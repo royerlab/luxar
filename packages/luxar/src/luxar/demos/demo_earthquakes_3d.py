@@ -177,8 +177,9 @@ GLOBE_LAT = 256
 # ~2k was invisible however large the image. Sampling per fragment makes the
 # basemap the only thing limiting how sharp a coastline looks.
 # 16384x8192 across TWO tiles of 8192x8192 — 4x the pixels of a single
-# 8192x4096. KTX2 keeps those tiles GPU-compressed after upload instead of
-# expanding the full 16384x8192 basemap to 512 MiB of RGBA8.
+# 8192x4096. One node would exceed the 512 MiB admission budget once its KTX2
+# payload is counted at 5x alongside the resident mip chain. Two nodes keep the
+# measured q2 Blue Marble tile at ~336 MiB peak with ~176 MiB headroom.
 #
 # Splitting is also the only way past 16384 at all. A GPU silently CLAMPS a
 # larger texture — wrong image, no diagnostic — so `MAX_MESH_TEXTURE_SIZE`
@@ -188,7 +189,7 @@ GLOBE_LAT = 256
 GLOBE_TEXTURE_WIDTH = 16384
 GLOBE_TILES = 2
 GLOBE_TEXTURE_FORMAT = "ktx2"
-GLOBE_TEXTURE_QUALITY = 2
+GLOBE_TEXTURE_QUALITY = None
 
 # The cloud deck is REAL WEATHER — NASA's Blue Marble cloud composite — not
 # procedural noise, and a translucent mesh shell rather than 60k luminous points.

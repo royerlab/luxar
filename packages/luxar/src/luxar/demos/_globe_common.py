@@ -38,10 +38,12 @@ The four primitives, and why each is shaped the way it is:
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass
 from typing import Any, Optional, Tuple
 
 import numpy as np
+from arbol import aprint
 
 __all__ = [
     "Clouds",
@@ -865,7 +867,7 @@ def _prepare_globe_texture(
             width,
             height,
             channels,
-            {"texture_ktx2_quality": quality},
+            {"texture_ktx2_mode": "uastc", "texture_ktx2_quality": quality},
         )
 
     payload, encoding, width, height, channels = encode_texture(
@@ -908,7 +910,7 @@ def add_textured_globe(
     every part would either duplicate the whole texture or need a shared-atlas
     mechanism that does not exist.
 
-    Useful sizes for the default bitmap path:
+    Useful sizes for the portable bitmap path:
 
     * ``tiles=1`` at 8192 — 6.0 MB (JPEG) / 4.3 MB (WebP), the comfortable default.
     * ``tiles=1`` at 16384 — 4x the pixels, 20.4 MB JPEG. Over WebP's limit.
@@ -921,7 +923,7 @@ def add_textured_globe(
     separate resident decoded surface. That is why this is a knob and not the
     default.
 
-    With opt-in KTX2 UASTC including mipmaps, the resident figures are about
+    With KTX2 UASTC including mipmaps, the resident figures are about
     43 MiB for one 8192x4096 tile, 171 MiB across two 8192x8192 tiles, and
     297 MiB across four 5400x10800 tiles, versus 128, 512 and 890 MiB as RGBA8.
     The 16384 per-axis device limit still applies; KTX2 removes CPU bitmap
@@ -944,8 +946,10 @@ def add_textured_globe(
         n_lon: Total longitude divisions across the whole globe.
         n_lat: Latitude divisions.
         tiles: Number of longitude bands. 1 = a single node.
-        fmt: Texture codec. ``ktx2`` passes RGB tiles to the mesh writer for
-            optional ``toktx`` authoring; other values use :func:`encode_texture`.
+        fmt: Texture codec. This generic low-level helper deliberately defaults
+            to portable ``webp``; ``build_earth`` selects ``ktx2`` for the shared
+            demos. KTX2 passes RGB tiles to the mesh writer for ``toktx``
+            authoring; other values use :func:`encode_texture`.
         quality: Codec quality. ``None`` selects 2 for KTX2/UASTC and 90 for
             bitmap codecs; explicit KTX2 values use the UASTC 0-4 scale.
         shading: ``smooth`` | ``flat`` | ``none``.
@@ -968,6 +972,13 @@ def add_textured_globe(
         raise ValueError(
             f"basemap width ({src_w}) must divide evenly into {tiles} tiles"
         )
+    if fmt.lower() == "ktx2" and shutil.which("toktx") is None:
+        aprint(
+            "KTX-Software `toktx` was not found; authoring the Earth basemap as "
+            "WebP quality 90 instead. Install KTX-Software to keep it GPU-compressed."
+        )
+        fmt = "webp"
+        quality = None
     tile_src_w = src_w // tiles
     lon_per_tile = 360.0 / tiles
     relief_grid = np.asarray(relief, dtype=np.float32)
@@ -1374,8 +1385,9 @@ def build_earth(
         n_lat: Latitude divisions.
         texture_width: Basemap width to fetch; halved per axis into ``tiles``.
         tiles: Longitude bands, each its own node. See :func:`add_textured_globe`.
-        fmt: Basemap codec; defaults to GPU-compressed UASTC ``ktx2``. Select a
-            bitmap codec explicitly for a portable fallback.
+        fmt: Basemap codec; defaults to GPU-compressed UASTC ``ktx2`` and falls
+            back to WebP when ``toktx`` is unavailable. Select a bitmap codec
+            explicitly to require the portable path.
         quality: Basemap codec quality; defaults to 90 for bitmap codecs and
             UASTC level 2 for KTX2.
         shading: ``smooth`` | ``flat`` | ``none``.
