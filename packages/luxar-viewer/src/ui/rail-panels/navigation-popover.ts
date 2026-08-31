@@ -19,7 +19,7 @@
 import { config, type RenderingSettings } from '../../config';
 import type { SceneManager } from '../../scene/scene-manager';
 import type { AnimationController } from '../../scene/animation/animation-controller';
-import type { ControlType } from '../../controls/types';
+import type { AutoRotateAxis, ControlType } from '../../controls/types';
 import { makePopoverGui } from './popover-gui';
 
 export interface NavigationPopoverContext {
@@ -34,6 +34,18 @@ export interface NavigationPopoverContext {
   /** Switch to a specific control mode (reuses the V-cycle context wiring). */
   setMode: (type: ControlType) => void;
 }
+
+/**
+ * Turntable-axis dropdown entries: label → stored token. Named in the CAMERA
+ * frame ("what the rotation looks like on screen") rather than x/y/z, which in
+ * an nD scientific viewer reads as a DATA axis — and which the gallery harness
+ * already spends on world axes.
+ */
+const AUTO_ROTATE_AXIS_OPTIONS: Record<string, AutoRotateAxis> = {
+  Vertical: 'vertical',
+  Horizontal: 'horizontal',
+  'View axis': 'view',
+};
 
 /** The three modes, in cycle order, with labels for the selector. */
 const MODES: { id: ControlType; label: string }[] = [
@@ -105,6 +117,15 @@ function buildModeParams(
         sceneManager.setAutoRotate(value);
         saveSettings();
         if (value) animationController.startAnimation();
+      });
+
+    gui
+      .add(settings, 'autoRotateAxis', AUTO_ROTATE_AXIS_OPTIONS)
+      .name('Rotation Axis')
+      .onChange((value: AutoRotateAxis) => {
+        sceneManager.setAutoRotateAxis(value);
+        saveSettings();
+        triggerAnimation();
       });
 
     gui

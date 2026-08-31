@@ -442,6 +442,19 @@ vc = luxar.ViewerConfig(
     bloom_strength=0.4,
     control_type="orbit",
     auto_rotate=True,
+    # Turntable axis, in the CAMERA frame: "vertical" (screen-up, the default),
+    # "horizontal" (screen-right — the scene tumbles over the top), or "view"
+    # (the view direction — a pure roll, the camera never moves).
+    #
+    # One caveat on "view": the LOD selector measures a node by the
+    # axis-aligned screen box of its projected bounds, which is not
+    # roll-invariant — a square footprint swings about 2x in area at 45°, a
+    # full level of the halving ladder. A rolling scene parked near a switch
+    # threshold will therefore breathe between levels (and a turntable
+    # recording pays extra LOD-settle ticks per frame). Hysteresis softens it;
+    # "vertical" and "horizontal" change the view legitimately and are not
+    # affected in the same way.
+    auto_rotate_axis="vertical",
 )
 
 dims = luxar.Dimensions.default_3d()
@@ -495,7 +508,7 @@ at — which is what keeps a reloaded or shared post-switch link named.
 | Theme | `theme` (`dark`, `light`, `frosted-glass`, `liquid-glass`) |
 | Tone mapping | `tone_mapping`, `exposure`, `global_offset`, `global_gamma` |
 | Bloom | `bloom_enabled`, `bloom_strength`, `bloom_radius`, `bloom_threshold` |
-| Controls | `control_type`, `auto_rotate`, `auto_rotate_speed` |
+| Controls | `control_type`, `auto_rotate`, `auto_rotate_speed`, `auto_rotate_axis` |
 | Cinematic | `cinematic_mode`, `vignette_enabled`, `chromatic_lens_distortion_enabled` |
 | Detector noise | `detector_noise_enabled`, `detector_noise_readout_sigma`, `detector_noise_photon_gain` |
 | Anti-aliasing | `fxaa_enabled`, `msaa_enabled`, `ssaa_enabled` |

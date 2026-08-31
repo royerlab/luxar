@@ -58,6 +58,7 @@ function createMockRenderingControls() {
       controlType: 'orbit' as const,
       autoRotate: false,
       autoRotateSpeed: 0.5,
+      autoRotateAxis: 'horizontal' as const,
       cinematicMode: false,
       vignetteEnabled: false,
       vignetteDarkness: 0.5,
@@ -190,6 +191,10 @@ describe('captureViewerState', () => {
     expect(state.exposure).toBe(1.0);
     expect(state.tone_mapping).toBe('ACES');
     expect(state.control_type).toBe('orbit');
+    // Round-trips through RENDERING_SETTINGS_MAP. Without a map entry the
+    // key is not merely absent — captureViewerState logs "dropping unknown
+    // RenderingSettings key" and the authored axis is silently lost.
+    expect(state.auto_rotate_axis).toBe('horizontal');
     expect(state.fxaa_enabled).toBe(true);
     expect(state.dynamic_clipping_enabled).toBe(true);
     expect(state.adaptive_dpr_enabled).toBe(true);

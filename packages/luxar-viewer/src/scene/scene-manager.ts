@@ -86,6 +86,7 @@ import { computePixelRatioOverride } from './scene-manager/viewport/dpr-policy';
 import { type LuxarCamera, isPerspectiveCamera, isOrthographicCamera } from '../utils/camera-utils';
 import { isDocumentFullscreen } from '../utils/fullscreen';
 import type { ControlType } from '../controls/controls-manager';
+import type { AutoRotateAxis } from '../controls/types';
 
 /** Default scene up (world +Y) — overridden per scene by `viewer_config.up`. */
 const DEFAULT_SCENE_UP = new THREE.Vector3(0, 1, 0);
@@ -1350,6 +1351,16 @@ export class SceneManager extends THREE.EventDispatcher<{
     this.controls.setAutoRotateSpeed(speed);
   }
 
+  /**
+   * Set the camera-frame axis the turntable revolves around: 'vertical'
+   * (screen-up — the default), 'horizontal' (screen-right, a tumble over the
+   * top), or 'view' (the view direction, a pure roll).
+   */
+  setAutoRotateAxis(axis: AutoRotateAxis): void {
+    this.controls.setAutoRotateAxis(axis);
+    log.custom(LogEmoji.SCENE, Modules.SCENE_MANAGER, `Auto-rotation axis: ${axis}`);
+  }
+
   /** Orbit wheel-zoom speed (live; shared with ortho — same control class). */
   setOrbitZoomSpeed(speed: number): void {
     this.controls.setOrbitZoomSpeed(speed);
@@ -1384,6 +1395,11 @@ export class SceneManager extends THREE.EventDispatcher<{
    */
   getAutoRotate(): boolean {
     return this.controls.getAutoRotate();
+  }
+
+  /** Current turntable axis (see {@link setAutoRotateAxis}). */
+  getAutoRotateAxis(): AutoRotateAxis {
+    return this.controls.getAutoRotateAxis();
   }
 
   /**

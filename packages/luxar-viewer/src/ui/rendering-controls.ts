@@ -370,6 +370,7 @@ export class RenderingControls {
     this.sceneManager.setControlType(this.settings.controlType);
     this.sceneManager.setAutoRotate(this.settings.autoRotate);
     this.sceneManager.setAutoRotateSpeed(this.settings.autoRotateSpeed);
+    this.sceneManager.setAutoRotateAxis(this.settings.autoRotateAxis);
     this.sceneManager.setNaturalDrag(this.settings.naturalDrag);
     this.sceneManager.setOrbitZoomSpeed(defaults.orbitZoomSpeed);
     this.sceneManager.setOrbitDampingFactor(defaults.orbitDampingFactor);
@@ -473,6 +474,7 @@ export class RenderingControls {
     this.sceneManager.setControlType(this.settings.controlType);
     this.sceneManager.setAutoRotate(this.settings.autoRotate);
     this.sceneManager.setAutoRotateSpeed(this.settings.autoRotateSpeed);
+    this.sceneManager.setAutoRotateAxis(this.settings.autoRotateAxis);
     this.sceneManager.setNaturalDrag(this.settings.naturalDrag);
 
     // Apply orbit feel settings (if they exist in loaded settings)
@@ -574,6 +576,9 @@ export class RenderingControls {
     }
     if (zarrOverrides.autoRotateSpeed !== undefined) {
       this.sceneManager.setAutoRotateSpeed(this.settings.autoRotateSpeed);
+    }
+    if (zarrOverrides.autoRotateAxis !== undefined) {
+      this.sceneManager.setAutoRotateAxis(this.settings.autoRotateAxis);
     }
     if (zarrOverrides.naturalDrag !== undefined) {
       this.sceneManager.setNaturalDrag(this.settings.naturalDrag);

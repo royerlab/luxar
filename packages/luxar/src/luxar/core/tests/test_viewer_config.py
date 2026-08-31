@@ -301,6 +301,27 @@ class TestViewerConfig:
         for ct in ("orbit", "fly", "ortho"):
             assert ViewerConfig(control_type=ct).control_type == ct
 
+    def test_invalid_auto_rotate_axis(self) -> None:
+        with pytest.raises(ValueError, match="auto_rotate_axis must be one of"):
+            ViewerConfig(auto_rotate_axis="z")
+
+    def test_valid_auto_rotate_axes(self) -> None:
+        # Named in the camera frame, not x/y/z — the viewer's dropdown and the
+        # accepted token set have to agree or an authored scene silently falls
+        # back to the screen-vertical turntable.
+        for axis in ("vertical", "horizontal", "view"):
+            assert ViewerConfig(auto_rotate_axis=axis).auto_rotate_axis == axis
+
+    def test_auto_rotate_axis_round_trips_through_dict(self) -> None:
+        vc = ViewerConfig(auto_rotate=True, auto_rotate_axis="view")
+        restored = ViewerConfig.from_dict(vc.to_dict())
+        assert restored.auto_rotate_axis == "view"
+
+    def test_auto_rotate_axis_absent_when_unset(self) -> None:
+        # Sparse serialization: an unset axis must not write a key, so every
+        # existing scene keeps its exact (screen-vertical) behavior.
+        assert "auto_rotate_axis" not in ViewerConfig(auto_rotate=True).to_dict()
+
     def test_invalid_exposure_out_of_range(self) -> None:
         with pytest.raises(ValueError, match="exposure"):
             ViewerConfig(exposure=-11.0)
