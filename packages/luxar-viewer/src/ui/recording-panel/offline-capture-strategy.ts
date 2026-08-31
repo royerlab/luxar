@@ -635,8 +635,10 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
 
         this.animationController.addPerFrameCallback(captureCallbackId, () => {
           if (i > 0) controls.applyOrbitRotation(anglePerFrame);
-          // Called on frame 0 too, deliberately: it explicitly establishes
-          // phase 0 and the true baseline distance before subsequent frames.
+          // Called on frame 0 too, deliberately: switching the interactive
+          // dolly off leaves the camera wherever the swing had reached, so
+          // this is what drives the phase to 0 and puts the capture on the
+          // true baseline distance rather than on a leftover offset.
           if (dollyCycles > 0) controls.applyOrbitDolly(dollyPhaseFor(i));
         });
 

@@ -271,9 +271,18 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     return this.currentControls;
   }
 
-  /** Remove any live dolly offset before the active controls are abandoned. */
+  /**
+   * Undo a LIVE dolly offset before the active controls are abandoned, so a
+   * transient mid-swing position is not baked into the saved camera state and
+   * carried into the next control instance.
+   *
+   * Only while the dolly is actually running. Once it has been switched off
+   * the camera's position is the user's chosen framing (see
+   * `LuxarOrbitControls.autoDolly`), and a mode switch must preserve it like
+   * any other.
+   */
   public returnAutoDollyToBaseline(): void {
-    if (this.currentControls instanceof LuxarOrbitControls) {
+    if (this.currentControls instanceof LuxarOrbitControls && this.currentControls.autoDolly) {
       this.currentControls.returnAutoDollyToBaseline();
     }
   }

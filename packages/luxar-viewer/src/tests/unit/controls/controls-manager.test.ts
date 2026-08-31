@@ -193,20 +193,30 @@ describe('ControlsManager', () => {
       expect(camera.position.distanceTo(controls.target)).toBeCloseTo(baseline, 6);
     });
 
-    it('preserves the baseline when changing dolly amplitude while paused', () => {
+    it('does not move a PAUSED dolly, including when the amplitude changes', () => {
+      // Switching the dolly off is not a cancel: it leaves the camera where it
+      // is and freezes the phase (see LuxarOrbitControls.autoDolly). Editing
+      // the amplitude while paused must therefore move nothing either — the
+      // new amplitude simply applies from wherever the user left the camera.
       controlsManager.setAutoDolly(true);
       const controls = controlsManager.getControls() as LuxarOrbitControls;
       const baseline = camera.position.distanceTo(controls.target);
 
-      controls.update(2.5);
-      expect(camera.position.distanceTo(controls.target)).toBeCloseTo(baseline / 1.15, 6);
+      controls.update(2.5); // quarter of the 10 s period → the near extreme
+      const nearExtreme = camera.position.distanceTo(controls.target);
+      expect(nearExtreme).toBeCloseTo(baseline / 1.15, 6);
 
       controlsManager.setAutoDolly(false);
+      expect(camera.position.distanceTo(controls.target)).toBeCloseTo(nearExtreme, 6);
+
       controlsManager.setAutoDollyAmplitudePercent(50);
+      expect(camera.position.distanceTo(controls.target)).toBeCloseTo(nearExtreme, 6);
+
+      // Resuming continues from the frozen phase, so a whole period returns to
+      // where it was rather than to the original baseline.
       controlsManager.setAutoDolly(true);
       controls.update(10);
-
-      expect(camera.position.distanceTo(controls.target)).toBeCloseTo(baseline, 6);
+      expect(camera.position.distanceTo(controls.target)).toBeCloseTo(nearExtreme, 6);
     });
 
     it('keeps the paused dolly framing unchanged across a control-mode round trip', () => {
@@ -222,8 +232,50 @@ describe('ControlsManager', () => {
       controlsManager.setControlType('orbit');
       const recreatedControls = controlsManager.getControls() as LuxarOrbitControls;
 
-      expect(pausedDistance).toBeCloseTo(baseline, 6);
+      // The paused framing is the user's, not a transient to be undone: it is
+      // off-baseline and must SURVIVE the dispose/recreate a mode switch does.
+      expect(pausedDistance).toBeCloseTo(baseline / 1.15, 6);
       expect(camera.position.distanceTo(recreatedControls.target)).toBeCloseTo(pausedDistance, 6);
+    });
+
+    it('DOES undo a live mid-swing offset when the controls are abandoned', () => {
+      // The other half of the contract: while the dolly is running, its
+      // position is a transient. Baking it into the saved camera state would
+      // make an arbitrary point of the swing the new permanent framing.
+      controlsManager.setAutoDolly(true);
+      const controls = controlsManager.getControls() as LuxarOrbitControls;
+      const baseline = camera.position.distanceTo(controls.target);
+
+      controls.update(2.5);
+      expect(camera.position.distanceTo(controls.target)).toBeCloseTo(baseline / 1.15, 6);
+
+      controlsManager.setControlType('fly');
+      controlsManager.setControlType('orbit');
+      const recreated = controlsManager.getControls() as LuxarOrbitControls;
+      expect(camera.position.distanceTo(recreated.target)).toBeCloseTo(baseline, 6);
+    });
+
+    it('switching an animation OFF never rewinds it — dolly matches turntable', () => {
+      // The symmetry that decided this behaviour. Disabling auto-rotation does
+      // not rewind the scene to its starting angle, so disabling the dolly must
+      // not rewind the distance; a snap-back was measured at up to +95% of the
+      // viewing distance in a single frame at maximum amplitude.
+      const controls = controlsManager.getControls() as LuxarOrbitControls;
+
+      controlsManager.setAutoRotate(true);
+      controls.update(5);
+      const spunPose = camera.quaternion.clone();
+      controlsManager.setAutoRotate(false);
+      // Asserted on the CAMERA, which is what the user sees. 1e-6 rad rather
+      // than exact zero because the pose round-trips through Float32; a
+      // genuine rewind would be radians, six orders of magnitude away.
+      expect(camera.quaternion.angleTo(spunPose)).toBeLessThan(1e-6);
+
+      controlsManager.setAutoDolly(true);
+      controls.update(2.5);
+      const dolliedDistance = camera.position.distanceTo(controls.target);
+      controlsManager.setAutoDolly(false);
+      expect(camera.position.distanceTo(controls.target)).toBeCloseTo(dolliedDistance, 6);
     });
 
     it('returns a running dolly to baseline before rebuilding controls', () => {
