@@ -15,8 +15,9 @@ plus the full mip tail.
 The four shared Earth demos now author their basemaps as UASTC KTX2 by default,
 cutting their combined resident texture footprint from RGBA8's 4 bytes per pixel
 to the compressed mip-chain budget of about 4/3 bytes per pixel. If `toktx` is
-not installed, globe authoring reports the downgrade and falls back to WebP
-quality 90 rather than failing gallery generation.
+not installed, globe authoring reports the downgrade and falls back to bitmap
+quality 90 — WebP within its 16383-pixel bound, or JPEG above it — rather than
+failing gallery generation.
 
 Measured with `toktx` 4.4.2 at UASTC quality 2, the two real 8193x8192 Blue
 Marble tiles are 48.57 and 58.69 MiB, versus 5.78 and 8.17 MiB as WebP quality
