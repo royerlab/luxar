@@ -174,7 +174,9 @@ class CompositionMixin(_GSplatDataOps):
 
         Raises:
             ValueError: On empty input list, or mismatched ndim /
-                truncation_radius / n_substitutive across datasets.
+                truncation_radius / n_substitutive across datasets; also when
+                categorical labels are present on only some inputs or use
+                different vocabularies.
         """
         from luxar.gsplats.gsplat_data import SubstitutiveLevel
 
@@ -341,7 +343,9 @@ class CompositionMixin(_GSplatDataOps):
             Single GSplatData with ndim+1 dimensions containing all splats.
 
         Raises:
-            ValueError: If datasets is empty, lengths mismatch, or ndims differ.
+            ValueError: If datasets is empty, lengths mismatch, ndims differ,
+                or categorical labels are present on only some inputs or use
+                different vocabularies.
 
         Example:
             >>> # Combine 3D timepoints into 4D

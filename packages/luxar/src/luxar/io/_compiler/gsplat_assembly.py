@@ -577,9 +577,10 @@ def apply_gsplat_spatial_ordering(
     mode resolution to the write step.
 
     Returns:
-        (centers, amplitudes, cholesky_factors, colors, ordering_data,
-        centers_encoding_plan), where ordering_data is None if ordering was not
-        applied and centers_encoding_plan is None if no dataset context was supplied.
+        (centers, amplitudes, cholesky_factors, colors, label_ids,
+        ordering_data, centers_encoding_plan), where ordering_data is None if
+        ordering was not applied and centers_encoding_plan is None if no
+        dataset context was supplied.
     """
     ordering_data = None
     centers_encoding_plan = None

@@ -1258,6 +1258,8 @@ def merge_to_count(
 
     Raises:
         ValueError: If ``n_target < 1`` or ``method`` is not recognised.
+            Also raised when the input carries categorical labels, because
+            merging has no defined label-combination rule.
     """
     if n_target < 1:
         raise ValueError(f"n_target must be >= 1, got {n_target}")

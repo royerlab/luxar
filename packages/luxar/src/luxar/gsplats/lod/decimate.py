@@ -194,7 +194,8 @@ def decimate(
 
     Raises:
         ValueError: on an out-of-range target, an unknown method, or a
-            ``coarsen_dims`` index outside ``[0, data.ndim)``.
+            ``coarsen_dims`` index outside ``[0, data.ndim)``; also when
+            ``method="merge"`` is requested for categorical labels.
     """
     n_in = int(data.n_splats)
     n_target = resolve_target_count(target, n_in)
