@@ -1,6 +1,6 @@
 # Cross-Node Depth Ordering — Depth-Shard Interleaving (Route B)
 
-> **Status**: Phases S, 0, 1, 2 and 3 IMPLEMENTED on the draft holding PR #2407 (branch `feat/cross-node-depth-shards`); the feature is **off by default** and **NOT yet recommended for use** — §7.2 records measured popping on co-extensive, finely-interleaved nodes, whose cause (shard count vs interleaving fineness) is understood but not yet gated against. Real data measures clean. Implementation deltas vs the text below, all found by tests or measurement rather than review: (a) `syncDepthShards`'s idempotent path must RE-ASSERT the parent's narrowed `instanceCount`, because every commit resets it to the whole count — without it the parent redraws the entire node on top of its shards (the two-node E2E counted 9375 elements drawn for a 5000-element node); (b) the group's internal sort keys had to become MEMBER-level, since a shard with no usable bounds keys to 0 (i.e. at the camera) and sorted to the near end of its own node, and a shard-level key makes the member comparison non-transitive; (c) `orderGroupsWithContainment` now RETURNS its edge set — inferring the edges by diffing depth order against hoisted order is a guess, not the relation; (d) **the containment override is dropped between two SHARDED groups** (decision 4's "plausibly subsumes" note, now settled): two co-extensive interpenetrating nodes have near-equal bounding spheres, so whichever is a hair larger "contains" the other and the block forced strict node-major order — defeating the exact case sharding exists to fix (an edge with only one side sharded is kept); and (e) the merge key is the shard's sort-pose VIEW-Z interval, not a re-projected box — correct on principle, but measurably neutral (§7.2).
+> **Status**: Phases S, 0, 1, 2 and 3 IMPLEMENTED on the draft holding PR #2407 (branch `feat/cross-node-depth-shards`); the feature is **off by default**, pending the separability gate that should choose the shard count per pair instead of the current constant. **It demonstrably works**: against an exact ground truth it removes 84% of the cross-node ordering error at 64 shards for no measurable frame cost, and 93% at 256 for ~1-2 ms (§7.3). §7.2's popping at the default 16 shards is that constant being too low for a co-extensive pair, not a wall. Implementation deltas vs the text below, all found by tests or measurement rather than review: (a) `syncDepthShards`'s idempotent path must RE-ASSERT the parent's narrowed `instanceCount`, because every commit resets it to the whole count — without it the parent redraws the entire node on top of its shards (the two-node E2E counted 9375 elements drawn for a 5000-element node); (b) the group's internal sort keys had to become MEMBER-level, since a shard with no usable bounds keys to 0 (i.e. at the camera) and sorted to the near end of its own node, and a shard-level key makes the member comparison non-transitive; (c) `orderGroupsWithContainment` now RETURNS its edge set — inferring the edges by diffing depth order against hoisted order is a guess, not the relation; (d) **the containment override is dropped between two SHARDED groups** (decision 4's "plausibly subsumes" note, now settled): two co-extensive interpenetrating nodes have near-equal bounding spheres, so whichever is a hair larger "contains" the other and the block forced strict node-major order — defeating the exact case sharding exists to fix (an edge with only one side sharded is kept); and (e) the merge key is the shard's sort-pose VIEW-Z interval, not a re-projected box — correct on principle, but measurably neutral (§7.2).
 > **Scope**: Viewer-only. No `.luxar.zarr` / `.gsplats.zarr` format change, no Python-side change, **no shader change**.
 > **Goal**: correct back-to-front compositing *between* two or more overlapping order-dependent nodes — of any instanced geometry type, in any mix of order-dependent blending modes — to a bounded, tunable ordering error.
 > **Non-goals**: per-pixel ordering (the StopThePop error class — a single per-element depth cannot fix it, and no global sort can); order-independent transparency; one globally merged draw (Spark's architecture — §8.2); Mesh (§8.1).
@@ -310,6 +310,57 @@ to what a user sees.
 node's shard intervals against the other's and fall back to whole-node ordering
 for that pair when they overlap too heavily to order meaningfully. Until that
 lands, `shardsPerNode` is a blunt instrument and the feature stays off by default.
+
+---
+
+## 7.3 Does it actually help? Quality and cost against ground truth (2026-08-31)
+
+Everything in §7.1/§7.2 measures whether sharding BREAKS anything. This measures
+whether it helps, which nothing before it did — and it is the experiment that
+decides whether the idea is worth its complexity.
+
+**Ground truth** is the same 10,000 splats of the two-comb fixture in ONE node,
+where within-node sorting is already exact, so the correct composite is
+computable. Both two-node arms are approximations of it. Error is the mean
+per-channel image difference against that reference, averaged over five camera
+angles (0/20/45/70/110 degrees). Cost is the median frame time during a
+continuous drag.
+
+| shards | draws | error vs truth | error reduction | fixture frame p50 | neuromast frame p50 |
+| --- | --- | --- | --- | --- | --- |
+| off | — | 19.62 | — | 3.0 ms | 6.1 ms |
+| 16 | 32 | 10.17 | 48% | 2.9 ms | 5.1 ms |
+| 64 | 128 | **3.07** | **84%** | **3.3 ms** | **5.2 ms** |
+| 256 | 512 | 1.29 | 93% | 4.7 ms | 7.0 ms |
+
+**It works, and it converges.** The error falls monotonically toward the exact
+composite. 64 shards removes 84% of it at a frame cost inside this machine's
+run-to-run variance (repeat runs of the same configuration moved p50 by up to
+~1.5 ms, so treat the 16/64 rows as "not measurably more expensive" rather than
+as exact figures); 256 removes 93% for a clear but modest ~1–2 ms.
+
+That settles the doubt §7.2 raised. Sharding is not merely non-destructive on
+real data — on a scene where cross-node ordering genuinely matters it recovers
+most of the error the authoring workaround (merge + partition) would, without
+merging the nodes.
+
+**It also found a silent-disable bug, which had corrupted §7.2's conclusion.**
+Shards hold `ceil(N / S)` elements each, so a count that does not divide the
+element count is covered by FEWER shards than requested: 256 over 5,000 needs
+only 250, and the last six are never created. The coordinator then asked the sort
+for 256 boxes, `shardOrderInputFor`'s mesh-count guard rejected the mismatch, and
+the node fell back to whole-node ordering — the feature quietly switching itself
+off. That is why 256 first measured WORSE than 64 (16.37 vs 3.07), and why §7.2
+recorded "raising the count removes the popping": it removed it by disabling the
+feature. Fixed by requesting bounds for the ESTABLISHED count
+(`establishedShardCount`), pinned by a unit test. §7.2's popping numbers at 16
+shards stand; its claim about high counts does not.
+
+**What §7.2's real finding reduces to**, with this in hand: the shard count has
+to match how finely the two nodes interleave, and the policy's fixed 16 is simply
+too low for a co-extensive pair. The fixture wants 64+. That is a tuning problem
+with a measured curve behind it, not a wall — and the still-open separability
+gate is what should choose the count per pair instead of a constant.
 
 ---
 

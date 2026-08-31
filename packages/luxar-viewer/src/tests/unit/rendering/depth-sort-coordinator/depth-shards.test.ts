@@ -171,6 +171,29 @@ describe('depth shards', () => {
       expect(mesh.children).toHaveLength(0);
     });
 
+    it('reports the ESTABLISHED count when the request does not divide evenly', () => {
+      // Shards are `ceil(N / S)` elements each, so a request that does not divide
+      // the element count is covered by FEWER shards than asked for: 256 over
+      // 5000 needs only 250 of 20. Callers must be able to see that, because the
+      // sort has to report bounds for as many shards as actually exist — asking
+      // for 256 when 250 exist trips the coordinator's mesh-count guard and
+      // silently reverts the node to whole-node ordering. That measured as "high
+      // shard counts fix the popping" when they were only disabling the feature.
+      const mesh = makeNode(5000);
+      const established = syncDepthShards(mesh, 256, 5000);
+      expect(established).toBe(250);
+      expect(depthShardCount(mesh)).toBe(250);
+      expect(depthShardChildren(mesh)).toHaveLength(249);
+      // ...and it is still an exact partition.
+      const total =
+        (mesh.geometry as THREE.InstancedBufferGeometry).instanceCount +
+        depthShardChildren(mesh).reduce(
+          (sum, c) => sum + (c.geometry as THREE.InstancedBufferGeometry).instanceCount,
+          0
+        );
+      expect(total).toBe(5000);
+    });
+
     it('caps the shard count at the element count rather than making empty shards', () => {
       const mesh = makeNode(3);
       const established = syncDepthShards(mesh, 10, 3);

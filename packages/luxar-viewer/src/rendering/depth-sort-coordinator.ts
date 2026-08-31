@@ -108,6 +108,7 @@ import {
 } from './depth-sort-coordinator/triangle-ordering';
 import {
   depthShardChildren,
+  depthShardCount,
   effectiveInstanceCount,
   releaseDepthShards,
   syncDepthShards,
@@ -476,9 +477,26 @@ const EMPTY_SHARD_BOUNDS = new Float32Array(0);
  * and the whole feature is inert. Reads a stamp rather than owning state so the
  * policy can live where the overlap information is.
  */
-function requestedShardCount(mesh: THREE.Mesh): number {
+function desiredShardCount(mesh: THREE.Mesh): number {
   const requested = (mesh.userData as { depthShardCount?: number }).depthShardCount;
   return typeof requested === 'number' && requested > 1 ? Math.trunc(requested) : 0;
+}
+
+/**
+ * How many shards the node ACTUALLY has, which is what a sort must report bounds
+ * for — not what the policy asked for.
+ *
+ * The two differ whenever the requested count does not divide the element count:
+ * shards are `ceil(N / S)` elements each, so `S = 256` over 5,000 elements is
+ * covered by 250 shards and the last six are never created. Requesting 256 boxes
+ * then fails `shardOrderInputFor`'s mesh-count guard and the node SILENTLY falls
+ * back to whole-node ordering — the feature quietly turning itself off, which
+ * measured as "high shard counts fix the popping" when they were merely
+ * disabling it. Asking for the established count keeps the two in step.
+ */
+function establishedShardCount(mesh: THREE.Mesh): number {
+  const established = depthShardCount(mesh);
+  return established > 1 ? established : 0;
 }
 
 /**
@@ -1357,7 +1375,7 @@ export function noteDepthSortCommit(
   // pooled geometry can both have changed, and either invalidates the shard
   // boundaries and the views that alias them; `syncDepthShards` rebuilds
   // wholesale and is a no-op while the count is 1 (every node today).
-  syncDepthShards(mesh, requestedShardCount(mesh), count);
+  syncDepthShards(mesh, desiredShardCount(mesh), count);
 
   // Sort NOW when the node is small enough, so the first frame after this
   // commit is already ordered instead of showing the fallback the commit path
@@ -1694,9 +1712,9 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
       generation,
       modelView: new Float32Array(modelView.elements),
       // Request per-shard depth bounds only for a node that is actually
-      // sharded. Until the shard-count policy lands (spec §4) nothing is, so
-      // this is 0 everywhere and the kernel skips the work entirely.
-      shardCount: requestedShardCount(mesh),
+      // sharded, and for exactly as many shards as it HAS (see
+      // `establishedShardCount`). 0 when unsharded, and the kernel skips it.
+      shardCount: establishedShardCount(mesh),
     }),
     SORT_RPC_TIMEOUT_MS
   )
