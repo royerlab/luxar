@@ -192,6 +192,27 @@ describe('initAnimationManager', () => {
     initAnimationManager(ctx); // second call should not re-construct
     expect(DimensionAnimationManager).toHaveBeenCalledTimes(1);
   });
+
+  it('wires a committed-quality probe that follows scene replacement', () => {
+    const ctx = makeCtx();
+    const sceneManager = ctx.sceneManager as unknown as { scene: object };
+    sceneManager.scene = {
+      children: [
+        { userData: { committedEnergyFraction: 0.9 } },
+        { userData: { committedEnergyFraction: 0.1 } },
+      ],
+    };
+
+    initAnimationManager(ctx);
+
+    const constructor = DimensionAnimationManager as unknown as ReturnType<typeof vi.fn>;
+    const committedQuality = constructor.mock.calls[0][2] as (() => number | null) | undefined;
+    expect(committedQuality).toBeTypeOf('function');
+    expect(committedQuality?.()).toBeCloseTo(0.1);
+
+    sceneManager.scene = { children: [{ userData: { committedEnergyFraction: 0.7 } }] };
+    expect(committedQuality?.()).toBeCloseTo(0.7);
+  });
 });
 
 describe('initDimensionSliders', () => {
