@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import re
+from collections import Counter
 from pathlib import Path
 from types import ModuleType
 
@@ -145,7 +146,12 @@ def test_partitioned_slice_survey_reads_rung_zero_across_parts(tmp_path: Path) -
         fine = leaf.create_group("additive_1")
         fine.attrs.update({"type": "points", "n_points": 0, "slice_dims": [0]})
 
-    assert checker.sliced_first_rung_counts(root) == [("/", 4)]
+    # Parts SUM per coordinate: {0: 3+1, 1: 1+2, 2: 0+2} = {0: 4, 1: 3, 2: 2}.
+    # The reported scalar is the SPARSEST coordinate (2), not the busiest (4).
+    assert checker._node_slice_histogram(root, root) == Counter(
+        {(0,): 4, (1,): 3, (2,): 2}
+    )
+    assert checker.sliced_first_rung_counts(root) == [("/", 2)]
 
 
 def test_sliced_rung_with_no_centers_is_an_empty_measurement(tmp_path: Path) -> None:
@@ -475,3 +481,265 @@ def test_parse_aspects_reports_a_zero_height_as_a_value_error() -> None:
         checker.parse_aspects("1:0")
     with pytest.raises(ValueError):
         checker.parse_aspects("abc")
+
+
+def _sliced_node(
+    path: Path,
+    per_coordinate: dict[int, int],
+    *,
+    node_total: int | None = None,
+    node_name: str = "leaf",
+):
+    """A points leaf whose rung 0 holds ``count`` elements at each coordinate."""
+    root = zarr.open_group(path, mode="w")
+    leaf = root.create_group(node_name)
+    rows = np.asarray(
+        [[coord] for coord, count in per_coordinate.items() for _ in range(count)],
+        dtype=np.uint16,
+    ).reshape(-1, 1)
+    total = node_total if node_total is not None else len(rows)
+    leaf.attrs.update({"type": "points", "n_points": total, "n_additive_sublods": 2})
+    rung = leaf.create_group("additive_0")
+    rung.attrs.update({"type": "points", "n_points": len(rows), "slice_dims": [0]})
+    rung.create_array("positions", data=rows)
+    leaf.create_group("additive_1").attrs.update(
+        {"type": "points", "n_points": max(total - len(rows), 0), "slice_dims": [0]}
+    )
+    return root
+
+
+def _sliced_verdicts(root, **overrides):
+    results: list[tuple[str, str, str]] = []
+    counts = {"ok": 0, "warn": 0, "fail": 0, "skip": 0}
+    failures: list[str] = []
+    options = {
+        "scene_name": "scene",
+        "min_first_rung": checker.DEFAULT_MIN_SLICE_FIRST_RUNG,
+        "min_rung_share": checker.DEFAULT_MIN_SLICE_RUNG_SHARE,
+    }
+    options.update(overrides)
+    checker._record_sliced_verdicts(
+        root,
+        options["scene_name"],
+        options["min_first_rung"],
+        results,
+        counts,
+        failures,
+        options["min_rung_share"],
+    )
+    return results
+
+
+def test_one_busy_coordinate_does_not_mask_starved_ones(tmp_path: Path) -> None:
+    """The regression the percentile reduction replaces.
+
+    Reducing with ``max()`` asked whether the BUSIEST slice was healthy, so a
+    node with a single fat coordinate passed however many starved ones sat
+    beside it. Measured spreads between p05 and max on real stores run from
+    2.1x to 122x, and ``zebrafish_timelapse/endoderm`` passed the old reduction
+    on a max of 6,648 while a twentieth of its timepoints held 330 or fewer.
+    """
+    per_coordinate = {0: 5_000} | {c: 5 for c in range(1, 40)}
+    root = _sliced_node(tmp_path / "lopsided.zarr", per_coordinate)
+
+    histogram = checker._node_slice_histogram(root["leaf"], root)
+    assert max(histogram.values()) == 5_000  # the old reduction: comfortably passing
+    assert checker.sparsest_slice_elements(histogram) == 5  # the new one: starved
+
+    (path, status, message) = _sliced_verdicts(root)[0]
+    assert (path, status) == ("/leaf", "fail")
+    assert "sparsest rung-0 slices hold 5 elements" in message
+    assert "covers 40 coordinates" in message
+
+
+def test_a_uniformly_healthy_sliced_node_passes(tmp_path: Path) -> None:
+    """The negative arm: a gate that never passes is indistinguishable from one
+    that never fires, so pin that a good node produces NO verdict."""
+    root = _sliced_node(tmp_path / "healthy.zarr", {c: 400 for c in range(30)})
+
+    assert checker.sliced_first_rung_counts(root) == [("/leaf", 400)]
+    assert _sliced_verdicts(root) == []
+
+
+def test_share_arm_fires_when_every_slice_clears_the_absolute_floor(
+    tmp_path: Path,
+) -> None:
+    """The two arms are independent: absolute counts can be comfortable while
+    rung 0 is still a sliver of the node, which is the #2376 shape (a rung sized
+    against a download budget, then divided by the slice count)."""
+    # 30 coordinates x 400 = 12,000 in rung 0, against a 1,000,000-element node.
+    root = _sliced_node(
+        tmp_path / "thin-share.zarr", {c: 400 for c in range(30)}, node_total=1_000_000
+    )
+
+    assert checker.sliced_first_rung_counts(root) == [("/leaf", 400)]  # absolute: fine
+    (path, status, message) = _sliced_verdicts(root)[0]
+    assert (path, status) == ("/leaf", "fail")
+    assert "rung 0 is 1.20% of the node" in message
+    assert "share floor" in message
+
+
+def test_share_denominator_skips_unladdered_partition_parts(tmp_path: Path) -> None:
+    """Only parts contributing a sliced rung belong in its share denominator."""
+    root = zarr.open_group(tmp_path / "mixed-partition.zarr", mode="w")
+    root.attrs["kind"] = "partition"
+    laddered = root.create_group("laddered")
+    laddered.attrs.update(
+        {"type": "points", "n_points": 100_000, "n_additive_sublods": 2}
+    )
+    rows = np.repeat(np.arange(40, dtype=np.uint16), 500).reshape(-1, 1)
+    rung = laddered.create_group("additive_0")
+    rung.attrs.update({"type": "points", "n_points": len(rows), "slice_dims": [0]})
+    rung.create_array("positions", data=rows)
+    laddered.create_group("additive_1").attrs.update(
+        {"type": "points", "n_points": 80_000, "slice_dims": [0]}
+    )
+    root.create_group("unladdered").attrs.update(
+        {"type": "points", "n_points": 900_000, "n_additive_sublods": 1}
+    )
+
+    assert _sliced_verdicts(root) == []
+
+
+def test_substitutive_share_uses_one_level_not_keywise_maxima(tmp_path: Path) -> None:
+    """Synthetic maxima from different LOD alternatives must not inflate share."""
+    root = zarr.open_group(tmp_path / "lod-share.zarr", mode="w")
+    root.attrs["kind"] = "lod"
+    for index, coordinate in enumerate((0, 1)):
+        leaf = root.create_group(f"level_{index}")
+        leaf.attrs.update(
+            {"type": "points", "n_points": 10_000, "n_additive_sublods": 2}
+        )
+        rung = leaf.create_group("additive_0")
+        rung.attrs.update({"type": "points", "n_points": 600, "slice_dims": [0]})
+        rung.create_array(
+            "positions",
+            data=np.full((600, 1), coordinate, dtype=np.uint16),
+        )
+        leaf.create_group("additive_1").attrs.update(
+            {"type": "points", "n_points": 9_400, "slice_dims": [0]}
+        )
+
+    (_, status, message) = _sliced_verdicts(root)[0]
+    assert status == "fail"
+    assert "rung 0 is 6.00% of the node" in message
+
+
+def test_share_arm_fires_when_an_exemption_is_dropped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fires-proof for the allowlist, in both directions.
+
+    An exemption that silently disabled the arm would be indistinguishable from
+    a clean store, so pin that the SAME node fails the moment its entry goes
+    away — this is what stops the allowlist from becoming a tolerance.
+    """
+    root = _sliced_node(
+        tmp_path / "exempt.zarr", {c: 400 for c in range(30)}, node_total=192_000
+    )
+    key = "scene/leaf"
+
+    monkeypatch.setattr(
+        checker,
+        "SHARE_ARM_EXEMPT",
+        {key: (0.06, "measured: converges on keypress")},
+    )
+    (_, status, message) = _sliced_verdicts(root)[0]
+    assert status == "warn"
+    assert "[exempt: measured: converges on keypress]" in message
+
+    monkeypatch.setattr(checker, "SHARE_ARM_EXEMPT", {})
+    (_, status, _) = _sliced_verdicts(root)[0]
+    assert status == "fail"
+
+
+def test_share_exemption_stops_at_its_measured_floor(tmp_path: Path) -> None:
+    """An exempt path goes red if a rebuild degrades below the allowed share."""
+    scene = tmp_path / "esm3_protein_landscape.luxar.zarr"
+    root = _sliced_node(
+        scene,
+        {0: 500, 1: 500},
+        node_total=20_000,
+        node_name="proteins",
+    )
+
+    (_, status, message) = _sliced_verdicts(
+        root, scene_name="esm3_protein_landscape.luxar.zarr"
+    )[0]
+    assert status == "fail"
+    assert "rung 0 is 5.00% of the node" in message
+
+
+def test_every_share_arm_exemption_carries_a_measured_reason() -> None:
+    """An exemption without a figure in it is a tolerance wearing a comment."""
+    assert checker.SHARE_ARM_EXEMPT, "an empty allowlist should be deleted, not kept"
+    for key, (_, reason) in checker.SHARE_ARM_EXEMPT.items():
+        assert "%" in reason and "rung 0 =" in reason, (
+            f"{key}: reason cites no measurement"
+        )
+
+
+def test_calibrated_sliced_defaults_and_cli_exemption_are_pinned(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Pin the measured defaults, CLI wiring, and exempt/fresh exit behavior."""
+    assert checker.DEFAULT_MIN_SLICE_FIRST_RUNG == 250
+    assert checker.DEFAULT_MIN_SLICE_RUNG_SHARE == 0.10
+    exempt = tmp_path / "esm3_protein_landscape.luxar.zarr"
+    _sliced_node(
+        exempt,
+        {0: 500, 1: 500},
+        node_total=16_000,
+        node_name="proteins",
+    )
+
+    assert checker.main([str(exempt)]) == 0
+    exempt_output = _ANSI_ESCAPE.sub("", capsys.readouterr().out)
+    assert "rung 0 is 6.25% of the node" in exempt_output
+    assert "[exempt:" in exempt_output
+
+    fresh = tmp_path / "fresh.luxar.zarr"
+    _sliced_node(fresh, {0: 500, 1: 500}, node_total=16_000)
+    assert checker.main([str(fresh)]) == 1
+    fresh_output = _ANSI_ESCAPE.sub("", capsys.readouterr().out)
+    assert "rung 0 is 6.25% of the node" in fresh_output
+    assert "[exempt:" not in fresh_output
+
+    assert checker.main([str(fresh), "--min-slice-rung-share", "0.005"]) == 0
+    capsys.readouterr()
+
+    healthy = tmp_path / "healthy.luxar.zarr"
+    _sliced_node(healthy, {0: 500, 1: 500})
+    assert checker.main([str(healthy), "--min-slice-first-rung", "100000"]) == 1
+    healthy_output = _ANSI_ESCAPE.sub("", capsys.readouterr().out)
+    assert "below the 100,000 absolute first-paint floor" in healthy_output
+
+
+def test_starvation_percentile_is_the_minimum_for_a_handful_of_slices() -> None:
+    """At 20 or fewer coordinates the index is 0, which is the right reading:
+    with a handful of slices there is no tail to discount."""
+    assert checker.sparsest_slice_elements(Counter({(0,): 9, (1,): 100})) == 9
+    assert (
+        checker.sparsest_slice_elements(
+            Counter({(c,): 100 for c in range(19)} | {(19,): 3})
+        )
+        == 3
+    )
+
+    # At 100 coordinates the index is int(0.05 * 99) = 4, the FIFTH smallest.
+    # So up to four starved slices are tolerated as a tail and the fifth is
+    # reported — pin both sides of that boundary, since a percentile that
+    # silently rounded to 0 or to the minimum would pass one of them.
+    def hundred(starved: int) -> Counter:
+        return Counter(
+            {(c,): 1 for c in range(starved)} | {(c,): 900 for c in range(starved, 100)}
+        )
+
+    assert checker.sparsest_slice_elements(hundred(4)) == 900  # tail, discounted
+    assert checker.sparsest_slice_elements(hundred(5)) == 1  # 5% starved, reported
+
+
+def test_empty_histogram_is_a_zero_not_a_pass() -> None:
+    """ "0 nodes measured" and "0 violations" render identically and mean the
+    opposite, so an empty survey must fail rather than fall through."""
+    assert checker.sparsest_slice_elements(Counter()) == 0
