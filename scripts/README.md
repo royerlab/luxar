@@ -23,7 +23,6 @@ scripts/
 | `check_scene_credits.py` | Verify built demo stores carry the `short`, `doi`, and `license` their registry citation declares |
 | `check_open_issue_pr.py` | Report whether an open PR already claims an issue (advisory, run by hand); inventory unique/shared paths before closing a duplicate |
 | `ci_queue_scan.py` | Classify obsidian-labelled Actions jobs and perform bounded repository run scans for CI routing/watchdog policy |
-| `ci_queue_redispatch.py` | Hand off, cancel, and fully rerun one first-attempt CI run stranded behind a saturated obsidian queue |
 | `check_fixture_env.py` | Assert the viewer-fixture Hatch environment is CPU-only and free of default-env tooling |
 | `check_version_consistency.py` | Verify the Python, viewer, and citation metadata describe the same release |
 | `set_version.py` | Update the Python, viewer, and citation release versions together |
