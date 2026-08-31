@@ -981,10 +981,7 @@ describe('DimensionAnimationManager', () => {
     const pacingMessages = (spy: { mock: { calls: unknown[][] } }): string[] =>
       spy.mock.calls.map((call) => String(call[1])).filter((msg) => msg.includes('fps'));
 
-    const runOneMeasurementWindow = (
-      energy: number | null | undefined,
-      targetFPS = 10
-    ) => {
+    const runOneMeasurementWindow = (energy: number | null | undefined, targetFPS = 10) => {
       const probe = energy === undefined ? undefined : () => energy;
       const m = new DimensionAnimationManager(sceneDimsManager, mockAnimationController, probe);
       const events: Array<{ committedEnergyFraction: number | null }> = [];

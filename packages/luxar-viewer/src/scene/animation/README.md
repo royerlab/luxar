@@ -15,7 +15,7 @@ folder contains only the loop and the dimension scrubber.
 | File                             | Role                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `animation-controller.ts`        | `requestAnimationFrame`-driven render loop. Updates `ControlsManager`, runs registered per-frame callbacks, then renders through `PostProcessingManager`. Emits `frame-start` / `frame-end` on the event bus (for the PerformanceMonitor panel), paces pathologically slow frames (see the invariant below), and auto-pauses after `config.animation.idleTimeoutMs` of inactivity unless something continuous is active. |
-| `committed-quality.ts`           | Walks visible, non-empty commit stamps and reports the minimum committed energy used by dimension-playback feedback.                                                                                                                                                                                                                                                                                                                                                                   |
+| `committed-quality.ts`           | Walks visible, non-empty commit stamps and reports the minimum committed energy used by dimension-playback feedback.                                                                                                                                                                                                                                                                                                     |
 | `dimension-animation-manager.ts` | Per-dimension FPS-throttled scrubber with `once` / `loop` / `bounce` modes. Mutates `SceneDimsManager` state and awaits `waitForUpdate()` so animation never advances faster than data loading. Extends `THREE.EventDispatcher` — emits `play`, `pause`, `complete`, `directionChange`, `speedChange`, `loopModeChange`, `fpsWarning`.                                                                                   |
 
 ## Public surface
@@ -150,15 +150,15 @@ callers that build the options object dynamically; defaults come from
 `DimensionAnimationManager` extends `THREE.EventDispatcher` with the
 `DimensionAnimationEvents` map from `src/types/animation.ts`:
 
-| Event             | Payload                                                         | When                                                                    |
-| ----------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `play`            | `{ dimIndex }`                                                  | `play()` transitions a paused dim to playing                            |
-| `pause`           | `{ dimIndex }`                                                  | `pause()` transitions a playing dim                                     |
-| `complete`        | `{ dimIndex }`                                                  | `once` mode hit the far boundary                                        |
-| `directionChange` | `{ dimIndex, direction }`                                       | `bounce` mode flipped at a boundary                                     |
-| `speedChange`     | `{ dimIndex, fps }`                                             | `setTargetFPS` applied (after clamp)                                    |
-| `loopModeChange`  | `{ dimIndex, loopMode }`                                        | `setLoopMode` applied                                                   |
-| `fpsWarning`      | `{ dimIndex, targetFPS, actualFPS, committedEnergyFraction }`   | Cadence slipped or a visible node is below the committed-energy threshold |
+| Event             | Payload                                                       | When                                                                      |
+| ----------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `play`            | `{ dimIndex }`                                                | `play()` transitions a paused dim to playing                              |
+| `pause`           | `{ dimIndex }`                                                | `pause()` transitions a playing dim                                       |
+| `complete`        | `{ dimIndex }`                                                | `once` mode hit the far boundary                                          |
+| `directionChange` | `{ dimIndex, direction }`                                     | `bounce` mode flipped at a boundary                                       |
+| `speedChange`     | `{ dimIndex, fps }`                                           | `setTargetFPS` applied (after clamp)                                      |
+| `loopModeChange`  | `{ dimIndex, loopMode }`                                      | `setLoopMode` applied                                                     |
+| `fpsWarning`      | `{ dimIndex, targetFPS, actualFPS, committedEnergyFraction }` | Cadence slipped or a visible node is below the committed-energy threshold |
 
 `AnimationController` does not extend `EventDispatcher`; it publishes
 `frame-start` and `frame-end` on `utils/cross-layer/event-bus` so the
