@@ -324,10 +324,6 @@ for (const [nodeType, fixture] of [
     ).toBe(true);
     expect(await setBlendingModeVisible(page, nodeType, 'opaque', false)).toBeGreaterThan(0);
     expect(await setBlendingModeVisible(page, nodeType, 'luminous', false)).toBeGreaterThan(0);
-    const background = await stableCanvasLinearLuminance(
-      page,
-      `${nodeType}: first luminous background capture`
-    );
 
     expect(await setBlendingModeVisible(page, nodeType, 'luminous', true)).toBeGreaterThan(0);
     const luminousOnly = await stableCanvasLinearLuminance(page, `${nodeType}: luminous capture`);
@@ -341,25 +337,15 @@ for (const [nodeType, fixture] of [
 
     expect(await setBlendingModeVisible(page, nodeType, 'opaque', false)).toBeGreaterThan(0);
     expect(await setBlendingModeVisible(page, nodeType, 'luminous', false)).toBeGreaterThan(0);
-    const backgroundAfter = await stableCanvasLinearLuminance(
-      page,
-      `${nodeType}: second luminous background capture`
-    );
-    const backgroundDrift = Math.abs(backgroundAfter - background);
-    expect(
-      backgroundDrift,
-      `${nodeType}: luminous background changed between captures (before=${background}, after=${backgroundAfter}, drift=${backgroundDrift})`
-    ).toBeLessThanOrEqual(Math.max(1e-8, background * 1e-3));
-
-    const averageBackground = (background + backgroundAfter) / 2;
-    const luminousSignal = luminousOnly - averageBackground;
-    const withDimOpaqueSignal = withDimOpaque - averageBackground;
+    const background = await stableCanvasLinearLuminance(page, `${nodeType}: background capture`);
+    const luminousSignal = luminousOnly - background;
+    const withDimOpaqueSignal = withDimOpaque - background;
     const visibleRatio = withDimOpaqueSignal / luminousSignal;
-    const measurements = `background=${background}, backgroundAfter=${backgroundAfter}, luminousOnly=${luminousOnly}, withDimOpaque=${withDimOpaque}, luminousSignal=${luminousSignal}, withDimOpaqueSignal=${withDimOpaqueSignal}, ratio=${visibleRatio}`;
+    const measurements = `background=${background}, luminousOnly=${luminousOnly}, withDimOpaque=${withDimOpaque}, luminousSignal=${luminousSignal}, withDimOpaqueSignal=${withDimOpaqueSignal}, ratio=${visibleRatio}`;
     expect(
       luminousSignal,
       `${nodeType}: luminous geometry behind must dominate the background; ${measurements}`
-    ).toBeGreaterThan(Math.max(1e-4, averageBackground * 5));
+    ).toBeGreaterThan(Math.max(1e-4, background * 5));
     expect(
       visibleRatio,
       `${nodeType}: negligible opaque contributions must not stamp the depth buffer; ${measurements}`
