@@ -81,4 +81,20 @@ describe('syncCurrentState — orbit turntable pull', () => {
     expect(settings.autoRotate).toBe(true);
     expect(settings.autoRotateSpeed).toBe(1.5);
   });
+
+  it('pulls the live dolly state back, converting the fraction to a percent', () => {
+    // The control holds 0.3; the settings object (and the slider bound to it)
+    // speaks percent. Writing the raw fraction here would show "0.3" under a
+    // label promising percent, and persisting it would then be re-read as
+    // 0.3% — a swing three orders of magnitude too small.
+    const { settings, context } = makeContext({
+      autoDolly: true,
+      autoDollyAmplitude: 0.3,
+      autoDollyPeriod: 4,
+    });
+    syncCurrentState(context);
+    expect(settings.autoDolly).toBe(true);
+    expect(settings.autoDollyAmplitudePercent).toBeCloseTo(30, 12);
+    expect(settings.autoDollyPeriod).toBe(4);
+  });
 });

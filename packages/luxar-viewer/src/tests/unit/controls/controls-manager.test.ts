@@ -164,6 +164,74 @@ describe('ControlsManager', () => {
       expect(controlsManager.getAutoRotateAxis()).toBe('horizontal');
     });
 
+    it('setAutoDolly* update the live instance, converting percent → fraction once', () => {
+      controlsManager.setAutoDolly(true);
+      controlsManager.setAutoDollyAmplitudePercent(30);
+      controlsManager.setAutoDollyPeriod(4);
+
+      const controls = controlsManager.getControls() as LuxarOrbitControls;
+      expect(controls.autoDolly).toBe(true);
+      // The user-facing side speaks percent, the physics holds the fraction —
+      // a bare 30 reaching the control would swing it by 3000%.
+      expect(controls.autoDollyAmplitude).toBeCloseTo(0.3, 12);
+      expect(controls.autoDollyPeriod).toBe(4);
+      expect(controlsManager.getAutoDolly()).toBe(true);
+    });
+
+    it('isAutoDollyActive requires zoom, a real amplitude and a real period', () => {
+      expect(controlsManager.isAutoDollyActive()).toBe(false);
+
+      controlsManager.setAutoDolly(true);
+      expect(controlsManager.isAutoDollyActive()).toBe(true);
+
+      // A zero-size oscillation must not hold the render loop awake.
+      controlsManager.setAutoDollyAmplitudePercent(0);
+      expect(controlsManager.isAutoDollyActive()).toBe(false);
+      controlsManager.setAutoDollyAmplitudePercent(15);
+
+      controlsManager.setAutoDollyPeriod(0);
+      expect(controlsManager.isAutoDollyActive()).toBe(false);
+      controlsManager.setAutoDollyPeriod(10);
+
+      const controls = controlsManager.getControls() as LuxarOrbitControls;
+      controls.enableZoom = false;
+      expect(controlsManager.isAutoDollyActive()).toBe(false);
+    });
+
+    it('the dolly stays ACTIVE in ortho, where the turntable goes inert', () => {
+      // The asymmetry that justifies gating on enableZoom: ortho disables
+      // rotation, so auto-rotate cannot move anything, but zoom is exactly
+      // what "closer" means in 2D.
+      controlsManager.setAutoRotate(true);
+      controlsManager.setAutoDolly(true);
+      controlsManager.setAutoDollyAmplitudePercent(20);
+      controlsManager.setAutoDollyPeriod(6);
+
+      controlsManager.setControlType('ortho');
+
+      const controls = controlsManager.getControls() as LuxarOrbitControls;
+      expect(controls.autoDolly).toBe(true);
+      expect(controls.autoDollyAmplitude).toBeCloseTo(0.2, 12);
+      expect(controls.autoDollyPeriod).toBe(6);
+      expect(controlsManager.isAutoRotateActive()).toBe(false);
+      expect(controlsManager.isAutoDollyActive()).toBe(true);
+    });
+
+    it('dolly settings survive a mode round-trip through fly', () => {
+      controlsManager.setAutoDolly(true);
+      controlsManager.setAutoDollyAmplitudePercent(25);
+      controlsManager.setAutoDollyPeriod(3);
+
+      controlsManager.setControlType('fly');
+      expect(controlsManager.getAutoDolly()).toBe(false); // fly has no dolly
+      controlsManager.setControlType('orbit');
+
+      const controls = controlsManager.getControls() as LuxarOrbitControls;
+      expect(controls.autoDolly).toBe(true);
+      expect(controls.autoDollyAmplitude).toBeCloseTo(0.25, 12);
+      expect(controls.autoDollyPeriod).toBe(3);
+    });
+
     it('setOrbitZoomSpeed updates the live orbit instance AND survives a mode round-trip', () => {
       controlsManager.setOrbitZoomSpeed(2.0);
       let controls = controlsManager.getControls() as LuxarOrbitControls;

@@ -33,6 +33,15 @@ export const controlsConfig: ControlsConfig = {
     autoRotate: {
       speed: { min: 0.1, max: 5.0, default: 0.25, step: 0.1 },
     },
+    // Auto-dolly. The 50% ceiling is not arbitrary: screen area goes as 1/d²,
+    // so a swing of A moves projected area by (1+A)⁴ — 1.75x at 15%, but 5x at
+    // 50%, which walks up and down the LOD ladder every cycle and re-fetches
+    // chunks on a hosted scene. Defaults mirror DEFAULT_AUTO_DOLLY_AMPLITUDE /
+    // DEFAULT_AUTO_DOLLY_PERIOD in controls/types.ts (pinned by a unit test).
+    autoDolly: {
+      amplitudePercent: { min: 1, max: 50, default: 15, step: 1 },
+      period: { min: 1, max: 60, default: 10, step: 0.5 },
+    },
     zoom: {
       minDistance: 0.1,
       maxDistance: 1000,

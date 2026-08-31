@@ -120,6 +120,8 @@ function makeSession(overrides: Record<string, unknown> = {}): any {
     restoreRecordingState: vi.fn(),
     pauseAutoRotate: vi.fn(),
     restoreAutoRotate: vi.fn(),
+    pauseAutoDolly: vi.fn(),
+    restoreAutoDolly: vi.fn(),
     showRecordingIndicator: vi.fn(),
     hideRecordingIndicator: vi.fn(),
     ...overrides,
@@ -131,10 +133,21 @@ function makeSceneManager(
   ssaaScale = 1
 ): {
   sm: any;
-  orbitControls: { applyOrbitRotation: ReturnType<typeof vi.fn> };
+  orbitControls: {
+    applyOrbitRotation: ReturnType<typeof vi.fn>;
+    applyOrbitDolly: ReturnType<typeof vi.fn>;
+    autoDolly: boolean;
+    autoDollyPeriod: number;
+  };
 } {
   const orbitControls = Object.assign(Object.create(LuxarOrbitControls.prototype), {
     applyOrbitRotation: vi.fn(),
+    applyOrbitDolly: vi.fn(),
+    // Off by default, matching the shipped default; the dolly tests below
+    // switch it on before running the capture.
+    autoDolly: false,
+    autoDollyAmplitude: 0.15,
+    autoDollyPeriod: 10,
   });
   const sm = {
     controls: { getControls: vi.fn(() => orbitControls) },
@@ -569,6 +582,85 @@ describe('OfflineCaptureStrategy', () => {
         0
       );
       expect(swept).toBeCloseTo(2 * Math.PI * (5 / 6), 12);
+    });
+
+    it('bakes a WHOLE number of dolly cycles into the turn so the clip loops', async () => {
+      const { sm, orbitControls } = makeSceneManager();
+      orbitControls.autoDolly = true;
+      // 3 s turn, 1 s period → exactly 3 cycles, no rounding needed.
+      orbitControls.autoDollyPeriod = 1;
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
+
+      await strat.run(
+        makeOpts({ outputFormat: 'png', videoFPS: 2, turntableSpeed: 120 }),
+        'turntable',
+        makeSession()
+      );
+
+      // One call per frame INCLUDING frame 0 — that call drives the dolly to
+      // phase 0, undoing any offset left by the interactive oscillation so the
+      // capture opens at the true baseline distance.
+      const phases = orbitControls.applyOrbitDolly.mock.calls.map((c: unknown[]) => c[0] as number);
+      expect(phases).toHaveLength(6);
+      expect(phases[0]).toBe(0);
+      // Same [0, 2π) convention as the rotation: the last frame stops one step
+      // short of closing the loop, so playback wraps without a duplicate frame.
+      const cycleSpan = 2 * Math.PI * 3;
+      expect(phases[5]).toBeCloseTo(cycleSpan * (5 / 6), 12);
+      expect(phases[5]).toBeLessThan(cycleSpan);
+      // Strictly increasing, evenly spaced.
+      for (let i = 1; i < phases.length; i++) {
+        expect(phases[i] - phases[i - 1]).toBeCloseTo(cycleSpan / 6, 12);
+      }
+    });
+
+    it('rounds a period that does not divide the turn UP to a whole cycle', async () => {
+      const { sm, orbitControls } = makeSceneManager();
+      orbitControls.autoDolly = true;
+      // 3 s turn with a 10 s period would be 0.3 of a cycle — rounded to 0 it
+      // would silently disable the dolly, so the floor is one slow breath.
+      orbitControls.autoDollyPeriod = 10;
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
+
+      await strat.run(
+        makeOpts({ outputFormat: 'png', videoFPS: 2, turntableSpeed: 120 }),
+        'turntable',
+        makeSession()
+      );
+
+      const phases = orbitControls.applyOrbitDolly.mock.calls.map((c: unknown[]) => c[0] as number);
+      expect(phases[5]).toBeCloseTo(2 * Math.PI * (5 / 6), 12);
+    });
+
+    it('leaves the dolly alone when the user has it switched off', async () => {
+      const { sm, orbitControls } = makeSceneManager();
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
+
+      await strat.run(
+        makeOpts({ outputFormat: 'png', videoFPS: 2, turntableSpeed: 120 }),
+        'turntable',
+        makeSession()
+      );
+
+      expect(orbitControls.applyOrbitDolly).not.toHaveBeenCalled();
+    });
+
+    it('pauses the interactive dolly for the capture and restores it after', async () => {
+      // Wall-clock frames here wait on LOD settling, so the live oscillation
+      // would judder AND compound with the baked one.
+      const { sm, orbitControls } = makeSceneManager();
+      orbitControls.autoDolly = true;
+      const session = makeSession();
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
+
+      await strat.run(
+        makeOpts({ outputFormat: 'png', videoFPS: 2, turntableSpeed: 120 }),
+        'turntable',
+        session
+      );
+
+      expect(session.pauseAutoDolly).toHaveBeenCalled();
+      expect(session.restoreAutoDolly).toHaveBeenCalled();
     });
 
     it('builds the overlay, drives the driver for every frame, then tears everything down', async () => {

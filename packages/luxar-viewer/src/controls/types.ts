@@ -81,6 +81,45 @@ export function isAutoRotateAxis(value: unknown): value is AutoRotateAxis {
   return typeof value === 'string' && (AUTO_ROTATE_AXES as readonly string[]).includes(value);
 }
 
+/**
+ * Default auto-dolly amplitude: peak swing as a fraction of the orbit
+ * distance, so ±15% means the camera reaches `d×1.15` and `d÷1.15`.
+ *
+ * Deliberately modest, for a reason that is not about taste. Screen area goes
+ * as `1/d²`, so a swing of `A` moves the projected area of the subject by
+ * `(1+A)⁴` between its extremes — 1.75× at 15%, but 2.9× at 30% and 5× at 50%.
+ * The LOD selector steps on halvings of screen area with hysteresis only on
+ * the downgrade side, so a large amplitude walks up and down the ladder every
+ * cycle, re-fetching chunks each time on a hosted scene where cost is
+ * requests. At 15% the whole oscillation stays inside a single LOD step.
+ */
+export const DEFAULT_AUTO_DOLLY_AMPLITUDE = 0.15;
+
+/** Default auto-dolly period: seconds per full in-and-out oscillation. */
+export const DEFAULT_AUTO_DOLLY_PERIOD = 10;
+
+/**
+ * Convert a user-facing dolly amplitude in PERCENT to the fraction the control
+ * itself holds (15 → 0.15), and back.
+ *
+ * The unit split is deliberate. The GUI number controller renders a raw value
+ * with no unit formatting, so a stored fraction would show as `0.15` under a
+ * label promising percent — hence everything user-facing (the settings key, the
+ * zarr attribute, the Python field) carries `percent` in its NAME, while the
+ * math holds a fraction. These two helpers are the only places the factor of
+ * 100 appears, so the conversion cannot be half-applied at one of the three
+ * seams that cross the boundary (control construction, the live setter, and
+ * the read-back in `syncCurrentState`).
+ */
+export function dollyAmplitudeFromPercent(percent: number): number {
+  return percent / 100;
+}
+
+/** Inverse of {@link dollyAmplitudeFromPercent} (0.15 → 15). */
+export function dollyAmplitudeToPercent(amplitude: number): number {
+  return amplitude * 100;
+}
+
 /** Union type for control instances. */
 export type ControlInstance = LuxarOrbitControls | LuxarFlyControls;
 

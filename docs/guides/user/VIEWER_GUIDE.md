@@ -467,6 +467,27 @@ vc = luxar.ViewerConfig(
     # direction. At exact alignment the turntable is a pure roll with a
     # stationary camera.
     auto_rotate_axis="vertical",
+    # Auto-dolly: the turntable's radial sibling. Instead of going AROUND the
+    # subject the camera breathes toward and away from it on a sine — the
+    # equivalent of turning the mousewheel back and forth. Combined with
+    # auto_rotate it gives the slow approach-and-retreat hero shot; on its own
+    # the parallax is a depth cue a still cannot give.
+    #
+    # The amplitude is a PERCENT of the viewing distance, so it means the same
+    # thing at any scene scale: 15 swings between d/1.15 and d x 1.15. Keep it
+    # modest. Screen area goes as 1/d^2, so the swing moves the subject's
+    # projected area by (1 + a)^4 — 1.75x at 15%, but 2.9x at 30% and 5x at
+    # 50%. The LOD ladder steps on halvings of screen area, so a large
+    # amplitude walks up and down it every cycle, re-fetching chunks each time
+    # on a hosted scene where cost is requests rather than bytes.
+    #
+    # The user keeps control of zoom while it runs: both the wheel and the
+    # dolly only ever multiply the distance, so a scroll moves the centre the
+    # camera is breathing around rather than fighting the animation. It also
+    # works in ortho mode, where it breathes the orthographic zoom instead.
+    auto_dolly=False,
+    auto_dolly_amplitude_percent=15,
+    auto_dolly_period=10,  # seconds per full in-and-out cycle
 )
 
 dims = luxar.Dimensions.default_3d()
@@ -520,7 +541,7 @@ at — which is what keeps a reloaded or shared post-switch link named.
 | Theme | `theme` (`dark`, `light`, `frosted-glass`, `liquid-glass`) |
 | Tone mapping | `tone_mapping`, `exposure`, `global_offset`, `global_gamma` |
 | Bloom | `bloom_enabled`, `bloom_strength`, `bloom_radius`, `bloom_threshold` |
-| Controls | `control_type`, `auto_rotate`, `auto_rotate_speed`, `auto_rotate_axis` |
+| Controls | `control_type`, `auto_rotate`, `auto_rotate_speed`, `auto_rotate_axis`, `auto_dolly`, `auto_dolly_amplitude_percent`, `auto_dolly_period` |
 | Cinematic | `cinematic_mode`, `vignette_enabled`, `chromatic_lens_distortion_enabled` |
 | Detector noise | `detector_noise_enabled`, `detector_noise_readout_sigma`, `detector_noise_photon_gain` |
 | Anti-aliasing | `fxaa_enabled`, `msaa_enabled`, `ssaa_enabled` |

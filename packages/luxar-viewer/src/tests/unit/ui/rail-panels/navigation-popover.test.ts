@@ -109,6 +109,9 @@ function makeStubs(
     setAutoRotate: vi.fn(),
     setAutoRotateSpeed: vi.fn(),
     setAutoRotateAxis: vi.fn(),
+    setAutoDolly: vi.fn(),
+    setAutoDollyAmplitudePercent: vi.fn(),
+    setAutoDollyPeriod: vi.fn(),
     setNaturalDrag: vi.fn(),
     setOrbitZoomSpeed: vi.fn(),
     setOrbitDampingFactor: vi.fn(),
@@ -123,6 +126,9 @@ function makeStubs(
     autoRotate: false,
     autoRotateSpeed: 0.25,
     autoRotateAxis: 'vertical',
+    autoDolly: false,
+    autoDollyAmplitudePercent: 15,
+    autoDollyPeriod: 10,
     naturalDrag: false,
     orbitZoomSpeed: 1.0,
     orbitDampingFactor: 0.25,
@@ -303,11 +309,28 @@ describe('buildNavigationPopover', () => {
   });
 
   describe('ortho mode', () => {
-    it('adds no controls and appends an explanatory note', () => {
+    it('adds ONLY the auto-dolly rows and appends an explanatory note', () => {
+      // Ortho has no rotation to configure, but the dolly is gated on
+      // `enableZoom` and so is alive here — it breathes `camera.zoom`.
+      // Offering it in orbit only would make the same stored setting
+      // silently inert in 2D.
       const stubs = makeStubs('ortho');
       build(stubs);
-      expect(currentGui.controllers).toHaveLength(0);
+      expect(currentGui.controllers.map((c) => c.prop)).toEqual([
+        'autoDolly',
+        'autoDollyAmplitudePercent',
+        'autoDollyPeriod',
+      ]);
       expect(stubs.host.querySelector('.luxar-control-rail__popover-note')).not.toBeNull();
+    });
+
+    it('drives the scene manager from the ortho dolly rows', () => {
+      const stubs = makeStubs('ortho');
+      build(stubs);
+      byProp('autoDolly')._onChangeFn?.(true);
+      expect(stubs.sceneManager.setAutoDolly).toHaveBeenCalledWith(true);
+      byProp('autoDollyPeriod')._onChangeFn?.(4);
+      expect(stubs.sceneManager.setAutoDollyPeriod).toHaveBeenCalledWith(4);
     });
   });
 

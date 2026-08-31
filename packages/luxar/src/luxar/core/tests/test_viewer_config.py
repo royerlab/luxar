@@ -336,6 +336,47 @@ class TestViewerConfig:
         # existing scene keeps its exact (screen-vertical) behavior.
         assert "auto_rotate_axis" not in ViewerConfig(auto_rotate=True).to_dict()
 
+    def test_auto_dolly_round_trips_through_dict(self) -> None:
+        vc = ViewerConfig(
+            auto_dolly=True,
+            auto_dolly_amplitude_percent=25.0,
+            auto_dolly_period=4.0,
+        )
+        restored = ViewerConfig.from_dict(vc.to_dict())
+        assert restored.auto_dolly is True
+        assert restored.auto_dolly_amplitude_percent == 25.0
+        assert restored.auto_dolly_period == 4.0
+
+    def test_auto_dolly_absent_when_unset(self) -> None:
+        # Sparse serialization: no keys written means every existing scene
+        # keeps its exact behavior (no oscillation at all).
+        d = ViewerConfig(auto_rotate=True).to_dict()
+        assert "auto_dolly" not in d
+        assert "auto_dolly_amplitude_percent" not in d
+        assert "auto_dolly_period" not in d
+
+    def test_invalid_auto_dolly_amplitude(self) -> None:
+        # The percent is bounded to the viewer's own slider range: an
+        # unbounded amplitude would fling the camera through the subject on
+        # every cycle, and the viewer would clamp it back to the default
+        # anyway — better to fail at authoring time than to be silently ignored.
+        with pytest.raises(ValueError, match="auto_dolly_amplitude_percent"):
+            ViewerConfig(auto_dolly_amplitude_percent=0.15)
+        with pytest.raises(ValueError, match="auto_dolly_amplitude_percent"):
+            ViewerConfig(auto_dolly_amplitude_percent=900.0)
+
+    def test_auto_dolly_amplitude_is_a_percent_not_a_fraction(self) -> None:
+        # The field name carries the unit precisely because 0.15 is the
+        # plausible wrong value — it is rejected above rather than accepted as
+        # a 0.15% swing nobody could see.
+        assert ViewerConfig(auto_dolly_amplitude_percent=15.0).auto_dolly_amplitude_percent == 15.0
+
+    def test_invalid_auto_dolly_period(self) -> None:
+        with pytest.raises(ValueError, match="auto_dolly_period"):
+            ViewerConfig(auto_dolly_period=0)
+        with pytest.raises(ValueError, match="auto_dolly_period"):
+            ViewerConfig(auto_dolly_period=-3.0)
+
     def test_invalid_exposure_out_of_range(self) -> None:
         with pytest.raises(ValueError, match="exposure"):
             ViewerConfig(exposure=-11.0)

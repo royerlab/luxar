@@ -1360,6 +1360,30 @@ export class SceneManager extends THREE.EventDispatcher<{
     log.custom(LogEmoji.SCENE, Modules.SCENE_MANAGER, `Auto-rotation axis: ${axis}`);
   }
 
+  /**
+   * Enable/disable the auto-dolly: a sinusoidal in-and-out motion along the
+   * view direction, the turntable's radial sibling. Live in orbit AND ortho
+   * (in 2D it breathes `camera.zoom`).
+   */
+  setAutoDolly(enabled: boolean): void {
+    this.controls.setAutoDolly(enabled);
+    log.custom(
+      LogEmoji.SCENE,
+      Modules.SCENE_MANAGER,
+      `Auto-dolly ${enabled ? 'enabled' : 'disabled'}`
+    );
+  }
+
+  /** Dolly amplitude as a percent of the viewing distance (15 → ±15%). */
+  setAutoDollyAmplitudePercent(percent: number): void {
+    this.controls.setAutoDollyAmplitudePercent(percent);
+  }
+
+  /** Dolly period in seconds (one full in-and-out oscillation). */
+  setAutoDollyPeriod(seconds: number): void {
+    this.controls.setAutoDollyPeriod(seconds);
+  }
+
   /** Orbit wheel-zoom speed (live; shared with ortho — same control class). */
   setOrbitZoomSpeed(speed: number): void {
     this.controls.setOrbitZoomSpeed(speed);
@@ -1394,6 +1418,11 @@ export class SceneManager extends THREE.EventDispatcher<{
    */
   getAutoRotate(): boolean {
     return this.controls.getAutoRotate();
+  }
+
+  /** Current auto-dolly state (see {@link setAutoDolly}). */
+  getAutoDolly(): boolean {
+    return this.controls.getAutoDolly();
   }
 
   /** Current turntable axis (see {@link setAutoRotateAxis}). */

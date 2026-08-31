@@ -329,6 +329,11 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
     }
 
     session.pauseAutoRotate();
+    // The wall-clock dolly must not compound with the frame-indexed one below.
+    // It would also judder: these frames wait on LOD settling, so `deltaTime`
+    // here bears no relation to playback time.
+    const dollyActive = controls.autoDolly;
+    session.pauseAutoDolly();
 
     // Per-frame rotation step: frame 0 captures the starting view without
     // rotation, then frames 1..N-1 each advance by one step, so the N frames
@@ -337,6 +342,20 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
     // exactly back on the start pose, and a turntable is made to loop — the
     // duplicate shows up as a one-frame hitch at every wrap.
     const anglePerFrame = totalFrames > 0 ? (2 * Math.PI) / totalFrames : 0;
+
+    // Auto-dolly, baked frame-indexed alongside the rotation. The number of
+    // in-and-out cycles is ROUNDED to a whole number over the turn so the clip
+    // loops: at the configured period a 24 s turn with a 10 s period would
+    // otherwise end mid-swing, and the wrap would jump. `max(1, …)` keeps a
+    // period longer than the whole turn as one slow breath rather than none.
+    const dollyCycles =
+      dollyActive && controls.autoDollyPeriod > 0
+        ? Math.max(1, Math.round(durationSeconds / controls.autoDollyPeriod))
+        : 0;
+    // Same [0, 2π) convention as the rotation above: frame 0 sits at phase 0
+    // (its own baseline distance) and the last frame stops one step short.
+    const dollyPhaseFor = (frame: number): number =>
+      totalFrames > 0 ? (2 * Math.PI * dollyCycles * frame) / totalFrames : 0;
 
     log.info(
       Modules.RECORDING,
@@ -616,6 +635,10 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
 
         this.animationController.addPerFrameCallback(captureCallbackId, () => {
           if (i > 0) controls.applyOrbitRotation(anglePerFrame);
+          // Called on frame 0 too, deliberately: it drives the dolly to phase
+          // 0, undoing any offset left over from a live oscillation so the
+          // capture starts at the true baseline distance.
+          if (dollyCycles > 0) controls.applyOrbitDolly(dollyPhaseFor(i));
         });
 
         await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
@@ -864,6 +887,7 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
       session.isEXRSequenceRecording = false;
       cleanupOfflineOverlay();
       session.restoreAutoRotate();
+      session.restoreAutoDolly();
       session.restoreRecordingState();
       // Guarantee exactly one repaint after teardown. restoreRecordingState
       // resizes the render target back, which clears the canvas, and the

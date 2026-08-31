@@ -22,7 +22,12 @@ import { config } from '../config';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { EventGroup } from '../utils/cross-layer/event-group';
 import type { LuxarCamera } from '../utils/camera-utils';
-import { type AutoRotateAxis, type ControlType, DEFAULT_AUTO_ROTATE_AXIS } from './types';
+import {
+  type AutoRotateAxis,
+  type ControlType,
+  DEFAULT_AUTO_ROTATE_AXIS,
+  dollyAmplitudeFromPercent,
+} from './types';
 import { isMacPlatform } from '../utils/platform';
 import {
   createOrbitControls,
@@ -70,6 +75,21 @@ export interface ControlsManagerConfig {
    * like the speed above.
    */
   autoRotateAxis?: AutoRotateAxis;
+  /**
+   * Auto-dolly: oscillate the viewing distance on a sine (the turntable's
+   * radial sibling). Persisted here for the same reason the turntable fields
+   * are — an orbit↔ortho switch disposes and recreates the control.
+   */
+  autoDolly?: boolean;
+  /**
+   * Peak dolly swing as a PERCENT of the orbit distance. Percent (not the
+   * fraction the control holds) because this side of the manager is the
+   * user-facing one; `createOrbitControls`/`createOrthoControls` convert
+   * through `dollyAmplitudeFromPercent`.
+   */
+  autoDollyAmplitudePercent?: number;
+  /** Seconds per full dolly oscillation. */
+  autoDollyPeriod?: number;
   /**
    * Swap LEFT ↔ RIGHT mouse-button mapping in orbit (3D) mode. When true,
    * one-finger drag rotates and right-drag pans (touchpad ergonomics);
@@ -136,6 +156,9 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     autoRotate: false,
     autoRotateSpeed: config.controls.orbit.autoRotate.speed.default,
     autoRotateAxis: DEFAULT_AUTO_ROTATE_AXIS,
+    autoDolly: false,
+    autoDollyAmplitudePercent: config.controls.orbit.autoDolly.amplitudePercent.default,
+    autoDollyPeriod: config.controls.orbit.autoDolly.period.default,
     // Default to true on macOS; rendering-controls persistence overrides
     // this with any stored user choice as soon as settings load.
     naturalDrag: isMacPlatform(),
@@ -393,6 +416,38 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   }
 
   /**
+   * Enable/disable the auto-dolly. Applies to the live instance so the change
+   * takes effect on the next frame without a mode switch.
+   */
+  public setAutoDolly(enabled: boolean): void {
+    this.config.autoDolly = enabled;
+    if (this.currentControls instanceof LuxarOrbitControls) {
+      this.currentControls.autoDolly = enabled;
+    }
+  }
+
+  /**
+   * Set the dolly amplitude from a user-facing PERCENT (15 → ±15% of the
+   * viewing distance). The control itself stores the fraction; this is one of
+   * the three seams that cross that boundary, and all of them go through
+   * {@link dollyAmplitudeFromPercent}.
+   */
+  public setAutoDollyAmplitudePercent(percent: number): void {
+    this.config.autoDollyAmplitudePercent = percent;
+    if (this.currentControls instanceof LuxarOrbitControls) {
+      this.currentControls.autoDollyAmplitude = dollyAmplitudeFromPercent(percent);
+    }
+  }
+
+  /** Set the dolly period in seconds (one full in-and-out oscillation). */
+  public setAutoDollyPeriod(seconds: number): void {
+    this.config.autoDollyPeriod = seconds;
+    if (this.currentControls instanceof LuxarOrbitControls) {
+      this.currentControls.autoDollyPeriod = seconds;
+    }
+  }
+
+  /**
    * Toggle the orbit-mode LEFT ↔ RIGHT mouse-button mapping. Updates stored
    * config and, only when the active control is orbit (3D), mutates the
    * live mouseButtons in place so the change applies immediately without a
@@ -426,6 +481,30 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
       this.currentControls instanceof LuxarOrbitControls &&
       this.currentControls.autoRotate &&
       this.currentControls.enableRotate
+    );
+  }
+
+  public getAutoDolly(): boolean {
+    if (this.currentControls instanceof LuxarOrbitControls) {
+      return this.currentControls.autoDolly;
+    }
+    return false;
+  }
+
+  /**
+   * Whether the auto-dolly can currently move the camera. Gated on
+   * `enableZoom` rather than `enableRotate`: unlike the turntable, the dolly
+   * is alive in ortho mode, where it modulates `camera.zoom`. An inert
+   * amplitude or period counts as inactive so the render loop is not held
+   * awake by an oscillation of size zero.
+   */
+  public isAutoDollyActive(): boolean {
+    return (
+      this.currentControls instanceof LuxarOrbitControls &&
+      this.currentControls.autoDolly &&
+      this.currentControls.enableZoom &&
+      this.currentControls.autoDollyAmplitude > 0 &&
+      this.currentControls.autoDollyPeriod > 0
     );
   }
 

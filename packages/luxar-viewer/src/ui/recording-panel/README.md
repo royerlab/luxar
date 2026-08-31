@@ -32,7 +32,7 @@ RecordingPanel (UI + dispatch)
 `RecordingSession` is the **Session** half of a Strategy + Session
 decomposition: every cross-cutting concern that all three capture
 paths share — DPR save/restore, resize-lock, panel hide/restore,
-auto-rotate pause/restore, the modal confirmation dialog, the REC
+auto-rotate / auto-dolly pause/restore, the modal confirmation dialog, the REC
 indicator widget, mutual-exclusion flags, slider-sync coordinator —
 lives on Session. Each strategy owns its own capture pipeline plus a
 reference to Session for the shared scaffolding.
@@ -128,11 +128,22 @@ frame-by-frame capture for turntable + EXR-sequence modes:
    locked across a thousand consecutive heights, so no bounded walk helps
    and the even floor is taken instead. Exactly 2 and 4 never need a
    step; 1 and 3 need at most one.
-4. Pause auto-rotate and compute per-frame angle for the turntable. The
-   rotation itself goes through `LuxarOrbitControls.applyOrbitRotation(angle)`
-   with no explicit axis, which defaults to the configured `autoRotateAxis` —
-   so a turntable recorded from a non-default-axis preview rotates the same way
-   in the file.
+4. Pause auto-rotate AND the auto-dolly, then compute the per-frame angle for
+   the turntable. The rotation itself goes through
+   `LuxarOrbitControls.applyOrbitRotation(angle)` with no explicit axis, which
+   defaults to the configured `autoRotateAxis` — so a turntable recorded from a
+   non-default-axis preview rotates the same way in the file.
+
+   The dolly is baked the same way, through `applyOrbitDolly(phase)` at the
+   configured amplitude, and for the same reason: an export should breathe like
+   its preview. Two details make it a recording rather than a replay. The phase
+   comes from the FRAME INDEX (offline) or the wall-clock `progress` fraction
+   (live), never from `deltaTime` — offline frames wait on the LOD settle drain
+   below, so their real duration says nothing about playback time. And the
+   number of in-and-out cycles is ROUNDED to a whole number over the turn
+   (`max(1, round(turnSeconds / period))`), so the clip loops: the last frame
+   stops one step short of closing the cycle, exactly as the rotation does.
+
 5. Build the per-mode driver (`ImageSequenceDriver` /
    `ExrSequenceDriver` / `VideoModeDriver`).
 6. Mount the modal overlay (focus trap + Escape to cancel + preview
@@ -157,7 +168,7 @@ frame-by-frame capture for turntable + EXR-sequence modes:
 9. Call `driver.finalize(ctx, capturedFrames, progress)`.
 10. In `finally`: call `driver.abort?(ctx, reason)` if setup ran but
     finalize didn't succeed, remove per-frame callbacks, hide the
-    indicator + overlay, restore auto-rotate + recording state, wake
+    indicator + overlay, restore auto-rotate + auto-dolly + recording state, wake
     the loop once more, and clear the abort controller reference.
 
 ### Step 8's LOD settle drain

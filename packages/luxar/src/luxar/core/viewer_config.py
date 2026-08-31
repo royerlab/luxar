@@ -407,6 +407,20 @@ class ViewerConfig:
     # is usually the one you want: it spins the subject about its own axis,
     # where the camera-frame default makes that axis precess.
     auto_rotate_axis: Optional[str] = None
+    # Auto-dolly: oscillate the viewing distance on a sine — the turntable's
+    # radial sibling, equivalent to turning the mousewheel back and forth. The
+    # amplitude is a PERCENT of the viewing distance (hence the field name), so
+    # it means the same thing at any scene scale, and the viewer keeps honouring
+    # the user's own zoom while it runs. Unlike the turntable it is also alive
+    # in ortho mode, where it breathes the orthographic zoom instead.
+    auto_dolly: Optional[bool] = None
+    # Peak swing as a percent of the viewing distance (15 -> +/-15%). Keep it
+    # modest: screen area goes as 1/d^2, so the swing moves projected area by
+    # (1 + a)^4 — 1.75x at 15% but 5x at 50%, which walks up and down the LOD
+    # ladder every cycle and re-fetches chunks on a hosted scene.
+    auto_dolly_amplitude_percent: Optional[float] = None
+    # Seconds per full in-and-out oscillation.
+    auto_dolly_period: Optional[float] = None
     # Touchpad-friendly orbit drag mapping (LEFT=rotate, RIGHT=pan). When
     # unset, the viewer derives a default from `navigator.platform` (true on
     # macOS, false elsewhere) and persists the user's choice per-scene.
@@ -547,6 +561,13 @@ class ViewerConfig:
 
         # Control speeds and damping
         _validate_min(self.auto_rotate_speed, "auto_rotate_speed", 0)
+        _validate_range(
+            self.auto_dolly_amplitude_percent, "auto_dolly_amplitude_percent", 1, 50
+        )
+        if self.auto_dolly_period is not None and self.auto_dolly_period <= 0:
+            raise ValueError(
+                f"auto_dolly_period must be > 0, got {self.auto_dolly_period}"
+            )
         _validate_min(self.fly_movement_speed, "fly_movement_speed", 0)
         _validate_min(self.fly_rotation_speed, "fly_rotation_speed", 0)
         _validate_range(self.fly_damping, "fly_damping", 0, 1)
@@ -570,6 +591,9 @@ class ViewerConfig:
         "auto_rotate",
         "auto_rotate_speed",
         "auto_rotate_axis",
+        "auto_dolly",
+        "auto_dolly_amplitude_percent",
+        "auto_dolly_period",
         "natural_drag",
         "cinematic_mode",
         "vignette_enabled",

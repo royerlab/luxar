@@ -114,6 +114,7 @@ export class RecordingSession {
   private savedRecordingState: SavedRecordingState | null = null;
   private savedPanelStates: PanelStates | null = null;
   private savedAutoRotate: boolean = false;
+  private savedAutoDolly: boolean = false;
 
   // ── Mutual-exclusion (single source of truth) ─────────────────
   // Strategies cannot mutate these directly — they go through
@@ -317,6 +318,28 @@ export class RecordingSession {
   pauseAutoRotate(): void {
     this.savedAutoRotate = this.sceneManager.controls.getAutoRotate();
     this.sceneManager.controls.setAutoRotate(false);
+  }
+
+  /** Restore the auto-dolly to its pre-recording state. */
+  restoreAutoDolly(): void {
+    if (this.savedAutoDolly) {
+      this.sceneManager.controls.setAutoDolly(true);
+      this.savedAutoDolly = false;
+    }
+  }
+
+  /**
+   * Capture and pause the auto-dolly; restore via restoreAutoDolly().
+   *
+   * Kept separate from {@link pauseAutoRotate} rather than folded into it so
+   * neither name lies about what it touches. Both are paused for the same
+   * reason: a turntable recording drives the camera itself (from a frame index
+   * offline, from wall-clock progress live), and the interactive animation
+   * would compound with it.
+   */
+  pauseAutoDolly(): void {
+    this.savedAutoDolly = this.sceneManager.controls.getAutoDolly();
+    this.sceneManager.controls.setAutoDolly(false);
   }
 
   // ── Panel-state hide/restore ──────────────────────────────────

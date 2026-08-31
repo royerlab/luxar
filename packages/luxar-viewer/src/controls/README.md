@@ -109,6 +109,10 @@ ergonomics. In both mappings `Shift+left` performs the opposite action.
 - Exponential damping for smooth interaction
 - Auto-rotation around a camera-frame axis or a fixed scene axis — see
   `AutoRotateAxis`
+- Auto-dolly: a sinusoidal in-and-out motion along the view direction (the
+  turntable's radial sibling), gated on `enableZoom` so it is alive in ortho
+  too. Composes with the user's own zoom rather than fighting it — see
+  `luxar-orbit-controls/math/auto-dolly.ts`
 - Configurable mouse button mapping (CAD/Blender vs. natural-drag)
 - Touch support (1-finger rotate, 2-finger pinch-zoom + pan)
 
@@ -227,9 +231,16 @@ class LuxarOrbitControls extends EventDispatcher {
   // ('world-x' | 'world-y' | 'world-z'); also the default axis of
   // applyOrbitRotation, so recorded turntables match the preview
   autoRotateAxis: AutoRotateAxis;
+  autoDolly: boolean;
+  autoDollyAmplitude: number; // FRACTION of distance (0.15 = ±15%)
+  autoDollyPeriod: number; // seconds per full in-and-out cycle
   mouseButtons: { LEFT; MIDDLE; RIGHT };
 
   update(deltaTime?: number): boolean;
+  // Absolute-phase dolly for frame-indexed recording, the radial counterpart
+  // of applyOrbitRotation; uses the configured amplitude so an export
+  // breathes like its preview.
+  applyOrbitDolly(phase: number): void;
   reinitialize(): void;
   enableViewAxisRotation(speed?: number): void;
   listenToKeyEvents(element: HTMLElement | Window): void;
@@ -307,6 +318,7 @@ controls: {
   },
   orbit: {
     autoRotate: { speed: { default: 0.25 } },
+    autoDolly: { amplitudePercent: { default: 15 }, period: { default: 10 } },
     zoom: { minDistance: 0.1, maxDistance: 1000 },
   },
   scaleMultipliers: {

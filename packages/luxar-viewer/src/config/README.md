@@ -208,7 +208,10 @@ renderingControls: {
     vignetteEnabled: false,
     controlType: 'orbit',       // vs 'fly' or 'ortho'
     autoRotate: false,
-    autoRotateAxis: 'vertical'  // camera-frame or fixed scene axis; see AutoRotateAxis
+    autoRotateAxis: 'vertical',  // camera-frame or fixed scene axis; see AutoRotateAxis
+    autoDolly: false,
+    autoDollyAmplitudePercent: 15,  // PERCENT of distance; the control holds the fraction
+    autoDollyPeriod: 10             // seconds per full in-and-out cycle
   }
 }
 ```

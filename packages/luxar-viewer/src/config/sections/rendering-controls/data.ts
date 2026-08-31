@@ -61,6 +61,12 @@ export const renderingControlsConfig: RenderingControlsConfig = {
     // Screen-vertical turntable — the axis auto-rotation always used, so
     // every existing scene and persisted setting keeps its exact behavior.
     autoRotateAxis: 'vertical' as const,
+    autoDolly: false, // Auto-dolly disabled by default
+    // ±15% of the viewing distance: deep enough to read as motion, shallow
+    // enough that the whole swing stays inside one LOD step (screen area goes
+    // as 1/d², so the swing moves projected area by (1+A)⁴ = 1.75x here).
+    autoDollyAmplitudePercent: 15,
+    autoDollyPeriod: 10, // Seconds per full in-and-out cycle
     // Touchpad-friendly orbit drag mapping (LEFT=rotate, RIGHT=pan).
     // Default-on for Mac users; off elsewhere. The rendering-controls
     // persistence layer overrides this with the user's stored choice.
