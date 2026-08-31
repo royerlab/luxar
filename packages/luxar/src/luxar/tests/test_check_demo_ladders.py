@@ -484,11 +484,15 @@ def test_parse_aspects_reports_a_zero_height_as_a_value_error() -> None:
 
 
 def _sliced_node(
-    path: Path, per_coordinate: dict[int, int], *, node_total: int | None = None
+    path: Path,
+    per_coordinate: dict[int, int],
+    *,
+    node_total: int | None = None,
+    node_name: str = "leaf",
 ):
     """A points leaf whose rung 0 holds ``count`` elements at each coordinate."""
     root = zarr.open_group(path, mode="w")
-    leaf = root.create_group("leaf")
+    leaf = root.create_group(node_name)
     rows = np.asarray(
         [[coord] for coord, count in per_coordinate.items() for _ in range(count)],
         dtype=np.uint16,
@@ -508,11 +512,15 @@ def _sliced_verdicts(root, **overrides):
     results: list[tuple[str, str, str]] = []
     counts = {"ok": 0, "warn": 0, "fail": 0, "skip": 0}
     failures: list[str] = []
-    options = {"min_first_rung": 250, "min_rung_share": 0.10}
+    options = {
+        "scene_name": "scene",
+        "min_first_rung": checker.DEFAULT_MIN_SLICE_FIRST_RUNG,
+        "min_rung_share": checker.DEFAULT_MIN_SLICE_RUNG_SHARE,
+    }
     options.update(overrides)
     checker._record_sliced_verdicts(
         root,
-        "scene",
+        options["scene_name"],
         options["min_first_rung"],
         results,
         counts,
@@ -536,7 +544,7 @@ def test_one_busy_coordinate_does_not_mask_starved_ones(tmp_path: Path) -> None:
 
     histogram = checker._node_slice_histogram(root["leaf"], root)
     assert max(histogram.values()) == 5_000  # the old reduction: comfortably passing
-    assert checker.starved_slice_count(histogram) == 5  # the new one: starved
+    assert checker.sparsest_slice_elements(histogram) == 5  # the new one: starved
 
     (path, status, message) = _sliced_verdicts(root)[0]
     assert (path, status) == ("/leaf", "fail")
@@ -571,6 +579,52 @@ def test_share_arm_fires_when_every_slice_clears_the_absolute_floor(
     assert "share floor" in message
 
 
+def test_share_denominator_skips_unladdered_partition_parts(tmp_path: Path) -> None:
+    """Only parts contributing a sliced rung belong in its share denominator."""
+    root = zarr.open_group(tmp_path / "mixed-partition.zarr", mode="w")
+    root.attrs["kind"] = "partition"
+    laddered = root.create_group("laddered")
+    laddered.attrs.update(
+        {"type": "points", "n_points": 100_000, "n_additive_sublods": 2}
+    )
+    rows = np.repeat(np.arange(40, dtype=np.uint16), 500).reshape(-1, 1)
+    rung = laddered.create_group("additive_0")
+    rung.attrs.update({"type": "points", "n_points": len(rows), "slice_dims": [0]})
+    rung.create_array("positions", data=rows)
+    laddered.create_group("additive_1").attrs.update(
+        {"type": "points", "n_points": 80_000, "slice_dims": [0]}
+    )
+    root.create_group("unladdered").attrs.update(
+        {"type": "points", "n_points": 900_000, "n_additive_sublods": 1}
+    )
+
+    assert _sliced_verdicts(root) == []
+
+
+def test_substitutive_share_uses_one_level_not_keywise_maxima(tmp_path: Path) -> None:
+    """Synthetic maxima from different LOD alternatives must not inflate share."""
+    root = zarr.open_group(tmp_path / "lod-share.zarr", mode="w")
+    root.attrs["kind"] = "lod"
+    for index, coordinate in enumerate((0, 1)):
+        leaf = root.create_group(f"level_{index}")
+        leaf.attrs.update(
+            {"type": "points", "n_points": 10_000, "n_additive_sublods": 2}
+        )
+        rung = leaf.create_group("additive_0")
+        rung.attrs.update({"type": "points", "n_points": 600, "slice_dims": [0]})
+        rung.create_array(
+            "positions",
+            data=np.full((600, 1), coordinate, dtype=np.uint16),
+        )
+        leaf.create_group("additive_1").attrs.update(
+            {"type": "points", "n_points": 9_400, "slice_dims": [0]}
+        )
+
+    (_, status, message) = _sliced_verdicts(root)[0]
+    assert status == "fail"
+    assert "rung 0 is 6.00% of the node" in message
+
+
 def test_share_arm_fires_when_an_exemption_is_dropped(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -581,12 +635,14 @@ def test_share_arm_fires_when_an_exemption_is_dropped(
     away — this is what stops the allowlist from becoming a tolerance.
     """
     root = _sliced_node(
-        tmp_path / "exempt.zarr", {c: 400 for c in range(30)}, node_total=1_000_000
+        tmp_path / "exempt.zarr", {c: 400 for c in range(30)}, node_total=192_000
     )
     key = "scene/leaf"
 
     monkeypatch.setattr(
-        checker, "SHARE_ARM_EXEMPT", {key: "measured: converges on keypress"}
+        checker,
+        "SHARE_ARM_EXEMPT",
+        {key: (0.06, "measured: converges on keypress")},
     )
     (_, status, message) = _sliced_verdicts(root)[0]
     assert status == "warn"
@@ -597,24 +653,65 @@ def test_share_arm_fires_when_an_exemption_is_dropped(
     assert status == "fail"
 
 
+def test_share_exemption_stops_at_its_measured_floor(tmp_path: Path) -> None:
+    """An exempt path goes red if a rebuild degrades below the allowed share."""
+    scene = tmp_path / "esm3_protein_landscape.luxar.zarr"
+    root = _sliced_node(
+        scene,
+        {0: 500, 1: 500},
+        node_total=20_000,
+        node_name="proteins",
+    )
+
+    (_, status, message) = _sliced_verdicts(
+        root, scene_name="esm3_protein_landscape.luxar.zarr"
+    )[0]
+    assert status == "fail"
+    assert "rung 0 is 5.00% of the node" in message
+
+
 def test_every_share_arm_exemption_carries_a_measured_reason() -> None:
     """An exemption without a figure in it is a tolerance wearing a comment."""
     assert checker.SHARE_ARM_EXEMPT, "an empty allowlist should be deleted, not kept"
-    for key, reason in checker.SHARE_ARM_EXEMPT.items():
-        assert key.endswith(
-            tuple("/" + p for p in ("arxiv_papers_kaggle", "proteins", "Cells"))
-        )
+    for key, (_, reason) in checker.SHARE_ARM_EXEMPT.items():
         assert "%" in reason and "rung 0 =" in reason, (
             f"{key}: reason cites no measurement"
         )
 
 
+def test_calibrated_sliced_defaults_and_cli_exemption_are_pinned(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Pin the measured defaults, CLI wiring, and exempt/fresh exit behavior."""
+    assert checker.DEFAULT_MIN_SLICE_FIRST_RUNG == 250
+    assert checker.DEFAULT_MIN_SLICE_RUNG_SHARE == 0.10
+    exempt = tmp_path / "esm3_protein_landscape.luxar.zarr"
+    _sliced_node(
+        exempt,
+        {0: 500, 1: 500},
+        node_total=16_000,
+        node_name="proteins",
+    )
+
+    assert checker.main([str(exempt)]) == 0
+    exempt_output = _ANSI_ESCAPE.sub("", capsys.readouterr().out)
+    assert "rung 0 is 6.25% of the node" in exempt_output
+    assert "[exempt:" in exempt_output
+
+    fresh = tmp_path / "fresh.luxar.zarr"
+    _sliced_node(fresh, {0: 500, 1: 500}, node_total=16_000)
+    assert checker.main([str(fresh)]) == 1
+    fresh_output = _ANSI_ESCAPE.sub("", capsys.readouterr().out)
+    assert "rung 0 is 6.25% of the node" in fresh_output
+    assert "[exempt:" not in fresh_output
+
+
 def test_starvation_percentile_is_the_minimum_for_a_handful_of_slices() -> None:
-    """Under 20 coordinates the index lands on 0, which is the right reading:
+    """At 20 or fewer coordinates the index is 0, which is the right reading:
     with a handful of slices there is no tail to discount."""
-    assert checker.starved_slice_count(Counter({(0,): 9, (1,): 100})) == 9
+    assert checker.sparsest_slice_elements(Counter({(0,): 9, (1,): 100})) == 9
     assert (
-        checker.starved_slice_count(
+        checker.sparsest_slice_elements(
             Counter({(c,): 100 for c in range(19)} | {(19,): 3})
         )
         == 3
@@ -629,11 +726,11 @@ def test_starvation_percentile_is_the_minimum_for_a_handful_of_slices() -> None:
             {(c,): 1 for c in range(starved)} | {(c,): 900 for c in range(starved, 100)}
         )
 
-    assert checker.starved_slice_count(hundred(4)) == 900  # tail, discounted
-    assert checker.starved_slice_count(hundred(5)) == 1  # 5% starved, reported
+    assert checker.sparsest_slice_elements(hundred(4)) == 900  # tail, discounted
+    assert checker.sparsest_slice_elements(hundred(5)) == 1  # 5% starved, reported
 
 
 def test_empty_histogram_is_a_zero_not_a_pass() -> None:
     """ "0 nodes measured" and "0 violations" render identically and mean the
     opposite, so an empty survey must fail rather than fall through."""
-    assert checker.starved_slice_count(Counter()) == 0
+    assert checker.sparsest_slice_elements(Counter()) == 0

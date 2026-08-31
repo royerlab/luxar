@@ -123,7 +123,6 @@ DEFAULT_MIN_SLICE_FIRST_RUNG = 250
 #: ``n / SLICED_LADDER_MAX_DEPTH``, i.e. 12.5%); the 0.10 here leaves that a
 #: margin rather than tracking it exactly, so a small rounding change in the
 #: ladder builder does not turn the corpus red.
-#:
 DEFAULT_MIN_SLICE_RUNG_SHARE = 0.10
 
 #: Nodes exempt from the share arm, each keyed to the REASON it is allowed —
@@ -133,34 +132,38 @@ DEFAULT_MIN_SLICE_RUNG_SHARE = 0.10
 #: are keypress-navigated, which takes the loader's ``refine`` pass rather than
 #: the budgeted ``playback`` one, so they stream past rung 0 and converge
 #: instead of starving a frame (#2374, #2376).
-#:
 #: This is deliberately an allowlist and not a warning. A warning here would
 #: never clear — nothing is scheduled to rebuild these — and a permanently
 #: warning arm stops being a gate at all. As an allowlist the arm bites on
 #: anything NEW today, each exemption carries its justification, and the list
-#: shrinks to empty if these stores are ever rebuilt for another reason.
-#: ``test_share_arm_fires_when_an_exemption_is_dropped`` proves the arm still
-#: fires for every entry, so an exemption cannot quietly disable it.
-SHARE_ARM_EXEMPT: dict[str, str] = {
+#: shrinks to empty if these stores are ever rebuilt for another reason. Each
+#: entry also carries a 6% lower bound just below its measured 6.25% share, so a
+#: degraded rebuild goes red instead of inheriting a stale path exemption.
+SHARE_ARM_EXEMPT: dict[str, tuple[float, str]] = {
     "arxiv_papers_kaggle.luxar.zarr/arxiv_papers_kaggle": (
+        0.06,
         "pre-#2384 16-rung ladder (rung 0 = 410,796 of 6,572,730 = 6.25%) over 2 "
-        "keypress-navigated coordinates; rebuild cancelled, not deferred"
+        "keypress-navigated coordinates; rebuild cancelled, not deferred",
     ),
     "esm3_protein_landscape.luxar.zarr/proteins": (
+        0.06,
         "pre-#2384 16-rung ladder (rung 0 = 71,938 of 1,151,006 = 6.25%) over 2 "
-        "keypress-navigated coordinates; rebuild cancelled, not deferred"
+        "keypress-navigated coordinates; rebuild cancelled, not deferred",
     ),
     "human_multiome_peak_umap.luxar.zarr/Cells": (
+        0.06,
         "pre-#2384 16-rung ladder (rung 0 = 390,546 of 6,248,730 = 6.25%) over 6 "
-        "keypress-navigated coordinates; rebuild cancelled, not deferred"
+        "keypress-navigated coordinates; rebuild cancelled, not deferred",
     ),
     "mouse_multiome_peak_umap.luxar.zarr/Cells": (
+        0.06,
         "pre-#2384 16-rung ladder (rung 0 = 72,095 of 1,153,506 = 6.25%) over 6 "
-        "keypress-navigated coordinates; rebuild cancelled, not deferred"
+        "keypress-navigated coordinates; rebuild cancelled, not deferred",
     ),
     "zebrahub_multiome_peak_umap.luxar.zarr/Cells": (
+        0.06,
         "pre-#2384 16-rung ladder (rung 0 = 280,364 of 4,485,810 = 6.25%) over 7 "
-        "keypress-navigated coordinates; rebuild cancelled, not deferred"
+        "keypress-navigated coordinates; rebuild cancelled, not deferred",
     ),
 }
 
@@ -220,51 +223,65 @@ def _first_rung_histogram(
     return counts
 
 
-def _node_slice_histogram(
+def _node_slice_measurement(
     group: Any, zarr_root: Any
-) -> Counter[tuple[object, ...]] | None:
-    """Reduce one geometry node: partition=sum, substitutive LOD=keywise max."""
+) -> tuple[Counter[tuple[object, ...]], int] | None:
+    """Return one sliced rung histogram and its matching subtree total."""
     attrs = dict(group.attrs)
     if attrs.get("type") in ("points", "lines", "gsplats"):
-        return _first_rung_histogram(group, zarr_root)
+        histogram = _first_rung_histogram(group, zarr_root)
+        if histogram is None:
+            return None
+        return histogram, _element_count(attrs)
 
     children = [group[name] for name in group.group_keys()]
     if attrs.get("kind") == "partition":
         combined: Counter[tuple[object, ...]] = Counter()
+        total = 0
         for child in children:
-            child_histogram = _node_slice_histogram(child, zarr_root)
-            if child_histogram is not None:
+            measurement = _node_slice_measurement(child, zarr_root)
+            if measurement is not None:
+                child_histogram, child_total = measurement
                 combined += child_histogram
-        return combined or None
+                total += child_total
+        return (combined, total) if combined else None
     if attrs.get("kind") == "lod":
         alternatives = [
-            histogram
+            measurement
             for child in children
-            if (histogram := _node_slice_histogram(child, zarr_root)) is not None
+            if (measurement := _node_slice_measurement(child, zarr_root)) is not None
         ]
         if not alternatives:
             return None
-        keys = set().union(*(histogram.keys() for histogram in alternatives))
-        return Counter(
-            {key: max(histogram[key] for histogram in alternatives) for key in keys}
-        )
+        # Substitutive levels are alternatives, not additive parts. Audit one
+        # actual level — the finest by declared element total — so histogram
+        # and denominator describe the same drawable subtree.
+        return max(alternatives, key=lambda measurement: measurement[1])
     return None
 
 
-def starved_slice_count(histogram: Counter[tuple[object, ...]]) -> int:
+def _node_slice_histogram(
+    group: Any, zarr_root: Any
+) -> Counter[tuple[object, ...]] | None:
+    """Return the sliced rung histogram selected for one geometry node."""
+    measurement = _node_slice_measurement(group, zarr_root)
+    return None if measurement is None else measurement[0]
+
+
+def sparsest_slice_elements(histogram: Counter[tuple[object, ...]]) -> int:
     """The rung-0 count at the node's SPARSEST slices.
 
     Returns the lower 5th-percentile ORDER STATISTIC — an actually observed
     count, never an interpolation between two — so the number in a failure
-    message is a slice that exists. With fewer than 20 coordinates the index
-    lands on 0 and this is simply the minimum, which is the right reading for a
-    handful of slices: there is no tail to discount.
+    message is a slice that exists. With 20 or fewer coordinates the index lands
+    on 0 and this is simply the minimum, which is the right reading for a handful
+    of slices: there is no tail to discount.
 
     Coordinates ABSENT from rung 0 do not appear in ``histogram`` and so cannot
     lower this. That is deliberate for an empty coordinate (nothing to draw is
     not starvation) but it does mean a coordinate the node covers while rung 0
-    does not is invisible here; the caller reports rung-0 coverage alongside so
-    the gap is at least legible.
+    does not is invisible here; when a sliced arm fails, the caller reports
+    rung-0 coverage alongside so the gap is at least legible in that verdict.
     """
     if not histogram:
         return 0
@@ -278,13 +295,25 @@ def sliced_rung_histograms(
 ) -> list[tuple[str, Counter[tuple[object, ...]]]]:
     """Yield ``(path, per-coordinate rung-0 histogram)`` for each sliced node."""
     zarr_root = root if zarr_root is None else zarr_root
-    histogram = _node_slice_histogram(root, zarr_root)
-    if histogram is not None:
-        return [(path or "/", histogram)]
+    return [
+        (node_path, histogram)
+        for node_path, histogram, _ in sliced_rung_measurements(root, path, zarr_root)
+    ]
+
+
+def sliced_rung_measurements(
+    root: Any, path: str = "", zarr_root: Any = None
+) -> list[tuple[str, Counter[tuple[object, ...]], int]]:
+    """Yield sliced rung histograms with their matching subtree totals."""
+    zarr_root = root if zarr_root is None else zarr_root
+    measurement = _node_slice_measurement(root, zarr_root)
+    if measurement is not None:
+        histogram, total = measurement
+        return [(path or "/", histogram, total)]
     return [
         result
         for name in root.group_keys()
-        for result in sliced_rung_histograms(root[name], f"{path}/{name}", zarr_root)
+        for result in sliced_rung_measurements(root[name], f"{path}/{name}", zarr_root)
     ]
 
 
@@ -293,28 +322,9 @@ def sliced_first_rung_counts(
 ) -> list[tuple[str, int]]:
     """Measure each sliced node's rung-0 count at its SPARSEST slices."""
     return [
-        (node_path, starved_slice_count(histogram))
+        (node_path, sparsest_slice_elements(histogram))
         for node_path, histogram in sliced_rung_histograms(root, path, zarr_root)
     ]
-
-
-def _node_element_total(group: Any) -> int:
-    """Total elements of one geometry node, combined like its rung-0 histogram.
-
-    Mirrors :func:`_node_slice_histogram`'s structural rules exactly — partition
-    parts SUM, substitutive levels are ALTERNATIVES (max) — so the share below
-    divides two quantities reduced the same way. Reading only attrs, it costs
-    nothing: no array is opened.
-    """
-    attrs = dict(group.attrs)
-    if attrs.get("type") in ("points", "lines", "gsplats"):
-        return _element_count(attrs)
-    children = [group[name] for name in group.group_keys()]
-    if attrs.get("kind") == "partition":
-        return sum(_node_element_total(child) for child in children)
-    if attrs.get("kind") == "lod":
-        return max((_node_element_total(child) for child in children), default=0)
-    return 0
 
 
 def _record_sliced_verdicts(
@@ -340,12 +350,10 @@ def _record_sliced_verdicts(
       slice count. It is cheap (attrs only) and it is the reason a uniformly
       thin ladder cannot slip through on absolute counts alone.
     """
-    for path, histogram in sliced_rung_histograms(root):
-        node = root if path in ("", "/") else root[path.lstrip("/")]
-        count = starved_slice_count(histogram)
+    for path, histogram, node_total in sliced_rung_measurements(root):
+        count = sparsest_slice_elements(histogram)
         coverage = len(histogram)
         rung_total = sum(histogram.values())
-        node_total = _node_element_total(node)
         share = rung_total / node_total if node_total else 0.0
         where = (
             f" (rung 0 covers {coverage:,} coordinate{'s' if coverage != 1 else ''})"
@@ -364,7 +372,9 @@ def _record_sliced_verdicts(
                 f"{min_rung_share:.0%} share floor — the ladder is too deep for a "
                 f"sliced node, so playback re-pays a thin rung 0 every tick{where}"
             )
-            if (reason := SHARE_ARM_EXEMPT.get(f"{scene_name}{path}")) is not None:
+            exemption = SHARE_ARM_EXEMPT.get(f"{scene_name}{path}")
+            if exemption is not None and share >= exemption[0]:
+                _, reason = exemption
                 results.append((path, "warn", f"{thin} [exempt: {reason}]"))
                 counts["warn"] += 1
                 continue
