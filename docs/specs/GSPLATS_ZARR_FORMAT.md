@@ -81,9 +81,12 @@ Its vocabulary is explicit rather than inferred: every observed id must have a
 name, while a filtered subset may retain unused vocabulary entries so ids keep
 the same meaning across related leaves. Any row permutation or subset operation
 must apply the identical operation to `label_ids`. Concatenation, partition
-flattening, batch merge, migration, and re-encoding carry the channel only when
-all contributing leaves use identical vocabularies; mixed presence or different
-vocabularies is an error. Merge-based coarsening (`lod levels`, `overview`,
+flattening, and other operations that combine rows across leaves carry the channel
+only when all contributing leaves have identical presence and vocabularies;
+mixed presence or different vocabularies is an error. Per-leaf rewrites such as
+re-encoding, migration, restriding, optimisation, and batch merge carry each
+leaf's vocabulary unchanged without comparing leaves, so vocabularies may differ
+between leaves in one store. Merge-based coarsening (`lod levels`, `overview`,
 `adaptive`, and merge decimation) is refused because there is no defined class id
 for a splat synthesized from differently labeled inputs. Prefix/additive LOD is
 safe because it only reorders or subsets existing splats. Exporters without a
