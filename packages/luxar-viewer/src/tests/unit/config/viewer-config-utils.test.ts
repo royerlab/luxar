@@ -509,7 +509,7 @@ describe('RENDERING_SETTINGS_MAP completeness', () => {
   // SNAKE key existed — never that it mapped to the EXPECTED camelCase
   // name. A mutation that mapped `bloom_strength → 'bloomRadius'` would
   // have passed. The bijection property test in
-  // viewer-config-utils.property.test.ts covers the full 47-entry map
+  // viewer-config-utils.property.test.ts covers the full 48-entry map
   // mechanically; here we keep explicit, named value-assertions for the
   // audit-called-out entries (naturalDrag, auto_rotate_speed,
   // chromatic_lens_*, fly_rotation_speed, ...) so they remain
