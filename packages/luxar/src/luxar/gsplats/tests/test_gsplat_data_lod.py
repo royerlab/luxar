@@ -16,9 +16,125 @@ import pytest
 
 from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData, SubstitutiveLevel
 from luxar.gsplats.lod.additive import make_additive_lod
+from luxar.gsplats.lod.decimate import decimate
+from luxar.gsplats.lod.substitutive import make_substitutive_lod
+from luxar.gsplats.tree import iter_leaves
 from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
 from ._gsplat_data_helpers import _make_3d_gsplat
+
+_LABEL_COUNT = 3
+_LABEL_VOCABULARY = {i: f"class-{i}" for i in range(_LABEL_COUNT)}
+_LABEL_CHANNEL_OPERATIONS = (
+    pytest.param(
+        lambda data: data.filter(np.arange(data.n_splats) % 2 == 0), id="filter"
+    ),
+    pytest.param(
+        lambda data: data.filter_by(bbox=[(2.0, 10.0), (-1.0, 1.0), (-1.0, 1.0)]),
+        id="filter-by",
+    ),
+    pytest.param(
+        lambda data: data.slice_by([slice(2.0, 10.0), slice(None), slice(None)]),
+        id="slice-by",
+    ),
+    pytest.param(
+        lambda data: data.cull(method="amplitude_percentile", amplitude_percentile=25),
+        id="cull",
+    ),
+    pytest.param(
+        lambda data: data.transform(np.eye(data.ndim, dtype=np.float32)),
+        id="transform",
+    ),
+    pytest.param(
+        lambda data: data.translate(np.array([3.0, 0.0, 0.0], dtype=np.float32)),
+        id="translate",
+    ),
+    pytest.param(lambda data: data.center_at_centroid(), id="center-at-centroid"),
+    pytest.param(lambda data: data.with_colors((0.2, 0.4, 0.6)), id="with-colors"),
+    pytest.param(
+        lambda data: data.affine_intensity(scale=2.0, offset=0.1),
+        id="affine-intensity",
+    ),
+    pytest.param(lambda data: data.normalize_intensity(), id="normalize-intensity"),
+    pytest.param(
+        lambda data: data.clamp_intensity(min=0.5, max=2.0),
+        id="clamp-intensity",
+    ),
+    pytest.param(lambda data: data.scale_intensity(2.0), id="scale-intensity"),
+    pytest.param(
+        lambda data: data.reweight_amplitude(np.linspace(0.5, 1.5, data.n_splats)),
+        id="reweight-amplitude",
+    ),
+    pytest.param(
+        lambda data: data.soft_scale_filter(highpass=2.0),
+        id="soft-scale-filter",
+    ),
+    pytest.param(lambda data: data.flattened(), id="flattened"),
+    pytest.param(
+        lambda data: data.additive_prefix(min(1, data.n_additive_sublods - 1)),
+        id="additive-prefix",
+    ),
+    pytest.param(lambda data: data.at_substitutive(0), id="at-substitutive"),
+    pytest.param(lambda data: data.embed_dimension(2.0), id="embed-dimension"),
+    pytest.param(lambda data: GSplatData.concatenate([data, data]), id="concatenate"),
+    pytest.param(
+        lambda data: GSplatData.combine_as_new_dimension([data, data]),
+        id="combine-as-new-dimension",
+    ),
+    pytest.param(
+        lambda data: GSplatData.merge_with_channel_colors(
+            [data, data], [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)]
+        ),
+        id="merge-with-channel-colors",
+    ),
+    pytest.param(
+        lambda data: data.to_spatial_partition(max_elements=4),
+        id="to-spatial-partition",
+    ),
+    pytest.param(
+        lambda data: GSplatData.partition_from_regions(
+            [
+                data.filter(np.arange(data.n_splats) % 2 == 0),
+                data.filter(np.arange(data.n_splats) % 2 == 1),
+            ]
+        ),
+        id="partition-from-regions",
+    ),
+    pytest.param(
+        lambda data: make_additive_lod(data, n_lods=3, method="radial"),
+        id="make-additive-lod",
+    ),
+    pytest.param(
+        lambda data: decimate(data, target=0.5, method="prefix", verbose=False),
+        id="decimate-prefix",
+    ),
+    pytest.param(
+        lambda data: decimate(data, target=0.4, method="auto", verbose=False),
+        id="decimate-auto",
+    ),
+    pytest.param(
+        lambda data: decimate(
+            data,
+            target=0.5,
+            method="merge",
+            device="cpu",
+            lloyd_iterations=1,
+            verbose=False,
+        ),
+        id="decimate-merge",
+    ),
+    pytest.param(
+        lambda data: make_substitutive_lod(
+            data,
+            levels=1,
+            compression_factor=2,
+            method="greedy",
+            device="cpu",
+            verbose=False,
+        ),
+        id="make-substitutive-lod",
+    ),
+)
 
 
 class TestAdditiveSubLOD:
@@ -246,6 +362,55 @@ class TestGSplatDataLOD:
                 for center, label_id in zip(sublod.centers, sublod.label_ids):
                     assert int(label_id) == int(center[0])
                 assert sublod.label_vocabulary == vocabulary
+
+    @pytest.mark.parametrize("operation", _LABEL_CHANNEL_OPERATIONS)
+    @pytest.mark.parametrize("laddered", [False, True], ids=["flat", "laddered"])
+    @pytest.mark.parametrize("labeled", [False, True], ids=["unlabeled", "labeled"])
+    def test_operations_carry_or_refuse_categorical_channel(
+        self, operation, laddered: bool, labeled: bool
+    ) -> None:
+        centers = np.column_stack(
+            [np.arange(12, dtype=np.float32), np.zeros((12, 2), dtype=np.float32)]
+        )
+        amplitudes = np.ones(12, dtype=np.float32)
+        amplitudes[9] = 3.0
+        data = GSplatData(
+            centers=centers,
+            amplitudes=amplitudes,
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (12, 1)
+            ),
+        )
+        if labeled:
+            data = data.with_label_ids(
+                np.arange(12, dtype=np.uint8) % _LABEL_COUNT,
+                _LABEL_VOCABULARY,
+            )
+        if laddered:
+            data = make_additive_lod(data, n_lods=3, method="radial")
+
+        try:
+            result = operation(data)
+        except (ValueError, NotImplementedError):
+            if labeled:
+                return
+            raise
+
+        node = result.tree if isinstance(result, GSplatData) else result
+        sublods = [
+            sublod for leaf in iter_leaves(node) for sublod in leaf.additive_sublods
+        ]
+        assert sublods
+        if not labeled:
+            assert all(sublod.label_ids is None for sublod in sublods)
+            assert all(sublod.label_vocabulary is None for sublod in sublods)
+            return
+
+        for sublod in sublods:
+            assert sublod.label_ids is not None
+            assert sublod.label_vocabulary == _LABEL_VOCABULARY
+            expected = np.rint(sublod.centers[:, 0]).astype(np.int64) % _LABEL_COUNT
+            np.testing.assert_array_equal(sublod.label_ids, expected)
 
     def test_with_label_ids_accepts_integer_sequence(self) -> None:
         source = _make_3d_gsplat(6)
