@@ -7,7 +7,8 @@
  * interactive dolly (driven by wall-clock time in the update sequencer) and
  * the recorded one (driven by frame index in the capture strategies) both go
  * through {@link dollyScale}, so an exported video cannot breathe unlike the
- * preview it was set up from.
+ * preview it was set up from. {@link dollyAmplitudeChangeScale} preserves the
+ * same baseline when the live amplitude or phase origin changes.
  *
  * @module controls/luxar-orbit-controls/math/auto-dolly
  */

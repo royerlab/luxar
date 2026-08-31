@@ -204,7 +204,7 @@ export function buildRecordingGUI(deps: BuildGUIDeps): BuildGUIResult {
   };
 
   // Range derived from the stored rate's own 6-180 °/s bounds, so the
-  // reachable set is exactly what it was: 2 s to 60 s per turn.
+  // endpoints stay aligned at 2 s to 60 s per turn.
   const speedCtrl = root
     .add(
       ttSettings,

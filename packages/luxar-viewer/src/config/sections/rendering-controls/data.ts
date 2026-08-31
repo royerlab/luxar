@@ -63,8 +63,8 @@ export const renderingControlsConfig: RenderingControlsConfig = {
     autoRotateAxis: 'vertical' as const,
     autoDolly: false, // Auto-dolly disabled by default
     // ±15% of the viewing distance: deep enough to read as motion, shallow
-    // enough that the whole swing stays inside one LOD step (screen area goes
-    // as 1/d², so the swing moves projected area by (1+A)⁴ = 1.75x here).
+    // enough that the swing spans less than one screen-area halving, so it can
+    // cross at most one LOD boundary per half-cycle ((1+A)⁴ = 1.75x here).
     autoDollyAmplitudePercent: 15,
     autoDollyPeriod: 10, // Seconds per full in-and-out cycle
     // Touchpad-friendly orbit drag mapping (LEFT=rotate, RIGHT=pan).

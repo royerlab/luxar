@@ -186,8 +186,8 @@ function buildModeParams(
     // published scene), but "how long is one turn?" is the question a user
     // actually has — and the answer is then in the same unit as the dolly
     // period right below it. The slider range is DERIVED from the stored
-    // rate's range rather than declared separately, so the two cannot drift:
-    // the reachable set is exactly today's.
+    // rate's range rather than declared separately, so their endpoints stay
+    // aligned with the published range.
     const rs = config.controls.orbit.autoRotate.speed;
     const periodView = { seconds: secondsPerTurnFromRpm(settings.autoRotateSpeed) };
     gui

@@ -32,6 +32,16 @@ math/
   `'world-y'` agrees with `'vertical'` exactly while the camera is level.
 - The direction table is a total `Record` over the union, so adding a
   token to `AutoRotateAxis` without a direction fails to compile.
+- Both the per-frame turntable (`update.ts` step 1) and the
+  programmatic one (`LuxarOrbitControls.applyOrbitRotation`, which
+  recording drives) read the axis from here, so an exported turntable
+  cannot rotate unlike its own preview.
+- A world axis parallel to the view direction is benign rather than
+  singular: the camera offset lies along it, so the camera stays put and
+  the image rolls, exactly as `'view'` does.
+- An unrecognized token degrades to `'vertical'` rather than throwing:
+  this runs inside the render loop, and a hand-edited scene attribute
+  should not kill every subsequent frame.
 
 ### `auto-dolly.ts`
 
@@ -44,6 +54,9 @@ math/
   `amplitude` is a RATIO (0.15 → `d₀×1.15` out, `d₀÷1.15` in) and means the
   same thing at any scene scale — which is what makes it the sinusoidal
   mousewheel the feature is named for.
+- `dollyAmplitudeChangeScale(phase, fromAmplitude, toAmplitude) -> number`
+  compensates the displacement already applied at a phase, so changing the
+  amplitude or returning to phase zero preserves the user's baseline framing.
 - Returning a RATIO between two phases, rather than an absolute distance, is
   what lets the user keep zooming while it runs: distance is only ever
   multiplied, and multiplication commutes, so a wheel click moves the centre
@@ -54,16 +67,6 @@ math/
 - Both the interactive dolly (`update.ts`, wall-clock) and the recorded one
   (the capture strategies, frame-indexed) go through `dollyScale`, so an
   exported video cannot breathe unlike its own preview.
-- Both the per-frame turntable (`update.ts` step 1) and the
-  programmatic one (`LuxarOrbitControls.applyOrbitRotation`, which
-  recording drives) read the axis from here, so an exported turntable
-  cannot rotate unlike its own preview.
-- A world axis parallel to the view direction is benign rather than
-  singular: the camera offset lies along it, so the camera stays put and
-  the image rolls, exactly as `'view'` does.
-- An unrecognized token degrades to `'vertical'` rather than throwing:
-  this runs inside the render loop, and a hand-edited scene attribute
-  should not kill every subsequent frame.
 
 ### `trackball.ts`
 

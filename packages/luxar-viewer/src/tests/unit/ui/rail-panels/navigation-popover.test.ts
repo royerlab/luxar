@@ -232,9 +232,9 @@ describe('buildNavigationPopover', () => {
       expect(byProp('seconds').object?.seconds).toBe(240);
     });
 
-    it('offers exactly the rates the stored range allows, as periods', () => {
+    it('derives period endpoints from the stored rate range', () => {
       // Derived from config.controls.orbit.autoRotate.speed (0.1-5 rpm), not
-      // declared separately, so the reachable set cannot drift from the rate's.
+      // declared separately, so the endpoints stay aligned with the rate's.
       const ctrl = byProp('seconds');
       expect(ctrl.min).toBe(12); // 60 / 5 rpm — the fastest turn
       expect(ctrl.max).toBe(600); // 60 / 0.1 rpm — the slowest

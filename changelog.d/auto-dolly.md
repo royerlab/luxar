@@ -52,10 +52,9 @@ fast, silently. Each conversion lives in one named pair at the UI edge —
 `secondsPerTurnFromRpm` / `rpmFromSecondsPerTurn` and
 `turnSecondsFromDegPerSec` / `degPerSecFromTurnSeconds` — the same split the
 dolly amplitude already uses for percent versus fraction. Slider ranges are
-derived from the stored ranges rather than declared again, so the reachable
-set cannot drift: 12-600 s is exactly the old 0.1-5 rpm.
+derived from the stored ranges rather than declared again, so the endpoints
+stay aligned: 12-600 s corresponds exactly to the old 0.1-5 rpm range.
 
 Three doc comments claimed things that were no longer true, including a
 `setAutoRotateSpeed` docstring citing a default of 2.0 (it is 0.25) and
 "30 seconds per orbit at 60fps" (the turn is frame-rate independent).
-
