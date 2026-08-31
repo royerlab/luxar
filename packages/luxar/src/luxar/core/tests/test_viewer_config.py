@@ -467,6 +467,17 @@ class TestViewerConfig:
         vc = ViewerConfig(adaptive_dpr_enabled=True)
         assert vc.adaptive_dpr_enabled is True
 
+    def test_allow_high_dpr(self) -> None:
+        vc = ViewerConfig(allow_high_dpr=True)
+        assert vc.allow_high_dpr is True
+
+    def test_allow_high_dpr_defaults_to_unset(self) -> None:
+        # None, not False: an unset key leaves the viewer default in
+        # place, and only a key the author actually wrote is serialized.
+        vc = ViewerConfig()
+        assert vc.allow_high_dpr is None
+        assert "allow_high_dpr" not in vc.to_dict()
+
     def test_ui_config(self) -> None:
         vc = ViewerConfig(ui=UIConfig(show_help=False, show_dimensions=True))
         d = vc.to_dict()
@@ -565,6 +576,7 @@ class TestViewerConfig:
             fly_inertial_mode=True,
             dynamic_clipping_enabled=True,
             adaptive_dpr_enabled=True,
+            allow_high_dpr=True,
             theme="dark",
             ui=UIConfig(show_help=False),
             dimensions=DimensionsConfig(current_step=[5, 0, 0]),
@@ -580,6 +592,7 @@ class TestViewerConfig:
         assert vc2.fly_movement_speed == 2.0
         assert vc2.dynamic_clipping_enabled is True
         assert vc2.adaptive_dpr_enabled is True
+        assert vc2.allow_high_dpr is True
         assert vc2.theme == "dark"
         assert vc2.ui is not None
         assert vc2.ui.show_help is False
@@ -661,6 +674,7 @@ class TestViewerConfig:
                 "theme": "dark",
                 "dynamic_clipping_enabled": True,
                 "adaptive_dpr_enabled": True,
+                "allow_high_dpr": True,
                 "ui": {
                     "show_help": False,
                     "show_rendering_controls": False,

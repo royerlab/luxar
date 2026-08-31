@@ -68,7 +68,9 @@ export class RecordingPanel {
   private options: RecordingOptions = {
     outputFormat: 'webp',
     imageQuality: 0.92,
-    maxDPR: true,
+    // Null follows the live on-screen ceiling until the user moves the
+    // Capture DPR slider.
+    captureDPR: null,
     transparentBackground: false,
     videoDurationLimit: 60,
     videoFPS: 30,
@@ -103,6 +105,7 @@ export class RecordingPanel {
   private videoDurationController: Controller | null = null;
   private formatController: Controller | null = null;
   private captureController: Controller | null = null;
+  private refreshCaptureDPR: (() => void) | null = null;
 
   /** LOD-quiescence predicate for the offline loop — see {@link setLODSettledProvider}. */
   private lodSettledProvider: (() => boolean | null) | null = null;
@@ -188,6 +191,7 @@ export class RecordingPanel {
   // ========== Public API ==========
 
   show(): void {
+    this.refreshCaptureDPR?.();
     this.gui.show();
     this.visible = true;
   }
@@ -380,6 +384,7 @@ export class RecordingPanel {
     this.syncToggleController = result.syncToggleController;
     this.syncDimensionController = result.syncDimensionController;
     this.captureController = result.captureController;
+    this.refreshCaptureDPR = result.refreshCaptureDPR;
     this.imageControllers = result.imageControllers;
     this.videoControllers = result.videoControllers;
     this.turntableControllers = result.turntableControllers;

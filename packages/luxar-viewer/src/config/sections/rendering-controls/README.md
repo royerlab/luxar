@@ -1,6 +1,6 @@
 # rendering-controls
 
-User-adjustable rendering settings — the single source of truth for camera FOV / clipping, bloom, global EOG (exposure / offset / gamma), anti-aliasing, tone mapping, vignette, physics-based detector noise, chromatic lens distortion, navigation mode, and adaptive DPR / cinematic toggles. Persisted per-scene via the rendering-controls persistence layer and overridable through the zarr `viewer_config` bridge.
+User-adjustable rendering settings — the single source of truth for camera FOV / clipping, bloom, global EOG (exposure / offset / gamma), anti-aliasing, tone mapping, vignette, physics-based detector noise, chromatic lens distortion, navigation mode, and the adaptive-DPR / high-DPR / cinematic toggles. Persisted per-scene via the rendering-controls persistence layer and overridable through the zarr `viewer_config` bridge.
 
 Conforms to the section-trio pattern documented in [../../README.md](../../README.md): `data.ts` exports the literal, `types.ts` defines the interface, `validate.ts` exports section validators invoked by the central dispatcher.
 

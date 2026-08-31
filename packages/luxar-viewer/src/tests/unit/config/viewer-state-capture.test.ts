@@ -88,6 +88,7 @@ function createMockRenderingControls() {
       flyRotationDamping: 0.9,
       dynamicClippingEnabled: true,
       adaptiveDPREnabled: true,
+      allowHighDPR: true,
     },
   } as any;
 }
@@ -198,6 +199,7 @@ describe('captureViewerState', () => {
     expect(state.fxaa_enabled).toBe(true);
     expect(state.dynamic_clipping_enabled).toBe(true);
     expect(state.adaptive_dpr_enabled).toBe(true);
+    expect(state.allow_high_dpr).toBe(true);
   });
 
   it('should capture theme', () => {

@@ -82,7 +82,10 @@ import {
 } from './scene-manager/render-pipeline/renderer-setup';
 import { createPostProcessing } from './scene-manager/render-pipeline/post-processing-setup';
 import { ResizeOrchestrator } from './scene-manager/viewport/resize-orchestrator';
-import { computePixelRatioOverride } from './scene-manager/viewport/dpr-policy';
+import {
+  computePixelRatioOverride,
+  getActivePixelRatio,
+} from './scene-manager/viewport/dpr-policy';
 import { type LuxarCamera, isPerspectiveCamera, isOrthographicCamera } from '../utils/camera-utils';
 import { isDocumentFullscreen } from '../utils/fullscreen';
 import type { ControlType } from '../controls/controls-manager';
@@ -259,10 +262,10 @@ export class SceneManager extends THREE.EventDispatcher<{
   /**
    * Explicit DPR selected by adaptive/manual resolution control.
    *
-   * `null` means "track the browser's native `window.devicePixelRatio`".
+   * `null` means "track the live pixel-ratio ceiling".
    * Non-null values must survive ordinary window resizes; otherwise a
    * resize event immediately after a manual DPR change silently restores
-   * native resolution while the AdaptiveDPRManager/UI still reports the
+   * ceiling resolution while the AdaptiveDPRManager/UI still reports the
    * reduced DPR.
    */
   private pixelRatioOverride: number | null = null;
@@ -1069,6 +1072,21 @@ export class SceneManager extends THREE.EventDispatcher<{
       pixelRatioOverride: this.pixelRatioOverride,
       updateMaterialsForCurrentCamera: () => this.updateMaterialsForCurrentCamera(),
     };
+  }
+
+  /**
+   * The pixel ratio the renderer is currently sized for: the explicit
+   * override if one is engaged, otherwise the live ceiling — and clamped
+   * to that ceiling either way.
+   *
+   * Exposed so callers that need to re-apply the pixel ratio by hand
+   * (the recording session, after a scaled capture) can ask for the
+   * value the resize path would use instead of reaching for
+   * `window.devicePixelRatio`, which respects neither the override nor
+   * the pixel-ratio cap.
+   */
+  get activePixelRatio(): number {
+    return getActivePixelRatio(this.pixelRatioOverride);
   }
 
   /**

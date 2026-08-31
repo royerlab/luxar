@@ -15,6 +15,11 @@ import {
 import type { Renderer } from '../../../../../rendering/renderer-capabilities';
 import type { PostProcessingManager } from '../../../../../rendering';
 import * as THREE from 'three';
+import { allowHighDPR, setNativeDPR } from '../../../../helpers/device-pixel-ratio';
+import {
+  DEFAULT_MAX_PIXEL_RATIO,
+  setMaxPixelRatioCap,
+} from '../../../../../rendering/pixel-ratio-cap';
 
 function makeRenderer() {
   const setPixelRatio = vi.fn();
@@ -39,7 +44,13 @@ function makePostProcessing() {
   };
 }
 
-function makeCtx(opts: { withPostProcessing?: boolean; withCamera?: boolean } = {}) {
+function makeCtx(
+  opts: {
+    withPostProcessing?: boolean;
+    withCamera?: boolean;
+    pixelRatioOverride?: number | null;
+  } = {}
+) {
   const { renderer, setPixelRatio, setSize } = makeRenderer();
   const { pp, resize: ppResize, setDPRScale } = makePostProcessing();
   const camera = opts.withCamera === false ? null : new THREE.PerspectiveCamera();
@@ -49,7 +60,7 @@ function makeCtx(opts: { withPostProcessing?: boolean; withCamera?: boolean } = 
     renderer,
     camera,
     postProcessing: opts.withPostProcessing === false ? null : pp,
-    pixelRatioOverride: null,
+    pixelRatioOverride: opts.pixelRatioOverride ?? null,
     updateMaterialsForCurrentCamera,
   };
 
@@ -64,12 +75,20 @@ function makeCtx(opts: { withPostProcessing?: boolean; withCamera?: boolean } = 
 }
 
 describe('ResizeOrchestrator.resizeNow', () => {
+  // A 2x display with the cap LIFTED, so the resize pipeline's own
+  // assertions read against the display's DPR as they always have. The
+  // capped default gets its own test at the end of this block — it is
+  // the one place the orchestrator can observe the ceiling, since it
+  // resolves the ratio through dpr-policy rather than owning it.
+  let restoreCap: () => void;
+  let restoreNative: () => void;
   beforeEach(() => {
-    Object.defineProperty(window, 'devicePixelRatio', {
-      value: 2,
-      configurable: true,
-      writable: true,
-    });
+    restoreNative = setNativeDPR(2);
+    restoreCap = allowHighDPR();
+  });
+  afterEach(() => {
+    restoreCap();
+    restoreNative();
   });
 
   it('applies pixelRatio + postProcessing.resize + DPR-scale sync + material refresh', () => {
@@ -216,5 +235,48 @@ describe('ResizeOrchestrator.dispose', () => {
 
     mockRAF.mockRestore();
     mockCancelRAF.mockRestore();
+  });
+});
+
+/**
+ * The orchestrator does not own the ceiling — it resolves the ratio
+ * through `dpr-policy.getActivePixelRatio`, which is exactly why the cap
+ * lives there. This block is the proof that the seam actually binds on
+ * the path every window resize takes, including the very first one,
+ * before AdaptiveDPRManager has evaluated a single frame.
+ */
+describe('ResizeOrchestrator honours the pixel-ratio cap', () => {
+  let restoreNative: () => void;
+  beforeEach(() => {
+    restoreNative = setNativeDPR(2);
+    setMaxPixelRatioCap(DEFAULT_MAX_PIXEL_RATIO);
+  });
+  afterEach(() => restoreNative());
+
+  it('sizes a null-override resize at the cap, not the display DPR', () => {
+    const orchestrator = new ResizeOrchestrator();
+    const harness = makeCtx();
+
+    orchestrator.resizeNow(1024, 768, harness.ctx);
+
+    expect(harness.setPixelRatio).toHaveBeenCalledWith(1);
+  });
+
+  it('still honours a reduction below the cap', () => {
+    const orchestrator = new ResizeOrchestrator();
+    const harness = makeCtx({ pixelRatioOverride: 0.5 });
+
+    orchestrator.resizeNow(1024, 768, harness.ctx);
+
+    expect(harness.setPixelRatio).toHaveBeenCalledWith(0.5);
+  });
+
+  it('clamps an above-cap override rather than trusting it', () => {
+    const orchestrator = new ResizeOrchestrator();
+    const harness = makeCtx({ pixelRatioOverride: 2 });
+
+    orchestrator.resizeNow(1024, 768, harness.ctx);
+
+    expect(harness.setPixelRatio).toHaveBeenCalledWith(1);
   });
 });

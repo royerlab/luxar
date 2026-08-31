@@ -39,6 +39,7 @@ import { log, Modules } from '../../utils/log';
 import { showToast } from '../toast';
 import type { SceneManager } from '../../scene/scene-manager';
 import type { AnimationController } from '../../scene/animation/animation-controller';
+import { getMaxPixelRatio } from '../../rendering/pixel-ratio-cap';
 import { LuxarOrbitControls } from '../../controls/luxar-orbit-controls';
 import {
   computeVideoBitrate as computeVideoBitratePure,
@@ -106,7 +107,7 @@ export class VideoRecordingStrategy implements CaptureStrategy {
       this.hooks.hideAllPanels();
 
       session.saveRecordingState({
-        disableDPR: true,
+        captureDPR: opts.captureDPR ?? getMaxPixelRatio(),
         lockResize: true,
         scaleResolution: opts.videoResolution > 0 ? { targetH: opts.videoResolution } : undefined,
       });

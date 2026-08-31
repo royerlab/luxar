@@ -12,6 +12,7 @@
  */
 
 import GUI, { type Controller } from '../../gui';
+import { getMaxPixelRatio, getNativePixelRatio } from '../../../rendering/pixel-ratio-cap';
 import type {
   OutputFormat,
   RecordingMode,
@@ -32,6 +33,7 @@ export interface BuildGUIResult {
   syncToggleController: Controller;
   syncDimensionController: Controller;
   captureController: Controller;
+  refreshCaptureDPR(): void;
   imageControllers: Controller[];
   videoControllers: Controller[];
   turntableControllers: Controller[];
@@ -67,7 +69,7 @@ export function buildRecordingGUI(deps: BuildGUIDeps): BuildGUIResult {
   //   Primary : Mode, Format, Image Quality, Transparent BG, Video
   //             Quality, Resolution, Max Duration, Frame Rate, turntable
   //             Output/Speed/Smooth.
-  //   Advanced: Show Panels, Include Overlays, Max Resolution (DPR),
+  //   Advanced: Show Panels, Include Overlays, Capture DPR,
   //             Codec, Sync to Slider, Dimension.
   const root = deps.gui;
 
@@ -85,7 +87,7 @@ export function buildRecordingGUI(deps: BuildGUIDeps): BuildGUIResult {
   const imgSettings = {
     format: deps.options.outputFormat,
     quality: deps.options.imageQuality,
-    maxDPR: deps.options.maxDPR,
+    captureDPR: deps.options.captureDPR ?? getMaxPixelRatio(),
     transparentBg: deps.options.transparentBackground,
   };
 
@@ -274,16 +276,35 @@ export function buildRecordingGUI(deps: BuildGUIDeps): BuildGUIResult {
     .closest('.luxar-gui__controller')
     ?.setAttribute('title', 'Composite text/image/HTML overlays into the capture');
 
-  const maxDPRCtrl = advanced
-    .add(imgSettings, 'maxDPR')
-    .name('Max Resolution')
-    .onChange((val: boolean) => {
-      deps.options.maxDPR = val;
+  const captureDPRCtrl = advanced
+    .add(imgSettings, 'captureDPR', 0.25, getNativePixelRatio(), 0.25)
+    .name('Capture DPR')
+    .onChange((val: number) => {
+      deps.options.captureDPR = val;
     });
-  maxDPRCtrl.domElement
-    .closest('.luxar-gui__controller')
-    ?.setAttribute('title', 'Maximize pixel ratio for highest resolution screenshot');
-  imageControllers.push(maxDPRCtrl);
+  const captureDPRRow = captureDPRCtrl.domElement.closest('.luxar-gui__controller');
+  const refreshCaptureDPR = (): void => {
+    const ceiling = getMaxPixelRatio();
+    const native = getNativePixelRatio();
+    captureDPRCtrl.max(native);
+    if (deps.options.captureDPR === null) {
+      imgSettings.captureDPR = ceiling;
+      captureDPRCtrl.updateDisplay();
+    }
+    captureDPRRow?.setAttribute(
+      'title',
+      'Capture DPR: pixel ratio used to render screenshots and videos\n' +
+        `• Default ${ceiling.toFixed(2)} = what is on screen, so the export matches ` +
+        'what you see\n' +
+        `• Your display supports up to ${native.toFixed(2)} — raise this for a ` +
+        'higher-resolution export\n' +
+        '• Above the on-screen value the export is not a pure upscale: very thin lines and\n' +
+        '  very small points have a minimum size in DEVICE pixels, so they come out\n' +
+        '  relatively thinner and sharper than on screen'
+    );
+  };
+  refreshCaptureDPR();
+  imageControllers.push(captureDPRCtrl);
 
   // Video codec selector (turntable/offline only — the real-time Video
   // mode always emits WebM via MediaRecorder and ignores this).
@@ -351,6 +372,7 @@ export function buildRecordingGUI(deps: BuildGUIDeps): BuildGUIResult {
     syncToggleController: syncCtrl,
     syncDimensionController: syncDimCtrl,
     captureController: captureBtn,
+    refreshCaptureDPR,
     imageControllers,
     videoControllers,
     turntableControllers,

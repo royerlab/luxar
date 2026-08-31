@@ -6,6 +6,11 @@ thresholds, multiplicative scaling factors, the static DPR floor, the U-shape
 probe knobs, the learned floor/ceiling TTLs with exponential backoff, and the
 session-hygiene timings (gap reset, content-change recheck).
 
+The MAXIMUM DPR is not here either: the adaptive loop scales below a ceiling
+that `rendering/pixel-ratio-cap.ts` owns, which is the display's own DPR only
+when the `allowHighDPR` setting is on. It is off by default, so on a HiDPI
+display the ceiling this loop works under is 1.0.
+
 Conforms to the section-trio pattern documented in [../README.md](../README.md):
 `data.ts` exports the literal, `types.ts` defines the interface, and
 `validate.ts` checks the cross-field invariants (threshold ordering, factor

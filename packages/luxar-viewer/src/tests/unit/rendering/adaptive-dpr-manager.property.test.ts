@@ -58,6 +58,16 @@ vi.mock('../../../config', () => ({
 }));
 
 import { AdaptiveDPRManager, type DPRRenderer } from '../../../rendering/adaptive-dpr-manager';
+import {
+  computePixelRatioOverride,
+  getActivePixelRatio,
+} from '../../../scene/scene-manager/viewport/dpr-policy';
+import {
+  DEFAULT_MAX_PIXEL_RATIO,
+  getMaxPixelRatio,
+  getMaxPixelRatioCap,
+  setMaxPixelRatioCap,
+} from '../../../rendering/pixel-ratio-cap';
 
 /** Tiny deterministic PRNG (mulberry32) — reproducible from a seed. */
 function rng(seed: number): () => number {
@@ -76,15 +86,20 @@ function setNativeDPR(value: number): void {
 }
 
 /**
- * Renderer stand-in that models the REAL SceneManager DPR path: an
- * explicit setAdaptivePixelRatio() within 0.01 of the live native
- * clears the override (null = "track live devicePixelRatio"), exactly
- * like scene-manager/viewport/dpr-policy.computePixelRatioOverride.
- * `effective()` is therefore what the screen actually renders at — the
- * value I5 compares against manager.currentDPR. Modelling this is
- * essential: the manager deliberately does NOT re-apply when it is
- * "tracking native" (a monitor-DPI change follows the null override for
- * free), so a naive last-value mock would report a false divergence.
+ * Renderer stand-in that runs the REAL SceneManager DPR path rather than
+ * re-implementing it: `setAdaptivePixelRatio` stores whatever
+ * dpr-policy.computePixelRatioOverride decides, and `effective()` is
+ * dpr-policy.getActivePixelRatio of that — i.e. literally what the
+ * screen renders at, which is the value I5 compares against
+ * manager.currentDPR.
+ *
+ * Calling the policy instead of copying it matters twice over. The
+ * manager deliberately does NOT re-apply while it is "tracking the
+ * ceiling" (a null override follows a monitor-DPI change for free), so a
+ * naive last-value mock reports a false divergence; and a hand-copied
+ * threshold would silently stop modelling the real seam the first time
+ * the policy changed — which is exactly what the pixel-ratio cap did to
+ * it.
  */
 function makeRenderer(): DPRRenderer & {
   override: number | null;
@@ -96,12 +111,10 @@ function makeRenderer(): DPRRenderer & {
     touched: false,
     setAdaptivePixelRatio(dpr: number) {
       r.touched = true;
-      const native = window.devicePixelRatio || 1;
-      const safe = Number.isFinite(dpr) && dpr > 0 ? dpr : native;
-      r.override = Math.abs(safe - native) < 0.01 ? null : safe;
+      r.override = computePixelRatioOverride(dpr).override;
     },
     effective() {
-      return r.override ?? (window.devicePixelRatio || 1);
+      return getActivePixelRatio(r.override);
     },
   };
   return r;
@@ -109,15 +122,21 @@ function makeRenderer(): DPRRenderer & {
 
 const EPS = 1e-6;
 const NATIVE_CHOICES = [1, 1.5, 2, 3];
+// The shipped default, a couple of partial lifts (a `?dpr=` pin or a
+// capture override), and fully unrestricted.
+const CAP_CHOICES = [DEFAULT_MAX_PIXEL_RATIO, 1.5, 2, Infinity];
 const FPS_CHOICES = [2.5, 8, 20, 30, 45, 55, 61, 90, 120, 144];
 
 describe('AdaptiveDPRManager — property/invariant fuzzing', () => {
   let restoreNative: number;
+  let restoreCap: number;
   beforeEach(() => {
     restoreNative = window.devicePixelRatio;
+    restoreCap = getMaxPixelRatioCap();
   });
   afterEach(() => {
     setNativeDPR(restoreNative);
+    setMaxPixelRatioCap(restoreCap);
   });
 
   /** Assert the manager's cross-cutting invariants at the current state. */
@@ -128,10 +147,15 @@ describe('AdaptiveDPRManager — property/invariant fuzzing', () => {
   ) {
     const s = m.getState();
     const native = window.devicePixelRatio || 1;
+    // Every bound below is stated against the CEILING — min(native, cap)
+    // — not the display's raw DPR. Under the shipped cap the two differ,
+    // and a bound of `<= native` would pass while the viewer rendered at
+    // twice what the setting allows.
+    const ceiling = getMaxPixelRatio();
 
     // I1 bounds
     expect(s.currentDPR, `${ctx} I1-lo`).toBeGreaterThanOrEqual(0.25 - EPS);
-    expect(s.currentDPR, `${ctx} I1-hi`).toBeLessThanOrEqual(native + EPS);
+    expect(s.currentDPR, `${ctx} I1-hi`).toBeLessThanOrEqual(ceiling + EPS);
     expect(Number.isFinite(s.currentDPR), `${ctx} I1-finite`).toBe(true);
 
     // I2 cap finite & positive
@@ -141,14 +165,16 @@ describe('AdaptiveDPRManager — property/invariant fuzzing', () => {
     // I3 ceiling sane
     expect(Number.isFinite(s.dprCeiling), `${ctx} I3-finite`).toBe(true);
     expect(s.dprCeiling, `${ctx} I3-pos`).toBeGreaterThan(0);
-    expect(s.dprCeiling, `${ctx} I3-hi`).toBeLessThanOrEqual(native + EPS);
-    // I3b the only demoted value is exactly 1.0 (a Schelling point, not
-    // a hunted estimate) — the ceiling is either the live native or 1.0,
-    // whether the demotion came from punished ascents or sustained
-    // sub-throttle distress.
+    expect(s.dprCeiling, `${ctx} I3-hi`).toBeLessThanOrEqual(ceiling + EPS);
+    // I3b the only LEARNED demotion is to exactly 1.0 (a Schelling point,
+    // not a hunted estimate), so the reported ceiling is either the
+    // session ceiling or 1.0 — whether the demotion came from punished
+    // ascents or sustained sub-throttle distress. (When the cap is 1.0
+    // the two coincide, which is the setting being the same demotion
+    // applied up front.)
     expect(
-      Math.abs(s.dprCeiling - 1.0) < EPS || Math.abs(s.dprCeiling - native) < EPS,
-      `${ctx} I3b-schelling (ceiling ${s.dprCeiling}, native ${native})`
+      Math.abs(s.dprCeiling - 1.0) < EPS || Math.abs(s.dprCeiling - ceiling) < EPS,
+      `${ctx} I3b-schelling (ceiling ${s.dprCeiling}, session ${ceiling}, native ${native})`
     ).toBe(true);
 
     // I4 floor sane (config.minDPR = 0.5)
@@ -202,12 +228,25 @@ describe('AdaptiveDPRManager — property/invariant fuzzing', () => {
             m.notifyContentChanged(t);
           } else if (roll < 0.9) {
             m.setEnabled(rand() < 0.5);
-          } else if (roll < 0.94) {
+          } else if (roll < 0.93) {
             // Only meaningful when adaptive is off; harmless otherwise.
             m.setManualDPR(0.2 + rand() * 3);
-          } else if (roll < 0.98) {
+          } else if (roll < 0.96) {
             // Monitor drag / browser zoom: live devicePixelRatio changes.
             setNativeDPR(NATIVE_CHOICES[Math.floor(rand() * NATIVE_CHOICES.length)]);
+          } else if (roll < 0.98) {
+            // The Allow High DPR toggle, and the out-of-band cap writes a
+            // `?dpr=` pin or a capture makes. Fuzzed alongside everything
+            // else because the interesting failures are INTERACTIONS —
+            // a cap lowered while resting at the old ceiling, or raised
+            // mid-probe — not the toggle in isolation.
+            if (rand() < 0.7) {
+              m.setHighDPRAllowed(rand() < 0.5);
+            } else {
+              setMaxPixelRatioCap(
+                CAP_CHOICES[Math.floor(rand() * CAP_CHOICES.length)] ?? DEFAULT_MAX_PIXEL_RATIO
+              );
+            }
           } else {
             m.getState(); // pure-ish poll (also triggers a sync)
           }
@@ -338,7 +377,7 @@ describe('AdaptiveDPRManager — property/invariant fuzzing', () => {
           // Boundary marker, not a wish: five in a row IS a frame rate.
           expect(floorAfterBurst, `${ctx} boundary — a floor is learned`).toBeGreaterThan(0.5);
         }
-        expect(s.currentDPR, `${ctx} DPR restored`).toBeCloseTo(native, 1);
+        expect(s.currentDPR, `${ctx} DPR restored`).toBeCloseTo(getMaxPixelRatio(), 1);
         m.dispose();
       }
     }

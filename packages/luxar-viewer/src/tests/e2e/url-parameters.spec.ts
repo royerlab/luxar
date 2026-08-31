@@ -85,6 +85,63 @@ test.describe('URL Parameters', () => {
     expect(state!.currentDPR).toBe(0.5);
   });
 
+  test.describe('high-DPR pin', () => {
+    test.use({ deviceScaleFactor: 2 });
+
+    test('?dpr= above 1.0 overrides the high-DPR ceiling', async ({ page }) => {
+      // High DPR is off by default, which caps the viewer at CSS
+      // resolution. An explicit pin is an explicit request and must win —
+      // otherwise the seam would silently clamp `?dpr=2` back to 1.0 and
+      // the parameter would look broken.
+      await page.goto(`/?src=${DATASET}&debug&dpr=2`);
+      await waitForLuxarReady(page);
+
+      const state = await page.evaluate(() => {
+        const manager = (window as any).__luxarDebug?.app?.components?.adaptiveDPRManager;
+        if (!manager) return null;
+        // The persisted per-scene setting must not claw the ceiling back.
+        manager.setHighDPRAllowed(false);
+        return {
+          currentDPR: manager.getCurrentDPR(),
+          nativeDPR: manager.getNativeDPR(),
+          pinned: manager.isPinned(),
+        };
+      });
+
+      expect(state).not.toBeNull();
+      expect(state!.pinned).toBe(true);
+      expect(state!.nativeDPR).toBe(2);
+      expect(state!.currentDPR).toBe(2);
+    });
+
+    /**
+     * The complement, and the actual default: with no pin, a 2x display
+     * still renders at CSS resolution. This is the behaviour the whole
+     * change exists for, and the only end-to-end proof that the cap binds
+     * on a real HiDPI display — every other spec runs at
+     * deviceScaleFactor 1, where the ceiling never has anything to clamp.
+     */
+    test('without a pin, the ceiling caps a HiDPI display at 1.0', async ({ page }) => {
+      await page.goto(`/?src=${DATASET}&debug`);
+      await waitForLuxarReady(page);
+
+      const state = await page.evaluate(() => {
+        const manager = (window as any).__luxarDebug?.app?.components?.adaptiveDPRManager;
+        if (!manager) return null;
+        return {
+          currentDPR: manager.getCurrentDPR(),
+          nativeDPR: manager.getNativeDPR(),
+          allowHighDPR: manager.isHighDPRAllowed(),
+        };
+      });
+
+      expect(state).not.toBeNull();
+      expect(state!.nativeDPR).toBe(2);
+      expect(state!.allowHighDPR).toBe(false);
+      expect(state!.currentDPR).toBeLessThanOrEqual(1);
+    });
+  });
+
   test('should enable debug interface with ?debug parameter', async ({ page }) => {
     // With ?debug: interface should be fully functional
     await page.goto(`/?src=${DATASET}&debug`);

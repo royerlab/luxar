@@ -2,13 +2,14 @@
 /**
  * Unit tests for AdaptiveDPRManager.
  *
- * The manager has only two real-world dependencies: `window.devicePixelRatio`
- * (read once in the constructor) and the project `config` module. We set
- * the DPR explicitly before each test and mock the config so the FPS
- * thresholds, scaling factors, and hysteresis are fully under our control.
+ * The manager has three real-world dependencies: `window.devicePixelRatio`,
+ * the shared pixel-ratio cap (`rendering/pixel-ratio-cap`), and the
+ * project `config` module. We set the DPR and the cap explicitly before
+ * each test and mock the config so the FPS thresholds, scaling factors,
+ * and hysteresis are fully under our control.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Config mock — the manager layers this OVER the real data.ts defaults
 // (structural per-key fallback), so only the keys under test need to be
@@ -32,26 +33,27 @@ vi.mock('../../../config', () => ({
 
 import { AdaptiveDPRManager, type DPRRenderer } from '../../../rendering/adaptive-dpr-manager';
 import { BoundsLedger } from '../../../rendering/adaptive-dpr/bounds-ledger';
+import { DEFAULT_MAX_PIXEL_RATIO, setMaxPixelRatioCap } from '../../../rendering/pixel-ratio-cap';
+import { allowHighDPR, setNativeDPR } from '../../helpers/device-pixel-ratio';
 
 // ---------------------------------------------------------------------
 // Test fixtures
 // ---------------------------------------------------------------------
 
-function setNativeDPR(value: number): () => void {
-  const original = window.devicePixelRatio;
-  Object.defineProperty(window, 'devicePixelRatio', {
-    configurable: true,
-    value,
-    writable: true,
-  });
-  return () => {
-    Object.defineProperty(window, 'devicePixelRatio', {
-      configurable: true,
-      value: original,
-      writable: true,
-    });
-  };
-}
+// Every block below predates the pixel-ratio cap and asserts against the
+// DISPLAY's DPR — "resets to native when disabled", "scales up to
+// native", the 2.0 -> 1.0 learned-ceiling choreography — so the whole
+// file runs with high DPR ALLOWED. That keeps the coverage those tests
+// were written for: under the shipped 1.0 cap the ceiling-demotion and
+// distress blocks would still PASS while testing nothing, because their
+// starting DPR is already the value they assert the manager arrives at.
+//
+// The capped default has its own block at the end of this file.
+let restoreCapForFile: () => void;
+beforeEach(() => {
+  restoreCapForFile = allowHighDPR();
+});
+afterEach(() => restoreCapForFile());
 
 function makeRenderer(): DPRRenderer & { setAdaptivePixelRatio: ReturnType<typeof vi.fn> } {
   return {
@@ -1731,7 +1733,7 @@ describe('AdaptiveDPRManager — live native DPR (monitor / zoom changes)', () =
     }
   });
 
-  it('follows the new native silently when tracking native (no redundant re-apply)', () => {
+  it('follows the new native when tracking it, and re-applies', () => {
     const m = new AdaptiveDPRManager();
     try {
       const renderer = makeRenderer();
@@ -1740,9 +1742,16 @@ describe('AdaptiveDPRManager — live native DPR (monitor / zoom changes)', () =
       setNativeDPR(1.0);
       // Live-consistent getCurrentDPR: never reports the stale native.
       expect(m.getCurrentDPR()).toBe(1.0);
-      // Tracking-native path must NOT reallocate render targets — the
-      // renderer follows live DPR by itself via the null override.
-      expect(renderer.setAdaptivePixelRatio).not.toHaveBeenCalled();
+      // This used to assert the opposite — that the tracking path does
+      // NOT re-apply, because a null override in dpr-policy follows the
+      // live ceiling for free. That reasoning was unsound: the manager
+      // cannot see the renderer's override, so "currentDPR equals the
+      // ceiling" does not imply the renderer is tracking. See the
+      // syncNativeDPR doc for the fuzzer-found sequence where the
+      // manager reported 3.0 while the renderer drew at 1.0. The
+      // optimization saved one reallocation during a monitor drag, which
+      // fires a resize anyway.
+      expect(renderer.setAdaptivePixelRatio).toHaveBeenCalledWith(1.0);
     } finally {
       restore();
     }
@@ -1778,9 +1787,12 @@ describe('AdaptiveDPRManager — live native DPR (monitor / zoom changes)', () =
       renderer.setAdaptivePixelRatio.mockClear();
 
       setNativeDPR(1.0);
-      // 0.5 is still valid below native 1.0 — no clamp, no re-apply.
+      // 0.5 is still valid below native 1.0, so the VALUE is untouched.
+      // It is re-applied all the same: the rebase re-asserts the DPR
+      // unconditionally now (see syncNativeDPR), because the manager
+      // cannot tell whether the renderer is holding a stale override.
       expect(m.getCurrentDPR()).toBe(0.5);
-      expect(renderer.setAdaptivePixelRatio).not.toHaveBeenCalled();
+      expect(renderer.setAdaptivePixelRatio).toHaveBeenCalledWith(0.5);
     } finally {
       restore();
     }
@@ -2252,6 +2264,288 @@ describe('AdaptiveDPRManager — sustained distress demotes the ceiling to 1.0',
       expect(m.getState().currentDPR).toBe(1.0);
     } finally {
       restore();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------
+// The pixel-ratio cap — the SHIPPED DEFAULT (high DPR disallowed)
+//
+// Everything above runs with the cap lifted so its pre-cap coverage
+// survives. This block is the inverse: a 2x display where the viewer is
+// only allowed to reach 1.0, which is what users actually get.
+// ---------------------------------------------------------------------
+
+describe('AdaptiveDPRManager — pixel-ratio cap (high DPR disallowed)', () => {
+  let restore: () => void;
+
+  beforeEach(() => {
+    restore = setNativeDPR(2.0);
+    // Overrides the file-wide allowHighDPR() in the outer beforeEach —
+    // outer hooks run first, so this wins.
+    setMaxPixelRatioCap(DEFAULT_MAX_PIXEL_RATIO);
+  });
+  afterEach(() => restore());
+
+  it('starts at the ceiling, not the display DPR, and does not call that "reduced"', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      // The display is still reported honestly — the cap governs what we
+      // RENDER at, it does not lie about the hardware.
+      expect(m.getNativeDPR()).toBe(2.0);
+      expect(m.getCurrentDPR()).toBe(1.0);
+      // Load-bearing: `isReducedResolution` drives the resolution-indicator
+      // toast. Measured against native it would be permanently true, and
+      // every scene would open with a "50%" toast.
+      expect(m.getState().isReducedResolution).toBe(false);
+      expect(m.getState().dprCeiling).toBe(1.0);
+      expect(m.getState().allowHighDPR).toBe(false);
+    } finally {
+      m.dispose();
+    }
+  });
+
+  it('never scales up past the ceiling however long FPS stays high', () => {
+    const renderer = makeRenderer();
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+      let t = 1000;
+      for (let i = 0; i < 40; i++) t = pushFrames(m, t, 30, 500);
+      expect(m.getCurrentDPR()).toBeLessThanOrEqual(1.0);
+      for (const dpr of appliedDPRs(renderer)) expect(dpr).toBeLessThanOrEqual(1.0);
+    } finally {
+      m.dispose();
+    }
+  });
+
+  it('still scales DOWN normally beneath the ceiling', () => {
+    const renderer = makeRenderer();
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+      let t = 1000;
+      for (let i = 0; i < 6; i++) t = pushFrames(m, t, 6, 600);
+      expect(m.getCurrentDPR()).toBeLessThan(1.0);
+      expect(m.getState().isReducedResolution).toBe(true);
+    } finally {
+      m.dispose();
+    }
+  });
+
+  it('disabling adaptation resets to the ceiling, not the display DPR', () => {
+    const renderer = makeRenderer();
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+      m.setEnabled(false);
+      expect(m.getCurrentDPR()).toBe(1.0);
+      expect(m.getState().isReducedResolution).toBe(false);
+      for (const dpr of appliedDPRs(renderer)) expect(dpr).toBeLessThanOrEqual(1.0);
+    } finally {
+      m.dispose();
+    }
+  });
+
+  it('clamps manual DPR to the ceiling', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setEnabled(false);
+      m.setManualDPR(99);
+      expect(m.getCurrentDPR()).toBe(1.0);
+      m.setManualDPR(0.5);
+      expect(m.getCurrentDPR()).toBe(0.5);
+      expect(m.getState().isReducedResolution).toBe(true);
+    } finally {
+      m.dispose();
+    }
+  });
+
+  it('rests the idle frame at the ceiling — no sharpen pop back to native', () => {
+    const renderer = makeRenderer();
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+      let t = 1000;
+      for (let i = 0; i < 6; i++) t = pushFrames(m, t, 6, 600);
+      const operating = m.getCurrentDPR();
+      expect(operating).toBeLessThan(1.0);
+
+      expect(m.prepareIdleFrame()).toBe(true);
+      expect(m.getCurrentDPR()).toBe(1.0);
+
+      m.notifyResumed();
+      expect(m.getCurrentDPR()).toBeCloseTo(operating, 5);
+    } finally {
+      m.dispose();
+    }
+  });
+
+  it('prepareIdleFrame is a no-op when already resting at the ceiling', () => {
+    const renderer = makeRenderer();
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+      expect(m.prepareIdleFrame()).toBe(false);
+    } finally {
+      m.dispose();
+    }
+  });
+
+  describe('runtime toggle', () => {
+    it('turning it ON while adaptive jumps straight to the display DPR', () => {
+      const renderer = makeRenderer();
+      const m = new AdaptiveDPRManager();
+      try {
+        m.setRenderer(renderer);
+        expect(m.getCurrentDPR()).toBe(1.0);
+
+        m.setHighDPRAllowed(true);
+
+        expect(m.isHighDPRAllowed()).toBe(true);
+        expect(m.getCurrentDPR()).toBe(2.0);
+        expect(appliedDPRs(renderer)).toContain(2.0);
+      } finally {
+        m.dispose();
+      }
+    });
+
+    it('turning it ON while MANUAL widens the range but keeps the chosen DPR', () => {
+      const m = new AdaptiveDPRManager();
+      try {
+        m.setEnabled(false);
+        m.setManualDPR(0.5);
+
+        m.setHighDPRAllowed(true);
+
+        // The user's number is authoritative in manual mode — it must not
+        // be moved out from under them just because the ceiling rose.
+        expect(m.getCurrentDPR()).toBe(0.5);
+        expect(m.getState().dprCeiling).toBe(2.0);
+        m.setManualDPR(2.0);
+        expect(m.getCurrentDPR()).toBe(2.0);
+      } finally {
+        m.dispose();
+      }
+    });
+
+    it('turning it OFF clamps down immediately', () => {
+      const renderer = makeRenderer();
+      const m = new AdaptiveDPRManager();
+      try {
+        m.setRenderer(renderer);
+        m.setHighDPRAllowed(true);
+        expect(m.getCurrentDPR()).toBe(2.0);
+
+        m.setHighDPRAllowed(false);
+
+        expect(m.getCurrentDPR()).toBe(1.0);
+        expect(m.getState().isReducedResolution).toBe(false);
+        expect(appliedDPRs(renderer).at(-1)).toBe(1.0);
+      } finally {
+        m.dispose();
+      }
+    });
+
+    it('is a no-op when the value is unchanged', () => {
+      const renderer = makeRenderer();
+      const m = new AdaptiveDPRManager();
+      try {
+        m.setRenderer(renderer);
+        m.setHighDPRAllowed(false);
+        expect(renderer.setAdaptivePixelRatio).not.toHaveBeenCalled();
+      } finally {
+        m.dispose();
+      }
+    });
+  });
+
+  describe('URL-pinned DPR', () => {
+    it('raises the cap so an above-ceiling pin is honoured', () => {
+      const m = new AdaptiveDPRManager();
+      try {
+        m.pinManualDPR(2.0);
+        expect(m.getCurrentDPR()).toBe(2.0);
+        expect(m.isPinned()).toBe(true);
+      } finally {
+        m.dispose();
+      }
+    });
+
+    it('is still bounded by the display', () => {
+      const m = new AdaptiveDPRManager();
+      try {
+        m.pinManualDPR(4.0);
+        expect(m.getCurrentDPR()).toBe(2.0);
+      } finally {
+        m.dispose();
+      }
+    });
+
+    it('a below-ceiling pin leaves the cap alone', () => {
+      const m = new AdaptiveDPRManager();
+      try {
+        m.pinManualDPR(0.5);
+        expect(m.getCurrentDPR()).toBe(0.5);
+        expect(m.isHighDPRAllowed()).toBe(false);
+      } finally {
+        m.dispose();
+      }
+    });
+
+    it('ignores a later setHighDPRAllowed, like it ignores setEnabled', () => {
+      const m = new AdaptiveDPRManager();
+      try {
+        m.pinManualDPR(0.5);
+        m.setHighDPRAllowed(true);
+        expect(m.getCurrentDPR()).toBe(0.5);
+        expect(m.isHighDPRAllowed()).toBe(false);
+      } finally {
+        m.dispose();
+      }
+    });
+  });
+
+  it('a monitor change rebases against the new CEILING, not the new native', () => {
+    const renderer = makeRenderer();
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+      expect(m.getCurrentDPR()).toBe(1.0);
+
+      // Drag to a 3x display: the ceiling is still 1.0, so the operating
+      // DPR does not move. What must NOT happen is the session being
+      // treated as "explicitly reduced" and clamped to something else,
+      // or the ceiling following the display past the cap.
+      const restore3x = setNativeDPR(3.0);
+      try {
+        expect(m.getNativeDPR()).toBe(3.0);
+        expect(m.getCurrentDPR()).toBe(1.0);
+        expect(m.getState().isReducedResolution).toBe(false);
+        // Re-asserted rather than left to the null override: see
+        // syncNativeDPR for why the manager can no longer assume the
+        // renderer is tracking just because the numbers agree.
+        expect(appliedDPRs(renderer)).toEqual([1.0]);
+      } finally {
+        restore3x();
+      }
+    } finally {
+      m.dispose();
+    }
+  });
+
+  it('a move to a SUB-1 display lowers the ceiling with it', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      const restoreSmall = setNativeDPR(0.75);
+      try {
+        expect(m.getCurrentDPR()).toBeCloseTo(0.75, 5);
+        expect(m.getState().dprCeiling).toBeCloseTo(0.75, 5);
+      } finally {
+        restoreSmall();
+      }
+    } finally {
+      m.dispose();
     }
   });
 });

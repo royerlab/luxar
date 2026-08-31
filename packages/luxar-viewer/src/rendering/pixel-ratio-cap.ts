@@ -1,0 +1,126 @@
+/**
+ * The pixel-ratio cap — the maximum device pixel ratio the viewer will
+ * ever render at.
+ *
+ * HiDPI rendering is expensive out of all proportion to what it buys on
+ * soft-edged emissive geometry: a 2x display is 4x the fragment work for
+ * a scene made of points, gsplats and lines. So the viewer renders at
+ * CSS resolution (DPR 1.0) unless high DPR is explicitly allowed —
+ * `renderingControls.defaults.allowHighDPR`, authorable per scene as
+ * `viewer_config.allow_high_dpr`.
+ *
+ * # Why this is its own module, and why it lives in `rendering/`
+ *
+ * The cap is read by modules in two different layers —
+ * `AdaptiveDPRManager` here, and `scene/scene-manager/viewport/dpr-policy`
+ * — and dependency-cruiser's layer rules forbid `rendering/` from
+ * importing `scene/`. A leaf module in the lower of the two layers is the
+ * only place both can reach. It imports nothing, so it cannot take part
+ * in a cycle.
+ *
+ * `dpr-policy.getActivePixelRatio` is what actually applies the cap, and
+ * that is the ONE function the renderer boundary calls (see
+ * resize-orchestrator). Enforcing it there makes it structurally
+ * impossible for a DPR above the cap to reach the renderer: the opening
+ * frame, every resize and every monitor drag are covered, without
+ * threading a flag through ResizeCtx.
+ *
+ * # The three writers
+ *
+ * The cap is stored as a NUMBER rather than the boolean it usually comes
+ * from, because two callers besides the setting legitimately need to
+ * raise it. **All three, listed here so they stay reviewable — if you
+ * add a fourth, document it here:**
+ *
+ * 1. The `allowHighDPR` setting — `Infinity` when allowed, else 1.0.
+ *    The normal path (`RenderingControls`, on load and on toggle).
+ * 2. `AdaptiveDPRManager.pinManualDPR` (the `?dpr=` URL param) raises the
+ *    cap to the pinned value for the session, so `?dpr=2` renders at 2
+ *    even with the setting off. An explicit request wins, and
+ *    deterministic E2E / repro pins keep working.
+ * 3. `RecordingSession.saveRecordingState` / `restoreRecordingState` lift
+ *    the cap to the recording panel's `captureDPR` for the duration of a
+ *    capture and put it back afterwards. Without a hatch at this level
+ *    the seam would clamp an explicitly requested high-DPR export back
+ *    down to whatever is on screen.
+ */
+
+/**
+ * The cap applied when high DPR is not allowed: exactly CSS resolution.
+ *
+ * 1.0 is a Schelling point, not a tuned estimate — it is what every
+ * non-HiDPI display renders, and it is the same value
+ * `BoundsLedger.dprCeiling` demotes to when the adaptive loop earns that
+ * conclusion the hard way from FPS evidence. This setting is that
+ * demotion made the default.
+ */
+export const DEFAULT_MAX_PIXEL_RATIO = 1.0;
+
+/**
+ * The cap, as an absolute DPR. `Infinity` means "no cap — use whatever
+ * the display offers".
+ *
+ * Defaults to `DEFAULT_MAX_PIXEL_RATIO` so a viewer that never touches
+ * the setting (an embedder, a unit test constructing a SceneManager
+ * directly) still gets the cheap default rather than silently
+ * supersampling.
+ */
+let maxPixelRatioCap: number = DEFAULT_MAX_PIXEL_RATIO;
+
+/**
+ * Uncapped `window.devicePixelRatio`, with the 0/undefined guard.
+ *
+ * Also guards `window` itself. This module has no imports, so it is the
+ * cheapest thing in the tree to pull into a non-browser context — a node
+ * test, or the published library bundle under SSR — and a bare
+ * `window.devicePixelRatio` there is a ReferenceError rather than a
+ * missing display. 1 is the honest answer when there is no display at
+ * all: CSS resolution, which is what the cap defaults to anyway.
+ */
+export function getNativePixelRatio(): number {
+  return (typeof window === 'undefined' ? 1 : window.devicePixelRatio) || 1;
+}
+
+/**
+ * Set the cap. See the three legitimate writers in the module doc.
+ *
+ * A non-positive or NaN value falls back to the default cap rather than
+ * disabling the ceiling by accident.
+ */
+export function setMaxPixelRatioCap(cap: number): void {
+  maxPixelRatioCap = cap > 0 ? cap : DEFAULT_MAX_PIXEL_RATIO;
+}
+
+/** The stored cap, before clamping to what the display actually offers. */
+export function getMaxPixelRatioCap(): number {
+  return maxPixelRatioCap;
+}
+
+/**
+ * Convenience for the common case: allow high DPR (no cap) or not (CSS
+ * resolution).
+ */
+export function setHighDPRAllowed(allowed: boolean): void {
+  setMaxPixelRatioCap(allowed ? Infinity : DEFAULT_MAX_PIXEL_RATIO);
+}
+
+/**
+ * True when the cap is not restricting the display's own DPR.
+ *
+ * Derived from the cap rather than stored separately, so the two can
+ * never disagree — but note a session that raised the cap via a `?dpr=2`
+ * pin also reads as "allowed" here. That is deliberate: the question this
+ * answers is "may the viewer render above CSS resolution", and after an
+ * explicit pin the answer genuinely is yes.
+ */
+export function isHighDPRAllowed(): boolean {
+  return maxPixelRatioCap > DEFAULT_MAX_PIXEL_RATIO;
+}
+
+/**
+ * The effective ceiling: the display's own DPR or the cap, whichever is
+ * lower. A cap never RAISES the pixel ratio above what the display has.
+ */
+export function getMaxPixelRatio(): number {
+  return Math.min(getNativePixelRatio(), maxPixelRatioCap);
+}

@@ -74,6 +74,12 @@ export const renderingControlsConfig: RenderingControlsConfig = {
     // Note: Fly control settings are referenced directly from controls.fly to avoid duplication
     // Adaptive resolution (runtime/UI toggle; overrides adaptiveDPR.enabled after init)
     adaptiveDPREnabled: true, // Persisted per-scene via localStorage
+    // High-DPI rendering (persisted per-scene via localStorage). OFF by
+    // default: a 2x display is 4x the fragment work, and on soft-edged
+    // emissive geometry the extra pixels buy very little. While off, DPR
+    // 1.0 is the starting value, the adaptive scale-up ceiling, and the
+    // top of the Manual DPR slider. See rendering/pixel-ratio-cap.
+    allowHighDPR: false,
     // Cinematic mode (disabled by default)
     cinematicMode: false,
   },

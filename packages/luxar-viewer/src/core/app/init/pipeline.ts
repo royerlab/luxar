@@ -19,6 +19,7 @@ import { notifier } from '../../../utils/cross-layer/notifier';
 import { log, Modules } from '../../../utils/log';
 import { config } from '../../../config';
 import { getGpuByteBudget } from '../../../rendering/gpu-byte-budget';
+import { getMaxPixelRatio, setHighDPRAllowed } from '../../../rendering/pixel-ratio-cap';
 import {
   configureDepthSort,
   setDepthSortEnabled,
@@ -340,6 +341,15 @@ export async function runInitPipeline(
     }
   });
 
+  // Seed the pixel-ratio cap from config BEFORE anything sizes a frame.
+  // The renderer boundary (dpr-policy.getActivePixelRatio) reads the cap
+  // on every resize, so with high DPR disallowed — the default — even the
+  // opening frame renders at CSS resolution instead of paying 4x the
+  // fragment cost until the adaptive loop reacts. A scene's authored
+  // `allow_high_dpr`, and any persisted per-scene choice, land later via
+  // RenderingControls.
+  setHighDPRAllowed(config.renderingControls.defaults.allowHighDPR);
+
   // Initialize adaptive DPR manager for dynamic resolution scaling
   const adaptiveDPRManager = new AdaptiveDPRManager();
   partial.adaptiveDPRManager = adaptiveDPRManager;
@@ -379,10 +389,15 @@ export async function runInitPipeline(
   resolutionIndicator.setTargetFPS(displayTargetFPS);
   adaptiveDPRManager.setOnDPRChangeCallback((dpr, isReducedResolution) => {
     if (isReducedResolution) {
-      // The indicator displays percent-of-native resolution, so normalize
-      // the absolute DPR here — on a 2x retina display a reduced DPR of
-      // 1.8 must read as "90%", not "180%".
-      resolutionIndicator.show(dpr / adaptiveDPRManager.getNativeDPR());
+      // The indicator displays percent-of-FULL-QUALITY resolution, so
+      // normalize the absolute DPR here — on a 2x retina display a
+      // reduced DPR of 1.8 must read as "90%", not "180%".
+      //
+      // Normalized against the CEILING, not the display's DPR: with high
+      // DPR disallowed, 1.0 IS full quality, and dividing by native would
+      // both report a permanent "50%" and fire the toast on every load of
+      // every scene.
+      resolutionIndicator.show(dpr / getMaxPixelRatio());
     } else {
       // Reset the indicator so it can show again on next reduced resolution mode activation
       resolutionIndicator.reset();

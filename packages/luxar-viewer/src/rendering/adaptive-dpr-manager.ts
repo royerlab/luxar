@@ -14,14 +14,19 @@
  *   stayed above scaleUpFpsRatio × cap for hysteresisSeconds (with a
  *   small mid-band grace so isolated dropped-frame samples don't
  *   restart the wait)
- * - DPR walks multiplicatively below the LIVE window.devicePixelRatio
- *   (re-read on every evaluation/public read — monitor drags and browser
- *   zoom change it at runtime) and stops strictly above
+ * - DPR walks multiplicatively below the session CEILING — the LIVE
+ *   window.devicePixelRatio (re-read on every evaluation/public read:
+ *   monitor drags and browser zoom change it at runtime), capped by the
+ *   allow-high-DPR setting (see ./pixel-ratio-cap; by default the
+ *   ceiling is 1.0 even on a HiDPI display) — and stops strictly above
  *   max(minDPR, learned U-shape floor)
  * - Sustained distress-level FPS (below what any real display throttle
  *   can produce) demotes the operating ceiling to 1.0 in one step —
  *   HiDPI is a luxury a scene at ~10fps has proven it can't afford
- *   (see the estimator's sub-throttle distress verdict)
+ *   (see the estimator's sub-throttle distress verdict). With high DPR
+ *   disallowed this demotion machinery is inert by construction, the
+ *   ceiling already being 1.0 — the setting is precisely this demotion,
+ *   applied up front instead of after the evidence
  *
  * # U-shape awareness
  *
@@ -57,6 +62,13 @@
 
 import { config } from '../config';
 import type { AdaptiveDPRConfig } from '../config/types';
+import {
+  getMaxPixelRatioCap,
+  getNativePixelRatio,
+  isHighDPRAllowed,
+  setHighDPRAllowed,
+  setMaxPixelRatioCap,
+} from './pixel-ratio-cap';
 import { adaptiveDPRConfig as adaptiveDPRDefaults } from '../config/sections/adaptive-dpr/data';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { clamp } from '../utils/clamp';
@@ -90,9 +102,12 @@ export interface AdaptiveDPRState {
   probing: boolean;
   /** Estimated achievable rAF rate the FPS thresholds derive from. */
   refreshRateCap: number;
-  /** Effective scale-up ceiling: native, or 1.0 while demoted after
-   *  repeated punished ascents (HiDPI luxury the scene can't sustain). */
+  /** Effective scale-up ceiling: the lower of the session ceiling (the
+   *  display's DPR, capped unless high DPR is allowed) and a LEARNED 1.0
+   *  demotion after repeated punished ascents. */
   dprCeiling: number;
+  /** Whether the viewer may currently render above CSS resolution. */
+  allowHighDPR: boolean;
 }
 
 /**
@@ -181,6 +196,11 @@ export class AdaptiveDPRManager {
   // exists only to detect changes (see syncNativeDPR for the rebase
   // rules applied when it moves).
   private lastSeenNativeDPR: number;
+  // Last observed pixel-ratio cap. Like the native snapshot above this
+  // exists only to DETECT a change — the cap has writers outside this
+  // class (see rendering/pixel-ratio-cap), so syncNativeDPR watches it
+  // rather than assuming every write came through setHighDPRAllowed.
+  private lastSeenCap: number;
   private isEnabled: boolean;
   private lastEvaluationTime: number = 0;
   private isReducedResolution: boolean = false;
@@ -226,11 +246,11 @@ export class AdaptiveDPRManager {
   // calls that are acted upon.
   private lastContentChangeAt: number | null = null;
 
-  // Idle-restore state: prepareIdleFrame() snaps DPR to native for the
-  // resting frame and remembers where the loop was operating so
+  // Idle-restore state: prepareIdleFrame() snaps DPR to the CEILING for
+  // the resting frame and remembers where the loop was operating so
   // notifyResumed() can return there in ONE step instead of reactively
   // re-walking the reduction ladder on every interaction burst.
-  private restingAtNative: boolean = false;
+  private restingAtCeiling: boolean = false;
   private lastOperatingDPR: number | null = null;
 
   // True after pinManualDPR(): the DPR is locked for the session
@@ -256,7 +276,14 @@ export class AdaptiveDPRManager {
     };
 
     this.lastSeenNativeDPR = this.readLiveNativeDPR();
-    this.currentDPR = this.lastSeenNativeDPR;
+    this.lastSeenCap = getMaxPixelRatioCap();
+    // Start at the CEILING, not the native DPR: with high DPR disallowed
+    // (the default) the opening frame must already be at CSS resolution
+    // rather than paying 4x the fragment cost until the FPS loop
+    // reactively walks it back down. The renderer boundary clamps to the
+    // same ceiling anyway (dpr-policy.getActivePixelRatio), so this keeps
+    // the manager's own bookkeeping honest about what is on screen.
+    this.currentDPR = this.ceiling();
     this.probeController = new ProbeController({
       windowMs: this.config.probeWindowMs,
       improvement: this.config.probeImprovement,
@@ -284,13 +311,34 @@ export class AdaptiveDPRManager {
 
     log.info(
       Modules.ADAPTIVE_DPR,
-      `Initialized (enabled: ${this.isEnabled}, native DPR: ${this.lastSeenNativeDPR.toFixed(2)})`
+      `Initialized (enabled: ${this.isEnabled}, native DPR: ` +
+        `${this.lastSeenNativeDPR.toFixed(2)}, ceiling: ${this.ceiling().toFixed(2)})`
     );
   }
 
   /** Live `window.devicePixelRatio` with the 0/undefined guard. */
   private readLiveNativeDPR(): number {
-    return window.devicePixelRatio || 1;
+    return getNativePixelRatio();
+  }
+
+  /**
+   * The highest DPR this session may currently render at: the display's
+   * own DPR, capped by the pixel-ratio cap (see
+   * `rendering/pixel-ratio-cap` — usually 1.0, because high DPR is off by
+   * default).
+   *
+   * Every place that used to treat `lastSeenNativeDPR` as an upper bound
+   * reads this instead. The NATIVE snapshot is still what
+   * `syncNativeDPR` tracks and rebases on, because a display change is a
+   * real event regardless of the cap; the ceiling is what that snapshot
+   * is allowed to mean for rendering.
+   *
+   * Deliberately built from the SNAPSHOT rather than calling
+   * `getMaxPixelRatio()` directly, so a tick stays internally consistent
+   * with the native value `syncNativeDPR` resolved at its start.
+   */
+  private ceiling(): number {
+    return Math.min(this.lastSeenNativeDPR, getMaxPixelRatioCap());
   }
 
   /**
@@ -301,27 +349,58 @@ export class AdaptiveDPRManager {
    * and frame timings of the OLD display, so a native change clears
    * them wholesale. The operating DPR follows one of two rules:
    *
-   * - Tracking native (no reduction/override engaged): follow the new
-   *   native silently. The renderer already tracks live DPR by itself
-   *   (null override in dpr-policy), so re-applying would only trigger
-   *   a redundant render-target reallocation.
-   * - Explicitly reduced/manual: clamp to the new native and re-apply,
-   *   so a move to a lower-DPI monitor never leaves a supersampling
-   *   override behind (the pre-fix failure mode: a 2.0 override kept
-   *   rendering 4x the pixels on a 1x monitor).
+   * - Tracking the ceiling (no reduction/manual value engaged): follow
+   *   the new ceiling.
+   * - Explicitly reduced/manual: keep the value, clamped to the new
+   *   ceiling, so a move to a lower-DPI monitor never leaves a
+   *   supersampling override behind (the pre-fix failure mode: a 2.0
+   *   override kept rendering 4x the pixels on a 1x monitor).
+   *
+   * Either way the new DPR is RE-APPLIED. There used to be a fast path
+   * here that skipped the apply while tracking, on the grounds that a
+   * null override in dpr-policy already follows the live ceiling for
+   * free. It was unsound: the manager cannot see the renderer's
+   * override, and "currentDPR equals the ceiling" does not imply the
+   * renderer is tracking. The property fuzzer produced the counterexample
+   * — a reduction to 1.0 applied while the ceiling was 2.0 (so the
+   * override is an explicit 1.0), then the ceiling falls to 1.0, then
+   * rises to 3.0. The last step reads as "tracking" because currentDPR
+   * happens to equal the OLD ceiling, so nothing was applied, and the
+   * manager reported 3.0 while the renderer kept drawing at 1.0 until
+   * something else forced a resize. The optimization only ever saved one
+   * redundant reallocation on a monitor drag — during which the browser
+   * fires a resize anyway.
    *
    * Detection is lazy — evaluation ticks and public reads — which
    * covers browser zoom (resize → interaction → evaluation) and
    * monitor drags on the next activity without a matchMedia listener.
    *
+   * The CAP is watched here too, not just the native DPR, because it has
+   * writers outside this class (a `?dpr=` pin, a capture lifting it and
+   * putting it back). Those all re-apply immediately today, but a cap
+   * raised with no follow-up would otherwise leave `currentDPR` reporting
+   * the old ceiling while a null override silently rendered at the new
+   * one — a divergence the property fuzzer finds in one step.
+   *
+   * Watching the cap matters for visibility too: a monitor drag or a
+   * zoom fires a window resize, which re-sizes the backbuffer on its own,
+   * but nothing fires for a cap change. Without this the new ceiling
+   * would have no visible effect until the user happened to resize the
+   * window.
+   *
    * @returns the live native DPR
    */
   private syncNativeDPR(): number {
     const live = this.readLiveNativeDPR();
-    if (Math.abs(live - this.lastSeenNativeDPR) < 0.01) return live;
+    const liveCap = getMaxPixelRatioCap();
+    const nativeChanged = Math.abs(live - this.lastSeenNativeDPR) >= 0.01;
+    const capChanged = liveCap !== this.lastSeenCap;
+    if (!nativeChanged && !capChanged) return live;
 
     const previousNative = this.lastSeenNativeDPR;
+    const previousCap = this.lastSeenCap;
     this.lastSeenNativeDPR = live;
+    this.lastSeenCap = liveCap;
 
     // Absolute-DPR calibrations from the old display are stale — and so
     // is its refresh-cap estimate (a new monitor can have a different
@@ -333,28 +412,31 @@ export class AdaptiveDPRManager {
     this.fpsTracker.clear();
     this.stallDetector.clear();
     this.nonStallIntervals = 0;
-    this.restingAtNative = false;
+    this.restingAtCeiling = false;
     this.lastOperatingDPR = null;
 
-    const wasTrackingNative = Math.abs(this.currentDPR - previousNative) < 0.01;
-    let applied = false;
-    if (wasTrackingNative) {
-      this.currentDPR = live;
-    } else if (this.currentDPR > live) {
-      this.currentDPR = live;
-      this.applyDPR();
-      applied = true;
-    }
-    const wasReduced = this.isReducedResolution;
-    this.isReducedResolution = this.currentDPR < live * 0.95;
+    // Both bounds are CEILINGS, not raw natives: under a cap the two
+    // differ, and comparing against native would classify a capped
+    // session as "explicitly reduced" on every display change and
+    // re-apply for nothing.
+    const previousCeiling = Math.min(previousNative, previousCap);
+    const newCeiling = this.ceiling();
+
+    // Tracking the old ceiling means "follow the new one"; anything else
+    // is an explicit reduction/manual value, kept but clamped.
+    const wasTrackingCeiling = Math.abs(this.currentDPR - previousCeiling) < 0.01;
+    this.currentDPR = wasTrackingCeiling ? newCeiling : Math.min(this.currentDPR, newCeiling);
+    this.applyDPR();
+    this.isReducedResolution = this.currentDPR < newCeiling * 0.95;
 
     log.info(
       Modules.ADAPTIVE_DPR,
-      `Native DPR changed ${previousNative.toFixed(2)} → ${live.toFixed(2)}; ` +
-        `rebased (DPR ${this.currentDPR.toFixed(2)}, floor/probe/FPS state cleared)`
+      `Ceiling changed (native ${previousNative.toFixed(2)} → ${live.toFixed(2)}, ` +
+        `cap ${previousCap} → ${liveCap}); rebased (DPR ${this.currentDPR.toFixed(2)}, ` +
+        `ceiling ${newCeiling.toFixed(2)}, floor/probe/FPS state cleared)`
     );
 
-    if (this.onDPRChange && (applied || wasReduced !== this.isReducedResolution)) {
+    if (this.onDPRChange) {
       this.onDPRChange(this.currentDPR, this.isReducedResolution);
     }
     return live;
@@ -703,7 +785,7 @@ export class AdaptiveDPRManager {
     // Rejected: revert and floor (repeated identical rejections
     // escalate the retry TTL exponentially — see BoundsLedger).
     this.currentDPR = probe.previousDPR;
-    this.isReducedResolution = this.currentDPR < this.lastSeenNativeDPR * 0.95;
+    this.isReducedResolution = this.currentDPR < this.ceiling() * 0.95;
     this.applyDPR();
     const ttlMs = this.boundsLedger.recordRejection(probe.probedDPR, timestamp);
 
@@ -795,7 +877,7 @@ export class AdaptiveDPRManager {
     this.applyDPR();
 
     // Update reduced resolution mode status
-    this.isReducedResolution = newDPR < this.lastSeenNativeDPR * 0.95;
+    this.isReducedResolution = newDPR < this.ceiling() * 0.95;
 
     log.custom(
       LogEmoji.PERFORMANCE,
@@ -845,7 +927,7 @@ export class AdaptiveDPRManager {
     if (this.currentDPR <= 1.0 + 0.001) return;
 
     this.currentDPR = 1.0;
-    this.isReducedResolution = this.currentDPR < this.lastSeenNativeDPR * 0.95;
+    this.isReducedResolution = this.currentDPR < this.ceiling() * 0.95;
     this.applyDPR();
 
     if (this.onDPRChange) {
@@ -857,12 +939,16 @@ export class AdaptiveDPRManager {
    * Scale DPR up for better quality
    */
   private scaleUp(fps: number, timestamp: number): void {
-    // Don't exceed the native DPR, nor a demoted ceiling (evidence
+    // Don't exceed the session ceiling (the display's DPR, capped by the
+    // allow-high-DPR setting), nor a LEARNED demoted ceiling (evidence
     // says this scene can't sustain the above-1.0 luxury right now).
-    const maxDPR = Math.min(
-      this.lastSeenNativeDPR,
-      this.boundsLedger.dprCeiling ?? this.lastSeenNativeDPR
-    );
+    //
+    // With high DPR disallowed the two coincide at 1.0 and the learned
+    // demotion becomes inert by construction — which is the point: this
+    // setting is that same demotion, applied up front instead of after
+    // the scene has spent seconds proving it at ~10fps.
+    const ceiling = this.ceiling();
+    const maxDPR = Math.min(ceiling, this.boundsLedger.dprCeiling ?? ceiling);
     const newDPR = Math.min(maxDPR, this.currentDPR * this.config.scaleUpFactor);
 
     // Only apply if there's a meaningful change and we're not at max
@@ -877,7 +963,7 @@ export class AdaptiveDPRManager {
     this.applyDPR();
 
     // Update reduced resolution mode status
-    this.isReducedResolution = newDPR < this.lastSeenNativeDPR * 0.95;
+    this.isReducedResolution = newDPR < this.ceiling() * 0.95;
 
     log.custom(
       LogEmoji.PERFORMANCE,
@@ -918,10 +1004,14 @@ export class AdaptiveDPRManager {
     this.isEnabled = enabled;
 
     if (!enabled) {
-      // Reset to the LIVE native DPR when disabled — the display may
-      // have changed since construction (monitor drag, browser zoom).
-      const nativeDPR = this.syncNativeDPR();
-      this.currentDPR = nativeDPR;
+      // Reset to the LIVE ceiling when disabled — sync first because the
+      // display may have changed since construction (monitor drag,
+      // browser zoom). The ceiling, not the native DPR: turning
+      // adaptation off means "stop lowering quality for FPS", not
+      // "ignore the allow-high-DPR setting".
+      this.syncNativeDPR();
+      const ceiling = this.ceiling();
+      this.currentDPR = ceiling;
       this.applyDPR();
       this.isReducedResolution = false;
       this.hysteresis.clear();
@@ -931,11 +1021,11 @@ export class AdaptiveDPRManager {
       this.fpsTracker.clear();
       this.stallDetector.clear();
       this.nonStallIntervals = 0;
-      this.restingAtNative = false;
+      this.restingAtCeiling = false;
       this.lastOperatingDPR = null;
 
       if (this.onDPRChange) {
-        this.onDPRChange(nativeDPR, false);
+        this.onDPRChange(ceiling, false);
       }
     }
 
@@ -976,7 +1066,8 @@ export class AdaptiveDPRManager {
       dprFloor: this.boundsLedger.dprFloor,
       probing: this.probeController.isPending,
       refreshRateCap: this.refreshRateEstimator.getCap(),
-      dprCeiling: this.boundsLedger.dprCeiling ?? nativeDPR,
+      dprCeiling: Math.min(this.ceiling(), this.boundsLedger.dprCeiling ?? nativeDPR),
+      allowHighDPR: isHighDPRAllowed(),
     };
   }
 
@@ -1004,7 +1095,9 @@ export class AdaptiveDPRManager {
   /**
    * Set manual DPR value (only works when adaptive is disabled)
    *
-   * @param dpr - Device pixel ratio to set (clamped to 0.25 - native DPR)
+   * @param dpr - Device pixel ratio to set (clamped to 0.25 - the session
+   *   ceiling, i.e. the display's DPR capped by the allow-high-DPR
+   *   setting)
    */
   setManualDPR(dpr: number): void {
     if (this.isEnabled) {
@@ -1015,35 +1108,115 @@ export class AdaptiveDPRManager {
       return;
     }
 
-    // Clamp DPR to reasonable range against the LIVE native value.
-    const nativeDPR = this.syncNativeDPR();
+    // Clamp against the LIVE ceiling. The manual slider is an
+    // interactive control, so the cap binds here too — the setting is a
+    // hard ceiling for everything on screen, and the slider's own range
+    // is built from the same number (see performance-setup).
+    this.syncNativeDPR();
+    const ceiling = this.ceiling();
     const minDPR = 0.25;
-    const clampedDPR = clamp(dpr, minDPR, nativeDPR);
+    const clampedDPR = clamp(dpr, minDPR, ceiling);
 
     // DPR changes force renderer/post-processing target reallocations, so
     // avoid repeating that expensive path for duplicate slider/input events.
     if (Math.abs(clampedDPR - this.currentDPR) < 0.01) return;
 
     this.currentDPR = clampedDPR;
-    this.isReducedResolution = clampedDPR < nativeDPR * 0.95;
+    this.isReducedResolution = clampedDPR < ceiling * 0.95;
     this.applyDPR();
 
     log.info(Modules.ADAPTIVE_DPR, `Manual DPR set to ${clampedDPR.toFixed(2)}`);
   }
 
   /**
+   * Allow or forbid rendering above CSS resolution (DPR 1.0).
+   *
+   * The runtime face of `renderingControls.defaults.allowHighDPR` /
+   * `viewer_config.allow_high_dpr`. Writes the shared pixel-ratio cap
+   * (see `rendering/pixel-ratio-cap`) and then re-settles the operating
+   * DPR so the click has a visible effect immediately rather than after
+   * a hysteresis window:
+   *
+   * - Turning it ON while ADAPTIVE: jump straight to the new ceiling.
+   *   The user asked to see HiDPI; if the scene cannot sustain it the
+   *   loop walks back down within a probe window, which is honest
+   *   feedback rather than a silent no-op.
+   * - Turning it ON while MANUAL: widen the range only, leave the
+   *   chosen DPR alone. In manual mode the user's number is
+   *   authoritative and must not be moved out from under them.
+   * - Turning it OFF: clamp down at once in both modes. A cap that does
+   *   not bind immediately is not a cap.
+   *
+   * No-op while pinned, mirroring `setEnabled` — a `?dpr=` session is
+   * deliberately immune to persisted per-scene settings.
+   */
+  setHighDPRAllowed(allowed: boolean): void {
+    if (this.pinned) {
+      log.info(
+        Modules.ADAPTIVE_DPR,
+        `Ignoring setHighDPRAllowed(${allowed}) — DPR is pinned for this session (?dpr= URL param)`
+      );
+      return;
+    }
+    if (isHighDPRAllowed() === allowed) return;
+
+    // Remembered across the cap write: syncNativeDPR's rebase settles a
+    // session that was tracking the ceiling ONTO the new ceiling, which
+    // is right for adaptive mode but would move a manual value the user
+    // chose deliberately.
+    const beforeDPR = this.currentDPR;
+
+    setHighDPRAllowed(allowed);
+    // Does the real work: detects the cap change, clears bounds/probe/FPS
+    // state calibrated for the old ceiling, and re-applies.
+    this.syncNativeDPR();
+
+    const ceiling = this.ceiling();
+    const target = this.isEnabled ? ceiling : Math.min(beforeDPR, ceiling);
+    if (Math.abs(target - this.currentDPR) >= 0.01) {
+      this.currentDPR = target;
+      this.applyDPR();
+    }
+    this.isReducedResolution = this.currentDPR < ceiling * 0.95;
+
+    log.info(
+      Modules.ADAPTIVE_DPR,
+      `High DPR ${allowed ? 'allowed' : 'disallowed'} ` +
+        `(ceiling ${ceiling.toFixed(2)}, DPR ${this.currentDPR.toFixed(2)})`
+    );
+
+    if (this.onDPRChange) {
+      this.onDPRChange(this.currentDPR, this.isReducedResolution);
+    }
+  }
+
+  /** Whether the viewer may currently render above CSS resolution. */
+  isHighDPRAllowed(): boolean {
+    return isHighDPRAllowed();
+  }
+
+  /**
    * Pin a fixed manual DPR for the whole session (`?dpr=` URL param).
    *
-   * Disables adaptive mode, applies `dpr` as a manual DPR (clamped to
-   * [0.25, native]), and locks the enabled state: subsequent
-   * `setEnabled()` calls (persisted per-scene settings, the Performance
-   * toggle, scene metadata) are ignored for the rest of the session.
-   * Intended for deterministic E2E/visual-regression runs and repros.
+   * Disables adaptive mode, applies `dpr` as a manual DPR, and locks the
+   * enabled state: subsequent `setEnabled()` / `setHighDPRAllowed()`
+   * calls (persisted per-scene settings, the Performance toggles, scene
+   * metadata) are ignored for the rest of the session. Intended for
+   * deterministic E2E/visual-regression runs and repros.
+   *
+   * An explicit pin RAISES the pixel-ratio cap to the pinned value if
+   * needed, so `?dpr=2` renders at 2 even with high DPR disallowed —
+   * otherwise the seam would silently clamp the pin to 1.0 and the
+   * parameter would look broken. The pin is still bounded by the
+   * display: `?dpr=4` on a 2x screen pins 2.
    *
    * @param dpr - Device pixel ratio to pin
    */
   pinManualDPR(dpr: number): void {
     this.setEnabled(false);
+    if (Number.isFinite(dpr) && dpr > getMaxPixelRatioCap()) {
+      setMaxPixelRatioCap(dpr);
+    }
     this.setManualDPR(dpr);
     this.pinned = true;
     log.info(Modules.ADAPTIVE_DPR, `DPR pinned at ${this.currentDPR.toFixed(2)} for this session`);
@@ -1100,10 +1273,16 @@ export class AdaptiveDPRManager {
   }
 
   /**
-   * Restore native DPR for the resting frame, just before the loop
+   * Restore full quality for the resting frame, just before the loop
    * idle-pauses. The static image the user is about to study should be
-   * sharp — reduced DPR only ever traded quality for interaction
-   * smoothness, and there is no interaction anymore.
+   * as sharp as this session allows — reduced DPR only ever traded
+   * quality for interaction smoothness, and there is no interaction
+   * anymore.
+   *
+   * "Full quality" is the session CEILING, not the native DPR: with high
+   * DPR disallowed, resting at native would both contradict the setting
+   * and pay a 4x-pixel render-target reallocation (plus a visible
+   * sharpen/soften pop) on every idle/resume cycle.
    *
    * Mutates OPERATING state only (never the floor/backoff — see
    * notifyPaused). Remembers the operating DPR so notifyResumed() can
@@ -1114,18 +1293,19 @@ export class AdaptiveDPRManager {
    */
   prepareIdleFrame(): boolean {
     if (!this.isEnabled) return false;
-    const nativeDPR = this.syncNativeDPR();
-    if (this.currentDPR >= nativeDPR - 0.01) return false;
+    this.syncNativeDPR();
+    const ceiling = this.ceiling();
+    if (this.currentDPR >= ceiling - 0.01) return false;
 
     this.lastOperatingDPR = this.currentDPR;
-    this.currentDPR = nativeDPR;
-    this.restingAtNative = true;
+    this.currentDPR = ceiling;
+    this.restingAtCeiling = true;
     this.isReducedResolution = false;
     this.applyDPR();
 
     log.info(
       Modules.ADAPTIVE_DPR,
-      `Idle: restored native DPR ${nativeDPR.toFixed(2)} for the resting frame ` +
+      `Idle: restored DPR to the ceiling ${ceiling.toFixed(2)} for the resting frame ` +
         `(operating DPR ${this.lastOperatingDPR.toFixed(2)} remembered for resume)`
     );
 
@@ -1138,25 +1318,26 @@ export class AdaptiveDPRManager {
   /**
    * The loop is starting again after an idle rest: snap straight back
    * to the remembered operating DPR in ONE step (clamped to the live
-   * native). Without this, every interaction burst after an idle
+   * ceiling). Without this, every interaction burst after an idle
    * restore would re-discover the reduction reactively — a cascade of
    * scale-downs, probes, and render-target reallocations.
    */
   notifyResumed(): void {
-    if (!this.isEnabled || !this.restingAtNative) return;
-    this.restingAtNative = false;
+    if (!this.isEnabled || !this.restingAtCeiling) return;
+    this.restingAtCeiling = false;
 
-    const nativeDPR = this.syncNativeDPR();
+    this.syncNativeDPR();
+    const ceiling = this.ceiling();
     const target = Math.min(
-      this.lastOperatingDPR ?? nativeDPR,
-      this.boundsLedger.dprCeiling ?? nativeDPR,
-      nativeDPR
+      this.lastOperatingDPR ?? ceiling,
+      this.boundsLedger.dprCeiling ?? ceiling,
+      ceiling
     );
     this.lastOperatingDPR = null;
     if (Math.abs(target - this.currentDPR) < 0.01) return;
 
     this.currentDPR = target;
-    this.isReducedResolution = target < nativeDPR * 0.95;
+    this.isReducedResolution = target < ceiling * 0.95;
     this.applyDPR();
 
     log.info(

@@ -183,6 +183,7 @@ describe('rendering-controls-utils', () => {
         ['naturalDrag', 'naturalDrag' as const],
         ['dynamicClippingEnabled', 'dynamicClippingEnabled' as const],
         ['adaptiveDPREnabled', 'adaptiveDPREnabled' as const],
+        ['allowHighDPR', 'allowHighDPR' as const],
         ['cinematicMode', 'cinematicMode' as const],
       ])('%s rejects string injection and falls back to default', (_name, key) => {
         const defaults = getDefaultRenderingSettings();

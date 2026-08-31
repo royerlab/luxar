@@ -249,6 +249,7 @@ export function validateRenderingSettings(settings: Partial<RenderingSettings>):
     merged.adaptiveDPREnabled,
     defaults.adaptiveDPREnabled
   );
+  merged.allowHighDPR = booleanOrDefault(merged.allowHighDPR, defaults.allowHighDPR);
   merged.cinematicMode = booleanOrDefault(merged.cinematicMode, defaults.cinematicMode);
   merged.autoDolly = booleanOrDefault(merged.autoDolly, defaults.autoDolly);
   // Bound to the slider's own range: a hand-edited amplitude of 900% would
