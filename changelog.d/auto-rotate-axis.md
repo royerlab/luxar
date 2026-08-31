@@ -15,7 +15,7 @@ indefinitely with no pole flip.
 When a fixed scene axis approaches the view direction, the selector's
 axis-aligned screen box of the projected bounds is not roll-invariant, so a
 scene near an LOD threshold can breathe between levels. See the
-[viewer guide](docs/guides/user/VIEWER_GUIDE.md) for details.
+[viewer guide](../docs/guides/user/VIEWER_GUIDE.md) for details.
 
 Scenes can author it from Python as `ViewerConfig(auto_rotate=True,
 auto_rotate_axis="view")`, and the choice persists per scene with the rest
