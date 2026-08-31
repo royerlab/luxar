@@ -59,6 +59,11 @@ WORKFLOW = REPO / ".github/workflows/ci.yml"
 #: of narrow escapes.
 GATE_INPUTS: list[tuple[str, str, str]] = [
     (
+        ".pre-commit-config.yaml",
+        "py",
+        "test_mypy_gate_targets_stay_synchronized parses the mypy hook entry",
+    ),
+    (
         ".gitattributes",
         "py",
         "test_docs_workflow.py derives the published LFS candidate set from it",
