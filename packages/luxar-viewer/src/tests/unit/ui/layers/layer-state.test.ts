@@ -243,13 +243,23 @@ describe('LayerStateManager', () => {
             {
               path: 'tiles/part_0',
               type: 'gsplats',
-              attrs: { label_vocabulary: { '7': 'cell', '9007199254740993': 'artifact' } },
+              attrs: {
+                label_vocabulary: {
+                  '9007199254740993': 'cell',
+                  '9007199254740995': 'artifact',
+                },
+              },
               hasSpatialIndex: true,
             },
             {
               path: 'tiles/part_1',
               type: 'gsplats',
-              attrs: { label_vocabulary: { '7': 'cell', '9007199254740993': 'artifact' } },
+              attrs: {
+                label_vocabulary: {
+                  '9007199254740995': 'artifact',
+                  '9007199254740993': 'cell',
+                },
+              },
               hasSpatialIndex: true,
             },
           ],
@@ -260,8 +270,8 @@ describe('LayerStateManager', () => {
     mgr.initFromSceneGraph(graph);
 
     expect(mgr.getLayer('tiles')!.labelVocabulary).toEqual([
-      { id: '7', name: 'cell' },
-      { id: '9007199254740993', name: 'artifact' },
+      { id: '9007199254740993', name: 'cell' },
+      { id: '9007199254740995', name: 'artifact' },
     ]);
   });
 

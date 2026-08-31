@@ -106,9 +106,7 @@ function deriveLabelVocabularyFromDescendants(node: SceneNode): LabelVocabulary 
     if (
       !candidate ||
       candidate.length !== first.length ||
-      candidate.some(
-        (entry, index) => entry.id !== first[index].id || entry.name !== first[index].name
-      )
+      candidate.some((entry) => first.find((item) => item.id === entry.id)?.name !== entry.name)
     ) {
       return undefined;
     }
