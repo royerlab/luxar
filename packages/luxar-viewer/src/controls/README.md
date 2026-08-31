@@ -223,8 +223,10 @@ class LuxarOrbitControls extends EventDispatcher {
   enableZoom: boolean;
   autoRotate: boolean;
   autoRotateSpeed: number; // 0.25 = 4 min/rotation
-  autoRotateAxis: 'vertical' | 'horizontal' | 'view'; // camera frame; also
-  // the default axis of applyOrbitRotation, so recorded turntables match
+  // camera frame ('vertical' | 'horizontal' | 'view') or a fixed scene axis
+  // ('world-x' | 'world-y' | 'world-z'); also the default axis of
+  // applyOrbitRotation, so recorded turntables match the preview
+  autoRotateAxis: AutoRotateAxis;
   mouseButtons: { LEFT; MIDDLE; RIGHT };
 
   update(deltaTime?: number): boolean;

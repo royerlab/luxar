@@ -306,11 +306,25 @@ class TestViewerConfig:
             ViewerConfig(auto_rotate_axis="z")
 
     def test_valid_auto_rotate_axes(self) -> None:
-        # Named in the camera frame, not x/y/z — the viewer's dropdown and the
-        # accepted token set have to agree or an authored scene silently falls
-        # back to the screen-vertical turntable.
-        for axis in ("vertical", "horizontal", "view"):
+        # The camera-frame three are words and the world three are letters —
+        # the viewer's dropdown and this accepted set have to agree or an
+        # authored scene silently falls back to the screen-vertical turntable.
+        for axis in (
+            "vertical",
+            "horizontal",
+            "view",
+            "world-x",
+            "world-y",
+            "world-z",
+        ):
             assert ViewerConfig(auto_rotate_axis=axis).auto_rotate_axis == axis
+
+    def test_world_axis_letters_are_not_bare(self) -> None:
+        # A bare letter is rejected: it would be ambiguous between a world axis
+        # and a data axis, which is why the world tokens carry the prefix.
+        for axis in ("x", "y", "z", "world_y", "World-Y"):
+            with pytest.raises(ValueError, match="auto_rotate_axis must be one of"):
+                ViewerConfig(auto_rotate_axis=axis)
 
     def test_auto_rotate_axis_round_trips_through_dict(self) -> None:
         vc = ViewerConfig(auto_rotate=True, auto_rotate_axis="view")
