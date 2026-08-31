@@ -452,8 +452,10 @@ vc = luxar.ViewerConfig(
     # full level of the halving ladder. A rolling scene parked near a switch
     # threshold will therefore breathe between levels (and a turntable
     # recording pays extra LOD-settle ticks per frame). Hysteresis softens it;
-    # "vertical" and "horizontal" change the view legitimately and are not
-    # affected in the same way.
+    # a world axis is affected to the extent that it approaches the view
+    # direction. At exact alignment the turntable is a pure roll with a
+    # stationary camera. "vertical" and "horizontal" change the view
+    # legitimately and are not affected in the same way.
     auto_rotate_axis="vertical",
 )
 
