@@ -358,6 +358,9 @@ class TestFileLevel:
         with pytest.raises(ValueError, match="without_label_ids"):
             export_inria_ply(store, tmp_path / "out.ply")
 
+        with pytest.raises(ValueError, match="without_label_ids"):
+            gsplat_data_to_inria_ply(labeled)
+
     def test_empty_export_raises(self) -> None:
         empty = GSplatData(
             centers=np.zeros((0, 3), np.float32),

@@ -290,6 +290,12 @@ def gsplat_data_to_inria_ply(
         raise ValueError(f"sh_degree must be in [0, 3]; got {sh_degree}")
     if data.n_splats == 0:
         raise ValueError("Cannot export an empty splat set")
+    if data.label_ids is not None:
+        raise ValueError(
+            "cannot export categorical channel 'label_ids' to INRIA PLY: the "
+            "format has no field for the id-to-name vocabulary. Remove it first "
+            "(`GSplatData.without_label_ids()`)."
+        )
 
     centers, sigma, amplitudes, per_splat_colors = _select_3d(
         data, timepoint, slice_dim, slice_index
@@ -365,13 +371,6 @@ def export_inria_ply(
             f"{Path(input_path).name}: not a flat/matrix-shaped gsplat store "
             f"({exc}). Collapse it first with `luxar gsplat flatten`."
         ) from exc
-
-    if data.label_ids is not None:
-        raise ValueError(
-            "cannot export categorical channel 'label_ids' to INRIA PLY: the "
-            "format has no field for the id-to-name vocabulary. Call "
-            "without_label_ids() before exporting."
-        )
 
     payload = gsplat_data_to_inria_ply(data, **kwargs)  # type: ignore[arg-type]
     Path(output_path).write_bytes(payload)
