@@ -1,0 +1,1 @@
+Demo datasets can now resolve an exact subset of manifest files without downloading unused siblings. The cell-tracking demo uses this for `--datasets N`, while declared positional pairs remain atomic.
