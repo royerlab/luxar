@@ -44,9 +44,8 @@ describe('planRefinementAdmission', () => {
   });
 
   describe('never refuses on an absent signal', () => {
-    // Firefox and Safari have no `performance.memory`. Treating "unmeasurable"
-    // as "out of budget" would make them strictly worse than Chrome at
-    // rendering scenes they hold perfectly well.
+    // Production uses a device-class fallback when `performance.memory` is
+    // absent. This branch is defensive for direct callers with no usable budget.
     it.each([0, -1, Number.NaN])('admits when the budget is %p', (budget) => {
       const v = planRefinementAdmission(10 * MB, 5 * MB, budget as number);
       expect(v).toMatchObject({ admitted: true, reason: 'unbudgeted' });

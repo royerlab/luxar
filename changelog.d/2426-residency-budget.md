@@ -22,9 +22,11 @@ the tracked measured footprint.
 
 Sharing one budget across the four types is deliberate — Laniakea's ten line
 nodes are each individually affordable and only collectively fatal, so per-type
-budgets would have admitted all of them. Where no memory signal is available
-(Firefox and Safari expose none), refinement is unbounded exactly as before,
-rather than being throttled on a measurement that does not exist.
+budgets would have admitted all of them. Browsers without a heap-limit signal,
+including Firefox and Safari, use the device-class fallback pool and therefore
+receive a ceiling too. The shared working-set calculation is capped at 512 MiB,
+so sufficiently large desktop heaps resolve to the same ceiling rather than
+scaling without bound.
 
 Superseded or otherwise uncommitted refinement passes now release the previous
 cumulative payload they used for prefix-append detection instead of retaining

@@ -21,9 +21,11 @@
  * at the rung it reached and stays there — a legible partial scene rather than
  * a dead tab. Only loaders registered in the four refinement sweep maps are
  * covered; lazy `lod_group` levels are outside those maps and outside this
- * accounting. The budget uses the same device-derived scale as the eager gate,
- * but it is an independent settled-residency ceiling, not a shared reservation:
- * eager in-flight bytes and refinement residency may coexist transiently.
+ * accounting. The budget uses the eager gate's working-set calculation, including
+ * its `EAGER_WORKING_SET_CAP_BYTES` ceiling: sufficiently large desktop heaps all
+ * resolve to that same cap rather than scaling without bound. This remains an
+ * independent settled-residency ceiling, not a shared reservation; eager in-flight
+ * bytes and refinement residency may coexist transiently.
  *
  * Decoded payload bytes are measured from the typed arrays. Renderer element
  * rows are derived from each geometry's authoritative layout constant, because
@@ -88,10 +90,11 @@ export interface RefinementAdmission {
  * Over-estimating here would stop equal-count ladders several rungs early,
  * degrading scenes that were never in danger.
  *
- * A non-positive budget means "no signal" (no `performance.memory`, no
- * override) and admits everything. Refusing to refine because a measurement is
- * unavailable would make Firefox and Safari strictly worse than Chrome at
- * rendering a scene they can hold perfectly well.
+ * Production construction supplies a device-class fallback when
+ * `performance.memory` is unavailable, so Firefox and Safari are budgeted too.
+ * The non-positive branch is defensive for direct callers that explicitly supply
+ * no usable budget; it admits everything rather than treating invalid input as
+ * exhausted capacity.
  */
 export function planRefinementAdmission(
   residentBytes: number,
