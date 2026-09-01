@@ -2,9 +2,9 @@
  * Unit tests for the shared progressive-loader streaming policy
  * (data/loaders/progressive/streaming-policy.ts).
  *
- * The three geometry loaders (GSplats/Points/Lines) all drive their LOD
+ * The four geometry loaders (GSplats/Points/Lines/Mesh) all drive their LOD
  * streaming loop through these pure decisions, so pinning them here keeps the
- * three loops identical by construction and documents the contract:
+ * four loops identical by construction and documents the contract:
  *
  *  - playback: responsive — stream CACHE-RESIDENT levels within the pass
  *    budget, stop at the first cold/slow one, never block on a cold level.

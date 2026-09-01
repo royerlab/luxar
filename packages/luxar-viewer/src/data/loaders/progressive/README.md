@@ -112,7 +112,7 @@ concatenation memo only when it covers one of those discarded levels.
 ### `streaming-policy.ts`
 
 Pure decisions that drive each progressive loader's LOD streaming loop, so
-the three loops stay identical by construction. A pass is classified from
+the four loops stay identical by construction. A pass is classified from
 two facts (is a per-frame budget active? is this a background prefetch?):
 
 | Pass       | When                            | Behavior                                                                                                                                |
@@ -130,7 +130,10 @@ const pass = classifyStreamingPass(budgetDeadline !== null, viewState.prefetch =
 for (let level = startLevel; level < nLods; level++) {
   if (shouldStopBeforeLevel(pass, level, startLevel, now(), budgetDeadline)) break;
   // ... load level ...
-  const additionalResidentBytes = ladderResidentBytes() - residentBytesAtPassStart;
+  const additionalResidentBytes = Math.max(
+    0,
+    ladderResidentBytes(this.ladderResidency()) - residentBytesAtPassStart
+  );
   if (
     shouldStopAfterLevel(
       pass,
