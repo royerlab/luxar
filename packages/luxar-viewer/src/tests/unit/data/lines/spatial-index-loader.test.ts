@@ -916,6 +916,7 @@ describe('LinesSpatialIndexLoader', () => {
 
         bodyLoader.releaseAccumulator();
         expect(bodyLoader.getAccumulatorStats()).toBeNull();
+        expect(bodyLoader.getMetrics().memoryUsed).toBe(0);
 
         const second = await bodyLoader.loadLines(viewState);
         expect(bodyLoader.getAccumulatorStats()).not.toBeNull();

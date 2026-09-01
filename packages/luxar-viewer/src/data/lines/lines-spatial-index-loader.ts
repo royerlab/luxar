@@ -409,6 +409,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     this._accumulator?.dispose();
     this._accumulator = null;
     this._accumulatorReleased = true;
+    this.metrics.memoryUsed = 0;
   }
 
   /**
