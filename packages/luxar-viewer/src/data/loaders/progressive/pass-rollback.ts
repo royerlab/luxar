@@ -41,12 +41,19 @@
 import { log, Modules } from '../../../utils/log';
 
 export interface LadderRollbackState {
+  /** Logical levels represented after the failed pass. */
   loadedLevelCount: number;
+  /** Logical-level watermark captured before the failed pass appended work. */
   levelsAtPassStart: number;
+  /** Logical level count covered by the concat memo, or `null` without one. */
   concatCacheLodCount: number | null;
+  /** Separately retained payload objects after the failed pass. */
   retainedPayloadCount: number;
+  /** Retained-payload watermark captured before the failed pass appended work. */
   payloadsAtPassStart: number;
+  /** Whether the pass began from a full, not-yet-committed cache restore. */
   restoredFullLadderAtPassStart: boolean;
+  /** Total logical levels in the ladder. */
   totalLevelCount: number;
 }
 
@@ -59,6 +66,15 @@ export type LadderRollbackPlan =
       action: 'truncate';
       keep: number;
       dropped: number;
+      /**
+       * Whether the memoized concat must be discarded. True exactly when the
+       * memo covers MORE logical levels than survive, in which case it
+       * describes a prefix the loader no longer holds. A memo at or below
+       * `keep` is still a faithful concatenation of retained levels, so it is
+       * deliberately kept — the commit layer's append fast path gates on pure
+       * IDENTITY between the memo and `committedData`, and dropping a valid
+       * memo would downgrade the next commit to a full rewrite.
+       */
       invalidateConcatCache: boolean;
     };
 
@@ -73,6 +89,10 @@ export type LadderRollbackPlan =
  *
  * The returned action also accounts for folded payloads and restored full
  * snapshots, so every geometry makes the same retry/truncate/unwind choice.
+ * `loadedLevelCount` / `levelsAtPassStart` track logical ladder progress;
+ * `retainedPayloadCount` / `payloadsAtPassStart` separately reveal whether
+ * the failed pass's appends still exist as individual payloads or were folded
+ * into a cumulative payload before the failure surfaced.
  */
 export function planLadderRollback(state: LadderRollbackState): LadderRollbackPlan {
   const loaded = Math.max(0, state.loadedLevelCount);
