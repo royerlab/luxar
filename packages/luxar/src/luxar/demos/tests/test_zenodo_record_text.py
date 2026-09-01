@@ -1585,7 +1585,7 @@ def test_refresh_reports_and_discards_an_unpinned_read_without_a_fallback(
     }
 
 
-def test_refresh_preserves_quality_prose_on_a_successful_read(
+def test_refresh_preserves_supplied_metadata_absent_from_a_successful_read(
     gen: Any,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1593,7 +1593,7 @@ def test_refresh_preserves_quality_prose_on_a_successful_read(
 ) -> None:
     key = "ds/a.gsplats.zarr.zip"
     archive = tmp_path / "a.gsplats.zarr.zip"
-    write_frame(archive)
+    write_frame(archive, psnr=None, source_bytes=None)
     digest = gen._sha256_of(archive)
     monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
     monkeypatch.setattr(
@@ -1603,6 +1603,9 @@ def test_refresh_preserves_quality_prose_on_a_successful_read(
             key: {
                 "quality_note": "internal provenance",
                 "quality_caveat": "reader-facing caveat",
+                "source_shape": [100, 64, 256, 256],
+                "source_dtype": "uint16",
+                "source_bytes": 838_860_800,
             }
         },
     )
@@ -1613,6 +1616,9 @@ def test_refresh_preserves_quality_prose_on_a_successful_read(
     entry = json.loads((tmp_path / "chars.json").read_text())["archives"][key]
     assert entry["quality_note"] == "internal provenance"
     assert entry["quality_caveat"] == "reader-facing caveat"
+    assert entry["source_shape"] == [100, 64, 256, 256]
+    assert entry["source_dtype"] == "uint16"
+    assert entry["source_bytes"] == 838_860_800
 
 
 def test_a_hand_recovered_null_digest_is_not_an_unpinned_marker(gen: Any) -> None:

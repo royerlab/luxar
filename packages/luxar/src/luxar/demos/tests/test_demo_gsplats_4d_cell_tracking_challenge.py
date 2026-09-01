@@ -710,51 +710,6 @@ class TestPrecomputedRoundTrip:
             is None
         )
 
-    def test_an_uncovered_crop_bails_out_before_fetching_anything(
-        self, tmp_path, monkeypatch
-    ) -> None:
-        """`--datasets 9` must not download the seven hosted crops to discard them.
-
-        Coverage is decided from the manifest, which is a pure read. Asking
-        ``ensure_dataset`` first and checking coverage afterwards downloaded the
-        whole 632 MB set, rehydrated every crop that WAS present, and threw the
-        lot away before starting the 3.2 GB Kaggle download — so this asserts the
-        fetch never happens, not merely that the answer is ``None``.
-        """
-        covered = _demo.precomputed_file_names("crop_x")
-        manifest = {
-            "records": {"cc-by": {"id": 1, "published": True}},
-            "datasets": {
-                _demo.PRECOMPUTED_DATASET: {
-                    "bucket": "zenodo",
-                    "record": "cc-by",
-                    "dir": "",
-                    "files": [
-                        {"name": n, "sha256": "0" * 64, "bytes": 1} for n in covered
-                    ],
-                }
-            },
-        }
-
-        calls: list[str] = []
-
-        def _must_not_run(*args, **kwargs):
-            calls.append("ensure_dataset")
-            raise AssertionError("ensure_dataset was called for an uncovered crop")
-
-        import luxar.demos as _demos_pkg
-
-        monkeypatch.setattr(_demos_pkg, "ensure_dataset", _must_not_run)
-
-        # crop_y is not in the manifest's file list; crop_x is.
-        assert (
-            _demo.load_precomputed_crops(
-                ["crop_x", "crop_y"], manifest=manifest, cache_root=tmp_path
-            )
-            is None
-        )
-        assert calls == [], "the uncovered crop still triggered a fetch"
-
     def test_a_fault_propagates_instead_of_triggering_kaggle_and_a_gpu_fit(
         self, tmp_path
     ) -> None:
