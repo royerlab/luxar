@@ -399,7 +399,7 @@ export class MeshProgressiveLoader implements MeshDataLoader {
   }
 
   /**
-   * Measured footprint of the loaded ladder, for the scene-wide residency
+   * Measured footprint of the loaded ladder, for the shared sweep residency
    * budget (`scene-loader/progressive/residency-budget`). Sums real
    * `byteLength`s rather than modelling a per-element cost, so it stays correct
    * as payload columns come and go. Rung count is reported alongside so the

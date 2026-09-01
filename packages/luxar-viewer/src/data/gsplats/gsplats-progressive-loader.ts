@@ -331,7 +331,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
   }
 
   /**
-   * Measured footprint of the loaded ladder, for the scene-wide residency
+   * Measured footprint of the loaded ladder, for the shared sweep residency
    * budget (`scene-loader/progressive/residency-budget`). Sums real
    * `byteLength`s rather than modelling a per-element cost. Rung count comes
    * from `_loadedLODCount` (LOGICAL levels), not `loadedLODs.length`, which is

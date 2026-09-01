@@ -25,14 +25,15 @@
  * but it is an independent settled-residency ceiling, not a shared reservation:
  * eager in-flight bytes and refinement residency may coexist transiently.
  *
- * Bytes are MEASURED, not modelled. `measureLodBytes` sums the actual
- * `byteLength` of every typed array a loaded ladder holds, so there are no
- * per-geometry constants to get wrong and nothing to re-tune when a payload
- * gains a column. The next rung is estimated from the mean rung so far — see
- * {@link estimateNextRungBytes}. This models settled ladder bytes. During a
- * fold/commit, the previous cumulative payload can remain reachable while the
- * replacement is allocated, so the admitted node's transient peak can approach
- * twice its settled footprint; the separately bounded slice cache is omitted.
+ * Decoded payload bytes are measured from the typed arrays. Renderer element
+ * rows are derived from each geometry's authoritative layout constant, because
+ * those allocations are not present in the decoded payload. The next rung is
+ * estimated from the mean accounted rung so far — see
+ * {@link estimateNextRungBytes}. During a fold/commit, the previous cumulative
+ * CPU payload can remain reachable while the replacement is allocated, so the
+ * transient peak may add nearly one extra decoded cumulative on top of the
+ * settled payload + element-row accounting; the separately bounded slice cache
+ * is omitted.
  *
  * DECLINING MUST ALSO RETIRE THE LOADER FROM THE RUN. `runProgressiveRefinement`
  * spins while `anyHasMoreLODs()` is true, and a declined loader still has more
@@ -131,7 +132,7 @@ export function planRefinementAdmission(
  * for Lines, ~43 B/splat for GSplats), the texture row is ~3.6x the payload for
  * Lines but only ~1.5x for GSplats. So a budget fed the payload alone does not
  * merely under-count — it under-counts LINES BY ~2.4x MORE THAN GSPLATS, and
- * the scene-wide ceiling then declines a 598 MB gsplat node while admitting a
+ * the shared sweep ceiling then declines a 598 MB gsplat node while admitting a
  * 901 MB lines node. That is exactly what was observed when the cap was first
  * measured under forced pressure, and it made the cap useless for the geometry
  * it was written for.

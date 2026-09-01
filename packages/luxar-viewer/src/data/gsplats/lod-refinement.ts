@@ -99,8 +99,8 @@ export interface GSplatsRefinementCtx {
    */
   signal?: AbortSignal;
   /**
-   * Scene-wide residency ceiling for this run, shared with the other three
-   * geometry phases. Absent = unbounded (today's behaviour).
+   * Shared residency ceiling for sweep-registered progressive leaves. Absent =
+   * unbounded (today's behaviour).
    */
   residencyBudget?: RefinementResidencyBudget;
 }
@@ -129,7 +129,7 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
         rollbackToPassStart?: () => number;
         ladderResidency?: () => LadderResidency;
       };
-      // Scene-wide residency ceiling. Declining here is not enough on its own —
+      // Shared sweep residency ceiling. Declining here is not enough on its own —
       // `anyHasMoreLODs` and `getLoaderProgress` below must also exclude
       // declined paths, or the loop re-offers this loader every frame forever
       // while holding the update lock (the trap `isExhausted` already avoids).

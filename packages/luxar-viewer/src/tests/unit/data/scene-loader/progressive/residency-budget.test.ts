@@ -64,7 +64,7 @@ describe('ladderResidentBytes — the element-row term', () => {
   // A Lines element row is 96 B (6 RGBA32F texels) against a ~27 B/vertex
   // payload; a GSplats row is 64 B against ~43 B/splat. Counting only the
   // payload therefore under-reports Lines by ~2.4x MORE than GSplats, and the
-  // scene-wide ceiling declined a 598 MB gsplat node while admitting a 901 MB
+  // shared sweep ceiling declined a 598 MB gsplat node while admitting a 901 MB
   // lines node — useless for the geometry the cap was written for.
   it('adds the element rows to the decoded payload', () => {
     expect(

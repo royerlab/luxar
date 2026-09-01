@@ -324,7 +324,7 @@ export class LinesProgressiveLoader implements LinesDataLoader {
   }
 
   /**
-   * Measured footprint of the loaded ladder, for the scene-wide residency
+   * Measured footprint of the loaded ladder, for the shared sweep residency
    * budget (`scene-loader/progressive/residency-budget`).
    *
    * `measureLodBytes` sums real `byteLength`s rather than modelling a
@@ -340,7 +340,7 @@ export class LinesProgressiveLoader implements LinesDataLoader {
       elementCount: this.loadedLODs.reduce((s, d) => s + d.segmentCount, 0),
       // 6 RGBA32F texels/segment — the largest element row of any geometry, and
       // ~3.6x this payload's own bytes per vertex. Omitting it made the
-      // scene-wide budget under-count Lines far more than GSplats.
+      // shared budget under-count Lines far more than GSplats.
       bytesPerElement: LINE_FLOATS_PER_SEGMENT * Float32Array.BYTES_PER_ELEMENT,
     };
   }
