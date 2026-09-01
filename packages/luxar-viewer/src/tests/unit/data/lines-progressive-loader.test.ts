@@ -19,7 +19,10 @@ import type { LinesSpatialIndexLoader } from '../../../data/lines/lines-spatial-
 import type { LinesViewState, LoadedLinesData } from '../../../types/lines';
 import { CACHE_HIT_THRESHOLD_MS } from '../../../data/loaders/progressive/constants';
 import { SliceCache } from '../../../cache/slice-cache';
-import { buildSliceViewSig } from '../../../data/loaders/progressive/slice-cache-helper';
+import {
+  buildSliceViewSig,
+  measureLodBytes,
+} from '../../../data/loaders/progressive/slice-cache-helper';
 import { getPrefixParent } from '../../../types/prefix-lineage';
 import {
   resetLodLoadStats,
@@ -31,6 +34,7 @@ interface SubLoaderStub {
   updateView: ReturnType<typeof vi.fn>;
   updateViewWithResidency: ReturnType<typeof vi.fn>;
   prefetchChunks: ReturnType<typeof vi.fn>;
+  releaseAccumulator: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
   getMetrics: ReturnType<typeof vi.fn>;
   getActiveQueries: ReturnType<typeof vi.fn>;
@@ -139,6 +143,7 @@ function makeSubLoader(
     updateView,
     updateViewWithResidency,
     prefetchChunks: vi.fn().mockResolvedValue(undefined),
+    releaseAccumulator: vi.fn(),
     dispose: vi.fn(),
     getMetrics: vi.fn(() => stubMetrics(metrics)),
     getActiveQueries: vi.fn(() => []),
@@ -196,6 +201,10 @@ describe('LinesProgressiveLoader', () => {
         sc
       );
       await l.loadLines(viewA);
+      const key = SliceCache.makeKey('/l', buildSliceViewSig(viewA));
+      const cached = sc.peek(key)!;
+      expect(cached.payload).toHaveLength(1);
+      expect(cached.ladderDepth).toBe(2);
       await l.loadLines(viewB);
       a.updateViewWithResidency.mockClear();
       b.updateViewWithResidency.mockClear();
@@ -239,6 +248,63 @@ describe('LinesProgressiveLoader', () => {
       // All cache-hit fast → all 3 loaded → 10+5+2 = 17 segments, 20+10+4 = 34 verts.
       expect(result.segmentCount).toBe(17);
       expect(result.vertexCount).toBe(34);
+    });
+
+    it('releases decoded rung payloads after folding them into the cumulative result', async () => {
+      const result = await loader.loadLines(baseViewState);
+      const retained = (
+        loader as unknown as {
+          loadedLODs: LoadedLinesData[];
+        }
+      ).loadedLODs;
+
+      expect(loader.loadedLODCount).toBe(3);
+      expect(retained).toHaveLength(1);
+      expect(retained[0]).toBe(result);
+      expect(lodA.releaseAccumulator).toHaveBeenCalledTimes(1);
+      expect(lodB.releaseAccumulator).toHaveBeenCalledTimes(1);
+      expect(lodC.releaseAccumulator).toHaveBeenCalledTimes(1);
+    });
+
+    it('produces the same payload when levels fold incrementally or in one pass', async () => {
+      const levels = [
+        makeLodData(6, 3, 3, { color: 'uint8', rgba: true, scalars: true, mark: 11 }),
+        makeLodData(4, 2),
+        makeLodData(2, 1, 3, {
+          color: 'uint8',
+          rgba: true,
+          sharpness: true,
+          scalars: true,
+          mark: 22,
+        }),
+      ];
+      const onePassLoaders = levels.map((level) => makeSubLoader(level));
+      const incrementalLoaders = levels.map((level) => {
+        const subLoader = makeSubLoader(level);
+        subLoader.updateViewWithResidency.mockResolvedValue({
+          data: level,
+          allResident: false,
+        });
+        return subLoader;
+      });
+      const onePassLoader = new LinesProgressiveLoader(
+        onePassLoaders as unknown as LinesSpatialIndexLoader[],
+        levels.length,
+        '/one-pass'
+      );
+      const incrementalLoader = new LinesProgressiveLoader(
+        incrementalLoaders as unknown as LinesSpatialIndexLoader[],
+        levels.length,
+        '/incremental'
+      );
+
+      const onePass = await onePassLoader.loadLines(baseViewState);
+      let incremental = await incrementalLoader.loadLines(baseViewState);
+      while (incrementalLoader.hasMoreLODs) {
+        incremental = await incrementalLoader.loadLines(baseViewState);
+      }
+
+      expect(incremental).toEqual(onePass);
     });
 
     it('records lines additive load timing keys', async () => {
@@ -1221,6 +1287,12 @@ describe('LinesProgressiveLoader', () => {
       expect(metrics.queries).toBe(5); // 2 + 3
       expect(metrics.elementsLoaded).toBe(150); // 100 + 50
       expect(metrics.memoryUsed).toBe(30); // 10 + 20
+    });
+
+    it('getMetrics includes the retained cumulative payload after rung accumulators release', async () => {
+      const result = await loader.loadLines(baseViewState);
+
+      expect(loader.getMetrics().memoryUsed).toBe(measureLodBytes([result]));
     });
 
     it('addEventListener / removeEventListener fan out to every inner loader', () => {
