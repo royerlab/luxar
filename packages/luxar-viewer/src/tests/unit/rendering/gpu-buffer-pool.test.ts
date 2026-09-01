@@ -223,13 +223,18 @@ describe('GPUBufferPool', () => {
       expect(pool.getStats().pooledBuffers).toBe(0);
     });
 
-    it('does not accumulate superseded pairs across an unsliced ladder climb', () => {
-      pool.acquirePointsGeometry('unsliced-ladder', 1000);
-      pool.acquirePointsGeometry('unsliced-ladder', 2000, { canRegrow: false });
+    it('retains streaming rungs but disposes the pair superseded at completion', () => {
+      const first = pool.acquirePointsGeometry('unsliced-ladder', 1000);
+      const second = pool.acquirePointsGeometry('unsliced-ladder', 2000, { canRegrow: true });
+      const firstDispose = vi.spyOn(first, 'dispose');
+      const secondDispose = vi.spyOn(second, 'dispose');
+
       pool.acquirePointsGeometry('unsliced-ladder', 4000, { canRegrow: false });
 
-      expect(pool.getStats().pooledBuffers).toBe(0);
-      expect(pool.getStats().evictions).toBe(2);
+      expect(firstDispose).not.toHaveBeenCalled();
+      expect(secondDispose).toHaveBeenCalledTimes(1);
+      expect(pool.getStats().pooledBuffers).toBe(1);
+      expect(pool.getStats().evictions).toBe(1);
     });
 
     it('keeps the successful replacement when superseded disposal throws', () => {
@@ -684,9 +689,9 @@ describe('GPUBufferPool', () => {
         throw new Error('synthetic OOM after alloc');
       });
       try {
-        expect(() =>
-          pool.acquirePointsGeometry('grow-oom-p2', 2000, { canRegrow: false })
-        ).toThrow('synthetic OOM after alloc');
+        expect(() => pool.acquirePointsGeometry('grow-oom-p2', 2000, { canRegrow: false })).toThrow(
+          'synthetic OOM after alloc'
+        );
       } finally {
         spy.mockRestore();
       }

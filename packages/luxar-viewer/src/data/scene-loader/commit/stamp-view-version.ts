@@ -50,10 +50,10 @@ export interface LadderStampable {
 }
 
 /**
- * Whether a committed node may later need a previously superseded capacity.
- * Progressive nD nodes can shrink on a slice change and regrow into an old
- * bucket; an unsliced ladder grows monotonically, so every successful grow
- * makes its released geometry permanently obsolete.
+ * Whether a committed node should keep previously superseded capacities under
+ * the normal reuse policy. Progressive nD nodes can shrink on a slice change,
+ * and an unsliced progressive ladder retains buffers until its final commit.
+ * Once that ladder is complete, its just-released geometry is obsolete.
  */
 export function canLadderRegrow(
   userData: LadderStampable | undefined | null,
