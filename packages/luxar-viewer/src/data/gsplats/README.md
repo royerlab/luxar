@@ -9,7 +9,7 @@ specific to the GSplats node type.
 | File                              | Role                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `gsplats-spatial-index-loader.ts` | Spatial-index loader for GSplats: queries the chunk-bounds index, fetches encoded ranges through `RangeLoader`, and emits a `LoadedGSplatsData` payload                                                                                                                                                                                                                                                                                                                              |
-| `gsplats-progressive-loader.ts`   | Composite multi-LOD facade: wraps N `GSplatsSpatialIndexLoader` instances (one per LOD subgroup) and loads them sequentially. Stops at the first LOD whose load exceeds the cache-hit threshold and prefetches the next one                                                                                                                                                                                                                                                          |
+| `gsplats-progressive-loader.ts`   | Composite multi-LOD facade: wraps N `GSplatsSpatialIndexLoader` instances (one per LOD subgroup), loads them sequentially, and folds the loaded levels into one cumulative payload while tracking logical ladder depth separately. Stops at the first LOD whose load exceeds the cache-hit threshold and prefetches the next one.                                                                                                                                                    |
 | `chunk-index-loader.ts`           | Loads the GSplats `chunk_bounds` index from zarr metadata, reconciles the metadata-implied chunk count against the array's implied count (taking the smaller value on mismatch), and exposes `registerGSplatsArrayBounds` as a per-type wrapper around `ChunkPrefetcher.registerArrayBounds`                                                                                                                                                                                         |
 | `label-channel.ts`                | Compacts exact unsigned `label_ids` against `label_vocabulary`, projects their GPU-safe indices with visible splats, and resolves picked indices back to exact ids and names                                                                                                                                                                                                                                                                                                         |
 | `projection.ts`                   | Exports `createEmptyGSplatsData` (the "no visible splats" payload) only. The nD→3D projection math (marginal Cholesky, Mahalanobis attenuation, 3D center extraction) lives solely in the worker dispatcher `workers/data-worker/projection/gsplats.ts` (run on a worker, or on the main thread via `workers/data-worker/projection/in-process.ts`), backed by the fused WASM kernel + TS reference; the hand-written main-thread copy was deleted in W4 to leave one implementation |
@@ -22,6 +22,8 @@ specific to the GSplats node type.
 contract — same shape as the Points and Lines facades (constructor,
 `loadGSplats`, `updateView`, `prefetchChunks`, `dispose`, monitor
 events via `addEventListener` / `getMetrics` / `getActiveQueries`).
+The concrete loader also exposes `releaseAccumulator()` for the progressive
+ownership handoff.
 Scene-loader code never imports the concrete class — it goes through
 `loader-factory.ts`.
 
@@ -36,6 +38,10 @@ Scene-loader code never imports the concrete class — it goes through
   LOD adds residual detail. `GSplatsProgressiveLoader` concatenates
   loaded LODs in order, so the brightest splats are always present
   first regardless of how many LODs have streamed in.
+- Folded ladders keep one cumulative payload and release the decoded rung
+  accumulators after each concatenation. Because payload count no longer
+  identifies logical depth, an oversized folded SliceCache snapshot cannot be
+  trimmed safely and is skipped rather than stored with a cursor ahead of data.
 - The picking slot → on-disk element index map is composed at
   **projection** time, not load time (issue #1423). GSplats projection —
   and with it the hidden-dim visibility compaction that renumbers the

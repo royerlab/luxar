@@ -341,19 +341,21 @@ export class LinesProgressiveLoader implements LinesDataLoader {
    * @returns Levels discarded (0 when the pass appended none).
    */
   rollbackToPassStart(): number {
-    const plan = planLadderRollback(
-      this._loadedLODCount,
-      this._levelsAtPassStart,
-      this._concatCache?.lodCount ?? null
-    );
-    if (plan.dropped === 0) {
-      if (this._loadedLODCount === this.nLods && this.loadedLODs.length < this._loadedLODCount) {
-        this._retryFoldedPass = true;
-      }
+    const plan = planLadderRollback({
+      loadedLevelCount: this._loadedLODCount,
+      levelsAtPassStart: this._levelsAtPassStart,
+      concatCacheLodCount: this._concatCache?.lodCount ?? null,
+      retainedPayloadCount: this.loadedLODs.length,
+      payloadsAtPassStart: this._payloadsAtPassStart,
+      restoredFullLadderAtPassStart: this._restoredFullLadderAtPassStart,
+      totalLevelCount: this.nLods,
+    });
+    if (plan.action === 'none') return 0;
+    if (plan.action === 'retry-folded-pass') {
+      this._retryFoldedPass = true;
       return 0;
     }
-
-    if (this._restoredFullLadderAtPassStart) {
+    if (plan.action === 'unwind-restored-full') {
       this.loadedLODs = [];
       this._loadedLODCount = 0;
       this._restoredFullLadderAtPassStart = false;
@@ -362,13 +364,6 @@ export class LinesProgressiveLoader implements LinesDataLoader {
       this._concatCache = null;
       return plan.dropped;
     }
-
-    const retainedPayloadsAdded = this.loadedLODs.length - this._payloadsAtPassStart;
-    if (retainedPayloadsAdded < plan.dropped) {
-      this._retryFoldedPass = true;
-      return 0;
-    }
-
     this.loadedLODs.length = this._payloadsAtPassStart;
     this._loadedLODCount = plan.keep;
     this._retryFoldedPass = false;

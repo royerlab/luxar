@@ -314,6 +314,12 @@ def stream_ladder(
 ) -> dict[str, Any]:
     """The additive ladder a Points/Lines leaf shown whole should carry.
 
+    This bounds first-paint and per-commit work; it does not reduce the
+    terminal geometry itself. The viewer folds decoded rungs into one
+    cumulative payload, so a completed ladder retains approximately the same
+    payload bytes as the equivalent plain leaf rather than every rung plus a
+    second cumulative copy.
+
     The Points/Lines counterpart of choosing ``stream`` above. Those adders take
     a ladder spec directly rather than going through a recipe, and — unlike the
     substitutive path, where a ladder is composed in by default — an additive

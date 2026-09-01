@@ -348,13 +348,15 @@ export class MeshProgressiveLoader implements MeshDataLoader {
    * skip no-op re-commits, and what keeps the projection scratch alive.
    */
   private _concatCache: { lodCount: number; result: LoadedMeshData } | null = null;
-  // `loadedLODs.length` as the CURRENT updateView pass found it — the
-  // watermark `rollbackToPassStart()` unwinds to when the caller's commit
-  // throws. See `../loaders/progressive/pass-rollback`.
+  private _loadedLODCount = 0;
+  // Logical level and retained-payload watermarks at pass start. A successful
+  // concat folds every loaded level into one cumulative payload, so these
+  // counts intentionally differ.
   private _levelsAtPassStart = 0;
+  private _payloadsAtPassStart = 0;
   // A completed pass can still fail after loading, during projection or commit.
   // Keep it schedulable for one retry even though the ladder cursor is full.
-  private _retryCompletedPass = false;
+  private _retryFoldedPass = false;
   /** Per-pass playback budget from the CURRENT `updateView`; null outside playback. */
   private _frameBudgetMs: number | null = null;
   private _lastAllResident = true;
@@ -383,15 +385,15 @@ export class MeshProgressiveLoader implements MeshDataLoader {
     // another level (see `_budgetRefusal`'s docstring) — report no further work
     // so the refinement loop leaves the node instead of re-failing it forever.
     if (this._budgetRefusal) return false;
-    if (this._retryCompletedPass) return true;
+    if (this._retryFoldedPass) return true;
     // While a playback frame budget is active the budgeted prefix IS the target:
     // no background refinement between animation ticks.
     if (this._frameBudgetMs !== null) return false;
-    return this.loadedLODs.length < this.nLods;
+    return this._loadedLODCount < this.nLods;
   }
 
   get loadedLODCount(): number {
-    return this.loadedLODs.length;
+    return this._loadedLODCount;
   }
 
   get totalLODCount(): number {
@@ -407,16 +409,22 @@ export class MeshProgressiveLoader implements MeshDataLoader {
    * @returns Levels discarded (0 when the pass appended none).
    */
   rollbackToPassStart(): number {
-    const plan = planLadderRollback(
-      this.loadedLODs.length,
-      this._levelsAtPassStart,
-      this._concatCache?.lodCount ?? null
-    );
-    if (plan.dropped === 0 && this.loadedLODs.length === this.nLods) {
-      this._retryCompletedPass = true;
+    const plan = planLadderRollback({
+      loadedLevelCount: this._loadedLODCount,
+      levelsAtPassStart: this._levelsAtPassStart,
+      concatCacheLodCount: this._concatCache?.lodCount ?? null,
+      retainedPayloadCount: this.loadedLODs.length,
+      payloadsAtPassStart: this._payloadsAtPassStart,
+      restoredFullLadderAtPassStart: false,
+      totalLevelCount: this.nLods,
+    });
+    if (plan.action === 'retry-folded-pass') this._retryFoldedPass = true;
+    if (plan.action === 'truncate') {
+      this.loadedLODs.length = this._payloadsAtPassStart;
+      this._loadedLODCount = plan.keep;
+      this._retryFoldedPass = false;
+      if (plan.invalidateConcatCache) this._concatCache = null;
     }
-    if (plan.dropped > 0) this.loadedLODs.length = plan.keep;
-    if (plan.invalidateConcatCache) this._concatCache = null;
     return plan.dropped;
   }
 
@@ -547,19 +555,10 @@ export class MeshProgressiveLoader implements MeshDataLoader {
    * That does NOT make the charged figure a bound on true peak residency,
    * which is a separate quantity this sum does not track. Per level `i`, the
    * charged term is `stored_i + 4·decoded_i` (plus that level's own
-   * `maxChunk_i`, which is transient and never resident); true residency after
-   * a full reveal is `decoded_i` held by the level's own loader PLUS its share
-   * of the memoized concat copy (`concatenateMemoized` below) — the per-level
-   * buffers stay resident AND the concat holds a second copy of the same
-   * values, so residency is ≈ `2·decoded_i`. The ratio of the two depends on
-   * how much narrower the stored dtype is than the always-4-byte decoded
-   * value: for a float32 3D mesh, stored ≈ decoded, so `2·decoded_i` works out
-   * to only ≈1x the charged sum; for a narrow quantized store (e.g. `stored_i
-   * ≈ decoded_i / 4`), it is ≈1.6x the charged sum. So true residency is at
-   * most ~1.6x this sum for a narrow-dtype store, and close to 1x for a
-   * float32 one — never the flat "roughly twice" a reader might otherwise
-   * assume from the over-estimate above. Tightening the ceiling to the true
-   * residency figure is a deliberate follow-up, not bundled into this fix.
+   * `maxChunk_i`, which is transient and never resident). After each successful
+   * concat, the level loaders release their decoded payloads and the composite
+   * retains only the cumulative payload plus its projection scratch. Tightening
+   * the ceiling to a true peak-residency model remains a separate concern.
    *
    * ## Why a level's own rejection propagates, unswallowed
    *
@@ -640,7 +639,7 @@ export class MeshProgressiveLoader implements MeshDataLoader {
     // Record the per-pass playback budget FIRST: a pause re-trigger arrives with
     // the same view state and must still clear the budget.
     this._frameBudgetMs = viewState.frameBudgetMs ?? null;
-    this._retryCompletedPass = false;
+    this._retryFoldedPass = false;
     const budgetDeadline =
       this._frameBudgetMs !== null ? performance.now() + this._frameBudgetMs : null;
 
@@ -662,8 +661,9 @@ export class MeshProgressiveLoader implements MeshDataLoader {
     const isPrefetch = viewState.prefetch === true;
 
     const pass = classifyStreamingPass(budgetDeadline !== null, isPrefetch);
-    const startLevel = this.loadedLODs.length;
+    const startLevel = this._loadedLODCount;
     this._levelsAtPassStart = startLevel;
+    this._payloadsAtPassStart = this.loadedLODs.length;
 
     for (let level = startLevel; level < this.nLods; level++) {
       // A dispose() racing the awaited level below clears `lodLoaders`, so the
@@ -689,6 +689,7 @@ export class MeshProgressiveLoader implements MeshDataLoader {
       // the whole prefix's arrays that nothing will read).
       if (this._disposed) break;
       this.loadedLODs.push(lodData);
+      this._loadedLODCount++;
 
       if (!this._initialLoadDone) {
         log.custom(
@@ -705,10 +706,10 @@ export class MeshProgressiveLoader implements MeshDataLoader {
     if (!this._initialLoadDone && startLevel === 0) this._initialLoadDone = true;
 
     const totalFaces = this.loadedLODs.reduce((s, d) => s + d.faceCount, 0);
-    if (this.loadedLODs.length < this.nLods) {
+    if (this._loadedLODCount < this.nLods) {
       log.info(
         Modules.SCENE_LOADER,
-        `Progressive Mesh: ${this.loadedLODs.length}/${this.nLods} LODs ` +
+        `Progressive Mesh: ${this._loadedLODCount}/${this.nLods} LODs ` +
           `(${totalFaces} faces) — revealing`
       );
     } else if (startLevel < this.nLods) {
@@ -737,11 +738,16 @@ export class MeshProgressiveLoader implements MeshDataLoader {
   private concatenateMemoized(session?: UpdateSession): LoadedMeshData {
     const concatSession = session?.begin('Concatenate LODs');
     try {
-      if (this._concatCache && this._concatCache.lodCount === this.loadedLODs.length) {
+      if (this._concatCache && this._concatCache.lodCount === this._loadedLODCount) {
         return this._concatCache.result;
       }
       const result = concatenateMeshData(this.loadedLODs);
-      this._concatCache = { lodCount: this.loadedLODs.length, result };
+      const preservesSinglePayload = this._loadedLODCount === 1 && result === this.loadedLODs[0];
+      for (let level = 0; level < this._loadedLODCount; level++) {
+        this.lodLoaders[level]?.releaseData(level === 0 && preservesSinglePayload);
+      }
+      this.loadedLODs = [result];
+      this._concatCache = { lodCount: this._loadedLODCount, result };
       return result;
     } finally {
       concatSession?.end();
@@ -776,10 +782,9 @@ export class MeshProgressiveLoader implements MeshDataLoader {
     // anyway: the committed surface is the revealed prefix's concatenation, not
     // a quantity each level owns a share of.
     const metrics = this.monitor.getMetrics();
-    const concatMemory =
-      this._concatCache && this._concatCache.lodCount > 1
-        ? meshPayloadBytes(this._concatCache.result) + meshProjectionBytes(this._concatCache.result)
-        : 0;
+    const concatMemory = this._concatCache
+      ? meshPayloadBytes(this._concatCache.result) + meshProjectionBytes(this._concatCache.result)
+      : 0;
     return {
       ...metrics,
       visibleElements: this._visibleTriangles,
@@ -794,10 +799,14 @@ export class MeshProgressiveLoader implements MeshDataLoader {
 
   dispose(): void {
     this._disposed = true;
+    if (this._concatCache?.result.texture?.kind === 'bitmap') {
+      this._concatCache.result.texture.bitmap.close();
+    }
     for (const loader of this.lodLoaders) loader.dispose();
     this.lodLoaders = [];
     this.loadedLODs = [];
-    this._retryCompletedPass = false;
+    this._loadedLODCount = 0;
+    this._retryFoldedPass = false;
     this._concatCache = null;
     // Nothing is on screen for this node any more; the cumulative counters live
     // on the (now-disposed) levels and go with them.

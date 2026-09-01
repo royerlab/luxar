@@ -3,8 +3,11 @@
 
 A points/lines leaf that loads all-at-once freezes the browser for as long as it
 takes to decode and commit — ~85 s on the 9.75M-point DESI demo before its levels
-were laddered (royerlab/luxar#808). This walks built scenes and reports, per
-laddered leaf, whether the ladder is actually *useful*.
+were laddered (royerlab/luxar#808). Additive ladders bound first-paint and
+individual commit work; they do not reduce terminal geometry residency. The
+viewer folds completed rungs into one cumulative payload, avoiding the former
+second retained copy. This walks built scenes and reports, per laddered leaf,
+whether the ladder is actually *useful*.
 
 A ladder can exist and still be worthless. For example,
 ``global_rivers_earth/terrain`` once shipped levels of 8 / 56 / 272 / 1174 /

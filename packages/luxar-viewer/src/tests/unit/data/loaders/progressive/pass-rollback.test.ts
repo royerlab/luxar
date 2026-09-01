@@ -1,17 +1,10 @@
-/**
- * Unit tests for the shared pass-start rollback plan
- * (`data/loaders/progressive/pass-rollback`).
- *
- * The plan is what stops a failed commit from escalating: without it a retry
- * resumes from the ADVANCED ladder cursor and allocates more than the attempt
- * that just failed, and on reaching the last rung flips `hasMoreLODs` false so
- * the node is stranded silently. See #2426.
- */
+/** Unit tests for the shared progressive pass rollback decision. */
 
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import {
   planLadderRollback,
   tryRollbackToPassStart,
+  type LadderRollbackState,
 } from '../../../../../data/loaders/progressive/pass-rollback';
 import { log, Modules } from '../../../../../utils/log';
 
@@ -19,77 +12,120 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+const baseState: LadderRollbackState = {
+  loadedLevelCount: 6,
+  levelsAtPassStart: 2,
+  concatCacheLodCount: 6,
+  retainedPayloadCount: 6,
+  payloadsAtPassStart: 2,
+  restoredFullLadderAtPassStart: false,
+  totalLevelCount: 8,
+};
+
 describe('planLadderRollback', () => {
-  it('drops exactly the levels the failed pass appended', () => {
-    // Pass started at 2, streamed to 6, then the commit threw.
-    expect(planLadderRollback(6, 2, 6)).toEqual({
+  it('truncates intact payloads appended by the failed pass', () => {
+    expect(planLadderRollback(baseState)).toEqual({
+      action: 'truncate',
       keep: 2,
       dropped: 4,
       invalidateConcatCache: true,
     });
   });
 
-  it('is a no-op when the pass appended nothing', () => {
-    // The throw came from the fetch, before any level landed.
-    expect(planLadderRollback(3, 3, 3)).toEqual({
-      keep: 3,
-      dropped: 0,
+  it('keeps a memo that covers only surviving levels', () => {
+    expect(planLadderRollback({ ...baseState, concatCacheLodCount: 2 })).toEqual({
+      action: 'truncate',
+      keep: 2,
+      dropped: 4,
       invalidateConcatCache: false,
     });
   });
 
-  it('keeps a memo that covers only surviving levels', () => {
-    // The memo is from the last SUCCESSFUL commit at level 2. It still
-    // describes levels the loader holds, and the commit layer's append fast
-    // path gates on its identity against `committedData` — dropping it would
-    // needlessly downgrade the next commit to a full rewrite.
-    expect(planLadderRollback(5, 2, 2).invalidateConcatCache).toBe(false);
+  it('retries a folded pass when no intact payload can be removed', () => {
+    expect(
+      planLadderRollback({
+        ...baseState,
+        loadedLevelCount: 6,
+        levelsAtPassStart: 4,
+        retainedPayloadCount: 1,
+        payloadsAtPassStart: 1,
+      })
+    ).toEqual({ action: 'retry-folded-pass', dropped: 0 });
   });
 
-  it('discards a memo that covers levels being dropped', () => {
-    expect(planLadderRollback(5, 2, 3).invalidateConcatCache).toBe(true);
+  it('keeps a full no-append pass schedulable for retry', () => {
+    expect(
+      planLadderRollback({
+        ...baseState,
+        loadedLevelCount: 8,
+        levelsAtPassStart: 8,
+        retainedPayloadCount: 1,
+        payloadsAtPassStart: 1,
+      })
+    ).toEqual({ action: 'retry-folded-pass', dropped: 0 });
   });
 
-  it('treats an absent memo as nothing to invalidate', () => {
-    expect(planLadderRollback(5, 2, null).invalidateConcatCache).toBe(false);
+  it('fully unwinds an uncommitted restored full snapshot', () => {
+    expect(
+      planLadderRollback({
+        ...baseState,
+        restoredFullLadderAtPassStart: true,
+      })
+    ).toEqual({ action: 'unwind-restored-full', dropped: 4 });
   });
 
-  it('unwinds a full ladder back to its restored prefix', () => {
-    // The Laniakea shape: a 7-rung ladder that reached 7/7 across escalating
-    // retries. Rolling back to the pass-start prefix is what keeps
-    // `hasMoreLODs` true so the failure cap can actually be reached.
-    expect(planLadderRollback(7, 4, 7)).toEqual({
-      keep: 4,
-      dropped: 3,
+  it('does nothing when an incomplete pass appended nothing', () => {
+    expect(
+      planLadderRollback({
+        ...baseState,
+        loadedLevelCount: 3,
+        levelsAtPassStart: 3,
+        retainedPayloadCount: 1,
+        payloadsAtPassStart: 1,
+      })
+    ).toEqual({ action: 'none', dropped: 0 });
+  });
+
+  it('clamps bad watermarks without dropping earlier work', () => {
+    expect(
+      planLadderRollback({
+        ...baseState,
+        loadedLevelCount: 3,
+        levelsAtPassStart: 9,
+        retainedPayloadCount: 3,
+        payloadsAtPassStart: 3,
+      })
+    ).toEqual({ action: 'none', dropped: 0 });
+  });
+
+  it('clamps a negative watermark to zero', () => {
+    expect(
+      planLadderRollback({
+        ...baseState,
+        loadedLevelCount: 4,
+        levelsAtPassStart: -2,
+        retainedPayloadCount: 4,
+        payloadsAtPassStart: 0,
+      })
+    ).toEqual({
+      action: 'truncate',
+      keep: 0,
+      dropped: 4,
       invalidateConcatCache: true,
     });
   });
 
-  describe('is defensive rather than destructive about bad watermarks', () => {
-    it('never drops levels the pass did not add (watermark above the count)', () => {
-      // A stale watermark must under-drop, not discard committed work.
-      expect(planLadderRollback(3, 9, 3)).toEqual({
-        keep: 3,
-        dropped: 0,
-        invalidateConcatCache: false,
-      });
-    });
-
-    it('clamps a negative watermark to zero', () => {
-      expect(planLadderRollback(4, -2, 4)).toEqual({
-        keep: 0,
-        dropped: 4,
-        invalidateConcatCache: true,
-      });
-    });
-
-    it('handles an empty ladder', () => {
-      expect(planLadderRollback(0, 0, null)).toEqual({
-        keep: 0,
-        dropped: 0,
-        invalidateConcatCache: false,
-      });
-    });
+  it('handles an empty ladder', () => {
+    expect(
+      planLadderRollback({
+        ...baseState,
+        loadedLevelCount: 0,
+        levelsAtPassStart: 0,
+        retainedPayloadCount: 0,
+        payloadsAtPassStart: 0,
+        totalLevelCount: 8,
+      })
+    ).toEqual({ action: 'none', dropped: 0 });
   });
 });
 

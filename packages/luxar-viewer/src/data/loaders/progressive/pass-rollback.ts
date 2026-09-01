@@ -40,23 +40,43 @@
 
 import { log, Modules } from '../../../utils/log';
 
-/** What a loader should do to undo the levels a failed pass appended. */
-export interface LadderRollbackPlan {
-  /** Level count to truncate `loadedLODs` to. */
-  keep: number;
-  /** Levels the failed pass appended; 0 when the pass added none. */
-  dropped: number;
-  /**
-   * Whether the memoized concat must be discarded. True exactly when the memo
-   * covers MORE levels than survive, in which case it describes a prefix the
-   * loader no longer holds. A memo at or below `keep` is still a faithful
-   * concatenation of levels the loader kept, so it is retained — that matters
-   * for more than speed: the commit layer's append fast path gates on pure
-   * IDENTITY between the memo and `committedData`, so needlessly dropping a
-   * still-valid memo would downgrade the next commit to a full rewrite.
-   */
-  invalidateConcatCache: boolean;
+export interface LadderRollbackState {
+  /** Logical levels represented after the failed pass. */
+  loadedLevelCount: number;
+  /** Logical-level watermark captured before the failed pass appended work. */
+  levelsAtPassStart: number;
+  /** Logical level count covered by the concat memo, or `null` without one. */
+  concatCacheLodCount: number | null;
+  /** Separately retained payload objects after the failed pass. */
+  retainedPayloadCount: number;
+  /** Retained-payload watermark captured before the failed pass appended work. */
+  payloadsAtPassStart: number;
+  /** Whether the pass began from a full, not-yet-committed cache restore. */
+  restoredFullLadderAtPassStart: boolean;
+  /** Total logical levels in the ladder. */
+  totalLevelCount: number;
 }
+
+/** What a loader should do to undo a failed pass. */
+export type LadderRollbackPlan =
+  | { action: 'none'; dropped: 0 }
+  | { action: 'retry-folded-pass'; dropped: 0 }
+  | { action: 'unwind-restored-full'; dropped: number }
+  | {
+      action: 'truncate';
+      keep: number;
+      dropped: number;
+      /**
+       * Whether the memoized concat must be discarded. True exactly when the
+       * memo covers MORE logical levels than survive, in which case it
+       * describes a prefix the loader no longer holds. A memo at or below
+       * `keep` is still a faithful concatenation of retained levels, so it is
+       * deliberately kept — the commit layer's append fast path gates on pure
+       * IDENTITY between the memo and `committedData`, and dropping a valid
+       * memo would downgrade the next commit to a full rewrite.
+       */
+      invalidateConcatCache: boolean;
+    };
 
 /**
  * Decide how far to unwind a ladder after a pass failed.
@@ -67,22 +87,34 @@ export interface LadderRollbackPlan {
  * levels the pass did not add. Under-dropping degrades to today's behaviour;
  * over-dropping would throw away committed work.
  *
- * @param loadedLevelCount - `loadedLODs.length` right now.
- * @param levelsAtPassStart - `loadedLODs.length` when the failed pass began.
- * @param concatCacheLodCount - Level count the memoized concat covers, or
- *   `null` when there is no memo.
+ * The returned action also accounts for folded payloads and restored full
+ * snapshots, so every geometry makes the same retry/truncate/unwind choice.
+ * `loadedLevelCount` / `levelsAtPassStart` track logical ladder progress;
+ * `retainedPayloadCount` / `payloadsAtPassStart` separately reveal whether
+ * the failed pass's appends still exist as individual payloads or were folded
+ * into a cumulative payload before the failure surfaced.
  */
-export function planLadderRollback(
-  loadedLevelCount: number,
-  levelsAtPassStart: number,
-  concatCacheLodCount: number | null
-): LadderRollbackPlan {
-  const total = Math.max(0, loadedLevelCount);
-  const keep = Math.min(Math.max(0, levelsAtPassStart), total);
+export function planLadderRollback(state: LadderRollbackState): LadderRollbackPlan {
+  const loaded = Math.max(0, state.loadedLevelCount);
+  const keep = Math.min(Math.max(0, state.levelsAtPassStart), loaded);
+  const dropped = loaded - keep;
+  if (dropped === 0) {
+    return loaded === state.totalLevelCount
+      ? { action: 'retry-folded-pass', dropped: 0 }
+      : { action: 'none', dropped: 0 };
+  }
+  if (state.restoredFullLadderAtPassStart) {
+    return { action: 'unwind-restored-full', dropped };
+  }
+  const retainedPayloadsAdded = state.retainedPayloadCount - state.payloadsAtPassStart;
+  if (retainedPayloadsAdded < dropped) {
+    return { action: 'retry-folded-pass', dropped: 0 };
+  }
   return {
+    action: 'truncate',
     keep,
-    dropped: total - keep,
-    invalidateConcatCache: concatCacheLodCount !== null && concatCacheLodCount > keep,
+    dropped,
+    invalidateConcatCache: state.concatCacheLodCount !== null && state.concatCacheLodCount > keep,
   };
 }
 

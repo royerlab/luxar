@@ -49,7 +49,8 @@ import {
 } from '../loaders/progressive/streaming-policy';
 import {
   deleteLadder,
-  restoreLadder,
+  measureLodBytes,
+  restoreLadderSnapshot,
   storeLadder,
 } from '../loaders/progressive/slice-cache-helper';
 import { planLadderRollback } from '../loaders/progressive/pass-rollback';
@@ -90,15 +91,16 @@ import { timeLodStageWithResult } from '../scene-loader/lod-load-stats';
  */
 function buildLadderElementIdMap(
   parts: LoadedPointsData[],
+  payloadLevelStarts: readonly number[],
+  logicalDepth: number,
   levelOffsets: readonly number[],
   totalPoints: number,
   warn: (message: string) => void
 ): Uint32Array | undefined {
-  // `parts.length + 1`: the LAST loaded level needs its closing bound too.
-  if (levelOffsets.length < parts.length + 1) {
+  if (payloadLevelStarts.length !== parts.length || levelOffsets.length <= logicalDepth) {
     warn(
-      `Progressive Points: ${levelOffsets.length} level bounds for ${parts.length} loaded ` +
-        'levels — picking labels fall back to the visible-buffer slot.'
+      `Progressive Points: inconsistent retained-payload lineage for ${parts.length} payloads ` +
+        `at logical depth ${logicalDepth} — picking labels fall back to the visible-buffer slot.`
     );
     return undefined;
   }
@@ -106,13 +108,28 @@ function buildLadderElementIdMap(
   let identity = true;
   let running = 0;
   for (const [i, part] of parts.entries()) {
+    const startLevel = payloadLevelStarts[i];
+    const endLevel = payloadLevelStarts[i + 1] ?? logicalDepth;
+    if (
+      !Number.isInteger(startLevel) ||
+      !Number.isInteger(endLevel) ||
+      startLevel < 0 ||
+      endLevel <= startLevel ||
+      endLevel > logicalDepth
+    ) {
+      warn(
+        `Progressive Points: retained payload ${i} has invalid logical level range ` +
+          `[${startLevel}, ${endLevel}) — picking labels fall back to the visible-buffer slot.`
+      );
+      return undefined;
+    }
     const ids = part.elementIds;
     // An EMPTY level writes nothing into the union map, so its missing map
     // cannot corrupt a single slot — it must not veto the other levels' (a
     // ladder level culled to zero by the current slice is ordinary).
     if (part.pointCount > 0 && part.elementIdsUnavailable === true) {
       warn(
-        `Progressive Points: level ${i} could not build a slot → on-disk map (its slots are ` +
+        `Progressive Points: payload ${i} could not build a slot → on-disk map (its slots are ` +
           'not on-disk indices) — picking labels fall back to the visible-buffer slot.'
       );
       return undefined;
@@ -121,7 +138,7 @@ function buildLadderElementIdMap(
       anyMap = true;
       if (ids.length !== part.pointCount) {
         warn(
-          `Progressive Points: level ${i} published ${ids.length} element ids for ` +
+          `Progressive Points: payload ${i} published ${ids.length} element ids for ` +
             `${part.pointCount} points — picking labels fall back to the visible-buffer slot.`
         );
         return undefined;
@@ -129,7 +146,7 @@ function buildLadderElementIdMap(
     }
     // Identity only survives while every level is fully resident and unculled:
     // its on-disk offset must equal the running sum of the LOADED counts.
-    if (levelOffsets[i] !== running) identity = false;
+    if (levelOffsets[startLevel] !== running) identity = false;
     running += part.pointCount;
   }
   if (!anyMap && identity) return undefined;
@@ -137,19 +154,17 @@ function buildLadderElementIdMap(
   const out = new Uint32Array(totalPoints);
   let w = 0;
   for (const [i, part] of parts.entries()) {
-    const base = levelOffsets[i];
-    // Rows level `i` owns in the union: anything past this belongs to the NEXT
-    // level, so a level-space index that reaches it is inconsistent with the
-    // `n_points` the offsets were built from (a store whose spatial index and
-    // attrs disagree). Refuse rather than shift it into a sibling's row.
-    const span = levelOffsets[i + 1] - base;
+    const startLevel = payloadLevelStarts[i];
+    const endLevel = payloadLevelStarts[i + 1] ?? logicalDepth;
+    const base = levelOffsets[startLevel];
+    const span = levelOffsets[endLevel] - base;
     const ids = part.elementIds;
     for (let k = 0; k < part.pointCount; k++) {
       const local = ids === undefined ? k : ids[k];
       // Negated compare so a NaN / undefined slot also fails closed.
       if (!(local < span)) {
         warn(
-          `Progressive Points: level ${i} maps a slot to index ${local}, past its ${span} ` +
+          `Progressive Points: payload ${i} maps a slot to index ${local}, past its ${span} ` +
             'on-disk rows — picking labels fall back to the visible-buffer slot.'
         );
         return undefined;
@@ -180,6 +195,8 @@ function buildLadderElementIdMap(
  */
 function concatenatePointsData(
   parts: LoadedPointsData[],
+  payloadLevelStarts: readonly number[],
+  logicalDepth: number,
   levelOffsets: readonly number[] | null,
   warn: (message: string) => void = () => {}
 ): LoadedPointsData {
@@ -199,19 +216,16 @@ function concatenatePointsData(
     };
   }
   if (parts.length === 1) {
-    // `parts[0]` is a SUB-LOD (`additive_0`) — `parts.length === 1` is not
-    // "unladdered", it is the first-paint state of EVERY ladder (this loader
-    // only exists for `n_additive_sublods` nodes).
+    // A single retained payload is either `additive_0` at first paint or a
+    // folded cumulative prefix. Both begin at logical level 0, and their map is
+    // already in the parent's union space; only the closing bound differs.
     //
     // The ladder's labels live in ONE CSR on the PARENT node (#1422), whose
     // index space is the concatenation of the levels, so a correct ladder map is
     // a per-level map offset by the preceding levels' on-disk counts (#1439).
-    // WITH `levelOffsets` that composition is running: `additive_0`'s on-disk
-    // range IS the union CSR's PREFIX, so level 0's index space already is the
-    // parent's, shifted by `levelOffsets[0] === 0` — the map is correct as it
-    // stands and the payload passes through UNCHANGED (no strip, no copy), and it
-    // stays correct as further levels land because the multi-part branch below
-    // composes them.
+    // WITH `levelOffsets`, the payload's on-disk range IS the union CSR's
+    // prefix, so its index space already is the parent's and it passes through
+    // unchanged after validating against `levelOffsets[logicalDepth]`.
     //
     // WITHOUT `levelOffsets` (no parent CSR, or a failed cross-check) there is
     // no union index space any reader could key by, so the GUARD applies
@@ -227,25 +241,31 @@ function concatenatePointsData(
     // composition cannot run, so the map is normally never built at all in that
     // case; this keeps the invariant true whatever attrs a sub-LOD carries.
     const only = parts[0];
-    const offsetOk = levelOffsets !== null && levelOffsets.length >= 2 && levelOffsets[0] === 0;
+    const offsetOk =
+      payloadLevelStarts.length === 1 &&
+      payloadLevelStarts[0] === 0 &&
+      logicalDepth >= 1 &&
+      levelOffsets !== null &&
+      levelOffsets.length > logicalDepth &&
+      levelOffsets[0] === 0;
     if (offsetOk) {
-      // Level 0 owns union rows [0, levelOffsets[1]) — `levelOffsets[0]` is 0,
-      // so its span IS its closing bound. The same three fail-closed checks
+      // The retained prefix owns union rows [0, levelOffsets[logicalDepth]).
+      // The same three fail-closed checks
       // `buildLadderElementIdMap` applies, on the one level there is:
       // a level that WANTED a map and failed to build one is NOT the identity
       // (its slots are not on-disk indices); a length mismatch means the map
       // does not describe this payload; and an id past level 0's rows names a
-      // real row belonging to additive_1 in the union CSR. An EMPTY level has
+      // real row outside the retained prefix in the union CSR. An EMPTY payload has
       // no slots to be wrong about, so it is exempt.
-      const span = levelOffsets[1];
+      const span = levelOffsets[logicalDepth];
       let failure: string | null = null;
       if (only.pointCount > 0 && only.elementIdsUnavailable === true) {
         failure =
-          'level 0 could not build a slot → on-disk map (its slots are not on-disk indices)';
+          'retained prefix could not build a slot → on-disk map (its slots are not on-disk indices)';
       } else if (only.elementIds !== undefined && only.elementIds.length !== only.pointCount) {
-        failure = `level 0 published ${only.elementIds.length} element ids for ${only.pointCount} points`;
+        failure = `retained prefix published ${only.elementIds.length} element ids for ${only.pointCount} points`;
       } else if (only.elementIds?.some((id) => !(id < span))) {
-        failure = `level 0 maps a slot past its ${span} on-disk rows`;
+        failure = `retained prefix maps a slot past its ${span} on-disk rows`;
       }
       if (failure === null) return only;
       warn(`Progressive Points: ${failure} — picking labels fall back to the visible-buffer slot.`);
@@ -325,7 +345,14 @@ function concatenatePointsData(
   // the parent declares one, otherwise not published at all (see the
   // single-part branch and `buildLadderElementIdMap`).
   if (levelOffsets !== null) {
-    const elementIds = buildLadderElementIdMap(parts, levelOffsets, totalPoints, warn);
+    const elementIds = buildLadderElementIdMap(
+      parts,
+      payloadLevelStarts,
+      logicalDepth,
+      levelOffsets,
+      totalPoints,
+      warn
+    );
     if (elementIds) result.elementIds = elementIds;
   }
 
@@ -338,6 +365,10 @@ function concatenatePointsData(
 export class PointsProgressiveLoader implements PointsDataLoader {
   private lodLoaders: PointsSpatialIndexLoader[];
   private loadedLODs: LoadedPointsData[] = [];
+  // Payload i spans logical levels [_payloadLevelStarts[i],
+  // _payloadLevelStarts[i + 1] ?? _loadedLODCount); folding collapses this to [0].
+  private _payloadLevelStarts: number[] = [];
+  private _loadedLODCount = 0;
   private lastViewState: PointsViewState | null = null;
   private nLods: number;
   private monitor: ProgressiveMonitorAdapter;
@@ -355,13 +386,18 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     lodCount: number;
     result: LoadedPointsData;
   } | null = null;
-  // `loadedLODs.length` as the CURRENT updateView pass found it — the
-  // watermark `rollbackToPassStart()` unwinds to when the caller's commit
-  // throws. See `../loaders/progressive/pass-rollback`.
+  // Logical ladder depth and retained payload count as the CURRENT updateView
+  // pass found them. The pass advances both before its caller has committed
+  // the result, while concatenation may later fold many logical rungs into one
+  // retained payload. Rollback needs both watermarks to distinguish an intact
+  // append from an already-folded result.
+  // See `../loaders/progressive/pass-rollback`.
   private _levelsAtPassStart = 0;
+  private _payloadsAtPassStart = 0;
+  private _restoredFullLadderAtPassStart = false;
   // A completed pass can still fail after loading, during projection or commit.
   // Keep it schedulable for one retry even though the ladder cursor is full.
-  private _retryCompletedPass = false;
+  private _retryFoldedPass = false;
   // Per-sub-LOD cumulative energy fractions e(k) (the build-time
   // `lod_stats.energy_fraction_cum` stamps), normalized at construction:
   // non-null only when EVERY sub-LOD carries a stamp (a partially stamped
@@ -424,16 +460,16 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     // refinement loop holding a stale reference stops instead of indexing
     // into the now-empty lodLoaders. Mirrors GSplatsProgressiveLoader.
     if (this._disposed) return false;
-    if (this._retryCompletedPass) return true;
+    if (this._retryFoldedPass) return true;
     // While a playback frame budget is active, the budgeted prefix IS the
     // target: no background refinement between animation ticks; the commit
     // stamps the prefix complete. Mirrors GSplatsProgressiveLoader.
     if (this._frameBudgetMs !== null) return false;
-    return this.loadedLODs.length < this.nLods;
+    return this._loadedLODCount < this.nLods;
   }
 
   get loadedLODCount(): number {
-    return this.loadedLODs.length;
+    return this._loadedLODCount;
   }
 
   get totalLODCount(): number {
@@ -449,18 +485,35 @@ export class PointsProgressiveLoader implements PointsDataLoader {
    * @returns Levels discarded (0 when the pass appended none).
    */
   rollbackToPassStart(): number {
-    const plan = planLadderRollback(
-      this.loadedLODs.length,
-      this._levelsAtPassStart,
-      this._concatCache?.lodCount ?? null
-    );
-    if (plan.dropped === 0 && this.loadedLODs.length === this.nLods) {
-      this._retryCompletedPass = true;
+    const plan = planLadderRollback({
+      loadedLevelCount: this._loadedLODCount,
+      levelsAtPassStart: this._levelsAtPassStart,
+      concatCacheLodCount: this._concatCache?.lodCount ?? null,
+      retainedPayloadCount: this.loadedLODs.length,
+      payloadsAtPassStart: this._payloadsAtPassStart,
+      restoredFullLadderAtPassStart: this._restoredFullLadderAtPassStart,
+      totalLevelCount: this.nLods,
+    });
+    if (plan.action === 'none') return 0;
+    if (plan.action === 'retry-folded-pass') {
+      this._retryFoldedPass = true;
+      return 0;
     }
-    if (plan.dropped > 0) {
-      this.loadedLODs.length = plan.keep;
+    if (plan.action === 'unwind-restored-full') {
+      this.loadedLODs = [];
+      this._payloadLevelStarts = [];
+      this._loadedLODCount = 0;
+      this._restoredFullLadderAtPassStart = false;
+      this._retryFoldedPass = false;
       if (this.lastViewState) deleteLadder(this.sliceCache, this.path, this.lastViewState);
+      this._concatCache = null;
+      return plan.dropped;
     }
+    this.loadedLODs.length = this._payloadsAtPassStart;
+    this._payloadLevelStarts.length = this._payloadsAtPassStart;
+    this._loadedLODCount = plan.keep;
+    this._retryFoldedPass = false;
+    if (this.lastViewState) deleteLadder(this.sliceCache, this.path, this.lastViewState);
     if (plan.invalidateConcatCache) this._concatCache = null;
     return plan.dropped;
   }
@@ -476,7 +529,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
    */
   get committedEnergyFraction(): number | null {
     if (!this.energyTable) return null;
-    const k = this.loadedLODs.length;
+    const k = this._loadedLODCount;
     if (k === 0) return 0;
     return this.energyTable[Math.min(k, this.energyTable.length) - 1];
   }
@@ -506,7 +559,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     // a pause re-trigger arrives with the SAME view state — it must still
     // clear the budget). Mirrors GSplatsProgressiveLoader.
     this._frameBudgetMs = viewState.frameBudgetMs ?? null;
-    this._retryCompletedPass = false;
+    this._retryFoldedPass = false;
     const budgetDeadline =
       this._frameBudgetMs !== null ? performance.now() + this._frameBudgetMs : null;
 
@@ -516,7 +569,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     // foreground frames as the ladder deepens. Mirrors GSplatsProgressiveLoader.
     const isPrefetch = viewState.prefetch === true;
     const finish = (): LoadedPointsData =>
-      isPrefetch ? concatenatePointsData([], null) : this.concatenateMemoized(session);
+      isPrefetch ? concatenatePointsData([], [], 0, null) : this.concatenateMemoized(session);
 
     if (!this.lastViewState || !viewStatesEqual(viewState, this.lastViewState)) {
       // DEPARTURE store: snapshot the OUTGOING view's partial ladder before
@@ -525,15 +578,16 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       // otherwise store nothing at all (completion never happens), making
       // scrub-back — the S-cache's headline case — always cold. One clone
       // per slice-leave; upgrade-if-longer makes re-departures cheap no-ops.
-      if (this.lastViewState && this.loadedLODs.length > 0) {
+      if (this.lastViewState && this._loadedLODCount > 0) {
         storeLadder(this.sliceCache, this.path, this.lastViewState, this.loadedLODs, {
           scan: this._frameBudgetMs !== null,
           pin: viewState.prefetch === true,
+          ladderDepth: this._loadedLODCount,
           totalLODCount: this.nLods,
         });
       }
       // Try the SliceCache before discarding the ladder (see GSplats loader).
-      const restored = restoreLadder<LoadedPointsData>(
+      const restored = restoreLadderSnapshot<LoadedPointsData>(
         this.sliceCache,
         this.path,
         viewState,
@@ -542,11 +596,22 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       // Shallow-copy the CONTAINER: the streaming loop below pushes further
       // levels and must never mutate the cache's payload array (elements
       // stay shared read-only). Mirrors GSplatsProgressiveLoader.
-      this.loadedLODs = restored ? [...restored] : [];
+      this.loadedLODs = restored ? [...restored.lods] : [];
+      this._loadedLODCount = restored?.depth ?? 0;
+      if (restored) {
+        const foldedPrefixDepth = restored.depth - restored.lods.length + 1;
+        this._payloadLevelStarts = restored.lods.map((_, index) =>
+          index === 0 ? 0 : foldedPrefixDepth + index - 1
+        );
+      } else {
+        this._payloadLevelStarts = [];
+      }
       // A restored full ladder has not been committed for this pass. If its
       // concat or commit fails, unwind the whole restored snapshot rather than
       // preserving a cursor at nLods and silently disabling retries.
       this._levelsAtPassStart = 0;
+      this._payloadsAtPassStart = 0;
+      this._restoredFullLadderAtPassStart = false;
       this._resetGeneration++;
       this.lastViewState = {
         displayDims: [...viewState.displayDims],
@@ -559,7 +624,8 @@ export class PointsProgressiveLoader implements PointsDataLoader {
         this._lastAllResident = true;
         // FULL ladder short-circuits; a PREFIX falls through to the loop
         // (startLevel = prefix length). Mirrors GSplatsProgressiveLoader.
-        if (restored.length === this.nLods) {
+        if (restored.depth === this.nLods) {
+          this._restoredFullLadderAtPassStart = true;
           return finish();
         }
       }
@@ -580,8 +646,10 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     // full decoded ladder (abort-safe, stored per level); `refine` stops at the
     // first cold/slow level. Mirrors GSplatsProgressiveLoader.
     const pass = classifyStreamingPass(budgetDeadline !== null, isPrefetch);
-    const startLevel = this.loadedLODs.length;
+    const startLevel = this._loadedLODCount;
     this._levelsAtPassStart = startLevel;
+    this._payloadsAtPassStart = this.loadedLODs.length;
+    this._restoredFullLadderAtPassStart = false;
 
     for (let level = startLevel; level < this.nLods; level++) {
       // A dispose() racing the awaited level below clears `lodLoaders`, so
@@ -605,6 +673,8 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       const elapsed = performance.now() - t0;
 
       this.loadedLODs.push(lodData);
+      this._payloadLevelStarts.push(level);
+      this._loadedLODCount++;
       this._lastAllResident = allResident;
 
       if (!this._initialLoadDone) {
@@ -642,10 +712,10 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     }
 
     const totalPoints = this.loadedLODs.reduce((s, d) => s + d.positions.length / 3, 0);
-    if (this.loadedLODs.length < this.nLods) {
+    if (this._loadedLODCount < this.nLods) {
       log.info(
         Modules.SPATIAL_INDEX_LOADER,
-        `Progressive Points: ${this.loadedLODs.length}/${this.nLods} LODs (${totalPoints} points) — refining`
+        `Progressive Points: ${this._loadedLODCount}/${this.nLods} LODs (${totalPoints} points) — refining`
       );
     } else if (startLevel < this.nLods) {
       log.info(
@@ -659,15 +729,17 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     // Snapshot into the SliceCache (upgrade-if-longer): full ladders always;
     // PREFIXES only while a playback budget is active. Mirrors
     // GSplatsProgressiveLoader.
-    if (this.loadedLODs.length === this.nLods || this._frameBudgetMs !== null) {
+    const result = finish();
+    if (this._loadedLODCount === this.nLods || this._frameBudgetMs !== null) {
       storeLadder(this.sliceCache, this.path, viewState, this.loadedLODs, {
         scan: this._frameBudgetMs !== null,
         pin: viewState.prefetch === true,
+        ladderDepth: this._loadedLODCount,
         totalLODCount: this.nLods,
       });
     }
 
-    return finish();
+    return result;
   }
 
   /**
@@ -691,7 +763,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       if (
         this._concatCache &&
         this._concatCache.generation === this._resetGeneration &&
-        this._concatCache.lodCount === this.loadedLODs.length
+        this._concatCache.lodCount === this._loadedLODCount
       ) {
         return this._concatCache.result;
       }
@@ -700,18 +772,25 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       const prevMemo =
         this._concatCache &&
         this._concatCache.generation === this._resetGeneration &&
-        this._concatCache.lodCount < this.loadedLODs.length
+        this._concatCache.lodCount < this._loadedLODCount
           ? this._concatCache.result
           : null;
       const result = concatenatePointsData(
         this.loadedLODs,
+        this._payloadLevelStarts,
+        this._loadedLODCount,
         this.levelOffsets,
         this.warnComposeFailure
       );
       setPrefixParent(result, prevMemo);
+      for (let level = 0; level < this._loadedLODCount; level++) {
+        this.lodLoaders[level]?.releaseAccumulator();
+      }
+      this.loadedLODs = [result];
+      this._payloadLevelStarts = [0];
       this._concatCache = {
         generation: this._resetGeneration,
-        lodCount: this.loadedLODs.length,
+        lodCount: this._loadedLODCount,
         result,
       };
       return result;
@@ -725,7 +804,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     // awaited level and this fire-and-forget clears `lodLoaders`, and
     // indexing it would TypeError before the .catch can swallow anything.
     if (this._disposed) return;
-    const nextLevel = this.loadedLODs.length;
+    const nextLevel = this._loadedLODCount;
     if (nextLevel >= this.nLods) return;
     // Fire-and-forget; errors ignored (network failures, aborts).
     void this.lodLoaders[nextLevel].prefetchChunks(viewState).catch(() => {
@@ -751,7 +830,9 @@ export class PointsProgressiveLoader implements PointsDataLoader {
   }
 
   getMetrics(): LoaderMetrics {
-    return this.monitor.getMetrics();
+    const metrics = this.monitor.getMetrics();
+    const concatMemory = this._concatCache ? measureLodBytes([this._concatCache.result]) : 0;
+    return { ...metrics, memoryUsed: metrics.memoryUsed + concatMemory };
   }
 
   dispose(): void {
@@ -761,7 +842,9 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     }
     this.lodLoaders = [];
     this.loadedLODs = [];
-    this._retryCompletedPass = false;
+    this._payloadLevelStarts = [];
+    this._loadedLODCount = 0;
+    this._retryFoldedPass = false;
     this.lastViewState = null;
     this._concatCache = null;
   }

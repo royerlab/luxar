@@ -208,6 +208,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
   // Data accumulator for object pooling.
   private _accumulator: GSplatsDataAccumulator | null = null;
+  private _accumulatorConfig: { capacity: number; ndim: number } | null = null;
   private _labelIndicesScratch = new Uint32Array(0);
   /** Color layout of this dataset: 3 (RGB) or 4 (RGBA, alpha = per-splat opacity). */
   private colorComponents: 3 | 4 = 3;
@@ -441,6 +442,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
         Math.max(1024, Math.ceil(totalSplats / 10))
       );
 
+      this._accumulatorConfig = { capacity: initialCapacity, ndim };
       this._accumulator = new GSplatsDataAccumulator(initialCapacity, ndim);
       this._accumulator.configureColorComponents(this.colorComponents);
 
@@ -553,6 +555,16 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       attrs.has_labels === true || attrs.has_image_labels === true || attrs.has_keys === true;
 
     // Load directly into the accumulator buffers (zero allocations).
+    if (
+      !this._accumulator &&
+      appConfig.dataLoading.performance.useAccumulators &&
+      this._accumulatorConfig
+    ) {
+      const { capacity, ndim } = this._accumulatorConfig;
+      this._accumulator = new GSplatsDataAccumulator(capacity, ndim);
+      this._accumulator.configureColorComponents(this.colorComponents);
+    }
+
     if (this._accumulator && appConfig.dataLoading.performance.useAccumulators) {
       // Capture locally: dispose() (dataset switch) can null + dispose
       // `this._accumulator` while the chunk loads below are in flight —
@@ -1165,6 +1177,19 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     return this._accumulator?.getStats() ?? null;
   }
 
+  /**
+   * Release pooled decoded buffers after a progressive parent has copied them.
+   * Earlier payloads remain valid because `dispose()` replaces the accumulator
+   * buffers rather than clearing their old arrays. This deliberately gives up
+   * pooling across view changes to release the progressive ladder's second copy.
+   */
+  releaseAccumulator(): void {
+    if (!this._accumulatorConfig) return;
+    this._accumulator?.dispose();
+    this._accumulator = null;
+    this.metrics.memoryUsed = 0;
+  }
+
   // ────────────────────────────────────────────────────────────────────
   // LoaderMonitor surface — same shape as the points and lines facades.
   // ────────────────────────────────────────────────────────────────────
@@ -1217,5 +1242,6 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       this._accumulator.dispose();
       this._accumulator = null;
     }
+    this._accumulatorConfig = null;
   }
 }
