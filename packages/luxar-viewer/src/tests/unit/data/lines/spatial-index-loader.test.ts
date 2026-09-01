@@ -922,7 +922,10 @@ describe('LinesSpatialIndexLoader', () => {
         expect(bodyLoader.getAccumulatorStats()).not.toBeNull();
         expect(second.vertexCount).toBe(first.vertexCount);
         expect(second.segmentCount).toBe(first.segmentCount);
+        expect(second.positions).toEqual(first.positions);
         expect(Array.from(second.segments)).toEqual(Array.from(first.segments));
+        expect(second.colors).toBeInstanceOf(Float32Array);
+        expect(second.colors).toEqual(first.colors);
       });
 
       it('should fold completed loads into avgQueryTime (wrapper close-out)', async () => {

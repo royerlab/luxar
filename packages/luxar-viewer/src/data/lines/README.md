@@ -76,6 +76,12 @@ worker dispatcher kernel in-process. `projection.ts` here exports only
   dtype-max for Uint8/Uint16). LOD 0 always loads; later levels stop on a
   cache miss or once the wall-clock budget (`CACHE_HIT_THRESHOLD_MS`) is
   exceeded, leaving the rest to the refinement loop.
+- **Folded ladders trade prefix caching for bounded residency.** After each
+  commit, progressive Lines keeps one cumulative payload and releases the
+  decoded rung accumulators that backed it. A cumulative payload cannot be
+  trimmed back to a coarse prefix without recreating the released rungs, so if
+  that payload exceeds the SliceCache budget the slice is not cached and will
+  re-decode on every revisit; the loader emits a one-time warning for the node.
 - **Per-vertex scalars ride the worker path.** Since `873690c3` the
   worker payload carries `scalars: Float32Array | Float16Array |
 Uint8Array | null`; `interpolate_scalars_batch` (the same WASM

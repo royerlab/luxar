@@ -358,6 +358,29 @@ describe('slice-cache-helper — oversized ladder (partial-prefix caching)', () 
     expect(restoreLadder<FakeLod>(sc, ovPath, view, N_LODS)).toBeNull();
   });
 
+  it('warns once when a folded payload exceeds the budget even at one payload', () => {
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => undefined);
+    const sc = new SliceCache({ maxSize: 500 });
+    const ovPath = '/folded-too-large-node';
+    const folded = [makeLod(300)]; // 1200B cumulative payload
+    try {
+      storeLadder(sc, ovPath, view, folded, { ladderDepth: 3, totalLODCount: 3 });
+      storeLadder(sc, ovPath, { ...view, slicePosition: [0, 0, 0, 8] }, folded, {
+        ladderDepth: 3,
+        totalLODCount: 3,
+      });
+
+      expect(restoreLadder<FakeLod>(sc, ovPath, view, N_LODS)).toBeNull();
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining('exceeds the budget even at one level')
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it('does not trim a folded payload when the trimmed logical depth is unknowable', () => {
     const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => undefined);
     const sc = new SliceCache({ maxSize: 500 });

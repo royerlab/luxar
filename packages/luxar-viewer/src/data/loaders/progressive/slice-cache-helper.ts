@@ -171,7 +171,11 @@ export function restoreLadder<T>(
   return restoreLadderSnapshot<T>(sliceCache, path, view, nLods)?.lods ?? null;
 }
 
-/** Cached ladder payloads together with the logical loaded-level count. */
+/**
+ * A restored progressive snapshot. `lods` is the retained payload container;
+ * `depth` is the logical loaded-level count and may exceed `lods.length` when
+ * a loader folds several levels into one cumulative payload.
+ */
 export interface RestoredLadderSnapshot<T> {
   lods: T[];
   depth: number;
@@ -183,9 +187,11 @@ export interface RestoredLadderSnapshot<T> {
  * may fold several loaded levels into one cumulative payload and store the
  * logical depth separately. A prefix restores progress so loading resumes from
  * `startLevel = depth` instead of re-streaming level 0; a full ladder
- * short-circuits the whole load. The returned arrays are shared read-only:
- * concat allocates fresh output and worker projection structured-clones its
- * inputs, so the cached snapshot is never mutated.
+ * short-circuits the whole load. Shared by all three progressive loaders.
+ * The returned elements are the cache entry's own read-only objects; worker
+ * projection structured-clones its inputs, so downstream processing does not
+ * mutate them. A loader that will push more levels must still shallow-copy the
+ * CONTAINER first so it never mutates the cache's payload array.
  */
 export function restoreLadderSnapshot<T>(
   sliceCache: SliceCache | null,
@@ -234,7 +240,8 @@ export function restoreLadderSnapshot<T>(
  * (deduped by the cache's `markOversizedWarned`, so it can't leak across
  * sessions or a dataset switch). Folded payloads cannot be trimmed safely
  * because payload count no longer identifies level count; those leave any
- * existing shorter entry intact instead.
+ * existing shorter entry intact. If the cumulative payload itself exceeds the
+ * budget, the folded slice is not cached and re-decodes on every revisit.
  */
 export function storeLadder<T extends object>(
   sliceCache: SliceCache | null,
@@ -251,6 +258,7 @@ export function storeLadder<T extends object>(
   const existingDepth =
     existing?.ladderDepth ?? (existing?.payload as unknown[] | undefined)?.length;
   if (existingDepth !== undefined && existingDepth >= requestedDepth) return;
+  const isFolded = opts?.ladderDepth !== undefined && opts.ladderDepth !== lods.length;
 
   // Trim to the largest coarse-first prefix that fits the budget instead of
   // dropping the whole ladder (which would make heavy single slices forever
@@ -261,12 +269,19 @@ export function storeLadder<T extends object>(
     fit--;
     bytes = fit > 0 ? measureLodBytes(lods.slice(0, fit)) : 0;
   }
-  if (fit === 0) return; // even the coarsest single level exceeds the budget
+  if (fit === 0) {
+    if (sliceCache.markOversizedWarned(path)) {
+      log.warning(
+        Modules.CACHE,
+        `SliceCache: ${isFolded ? 'folded ladder' : 'ladder'} for ${path} exceeds the budget even at one level; this slice will re-decode on every visit. Consider a larger cache budget.`
+      );
+    }
+    return;
+  }
   // A logical depth that differs from payload count means at least one payload
   // already folds several levels. Trimming by payload count cannot recover the
   // corresponding ladder depth safely, so retain the existing shorter entry
   // instead of caching a snapshot with a cursor ahead of its data.
-  const isFolded = opts?.ladderDepth !== undefined && opts.ladderDepth !== lods.length;
   if (isFolded && fit < lods.length) {
     if (sliceCache.markOversizedWarned(path)) {
       log.warning(

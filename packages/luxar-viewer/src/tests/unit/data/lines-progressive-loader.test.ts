@@ -259,10 +259,52 @@ describe('LinesProgressiveLoader', () => {
       ).loadedLODs;
 
       expect(loader.loadedLODCount).toBe(3);
-      expect(retained).toEqual([result]);
+      expect(retained).toHaveLength(1);
+      expect(retained[0]).toBe(result);
       expect(lodA.releaseAccumulator).toHaveBeenCalledTimes(1);
       expect(lodB.releaseAccumulator).toHaveBeenCalledTimes(1);
       expect(lodC.releaseAccumulator).toHaveBeenCalledTimes(1);
+    });
+
+    it('produces the same payload when levels fold incrementally or in one pass', async () => {
+      const levels = [
+        makeLodData(6, 3, 3, { color: 'uint8', rgba: true, scalars: true, mark: 11 }),
+        makeLodData(4, 2),
+        makeLodData(2, 1, 3, {
+          color: 'uint8',
+          rgba: true,
+          sharpness: true,
+          scalars: true,
+          mark: 22,
+        }),
+      ];
+      const onePassLoaders = levels.map((level) => makeSubLoader(level));
+      const incrementalLoaders = levels.map((level) => {
+        const subLoader = makeSubLoader(level);
+        subLoader.updateViewWithResidency.mockResolvedValue({
+          data: level,
+          allResident: false,
+        });
+        return subLoader;
+      });
+      const onePassLoader = new LinesProgressiveLoader(
+        onePassLoaders as unknown as LinesSpatialIndexLoader[],
+        levels.length,
+        '/one-pass'
+      );
+      const incrementalLoader = new LinesProgressiveLoader(
+        incrementalLoaders as unknown as LinesSpatialIndexLoader[],
+        levels.length,
+        '/incremental'
+      );
+
+      const onePass = await onePassLoader.loadLines(baseViewState);
+      let incremental = await incrementalLoader.loadLines(baseViewState);
+      while (incrementalLoader.hasMoreLODs) {
+        incremental = await incrementalLoader.loadLines(baseViewState);
+      }
+
+      expect(incremental).toEqual(onePass);
     });
 
     it('records lines additive load timing keys', async () => {
