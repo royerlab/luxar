@@ -652,6 +652,111 @@ describe('GPUBufferPool', () => {
       expect(pool.acquirePointsGeometry('grow-oom-p2', 1000)).toBe(geom1);
       expect(pool.getStats().reuses).toBe(reusesBefore + 1);
     });
+
+    it('points: a throw from the post-grow reclaim sweep keeps the old mesh buffer private', () => {
+      const original = pool.acquirePointsGeometry('grow-post-sweep-p', 1000);
+
+      let replacement: THREE.InstancedBufferGeometry | undefined;
+      const onReplacementDispose = vi.fn();
+      let evictCalls = 0;
+      const spy = vi.spyOn(pool, 'evictUnused').mockImplementation(() => {
+        evictCalls++;
+        if (evictCalls === 2) {
+          replacement = pool.activeBuffers.get('grow-post-sweep-p')
+            ?.geometry as THREE.InstancedBufferGeometry;
+          replacement?.addEventListener('dispose', onReplacementDispose);
+        }
+        if (evictCalls === 3) throw new Error('post-grow sweep boom');
+        return 0;
+      });
+      try {
+        expect(() => pool.acquirePointsGeometry('grow-post-sweep-p', 2000)).toThrow(
+          'post-grow sweep boom'
+        );
+      } finally {
+        spy.mockRestore();
+      }
+
+      expect(evictCalls).toBe(3);
+      expect(replacement).toBeDefined();
+      expect(replacement).not.toBe(original);
+      expect(pool.activeBuffers.get('grow-post-sweep-p')?.geometry).toBe(original);
+      expect(onReplacementDispose).toHaveBeenCalledTimes(1);
+      for (const buffers of pool.points.pointBuffers.values()) {
+        expect(buffers.some((buffer) => buffer.geometry === original)).toBe(false);
+        expect(buffers.some((buffer) => buffer.geometry === replacement)).toBe(false);
+      }
+    });
+
+    it('lines: a throw from the post-grow reclaim sweep keeps the old mesh buffer private', () => {
+      const original = pool.acquireLinesGeometry('grow-post-sweep-l', 500);
+
+      let replacement: THREE.InstancedBufferGeometry | undefined;
+      const onReplacementDispose = vi.fn();
+      let evictCalls = 0;
+      const spy = vi.spyOn(pool, 'evictUnused').mockImplementation(() => {
+        evictCalls++;
+        if (evictCalls === 2) {
+          replacement = pool.activeBuffers.get('grow-post-sweep-l')
+            ?.geometry as THREE.InstancedBufferGeometry;
+          replacement?.addEventListener('dispose', onReplacementDispose);
+        }
+        if (evictCalls === 3) throw new Error('post-grow sweep boom');
+        return 0;
+      });
+      try {
+        expect(() => pool.acquireLinesGeometry('grow-post-sweep-l', 2000)).toThrow(
+          'post-grow sweep boom'
+        );
+      } finally {
+        spy.mockRestore();
+      }
+
+      expect(evictCalls).toBe(3);
+      expect(replacement).toBeDefined();
+      expect(replacement).not.toBe(original);
+      expect(pool.activeBuffers.get('grow-post-sweep-l')?.geometry).toBe(original);
+      expect(onReplacementDispose).toHaveBeenCalledTimes(1);
+      for (const buffers of pool.lines.lineBuffers.values()) {
+        expect(buffers.some((buffer) => buffer.geometry === original)).toBe(false);
+        expect(buffers.some((buffer) => buffer.geometry === replacement)).toBe(false);
+      }
+    });
+
+    it('gsplats: a throw from the post-grow reclaim sweep keeps the old mesh buffer private', () => {
+      const original = pool.acquireGSplatsGeometry('grow-post-sweep-g', 300);
+
+      let replacement: THREE.InstancedBufferGeometry | undefined;
+      const onReplacementDispose = vi.fn();
+      let evictCalls = 0;
+      const spy = vi.spyOn(pool, 'evictUnused').mockImplementation(() => {
+        evictCalls++;
+        if (evictCalls === 2) {
+          replacement = pool.activeBuffers.get('grow-post-sweep-g')
+            ?.geometry as THREE.InstancedBufferGeometry;
+          replacement?.addEventListener('dispose', onReplacementDispose);
+        }
+        if (evictCalls === 3) throw new Error('post-grow sweep boom');
+        return 0;
+      });
+      try {
+        expect(() => pool.acquireGSplatsGeometry('grow-post-sweep-g', 1000)).toThrow(
+          'post-grow sweep boom'
+        );
+      } finally {
+        spy.mockRestore();
+      }
+
+      expect(evictCalls).toBe(3);
+      expect(replacement).toBeDefined();
+      expect(replacement).not.toBe(original);
+      expect(pool.activeBuffers.get('grow-post-sweep-g')?.geometry).toBe(original);
+      expect(onReplacementDispose).toHaveBeenCalledTimes(1);
+      for (const buffers of pool.gsplats.gsplatBuffers.values()) {
+        expect(buffers.some((buffer) => buffer.geometry === original)).toBe(false);
+        expect(buffers.some((buffer) => buffer.geometry === replacement)).toBe(false);
+      }
+    });
   });
 
   describe('LRU Eviction', () => {

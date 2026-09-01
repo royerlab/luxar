@@ -148,6 +148,9 @@ export class LinesBufferAdapter {
       try {
         this.releaseGeometry(nodeId);
         grown = this.adoptOrAllocate(nodeId, segmentCount);
+        // The replacement is not handed to the caller until this function
+        // returns, so the post-grow sweep remains inside the re-claim window.
+        host.evictUnused(false);
       } catch (error) {
         this.reclaimAfterFailedGrow(nodeId, released);
         throw error;
@@ -169,19 +172,6 @@ export class LinesBufferAdapter {
       // already registered, closes it — re-running the EXISTING policy at the
       // right moment rather than adding a disposal path of its own.
       //
-      // Deliberately OUTSIDE the try: a throwing dispose listener must not be
-      // mistaken for a failed grow and send us into `reclaimAfterFailedGrow`,
-      // which would try to reinstate a buffer this node has already replaced.
-      //
-      // On the grace it overrides: that grace exists for the DATASET SWITCH
-      // (release everything, re-acquire in the same frame — without it each
-      // allocation's sweep disposes buffers later acquires would have
-      // best-fit). A growth is not that shape: the released pair is by
-      // construction SMALLER than what this node now needs, and co-growing
-      // siblings are moving up too, so it is a poor adoption candidate. That
-      // is an argument, not a measurement — `reuses` across a dataset switch
-      // is the check that keeps it honest.
-      host.evictUnused(false);
       return grown;
     }
 

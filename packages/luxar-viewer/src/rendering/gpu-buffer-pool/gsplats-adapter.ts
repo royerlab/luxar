@@ -140,6 +140,9 @@ export class GSplatsBufferAdapter {
       try {
         this.releaseGeometry(nodeId);
         grown = this.adoptOrAllocate(nodeId, splatCount);
+        // The replacement is not handed to the caller until this function
+        // returns, so the post-grow sweep remains inside the re-claim window.
+        host.evictUnused(false);
       } catch (error) {
         this.reclaimAfterFailedGrow(nodeId, released);
         throw error;
@@ -148,9 +151,7 @@ export class GSplatsBufferAdapter {
       // the pair released above escapes BOTH existing sweeps (the release
       // sweep runs before the replacement registers; the acquire sweep
       // grace-skips a buffer stamped with the current frame, and the adopt
-      // path sweeps not at all). Outside the try so a throwing dispose
-      // listener is not mistaken for a failed grow.
-      host.evictUnused(false);
+      // path sweeps not at all).
       return grown;
     }
 
