@@ -207,6 +207,23 @@ describe('RefinementResidencyBudget', () => {
     expect(budget.admit('/next', residency(10 * MB, 1)).admitted).toBe(false);
   });
 
+  it('allows one estimated rung when an equal headroom share would be smaller', () => {
+    const budget = new RefinementResidencyBudget(
+      100 * MB,
+      new Map([
+        ['/a', residency(20 * MB, 2)],
+        ['/b', residency(20 * MB, 2)],
+        ['/c', residency(20 * MB, 2)],
+        ['/d', residency(20 * MB, 2)],
+      ])
+    );
+
+    expect(budget.admit('/a', residency(20 * MB, 2))).toMatchObject({
+      admitted: true,
+      allowanceBytes: 10 * MB,
+    });
+  });
+
   it('redistributes headroom after another tracked loader is declined', () => {
     const budget = new RefinementResidencyBudget(
       100 * MB,
