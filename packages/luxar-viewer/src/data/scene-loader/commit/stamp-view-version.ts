@@ -2,8 +2,7 @@
  * Shared helpers for the per-geometry commit concerns: stamp commit-time
  * facts about a mesh's committed geometry onto its `userData`.
  *
- * The LOD registry (`scene/lod-freshness.ts` / `scene/lod-group-registry.ts`)
- * reads two stamps:
+ * Consumers read three stamps:
  *
  *   - `loadedViewVersion` — whether a level's committed geometry is *fresh
  *     for the current view (slice / displayDims) version*; distinct from
@@ -17,6 +16,9 @@
  *     flip the moment the final LOD's *fetch* resolves, frames before its
  *     processing + commit land — so a reader never sees "complete" paired
  *     with a stale partial count.
+ *   - `committedLODCount` — how many additive ladder rungs the committed
+ *     geometry contains. Read by the monitor's `committed-lod-reader` so the
+ *     Scene-Graph tab reports what is on screen rather than the loader cursor.
  *
  * Centralised here so GSplats, Points, and Lines stamp identically
  * (three-geometry symmetry).

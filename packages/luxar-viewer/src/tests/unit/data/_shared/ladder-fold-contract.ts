@@ -55,7 +55,7 @@ export interface LadderFoldSubject {
   loadAll(): Promise<void>;
   totalLevels: number;
   /**
-   * Optional: a loader whose sub-LODs report NON-resident, so the streaming
+   * A loader whose sub-LODs report NON-resident, so the streaming
    * policy stops after each level and the ladder is climbed over several
    * passes. That is the shape real refinement takes, and it is materially
    * different from a single resident pass — the single-pass climb concatenates
