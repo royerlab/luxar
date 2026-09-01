@@ -30,7 +30,11 @@ import {
   shouldStopBeforeLevel,
   shouldStopAfterLevel,
 } from '../loaders/progressive/streaming-policy';
-import { restoreLadder, storeLadder } from '../loaders/progressive/slice-cache-helper';
+import {
+  deleteLadder,
+  restoreLadder,
+  storeLadder,
+} from '../loaders/progressive/slice-cache-helper';
 import { planLadderRollback } from '../loaders/progressive/pass-rollback';
 import { viewStatesEqual } from '../loaders/progressive/view-state-equal';
 import type { SliceCache } from '../../cache/slice-cache';
@@ -331,7 +335,10 @@ export class LinesProgressiveLoader implements LinesDataLoader {
       this._levelsAtPassStart,
       this._concatCache?.lodCount ?? null
     );
-    if (plan.dropped > 0) this.loadedLODs.length = plan.keep;
+    if (plan.dropped > 0) {
+      this.loadedLODs.length = plan.keep;
+      if (this.lastViewState) deleteLadder(this.sliceCache, this.path, this.lastViewState);
+    }
     if (plan.invalidateConcatCache) this._concatCache = null;
     return plan.dropped;
   }
@@ -564,7 +571,9 @@ export class LinesProgressiveLoader implements LinesDataLoader {
       // Capture the previous SAME-GENERATION memo before overwriting the
       // cache — that (and only that) is the result this one extends.
       const prevMemo =
-        this._concatCache && this._concatCache.generation === this._resetGeneration
+        this._concatCache &&
+        this._concatCache.generation === this._resetGeneration &&
+        this._concatCache.lodCount < this.loadedLODs.length
           ? this._concatCache.result
           : null;
       const result = concatenateLinesData(this.loadedLODs);

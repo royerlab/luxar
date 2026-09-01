@@ -599,6 +599,32 @@ describe('LinesProgressiveLoader', () => {
       expect(after.vertexCount).toBe(before.vertexCount);
       expect(loader.loadedLODCount).toBe(3);
     });
+
+    it('evicts an uncommitted full ladder snapshot before a later slice revisit', async () => {
+      const sliceCache = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const first = makeSubLoader(makeLodData(20, 10, 3, { color: 'uint8' }));
+      const second = makeSubLoader(makeLodData(10, 5, 3, { color: 'uint8' }));
+      const recovering = new LinesProgressiveLoader(
+        [first, second] as unknown as LinesSpatialIndexLoader[],
+        2,
+        '/rollback-cache',
+        undefined,
+        sliceCache
+      );
+      const viewA = baseViewState;
+      const viewB = { ...baseViewState, slicePosition: [0, 0, 0, 1] };
+
+      await recovering.loadLines(viewA);
+      expect(recovering.rollbackToPassStart()).toBe(2);
+      await recovering.loadLines(viewB);
+
+      first.updateViewWithResidency.mockClear();
+      second.updateViewWithResidency.mockClear();
+      await recovering.loadLines(viewA);
+
+      expect(first.updateViewWithResidency).toHaveBeenCalled();
+      expect(second.updateViewWithResidency).toHaveBeenCalled();
+    });
   });
 
   describe('cache-hit timing short-circuit', () => {

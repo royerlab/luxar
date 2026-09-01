@@ -263,6 +263,16 @@ export class SliceCache {
     return this.cache.peek(key);
   }
 
+  /** Remove one cached slice without leaving an eviction tombstone. */
+  delete(key: string): boolean {
+    const deleted = this.cache.delete(key);
+    if (deleted) {
+      this.tombstones.delete(key);
+      this.ladderDepths.delete(key);
+    }
+    return deleted;
+  }
+
   /**
    * Whether an entry of `bytes` could ever be stored (i.e. it does not exceed
    * the whole budget). The LRU silently rejects oversized entries, so callers

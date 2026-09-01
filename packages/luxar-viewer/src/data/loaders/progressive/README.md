@@ -28,6 +28,7 @@ resident and has no per-slice payload to cache.
 progressive/
 ├── concat-helpers.ts      # Generic typed-array field concatenation across LOD parts
 ├── constants.ts           # CACHE_HIT_THRESHOLD_MS — the shared streaming threshold
+├── pass-rollback.ts       # Failed-pass ladder truncation and concat-cache retention plan
 ├── streaming-policy.ts    # Per-pass LOD streaming decisions (playback / prefetch / refine)
 ├── slice-cache-helper.ts  # Shared SliceCache key/clone/restore/store logic (3-loader symmetry;
 │                          # also used by the plain spatial-index loaders — a plain leaf caches
@@ -100,6 +101,13 @@ cache hit. It is consumed by `streaming-policy.ts` (below) — the `refine`
 and `playback` passes keep streaming while levels load faster than this and
 stop at the first slower/cold one. Deliberately a single cross-geometry
 threshold, not a per-geometry tuning knob.
+
+### `pass-rollback.ts`
+
+Computes the state change required after a progressive pass appends levels but
+fails before its result is committed. `planLadderRollback` clamps the pass-start
+watermark, reports how many levels must be discarded, and invalidates a
+concatenation memo only when it covers one of those discarded levels.
 
 ### `streaming-policy.ts`
 
