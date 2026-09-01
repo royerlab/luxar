@@ -255,6 +255,9 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
   // watermark `rollbackToPassStart()` unwinds to when the caller's commit
   // throws. See `../loaders/progressive/pass-rollback`.
   private _levelsAtPassStart = 0;
+  // A completed pass can still fail after loading, during projection or commit.
+  // Keep it schedulable for one retry even though the ladder cursor is full.
+  private _retryCompletedPass = false;
   // Per-sub-LOD cumulative energy fractions e(k) (the build-time
   // `lod_stats.energy_fraction_cum` stamps), normalized at construction:
   // non-null only when EVERY sub-LOD carries a stamp (a partially stamped
@@ -302,6 +305,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     // refinement loop holding a stale reference stops instead of indexing
     // into the now-empty lodLoaders.
     if (this._disposed) return false;
+    if (this._retryCompletedPass) return true;
     // While a playback frame budget is active, the budgeted prefix IS the
     // target: report no further work so the refinement scheduler stays idle
     // between animation ticks and the commit stamps the prefix as complete
@@ -352,6 +356,9 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       this._levelsAtPassStart,
       this._concatCache?.lodCount ?? null
     );
+    if (plan.dropped === 0 && this.loadedLODs.length === this.nLods) {
+      this._retryCompletedPass = true;
+    }
     if (plan.dropped > 0) {
       this.loadedLODs.length = plan.keep;
       if (this.lastViewState) deleteLadder(this.sliceCache, this.path, this.lastViewState);
@@ -400,6 +407,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     // clear the budget so refinement can resume). Deadline is measured from
     // pass start so slow levels consume the budget too.
     this._frameBudgetMs = viewState.frameBudgetMs ?? null;
+    this._retryCompletedPass = false;
     const budgetDeadline =
       this._frameBudgetMs !== null ? performance.now() + this._frameBudgetMs : null;
 
@@ -672,6 +680,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     }
     this.lodLoaders = [];
     this.loadedLODs = [];
+    this._retryCompletedPass = false;
     this.lastViewState = null;
     this._concatCache = null;
   }

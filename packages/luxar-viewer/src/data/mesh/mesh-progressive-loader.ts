@@ -352,6 +352,9 @@ export class MeshProgressiveLoader implements MeshDataLoader {
   // watermark `rollbackToPassStart()` unwinds to when the caller's commit
   // throws. See `../loaders/progressive/pass-rollback`.
   private _levelsAtPassStart = 0;
+  // A completed pass can still fail after loading, during projection or commit.
+  // Keep it schedulable for one retry even though the ladder cursor is full.
+  private _retryCompletedPass = false;
   /** Per-pass playback budget from the CURRENT `updateView`; null outside playback. */
   private _frameBudgetMs: number | null = null;
   private _lastAllResident = true;
@@ -380,6 +383,7 @@ export class MeshProgressiveLoader implements MeshDataLoader {
     // another level (see `_budgetRefusal`'s docstring) — report no further work
     // so the refinement loop leaves the node instead of re-failing it forever.
     if (this._budgetRefusal) return false;
+    if (this._retryCompletedPass) return true;
     // While a playback frame budget is active the budgeted prefix IS the target:
     // no background refinement between animation ticks.
     if (this._frameBudgetMs !== null) return false;
@@ -408,6 +412,9 @@ export class MeshProgressiveLoader implements MeshDataLoader {
       this._levelsAtPassStart,
       this._concatCache?.lodCount ?? null
     );
+    if (plan.dropped === 0 && this.loadedLODs.length === this.nLods) {
+      this._retryCompletedPass = true;
+    }
     if (plan.dropped > 0) this.loadedLODs.length = plan.keep;
     if (plan.invalidateConcatCache) this._concatCache = null;
     return plan.dropped;
@@ -633,6 +640,7 @@ export class MeshProgressiveLoader implements MeshDataLoader {
     // Record the per-pass playback budget FIRST: a pause re-trigger arrives with
     // the same view state and must still clear the budget.
     this._frameBudgetMs = viewState.frameBudgetMs ?? null;
+    this._retryCompletedPass = false;
     const budgetDeadline =
       this._frameBudgetMs !== null ? performance.now() + this._frameBudgetMs : null;
 
@@ -789,6 +797,7 @@ export class MeshProgressiveLoader implements MeshDataLoader {
     for (const loader of this.lodLoaders) loader.dispose();
     this.lodLoaders = [];
     this.loadedLODs = [];
+    this._retryCompletedPass = false;
     this._concatCache = null;
     // Nothing is on screen for this node any more; the cumulative counters live
     // on the (now-disposed) levels and go with them.

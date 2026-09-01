@@ -369,6 +369,19 @@ describe('MeshProgressiveLoader', () => {
     expect(loader.hasMoreLODs).toBe(true);
   });
 
+  it('keeps a completed pass schedulable when its commit fails', async () => {
+    const { loader } = makeLadder([level(4, [0, 1, 2]), level(3, [0, 1, 2])]);
+
+    const result = await loader.updateView(VIEW);
+    expect(loader.loadedLODCount).toBe(2);
+    expect(loader.hasMoreLODs).toBe(false);
+
+    await expect(loader.updateView(VIEW)).resolves.toBe(result);
+    expect(loader.rollbackToPassStart()).toBe(0);
+    expect(loader.loadedLODCount).toBe(2);
+    expect(loader.hasMoreLODs).toBe(true);
+  });
+
   it('streams resident levels under a playback frame budget', async () => {
     const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(0);
     try {

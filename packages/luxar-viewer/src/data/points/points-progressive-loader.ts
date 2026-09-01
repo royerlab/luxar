@@ -359,6 +359,9 @@ export class PointsProgressiveLoader implements PointsDataLoader {
   // watermark `rollbackToPassStart()` unwinds to when the caller's commit
   // throws. See `../loaders/progressive/pass-rollback`.
   private _levelsAtPassStart = 0;
+  // A completed pass can still fail after loading, during projection or commit.
+  // Keep it schedulable for one retry even though the ladder cursor is full.
+  private _retryCompletedPass = false;
   // Per-sub-LOD cumulative energy fractions e(k) (the build-time
   // `lod_stats.energy_fraction_cum` stamps), normalized at construction:
   // non-null only when EVERY sub-LOD carries a stamp (a partially stamped
@@ -421,6 +424,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     // refinement loop holding a stale reference stops instead of indexing
     // into the now-empty lodLoaders. Mirrors GSplatsProgressiveLoader.
     if (this._disposed) return false;
+    if (this._retryCompletedPass) return true;
     // While a playback frame budget is active, the budgeted prefix IS the
     // target: no background refinement between animation ticks; the commit
     // stamps the prefix complete. Mirrors GSplatsProgressiveLoader.
@@ -450,6 +454,9 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       this._levelsAtPassStart,
       this._concatCache?.lodCount ?? null
     );
+    if (plan.dropped === 0 && this.loadedLODs.length === this.nLods) {
+      this._retryCompletedPass = true;
+    }
     if (plan.dropped > 0) {
       this.loadedLODs.length = plan.keep;
       if (this.lastViewState) deleteLadder(this.sliceCache, this.path, this.lastViewState);
@@ -499,6 +506,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     // a pause re-trigger arrives with the SAME view state — it must still
     // clear the budget). Mirrors GSplatsProgressiveLoader.
     this._frameBudgetMs = viewState.frameBudgetMs ?? null;
+    this._retryCompletedPass = false;
     const budgetDeadline =
       this._frameBudgetMs !== null ? performance.now() + this._frameBudgetMs : null;
 
@@ -753,6 +761,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     }
     this.lodLoaders = [];
     this.loadedLODs = [];
+    this._retryCompletedPass = false;
     this.lastViewState = null;
     this._concatCache = null;
   }

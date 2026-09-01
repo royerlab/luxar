@@ -523,6 +523,17 @@ describe('GSplatsProgressiveLoader', () => {
   });
 
   describe('rollbackToPassStart (failed-commit recovery, #2426)', () => {
+    it('keeps a completed pass schedulable when its commit fails', async () => {
+      const result = await loader.loadGSplats(baseViewState);
+      expect(loader.loadedLODCount).toBe(3);
+      expect(loader.hasMoreLODs).toBe(false);
+
+      await expect(loader.loadGSplats(baseViewState)).resolves.toBe(result);
+      expect(loader.rollbackToPassStart()).toBe(0);
+      expect(loader.loadedLODCount).toBe(3);
+      expect(loader.hasMoreLODs).toBe(true);
+    });
+
     it('unwinds only the levels the failing pass appended', async () => {
       lodB.updateViewWithResidency.mockImplementationOnce(async () => ({
         data: makeLodData(50, 3, { color: 'uint8' }),
