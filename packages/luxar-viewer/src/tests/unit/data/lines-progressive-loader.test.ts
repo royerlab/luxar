@@ -614,8 +614,8 @@ describe('LinesProgressiveLoader', () => {
       expect(loader.hasMoreLODs).toBe(true);
     });
 
-    it('keeps a folded payload intact when the commit fails after concatenation', async () => {
-      await loader.loadLines(baseViewState);
+    it('retries the same folded payload when the commit fails after concatenation', async () => {
+      const result = await loader.loadLines(baseViewState);
       expect(loader.loadedLODCount).toBe(3);
       expect(loader.hasMoreLODs).toBe(false);
 
@@ -632,6 +632,16 @@ describe('LinesProgressiveLoader', () => {
       expect(loader.rollbackToPassStart()).toBe(0);
       expect(loader.loadedLODCount).toBe(3);
       expect(retained).toHaveLength(1);
+      expect(loader.hasMoreLODs).toBe(true);
+
+      lodA.updateViewWithResidency.mockClear();
+      lodB.updateViewWithResidency.mockClear();
+      lodC.updateViewWithResidency.mockClear();
+      await expect(loader.loadLines(baseViewState)).resolves.toBe(result);
+      expect(lodA.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(lodB.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(lodC.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(loader.hasMoreLODs).toBe(false);
     });
 
     it('keeps an incrementally folded prefix and cursor paired', async () => {
@@ -683,6 +693,7 @@ describe('LinesProgressiveLoader', () => {
       expect(second.updateViewWithResidency).not.toHaveBeenCalled();
       expect(recovering.rollbackToPassStart()).toBe(2);
       expect(recovering.loadedLODCount).toBe(0);
+      expect(recovering.hasMoreLODs).toBe(true);
 
       await recovering.loadLines(viewB);
 

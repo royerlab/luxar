@@ -667,6 +667,7 @@ describe('PointsProgressiveLoader', () => {
       expect(second.updateViewWithResidency).not.toHaveBeenCalled();
       expect(recovering.rollbackToPassStart()).toBe(2);
       expect(recovering.loadedLODCount).toBe(0);
+      expect(recovering.hasMoreLODs).toBe(true);
 
       await recovering.loadPoints(viewB);
 

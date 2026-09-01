@@ -267,6 +267,7 @@ export class LinesProgressiveLoader implements LinesDataLoader {
   private _levelsAtPassStart = 0;
   private _payloadsAtPassStart = 0;
   private _restoredFullLadderAtPassStart = false;
+  private _retryFoldedPass = false;
   // Per-sub-LOD cumulative energy fractions e(k) (the build-time
   // `lod_stats.energy_fraction_cum` stamps), normalized at construction:
   // non-null only when EVERY sub-LOD carries a stamp (a partially stamped
@@ -308,6 +309,7 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     // refinement loop holding a stale reference stops instead of indexing
     // into the now-empty lodLoaders. Mirrors GSplatsProgressiveLoader.
     if (this._disposed) return false;
+    if (this._retryFoldedPass) return true;
     // While a playback frame budget is active, the budgeted prefix IS the
     // target: no background refinement between animation ticks; the commit
     // stamps the prefix complete. Mirrors GSplatsProgressiveLoader.
@@ -344,22 +346,32 @@ export class LinesProgressiveLoader implements LinesDataLoader {
       this._levelsAtPassStart,
       this._concatCache?.lodCount ?? null
     );
-    if (plan.dropped === 0) return 0;
+    if (plan.dropped === 0) {
+      if (this._loadedLODCount === this.nLods && this.loadedLODs.length < this._loadedLODCount) {
+        this._retryFoldedPass = true;
+      }
+      return 0;
+    }
 
     if (this._restoredFullLadderAtPassStart) {
       this.loadedLODs = [];
       this._loadedLODCount = 0;
       this._restoredFullLadderAtPassStart = false;
+      this._retryFoldedPass = false;
       if (this.lastViewState) deleteLadder(this.sliceCache, this.path, this.lastViewState);
       this._concatCache = null;
       return plan.dropped;
     }
 
     const retainedPayloadsAdded = this.loadedLODs.length - this._payloadsAtPassStart;
-    if (retainedPayloadsAdded < plan.dropped) return 0;
+    if (retainedPayloadsAdded < plan.dropped) {
+      this._retryFoldedPass = true;
+      return 0;
+    }
 
     this.loadedLODs.length = this._payloadsAtPassStart;
     this._loadedLODCount = plan.keep;
+    this._retryFoldedPass = false;
     if (this.lastViewState) deleteLadder(this.sliceCache, this.path, this.lastViewState);
     if (plan.invalidateConcatCache) this._concatCache = null;
     return plan.dropped;
@@ -406,6 +418,7 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     // a pause re-trigger arrives with the SAME view state — it must still
     // clear the budget). Mirrors GSplatsProgressiveLoader.
     this._frameBudgetMs = viewState.frameBudgetMs ?? null;
+    this._retryFoldedPass = false;
     const budgetDeadline =
       this._frameBudgetMs !== null ? performance.now() + this._frameBudgetMs : null;
 
@@ -668,6 +681,7 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     this.lodLoaders = [];
     this.loadedLODs = [];
     this._loadedLODCount = 0;
+    this._retryFoldedPass = false;
     this.lastViewState = null;
     this._concatCache = null;
   }
