@@ -69,6 +69,7 @@ import {
 import type { MeshPreflightResult } from './preflight';
 import type { UpdateSession } from '../../profiling/update-profiler';
 import { concatRequiredField } from '../loaders/progressive/concat-helpers';
+import { planLadderRollback } from '../loaders/progressive/pass-rollback';
 import {
   classifyStreamingPass,
   shouldStopBeforeLevel,
@@ -347,6 +348,10 @@ export class MeshProgressiveLoader implements MeshDataLoader {
    * skip no-op re-commits, and what keeps the projection scratch alive.
    */
   private _concatCache: { lodCount: number; result: LoadedMeshData } | null = null;
+  // `loadedLODs.length` as the CURRENT updateView pass found it — the
+  // watermark `rollbackToPassStart()` unwinds to when the caller's commit
+  // throws. See `../loaders/progressive/pass-rollback`.
+  private _levelsAtPassStart = 0;
   /** Per-pass playback budget from the CURRENT `updateView`; null outside playback. */
   private _frameBudgetMs: number | null = null;
   private _lastAllResident = true;
@@ -387,6 +392,25 @@ export class MeshProgressiveLoader implements MeshDataLoader {
 
   get totalLODCount(): number {
     return this.nLods;
+  }
+
+  /**
+   * Discard the levels the current pass appended, restoring the ladder to the
+   * prefix the pass started from. Called by `runMeshRefinement`'s catch; see
+   * `../loaders/progressive/pass-rollback` for why a failed commit must not
+   * leave the cursor advanced.
+   *
+   * @returns Levels discarded (0 when the pass appended none).
+   */
+  rollbackToPassStart(): number {
+    const plan = planLadderRollback(
+      this.loadedLODs.length,
+      this._levelsAtPassStart,
+      this._concatCache?.lodCount ?? null
+    );
+    if (plan.dropped > 0) this.loadedLODs.length = plan.keep;
+    if (plan.invalidateConcatCache) this._concatCache = null;
+    return plan.dropped;
   }
 
   get lastAllResident(): boolean {
@@ -631,6 +655,7 @@ export class MeshProgressiveLoader implements MeshDataLoader {
 
     const pass = classifyStreamingPass(budgetDeadline !== null, isPrefetch);
     const startLevel = this.loadedLODs.length;
+    this._levelsAtPassStart = startLevel;
 
     for (let level = startLevel; level < this.nLods; level++) {
       // A dispose() racing the awaited level below clears `lodLoaders`, so the

@@ -78,6 +78,9 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
       // PointsSpatialIndexLoader doesn't have it, so skip on absence.
       const progressiveLoader = loader as PointsDataLoader & {
         hasMoreLODs?: boolean;
+        // Optional for the same reason as `hasMoreLODs`: only a progressive
+        // loader has a ladder to unwind. Every `PointsProgressiveLoader` has it.
+        rollbackToPassStart?: () => number;
       };
       if (progressiveLoader.hasMoreLODs !== true) return false;
       if (failures.isExhausted(path)) return false;
@@ -117,6 +120,11 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
         // in-flight read on purpose. Don't count it toward the failure backoff
         // or log an error — the loop's next-pass pending check hands off.
         if (isAbortError(error)) return false;
+        // Unwind the levels this pass appended before the throw, so the retry
+        // re-attempts the SAME prefix rather than resuming from the advanced
+        // cursor with a larger allocation. See
+        // `../loaders/progressive/pass-rollback`.
+        progressiveLoader.rollbackToPassStart?.();
         if (failures.recordFailure(path)) {
           log.error(
             Modules.SCENE_LOADER,

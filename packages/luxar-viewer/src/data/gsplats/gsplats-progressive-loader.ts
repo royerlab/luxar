@@ -36,6 +36,7 @@ import {
   shouldStopAfterLevel,
 } from '../loaders/progressive/streaming-policy';
 import { restoreLadder, storeLadder } from '../loaders/progressive/slice-cache-helper';
+import { planLadderRollback } from '../loaders/progressive/pass-rollback';
 import { viewStatesEqual } from '../loaders/progressive/view-state-equal';
 import type { SliceCache } from '../../cache/slice-cache';
 import { log, Modules, LogEmoji } from '../../utils/log';
@@ -246,6 +247,10 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     lodCount: number;
     result: LoadedGSplatsData;
   } | null = null;
+  // `loadedLODs.length` as the CURRENT updateView pass found it — the
+  // watermark `rollbackToPassStart()` unwinds to when the caller's commit
+  // throws. See `../loaders/progressive/pass-rollback`.
+  private _levelsAtPassStart = 0;
   // Per-sub-LOD cumulative energy fractions e(k) (the build-time
   // `lod_stats.energy_fraction_cum` stamps), normalized at construction:
   // non-null only when EVERY sub-LOD carries a stamp (a partially stamped
@@ -330,6 +335,25 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
   }
 
   /**
+   * Discard the levels the current pass appended, restoring the ladder to the
+   * prefix the pass started from. Called by `runGSplatsRefinement`'s catch;
+   * see `../loaders/progressive/pass-rollback` for why a failed commit must
+   * not leave the cursor advanced.
+   *
+   * @returns Levels discarded (0 when the pass appended none).
+   */
+  rollbackToPassStart(): number {
+    const plan = planLadderRollback(
+      this.loadedLODs.length,
+      this._levelsAtPassStart,
+      this._concatCache?.lodCount ?? null
+    );
+    if (plan.dropped > 0) this.loadedLODs.length = plan.keep;
+    if (plan.invalidateConcatCache) this._concatCache = null;
+    return plan.dropped;
+  }
+
+  /**
    * Whether the most recently streamed LOD level was fully cache-resident
    * (no chunk fetched from the network). Drives the monitor's
    * cached-vs-streaming residency indicator. Defaults to `true` before any
@@ -406,6 +430,10 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       // levels into loadedLODs and must never mutate the cache's payload
       // array (the elements stay shared read-only — store deep-clones).
       this.loadedLODs = restored ? [...restored] : [];
+      // Watermark the restored prefix NOW: the full-ladder restore below
+      // returns early, and a commit that then throws must unwind to the
+      // restored prefix, not to a stale watermark from an earlier pass.
+      this._levelsAtPassStart = this.loadedLODs.length;
       this._resetGeneration++;
       this.lastViewState = {
         displayDims: [...viewState.displayDims],
@@ -443,6 +471,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     // abort); `refine` stops at the first cold/slow level.
     const pass = classifyStreamingPass(budgetDeadline !== null, isPrefetch);
     const startLevel = this.loadedLODs.length;
+    this._levelsAtPassStart = startLevel;
 
     for (let level = startLevel; level < this.nLods; level++) {
       // A dispose() racing the awaited level below clears `lodLoaders`, so

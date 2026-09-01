@@ -111,6 +111,12 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
     processLoader: async (path, loader) => {
       if (loader.hasMoreLODs !== true) return false;
       if (failures.isExhausted(path)) return false;
+      // Optional for the same reason as `hasMoreLODs` on the interface: only a
+      // progressive loader has a ladder to unwind. Every
+      // `GSplatsProgressiveLoader` implements it.
+      const progressiveLoader = loader as GSplatsDataLoader & {
+        rollbackToPassStart?: () => number;
+      };
       try {
         const mesh = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
         const nodeAttrs = mesh?.userData?.attrs as GSplatsMetadata | undefined;
@@ -148,6 +154,11 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
         // in-flight read on purpose. Don't count it toward the failure backoff
         // or log an error — the loop's next-pass pending check hands off.
         if (isAbortError(error)) return false;
+        // Unwind the levels this pass appended before the throw, so the retry
+        // re-attempts the SAME prefix rather than resuming from the advanced
+        // cursor with a larger allocation. See
+        // `../loaders/progressive/pass-rollback`.
+        progressiveLoader.rollbackToPassStart?.();
         if (failures.recordFailure(path)) {
           log.error(
             Modules.SCENE_LOADER,

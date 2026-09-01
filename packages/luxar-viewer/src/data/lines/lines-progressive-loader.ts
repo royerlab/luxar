@@ -31,6 +31,7 @@ import {
   shouldStopAfterLevel,
 } from '../loaders/progressive/streaming-policy';
 import { restoreLadder, storeLadder } from '../loaders/progressive/slice-cache-helper';
+import { planLadderRollback } from '../loaders/progressive/pass-rollback';
 import { viewStatesEqual } from '../loaders/progressive/view-state-equal';
 import type { SliceCache } from '../../cache/slice-cache';
 import { log, Modules, LogEmoji } from '../../utils/log';
@@ -248,6 +249,11 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     lodCount: number;
     result: LoadedLinesData;
   } | null = null;
+  // `loadedLODs.length` as the CURRENT updateView pass found it. The pass
+  // appends levels before its caller has committed them, so this is the
+  // watermark `rollbackToPassStart()` unwinds to when that commit throws.
+  // See `../loaders/progressive/pass-rollback`.
+  private _levelsAtPassStart = 0;
   // Per-sub-LOD cumulative energy fractions e(k) (the build-time
   // `lod_stats.energy_fraction_cum` stamps), normalized at construction:
   // non-null only when EVERY sub-LOD carries a stamp (a partially stamped
@@ -302,6 +308,32 @@ export class LinesProgressiveLoader implements LinesDataLoader {
 
   get totalLODCount(): number {
     return this.nLods;
+  }
+
+  /**
+   * Discard the levels the current pass appended, restoring the ladder to the
+   * prefix the pass started from.
+   *
+   * Called by `runLinesRefinement`'s catch. `updateView` advances the cursor as
+   * each level ARRIVES, but the concat / projection / commit that follows can
+   * still throw — classically `RangeError: Array buffer allocation failed` on a
+   * large node. Without this the retry would resume from the advanced cursor
+   * and attempt an even larger allocation, and on reaching `nLods` would flip
+   * `hasMoreLODs` false and strand the node silently. Unwinding makes the retry
+   * re-attempt the SAME prefix, so the failure tracker's 3-strike cap can
+   * actually be reached and reported.
+   *
+   * @returns Levels discarded (0 when the pass appended none).
+   */
+  rollbackToPassStart(): number {
+    const plan = planLadderRollback(
+      this.loadedLODs.length,
+      this._levelsAtPassStart,
+      this._concatCache?.lodCount ?? null
+    );
+    if (plan.dropped > 0) this.loadedLODs.length = plan.keep;
+    if (plan.invalidateConcatCache) this._concatCache = null;
+    return plan.dropped;
   }
 
   /**
@@ -378,6 +410,11 @@ export class LinesProgressiveLoader implements LinesDataLoader {
       // levels and must never mutate the cache's payload array (elements
       // stay shared read-only). Mirrors GSplatsProgressiveLoader.
       this.loadedLODs = restored ? [...restored] : [];
+      // Watermark the restored prefix NOW, not just at `startLevel` below: the
+      // full-ladder restore a few lines down returns early, and a commit that
+      // then throws must unwind to the restored prefix rather than to a stale
+      // watermark left by an earlier pass.
+      this._levelsAtPassStart = this.loadedLODs.length;
       this._resetGeneration++;
       this.lastViewState = {
         displayDims: [...viewState.displayDims],
@@ -412,6 +449,7 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     // first cold/slow level. Mirrors GSplatsProgressiveLoader.
     const pass = classifyStreamingPass(budgetDeadline !== null, isPrefetch);
     const startLevel = this.loadedLODs.length;
+    this._levelsAtPassStart = startLevel;
 
     for (let level = startLevel; level < this.nLods; level++) {
       // A dispose() racing the awaited level below clears `lodLoaders`, so
