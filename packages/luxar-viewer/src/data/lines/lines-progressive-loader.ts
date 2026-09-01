@@ -318,7 +318,7 @@ export class LinesProgressiveLoader implements LinesDataLoader {
    * Discard the levels the current pass appended, restoring the ladder to the
    * prefix the pass started from.
    *
-   * Called by `runLinesRefinement`'s catch. `updateView` advances the cursor as
+   * Called by the main-update and refinement catch paths. `updateView` advances the cursor as
    * each level ARRIVES, but the concat / projection / commit that follows can
    * still throw — classically `RangeError: Array buffer allocation failed` on a
    * large node. Without this the retry would resume from the advanced cursor

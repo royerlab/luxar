@@ -340,7 +340,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
 
   /**
    * Discard the levels the current pass appended, restoring the ladder to the
-   * prefix the pass started from. Called by `runGSplatsRefinement`'s catch;
+   * prefix the pass started from. Called by the main-update and refinement catches;
    * see `../loaders/progressive/pass-rollback` for why a failed commit must
    * not leave the cursor advanced.
    *

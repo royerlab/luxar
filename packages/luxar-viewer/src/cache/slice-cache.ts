@@ -263,7 +263,12 @@ export class SliceCache {
     return this.cache.peek(key);
   }
 
-  /** Remove one cached slice without leaving an eviction tombstone. */
+  /**
+   * Remove one cached slice without leaving an eviction tombstone.
+   *
+   * @param key - Cache key to invalidate.
+   * @returns Whether an entry was removed.
+   */
   delete(key: string): boolean {
     const deleted = this.cache.delete(key);
     if (deleted) {
