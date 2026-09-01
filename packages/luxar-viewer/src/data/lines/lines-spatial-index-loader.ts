@@ -103,6 +103,12 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
 
   // Data accumulator for object pooling.
   private _accumulator: LinesDataAccumulator | null = null;
+  private _accumulatorConfig: {
+    initialVertexCapacity: number;
+    initialSegmentCapacity: number;
+    ndim: number;
+  } | null = null;
+  private _accumulatorReleased = false;
 
   // L0 decompressed chunk cache (optional, avoids Blosc decompression on repeat access)
   private l0Cache: DecompressedChunkCache | null = null;
@@ -362,17 +368,54 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
         Math.max(1024, Math.ceil(totalVertices / 10))
       );
 
-      this._accumulator = new LinesDataAccumulator(initialVertexCap, initialSegmentCap, ndim);
-
-      if (appConfig.dataLoading.performance.enablePerformanceMonitoring) {
-        const stats = this._accumulator.getStats();
-        log.info(
-          Modules.DATA_ACCUMULATOR,
-          `Initialized LinesDataAccumulator for ${this.node.path}: ` +
-            `segmentCap=${stats.capacity}, vertexCap=${initialVertexCap}, ndim=${ndim}`
-        );
-      }
+      this._accumulatorConfig = {
+        initialVertexCapacity: initialVertexCap,
+        initialSegmentCapacity: initialSegmentCap,
+        ndim,
+      };
+      this.createAccumulator();
     }
+  }
+
+  private createAccumulator(): void {
+    if (
+      this._accumulator ||
+      !this._accumulatorConfig ||
+      !appConfig.dataLoading.performance.useAccumulators
+    ) {
+      return;
+    }
+    const { initialVertexCapacity, initialSegmentCapacity, ndim } = this._accumulatorConfig;
+    this._accumulator = new LinesDataAccumulator(
+      initialVertexCapacity,
+      initialSegmentCapacity,
+      ndim
+    );
+
+    if (appConfig.dataLoading.performance.enablePerformanceMonitoring) {
+      const stats = this._accumulator.getStats();
+      log.info(
+        Modules.DATA_ACCUMULATOR,
+        `Initialized LinesDataAccumulator for ${this.node.path}: ` +
+          `segmentCap=${stats.capacity}, vertexCap=${initialVertexCapacity}, ndim=${ndim}`
+      );
+    }
+    this._accumulatorReleased = false;
+  }
+
+  /**
+   * Release pooled decoded buffers after a progressive parent has copied them.
+   * Earlier payloads remain valid because `dispose()` replaces the accumulator
+   * buffers rather than clearing their old arrays. This deliberately gives up
+   * pooling across view changes: retaining the pool would keep the second copy
+   * that progressive Lines releases here.
+   */
+  releaseAccumulator(): void {
+    if (!this._accumulatorConfig) return;
+    this._accumulator?.dispose();
+    this._accumulator = null;
+    this._accumulatorReleased = true;
+    this.metrics.memoryUsed = 0;
   }
 
   /**
@@ -528,6 +571,11 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
         log.info(Modules.LINES_LOADER, `  Last 5 ranges: ${last5}`);
       }
     }
+
+    // A progressive parent may release this level's pooled buffers after
+    // folding them into its cumulative payload. Recreate them lazily only
+    // when this level is queried again.
+    if (this._accumulatorReleased) this.createAccumulator();
 
     // Load directly to the accumulator when enabled (zero allocations).
     // ensureCapacity is called with the ACTUAL segment count — relying
@@ -1042,5 +1090,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       this._accumulator.dispose();
       this._accumulator = null;
     }
+    this._accumulatorConfig = null;
+    this._accumulatorReleased = false;
   }
 }
