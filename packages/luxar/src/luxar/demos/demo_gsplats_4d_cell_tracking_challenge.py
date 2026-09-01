@@ -56,7 +56,8 @@ Options:
                       on the most compact grid that holds them: 4 -> 2x2,
                       6 -> 3x2, 9 -> 3x3. The default is 6 because only seven
                       crops have cleared Kaggle's download quota and seven fills
-                      no rectangle; six does.
+                      no rectangle; six does. Hosted downloads include only
+                      those N crops.
     --timepoints=N    Timepoints per crop (default: 100, the whole timelapse)
     --seeds=K         Splats per timepoint fit (default: 60000, keeping ~43k)
     --recompute       Re-fit from scratch, ignoring the fit cache
@@ -410,20 +411,20 @@ def load_precomputed_crops(
     from luxar.demos import (
         DatasetUnavailable,
         LocalComputeDataset,
-        dataset_spec,
+        declared_file_names,
         ensure_dataset,
     )
 
     file_names = {
         name for dataset in chosen for name in precomputed_file_names(dataset)
     }
-    declared_names = {
-        file["name"]
-        for file in dataset_spec(PRECOMPUTED_DATASET, manifest).get("files", [])
-    }
+    declared_names = declared_file_names(PRECOMPUTED_DATASET, manifest=manifest)
+    selected_file_names = file_names if declared_names else None
     for dataset in chosen:
         volume_name, tracks_name = precomputed_file_names(dataset)
-        if volume_name not in declared_names or tracks_name not in declared_names:
+        if declared_names and (
+            volume_name not in declared_names or tracks_name not in declared_names
+        ):
             aprint(
                 f"Hosted dataset has no entry for {dataset}; falling back to the "
                 "Kaggle download and local fit (already-fitted timepoints are reused)."
@@ -433,7 +434,7 @@ def load_precomputed_crops(
     try:
         paths = ensure_dataset(
             PRECOMPUTED_DATASET,
-            file_names=file_names,
+            file_names=selected_file_names,
             recompute=FLAGS["recompute"],
             manifest=manifest,
             cache_root=cache_root,
@@ -454,12 +455,7 @@ def load_precomputed_crops(
     crops: list[dict] = []
     for dataset in chosen:
         volume_name, tracks_name = precomputed_file_names(dataset)
-        if volume_name not in by_name or tracks_name not in by_name:
-            aprint(
-                f"Hosted dataset has no entry for {dataset}; falling back to the "
-                "Kaggle download and local fit (already-fitted timepoints are reused)."
-            )
-            return None
+        # The preflight and exact selector guarantee both names are present.
         crops.append(
             _crop_from_precomputed(dataset, by_name[volume_name], by_name[tracks_name])
         )

@@ -27,6 +27,7 @@ from luxar.demos._support.datasets.data_fetch import (
     LocalComputeDataset,
     clear_manifest_cache,
     dataset_spec,
+    declared_file_names,
     ensure_dataset,
     load_dataset_gsplats,
     load_local_fit_gsplats,
@@ -594,6 +595,37 @@ def test_variant_explicit_full(fake_repo):
     )
     assert paths[0].read_bytes() == b"full-timelapse-bytes"
     assert paths[0].parent == cache / "toy_ts" / "full"
+
+
+def test_file_selection_uses_the_resolved_variant(fake_repo):
+    manifest, cache = fake_repo
+
+    paths = ensure_dataset(
+        "toy_ts",
+        variant="full",
+        file_names={"ts.gsplats.zarr.zip"},
+        manifest=manifest,
+        cache_root=cache,
+        verbose=False,
+    )
+
+    assert [path.read_bytes() for path in paths] == [b"full-timelapse-bytes"]
+    assert declared_file_names("toy_ts", variant="full", manifest=manifest) == {
+        "ts.gsplats.zarr.zip"
+    }
+
+
+def test_unknown_selected_file_names_the_resolved_variant(fake_repo):
+    manifest, cache = fake_repo
+
+    with pytest.raises(ValueError, match="dataset 'toy_ts' variant 'light'.*nope.zip"):
+        ensure_dataset(
+            "toy_ts",
+            file_names={"nope.zip"},
+            manifest=manifest,
+            cache_root=cache,
+            verbose=False,
+        )
 
 
 def test_unknown_variant_raises(fake_repo):

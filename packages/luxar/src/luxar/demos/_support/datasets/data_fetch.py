@@ -247,13 +247,30 @@ def resolve_variant(
     return variants[variant].get("files") or [], variant
 
 
+def declared_file_names(
+    name: str,
+    *,
+    variant: Optional[str] = None,
+    manifest: Optional[Manifest] = None,
+) -> set[str]:
+    """Return the file names declared by the resolved dataset variant."""
+    spec = dataset_spec(name, manifest)
+    files, _variant_name = resolve_variant(name, spec, variant)
+    return {entry["name"] for entry in files}
+
+
 def _select_files(
     name: str,
     files: list[Manifest],
     file_names: Optional[Collection[str]],
     variant_name: Optional[str],
 ) -> list[Manifest]:
-    """Select exact manifest entries without splitting positional groups."""
+    """Select exact manifest entries without hiding mistakes or splitting groups.
+
+    Unknown names raise so a typo cannot silently resolve the wrong subset.
+    Positional sidecars are indexed against their partner, so selecting only
+    part of a group could pair unrelated rows and corrupt their alignment.
+    """
     if file_names is None:
         return files
 
@@ -302,7 +319,8 @@ def ensure_dataset(
             error for a dataset without variants, or an unknown variant name.
         file_names: Optional exact set of manifest file names to resolve. The
             result remains in manifest order. Unknown names and selections that
-            split a declared ``positional_pair`` are rejected.
+            split a declared ``positional_pair`` are rejected. An empty
+            selection returns an empty list without creating a cache directory.
         recompute: If True, raise :class:`LocalComputeDataset` for *any* dataset
             so the caller takes its own build path (mirrors the demos' ``--recompute``).
         cache_root: Override the cache root (tests). Defaults to ``~/.cache/luxar``.
@@ -314,6 +332,8 @@ def ensure_dataset(
     Raises:
         DatasetNotFound: unknown dataset.
         LocalComputeDataset: dataset is local-compute/regenerate (or recompute=True).
+        ValueError: unsupported bucket or variant, an unknown selected file name,
+            or a selection that splits a declared ``positional_pair``.
         DatasetUnavailable: data is neither cached, in-repo, nor hosted yet, or
             a declared ``positional_pair`` cannot resolve every member to the
             same generation — the conditions a caller may route around by
@@ -335,9 +355,9 @@ def ensure_dataset(
 
     files, variant_name = resolve_variant(name, spec, variant)
     files = _select_files(name, files, file_names, variant_name)
+    if file_names is not None and not files:
+        return []
     if not files:
-        if file_names is not None:
-            return []
         detail = f" variant {variant_name!r}" if variant_name else ""
         raise DatasetUnavailable(
             f"Dataset {name!r}{detail} has no files listed in the manifest yet "

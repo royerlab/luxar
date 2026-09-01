@@ -679,8 +679,12 @@ class TestPrecomputedRoundTrip:
             is None
         )
 
-    def test_pending_upload_falls_back_instead_of_raising(self, tmp_path) -> None:
+    def test_pending_upload_falls_back_instead_of_raising(
+        self, tmp_path, monkeypatch
+    ) -> None:
         """The real manifest state today: registered, hosted nowhere yet."""
+        messages: list[str] = []
+        monkeypatch.setattr(_demo, "aprint", messages.append)
         manifest = {
             "records": {"cc-by": {}},
             "datasets": {
@@ -699,6 +703,8 @@ class TestPrecomputedRoundTrip:
             )
             is None
         )
+        assert any("pending upload" in message for message in messages)
+        assert all("has no entry" not in message for message in messages)
 
     def test_a_fault_propagates_instead_of_triggering_kaggle_and_a_gpu_fit(
         self, tmp_path
@@ -733,8 +739,10 @@ class TestPrecomputedRoundTrip:
         assert got["tracks"] is None
 
     def test_a_missing_crop_falls_back_rather_than_half_building(
-        self, tmp_path
+        self, tmp_path, monkeypatch
     ) -> None:
+        messages: list[str] = []
+        monkeypatch.setattr(_demo, "aprint", messages.append)
         cache_root, written = self._stage(self._crop(name="crop_a"), tmp_path)
         got = _demo.load_precomputed_crops(
             ["crop_a", "crop_b"],
@@ -742,6 +750,7 @@ class TestPrecomputedRoundTrip:
             cache_root=cache_root,
         )
         assert got is None, "a partially hosted set must not build a partial matrix"
+        assert any("has no entry for crop_b" in message for message in messages)
 
     def test_unchosen_manifest_crops_are_not_resolved(self, tmp_path) -> None:
         cache_root, written = self._stage(self._crop(name="crop_a"), tmp_path)
