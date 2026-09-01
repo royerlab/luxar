@@ -96,6 +96,14 @@ export interface WireMonitorAfterLoadParams {
    */
   updateVisibleCounts: () => void;
   /**
+   * Caller-supplied reader for the per-node `committedLODCount` stamp, so the
+   * Scene-Graph tab reports rungs actually ON SCREEN rather than the loader's
+   * cursor. Lives on SceneLoader for the same reason as the two above: it
+   * reads the live THREE scene. Null/omitted keeps the pre-existing
+   * loader-cursor behaviour.
+   */
+  committedLODCounts?: (() => ReadonlyMap<string, number>) | null;
+  /**
    * Failed-load records + retry-all from the SceneLoader — powers the
    * Overview tab's failure banner and its Retry action. Null when the
    * host doesn't expose retry (headless tests).
@@ -182,6 +190,7 @@ export function wireMonitorAfterLoad(params: WireMonitorAfterLoadParams): void {
       loaderMaps: [loaders, linesLoaders, gsplatLoaders, meshLoaders],
       lodGroupRegistry,
       partitionGroups: collectPartitionGroups(sceneGraph),
+      committedLODCounts: params.committedLODCounts ?? undefined,
     })
   );
 

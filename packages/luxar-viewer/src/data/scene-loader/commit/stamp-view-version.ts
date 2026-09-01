@@ -47,6 +47,19 @@ export interface LadderStampable {
    * the display gate falls back to count crossover then.
    */
   committedEnergyFraction?: number;
+  /**
+   * Ladder rungs actually ON SCREEN — the loader's cursor as of the commit
+   * that put this geometry there, not its cursor now.
+   *
+   * The two diverge exactly when it matters. `updateView` advances the cursor
+   * as each rung ARRIVES, so a pass whose commit fails or is superseded leaves
+   * the loader reporting rungs the viewer never drew. On the hosted Laniakea
+   * demo the monitor read "LOD 7/7 ~100%" for basins that were rendering a
+   * coarse prefix and had stopped refining — the panel was reporting the
+   * loader's intent while the screen showed something else, which is how the
+   * failure stayed invisible (#2426).
+   */
+  committedLODCount?: number;
 }
 
 /**
@@ -83,8 +96,18 @@ export function stampLoadedViewVersion(
 export function stampLadderComplete(userData: LadderStampable | undefined | null): void {
   if (!userData) return;
   const loader = userData.loader as
-    { hasMoreLODs?: boolean; committedEnergyFraction?: number | null } | undefined;
+    | {
+        hasMoreLODs?: boolean;
+        committedEnergyFraction?: number | null;
+        loadedLODCount?: number;
+      }
+    | undefined;
   userData.committedLadderComplete = loader?.hasMoreLODs !== true;
+  // Snapshot the cursor AT COMMIT. Reading it later reports rungs that were
+  // fetched but never drawn — see `committedLODCount`.
+  if (typeof loader?.loadedLODCount === 'number') {
+    userData.committedLODCount = loader.loadedLODCount;
+  }
   if (!loader || !('committedEnergyFraction' in loader)) {
     // Non-progressive loader: the committed geometry is the leaf's complete
     // content — all of its energy is on screen.
