@@ -575,6 +575,19 @@ at — which is what keeps a reloaded or shared post-switch link named.
 | Dimensions | `dimensions.current_step`, `dimensions.selected_dimension` |
 | Animation | `animation` (per-dimension: `playing`, `target_fps`, `loop`, `direction`, `step_size`) — a scene with `playing: true` on a dimension starts that dimension animating on load, from wherever `dimensions.current_step` put it |
 
+Set `allow_high_dpr=True` if your scene is **line-dominated** — a river network,
+a tractogram, a wiring diagram. The viewer renders at CSS resolution by default
+even on a Retina display, because a 2x panel costs 4x the fragment work and
+soft-edged emissive geometry barely rewards it. Measured against DPR 2,
+brightness and coverage hold to within 2.5% on every geometry type and the whole
+visible effect is a 15-35% loss of fine detail: on points and splats that is
+mild softening, but on dense thin lines the individual strands stop being
+separable. Line scenes are also the cheapest place to spend the pixels, because
+they are not fill-bound — a trajectory scene measured 1.06-1.17x faster at DPR 1
+against 2.6-2.7x for a point cloud, so you buy the detail back for almost no
+frame time. Leave it off for points, gsplats and mesh unless a particular scene
+proves otherwise.
+
 Setting `cinematic_mode=True` expands the whole cinematic preset (ACES tone
 mapping, a subtle wide bloom, detector noise, vignette, and the 35 mm
 chromatic lens + FOV) for every field the scene does not set itself — so you
@@ -607,6 +620,8 @@ valid ranges.
 - Disable bloom and lower anti-aliasing quality in the rendering panel.
 - Adaptive resolution automatically lowers pixel density during interaction.
 - Check **Allow High DPR** in the Performance panel is off (it is by default).
+  Conversely, if a scene of thin lines looks mushy rather than slow, turning it
+  ON is usually cheap — line scenes are not fill-bound.
   On a HiDPI display it costs four times the pixels, which is rarely worth it
   for points, splats and lines.
 

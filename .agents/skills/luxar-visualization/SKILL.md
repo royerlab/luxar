@@ -249,6 +249,36 @@ empirically tuned distance from another FOV. For a derived distance, importing
 `CINEMATIC_FOV_DEG` or `framing_scale` vouches for the module and lets the pose use
 a local variable normally.
 
+### Thin-line scenes need `allow_high_dpr=True`
+
+The viewer renders at CSS resolution (device pixel ratio 1.0) by default, even on
+a Retina display, because a 2x panel costs 4x the fragment work and soft-edged
+emissive geometry barely rewards it. **Line-dominant scenes are the documented
+exception — set `allow_high_dpr=True` on them.**
+
+```python
+viewer_config=ViewerConfig(
+    cinematic_mode=True,
+    allow_high_dpr=True,   # river networks / tractograms / wiring diagrams
+)
+```
+
+Measured on a Retina panel against DPR 2, brightness and coverage hold to within
+2.5% on every geometry type; the entire visible effect of the cap is a 15-35%
+loss of high-frequency detail. On points and gsplats that reads as slightly
+softer. On dense thin lines it reads as **mush** — individual rivers, streamlines
+or edges stop being separable, which loses information rather than polish.
+
+It is also the cheapest place to spend the pixels. Line scenes are not
+fill-bound, so they gain least from the cap to begin with: a trajectory scene
+measured 1.06-1.17x faster at DPR 1, against 2.6-2.7x for a point cloud. You buy
+the detail back for almost no frame time.
+
+Leave it off for points, gsplats and mesh unless a specific scene proves
+otherwise — that is where the default earns its keep. Mesh is the one worth
+checking by eye, since it is shaded with hard silhouette edges rather than soft
+sprites, and the "emissive geometry barely rewards it" argument does not cover it.
+
 Two decisions this formula makes explicit:
 
 - **`fov` is VERTICAL**, so visible width scales with the LIVE viewport aspect

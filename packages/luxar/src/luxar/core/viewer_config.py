@@ -494,10 +494,26 @@ class ViewerConfig:
 
     # Whether the viewer may render above CSS resolution (device pixel
     # ratio > 1) on a HiDPI display. Off by default: a 2x display costs
-    # 4x the fragment work, which for soft-edged emissive geometry
-    # (points, gsplats, lines) buys very little. Turn it on for a scene
-    # whose detail genuinely rewards the extra pixels and which is light
-    # enough to afford them.
+    # 4x the fragment work, and for soft-edged emissive geometry the
+    # extra pixels buy little.
+    #
+    # TURN IT ON FOR THIN-LINE SCENES. That is the one case measured to
+    # be worth it, and it is worth it twice over:
+    #
+    # - Dense line work is what the cap actually costs. Measured on a
+    #   Retina panel against DPR 2, brightness and coverage are preserved
+    #   to within 2.5% on every geometry type — the whole visible effect
+    #   is a 15-35% loss of high-frequency detail. On points and splats
+    #   that reads as slightly softer. On a river network, a tractogram
+    #   or a wiring diagram it reads as MUSH: the individual lines stop
+    #   being separable, which is an information loss, not a cosmetic one.
+    # - Line scenes are the cheapest place to pay for it. They are not
+    #   fill-bound, so they gain least from the cap in the first place:
+    #   1.06-1.17x on a trajectory scene, against 2.6-2.7x on a point
+    #   cloud. You buy back the detail for almost no frame time.
+    #
+    # Leave it off for points, gsplats and mesh unless a specific scene
+    # proves otherwise; those are where the cap earns its keep.
     allow_high_dpr: Optional[bool] = None
 
     # UI panel visibility

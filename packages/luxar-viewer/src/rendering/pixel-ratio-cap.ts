@@ -9,6 +9,23 @@
  * `renderingControls.defaults.allowHighDPR`, authorable per scene as
  * `viewer_config.allow_high_dpr`.
  *
+ * # What the cap costs, measured
+ *
+ * On a Retina panel against DPR 2: mean luminance, lit coverage and p99
+ * luminance all hold to within 2.5% on every geometry type — the
+ * minimum-drawn-size widening and the shader's energy compensation very
+ * nearly cancel. The entire visible effect is a 15-35% loss of
+ * high-frequency detail.
+ *
+ * That is mild on points and gsplats, whose sprites are soft to begin
+ * with. It is NOT mild on dense thin lines: a river network or a
+ * tractogram stops being separable, which loses information rather than
+ * polish. Those scenes are also the least fill-bound, so they gain least
+ * from the cap in the first place (measured 1.06-1.17x, against 2.6-2.7x
+ * on a point cloud) — which makes them both the place the cap hurts most
+ * and the cheapest place to switch it off. Line-dominant demos author
+ * `allow_high_dpr=True` for exactly that reason.
+ *
  * # Why this is its own module, and why it lives in `rendering/`
  *
  * The cap is read by modules in two different layers —

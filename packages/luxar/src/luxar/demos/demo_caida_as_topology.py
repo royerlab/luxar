@@ -1392,7 +1392,14 @@ def build_scene(
             scene = compiler.create_scene(
                 citation=DEMO_META["citation"],
                 dimensions=dims,
-                viewer_config=ViewerConfig(cinematic_mode=True),
+                viewer_config=ViewerConfig(
+                    # Thin lines are the one geometry that genuinely rewards the pixels:
+                    # at CSS resolution this scene's structure reads as mush. Cheap
+                    # here, because line scenes are not fill-bound — see
+                    # ViewerConfig.allow_high_dpr.
+                    allow_high_dpr=True,
+                    cinematic_mode=True,
+                ),
             )
 
             scene.add_points(
