@@ -97,6 +97,7 @@ function makeCtx(overrides: Partial<AtomicCommitCtx> = {}): AtomicCommitCtx & {
     commitLinesGeometry: ReturnType<typeof vi.fn>;
     commitGSplatsGeometry: ReturnType<typeof vi.fn>;
     commitMeshGeometry: ReturnType<typeof vi.fn>;
+    onCommitFailed: ReturnType<typeof vi.fn>;
     markPickingDirty: ReturnType<typeof vi.fn>;
     beginFrame: ReturnType<typeof vi.fn>;
   };
@@ -105,6 +106,7 @@ function makeCtx(overrides: Partial<AtomicCommitCtx> = {}): AtomicCommitCtx & {
   const commitLinesGeometry = vi.fn();
   const commitGSplatsGeometry = vi.fn();
   const commitMeshGeometry = vi.fn();
+  const onCommitFailed = vi.fn();
   const markPickingDirty = vi.fn();
   const beginFrame = vi.fn();
 
@@ -115,6 +117,7 @@ function makeCtx(overrides: Partial<AtomicCommitCtx> = {}): AtomicCommitCtx & {
     commitLinesGeometry,
     commitGSplatsGeometry,
     commitMeshGeometry,
+    onCommitFailed,
     ...overrides,
   };
   return Object.assign(ctx, {
@@ -123,6 +126,7 @@ function makeCtx(overrides: Partial<AtomicCommitCtx> = {}): AtomicCommitCtx & {
       commitLinesGeometry,
       commitGSplatsGeometry,
       commitMeshGeometry,
+      onCommitFailed,
       markPickingDirty,
       beginFrame,
     },
@@ -222,6 +226,30 @@ describe('runAtomicCommit — null staged entries', () => {
 });
 
 describe('runAtomicCommit — synchronous throw mid-commit', () => {
+  it('reports every failed commit path so its progressive loader can unwind', () => {
+    const points = makePointsStaged(1);
+    const lines = makeLinesStaged(1);
+    const gsplats = makeGSplatsStaged(1);
+    const mesh = makeMeshStaged(1);
+    const ctx = makeCtx();
+    ctx.spies.updatePointsGeometry.mockImplementation(() => {
+      throw new Error('points commit failed');
+    });
+    ctx.spies.commitLinesGeometry.mockImplementation(() => {
+      throw new Error('lines commit failed');
+    });
+    ctx.spies.commitGSplatsGeometry.mockImplementation(() => {
+      throw new Error('gsplats commit failed');
+    });
+    ctx.spies.commitMeshGeometry.mockImplementation(() => {
+      throw new Error('mesh commit failed');
+    });
+
+    expect(() => runAtomicCommit(points, lines, gsplats, mesh, ctx)).toThrow(AggregateError);
+
+    expect(ctx.spies.onCommitFailed.mock.calls).toEqual([['/p0'], ['/l0'], ['/g0'], ['/m0']]);
+  });
+
   it('fault isolation: a throwing points commit does NOT starve lines/gsplats/mesh siblings; errors surface as ONE AggregateError', () => {
     const points = makePointsStaged(3);
     const lines = makeLinesStaged(2);
