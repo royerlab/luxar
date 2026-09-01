@@ -1718,6 +1718,74 @@ describe('PointsProgressiveLoader — ladder elementIds composition (issue #1439
     expect(Array.from(result.elementIds!)).toEqual([3, 9, 102, 105]);
   });
 
+  it('keeps logical level offsets when a folded prefix is refined', async () => {
+    const a = makeSubLoader(gappedLod([3, 9]));
+    const bData = gappedLod([2, 5]);
+    const b = makeSubLoader(bData);
+    b.updateViewWithResidency = vi.fn(async () => ({ data: bData, allResident: false }));
+    const c = makeSubLoader(gappedLod([1]));
+    const loader = new PointsProgressiveLoader(
+      [a, b, c] as unknown as PointsSpatialIndexLoader[],
+      3,
+      '/points',
+      undefined,
+      null,
+      [0, 100, 350, 400]
+    );
+
+    expect(Array.from((await loader.loadPoints(baseViewState)).elementIds!)).toEqual([
+      3, 9, 102, 105,
+    ]);
+    expect(Array.from((await loader.loadPoints(baseViewState)).elementIds!)).toEqual([
+      3, 9, 102, 105, 351,
+    ]);
+  });
+
+  it('restores a full folded ladder with its union-space element ids intact', async () => {
+    const sliceCache = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+    const viewA = { ...baseViewState, slicePosition: [0, 0, 0, 0] };
+    const viewB = { ...baseViewState, slicePosition: [0, 0, 0, 1] };
+    const loader = new PointsProgressiveLoader(
+      [
+        makeSubLoader(gappedLod([3, 9])),
+        makeSubLoader(gappedLod([2, 5])),
+      ] as unknown as PointsSpatialIndexLoader[],
+      2,
+      '/points',
+      undefined,
+      sliceCache,
+      [0, 100, 350]
+    );
+
+    await loader.loadPoints(viewA);
+    await loader.loadPoints(viewB);
+    const restored = await loader.loadPoints(viewA);
+
+    expect(Array.from(restored.elementIds!)).toEqual([3, 9, 102, 105]);
+  });
+
+  it('offsets a level after an empty level inside a folded prefix', async () => {
+    const a = makeSubLoader(gappedLod([3, 9]));
+    const empty = makeLodData(0, 3, { color: 'uint8' });
+    empty.elementIds = new Uint32Array(0);
+    const b = makeSubLoader(empty);
+    b.updateViewWithResidency = vi.fn(async () => ({ data: empty, allResident: false }));
+    const c = makeSubLoader(gappedLod([1, 2]));
+    const loader = new PointsProgressiveLoader(
+      [a, b, c] as unknown as PointsSpatialIndexLoader[],
+      3,
+      '/points',
+      undefined,
+      null,
+      [0, 100, 350, 400]
+    );
+
+    await loader.loadPoints(baseViewState);
+    const refined = await loader.loadPoints(baseViewState);
+
+    expect(Array.from(refined.elementIds!)).toEqual([3, 9, 351, 352]);
+  });
+
   it('tolerates a level that loaded ZERO points', async () => {
     const empty = makeLodData(0, 3, { color: 'uint8' });
     empty.elementIds = new Uint32Array(0);

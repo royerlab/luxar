@@ -91,15 +91,16 @@ import { timeLodStageWithResult } from '../scene-loader/lod-load-stats';
  */
 function buildLadderElementIdMap(
   parts: LoadedPointsData[],
+  payloadLevelStarts: readonly number[],
+  logicalDepth: number,
   levelOffsets: readonly number[],
   totalPoints: number,
   warn: (message: string) => void
 ): Uint32Array | undefined {
-  // `parts.length + 1`: the LAST loaded level needs its closing bound too.
-  if (levelOffsets.length < parts.length + 1) {
+  if (payloadLevelStarts.length !== parts.length || levelOffsets.length <= logicalDepth) {
     warn(
-      `Progressive Points: ${levelOffsets.length} level bounds for ${parts.length} loaded ` +
-        'levels — picking labels fall back to the visible-buffer slot.'
+      `Progressive Points: inconsistent retained-payload lineage for ${parts.length} payloads ` +
+        `at logical depth ${logicalDepth} — picking labels fall back to the visible-buffer slot.`
     );
     return undefined;
   }
@@ -107,13 +108,28 @@ function buildLadderElementIdMap(
   let identity = true;
   let running = 0;
   for (const [i, part] of parts.entries()) {
+    const startLevel = payloadLevelStarts[i];
+    const endLevel = payloadLevelStarts[i + 1] ?? logicalDepth;
+    if (
+      !Number.isInteger(startLevel) ||
+      !Number.isInteger(endLevel) ||
+      startLevel < 0 ||
+      endLevel <= startLevel ||
+      endLevel > logicalDepth
+    ) {
+      warn(
+        `Progressive Points: retained payload ${i} has invalid logical level range ` +
+          `[${startLevel}, ${endLevel}) — picking labels fall back to the visible-buffer slot.`
+      );
+      return undefined;
+    }
     const ids = part.elementIds;
     // An EMPTY level writes nothing into the union map, so its missing map
     // cannot corrupt a single slot — it must not veto the other levels' (a
     // ladder level culled to zero by the current slice is ordinary).
     if (part.pointCount > 0 && part.elementIdsUnavailable === true) {
       warn(
-        `Progressive Points: level ${i} could not build a slot → on-disk map (its slots are ` +
+        `Progressive Points: payload ${i} could not build a slot → on-disk map (its slots are ` +
           'not on-disk indices) — picking labels fall back to the visible-buffer slot.'
       );
       return undefined;
@@ -122,7 +138,7 @@ function buildLadderElementIdMap(
       anyMap = true;
       if (ids.length !== part.pointCount) {
         warn(
-          `Progressive Points: level ${i} published ${ids.length} element ids for ` +
+          `Progressive Points: payload ${i} published ${ids.length} element ids for ` +
             `${part.pointCount} points — picking labels fall back to the visible-buffer slot.`
         );
         return undefined;
@@ -130,7 +146,7 @@ function buildLadderElementIdMap(
     }
     // Identity only survives while every level is fully resident and unculled:
     // its on-disk offset must equal the running sum of the LOADED counts.
-    if (levelOffsets[i] !== running) identity = false;
+    if (levelOffsets[startLevel] !== running) identity = false;
     running += part.pointCount;
   }
   if (!anyMap && identity) return undefined;
@@ -138,19 +154,17 @@ function buildLadderElementIdMap(
   const out = new Uint32Array(totalPoints);
   let w = 0;
   for (const [i, part] of parts.entries()) {
-    const base = levelOffsets[i];
-    // Rows level `i` owns in the union: anything past this belongs to the NEXT
-    // level, so a level-space index that reaches it is inconsistent with the
-    // `n_points` the offsets were built from (a store whose spatial index and
-    // attrs disagree). Refuse rather than shift it into a sibling's row.
-    const span = levelOffsets[i + 1] - base;
+    const startLevel = payloadLevelStarts[i];
+    const endLevel = payloadLevelStarts[i + 1] ?? logicalDepth;
+    const base = levelOffsets[startLevel];
+    const span = levelOffsets[endLevel] - base;
     const ids = part.elementIds;
     for (let k = 0; k < part.pointCount; k++) {
       const local = ids === undefined ? k : ids[k];
       // Negated compare so a NaN / undefined slot also fails closed.
       if (!(local < span)) {
         warn(
-          `Progressive Points: level ${i} maps a slot to index ${local}, past its ${span} ` +
+          `Progressive Points: payload ${i} maps a slot to index ${local}, past its ${span} ` +
             'on-disk rows — picking labels fall back to the visible-buffer slot.'
         );
         return undefined;
@@ -181,6 +195,8 @@ function buildLadderElementIdMap(
  */
 function concatenatePointsData(
   parts: LoadedPointsData[],
+  payloadLevelStarts: readonly number[],
+  logicalDepth: number,
   levelOffsets: readonly number[] | null,
   warn: (message: string) => void = () => {}
 ): LoadedPointsData {
@@ -200,19 +216,16 @@ function concatenatePointsData(
     };
   }
   if (parts.length === 1) {
-    // `parts[0]` is a SUB-LOD (`additive_0`) — `parts.length === 1` is not
-    // "unladdered", it is the first-paint state of EVERY ladder (this loader
-    // only exists for `n_additive_sublods` nodes).
+    // A single retained payload is either `additive_0` at first paint or a
+    // folded cumulative prefix. Both begin at logical level 0, and their map is
+    // already in the parent's union space; only the closing bound differs.
     //
     // The ladder's labels live in ONE CSR on the PARENT node (#1422), whose
     // index space is the concatenation of the levels, so a correct ladder map is
     // a per-level map offset by the preceding levels' on-disk counts (#1439).
-    // WITH `levelOffsets` that composition is running: `additive_0`'s on-disk
-    // range IS the union CSR's PREFIX, so level 0's index space already is the
-    // parent's, shifted by `levelOffsets[0] === 0` — the map is correct as it
-    // stands and the payload passes through UNCHANGED (no strip, no copy), and it
-    // stays correct as further levels land because the multi-part branch below
-    // composes them.
+    // WITH `levelOffsets`, the payload's on-disk range IS the union CSR's
+    // prefix, so its index space already is the parent's and it passes through
+    // unchanged after validating against `levelOffsets[logicalDepth]`.
     //
     // WITHOUT `levelOffsets` (no parent CSR, or a failed cross-check) there is
     // no union index space any reader could key by, so the GUARD applies
@@ -228,25 +241,31 @@ function concatenatePointsData(
     // composition cannot run, so the map is normally never built at all in that
     // case; this keeps the invariant true whatever attrs a sub-LOD carries.
     const only = parts[0];
-    const offsetOk = levelOffsets !== null && levelOffsets.length >= 2 && levelOffsets[0] === 0;
+    const offsetOk =
+      payloadLevelStarts.length === 1 &&
+      payloadLevelStarts[0] === 0 &&
+      logicalDepth >= 1 &&
+      levelOffsets !== null &&
+      levelOffsets.length > logicalDepth &&
+      levelOffsets[0] === 0;
     if (offsetOk) {
-      // Level 0 owns union rows [0, levelOffsets[1]) — `levelOffsets[0]` is 0,
-      // so its span IS its closing bound. The same three fail-closed checks
+      // The retained prefix owns union rows [0, levelOffsets[logicalDepth]).
+      // The same three fail-closed checks
       // `buildLadderElementIdMap` applies, on the one level there is:
       // a level that WANTED a map and failed to build one is NOT the identity
       // (its slots are not on-disk indices); a length mismatch means the map
       // does not describe this payload; and an id past level 0's rows names a
-      // real row belonging to additive_1 in the union CSR. An EMPTY level has
+      // real row outside the retained prefix in the union CSR. An EMPTY payload has
       // no slots to be wrong about, so it is exempt.
-      const span = levelOffsets[1];
+      const span = levelOffsets[logicalDepth];
       let failure: string | null = null;
       if (only.pointCount > 0 && only.elementIdsUnavailable === true) {
         failure =
-          'level 0 could not build a slot → on-disk map (its slots are not on-disk indices)';
+          'retained prefix could not build a slot → on-disk map (its slots are not on-disk indices)';
       } else if (only.elementIds !== undefined && only.elementIds.length !== only.pointCount) {
-        failure = `level 0 published ${only.elementIds.length} element ids for ${only.pointCount} points`;
+        failure = `retained prefix published ${only.elementIds.length} element ids for ${only.pointCount} points`;
       } else if (only.elementIds?.some((id) => !(id < span))) {
-        failure = `level 0 maps a slot past its ${span} on-disk rows`;
+        failure = `retained prefix maps a slot past its ${span} on-disk rows`;
       }
       if (failure === null) return only;
       warn(`Progressive Points: ${failure} — picking labels fall back to the visible-buffer slot.`);
@@ -326,7 +345,14 @@ function concatenatePointsData(
   // the parent declares one, otherwise not published at all (see the
   // single-part branch and `buildLadderElementIdMap`).
   if (levelOffsets !== null) {
-    const elementIds = buildLadderElementIdMap(parts, levelOffsets, totalPoints, warn);
+    const elementIds = buildLadderElementIdMap(
+      parts,
+      payloadLevelStarts,
+      logicalDepth,
+      levelOffsets,
+      totalPoints,
+      warn
+    );
     if (elementIds) result.elementIds = elementIds;
   }
 
@@ -339,6 +365,7 @@ function concatenatePointsData(
 export class PointsProgressiveLoader implements PointsDataLoader {
   private lodLoaders: PointsSpatialIndexLoader[];
   private loadedLODs: LoadedPointsData[] = [];
+  private _payloadLevelStarts: number[] = [];
   private _loadedLODCount = 0;
   private lastViewState: PointsViewState | null = null;
   private nLods: number;
@@ -466,6 +493,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     }
     if (this._restoredFullLadderAtPassStart) {
       this.loadedLODs = [];
+      this._payloadLevelStarts = [];
       this._loadedLODCount = 0;
       this._restoredFullLadderAtPassStart = false;
       if (this.lastViewState) deleteLadder(this.sliceCache, this.path, this.lastViewState);
@@ -477,6 +505,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       return 0;
     }
     this.loadedLODs.length = this._payloadsAtPassStart;
+    this._payloadLevelStarts.length = this._payloadsAtPassStart;
     this._loadedLODCount = plan.keep;
     if (this.lastViewState) deleteLadder(this.sliceCache, this.path, this.lastViewState);
     if (plan.invalidateConcatCache) this._concatCache = null;
@@ -534,7 +563,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     // foreground frames as the ladder deepens. Mirrors GSplatsProgressiveLoader.
     const isPrefetch = viewState.prefetch === true;
     const finish = (): LoadedPointsData =>
-      isPrefetch ? concatenatePointsData([], null) : this.concatenateMemoized(session);
+      isPrefetch ? concatenatePointsData([], [], 0, null) : this.concatenateMemoized(session);
 
     if (!this.lastViewState || !viewStatesEqual(viewState, this.lastViewState)) {
       // DEPARTURE store: snapshot the OUTGOING view's partial ladder before
@@ -563,6 +592,14 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       // stay shared read-only). Mirrors GSplatsProgressiveLoader.
       this.loadedLODs = restored ? [...restored.lods] : [];
       this._loadedLODCount = restored?.depth ?? 0;
+      if (restored) {
+        const foldedPrefixDepth = restored.depth - restored.lods.length + 1;
+        this._payloadLevelStarts = restored.lods.map((_, index) =>
+          index === 0 ? 0 : foldedPrefixDepth + index - 1
+        );
+      } else {
+        this._payloadLevelStarts = [];
+      }
       // A restored full ladder has not been committed for this pass. If its
       // concat or commit fails, unwind the whole restored snapshot rather than
       // preserving a cursor at nLods and silently disabling retries.
@@ -630,6 +667,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       const elapsed = performance.now() - t0;
 
       this.loadedLODs.push(lodData);
+      this._payloadLevelStarts.push(level);
       this._loadedLODCount++;
       this._lastAllResident = allResident;
 
@@ -733,6 +771,8 @@ export class PointsProgressiveLoader implements PointsDataLoader {
           : null;
       const result = concatenatePointsData(
         this.loadedLODs,
+        this._payloadLevelStarts,
+        this._loadedLODCount,
         this.levelOffsets,
         this.warnComposeFailure
       );
@@ -741,6 +781,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
         this.lodLoaders[level]?.releaseAccumulator();
       }
       this.loadedLODs = [result];
+      this._payloadLevelStarts = [0];
       this._concatCache = {
         generation: this._resetGeneration,
         lodCount: this._loadedLODCount,
@@ -795,6 +836,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     }
     this.lodLoaders = [];
     this.loadedLODs = [];
+    this._payloadLevelStarts = [];
     this._loadedLODCount = 0;
     this._retryCompletedPass = false;
     this.lastViewState = null;
