@@ -120,6 +120,7 @@ function subLoader(
       if (opts.gate) await opts.gate;
       return { data, allResident: opts.resident ?? true };
     }),
+    releaseData: vi.fn(),
     dispose: vi.fn(() => {
       stub.disposed = true;
     }),
@@ -354,7 +355,37 @@ describe('MeshProgressiveLoader', () => {
     expect(loader.hasMoreLODs).toBe(true);
   });
 
-  it('unwinds only the levels the failing pass appended', async () => {
+  it('retains one cumulative payload after concatenation', async () => {
+    const { loader, subs } = makeLadder([
+      level(4, [0, 1, 2]),
+      level(3, [0, 1, 2]),
+      level(3, [0, 1, 2]),
+    ]);
+
+    const result = await loader.updateView(VIEW);
+    const retained = (loader as unknown as { loadedLODs: LoadedMeshData[] }).loadedLODs;
+
+    expect(loader.loadedLODCount).toBe(3);
+    expect(retained).toEqual([result]);
+    for (const sub of subs) expect(sub.releaseData).toHaveBeenCalledOnce();
+  });
+
+  it('unwinds intact rung payloads when concatenation fails before folding', async () => {
+    const { loader } = makeLadder([
+      level(4, [0, 1, 2]),
+      level(3, [0, 1, 2], { ndim: 4 }),
+      level(3, [0, 1, 2]),
+    ]);
+
+    await expect(loader.updateView(VIEW)).rejects.toThrow('mixed dimensionality');
+    expect(loader.loadedLODCount).toBe(3);
+
+    expect(loader.rollbackToPassStart()).toBe(3);
+    expect(loader.loadedLODCount).toBe(0);
+    expect(loader.hasMoreLODs).toBe(true);
+  });
+
+  it('keeps an incrementally folded prefix and cursor paired', async () => {
     const { loader } = makeLadder([level(4, [0, 1, 2]), level(3, [0, 1, 2]), level(3, [0, 1, 2])], {
       resident: false,
     });
@@ -364,8 +395,8 @@ describe('MeshProgressiveLoader', () => {
 
     await loader.updateView(VIEW);
     expect(loader.loadedLODCount).toBe(3);
-    expect(loader.rollbackToPassStart()).toBe(1);
-    expect(loader.loadedLODCount).toBe(2);
+    expect(loader.rollbackToPassStart()).toBe(0);
+    expect(loader.loadedLODCount).toBe(3);
     expect(loader.hasMoreLODs).toBe(true);
   });
 

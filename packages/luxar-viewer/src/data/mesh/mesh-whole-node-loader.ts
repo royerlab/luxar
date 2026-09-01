@@ -715,6 +715,25 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
     return { data, allResident };
   }
 
+  /**
+   * Release the decoded payload after a progressive parent has folded it into
+   * its cumulative result. Initialization metadata and handles stay warm, so a
+   * later direct load can re-fetch without rebuilding the loader.
+   *
+   * `preserveExternalResources` is used when the parent's cumulative result is
+   * the same single-level object; closing its bitmap would invalidate the
+   * transferred payload.
+   */
+  releaseData(preserveExternalResources = false): void {
+    if (!this.data) return;
+    if (!preserveExternalResources && this.data.texture?.kind === 'bitmap') {
+      this.data.texture.bitmap.close();
+    }
+    this.data = null;
+    this.metrics.memoryUsed = 0;
+    this.metrics.visibleElements = 0;
+  }
+
   // ────────────────────────────────────────────────────────────────────
   // LoaderMonitor surface
   //
