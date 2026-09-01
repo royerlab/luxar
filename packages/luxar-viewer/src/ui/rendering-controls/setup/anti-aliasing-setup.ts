@@ -38,15 +38,7 @@ export function setupAntiAliasingControls(context: SetupContext): SetupResult {
       'returns and increased GPU cost. Start with one and add more only if needed.'
   );
 
-  // SSAA settings (collapsible) - First because it's the highest quality
-  const ssaaFolder = aaFolder.addFolder('SSAA Settings (Supersampling)');
-
-  ssaaFolder.domElement?.setAttribute(
-    'title',
-    'SSAA Settings: Configure the supersampling resolution multiplier\n' +
-      '• Higher multiplier = better quality but heavier on the GPU'
-  );
-
+  let ssaaFolder: ReturnType<typeof aaFolder.addFolder>;
   const ssaaControl = aaFolder
     .add(settings, 'ssaaEnabled')
     .name('SSAA Enabled')
@@ -63,6 +55,15 @@ export function setupAntiAliasingControls(context: SetupContext): SetupResult {
         ssaaFolder.hide();
       }
     });
+
+  // SSAA settings (collapsible) - First because it's the highest quality
+  ssaaFolder = aaFolder.addFolder('SSAA Settings (Supersampling)');
+
+  ssaaFolder.domElement?.setAttribute(
+    'title',
+    'SSAA Settings: Configure the supersampling resolution multiplier\n' +
+      '• Higher multiplier = better quality but heavier on the GPU'
+  );
 
   // Set tooltip for SSAA
   ssaaControl.domElement.setAttribute(
@@ -115,15 +116,7 @@ export function setupAntiAliasingControls(context: SetupContext): SetupResult {
       '• Works well with additive blending'
   );
 
-  // MSAA settings (collapsible)
-  const msaaFolder = aaFolder.addFolder('MSAA Settings');
-
-  msaaFolder.domElement?.setAttribute(
-    'title',
-    'MSAA Settings: Configure the multisample count\n' +
-      '• More samples = smoother edges but more GPU work'
-  );
-
+  let msaaFolder: ReturnType<typeof aaFolder.addFolder>;
   const msaaControl = aaFolder
     .add(settings, 'msaaEnabled')
     .name('MSAA Enabled')
@@ -140,6 +133,15 @@ export function setupAntiAliasingControls(context: SetupContext): SetupResult {
         msaaFolder.hide();
       }
     });
+
+  // MSAA settings (collapsible)
+  msaaFolder = aaFolder.addFolder('MSAA Settings');
+
+  msaaFolder.domElement?.setAttribute(
+    'title',
+    'MSAA Settings: Configure the multisample count\n' +
+      '• More samples = smoother edges but more GPU work'
+  );
 
   // Set tooltip for MSAA
   msaaControl.domElement.setAttribute(
