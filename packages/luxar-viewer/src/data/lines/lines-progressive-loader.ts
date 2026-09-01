@@ -234,6 +234,9 @@ function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
  */
 export class LinesProgressiveLoader implements LinesDataLoader {
   private lodLoaders: LinesSpatialIndexLoader[];
+  // Retained payloads are folded after each concatenation, so this array may
+  // contain one cumulative payload plus newly loaded rungs. Its length is not
+  // the logical cursor; only _loadedLODCount tracks loaded ladder depth.
   private loadedLODs: LoadedLinesData[] = [];
   private _loadedLODCount = 0;
   private lastViewState: LinesViewState | null = null;
@@ -395,8 +398,8 @@ export class LinesProgressiveLoader implements LinesDataLoader {
       if (restored) {
         this._initialLoadDone = true;
         this._lastAllResident = true;
-        // FULL ladder short-circuits; a PREFIX falls through to the loop
-        // (startLevel = restored logical depth). Mirrors GSplatsProgressiveLoader.
+        // FULL ladder short-circuits; a PREFIX falls through to the loop at
+        // its restored logical depth even when several rungs share one payload.
         if (restored.depth === this.nLods) {
           return finish();
         }

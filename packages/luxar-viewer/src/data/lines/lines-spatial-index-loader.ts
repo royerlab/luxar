@@ -403,7 +403,13 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     this._accumulatorReleased = false;
   }
 
-  /** Release pooled decoded buffers after a progressive parent has copied them. */
+  /**
+   * Release pooled decoded buffers after a progressive parent has copied them.
+   * Earlier payloads remain valid because `dispose()` replaces the accumulator
+   * buffers rather than clearing their old arrays. This deliberately gives up
+   * pooling across view changes: retaining the pool would keep the second copy
+   * that progressive Lines releases here.
+   */
   releaseAccumulator(): void {
     if (!this._accumulatorConfig) return;
     this._accumulator?.dispose();

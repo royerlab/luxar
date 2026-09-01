@@ -151,14 +151,6 @@ export function cloneLodSnapshot<T extends object>(lods: readonly T[]): T[] {
 }
 
 /**
- * Look up a cached ladder snapshot for `view` — FULL or PREFIX — or null on
- * miss / disabled / empty. Most loaders use one payload per level, while Lines
- * may fold several loaded levels into one cumulative payload and store the
- * logical depth separately. The returned arrays are shared read-only: concat
- * allocates fresh output and worker projection structured-clones its inputs,
- * so the cached snapshot is never mutated.
- */
-/**
  * True when the view has at least one non-displayed dimension. With every
  * dimension displayed there is exactly ONE possible slice — it never gets
  * re-queried, so caching it can never hit and would only pin a full deep
@@ -169,6 +161,7 @@ function hasHiddenDims(view: SliceViewLike): boolean {
   return view.displayDims.length < view.slicePosition.length;
 }
 
+/** Look up only the cached ladder payloads, without their logical depth. */
 export function restoreLadder<T>(
   sliceCache: SliceCache | null,
   path: string,
@@ -178,11 +171,22 @@ export function restoreLadder<T>(
   return restoreLadderSnapshot<T>(sliceCache, path, view, nLods)?.lods ?? null;
 }
 
+/** Cached ladder payloads together with the logical loaded-level count. */
 export interface RestoredLadderSnapshot<T> {
   lods: T[];
   depth: number;
 }
 
+/**
+ * Look up a cached ladder snapshot for `view` — FULL or PREFIX — or null on
+ * miss / disabled / empty. Most loaders use one payload per level, while Lines
+ * may fold several loaded levels into one cumulative payload and store the
+ * logical depth separately. A prefix restores progress so loading resumes from
+ * `startLevel = depth` instead of re-streaming level 0; a full ladder
+ * short-circuits the whole load. The returned arrays are shared read-only:
+ * concat allocates fresh output and worker projection structured-clones its
+ * inputs, so the cached snapshot is never mutated.
+ */
 export function restoreLadderSnapshot<T>(
   sliceCache: SliceCache | null,
   path: string,
