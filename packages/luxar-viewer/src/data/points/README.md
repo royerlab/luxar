@@ -9,7 +9,7 @@ to the Points node type.
 | File                             | Role                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `points-spatial-index-loader.ts` | Spatial-index loader for Points: queries the chunk-bounds index, fetches encoded ranges through `RangeLoader`, and emits a `LoadedPointsData` payload. `loadPoints` is a thin wrapper (S-cache restore → `loadPointsInternal` → shared `finishQueryTracking` close-out → S-cache store / error emit) mirroring the Lines and GSplats facades. Owns the per-loader `LoadedPointsDataAccumulator` for the zero-allocation hot path.                                                                                                                    |
-| `points-progressive-loader.ts`   | Composite-pattern multi-additive-LOD facade. Wraps N `PointsSpatialIndexLoader` instances (one per `additive_<i>` subgroup), loads LODs sequentially from LOD 0, stops at the first cache miss / `CACHE_HIT_THRESHOLD_MS` overrun, prefetches the next LOD, and concatenates the loaded levels into one `LoadedPointsData`. Mirrors `GSplatsProgressiveLoader`.                                                                                                                                                                                      |
+| `points-progressive-loader.ts`   | Composite-pattern multi-additive-LOD facade. Wraps N `PointsSpatialIndexLoader` instances (one per `additive_<i>` subgroup), loads LODs sequentially from LOD 0, stops at the first cache miss / `CACHE_HIT_THRESHOLD_MS` overrun, prefetches the next LOD, and folds the loaded levels into one cumulative `LoadedPointsData` while tracking logical ladder depth separately. Mirrors `GSplatsProgressiveLoader`.                                                                                                                                   |
 | `lod-refinement.ts`              | Progressive Points LOD refinement — thin wrapper over the generic `data/scene-loader/progressive/refinement.ts`. Drives the per-frame refinement loop for progressive loaders (those exposing `hasMoreLODs`); commits each refined load directly via `updatePointsGeometry`. Mirrors `data/gsplats/lod-refinement.ts`.                                                                                                                                                                                                                               |
 | `projection.ts`                  | The single, **WASM-accelerated** nD→3D Points projection (`projectPointsTo3D`) + `createEmptyPointsData`. Runs the `extract_3d_positions` / `calculate_effective_radii` WASM kernels (via a `wasm` backend from `getPointsBackend`), then filters by visibility, normalizes uint8 radii (`/255`), and writes through `targetBuffers` (zero-alloc accumulator). Runs on the **main thread** — Points projection is bandwidth-bound and pairs with the accumulator, so it isn't worker-offloaded (W4b removed the former dead worker dispatcher copy). |
 | `effective-radius-calculator.ts` | `calculateSpatialQueryTolerance` + `shouldApplyEffectiveRadius` (used by the loader), plus a TS reference `calculateEffectiveRadii` (the production path now uses the WASM kernel; the TS twin lives in `wasm/typescript/effective-radii.ts`). Points-only — Lines and GSplats carry equivalent info in segment bounds / Cholesky factors.                                                                                                                                                                                                           |
@@ -21,8 +21,10 @@ to the Points node type.
 `PointsSpatialIndexLoader` implements the `DataLoader` contract —
 same shape as the Lines and GSplats facades (constructor, `loadPoints`,
 `updateView`, `prefetchChunks`, `dispose`, monitor events via
-`addEventListener` / `getMetrics` / `getActiveQueries`). Scene-loader
-code never imports the concrete class — it goes through
+`addEventListener` / `getMetrics` / `getActiveQueries`).
+The concrete loader also exposes `releaseAccumulator()` for the progressive
+ownership handoff.
+Scene-loader code never imports the concrete class — it goes through
 `loader-factory.ts`. For multi-additive-LOD datasets the factory
 constructs a `PointsProgressiveLoader` instead, which implements the
 same contract (plus `hasMoreLODs` / `loadedLODCount` / `totalLODCount`
@@ -68,6 +70,11 @@ space is not one any reader can key by (#1439).
   only for a node declaring a string/image channel on a non-identity range set
   — a node without one, a single `[0, N)` range, and every sub-LOD of a ladder
   whose parent declares no union label/key CSR all skip it.
+- **Folded ladders trade prefix caching for bounded residency.** After each
+  concatenation, progressive Points keeps one cumulative payload and releases
+  the decoded rung accumulators that backed it. A cumulative payload cannot be
+  trimmed back to a coarse prefix without recreating those rungs, so an
+  oversized folded snapshot is not cached and re-decodes on revisit.
 - **Dtype-aware scale propagation.** `radiusScale` lives on
   `geometry.userData` and is propagated to the material's uniforms via
   `syncPointMaterialWithGeometry` (the only one of the three
