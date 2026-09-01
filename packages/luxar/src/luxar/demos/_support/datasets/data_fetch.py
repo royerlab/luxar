@@ -51,7 +51,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from functools import lru_cache
 from pathlib import Path
 from types import TracebackType
@@ -247,10 +247,47 @@ def resolve_variant(
     return variants[variant].get("files") or [], variant
 
 
+def _select_files(
+    name: str,
+    files: list[Manifest],
+    file_names: Optional[Collection[str]],
+    variant_name: Optional[str],
+) -> list[Manifest]:
+    """Select exact manifest entries without splitting positional groups."""
+    if file_names is None:
+        return files
+
+    requested = set(file_names)
+    available = {entry["name"] for entry in files}
+    unknown = requested - available
+    if unknown:
+        detail = f" variant {variant_name!r}" if variant_name else ""
+        raise ValueError(
+            f"Requested files are not declared by dataset {name!r}{detail}: "
+            f"{sorted(unknown)}"
+        )
+
+    groups: dict[str, set[str]] = {}
+    for entry in files:
+        group = entry.get("positional_pair")
+        if group:
+            groups.setdefault(group, set()).add(entry["name"])
+    for group, members in groups.items():
+        selected = requested & members
+        if selected and selected != members:
+            raise ValueError(
+                f"Requested files split positional pair {group!r} in dataset "
+                f"{name!r}; select every member: {sorted(members)}"
+            )
+
+    return [entry for entry in files if entry["name"] in requested]
+
+
 def ensure_dataset(
     name: str,
     *,
     variant: Optional[str] = None,
+    file_names: Optional[Collection[str]] = None,
     recompute: bool = False,
     cache_root: Optional[Path] = None,
     manifest: Optional[Manifest] = None,
@@ -263,6 +300,9 @@ def ensure_dataset(
         variant: For datasets with size variants (e.g. h2afva), which to fetch;
             defaults to the variant flagged ``default`` (the lighter one). An
             error for a dataset without variants, or an unknown variant name.
+        file_names: Optional exact set of manifest file names to resolve. The
+            result remains in manifest order. Unknown names and selections that
+            split a declared ``positional_pair`` are rejected.
         recompute: If True, raise :class:`LocalComputeDataset` for *any* dataset
             so the caller takes its own build path (mirrors the demos' ``--recompute``).
         cache_root: Override the cache root (tests). Defaults to ``~/.cache/luxar``.
@@ -294,7 +334,10 @@ def ensure_dataset(
         raise ValueError(f"Dataset {name!r} has unsupported bucket {bucket!r}")
 
     files, variant_name = resolve_variant(name, spec, variant)
+    files = _select_files(name, files, file_names, variant_name)
     if not files:
+        if file_names is not None:
+            return []
         detail = f" variant {variant_name!r}" if variant_name else ""
         raise DatasetUnavailable(
             f"Dataset {name!r}{detail} has no files listed in the manifest yet "

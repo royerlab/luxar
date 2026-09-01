@@ -743,6 +743,25 @@ class TestPrecomputedRoundTrip:
         )
         assert got is None, "a partially hosted set must not build a partial matrix"
 
+    def test_unchosen_manifest_crops_are_not_resolved(self, tmp_path) -> None:
+        cache_root, written = self._stage(self._crop(name="crop_a"), tmp_path)
+        manifest = self._manifest(written)
+        manifest["datasets"][_demo.PRECOMPUTED_DATASET]["files"].extend(
+            {"name": name} for name in _demo.precomputed_file_names("crop_b")
+        )
+
+        crops = _demo.load_precomputed_crops(
+            ["crop_a"], manifest=manifest, cache_root=cache_root
+        )
+
+        assert crops is not None
+        assert [crop["name"] for crop in crops] == ["crop_a"]
+        cache_dir = cache_root / _demo.PRECOMPUTED_DATASET
+        assert all(
+            not (cache_dir / name).exists()
+            for name in _demo.precomputed_file_names("crop_b")
+        )
+
 
 class TestManifestRegistration:
     """The demo's hosted dataset must be registered the way the standard expects."""

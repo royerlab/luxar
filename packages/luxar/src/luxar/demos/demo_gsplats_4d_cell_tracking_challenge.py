@@ -409,9 +409,13 @@ def load_precomputed_crops(
     """
     from luxar.demos import DatasetUnavailable, LocalComputeDataset, ensure_dataset
 
+    file_names = {
+        name for dataset in chosen for name in precomputed_file_names(dataset)
+    }
     try:
         paths = ensure_dataset(
             PRECOMPUTED_DATASET,
+            file_names=file_names,
             recompute=FLAGS["recompute"],
             manifest=manifest,
             cache_root=cache_root,
