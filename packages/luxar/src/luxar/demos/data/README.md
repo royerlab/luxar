@@ -88,12 +88,21 @@ Each subdirectory contains pre-fitted `.gsplats.zarr.zip` files for one demo:
 
 > **Note — uploads.** The neuromast pair, both h2afva timelapse variants, the
 > h2afva single-stack and decimation files, the seven cell-tracking crop pairs,
-> and the other hosted-only datasets are uploaded and pinned in the manifest.
-> `scripts/zenodo_migration_audit.py --live` verifies that every declared pin
-> matches the current draft records. All records are still unsubmitted, so each
-> carries `published: false` and the fetch derives no public URL from its
-> record id. Publishing the records and enabling their manifest URLs is the
-> remaining record-side step.
+> and the other hosted-only datasets are uploaded and pinned in the manifest;
+> nothing carries `pending_upload` any more.
+> A re-pin uploads under the SAME file name, so it replaces the outgoing copy;
+> each entry keeps that outgoing digest in `superseded_sha256` so a machine whose
+> cache is already warm with the previous generation reads it as out of date
+> rather than corrupt. That fallback is local-disk only — the download leg stays
+> strict on `hosted_sha256` and never fetches a superseded copy — and for a
+> `positional_pair` it needs the COMPLETE prior generation, which is why the
+> generator refuses a re-pin that moves one member of a pair without the other.
+> Do the upload BEFORE the record is published: publication freezes the files.
+> `scripts/zenodo_migration_audit.py --live`
+> verifies that every declared pin matches the current draft records. All four
+> records are still unsubmitted, so each carries `published: false` and the fetch
+> derives no public URL from its record id. Publishing the records and enabling
+> their manifest URLs is the remaining record-side step.
 
 ### Other Data Files (top level)
 
