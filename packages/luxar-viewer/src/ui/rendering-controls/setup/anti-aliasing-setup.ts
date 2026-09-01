@@ -38,7 +38,6 @@ export function setupAntiAliasingControls(context: SetupContext): SetupResult {
       'returns and increased GPU cost. Start with one and add more only if needed.'
   );
 
-  let ssaaFolder: ReturnType<typeof aaFolder.addFolder>;
   const ssaaControl = aaFolder
     .add(settings, 'ssaaEnabled')
     .name('SSAA Enabled')
@@ -56,8 +55,8 @@ export function setupAntiAliasingControls(context: SetupContext): SetupResult {
       }
     });
 
-  // SSAA settings (collapsible) - First because it's the highest quality
-  ssaaFolder = aaFolder.addFolder('SSAA Settings (Supersampling)');
+  // SSAA settings (collapsible) — created after its toggle so it renders below it
+  const ssaaFolder = aaFolder.addFolder('SSAA Settings (Supersampling)');
 
   ssaaFolder.domElement?.setAttribute(
     'title',
@@ -116,7 +115,6 @@ export function setupAntiAliasingControls(context: SetupContext): SetupResult {
       '• Works well with additive blending'
   );
 
-  let msaaFolder: ReturnType<typeof aaFolder.addFolder>;
   const msaaControl = aaFolder
     .add(settings, 'msaaEnabled')
     .name('MSAA Enabled')
@@ -134,8 +132,8 @@ export function setupAntiAliasingControls(context: SetupContext): SetupResult {
       }
     });
 
-  // MSAA settings (collapsible)
-  msaaFolder = aaFolder.addFolder('MSAA Settings');
+  // MSAA settings (collapsible) — created after its toggle so it renders below it
+  const msaaFolder = aaFolder.addFolder('MSAA Settings');
 
   msaaFolder.domElement?.setAttribute(
     'title',
