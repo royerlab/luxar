@@ -128,17 +128,18 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // the only way to reproduce constrained-device behaviour on a roomy box, and
   // it also constrains GPU geometry. The ambient JS heap limit is deliberately
   // not folded in: its coarse Chromium tiers are not a GPU-memory measurement.
-  const resolvedCacheBudgetMB =
-    urlParams.cacheBudgetMB ??
-    (userSettings.caching.budgetMode === 'custom' ? userSettings.caching.budgetMB : null);
   configureGpuByteBudget(
     urlParams.gpuBudgetMB != null
       ? urlParams.gpuBudgetMB * 1_000_000
       : config.dataLoading.performance.gpuPoolMaxBytes,
     {
-      cachePoolOverrideBytes: cachePoolOverrideBytes(resolvedCacheBudgetMB),
+      cachePoolOverrideBytes: cachePoolOverrideBytes(urlParams.cacheBudgetMB),
     }
   );
+
+  const resolvedCacheBudgetMB =
+    urlParams.cacheBudgetMB ??
+    (userSettings.caching.budgetMode === 'custom' ? userSettings.caching.budgetMB : null);
 
   // Install the session-wide line join override before any line material is
   // constructed (same shape and the same reason as the byte budget above).

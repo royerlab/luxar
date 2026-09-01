@@ -104,8 +104,7 @@ describe('gpu-byte-budget', () => {
       withDeviceMemory(32, () => {
         configureGpuByteBudget(null, { cachePoolOverrideBytes: 1024 * MiB });
         // 32 GB would pin at the 2 GB ceiling; the override must win.
-        expect(getGpuByteBudget()).toBeLessThan(2_000 * MB);
-        expect(getGpuByteBudget()).toBeGreaterThan(0);
+        expect(getGpuByteBudget()).toBe(Math.floor((1024 * MiB) / 3));
       });
     });
 
@@ -127,6 +126,20 @@ describe('gpu-byte-budget', () => {
       });
     });
 
+    it('keeps large cache overrides proportional instead of applying the eager-loader cap', () => {
+      withDeviceMemory(32, () => {
+        configureGpuByteBudget(null, { cachePoolOverrideBytes: 4096 * MiB });
+        expect(getGpuByteBudget()).toBe(Math.floor((4096 * MiB) / 3));
+      });
+    });
+
+    it('uses the cache override when deviceMemory is unavailable', () => {
+      withDeviceMemory(undefined, () => {
+        configureGpuByteBudget(null, { cachePoolOverrideBytes: 2048 * MiB });
+        expect(getGpuByteBudget()).toBe(Math.floor((2048 * MiB) / 3));
+      });
+    });
+
     it('does not shrink the budget merely because the heap is unmeasurable', () => {
       // Firefox and Safari expose no `performance.memory`. The heap helper
       // answers with a fixed small fallback that is indistinguishable from a
@@ -138,25 +151,11 @@ describe('gpu-byte-budget', () => {
       });
     });
 
-    it('DOES bind a roomy Chromium device to its measured heap tier', () => {
-      // This assertion was previously the opposite, on the reasoning that a
-      // coarse heap tier is not a GPU-memory signal. True of VRAM, wrong for
-      // the failure this budget exists to prevent: the crash is
-      // `RangeError: Array buffer allocation failed` — JS heap exhaustion —
-      // and a stranded pooled pair holds a CPU-side ArrayBuffer, so heap is
-      // what must bound the pool. `deviceMemory` is blind to it: it reports
-      // SYSTEM RAM, so a 32 GB box whose tab heap caps near 4 GB reads as
-      // roomy, takes the 2 GB ceiling, never binds, and evicts nothing right
-      // up until the tab dies.
-      //
-      // Measured on that exact shape: with the heap term the budget resolved
-      // to ~537 MB and the pool reclaimed during churn; without it, 2000 MB
-      // and ZERO evictions on the same scene.
+    it('does not shrink a roomy Chromium device from its measured heap tier', () => {
       withDeviceMemory(32, () => {
         withHeapLimit(4 * 1024 * 1024 * 1024, () => {
           configureGpuByteBudget();
-          expect(getGpuByteBudget()).toBeLessThan(2_000 * MB);
-          expect(getGpuByteBudget()).toBeGreaterThan(0);
+          expect(getGpuByteBudget()).toBe(2_000 * MB);
         });
       });
     });
@@ -172,6 +171,18 @@ describe('gpu-byte-budget', () => {
           expect(getGpuByteBudget()).toBe(2_000 * MB);
         });
       });
+    });
+
+    it('logs the cache override in the MiB units supplied by the user', () => {
+      const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+      withDeviceMemory(32, () => {
+        configureGpuByteBudget(null, { cachePoolOverrideBytes: 1024 * MiB });
+      });
+      expect(info).toHaveBeenCalledWith(
+        Modules.PERFORMANCE,
+        'GPU byte budget: 358 MB (auto: deviceMemory=32 GB -> 2000 MB, cacheBudgetMB=1024 -> 358 MB; min=358 MB)'
+      );
+      info.mockRestore();
     });
   });
 
