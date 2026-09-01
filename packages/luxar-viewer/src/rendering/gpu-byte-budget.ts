@@ -42,6 +42,7 @@
  * @module rendering/gpu-byte-budget
  */
 
+import { computeWorkingSetBudgetBytes, readHeapLimitBytes } from '../cache/heap-budget';
 import { log, Modules } from '../utils/log';
 
 /** Fraction of system RAM to devote to GPU geometry. */
@@ -86,10 +87,34 @@ export interface GpuBudgetMemorySignals {
 }
 
 /**
- * Compute the auto budget from ``navigator.deviceMemory`` and an explicit
- * cache-pool override. The ambient JS heap limit is deliberately excluded:
- * deriving through the eager line loader's share-of-a-share would cap every
- * roomy Chromium desktop at that subsystem's 512 MiB working-set ceiling.
+ * Compute the auto budget from ``navigator.deviceMemory``, the measured JS
+ * heap, and an explicit cache-pool override — whichever is scarcest.
+ *
+ * THE HEAP TERM IS THE ONE THAT MATTERS, and it has now been removed twice on
+ * the reasoning that a coarse heap tier is not a GPU-memory signal. That is
+ * true of VRAM and wrong for the failure this budget exists to prevent. The
+ * crash is `RangeError: Array buffer allocation failed` — JS heap exhaustion —
+ * and a stranded pooled pair holds a CPU-side ArrayBuffer as well as a
+ * texture, so heap is what must bound the pool. ``deviceMemory`` is
+ * structurally blind to it: it reports SYSTEM RAM, so a 32 GB machine whose
+ * tab heap caps near 4 GB reads as roomy, takes the 2 GB ceiling, never binds,
+ * and evicts nothing right up until the tab dies.
+ *
+ * MEASURED, not argued (host-demos, `jsHeapSizeLimit` spoofed in an init
+ * script with real used/total passing through): without the heap term the auto
+ * budget stayed at 2000 MB at a spoofed 256 MB heap and reclaimed nothing —
+ * not one MB of movement. With it, the budget tracks the spoof at 43 / 86 /
+ * 172 MB for 256 / 512 / 1024 MiB, and the auto-binding regression closes
+ * (multi6 real-heap evict=5).
+ *
+ * The two paths use DIFFERENT derivations on purpose. An explicit
+ * `?cacheBudgetMB=` is a direct statement about the pool the user wants, so it
+ * takes a simple proportional share ({@link CACHE_POOL_GPU_SHARE}). The
+ * ambient heap goes through ``computeWorkingSetBudgetBytes`` because that is
+ * the project's existing answer to "how much CPU-side working set can this
+ * device spare", the refinement residency cap already sizes from it, and a
+ * pooled buffer is exactly such a working set — and because it is the
+ * derivation the numbers above were measured against.
  */
 function computeAutoBudget(memory?: GpuBudgetMemorySignals): { bytes: number; sources: string[] } {
   const gb = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
@@ -102,8 +127,14 @@ function computeAutoBudget(memory?: GpuBudgetMemorySignals): { bytes: number; so
     cachePoolOverrideBytes > 0
       ? Math.floor(cachePoolOverrideBytes * CACHE_POOL_GPU_SHARE)
       : undefined;
+  // Only when the heap is actually MEASURABLE. `computeWorkingSetBudgetBytes`
+  // answers with a fixed fallback when it has nothing to go on, and that value
+  // is indistinguishable from a derived one — folding it in unguarded would cap
+  // a 32 GB Firefox/Safari box at the fallback purely for exposing no
+  // `performance.memory`. An absent measurement is not a small one.
+  const fromHeap = readHeapLimitBytes() !== undefined ? computeWorkingSetBudgetBytes() : undefined;
 
-  const candidates = [fromDeviceMemory, fromCachePool].filter(
+  const candidates = [fromDeviceMemory, fromHeap, fromCachePool].filter(
     (value): value is number => value !== undefined
   );
   if (candidates.length === 0) {
@@ -122,6 +153,9 @@ function computeAutoBudget(memory?: GpuBudgetMemorySignals): { bytes: number; so
   const sources: string[] = [];
   if (fromDeviceMemory !== undefined) {
     sources.push(`deviceMemory=${gb} GB -> ${mb(Math.min(fromDeviceMemory, MAX_BUDGET_BYTES))} MB`);
+  }
+  if (fromHeap !== undefined) {
+    sources.push(`heap -> ${mb(fromHeap)} MB`);
   }
   if (fromCachePool !== undefined) {
     sources.push(

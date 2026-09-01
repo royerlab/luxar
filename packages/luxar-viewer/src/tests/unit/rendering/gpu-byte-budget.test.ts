@@ -141,13 +141,49 @@ describe('gpu-byte-budget', () => {
       });
     });
 
-    it('does not shrink a roomy Chromium device from its measured heap tier', () => {
+    it('DOES bind a roomy Chromium device to its measured heap tier', () => {
+      // This assertion has been the opposite twice, on the reasoning that a
+      // coarse heap tier is not a GPU-memory signal. True of VRAM, wrong for
+      // the failure this budget prevents: the crash is `RangeError: Array
+      // buffer allocation failed` — JS heap exhaustion — and a stranded pooled
+      // pair holds a CPU-side ArrayBuffer, so heap is what must bound the
+      // pool. `deviceMemory` reports SYSTEM RAM, so a 32 GB box whose tab heap
+      // caps near 4 GB reads as roomy, takes the 2 GB ceiling, and evicts
+      // nothing right up until the tab dies.
+      //
+      // Settled by measurement, not argument (host-demos, `jsHeapSizeLimit`
+      // spoofed with real used/total passing through): WITHOUT the heap term
+      // the auto budget stayed at 2000 MB even at a spoofed 256 MB heap and
+      // reclaimed nothing — zero movement. WITH it the budget tracks the spoof
+      // at 43 / 86 / 172 MB for 256 / 512 / 1024 MiB, and multi6 returns to
+      // evict=5 on the real heap.
       withDeviceMemory(32, () => {
         withHeapLimit(4 * 1024 * 1024 * 1024, () => {
           configureGpuByteBudget();
-          expect(getGpuByteBudget()).toBe(2_000 * MB);
+          expect(getGpuByteBudget()).toBeLessThan(2_000 * MB);
+          expect(getGpuByteBudget()).toBeGreaterThan(0);
         });
       });
+    });
+
+    it('tracks the heap DOWNWARD, so a smaller heap binds harder', () => {
+      // The property the spoof measured, pinned here so it cannot regress
+      // silently: the budget must MOVE with the heap, not merely be below the
+      // ceiling once. A constant that happens to sit under 2 GB would pass the
+      // assertion above while being just as blind.
+      let atFourGB = 0;
+      let atOneGB = 0;
+      withDeviceMemory(32, () => {
+        withHeapLimit(4 * 1024 * 1024 * 1024, () => {
+          configureGpuByteBudget();
+          atFourGB = getGpuByteBudget();
+        });
+        withHeapLimit(1024 * 1024 * 1024, () => {
+          configureGpuByteBudget();
+          atOneGB = getGpuByteBudget();
+        });
+      });
+      expect(atOneGB).toBeLessThan(atFourGB);
     });
 
     it('logs the cache override in the MiB units supplied by the user', () => {
