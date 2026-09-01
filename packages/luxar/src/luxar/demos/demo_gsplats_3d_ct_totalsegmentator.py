@@ -47,7 +47,8 @@ On a fresh machine this demo bootstraps itself with no manual steps:
   1. Fast path: the manifest resolves a checksum-verified precomputed fit from
      the in-repo Git LFS copies or the hosted record. Hosted fits carry labels
      natively; the older in-repo fit resolves its matching sidecar.
-  2. ``--recompute`` downloads the 3.2 GB subset to
+  2. If no precomputed pair is available, or ``--recompute`` is passed, it
+     downloads the 3.2 GB subset to
      ``~/.cache/luxar/gsplats_ct_totalsegmentator/`` (resumable), extracts one
      subject, combines its masks with ``nibabel``, fits on the GPU, then caches
      the fit with labels sampled from the stored splat order under that
