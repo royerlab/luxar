@@ -21,6 +21,7 @@ import {
   measureLodBytes,
 } from '../../../data/loaders/progressive/slice-cache-helper';
 import { getPrefixParent } from '../../../types/prefix-lineage';
+import { testLadderFoldContract } from './_shared/ladder-fold-contract';
 import {
   resetLodLoadStats,
   setLodLoadStatsEnabled,
@@ -1602,4 +1603,24 @@ describe('determinant-equal dimensions refresh (three-geometry twin of the point
     });
     expect(lod0.updateView).toHaveBeenCalled();
   });
+});
+
+testLadderFoldContract('GSplats', async () => {
+  const subs = [
+    makeSubLoader(makeLodData(100, 3, { color: 'uint8' })),
+    makeSubLoader(makeLodData(50, 3, { color: 'uint8' })),
+    makeSubLoader(makeLodData(25, 3, { color: 'uint8' })),
+  ];
+  const l = new GSplatsProgressiveLoader(
+    subs as unknown as GSplatsSpatialIndexLoader[],
+    subs.length,
+    '/fold'
+  );
+  return {
+    loader: l,
+    totalLevels: subs.length,
+    loadAll: async () => {
+      await l.updateView(baseViewState);
+    },
+  };
 });
