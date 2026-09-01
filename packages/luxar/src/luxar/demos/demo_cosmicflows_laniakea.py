@@ -652,6 +652,8 @@ def write_laniakea_scene(
             ]
         )
         viewer_config = ViewerConfig(
+            # Thin lines lose detail at CSS resolution; see ViewerConfig.allow_high_dpr.
+            allow_high_dpr=True,
             cinematic_mode=True,
             camera=CameraConfig(
                 position=pull_in((1050.0, -1500.0, 780.0), from_fov_deg=42.0),

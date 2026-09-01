@@ -655,7 +655,12 @@ def build_scene(
                 # half a stop — the gallery still goes from 1.9% of its lit
                 # pixels blown to 5.4% at the same exposure, and back to 0.9%
                 # at the manifest's re-tuned -1.5 stops.
-                viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
+                viewer_config=ViewerConfig(
+                    # Thin lines lose detail at CSS resolution; see ViewerConfig.allow_high_dpr.
+                    allow_high_dpr=True,
+                    cinematic_mode=True,
+                    tone_mapping="ACES",
+                ),
                 citation=DEMO_META["citation"],
             )
 

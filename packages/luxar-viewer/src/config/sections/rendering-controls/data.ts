@@ -79,6 +79,15 @@ export const renderingControlsConfig: RenderingControlsConfig = {
     // emissive geometry the extra pixels buy very little. While off, DPR
     // 1.0 is the starting value, the adaptive scale-up ceiling, and the
     // top of the Manual DPR slider. See rendering/pixel-ratio-cap.
+    //
+    // A scene may override this via `viewer_config.allow_high_dpr`, and
+    // THIN-LINE scenes should: measured against DPR 2 on a Retina panel,
+    // brightness and coverage hold to within 2.5% everywhere and the whole
+    // visible cost is a 15-35% loss of high-frequency detail — mild on
+    // points and splats, but the difference between separable and mush on
+    // a river network or a tractogram. Line scenes also gain least from
+    // the cap (1.06-1.17x, vs 2.6-2.7x on a point cloud), so it is the
+    // cheapest place to spend the pixels.
     allowHighDPR: false,
     // Cinematic mode (disabled by default)
     cinematicMode: false,

@@ -106,8 +106,11 @@ export function setupPerformanceControls(context: PerformanceSetupContext): Perf
       '  resolution, the adaptive ceiling, and the top of the Manual DPR slider\n' +
       `• ON: allows up to ${manager.getNativeDPR().toFixed(2)}x, which costs ` +
       `${(manager.getNativeDPR() ** 2).toFixed(0)}x the pixels\n` +
-      '• Off by default because points, splats and lines are soft-edged — the\n' +
-      '  extra pixels usually cost far more than they show'
+      '• Off by default: points and splats are soft-edged, so the extra pixels\n' +
+      '  usually cost far more than they show\n' +
+      '• Worth turning ON for scenes made of THIN LINES (river networks,\n' +
+      '  tractograms, wiring diagrams), where CSS resolution blurs the strands\n' +
+      '  together — and where it is cheap, since line scenes are not fill-bound'
   );
 
   const adaptiveToggle = performanceFolder
