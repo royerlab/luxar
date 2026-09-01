@@ -540,6 +540,22 @@ describe('GSplatsProgressiveLoader', () => {
   });
 
   describe('rollbackToPassStart (failed-commit recovery, #2426)', () => {
+    it('unwinds intact rung payloads when concatenation fails before folding', async () => {
+      const incompatible = makeLodData(50, 3, { color: 'uint8' });
+      incompatible.colors = new Uint8Array(50 * 4);
+      incompatible.colorComponents = 4;
+      lodB.updateView.mockResolvedValue(incompatible);
+
+      await expect(loader.loadGSplats(baseViewState)).rejects.toThrow(
+        'mixed color layouts across LOD levels'
+      );
+      expect(loader.loadedLODCount).toBe(3);
+
+      expect(loader.rollbackToPassStart()).toBe(3);
+      expect(loader.loadedLODCount).toBe(0);
+      expect(loader.hasMoreLODs).toBe(true);
+    });
+
     it('keeps a completed pass schedulable when its commit fails', async () => {
       const result = await loader.loadGSplats(baseViewState);
       expect(loader.loadedLODCount).toBe(3);

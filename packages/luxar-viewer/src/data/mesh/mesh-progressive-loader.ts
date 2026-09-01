@@ -354,7 +354,7 @@ export class MeshProgressiveLoader implements MeshDataLoader {
   private _levelsAtPassStart = 0;
   // A completed pass can still fail after loading, during projection or commit.
   // Keep it schedulable for one retry even though the ladder cursor is full.
-  private _retryCompletedPass = false;
+  private _retryFoldedPass = false;
   /** Per-pass playback budget from the CURRENT `updateView`; null outside playback. */
   private _frameBudgetMs: number | null = null;
   private _lastAllResident = true;
@@ -383,7 +383,7 @@ export class MeshProgressiveLoader implements MeshDataLoader {
     // another level (see `_budgetRefusal`'s docstring) — report no further work
     // so the refinement loop leaves the node instead of re-failing it forever.
     if (this._budgetRefusal) return false;
-    if (this._retryCompletedPass) return true;
+    if (this._retryFoldedPass) return true;
     // While a playback frame budget is active the budgeted prefix IS the target:
     // no background refinement between animation ticks.
     if (this._frameBudgetMs !== null) return false;
@@ -407,16 +407,21 @@ export class MeshProgressiveLoader implements MeshDataLoader {
    * @returns Levels discarded (0 when the pass appended none).
    */
   rollbackToPassStart(): number {
-    const plan = planLadderRollback(
-      this.loadedLODs.length,
-      this._levelsAtPassStart,
-      this._concatCache?.lodCount ?? null
-    );
-    if (plan.dropped === 0 && this.loadedLODs.length === this.nLods) {
-      this._retryCompletedPass = true;
+    const plan = planLadderRollback({
+      loadedLevelCount: this.loadedLODs.length,
+      levelsAtPassStart: this._levelsAtPassStart,
+      concatCacheLodCount: this._concatCache?.lodCount ?? null,
+      retainedPayloadCount: this.loadedLODs.length,
+      payloadsAtPassStart: this._levelsAtPassStart,
+      restoredFullLadderAtPassStart: false,
+      totalLevelCount: this.nLods,
+    });
+    if (plan.action === 'retry-folded-pass') this._retryFoldedPass = true;
+    if (plan.action === 'truncate') {
+      this.loadedLODs.length = plan.keep;
+      this._retryFoldedPass = false;
+      if (plan.invalidateConcatCache) this._concatCache = null;
     }
-    if (plan.dropped > 0) this.loadedLODs.length = plan.keep;
-    if (plan.invalidateConcatCache) this._concatCache = null;
     return plan.dropped;
   }
 
@@ -640,7 +645,7 @@ export class MeshProgressiveLoader implements MeshDataLoader {
     // Record the per-pass playback budget FIRST: a pause re-trigger arrives with
     // the same view state and must still clear the budget.
     this._frameBudgetMs = viewState.frameBudgetMs ?? null;
-    this._retryCompletedPass = false;
+    this._retryFoldedPass = false;
     const budgetDeadline =
       this._frameBudgetMs !== null ? performance.now() + this._frameBudgetMs : null;
 
@@ -797,7 +802,7 @@ export class MeshProgressiveLoader implements MeshDataLoader {
     for (const loader of this.lodLoaders) loader.dispose();
     this.lodLoaders = [];
     this.loadedLODs = [];
-    this._retryCompletedPass = false;
+    this._retryFoldedPass = false;
     this._concatCache = null;
     // Nothing is on screen for this node any more; the cumulative counters live
     // on the (now-disposed) levels and go with them.

@@ -261,7 +261,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
   private _restoredFullLadderAtPassStart = false;
   // A completed pass can still fail after loading, during projection or commit.
   // Keep it schedulable for one retry even though the ladder cursor is full.
-  private _retryCompletedPass = false;
+  private _retryFoldedPass = false;
   // Per-sub-LOD cumulative energy fractions e(k) (the build-time
   // `lod_stats.energy_fraction_cum` stamps), normalized at construction:
   // non-null only when EVERY sub-LOD carries a stamp (a partially stamped
@@ -309,7 +309,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     // refinement loop holding a stale reference stops instead of indexing
     // into the now-empty lodLoaders.
     if (this._disposed) return false;
-    if (this._retryCompletedPass) return true;
+    if (this._retryFoldedPass) return true;
     // While a playback frame budget is active, the budgeted prefix IS the
     // target: report no further work so the refinement scheduler stays idle
     // between animation ticks and the commit stamps the prefix as complete
@@ -355,31 +355,32 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
    * @returns Levels discarded (0 when the pass appended none).
    */
   rollbackToPassStart(): number {
-    const plan = planLadderRollback(
-      this._loadedLODCount,
-      this._levelsAtPassStart,
-      this._concatCache?.lodCount ?? null
-    );
-    if (plan.dropped === 0) {
-      if (this._loadedLODCount === this.nLods && this.loadedLODs.length < this._loadedLODCount) {
-        this._retryCompletedPass = true;
-      }
+    const plan = planLadderRollback({
+      loadedLevelCount: this._loadedLODCount,
+      levelsAtPassStart: this._levelsAtPassStart,
+      concatCacheLodCount: this._concatCache?.lodCount ?? null,
+      retainedPayloadCount: this.loadedLODs.length,
+      payloadsAtPassStart: this._payloadsAtPassStart,
+      restoredFullLadderAtPassStart: this._restoredFullLadderAtPassStart,
+      totalLevelCount: this.nLods,
+    });
+    if (plan.action === 'none') return 0;
+    if (plan.action === 'retry-folded-pass') {
+      this._retryFoldedPass = true;
       return 0;
     }
-    if (this._restoredFullLadderAtPassStart) {
+    if (plan.action === 'unwind-restored-full') {
       this.loadedLODs = [];
       this._loadedLODCount = 0;
       this._restoredFullLadderAtPassStart = false;
+      this._retryFoldedPass = false;
       if (this.lastViewState) deleteLadder(this.sliceCache, this.path, this.lastViewState);
       this._concatCache = null;
       return plan.dropped;
     }
-    if (this.loadedLODs.length - this._payloadsAtPassStart < plan.dropped) {
-      this._retryCompletedPass = true;
-      return 0;
-    }
     this.loadedLODs.length = this._payloadsAtPassStart;
     this._loadedLODCount = plan.keep;
+    this._retryFoldedPass = false;
     if (this.lastViewState) deleteLadder(this.sliceCache, this.path, this.lastViewState);
     if (plan.invalidateConcatCache) this._concatCache = null;
     return plan.dropped;
@@ -425,7 +426,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     // clear the budget so refinement can resume). Deadline is measured from
     // pass start so slow levels consume the budget too.
     this._frameBudgetMs = viewState.frameBudgetMs ?? null;
-    this._retryCompletedPass = false;
+    this._retryFoldedPass = false;
     const budgetDeadline =
       this._frameBudgetMs !== null ? performance.now() + this._frameBudgetMs : null;
 
@@ -715,7 +716,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     this.lodLoaders = [];
     this.loadedLODs = [];
     this._loadedLODCount = 0;
-    this._retryCompletedPass = false;
+    this._retryFoldedPass = false;
     this.lastViewState = null;
     this._concatCache = null;
   }
