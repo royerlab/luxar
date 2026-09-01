@@ -6,7 +6,7 @@ nothing at rest: refinement drove every loader to its last rung with no notion
 of what the scene could afford. The Cosmicflows/Laniakea demo (10 line nodes,
 11.4 million segments) climbed its ladders until the tab ran out of memory.
 
-The viewer already measured this pressure when *loading* a scene, but that gate
+The viewer already measured this pressure when _loading_ a scene, but that gate
 releases as soon as each node's first paint completes, and refinement is
 scheduled afterwards — so by the time the ladders climbed, nothing held a
 budget at all.
@@ -25,3 +25,11 @@ nodes are each individually affordable and only collectively fatal, so per-type
 budgets would have admitted all of them. Where no memory signal is available
 (Firefox and Safari expose none), refinement is unbounded exactly as before,
 rather than being throttled on a measurement that does not exist.
+
+Superseded or otherwise uncommitted refinement passes now release the previous
+cumulative payload they used for prefix-append detection instead of retaining
+that abort-path lineage until another pass happens to replace it.
+
+The Scene-Graph monitor now reports the number of ladder rungs actually
+committed on screen, rather than the loader cursor. Failed or superseded commits
+therefore no longer make a stalled node appear fully refined.

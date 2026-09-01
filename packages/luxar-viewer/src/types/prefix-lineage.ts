@@ -117,7 +117,9 @@ export function getPrefixParent(child: object): object | undefined {
  * 0.0 / 0.5 / 0.75 / 0.875 at 2 / 4 / 8 / 16 rungs — reproducing the depth
  * curve seen on real gsplat nodes (#2426). The two-rung case retains nothing
  * for the same reason: it completes in a single pass, so there is no previous
- * cumulative to pin.
+ * cumulative to pin. Those fractions come from an abort-path probe that never
+ * commits; committing browser runs retain the same depth curve before and after
+ * this release, so they must not be read as the settled deep-rung saving.
  *
  * A no-op when the pass committed (the commit already cleared it) and when
  * `data` is absent. Safe to over-call: clearing an entry that is already gone

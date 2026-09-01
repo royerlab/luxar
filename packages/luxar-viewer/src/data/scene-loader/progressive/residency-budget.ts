@@ -27,13 +27,13 @@
  *
  * Decoded payload bytes are measured from the typed arrays. Renderer element
  * rows are derived from each geometry's authoritative layout constant, because
- * those allocations are not present in the decoded payload. The next rung is
- * estimated from the mean accounted rung so far — see
- * {@link estimateNextRungBytes}. During a fold/commit, the previous cumulative
- * CPU payload can remain reachable while the replacement is allocated, so the
- * transient peak may add nearly one extra decoded cumulative on top of the
- * settled payload + element-row accounting; the separately bounded slice cache
- * is omitted.
+ * those allocations are not present in the decoded payload. The renderer's two
+ * Uint32 ordering buffers (8 B/element) are intentionally omitted, as is the
+ * separately bounded slice cache. The next pass is estimated from the mean
+ * accounted rung so far — see {@link estimateNextRungBytes}. During a
+ * fold/commit, the previous cumulative CPU payload can remain reachable while
+ * the replacement is allocated, so the transient peak may add nearly one extra
+ * decoded cumulative on top of the settled payload + element-row accounting.
  *
  * DECLINING MUST ALSO RETIRE THE LOADER FROM THE RUN. `runProgressiveRefinement`
  * spins while `anyHasMoreLODs()` is true, and a declined loader still has more
@@ -62,7 +62,7 @@ export type RefinementAdmissionReason =
   /** Fits now, but the next rung would cross the ceiling. */
   | 'next-rung-would-exceed';
 
-/** The verdict for one refinement step. */
+/** The verdict for one loader's refinement pass. */
 export interface RefinementAdmission {
   admitted: boolean;
   reason: RefinementAdmissionReason;
@@ -72,20 +72,21 @@ export interface RefinementAdmission {
 }
 
 /**
- * Decide whether one more rung may be loaded.
+ * Decide whether one loader may run another refinement pass.
  *
  * Two rules, both from measured bytes:
  *
  *  1. a HARD STOP once tracked residency is already at or past the ceiling, and
  *  2. a PREDICTIVE stop when the next rung would cross it.
  *
- * Rule 2's input comes from {@link estimateNextRungBytes}, which under-estimates
- * on purpose for the ladder shape that actually hurts. Under-estimating means a
- * geometric ladder may cross the ceiling once before rule 1 catches it on the
- * following pass. Admissions reserve their estimate immediately, so later
- * nodes in the same pass see that authorised growth. That is the right
- * direction to err — over-estimating would stop equal-count ladders several
- * rungs early, degrading scenes that were never in danger.
+ * Rule 2's input comes from {@link estimateNextRungBytes}, which reserves one
+ * mean rung but authorises a PASS. A warm-cache pass may append every remaining
+ * cache-resident level before the streaming policy yields, so the bound is one
+ * pass of overshoot per node per run, not one rung. Admissions reserve their
+ * estimate immediately, so later nodes in the same run see that authorised
+ * growth. #2432 tracks enforcing the allowance inside the streaming loop.
+ * Over-estimating here would stop equal-count ladders several rungs early,
+ * degrading scenes that were never in danger.
  *
  * A non-positive budget means "no signal" (no `performance.memory`, no
  * override) and admits everything. Refusing to refine because a measurement is
@@ -137,16 +138,17 @@ export function planRefinementAdmission(
  * measured under forced pressure, and it made the cap useless for the geometry
  * it was written for.
  *
- * The element term is derived from each geometry's own authoritative layout
- * constant (`rendering/element-texture-layout`), not estimated, so the two
- * geometries cannot drift apart again.
+ * The element-row term is derived from each geometry's own authoritative layout
+ * constant (`rendering/element-texture-layout`), not estimated. It deliberately
+ * excludes the renderer's separate 8 B/element ordering pair documented in the
+ * module header.
  */
 export interface LadderResidency {
   /** Total bytes of every typed array the loaded rungs hold. */
   residentBytes: number;
   /** How many rungs those bytes represent. */
   loadedRungs: number;
-  /** Committed elements (segments / splats / points / triangles). */
+  /** Committed element-texture rows (segments / splats / points; Mesh has none). */
   elementCount: number;
   /** This geometry's element-texture row size, from its layout constant. */
   bytesPerElement: number;

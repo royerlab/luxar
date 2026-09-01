@@ -57,9 +57,11 @@ export interface LadderFoldSubject {
    * passes. That is the shape real refinement takes, and it is materially
    * different from a single resident pass — the single-pass climb concatenates
    * exactly once, so it has no previous cumulative and cannot exhibit the
-   * lineage retention that cost up to a whole redundant copy at depth (#2426).
-   * A contract that only ever ran the single-pass shape looked green through
-   * that entire bug.
+   * abort-path lineage retention that can pin up to a whole redundant copy at
+   * depth (#2426). Committing browser runs retain the same depth curve before
+   * and after the release; the multi-pass case protects the uncommitted exit,
+   * not a settled deep-rung saving. A contract that only ever ran the
+   * single-pass shape looked green through that entire bug.
    */
   multiPass?: { loader: FoldableLadderLoader; loadAll(): Promise<void>; totalLevels: number };
 }
