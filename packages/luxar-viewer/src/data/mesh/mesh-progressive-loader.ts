@@ -69,6 +69,7 @@ import {
 import type { MeshPreflightResult } from './preflight';
 import type { UpdateSession } from '../../profiling/update-profiler';
 import { concatRequiredField } from '../loaders/progressive/concat-helpers';
+import { planLadderRollback } from '../loaders/progressive/pass-rollback';
 import {
   classifyStreamingPass,
   shouldStopBeforeLevel,
@@ -347,6 +348,13 @@ export class MeshProgressiveLoader implements MeshDataLoader {
    * skip no-op re-commits, and what keeps the projection scratch alive.
    */
   private _concatCache: { lodCount: number; result: LoadedMeshData } | null = null;
+  // `loadedLODs.length` as the CURRENT updateView pass found it — the
+  // watermark `rollbackToPassStart()` unwinds to when the caller's commit
+  // throws. See `../loaders/progressive/pass-rollback`.
+  private _levelsAtPassStart = 0;
+  // A completed pass can still fail after loading, during projection or commit.
+  // Keep it schedulable for one retry even though the ladder cursor is full.
+  private _retryCompletedPass = false;
   /** Per-pass playback budget from the CURRENT `updateView`; null outside playback. */
   private _frameBudgetMs: number | null = null;
   private _lastAllResident = true;
@@ -375,6 +383,7 @@ export class MeshProgressiveLoader implements MeshDataLoader {
     // another level (see `_budgetRefusal`'s docstring) — report no further work
     // so the refinement loop leaves the node instead of re-failing it forever.
     if (this._budgetRefusal) return false;
+    if (this._retryCompletedPass) return true;
     // While a playback frame budget is active the budgeted prefix IS the target:
     // no background refinement between animation ticks.
     if (this._frameBudgetMs !== null) return false;
@@ -387,6 +396,28 @@ export class MeshProgressiveLoader implements MeshDataLoader {
 
   get totalLODCount(): number {
     return this.nLods;
+  }
+
+  /**
+   * Discard the levels the current pass appended, restoring the ladder to the
+   * prefix the pass started from. Called by the main-update and refinement catches; see
+   * `../loaders/progressive/pass-rollback` for why a failed commit must not
+   * leave the cursor advanced.
+   *
+   * @returns Levels discarded (0 when the pass appended none).
+   */
+  rollbackToPassStart(): number {
+    const plan = planLadderRollback(
+      this.loadedLODs.length,
+      this._levelsAtPassStart,
+      this._concatCache?.lodCount ?? null
+    );
+    if (plan.dropped === 0 && this.loadedLODs.length === this.nLods) {
+      this._retryCompletedPass = true;
+    }
+    if (plan.dropped > 0) this.loadedLODs.length = plan.keep;
+    if (plan.invalidateConcatCache) this._concatCache = null;
+    return plan.dropped;
   }
 
   get lastAllResident(): boolean {
@@ -609,6 +640,7 @@ export class MeshProgressiveLoader implements MeshDataLoader {
     // Record the per-pass playback budget FIRST: a pause re-trigger arrives with
     // the same view state and must still clear the budget.
     this._frameBudgetMs = viewState.frameBudgetMs ?? null;
+    this._retryCompletedPass = false;
     const budgetDeadline =
       this._frameBudgetMs !== null ? performance.now() + this._frameBudgetMs : null;
 
@@ -631,6 +663,7 @@ export class MeshProgressiveLoader implements MeshDataLoader {
 
     const pass = classifyStreamingPass(budgetDeadline !== null, isPrefetch);
     const startLevel = this.loadedLODs.length;
+    this._levelsAtPassStart = startLevel;
 
     for (let level = startLevel; level < this.nLods; level++) {
       // A dispose() racing the awaited level below clears `lodLoaders`, so the
@@ -764,6 +797,7 @@ export class MeshProgressiveLoader implements MeshDataLoader {
     for (const loader of this.lodLoaders) loader.dispose();
     this.lodLoaders = [];
     this.loadedLODs = [];
+    this._retryCompletedPass = false;
     this._concatCache = null;
     // Nothing is on screen for this node any more; the cumulative counters live
     // on the (now-disposed) levels and go with them.

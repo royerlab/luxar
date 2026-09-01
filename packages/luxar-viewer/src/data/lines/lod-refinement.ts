@@ -17,6 +17,7 @@ import type {
 import { log, Modules } from '../../utils/log';
 import { notifier } from '../../utils/cross-layer/notifier';
 import { isAbortError } from '../loaders/abort-error';
+import { tryRollbackToPassStart } from '../loaders/progressive/pass-rollback';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 import type { ViewState } from '../data-loader-types';
 import type { ViewStateQueue } from '../scene-loader/view-state/view-state-queue';
@@ -77,6 +78,11 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
     processLoader: async (path, loader) => {
       const progressiveLoader = loader as LinesDataLoader & {
         hasMoreLODs?: boolean;
+        // Optional because `linesLoaders` is typed as plain `LinesDataLoader`:
+        // a non-progressive loader has no ladder to unwind, and the
+        // `hasMoreLODs` gate above has already returned for it. Every real
+        // `LinesProgressiveLoader` implements it.
+        rollbackToPassStart?: () => number;
       };
       if (progressiveLoader.hasMoreLODs !== true) return false;
       if (failures.isExhausted(path)) return false;
@@ -119,12 +125,20 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
         // in-flight read on purpose. Don't count it toward the failure backoff
         // or log an error — the loop's next-pass pending check hands off.
         if (isAbortError(error)) return false;
+        // Unwind the levels this pass appended before the throw. `updateView`
+        // advances the ladder cursor as each level arrives, so without this the
+        // retry would resume from the ADVANCED cursor and attempt a strictly
+        // larger allocation than the one that just failed — and on reaching
+        // the last rung would flip `hasMoreLODs` false, silently stranding the
+        // node at its last committed prefix with the failure cap never reached.
+        // See `../loaders/progressive/pass-rollback`.
+        const unwound = tryRollbackToPassStart(progressiveLoader);
         if (failures.recordFailure(path)) {
           log.error(
             Modules.SCENE_LOADER,
             `Lines refinement failed for ${path}: ${(error as Error).message} — ` +
               `giving up after ${MAX_CONSECUTIVE_REFINEMENT_FAILURES} consecutive failures ` +
-              '(will retry on the next view change)'
+              `(will retry on the next view change; unwound ${unwound} level(s))`
           );
           // The node silently freezes at its last valid coarse prefix — a
           // console-only error leaves the user staring at a permanently
@@ -134,7 +148,8 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
         } else {
           log.error(
             Modules.SCENE_LOADER,
-            `Lines refinement failed for ${path}: ${(error as Error).message}`
+            `Lines refinement failed for ${path}: ${(error as Error).message} ` +
+              `(unwound ${unwound} level(s))`
           );
         }
         return false;

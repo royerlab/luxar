@@ -391,6 +391,30 @@ describe('SceneLoader', () => {
       expect(sceneLoader.getFailedLoaders().size).toBe(1);
     });
 
+    it('unwinds a progressive loader when its geometry commit fails', async () => {
+      const rollbackToPassStart = vi.fn().mockReturnValue(1);
+      const loaders = (sceneLoader as any).loaders as Map<string, unknown>;
+      loaders.clear();
+      loaders.set('/commit-fail', {
+        updateView: vi.fn().mockResolvedValue({
+          pointCount: 1,
+          positions: new Float32Array([1, 2, 3]),
+          metadata: { loadedPoints: 1 },
+        }),
+        rollbackToPassStart,
+        dispose: vi.fn(),
+      });
+      vi.spyOn(sceneLoader as any, 'updatePointsGeometry').mockImplementation(() => {
+        throw new Error('GPU commit failed');
+      });
+
+      await expect(sceneLoader.updateView({ displayDims: [0, 1, 2] })).rejects.toThrow(
+        AggregateError
+      );
+
+      expect(rollbackToPassStart).toHaveBeenCalledOnce();
+    });
+
     it('surfaces an archive fault once and preserves the last committed frame', async () => {
       const fault = new ArchiveFaultError(
         'The archive URL has expired. Refresh the page with a new URL.',

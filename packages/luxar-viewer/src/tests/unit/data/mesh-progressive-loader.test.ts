@@ -354,6 +354,39 @@ describe('MeshProgressiveLoader', () => {
     expect(loader.hasMoreLODs).toBe(true);
   });
 
+  it('unwinds only the levels the failing pass appended', async () => {
+    const { loader } = makeLadder([level(4, [0, 1, 2]), level(3, [0, 1, 2]), level(3, [0, 1, 2])], {
+      resident: false,
+    });
+
+    await loader.updateView(VIEW);
+    expect(loader.loadedLODCount).toBe(2);
+
+    await loader.updateView(VIEW);
+    expect(loader.loadedLODCount).toBe(3);
+    expect(loader.rollbackToPassStart()).toBe(1);
+    expect(loader.loadedLODCount).toBe(2);
+    expect(loader.hasMoreLODs).toBe(true);
+  });
+
+  it('keeps a completed pass schedulable when its commit fails', async () => {
+    const { loader, subs } = makeLadder([level(4, [0, 1, 2]), level(3, [0, 1, 2])]);
+
+    const result = await loader.updateView(VIEW);
+    expect(loader.loadedLODCount).toBe(2);
+    expect(loader.hasMoreLODs).toBe(false);
+
+    await expect(loader.updateView(VIEW)).resolves.toBe(result);
+    expect(loader.rollbackToPassStart()).toBe(0);
+    expect(loader.loadedLODCount).toBe(2);
+    expect(loader.hasMoreLODs).toBe(true);
+
+    for (const sub of subs) vi.mocked(sub.updateViewWithResidency).mockClear();
+    await expect(loader.updateView(VIEW)).resolves.toBe(result);
+    for (const sub of subs) expect(vi.mocked(sub.updateViewWithResidency)).not.toHaveBeenCalled();
+    expect(loader.hasMoreLODs).toBe(false);
+  });
+
   it('streams resident levels under a playback frame budget', async () => {
     const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(0);
     try {

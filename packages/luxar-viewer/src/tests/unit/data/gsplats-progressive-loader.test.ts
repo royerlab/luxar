@@ -522,6 +522,78 @@ describe('GSplatsProgressiveLoader', () => {
     });
   });
 
+  describe('rollbackToPassStart (failed-commit recovery, #2426)', () => {
+    it('keeps a completed pass schedulable when its commit fails', async () => {
+      const result = await loader.loadGSplats(baseViewState);
+      expect(loader.loadedLODCount).toBe(3);
+      expect(loader.hasMoreLODs).toBe(false);
+
+      await expect(loader.loadGSplats(baseViewState)).resolves.toBe(result);
+      expect(loader.rollbackToPassStart()).toBe(0);
+      expect(loader.loadedLODCount).toBe(3);
+      expect(loader.hasMoreLODs).toBe(true);
+
+      lodA.updateViewWithResidency.mockClear();
+      lodB.updateViewWithResidency.mockClear();
+      lodC.updateViewWithResidency.mockClear();
+      await expect(loader.loadGSplats(baseViewState)).resolves.toBe(result);
+      expect(lodA.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(lodB.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(lodC.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(loader.hasMoreLODs).toBe(false);
+    });
+
+    it('unwinds only the levels the failing pass appended', async () => {
+      lodB.updateViewWithResidency.mockImplementationOnce(async () => ({
+        data: makeLodData(50, 3, { color: 'uint8' }),
+        allResident: false,
+      }));
+      await loader.loadGSplats(baseViewState);
+      expect(loader.loadedLODCount).toBe(2);
+
+      await loader.loadGSplats(baseViewState);
+      expect(loader.loadedLODCount).toBe(3);
+      expect(loader.rollbackToPassStart()).toBe(1);
+      expect(loader.loadedLODCount).toBe(2);
+      expect(loader.hasMoreLODs).toBe(true);
+    });
+
+    it('evicts an uncommitted full ladder snapshot before a later slice revisit', async () => {
+      const sliceCache = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const first = makeSubLoader(makeLodData(20, 3, { color: 'uint8' }));
+      const second = makeSubLoader(makeLodData(10, 3, { color: 'uint8' }));
+      const recovering = new GSplatsProgressiveLoader(
+        [first, second] as unknown as GSplatsSpatialIndexLoader[],
+        2,
+        '/rollback-cache',
+        undefined,
+        sliceCache
+      );
+      const viewA = baseViewState;
+      const viewB = { ...baseViewState, slicePosition: [0, 0, 0, 1] };
+
+      await recovering.loadGSplats(viewA);
+      await recovering.loadGSplats(viewB);
+      first.updateViewWithResidency.mockClear();
+      second.updateViewWithResidency.mockClear();
+      await recovering.loadGSplats(viewA);
+      expect(first.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(second.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(recovering.rollbackToPassStart()).toBe(2);
+      expect(recovering.loadedLODCount).toBe(0);
+      expect(recovering.hasMoreLODs).toBe(true);
+
+      await recovering.loadGSplats(viewB);
+
+      first.updateViewWithResidency.mockClear();
+      second.updateViewWithResidency.mockClear();
+      await recovering.loadGSplats(viewA);
+
+      expect(first.updateViewWithResidency).toHaveBeenCalled();
+      expect(second.updateViewWithResidency).toHaveBeenCalled();
+    });
+  });
+
   describe('cache-hit timing short-circuit', () => {
     it(`stops loading further LODs when one takes > ${CACHE_HIT_THRESHOLD_MS}ms`, async () => {
       // Make LOD B slow (over the threshold) so LOD C is deferred.

@@ -23,6 +23,7 @@ import type { StagedMeshCommit } from '../scene-loader/process/data-processor-me
 import { log, Modules } from '../../utils/log';
 import { notifier } from '../../utils/cross-layer/notifier';
 import { isAbortError } from '../loaders/abort-error';
+import { tryRollbackToPassStart } from '../loaders/progressive/pass-rollback';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 import type { ViewState } from '../data-loader-types';
 import type { ViewStateQueue } from '../scene-loader/view-state/view-state-queue';
@@ -83,7 +84,12 @@ export async function runMeshRefinement(ctx: MeshRefinementCtx): Promise<void> {
       // Only the progressive loader exposes `hasMoreLODs`; an unladdered
       // `MeshWholeNodeLoader` does not, so it skips on absence. That is also what
       // keeps this loop free for the overwhelmingly common single-level mesh.
-      const progressiveLoader = loader as MeshDataLoader & { hasMoreLODs?: boolean };
+      const progressiveLoader = loader as MeshDataLoader & {
+        hasMoreLODs?: boolean;
+        // Optional for the same reason as `hasMoreLODs`: only the progressive
+        // loader has a ladder to unwind. Every `MeshProgressiveLoader` has it.
+        rollbackToPassStart?: () => number;
+      };
       if (progressiveLoader.hasMoreLODs !== true) return false;
       if (failures.isExhausted(path)) return false;
       try {
@@ -128,12 +134,17 @@ export async function runMeshRefinement(ctx: MeshRefinementCtx): Promise<void> {
         // in-flight read on purpose. Don't count it toward the failure backoff or
         // log an error — the loop's next-pass pending check hands off.
         if (isAbortError(error)) return false;
+        // Unwind the levels this pass appended before the throw, so the retry
+        // re-attempts the SAME prefix rather than resuming from the advanced
+        // cursor with a larger allocation. See
+        // `../loaders/progressive/pass-rollback`.
+        const unwound = tryRollbackToPassStart(progressiveLoader);
         if (failures.recordFailure(path)) {
           log.error(
             Modules.SCENE_LOADER,
             `Mesh refinement failed for ${path}: ${(error as Error).message} — ` +
               `giving up after ${MAX_CONSECUTIVE_REFINEMENT_FAILURES} consecutive failures ` +
-              '(will retry on the next view change)'
+              `(will retry on the next view change; unwound ${unwound} level(s))`
           );
           // The node silently freezes at its last revealed patch — a console-only
           // error leaves the user staring at a permanently partial surface with no
@@ -142,7 +153,8 @@ export async function runMeshRefinement(ctx: MeshRefinementCtx): Promise<void> {
         } else {
           log.error(
             Modules.SCENE_LOADER,
-            `Mesh refinement failed for ${path}: ${(error as Error).message}`
+            `Mesh refinement failed for ${path}: ${(error as Error).message} ` +
+              `(unwound ${unwound} level(s))`
           );
         }
         return false;

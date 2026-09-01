@@ -228,6 +228,7 @@ export function defineRefinementLoopContract(
       let calls = 0;
       const loader = {
         hasMoreLODs: true,
+        rollbackToPassStart: vi.fn(),
         updateView: vi.fn().mockImplementation(async () => {
           calls += 1;
           if (calls <= 4) throw new DOMException('aborted', 'AbortError');
@@ -249,7 +250,72 @@ export function defineRefinementLoopContract(
 
       // All 5 passes ran — the 4 aborts were not counted as strikes.
       expect(loader.updateView).toHaveBeenCalledTimes(5);
+      expect(loader.rollbackToPassStart).not.toHaveBeenCalled();
       expect(releaseLock).toHaveBeenCalledTimes(1);
+    });
+
+    it('unwinds each failed processed pass before retrying the same prefix', async () => {
+      let loadedLODCount = 1;
+      const loader = {
+        get hasMoreLODs() {
+          return loadedLODCount < 3;
+        },
+        get loadedLODCount() {
+          return loadedLODCount;
+        },
+        totalLODCount: 3,
+        rollbackToPassStart: vi.fn().mockImplementation(() => {
+          loadedLODCount--;
+          return 1;
+        }),
+        updateView: vi.fn().mockImplementation(async () => {
+          loadedLODCount++;
+          return { loaded: true };
+        }),
+      };
+
+      await run({
+        loaders: new Map([['/n', loader]]),
+        viewStateQueue: new ViewStateQueue(),
+        deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
+        updateVisibleCountsInMonitor: vi.fn(),
+        releaseLock: vi.fn(),
+        retriggerUpdate: vi.fn(),
+        processSpy: vi.fn().mockImplementation(() => {
+          throw new Error('commit preparation failed');
+        }),
+      });
+
+      expect(loader.updateView).toHaveBeenCalledTimes(3);
+      expect(loader.rollbackToPassStart).toHaveBeenCalledTimes(3);
+      expect(loader.hasMoreLODs).toBe(true);
+    });
+
+    it('still reaches the failure cap when rollback itself throws', async () => {
+      const loader = {
+        hasMoreLODs: true,
+        rollbackToPassStart: vi.fn(() => {
+          throw new Error('rollback failed');
+        }),
+        updateView: vi.fn().mockResolvedValue({ loaded: true }),
+      };
+      const releaseLock: () => void = vi.fn();
+
+      await run({
+        loaders: new Map([['/n', loader]]),
+        viewStateQueue: new ViewStateQueue(),
+        deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
+        updateVisibleCountsInMonitor: vi.fn(),
+        releaseLock,
+        retriggerUpdate: vi.fn(),
+        processSpy: vi.fn(() => {
+          throw new Error('commit preparation failed');
+        }),
+      });
+
+      expect(loader.updateView).toHaveBeenCalledTimes(3);
+      expect(loader.rollbackToPassStart).toHaveBeenCalledTimes(3);
+      expect(releaseLock).toHaveBeenCalledOnce();
     });
 
     it('gives up on a persistently failing loader after 3 consecutive failures (lock released)', async () => {
