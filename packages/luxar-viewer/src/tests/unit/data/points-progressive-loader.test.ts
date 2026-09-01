@@ -638,6 +638,15 @@ describe('PointsProgressiveLoader', () => {
       expect(loader.rollbackToPassStart()).toBe(0);
       expect(loader.loadedLODCount).toBe(3);
       expect(loader.hasMoreLODs).toBe(true);
+
+      lodA.updateViewWithResidency.mockClear();
+      lodB.updateViewWithResidency.mockClear();
+      lodC.updateViewWithResidency.mockClear();
+      await expect(loader.loadPoints(baseViewState)).resolves.toBe(result);
+      expect(lodA.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(lodB.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(lodC.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(loader.hasMoreLODs).toBe(false);
     });
 
     it('unwinds only the levels the failing pass appended', async () => {

@@ -370,7 +370,7 @@ describe('MeshProgressiveLoader', () => {
   });
 
   it('keeps a completed pass schedulable when its commit fails', async () => {
-    const { loader } = makeLadder([level(4, [0, 1, 2]), level(3, [0, 1, 2])]);
+    const { loader, subs } = makeLadder([level(4, [0, 1, 2]), level(3, [0, 1, 2])]);
 
     const result = await loader.updateView(VIEW);
     expect(loader.loadedLODCount).toBe(2);
@@ -380,6 +380,11 @@ describe('MeshProgressiveLoader', () => {
     expect(loader.rollbackToPassStart()).toBe(0);
     expect(loader.loadedLODCount).toBe(2);
     expect(loader.hasMoreLODs).toBe(true);
+
+    for (const sub of subs) sub.updateViewWithResidency.mockClear();
+    await expect(loader.updateView(VIEW)).resolves.toBe(result);
+    for (const sub of subs) expect(sub.updateViewWithResidency).not.toHaveBeenCalled();
+    expect(loader.hasMoreLODs).toBe(false);
   });
 
   it('streams resident levels under a playback frame budget', async () => {
