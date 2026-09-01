@@ -125,6 +125,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
   // Data accumulator for object pooling.
   private _accumulator: LoadedPointsDataAccumulator | null = null;
+  private _accumulatorConfig: { capacity: number; ndim: number; totalPoints: number } | null = null;
 
   /**
    * Components per color item, learned from the zarr `colors` shape at
@@ -463,6 +464,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         Math.max(1024, Math.ceil(totalPoints / 10)) // At least 1024, or ~10% of total
       );
 
+      this._accumulatorConfig = { capacity: initialCapacity, ndim, totalPoints };
       this._accumulator = new LoadedPointsDataAccumulator(initialCapacity, ndim, totalPoints);
 
       if (appConfig.dataLoading.performance.enablePerformanceMonitoring) {
@@ -612,6 +614,15 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
     // Prepare accumulator buffers if enabled.
     let targetBuffers: ProjectionTargetBuffers | null = null;
+
+    if (
+      !this._accumulator &&
+      appConfig.dataLoading.performance.useAccumulators &&
+      this._accumulatorConfig
+    ) {
+      const { capacity, ndim, totalPoints } = this._accumulatorConfig;
+      this._accumulator = new LoadedPointsDataAccumulator(capacity, ndim, totalPoints);
+    }
 
     if (this._accumulator && appConfig.dataLoading.performance.useAccumulators) {
       const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);

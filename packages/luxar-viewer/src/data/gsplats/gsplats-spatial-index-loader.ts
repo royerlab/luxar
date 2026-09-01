@@ -208,6 +208,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
   // Data accumulator for object pooling.
   private _accumulator: GSplatsDataAccumulator | null = null;
+  private _accumulatorConfig: { capacity: number; ndim: number } | null = null;
   private _labelIndicesScratch = new Uint32Array(0);
   /** Color layout of this dataset: 3 (RGB) or 4 (RGBA, alpha = per-splat opacity). */
   private colorComponents: 3 | 4 = 3;
@@ -441,6 +442,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
         Math.max(1024, Math.ceil(totalSplats / 10))
       );
 
+      this._accumulatorConfig = { capacity: initialCapacity, ndim };
       this._accumulator = new GSplatsDataAccumulator(initialCapacity, ndim);
       this._accumulator.configureColorComponents(this.colorComponents);
 
@@ -553,6 +555,16 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       attrs.has_labels === true || attrs.has_image_labels === true || attrs.has_keys === true;
 
     // Load directly into the accumulator buffers (zero allocations).
+    if (
+      !this._accumulator &&
+      appConfig.dataLoading.performance.useAccumulators &&
+      this._accumulatorConfig
+    ) {
+      const { capacity, ndim } = this._accumulatorConfig;
+      this._accumulator = new GSplatsDataAccumulator(capacity, ndim);
+      this._accumulator.configureColorComponents(this.colorComponents);
+    }
+
     if (this._accumulator && appConfig.dataLoading.performance.useAccumulators) {
       // Capture locally: dispose() (dataset switch) can null + dispose
       // `this._accumulator` while the chunk loads below are in flight —
