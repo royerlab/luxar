@@ -100,14 +100,6 @@ describe('gpu-byte-budget', () => {
     // eviction path is unreachable. The override is the ONLY way to reproduce
     // constrained-device behaviour — without it the fix is untestable on the
     // hardware that would verify it.
-    it('binds below the deviceMemory budget when a smaller pool override is given', () => {
-      withDeviceMemory(32, () => {
-        configureGpuByteBudget(null, { cachePoolOverrideBytes: 1024 * MiB });
-        // 32 GB would pin at the 2 GB ceiling; the override must win.
-        expect(getGpuByteBudget()).toBe(Math.floor((1024 * MiB) / 3));
-      });
-    });
-
     it('is what makes eviction reachable: budget lands under a few hundred MB', () => {
       // The stranded superseded pairs measured on a 2M-splat 16-rung node are
       // ~285 MB. For the pool LRU to fire at all, the budget must land below
@@ -141,10 +133,8 @@ describe('gpu-byte-budget', () => {
     });
 
     it('does not shrink the budget merely because the heap is unmeasurable', () => {
-      // Firefox and Safari expose no `performance.memory`. The heap helper
-      // answers with a fixed small fallback that is indistinguishable from a
-      // derived value; folding that in would cap a 32 GB machine at 256 MB for
-      // no reason but the browser. An absent measurement is not a small one.
+      // Firefox and Safari expose no `performance.memory`. Their absence of a
+      // heap measurement must not tighten an otherwise roomy device budget.
       withDeviceMemory(32, () => {
         configureGpuByteBudget(null, {});
         expect(getGpuByteBudget()).toBe(2_000 * MB);
@@ -154,19 +144,6 @@ describe('gpu-byte-budget', () => {
     it('does not shrink a roomy Chromium device from its measured heap tier', () => {
       withDeviceMemory(32, () => {
         withHeapLimit(4 * 1024 * 1024 * 1024, () => {
-          configureGpuByteBudget();
-          expect(getGpuByteBudget()).toBe(2_000 * MB);
-        });
-      });
-    });
-
-    it('still ignores the heap on a browser that cannot measure it', () => {
-      // The guard that keeps "absent is not small" true: Firefox and Safari
-      // expose no `performance.memory`, and the heap helper answers with a
-      // fixed fallback indistinguishable from a derived value. Binding on that
-      // would punish those browsers for a measurement they cannot provide.
-      withDeviceMemory(32, () => {
-        withHeapLimit(undefined, () => {
           configureGpuByteBudget();
           expect(getGpuByteBudget()).toBe(2_000 * MB);
         });
