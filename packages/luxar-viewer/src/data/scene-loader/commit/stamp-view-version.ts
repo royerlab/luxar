@@ -49,6 +49,16 @@ export interface LadderStampable {
   committedEnergyFraction?: number;
 }
 
+export function canLadderRegrow(
+  userData: LadderStampable | undefined | null,
+  ndim: number
+): boolean {
+  if (ndim > 3) return true;
+  const loader = userData?.loader;
+  if (!loader || typeof loader !== 'object' || !('hasMoreLODs' in loader)) return true;
+  return (loader as { hasMoreLODs?: boolean }).hasMoreLODs === true;
+}
+
 /**
  * Write `version` onto `userData.loadedViewVersion`. No-op when `userData` is
  * absent. Called by every leaf commit (gsplats / points / lines) so the stamp

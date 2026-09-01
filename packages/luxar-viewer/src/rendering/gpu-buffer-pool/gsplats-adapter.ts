@@ -27,6 +27,8 @@ import {
 import { clampSplatCapacity } from '../element-texture-layout';
 import type { GSplatsProjectionBounds } from '../../types/gsplats';
 import type { PooledBuffer } from './pool-stats';
+import type { BufferAcquireOptions } from './acquire-options';
+import { disposeSupersededBuffer } from './dispose-superseded';
 import { chooseCapacity } from './capacity';
 import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../config/constants';
 
@@ -107,7 +109,11 @@ export class GSplatsBufferAdapter {
 
   constructor(private readonly host: GSplatsAdapterHost) {}
 
-  acquireGeometry(nodeId: string, splatCount: number): THREE.InstancedBufferGeometry {
+  acquireGeometry(
+    nodeId: string,
+    splatCount: number,
+    options?: BufferAcquireOptions
+  ): THREE.InstancedBufferGeometry {
     const host = this.host;
     host._lastAcquireRebuilt = false;
 
@@ -138,7 +144,12 @@ export class GSplatsBufferAdapter {
       const released = active;
       try {
         this.releaseGeometry(nodeId);
-        return this.adoptOrAllocate(nodeId, splatCount);
+        const replacement = this.adoptOrAllocate(nodeId, splatCount);
+        if (options?.canRegrow === false && disposeSupersededBuffer(this.gsplatBuffers, released)) {
+          host.stats.evictions++;
+          host.typeStats.gsplats.evictions++;
+        }
+        return replacement;
       } catch (error) {
         this.reclaimAfterFailedGrow(nodeId, released);
         throw error;

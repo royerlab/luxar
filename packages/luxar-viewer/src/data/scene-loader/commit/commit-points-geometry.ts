@@ -31,7 +31,7 @@ import * as THREE from 'three';
 import type { LoadedPointsData } from '../../data-loader-types';
 import { noteDepthSortCommit } from '../../../rendering/depth-sort-coordinator';
 import { isPointsUserData } from '../../../types/points';
-import { stampLadderComplete, stampLoadedViewVersion } from './stamp-view-version';
+import { canLadderRegrow, stampLadderComplete, stampLoadedViewVersion } from './stamp-view-version';
 import { isAlreadyCommitted } from './noop-commit';
 import {
   getCommittedData,
@@ -151,7 +151,9 @@ export function commitPointsGeometry(
     if (gpuBufferPool) {
       // Acquire geometry from pool (capacity-aware: the fixed 3-texel
       // layout means any pooled points geometry fits any points node).
-      const geometry = gpuBufferPool.acquirePointsGeometry(path, pointCount);
+      const geometry = gpuBufferPool.acquirePointsGeometry(path, pointCount, {
+        canRegrow: canLadderRegrow(points.userData, data.ndim),
+      });
       // Pool rebuilt the geometry's storage (grow, pool swap, or fresh
       // allocation). The mesh's cached RenderObject in Three's
       // WebGPURenderer still references the old buffers; the helper

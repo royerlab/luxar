@@ -22,7 +22,7 @@ import { noteDepthSortCommit } from '../../../rendering/depth-sort-coordinator';
 import { clampLineCapacity } from '../../../rendering/element-texture-layout';
 import { syncLineMaterialWithGeometry } from '../../../rendering/material-sync-helpers';
 import { invalidateRenderObjectFor } from './invalidate-render-object';
-import { stampLadderComplete, stampLoadedViewVersion } from './stamp-view-version';
+import { canLadderRegrow, stampLadderComplete, stampLoadedViewVersion } from './stamp-view-version';
 import {
   getCommittedData,
   hasCommittedData,
@@ -112,7 +112,9 @@ export function commitLinesGeometry(
       // Acquire geometry from pool (capacity-aware: the fixed 6-texel
       // layout means any pooled lines geometry fits any lines node —
       // the interleaved era's scalar spec-set dimension is gone).
-      const geometry = gpuBufferPool.acquireLinesGeometry(staged.path, segmentCount);
+      const geometry = gpuBufferPool.acquireLinesGeometry(staged.path, segmentCount, {
+        canRegrow: canLadderRegrow(mesh.userData, staged.sourceData.ndim),
+      });
       const attributesRebuilt = gpuBufferPool.didLastAcquireRebuildAttributes();
       // Keep the previous depth-sort permutation on a same-node
       // same-count in-place recommit (timepoint scrub): a permutation of

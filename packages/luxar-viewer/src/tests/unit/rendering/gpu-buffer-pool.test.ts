@@ -210,6 +210,43 @@ describe('GPUBufferPool', () => {
       expect(stats.pooledBuffers).toBeGreaterThan(0);
     });
 
+    it('disposes the superseded geometry after a successful terminal grow', () => {
+      const geom1 = pool.acquirePointsGeometry('terminal-points', 1000);
+      const disposeSpy = vi.spyOn(geom1, 'dispose');
+
+      const geom2 = pool.acquirePointsGeometry('terminal-points', 2000, {
+        canRegrow: false,
+      });
+
+      expect(geom2).not.toBe(geom1);
+      expect(disposeSpy).toHaveBeenCalledTimes(1);
+      expect(pool.getStats().pooledBuffers).toBe(0);
+    });
+
+    it('keeps the superseded geometry pooled when the node can still regrow', () => {
+      const geom1 = pool.acquirePointsGeometry('growing-points', 1000);
+      const disposeSpy = vi.spyOn(geom1, 'dispose');
+
+      pool.acquirePointsGeometry('growing-points', 2000);
+
+      expect(disposeSpy).not.toHaveBeenCalled();
+      expect(pool.getStats().pooledBuffers).toBe(1);
+    });
+
+    it('disposes superseded Lines and GSplats geometries after terminal grows', () => {
+      const line = pool.acquireLinesGeometry('terminal-lines', 500);
+      const splat = pool.acquireGSplatsGeometry('terminal-gsplats', 300);
+      const lineDispose = vi.spyOn(line, 'dispose');
+      const splatDispose = vi.spyOn(splat, 'dispose');
+
+      pool.acquireLinesGeometry('terminal-lines', 2000, { canRegrow: false });
+      pool.acquireGSplatsGeometry('terminal-gsplats', 1000, { canRegrow: false });
+
+      expect(lineDispose).toHaveBeenCalledTimes(1);
+      expect(splatDispose).toHaveBeenCalledTimes(1);
+      expect(pool.getStats().pooledBuffers).toBe(0);
+    });
+
     it('grow-swap cancels a staged ordering apply left on the OLD geometry', () => {
       // The grow path (release + reacquire inside acquire) never goes
       // through releaseDepthSortNode — the coordinator still tracks the
@@ -541,7 +578,7 @@ describe('GPUBufferPool', () => {
     it('points: a throw during grow re-claims the released buffer', () => {
       const geom1 = pool.acquirePointsGeometry('grow-oom-p', 1000); // capacity 1500
 
-      withThrowingEvict(() => pool.acquirePointsGeometry('grow-oom-p', 2000));
+      withThrowingEvict(() => pool.acquirePointsGeometry('grow-oom-p', 2000, { canRegrow: false }));
 
       // The node's active entry is the ORIGINAL geometry, re-claimed.
       const active = pool.activeBuffers.get('grow-oom-p');
@@ -561,7 +598,7 @@ describe('GPUBufferPool', () => {
     it('lines: a throw during grow re-claims the released buffer', () => {
       const geom1 = pool.acquireLinesGeometry('grow-oom-l', 500); // capacity 750
 
-      withThrowingEvict(() => pool.acquireLinesGeometry('grow-oom-l', 2000));
+      withThrowingEvict(() => pool.acquireLinesGeometry('grow-oom-l', 2000, { canRegrow: false }));
 
       const active = pool.activeBuffers.get('grow-oom-l');
       expect(active).toBeDefined();
@@ -578,7 +615,9 @@ describe('GPUBufferPool', () => {
     it('gsplats: a throw during grow re-claims the released buffer', () => {
       const geom1 = pool.acquireGSplatsGeometry('grow-oom-g', 300); // capacity 450
 
-      withThrowingEvict(() => pool.acquireGSplatsGeometry('grow-oom-g', 1000));
+      withThrowingEvict(() =>
+        pool.acquireGSplatsGeometry('grow-oom-g', 1000, { canRegrow: false })
+      );
 
       const active = pool.activeBuffers.get('grow-oom-g');
       expect(active).toBeDefined();

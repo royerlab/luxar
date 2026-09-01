@@ -134,14 +134,18 @@ describe('commitGSplatsGeometry', () => {
     mockUpdateInstancedMesh.mockReset();
     const root = new THREE.Group();
     const mesh = makeMesh('/g');
+    mesh.userData.loader = { hasMoreLODs: false };
     root.add(mesh);
     const mockPool: any = {
-      acquireGSplatsGeometry: () => ({ geometry: new THREE.BufferGeometry(), pointCount: 0 }),
+      acquireGSplatsGeometry: vi.fn(() => new THREE.BufferGeometry()),
       updateGSplatsGeometry: () => undefined,
       releaseGSplatsGeometry: () => undefined,
       didLastAcquireRebuildAttributes: () => false,
     };
     expect(() => commitGSplatsGeometry(makeStaged(7), root, mockPool, undefined, V)).not.toThrow();
+    expect(mockPool.acquireGSplatsGeometry).toHaveBeenCalledWith('/g', 7, {
+      canRegrow: false,
+    });
     expect((mesh.userData as { visibleSplatCount: number }).visibleSplatCount).toBe(7);
     // Pool path must NOT fall through to the no-pool instanced-mesh update.
     expect(mockUpdateInstancedMesh).not.toHaveBeenCalled();

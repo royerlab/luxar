@@ -144,12 +144,13 @@ describe('commitLinesGeometry', () => {
   it('accepts a buffer-pool argument without throwing and still writes visibleSegmentCount', () => {
     const root = new THREE.Group();
     const mesh = makeMesh('/lines');
+    mesh.userData.loader = { hasMoreLODs: false };
     root.add(mesh);
     // Minimal pool stub — commitLinesGeometry's pool-supplied path should
     // route through this object. We pin the contract that visibleSegmentCount
     // is still written regardless of pool presence.
     const mockPool: any = {
-      acquireLinesGeometry: () => new THREE.BufferGeometry(),
+      acquireLinesGeometry: vi.fn(() => new THREE.BufferGeometry()),
       updateLinesGeometry: () => undefined,
       releaseLinesGeometry: () => undefined,
       didLastAcquireRebuildAttributes: () => false,
@@ -161,6 +162,9 @@ describe('commitLinesGeometry', () => {
     };
     mockUpdateInstancedLinesMesh.mockReset();
     expect(() => commitLinesGeometry(staged, root, mockPool, undefined, 0)).not.toThrow();
+    expect(mockPool.acquireLinesGeometry).toHaveBeenCalledWith('/lines', 11, {
+      canRegrow: false,
+    });
     expect(mesh.userData.visibleSegmentCount).toBe(11);
     // Pool path must NOT fall through to the no-pool instanced-mesh update.
     expect(mockUpdateInstancedLinesMesh).not.toHaveBeenCalled();

@@ -123,6 +123,7 @@ describe('commitPointsGeometry', () => {
   it('uses GPU buffer pool when supplied', () => {
     const root = new THREE.Group();
     const points = makePoints('/p');
+    points.userData.loader = { hasMoreLODs: false };
     root.add(points);
 
     const newGeometry = new THREE.BufferGeometry();
@@ -142,6 +143,9 @@ describe('commitPointsGeometry', () => {
       0
     );
     expect(gpuBufferPool.acquirePointsGeometry).toHaveBeenCalledTimes(1);
+    expect(gpuBufferPool.acquirePointsGeometry).toHaveBeenCalledWith('/p', 3, {
+      canRegrow: false,
+    });
     expect(gpuBufferPool.updatePointsGeometry).toHaveBeenCalledTimes(1);
     expect(points.geometry).toBe(newGeometry);
     expect(mockCreatePointsGeometry).not.toHaveBeenCalled();

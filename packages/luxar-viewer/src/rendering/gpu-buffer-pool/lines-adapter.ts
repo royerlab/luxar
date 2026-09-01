@@ -37,6 +37,8 @@ import {
 import { clampLineCapacity } from '../element-texture-layout';
 import type { ProcessedLinesData } from '../../types/lines';
 import type { PooledBuffer } from './pool-stats';
+import type { BufferAcquireOptions } from './acquire-options';
+import { disposeSupersededBuffer } from './dispose-superseded';
 import { chooseCapacity } from './capacity';
 
 /**
@@ -114,7 +116,11 @@ export class LinesBufferAdapter {
 
   constructor(private readonly host: LinesAdapterHost) {}
 
-  acquireGeometry(nodeId: string, segmentCount: number): THREE.InstancedBufferGeometry {
+  acquireGeometry(
+    nodeId: string,
+    segmentCount: number,
+    options?: BufferAcquireOptions
+  ): THREE.InstancedBufferGeometry {
     const host = this.host;
     host._lastAcquireRebuilt = false;
 
@@ -146,7 +152,12 @@ export class LinesBufferAdapter {
       const released = active;
       try {
         this.releaseGeometry(nodeId);
-        return this.adoptOrAllocate(nodeId, segmentCount);
+        const replacement = this.adoptOrAllocate(nodeId, segmentCount);
+        if (options?.canRegrow === false && disposeSupersededBuffer(this.lineBuffers, released)) {
+          host.stats.evictions++;
+          host.typeStats.lines.evictions++;
+        }
+        return replacement;
       } catch (error) {
         this.reclaimAfterFailedGrow(nodeId, released);
         throw error;

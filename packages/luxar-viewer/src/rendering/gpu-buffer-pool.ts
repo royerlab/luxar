@@ -38,6 +38,7 @@ import { evictUntilUnderByteBudget } from './gpu-buffer-pool/byte-budget-evictor
 import { PointsBufferAdapter } from './gpu-buffer-pool/points-adapter';
 import { LinesBufferAdapter } from './gpu-buffer-pool/lines-adapter';
 import { GSplatsBufferAdapter, type PackedGSplatsData } from './gpu-buffer-pool/gsplats-adapter';
+import type { BufferAcquireOptions } from './gpu-buffer-pool/acquire-options';
 
 // Per-type spec arrays and helpers live in
 // ./gpu-buffer-pool/{points,lines,gsplats}-adapter.
@@ -210,8 +211,12 @@ export class GPUBufferPool {
    * layout means any pooled points geometry fits any points node).
    * See `PointsBufferAdapter.acquireGeometry` for implementation.
    */
-  acquirePointsGeometry(nodeId: string, pointCount: number): THREE.InstancedBufferGeometry {
-    return this.points.acquireGeometry(nodeId, pointCount);
+  acquirePointsGeometry(
+    nodeId: string,
+    pointCount: number,
+    options?: BufferAcquireOptions
+  ): THREE.InstancedBufferGeometry {
+    return this.points.acquireGeometry(nodeId, pointCount, options);
   }
 
   /** Release Points geometry back to pool. */
@@ -247,8 +252,12 @@ export class GPUBufferPool {
    * the fixed 6-texel layout means capacity is the only matching
    * criterion; see lines-adapter.ts).
    */
-  acquireLinesGeometry(nodeId: string, segmentCount: number): THREE.InstancedBufferGeometry {
-    return this.lines.acquireGeometry(nodeId, segmentCount);
+  acquireLinesGeometry(
+    nodeId: string,
+    segmentCount: number,
+    options?: BufferAcquireOptions
+  ): THREE.InstancedBufferGeometry {
+    return this.lines.acquireGeometry(nodeId, segmentCount, options);
   }
 
   /** Release Lines geometry back to pool. */
@@ -279,8 +288,12 @@ export class GPUBufferPool {
   // =========================================================================
 
   /** Acquire geometry for GSplats (splat texture + `aSortedIndex`). */
-  acquireGSplatsGeometry(nodeId: string, splatCount: number): THREE.InstancedBufferGeometry {
-    return this.gsplats.acquireGeometry(nodeId, splatCount);
+  acquireGSplatsGeometry(
+    nodeId: string,
+    splatCount: number,
+    options?: BufferAcquireOptions
+  ): THREE.InstancedBufferGeometry {
+    return this.gsplats.acquireGeometry(nodeId, splatCount, options);
   }
 
   /** Release GSplats geometry back to pool. */

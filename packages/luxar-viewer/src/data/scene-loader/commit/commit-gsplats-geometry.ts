@@ -22,7 +22,7 @@ import { log, Modules } from '../../../utils/log';
 import type { UpdateSession } from '../../../profiling/update-profiler';
 import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import { invalidateRenderObjectFor } from './invalidate-render-object';
-import { stampLadderComplete, stampLoadedViewVersion } from './stamp-view-version';
+import { canLadderRegrow, stampLadderComplete, stampLoadedViewVersion } from './stamp-view-version';
 import {
   getCommittedData,
   hasCommittedData,
@@ -95,7 +95,9 @@ export function commitGSplatsGeometry(
   const bufferSession = session?.begin('Update Buffers');
   try {
     if (gpuBufferPool) {
-      const geometry = gpuBufferPool.acquireGSplatsGeometry(staged.path, splatCount);
+      const geometry = gpuBufferPool.acquireGSplatsGeometry(staged.path, splatCount, {
+        canRegrow: canLadderRegrow(mesh.userData, staged.sourceData.ndim),
+      });
       const attributesRebuilt = gpuBufferPool.didLastAcquireRebuildAttributes();
       const truncationRadius = readTruncate(mesh);
       // Keep the previous depth-sort permutation on a same-node same-count

@@ -43,6 +43,8 @@ import { clampPointCapacity } from '../element-texture-layout';
 import { DEFAULT_POINT_RADIUS } from '../../config/constants';
 import type { LoadedPointsData } from '../../data/data-loader-types';
 import type { PooledBuffer } from './pool-stats';
+import type { BufferAcquireOptions } from './acquire-options';
+import { disposeSupersededBuffer } from './dispose-superseded';
 import { chooseCapacity } from './capacity';
 
 /**
@@ -121,7 +123,11 @@ export class PointsBufferAdapter {
 
   constructor(private readonly host: PointsAdapterHost) {}
 
-  acquireGeometry(nodeId: string, pointCount: number): THREE.InstancedBufferGeometry {
+  acquireGeometry(
+    nodeId: string,
+    pointCount: number,
+    options?: BufferAcquireOptions
+  ): THREE.InstancedBufferGeometry {
     const host = this.host;
     host._lastAcquireRebuilt = false;
 
@@ -177,7 +183,12 @@ export class PointsBufferAdapter {
       const released = active;
       try {
         this.releaseGeometry(nodeId);
-        return this.adoptOrAllocate(nodeId, pointCount);
+        const replacement = this.adoptOrAllocate(nodeId, pointCount);
+        if (options?.canRegrow === false && disposeSupersededBuffer(this.pointBuffers, released)) {
+          host.stats.evictions++;
+          host.typeStats.points.evictions++;
+        }
+        return replacement;
       } catch (error) {
         this.reclaimAfterFailedGrow(nodeId, released);
         throw error;

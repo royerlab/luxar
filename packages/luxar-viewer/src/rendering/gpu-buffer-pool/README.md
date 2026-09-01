@@ -16,6 +16,8 @@ gpu-buffer-pool/
 │                              (estimateGeometryBytes, invalidateCachedByteSize)
 ├── capacity.ts              # Buffer-capacity sizing primitive
 │                              (chooseCapacity, __setMinInstanceCapacityForTesting)
+├── acquire-options.ts       # Per-grow lifecycle hint (canRegrow)
+├── dispose-superseded.ts    # Exact post-grow disposal after successful replacement
 ├── points-adapter.ts        # PointsBufferAdapter — acquire/release/update for points
 ├── lines-adapter.ts         # LinesBufferAdapter   — acquire/release/update for lines
 └── gsplats-adapter.ts       # GSplatsBufferAdapter — acquire/release/update for gsplats
