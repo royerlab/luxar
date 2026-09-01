@@ -1669,11 +1669,34 @@ testLadderFoldContract('Lines', async () => {
     subs.length,
     '/fold'
   );
+  // Non-resident sub-LODs: the streaming policy stops after each level, so the
+  // ladder is climbed over several passes — the shape real refinement takes.
+  const mpSubs = [20, 10, 4].map((n) => {
+    const s = makeSubLoader(makeLodData(n, n / 2, 3, { color: 'uint8' }));
+    s.updateViewWithResidency.mockImplementation(async () => ({
+      data: makeLodData(n, n / 2, 3, { color: 'uint8' }),
+      allResident: false,
+    }));
+    return s;
+  });
+  const mp = new LinesProgressiveLoader(
+    mpSubs as unknown as LinesSpatialIndexLoader[],
+    mpSubs.length,
+    '/fold-mp'
+  );
+
   return {
     loader: l,
     totalLevels: subs.length,
     loadAll: async () => {
       await l.loadLines(baseViewState);
+    },
+    multiPass: {
+      loader: mp,
+      totalLevels: mpSubs.length,
+      loadAll: async () => {
+        await mp.loadLines(baseViewState);
+      },
     },
   };
 });

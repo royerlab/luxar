@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   estimateNextRungBytes,
+  ladderResidentBytes,
   planRefinementAdmission,
   RefinementResidencyBudget,
 } from '../../../../../data/scene-loader/progressive/residency-budget';
@@ -50,6 +51,68 @@ describe('planRefinementAdmission', () => {
   it('clamps negative inputs rather than trusting them', () => {
     const v = planRefinementAdmission(-5 * MB, -1 * MB, 100 * MB);
     expect(v).toMatchObject({ admitted: true, residentBytes: 0 });
+  });
+});
+
+describe('ladderResidentBytes — the element-row term', () => {
+  // The bug this exists to prevent: budgeting on the decoded payload alone.
+  // A Lines element row is 96 B (6 RGBA32F texels) against a ~27 B/vertex
+  // payload; a GSplats row is 64 B against ~43 B/splat. Counting only the
+  // payload therefore under-reports Lines by ~2.4x MORE than GSplats, and the
+  // scene-wide ceiling declined a 598 MB gsplat node while admitting a 901 MB
+  // lines node — useless for the geometry the cap was written for.
+  it('adds the element rows to the decoded payload', () => {
+    expect(
+      ladderResidentBytes({
+        residentBytes: 27 * 1000,
+        loadedRungs: 1,
+        elementCount: 1000,
+        bytesPerElement: 96,
+      })
+    ).toBe(27_000 + 96_000);
+  });
+
+  it('keeps lines above gsplats for equal element counts, as the layouts require', () => {
+    const N = 1_000_000;
+    const lines = ladderResidentBytes({
+      residentBytes: 27 * N,
+      loadedRungs: 4,
+      elementCount: N,
+      bytesPerElement: 96,
+    });
+    const gsplats = ladderResidentBytes({
+      residentBytes: 43 * N,
+      loadedRungs: 4,
+      elementCount: N,
+      bytesPerElement: 64,
+    });
+    // Payload alone would rank gsplats HEAVIER (43 vs 27 B/element), which is
+    // the inversion that let the cap admit the heavier lines node.
+    expect(27 * N).toBeLessThan(43 * N);
+    expect(lines).toBeGreaterThan(gsplats);
+  });
+
+  it('treats a geometry with no element rows as payload-only', () => {
+    // Mesh is not element-texture backed; zero is the honest value.
+    expect(
+      ladderResidentBytes({
+        residentBytes: 500,
+        loadedRungs: 2,
+        elementCount: 0,
+        bytesPerElement: 0,
+      })
+    ).toBe(500);
+  });
+
+  it('clamps negative inputs', () => {
+    expect(
+      ladderResidentBytes({
+        residentBytes: -1,
+        loadedRungs: 1,
+        elementCount: -5,
+        bytesPerElement: -96,
+      })
+    ).toBe(0);
   });
 });
 
@@ -97,6 +160,8 @@ describe('RefinementResidencyBudget', () => {
   const residency = (residentBytes: number, loadedRungs = 1) => ({
     residentBytes,
     loadedRungs,
+    elementCount: 0,
+    bytesPerElement: 0,
   });
 
   it('sums footprints across nodes, which is the whole point', () => {

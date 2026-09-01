@@ -71,6 +71,7 @@ import type { UpdateSession } from '../../profiling/update-profiler';
 import { concatRequiredField } from '../loaders/progressive/concat-helpers';
 import { planLadderRollback } from '../loaders/progressive/pass-rollback';
 import { measureLodBytes } from '../loaders/progressive/slice-cache-helper';
+import type { LadderResidency } from '../scene-loader/progressive/residency-budget';
 import {
   classifyStreamingPass,
   shouldStopBeforeLevel,
@@ -404,10 +405,17 @@ export class MeshProgressiveLoader implements MeshDataLoader {
    * as payload columns come and go. Rung count is reported alongside so the
    * budget can estimate the next rung without needing per-rung sizes.
    */
-  ladderResidency(): { residentBytes: number; loadedRungs: number } {
+  ladderResidency(): LadderResidency {
     return {
       residentBytes: measureLodBytes(this.loadedLODs),
       loadedRungs: this.loadedLODCount,
+      // Mesh is NOT element-texture backed — it has no per-element row and no
+      // capacity clamp, which is why `element-texture-layout` defines no mesh
+      // layout. Zero here is the honest value, not an omission: its decoded
+      // payload IS its footprint. Stated explicitly so mesh is visibly exempt
+      // rather than looking like a geometry someone forgot to wire up.
+      elementCount: 0,
+      bytesPerElement: 0,
     };
   }
 

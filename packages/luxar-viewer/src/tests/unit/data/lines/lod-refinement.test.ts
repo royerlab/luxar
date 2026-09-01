@@ -18,6 +18,7 @@ import type { LinesDataLoader } from '../../../../types/lines';
 import type { ViewState } from '../../../../data/data-loader-types';
 import type { StagedLinesCommit } from '../../../../data/scene-loader/process/data-processor-lines';
 import { defineRefinementLoopContract } from '../_shared/refinement-loop-contract';
+import { getPrefixParent, setPrefixParent } from '../../../../types/prefix-lineage';
 
 const baseViewState: ViewState = {
   displayDims: [0, 1, 2],
@@ -202,5 +203,67 @@ describe('runLinesRefinement — Lines-specific behaviour', () => {
 
     expect(processLines).toHaveBeenCalledTimes(1);
     expect(commitLines).not.toHaveBeenCalled();
+  });
+
+  describe('lineage release on a pass that does not commit (#2426)', () => {
+    /** A loader that yields `data` once, then reports the ladder complete. */
+    function oneShotLoader(data: object): LinesDataLoader {
+      let done = false;
+      return {
+        get hasMoreLODs() {
+          return !done;
+        },
+        loadedLODCount: 1,
+        totalLODCount: 2,
+        updateView: vi.fn(async () => {
+          done = true;
+          return data;
+        }),
+      } as unknown as LinesDataLoader;
+    }
+
+    async function runWith(
+      opts: { staged: StagedLinesCommit | null; aborted?: boolean },
+      data: object
+    ) {
+      const controller = new AbortController();
+      if (opts.aborted) controller.abort();
+      await runLinesRefinement({
+        rootGroup: new THREE.Group(),
+        viewStateQueue: new ViewStateQueue(),
+        linesLoaders: new Map([['/l', oneShotLoader(data)]]),
+        deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
+        processLines: vi.fn().mockResolvedValue(opts.staged),
+        commitLines: vi.fn(),
+        updateVisibleCountsInMonitor: vi.fn(),
+        releaseLock: vi.fn(),
+        retriggerUpdate: vi.fn(),
+        signal: controller.signal,
+      });
+    }
+
+    it('releases the pinned parent when processing stages nothing', async () => {
+      // The parent is the PREVIOUS CUMULATIVE — on a deep ladder that is close
+      // to a whole redundant copy, held for as long as `data` stays reachable
+      // through `committedData` and the loader's memo.
+      const data = { payload: 'cumulative' };
+      setPrefixParent(data, { payload: 'previous-cumulative' });
+
+      await runWith({ staged: null }, data);
+
+      expect(getPrefixParent(data)).toBeUndefined();
+    });
+
+    it('releases the pinned parent when a superseding view-state aborts the pass', async () => {
+      // The common case in practice: ordinary camera motion supersedes passes
+      // constantly, and an abort landing during the async process round-trip is
+      // not a throw, so nothing else on this path clears the entry.
+      const data = { payload: 'cumulative' };
+      setPrefixParent(data, { payload: 'previous-cumulative' });
+
+      await runWith({ staged: {} as StagedLinesCommit, aborted: true }, data);
+
+      expect(getPrefixParent(data)).toBeUndefined();
+    });
   });
 });

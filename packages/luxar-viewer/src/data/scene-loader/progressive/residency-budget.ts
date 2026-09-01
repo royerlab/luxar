@@ -109,12 +109,45 @@ export function planRefinementAdmission(
   return { admitted: true, reason: 'ok', residentBytes: resident, budgetBytes };
 }
 
-/** A loader's measured ladder footprint. */
+/**
+ * A loader's ladder footprint.
+ *
+ * TWO TERMS, AND OMITTING THE SECOND BREAKS THE BUDGET ASYMMETRICALLY. The
+ * decoded payload is only part of what a committed node costs: each element
+ * also occupies a fixed row in the renderer's element texture, and that row's
+ * size differs sharply per geometry — 96 B/segment for Lines (6 RGBA32F
+ * texels), 64 B/splat for GSplats (4), 48 B/point for Points (3).
+ *
+ * Measured against the decoded payloads those elements come from (~27 B/vertex
+ * for Lines, ~43 B/splat for GSplats), the texture row is ~3.6x the payload for
+ * Lines but only ~1.5x for GSplats. So a budget fed the payload alone does not
+ * merely under-count — it under-counts LINES BY ~2.4x MORE THAN GSPLATS, and
+ * the scene-wide ceiling then declines a 598 MB gsplat node while admitting a
+ * 901 MB lines node. That is exactly what was observed when the cap was first
+ * measured under forced pressure, and it made the cap useless for the geometry
+ * it was written for.
+ *
+ * The element term is derived from each geometry's own authoritative layout
+ * constant (`rendering/element-texture-layout`), not estimated, so the two
+ * geometries cannot drift apart again.
+ */
 export interface LadderResidency {
   /** Total bytes of every typed array the loaded rungs hold. */
   residentBytes: number;
   /** How many rungs those bytes represent. */
   loadedRungs: number;
+  /** Committed elements (segments / splats / points / triangles). */
+  elementCount: number;
+  /** This geometry's element-texture row size, from its layout constant. */
+  bytesPerElement: number;
+}
+
+/** Total residency a loader accounts for: decoded payload + element rows. */
+export function ladderResidentBytes(residency: LadderResidency): number {
+  return (
+    Math.max(0, residency.residentBytes) +
+    Math.max(0, residency.elementCount) * Math.max(0, residency.bytesPerElement)
+  );
 }
 
 /**
@@ -186,10 +219,11 @@ export class RefinementResidencyBudget {
    * progress. The next view change starts a fresh run and a fresh decision.
    */
   admit(path: string, residency: LadderResidency): RefinementAdmission {
-    this.perPath.set(path, Math.max(0, residency.residentBytes));
+    const accounted = ladderResidentBytes(residency);
+    this.perPath.set(path, accounted);
     const verdict = planRefinementAdmission(
       this.residentBytes,
-      estimateNextRungBytes(residency.residentBytes, residency.loadedRungs),
+      estimateNextRungBytes(accounted, residency.loadedRungs),
       this.budgetBytes
     );
     if (!verdict.admitted) {

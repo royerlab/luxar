@@ -97,3 +97,38 @@ export function setPrefixParent(child: object, parent: object | null): void {
 export function getPrefixParent(child: object): object | undefined {
   return prefixParents.get(child);
 }
+
+/**
+ * Release `data`'s lineage entry when the pass that created it did NOT commit.
+ *
+ * The retention contract above has two halves, and only one of them was
+ * implemented. The commit layer's `setPrefixParent(data, null)` is
+ * unconditional and correct — but a refinement pass does not always reach a
+ * commit. It skips one when processing yields nothing to stage, and when a
+ * superseding view-state aborts mid-flight, which happens constantly during
+ * ordinary camera motion. On those exits the entry survived, and because the
+ * newest concat is reachable indefinitely through `committedData` and the
+ * loader's memo, so did the parent it pins.
+ *
+ * That parent is the PREVIOUS CUMULATIVE, which is what makes it expensive:
+ * its size is `(passes - 1) / passes` of the final payload, so it grows with
+ * ladder depth and saturates at a whole redundant copy. Measured in-process on
+ * an equal-count ladder climbed one rung per pass, the retained fraction runs
+ * 0.0 / 0.5 / 0.75 / 0.875 at 2 / 4 / 8 / 16 rungs — reproducing the depth
+ * curve seen on real gsplat nodes (#2426). The two-rung case retains nothing
+ * for the same reason: it completes in a single pass, so there is no previous
+ * cumulative to pin.
+ *
+ * A no-op when the pass committed (the commit already cleared it) and when
+ * `data` is absent. Safe to over-call: clearing an entry that is already gone
+ * costs a WeakMap miss, and the worst consequence of clearing one that was
+ * still wanted is a full rewrite instead of an append.
+ *
+ * Mesh does not stamp lineage at all, so it neither needs nor uses this.
+ */
+export function releaseLineageIfUncommitted(
+  data: object | null | undefined,
+  committed: boolean
+): void {
+  if (!committed && data) setPrefixParent(data, null);
+}

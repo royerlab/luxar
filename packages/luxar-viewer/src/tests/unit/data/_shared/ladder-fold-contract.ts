@@ -60,6 +60,17 @@ export interface LadderFoldSubject {
   /** Drive the loader until every rung is loaded and folded. */
   loadAll(): Promise<void>;
   totalLevels: number;
+  /**
+   * Optional: a loader whose sub-LODs report NON-resident, so the streaming
+   * policy stops after each level and the ladder is climbed over several
+   * passes. That is the shape real refinement takes, and it is materially
+   * different from a single resident pass — the single-pass climb concatenates
+   * exactly once, so it has no previous cumulative and cannot exhibit the
+   * lineage retention that cost up to a whole redundant copy at depth (#2426).
+   * A contract that only ever ran the single-pass shape looked green through
+   * that entire bug.
+   */
+  multiPass?: { loader: FoldableLadderLoader; loadAll(): Promise<void>; totalLevels: number };
 }
 
 /**
@@ -137,6 +148,22 @@ export function testLadderFoldContract(
       if (memo !== null && memo !== undefined) {
         expect(memo.lodCount).toBeLessThanOrEqual(loader.loadedLODCount);
       }
+    });
+
+    it('still folds to a single payload when climbed over MANY passes', async () => {
+      const subject = await makeSubject();
+      if (!subject.multiPass) return; // geometry opted out
+      const { loader: l, loadAll, totalLevels } = subject.multiPass;
+
+      await loadAll();
+      while (l.loadedLODCount < totalLevels) await loadAll();
+
+      // The shape real refinement takes. The single-pass case above concatenates
+      // exactly once; this one concatenates per pass, which is where retention
+      // between passes shows up.
+      expect(l.loadedLODCount).toBe(totalLevels);
+      expect(priv<unknown[]>(l, 'loadedLODs')).toHaveLength(1);
+      expect(l.ladderResidency().loadedRungs).toBe(totalLevels);
     });
   });
 }

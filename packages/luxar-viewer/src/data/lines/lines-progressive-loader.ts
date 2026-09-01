@@ -37,6 +37,8 @@ import {
   storeLadder,
 } from '../loaders/progressive/slice-cache-helper';
 import { planLadderRollback } from '../loaders/progressive/pass-rollback';
+import { LINE_FLOATS_PER_SEGMENT } from '../../rendering/element-texture-layout';
+import type { LadderResidency } from '../scene-loader/progressive/residency-budget';
 import { viewStatesEqual } from '../loaders/progressive/view-state-equal';
 import type { SliceCache } from '../../cache/slice-cache';
 import { log, Modules, LogEmoji } from '../../utils/log';
@@ -331,10 +333,15 @@ export class LinesProgressiveLoader implements LinesDataLoader {
    * than one entry per rung. That is exactly why the rung count is reported
    * from `_loadedLODCount` (LOGICAL levels) instead of `loadedLODs.length`.
    */
-  ladderResidency(): { residentBytes: number; loadedRungs: number } {
+  ladderResidency(): LadderResidency {
     return {
       residentBytes: measureLodBytes(this.loadedLODs),
       loadedRungs: this._loadedLODCount,
+      elementCount: this.loadedLODs.reduce((s, d) => s + d.segmentCount, 0),
+      // 6 RGBA32F texels/segment — the largest element row of any geometry, and
+      // ~3.6x this payload's own bytes per vertex. Omitting it made the
+      // scene-wide budget under-count Lines far more than GSplats.
+      bytesPerElement: LINE_FLOATS_PER_SEGMENT * Float32Array.BYTES_PER_ELEMENT,
     };
   }
 

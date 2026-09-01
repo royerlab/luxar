@@ -30,6 +30,7 @@ import type { LoadedGSplatsData } from '../../types/gsplats';
 import { log, Modules } from '../../utils/log';
 import { notifier } from '../../utils/cross-layer/notifier';
 import { isAbortError } from '../loaders/abort-error';
+import { releaseLineageIfUncommitted } from '../../types/prefix-lineage';
 import { tryRollbackToPassStart } from '../loaders/progressive/pass-rollback';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 import type { ViewState } from '../data-loader-types';
@@ -154,13 +155,24 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
         try {
           const data = await loader.updateView(gsplatsViewState, session, ctx.signal);
           if (data) {
-            const staged = await ctx.processGSplats(path, data, gsplatsViewState, session);
-            // Superseded/disposed while we were loading + processing: an abort
-            // landing during the async process round-trip is not a throw (so
-            // the AbortError catch below misses it). Skip the commit so no
-            // stale-slice geometry reaches the GPU — mirrors runAtomicCommit's
-            // signal.aborted guard on the main path (atomic-commit.ts).
-            if (staged && ctx.signal?.aborted !== true) ctx.commitGSplats(staged, session);
+            let committed = false;
+            try {
+              const staged = await ctx.processGSplats(path, data, gsplatsViewState, session);
+              // Superseded/disposed while we were loading + processing: an abort
+              // landing during the async process round-trip is not a throw (so
+              // the AbortError catch below misses it). Skip the commit so no
+              // stale-slice geometry reaches the GPU — mirrors runAtomicCommit's
+              // signal.aborted guard on the main path (atomic-commit.ts).
+              if (staged && ctx.signal?.aborted !== true) {
+                ctx.commitGSplats(staged, session);
+                committed = true;
+              }
+            } finally {
+              // A skipped commit never reaches the commit layer's own clear, and
+              // the pinned parent is the previous cumulative — worth up to a
+              // whole redundant copy on a deep ladder. See prefix-lineage.ts.
+              releaseLineageIfUncommitted(data, committed);
+            }
           }
         } finally {
           session?.end();
