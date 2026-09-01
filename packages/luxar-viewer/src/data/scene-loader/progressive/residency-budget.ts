@@ -33,12 +33,13 @@
  * Uint32 ordering buffers (8 B/element) are intentionally omitted, as is the
  * separately bounded slice cache. The next pass is estimated from the mean
  * accounted rung so far — see {@link estimateNextRungBytes}. An admitted loader
- * receives the exact remaining headroom and stops after the first level that
- * spends it, so a warmed cache cannot consume the rest of the ladder under one
- * admission. During a
- * fold/commit, the previous cumulative CPU payload can remain reachable while
- * the replacement is allocated, so the transient peak may add nearly one extra
- * decoded cumulative on top of the settled payload + element-row accounting.
+ * receives a fair share of the remaining headroom, with enough allowance for
+ * its estimated next rung, and stops after the first level that spends it. That
+ * prevents a warmed cache from consuming the rest of the ladder under one
+ * admission. During a fold/commit, the previous cumulative CPU payload can
+ * remain reachable while the replacement is allocated, so the transient peak
+ * may add nearly one extra decoded cumulative on top of the settled payload +
+ * element-row accounting.
  *
  * DECLINING MUST ALSO RETIRE THE LOADER FROM THE RUN. `runProgressiveRefinement`
  * spins while `anyHasMoreLODs()` is true, and a declined loader still has more
@@ -76,9 +77,9 @@ export interface RefinementAdmission {
   budgetBytes: number;
 }
 
-/** Admission plus the additional settled bytes this pass may consume. */
+/** Admission plus this loader's share of additional settled bytes. */
 export interface RefinementPassAdmission extends RefinementAdmission {
-  /** `null` when no residency signal is available. */
+  /** Fair share of headroom, lower-bounded by the estimated next rung; `null` unbudgeted. */
   allowanceBytes: number | null;
 }
 
@@ -275,8 +276,12 @@ export class RefinementResidencyBudget {
     const nextRungBytes = estimateNextRungBytes(accounted, residency.loadedRungs);
     this.perPath.set(path, accounted);
     const verdict = planRefinementAdmission(this.residentBytes, nextRungBytes, this.budgetBytes);
+    const headroomBytes = Math.max(0, this.budgetBytes - verdict.residentBytes);
+    const eligiblePathCount = Math.max(1, this.perPath.size - this.declined.size);
     const allowanceBytes =
-      this.budgetBytes > 0 ? Math.max(0, this.budgetBytes - verdict.residentBytes) : null;
+      this.budgetBytes > 0
+        ? Math.max(nextRungBytes, Math.floor(headroomBytes / eligiblePathCount))
+        : null;
     if (verdict.admitted) {
       this.perPath.set(path, accounted + nextRungBytes);
     } else {

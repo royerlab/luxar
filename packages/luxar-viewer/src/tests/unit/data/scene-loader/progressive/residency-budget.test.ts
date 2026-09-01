@@ -195,16 +195,33 @@ describe('RefinementResidencyBudget', () => {
     expect(budget.residentBytes).toBe(40 * MB);
   });
 
-  it('returns remaining headroom and reconciles multi-rung pass growth', () => {
+  it('shares remaining headroom and reconciles multi-rung pass growth', () => {
     const budget = new RefinementResidencyBudget(100 * MB, [['/other', residency(60 * MB, 3)]]);
 
     const admission = budget.admit('/n', residency(20 * MB, 2));
-    expect(admission).toMatchObject({ admitted: true, allowanceBytes: 20 * MB });
+    expect(admission).toMatchObject({ admitted: true, allowanceBytes: 10 * MB });
     expect(budget.residentBytes).toBe(90 * MB);
 
     budget.record('/n', residency(35 * MB, 4));
     expect(budget.residentBytes).toBe(95 * MB);
     expect(budget.admit('/next', residency(10 * MB, 1)).admitted).toBe(false);
+  });
+
+  it('redistributes headroom after another tracked loader is declined', () => {
+    const budget = new RefinementResidencyBudget(
+      100 * MB,
+      new Map([
+        ['/a', residency(10 * MB, 10)],
+        ['/b', residency(50 * MB, 1)],
+        ['/c', residency(10 * MB, 10)],
+      ])
+    );
+
+    expect(budget.admit('/b', residency(50 * MB, 1))).toMatchObject({ admitted: false });
+    expect(budget.admit('/a', residency(10 * MB, 10))).toMatchObject({
+      admitted: true,
+      allowanceBytes: 15 * MB,
+    });
   });
 
   it('seeds completed and pending loaders before the first admission', () => {
