@@ -33,7 +33,7 @@ describe('gpu-byte-budget', () => {
     });
   });
 
-  it('auto-sizes from deviceMemory at 25%, clamped to the [512MB, 2GB] range', () => {
+  it('auto-sizes from deviceMemory at 25%, capped at 2GB with NO floor', () => {
     withDeviceMemory(8, () => {
       configureGpuByteBudget(); // 8 GB × 0.25 = 2 GB (== ceiling)
       expect(getGpuByteBudget()).toBe(2_000 * MB);
@@ -47,8 +47,13 @@ describe('gpu-byte-budget', () => {
       expect(getGpuByteBudget()).toBe(2_000 * MB);
     });
     withDeviceMemory(1, () => {
-      configureGpuByteBudget(); // 0.25 GB → clamps up to 512 MB floor
-      expect(getGpuByteBudget()).toBe(512 * MB);
+      // A small device gets a SMALL budget — 1 GB × 0.25 = 250 MB, not clamped
+      // up. The old 512 MB floor is deliberately gone: the pool's stranded
+      // superseded pairs total a few hundred MB, so a floor above them meant
+      // the LRU never fired and nothing was ever reclaimed on exactly the
+      // devices that needed it. A budget that cannot bind is not a budget.
+      configureGpuByteBudget();
+      expect(getGpuByteBudget()).toBe(250 * MB);
     });
   });
 
@@ -59,10 +64,55 @@ describe('gpu-byte-budget', () => {
     });
   });
 
-  it('falls back to the floor when deviceMemory is unavailable', () => {
+  it('falls back to the no-signal budget when deviceMemory is unavailable', () => {
     withDeviceMemory(undefined, () => {
       configureGpuByteBudget();
       expect(getGpuByteBudget()).toBe(512 * MB);
+    });
+  });
+
+  describe('cache-pool override drives the budget (#2426 pool retention)', () => {
+    // `navigator.deviceMemory` is Chromium-only and spec-capped at 8 GB, so on
+    // any large machine it pins the budget at the 2 GB ceiling and the pool's
+    // eviction path is unreachable. The override is the ONLY way to reproduce
+    // constrained-device behaviour — without it the fix is untestable on the
+    // hardware that would verify it.
+    it('binds below the deviceMemory budget when a smaller pool override is given', () => {
+      withDeviceMemory(32, () => {
+        configureGpuByteBudget(null, { cachePoolOverrideBytes: 1024 * MB });
+        // 32 GB would pin at the 2 GB ceiling; the override must win.
+        expect(getGpuByteBudget()).toBeLessThan(2_000 * MB);
+        expect(getGpuByteBudget()).toBeGreaterThan(0);
+      });
+    });
+
+    it('is what makes eviction reachable: budget lands under a few hundred MB', () => {
+      // The stranded superseded pairs measured on a 2M-splat 16-rung node are
+      // ~285 MB. For the pool LRU to fire at all, the budget must land below
+      // active + pooled. This pins that the 1024 MB test point actually binds
+      // — the whole acceptance criterion (evictions > 0) depends on it.
+      withDeviceMemory(32, () => {
+        configureGpuByteBudget(null, { cachePoolOverrideBytes: 1024 * MB });
+        expect(getGpuByteBudget()).toBeLessThan(500 * MB);
+      });
+    });
+
+    it('an explicit gpuBudgetMB still wins over the override', () => {
+      withDeviceMemory(8, () => {
+        configureGpuByteBudget(1536 * MB, { cachePoolOverrideBytes: 256 * MB });
+        expect(getGpuByteBudget()).toBe(1536 * MB);
+      });
+    });
+
+    it('does not shrink the budget merely because the heap is unmeasurable', () => {
+      // Firefox and Safari expose no `performance.memory`. The heap helper
+      // answers with a fixed small fallback that is indistinguishable from a
+      // derived value; folding that in would cap a 32 GB machine at 256 MB for
+      // no reason but the browser. An absent measurement is not a small one.
+      withDeviceMemory(32, () => {
+        configureGpuByteBudget(null, {});
+        expect(getGpuByteBudget()).toBe(2_000 * MB);
+      });
     });
   });
 

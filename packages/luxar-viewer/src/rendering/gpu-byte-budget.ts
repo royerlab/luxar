@@ -42,33 +42,95 @@
  * @module rendering/gpu-byte-budget
  */
 
+import { computeWorkingSetBudgetBytes } from '../cache/heap-budget';
 import { log, Modules } from '../utils/log';
 
 /** Fraction of system RAM to devote to GPU geometry. */
 const DEVICE_MEMORY_FRACTION = 0.25;
-/** Lower clamp — also the fallback when ``deviceMemory`` is unavailable. */
-const MIN_BUDGET_BYTES = 512_000_000; // 512 MB
+/**
+ * Budget used when NO memory signal is available at all — neither
+ * ``deviceMemory`` nor a measurable heap nor an explicit cache-pool override.
+ *
+ * NOT a floor under a budget that WAS derived from a signal. It used to be one,
+ * and that was the bug: a tab told it had a small pool still got 512 MB, which
+ * is far above the stranded-pair total the pool needs to evict, so the LRU
+ * never fired and nothing was ever reclaimed. A budget that cannot bind is not
+ * a budget. See {@link computeAutoBudget}.
+ */
+const NO_SIGNAL_BUDGET_BYTES = 512_000_000; // 512 MB
 /** Upper clamp — keeps discrete-GPU machines (system RAM ≫ VRAM) safe. */
 const MAX_BUDGET_BYTES = 2_000_000_000; // 2 GB
 /** Floor that context-loss backoff will not reduce below. */
 const BACKOFF_FLOOR_BYTES = 256_000_000; // 256 MB
 
-let budgetBytes = MIN_BUDGET_BYTES;
+let budgetBytes = NO_SIGNAL_BUDGET_BYTES;
 
-function clamp(v: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, v));
+/**
+ * Memory signals the auto budget folds in alongside `navigator.deviceMemory`.
+ *
+ * `cachePoolOverrideBytes` is the `?cacheBudgetMB=` value (and the native
+ * launcher's equivalent). It MUST reach this budget, not just the caches:
+ * `deviceMemory` is Chromium-only and spec-capped at 8 GB, so on a large
+ * machine it pins the budget at the 2 GB ceiling and the pool can never be
+ * exercised under pressure at all. The override is the only way to reproduce
+ * constrained-device behaviour on a roomy box.
+ */
+export interface GpuBudgetMemorySignals {
+  /** `?cacheBudgetMB=` in bytes, if set. */
+  cachePoolOverrideBytes?: number;
+  /** Device-class pool size, used when the heap is unmeasurable (WebKit). */
+  fallbackPoolBytes?: number;
 }
 
 /**
  * Compute the auto budget from ``navigator.deviceMemory``. Undefined
  * (Safari/Firefox) ⇒ the conservative floor.
  */
-function computeAutoBudget(): number {
+function computeAutoBudget(memory?: GpuBudgetMemorySignals): number {
   const gb = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
-  if (typeof gb === 'number' && gb > 0) {
-    return clamp(gb * DEVICE_MEMORY_FRACTION * 1_000_000_000, MIN_BUDGET_BYTES, MAX_BUDGET_BYTES);
-  }
-  return MIN_BUDGET_BYTES;
+  const fromDeviceMemory =
+    typeof gb === 'number' && gb > 0 ? gb * DEVICE_MEMORY_FRACTION * 1_000_000_000 : undefined;
+
+  // The heap-derived working set, from the SAME helper the refinement residency
+  // cap uses — so the two agree on what the device can hold instead of the pool
+  // carrying an independent constant that never binds.
+  //
+  // ONLY when there is a REAL heap signal. `computeWorkingSetBudgetBytes`
+  // returns a fixed 256 MB fallback when it has nothing to go on, and that
+  // value is indistinguishable from a derived one — folding it in would cap a
+  // 32 GB Firefox/Safari machine at 256 MB purely because it exposes no
+  // `performance.memory`, making those browsers dramatically worse than Chrome
+  // at scenes they hold comfortably. An absent measurement must never read as
+  // a small one. (The two tests that caught this are the ones asserting the
+  // deviceMemory path and the no-signal path.)
+  const heapMeasurable =
+    typeof performance !== 'undefined' &&
+    typeof (performance as Performance & { memory?: { jsHeapSizeLimit?: number } }).memory
+      ?.jsHeapSizeLimit === 'number';
+  const fromHeap =
+    memory?.cachePoolOverrideBytes != null || heapMeasurable
+      ? computeWorkingSetBudgetBytes(
+          undefined,
+          memory?.cachePoolOverrideBytes,
+          memory?.fallbackPoolBytes
+        )
+      : undefined;
+
+  const candidates = [fromDeviceMemory, fromHeap && fromHeap > 0 ? fromHeap : undefined].filter(
+    (v): v is number => v !== undefined
+  );
+  if (candidates.length === 0) return NO_SIGNAL_BUDGET_BYTES;
+
+  // The MINIMUM of the signals, because a pooled allocation costs on BOTH
+  // sides: VRAM for the element texture, and JS heap for the CPU-side image
+  // that backs it. It has to fit in whichever is scarcer. (Mixing a VRAM signal
+  // and a heap signal in one number IS a category blend; it is deliberate. The
+  // failure we are fixing is a heap OOM caused by GPU-pool retention, so a
+  // budget that only tracked VRAM could not see it coming.)
+  //
+  // Clamped ABOVE only. There is no floor: a floor is exactly what stopped this
+  // budget from ever binding, and a budget that cannot bind cannot evict.
+  return Math.min(Math.min(...candidates), MAX_BUDGET_BYTES);
 }
 
 /**
@@ -79,14 +141,18 @@ function computeAutoBudget(): number {
  * - ``0`` → disable byte-budget eviction (unbounded resident geometry).
  * - a positive number → pin the budget to exactly that many bytes.
  */
-export function configureGpuByteBudget(overrideBytes?: number | null): void {
+export function configureGpuByteBudget(
+  overrideBytes?: number | null,
+  memory?: GpuBudgetMemorySignals
+): void {
   if (overrideBytes == null) {
-    budgetBytes = computeAutoBudget();
+    budgetBytes = computeAutoBudget(memory);
     const dm = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
-    log.info(
-      Modules.PERFORMANCE,
-      `GPU byte budget: ${mb(budgetBytes)} MB (auto from deviceMemory=${dm ?? 'n/a'} GB)`
-    );
+    const via =
+      memory?.cachePoolOverrideBytes != null
+        ? `cacheBudgetMB override + deviceMemory=${dm ?? 'n/a'} GB`
+        : `deviceMemory=${dm ?? 'n/a'} GB + heap`;
+    log.info(Modules.PERFORMANCE, `GPU byte budget: ${mb(budgetBytes)} MB (auto from ${via})`);
     return;
   }
   budgetBytes = Math.max(0, overrideBytes);

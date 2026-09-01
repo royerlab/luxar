@@ -25,6 +25,7 @@ import { validateAndLog } from '../config/validation';
 import { readUrlParams, type UrlParams } from '../config/url-params';
 import { initUserSettings } from '../config/user-settings';
 import { configureGpuByteBudget } from '../rendering/gpu-byte-budget';
+import { cachePoolOverrideBytes, deviceClassPoolBytes } from '../cache/heap-budget';
 import { setLineJoinOverride } from '../types/line-join';
 import { setLinePrimitiveOverride, setLinePrimitivePolicy } from '../types/line-primitive';
 import { StorageKeys } from '../utils/storage-keys';
@@ -120,10 +121,24 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // Size the single GPU-geometry byte budget before any pool / LOD
   // registry is constructed. Precedence: `?gpuBudgetMB=` URL param >
   // `config.gpuPoolMaxBytes` (null=auto, 0=disable, N=pin) > auto-size.
+  // The cache-pool override is threaded in as a memory SIGNAL for the auto
+  // path: `navigator.deviceMemory` is Chromium-only and spec-capped at 8 GB, so
+  // on a large machine it pins the budget at its ceiling and the pool's
+  // eviction path can never be exercised under pressure. `?cacheBudgetMB=` is
+  // the only way to reproduce constrained-device behaviour on a roomy box, and
+  // it is what makes the budget agree with the refinement residency cap rather
+  // than carrying an independent constant.
+  const resolvedCacheBudgetMB =
+    urlParams.cacheBudgetMB ??
+    (userSettings.caching.budgetMode === 'custom' ? userSettings.caching.budgetMB : null);
   configureGpuByteBudget(
     urlParams.gpuBudgetMB != null
       ? urlParams.gpuBudgetMB * 1_000_000
-      : config.dataLoading.performance.gpuPoolMaxBytes
+      : config.dataLoading.performance.gpuPoolMaxBytes,
+    {
+      cachePoolOverrideBytes: cachePoolOverrideBytes(resolvedCacheBudgetMB),
+      fallbackPoolBytes: deviceClassPoolBytes(),
+    }
   );
 
   // Install the session-wide line join override before any line material is
@@ -275,9 +290,7 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
       clearCache: urlParams.clearCache,
       noPrefetch: urlParams.noPrefetch || !userSettings.caching.prefetch,
       prefetchDebug: urlParams.prefetchDebug,
-      cacheBudgetMB:
-        urlParams.cacheBudgetMB ??
-        (userSettings.caching.budgetMode === 'custom' ? userSettings.caching.budgetMB : null),
+      cacheBudgetMB: resolvedCacheBudgetMB,
     },
     // `?renderer=webgl|webgpu` forces a backend regardless of the
     // build-time env, then the stored Settings preference, then undefined →
