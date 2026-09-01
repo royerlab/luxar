@@ -138,9 +138,36 @@ describe('gpu-byte-budget', () => {
       });
     });
 
-    it('does not shrink a roomy Chromium device from its measured heap tier', () => {
+    it('DOES bind a roomy Chromium device to its measured heap tier', () => {
+      // This assertion was previously the opposite, on the reasoning that a
+      // coarse heap tier is not a GPU-memory signal. True of VRAM, wrong for
+      // the failure this budget exists to prevent: the crash is
+      // `RangeError: Array buffer allocation failed` — JS heap exhaustion —
+      // and a stranded pooled pair holds a CPU-side ArrayBuffer, so heap is
+      // what must bound the pool. `deviceMemory` is blind to it: it reports
+      // SYSTEM RAM, so a 32 GB box whose tab heap caps near 4 GB reads as
+      // roomy, takes the 2 GB ceiling, never binds, and evicts nothing right
+      // up until the tab dies.
+      //
+      // Measured on that exact shape: with the heap term the budget resolved
+      // to ~537 MB and the pool reclaimed during churn; without it, 2000 MB
+      // and ZERO evictions on the same scene.
       withDeviceMemory(32, () => {
         withHeapLimit(4 * 1024 * 1024 * 1024, () => {
+          configureGpuByteBudget();
+          expect(getGpuByteBudget()).toBeLessThan(2_000 * MB);
+          expect(getGpuByteBudget()).toBeGreaterThan(0);
+        });
+      });
+    });
+
+    it('still ignores the heap on a browser that cannot measure it', () => {
+      // The guard that keeps "absent is not small" true: Firefox and Safari
+      // expose no `performance.memory`, and the heap helper answers with a
+      // fixed fallback indistinguishable from a derived value. Binding on that
+      // would punish those browsers for a measurement they cannot provide.
+      withDeviceMemory(32, () => {
+        withHeapLimit(undefined, () => {
           configureGpuByteBudget();
           expect(getGpuByteBudget()).toBe(2_000 * MB);
         });
