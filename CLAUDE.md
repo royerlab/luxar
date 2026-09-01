@@ -2,7 +2,7 @@
 
 Guidance for Claude Code when working with this repository.
 
-**Luxar** is a high-performance system for compiling and visualizing arbitrary-sized nD scientific scenes. It renders four first-class geometry types — **Points**, **Lines**, **Gaussian Splats**, and **Mesh** (triangle surfaces). Mesh is the newest and the only _shaded_ one — the other three are purely emissive — via a light-free view-anchored offset key, and it is now feature-complete at the UI level: picking (at VERTEX granularity, keyed on `gl_VertexID` rather than an element-texture texel), the Layers-panel appearance controls, monitor/stats/debug counts. The docs pass is done and real WebGPU is verified pixel-equivalent to WebGL (see `docs/specs/MESH_NODE_SPEC.md` §11 and the CHANGELOG A/B notes). The contract still names the writable and drawable sets separately — `geometry_types` and `loader_types` — because a type becomes authorable before it becomes drawable; they simply agree on all four today.
+**Luxar** is a high-performance system for compiling and visualizing arbitrary-sized nD scientific scenes. It renders four first-class geometry types — **Points**, **Lines**, **Gaussian Splats**, and **Mesh** (triangle surfaces). Mesh is the newest and the only *shaded* one — the other three are purely emissive — via a light-free view-anchored offset key, and it is now feature-complete at the UI level: picking (at VERTEX granularity, keyed on `gl_VertexID` rather than an element-texture texel), the Layers-panel appearance controls, monitor/stats/debug counts. The docs pass is done and real WebGPU is verified pixel-equivalent to WebGL (see `docs/specs/MESH_NODE_SPEC.md` §11 and the CHANGELOG A/B notes). The contract still names the writable and drawable sets separately — `geometry_types` and `loader_types` — because a type becomes authorable before it becomes drawable; they simply agree on all four today.
 
 ## Issue / PR Coordination
 
@@ -21,7 +21,6 @@ conclusion onto the surviving PR.
 ## Quick Reference
 
 ### Python (use Hatch)
-
 ```bash
 hatch run test              # Run tests
 hatch run test-cov          # Tests with coverage
@@ -37,14 +36,12 @@ run through hatch, so for a CPU fit, a demo, or a benchmark, export the width
 you want — an explicit value wins. Set `MKL_NUM_THREADS` too, not just
 `OMP_NUM_THREADS`: torch takes its intra-op count from MKL here, so overriding
 OMP alone still leaves `torch.get_num_threads() == 1`.
-
 ```bash
 OMP_NUM_THREADS=16 MKL_NUM_THREADS=16 \
   hatch run luxar gsplat fit vol.tiff out.gsplats.zarr --device cpu
 ```
 
 ### TypeScript (use pnpm, from packages/luxar-viewer/)
-
 ```bash
 pnpm dev          # Dev server (port 5173)
 pnpm build        # Build
@@ -56,7 +53,6 @@ pnpm format       # Format
 ```
 
 ### Make Commands (from project root)
-
 ```bash
 # Development Setup
 make setup-dev    # Complete development environment setup (auto-installs dependencies)
@@ -161,7 +157,6 @@ make help         # Show all available commands
 The build system is designed to work on **fresh Linux/macOS machines** with minimal pre-installed tools, including **HPC/Slurm login nodes** (no sudo, no GPU on login node).
 
 **Prerequisites:**
-
 - Python 3.12+ (usually pre-installed; `python3.12` is the usual HPC module)
 - Git and curl
 - **Git LFS** (optional, required for demo data files): `brew install git-lfs` (macOS) or `sudo apt-get install git-lfs` (Ubuntu)
@@ -169,29 +164,26 @@ The build system is designed to work on **fresh Linux/macOS machines** with mini
 - **HPC/no-sudo**: no extra prerequisites — the Makefile auto-detects and uses venv fallback
 
 **What `make setup-dev` installs (no sudo needed):**
-
 - **Node.js 22.22+** (installs the 22 LTS by default): via nvm (Linux) or Homebrew (macOS). The floor is jsdom 30 (dev/test only), whose undici 8 dependency crashes on Node older than 22.16; Vite 8 alone only needs 20.19. `engines.node` in `packages/luxar-viewer/package.json` deliberately stays at the library's runtime floor (`>=20.19.0`) — that manifest is published to npm, and a dev-only jsdom constraint there would break installs for consumers.
 - **pnpm**: TypeScript package manager (via npm global or `--prefix ~/.local` fallback on HPC)
 - **Hatch**: Python environment manager (via pipx, or venv fallback on HPC)
 - **Pre-commit hooks**: ruff (lint + format), bandit, and mypy — see `.pre-commit-config.yaml`
 
 **Key tools and their locations:**
-
-| Tool              | Installation                            | Location                                       |
-| ----------------- | --------------------------------------- | ---------------------------------------------- |
-| nvm               | Auto-installed                          | `~/.nvm/`                                      |
-| Node.js           | Via nvm                                 | `~/.nvm/versions/node/`                        |
-| Hatch             | Via pipx (or venv on HPC)               | `~/.local/bin/hatch`                           |
-| pnpm              | Via npm (or `--prefix ~/.local` on HPC) | `~/.local/bin/pnpm`                            |
-| Rust/wasm-pack    | `make install-rust`                     | `~/.cargo/`                                    |
-| Go (launchers)    | `make install-go`                       | `~/.local/go/` (Linux) or Homebrew (macOS)     |
-| Launcher binaries | `make build-launchers`                  | `packages/luxar/src/luxar/cli/_launchers/`     |
-| CUDA toolkit      | Manual install or module load           | `/usr/local/cuda/` (typical)                   |
-| CUDA extension    | `make build-cuda`                       | `packages/luxar/.../cuda/*.so`                 |
-| CUDA build info   | Auto-generated by build                 | `packages/luxar/.../cuda/cuda_build_info.json` |
+| Tool | Installation | Location |
+|------|--------------|----------|
+| nvm | Auto-installed | `~/.nvm/` |
+| Node.js | Via nvm | `~/.nvm/versions/node/` |
+| Hatch | Via pipx (or venv on HPC) | `~/.local/bin/hatch` |
+| pnpm | Via npm (or `--prefix ~/.local` on HPC) | `~/.local/bin/pnpm` |
+| Rust/wasm-pack | `make install-rust` | `~/.cargo/` |
+| Go (launchers) | `make install-go` | `~/.local/go/` (Linux) or Homebrew (macOS) |
+| Launcher binaries | `make build-launchers` | `packages/luxar/src/luxar/cli/_launchers/` |
+| CUDA toolkit | Manual install or module load | `/usr/local/cuda/` (typical) |
+| CUDA extension | `make build-cuda` | `packages/luxar/.../cuda/*.so` |
+| CUDA build info | Auto-generated by build | `packages/luxar/.../cuda/cuda_build_info.json` |
 
 **Troubleshooting:**
-
 ```bash
 # Check what's installed
 make check-deps
@@ -211,7 +203,6 @@ make setup-dev
 ```
 
 **HPC / Slurm cluster setup (no sudo, no GPU on login node):**
-
 ```bash
 # 1. Bootstrap the environment (detects HPC, uses venv fallback automatically)
 make setup-dev
@@ -236,7 +227,6 @@ make test-cuda
 ```
 
 **What `make build-cuda SLURM=1` does:**
-
 1. Detects the PyTorch CUDA version (e.g., 12.8) and finds a matching `cuda/` module
 2. Detects and loads the highest available GCC >= 9 module (required by PyTorch 2.x)
 3. Captures the current hatch virtual environment path
@@ -269,7 +259,6 @@ See `packages/luxar/src/luxar/demos/data/README.md` for details.
 See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for complete documentation.
 
 ### Luxar CLI
-
 ```bash
 luxar demo                       # List the 89 bundled demos (table)
 luxar demo run lorenz            # Run a demo by key/index (forwards -- args)
@@ -326,7 +315,6 @@ luxar export scene.luxar.zarr -o out/ --native macos,linux-amd64,linux-arm64 --n
 ```
 
 ### GSplat CLI (fitting, converting, rendering, merging)
-
 ```bash
 # Diagnose an existing store; --histograms enables the optional info histograms.
 luxar gsplat doctor splats.gsplats.zarr --histograms --bins 40
@@ -873,7 +861,6 @@ luxar gsplat view splats.gsplats.zarr          # Quick web viewer
 ```
 
 ### GPU Acceleration (Seeding & Fitting)
-
 ```python
 from luxar.gsplats.seeds import generate_seeds
 from luxar.gsplats import fit_gaussian_splats
@@ -895,7 +882,6 @@ hatch run python scripts/benchmarks/benchmark_seeding_gpu.py
 ```
 
 **GPU Support**:
-
 - Sobel gradients: All dimensions (1D-nD)
 - Interpolation: 2D/3D only (auto-fallback for others)
 - Deduplication: All dimensions
@@ -905,23 +891,22 @@ hatch run python scripts/benchmarks/benchmark_seeding_gpu.py
 
 The Makefile follows consistent naming conventions with **action-first** pattern:
 
-| Pattern                    | Purpose                                | Examples                                                                           |
-| -------------------------- | -------------------------------------- | ---------------------------------------------------------------------------------- |
-| `install-<tool>`           | Install external tool on system        | `install-node`, `install-rust`, `install-hatch`                                    |
-| `install-<component>-deps` | Install dependencies from manifest     | `install-viewer-deps` (node_modules)                                               |
-| `install-dev`              | Install Luxar package in editable mode | `install-dev` (pip install -e .)                                                   |
-| `setup-<component>`        | Orchestrated multi-step setup          | `setup-dev`, `setup-cuda`                                                          |
-| `enable-<feature>`         | Activate/enable a feature              | `enable-pre-commit` (activate hooks)                                               |
-| `build-<component>`        | Compile/build artifacts                | `build-viewer`, `build-wasm`, `build-cuda`                                         |
-| `test-<scope>`             | Run tests                              | `test-all`, `test-python`, `test-e2e`                                              |
-| `check-<aspect>`           | Verify/check something                 | `check-deps`, `check-all`, `check-cuda-deps`                                       |
-| `clean-<scope>`            | Clean build artifacts                  | `clean-all`, `clean-viewer`, `clean-cuda`                                          |
-| `format-<language>`        | Format code                            | `format-python`, `format-typescript`                                               |
-| `run-<script>`             | Run scripts/examples                   | `run-examples`, `run-demos`                                                        |
-| `serve-<target>`           | Start a server                         | `serve-docs`, `serve-dataset`, `serve-examples` (serves the `datasets/` directory) |
+| Pattern | Purpose | Examples |
+|---------|---------|----------|
+| `install-<tool>` | Install external tool on system | `install-node`, `install-rust`, `install-hatch` |
+| `install-<component>-deps` | Install dependencies from manifest | `install-viewer-deps` (node_modules) |
+| `install-dev` | Install Luxar package in editable mode | `install-dev` (pip install -e .) |
+| `setup-<component>` | Orchestrated multi-step setup | `setup-dev`, `setup-cuda` |
+| `enable-<feature>` | Activate/enable a feature | `enable-pre-commit` (activate hooks) |
+| `build-<component>` | Compile/build artifacts | `build-viewer`, `build-wasm`, `build-cuda` |
+| `test-<scope>` | Run tests | `test-all`, `test-python`, `test-e2e` |
+| `check-<aspect>` | Verify/check something | `check-deps`, `check-all`, `check-cuda-deps` |
+| `clean-<scope>` | Clean build artifacts | `clean-all`, `clean-viewer`, `clean-cuda` |
+| `format-<language>` | Format code | `format-python`, `format-typescript` |
+| `run-<script>` | Run scripts/examples | `run-examples`, `run-demos` |
+| `serve-<target>` | Start a server | `serve-docs`, `serve-dataset`, `serve-examples` (serves the `datasets/` directory) |
 
 **Key distinctions:**
-
 - `install-<tool>` vs `install-<component>-deps`: Tools are executables (node, rust); deps are project dependencies (node_modules)
 - `install-*` vs `setup-*`: Install is for single components; setup orchestrates multiple steps
 - `install-dev` vs `install-<tool>`: install-dev is for Luxar package itself; install-<tool> is for external tools
@@ -956,11 +941,9 @@ The Makefile follows consistent naming conventions with **action-first** pattern
 ### Documentation Requirements
 
 **Every Python subpackage MUST have**:
-
 - `README.md` - Purpose, key classes, usage examples
 
 **Every TypeScript package has**:
-
 - `README.md` in `/src/{package}/` - Keep in sync with code changes
 
 ---
@@ -968,7 +951,6 @@ The Makefile follows consistent naming conventions with **action-first** pattern
 ## Code Standards
 
 ### Python
-
 - Use type hints for all parameters and return values
 - Format with ruff (88 char line length)
 - Use PyTest (not unittest), mock only as last resort
@@ -983,7 +965,6 @@ with asection("Processing"):
 ```
 
 ### TypeScript
-
 - Format with prettier
 - Use JSDoc comments
 - Unified config in `src/config/` (camelCase, not UPPER_SNAKE_CASE)
@@ -995,13 +976,11 @@ with asection("Processing"):
 ## Testing
 
 ### Strategy
-
 - **Minimum coverage**: 80%
 - **NEVER skip tests** - fix them or create proper mocks
 - **Run before committing**: `make test-all && make check-all`
 
 ### Python Tests
-
 ```bash
 hatch run test                    # All tests
 hatch run pytest path/to/test.py  # Single file
@@ -1009,7 +988,6 @@ hatch run test-cov                # With coverage
 ```
 
 ### TypeScript Unit Tests
-
 ```bash
 cd packages/luxar-viewer
 pnpm test --run                   # All unit tests
@@ -1017,7 +995,6 @@ pnpm test path/to/test.ts         # Single file
 ```
 
 ### E2E Tests (Playwright)
-
 ```bash
 cd packages/luxar-viewer
 pnpm test:e2e                     # All E2E tests (~17 min)
@@ -1033,7 +1010,6 @@ zarr fixtures for EVERY chunk, not just the two that read them directly (set
 `LUXAR_E2E_NO_FIXTURES=1` to skip the check for a chunk you know needs none).
 Run `make run-examples` from the repository root too: the pre-flight warns and continues on a
 stale example stamp, but specs that read those stores may fail against outdated data.
-
 ```bash
 # Basic functionality
 npx playwright test basic-rendering.spec.ts viewer-initialization.spec.ts
@@ -1093,7 +1069,6 @@ npx playwright test all-examples-smoke-test.spec.ts demo-validation.spec.ts firs
 ```
 
 **Key E2E rules**:
-
 - Use `?src=<dataset>&debug` URL format (NOT `?data=`)
 - Use 3D datasets for general tests (4D/nD slicing may show 0 points)
 - Wait for `window.__luxarDebug` before assertions
@@ -1102,20 +1077,16 @@ npx playwright test all-examples-smoke-test.spec.ts demo-validation.spec.ts firs
 - See `docs/guides/user/E2E_TESTING_GUIDE.md` and `docs/guides/developer/PLAYWRIGHT_GUIDE.md` for details
 
 ### Cross-Language E2E Testing
-
 Python encoder and TypeScript decoder must stay in sync:
-
 1. **Fixture-based**: Python generates zarr, TypeScript unit tests verify (fast, no browser)
 2. **Playwright**: Full pipeline through browser (catches WebGL/rendering bugs)
 
 When to run E2E:
-
 - After changing encoding format
 - After changing decoder
 - Before PR/merge (always run full suite)
 
 ### Test Fixture Auto-Generation
-
 Unit tests (`pnpm test`) auto-generate missing zarr fixtures via `globalSetup` in `vitest.config.ts`. The fixture list is parsed directly from `tests/fixtures/generate_test_data.py` (the single source of truth) — adding a new fixture to the Python script is sufficient; no separate manifest needs updating.
 
 ---
@@ -1130,20 +1101,17 @@ pnpm agent:debug
 ```
 
 **Output includes**:
-
 - `[BROWSER-CONSOLE-*]` - All browser console logs
 - JSON state dump - Three.js scene, point counts, camera
 - `test-results/debug/debug-view.png` - Screenshot
 
 **Debug workflow**:
-
 1. Run `pnpm agent:debug` to see current state
 2. Add `console.log()` if needed
 3. Run again to verify fix
 4. Remove debug logging when done
 
 **Available at `window.__luxarDebug`** (when `?debug` in URL):
-
 - `scene`, `camera`, `renderer`, `controls`
 - `getState()`, `renderOnce()`, `app`, `consoleInterceptor`
 
@@ -1152,7 +1120,6 @@ pnpm agent:debug
 ## Critical Gotchas
 
 ### zarr library version vs zarr on-disk FORMAT (two separate axes)
-
 Luxar runs on **zarr-python 3** (`zarr>=3.2,<4`) and writes **zarr format 3** by
 default, while READING both formats. Never conflate the two axes. Both are pinned
 in one place — `packages/luxar/src/luxar/_zarr_compat.py` — and all writing goes
@@ -1169,11 +1136,10 @@ that cannot read 3 (an env var, not a flag, because the writing process is often
 a batch-fit worker or Slurm task rather than the one you invoked).
 
 Why it matters, concretely:
-
 - **Never name a metadata document.** `.zgroup` / `.zattrs` / `.zarray` /
   `.zmetadata` exist only at format 2; format 3 has one `zarr.json` per node with
   attributes nested under `attributes`, `c/0/0` chunk keys, and consolidated
-  metadata _inside_ the root `zarr.json`. Use the facade's bi-format readers —
+  metadata *inside* the root `zarr.json`. Use the facade's bi-format readers —
   `read_array_meta`, `read_node_attrs`, `is_consolidated`, `read_consolidated_attrs`
   — for anything that inspects a store on disk. Every bug found during the
   format-3 migration was a literal document name, and **not one of them raised**:
@@ -1214,13 +1180,11 @@ Why it matters, concretely:
   `_zarr_compat.consolidate()`. Never "fix" it by not consolidating: the viewer
   builds its entire scene graph from that index and has no directory-walk
   fallback, so the store would load as an empty scene.
-- Reading is version-agnostic: zarr-python 3 opens v2 _and_ v3, which is the point
+- Reading is version-agnostic: zarr-python 3 opens v2 *and* v3, which is the point
   of being on 3.x — 2.18 could not open a v3 store at all.
 
 ### Matrix Storage: NumPy vs THREE.js
-
 NumPy uses row-major, THREE.js uses column-major. **Always transpose when serializing**:
-
 ```python
 # Writing to zarr for THREE.js
 matrix.T.ravel().tolist()
@@ -1228,7 +1192,6 @@ matrix.T.ravel().tolist()
 # Reading back in Python
 np.array(flat_list).reshape(4, 4).T
 ```
-
 Translation is at `[3,7,11]` in NumPy but `[12,13,14]` in THREE.js.
 
 The viewer loader **refuses to load** scenes whose 4x4 transforms look
@@ -1238,9 +1201,7 @@ A producer that forgets to transpose now fails the load instead of
 silently rendering in the wrong place.
 
 ### Constructor Initialization Order
-
 When subclass and parent both set the same attribute, **parent must initialize first**:
-
 ```python
 def __init__(self):
     super().__init__()  # First!
@@ -1248,38 +1209,30 @@ def __init__(self):
 ```
 
 ### Transform Composition Order
-
 `compose(T1, T2, T3)` applies T1 first, T3 last (right-multiply):
-
 ```python
 result = result @ transform  # Correct
 # NOT: result = transform @ result
 ```
 
 ### nD Datasets in Tests
-
 - 4D/nD datasets may show 0 points depending on slice position
 - Use 3D datasets for general-purpose loading tests
 - For nD tests, navigate to slices known to have points
 
 ### Data Source URLs Normalize Trailing Slashes
-
 The viewer trims trailing slashes from dataset base URLs before appending zarr
 metadata paths, so both forms are accepted:
-
 ```bash
 http://localhost:5173/?src=http://127.0.0.1:8005
 http://localhost:5173/?src=http://127.0.0.1:8005/
 ```
-
 Prefer the no-trailing-slash form in examples and logs as the canonical spelling.
 
 ### WASM 16-Dimension Limit (with automatic >16D fallback)
-
 The compiled WASM kernels use fixed-size arrays (for performance) and support a
 **maximum of 16 dimensions** on the fast path. `validate_ndim` **panics** (crate
 is `panic = "abort"`) for `ndim > 16`, so those kernels must never be called above 16D.
-
 - Functions affected: `calculate_effective_radii`, `mahalanobis_distance`, `project_gsplats_nd_to_3d`, etc.
 - **>16D is fully supported (slower but works), automatically.** The TypeScript
   reference implementations in `wasm/typescript/` are uncapped, and the worker's
@@ -1290,13 +1243,11 @@ is `panic = "abort"`) for `ndim > 16`, so those kernels must never be called abo
   production >16D backend — keep it in 1:1 sync with the Rust kernels (parity tests).
 
 ### GSplats with Fewer Than 3 Display Dimensions (2D/1D scenes)
-
 The renderer's per-splat Cholesky buffer is **always** the 6-element packed-3D
 layout, no matter how many dimensions are displayed. So a 2D scene
 (`displayDims.length === 2`) produces only a 2×2 marginal and the third row must be
 **synthesized** — see `compute_display_cholesky_3d` (Rust) / `computeDisplayCholesky3D`
 (TS) in `wasm/*/gsplats_processing`.
-
 - **Never pad the phantom diagonal with an epsilon.** In sum projection (additive,
   luminous, volumetric) the shader scales amplitude by the Gaussian's extent along
   the view ray, `sigmaRay = 1/√(rᵀΣ⁻¹r)`; an ε-thin splat viewed face-on is scaled
@@ -1305,35 +1256,31 @@ layout, no matter how many dimensions are displayed. So a 2D scene
   giving the phantom axis the splat's own in-plane scale. `luxar.gsplats.lift`
   depends on this: its `opacity / (rayIntegralFactor · σ)` calibration holds for a 2D
   lift only because `√(σ·σ) == σ`.
-- The dimension hazard is **two-sided**: >16D panics (above), and <3 _display_ dims
+- The dimension hazard is **two-sided**: >16D panics (above), and <3 *display* dims
   used to panic too (a hardcoded sub-ndim of 3 read `display_dims[2]` out of bounds).
   When touching these kernels, test `displayDims.length` of 1 and 2, not just 3.
 - 2D gsplats are a first-class authoring path end to end (see the
   `demo_gsplats_2d_*` demos), spatial tiling included: BSP splitting needs only
   **2** spatial axes, so `luxar gsplat partition`, `lod --recipe
-tiles|overview|adaptive`, and `add_gsplats(partition=…)` all work on planar
+  tiles|overview|adaptive`, and `add_gsplats(partition=…)` all work on planar
   data. Only 1D input is rejected. Note the serialized BSP `axis` is a
   center-column index, which the viewer must map through `displayDims` to reach
   its own x/y/z (`render-order.ts`) — the two coincide only for `[0, 1, 2]`.
 
 ### ViewState.dimensions for extend_to_all
-
 The `dimensions` field in ViewState is **required** for `extend_to_all` to work:
-
 ```typescript
 // If extend_to_all is set but dimensions is undefined, the optimization is silently skipped
 const viewState: ViewState = {
-    displayDims: [0, 1, 2],
-    slicePosition: [0, 0, 0, 0],
-    tolerance: [0, 0, 0, 5],
-    dimensions: dims, // REQUIRED for extend_to_all!
+  displayDims: [0, 1, 2],
+  slicePosition: [0, 0, 0, 0],
+  tolerance: [0, 0, 0, 5],
+  dimensions: dims,  // REQUIRED for extend_to_all!
 };
 ```
 
 ### nD Transforms on Non-Displayed Dimensions
-
 `nd_transform` is separate from the 4x4 `transform`. It operates per-dimension on non-displayed dims:
-
 - Continuous/discrete: `{"scale": float, "offset": float}` (affine)
 - Categorical: `{"permutation": [int, ...]}` (relabeling)
 
@@ -1346,56 +1293,53 @@ See `docs/guides/specs/ND_TRANSFORMS_SPEC.md` for full details.
 ## Common Pitfalls and Solutions
 
 ### TypeScript: Event Listener Memory Leaks
-
 **Problem**: Creating new bound function references on each call prevents proper cleanup.
 
 ```typescript
 // ❌ WRONG - Creates new reference, removeEventListener won't work
-addEventListener("resize", this.handleResize.bind(this));
-removeEventListener("resize", this.handleResize.bind(this)); // Different reference!
+addEventListener('resize', this.handleResize.bind(this));
+removeEventListener('resize', this.handleResize.bind(this));  // Different reference!
 
 // ✅ CORRECT - Store bound reference for cleanup
 this.boundHandleResize = this.handleResize.bind(this);
-addEventListener("resize", this.boundHandleResize);
-removeEventListener("resize", this.boundHandleResize); // Same reference
+addEventListener('resize', this.boundHandleResize);
+removeEventListener('resize', this.boundHandleResize);  // Same reference
 ```
 
 ### TypeScript: Async Initialization Race Conditions
-
 **Problem**: Multiple callers triggering async initialization concurrently.
 
 ```typescript
 // ❌ WRONG - Non-atomic check
 if (!this.initPromise) {
-    this.initPromise = this.initialize(); // Race: two callers can both enter
+  this.initPromise = this.initialize();  // Race: two callers can both enter
 }
 
 // ✅ CORRECT - Atomic lock with cleanup
-if (this.initLock) return this.initPromise; // Return existing promise
+if (this.initLock) return this.initPromise;  // Return existing promise
 this.initLock = true;
 try {
-    this.initPromise = this.initialize();
-    await this.initPromise;
+  this.initPromise = this.initialize();
+  await this.initPromise;
 } finally {
-    this.initLock = false; // Always clear lock
+  this.initLock = false;  // Always clear lock
 }
 ```
 
 ### TypeScript: Over-Mocking in Tests
-
 **Problem**: Mocking entire classes defeats the purpose of testing.
 
 ```typescript
 // ❌ WRONG - Tests verify mock behavior, not real code
-vi.mock("../rendering/point-material", () => ({
-    PointMaterial: vi.fn().mockImplementation(() => ({
-        uniforms: { fov: { value: 60 } },
-        dispose: vi.fn(),
-    })),
+vi.mock('../rendering/point-material', () => ({
+  PointMaterial: vi.fn().mockImplementation(() => ({
+    uniforms: { fov: { value: 60 } },
+    dispose: vi.fn()
+  }))
 }));
 
 // ✅ CORRECT - Mock only external dependencies, test real code
-import { PointMaterial } from "../rendering/point-material";
+import { PointMaterial } from '../rendering/point-material';
 // Let PointMaterial run real shader generation code
 // Only mock THREE.ShaderMaterial if absolutely necessary
 ```
@@ -1407,30 +1351,25 @@ import { PointMaterial } from "../rendering/point-material";
 ## Luxar Conventions
 
 ### Physical Units
-
 Support: nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au
 
 ### Geometry Types & Attributes
-
 - **Points**: positions (Float32, nD, required), colors (Uint8/Float32 HDR), radii (Float32), sharpness (Float32)
 - **Lines**: vertices (Float32, nD, required), widths (Float32, required), segments (Uint32, auto-generated), colors (Uint8/Float32), sharpness (Float32)
 - **GSplats**: centers (Float32, nD, required), amplitudes (Float32, required), cholesky_factors (Float32, required; chol(Σ), scale-like diagonal), colors (Uint8/Float32, RGB or RGBA — the optional alpha is per-splat opacity, consumed by every blending mode; mapped to optical depth in `volumetric`)
-- **Mesh** (renderable, shaded): vertices (Float32, nD, required), faces (Uint32 `(F,3)`, required), normals (Float32 `(V,3)`) + a required `normal_dims` companion attr naming which three dimensions they describe, colors (Uint8/Float32, RGB or RGBA), scalars (Float32). No per-element size — a triangle's extent comes from its own vertices, so a mesh adds zero extent padding to scene bounds. Three structural paths are supported: `kind=partition` (`add_mesh(partition=…)`, spec §9.2), _substitutive_ LOD (`add_mesh(substitutive_lod=…)`, decimated by `luxar.mesh.decimate`), and a spatially coherent _reveal_ additive ladder (`add_mesh(additive_lod={"method": "radial"})`) — though no two of them in the same call. No additive (prefix) LOD ladder over an _arbitrary_ order — a prefix of an arbitrarily ordered index buffer is a holed surface, not a coarser one — so a non-reveal method and `volumetric` blending are both still refused with an explanation rather than silently degraded. No spatial index (`ordering="none"`): a mesh loads whole.
+- **Mesh** (renderable, shaded): vertices (Float32, nD, required), faces (Uint32 `(F,3)`, required), normals (Float32 `(V,3)`) + a required `normal_dims` companion attr naming which three dimensions they describe, colors (Uint8/Float32, RGB or RGBA), scalars (Float32). No per-element size — a triangle's extent comes from its own vertices, so a mesh adds zero extent padding to scene bounds. Three structural paths are supported: `kind=partition` (`add_mesh(partition=…)`, spec §9.2), *substitutive* LOD (`add_mesh(substitutive_lod=…)`, decimated by `luxar.mesh.decimate`), and a spatially coherent *reveal* additive ladder (`add_mesh(additive_lod={"method": "radial"})`) — though no two of them in the same call. No additive (prefix) LOD ladder over an *arbitrary* order — a prefix of an arbitrarily ordered index buffer is a holed surface, not a coarser one — so a non-reveal method and `volumetric` blending are both still refused with an explanation rather than silently degraded. No spatial index (`ordering="none"`): a mesh loads whole.
 
 ### Transforms
-
 - 4x4 matrices stored as 16-element lists
 - Transpose for THREE.js compatibility (see Critical Gotchas)
 - Use `luxar.transforms` module (translate, rotate, scale, compose)
 
 ### Dimensions
-
 - Define at Scene level using `Dimensions` and `Dimension` classes
 - Include: name, unit, range, step, display status
 - Step sizes used for keyboard navigation in viewer
 
 ### nD Navigation
-
 - Keyboard: 1-9 selects a non-displayed dimension, `[`/`]` navigates
 - Radius-based slicing: geometry visible based on nD hypersphere intersection
 
@@ -1470,11 +1409,10 @@ pnpm run format                  # Format TypeScript (from luxar-viewer/)
 ```
 
 `check-all` deliberately runs no tests: `test-all` is the single place they
-execute. For one command covering everything _including_ coverage, use
+execute. For one command covering everything *including* coverage, use
 `hatch run check` and `pnpm run check:ci` (what CI runs) directly.
 
 Before PR/merge:
-
 - Full E2E suite: `cd packages/luxar-viewer && pnpm test:e2e`
 - Update READMEs if functionality changed
 - Update LUXAR_ZARR_FORMAT.md if data format changed
@@ -1493,7 +1431,6 @@ Before PR/merge:
 8. **Ask Questions when Unsure** - Ask the user questions when you are genuinely unsure about a course of action. **ALWAYS use the `AskUserQuestion` interactive tool** for any decision point — never pose choices as inline prose. If the tool isn't loaded, load it via `ToolSearch` first.
 
 ### Naming Conventions
-
 - Example files: `*_example.py` or `*_example.luxar.zarr`
 - Temp files: Put in `delme/` directory
 - Example outputs: Generated to `datasets/examples/` (via `get_examples_output_dir()`)
@@ -1504,18 +1441,18 @@ Before PR/merge:
 
 ## Detailed Documentation
 
-| Topic                            | Location                                           |
-| -------------------------------- | -------------------------------------------------- |
-| Build System & Dev Setup         | `docs/guides/developer/BUILD_SYSTEM_SPEC.md`       |
-| E2E Testing Quick Ref            | `docs/guides/user/E2E_TESTING_GUIDE.md`            |
-| Playwright Full Guide            | `docs/guides/developer/PLAYWRIGHT_GUIDE.md`        |
-| Data Format Spec                 | `docs/guides/user/LUXAR_ZARR_FORMAT.md`            |
-| HDR Color Guide                  | `docs/guides/user/HDR_GUIDE.md`                    |
-| Network Simulation               | `docs/guides/developer/NETWORK_SIMULATION_SPEC.md` |
-| Console Logging Style            | `docs/guides/developer/CONSOLE_OUTPUT_STYLE.md`    |
-| UI Visual Design (authoritative) | `docs/guides/developer/UI_DESIGN_GUIDE.md`         |
-| Documentation Quality            | `docs/guides/developer/DOCUMENTATION_QUALITY.md`   |
-| Changelog                        | `CHANGELOG.md`                                     |
+| Topic | Location |
+|-------|----------|
+| Build System & Dev Setup | `docs/guides/developer/BUILD_SYSTEM_SPEC.md` |
+| E2E Testing Quick Ref | `docs/guides/user/E2E_TESTING_GUIDE.md` |
+| Playwright Full Guide | `docs/guides/developer/PLAYWRIGHT_GUIDE.md` |
+| Data Format Spec | `docs/guides/user/LUXAR_ZARR_FORMAT.md` |
+| HDR Color Guide | `docs/guides/user/HDR_GUIDE.md` |
+| Network Simulation | `docs/guides/developer/NETWORK_SIMULATION_SPEC.md` |
+| Console Logging Style | `docs/guides/developer/CONSOLE_OUTPUT_STYLE.md` |
+| UI Visual Design (authoritative) | `docs/guides/developer/UI_DESIGN_GUIDE.md` |
+| Documentation Quality | `docs/guides/developer/DOCUMENTATION_QUALITY.md` |
+| Changelog | `CHANGELOG.md` |
 
 ---
 
@@ -1526,14 +1463,12 @@ Python Data -> Luxar Core -> Zarr Archive -> Luxar Viewer -> WebGL -> Display
 ```
 
 ### Scene Graph
-
 - Scene (root) contains Groups, Points, Lines, GSplats, and Mesh
 - Groups can nest (hierarchical)
 - Transforms compose hierarchically (parent -> child)
 - Four geometry types: Points (soft-edged spheres), Lines (width-tapered curves), GSplats (oriented Gaussians), Mesh (shaded triangle surfaces)
 
 ### Performance Targets
-
 - 100K-10M elements for smooth interaction
 - Chunk size: 16KB-256KB (target 64KB; see `TARGET_CHUNK_BYTES` in `typing_utils/constants.py`)
 - Compression: Blosc zstd level 9, width-aware shuffle by dtype (see `encoding/compression.py`)
