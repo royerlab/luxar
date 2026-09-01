@@ -234,11 +234,21 @@ export class RefinementResidencyBudget {
     }
   }
 
-  /** Build one sized from the device heap, matching the eager admission gate. */
+  /**
+   * Build one sized from the device heap, matching the eager admission gate.
+   *
+   * `initialResidencies` is FIRST and REQUIRED, not an optional tail argument,
+   * because two separate guarantees rest on it and both fail silently when it
+   * is missing: resident bytes of already-complete loaders are forgotten (the
+   * ceiling ratchets upward, #2430), and — since the fair-share allowance
+   * divides headroom by the paths the budget currently knows — the first node
+   * admitted is handed the entire scene's headroom and can spend the whole
+   * ladder in one pass. Pass an empty iterable to opt out deliberately.
+   */
   static forSession(
+    initialResidencies: Iterable<readonly [string, LadderResidency]>,
     poolOverrideBytes?: number,
     fallbackPoolBytes?: number,
-    initialResidencies?: Iterable<readonly [string, LadderResidency]>,
     reporter?: RefinementResidencyReporter
   ): RefinementResidencyBudget {
     return new RefinementResidencyBudget(

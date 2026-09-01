@@ -241,6 +241,42 @@ describe('RefinementResidencyBudget', () => {
     });
   });
 
+  it('divides the allowance fairly ONLY because the budget was seeded', () => {
+    // The fair-share allowance divides headroom by the number of tracked,
+    // still-eligible paths — and `perPath` learns a path either from the
+    // constructor seed or from that path's own first `admit`. So fairness is
+    // load-bearing on the production call site passing
+    // `progressiveLadderResidencies()` (scene-loader.ts): the divisor is only
+    // the scene's node count if every node is already known when the FIRST
+    // node is admitted.
+    //
+    // Both arms are asserted because the degenerate one is the regression.
+    // Seeding was introduced (#2430) to stop completed loaders' bytes being
+    // forgotten; that its absence ALSO collapses this allowance is a second,
+    // silent consequence, and no test previously covered the wiring at all
+    // (`progressiveLadderResidencies` had exactly one non-definition caller
+    // and zero test references).
+    const nodes = Array.from(
+      { length: 9 },
+      (_, i) => [`/basin${i}`, residency(10 * MB, 2)] as const
+    );
+
+    const seeded = new RefinementResidencyBudget(1000 * MB, nodes);
+    const seededFirst = seeded.admit('/basin0', residency(10 * MB, 2));
+
+    const unseeded = new RefinementResidencyBudget(1000 * MB);
+    const unseededFirst = unseeded.admit('/basin0', residency(10 * MB, 2));
+
+    // Seeded: ~1/9 of the headroom, so the other eight basins can still refine.
+    expect(seededFirst.allowanceBytes).toBe(Math.floor((910 * MB) / 9));
+    // Unseeded: the first node admitted is handed ~99% of the scene's budget
+    // and can spend the whole ladder in one pass — the #2432 failure relocated,
+    // not fixed. This arm must stay red-if-unseeded for the assertion above to
+    // mean anything.
+    expect(unseededFirst.allowanceBytes).toBe(990 * MB);
+    expect(unseededFirst.allowanceBytes! / seededFirst.allowanceBytes!).toBeGreaterThan(9);
+  });
+
   it('seeds completed and pending loaders before the first admission', () => {
     const budget = new RefinementResidencyBudget(
       100 * MB,
@@ -329,8 +365,8 @@ describe('RefinementResidencyBudget', () => {
     // Sharing the scene-owned reporter keeps that one fact from flooding the
     // console during slice playback or dimension animation.
     const reporter = new RefinementResidencyReporter();
-    const firstRun = RefinementResidencyBudget.forSession(30 * MB, undefined, [], reporter);
-    const secondRun = RefinementResidencyBudget.forSession(30 * MB, undefined, [], reporter);
+    const firstRun = RefinementResidencyBudget.forSession([], 30 * MB, undefined, reporter);
+    const secondRun = RefinementResidencyBudget.forSession([], 30 * MB, undefined, reporter);
     for (let i = 0; i < 5; i++) firstRun.admit(`/first${i}`, residency(50 * MB, 5));
     for (let i = 0; i < 5; i++) secondRun.admit(`/second${i}`, residency(50 * MB, 5));
     expect(warn).toHaveBeenCalledTimes(1);
