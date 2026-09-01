@@ -25,7 +25,8 @@ from luxar.demos import ensure_dataset
   declared `positional_pair` additionally requires every partner to resolve to
   that same generation, otherwise the whole dataset is refused. Unrecognized
   bytes are quarantined as `.corrupt` and never returned or used as a
-  download-resume base.
+  download-resume base. `file_names` selects an exact subset in manifest order;
+  unknown names and selections that split a positional pair are rejected.
 - `load_dataset_gsplats()` loads a manifest-backed Zenodo GSplat dataset, or
   returns `None` when recomputation is requested.
 - `load_manifest()` and `dataset_spec()` return independent copies of the

@@ -27,6 +27,7 @@ from luxar.demos._support.datasets.data_fetch import (
     LocalComputeDataset,
     clear_manifest_cache,
     dataset_spec,
+    declared_file_names,
     ensure_dataset,
     load_dataset_gsplats,
     load_local_fit_gsplats,
@@ -596,6 +597,37 @@ def test_variant_explicit_full(fake_repo):
     assert paths[0].parent == cache / "toy_ts" / "full"
 
 
+def test_file_selection_uses_the_resolved_variant(fake_repo):
+    manifest, cache = fake_repo
+
+    paths = ensure_dataset(
+        "toy_ts",
+        variant="full",
+        file_names={"ts.gsplats.zarr.zip"},
+        manifest=manifest,
+        cache_root=cache,
+        verbose=False,
+    )
+
+    assert [path.read_bytes() for path in paths] == [b"full-timelapse-bytes"]
+    assert declared_file_names("toy_ts", variant="full", manifest=manifest) == {
+        "ts.gsplats.zarr.zip"
+    }
+
+
+def test_unknown_selected_file_names_the_resolved_variant(fake_repo):
+    manifest, cache = fake_repo
+
+    with pytest.raises(ValueError, match="dataset 'toy_ts' variant 'light'.*nope.zip"):
+        ensure_dataset(
+            "toy_ts",
+            file_names={"nope.zip"},
+            manifest=manifest,
+            cache_root=cache,
+            verbose=False,
+        )
+
+
 def test_unknown_variant_raises(fake_repo):
     manifest, cache = fake_repo
     with pytest.raises(ValueError, match="Unknown variant"):
@@ -624,6 +656,123 @@ def test_ensure_dataset_copies_from_inrepo_lfs(fake_repo):
     assert len(paths) == 1
     assert paths[0].exists() and paths[0].read_bytes() == b"toy-splat-bytes"
     assert paths[0].parent == cache / "gsplats_toy"
+
+
+def test_ensure_dataset_resolves_only_requested_files(fake_repo):
+    manifest, cache = fake_repo
+    dataset = manifest["datasets"]["gsplats_toy"]
+    lfs_dir = data_fetch._DEMOS_DATA_DIR / "gsplats_toy"
+    sidecar = lfs_dir / "toy_tracks.npz"
+    sidecar.write_bytes(b"toy-track-bytes")
+    dataset["files"].append(
+        {
+            "name": sidecar.name,
+            "sha256": _sha256(sidecar),
+            "bytes": sidecar.stat().st_size,
+        }
+    )
+
+    paths = ensure_dataset(
+        "gsplats_toy",
+        file_names={sidecar.name},
+        manifest=manifest,
+        cache_root=cache,
+        verbose=False,
+    )
+
+    assert [path.name for path in paths] == [sidecar.name]
+    assert paths[0].read_bytes() == b"toy-track-bytes"
+    assert not (cache / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip").exists()
+
+
+def test_ensure_dataset_rejects_an_unknown_requested_file(fake_repo):
+    manifest, cache = fake_repo
+
+    with pytest.raises(ValueError, match="not declared.*missing.npz"):
+        ensure_dataset(
+            "gsplats_toy",
+            file_names={"missing.npz"},
+            manifest=manifest,
+            cache_root=cache,
+            verbose=False,
+        )
+
+    assert not (cache / "gsplats_toy").exists()
+
+
+def test_ensure_dataset_accepts_an_empty_file_selection(fake_repo):
+    manifest, cache = fake_repo
+
+    paths = ensure_dataset(
+        "gsplats_toy",
+        file_names=set(),
+        manifest=manifest,
+        cache_root=cache,
+        verbose=False,
+    )
+
+    assert paths == []
+    assert not (cache / "gsplats_toy").exists()
+
+
+def test_ensure_dataset_rejects_part_of_a_positional_pair(fake_repo):
+    manifest, cache = fake_repo
+    entries = manifest["datasets"]["gsplats_toy"]["files"]
+    lfs_dir = data_fetch._DEMOS_DATA_DIR / "gsplats_toy"
+    sidecar = lfs_dir / "toy_tracks.npz"
+    sidecar.write_bytes(b"toy-track-bytes")
+    entries[0]["positional_pair"] = "toy"
+    entries.append(
+        {
+            "name": sidecar.name,
+            "sha256": _sha256(sidecar),
+            "bytes": sidecar.stat().st_size,
+            "positional_pair": "toy",
+        }
+    )
+
+    with pytest.raises(ValueError, match="positional pair.*toy"):
+        ensure_dataset(
+            "gsplats_toy",
+            file_names={entries[0]["name"]},
+            manifest=manifest,
+            cache_root=cache,
+            verbose=False,
+        )
+
+    assert not (cache / "gsplats_toy").exists()
+
+
+def test_ensure_dataset_resolves_a_complete_positional_pair_only(fake_repo):
+    manifest, cache = fake_repo
+    entries = manifest["datasets"]["gsplats_toy"]["files"]
+    lfs_dir = data_fetch._DEMOS_DATA_DIR / "gsplats_toy"
+    sidecar = lfs_dir / "toy_tracks.npz"
+    sidecar.write_bytes(b"toy-track-bytes")
+    entries[0]["positional_pair"] = "toy"
+    entries.extend(
+        [
+            {
+                "name": sidecar.name,
+                "sha256": _sha256(sidecar),
+                "bytes": sidecar.stat().st_size,
+                "positional_pair": "toy",
+            },
+            {"name": "unselected.bin", "sha256": "f" * 64},
+        ]
+    )
+    pair_names = {entries[0]["name"], sidecar.name}
+
+    paths = ensure_dataset(
+        "gsplats_toy",
+        file_names=pair_names,
+        manifest=manifest,
+        cache_root=cache,
+        verbose=False,
+    )
+
+    assert [path.name for path in paths] == [entries[0]["name"], sidecar.name]
+    assert not (cache / "gsplats_toy" / "unselected.bin").exists()
 
 
 def test_ensure_dataset_resolves_toplevel_dir(tmp_path, monkeypatch):

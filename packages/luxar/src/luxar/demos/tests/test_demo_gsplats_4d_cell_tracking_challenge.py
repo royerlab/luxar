@@ -670,17 +670,26 @@ class TestPrecomputedRoundTrip:
         assert got["offset"] == pytest.approx(expected[1])
 
     def test_recompute_forces_the_local_path(self, tmp_path, monkeypatch) -> None:
-        cache_root, written = self._stage(self._crop(), tmp_path)
+        messages: list[str] = []
+        monkeypatch.setattr(_demo, "aprint", messages.append)
+        cache_root, written = self._stage(self._crop(name="crop_a"), tmp_path)
         monkeypatch.setitem(_demo.FLAGS, "recompute", True)
         assert (
             _demo.load_precomputed_crops(
-                ["crop_x"], manifest=self._manifest(written), cache_root=cache_root
+                ["crop_a", "crop_b"],
+                manifest=self._manifest(written),
+                cache_root=cache_root,
             )
             is None
         )
+        assert messages == []
 
-    def test_pending_upload_falls_back_instead_of_raising(self, tmp_path) -> None:
+    def test_pending_upload_falls_back_instead_of_raising(
+        self, tmp_path, monkeypatch
+    ) -> None:
         """The real manifest state today: registered, hosted nowhere yet."""
+        messages: list[str] = []
+        monkeypatch.setattr(_demo, "aprint", messages.append)
         manifest = {
             "records": {"cc-by": {}},
             "datasets": {
@@ -699,6 +708,8 @@ class TestPrecomputedRoundTrip:
             )
             is None
         )
+        assert any("pending upload" in message for message in messages)
+        assert all("has no entry" not in message for message in messages)
 
     def test_a_fault_propagates_instead_of_triggering_kaggle_and_a_gpu_fit(
         self, tmp_path
@@ -733,8 +744,10 @@ class TestPrecomputedRoundTrip:
         assert got["tracks"] is None
 
     def test_a_missing_crop_falls_back_rather_than_half_building(
-        self, tmp_path
+        self, tmp_path, monkeypatch
     ) -> None:
+        messages: list[str] = []
+        monkeypatch.setattr(_demo, "aprint", messages.append)
         cache_root, written = self._stage(self._crop(name="crop_a"), tmp_path)
         got = _demo.load_precomputed_crops(
             ["crop_a", "crop_b"],
@@ -742,6 +755,26 @@ class TestPrecomputedRoundTrip:
             cache_root=cache_root,
         )
         assert got is None, "a partially hosted set must not build a partial matrix"
+        assert any("has no entry for crop_b" in message for message in messages)
+
+    def test_unchosen_manifest_crops_are_not_resolved(self, tmp_path) -> None:
+        cache_root, written = self._stage(self._crop(name="crop_a"), tmp_path)
+        manifest = self._manifest(written)
+        manifest["datasets"][_demo.PRECOMPUTED_DATASET]["files"].extend(
+            {"name": name} for name in _demo.precomputed_file_names("crop_b")
+        )
+
+        crops = _demo.load_precomputed_crops(
+            ["crop_a"], manifest=manifest, cache_root=cache_root
+        )
+
+        assert crops is not None
+        assert [crop["name"] for crop in crops] == ["crop_a"]
+        cache_dir = cache_root / _demo.PRECOMPUTED_DATASET
+        assert all(
+            not (cache_dir / name).exists()
+            for name in _demo.precomputed_file_names("crop_b")
+        )
 
 
 class TestManifestRegistration:
