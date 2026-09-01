@@ -32,13 +32,14 @@ import { configureRenderObjectEviction } from '../../../../data/scene-loader/com
 import type { LoadedPointsData } from '../../../../data/data-loader-types';
 import type { NodeFactory } from '../../../../rendering/node-factory';
 
-function makeData(pointCount: number, withRadii = false): LoadedPointsData {
+function makeData(pointCount: number, withRadii = false, ndim = 3): LoadedPointsData {
   return {
     positions: new Float32Array(pointCount * 3),
     colors: new Uint8Array(pointCount * 3),
     radii: withRadii ? new Float32Array(pointCount) : undefined,
     sharpness: undefined,
     pointCount,
+    ndim,
     metadata: {
       bounds: new THREE.Box3(new THREE.Vector3(-1, -1, -1), new THREE.Vector3(1, 1, 1)),
     },
@@ -149,6 +150,60 @@ describe('commitPointsGeometry', () => {
     expect(gpuBufferPool.updatePointsGeometry).toHaveBeenCalledTimes(1);
     expect(points.geometry).toBe(newGeometry);
     expect(mockCreatePointsGeometry).not.toHaveBeenCalled();
+  });
+
+  it('keeps superseded buffers reusable while an unsliced ladder is still streaming', () => {
+    const root = new THREE.Group();
+    const points = makePoints('/p');
+    points.userData.loader = { hasMoreLODs: true };
+    root.add(points);
+
+    const gpuBufferPool = {
+      acquirePointsGeometry: vi.fn(() => new THREE.BufferGeometry()),
+      updatePointsGeometry: vi.fn(),
+      didLastAcquireRebuildAttributes: vi.fn(() => false),
+    };
+
+    commitPointsGeometry(
+      '/p',
+      makeData(3),
+      root,
+      gpuBufferPool as never,
+      mockNodeFactory,
+      undefined,
+      0
+    );
+
+    expect(gpuBufferPool.acquirePointsGeometry).toHaveBeenCalledWith('/p', 3, {
+      canRegrow: true,
+    });
+  });
+
+  it('keeps superseded buffers reusable for sliced data after the ladder completes', () => {
+    const root = new THREE.Group();
+    const points = makePoints('/p');
+    points.userData.loader = { hasMoreLODs: false };
+    root.add(points);
+
+    const gpuBufferPool = {
+      acquirePointsGeometry: vi.fn(() => new THREE.BufferGeometry()),
+      updatePointsGeometry: vi.fn(),
+      didLastAcquireRebuildAttributes: vi.fn(() => false),
+    };
+
+    commitPointsGeometry(
+      '/p',
+      makeData(3, false, 4),
+      root,
+      gpuBufferPool as never,
+      mockNodeFactory,
+      undefined,
+      0
+    );
+
+    expect(gpuBufferPool.acquirePointsGeometry).toHaveBeenCalledWith('/p', 3, {
+      canRegrow: true,
+    });
   });
 
   it('disposes a replaced non-pool creation geometry at the pool handoff (placeholder leak)', () => {

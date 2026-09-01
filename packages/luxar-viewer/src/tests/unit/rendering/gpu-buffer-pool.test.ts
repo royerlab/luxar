@@ -667,6 +667,7 @@ describe('GPUBufferPool', () => {
       // dispose the never-handed-out replacement LAST (via the guarded
       // disposeReplacementAfterReclaim helper).
       const geom1 = pool.acquirePointsGeometry('grow-oom-p2', 1000); // capacity 1500
+      const originalDispose = vi.spyOn(geom1, 'dispose');
 
       let replacement: THREE.InstancedBufferGeometry | undefined;
       const onReplacementDispose = vi.fn();
@@ -683,9 +684,9 @@ describe('GPUBufferPool', () => {
         throw new Error('synthetic OOM after alloc');
       });
       try {
-        expect(() => pool.acquirePointsGeometry('grow-oom-p2', 2000)).toThrow(
-          'synthetic OOM after alloc'
-        );
+        expect(() =>
+          pool.acquirePointsGeometry('grow-oom-p2', 2000, { canRegrow: false })
+        ).toThrow('synthetic OOM after alloc');
       } finally {
         spy.mockRestore();
       }
@@ -702,6 +703,7 @@ describe('GPUBufferPool', () => {
       expect(active).toBeDefined();
       expect(active!.geometry).toBe(geom1);
       expect(active!.inUse).toBe(true);
+      expect(originalDispose).not.toHaveBeenCalled();
 
       // Replacement disposed (it was never handed to the caller) and
       // absent from every free bucket.

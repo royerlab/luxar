@@ -62,7 +62,7 @@ export function canLadderRegrow(
   if (ndim > 3) return true;
   const loader = userData?.loader;
   if (!loader || typeof loader !== 'object' || !('hasMoreLODs' in loader)) return true;
-  return false;
+  return loader.hasMoreLODs === true;
 }
 
 /**
