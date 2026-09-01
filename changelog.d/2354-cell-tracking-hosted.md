@@ -16,10 +16,10 @@ announces by name.
 Splat counts run 2.2M to 4.6M per crop over the 100 timepoints, 632.4 MB in
 total. The archive characteristics record the declared 100 × 64 × 256 × 256
 uint16 source grid, so the publication table can state compression honestly.
-The archives carry no PSNR and the record's table says `not scored` rather than
-guessing: the bundle builder loads its per-timepoint fits without statistics, so
-none reach the combined 4D store. The quality choice behind them is documented
-where it was measured — `DEFAULT_SEEDS` in the demo records a nuclei-masked K
+The archives carry no PSNR, so the record leaves both quality columns empty
+rather than guessing: the bundle builder loads its per-timepoint fits without
+statistics, so none reach the combined 4D store. The quality choice behind them
+is documented where it was measured — `DEFAULT_SEEDS` in the demo records a nuclei-masked K
 sweep (37.41 dB at 12,126 splats rising to 40.29 dB at 120,000, about +1 dB per
 doubling with no plateau) and explains why 60,000 is the balance point.
 

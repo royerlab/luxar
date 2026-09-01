@@ -2118,12 +2118,17 @@ def test_cell_tracking_measurements_include_the_declared_raw_volume(gen: Any) ->
     infos = [
         info for key, info in chars.items() if key.startswith("gsplats_cell_tracking/")
     ]
+    provenance = (
+        "Source grid declared from the manifest acquisition shape "
+        "(100 x 64 x 256 x 256 uint16), not read from archive stamps."
+    )
 
     assert len(infos) == 7
     for info in infos:
         assert info["source_shape"] == [100, 64, 256, 256]
         assert info["source_dtype"] == "uint16"
         assert info["source_bytes"] == 838_860_800
+        assert info["quality_note"] == provenance
 
 
 def test_h2afva_51tp_measurements_describe_the_pinned_flat_ladder(gen: Any) -> None:

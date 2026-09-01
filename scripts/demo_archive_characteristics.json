@@ -213,7 +213,8 @@
       "frames": 100,
       "quality_quotable": false,
       "measured_from": "staged",
-      "measured_sha256": "a2333a14baa6a08254698612693e0d1490e59f0eaf267abc411cb988cec3b1c9"
+      "measured_sha256": "a2333a14baa6a08254698612693e0d1490e59f0eaf267abc411cb988cec3b1c9",
+      "quality_note": "Source grid declared from the manifest acquisition shape (100 x 64 x 256 x 256 uint16), not read from archive stamps."
     },
     "gsplats_cell_tracking/6bba_57b7cc1e.gsplats.zarr.zip": {
       "n_splats": 2178516,
@@ -234,7 +235,8 @@
       "frames": 100,
       "quality_quotable": false,
       "measured_from": "staged",
-      "measured_sha256": "41483ef53a07935faa93edaf9765675bf1628a0cf3c117ab62e85a457eb37006"
+      "measured_sha256": "41483ef53a07935faa93edaf9765675bf1628a0cf3c117ab62e85a457eb37006",
+      "quality_note": "Source grid declared from the manifest acquisition shape (100 x 64 x 256 x 256 uint16), not read from archive stamps."
     },
     "gsplats_cell_tracking/6bba_5dfe9ad1.gsplats.zarr.zip": {
       "n_splats": 4649701,
@@ -255,7 +257,8 @@
       "frames": 100,
       "quality_quotable": false,
       "measured_from": "staged",
-      "measured_sha256": "fbcbfa8b8b2e57de9f05191a10221112918157e943dbf75bf28c5334d748c9b6"
+      "measured_sha256": "fbcbfa8b8b2e57de9f05191a10221112918157e943dbf75bf28c5334d748c9b6",
+      "quality_note": "Source grid declared from the manifest acquisition shape (100 x 64 x 256 x 256 uint16), not read from archive stamps."
     },
     "gsplats_cell_tracking/6bba_784a78c9.gsplats.zarr.zip": {
       "n_splats": 4520586,
@@ -276,7 +279,8 @@
       "frames": 100,
       "quality_quotable": false,
       "measured_from": "staged",
-      "measured_sha256": "22707e543e4d09823df3f48cbc3df4330fab2c72f7b7d19cd193d7bbbc326120"
+      "measured_sha256": "22707e543e4d09823df3f48cbc3df4330fab2c72f7b7d19cd193d7bbbc326120",
+      "quality_note": "Source grid declared from the manifest acquisition shape (100 x 64 x 256 x 256 uint16), not read from archive stamps."
     },
     "gsplats_cell_tracking/6bba_ae82a791.gsplats.zarr.zip": {
       "n_splats": 4197409,
@@ -297,7 +301,8 @@
       "frames": 100,
       "quality_quotable": false,
       "measured_from": "staged",
-      "measured_sha256": "b11bb3d43cd79ea2cdd8636881acc17a0bc20387d91b2fcb1eec8efc3fdd2aef"
+      "measured_sha256": "b11bb3d43cd79ea2cdd8636881acc17a0bc20387d91b2fcb1eec8efc3fdd2aef",
+      "quality_note": "Source grid declared from the manifest acquisition shape (100 x 64 x 256 x 256 uint16), not read from archive stamps."
     },
     "gsplats_cell_tracking/6bba_bb9f20c3.gsplats.zarr.zip": {
       "n_splats": 4283665,
@@ -318,7 +323,8 @@
       "frames": 100,
       "quality_quotable": false,
       "measured_from": "staged",
-      "measured_sha256": "ddf60dec17c0df4a28aee0687b7ddf5c88510101d55af92c386d789024e3d3e9"
+      "measured_sha256": "ddf60dec17c0df4a28aee0687b7ddf5c88510101d55af92c386d789024e3d3e9",
+      "quality_note": "Source grid declared from the manifest acquisition shape (100 x 64 x 256 x 256 uint16), not read from archive stamps."
     },
     "gsplats_cell_tracking/6bba_cff5865f.gsplats.zarr.zip": {
       "n_splats": 4101691,
@@ -339,7 +345,8 @@
       "frames": 100,
       "quality_quotable": false,
       "measured_from": "staged",
-      "measured_sha256": "8ece34f7bf84d1fdc82336abf442bd4635bd1c80a7e5b05b7cf3cb11b0a7dc27"
+      "measured_sha256": "8ece34f7bf84d1fdc82336abf442bd4635bd1c80a7e5b05b7cf3cb11b0a7dc27",
+      "quality_note": "Source grid declared from the manifest acquisition shape (100 x 64 x 256 x 256 uint16), not read from archive stamps."
     },
     "gsplats_cells3d/cells3d_ch0.gsplats.zarr.zip": {
       "n_splats": 41975,
