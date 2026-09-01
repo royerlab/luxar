@@ -130,9 +130,10 @@ make clean-launchers  # Clean built launcher binaries
 #   4.0 runtime installed, or a separate browser-only build. See #998.
 # Runtime override: LUXAR_CACHE_BUDGET_MB=<N> ./luxar-launcher
 #   Total in-memory cache pool (L0+L1+S-cache) the launcher passes to the
-#   viewer via ?cacheBudgetMB=. WKWebView has no performance.memory, so the
-#   viewer can't auto-size caches from the heap; the launcher supplies a
-#   generous default (2048). Lower it on a memory-constrained machine.
+#   viewer via ?cacheBudgetMB=. One third also becomes the auto GPU-geometry
+#   residency signal. WKWebView has neither performance.memory nor deviceMemory,
+#   so the launcher default (2048) raises that budget from 512 to 716 MB; lower
+#   it on a constrained machine.
 
 # CUDA (Gaussian Splatting)
 make setup-cuda       # Install CUDA deps + build extension (may need sudo)

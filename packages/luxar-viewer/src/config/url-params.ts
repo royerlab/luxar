@@ -233,8 +233,9 @@ export interface UrlParams {
    * (`?cacheBudgetMB=1536`). Used where `performance.memory` is unavailable —
    * WKWebView (the native app) and Safari — so heap-aware sizing has a real
    * budget to split instead of the tiny fixed fallback. The native launcher
-   * injects it automatically. Null/invalid ⇒ fall back to the measured heap,
-   * then to the fixed config sizes. See `cache/heap-budget.ts`.
+   * injects it automatically. One third also replaces the no-signal GPU-
+   * geometry fallback, in either direction. Null/invalid ⇒ fall back to the
+   * measured heap, then to the fixed config sizes. See `cache/heap-budget.ts`.
    */
   cacheBudgetMB: number | null;
   /**

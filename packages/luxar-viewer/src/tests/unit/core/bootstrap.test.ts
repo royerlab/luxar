@@ -76,6 +76,7 @@ vi.mock('zarrita', () => ({
 }));
 
 import { bootstrapStandalone } from '../../../core/bootstrap';
+import { getGpuByteBudget } from '../../../rendering/gpu-byte-budget';
 import { ArchiveFaultError } from '../../../cache/chunk-source';
 import { setDocumentTitle } from '../../../core/document-title';
 import { log } from '../../../utils/log';
@@ -590,6 +591,7 @@ describe('bootstrapStandalone', () => {
       expect(lc.noSliceCache).toBe(false); // untouched preference stays default
       expect(lc.noOpfs).toBe(false); // param-only flag defaults off
       expect(lc.cacheBudgetMB).toBe(512);
+      expect(getGpuByteBudget()).toBe(512_000_000);
     });
 
     it('URL cacheBudgetMB wins over a stored custom budget', async () => {
