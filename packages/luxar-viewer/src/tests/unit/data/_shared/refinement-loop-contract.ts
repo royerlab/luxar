@@ -136,7 +136,7 @@ export function defineRefinementLoopContract(
       expect(releaseLock).toHaveBeenCalledTimes(1);
     });
 
-    it('passes remaining headroom into the loader and records measured pass growth', async () => {
+    it('passes the loader headroom share and records measured pass growth', async () => {
       let hasMoreLODs = true;
       let residentBytes = 20;
       let loadedRungs = 2;

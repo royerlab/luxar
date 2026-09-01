@@ -344,7 +344,8 @@ export interface GSplatsDataLoader {
   updateView(
     viewState: GSplatsViewState,
     session?: UpdateSession,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    residencyAllowanceBytes?: number
   ): Promise<LoadedGSplatsData>;
 
   /** Clean up resources */

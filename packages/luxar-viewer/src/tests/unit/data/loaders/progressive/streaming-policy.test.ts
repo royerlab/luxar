@@ -80,6 +80,10 @@ describe('shouldStopAfterLevel', () => {
     expect(shouldStopAfterLevel('prefetch', 5, 0, false, slow)).toBe(false);
   });
 
+  it('residency allowance takes precedence over prefetch deepening', () => {
+    expect(shouldStopAfterLevel('prefetch', 3, 0, true, fast, 10, 10)).toBe(true);
+  });
+
   it('stops after a level spends the refinement residency allowance', () => {
     expect(shouldStopAfterLevel('refine', 1, 0, true, fast, 9, 10)).toBe(false);
     expect(shouldStopAfterLevel('refine', 1, 0, true, fast, 10, 10)).toBe(true);

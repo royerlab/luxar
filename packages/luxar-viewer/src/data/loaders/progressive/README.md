@@ -121,12 +121,28 @@ two facts (is a per-frame budget active? is this a background prefetch?):
 | `prefetch` | background shadow pass          | **Deepen toward the full ladder** — keep one new level after a restore, never stop on a cache miss, then obey the pass budget + abort.  |
 | `refine`   | foreground, unbudgeted (paused) | Stream cache-resident levels; stop at the first cold/slow one (the `CACHE_HIT_THRESHOLD_MS` rule).                                      |
 
+When the refinement sweep supplies a residency allowance, it overrides all
+three disciplines: the level that spends the allowance is kept, then the pass
+stops before appending another cached level.
+
 ```typescript
 const pass = classifyStreamingPass(budgetDeadline !== null, viewState.prefetch === true);
 for (let level = startLevel; level < nLods; level++) {
   if (shouldStopBeforeLevel(pass, level, startLevel, now(), budgetDeadline)) break;
   // ... load level ...
-  if (shouldStopAfterLevel(pass, level, startLevel, allResident, elapsed)) break; // playback/refine cold-or-slow stop
+  const additionalResidentBytes = ladderResidentBytes() - residentBytesAtPassStart;
+  if (
+    shouldStopAfterLevel(
+      pass,
+      level,
+      startLevel,
+      allResident,
+      elapsed,
+      additionalResidentBytes,
+      residencyAllowanceBytes
+    )
+  )
+    break;
 }
 ```
 

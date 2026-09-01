@@ -94,12 +94,6 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
         // `LinesProgressiveLoader` implements it.
         rollbackToPassStart?: () => number;
         ladderResidency?: () => LadderResidency;
-        updateView: (
-          viewState: LinesViewState,
-          session?: UpdateSession,
-          signal?: AbortSignal,
-          residencyAllowanceBytes?: number
-        ) => Promise<LoadedLinesData>;
       };
       if (progressiveLoader.hasMoreLODs !== true) return false;
       if (failures.isExhausted(path)) return false;

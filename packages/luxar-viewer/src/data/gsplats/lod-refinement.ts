@@ -128,12 +128,6 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
       const progressiveLoader = loader as GSplatsDataLoader & {
         rollbackToPassStart?: () => number;
         ladderResidency?: () => LadderResidency;
-        updateView: (
-          viewState: GSplatsViewState,
-          session?: UpdateSession,
-          signal?: AbortSignal,
-          residencyAllowanceBytes?: number
-        ) => Promise<LoadedGSplatsData>;
       };
       // Shared sweep residency ceiling. Declining here is not enough on its own —
       // `anyHasMoreLODs` and `getLoaderProgress` below must also exclude

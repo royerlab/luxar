@@ -93,12 +93,6 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
         // loader has a ladder to unwind. Every `PointsProgressiveLoader` has it.
         rollbackToPassStart?: () => number;
         ladderResidency?: () => LadderResidency;
-        updateView: (
-          viewState: PointsViewState,
-          session?: UpdateSession,
-          signal?: AbortSignal,
-          residencyAllowanceBytes?: number
-        ) => Promise<LoadedPointsData>;
       };
       if (progressiveLoader.hasMoreLODs !== true) return false;
       if (failures.isExhausted(path)) return false;

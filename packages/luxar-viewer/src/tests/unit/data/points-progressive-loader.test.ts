@@ -19,6 +19,7 @@ import {
   measureLodBytes,
 } from '../../../data/loaders/progressive/slice-cache-helper';
 import { getPrefixParent } from '../../../types/prefix-lineage';
+import { POINT_FLOATS_PER_POINT } from '../../../rendering/element-texture-layout';
 import { testLadderFoldContract } from './_shared/ladder-fold-contract';
 import { log } from '../../../utils/log';
 import {
@@ -788,6 +789,29 @@ describe('PointsProgressiveLoader', () => {
       await loader.updateView(baseViewState, undefined, undefined, 1);
       expect(loader.loadedLODCount).toBe(1);
       expect(lodB.updateViewWithResidency).not.toHaveBeenCalled();
+    });
+
+    it('charges only growth from an existing prefix against the allowance', async () => {
+      const data = [100, 50, 25, 10].map((count) => makeLodData(count, 3, { color: 'uint8' }));
+      const subLoaders = data.map((levelData) => makeSubLoader(levelData));
+      const warmedLoader = new PointsProgressiveLoader(
+        subLoaders as unknown as PointsSpatialIndexLoader[],
+        subLoaders.length,
+        '/warmed-points'
+      );
+
+      await warmedLoader.updateView(baseViewState, undefined, undefined, 1);
+      expect(warmedLoader.loadedLODCount).toBe(1);
+
+      const twoRungAllowance =
+        measureLodBytes(data.slice(1, 3)) +
+        (data[1].pointCount + data[2].pointCount) *
+          POINT_FLOATS_PER_POINT *
+          Float32Array.BYTES_PER_ELEMENT;
+      await warmedLoader.updateView(baseViewState, undefined, undefined, twoRungAllowance);
+
+      expect(warmedLoader.loadedLODCount).toBe(3);
+      expect(subLoaders[3].updateViewWithResidency).not.toHaveBeenCalled();
     });
   });
 

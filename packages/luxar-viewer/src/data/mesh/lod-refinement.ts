@@ -99,12 +99,6 @@ export async function runMeshRefinement(ctx: MeshRefinementCtx): Promise<void> {
         // loader has a ladder to unwind. Every `MeshProgressiveLoader` has it.
         rollbackToPassStart?: () => number;
         ladderResidency?: () => LadderResidency;
-        updateView: (
-          viewState: MeshViewState,
-          session?: UpdateSession,
-          signal?: AbortSignal,
-          residencyAllowanceBytes?: number
-        ) => Promise<LoadedMeshData>;
       };
       if (progressiveLoader.hasMoreLODs !== true) return false;
       if (failures.isExhausted(path)) return false;
