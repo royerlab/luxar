@@ -365,6 +365,8 @@ function concatenatePointsData(
 export class PointsProgressiveLoader implements PointsDataLoader {
   private lodLoaders: PointsSpatialIndexLoader[];
   private loadedLODs: LoadedPointsData[] = [];
+  // Payload i spans logical levels [starts[i], starts[i + 1] ?? _loadedLODCount);
+  // folding collapses every loaded prefix to the single start marker [0].
   private _payloadLevelStarts: number[] = [];
   private _loadedLODCount = 0;
   private lastViewState: PointsViewState | null = null;
@@ -384,9 +386,12 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     lodCount: number;
     result: LoadedPointsData;
   } | null = null;
-  // `loadedLODs.length` as the CURRENT updateView pass found it — the
-  // watermark `rollbackToPassStart()` unwinds to when the caller's commit
-  // throws. See `../loaders/progressive/pass-rollback`.
+  // Logical ladder depth and retained payload count as the CURRENT updateView
+  // pass found them. The pass advances both before its caller has committed
+  // the result, while concatenation may later fold many logical rungs into one
+  // retained payload. Rollback needs both watermarks to distinguish an intact
+  // append from an already-folded result.
+  // See `../loaders/progressive/pass-rollback`.
   private _levelsAtPassStart = 0;
   private _payloadsAtPassStart = 0;
   private _restoredFullLadderAtPassStart = false;
