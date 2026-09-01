@@ -19,7 +19,10 @@ import type { LinesSpatialIndexLoader } from '../../../data/lines/lines-spatial-
 import type { LinesViewState, LoadedLinesData } from '../../../types/lines';
 import { CACHE_HIT_THRESHOLD_MS } from '../../../data/loaders/progressive/constants';
 import { SliceCache } from '../../../cache/slice-cache';
-import { buildSliceViewSig } from '../../../data/loaders/progressive/slice-cache-helper';
+import {
+  buildSliceViewSig,
+  measureLodBytes,
+} from '../../../data/loaders/progressive/slice-cache-helper';
 import { getPrefixParent } from '../../../types/prefix-lineage';
 import {
   resetLodLoadStats,
@@ -31,6 +34,7 @@ interface SubLoaderStub {
   updateView: ReturnType<typeof vi.fn>;
   updateViewWithResidency: ReturnType<typeof vi.fn>;
   prefetchChunks: ReturnType<typeof vi.fn>;
+  releaseAccumulator: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
   getMetrics: ReturnType<typeof vi.fn>;
   getActiveQueries: ReturnType<typeof vi.fn>;
@@ -139,6 +143,7 @@ function makeSubLoader(
     updateView,
     updateViewWithResidency,
     prefetchChunks: vi.fn().mockResolvedValue(undefined),
+    releaseAccumulator: vi.fn(),
     dispose: vi.fn(),
     getMetrics: vi.fn(() => stubMetrics(metrics)),
     getActiveQueries: vi.fn(() => []),
@@ -196,6 +201,10 @@ describe('LinesProgressiveLoader', () => {
         sc
       );
       await l.loadLines(viewA);
+      const key = SliceCache.makeKey('/l', buildSliceViewSig(viewA));
+      const cached = sc.peek(key)!;
+      expect(cached.payload).toHaveLength(1);
+      expect(cached.ladderDepth).toBe(2);
       await l.loadLines(viewB);
       a.updateViewWithResidency.mockClear();
       b.updateViewWithResidency.mockClear();
@@ -239,6 +248,63 @@ describe('LinesProgressiveLoader', () => {
       // All cache-hit fast → all 3 loaded → 10+5+2 = 17 segments, 20+10+4 = 34 verts.
       expect(result.segmentCount).toBe(17);
       expect(result.vertexCount).toBe(34);
+    });
+
+    it('releases decoded rung payloads after folding them into the cumulative result', async () => {
+      const result = await loader.loadLines(baseViewState);
+      const retained = (
+        loader as unknown as {
+          loadedLODs: LoadedLinesData[];
+        }
+      ).loadedLODs;
+
+      expect(loader.loadedLODCount).toBe(3);
+      expect(retained).toHaveLength(1);
+      expect(retained[0]).toBe(result);
+      expect(lodA.releaseAccumulator).toHaveBeenCalledTimes(1);
+      expect(lodB.releaseAccumulator).toHaveBeenCalledTimes(1);
+      expect(lodC.releaseAccumulator).toHaveBeenCalledTimes(1);
+    });
+
+    it('produces the same payload when levels fold incrementally or in one pass', async () => {
+      const levels = [
+        makeLodData(6, 3, 3, { color: 'uint8', rgba: true, scalars: true, mark: 11 }),
+        makeLodData(4, 2),
+        makeLodData(2, 1, 3, {
+          color: 'uint8',
+          rgba: true,
+          sharpness: true,
+          scalars: true,
+          mark: 22,
+        }),
+      ];
+      const onePassLoaders = levels.map((level) => makeSubLoader(level));
+      const incrementalLoaders = levels.map((level) => {
+        const subLoader = makeSubLoader(level);
+        subLoader.updateViewWithResidency.mockResolvedValue({
+          data: level,
+          allResident: false,
+        });
+        return subLoader;
+      });
+      const onePassLoader = new LinesProgressiveLoader(
+        onePassLoaders as unknown as LinesSpatialIndexLoader[],
+        levels.length,
+        '/one-pass'
+      );
+      const incrementalLoader = new LinesProgressiveLoader(
+        incrementalLoaders as unknown as LinesSpatialIndexLoader[],
+        levels.length,
+        '/incremental'
+      );
+
+      const onePass = await onePassLoader.loadLines(baseViewState);
+      let incremental = await incrementalLoader.loadLines(baseViewState);
+      while (incrementalLoader.hasMoreLODs) {
+        incremental = await incrementalLoader.loadLines(baseViewState);
+      }
+
+      expect(incremental).toEqual(onePass);
     });
 
     it('records lines additive load timing keys', async () => {
@@ -535,21 +601,40 @@ describe('LinesProgressiveLoader', () => {
   });
 
   describe('rollbackToPassStart (failed-commit recovery, #2426)', () => {
-    it('unwinds the whole ladder when the failing pass started empty', async () => {
-      await loader.loadLines(baseViewState);
-      expect(loader.loadedLODCount).toBe(3);
-      expect(loader.hasMoreLODs).toBe(false);
+    it('unwinds intact rung payloads when concatenation fails before folding', async () => {
+      lodB.updateView.mockResolvedValue(makeLodData(10, 5, 4, { color: 'uint8' }));
 
-      // The caller's concat / projection / commit threw after updateView
-      // returned. Without unwinding, `hasMoreLODs === false` would strand the
-      // node: the refinement loop drops it from `anyHasMoreLODs`, the failure
-      // cap is never reached, and no "giving up" toast ever fires.
+      await expect(loader.loadLines(baseViewState)).rejects.toThrow(
+        'mixed dimensionality across LOD levels'
+      );
+      expect(loader.loadedLODCount).toBe(3);
+
       expect(loader.rollbackToPassStart()).toBe(3);
       expect(loader.loadedLODCount).toBe(0);
       expect(loader.hasMoreLODs).toBe(true);
     });
 
-    it('unwinds only the levels the failing pass appended', async () => {
+    it('keeps a folded payload intact when the commit fails after concatenation', async () => {
+      await loader.loadLines(baseViewState);
+      expect(loader.loadedLODCount).toBe(3);
+      expect(loader.hasMoreLODs).toBe(false);
+
+      const retained = (
+        loader as unknown as {
+          loadedLODs: LoadedLinesData[];
+        }
+      ).loadedLODs;
+      expect(retained).toHaveLength(1);
+
+      // Once concat has released the individual rung buffers, the pre-pass
+      // representation no longer exists. Rollback must leave the cumulative
+      // payload and its logical cursor paired rather than truncating one side.
+      expect(loader.rollbackToPassStart()).toBe(0);
+      expect(loader.loadedLODCount).toBe(3);
+      expect(retained).toHaveLength(1);
+    });
+
+    it('keeps an incrementally folded prefix and cursor paired', async () => {
       // Pass 1 stops after LOD 0 (LOD B reports a cache miss), so pass 2
       // starts from a committed prefix of 1.
       lodB.updateViewWithResidency.mockImplementationOnce(async () => ({
@@ -559,45 +644,20 @@ describe('LinesProgressiveLoader', () => {
       await loader.loadLines(baseViewState);
       expect(loader.loadedLODCount).toBe(2);
 
-      // Pass 2 (same view state → no reset) streams the rest, then its commit
-      // throws. Only pass 2's levels are discarded; the committed prefix stays.
+      // Pass 2 (same view state → no reset) streams the rest, then concat
+      // succeeds and folds the appended rung. The old prefix cannot be
+      // reconstructed after that destructive fold, so rollback is a no-op.
       await loader.loadLines(baseViewState);
       expect(loader.loadedLODCount).toBe(3);
-      expect(loader.rollbackToPassStart()).toBe(1);
-      expect(loader.loadedLODCount).toBe(2);
-      expect(loader.hasMoreLODs).toBe(true);
-    });
-
-    it('is idempotent, so a repeated retry re-attempts the same prefix', async () => {
-      // This is the property that turns escalation into backoff: three failed
-      // retries in a row must all re-attempt the SAME prefix rather than each
-      // resuming from a cursor the previous failure advanced.
-      await loader.loadLines(baseViewState);
-      expect(loader.rollbackToPassStart()).toBe(3);
       expect(loader.rollbackToPassStart()).toBe(0);
-      expect(loader.loadedLODCount).toBe(0);
+      expect(loader.loadedLODCount).toBe(3);
     });
 
     it('is a no-op when the pass appended nothing', async () => {
       await loader.loadLines(baseViewState);
-      loader.rollbackToPassStart();
       // A pass that throws during its FETCH adds no level; there is nothing to
       // unwind and the previously committed prefix must survive untouched.
       expect(loader.rollbackToPassStart()).toBe(0);
-    });
-
-    it('leaves a rolled-back ladder able to reload the same levels', async () => {
-      const before = await loader.loadLines(baseViewState);
-      expect(loader.rollbackToPassStart()).toBe(3);
-
-      // The memo covering the dropped levels was discarded with them, so the
-      // reload rebuilds rather than handing back a concat of levels the loader
-      // no longer holds.
-      const after = await loader.loadLines(baseViewState);
-      expect(after).not.toBe(before);
-      expect(after.segmentCount).toBe(before.segmentCount);
-      expect(after.vertexCount).toBe(before.vertexCount);
-      expect(loader.loadedLODCount).toBe(3);
     });
 
     it('evicts an uncommitted full ladder snapshot before a later slice revisit', async () => {
@@ -615,7 +675,15 @@ describe('LinesProgressiveLoader', () => {
       const viewB = { ...baseViewState, slicePosition: [0, 0, 0, 1] };
 
       await recovering.loadLines(viewA);
+      await recovering.loadLines(viewB);
+      first.updateViewWithResidency.mockClear();
+      second.updateViewWithResidency.mockClear();
+      await recovering.loadLines(viewA);
+      expect(first.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(second.updateViewWithResidency).not.toHaveBeenCalled();
       expect(recovering.rollbackToPassStart()).toBe(2);
+      expect(recovering.loadedLODCount).toBe(0);
+
       await recovering.loadLines(viewB);
 
       first.updateViewWithResidency.mockClear();
@@ -1314,6 +1382,12 @@ describe('LinesProgressiveLoader', () => {
       expect(metrics.queries).toBe(5); // 2 + 3
       expect(metrics.elementsLoaded).toBe(150); // 100 + 50
       expect(metrics.memoryUsed).toBe(30); // 10 + 20
+    });
+
+    it('getMetrics includes the retained cumulative payload after rung accumulators release', async () => {
+      const result = await loader.loadLines(baseViewState);
+
+      expect(loader.getMetrics().memoryUsed).toBe(measureLodBytes([result]));
     });
 
     it('addEventListener / removeEventListener fan out to every inner loader', () => {

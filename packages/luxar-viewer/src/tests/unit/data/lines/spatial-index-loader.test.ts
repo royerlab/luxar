@@ -904,6 +904,30 @@ describe('LinesSpatialIndexLoader', () => {
         expect(metrics.spatialIndex!.totalCells).toBeGreaterThan(0);
       });
 
+      it('recreates a progressive-parent-released accumulator on the next query', async () => {
+        const viewState: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        };
+
+        const first = await bodyLoader.loadLines(viewState);
+        expect(bodyLoader.getAccumulatorStats()).not.toBeNull();
+
+        bodyLoader.releaseAccumulator();
+        expect(bodyLoader.getAccumulatorStats()).toBeNull();
+        expect(bodyLoader.getMetrics().memoryUsed).toBe(0);
+
+        const second = await bodyLoader.loadLines(viewState);
+        expect(bodyLoader.getAccumulatorStats()).not.toBeNull();
+        expect(second.vertexCount).toBe(first.vertexCount);
+        expect(second.segmentCount).toBe(first.segmentCount);
+        expect(second.positions).toEqual(first.positions);
+        expect(Array.from(second.segments)).toEqual(Array.from(first.segments));
+        expect(second.colors).toBeInstanceOf(Float32Array);
+        expect(second.colors).toEqual(first.colors);
+      });
+
       it('should fold completed loads into avgQueryTime (wrapper close-out)', async () => {
         // The wrapper's shared finishQueryTracking stamps the rolling mean
         // after the load completes — mirror of the Points/GSplats suites.

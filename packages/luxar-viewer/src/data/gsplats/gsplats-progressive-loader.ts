@@ -437,10 +437,10 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       // levels into loadedLODs and must never mutate the cache's payload
       // array (the elements stay shared read-only — store deep-clones).
       this.loadedLODs = restored ? [...restored] : [];
-      // Watermark the restored prefix NOW: the full-ladder restore below
-      // returns early, and a commit that then throws must unwind to the
-      // restored prefix, not to a stale watermark from an earlier pass.
-      this._levelsAtPassStart = this.loadedLODs.length;
+      // A restored full ladder has not been committed for this pass. If its
+      // concat or commit fails, unwind the whole restored snapshot rather than
+      // preserving a cursor at nLods and silently disabling retries.
+      this._levelsAtPassStart = 0;
       this._resetGeneration++;
       this.lastViewState = {
         displayDims: [...viewState.displayDims],

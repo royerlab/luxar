@@ -16,6 +16,7 @@ import { SliceCache } from '../../../../../cache/slice-cache';
 import { log } from '../../../../../utils/log';
 import {
   restoreLadder,
+  restoreLadderSnapshot,
   storeLadder,
   buildSliceViewSig,
   measureLodBytes,
@@ -64,6 +65,25 @@ describe('slice-cache-helper — prefix ladders', () => {
     storeLadder(sc, PATH, view, [makeLod(10), makeLod(5)], { totalLODCount: 4 });
     expect(sc.getStats().fullLadderCount).toBe(0);
     expect(sc.getStats().ladderDepthHistogram).toEqual({ '2/4': 1 });
+  });
+
+  it('restores a logical depth that is larger than the folded payload count', () => {
+    storeLadder(sc, PATH, view, [makeLod(17)], { ladderDepth: 3, totalLODCount: 3 });
+
+    const restored = restoreLadderSnapshot<FakeLod>(sc, PATH, view, N_LODS);
+    expect(restored).toEqual({ lods: [expect.objectContaining({ count: 17 })], depth: 3 });
+    expect(sc.getStats().ladderDepthHistogram).toEqual({ '3/3': 1 });
+  });
+
+  it('uses logical depth for upgrade-if-longer when payload count stays folded', () => {
+    storeLadder(sc, PATH, view, [makeLod(10)], { ladderDepth: 2, totalLODCount: 3 });
+    const key = SliceCache.makeKey(PATH, buildSliceViewSig(view));
+    const before = sc.peek(key)!.payload;
+
+    storeLadder(sc, PATH, view, [makeLod(15)], { ladderDepth: 3, totalLODCount: 3 });
+
+    expect(sc.peek(key)!.payload).not.toBe(before);
+    expect(sc.peek(key)!.ladderDepth).toBe(3);
   });
 
   it('does not classify a plain one-result store as an additive ladder', () => {
@@ -319,11 +339,67 @@ describe('slice-cache-helper — oversized ladder (partial-prefix caching)', () 
     expect(restored![0].count).toBe(100);
   });
 
+  it('caches an unfolded coarse prefix when ladderDepth equals the payload count', () => {
+    const sc = new SliceCache({ maxSize: 500 });
+    const ovPath = '/oversized-unfolded-node';
+    const full = [makeLod(100), makeLod(100), makeLod(100)];
+    storeLadder(sc, ovPath, view, full, { ladderDepth: full.length, totalLODCount: N_LODS });
+
+    const restored = restoreLadderSnapshot<FakeLod>(sc, ovPath, view, N_LODS);
+    expect(restored?.lods).toHaveLength(1);
+    expect(restored?.lods[0].count).toBe(100);
+    expect(restored?.depth).toBe(1);
+  });
+
   it('drops nothing to the cache when even the coarsest level exceeds the budget', () => {
     const sc = new SliceCache({ maxSize: 100 }); // < a single 400B level
     const ovPath = '/tiny-budget-node';
     storeLadder(sc, ovPath, view, [makeLod(100)]);
     expect(restoreLadder<FakeLod>(sc, ovPath, view, N_LODS)).toBeNull();
+  });
+
+  it('warns once when a folded payload exceeds the budget even at one payload', () => {
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => undefined);
+    const sc = new SliceCache({ maxSize: 500 });
+    const ovPath = '/folded-too-large-node';
+    const folded = [makeLod(300)]; // 1200B cumulative payload
+    try {
+      storeLadder(sc, ovPath, view, folded, { ladderDepth: 3, totalLODCount: 3 });
+      storeLadder(sc, ovPath, { ...view, slicePosition: [0, 0, 0, 8] }, folded, {
+        ladderDepth: 3,
+        totalLODCount: 3,
+      });
+
+      expect(restoreLadder<FakeLod>(sc, ovPath, view, N_LODS)).toBeNull();
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining('exceeds the budget even at one level')
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('does not trim a folded payload when the trimmed logical depth is unknowable', () => {
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => undefined);
+    const sc = new SliceCache({ maxSize: 500 });
+    const ovPath = '/folded-oversized-node';
+    try {
+      storeLadder(sc, ovPath, view, [makeLod(50)], { ladderDepth: 1, totalLODCount: 3 });
+
+      storeLadder(sc, ovPath, view, [makeLod(100), makeLod(100)], {
+        ladderDepth: 3,
+        totalLODCount: 3,
+      });
+
+      const restored = restoreLadderSnapshot<FakeLod>(sc, ovPath, view, N_LODS);
+      expect(restored?.depth).toBe(1);
+      expect(restored?.lods[0].count).toBe(50);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('warns once when it has to trim an oversized ladder', () => {

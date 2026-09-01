@@ -30,9 +30,9 @@ progressive/
 ├── constants.ts           # CACHE_HIT_THRESHOLD_MS — the shared streaming threshold
 ├── pass-rollback.ts       # Failed-pass ladder truncation and concat-cache retention plan
 ├── streaming-policy.ts    # Per-pass LOD streaming decisions (playback / prefetch / refine)
-├── slice-cache-helper.ts  # Shared SliceCache key/clone/restore/store logic (3-loader symmetry;
-│                          # also used by the plain spatial-index loaders — a plain leaf caches
-│                          # its decoded slice as a 1-element ladder under the same key contract)
+├── slice-cache-helper.ts  # Shared SliceCache key/clone/restore/store logic, including separate
+│                          # logical ladder depth for folded Lines payloads; also used by plain
+│                          # spatial-index loaders caching a decoded slice as a 1-element ladder
 └── view-state-equal.ts    # viewStatesEqual — the memoized-noop / generation-reset linchpin
                            # (formerly three byte-identical copies, one per geometry loader)
 ```

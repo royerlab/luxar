@@ -553,7 +553,15 @@ describe('GSplatsProgressiveLoader', () => {
       const viewB = { ...baseViewState, slicePosition: [0, 0, 0, 1] };
 
       await recovering.loadGSplats(viewA);
+      await recovering.loadGSplats(viewB);
+      first.updateViewWithResidency.mockClear();
+      second.updateViewWithResidency.mockClear();
+      await recovering.loadGSplats(viewA);
+      expect(first.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(second.updateViewWithResidency).not.toHaveBeenCalled();
       expect(recovering.rollbackToPassStart()).toBe(2);
+      expect(recovering.loadedLODCount).toBe(0);
+
       await recovering.loadGSplats(viewB);
 
       first.updateViewWithResidency.mockClear();
