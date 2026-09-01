@@ -30,7 +30,11 @@ import {
   shouldStopBeforeLevel,
   shouldStopAfterLevel,
 } from '../loaders/progressive/streaming-policy';
-import { restoreLadderSnapshot, storeLadder } from '../loaders/progressive/slice-cache-helper';
+import {
+  measureLodBytes,
+  restoreLadderSnapshot,
+  storeLadder,
+} from '../loaders/progressive/slice-cache-helper';
 import { viewStatesEqual } from '../loaders/progressive/view-state-equal';
 import type { SliceCache } from '../../cache/slice-cache';
 import { log, Modules, LogEmoji } from '../../utils/log';
@@ -586,7 +590,9 @@ export class LinesProgressiveLoader implements LinesDataLoader {
   }
 
   getMetrics(): LoaderMetrics {
-    return this.monitor.getMetrics();
+    const metrics = this.monitor.getMetrics();
+    const concatMemory = this._concatCache ? measureLodBytes([this._concatCache.result]) : 0;
+    return { ...metrics, memoryUsed: metrics.memoryUsed + concatMemory };
   }
 
   dispose(): void {

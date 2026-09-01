@@ -258,11 +258,20 @@ export function storeLadder<T extends object>(
     bytes = fit > 0 ? measureLodBytes(lods.slice(0, fit)) : 0;
   }
   if (fit === 0) return; // even the coarsest single level exceeds the budget
-  // A caller-supplied logical depth means one payload may already contain
-  // several folded levels. Trimming by payload count cannot recover the
+  // A logical depth that differs from payload count means at least one payload
+  // already folds several levels. Trimming by payload count cannot recover the
   // corresponding ladder depth safely, so retain the existing shorter entry
   // instead of caching a snapshot with a cursor ahead of its data.
-  if (opts?.ladderDepth !== undefined && fit < lods.length) return;
+  const isFolded = opts?.ladderDepth !== undefined && opts.ladderDepth !== lods.length;
+  if (isFolded && fit < lods.length) {
+    if (sliceCache.markOversizedWarned(path)) {
+      log.warning(
+        Modules.CACHE,
+        `SliceCache: folded ladder for ${path} exceeds the budget; retaining the existing cached prefix because its logical depth cannot be trimmed safely. Consider a larger cache budget.`
+      );
+    }
+    return;
+  }
   // Dedupe the warning per NODE (path), not per view: a "ladder exceeds budget"
   // report is about the node vs the budget, not any one slice — so a long
   // playback sweep over many views of the same node warns once, not once/view.
@@ -273,7 +282,7 @@ export function storeLadder<T extends object>(
     );
   }
   // Re-check upgrade-if-longer against the (possibly trimmed) logical depth.
-  const storedDepth = opts?.ladderDepth ?? fit;
+  const storedDepth = fit < lods.length ? fit : (opts?.ladderDepth ?? fit);
   if (existingDepth !== undefined && existingDepth >= storedDepth) return;
   const snapshot = fit < lods.length ? lods.slice(0, fit) : lods;
   const { ladderDepth: _ladderDepth, totalLODCount, ...cacheOpts } = opts ?? {};

@@ -19,7 +19,10 @@ import type { LinesSpatialIndexLoader } from '../../../data/lines/lines-spatial-
 import type { LinesViewState, LoadedLinesData } from '../../../types/lines';
 import { CACHE_HIT_THRESHOLD_MS } from '../../../data/loaders/progressive/constants';
 import { SliceCache } from '../../../cache/slice-cache';
-import { buildSliceViewSig } from '../../../data/loaders/progressive/slice-cache-helper';
+import {
+  buildSliceViewSig,
+  measureLodBytes,
+} from '../../../data/loaders/progressive/slice-cache-helper';
 import { getPrefixParent } from '../../../types/prefix-lineage';
 import {
   resetLodLoadStats,
@@ -1242,6 +1245,12 @@ describe('LinesProgressiveLoader', () => {
       expect(metrics.queries).toBe(5); // 2 + 3
       expect(metrics.elementsLoaded).toBe(150); // 100 + 50
       expect(metrics.memoryUsed).toBe(30); // 10 + 20
+    });
+
+    it('getMetrics includes the retained cumulative payload after rung accumulators release', async () => {
+      const result = await loader.loadLines(baseViewState);
+
+      expect(loader.getMetrics().memoryUsed).toBe(measureLodBytes([result]));
     });
 
     it('addEventListener / removeEventListener fan out to every inner loader', () => {
