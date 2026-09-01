@@ -196,6 +196,10 @@ describe('LinesProgressiveLoader', () => {
         sc
       );
       await l.loadLines(viewA);
+      const key = SliceCache.makeKey('/l', buildSliceViewSig(viewA));
+      const cached = sc.peek(key)!;
+      expect(cached.payload).toHaveLength(1);
+      expect(cached.ladderDepth).toBe(2);
       await l.loadLines(viewB);
       a.updateViewWithResidency.mockClear();
       b.updateViewWithResidency.mockClear();
@@ -239,6 +243,18 @@ describe('LinesProgressiveLoader', () => {
       // All cache-hit fast → all 3 loaded → 10+5+2 = 17 segments, 20+10+4 = 34 verts.
       expect(result.segmentCount).toBe(17);
       expect(result.vertexCount).toBe(34);
+    });
+
+    it('releases decoded rung payloads after folding them into the cumulative result', async () => {
+      const result = await loader.loadLines(baseViewState);
+      const retained = (
+        loader as unknown as {
+          loadedLODs: LoadedLinesData[];
+        }
+      ).loadedLODs;
+
+      expect(loader.loadedLODCount).toBe(3);
+      expect(retained).toEqual([result]);
     });
 
     it('records lines additive load timing keys', async () => {

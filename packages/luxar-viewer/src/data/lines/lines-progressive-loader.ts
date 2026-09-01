@@ -30,7 +30,7 @@ import {
   shouldStopBeforeLevel,
   shouldStopAfterLevel,
 } from '../loaders/progressive/streaming-policy';
-import { restoreLadder, storeLadder } from '../loaders/progressive/slice-cache-helper';
+import { restoreLadderSnapshot, storeLadder } from '../loaders/progressive/slice-cache-helper';
 import { viewStatesEqual } from '../loaders/progressive/view-state-equal';
 import type { SliceCache } from '../../cache/slice-cache';
 import { log, Modules, LogEmoji } from '../../utils/log';
@@ -231,13 +231,14 @@ function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
 export class LinesProgressiveLoader implements LinesDataLoader {
   private lodLoaders: LinesSpatialIndexLoader[];
   private loadedLODs: LoadedLinesData[] = [];
+  private _loadedLODCount = 0;
   private lastViewState: LinesViewState | null = null;
   private nLods: number;
   private monitor: ProgressiveMonitorAdapter;
   private _initialLoadDone = false;
   private _lastAllResident = true;
   private _disposed = false;
-  // Memoized concatenation. Keyed on (resetGeneration, loadedLODs.length):
+  // Memoized concatenation. Keyed on (resetGeneration, logical LOD count):
   // the generation bumps on every view-state reset so a reset-then-reload
   // back to the same LOD count yields a NEW reference (contents differ),
   // while an unchanged view state with no new LODs returns the SAME
@@ -293,11 +294,11 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     // target: no background refinement between animation ticks; the commit
     // stamps the prefix complete. Mirrors GSplatsProgressiveLoader.
     if (this._frameBudgetMs !== null) return false;
-    return this.loadedLODs.length < this.nLods;
+    return this._loadedLODCount < this.nLods;
   }
 
   get loadedLODCount(): number {
-    return this.loadedLODs.length;
+    return this._loadedLODCount;
   }
 
   get totalLODCount(): number {
@@ -315,7 +316,7 @@ export class LinesProgressiveLoader implements LinesDataLoader {
    */
   get committedEnergyFraction(): number | null {
     if (!this.energyTable) return null;
-    const k = this.loadedLODs.length;
+    const k = this._loadedLODCount;
     if (k === 0) return 0;
     return this.energyTable[Math.min(k, this.energyTable.length) - 1];
   }
@@ -360,15 +361,16 @@ export class LinesProgressiveLoader implements LinesDataLoader {
       // DEPARTURE store: snapshot the outgoing view's partial ladder under
       // the OUTGOING key before discarding — scrub-back stays warm even when
       // ladders never complete between navigations. Mirrors Points/GSplats.
-      if (this.lastViewState && this.loadedLODs.length > 0) {
+      if (this.lastViewState && this._loadedLODCount > 0) {
         storeLadder(this.sliceCache, this.path, this.lastViewState, this.loadedLODs, {
           scan: this._frameBudgetMs !== null,
           pin: viewState.prefetch === true,
+          ladderDepth: this._loadedLODCount,
           totalLODCount: this.nLods,
         });
       }
       // Try the SliceCache before discarding the ladder (see GSplats loader).
-      const restored = restoreLadder<LoadedLinesData>(
+      const restored = restoreLadderSnapshot<LoadedLinesData>(
         this.sliceCache,
         this.path,
         viewState,
@@ -377,7 +379,8 @@ export class LinesProgressiveLoader implements LinesDataLoader {
       // Shallow-copy the CONTAINER: the streaming loop below pushes further
       // levels and must never mutate the cache's payload array (elements
       // stay shared read-only). Mirrors GSplatsProgressiveLoader.
-      this.loadedLODs = restored ? [...restored] : [];
+      this.loadedLODs = restored ? [...restored.lods] : [];
+      this._loadedLODCount = restored?.depth ?? 0;
       this._resetGeneration++;
       this.lastViewState = {
         displayDims: [...viewState.displayDims],
@@ -389,8 +392,8 @@ export class LinesProgressiveLoader implements LinesDataLoader {
         this._initialLoadDone = true;
         this._lastAllResident = true;
         // FULL ladder short-circuits; a PREFIX falls through to the loop
-        // (startLevel = prefix length). Mirrors GSplatsProgressiveLoader.
-        if (restored.length === this.nLods) {
+        // (startLevel = restored logical depth). Mirrors GSplatsProgressiveLoader.
+        if (restored.depth === this.nLods) {
           return finish();
         }
       }
@@ -411,7 +414,7 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     // full decoded ladder (abort-safe, stored per level); `refine` stops at the
     // first cold/slow level. Mirrors GSplatsProgressiveLoader.
     const pass = classifyStreamingPass(budgetDeadline !== null, isPrefetch);
-    const startLevel = this.loadedLODs.length;
+    const startLevel = this._loadedLODCount;
 
     for (let level = startLevel; level < this.nLods; level++) {
       // A dispose() racing the awaited level below clears `lodLoaders`, so
@@ -435,6 +438,7 @@ export class LinesProgressiveLoader implements LinesDataLoader {
       const elapsed = performance.now() - t0;
 
       this.loadedLODs.push(lodData);
+      this._loadedLODCount++;
       this._lastAllResident = allResident;
 
       if (!this._initialLoadDone) {
@@ -470,10 +474,10 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     }
 
     const totalSegs = this.loadedLODs.reduce((s, d) => s + d.segmentCount, 0);
-    if (this.loadedLODs.length < this.nLods) {
+    if (this._loadedLODCount < this.nLods) {
       log.info(
         Modules.LINES_LOADER,
-        `Progressive Lines: ${this.loadedLODs.length}/${this.nLods} LODs (${totalSegs} segs) — refining`
+        `Progressive Lines: ${this._loadedLODCount}/${this.nLods} LODs (${totalSegs} segs) — refining`
       );
     } else if (startLevel < this.nLods) {
       log.info(
@@ -487,19 +491,22 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     // Snapshot into the SliceCache (upgrade-if-longer): full ladders always;
     // PREFIXES only while a playback budget is active. Mirrors
     // GSplatsProgressiveLoader.
-    if (this.loadedLODs.length === this.nLods || this._frameBudgetMs !== null) {
+    const result = finish();
+
+    if (this._loadedLODCount === this.nLods || this._frameBudgetMs !== null) {
       storeLadder(this.sliceCache, this.path, viewState, this.loadedLODs, {
         scan: this._frameBudgetMs !== null,
         pin: viewState.prefetch === true,
+        ladderDepth: this._loadedLODCount,
         totalLODCount: this.nLods,
       });
     }
 
-    return finish();
+    return result;
   }
 
   /**
-   * Concatenate loaded LODs, memoized on (resetGeneration, LOD count).
+   * Concatenate loaded LODs, memoized on (resetGeneration, logical LOD count).
    * An unchanged view state with no new LODs returns the SAME object
    * reference — safe because the result is never mutated downstream
    * (worker projection inputs are structured-cloned, not transferred) —
@@ -510,7 +517,7 @@ export class LinesProgressiveLoader implements LinesDataLoader {
    * commit layer can recognise a genuine prefix-extension and take the
    * append fast path (depth-sorting Phase 4 Stage 2). The parent is null
    * for the first level of a generation (a view change bumps the reset
-   * generation and empties `loadedLODs`), which is correct — the first
+   * generation and resets the logical depth), which is correct — the first
    * commit extends nothing. Mirrors GSplatsProgressiveLoader.
    */
   private concatenateMemoized(session?: UpdateSession): LoadedLinesData {
@@ -519,7 +526,7 @@ export class LinesProgressiveLoader implements LinesDataLoader {
       if (
         this._concatCache &&
         this._concatCache.generation === this._resetGeneration &&
-        this._concatCache.lodCount === this.loadedLODs.length
+        this._concatCache.lodCount === this._loadedLODCount
       ) {
         return this._concatCache.result;
       }
@@ -531,9 +538,12 @@ export class LinesProgressiveLoader implements LinesDataLoader {
           : null;
       const result = concatenateLinesData(this.loadedLODs);
       setPrefixParent(result, prevMemo);
+      // Keep only the cumulative payload. The decoded rung arrays total the
+      // same bytes as `result`; retaining both doubled terminal residency.
+      this.loadedLODs = [result];
       this._concatCache = {
         generation: this._resetGeneration,
-        lodCount: this.loadedLODs.length,
+        lodCount: this._loadedLODCount,
         result,
       };
       return result;
@@ -547,7 +557,7 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     // awaited level and this fire-and-forget clears `lodLoaders`, and
     // indexing it would TypeError before the .catch can swallow anything.
     if (this._disposed) return;
-    const nextLevel = this.loadedLODs.length;
+    const nextLevel = this._loadedLODCount;
     if (nextLevel >= this.nLods) return;
     void this.lodLoaders[nextLevel].prefetchChunks(viewState).catch(() => {
       /* ignore */
@@ -582,6 +592,7 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     }
     this.lodLoaders = [];
     this.loadedLODs = [];
+    this._loadedLODCount = 0;
     this.lastViewState = null;
     this._concatCache = null;
   }

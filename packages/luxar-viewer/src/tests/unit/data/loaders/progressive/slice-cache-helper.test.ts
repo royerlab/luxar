@@ -16,6 +16,7 @@ import { SliceCache } from '../../../../../cache/slice-cache';
 import { log } from '../../../../../utils/log';
 import {
   restoreLadder,
+  restoreLadderSnapshot,
   storeLadder,
   buildSliceViewSig,
   measureLodBytes,
@@ -64,6 +65,25 @@ describe('slice-cache-helper — prefix ladders', () => {
     storeLadder(sc, PATH, view, [makeLod(10), makeLod(5)], { totalLODCount: 4 });
     expect(sc.getStats().fullLadderCount).toBe(0);
     expect(sc.getStats().ladderDepthHistogram).toEqual({ '2/4': 1 });
+  });
+
+  it('restores a logical depth that is larger than the folded payload count', () => {
+    storeLadder(sc, PATH, view, [makeLod(17)], { ladderDepth: 3, totalLODCount: 3 });
+
+    const restored = restoreLadderSnapshot<FakeLod>(sc, PATH, view, N_LODS);
+    expect(restored).toEqual({ lods: [expect.objectContaining({ count: 17 })], depth: 3 });
+    expect(sc.getStats().ladderDepthHistogram).toEqual({ '3/3': 1 });
+  });
+
+  it('uses logical depth for upgrade-if-longer when payload count stays folded', () => {
+    storeLadder(sc, PATH, view, [makeLod(10)], { ladderDepth: 2, totalLODCount: 3 });
+    const key = SliceCache.makeKey(PATH, buildSliceViewSig(view));
+    const before = sc.peek(key)!.payload;
+
+    storeLadder(sc, PATH, view, [makeLod(15)], { ladderDepth: 3, totalLODCount: 3 });
+
+    expect(sc.peek(key)!.payload).not.toBe(before);
+    expect(sc.peek(key)!.ladderDepth).toBe(3);
   });
 
   it('does not classify a plain one-result store as an additive ladder', () => {
@@ -324,6 +344,21 @@ describe('slice-cache-helper — oversized ladder (partial-prefix caching)', () 
     const ovPath = '/tiny-budget-node';
     storeLadder(sc, ovPath, view, [makeLod(100)]);
     expect(restoreLadder<FakeLod>(sc, ovPath, view, N_LODS)).toBeNull();
+  });
+
+  it('does not trim a folded payload when the trimmed logical depth is unknowable', () => {
+    const sc = new SliceCache({ maxSize: 500 });
+    const ovPath = '/folded-oversized-node';
+    storeLadder(sc, ovPath, view, [makeLod(50)], { ladderDepth: 1, totalLODCount: 3 });
+
+    storeLadder(sc, ovPath, view, [makeLod(100), makeLod(100)], {
+      ladderDepth: 3,
+      totalLODCount: 3,
+    });
+
+    const restored = restoreLadderSnapshot<FakeLod>(sc, ovPath, view, N_LODS);
+    expect(restored?.depth).toBe(1);
+    expect(restored?.lods[0].count).toBe(50);
   });
 
   it('warns once when it has to trim an oversized ladder', () => {
