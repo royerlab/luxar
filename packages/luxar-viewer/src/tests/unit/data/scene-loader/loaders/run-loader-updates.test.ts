@@ -99,6 +99,35 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
     }
   });
 
+  it('keeps the original failure path when rollback itself throws', async () => {
+    const ctx = makeCtx();
+    const rollbackToPassStart = vi.fn(() => {
+      throw new Error('rollback failed');
+    });
+    const loaders = new Map<string, object>([['/scene/points', { rollbackToPassStart }]]);
+    const errorSpy = vi.spyOn(log, 'error').mockImplementation(() => {});
+
+    try {
+      const results = await runLoaderUpdates(
+        loaders,
+        'Points',
+        () => {
+          throw new Error('real load failure');
+        },
+        ctx
+      );
+
+      expect(results[0].staged).toBeNull();
+      expect(rollbackToPassStart).toHaveBeenCalledOnce();
+      expect(ctx.failedLoaders.has('/scene/points')).toBe(true);
+      expect(ctx.forgetPath).toHaveBeenCalledWith('/scene/points');
+      expect(errorSpy.mock.calls[0][1]).toContain('real load failure');
+      expect(errorSpy.mock.calls[0][1]).not.toContain('rollback failed');
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
   it('omits the unwind suffix when a non-progressive loader discards no levels', async () => {
     const ctx = makeCtx();
     const errorSpy = vi.spyOn(log, 'error').mockImplementation(() => {});

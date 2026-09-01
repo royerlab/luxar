@@ -83,3 +83,14 @@ export function planLadderRollback(
     invalidateConcatCache: concatCacheLodCount !== null && concatCacheLodCount > keep,
   };
 }
+
+/** Run an optional loader rollback without replacing the original failure. */
+export function tryRollbackToPassStart(loader: {
+  rollbackToPassStart?: () => number;
+}): number {
+  try {
+    return loader.rollbackToPassStart?.() ?? 0;
+  } catch {
+    return 0;
+  }
+}

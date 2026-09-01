@@ -274,6 +274,11 @@ describe('runAtomicCommit — synchronous throw mid-commit', () => {
     expect(thrown).toBeInstanceOf(AggregateError);
     expect(thrown?.errors).toHaveLength(1);
     expect(thrown?.message).toContain('1 geometry commit(s) failed');
+    const combinedFailure = thrown?.errors[0] as AggregateError;
+    expect(combinedFailure).toBeInstanceOf(AggregateError);
+    expect(combinedFailure.errors).toHaveLength(2);
+    expect((combinedFailure.errors[0] as Error).message).toBe('points commit failed');
+    expect((combinedFailure.errors[1] as Error).message).toBe('rollback failed');
   });
 
   it('fault isolation: a throwing points commit does NOT starve lines/gsplats/mesh siblings; errors surface as ONE AggregateError', () => {

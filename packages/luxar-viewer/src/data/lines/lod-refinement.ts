@@ -17,6 +17,7 @@ import type {
 import { log, Modules } from '../../utils/log';
 import { notifier } from '../../utils/cross-layer/notifier';
 import { isAbortError } from '../loaders/abort-error';
+import { tryRollbackToPassStart } from '../loaders/progressive/pass-rollback';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 import type { ViewState } from '../data-loader-types';
 import type { ViewStateQueue } from '../scene-loader/view-state/view-state-queue';
@@ -131,7 +132,7 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
         // the last rung would flip `hasMoreLODs` false, silently stranding the
         // node at its last committed prefix with the failure cap never reached.
         // See `../loaders/progressive/pass-rollback`.
-        const unwound = progressiveLoader.rollbackToPassStart?.() ?? 0;
+        const unwound = tryRollbackToPassStart(progressiveLoader);
         if (failures.recordFailure(path)) {
           log.error(
             Modules.SCENE_LOADER,

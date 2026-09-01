@@ -291,6 +291,33 @@ export function defineRefinementLoopContract(
       expect(loader.hasMoreLODs).toBe(true);
     });
 
+    it('still reaches the failure cap when rollback itself throws', async () => {
+      const loader = {
+        hasMoreLODs: true,
+        rollbackToPassStart: vi.fn(() => {
+          throw new Error('rollback failed');
+        }),
+        updateView: vi.fn().mockResolvedValue({ loaded: true }),
+      };
+      const releaseLock: () => void = vi.fn();
+
+      await run({
+        loaders: new Map([['/n', loader]]),
+        viewStateQueue: new ViewStateQueue(),
+        deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
+        updateVisibleCountsInMonitor: vi.fn(),
+        releaseLock,
+        retriggerUpdate: vi.fn(),
+        processSpy: vi.fn(() => {
+          throw new Error('commit preparation failed');
+        }),
+      });
+
+      expect(loader.updateView).toHaveBeenCalledTimes(3);
+      expect(loader.rollbackToPassStart).toHaveBeenCalledTimes(3);
+      expect(releaseLock).toHaveBeenCalledOnce();
+    });
+
     it('gives up on a persistently failing loader after 3 consecutive failures (lock released)', async () => {
       // Regression: without the per-run failure cap, a loader whose level
       // fetch always throws kept hasMoreLODs=true forever and the loop

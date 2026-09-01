@@ -14,6 +14,7 @@ import type { ViewStateQueue } from '../view-state/view-state-queue';
 import type { LoaderRegistry } from './loader-registry';
 import { isAbortError } from '../../loaders/abort-error';
 import { archiveFaultFrom, type ArchiveFaultError } from '../../../cache/chunk-source';
+import { tryRollbackToPassStart } from '../../loaders/progressive/pass-rollback';
 import type * as THREE from 'three';
 
 const NOOP_SESSION: UpdateSession = {
@@ -89,8 +90,9 @@ export async function runLoaderUpdates<TLoader, TStaged>(
         return { staged: null, session };
       }
 
-      const unwound =
-        (loader as TLoader & { rollbackToPassStart?: () => number }).rollbackToPassStart?.() ?? 0;
+      const unwound = tryRollbackToPassStart(
+        loader as TLoader & { rollbackToPassStart?: () => number }
+      );
 
       const fault = archiveFaultFrom(error);
       if (fault) {
