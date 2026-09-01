@@ -38,19 +38,33 @@ export interface EvictorCtx {
   /**
    * Same-frame grace for ACQUIRE-triggered sweeps: buffers whose
    * `lastUsedFrame` equals this value are exempt from the byte pass.
-   * A dataset switch releases every old-node buffer then immediately
-   * acquires the new dataset's nodes in the same frame — without the
-   * grace, each fresh allocation's sweep would dispose the
-   * just-released buffers before later acquires can best-fit them
-   * (alloc/dispose churn replacing free reuse). `releaseGeometry`
-   * stamps `lastUsedFrame` with the release frame so the grace
-   * actually matches (an acquire-time stamp alone would carry a stale
-   * frame into the release). Release-triggered sweeps pass -1 (never
-   * matches) — byte enforcement on release is unconditional, which is
-   * also the backstop bounding the grace: if the frame counter is not
-   * advancing (no render loop), acquire sweeps may keep sparing
-   * released buffers, but every release re-enforces the budget without
-   * grace.
+   * Without it, a release followed by same-frame acquires would dispose
+   * the just-released buffers before those acquires can best-fit them —
+   * alloc/dispose churn replacing free reuse. `releaseGeometry` stamps
+   * `lastUsedFrame` with the release frame so the grace actually matches
+   * (an acquire-time stamp alone would carry a stale frame into the
+   * release). Release-triggered sweeps pass -1 (never matches) — byte
+   * enforcement on release is unconditional, which is also the backstop
+   * bounding the grace: if the frame counter is not advancing (no render
+   * loop), acquire sweeps may keep sparing released buffers, but every
+   * release re-enforces the budget without grace.
+   *
+   * WHICH RELEASE-THEN-REACQUIRE THIS PROTECTS IS NOT SETTLED. This
+   * comment used to name a DATASET SWITCH as the motivating case. That
+   * cannot be it: the pool is disposed and reconstructed per dataset
+   * (`lifecycle/dispose.ts` → `gpuBufferPool.dispose()`;
+   * `scene-loader.ts` nulls the field and rebuilds it on the next load),
+   * so no buffer ever survives a switch to be adopted after one. The
+   * rationale was describing a scenario the lifecycle prevents, and it
+   * misdirected a review (#2426) before anyone checked.
+   *
+   * The plausible real case is WITHIN a load: LOD demotion returns a
+   * level's buffer to the pool expecting re-promotion to adopt it back
+   * (`scene-loader.ts`'s `releaseLazyGSplats` / `releaseLazyPoints` /
+   * `releaseLazyLines` — "cheap re-projection from cached chunks"). That
+   * is a documented adoption dependency and it is same-frame-adjacent.
+   * It is stated here as the LIKELY case, not a verified one — do not
+   * promote it to fact without measuring a demote → re-promote cycle.
    */
   readonly graceFrame: number;
   /** Per-type eviction counters; mutated as buffers dispose. */
