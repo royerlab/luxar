@@ -32,13 +32,14 @@ _DATA_MANIFEST_PATH = _DEMO_PATH.parent / "data_manifest.json"
 # them against MATERIALIZED git-LFS bytes, so they can only ever describe the
 # in-repo copy.
 #
-# The cc-by deposition holds a different, also self-consistent pair — the refit
-# (29,378,476 B, 1,908,888 rows) with its own resampled sidecar — and the
-# manifest now records that separately as `hosted_sha256`/`hosted_bytes`. Do not
-# "fix" these constants to the hosted digests: the deep check cannot verify bytes
-# that are not on disk, and the two pairs must never be mixed. Pinning one file
-# from each pair is the #1670 mis-ordering all over again, so each pair moves
-# together or not at all.
+# The cc-by deposition holds a different generation: a 25,107,673-byte fit that
+# carries its 1,908,888 per-splat colors as a NATIVE gsplat attribute, plus a
+# sidecar exported from those same colors (so aligned by construction). The
+# manifest records it separately as `hosted_sha256`/`hosted_bytes`. Do not "fix"
+# these constants to the hosted digests: the deep check cannot verify bytes that
+# are not on disk, and the two generations must never be mixed. Pinning one file
+# from each is the #1670 mis-ordering all over again, so each moves together or
+# not at all.
 _SHIPPED_FIT_SHA256 = "c6ebbab8c2d1bdff0d5fd35f7032c6a375724b5fe5e6d33e8ca4e6af6ab139f6"
 _SHIPPED_COLORS_SHA256 = (
     "63bce184e56d6d3b5f8f6817100c66310984c45da65fd94cdbc0a42ac05abb44"
@@ -68,6 +69,25 @@ crop_to_content = _demo.crop_to_content
 sample_colors = _demo.sample_colors
 _save_colors_u8 = _demo._save_colors_u8
 _load_colors_f32 = _demo._load_colors_f32
+
+
+def _legacy_pair(rgb_vol: np.ndarray, fit: GSplatData):
+    """Write the LEGACY shape: a COLORLESS fit plus a positional sidecar.
+
+    This is what the in-repo Git-LFS payload is, and it is now the only shape on
+    which the ordering guard can fire at all — the hosted archive carries its
+    colors natively, so it has no second array to misorder. Tests of the guard
+    therefore have to build this shape explicitly; ``save_and_sample_colors`` no
+    longer produces it. Retires with the payloads themselves (#2354).
+
+    Written through the demo's own ``_save_fit`` and ``_save_colors_u8`` so the
+    recipe and the quantization rule cannot drift away from the real ones.
+    """
+    _demo._save_fit(fit)
+    stored = GSplatData.load(_demo.LOCAL_FIT, include_stats=False)
+    assert _demo._native_colors(stored) is None, "the legacy shape must be colorless"
+    _save_colors_u8(sample_colors(rgb_vol, stored.centers), _demo.LOCAL_COLORS)
+    return stored, _load_colors_f32(_demo.LOCAL_COLORS)
 
 
 class TestColorRoundtrip:
@@ -201,6 +221,7 @@ def _scattered_gsplat_data(n: int, extent: float, seed: int = 0) -> GSplatData:
         centers=rng.uniform(0.0, extent, (n, 3)).astype(np.float32),
         amplitudes=rng.uniform(0.2, 1.0, n).astype(np.float32),
         cholesky_factors=np.tile([1, 0, 1, 0, 0, 1], (n, 1)).astype(np.float32),
+        stats={"psnr_db": 38.25, "source_shape": [16, 16, 16]},
     )
 
 
@@ -251,8 +272,18 @@ class TestColorSidecarOrdering:
         )
         # Aligned with the fit that is RETURNED (== what the cache reloads)...
         np.testing.assert_array_equal(colors, expected)
-        # ...and the sidecar ON DISK carries those same rows.
-        np.testing.assert_array_equal(_load_colors_f32(_demo.LOCAL_COLORS), expected)
+        # ...and the STORE carries those same rows, natively — no sidecar exists
+        # any more, which is the point: there is no second file to misorder.
+        np.testing.assert_array_equal(_demo._native_colors(stored), expected)
+        assert not _demo.LOCAL_COLORS.exists(), "a sidecar was written after all"
+        # The pair is EXACTLY aligned, not merely above the gate. The constant
+        # `MIN_COLOR_AGREEMENT` is calibrated against this 1.000 baseline, so a
+        # change that quietly moved it to 0.999 would eat the tolerance budget
+        # that `TestColorAgreementThreshold` spends.
+        assert voxel_sampled_payload_agreement(stored.centers, colors) == 1.0
+        cached = GSplatData.load(_demo.LOCAL_FIT, include_stats=True)
+        assert cached.stats["psnr_db"] == 38.25
+        assert cached.stats["source_shape"] == [16, 16, 16]
         # ...and NOT the pre-save sampling the old code persisted.
         assert not np.array_equal(
             expected,
@@ -427,7 +458,10 @@ class TestRejectedPairFallsThroughToRefit:
         fit = _scattered_gsplat_data(n, extent=15.49, seed=5)
         monkeypatch.setattr(_demo, "LOCAL_FIT", tmp_path / _demo.FIT_FILE)
         monkeypatch.setattr(_demo, "LOCAL_COLORS", tmp_path / _demo.COLORS_FILE)
-        _, colors = _demo.save_and_sample_colors(fit, rgb_vol)
+        # The LEGACY shape on purpose: a fit carrying its own colors ignores the
+        # sidecar entirely, so permuting one could not be detected — nor would it
+        # matter. The guard under test only applies where two arrays exist.
+        _, colors = _legacy_pair(rgb_vol, fit)
         if permute:
             _save_colors_u8(colors[rng.permutation(n)], _demo.LOCAL_COLORS)
 
@@ -496,6 +530,105 @@ class TestRejectedPairFallsThroughToRefit:
         )
 
 
+class TestNativeColorsWinOverTheSidecar:
+    """A fit that carries its own colors must never consult a sidecar.
+
+    This is what retires the #1670/#2334 failure mode rather than guarding
+    against it: the writer permutes a native color attribute in lockstep with the
+    centers, so the two cannot fall out of order. The sidecar branch survives
+    only for the in-repo Git-LFS payload, which is a COLORLESS generation of this
+    fit (1,911,192 splats against the hosted 1,908,888) and retires with it
+    (#2354).
+    """
+
+    @staticmethod
+    def _fixture(tmp_path, monkeypatch, tag: str):
+        rng = np.random.default_rng(97)
+        rgb_vol = rng.uniform(0.0, 1.0, (16, 16, 16, 3)).astype(np.float32)
+        fit = _scattered_gsplat_data(4000, extent=15.49, seed=11)
+        monkeypatch.setattr(_demo, "LOCAL_FIT", tmp_path / (tag + _demo.FIT_FILE))
+        monkeypatch.setattr(_demo, "LOCAL_COLORS", tmp_path / (tag + _demo.COLORS_FILE))
+        return rgb_vol, fit
+
+    def test_a_permuted_sidecar_beside_a_native_fit_is_ignored(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """The decisive one: a WRONG sidecar must not be able to corrupt output.
+
+        Under the old contract this pair was rejected and forced a multi-GB
+        refit. Now the sidecar is simply irrelevant, so the correct colors are
+        returned and no refit is needed — a strictly better outcome, and the
+        assertion that proves the sidecar is not merely tolerated but unread.
+        """
+        rgb_vol, fit = self._fixture(tmp_path, monkeypatch, "native-")
+        stored, colors = _demo.save_and_sample_colors(fit, rgb_vol)
+        rng = np.random.default_rng(3)
+        _save_colors_u8(colors[rng.permutation(len(colors))], _demo.LOCAL_COLORS)
+
+        got = _demo._colors_for(stored, _demo.LOCAL_FIT, _demo.LOCAL_COLORS)
+
+        np.testing.assert_array_equal(got, colors)
+        # Non-vacuity: the sidecar really did hold something else.
+        assert not np.array_equal(_load_colors_f32(_demo.LOCAL_COLORS), colors)
+
+    def test_a_colorless_fit_still_falls_back_to_its_sidecar(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """The in-repo Git-LFS path, which must keep working until #2354."""
+        rgb_vol, fit = self._fixture(tmp_path, monkeypatch, "legacy-")
+        stored, colors = _legacy_pair(rgb_vol, fit)
+
+        got = _demo._colors_for(stored, _demo.LOCAL_FIT, _demo.LOCAL_COLORS)
+
+        np.testing.assert_array_equal(got, colors)
+
+    def test_a_colorless_fit_with_a_misordered_sidecar_is_rejected(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """The guard must still fire on the shape where it can."""
+        rgb_vol, fit = self._fixture(tmp_path, monkeypatch, "broken-")
+        stored, colors = _legacy_pair(rgb_vol, fit)
+        rng = np.random.default_rng(4)
+        _save_colors_u8(colors[rng.permutation(len(colors))], _demo.LOCAL_COLORS)
+
+        assert _demo._colors_for(stored, _demo.LOCAL_FIT, _demo.LOCAL_COLORS) is None
+
+    def test_a_colorless_fit_with_no_sidecar_yields_nothing(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """Never "render without colors" — the callers must refit instead."""
+        rgb_vol, fit = self._fixture(tmp_path, monkeypatch, "none-")
+        stored, _ = _legacy_pair(rgb_vol, fit)
+
+        assert _demo._colors_for(stored, _demo.LOCAL_FIT, None) is None
+
+    def test_a_native_color_array_with_too_few_channels_is_refused(
+        self, tmp_path, monkeypatch, capsys
+    ) -> None:
+        """A real two-channel GSplatData must not be handed to the scene."""
+        _, fit = self._fixture(tmp_path, monkeypatch, "malformed-")
+        malformed = GSplatData(
+            centers=fit.centers,
+            amplitudes=fit.amplitudes,
+            cholesky_factors=fit.cholesky_factors,
+            colors=np.ones((len(fit.centers), 2), dtype=np.float32),
+        )
+
+        assert _demo._native_colors(malformed) is None
+        assert "does not describe its" in capsys.readouterr().out
+
+    def test_a_cache_that_drops_native_colors_is_removed(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        rgb_vol, fit = self._fixture(tmp_path, monkeypatch, "dropped-")
+        monkeypatch.setattr(_demo, "_native_colors", lambda _fit: None)
+
+        with pytest.raises(RuntimeError, match="cannot be cached without its colors"):
+            _demo.save_and_sample_colors(fit, rgb_vol)
+
+        assert not _demo.LOCAL_FIT.exists()
+
+
 class TestManifestPairIsGuardedToo:
     """The manifest-resolved pair must still run the semantic alignment guard.
 
@@ -515,7 +648,8 @@ class TestManifestPairIsGuardedToo:
         manifest_dir = tmp_path / "manifest"
         monkeypatch.setattr(_demo, "LOCAL_FIT", manifest_dir / _demo.FIT_FILE)
         monkeypatch.setattr(_demo, "LOCAL_COLORS", manifest_dir / _demo.COLORS_FILE)
-        _, colors = _demo.save_and_sample_colors(fit, rgb_vol)
+        # Legacy shape, for the same reason as the sibling class above.
+        _, colors = _legacy_pair(rgb_vol, fit)
         if permute:
             _save_colors_u8(
                 colors[rng.permutation(n)], manifest_dir / _demo.COLORS_FILE

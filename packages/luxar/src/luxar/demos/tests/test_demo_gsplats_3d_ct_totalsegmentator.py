@@ -220,6 +220,26 @@ class TestLabelRoundtrip:
         np.testing.assert_array_equal(loaded, labels)
 
 
+def _legacy_pair(label_vol: np.ndarray, fit: GSplatData):
+    """Write the LEGACY shape: a fit with NO label channel plus a sidecar.
+
+    This is what the in-repo Git-LFS payload is, and it is now the only shape on
+    which the ordering guard can fire at all — the hosted archive carries its
+    organ ids natively, so it has no second array to misorder. Tests of the guard
+    therefore build this shape explicitly; ``save_and_sample_labels`` no longer
+    produces it. Retires with the payloads (#2354).
+
+    Written through the demo's own ``_save_atlas_fit`` / ``_save_labels_u8`` so
+    the recipe and the quantization rule cannot drift from the real ones.
+    """
+    _demo._save_atlas_fit(fit)
+    stored = GSplatData.load(_demo.LOCAL_FIT)
+    assert _demo._native_labels(stored) is None, "the legacy shape must carry no ids"
+    labels = _demo.sample_labels(label_vol, stored.centers)
+    _save_labels_u8(labels, _demo.LOCAL_LABELS)
+    return stored, _load_labels(_demo.LOCAL_LABELS)
+
+
 def _scattered_gsplat_data(n: int, extent: float, seed: int = 0) -> GSplatData:
     """Splats scattered over a small voxel grid — no GPU fit needed."""
     rng = np.random.default_rng(seed)
@@ -227,6 +247,7 @@ def _scattered_gsplat_data(n: int, extent: float, seed: int = 0) -> GSplatData:
         centers=rng.uniform(0.0, extent, (n, 3)).astype(np.float32),
         amplitudes=rng.uniform(0.2, 1.0, n).astype(np.float32),
         cholesky_factors=np.tile([1, 0, 1, 0, 0, 1], (n, 1)).astype(np.float32),
+        stats={"psnr_db": 42.5, "source_shape": [16, 16, 16]},
     )
 
 
@@ -248,7 +269,7 @@ class TestLabelSidecarOrdering:
         monkeypatch.setattr(_demo, "LOCAL_FIT", tmp_path / _demo.FIT_FILE)
         monkeypatch.setattr(_demo, "LOCAL_LABELS", tmp_path / _demo.LABELS_FILE)
 
-        stored, labels = _demo.save_and_sample_labels(fit, label_vol)
+        stored, labels = _legacy_pair(label_vol, fit)
 
         # Non-vacuity: the writer really did permute this input. Without it the
         # pre/post-save samplings would agree and prove nothing.
@@ -272,7 +293,7 @@ class TestLabelSidecarOrdering:
         monkeypatch.setattr(_demo, "LOCAL_FIT", tmp_path / _demo.FIT_FILE)
         monkeypatch.setattr(_demo, "LOCAL_LABELS", tmp_path / _demo.LABELS_FILE)
 
-        stored, labels = _demo.save_and_sample_labels(fit, label_vol)
+        stored, labels = _legacy_pair(label_vol, fit)
         assert _demo._labels_match_fit(stored, labels, "aligned")
         # A permuted sidecar (the #1670 bug) and a wrong-length one are refused.
         permuted = labels[rng.permutation(n)]
@@ -367,7 +388,7 @@ class TestLabelAgreementThreshold:
         fit = _scattered_gsplat_data(n, extent=15.49, seed=3)
         monkeypatch.setattr(_demo, "LOCAL_FIT", tmp_path / _demo.FIT_FILE)
         monkeypatch.setattr(_demo, "LOCAL_LABELS", tmp_path / _demo.LABELS_FILE)
-        stored, labels = _demo.save_and_sample_labels(fit, label_vol)
+        stored, labels = _legacy_pair(label_vol, fit)
 
         order, collides = _same_voxel_pairs(stored.centers)
         lone = _lone_pairs(collides)
@@ -388,9 +409,9 @@ class TestLabelAgreementThreshold:
         monkeypatch.setattr(
             _demo, "LOCAL_LABELS", tmp_path / ("probe-" + _demo.LABELS_FILE)
         )
-        stored, _ = _demo.save_and_sample_labels(
-            _scattered_gsplat_data(6000, extent=15.49, seed=3),
+        stored, _ = _legacy_pair(
             np.zeros((16, 16, 16), dtype=np.int32),
+            _scattered_gsplat_data(6000, extent=15.49, seed=3),
         )
         _, collides = _same_voxel_pairs(stored.centers)
         return int(np.floor((1.0 - _demo.MIN_LABEL_AGREEMENT) * len(collides)))
@@ -426,9 +447,9 @@ class TestLabelAgreementThreshold:
         monkeypatch.setattr(
             _demo, "LOCAL_LABELS", tmp_path / ("nm-" + _demo.LABELS_FILE)
         )
-        stored, _ = _demo.save_and_sample_labels(
-            _scattered_gsplat_data(6000, extent=15.49, seed=3),
+        stored, _ = _legacy_pair(
             np.zeros((16, 16, 16), dtype=np.int32),
+            _scattered_gsplat_data(6000, extent=15.49, seed=3),
         )
         _, collides = _same_voxel_pairs(stored.centers)
         stored, broken = self._pair_with_broken(
@@ -477,6 +498,115 @@ class TestRawCentersArePrecondition:
         )
 
 
+class TestNativeLabelsWinOverTheSidecar:
+    """A fit carrying its own organ ids must never consult a sidecar.
+
+    This retires the #1670/#2334 failure mode instead of guarding against it. It
+    matters more here than for vh_head: ct_atlas's misindexing is the DANGEROUS
+    kind, because organs are large and contiguous, so a reordered attach still
+    lands ~37% of splats in the right organ and renders plausible anatomy with the
+    rest silently mislabelled. A native channel cannot be reordered relative to
+    the splats it describes.
+    """
+
+    @staticmethod
+    def _fixture(tmp_path, monkeypatch, tag: str):
+        rng = np.random.default_rng(91)
+        label_vol = rng.integers(0, 118, (16, 16, 16)).astype(np.int32)
+        fit = _scattered_gsplat_data(4000, extent=15.49, seed=13)
+        monkeypatch.setattr(_demo, "LOCAL_FIT", tmp_path / (tag + _demo.FIT_FILE))
+        monkeypatch.setattr(_demo, "LOCAL_LABELS", tmp_path / (tag + _demo.LABELS_FILE))
+        return label_vol, fit
+
+    def test_a_permuted_sidecar_beside_a_native_fit_is_ignored(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        label_vol, fit = self._fixture(tmp_path, monkeypatch, "native-")
+        stored, labels = _demo.save_and_sample_labels(fit, label_vol)
+        rng = np.random.default_rng(5)
+        _save_labels_u8(labels[rng.permutation(len(labels))], _demo.LOCAL_LABELS)
+
+        got = _demo._labels_for(stored, _demo.LOCAL_FIT, _demo.LOCAL_LABELS)
+
+        np.testing.assert_array_equal(got, labels)
+        # Non-vacuity: the sidecar really did hold a different ordering.
+        assert not np.array_equal(_load_labels(_demo.LOCAL_LABELS), labels)
+
+    def test_the_ids_survive_the_save_exactly_not_merely_in_range(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """A renumbering passes a range check, so check the classes themselves.
+
+        #2334's hard requirement: the channel is CATEGORICAL, so an
+        amplitude-style encoder that returns class 51 as 50 or 52 would attribute
+        splats to the wrong anatomy with no error anywhere. Set equality alone is
+        also not enough — a swap of two classes preserves the set — so the
+        per-class POPULATIONS are compared too.
+        """
+        label_vol, fit = self._fixture(tmp_path, monkeypatch, "exact-")
+        stored, labels = _demo.save_and_sample_labels(fit, label_vol)
+
+        assert stored.label_ids is not None
+        ids = np.asarray(stored.label_ids).astype(np.int32)
+        expected = _demo.sample_labels(label_vol, stored.centers)
+        np.testing.assert_array_equal(labels, expected)
+        np.testing.assert_array_equal(ids, expected)
+        assert set(np.unique(ids).tolist()) == set(np.unique(expected).tolist())
+        for cls in np.unique(expected):
+            assert int((ids == cls).sum()) == int((expected == cls).sum()), (
+                f"class {int(cls)} changed population through the save"
+            )
+        cached = GSplatData.load(_demo.LOCAL_FIT, include_stats=True)
+        assert cached.stats["psnr_db"] == 42.5
+        assert cached.stats["source_shape"] == [16, 16, 16]
+        # The vocabulary has to name every id present, background included.
+        vocab = {int(k): str(v) for k, v in (stored.label_vocabulary or {}).items()}
+        assert set(np.unique(ids).tolist()) <= set(vocab), "an id has no name"
+        assert vocab.get(0) == "background"
+
+    def test_a_legacy_fit_still_falls_back_to_its_sidecar(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """The in-repo Git-LFS path, which must keep working until #2354."""
+        label_vol, fit = self._fixture(tmp_path, monkeypatch, "legacy-")
+        stored, labels = _legacy_pair(label_vol, fit)
+
+        got = _demo._labels_for(stored, _demo.LOCAL_FIT, _demo.LOCAL_LABELS)
+
+        np.testing.assert_array_equal(got, labels)
+
+    def test_a_legacy_fit_with_a_misordered_sidecar_is_rejected(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """The guard must still fire on the shape where it can."""
+        label_vol, fit = self._fixture(tmp_path, monkeypatch, "broken-")
+        stored, labels = _legacy_pair(label_vol, fit)
+        rng = np.random.default_rng(6)
+        _save_labels_u8(labels[rng.permutation(len(labels))], _demo.LOCAL_LABELS)
+
+        assert _demo._labels_for(stored, _demo.LOCAL_FIT, _demo.LOCAL_LABELS) is None
+
+    def test_a_legacy_fit_with_no_sidecar_yields_nothing(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """Never render unlabelled anatomy — the callers must refit instead."""
+        label_vol, fit = self._fixture(tmp_path, monkeypatch, "none-")
+        stored, _ = _legacy_pair(label_vol, fit)
+
+        assert _demo._labels_for(stored, _demo.LOCAL_FIT, None) is None
+
+    def test_a_cache_that_drops_native_labels_is_removed(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        label_vol, fit = self._fixture(tmp_path, monkeypatch, "dropped-")
+        monkeypatch.setattr(_demo, "_native_labels", lambda _fit: None)
+
+        with pytest.raises(RuntimeError, match="cannot be cached without its labels"):
+            _demo.save_and_sample_labels(fit, label_vol)
+
+        assert not _demo.LOCAL_FIT.exists()
+
+
 class TestRejectedPairFallsThroughToRefit:
     """A rejected (fit, labels) pair must trigger a REFIT, not render nonsense.
 
@@ -497,7 +627,7 @@ class TestRejectedPairFallsThroughToRefit:
         monkeypatch.setattr(_demo, "LOCAL_FIT", tmp_path / _demo.FIT_FILE)
         monkeypatch.setattr(_demo, "LOCAL_LABELS", tmp_path / _demo.LABELS_FILE)
         monkeypatch.setattr(_demo, "CACHE_LABELS", tmp_path / _demo.LABELS_FILE)
-        stored, labels = _demo.save_and_sample_labels(fit, label_vol)
+        stored, labels = _legacy_pair(label_vol, fit)
         if permute:
             _save_labels_u8(labels[rng.permutation(n)], _demo.LOCAL_LABELS)
 
@@ -567,7 +697,7 @@ class TestShippedLfsPairIsGuardedToo:
         lfs_dir.mkdir()
         monkeypatch.setattr(_demo, "LOCAL_FIT", lfs_dir / _demo.FIT_FILE)
         monkeypatch.setattr(_demo, "LOCAL_LABELS", lfs_dir / _demo.LABELS_FILE)
-        _, labels = _demo.save_and_sample_labels(fit, label_vol)
+        _, labels = _legacy_pair(label_vol, fit)
         if permute:
             _save_labels_u8(labels[rng.permutation(n)], lfs_dir / _demo.LABELS_FILE)
         monkeypatch.setattr(_demo, "LFS_FIT", lfs_dir / _demo.FIT_FILE)
@@ -686,8 +816,14 @@ class TestTheLocalDoorOpensOnTheSecondLaunch:
 
         first_fit, first_labels = _demo.load_or_build()
         assert (downloads, fits) == ([1], [1]), "launch 1 should download and fit once"
-        assert _demo.LOCAL_FIT.exists() and _demo.LOCAL_LABELS.exists(), (
-            "launch 1 left an incomplete pair behind, so launch 2 must refit"
+        # Completeness is now a property of ONE file: the refit writes a fit that
+        # carries its own organ ids and emits no sidecar, so "both halves landed"
+        # is the wrong question — "does the fit describe itself" is the right one.
+        assert _demo.LOCAL_FIT.exists(), "launch 1 left no fit behind"
+        assert not _demo.LOCAL_LABELS.exists(), "the refit still wrote a sidecar"
+        cached = GSplatData.load(_demo.LOCAL_FIT)
+        assert _demo._native_labels(cached) is not None, (
+            "launch 1 cached a fit with no organ ids, so launch 2 must refit"
         )
 
         second_fit, second_labels = _demo.load_or_build()
@@ -696,16 +832,31 @@ class TestTheLocalDoorOpensOnTheSecondLaunch:
         np.testing.assert_array_equal(second_fit.centers, first_fit.centers)
         np.testing.assert_array_equal(second_labels, first_labels)
 
-    def test_a_missing_sidecar_sends_the_second_launch_back_to_the_refit(
+    def test_a_legacy_fit_with_no_sidecar_sends_the_second_launch_back_to_the_refit(
         self, tmp_path, monkeypatch
     ) -> None:
-        """Half a pair is not a usable answer — and it is the CHEAP half checked first."""
+        """Half a pair is still not a usable answer, where a pair is what exists.
+
+        A fit that carries its own ids cannot be half of anything, so the case
+        this covers is the LEGACY shape — the in-repo Git-LFS generation, which
+        has no label channel — with its sidecar gone. That branch is live until
+        those payloads retire (#2354), and it must refit rather than render.
+        """
         _, fits = self._setup(tmp_path, monkeypatch)
         _demo.load_or_build()
+        assert fits == [1]
+
+        # Replace the cached self-describing fit with the legacy shape, then take
+        # the sidecar away.
+        _legacy_pair(
+            np.zeros((16, 16, 16), dtype=np.int32),
+            _scattered_gsplat_data(6000, extent=15.49, seed=42),
+        )
+        assert _demo._native_labels(GSplatData.load(_demo.LOCAL_FIT)) is None
         _demo.LOCAL_LABELS.unlink()
 
         _demo.load_or_build()
-        assert fits == [1, 1], "a fit with no labels sidecar was rendered anyway"
+        assert fits == [1, 1], "a fit with neither native ids nor a sidecar was used"
 
     def test_recompute_bypasses_the_local_door(self, tmp_path, monkeypatch) -> None:
         """``--recompute`` must refit even with a perfectly good local pair present."""

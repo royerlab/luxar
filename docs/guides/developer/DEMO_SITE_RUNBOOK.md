@@ -466,15 +466,15 @@ datasets are affected:
 | dataset | files | repo MB | hosted MB | ratio |
 |---|---:|---:|---:|---:|
 | `gsplats_cells3d` | 2 | 0.6 | 1.3 | 2.25x |
-| `gsplats_ct_totalsegmentator` | 2 | 7.2 | 10.2 | 1.42x |
 | `gsplats_milkyway_dust` | 1 | 7.8 | 10.6 | 1.36x |
-| `gsplats_visible_human_head` | 2 | 25.6 | 34.5 | 1.35x |
 | `gsplats_cmu1_pathology` | 3 | 113.8 | 150.1 | 1.32x |
 | `gsplats_nexrad_supercell` | 1 | 10.1 | 12.9 | 1.28x |
 | `gsplats_dapi` | 1 | 0.1 | 0.1 | 1.22x |
+| `gsplats_visible_human_head` | 2 | 25.6 | 30.2 | 1.18x |
 | `gsplats_celegans` | 1 | 72.0 | 80.8 | 1.12x |
 | `desi_galaxies` | 1 | 74.3 | 76.8 | 1.03x |
 | `gsplats_kidney` | 3 | 2.1 | 2.1 | 0.99x |
+| `gsplats_ct_totalsegmentator` | 2 | 7.2 | 7.0 | 0.98x |
 | `gsplats_multichannel` | 2 | 0.4 | 0.4 | 0.95x |
 | `gsplats_cryoem_virus` | 1 | 11.1 | 10.6 | 0.95x |
 | `gsplats_flylight_mcfo_63x` | 1 | 8.2 | 7.7 | 0.94x |
@@ -1036,27 +1036,23 @@ would be ambiguous). Each moved file keeps its outgoing digest in
 `superseded_sha256`, so one previous cache generation reads as stale rather than
 corrupt.
 
-The other three — `vh_head`, `ct_atlas`, `milkyway_dust` — were left on their
-previous pins **on purpose**, and that gap is itself a hazard to carry forward:
+The paired migration in #2334 moved `vh_head` and `ct_atlas` together with their
+positionally indexed sidecars, bringing **seven of the eight** onto the restructured
+generation. Their fits now also carry the colours or labels natively, so a writer
+reorder cannot separate the payload from the splats it describes.
 
-- `vh_head` and `ct_atlas` each ship a **positionally indexed sidecar**
-  (`vh_head_colors.npz`, `ct_atlas_labels.npz`). Row *i* of the sidecar describes
-  element *i* of the archive, so a restructure that reorders elements silently
-  mismatches colours or labels unless both move together. #2334 tracks that paired
-  migration.
-- `milkyway_dust` keeps its levels-preserving generation because its coarse levels
-  are what get selected when the galaxy is orbited at range; a flat streaming
-  ladder would regress the zoomed-out view (3.14).
+Only `milkyway_dust` remains on its previous pin **on purpose**. Its coarse levels
+are what get selected when the galaxy is orbited at range; a flat streaming ladder
+would regress the zoomed-out view (3.14).
 
 **The consequence is a publish-order constraint, not a to-do.** The drafts hold
-restructured files for all three, while the manifest pins the previous generation.
-After the in-repo payloads are removed, publishing a record in that state makes
-cold fetches and fresh installs abort with an uncaught checksum `ValueError`: the
-three affected demos catch `DatasetUnavailable`, not digest mismatches, so the
-source-download/refit fallback does not run. Either roll the draft files back to
-the pinned contracts before publishing, or land the paired sidecar migration
-first. The live gallery tiles are indifferent either way, because they serve
-already-derived scenes and never consult the pin (3.10).
+the restructured `milkyway_dust` file while the manifest pins the previous
+generation. After the in-repo payload is removed, publishing the record in that
+state makes cold fetches and fresh installs abort with an uncaught checksum
+`ValueError`: the demo catches `DatasetUnavailable`, not digest mismatches, so the
+source-download/refit fallback does not run. Roll the draft file back to the pinned
+contract before publishing. The live gallery tile is indifferent either way,
+because it serves an already-derived scene and never consults the pin (3.10).
 
 ### 3.21 Guard the artefact you ship, not only the inputs you fed it
 
