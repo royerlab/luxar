@@ -20,7 +20,7 @@
  * three would stay green. Parameterising one contract over all four means a
  * fifth geometry, or a fold rewritten in one place, cannot quietly skip it.
  *
- * The two properties, and what each one catches:
+ * The three properties, and what each one catches:
  *
  *  1. FOLDS TO A SINGLE PAYLOAD — the fold happened at all. Catches a loader
  *     that concatenates but forgets to drop the parts, which is the original
@@ -31,6 +31,9 @@
  *     post-fold) would make the budget's mean-rung estimate read the whole
  *     merged blob as a single enormous next rung and stall refinement several
  *     rungs early.
+ *  3. THE MULTI-PASS CLIMB ALSO FOLDS — exercises the real refinement shape,
+ *     where each pass can build on the previous cumulative. The single-pass
+ *     case concatenates only once and cannot expose retention between passes.
  * @module tests/unit/data/_shared/ladder-fold-contract
  */
 
