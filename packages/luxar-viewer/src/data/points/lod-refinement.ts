@@ -18,10 +18,15 @@ import type {
 import { log, Modules } from '../../utils/log';
 import { notifier } from '../../utils/cross-layer/notifier';
 import { isAbortError } from '../loaders/abort-error';
+import { releaseLineageIfUncommitted } from '../../types/prefix-lineage';
 import { tryRollbackToPassStart } from '../loaders/progressive/pass-rollback';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 import type { ViewState } from '../data-loader-types';
 import type { ViewStateQueue } from '../scene-loader/view-state/view-state-queue';
+import type {
+  LadderResidency,
+  RefinementResidencyBudget,
+} from '../scene-loader/progressive/residency-budget';
 import {
   MAX_CONSECUTIVE_REFINEMENT_FAILURES,
   RefinementFailureTracker,
@@ -63,6 +68,11 @@ export interface PointsRefinementCtx {
    * `AbortError` in the per-loader catch is cancellation, not failure.
    */
   signal?: AbortSignal;
+  /**
+   * Shared residency ceiling for sweep-registered progressive leaves. Absent =
+   * unbounded (today's behaviour).
+   */
+  residencyBudget?: RefinementResidencyBudget;
 }
 
 export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<void> {
@@ -82,9 +92,18 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
         // Optional for the same reason as `hasMoreLODs`: only a progressive
         // loader has a ladder to unwind. Every `PointsProgressiveLoader` has it.
         rollbackToPassStart?: () => number;
+        ladderResidency?: () => LadderResidency;
       };
       if (progressiveLoader.hasMoreLODs !== true) return false;
       if (failures.isExhausted(path)) return false;
+      // Shared sweep residency ceiling. Declining here is not enough on its own —
+      // `anyHasMoreLODs` and `getLoaderProgress` below must also exclude
+      // declined paths, or the loop re-offers this loader every frame forever
+      // while holding the update lock (the trap `isExhausted` already avoids).
+      const residency = progressiveLoader.ladderResidency?.();
+      if (residency && ctx.residencyBudget?.admit(path, residency).admitted === false) {
+        return false;
+      }
       try {
         const mesh = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
         const nodeAttrs = mesh?.userData?.attrs as PointsMetadata | undefined;
@@ -102,13 +121,22 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
         const session = pass?.begin(`Points (${path})`);
         try {
           const data = await loader.updateView(pointsVS, session, ctx.signal);
-          // Superseded/disposed while we were loading: an abort that raced the
-          // load's resolution (served from cache / abort after the fetch) is
-          // not a throw. Skip the commit so no stale-slice geometry reaches the
-          // GPU — mirrors runAtomicCommit's signal.aborted guard on the main
-          // path (atomic-commit.ts).
-          if (data && ctx.signal?.aborted !== true) {
-            ctx.updatePointsGeometry(path, data, session);
+          let committed = false;
+          try {
+            // Superseded/disposed while we were loading: an abort that raced the
+            // load's resolution (served from cache / abort after the fetch) is
+            // not a throw. Skip the commit so no stale-slice geometry reaches the
+            // GPU — mirrors runAtomicCommit's signal.aborted guard on the main
+            // path (atomic-commit.ts).
+            if (data && ctx.signal?.aborted !== true) {
+              ctx.updatePointsGeometry(path, data, session);
+              committed = true;
+            }
+          } finally {
+            // A skipped commit never reaches the commit layer's own clear, and
+            // the pinned parent is the previous cumulative — worth up to a whole
+            // redundant copy on a deep ladder. See prefix-lineage.ts.
+            releaseLineageIfUncommitted(data, committed);
           }
         } finally {
           session?.end();
@@ -154,16 +182,28 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
         loadedLODCount: number;
         totalLODCount: number;
       };
-      if (failures.isExhausted(path) || progressiveLoader.hasMoreLODs !== true) return null;
+      if (
+        failures.isExhausted(path) ||
+        ctx.residencyBudget?.isDeclined(path) === true ||
+        progressiveLoader.hasMoreLODs !== true
+      ) {
+        return null;
+      }
       return {
         loaded: progressiveLoader.loadedLODCount,
         total: progressiveLoader.totalLODCount,
       };
     },
+    // A budget-declined loader still reports `hasMoreLODs`, so it MUST be
+    // excluded here as well or the loop never terminates.
     anyHasMoreLODs: () =>
       [...ctx.pointsLoaders.entries()].some(([path, l]) => {
         const pl = l as PointsDataLoader & { hasMoreLODs?: boolean };
-        return !failures.isExhausted(path) && pl.hasMoreLODs === true;
+        return (
+          !failures.isExhausted(path) &&
+          ctx.residencyBudget?.isDeclined(path) !== true &&
+          pl.hasMoreLODs === true
+        );
       }),
     onNoProgress: (stalled) => {
       for (const { path, loaded, total } of stalled) {

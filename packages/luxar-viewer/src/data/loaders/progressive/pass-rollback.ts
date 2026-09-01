@@ -35,6 +35,15 @@
  * stays in the loader, which is the only thing that can touch its private
  * fields.
  *
+ * COUNTS HERE ARE LOGICAL LEVELS, NEVER PAYLOAD ENTRIES. Every loader now FOLDS
+ * its ladder — the rungs are concatenated into one cumulative payload and the
+ * parts released — so `loadedLODs.length` becomes 1 while the logical count is
+ * still 7. That is why each loader carries a separate `_loadedLODCount`, and
+ * why {@link LadderRollbackState} takes the two counts apart rather than
+ * inferring either from an array length. Feeding a payload count into a logical
+ * field is silently wrong: no throw, just a memo gate evaluated against the
+ * wrong number.
+ *
  * @module data/loaders/progressive/pass-rollback
  */
 

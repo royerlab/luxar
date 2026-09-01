@@ -24,6 +24,7 @@ import {
   measureLodBytes,
 } from '../../../data/loaders/progressive/slice-cache-helper';
 import { getPrefixParent } from '../../../types/prefix-lineage';
+import { testLadderFoldContract } from './_shared/ladder-fold-contract';
 import {
   resetLodLoadStats,
   setLodLoadStatsEnabled,
@@ -1654,6 +1655,49 @@ describe('LinesProgressiveLoader — RGBA color layout (colorK stride, volumetri
     expect(result.colorComponents).toBe(4);
     expect(result.colors?.length).toBe(30 * 4);
   });
+});
+
+testLadderFoldContract('Lines', async () => {
+  const subs = [
+    makeSubLoader(makeLodData(20, 10, 3, { color: 'uint8' })),
+    makeSubLoader(makeLodData(10, 5, 3, { color: 'uint8' })),
+    makeSubLoader(makeLodData(4, 2, 3, { color: 'uint8' })),
+  ];
+  const l = new LinesProgressiveLoader(
+    subs as unknown as LinesSpatialIndexLoader[],
+    subs.length,
+    '/fold'
+  );
+  // Non-resident sub-LODs: the streaming policy stops after each level, so the
+  // ladder is climbed over several passes — the shape real refinement takes.
+  const mpSubs = [20, 10, 4].map((n) => {
+    const s = makeSubLoader(makeLodData(n, n / 2, 3, { color: 'uint8' }));
+    s.updateViewWithResidency.mockImplementation(async () => ({
+      data: makeLodData(n, n / 2, 3, { color: 'uint8' }),
+      allResident: false,
+    }));
+    return s;
+  });
+  const mp = new LinesProgressiveLoader(
+    mpSubs as unknown as LinesSpatialIndexLoader[],
+    mpSubs.length,
+    '/fold-mp'
+  );
+
+  return {
+    loader: l,
+    totalLevels: subs.length,
+    loadAll: async () => {
+      await l.loadLines(baseViewState);
+    },
+    multiPass: {
+      loader: mp,
+      totalLevels: mpSubs.length,
+      loadAll: async () => {
+        await mp.loadLines(baseViewState);
+      },
+    },
+  };
 });
 
 describe('LinesProgressiveLoader — vertexRangeBounds are never published (issue #1424)', () => {

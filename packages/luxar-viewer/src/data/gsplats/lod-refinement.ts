@@ -30,10 +30,15 @@ import type { LoadedGSplatsData } from '../../types/gsplats';
 import { log, Modules } from '../../utils/log';
 import { notifier } from '../../utils/cross-layer/notifier';
 import { isAbortError } from '../loaders/abort-error';
+import { releaseLineageIfUncommitted } from '../../types/prefix-lineage';
 import { tryRollbackToPassStart } from '../loaders/progressive/pass-rollback';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 import type { ViewState } from '../data-loader-types';
 import type { ViewStateQueue } from '../scene-loader/view-state/view-state-queue';
+import type {
+  LadderResidency,
+  RefinementResidencyBudget,
+} from '../scene-loader/progressive/residency-budget';
 import type { StagedGSplatsCommit } from '../scene-loader/process/data-processor-gsplats';
 import {
   MAX_CONSECUTIVE_REFINEMENT_FAILURES,
@@ -93,6 +98,11 @@ export interface GSplatsRefinementCtx {
    * `AbortError` in the per-loader catch is cancellation, not failure.
    */
   signal?: AbortSignal;
+  /**
+   * Shared residency ceiling for sweep-registered progressive leaves. Absent =
+   * unbounded (today's behaviour).
+   */
+  residencyBudget?: RefinementResidencyBudget;
 }
 
 /**
@@ -117,7 +127,16 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
       // `GSplatsProgressiveLoader` implements it.
       const progressiveLoader = loader as GSplatsDataLoader & {
         rollbackToPassStart?: () => number;
+        ladderResidency?: () => LadderResidency;
       };
+      // Shared sweep residency ceiling. Declining here is not enough on its own —
+      // `anyHasMoreLODs` and `getLoaderProgress` below must also exclude
+      // declined paths, or the loop re-offers this loader every frame forever
+      // while holding the update lock (the trap `isExhausted` already avoids).
+      const residency = progressiveLoader.ladderResidency?.();
+      if (residency && ctx.residencyBudget?.admit(path, residency).admitted === false) {
+        return false;
+      }
       try {
         const mesh = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
         const nodeAttrs = mesh?.userData?.attrs as GSplatsMetadata | undefined;
@@ -136,13 +155,24 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
         try {
           const data = await loader.updateView(gsplatsViewState, session, ctx.signal);
           if (data) {
-            const staged = await ctx.processGSplats(path, data, gsplatsViewState, session);
-            // Superseded/disposed while we were loading + processing: an abort
-            // landing during the async process round-trip is not a throw (so
-            // the AbortError catch below misses it). Skip the commit so no
-            // stale-slice geometry reaches the GPU — mirrors runAtomicCommit's
-            // signal.aborted guard on the main path (atomic-commit.ts).
-            if (staged && ctx.signal?.aborted !== true) ctx.commitGSplats(staged, session);
+            let committed = false;
+            try {
+              const staged = await ctx.processGSplats(path, data, gsplatsViewState, session);
+              // Superseded/disposed while we were loading + processing: an abort
+              // landing during the async process round-trip is not a throw (so
+              // the AbortError catch below misses it). Skip the commit so no
+              // stale-slice geometry reaches the GPU — mirrors runAtomicCommit's
+              // signal.aborted guard on the main path (atomic-commit.ts).
+              if (staged && ctx.signal?.aborted !== true) {
+                ctx.commitGSplats(staged, session);
+                committed = true;
+              }
+            } finally {
+              // A skipped commit never reaches the commit layer's own clear, and
+              // the pinned parent is the previous cumulative — worth up to a
+              // whole redundant copy on a deep ladder. See prefix-lineage.ts.
+              releaseLineageIfUncommitted(data, committed);
+            }
           }
         } finally {
           session?.end();
@@ -187,15 +217,26 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
         loadedLODCount: number;
         totalLODCount: number;
       };
-      if (failures.isExhausted(path) || progressiveLoader.hasMoreLODs !== true) return null;
+      if (
+        failures.isExhausted(path) ||
+        ctx.residencyBudget?.isDeclined(path) === true ||
+        progressiveLoader.hasMoreLODs !== true
+      ) {
+        return null;
+      }
       return {
         loaded: progressiveLoader.loadedLODCount,
         total: progressiveLoader.totalLODCount,
       };
     },
+    // A budget-declined loader still reports `hasMoreLODs`, so it MUST be
+    // excluded here as well or the loop never terminates.
     anyHasMoreLODs: () =>
       [...ctx.gsplatLoaders.entries()].some(
-        ([path, l]) => !failures.isExhausted(path) && l.hasMoreLODs === true
+        ([path, l]) =>
+          !failures.isExhausted(path) &&
+          ctx.residencyBudget?.isDeclined(path) !== true &&
+          l.hasMoreLODs === true
       ),
     onNoProgress: (stalled) => {
       for (const { path, loaded, total } of stalled) {

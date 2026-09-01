@@ -55,6 +55,7 @@ import type {
 import type { LODGroupRegistry } from '../../../scene/lod-group-registry';
 import { setupCaches } from '../cache/cache-setup';
 import { wireMonitorAfterLoad } from '../monitor/monitor-wiring';
+import { createCommittedLODCountReader } from '../monitor/committed-lod-reader';
 import { createDrawOrderProvider } from '../monitor/draw-order-provider';
 import { loadOverlayConfigs } from '../../loaders';
 import { buildSceneGraph } from '../nodes/build-scene-graph';
@@ -457,6 +458,7 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
     updateVisibleCounts: () => ctx.updateVisibleCountsInMonitor(),
     failedLoads: ctx.getFailedLoadsProvider(),
     drawOrderProvider: createDrawOrderProvider(rootGroup),
+    committedLODCounts: createCommittedLODCountReader(rootGroup),
   });
 
   // Report what ACTUALLY happened. Ordinary leaf-local LoaderErrors are swallowed

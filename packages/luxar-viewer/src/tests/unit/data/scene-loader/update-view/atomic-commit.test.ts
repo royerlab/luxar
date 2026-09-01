@@ -29,6 +29,7 @@ import type { LoadedPointsData } from '../../../../../data/data-loader-types';
 import type { StagedLinesCommit } from '../../../../../data/scene-loader/process/data-processor-lines';
 import type { StagedGSplatsCommit } from '../../../../../data/scene-loader/process/data-processor-gsplats';
 import type { StagedMeshCommit } from '../../../../../data/scene-loader/process/data-processor-mesh';
+import { getPrefixParent, setPrefixParent } from '../../../../../types/prefix-lineage';
 
 // ============================================================================
 // Local fixtures
@@ -471,5 +472,46 @@ describe('runAtomicCommit — discarded sweep', () => {
     for (const entry of [...points, ...lines, ...gsplats, ...mesh]) {
       expect(entry.session.end).toHaveBeenCalledTimes(2);
     }
+  });
+
+  it('releases uncommitted prefix lineage for Points, Lines, and GSplats only', () => {
+    const parent = {};
+    const pointsData = { pointCount: 1 } as LoadedPointsData;
+    const linesData = {};
+    const gsplatsData = {};
+    const meshData = {};
+    setPrefixParent(pointsData, parent);
+    setPrefixParent(linesData, parent);
+    setPrefixParent(gsplatsData, parent);
+    setPrefixParent(meshData, parent);
+
+    const points: AtomicCommitInput<{ path: string; data: LoadedPointsData }>[] = [
+      { staged: { path: '/p', data: pointsData }, session: makeSession() },
+    ];
+    const lines: AtomicCommitInput<StagedLinesCommit>[] = [
+      {
+        staged: { path: '/l', sourceData: linesData, noop: true } as StagedLinesCommit,
+        session: makeSession(),
+      },
+    ];
+    const gsplats: AtomicCommitInput<StagedGSplatsCommit>[] = [
+      {
+        staged: { path: '/g', sourceData: gsplatsData, noop: true } as StagedGSplatsCommit,
+        session: makeSession(),
+      },
+    ];
+    const mesh: AtomicCommitInput<StagedMeshCommit>[] = [
+      {
+        staged: { path: '/m', data: meshData } as StagedMeshCommit,
+        session: makeSession(),
+      },
+    ];
+
+    runAtomicCommit(points, lines, gsplats, mesh, makeCtx({ discard: true }));
+
+    expect(getPrefixParent(pointsData)).toBeUndefined();
+    expect(getPrefixParent(linesData)).toBeUndefined();
+    expect(getPrefixParent(gsplatsData)).toBeUndefined();
+    expect(getPrefixParent(meshData)).toBe(parent);
   });
 });
