@@ -628,6 +628,49 @@ describe('PointsProgressiveLoader', () => {
     });
   });
 
+  describe('rollbackToPassStart (failed-commit recovery, #2426)', () => {
+    it('unwinds only the levels the failing pass appended', async () => {
+      lodB.updateViewWithResidency.mockImplementationOnce(async () => ({
+        data: makeLodData(50, 3, { color: 'uint8' }),
+        allResident: false,
+      }));
+      await loader.loadPoints(baseViewState);
+      expect(loader.loadedLODCount).toBe(2);
+
+      await loader.loadPoints(baseViewState);
+      expect(loader.loadedLODCount).toBe(3);
+      expect(loader.rollbackToPassStart()).toBe(1);
+      expect(loader.loadedLODCount).toBe(2);
+      expect(loader.hasMoreLODs).toBe(true);
+    });
+
+    it('evicts an uncommitted full ladder snapshot before a later slice revisit', async () => {
+      const sliceCache = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const first = makeSubLoader(makeLodData(20, 3, { color: 'uint8' }));
+      const second = makeSubLoader(makeLodData(10, 3, { color: 'uint8' }));
+      const recovering = new PointsProgressiveLoader(
+        [first, second] as unknown as PointsSpatialIndexLoader[],
+        2,
+        '/rollback-cache',
+        undefined,
+        sliceCache
+      );
+      const viewA = baseViewState;
+      const viewB = { ...baseViewState, slicePosition: [0, 0, 0, 1] };
+
+      await recovering.loadPoints(viewA);
+      expect(recovering.rollbackToPassStart()).toBe(2);
+      await recovering.loadPoints(viewB);
+
+      first.updateViewWithResidency.mockClear();
+      second.updateViewWithResidency.mockClear();
+      await recovering.loadPoints(viewA);
+
+      expect(first.updateViewWithResidency).toHaveBeenCalled();
+      expect(second.updateViewWithResidency).toHaveBeenCalled();
+    });
+  });
+
   describe('cache-hit timing short-circuit', () => {
     it(`stops loading further LODs when one takes > ${CACHE_HIT_THRESHOLD_MS}ms`, async () => {
       // Make LOD B slow (over the threshold) so LOD C is deferred.
