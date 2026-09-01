@@ -381,9 +381,9 @@ describe('MeshProgressiveLoader', () => {
     expect(loader.loadedLODCount).toBe(2);
     expect(loader.hasMoreLODs).toBe(true);
 
-    for (const sub of subs) sub.updateViewWithResidency.mockClear();
+    for (const sub of subs) vi.mocked(sub.updateViewWithResidency).mockClear();
     await expect(loader.updateView(VIEW)).resolves.toBe(result);
-    for (const sub of subs) expect(sub.updateViewWithResidency).not.toHaveBeenCalled();
+    for (const sub of subs) expect(vi.mocked(sub.updateViewWithResidency)).not.toHaveBeenCalled();
     expect(loader.hasMoreLODs).toBe(false);
   });
 
