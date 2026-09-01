@@ -283,8 +283,8 @@ describe('RefinementResidencyBudget', () => {
     // Sharing the scene-owned reporter keeps that one fact from flooding the
     // console during slice playback or dimension animation.
     const reporter = new RefinementResidencyReporter();
-    const firstRun = new RefinementResidencyBudget(10 * MB, [], reporter);
-    const secondRun = new RefinementResidencyBudget(10 * MB, [], reporter);
+    const firstRun = RefinementResidencyBudget.forSession(30 * MB, undefined, [], reporter);
+    const secondRun = RefinementResidencyBudget.forSession(30 * MB, undefined, [], reporter);
     for (let i = 0; i < 5; i++) firstRun.admit(`/first${i}`, residency(50 * MB, 5));
     for (let i = 0; i < 5; i++) secondRun.admit(`/second${i}`, residency(50 * MB, 5));
     expect(warn).toHaveBeenCalledTimes(1);
