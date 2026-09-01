@@ -14,6 +14,9 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import * as THREE from 'three';
+import { stampLadderComplete } from '../../../../../data/scene-loader/commit/stamp-view-version';
+import { createCommittedLODCountReader } from '../../../../../data/scene-loader/monitor/committed-lod-reader';
 import { createLODProgressProvider } from '../../../../../data/scene-loader/monitor/lod-progress-provider';
 
 /** A loader stalled at rung 3 of 7 whose cursor ran on to 7. */
@@ -27,6 +30,31 @@ function strandedLoader() {
 }
 
 describe('monitor LOD progress reports committed geometry', () => {
+  it('reads the committed cursor stamped on a named scene node', () => {
+    const root = new THREE.Group();
+    const node = new THREE.Object3D();
+    node.name = '/Basin 2 streamlines';
+    node.userData.loader = strandedLoader();
+    root.add(node);
+
+    stampLadderComplete(node.userData);
+
+    expect(createCommittedLODCountReader(root)()).toEqual(new Map([['/Basin 2 streamlines', 7]]));
+  });
+
+  it('omits a loader with no progressive cursor stamp', () => {
+    const root = new THREE.Group();
+    const node = new THREE.Object3D();
+    node.name = '/single-set';
+    node.userData.loader = {};
+    root.add(node);
+
+    stampLadderComplete(node.userData);
+
+    expect(createCommittedLODCountReader(root)()).toEqual(new Map());
+    expect(node.userData).not.toHaveProperty('committedLODCount');
+  });
+
   it('reports the committed rung count, not the loader cursor', () => {
     const provider = createLODProgressProvider({
       loaderMaps: [new Map([['/Basin 2 streamlines', strandedLoader()]])],
