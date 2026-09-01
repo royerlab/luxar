@@ -94,6 +94,12 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
         // `LinesProgressiveLoader` implements it.
         rollbackToPassStart?: () => number;
         ladderResidency?: () => LadderResidency;
+        updateView: (
+          viewState: LinesViewState,
+          session?: UpdateSession,
+          signal?: AbortSignal,
+          residencyAllowanceBytes?: number
+        ) => Promise<LoadedLinesData>;
       };
       if (progressiveLoader.hasMoreLODs !== true) return false;
       if (failures.isExhausted(path)) return false;
@@ -102,7 +108,8 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
       // declined paths, or the loop re-offers this loader every frame forever
       // while holding the update lock (the trap `isExhausted` already avoids).
       const residency = progressiveLoader.ladderResidency?.();
-      if (residency && ctx.residencyBudget?.admit(path, residency).admitted === false) {
+      const admission = residency ? ctx.residencyBudget?.admit(path, residency) : undefined;
+      if (admission?.admitted === false) {
         return false;
       }
       try {
@@ -123,7 +130,12 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
         const pass = ctx.profiler?.beginPass();
         const session = pass?.begin(`Lines (${path})`);
         try {
-          const data = await loader.updateView(linesVS, session, ctx.signal);
+          const data = await progressiveLoader.updateView(
+            linesVS,
+            session,
+            ctx.signal,
+            admission?.allowanceBytes ?? undefined
+          );
           if (data) {
             let committed = false;
             try {
@@ -180,6 +192,9 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
           );
         }
         return false;
+      } finally {
+        const measured = progressiveLoader.ladderResidency?.();
+        if (measured) ctx.residencyBudget?.record(path, measured);
       }
     },
     getLoaderProgress: (path, loader) => {

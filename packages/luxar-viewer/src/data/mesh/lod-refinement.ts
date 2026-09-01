@@ -99,6 +99,12 @@ export async function runMeshRefinement(ctx: MeshRefinementCtx): Promise<void> {
         // loader has a ladder to unwind. Every `MeshProgressiveLoader` has it.
         rollbackToPassStart?: () => number;
         ladderResidency?: () => LadderResidency;
+        updateView: (
+          viewState: MeshViewState,
+          session?: UpdateSession,
+          signal?: AbortSignal,
+          residencyAllowanceBytes?: number
+        ) => Promise<LoadedMeshData>;
       };
       if (progressiveLoader.hasMoreLODs !== true) return false;
       if (failures.isExhausted(path)) return false;
@@ -107,7 +113,8 @@ export async function runMeshRefinement(ctx: MeshRefinementCtx): Promise<void> {
       // declined paths, or the loop re-offers this loader every frame forever
       // while holding the update lock (the trap `isExhausted` already avoids).
       const residency = progressiveLoader.ladderResidency?.();
-      if (residency && ctx.residencyBudget?.admit(path, residency).admitted === false) {
+      const admission = residency ? ctx.residencyBudget?.admit(path, residency) : undefined;
+      if (admission?.admitted === false) {
         return false;
       }
       try {
@@ -126,7 +133,12 @@ export async function runMeshRefinement(ctx: MeshRefinementCtx): Promise<void> {
         const pass = ctx.profiler?.beginPass();
         const session = pass?.begin(`Mesh (${path})`);
         try {
-          const data = await loader.updateView(meshVS, session, ctx.signal);
+          const data = await progressiveLoader.updateView(
+            meshVS,
+            session,
+            ctx.signal,
+            admission?.allowanceBytes ?? undefined
+          );
           if (data) {
             const staged = await ctx.processMesh(path, data, meshVS, {
               normal_dims: nodeAttrs?.normal_dims,
@@ -176,6 +188,9 @@ export async function runMeshRefinement(ctx: MeshRefinementCtx): Promise<void> {
           );
         }
         return false;
+      } finally {
+        const measured = progressiveLoader.ladderResidency?.();
+        if (measured) ctx.residencyBudget?.record(path, measured);
       }
     },
     getLoaderProgress: (path, loader) => {

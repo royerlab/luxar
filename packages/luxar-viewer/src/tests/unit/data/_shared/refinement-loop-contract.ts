@@ -136,6 +136,49 @@ export function defineRefinementLoopContract(
       expect(releaseLock).toHaveBeenCalledTimes(1);
     });
 
+    it('passes remaining headroom into the loader and records measured pass growth', async () => {
+      let hasMoreLODs = true;
+      let residentBytes = 20;
+      let loadedRungs = 2;
+      const loader = {
+        get hasMoreLODs() {
+          return hasMoreLODs;
+        },
+        get loadedLODCount() {
+          return loadedRungs;
+        },
+        totalLODCount: 4,
+        ladderResidency: () => ({
+          residentBytes,
+          loadedRungs,
+          elementCount: 0,
+          bytesPerElement: 0,
+        }),
+        updateView: vi.fn().mockImplementation(async () => {
+          residentBytes = 35;
+          loadedRungs = 4;
+          hasMoreLODs = false;
+          return null;
+        }),
+      };
+      const residencyBudget = new RefinementResidencyBudget(40);
+
+      await run({
+        loaders: new Map([['/n', loader]]),
+        viewStateQueue: new ViewStateQueue(),
+        deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
+        updateVisibleCountsInMonitor: vi.fn(),
+        releaseLock: vi.fn(),
+        retriggerUpdate: vi.fn(),
+        processSpy: vi.fn(),
+        residencyBudget,
+      });
+
+      expect(loader.updateView).toHaveBeenCalledTimes(1);
+      expect(loader.updateView.mock.calls[0][3]).toBe(20);
+      expect(residencyBudget.residentBytes).toBe(35);
+    });
+
     it('stops after one successful pass that does not advance the pending loader', async () => {
       const loader = {
         hasMoreLODs: true,

@@ -128,13 +128,20 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
       const progressiveLoader = loader as GSplatsDataLoader & {
         rollbackToPassStart?: () => number;
         ladderResidency?: () => LadderResidency;
+        updateView: (
+          viewState: GSplatsViewState,
+          session?: UpdateSession,
+          signal?: AbortSignal,
+          residencyAllowanceBytes?: number
+        ) => Promise<LoadedGSplatsData>;
       };
       // Shared sweep residency ceiling. Declining here is not enough on its own —
       // `anyHasMoreLODs` and `getLoaderProgress` below must also exclude
       // declined paths, or the loop re-offers this loader every frame forever
       // while holding the update lock (the trap `isExhausted` already avoids).
       const residency = progressiveLoader.ladderResidency?.();
-      if (residency && ctx.residencyBudget?.admit(path, residency).admitted === false) {
+      const admission = residency ? ctx.residencyBudget?.admit(path, residency) : undefined;
+      if (admission?.admitted === false) {
         return false;
       }
       try {
@@ -153,7 +160,12 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
         const pass = ctx.profiler?.beginPass();
         const session = pass?.begin(`GSplats (${path})`);
         try {
-          const data = await loader.updateView(gsplatsViewState, session, ctx.signal);
+          const data = await progressiveLoader.updateView(
+            gsplatsViewState,
+            session,
+            ctx.signal,
+            admission?.allowanceBytes ?? undefined
+          );
           if (data) {
             let committed = false;
             try {
@@ -210,6 +222,9 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
           );
         }
         return false;
+      } finally {
+        const measured = progressiveLoader.ladderResidency?.();
+        if (measured) ctx.residencyBudget?.record(path, measured);
       }
     },
     getLoaderProgress: (path, loader) => {

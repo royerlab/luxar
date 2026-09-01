@@ -32,7 +32,10 @@
  * those allocations are not present in the decoded payload. The renderer's two
  * Uint32 ordering buffers (8 B/element) are intentionally omitted, as is the
  * separately bounded slice cache. The next pass is estimated from the mean
- * accounted rung so far — see {@link estimateNextRungBytes}. During a
+ * accounted rung so far — see {@link estimateNextRungBytes}. An admitted loader
+ * receives the exact remaining headroom and stops after the first level that
+ * spends it, so a warmed cache cannot consume the rest of the ladder under one
+ * admission. During a
  * fold/commit, the previous cumulative CPU payload can remain reachable while
  * the replacement is allocated, so the transient peak may add nearly one extra
  * decoded cumulative on top of the settled payload + element-row accounting.
@@ -73,6 +76,12 @@ export interface RefinementAdmission {
   budgetBytes: number;
 }
 
+/** Admission plus the additional settled bytes this pass may consume. */
+export interface RefinementPassAdmission extends RefinementAdmission {
+  /** `null` when no residency signal is available. */
+  allowanceBytes: number | null;
+}
+
 /**
  * Decide whether one loader may run another refinement pass.
  *
@@ -81,14 +90,12 @@ export interface RefinementAdmission {
  *  1. a HARD STOP once tracked residency is already at or past the ceiling, and
  *  2. a PREDICTIVE stop when the next rung would cross it.
  *
- * Rule 2's input comes from {@link estimateNextRungBytes}, which reserves one
- * mean rung but authorises a PASS. A warm-cache pass may append every remaining
- * cache-resident level before the streaming policy yields, so the bound is one
- * pass of overshoot per node per run, not one rung. Admissions reserve their
- * estimate immediately, so later nodes in the same run see that authorised
- * growth. #2432 tracks enforcing the allowance inside the streaming loop.
- * Over-estimating here would stop equal-count ladders several rungs early,
- * degrading scenes that were never in danger.
+ * Rule 2's input comes from {@link estimateNextRungBytes}, which under-estimates
+ * on purpose for the ladder shape that actually hurts. A geometric ladder may
+ * cross the ceiling by one level before its pass stops. Admissions reserve
+ * their estimate immediately, and measured post-pass bytes replace it before
+ * the next loader is considered. Over-estimating here would stop equal-count
+ * ladders several rungs early, degrading scenes that were never in danger.
  *
  * Production construction supplies a device-class fallback when
  * `performance.memory` is unavailable, so Firefox and Safari are budgeted too.
@@ -263,17 +270,24 @@ export class RefinementResidencyBudget {
    * progress. An admission immediately reserves its estimated next rung so the
    * remaining loaders in this pass see the growth already authorised.
    */
-  admit(path: string, residency: LadderResidency): RefinementAdmission {
+  admit(path: string, residency: LadderResidency): RefinementPassAdmission {
     const accounted = ladderResidentBytes(residency);
     const nextRungBytes = estimateNextRungBytes(accounted, residency.loadedRungs);
     this.perPath.set(path, accounted);
     const verdict = planRefinementAdmission(this.residentBytes, nextRungBytes, this.budgetBytes);
+    const allowanceBytes =
+      this.budgetBytes > 0 ? Math.max(0, this.budgetBytes - verdict.residentBytes) : null;
     if (verdict.admitted) {
       this.perPath.set(path, accounted + nextRungBytes);
     } else {
       this.declined.add(path);
       this.reporter.reportOnce(path, verdict);
     }
-    return verdict;
+    return { ...verdict, allowanceBytes };
+  }
+
+  /** Replace an admission estimate with the loader's measured post-pass footprint. */
+  record(path: string, residency: LadderResidency): void {
+    this.perPath.set(path, ladderResidentBytes(residency));
   }
 }

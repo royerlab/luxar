@@ -71,7 +71,10 @@ import type { UpdateSession } from '../../profiling/update-profiler';
 import { concatRequiredField } from '../loaders/progressive/concat-helpers';
 import { planLadderRollback } from '../loaders/progressive/pass-rollback';
 import { measureLodBytes } from '../loaders/progressive/slice-cache-helper';
-import type { LadderResidency } from '../scene-loader/progressive/residency-budget';
+import {
+  ladderResidentBytes,
+  type LadderResidency,
+} from '../scene-loader/progressive/residency-budget';
 import {
   classifyStreamingPass,
   shouldStopBeforeLevel,
@@ -657,7 +660,8 @@ export class MeshProgressiveLoader implements MeshDataLoader {
   async updateView(
     viewState: MeshViewState,
     session?: UpdateSession,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    residencyAllowanceBytes?: number
   ): Promise<LoadedMeshData> {
     // Record the per-pass playback budget FIRST: a pause re-trigger arrives with
     // the same view state and must still clear the budget.
@@ -685,6 +689,7 @@ export class MeshProgressiveLoader implements MeshDataLoader {
 
     const pass = classifyStreamingPass(budgetDeadline !== null, isPrefetch);
     const startLevel = this._loadedLODCount;
+    const residentBytesAtPassStart = ladderResidentBytes(this.ladderResidency());
     this._levelsAtPassStart = startLevel;
     this._payloadsAtPassStart = this.loadedLODs.length;
 
@@ -723,7 +728,23 @@ export class MeshProgressiveLoader implements MeshDataLoader {
         );
       }
 
-      if (shouldStopAfterLevel(pass, level, startLevel, allResident, elapsed)) break;
+      const additionalResidentBytes = Math.max(
+        0,
+        ladderResidentBytes(this.ladderResidency()) - residentBytesAtPassStart
+      );
+      if (
+        shouldStopAfterLevel(
+          pass,
+          level,
+          startLevel,
+          allResident,
+          elapsed,
+          additionalResidentBytes,
+          residencyAllowanceBytes
+        )
+      ) {
+        break;
+      }
     }
 
     if (!this._initialLoadDone && startLevel === 0) this._initialLoadDone = true;

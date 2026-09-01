@@ -80,6 +80,12 @@ describe('shouldStopAfterLevel', () => {
     expect(shouldStopAfterLevel('prefetch', 5, 0, false, slow)).toBe(false);
   });
 
+  it('stops after a level spends the refinement residency allowance', () => {
+    expect(shouldStopAfterLevel('refine', 1, 0, true, fast, 9, 10)).toBe(false);
+    expect(shouldStopAfterLevel('refine', 1, 0, true, fast, 10, 10)).toBe(true);
+    expect(shouldStopAfterLevel('refine', 0, 0, true, fast, 0, 0)).toBe(false);
+  });
+
   // Playback shares refine's rule: residency, not level index, is what
   // separates "affordable inside a tick" from "stalls the tick" (#2374/#2376).
   it('playback stops at the first cold level past the floor', () => {

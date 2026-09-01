@@ -108,14 +108,27 @@ export function shouldStopBeforeLevel(
  *
  * `prefetch` deepens regardless of residency — warming cold levels is its whole
  * job — and is bounded by the pass budget + abort instead.
+ *
+ * A refinement residency allowance is independent of those disciplines. When
+ * supplied, the first level that spends the remaining settled-byte headroom is
+ * kept, then the pass stops before another cache-resident level can append.
  */
 export function shouldStopAfterLevel(
   kind: StreamingPassKind,
   level: number,
   startLevel: number,
   allResident: boolean,
-  elapsedMs: number
+  elapsedMs: number,
+  additionalResidentBytes = 0,
+  residencyAllowanceBytes?: number
 ): boolean {
+  if (
+    residencyAllowanceBytes !== undefined &&
+    additionalResidentBytes > 0 &&
+    additionalResidentBytes >= Math.max(0, residencyAllowanceBytes)
+  ) {
+    return true;
+  }
   if (kind === 'prefetch') return false;
   return (
     isPastGuaranteedProgressFloor(kind, level, startLevel) &&

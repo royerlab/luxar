@@ -680,6 +680,12 @@ describe('GSplatsProgressiveLoader', () => {
       expect(lodB.updateViewWithResidency).toHaveBeenCalled();
       expect(lodC.updateViewWithResidency).toHaveBeenCalled();
     });
+
+    it('stops a warmed-cache refinement pass after spending its residency allowance', async () => {
+      await loader.updateView(baseViewState, undefined, undefined, 1);
+      expect(loader.loadedLODCount).toBe(1);
+      expect(lodB.updateViewWithResidency).not.toHaveBeenCalled();
+    });
   });
 
   describe('playback frame budget (frameBudgetMs)', () => {
