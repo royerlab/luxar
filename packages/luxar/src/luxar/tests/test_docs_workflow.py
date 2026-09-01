@@ -172,6 +172,22 @@ def test_runbook_archive_size_table_matches_active_manifest_pins() -> None:
     assert ratios == sorted(ratios, reverse=True)
 
 
+def test_runbook_publish_constraint_names_only_unmigrated_archive() -> None:
+    """Keep the rollback instruction scoped to the one intentionally stale pin."""
+    text = DEMO_SITE_RUNBOOK.read_text()
+    section = text.split(
+        "#### A partial re-pin leaves the drafts and the manifest deliberately disagreeing",
+        1,
+    )[1].split("### 3.21", 1)[0]
+    prose = " ".join(section.split())
+
+    assert "**seven of the eight**" in prose
+    assert "Only `milkyway_dust` remains on its previous pin" in prose
+    assert "Roll the draft file back to the pinned contract before publishing" in prose
+    assert "drafts hold restructured files for all three" not in prose
+    assert "land the paired sidecar migration first" not in prose
+
+
 def test_pages_publishes_daily_or_on_demand_not_on_main_push() -> None:
     """Keep publication off pushes; scheduling is active only on default dev."""
     triggers = _workflow_triggers()

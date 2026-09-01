@@ -247,6 +247,7 @@ _MANIFEST_PATH_READERS = frozenset(
     {
         "load",  # GSplatData.load / np.load
         "_load_labels",  # ct_totalsegmentator's npz reader
+        "_labels_for",  # ct_totalsegmentator's native-or-sidecar reader
         "_load_colors_f32",  # visible_human_head's npz reader
     }
 )
@@ -1015,6 +1016,12 @@ def test_the_guard_sees_every_path_shape_the_demos_use() -> None:
     )
     assert not local_fit_violations(
         header + 'L = CACHE_DIR / "toy_ch1.zip"\nlabels = _load_labels(L)\n', datasets
+    )
+    assert not local_fit_violations(
+        header
+        + 'L = CACHE_DIR / "toy_ch1.zip"\n'
+        + "labels = _labels_for(fit, fit_path, L)\n",
+        datasets,
     )
     assert not local_fit_violations(
         header + 'raw = CACHE_DIR / "source.tif"\nrequests.download(raw)\n', datasets
