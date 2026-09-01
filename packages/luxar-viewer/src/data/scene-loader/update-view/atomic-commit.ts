@@ -97,7 +97,10 @@ export function runAtomicCommit(
       ctx.onCommitFailed?.(path);
     } catch (rollbackError) {
       commitErrors.push(
-        new AggregateError([error, rollbackError], `Geometry commit and rollback failed for ${path}`)
+        new AggregateError(
+          [error, rollbackError],
+          `Geometry commit and rollback failed for ${path}`
+        )
       );
       return;
     }

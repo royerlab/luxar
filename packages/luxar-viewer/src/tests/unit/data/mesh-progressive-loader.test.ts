@@ -355,10 +355,9 @@ describe('MeshProgressiveLoader', () => {
   });
 
   it('unwinds only the levels the failing pass appended', async () => {
-    const { loader } = makeLadder(
-      [level(4, [0, 1, 2]), level(3, [0, 1, 2]), level(3, [0, 1, 2])],
-      { resident: false }
-    );
+    const { loader } = makeLadder([level(4, [0, 1, 2]), level(3, [0, 1, 2]), level(3, [0, 1, 2])], {
+      resident: false,
+    });
 
     await loader.updateView(VIEW);
     expect(loader.loadedLODCount).toBe(2);
