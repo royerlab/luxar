@@ -153,11 +153,12 @@ function levelData(faceCount: number): LoadedMeshData {
 }
 
 /**
- * A `MeshWholeNodeLoader`-shaped stub for one ladder level: the three methods
+ * A `MeshWholeNodeLoader`-shaped stub for one ladder level: the four methods
  * `MeshProgressiveLoader` calls — the `updateViewWithResidency` its streaming
  * loop fetches through, the `runPreflight` its aggregate byte-budget gate calls
- * once per level before any level is fetched, and the `dispose` it forwards to
- * every level on teardown. Always reports
+ * once per level before any level is fetched, the `releaseData` it calls after
+ * folding a level into the cumulative payload, and the `dispose` it forwards
+ * to every level on teardown. Always reports
  * `allResident: false` — see the module doc for why that is the faithful
  * (not merely convenient) choice.
  */
@@ -176,6 +177,7 @@ function stubLevelLoader(faceCount: number): MeshWholeNodeLoader {
       accountedBytes: data.vertices.byteLength + data.faces.byteLength,
     })),
     updateViewWithResidency: vi.fn(async () => ({ data, allResident: false })),
+    releaseData: vi.fn(),
     dispose: vi.fn(),
   } as unknown as MeshWholeNodeLoader;
 }
