@@ -144,45 +144,13 @@ export class LinesBufferAdapter {
       // The released buffer can never be picked by the best-fit scan
       // for this call: its capacity < segmentCount.
       const released = active;
-      let grown: THREE.InstancedBufferGeometry;
       try {
         this.releaseGeometry(nodeId);
-        grown = this.adoptOrAllocate(nodeId, segmentCount);
+        return this.adoptOrAllocate(nodeId, segmentCount);
       } catch (error) {
         this.reclaimAfterFailedGrow(nodeId, released);
         throw error;
       }
-      // POST-GROW RECLAIM. Without this the pair released above is stranded
-      // for the lifetime of the scene, by two independent mechanisms:
-      //
-      //  - the sweep inside `releaseGeometry` IS unconditional, but it runs
-      //    before the larger replacement is registered active, so it measures
-      //    `budget - sumActiveBytes()` against PRE-GROWTH accounting, sees
-      //    headroom that no longer exists, and evicts nothing;
-      //  - the acquire-side sweep in `adoptOrAllocate` does see the new
-      //    accounting, but runs with `graceFrame = frameCount` while
-      //    `releaseGeometry` has just stamped the released pair with that same
-      //    frame — so the grace skips exactly the buffer we need it to take.
-      //    (And on the ADOPT path there is no acquire sweep at all.)
-      //
-      // So it escapes both. One unconditional pass here, with the replacement
-      // already registered, closes it — re-running the EXISTING policy at the
-      // right moment rather than adding a disposal path of its own.
-      //
-      // Deliberately OUTSIDE the try: a throwing dispose listener must not be
-      // mistaken for a failed grow and send us into `reclaimAfterFailedGrow`,
-      // which would try to reinstate a buffer this node has already replaced.
-      //
-      // On the grace it overrides: that grace exists for the DATASET SWITCH
-      // (release everything, re-acquire in the same frame — without it each
-      // allocation's sweep disposes buffers later acquires would have
-      // best-fit). A growth is not that shape: the released pair is by
-      // construction SMALLER than what this node now needs, and co-growing
-      // siblings are moving up too, so it is a poor adoption candidate. That
-      // is an argument, not a measurement — `reuses` across a dataset switch
-      // is the check that keeps it honest.
-      host.evictUnused(false);
-      return grown;
     }
 
     return this.adoptOrAllocate(nodeId, segmentCount);

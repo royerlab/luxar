@@ -136,22 +136,13 @@ export class GSplatsBufferAdapter {
       // The released buffer can never be picked by the best-fit scan
       // for this call (capacity < splatCount).
       const released = active;
-      let grown: THREE.InstancedBufferGeometry;
       try {
         this.releaseGeometry(nodeId);
-        grown = this.adoptOrAllocate(nodeId, splatCount);
+        return this.adoptOrAllocate(nodeId, splatCount);
       } catch (error) {
         this.reclaimAfterFailedGrow(nodeId, released);
         throw error;
       }
-      // Post-grow reclaim — see the twin comment in `lines-adapter.ts` for why
-      // the pair released above escapes BOTH existing sweeps (the release
-      // sweep runs before the replacement registers; the acquire sweep
-      // grace-skips a buffer stamped with the current frame, and the adopt
-      // path sweeps not at all). Outside the try so a throwing dispose
-      // listener is not mistaken for a failed grow.
-      host.evictUnused(false);
-      return grown;
     }
 
     return this.adoptOrAllocate(nodeId, splatCount);
