@@ -65,9 +65,9 @@ export function concatenateGSplatsData(parts: LoadedGSplatsData[]): LoadedGSplat
 
   if (parts.length === 1) {
     // GUARD (belt-and-braces): a ladder payload must never publish the picking
-    // index space. `parts[0]` is a SUB-LOD (`additive_0`), so its ranges
-    // (and any map composed from them) are in that level's on-disk index space,
-    // not the parent node's, and `parts.length === 1` is not "unladdered" — this
+    // index space. `parts[0]` is either `additive_0` or a folded cumulative
+    // prefix, but its ranges are still not in the parent node's index space, and
+    // `parts.length === 1` is not "unladdered" — this
     // loader only exists for `n_additive_sublods` nodes, so it is the first-paint
     // state of EVERY ladder. Passing them through would make hover report an
     // additive_0 index while only LOD 0 is resident and the raw slot once a
