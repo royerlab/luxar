@@ -8,7 +8,6 @@ blending — no network, no PNG IO, no GPU fit. The demo is loaded by file path
 from __future__ import annotations
 
 import importlib.util
-import json
 import sys
 from pathlib import Path
 
@@ -16,7 +15,7 @@ import numpy as np
 import pytest
 import zarr
 
-from luxar.demos import is_lfs_pointer, voxel_sampled_payload_agreement
+from luxar.demos import voxel_sampled_payload_agreement
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.gsplats.gsplat_data import GSplatData
 
@@ -26,24 +25,11 @@ _DEMO_PATH = (
     Path(__file__).resolve().parents[1] / "demo_gsplats_3d_visible_human_head.py"
 )
 _DATA_MANIFEST_PATH = _DEMO_PATH.parent / "data_manifest.json"
-# The pair SHIPPED IN THIS REPO — the 20,572,128-byte fit and the sidecar #1911
-# resampled against it (1,911,192 rows, matching that fit's splat count). These
-# track the manifest's `sha256`, deliberately: the sibling deep check validates
-# them against MATERIALIZED git-LFS bytes, so they can only ever describe the
-# in-repo copy.
-#
-# The cc-by deposition holds a different generation: a 25,107,673-byte fit that
-# carries its 1,908,888 per-splat colors as a NATIVE gsplat attribute, plus a
-# sidecar exported from those same colors (so aligned by construction). The
-# manifest records it separately as `hosted_sha256`/`hosted_bytes`. Do not "fix"
-# these constants to the hosted digests: the deep check cannot verify bytes that
-# are not on disk, and the two generations must never be mixed. Pinning one file
-# from each is the #1670 mis-ordering all over again, so each moves together or
-# not at all.
-_SHIPPED_FIT_SHA256 = "c6ebbab8c2d1bdff0d5fd35f7032c6a375724b5fe5e6d33e8ca4e6af6ab139f6"
-_SHIPPED_COLORS_SHA256 = (
-    "63bce184e56d6d3b5f8f6817100c66310984c45da65fd94cdbc0a42ac05abb44"
-)
+# The in-repo Git-LFS pair this demo used to ship was removed with the rest of
+# the payloads (#2354); the manifest now pins the HOSTED fit directly, and that
+# fit carries its colours natively (#2334) so there is no pair left to keep
+# aligned. The guard itself is still exercised throughout this file on
+# synthetic pairs, which is what the legacy sidecar branch still needs.
 
 
 def _load_demo_module():
@@ -58,9 +44,6 @@ def _load_demo_module():
 
 
 _demo = _load_demo_module()
-_LFS_DIR = _DEMO_PATH.parent / "data" / _demo.DEMO_NAME
-_LFS_FIT = _LFS_DIR / _demo.FIT_FILE
-_LFS_COLORS = _LFS_DIR / _demo.COLORS_FILE
 create_luxar_scene = _demo.create_luxar_scene
 luminance = _demo.luminance
 tissue_mask = _demo.tissue_mask
@@ -699,77 +682,3 @@ class TestManifestPairIsGuardedToo:
         got_fit, got_colors = _demo.load_or_build()
         assert got_fit is not sentinel_fit, "an aligned manifest pair triggered a refit"
         np.testing.assert_array_equal(got_colors, colors)
-
-
-class TestShippedPairIsAligned:
-    """The SHIPPED (fit, colors) pair must pass the demo's own guard.
-
-    Every other test here exercises the guard on synthetic pairs, which is why
-    #1670 survived: the mechanism was covered and the artifact was not. The
-    shipped sidecar had been sampled in the pre-save splat order, disagreed with
-    the shipped store at 0.00097, and the demo silently fell through to a 1.1 GB
-    download and refit on every run for anyone who pulled Git LFS.
-
-    A sidecar carries no positions, so a mis-ordered one cannot be repaired in
-    place — it has to be resampled from the volume. The manifest-pin test runs
-    without materialized LFS assets in CI; bump its constants only after this
-    deep pair check passes on a checkout where ``git lfs pull`` has run.
-
-    Know the deep check's resolution before trusting it. The metric only sees
-    splats that SHARE a voxel — 136,703 of 1,911,192 here, 7.15% — so it catches
-    wholesale reordering and nothing finer. Measured against the real sidecar: a
-    full permutation scores 0.00001, a roll by one 0.03546, a length change is
-    caught outright, but swapping two arbitrary rows still passes. That is the
-    right trade for the failure this guards (a sampling pass writing the whole
-    array in the wrong order, i.e. #1670), and the wrong tool for per-splat
-    corruption.
-
-    It also cannot detect a resample taken in a DRIFTED coordinate frame — see
-    the rejection branch in ``load_or_build``, and the three out-of-band frame
-    checks recorded in the demo's module docstring.
-    """
-
-    def test_manifest_keeps_the_verified_pair_pinned(self) -> None:
-        manifest = json.loads(_DATA_MANIFEST_PATH.read_text())
-        files = {
-            entry["name"]: entry["sha256"]
-            for entry in manifest["datasets"]["gsplats_visible_human_head"]["files"]
-        }
-
-        expected = {
-            _demo.FIT_FILE: _SHIPPED_FIT_SHA256,
-            _demo.COLORS_FILE: _SHIPPED_COLORS_SHA256,
-        }
-        assert expected.items() <= files.items(), (
-            "the shipped fit/colors pair changed; materialize Git LFS, rerun "
-            "test_shipped_colors_belong_to_the_shipped_fit, then update both "
-            "verified sha256 constants together"
-        )
-
-    @pytest.mark.slow
-    def test_shipped_colors_belong_to_the_shipped_fit(self) -> None:
-        if is_lfs_pointer(_LFS_FIT) or not _LFS_FIT.exists():
-            pytest.skip(
-                "Visible Human Git LFS assets are not materialized (run 'git lfs pull')"
-            )
-        if is_lfs_pointer(_LFS_COLORS) or not _LFS_COLORS.exists():
-            pytest.skip(
-                "Visible Human Git LFS colors sidecar is not materialized "
-                "(run 'git lfs pull')"
-            )
-
-        fit = GSplatData.load(_LFS_FIT, include_stats=False)
-        colors = _demo._load_colors_f32(_LFS_COLORS)
-
-        assert len(colors) == len(fit.centers), (
-            f"{len(colors):,} colors for {len(fit.centers):,} splats — the "
-            "sidecar does not belong to this fit"
-        )
-        agreement = _demo.voxel_sampled_payload_agreement(fit.centers, colors)
-        assert agreement is not None, "too few same-voxel splats to verify"
-        assert agreement >= _demo.MIN_COLOR_AGREEMENT, (
-            f"shipped pair agrees at {agreement:.5f} < "
-            f"{_demo.MIN_COLOR_AGREEMENT} — the colors are not in the shipped "
-            "store's splat order, so the demo will refit on every run (#1670). "
-            "Resample the sidecar at the shipped store's centers."
-        )

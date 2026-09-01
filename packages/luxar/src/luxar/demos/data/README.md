@@ -31,7 +31,7 @@ the manifest as one of:
 
 | Bucket | Meaning |
 |--------|---------|
-| `zenodo` | Redistributable derived product. Resolved from the cache, then the in-repo LFS copy, then the Zenodo record; while an in-repo payload is present it wins over the hosted copy. |
+| `zenodo` | Redistributable derived product. Fetched on demand from a Zenodo record into `~/.cache/luxar/`. The in-repo LFS fallback is gone with the payloads (#2354) — the record is the only source. |
 | `local-compute` | The demo fetches the raw source and fits/builds locally. Most are not redistributable; `gsplats_flylight_mcfo` is waiting for a record. |
 | `regenerate` | Cheap to rebuild client-side (no GPU); not hosted at all. |
 
@@ -64,7 +64,25 @@ dataset in the manifest.
 
 ## Directory Structure
 
-### Precomputed Gaussian Splats (Git LFS)
+### Precomputed Gaussian Splats (hosted)
+
+> **The payloads are no longer in this repository.** #2354 removed 27 files /
+> 409.9 MB of Git-LFS content, and the manifest's dual checksum contract
+> collapsed with them: with nothing in the tree for a repo digest to describe,
+> `hosted_sha256` became `sha256` and the hosted-specific fields are gone. What
+> the fetch reads is unchanged, because `download_sha = hosted_sha or sha`.
+>
+> The tables below therefore describe what the RECORD holds for each dataset,
+> not files on disk. `dipc_genome/dipc_gm12878.npz` is the one payload still in
+> the tree: its bucket is `regenerate` and it is on no record, so there is
+> nothing to fall back to yet.
+>
+> One consequence worth knowing: a cache populated from the old in-repo copies
+> no longer matches the collapsed pin and is re-downloaded once. Measured on a
+> developer machine, 23 of 36 cached files. The alternative — recording each
+> outgoing repo digest in `superseded_sha256` — would spare that download but
+> would spend the single honoured fallback slot on the older generation, so it is
+> left as a reviewer's call rather than assumed.
 
 Each subdirectory contains pre-fitted `.gsplats.zarr.zip` files for one demo:
 
@@ -119,6 +137,10 @@ All GSplat demos follow a unified pattern:
 The precomputed data is automatically copied to `~/.cache/luxar/` on first use, so subsequent runs are even faster.
 
 ## Git LFS Setup
+
+Only `dipc_genome/dipc_gm12878.npz` is still stored in Git LFS; every other
+demo payload comes from a Zenodo record. A checkout without LFS materialized
+therefore affects that one file, not the demo corpus.
 
 ### Installing Git LFS
 

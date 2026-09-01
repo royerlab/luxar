@@ -46,9 +46,14 @@ VALID_BUCKETS = {"zenodo", "local-compute", "regenerate"}
 GEN_SCRIPT = REPO_ROOT / "scripts" / "gen_data_manifest.py"
 _NO_SCRIPT = "generator script not present (packaged install without repo scripts/)"
 
-# This contract deliberately tracks hosted pins and their history depths. Update
-# it as part of a reviewed hosted re-pin; it is distinct from the demos' shipped
-# LFS digest constants, which intentionally describe the in-repo bytes instead.
+# This contract deliberately tracks the pinned digests and their history depths.
+# Update it as part of a reviewed re-pin.
+#
+# The digests below are unchanged by the Git-LFS teardown (#2354) — they are the
+# same HOSTED values — but the field holding them moved. With no in-repo payload
+# left there is nothing for a repo `sha256` to describe, so the hosted digest IS
+# `sha256` now and `hosted_sha256` is gone. What the test guards is unchanged:
+# both members of a positional pair must move together, at equal history depth.
 _EXPECTED_POSITIONAL_HOSTED_CONTRACTS = {
     # Re-pinned when the hosted fit gained an exact NATIVE categorical label
     # channel (#2387), retiring the sidecar's ordering hazard for the hosted copy
@@ -142,12 +147,12 @@ def test_positional_sidecar_hosted_pairs_move_atomically():
             expected_contract = _EXPECTED_POSITIONAL_HOSTED_CONTRACTS[
                 (dataset_name, entry["name"])
             ]
-            assert (entry.get("hosted_sha256"), len(history)) == expected_contract, (
+            assert (entry.get("sha256"), len(history)) == expected_contract, (
                 f"{dataset_name}/{entry['name']} hosted pin or history depth changed; "
                 "update the committed expectation only after reviewing the re-pin"
             )
             if history:
-                for key in ("sha256", "hosted_sha256"):
+                for key in ("sha256",):
                     assert entry.get(key) != history[-1], (
                         f"{dataset_name}/{entry['name']} still names its "
                         f"superseded pin as {key}"
