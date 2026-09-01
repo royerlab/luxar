@@ -187,6 +187,7 @@ import type { LineWorkingSetGate, NodeBuildCtx } from './scene-loader/nodes/buil
 import { createLineWorkingSetGate } from './scene-loader/nodes/load-children-concurrently';
 import {
   RefinementResidencyBudget,
+  RefinementResidencyReporter,
   type LadderResidency,
 } from './scene-loader/progressive/residency-budget';
 
@@ -232,6 +233,7 @@ export class SceneLoader {
   private cacheBudgets: CacheBudgets | null = null;
   private registry = new LoaderRegistry();
   private readonly lineWorkingSetGate: LineWorkingSetGate;
+  private readonly refinementResidencyReporter = new RefinementResidencyReporter();
 
   // Delegate registry-backed maps used by the loader orchestration methods.
   private get loaders() {
@@ -1349,7 +1351,8 @@ export class SceneLoader {
       const residencyBudget = RefinementResidencyBudget.forSession(
         cachePoolOverrideBytes(this.config.cacheBudgetMB),
         deviceClassPoolBytes(),
-        this.progressiveLadderResidencies()
+        this.progressiveLadderResidencies(),
+        this.refinementResidencyReporter
       );
       // Intermediate phases shouldn't release the lock — only the last
       // phase running to completion does.

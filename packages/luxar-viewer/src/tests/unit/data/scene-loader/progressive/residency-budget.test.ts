@@ -12,6 +12,7 @@ import {
   ladderResidentBytes,
   planRefinementAdmission,
   RefinementResidencyBudget,
+  RefinementResidencyReporter,
 } from '../../../../../data/scene-loader/progressive/residency-budget';
 
 const MB = 1024 * 1024;
@@ -277,10 +278,15 @@ describe('RefinementResidencyBudget', () => {
     expect(budget.admit('/fresh', residency(0, 0)).admitted).toBe(true);
   });
 
-  it('reports the ceiling once per run, not once per node', () => {
-    // Ten nodes hitting one ceiling is one fact about the scene.
-    const budget = new RefinementResidencyBudget(10 * MB);
-    for (let i = 0; i < 10; i++) budget.admit(`/n${i}`, residency(50 * MB, 5));
+  it('reports the ceiling once across view-triggered runs', () => {
+    // A scene parked at the ceiling starts a new run after every view change.
+    // Sharing the scene-owned reporter keeps that one fact from flooding the
+    // console during slice playback or dimension animation.
+    const reporter = new RefinementResidencyReporter();
+    const firstRun = new RefinementResidencyBudget(10 * MB, [], reporter);
+    const secondRun = new RefinementResidencyBudget(10 * MB, [], reporter);
+    for (let i = 0; i < 5; i++) firstRun.admit(`/first${i}`, residency(50 * MB, 5));
+    for (let i = 0; i < 5; i++) secondRun.admit(`/second${i}`, residency(50 * MB, 5));
     expect(warn).toHaveBeenCalledTimes(1);
     expect(String(warn.mock.calls[0][1])).toContain('residency ceiling');
   });

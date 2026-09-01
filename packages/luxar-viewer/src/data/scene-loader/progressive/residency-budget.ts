@@ -187,6 +187,24 @@ export function estimateNextRungBytes(residentBytes: number, loadedRungs: number
   return residentBytes / loadedRungs;
 }
 
+/** Report the residency ceiling once for a scene, across refinement runs. */
+export class RefinementResidencyReporter {
+  private reported = false;
+
+  reportOnce(path: string, verdict: RefinementAdmission): void {
+    if (this.reported) return;
+    this.reported = true;
+    const mib = (value: number): string => `${(value / (1024 * 1024)).toFixed(1)} MiB`;
+    log.warning(
+      Modules.SCENE_LOADER,
+      `Progressive refinement stopped at the residency ceiling (first: ${path}, ` +
+        `${verdict.reason}): resident ${mib(verdict.residentBytes)}, ` +
+        `budget ${mib(verdict.budgetBytes)}. Nodes stay at the detail they reached; ` +
+        'author a coarser ladder or split the scene to go further.'
+    );
+  }
+}
+
 /**
  * One run's residency accounting for sweep-registered progressive leaves,
  * shared by all four geometry refinement phases. The map is seeded from every
@@ -197,11 +215,11 @@ export function estimateNextRungBytes(residentBytes: number, loadedRungs: number
 export class RefinementResidencyBudget {
   private readonly perPath = new Map<string, number>();
   private readonly declined = new Set<string>();
-  private reported = false;
 
   constructor(
     readonly budgetBytes: number,
-    initialResidencies: Iterable<readonly [string, LadderResidency]> = []
+    initialResidencies: Iterable<readonly [string, LadderResidency]> = [],
+    private readonly reporter = new RefinementResidencyReporter()
   ) {
     for (const [path, residency] of initialResidencies) {
       this.perPath.set(path, ladderResidentBytes(residency));
@@ -212,11 +230,13 @@ export class RefinementResidencyBudget {
   static forSession(
     poolOverrideBytes?: number,
     fallbackPoolBytes?: number,
-    initialResidencies?: Iterable<readonly [string, LadderResidency]>
+    initialResidencies?: Iterable<readonly [string, LadderResidency]>,
+    reporter?: RefinementResidencyReporter
   ): RefinementResidencyBudget {
     return new RefinementResidencyBudget(
       computeWorkingSetBudgetBytes(undefined, poolOverrideBytes, fallbackPoolBytes),
-      initialResidencies
+      initialResidencies,
+      reporter
     );
   }
 
@@ -252,26 +272,8 @@ export class RefinementResidencyBudget {
       this.perPath.set(path, accounted + nextRungBytes);
     } else {
       this.declined.add(path);
-      this.reportOnce(path, verdict);
+      this.reporter.reportOnce(path, verdict);
     }
     return verdict;
-  }
-
-  /**
-   * Log the ceiling ONCE per run rather than once per node. Ten nodes hitting
-   * the same ceiling is one fact about the scene, not ten about the nodes, and
-   * a per-node line would bury it.
-   */
-  private reportOnce(path: string, verdict: RefinementAdmission): void {
-    if (this.reported) return;
-    this.reported = true;
-    const mib = (value: number): string => `${(value / (1024 * 1024)).toFixed(1)} MiB`;
-    log.warning(
-      Modules.SCENE_LOADER,
-      `Progressive refinement stopped at the residency ceiling (first: ${path}, ` +
-        `${verdict.reason}): resident ${mib(verdict.residentBytes)}, ` +
-        `budget ${mib(verdict.budgetBytes)}. Nodes stay at the detail they reached; ` +
-        'author a coarser ladder or split the scene to go further.'
-    );
   }
 }

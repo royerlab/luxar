@@ -18,7 +18,7 @@ those sweeps and remain outside this accounting. The gate is a refusal, never an
 eviction: tracked leaves at the ceiling stop adding detail and keep everything
 already drawn, so the scene settles at a legible partial view instead of dying.
 Where the ceiling is reached, the console says so once, naming the budget and
-the tracked measured footprint.
+the tracked measured footprint, without repeating on later view changes.
 
 Sharing one budget across the four types is deliberate — Laniakea's ten line
 nodes are each individually affordable and only collectively fatal, so per-type
