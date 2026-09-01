@@ -472,6 +472,20 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     return this._loadedLODCount;
   }
 
+  /**
+   * Measured footprint of the loaded ladder, for the scene-wide residency
+   * budget (`scene-loader/progressive/residency-budget`). Sums real
+   * `byteLength`s rather than modelling a per-element cost. Rung count comes
+   * from `_loadedLODCount` (LOGICAL levels), not `loadedLODs.length`, which is
+   * 1 once the ladder has folded.
+   */
+  ladderResidency(): { residentBytes: number; loadedRungs: number } {
+    return {
+      residentBytes: measureLodBytes(this.loadedLODs),
+      loadedRungs: this._loadedLODCount,
+    };
+  }
+
   get totalLODCount(): number {
     return this.nLods;
   }

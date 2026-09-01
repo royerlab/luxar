@@ -321,6 +321,23 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     return this._loadedLODCount;
   }
 
+  /**
+   * Measured footprint of the loaded ladder, for the scene-wide residency
+   * budget (`scene-loader/progressive/residency-budget`).
+   *
+   * `measureLodBytes` sums real `byteLength`s rather than modelling a
+   * per-element cost, so this stays correct as payload columns come and go —
+   * and correct after the fold, where `loadedLODs` is one merged payload rather
+   * than one entry per rung. That is exactly why the rung count is reported
+   * from `_loadedLODCount` (LOGICAL levels) instead of `loadedLODs.length`.
+   */
+  ladderResidency(): { residentBytes: number; loadedRungs: number } {
+    return {
+      residentBytes: measureLodBytes(this.loadedLODs),
+      loadedRungs: this._loadedLODCount,
+    };
+  }
+
   get totalLODCount(): number {
     return this.nLods;
   }

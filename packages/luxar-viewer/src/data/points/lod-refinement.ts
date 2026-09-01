@@ -22,6 +22,10 @@ import { tryRollbackToPassStart } from '../loaders/progressive/pass-rollback';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 import type { ViewState } from '../data-loader-types';
 import type { ViewStateQueue } from '../scene-loader/view-state/view-state-queue';
+import type {
+  LadderResidency,
+  RefinementResidencyBudget,
+} from '../scene-loader/progressive/residency-budget';
 import {
   MAX_CONSECUTIVE_REFINEMENT_FAILURES,
   RefinementFailureTracker,
@@ -63,6 +67,11 @@ export interface PointsRefinementCtx {
    * `AbortError` in the per-loader catch is cancellation, not failure.
    */
   signal?: AbortSignal;
+  /**
+   * Scene-wide residency ceiling for this run, shared with the other three
+   * geometry phases. Absent = unbounded (today's behaviour).
+   */
+  residencyBudget?: RefinementResidencyBudget;
 }
 
 export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<void> {
@@ -82,9 +91,18 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
         // Optional for the same reason as `hasMoreLODs`: only a progressive
         // loader has a ladder to unwind. Every `PointsProgressiveLoader` has it.
         rollbackToPassStart?: () => number;
+        ladderResidency?: () => LadderResidency;
       };
       if (progressiveLoader.hasMoreLODs !== true) return false;
       if (failures.isExhausted(path)) return false;
+      // Scene-wide residency ceiling. Declining here is not enough on its own —
+      // `anyHasMoreLODs` and `getLoaderProgress` below must also exclude
+      // declined paths, or the loop re-offers this loader every frame forever
+      // while holding the update lock (the trap `isExhausted` already avoids).
+      const residency = progressiveLoader.ladderResidency?.();
+      if (residency && ctx.residencyBudget?.admit(path, residency).admitted === false) {
+        return false;
+      }
       try {
         const mesh = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
         const nodeAttrs = mesh?.userData?.attrs as PointsMetadata | undefined;
@@ -154,16 +172,28 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
         loadedLODCount: number;
         totalLODCount: number;
       };
-      if (failures.isExhausted(path) || progressiveLoader.hasMoreLODs !== true) return null;
+      if (
+        failures.isExhausted(path) ||
+        ctx.residencyBudget?.isDeclined(path) === true ||
+        progressiveLoader.hasMoreLODs !== true
+      ) {
+        return null;
+      }
       return {
         loaded: progressiveLoader.loadedLODCount,
         total: progressiveLoader.totalLODCount,
       };
     },
+    // A budget-declined loader still reports `hasMoreLODs`, so it MUST be
+    // excluded here as well or the loop never terminates.
     anyHasMoreLODs: () =>
       [...ctx.pointsLoaders.entries()].some(([path, l]) => {
         const pl = l as PointsDataLoader & { hasMoreLODs?: boolean };
-        return !failures.isExhausted(path) && pl.hasMoreLODs === true;
+        return (
+          !failures.isExhausted(path) &&
+          ctx.residencyBudget?.isDeclined(path) !== true &&
+          pl.hasMoreLODs === true
+        );
       }),
     onNoProgress: (stalled) => {
       for (const { path, loaded, total } of stalled) {

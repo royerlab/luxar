@@ -1,0 +1,165 @@
+/**
+ * Unit tests for the progressive-refinement residency budget (#2426).
+ *
+ * The budget is the only thing that bounds an additive ladder at rest: the
+ * ladder's terminal state is 100% of every node, so without a ceiling a scene
+ * like Laniakea (10 line nodes x ~1.3M segments) climbs until the tab dies.
+ */
+
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import {
+  estimateNextRungBytes,
+  planRefinementAdmission,
+  RefinementResidencyBudget,
+} from '../../../../../data/scene-loader/progressive/residency-budget';
+
+const MB = 1024 * 1024;
+
+describe('planRefinementAdmission', () => {
+  it('admits a rung that fits with room to spare', () => {
+    const v = planRefinementAdmission(10 * MB, 5 * MB, 100 * MB);
+    expect(v).toMatchObject({ admitted: true, reason: 'ok' });
+  });
+
+  it('refuses once already at the ceiling', () => {
+    const v = planRefinementAdmission(100 * MB, 1 * MB, 100 * MB);
+    expect(v).toMatchObject({ admitted: false, reason: 'over-budget' });
+  });
+
+  it('refuses a rung that would cross the ceiling', () => {
+    const v = planRefinementAdmission(90 * MB, 20 * MB, 100 * MB);
+    expect(v).toMatchObject({ admitted: false, reason: 'next-rung-would-exceed' });
+  });
+
+  it('admits a rung that lands exactly on the ceiling', () => {
+    // The ceiling is a budget, not a hazard line — spending it exactly is the
+    // intended use, and refusing here would waste the last rung of every scene.
+    expect(planRefinementAdmission(90 * MB, 10 * MB, 100 * MB).admitted).toBe(true);
+  });
+
+  describe('never refuses on an absent signal', () => {
+    // Firefox and Safari have no `performance.memory`. Treating "unmeasurable"
+    // as "out of budget" would make them strictly worse than Chrome at
+    // rendering scenes they hold perfectly well.
+    it.each([0, -1, Number.NaN])('admits when the budget is %p', (budget) => {
+      const v = planRefinementAdmission(10 * MB, 5 * MB, budget as number);
+      expect(v).toMatchObject({ admitted: true, reason: 'unbudgeted' });
+    });
+  });
+
+  it('clamps negative inputs rather than trusting them', () => {
+    const v = planRefinementAdmission(-5 * MB, -1 * MB, 100 * MB);
+    expect(v).toMatchObject({ admitted: true, residentBytes: 0 });
+  });
+});
+
+describe('estimateNextRungBytes', () => {
+  it('is the mean rung so far', () => {
+    expect(estimateNextRungBytes(30 * MB, 3)).toBe(10 * MB);
+  });
+
+  it('estimates zero for a node that has loaded nothing', () => {
+    // A node with no rungs must never be refused its first one, or a scene
+    // already over budget would never paint at all.
+    expect(estimateNextRungBytes(0, 0)).toBe(0);
+    expect(estimateNextRungBytes(10 * MB, 0)).toBe(0);
+  });
+
+  it('under-estimates a geometric ladder, which is the safe direction', () => {
+    // `stream:C` doubles: rungs 1+2+4+8 = 15 resident over 4 rungs -> mean
+    // 3.75, while the real next rung is 16. Erring low costs at most one
+    // overshoot (the hard stop catches it next pass); erring high would stall
+    // equal-count ladders that were never in danger.
+    const resident = (1 + 2 + 4 + 8) * MB;
+    expect(estimateNextRungBytes(resident, 4)).toBeLessThan(16 * MB);
+  });
+
+  it('is exact for an equal-count ladder', () => {
+    expect(estimateNextRungBytes(4 * MB, 4)).toBe(1 * MB);
+  });
+
+  it('survives the Lines fold, where per-rung sizes no longer exist', () => {
+    // After #2427 the Lines loader holds ONE merged payload; only the total and
+    // the rung count survive, and both are inputs here.
+    expect(estimateNextRungBytes(120 * MB, 6)).toBe(20 * MB);
+  });
+});
+
+describe('RefinementResidencyBudget', () => {
+  let warn: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    const { log } = await import('../../../../../utils/log');
+    warn = vi.spyOn(log, 'warning').mockImplementation(() => undefined);
+  });
+  afterEach(() => warn.mockRestore());
+
+  const residency = (residentBytes: number, loadedRungs = 1) => ({
+    residentBytes,
+    loadedRungs,
+  });
+
+  it('sums footprints across nodes, which is the whole point', () => {
+    // Laniakea's shape: each node is individually affordable and the scene is
+    // collectively fatal. A per-node budget would admit all ten.
+    const budget = new RefinementResidencyBudget(100 * MB);
+    for (let i = 0; i < 4; i++) {
+      expect(budget.admit(`/node${i}`, residency(20 * MB, 20)).admitted).toBe(true);
+    }
+    expect(budget.residentBytes).toBe(80 * MB);
+    // The fifth crosses the ceiling collectively, though it is the same size.
+    expect(budget.admit('/node4', residency(20 * MB, 20))).toMatchObject({
+      admitted: false,
+      reason: 'over-budget',
+    });
+  });
+
+  it('re-measures a node rather than accumulating its rungs', () => {
+    // `admit` receives the node's CURRENT total, not a delta. A loader that
+    // grows 10 -> 20 -> 30 MB must read as 30, not 60.
+    const budget = new RefinementResidencyBudget(1000 * MB);
+    budget.admit('/n', residency(10 * MB, 1));
+    budget.admit('/n', residency(20 * MB, 2));
+    budget.admit('/n', residency(30 * MB, 3));
+    expect(budget.residentBytes).toBe(30 * MB);
+  });
+
+  it('makes a refusal sticky for the rest of the run', () => {
+    const budget = new RefinementResidencyBudget(10 * MB);
+    expect(budget.isDeclined('/n')).toBe(false);
+    budget.admit('/n', residency(50 * MB, 5));
+    expect(budget.isDeclined('/n')).toBe(true);
+    // Sticky even if the node later reports a footprint that would fit — a
+    // loader re-offered every frame would otherwise re-measure and re-refuse
+    // forever while holding the update lock.
+    budget.admit('/n', residency(1, 1));
+    expect(budget.isDeclined('/n')).toBe(true);
+  });
+
+  it('does not decline nodes that fit', () => {
+    const budget = new RefinementResidencyBudget(100 * MB);
+    budget.admit('/small', residency(1 * MB, 4));
+    expect(budget.isDeclined('/small')).toBe(false);
+  });
+
+  it('never refuses a node its first rung', () => {
+    // Zero rungs estimates zero, so a scene already over budget still paints.
+    const budget = new RefinementResidencyBudget(10 * MB);
+    expect(budget.admit('/fresh', residency(0, 0)).admitted).toBe(true);
+  });
+
+  it('reports the ceiling once per run, not once per node', () => {
+    // Ten nodes hitting one ceiling is one fact about the scene.
+    const budget = new RefinementResidencyBudget(10 * MB);
+    for (let i = 0; i < 10; i++) budget.admit(`/n${i}`, residency(50 * MB, 5));
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][1])).toContain('residency ceiling');
+  });
+
+  it('never declines when the budget is unknown', () => {
+    const budget = new RefinementResidencyBudget(0);
+    expect(budget.admit('/n', residency(500 * MB, 5)).admitted).toBe(true);
+    expect(budget.isDeclined('/n')).toBe(false);
+    expect(warn).not.toHaveBeenCalled();
+  });
+});

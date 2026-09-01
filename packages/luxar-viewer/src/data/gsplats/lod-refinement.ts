@@ -34,6 +34,10 @@ import { tryRollbackToPassStart } from '../loaders/progressive/pass-rollback';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 import type { ViewState } from '../data-loader-types';
 import type { ViewStateQueue } from '../scene-loader/view-state/view-state-queue';
+import type {
+  LadderResidency,
+  RefinementResidencyBudget,
+} from '../scene-loader/progressive/residency-budget';
 import type { StagedGSplatsCommit } from '../scene-loader/process/data-processor-gsplats';
 import {
   MAX_CONSECUTIVE_REFINEMENT_FAILURES,
@@ -93,6 +97,11 @@ export interface GSplatsRefinementCtx {
    * `AbortError` in the per-loader catch is cancellation, not failure.
    */
   signal?: AbortSignal;
+  /**
+   * Scene-wide residency ceiling for this run, shared with the other three
+   * geometry phases. Absent = unbounded (today's behaviour).
+   */
+  residencyBudget?: RefinementResidencyBudget;
 }
 
 /**
@@ -117,7 +126,16 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
       // `GSplatsProgressiveLoader` implements it.
       const progressiveLoader = loader as GSplatsDataLoader & {
         rollbackToPassStart?: () => number;
+        ladderResidency?: () => LadderResidency;
       };
+      // Scene-wide residency ceiling. Declining here is not enough on its own —
+      // `anyHasMoreLODs` and `getLoaderProgress` below must also exclude
+      // declined paths, or the loop re-offers this loader every frame forever
+      // while holding the update lock (the trap `isExhausted` already avoids).
+      const residency = progressiveLoader.ladderResidency?.();
+      if (residency && ctx.residencyBudget?.admit(path, residency).admitted === false) {
+        return false;
+      }
       try {
         const mesh = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
         const nodeAttrs = mesh?.userData?.attrs as GSplatsMetadata | undefined;
@@ -187,15 +205,26 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
         loadedLODCount: number;
         totalLODCount: number;
       };
-      if (failures.isExhausted(path) || progressiveLoader.hasMoreLODs !== true) return null;
+      if (
+        failures.isExhausted(path) ||
+        ctx.residencyBudget?.isDeclined(path) === true ||
+        progressiveLoader.hasMoreLODs !== true
+      ) {
+        return null;
+      }
       return {
         loaded: progressiveLoader.loadedLODCount,
         total: progressiveLoader.totalLODCount,
       };
     },
+    // A budget-declined loader still reports `hasMoreLODs`, so it MUST be
+    // excluded here as well or the loop never terminates.
     anyHasMoreLODs: () =>
       [...ctx.gsplatLoaders.entries()].some(
-        ([path, l]) => !failures.isExhausted(path) && l.hasMoreLODs === true
+        ([path, l]) =>
+          !failures.isExhausted(path) &&
+          ctx.residencyBudget?.isDeclined(path) !== true &&
+          l.hasMoreLODs === true
       ),
     onNoProgress: (stalled) => {
       for (const { path, loaded, total } of stalled) {

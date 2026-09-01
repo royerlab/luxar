@@ -35,6 +35,26 @@
  * stays in the loader, which is the only thing that can touch its private
  * fields.
  *
+ * COUNTS HERE ARE LOGICAL LEVELS, NEVER PAYLOAD ENTRIES. Every loader now FOLDS
+ * its ladder — the rungs are concatenated into one cumulative payload and the
+ * parts released — so `loadedLODs.length` becomes 1 while the logical count is
+ * still 7. That is why each loader carries a separate `_loadedLODCount`, and
+ * why {@link LadderRollbackState} takes the two counts apart rather than
+ * inferring either from an array length. Feeding a payload count into a logical
+ * field is silently wrong: no throw, just a memo gate evaluated against the
+ * wrong number.
+ *
+ * The invariant that catches every variant of that mistake, and the one a
+ * loader's tests should assert after any rollback:
+ *
+ *     _concatCache === null || _concatCache.lodCount <= <logical level count>
+ *
+ * A memo describing more levels than the loader holds is the whole hazard: the
+ * loaders select their lineage parent on generation and level count, so an
+ * over-long memo can stamp a prefix-lineage claim on an object it does not
+ * extend, and the commit layer's append gate will then write a suffix over a
+ * wrong prefix. Silent wrong render, no error raised.
+ *
  * @module data/loaders/progressive/pass-rollback
  */
 

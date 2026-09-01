@@ -185,6 +185,7 @@ import { queueNext } from './scene-loader/update-view/queue-next';
 import { connectLoaderToMonitor as connectLoaderToMonitorHelper } from './scene-loader/nodes/connect-loader-to-monitor';
 import type { LineWorkingSetGate, NodeBuildCtx } from './scene-loader/nodes/build-ctx';
 import { createLineWorkingSetGate } from './scene-loader/nodes/load-children-concurrently';
+import { RefinementResidencyBudget } from './scene-loader/progressive/residency-budget';
 
 /**
  * Delay before `kickRefinementIfIdle` re-checks a lock-held serialization
@@ -1320,6 +1321,16 @@ export class SceneLoader {
       // recorded); the loop's next-pass pending check performs the hand-off.
       const refinementController = new AbortController();
       this._updateAbortController = refinementController;
+      // ONE budget for the whole run, shared by all four geometry phases. They
+      // execute sequentially below, so a single instance sees the entire scene
+      // — which is the point: Laniakea's ten line nodes are each affordable and
+      // collectively fatal, so four independent per-type budgets would admit
+      // every one of them. Scoped to the run so the next view change re-decides
+      // from scratch rather than inheriting a stale refusal.
+      const residencyBudget = RefinementResidencyBudget.forSession(
+        cachePoolOverrideBytes(this.config.cacheBudgetMB),
+        deviceClassPoolBytes()
+      );
       // Intermediate phases shouldn't release the lock — only the last
       // phase running to completion does.
       const noopReleaseLock = () => {
@@ -1358,6 +1369,7 @@ export class SceneLoader {
         isActive: () => !this._disposed,
         signal: refinementController.signal,
         profiler: this.profiler,
+        residencyBudget,
       });
       if (cancelled || this._disposed) return;
 
@@ -1375,6 +1387,7 @@ export class SceneLoader {
         isActive: () => !this._disposed,
         signal: refinementController.signal,
         profiler: this.profiler,
+        residencyBudget,
       });
       if (cancelled || this._disposed) return;
 
@@ -1393,6 +1406,7 @@ export class SceneLoader {
         isActive: () => !this._disposed,
         signal: refinementController.signal,
         profiler: this.profiler,
+        residencyBudget,
       });
       if (cancelled || this._disposed) return;
 
@@ -1417,6 +1431,7 @@ export class SceneLoader {
         isActive: () => !this._disposed,
         signal: refinementController.signal,
         profiler: this.profiler,
+        residencyBudget,
       });
     } finally {
       this._refining = false;

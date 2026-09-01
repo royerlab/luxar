@@ -70,6 +70,7 @@ import type { MeshPreflightResult } from './preflight';
 import type { UpdateSession } from '../../profiling/update-profiler';
 import { concatRequiredField } from '../loaders/progressive/concat-helpers';
 import { planLadderRollback } from '../loaders/progressive/pass-rollback';
+import { measureLodBytes } from '../loaders/progressive/slice-cache-helper';
 import {
   classifyStreamingPass,
   shouldStopBeforeLevel,
@@ -394,6 +395,20 @@ export class MeshProgressiveLoader implements MeshDataLoader {
 
   get loadedLODCount(): number {
     return this._loadedLODCount;
+  }
+
+  /**
+   * Measured footprint of the loaded ladder, for the scene-wide residency
+   * budget (`scene-loader/progressive/residency-budget`). Sums real
+   * `byteLength`s rather than modelling a per-element cost, so it stays correct
+   * as payload columns come and go. Rung count is reported alongside so the
+   * budget can estimate the next rung without needing per-rung sizes.
+   */
+  ladderResidency(): { residentBytes: number; loadedRungs: number } {
+    return {
+      residentBytes: measureLodBytes(this.loadedLODs),
+      loadedRungs: this.loadedLODCount,
+    };
   }
 
   get totalLODCount(): number {
