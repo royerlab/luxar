@@ -453,7 +453,18 @@ DATASETS: dict[str, dict] = {
             # download rather than a local probe.
             stored_bytes=None,
         ),
-        pending_upload=True,
+        # Uploaded to the cc-by draft and verified by download-and-hash, so
+        # `pending_upload` is gone. The PINS are not here: this dataset has no
+        # in-repo directory, so `_files_for` finds nothing on disk and returns the
+        # COMMITTED list — the manifest itself is authoritative for a hosted-only
+        # dataset, exactly as `gsplats_4d_neuromast_2ch` does it. A `files=` in
+        # this spec would be silently discarded.
+        #
+        # SEVEN of the nine crops in the demo's `DATASETS`: the ones with a
+        # complete 100-timepoint fit cache at the default 60,000 seeds. They cover
+        # the default `--datasets 6` with one spare; `--datasets 8`/`9` still falls
+        # back to the Kaggle download, which the loader treats as a supported
+        # partial-record state rather than a fault.
     ),
     "h2afva": dict(
         bucket="zenodo",
