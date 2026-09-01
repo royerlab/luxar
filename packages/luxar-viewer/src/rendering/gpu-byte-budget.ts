@@ -49,7 +49,7 @@ import { log, Modules } from '../utils/log';
 const DEVICE_MEMORY_FRACTION = 0.25;
 /**
  * Budget used when NO memory signal is available at all — neither
- * ``deviceMemory`` nor a measurable heap nor an explicit cache-pool override.
+ * ``deviceMemory`` nor an explicit cache-pool override.
  *
  * NOT a floor under a budget that WAS derived from a signal. It used to be one,
  * and that was the bug: a tab told it had a small pool still got 512 MB, which
@@ -66,7 +66,7 @@ const BACKOFF_FLOOR_BYTES = 256_000_000; // 256 MB
 let budgetBytes = NO_SIGNAL_BUDGET_BYTES;
 
 /**
- * Memory signals the auto budget folds in alongside `navigator.deviceMemory`.
+ * Explicit memory signals the auto budget folds in alongside `navigator.deviceMemory`.
  *
  * `cachePoolOverrideBytes` is the `?cacheBudgetMB=` value (and the native
  * launcher's equivalent). It MUST reach this budget, not just the caches:
@@ -82,9 +82,9 @@ export interface GpuBudgetMemorySignals {
 
 /**
  * Compute the auto budget from ``navigator.deviceMemory`` and an explicit
- * cache-pool override. An ambient JS heap limit is not a GPU-memory signal:
- * Chromium's coarse heap tiers would otherwise cap every roomy desktop at the
- * eager line loader's 512 MiB working-set ceiling.
+ * cache-pool override. The ambient JS heap limit is deliberately excluded:
+ * deriving through the eager line loader's share-of-a-share would cap every
+ * roomy Chromium desktop at that subsystem's 512 MiB working-set ceiling.
  */
 function computeAutoBudget(memory?: GpuBudgetMemorySignals): { bytes: number; sources: string[] } {
   const gb = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
@@ -102,15 +102,16 @@ function computeAutoBudget(memory?: GpuBudgetMemorySignals): { bytes: number; so
     (value): value is number => value !== undefined
   );
   if (candidates.length === 0) {
-    return { bytes: NO_SIGNAL_BUDGET_BYTES, sources: ['no memory signal fallback'] };
+    return {
+      bytes: NO_SIGNAL_BUDGET_BYTES,
+      sources: [`no memory signal -> ${mb(NO_SIGNAL_BUDGET_BYTES)} MB fallback`],
+    };
   }
 
   // The MINIMUM of the signals, because a pooled allocation costs on BOTH
   // sides: VRAM for the element texture, and JS heap for the CPU-side image
-  // that backs it. It has to fit in whichever is scarcer. (Mixing a VRAM signal
-  // and a heap signal in one number IS a category blend; it is deliberate. The
-  // failure we are fixing is a heap OOM caused by GPU-pool retention, so a
-  // budget that only tracked VRAM could not see it coming.)
+  // that backs it. An explicit cache budget is therefore allowed to tighten
+  // the GPU budget; a coarse ambient heap tier is not.
   //
   // Clamped ABOVE only. There is no floor: a floor is exactly what stopped this
   // budget from ever binding, and a budget that cannot bind cannot evict.
@@ -128,7 +129,8 @@ function computeAutoBudget(memory?: GpuBudgetMemorySignals): { bytes: number; so
  * Configure the budget once at startup from the resolved config value
  * (or the ``?gpuBudgetMB`` URL param, which the caller passes in):
  *
- * - ``null`` / ``undefined`` → **auto-size** from device memory.
+ * - ``null`` / ``undefined`` → **auto-size** from device memory and any
+ *   explicit cache-pool override.
  * - ``0`` → disable byte-budget eviction (unbounded resident geometry).
  * - a positive number → pin the budget to exactly that many bytes.
  */
@@ -139,10 +141,11 @@ export function configureGpuByteBudget(
   if (overrideBytes == null) {
     const auto = computeAutoBudget(memory);
     budgetBytes = auto.bytes;
-    log.info(
-      Modules.PERFORMANCE,
-      `GPU byte budget: ${mb(budgetBytes)} MB (auto: ${auto.sources.join(', ')}; min)`
-    );
+    const resolution =
+      auto.sources.length === 1 && auto.sources[0].startsWith('no memory signal')
+        ? auto.sources[0]
+        : `${auto.sources.join(', ')}; min=${mb(auto.bytes)} MB`;
+    log.info(Modules.PERFORMANCE, `GPU byte budget: ${mb(budgetBytes)} MB (auto: ${resolution})`);
     return;
   }
   budgetBytes = Math.max(0, overrideBytes);

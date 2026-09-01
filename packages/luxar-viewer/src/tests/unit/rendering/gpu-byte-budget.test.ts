@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   configureGpuByteBudget,
   getGpuByteBudget,
   reduceGpuByteBudgetForContextLoss,
 } from '../../../rendering/gpu-byte-budget';
+import { log, Modules } from '../../../utils/log';
 
 /** Temporarily set navigator.deviceMemory (GB) for a test. */
 function withDeviceMemory(gb: number | undefined, fn: () => void): void {
@@ -34,6 +35,7 @@ function withHeapLimit(bytes: number | undefined, fn: () => void): void {
 }
 
 const MB = 1_000_000;
+const MiB = 1024 * 1024;
 
 afterEach(() => {
   // Reset to a known state so tests don't leak the singleton budget.
@@ -80,10 +82,16 @@ describe('gpu-byte-budget', () => {
   });
 
   it('falls back to the no-signal budget when deviceMemory is unavailable', () => {
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
     withDeviceMemory(undefined, () => {
       configureGpuByteBudget();
       expect(getGpuByteBudget()).toBe(512 * MB);
     });
+    expect(info).toHaveBeenCalledWith(
+      Modules.PERFORMANCE,
+      'GPU byte budget: 512 MB (auto: no memory signal -> 512 MB fallback)'
+    );
+    info.mockRestore();
   });
 
   describe('cache-pool override drives the budget (#2426 pool retention)', () => {
@@ -94,7 +102,7 @@ describe('gpu-byte-budget', () => {
     // hardware that would verify it.
     it('binds below the deviceMemory budget when a smaller pool override is given', () => {
       withDeviceMemory(32, () => {
-        configureGpuByteBudget(null, { cachePoolOverrideBytes: 1024 * MB });
+        configureGpuByteBudget(null, { cachePoolOverrideBytes: 1024 * MiB });
         // 32 GB would pin at the 2 GB ceiling; the override must win.
         expect(getGpuByteBudget()).toBeLessThan(2_000 * MB);
         expect(getGpuByteBudget()).toBeGreaterThan(0);
@@ -104,11 +112,11 @@ describe('gpu-byte-budget', () => {
     it('is what makes eviction reachable: budget lands under a few hundred MB', () => {
       // The stranded superseded pairs measured on a 2M-splat 16-rung node are
       // ~285 MB. For the pool LRU to fire at all, the budget must land below
-      // active + pooled. This pins that the 1024 MB test point actually binds
+      // active + pooled. This pins that the 1024 MiB test point actually binds
       // — the whole acceptance criterion (evictions > 0) depends on it.
       withDeviceMemory(32, () => {
-        configureGpuByteBudget(null, { cachePoolOverrideBytes: 1024 * MB });
-        expect(getGpuByteBudget()).toBeLessThan(500 * MB);
+        configureGpuByteBudget(null, { cachePoolOverrideBytes: 1024 * MiB });
+        expect(getGpuByteBudget()).toBe(Math.floor((1024 * MiB) / 3));
       });
     });
 
