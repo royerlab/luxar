@@ -27,19 +27,23 @@ _MANIFEST = Path(__file__).resolve().parents[1] / "data_manifest.json"
 _CACHE = Path.home() / ".cache" / "luxar"
 _STAGING_ROOT = _REPO / "delme"
 
-_PairCheck = tuple[str, str, Callable[[Path], np.ndarray], float]
+_PairCheck = tuple[
+    str, str, Callable[[Path], np.ndarray], float, Callable[[GSplatData], bool]
+]
 _PAIR_CHECKS: dict[str, _PairCheck] = {
     ct_demo.DEMO_NAME: (
         ct_demo.FIT_FILE,
         ct_demo.LABELS_FILE,
         ct_demo._load_labels,
         ct_demo.MIN_LABEL_AGREEMENT,
+        lambda fit: ct_demo._native_labels(fit) is not None,
     ),
     vh_demo.DEMO_NAME: (
         vh_demo.FIT_FILE,
         vh_demo.COLORS_FILE,
         vh_demo._load_colors_f32,
         vh_demo.MIN_COLOR_AGREEMENT,
+        lambda fit: vh_demo._native_colors(fit) is not None,
     ),
 }
 
@@ -99,7 +103,9 @@ def _pair_cases() -> list[Any]:
     )
     cases: list[Any] = []
     for (dataset, pair), entries in sorted(groups.items()):
-        fit_name, sidecar_name, payload_loader, threshold = _PAIR_CHECKS[dataset]
+        fit_name, sidecar_name, payload_loader, threshold, native_check = _PAIR_CHECKS[
+            dataset
+        ]
         by_name = {entry["name"]: entry for entry in entries}
         assert set(by_name) == {fit_name, sidecar_name}, (
             f"{dataset}/{pair} no longer matches its declared demo payload files"
@@ -111,6 +117,7 @@ def _pair_cases() -> list[Any]:
                 by_name[sidecar_name],
                 payload_loader,
                 threshold,
+                native_check,
                 id=f"{dataset}/{pair}",
             )
         )
@@ -224,12 +231,20 @@ def test_lookup_reports_a_stale_hosted_size(
             sidecar_entry,
             lambda _path: np.empty(0),
             1.0,
+            lambda _fit: True,
         )
 
 
 @pytest.mark.slow
 @pytest.mark.parametrize(
-    ("dataset", "fit_entry", "sidecar_entry", "payload_loader", "threshold"),
+    (
+        "dataset",
+        "fit_entry",
+        "sidecar_entry",
+        "payload_loader",
+        "threshold",
+        "native_check",
+    ),
     _pair_cases(),
 )
 def test_locatable_hosted_positional_pair_is_aligned(
@@ -238,6 +253,7 @@ def test_locatable_hosted_positional_pair_is_aligned(
     sidecar_entry: dict[str, Any],
     payload_loader: Callable[[Path], np.ndarray],
     threshold: float,
+    native_check: Callable[[GSplatData], bool],
 ) -> None:
     if not fit_entry.get("hosted_sha256") or not sidecar_entry.get("hosted_sha256"):
         pytest.skip("positional pair has no current hosted pin")
@@ -261,6 +277,7 @@ def test_locatable_hosted_positional_pair_is_aligned(
     fit = GSplatData.load(fit_path, include_stats=False)
     payload = payload_loader(sidecar_path)
 
+    assert native_check(fit), f"{dataset} hosted fit lacks its native payload channel"
     assert len(payload) == len(fit.centers), (
         f"{dataset} hosted pair has {len(payload):,} payload rows for "
         f"{len(fit.centers):,} splats"
