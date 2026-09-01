@@ -420,7 +420,7 @@ export class MeshProgressiveLoader implements MeshDataLoader {
     });
     if (plan.action === 'retry-folded-pass') this._retryFoldedPass = true;
     if (plan.action === 'truncate') {
-      this.loadedLODs.length = plan.keep;
+      this.loadedLODs.length = this._payloadsAtPassStart;
       this._loadedLODCount = plan.keep;
       this._retryFoldedPass = false;
       if (plan.invalidateConcatCache) this._concatCache = null;

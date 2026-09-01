@@ -385,6 +385,39 @@ describe('MeshProgressiveLoader', () => {
     expect(loader.hasMoreLODs).toBe(true);
   });
 
+  it('replays a failed pass without duplicating levels behind a folded prefix', async () => {
+    const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(0);
+    try {
+      const levels = [
+        level(4, [0, 1, 2]),
+        level(3, [0, 1, 2]),
+        level(3, [0, 1, 2]),
+        level(3, [0, 1, 2]),
+      ];
+      const subs = [
+        subLoader(levels[0]),
+        subLoader(levels[1], { resident: false }),
+        subLoader(levels[2]),
+        subLoader(levels[3]),
+      ];
+      const loader = new MeshProgressiveLoader(subs, levels.length, '/surf');
+
+      const prefix = await loader.updateView(VIEW);
+      expect(prefix.vertexCount).toBe(7);
+      expect(prefix.faceCount).toBe(2);
+
+      vi.mocked(subs[3].updateViewWithResidency).mockRejectedValueOnce(new Error('fetch failed'));
+      await expect(loader.updateView(VIEW)).rejects.toThrow('fetch failed');
+      expect(loader.rollbackToPassStart()).toBe(1);
+
+      const replayed = await loader.updateView(VIEW);
+      expect(replayed.vertexCount).toBe(13);
+      expect(replayed.faceCount).toBe(4);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
   it('keeps an incrementally folded prefix and cursor paired', async () => {
     const { loader } = makeLadder([level(4, [0, 1, 2]), level(3, [0, 1, 2]), level(3, [0, 1, 2])], {
       resident: false,
