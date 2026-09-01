@@ -131,29 +131,33 @@ describe('MeshProgressiveLoader — monitor telemetry', () => {
     expect(m.memoryUsed).toBe(4000);
   });
 
-  it('includes only a multi-level concatenation in resident memory', () => {
+  it('reports the retained cumulative payload after child payloads are released', () => {
     const first = meshData();
     const second = meshData(2);
     const firstBytes = meshPayloadBytes(first) + meshProjectionBytes(first);
-    const secondBytes = meshPayloadBytes(second) + meshProjectionBytes(second);
-    const loader = ladder([
-      level('/surface/additive_0', { memoryUsed: firstBytes }),
-      level('/surface/additive_1', { memoryUsed: secondBytes }),
-    ]);
-    const internals = loader as unknown as {
+    const single = ladder([level('/surface/additive_0', { memoryUsed: 0 })]);
+    const singleInternals = single as unknown as {
       loadedLODs: LoadedMeshData[];
       _concatCache: { lodCount: number; result: LoadedMeshData } | null;
     };
 
-    internals.loadedLODs = [first];
-    internals._concatCache = { lodCount: 1, result: first };
-    expect(loader.getMetrics().memoryUsed).toBe(firstBytes + secondBytes);
+    singleInternals.loadedLODs = [first];
+    singleInternals._concatCache = { lodCount: 1, result: first };
+    expect(single.getMetrics().memoryUsed).toBe(firstBytes);
 
     const concatenated = concatenateMeshData([first, second]);
-    internals.loadedLODs = [first, second];
-    internals._concatCache = { lodCount: 2, result: concatenated };
-    expect(loader.getMetrics().memoryUsed).toBe(
-      firstBytes + secondBytes + meshPayloadBytes(concatenated) + meshProjectionBytes(concatenated)
+    const folded = ladder([
+      level('/surface/additive_0', { memoryUsed: 0 }),
+      level('/surface/additive_1', { memoryUsed: 0 }),
+    ]);
+    const foldedInternals = folded as unknown as {
+      loadedLODs: LoadedMeshData[];
+      _concatCache: { lodCount: number; result: LoadedMeshData } | null;
+    };
+    foldedInternals.loadedLODs = [concatenated];
+    foldedInternals._concatCache = { lodCount: 2, result: concatenated };
+    expect(folded.getMetrics().memoryUsed).toBe(
+      meshPayloadBytes(concatenated) + meshProjectionBytes(concatenated)
     );
   });
 

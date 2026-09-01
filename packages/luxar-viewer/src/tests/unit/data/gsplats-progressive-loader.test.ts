@@ -16,7 +16,10 @@ import type { GSplatsSpatialIndexLoader } from '../../../data/gsplats/gsplats-sp
 import type { GSplatsViewState, LoadedGSplatsData } from '../../../types/gsplats';
 import { CACHE_HIT_THRESHOLD_MS } from '../../../data/loaders/progressive/constants';
 import { SliceCache } from '../../../cache/slice-cache';
-import { buildSliceViewSig } from '../../../data/loaders/progressive/slice-cache-helper';
+import {
+  buildSliceViewSig,
+  measureLodBytes,
+} from '../../../data/loaders/progressive/slice-cache-helper';
 import { getPrefixParent } from '../../../types/prefix-lineage';
 import {
   resetLodLoadStats,
@@ -28,6 +31,7 @@ interface SubLoaderStub {
   updateView: ReturnType<typeof vi.fn>;
   updateViewWithResidency: ReturnType<typeof vi.fn>;
   prefetchChunks: ReturnType<typeof vi.fn>;
+  releaseAccumulator: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
   getMetrics: ReturnType<typeof vi.fn>;
   getActiveQueries: ReturnType<typeof vi.fn>;
@@ -98,6 +102,7 @@ function makeSubLoader(
     updateView,
     updateViewWithResidency,
     prefetchChunks: vi.fn().mockResolvedValue(undefined),
+    releaseAccumulator: vi.fn(),
     dispose: vi.fn(),
     getMetrics: vi.fn(() => stubMetrics(metrics)),
     getActiveQueries: vi.fn(() => []),
@@ -141,6 +146,21 @@ describe('GSplatsProgressiveLoader', () => {
       const result = await loader.loadGSplats(baseViewState);
       // All 3 LODs are cache-hit fast (sync mock) → all loaded → 100+50+25 = 175.
       expect(result.splatCount).toBe(175);
+    });
+
+    it('retains one cumulative payload and releases decoded rung buffers', async () => {
+      const result = await loader.loadGSplats(baseViewState);
+      const retained = (
+        loader as unknown as {
+          loadedLODs: LoadedGSplatsData[];
+        }
+      ).loadedLODs;
+
+      expect(loader.loadedLODCount).toBe(3);
+      expect(retained).toEqual([result]);
+      expect(lodA.releaseAccumulator).toHaveBeenCalledTimes(1);
+      expect(lodB.releaseAccumulator).toHaveBeenCalledTimes(1);
+      expect(lodC.releaseAccumulator).toHaveBeenCalledTimes(1);
     });
 
     it('records bounded per-level additive load timing with residency', async () => {
@@ -523,6 +543,22 @@ describe('GSplatsProgressiveLoader', () => {
   });
 
   describe('rollbackToPassStart (failed-commit recovery, #2426)', () => {
+    it('unwinds intact rung payloads when concatenation fails before folding', async () => {
+      const incompatible = makeLodData(50, 3, { color: 'uint8' });
+      incompatible.colors = new Uint8Array(50 * 4);
+      incompatible.colorComponents = 4;
+      lodB.updateView.mockResolvedValue(incompatible);
+
+      await expect(loader.loadGSplats(baseViewState)).rejects.toThrow(
+        'mixed color layouts across LOD levels'
+      );
+      expect(loader.loadedLODCount).toBe(3);
+
+      expect(loader.rollbackToPassStart()).toBe(3);
+      expect(loader.loadedLODCount).toBe(0);
+      expect(loader.hasMoreLODs).toBe(true);
+    });
+
     it('keeps a completed pass schedulable when its commit fails', async () => {
       const result = await loader.loadGSplats(baseViewState);
       expect(loader.loadedLODCount).toBe(3);
@@ -543,7 +579,7 @@ describe('GSplatsProgressiveLoader', () => {
       expect(loader.hasMoreLODs).toBe(false);
     });
 
-    it('unwinds only the levels the failing pass appended', async () => {
+    it('keeps an incrementally folded prefix and cursor paired', async () => {
       lodB.updateViewWithResidency.mockImplementationOnce(async () => ({
         data: makeLodData(50, 3, { color: 'uint8' }),
         allResident: false,
@@ -553,8 +589,8 @@ describe('GSplatsProgressiveLoader', () => {
 
       await loader.loadGSplats(baseViewState);
       expect(loader.loadedLODCount).toBe(3);
-      expect(loader.rollbackToPassStart()).toBe(1);
-      expect(loader.loadedLODCount).toBe(2);
+      expect(loader.rollbackToPassStart()).toBe(0);
+      expect(loader.loadedLODCount).toBe(3);
       expect(loader.hasMoreLODs).toBe(true);
     });
 
@@ -1151,6 +1187,12 @@ describe('GSplatsProgressiveLoader', () => {
       expect(metrics.queries).toBe(5); // 2 + 3
       expect(metrics.elementsLoaded).toBe(150); // 100 + 50
       expect(metrics.memoryUsed).toBe(30); // 10 + 20
+    });
+
+    it('getMetrics includes the retained cumulative payload after rung accumulators release', async () => {
+      const result = await loader.loadGSplats(baseViewState);
+
+      expect(loader.getMetrics().memoryUsed).toBe(measureLodBytes([result]));
     });
 
     it('addEventListener / removeEventListener fan out to every inner loader', () => {

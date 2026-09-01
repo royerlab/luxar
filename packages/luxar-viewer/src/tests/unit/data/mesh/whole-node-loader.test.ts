@@ -516,6 +516,21 @@ describe('MeshWholeNodeLoader — whole-node residency', () => {
     expect(store.chunkRequests().length).toBeGreaterThan(before);
   });
 
+  it('releases a progressive-parent-folded payload without resetting initialization', async () => {
+    const store = buildStore(meshAttrs(), tetArrays());
+    const loader = makeLoader(store, meshAttrs());
+    const first = await loader.loadMesh(VIEW);
+    const before = store.chunkRequests().length;
+
+    loader.releaseData();
+
+    expect(loader.getMetrics().memoryUsed).toBe(0);
+    const second = await loader.loadMesh(VIEW);
+    expect(store.chunkRequests().length).toBeGreaterThan(before);
+    expect(second).not.toBe(first);
+    expect(first.vertexCount).toBe(4);
+  });
+
   it('every chunk read carries an abort signal, not just the faces one', async () => {
     // A signal that reaches only one of the arrays is cancellation theatre: the
     // decoder-routed reads (vertices, normals, scalars) and the shared colour

@@ -223,7 +223,7 @@ describe('GSplatsSpatialIndexLoader', () => {
           if (array === mockArrays.centers) elementsPerItem = 3;
           else if (array === mockArrays.cholesky_factors_diag) elementsPerItem = 3;
           else if (array === mockArrays.cholesky_factors_offdiag) elementsPerItem = 3;
-          else if (array === mockArrays.colors) elementsPerItem = 3;
+          else if (array === mockArrays.colors) elementsPerItem = mockArrays.colors.shape[1];
           if (array === mockArrays.label_ids) {
             return Promise.resolve({
               data: BigUint64Array.from({ length: count }, (_, index) =>
@@ -1447,6 +1447,31 @@ describe('GSplatsSpatialIndexLoader', () => {
         // Chunk-index telemetry is attached for the advisor (×3 symmetric).
         expect(metrics.spatialIndex).toBeDefined();
         expect(metrics.spatialIndex!.totalCells).toBeGreaterThan(0);
+      });
+
+      it('recreates a progressive-parent-released accumulator on the next query', async () => {
+        mockArrays.colors.shape = [5000, 4];
+        const viewState: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        };
+
+        const first = await bodyLoader.loadGSplats(viewState);
+        expect(bodyLoader.getAccumulatorStats()).not.toBeNull();
+
+        bodyLoader.releaseAccumulator();
+        expect(bodyLoader.getAccumulatorStats()).toBeNull();
+        expect(bodyLoader.getMetrics().memoryUsed).toBe(0);
+
+        const second = await bodyLoader.loadGSplats(viewState);
+        expect(bodyLoader.getAccumulatorStats()).not.toBeNull();
+        expect(second.splatCount).toBe(first.splatCount);
+        expect(second.positions).toEqual(first.positions);
+        expect(second.colors).toEqual(first.colors);
+        expect(first.colorComponents).toBe(4);
+        expect(second.colorComponents).toBe(4);
+        expect(second.colors).toHaveLength(second.splatCount * 4);
       });
 
       it('should fold completed loads into avgQueryTime (wrapper close-out)', async () => {

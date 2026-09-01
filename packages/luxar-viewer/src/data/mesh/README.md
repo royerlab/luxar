@@ -9,14 +9,14 @@ loading).
 
 ## Files
 
-| File                         | Role                                                                                                                                                                                                                                                                                                                              |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mesh-whole-node-loader.ts`  | `MeshWholeNodeLoader` — the whole-node loader. Opens metadata handles, runs Stage 1, fetches and decodes every array in full, runs Stage 2, then caches the result for the loader's lifetime. Implements `MeshDataLoader`.                                                                                                        |
-| `preflight.ts`               | Stage 1: the **metadata preflight**. Vertex cap, byte budget, shape/dtype cross-checks, `normal_dims` well-formedness — all decided from `.zarray`/`.zattrs` alone, with **no chunk fetched**. Also exports `parseDtype`.                                                                                                         |
-| `validate.ts`                | Stage 2: post-decode value checks. Materialized lengths, and the two-sided face-index range check that runs on the **source-typed** values before the u32 coercion.                                                                                                                                                               |
-| `mesh-progressive-loader.ts` | `MeshProgressiveLoader` — the reveal-ladder composite. Wraps one `MeshWholeNodeLoader` per `additive_<i>` subgroup and concatenates the loaded prefix, offsetting each level's face indices by the preceding levels' vertex count. Half the size of its three siblings because a mesh ladder is **view-independent** (see below). |
-| `lod-refinement.ts`          | `runMeshRefinement` — the loop that drains the remaining levels a level per pass, yielding to the render loop between them. Thin wrapper over the shared `scene-loader/progressive/refinement.ts`, shaped after the Lines one (both have an async project step between load and commit).                                          |
-| `projection.ts`              | `projectMeshTo3D` — display-space `position` extraction, the whole-triangle nD cull (via the B2 kernels), the no-hidden-dims fast path, and the winding post-pass. Also `resolveWinding` (pure, exhaustively tested) and `noticeUndecidableWinding`.                                                                              |
+| File                         | Role                                                                                                                                                                                                                                                                                                                                                                |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mesh-whole-node-loader.ts`  | `MeshWholeNodeLoader` — the whole-node loader. Opens metadata handles, runs Stage 1, fetches and decodes every array in full, runs Stage 2, then caches the result until disposal or a progressive parent's `releaseData()` ownership handoff. Implements `MeshDataLoader`.                                                                                         |
+| `preflight.ts`               | Stage 1: the **metadata preflight**. Vertex cap, byte budget, shape/dtype cross-checks, `normal_dims` well-formedness — all decided from `.zarray`/`.zattrs` alone, with **no chunk fetched**. Also exports `parseDtype`.                                                                                                                                           |
+| `validate.ts`                | Stage 2: post-decode value checks. Materialized lengths, and the two-sided face-index range check that runs on the **source-typed** values before the u32 coercion.                                                                                                                                                                                                 |
+| `mesh-progressive-loader.ts` | `MeshProgressiveLoader` — the reveal-ladder composite. Wraps one `MeshWholeNodeLoader` per `additive_<i>` subgroup, folds the loaded prefix into one cumulative payload, releases the child payloads, and offsets each level's face indices by preceding vertex count. It remains smaller than its siblings because the ladder is **view-independent** (see below). |
+| `lod-refinement.ts`          | `runMeshRefinement` — the loop that drains the remaining levels a level per pass, yielding to the render loop between them. Thin wrapper over the shared `scene-loader/progressive/refinement.ts`, shaped after the Lines one (both have an async project step between load and commit).                                                                            |
+| `projection.ts`              | `projectMeshTo3D` — display-space `position` extraction, the whole-triangle nD cull (via the B2 kernels), the no-hidden-dims fast path, and the winding post-pass. Also `resolveWinding` (pure, exhaustively tested) and `noticeUndecidableWinding`.                                                                                                                |
 
 ## Why this folder is so much smaller than `data/lines/`
 
@@ -63,9 +63,9 @@ loaded depends only on how many levels have arrived, and what is _drawn_ is deci
 downstream by the cull, exactly as for an unladdered mesh. Two consequences are
 load-bearing rather than incidental:
 
-- **No `SliceCache`.** Each sub-loader's own decode is the cache and lasts the node's
-  lifetime; a whole-ladder entry keyed by slice would store the same bytes under every
-  key.
+- **No `SliceCache`.** The cumulative reveal payload is view-independent and lasts the
+  node's lifetime; a whole-ladder entry keyed by slice would store the same bytes under
+  every key. Child loaders release their decoded payloads after each successful fold.
 - **The concat memo keys on the level count alone**, so a slice move returns the same
   object — and with it the same loader-owned projection scratch (#1245). Had the ladder
   reset per view like its siblings, every scrub frame would have reallocated and
