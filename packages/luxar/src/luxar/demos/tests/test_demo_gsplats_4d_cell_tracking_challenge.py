@@ -670,14 +670,19 @@ class TestPrecomputedRoundTrip:
         assert got["offset"] == pytest.approx(expected[1])
 
     def test_recompute_forces_the_local_path(self, tmp_path, monkeypatch) -> None:
-        cache_root, written = self._stage(self._crop(), tmp_path)
+        messages: list[str] = []
+        monkeypatch.setattr(_demo, "aprint", messages.append)
+        cache_root, written = self._stage(self._crop(name="crop_a"), tmp_path)
         monkeypatch.setitem(_demo.FLAGS, "recompute", True)
         assert (
             _demo.load_precomputed_crops(
-                ["crop_x"], manifest=self._manifest(written), cache_root=cache_root
+                ["crop_a", "crop_b"],
+                manifest=self._manifest(written),
+                cache_root=cache_root,
             )
             is None
         )
+        assert messages == []
 
     def test_pending_upload_falls_back_instead_of_raising(
         self, tmp_path, monkeypatch

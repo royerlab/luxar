@@ -418,7 +418,11 @@ def load_precomputed_crops(
     file_names = {
         name for dataset in chosen for name in precomputed_file_names(dataset)
     }
-    declared_names = declared_file_names(PRECOMPUTED_DATASET, manifest=manifest)
+    declared_names = (
+        set()
+        if FLAGS["recompute"]
+        else declared_file_names(PRECOMPUTED_DATASET, manifest=manifest)
+    )
     selected_file_names = file_names if declared_names else None
     for dataset in chosen:
         volume_name, tracks_name = precomputed_file_names(dataset)

@@ -321,6 +321,9 @@ def ensure_dataset(
             result remains in manifest order. Unknown names and selections that
             split a declared ``positional_pair`` are rejected. An empty
             selection returns an empty list without creating a cache directory.
+            A non-empty selection against a dataset with no declared files is
+            rejected as unknown; query :func:`declared_file_names` first when
+            that absence should remain routable as :class:`DatasetUnavailable`.
         recompute: If True, raise :class:`LocalComputeDataset` for *any* dataset
             so the caller takes its own build path (mirrors the demos' ``--recompute``).
         cache_root: Override the cache root (tests). Defaults to ``~/.cache/luxar``.
