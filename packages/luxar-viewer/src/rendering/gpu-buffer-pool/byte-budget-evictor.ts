@@ -49,22 +49,31 @@ export interface EvictorCtx {
    * loop), acquire sweeps may keep sparing released buffers, but every
    * release re-enforces the budget without grace.
    *
-   * WHICH RELEASE-THEN-REACQUIRE THIS PROTECTS IS NOT SETTLED. This
-   * comment used to name a DATASET SWITCH as the motivating case. That
-   * cannot be it: the pool is disposed and reconstructed per dataset
-   * (`lifecycle/dispose.ts` → `gpuBufferPool.dispose()`;
-   * `scene-loader.ts` nulls the field and rebuilds it on the next load),
-   * so no buffer ever survives a switch to be adopted after one. The
-   * rationale was describing a scenario the lifecycle prevents, and it
-   * misdirected a review (#2426) before anyone checked.
+   * THIS GRACE IS VESTIGIAL AS FAR AS ANYONE HAS BEEN ABLE TO MEASURE.
+   * Both candidate justifications were checked and neither survives
+   * (#2426, #2436):
    *
-   * The plausible real case is WITHIN a load: LOD demotion returns a
-   * level's buffer to the pool expecting re-promotion to adopt it back
-   * (`scene-loader.ts`'s `releaseLazyGSplats` / `releaseLazyPoints` /
-   * `releaseLazyLines` — "cheap re-projection from cached chunks"). That
-   * is a documented adoption dependency and it is same-frame-adjacent.
-   * It is stated here as the LIKELY case, not a verified one — do not
-   * promote it to fact without measuring a demote → re-promote cycle.
+   *  - DATASET SWITCH, which this comment used to name outright. Cannot
+   *    be it: the pool is disposed and reconstructed per dataset
+   *    (`lifecycle/dispose.ts` → `gpuBufferPool.dispose()`;
+   *    `scene-loader.ts` nulls the field and rebuilds it on the next
+   *    load), so no buffer survives a switch to be adopted after one.
+   *    The comment asserted a scenario the lifecycle prevents, and it
+   *    misdirected a review before anyone checked.
+   *  - LOD DEMOTION, the plausible replacement: `releaseLazyGSplats` /
+   *    `releaseLazyPoints` / `releaseLazyLines` return a level's buffer
+   *    expecting re-promotion to adopt it back. MEASURED under a binding
+   *    budget: re-promotion allocates fresh either way (alloc +1,
+   *    reuses +0, with and without the post-grow sweep). The demoted
+   *    buffer is already gone — `releaseGeometry`'s own sweep runs at
+   *    graceFrame -1 and takes it at demotion time — so the grace never
+   *    gets the chance to protect it.
+   *
+   * KEPT ANYWAY, DELIBERATELY. "Protects no case we could construct" is
+   * not "protects nothing": some unmeasured same-frame release-then-
+   * reacquire may still rely on it, and proving that negative is its own
+   * piece of work. Removal is a separate, optional cleanup — do not
+   * delete this on the strength of the paragraph above.
    */
   readonly graceFrame: number;
   /** Per-type eviction counters; mutated as buffers dispose. */
