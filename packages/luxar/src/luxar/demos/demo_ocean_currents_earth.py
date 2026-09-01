@@ -721,10 +721,7 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
                 citation=DEMO_META["citation"],
                 dimensions=dims,
                 viewer_config=ViewerConfig(
-                    # Thin lines are the one geometry that genuinely rewards the pixels:
-                    # at CSS resolution this scene's structure reads as mush. Cheap
-                    # here, because line scenes are not fill-bound — see
-                    # ViewerConfig.allow_high_dpr.
+                    # Thin lines lose detail at CSS resolution; see ViewerConfig.allow_high_dpr.
                     allow_high_dpr=True,
                     cinematic_mode=True,
                     # No tone mapping at all (#1459): the ramp is an encoding of

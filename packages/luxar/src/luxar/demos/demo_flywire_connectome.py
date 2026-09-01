@@ -656,10 +656,7 @@ def build_scene(
                 # pixels blown to 5.4% at the same exposure, and back to 0.9%
                 # at the manifest's re-tuned -1.5 stops.
                 viewer_config=ViewerConfig(
-                    # Thin lines are the one geometry that genuinely rewards the pixels:
-                    # at CSS resolution this scene's structure reads as mush. Cheap
-                    # here, because line scenes are not fill-bound — see
-                    # ViewerConfig.allow_high_dpr.
+                    # Thin lines lose detail at CSS resolution; see ViewerConfig.allow_high_dpr.
                     allow_high_dpr=True,
                     cinematic_mode=True,
                     tone_mapping="ACES",

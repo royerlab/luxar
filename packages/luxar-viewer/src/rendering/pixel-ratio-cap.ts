@@ -4,7 +4,7 @@
  *
  * HiDPI rendering is expensive out of all proportion to what it buys on
  * soft-edged emissive geometry: a 2x display is 4x the fragment work for
- * a scene made of points, gsplats and lines. So the viewer renders at
+ * a scene made of points and gsplats. So the viewer renders at
  * CSS resolution (DPR 1.0) unless high DPR is explicitly allowed —
  * `renderingControls.defaults.allowHighDPR`, authorable per scene as
  * `viewer_config.allow_high_dpr`.

@@ -620,10 +620,9 @@ valid ranges.
 - Disable bloom and lower anti-aliasing quality in the rendering panel.
 - Adaptive resolution automatically lowers pixel density during interaction.
 - Check **Allow High DPR** in the Performance panel is off (it is by default).
-  Conversely, if a scene of thin lines looks mushy rather than slow, turning it
-  ON is usually cheap — line scenes are not fill-bound.
   On a HiDPI display it costs four times the pixels, which is rarely worth it
-  for points, splats and lines.
+  for points and splats. Conversely, if a scene of thin lines looks mushy rather
+  than slow, turning it ON is usually cheap — line scenes are not fill-bound.
 
 **Camera feels stuck or wrong**
 - Press **F** to recenter the camera on the scene bounding box.

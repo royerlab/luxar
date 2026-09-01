@@ -1052,10 +1052,7 @@ def generate_detector_scene(
         scene = compiler.create_scene(
             dimensions=dims,
             viewer_config=ViewerConfig(
-                # Thin lines are the one geometry that genuinely rewards the pixels:
-                # at CSS resolution this scene's structure reads as mush. Cheap
-                # here, because line scenes are not fill-bound — see
-                # ViewerConfig.allow_high_dpr.
+                # Thin lines lose detail at CSS resolution; see ViewerConfig.allow_high_dpr.
                 allow_high_dpr=True,
                 cinematic_mode=True,
             ),

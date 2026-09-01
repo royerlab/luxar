@@ -249,6 +249,35 @@ empirically tuned distance from another FOV. For a derived distance, importing
 `CINEMATIC_FOV_DEG` or `framing_scale` vouches for the module and lets the pose use
 a local variable normally.
 
+Two decisions this formula makes explicit:
+
+- **`fov` is VERTICAL**, so visible width scales with the LIVE viewport aspect
+  while a baked distance cannot. A wide object therefore has no single distance
+  that fills it everywhere: at the aspect you calibrate for it occupies `fill` of
+  the width, a WIDER window leaves margin, a NARROWER one crops. (That is the
+  direction — it is easy to write it backwards.) The design aspect is a declared
+  calibration point, not a safety margin, so say which one you picked. Framing for
+  a square viewport is the no-crop-ever choice; the viewer default uses that same
+  shorter-axis rule with `fill = 0.75`, while an explicit camera can choose a
+  tighter fill and a declared landscape calibration aspect. Work out both numbers
+  before choosing.
+- **Fit at the NEAR FACE, not the target plane.** This matches the viewer default:
+  the frustum narrows towards the camera, so a deep object's camera-facing side has
+  the least room. Fit at `d - depth/2` and add the half-depth back; otherwise the
+  near corners silently leave the frame.
+
+A test that merely asserts the camera block *exists* is vacuous — a silent revert
+to the default still loads a valid scene. Assert the geometry, and prefer one
+assertion that re-derives nothing: project the eight bbox corners through the
+camera and require every one inside the frustum. That catches the near-face error;
+a test that repeats the distance formula cannot.
+
+If a node's data sits diagonally in its own footprint, level it before authoring the
+camera: the amplitude-weighted principal axis of the cloud in the view plane gives
+the correction angle directly (`gsplat transform --rotate-z <-angle>`), and it can
+shrink the bounding box dramatically — 483×508 → 663×303 µm on a fly brain, which is
+the difference between framing the specimen and framing empty corners.
+
 ### Thin-line scenes need `allow_high_dpr=True`
 
 The viewer renders at CSS resolution (device pixel ratio 1.0) by default, even on
@@ -278,35 +307,6 @@ Leave it off for points, gsplats and mesh unless a specific scene proves
 otherwise — that is where the default earns its keep. Mesh is the one worth
 checking by eye, since it is shaded with hard silhouette edges rather than soft
 sprites, and the "emissive geometry barely rewards it" argument does not cover it.
-
-Two decisions this formula makes explicit:
-
-- **`fov` is VERTICAL**, so visible width scales with the LIVE viewport aspect
-  while a baked distance cannot. A wide object therefore has no single distance
-  that fills it everywhere: at the aspect you calibrate for it occupies `fill` of
-  the width, a WIDER window leaves margin, a NARROWER one crops. (That is the
-  direction — it is easy to write it backwards.) The design aspect is a declared
-  calibration point, not a safety margin, so say which one you picked. Framing for
-  a square viewport is the no-crop-ever choice; the viewer default uses that same
-  shorter-axis rule with `fill = 0.75`, while an explicit camera can choose a
-  tighter fill and a declared landscape calibration aspect. Work out both numbers
-  before choosing.
-- **Fit at the NEAR FACE, not the target plane.** This matches the viewer default:
-  the frustum narrows towards the camera, so a deep object's camera-facing side has
-  the least room. Fit at `d - depth/2` and add the half-depth back; otherwise the
-  near corners silently leave the frame.
-
-A test that merely asserts the camera block *exists* is vacuous — a silent revert
-to the default still loads a valid scene. Assert the geometry, and prefer one
-assertion that re-derives nothing: project the eight bbox corners through the
-camera and require every one inside the frustum. That catches the near-face error;
-a test that repeats the distance formula cannot.
-
-If a node's data sits diagonally in its own footprint, level it before authoring the
-camera: the amplitude-weighted principal axis of the cloud in the view plane gives
-the correction angle directly (`gsplat transform --rotate-z <-angle>`), and it can
-shrink the bounding box dramatically — 483×508 → 663×303 µm on a fly brain, which is
-the difference between framing the specimen and framing empty corners.
 
 ## Baked ambient occlusion (`luxar.shading`)
 
