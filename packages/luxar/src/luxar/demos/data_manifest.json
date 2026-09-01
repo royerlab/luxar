@@ -531,9 +531,79 @@
         "comparable": true,
         "stored_bytes": null
       },
-      "pending_upload": true,
       "dir": "gsplats_cell_tracking",
-      "files": []
+      "files": [
+        {
+          "name": "6bba_09961292.gsplats.zarr.zip",
+          "sha256": "a2333a14baa6a08254698612693e0d1490e59f0eaf267abc411cb988cec3b1c9",
+          "bytes": 91853287
+        },
+        {
+          "name": "6bba_09961292_tracks.npz",
+          "sha256": "87780e6d1c623d89ba7def189ddb1b3ae641355749844589f69f8a599f1ad934",
+          "bytes": 32508
+        },
+        {
+          "name": "6bba_57b7cc1e.gsplats.zarr.zip",
+          "sha256": "41483ef53a07935faa93edaf9765675bf1628a0cf3c117ab62e85a457eb37006",
+          "bytes": 51046481
+        },
+        {
+          "name": "6bba_57b7cc1e_tracks.npz",
+          "sha256": "899508d354e429b868960c01d824ff98804c76481ab9eb65c906c16c253da806",
+          "bytes": 28215
+        },
+        {
+          "name": "6bba_5dfe9ad1.gsplats.zarr.zip",
+          "sha256": "fbcbfa8b8b2e57de9f05191a10221112918157e943dbf75bf28c5334d748c9b6",
+          "bytes": 105027651
+        },
+        {
+          "name": "6bba_5dfe9ad1_tracks.npz",
+          "sha256": "0f778270ac3115db8bf6a101c2043087f33fc64c88c510989f50e2942d314e13",
+          "bytes": 27473
+        },
+        {
+          "name": "6bba_784a78c9.gsplats.zarr.zip",
+          "sha256": "22707e543e4d09823df3f48cbc3df4330fab2c72f7b7d19cd193d7bbbc326120",
+          "bytes": 101597937
+        },
+        {
+          "name": "6bba_784a78c9_tracks.npz",
+          "sha256": "5ba99ba428b3cf9668d4b63440c8aee371a1d0cd2f5d4c86ac1aa3828b49f344",
+          "bytes": 30646
+        },
+        {
+          "name": "6bba_ae82a791.gsplats.zarr.zip",
+          "sha256": "b11bb3d43cd79ea2cdd8636881acc17a0bc20387d91b2fcb1eec8efc3fdd2aef",
+          "bytes": 93556276
+        },
+        {
+          "name": "6bba_ae82a791_tracks.npz",
+          "sha256": "a17758e5023347e5cfa875963fd22321dc4dff3fd81e0ade9fadc0f4de96191d",
+          "bytes": 24705
+        },
+        {
+          "name": "6bba_bb9f20c3.gsplats.zarr.zip",
+          "sha256": "ddf60dec17c0df4a28aee0687b7ddf5c88510101d55af92c386d789024e3d3e9",
+          "bytes": 96329136
+        },
+        {
+          "name": "6bba_bb9f20c3_tracks.npz",
+          "sha256": "93d3f64a447681c1d1e3f6374fb966804b188071ccbe0efe3b25adeb03b70568",
+          "bytes": 31847
+        },
+        {
+          "name": "6bba_cff5865f.gsplats.zarr.zip",
+          "sha256": "8ece34f7bf84d1fdc82336abf442bd4635bd1c80a7e5b05b7cf3cb11b0a7dc27",
+          "bytes": 92783719
+        },
+        {
+          "name": "6bba_cff5865f_tracks.npz",
+          "sha256": "53250fa5bfb4edf6cd68ce1c6f79290a841e40ab04f8dd565df83881b693e8b5",
+          "bytes": 28958
+        }
+      ]
     },
     "h2afva": {
       "bucket": "zenodo",

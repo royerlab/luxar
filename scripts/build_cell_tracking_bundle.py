@@ -4,11 +4,12 @@
 The cell-tracking demo's raw source sits behind an authenticated Kaggle
 competition endpoint, so the redistributable thing is the **derived product**:
 per crop, the finished 4D Gaussian-splat volume (LOD ladder included) plus the
-track geometry. With those hosted, the demo runs with no credentials and no GPU.
+track geometry. Once those files are published, the demo runs with no credentials
+and no GPU.
 
 This reads the demo's own per-timepoint fit cache, runs the demo's own combine →
-LOD → tracks pipeline, and writes one pair of files per crop, plus the
-``files`` block to paste into ``scripts/gen_data_manifest.py`` (name + sha256 +
+LOD → tracks pipeline, and writes one pair of files per crop, plus the ``files``
+block to paste into the committed ``data_manifest.json`` entry (name + sha256 +
 bytes, which is what makes a fetched copy verifiable).
 
     # every crop the fit cache holds, at all 100 timepoints (what is hosted)
@@ -137,9 +138,11 @@ def main() -> int:
     listing.write_text(json.dumps(files, indent=2) + "\n")
     print(f"manifest `files` block written to {listing}")
     print(
-        "\nNext: upload these to the cc-by Zenodo record, paste the block into "
-        "`gsplats_cell_tracking` in scripts/gen_data_manifest.py, drop its "
-        "`pending_upload` flag, and re-run the generator.\n"
+        "\nNext: upload these to the cc-by Zenodo record, then replace the "
+        "`gsplats_cell_tracking.files` list in "
+        "packages/luxar/src/luxar/demos/data_manifest.json. Hosted-only file "
+        "lists live in the committed manifest because the generator has no "
+        "in-repo directory to scan.\n"
         "NOTE: the demo can only FETCH them once that record is PUBLISHED — an "
         "unpublished draft's files are not publicly downloadable, so the record's "
         "base_url stays null until then."

@@ -428,18 +428,18 @@ DATASETS: dict[str, dict] = {
             "group, CZ Biohub SF. Derived product: per-crop 4D Gaussian-splat "
             "fits with substitutive LOD."
         ),
-        # Computed on obsidian, awaiting upload to the cc-by record. Redistributable
-        # as a DERIVED product because the source is CC0 — and since the raw
-        # competition data is behind an authenticated endpoint, hosting the fits is
-        # what makes the demo runnable with no Kaggle credentials and no GPU at all.
+        # Computed on obsidian and uploaded to the cc-by draft. Redistributable as a
+        # DERIVED product because the source is CC0 — and since the raw competition
+        # data is behind an authenticated endpoint, publishing the fits is what makes
+        # the demo runnable with no Kaggle credentials and no GPU at all.
         #
-        # ONE file set, at the full 100 timepoints: ~700 MB (measured — 77.3 MB per
-        # crop x 9). No lighter variant, deliberately. The demo exists to show the
-        # whole timelapse, a decimated one would undercut that, and 700 MB is modest
-        # for this catalogue (the celegans demo pulls 26 GB). The derived product is
-        # far smaller than either the ~4 GB of raw crops or the ~450 MB of
-        # per-timepoint fit cache it is built from, because a fitted splat costs
-        # about 12 bytes once encoded and zipped.
+        # ONE file set, at the full 100 timepoints: 632.4 MB across the seven crops
+        # with complete fit caches (~90 MB per crop). No lighter variant,
+        # deliberately. The demo exists to show the whole timelapse, a decimated one
+        # would undercut that, and 632.4 MB is modest for this catalogue (the celegans
+        # demo pulls 26 GB). The derived product is far smaller than either the raw
+        # crops or the per-timepoint fit cache it is built from, because a fitted
+        # splat costs about 12 bytes once encoded and zipped.
         acquisition=dict(
             description=(
                 "one competition training crop per fitted archive: an OME-Zarr "
@@ -453,7 +453,18 @@ DATASETS: dict[str, dict] = {
             # download rather than a local probe.
             stored_bytes=None,
         ),
-        pending_upload=True,
+        # Uploaded to the cc-by draft and verified by download-and-hash, so
+        # `pending_upload` is gone. The PINS are not here: this dataset has no
+        # in-repo directory, so `_files_for` finds nothing on disk and returns the
+        # COMMITTED list — the manifest itself is authoritative for a hosted-only
+        # dataset, exactly as `gsplats_4d_neuromast_2ch` does it. A `files=` in
+        # this spec would be silently discarded.
+        #
+        # SEVEN of the nine crops in the demo's `DATASETS`: the ones with a
+        # complete 100-timepoint fit cache at the default 60,000 seeds. They cover
+        # the default `--datasets 6` with one spare; `--datasets 8`/`9` still falls
+        # back to the Kaggle download, which the loader treats as a supported
+        # partial-record state rather than a fault.
     ),
     "h2afva": dict(
         bucket="zenodo",
