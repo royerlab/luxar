@@ -257,7 +257,9 @@ export function defineRefinementLoopContract(
     it('unwinds each failed processed pass before retrying the same prefix', async () => {
       let loadedLODCount = 1;
       const loader = {
-        hasMoreLODs: true,
+        get hasMoreLODs() {
+          return loadedLODCount < 3;
+        },
         get loadedLODCount() {
           return loadedLODCount;
         },

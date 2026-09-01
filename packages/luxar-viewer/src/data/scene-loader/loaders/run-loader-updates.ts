@@ -110,10 +110,11 @@ export async function runLoaderUpdates<TLoader, TStaged>(
       ctx.registry.recordFailure(path, error as Error);
       const retryCount = ctx.registry.failedLoaders.get(path)?.retryCount ?? 0;
       const lcType = loaderType === 'Points' ? '' : `${loaderType.toLowerCase()} `;
+      const unwindSuffix = unwound > 0 ? ` (unwound ${unwound} level(s))` : '';
       log.error(
         Modules.SCENE_LOADER,
-        `Failed to update ${lcType}${path} (attempt ${retryCount + 1}): ${(error as Error).message} ` +
-          `(unwound ${unwound} level(s))`
+        `Failed to update ${lcType}${path} (attempt ${retryCount + 1}): ${(error as Error).message}` +
+          unwindSuffix
       );
       return { staged: null, session };
     }

@@ -21,6 +21,7 @@ import {
 import { ViewStateQueue } from '../../../../../data/scene-loader/view-state/view-state-queue';
 import { LoaderRegistry } from '../../../../../data/scene-loader/loaders/loader-registry';
 import { ArchiveFaultError } from '../../../../../cache/chunk-source';
+import { log } from '../../../../../utils/log';
 
 function makeCtx() {
   const viewStateQueue = new ViewStateQueue();
@@ -75,21 +76,48 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
     const ctx = makeCtx();
     const rollbackToPassStart = vi.fn().mockReturnValue(2);
     const loaders = new Map<string, object>([['/scene/points', { rollbackToPassStart }]]);
+    const errorSpy = vi.spyOn(log, 'error').mockImplementation(() => {});
 
-    const results = await runLoaderUpdates(
-      loaders,
-      'Points',
-      () => {
-        throw new Error('real load failure');
-      },
-      ctx
-    );
+    try {
+      const results = await runLoaderUpdates(
+        loaders,
+        'Points',
+        () => {
+          throw new Error('real load failure');
+        },
+        ctx
+      );
 
-    expect(results[0].staged).toBeNull();
-    expect(ctx.failedLoaders.has('/scene/points')).toBe(true);
-    expect(ctx.failedLoaders.get('/scene/points')?.retryCount).toBe(0);
-    expect(ctx.forgetPath).toHaveBeenCalledWith('/scene/points');
-    expect(rollbackToPassStart).toHaveBeenCalledOnce();
+      expect(results[0].staged).toBeNull();
+      expect(ctx.failedLoaders.has('/scene/points')).toBe(true);
+      expect(ctx.failedLoaders.get('/scene/points')?.retryCount).toBe(0);
+      expect(ctx.forgetPath).toHaveBeenCalledWith('/scene/points');
+      expect(rollbackToPassStart).toHaveBeenCalledOnce();
+      expect(errorSpy.mock.calls[0][1]).toContain('(unwound 2 level(s))');
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('omits the unwind suffix when a non-progressive loader discards no levels', async () => {
+    const ctx = makeCtx();
+    const errorSpy = vi.spyOn(log, 'error').mockImplementation(() => {});
+
+    try {
+      await runLoaderUpdates(
+        new Map<string, object>([['/scene/plain', {}]]),
+        'Points',
+        () => {
+          throw new Error('plain load failure');
+        },
+        ctx
+      );
+
+      expect(errorSpy).toHaveBeenCalledOnce();
+      expect(errorSpy.mock.calls[0][1]).not.toContain('unwound');
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   it('hoists wrapped archive faults once without recording per-node failures', async () => {
