@@ -368,3 +368,81 @@ describe('byte-budget eviction', () => {
     generousPool.dispose();
   });
 });
+
+describe('post-grow reclaim (#2426 pool retention)', () => {
+  /**
+   * A growing ladder is release + reacquire per capacity tier, and the pair
+   * released at each growth used to be stranded for the life of the scene by
+   * TWO independent mechanisms:
+   *
+   *  - `releaseGeometry`'s own sweep IS unconditional, but it runs before the
+   *    larger replacement registers, so it measures the budget against
+   *    pre-growth active bytes, sees headroom that no longer exists, and
+   *    evicts nothing;
+   *  - the acquire-side sweep does see the new accounting, but runs with
+   *    `graceFrame = frameCount` while the release just stamped the pair with
+   *    that same frame — so the grace skips precisely the buffer that needs
+   *    taking. (On the ADOPT path there is no acquire sweep at all.)
+   *
+   * A SINGLE node is the discriminating case: multi-node scenes hid this,
+   * because a later node's churn re-runs the pass and catches earlier nodes'
+   * pairs — leaving only the last node's final pair stranded. One node never
+   * acquires again, so nothing ever reclaims it.
+   */
+  // THE BUDGET REGIME IS THE WHOLE TEST, and getting it wrong makes these
+  // vacuous. A 100-point buffer is ~66.8 KB and a 5000-point one ~453 KB, so:
+  //   budget < 66.8 KB  → the RELEASE sweep already reclaims it (at release the
+  //                       node's own bytes have left `activeBytes`, so
+  //                       pooledTarget is the whole budget) — the post-grow
+  //                       sweep is never needed and the test proves nothing.
+  //   budget > 520 KB   → nothing is ever over budget; also proves nothing.
+  //   in between        → pooled alone fits, active + pooled does not. That is
+  //                       the real ladder regime, and the only one where the
+  //                       stranding is observable.
+  // Verified by mutation: with the post-grow sweep removed, the first test
+  // below fails at this budget and passes at 40 KB.
+  const BUDGET_IN_REGIME = 480_000;
+
+  it('reclaims the superseded pair when a single node grows past the budget', () => {
+    const pool = new GPUBufferPool(20, 300, 5, () => BUDGET_IN_REGIME);
+    pool.acquirePointsGeometry('n1', 100);
+    const grown = pool.acquirePointsGeometry('n1', 5000);
+    expect(grown).toBeDefined();
+
+    const stats = pool.getStats();
+    // The whole point: no pooled residue left behind by the growth.
+    expect(stats.pooledBytes).toBe(0);
+    expect(stats.byType.points.evictions).toBeGreaterThan(0);
+
+    pool.dispose();
+  });
+
+  it('leaves the pair pooled when the budget has room, preserving reuse', () => {
+    // The reclaim is budget-driven, not unconditional disposal: with headroom
+    // the released pair must stay adoptable, or growth becomes alloc/dispose
+    // churn on machines that were never under pressure.
+    const pool = new GPUBufferPool(20, 300, 5, () => 100_000_000);
+    pool.acquirePointsGeometry('n1', 100);
+    pool.acquirePointsGeometry('n1', 5000);
+
+    const stats = pool.getStats();
+    expect(stats.pooledBuffers).toBeGreaterThan(0);
+    expect(stats.byType.points.evictions).toBe(0);
+
+    pool.dispose();
+  });
+
+  it('does not disturb the active buffer it just grew into', () => {
+    const pool = new GPUBufferPool(20, 300, 5, () => BUDGET_IN_REGIME);
+    pool.acquirePointsGeometry('n1', 100);
+    const grown = pool.acquirePointsGeometry('n1', 5000);
+
+    // Active is never evictable; the node must still hold the geometry it was
+    // handed, or the caller renders against a disposed buffer.
+    const stats = pool.getStats();
+    expect(stats.activeBytes).toBeGreaterThan(0);
+    expect(grown.userData.luxarInvalidated).not.toBe(true);
+
+    pool.dispose();
+  });
+});
