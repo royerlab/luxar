@@ -1103,6 +1103,8 @@ def write_scene(
             ]
         )
         viewer_config = ViewerConfig(
+            # Thin lines lose detail at CSS resolution; see ViewerConfig.allow_high_dpr.
+            allow_high_dpr=True,
             cinematic_mode=True,
             camera=CameraConfig(
                 position=pull_in(

@@ -1050,7 +1050,12 @@ def generate_detector_scene(
             ]
         )
         scene = compiler.create_scene(
-            dimensions=dims, viewer_config=ViewerConfig(cinematic_mode=True)
+            dimensions=dims,
+            viewer_config=ViewerConfig(
+                # Thin lines lose detail at CSS resolution; see ViewerConfig.allow_high_dpr.
+                allow_high_dpr=True,
+                cinematic_mode=True,
+            ),
         )
 
         rng = np.random.default_rng(42)

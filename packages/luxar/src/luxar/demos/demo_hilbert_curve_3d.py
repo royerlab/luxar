@@ -223,7 +223,12 @@ def build_scene(output_path: Path, max_order: int) -> int:
 
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
-                dimensions=dims, viewer_config=ViewerConfig(cinematic_mode=True)
+                dimensions=dims,
+                viewer_config=ViewerConfig(
+                    # Thin lines lose detail at CSS resolution; see ViewerConfig.allow_high_dpr.
+                    allow_high_dpr=True,
+                    cinematic_mode=True,
+                ),
             )
 
             for slot, order in enumerate(orders):
