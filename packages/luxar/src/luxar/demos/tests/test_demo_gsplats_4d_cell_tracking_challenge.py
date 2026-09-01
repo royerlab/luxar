@@ -735,7 +735,15 @@ class TestPrecomputedRoundTrip:
     def test_a_missing_crop_falls_back_rather_than_half_building(
         self, tmp_path
     ) -> None:
-        cache_root, written = self._stage(self._crop(name="crop_a"), tmp_path)
+        cache_root = tmp_path / "cache"
+        staged = cache_root / _demo.PRECOMPUTED_DATASET
+        staged.mkdir(parents=True)
+        written = []
+        for name in _demo.precomputed_file_names("crop_a"):
+            path = staged / name
+            path.write_bytes(b"must not be opened")
+            written.append(path)
+
         got = _demo.load_precomputed_crops(
             ["crop_a", "crop_b"],
             manifest=self._manifest(written),

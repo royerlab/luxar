@@ -407,7 +407,25 @@ def load_precomputed_crops(
     ``manifest`` / ``cache_root`` exist for tests, mirroring
     :func:`~luxar.demos.ensure_dataset`.
     """
-    from luxar.demos import DatasetUnavailable, LocalComputeDataset, ensure_dataset
+    from luxar.demos import (
+        DatasetUnavailable,
+        LocalComputeDataset,
+        dataset_spec,
+        ensure_dataset,
+    )
+
+    declared_names = {
+        file["name"]
+        for file in dataset_spec(PRECOMPUTED_DATASET, manifest).get("files", [])
+    }
+    for dataset in chosen:
+        volume_name, tracks_name = precomputed_file_names(dataset)
+        if volume_name not in declared_names or tracks_name not in declared_names:
+            aprint(
+                f"Hosted dataset has no entry for {dataset}; falling back to the "
+                "Kaggle download and local fit (already-fitted timepoints are reused)."
+            )
+            return None
 
     try:
         paths = ensure_dataset(
