@@ -207,6 +207,16 @@ export function restoreLadderSnapshot<T>(
   return lods.length > 0 && depth >= lods.length && depth <= nLods ? { lods, depth } : null;
 }
 
+/** Remove the cached ladder snapshot for one node/view pair. */
+export function deleteLadder(
+  sliceCache: SliceCache | null,
+  path: string,
+  view: SliceViewLike
+): void {
+  if (!sliceCache || !hasHiddenDims(view)) return;
+  sliceCache.delete(SliceCache.makeKey(path, buildSliceViewSig(view)));
+}
+
 /**
  * Store a cloned snapshot of the ladder — full or prefix — with
  * UPGRADE-IF-LONGER semantics: an existing entry is replaced only when the

@@ -264,6 +264,21 @@ export class SliceCache {
   }
 
   /**
+   * Remove one cached slice without leaving an eviction tombstone.
+   *
+   * @param key - Cache key to invalidate.
+   * @returns Whether an entry was removed.
+   */
+  delete(key: string): boolean {
+    const deleted = this.cache.delete(key);
+    if (deleted) {
+      this.tombstones.delete(key);
+      this.ladderDepths.delete(key);
+    }
+    return deleted;
+  }
+
+  /**
    * Whether an entry of `bytes` could ever be stored (i.e. it does not exceed
    * the whole budget). The LRU silently rejects oversized entries, so callers
    * check this BEFORE doing the (potentially large) clone to avoid a wasted

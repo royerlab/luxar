@@ -18,6 +18,7 @@ import type {
 import { log, Modules } from '../../utils/log';
 import { notifier } from '../../utils/cross-layer/notifier';
 import { isAbortError } from '../loaders/abort-error';
+import { tryRollbackToPassStart } from '../loaders/progressive/pass-rollback';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 import type { ViewState } from '../data-loader-types';
 import type { ViewStateQueue } from '../scene-loader/view-state/view-state-queue';
@@ -78,6 +79,9 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
       // PointsSpatialIndexLoader doesn't have it, so skip on absence.
       const progressiveLoader = loader as PointsDataLoader & {
         hasMoreLODs?: boolean;
+        // Optional for the same reason as `hasMoreLODs`: only a progressive
+        // loader has a ladder to unwind. Every `PointsProgressiveLoader` has it.
+        rollbackToPassStart?: () => number;
       };
       if (progressiveLoader.hasMoreLODs !== true) return false;
       if (failures.isExhausted(path)) return false;
@@ -117,12 +121,17 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
         // in-flight read on purpose. Don't count it toward the failure backoff
         // or log an error — the loop's next-pass pending check hands off.
         if (isAbortError(error)) return false;
+        // Unwind the levels this pass appended before the throw, so the retry
+        // re-attempts the SAME prefix rather than resuming from the advanced
+        // cursor with a larger allocation. See
+        // `../loaders/progressive/pass-rollback`.
+        const unwound = tryRollbackToPassStart(progressiveLoader);
         if (failures.recordFailure(path)) {
           log.error(
             Modules.SCENE_LOADER,
             `Points refinement failed for ${path}: ${(error as Error).message} — ` +
               `giving up after ${MAX_CONSECUTIVE_REFINEMENT_FAILURES} consecutive failures ` +
-              '(will retry on the next view change)'
+              `(will retry on the next view change; unwound ${unwound} level(s))`
           );
           // The node silently freezes at its last valid coarse prefix — a
           // console-only error leaves the user staring at a permanently
@@ -132,7 +141,8 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
         } else {
           log.error(
             Modules.SCENE_LOADER,
-            `Points refinement failed for ${path}: ${(error as Error).message}`
+            `Points refinement failed for ${path}: ${(error as Error).message} ` +
+              `(unwound ${unwound} level(s))`
           );
         }
         return false;

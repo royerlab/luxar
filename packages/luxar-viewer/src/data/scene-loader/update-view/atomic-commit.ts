@@ -48,6 +48,8 @@ export interface AtomicCommitCtx {
   commitLinesGeometry(staged: StagedLinesCommit, session?: UpdateSession): void;
   commitGSplatsGeometry(staged: StagedGSplatsCommit, session?: UpdateSession): void;
   commitMeshGeometry(staged: StagedMeshCommit, session?: UpdateSession): void;
+  /** Restore the owning progressive loader when its staged commit fails. */
+  onCommitFailed?(path: string): void;
 }
 
 /**
@@ -90,6 +92,20 @@ export function runAtomicCommit(
   // AggregateError so the failure stays exactly as loud as before at the
   // same call site — fail-loud is preserved, sibling starvation is not.
   const commitErrors: unknown[] = [];
+  const recordCommitFailure = (path: string, error: unknown): void => {
+    try {
+      ctx.onCommitFailed?.(path);
+    } catch (rollbackError) {
+      commitErrors.push(
+        new AggregateError(
+          [error, rollbackError],
+          `Geometry commit and rollback failed for ${path}`
+        )
+      );
+      return;
+    }
+    commitErrors.push(error);
+  };
 
   try {
     // Advance GPU buffer pool frame counter once per update cycle
@@ -102,7 +118,7 @@ export function runAtomicCommit(
       try {
         if (staged && !discard) ctx.updatePointsGeometry(staged.path, staged.data, session);
       } catch (err) {
-        commitErrors.push(err);
+        recordCommitFailure(staged!.path, err);
       } finally {
         session.end();
       }
@@ -111,7 +127,7 @@ export function runAtomicCommit(
       try {
         if (staged && !discard) ctx.commitLinesGeometry(staged, session);
       } catch (err) {
-        commitErrors.push(err);
+        recordCommitFailure(staged!.path, err);
       } finally {
         session.end();
       }
@@ -120,7 +136,7 @@ export function runAtomicCommit(
       try {
         if (staged && !discard) ctx.commitGSplatsGeometry(staged, session);
       } catch (err) {
-        commitErrors.push(err);
+        recordCommitFailure(staged!.path, err);
       } finally {
         session.end();
       }
@@ -129,7 +145,7 @@ export function runAtomicCommit(
       try {
         if (staged && !discard) ctx.commitMeshGeometry(staged, session);
       } catch (err) {
-        commitErrors.push(err);
+        recordCommitFailure(staged!.path, err);
       } finally {
         session.end();
       }

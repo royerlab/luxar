@@ -78,6 +78,19 @@ describe('SliceCache', () => {
     expect(s.misses).toBe(0);
   });
 
+  it('delete() removes one entry without turning a later miss into cache thrash', () => {
+    const c = new SliceCache({ maxSize: 1024 });
+    const key = SliceCache.makeKey('/n', 'v');
+    c.set(key, { ...entry(10), ladderDepth: 2, totalLadderDepth: 2 });
+
+    expect(c.delete(key)).toBe(true);
+    expect(c.delete(key)).toBe(false);
+    expect(c.getStats().count).toBe(0);
+    expect(c.getStats().ladderDepthHistogram).toEqual({});
+    expect(c.get(key)).toBeUndefined();
+    expect(c.getStats().thrashMisses).toBe(0);
+  });
+
   it('makeKey namespaces by node path so identical views on different nodes never collide', () => {
     const c = new SliceCache({ maxSize: 1024 });
     const k1 = SliceCache.makeKey('/a', 'view');

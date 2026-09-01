@@ -1132,6 +1132,18 @@ export class SceneLoader {
         commitLinesGeometry: (staged, session) => this.commitLinesGeometry(staged, session),
         commitGSplatsGeometry: (staged, session) => this.commitGSplatsGeometry(staged, session),
         commitMeshGeometry: (staged, session) => this.commitMeshGeometry(staged, session),
+        onCommitFailed: (path) => {
+          const loader =
+            this.loaders.get(path) ??
+            this.linesLoaders.get(path) ??
+            this.gsplatLoaders.get(path) ??
+            this.meshLoaders.get(path);
+          (
+            loader as typeof loader & {
+              rollbackToPassStart?: () => number;
+            }
+          )?.rollbackToPassStart?.();
+        },
       });
 
       // Post-commit bookkeeping is meaningful only for a committed frame. A

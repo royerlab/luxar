@@ -600,6 +600,106 @@ describe('LinesProgressiveLoader', () => {
     });
   });
 
+  describe('rollbackToPassStart (failed-commit recovery, #2426)', () => {
+    it('unwinds intact rung payloads when concatenation fails before folding', async () => {
+      lodB.updateView.mockResolvedValue(makeLodData(10, 5, 4, { color: 'uint8' }));
+
+      await expect(loader.loadLines(baseViewState)).rejects.toThrow(
+        'mixed dimensionality across LOD levels'
+      );
+      expect(loader.loadedLODCount).toBe(3);
+
+      expect(loader.rollbackToPassStart()).toBe(3);
+      expect(loader.loadedLODCount).toBe(0);
+      expect(loader.hasMoreLODs).toBe(true);
+    });
+
+    it('keeps a completed folded pass schedulable when its commit fails', async () => {
+      const result = await loader.loadLines(baseViewState);
+      expect(loader.loadedLODCount).toBe(3);
+      expect(loader.hasMoreLODs).toBe(false);
+
+      const retained = (
+        loader as unknown as {
+          loadedLODs: LoadedLinesData[];
+        }
+      ).loadedLODs;
+      expect(retained).toHaveLength(1);
+
+      // A later pass starts from the completed folded ladder and appends no
+      // levels. If its geometry commit fails, rollback must still make the
+      // loader schedulable so the same cumulative payload is retried.
+      await expect(loader.loadLines(baseViewState)).resolves.toBe(result);
+      expect(loader.rollbackToPassStart()).toBe(0);
+      expect(loader.loadedLODCount).toBe(3);
+      expect(retained).toHaveLength(1);
+      expect(loader.hasMoreLODs).toBe(true);
+
+      lodA.updateViewWithResidency.mockClear();
+      lodB.updateViewWithResidency.mockClear();
+      lodC.updateViewWithResidency.mockClear();
+      await expect(loader.loadLines(baseViewState)).resolves.toBe(result);
+      expect(lodA.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(lodB.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(lodC.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(loader.hasMoreLODs).toBe(false);
+    });
+
+    it('keeps an incrementally folded prefix and cursor paired', async () => {
+      // Pass 1 stops after LOD 0 (LOD B reports a cache miss), so pass 2
+      // starts from a committed prefix of 1.
+      lodB.updateViewWithResidency.mockImplementationOnce(async () => ({
+        data: makeLodData(10, 5, 3, { color: 'uint8' }),
+        allResident: false,
+      }));
+      await loader.loadLines(baseViewState);
+      expect(loader.loadedLODCount).toBe(2);
+
+      // Pass 2 (same view state → no reset) streams the rest, then concat
+      // succeeds and folds the appended rung. The old prefix cannot be
+      // reconstructed after that destructive fold, so rollback is a no-op.
+      await loader.loadLines(baseViewState);
+      expect(loader.loadedLODCount).toBe(3);
+      expect(loader.rollbackToPassStart()).toBe(0);
+      expect(loader.loadedLODCount).toBe(3);
+    });
+
+    it('evicts an uncommitted full ladder snapshot before a later slice revisit', async () => {
+      const sliceCache = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const first = makeSubLoader(makeLodData(20, 10, 3, { color: 'uint8' }));
+      const second = makeSubLoader(makeLodData(10, 5, 3, { color: 'uint8' }));
+      const recovering = new LinesProgressiveLoader(
+        [first, second] as unknown as LinesSpatialIndexLoader[],
+        2,
+        '/rollback-cache',
+        undefined,
+        sliceCache
+      );
+      const viewA = baseViewState;
+      const viewB = { ...baseViewState, slicePosition: [0, 0, 0, 1] };
+
+      await recovering.loadLines(viewA);
+      await recovering.loadLines(viewB);
+      first.updateViewWithResidency.mockClear();
+      second.updateViewWithResidency.mockClear();
+      await recovering.loadLines(viewA);
+      expect(first.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(second.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(recovering.rollbackToPassStart()).toBe(2);
+      expect(recovering.loadedLODCount).toBe(0);
+      expect(recovering.hasMoreLODs).toBe(true);
+
+      await recovering.loadLines(viewB);
+
+      first.updateViewWithResidency.mockClear();
+      second.updateViewWithResidency.mockClear();
+      await recovering.loadLines(viewA);
+
+      expect(first.updateViewWithResidency).toHaveBeenCalled();
+      expect(second.updateViewWithResidency).toHaveBeenCalled();
+    });
+  });
+
   describe('cache-hit timing short-circuit', () => {
     it(`stops loading further LODs when one takes > ${CACHE_HIT_THRESHOLD_MS}ms`, async () => {
       let now = 0;

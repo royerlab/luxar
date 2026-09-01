@@ -21,6 +21,7 @@ import {
 import { ViewStateQueue } from '../../../../../data/scene-loader/view-state/view-state-queue';
 import { LoaderRegistry } from '../../../../../data/scene-loader/loaders/loader-registry';
 import { ArchiveFaultError } from '../../../../../cache/chunk-source';
+import { log } from '../../../../../utils/log';
 
 function makeCtx() {
   const viewStateQueue = new ViewStateQueue();
@@ -51,7 +52,8 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
     'treats %s as superseded: staged=null, no failure, no forgetPath',
     async (name) => {
       const ctx = makeCtx();
-      const loaders = new Map<string, object>([['/scene/points', {}]]);
+      const rollbackToPassStart = vi.fn();
+      const loaders = new Map<string, object>([['/scene/points', { rollbackToPassStart }]]);
 
       const results = await runLoaderUpdates(
         loaders,
@@ -66,33 +68,94 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
       expect(results[0].staged).toBeNull();
       expect(ctx.failedLoaders.size).toBe(0);
       expect(ctx.forgetPath).not.toHaveBeenCalled();
+      expect(rollbackToPassStart).not.toHaveBeenCalled();
     }
   );
 
   it('still records genuine (non-abort) errors as failures and forgets the path', async () => {
     const ctx = makeCtx();
-    const loaders = new Map<string, object>([['/scene/points', {}]]);
+    const rollbackToPassStart = vi.fn().mockReturnValue(2);
+    const loaders = new Map<string, object>([['/scene/points', { rollbackToPassStart }]]);
+    const errorSpy = vi.spyOn(log, 'error').mockImplementation(() => {});
 
-    const results = await runLoaderUpdates(
-      loaders,
-      'Points',
-      () => {
-        throw new Error('real load failure');
-      },
-      ctx
-    );
+    try {
+      const results = await runLoaderUpdates(
+        loaders,
+        'Points',
+        () => {
+          throw new Error('real load failure');
+        },
+        ctx
+      );
 
-    expect(results[0].staged).toBeNull();
-    expect(ctx.failedLoaders.has('/scene/points')).toBe(true);
-    expect(ctx.failedLoaders.get('/scene/points')?.retryCount).toBe(0);
-    expect(ctx.forgetPath).toHaveBeenCalledWith('/scene/points');
+      expect(results[0].staged).toBeNull();
+      expect(ctx.failedLoaders.has('/scene/points')).toBe(true);
+      expect(ctx.failedLoaders.get('/scene/points')?.retryCount).toBe(0);
+      expect(ctx.forgetPath).toHaveBeenCalledWith('/scene/points');
+      expect(rollbackToPassStart).toHaveBeenCalledOnce();
+      expect(errorSpy.mock.calls[0][1]).toContain('(unwound 2 level(s))');
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('keeps the original failure path when rollback itself throws', async () => {
+    const ctx = makeCtx();
+    const rollbackToPassStart = vi.fn(() => {
+      throw new Error('rollback failed');
+    });
+    const loaders = new Map<string, object>([['/scene/points', { rollbackToPassStart }]]);
+    const errorSpy = vi.spyOn(log, 'error').mockImplementation(() => {});
+
+    try {
+      const results = await runLoaderUpdates(
+        loaders,
+        'Points',
+        () => {
+          throw new Error('real load failure');
+        },
+        ctx
+      );
+
+      expect(results[0].staged).toBeNull();
+      expect(rollbackToPassStart).toHaveBeenCalledOnce();
+      expect(ctx.failedLoaders.has('/scene/points')).toBe(true);
+      expect(ctx.forgetPath).toHaveBeenCalledWith('/scene/points');
+      expect(errorSpy.mock.calls[0][1]).toContain('real load failure');
+      expect(errorSpy.mock.calls[0][1]).not.toContain('rollback failed');
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('omits the unwind suffix when a non-progressive loader discards no levels', async () => {
+    const ctx = makeCtx();
+    const errorSpy = vi.spyOn(log, 'error').mockImplementation(() => {});
+
+    try {
+      await runLoaderUpdates(
+        new Map<string, object>([['/scene/plain', {}]]),
+        'Points',
+        () => {
+          throw new Error('plain load failure');
+        },
+        ctx
+      );
+
+      expect(errorSpy).toHaveBeenCalledOnce();
+      expect(errorSpy.mock.calls[0][1]).not.toContain('unwound');
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   it('hoists wrapped archive faults once without recording per-node failures', async () => {
     const ctx = makeCtx();
+    const rollbackA = vi.fn().mockReturnValue(1);
+    const rollbackB = vi.fn().mockReturnValue(1);
     const loaders = new Map<string, object>([
-      ['/scene/points-a', {}],
-      ['/scene/points-b', {}],
+      ['/scene/points-a', { rollbackToPassStart: rollbackA }],
+      ['/scene/points-b', { rollbackToPassStart: rollbackB }],
     ]);
     const fault = new ArchiveFaultError(
       'The archive URL has expired. Refresh the page with a new URL.',
@@ -113,6 +176,8 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
     expect(ctx.onArchiveFault).toHaveBeenCalledWith(fault);
     expect(ctx.failedLoaders.size).toBe(0);
     expect(ctx.forgetPath).not.toHaveBeenCalled();
+    expect(rollbackA).toHaveBeenCalledOnce();
+    expect(rollbackB).toHaveBeenCalledOnce();
   });
 
   it('passes through staged results unchanged on success', async () => {
