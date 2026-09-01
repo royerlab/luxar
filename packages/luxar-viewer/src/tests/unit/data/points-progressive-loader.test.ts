@@ -2004,11 +2004,31 @@ testLadderFoldContract('Points', async () => {
     subs.length,
     '/fold'
   );
+  const multiPassSubs = [100, 50, 25].map((count) => {
+    const sub = makeSubLoader(makeLodData(count, 3, { color: 'uint8' }));
+    sub.updateViewWithResidency.mockImplementation(async () => ({
+      data: makeLodData(count, 3, { color: 'uint8' }),
+      allResident: false,
+    }));
+    return sub;
+  });
+  const multiPassLoader = new PointsProgressiveLoader(
+    multiPassSubs as unknown as PointsSpatialIndexLoader[],
+    multiPassSubs.length,
+    '/fold-multi-pass'
+  );
   return {
     loader: l,
     totalLevels: subs.length,
     loadAll: async () => {
       await l.updateView(baseViewState);
+    },
+    multiPass: {
+      loader: multiPassLoader,
+      totalLevels: multiPassSubs.length,
+      loadAll: async () => {
+        await multiPassLoader.updateView(baseViewState);
+      },
     },
   };
 });

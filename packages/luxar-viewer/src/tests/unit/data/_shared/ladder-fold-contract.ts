@@ -63,7 +63,7 @@ export interface LadderFoldSubject {
    * not a settled deep-rung saving. A contract that only ever ran the
    * single-pass shape looked green through that entire bug.
    */
-  multiPass?: { loader: FoldableLadderLoader; loadAll(): Promise<void>; totalLevels: number };
+  multiPass: { loader: FoldableLadderLoader; loadAll(): Promise<void>; totalLevels: number };
 }
 
 /**
@@ -111,9 +111,7 @@ export function testLadderFoldContract(
       expect(residency.residentBytes).toBeGreaterThan(0);
     });
     it('still folds to a single payload when climbed over MANY passes', async () => {
-      const subject = await makeSubject();
-      if (!subject.multiPass) return; // geometry opted out
-      const { loader: l, loadAll, totalLevels } = subject.multiPass;
+      const { loader: l, loadAll, totalLevels } = (await makeSubject()).multiPass;
 
       await loadAll();
       while (l.loadedLODCount < totalLevels) await loadAll();

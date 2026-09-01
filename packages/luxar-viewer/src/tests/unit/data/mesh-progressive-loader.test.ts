@@ -887,11 +887,24 @@ testLadderFoldContract('Mesh', async () => {
   ];
   const subs = levels.map((d) => subLoader(d, { resident: true }));
   const l = new MeshProgressiveLoader(subs, levels.length, '/fold');
+  const multiPassSubs = levels.map((data) => subLoader(data, { resident: false }));
+  const multiPassLoader = new MeshProgressiveLoader(
+    multiPassSubs,
+    levels.length,
+    '/fold-multi-pass'
+  );
   return {
     loader: l,
     totalLevels: levels.length,
     loadAll: async () => {
       await l.updateView(VIEW);
+    },
+    multiPass: {
+      loader: multiPassLoader,
+      totalLevels: levels.length,
+      loadAll: async () => {
+        await multiPassLoader.updateView(VIEW);
+      },
     },
   };
 });
