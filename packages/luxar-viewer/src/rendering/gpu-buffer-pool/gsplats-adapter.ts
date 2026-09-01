@@ -145,6 +145,7 @@ export class GSplatsBufferAdapter {
       try {
         this.releaseGeometry(nodeId);
         const replacement = this.adoptOrAllocate(nodeId, splatCount);
+        // Post-success disposal ordering — see the points adapter's twin comment.
         if (options?.canRegrow === false && disposeSupersededBuffer(this.gsplatBuffers, released)) {
           host.stats.evictions++;
           host.typeStats.gsplats.evictions++;

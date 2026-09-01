@@ -153,6 +153,7 @@ export class LinesBufferAdapter {
       try {
         this.releaseGeometry(nodeId);
         const replacement = this.adoptOrAllocate(nodeId, segmentCount);
+        // Post-success disposal ordering — see the points adapter's twin comment.
         if (options?.canRegrow === false && disposeSupersededBuffer(this.lineBuffers, released)) {
           host.stats.evictions++;
           host.typeStats.lines.evictions++;

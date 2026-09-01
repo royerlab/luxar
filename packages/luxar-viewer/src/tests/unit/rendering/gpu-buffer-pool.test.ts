@@ -210,7 +210,7 @@ describe('GPUBufferPool', () => {
       expect(stats.pooledBuffers).toBeGreaterThan(0);
     });
 
-    it('disposes the superseded geometry after a successful terminal grow', () => {
+    it('disposes the superseded geometry after a completed unsliced grow', () => {
       const geom1 = pool.acquirePointsGeometry('terminal-points', 1000);
       const disposeSpy = vi.spyOn(geom1, 'dispose');
 
@@ -259,7 +259,7 @@ describe('GPUBufferPool', () => {
       expect(pool.getStats().pooledBuffers).toBe(1);
     });
 
-    it('disposes superseded Lines and GSplats geometries after terminal grows', () => {
+    it('disposes superseded Lines and GSplats geometries after completed unsliced grows', () => {
       const line = pool.acquireLinesGeometry('terminal-lines', 500);
       const splat = pool.acquireGSplatsGeometry('terminal-gsplats', 300);
       const lineDispose = vi.spyOn(line, 'dispose');

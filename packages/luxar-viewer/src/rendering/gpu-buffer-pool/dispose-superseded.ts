@@ -1,5 +1,20 @@
+/**
+ * Post-grow disposal for released geometries that cannot be reused.
+ *
+ * @module rendering/gpu-buffer-pool/dispose-superseded
+ */
+
 import type { PooledBuffer } from './pool-stats';
 
+/**
+ * Remove and dispose a just-released geometry after its replacement has been
+ * acquired successfully. A false result means the release-time eviction sweep
+ * already removed the buffer, so callers must not increment eviction counts.
+ *
+ * Disposal errors are intentionally contained: the replacement is active and
+ * the old entry is no longer adoptable, so propagating here would make grow
+ * recovery reinstate an already-disposed, already-unbucketed geometry.
+ */
 export function disposeSupersededBuffer(
   buffersByCapacity: Map<number, PooledBuffer[]>,
   released: PooledBuffer

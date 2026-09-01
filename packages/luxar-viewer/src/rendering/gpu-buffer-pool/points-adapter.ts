@@ -184,6 +184,8 @@ export class PointsBufferAdapter {
       try {
         this.releaseGeometry(nodeId);
         const replacement = this.adoptOrAllocate(nodeId, pointCount);
+        // Dispose only after replacement acquisition succeeds: a failed grow
+        // must be able to reclaim the released geometry as the active entry.
         if (options?.canRegrow === false && disposeSupersededBuffer(this.pointBuffers, released)) {
           host.stats.evictions++;
           host.typeStats.points.evictions++;
