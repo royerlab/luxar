@@ -41,7 +41,7 @@ export const dataLoadingPerformanceConfig: DataLoadingPerformanceConfig = {
   // Without a budget, a 10M-element Lines buffer (~760 MB at 1.5×
   // overallocation) or a stack of retained LOD levels can briefly hold
   // gigabytes. Overridable at runtime via `?gpuBudgetMB=`.
-  gpuPoolMaxBytes: null, // auto-size from deviceMemory and/or one third of cacheBudgetMB
+  gpuPoolMaxBytes: null, // auto-size from deviceMemory, small heaps, and cacheBudgetMB
 
   // Debugging
   enablePerformanceMonitoring: false,
