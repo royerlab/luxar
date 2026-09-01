@@ -250,6 +250,32 @@ describe('runAtomicCommit — synchronous throw mid-commit', () => {
     expect(ctx.spies.onCommitFailed.mock.calls).toEqual([['/p0'], ['/l0'], ['/g0'], ['/m0']]);
   });
 
+  it('keeps rollback callback failures isolated as one failed geometry commit', () => {
+    const points = makePointsStaged(2);
+    const lines = makeLinesStaged(1);
+    const ctx = makeCtx({
+      onCommitFailed: () => {
+        throw new Error('rollback failed');
+      },
+    });
+    ctx.spies.updatePointsGeometry.mockImplementation((path: string) => {
+      if (path === '/p0') throw new Error('points commit failed');
+    });
+
+    let thrown: AggregateError | undefined;
+    try {
+      runAtomicCommit(points, lines, [], [], ctx);
+    } catch (error) {
+      thrown = error as AggregateError;
+    }
+
+    expect(ctx.spies.updatePointsGeometry).toHaveBeenCalledTimes(2);
+    expect(ctx.spies.commitLinesGeometry).toHaveBeenCalledOnce();
+    expect(thrown).toBeInstanceOf(AggregateError);
+    expect(thrown?.errors).toHaveLength(1);
+    expect(thrown?.message).toContain('1 geometry commit(s) failed');
+  });
+
   it('fault isolation: a throwing points commit does NOT starve lines/gsplats/mesh siblings; errors surface as ONE AggregateError', () => {
     const points = makePointsStaged(3);
     const lines = makeLinesStaged(2);
