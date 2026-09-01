@@ -1177,7 +1177,14 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     return this._accumulator?.getStats() ?? null;
   }
 
+  /**
+   * Release pooled decoded buffers after a progressive parent has copied them.
+   * Earlier payloads remain valid because `dispose()` replaces the accumulator
+   * buffers rather than clearing their old arrays. This deliberately gives up
+   * pooling across view changes to release the progressive ladder's second copy.
+   */
   releaseAccumulator(): void {
+    if (!this._accumulatorConfig) return;
     this._accumulator?.dispose();
     this._accumulator = null;
     this.metrics.memoryUsed = 0;
@@ -1235,5 +1242,6 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       this._accumulator.dispose();
       this._accumulator = null;
     }
+    this._accumulatorConfig = null;
   }
 }

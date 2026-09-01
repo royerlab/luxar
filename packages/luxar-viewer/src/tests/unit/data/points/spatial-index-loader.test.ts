@@ -635,6 +635,27 @@ describe('PointsSpatialIndexLoader', () => {
       expect(metrics.spatialIndex!.totalCells).toBeGreaterThan(0);
     });
 
+    it('recreates a progressive-parent-released accumulator on the next query', async () => {
+      const viewState: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 5],
+        tolerance: [0, 0, 0, 0.1],
+      };
+
+      const first = await loader.loadPoints(viewState);
+      expect(loader.getAccumulatorStats()).not.toBeNull();
+
+      loader.releaseAccumulator();
+      expect(loader.getAccumulatorStats()).toBeNull();
+      expect(loader.getMetrics().memoryUsed).toBe(0);
+
+      const second = await loader.loadPoints(viewState);
+      expect(loader.getAccumulatorStats()).not.toBeNull();
+      expect(second.pointCount).toBe(first.pointCount);
+      expect(second.positions).toEqual(first.positions);
+      expect(second.colors).toEqual(first.colors);
+    });
+
     it('should fold completed loads into avgQueryTime (wrapper close-out)', async () => {
       // The wrapper's shared finishQueryTracking stamps the rolling mean
       // AFTER the load (incl. projection) completes — mirror of the Lines/
