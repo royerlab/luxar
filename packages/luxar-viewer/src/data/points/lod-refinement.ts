@@ -124,13 +124,13 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
         // re-attempts the SAME prefix rather than resuming from the advanced
         // cursor with a larger allocation. See
         // `../loaders/progressive/pass-rollback`.
-        progressiveLoader.rollbackToPassStart?.();
+        const unwound = progressiveLoader.rollbackToPassStart?.() ?? 0;
         if (failures.recordFailure(path)) {
           log.error(
             Modules.SCENE_LOADER,
             `Points refinement failed for ${path}: ${(error as Error).message} — ` +
               `giving up after ${MAX_CONSECUTIVE_REFINEMENT_FAILURES} consecutive failures ` +
-              '(will retry on the next view change)'
+              `(will retry on the next view change; unwound ${unwound} level(s))`
           );
           // The node silently freezes at its last valid coarse prefix — a
           // console-only error leaves the user staring at a permanently
@@ -140,7 +140,8 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
         } else {
           log.error(
             Modules.SCENE_LOADER,
-            `Points refinement failed for ${path}: ${(error as Error).message}`
+            `Points refinement failed for ${path}: ${(error as Error).message} ` +
+              `(unwound ${unwound} level(s))`
           );
         }
         return false;

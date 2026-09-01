@@ -137,13 +137,13 @@ export async function runMeshRefinement(ctx: MeshRefinementCtx): Promise<void> {
         // re-attempts the SAME prefix rather than resuming from the advanced
         // cursor with a larger allocation. See
         // `../loaders/progressive/pass-rollback`.
-        progressiveLoader.rollbackToPassStart?.();
+        const unwound = progressiveLoader.rollbackToPassStart?.() ?? 0;
         if (failures.recordFailure(path)) {
           log.error(
             Modules.SCENE_LOADER,
             `Mesh refinement failed for ${path}: ${(error as Error).message} — ` +
               `giving up after ${MAX_CONSECUTIVE_REFINEMENT_FAILURES} consecutive failures ` +
-              '(will retry on the next view change)'
+              `(will retry on the next view change; unwound ${unwound} level(s))`
           );
           // The node silently freezes at its last revealed patch — a console-only
           // error leaves the user staring at a permanently partial surface with no
@@ -152,7 +152,8 @@ export async function runMeshRefinement(ctx: MeshRefinementCtx): Promise<void> {
         } else {
           log.error(
             Modules.SCENE_LOADER,
-            `Mesh refinement failed for ${path}: ${(error as Error).message}`
+            `Mesh refinement failed for ${path}: ${(error as Error).message} ` +
+              `(unwound ${unwound} level(s))`
           );
         }
         return false;

@@ -51,7 +51,8 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
     'treats %s as superseded: staged=null, no failure, no forgetPath',
     async (name) => {
       const ctx = makeCtx();
-      const loaders = new Map<string, object>([['/scene/points', {}]]);
+      const rollbackToPassStart = vi.fn();
+      const loaders = new Map<string, object>([['/scene/points', { rollbackToPassStart }]]);
 
       const results = await runLoaderUpdates(
         loaders,
@@ -66,12 +67,14 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
       expect(results[0].staged).toBeNull();
       expect(ctx.failedLoaders.size).toBe(0);
       expect(ctx.forgetPath).not.toHaveBeenCalled();
+      expect(rollbackToPassStart).not.toHaveBeenCalled();
     }
   );
 
   it('still records genuine (non-abort) errors as failures and forgets the path', async () => {
     const ctx = makeCtx();
-    const loaders = new Map<string, object>([['/scene/points', {}]]);
+    const rollbackToPassStart = vi.fn().mockReturnValue(2);
+    const loaders = new Map<string, object>([['/scene/points', { rollbackToPassStart }]]);
 
     const results = await runLoaderUpdates(
       loaders,
@@ -86,13 +89,16 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
     expect(ctx.failedLoaders.has('/scene/points')).toBe(true);
     expect(ctx.failedLoaders.get('/scene/points')?.retryCount).toBe(0);
     expect(ctx.forgetPath).toHaveBeenCalledWith('/scene/points');
+    expect(rollbackToPassStart).toHaveBeenCalledOnce();
   });
 
   it('hoists wrapped archive faults once without recording per-node failures', async () => {
     const ctx = makeCtx();
+    const rollbackA = vi.fn().mockReturnValue(1);
+    const rollbackB = vi.fn().mockReturnValue(1);
     const loaders = new Map<string, object>([
-      ['/scene/points-a', {}],
-      ['/scene/points-b', {}],
+      ['/scene/points-a', { rollbackToPassStart: rollbackA }],
+      ['/scene/points-b', { rollbackToPassStart: rollbackB }],
     ]);
     const fault = new ArchiveFaultError(
       'The archive URL has expired. Refresh the page with a new URL.',
@@ -113,6 +119,8 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
     expect(ctx.onArchiveFault).toHaveBeenCalledWith(fault);
     expect(ctx.failedLoaders.size).toBe(0);
     expect(ctx.forgetPath).not.toHaveBeenCalled();
+    expect(rollbackA).toHaveBeenCalledOnce();
+    expect(rollbackB).toHaveBeenCalledOnce();
   });
 
   it('passes through staged results unchanged on success', async () => {

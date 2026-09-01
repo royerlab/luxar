@@ -89,6 +89,9 @@ export async function runLoaderUpdates<TLoader, TStaged>(
         return { staged: null, session };
       }
 
+      const unwound =
+        (loader as TLoader & { rollbackToPassStart?: () => number }).rollbackToPassStart?.() ?? 0;
+
       const fault = archiveFaultFrom(error);
       if (fault) {
         archiveFault ??= fault;
@@ -109,7 +112,8 @@ export async function runLoaderUpdates<TLoader, TStaged>(
       const lcType = loaderType === 'Points' ? '' : `${loaderType.toLowerCase()} `;
       log.error(
         Modules.SCENE_LOADER,
-        `Failed to update ${lcType}${path} (attempt ${retryCount + 1}): ${(error as Error).message}`
+        `Failed to update ${lcType}${path} (attempt ${retryCount + 1}): ${(error as Error).message} ` +
+          `(unwound ${unwound} level(s))`
       );
       return { staged: null, session };
     }

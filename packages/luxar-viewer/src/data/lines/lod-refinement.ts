@@ -131,13 +131,13 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
         // the last rung would flip `hasMoreLODs` false, silently stranding the
         // node at its last committed prefix with the failure cap never reached.
         // See `../loaders/progressive/pass-rollback`.
-        progressiveLoader.rollbackToPassStart?.();
+        const unwound = progressiveLoader.rollbackToPassStart?.() ?? 0;
         if (failures.recordFailure(path)) {
           log.error(
             Modules.SCENE_LOADER,
             `Lines refinement failed for ${path}: ${(error as Error).message} — ` +
               `giving up after ${MAX_CONSECUTIVE_REFINEMENT_FAILURES} consecutive failures ` +
-              '(will retry on the next view change)'
+              `(will retry on the next view change; unwound ${unwound} level(s))`
           );
           // The node silently freezes at its last valid coarse prefix — a
           // console-only error leaves the user staring at a permanently
@@ -147,7 +147,8 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
         } else {
           log.error(
             Modules.SCENE_LOADER,
-            `Lines refinement failed for ${path}: ${(error as Error).message}`
+            `Lines refinement failed for ${path}: ${(error as Error).message} ` +
+              `(unwound ${unwound} level(s))`
           );
         }
         return false;
