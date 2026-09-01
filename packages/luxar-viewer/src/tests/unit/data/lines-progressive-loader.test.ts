@@ -1655,7 +1655,6 @@ describe('LinesProgressiveLoader — RGBA color layout (colorK stride, volumetri
     expect(result.colorComponents).toBe(4);
     expect(result.colors?.length).toBe(30 * 4);
   });
-
 });
 
 testLadderFoldContract('Lines', async () => {

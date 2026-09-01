@@ -185,7 +185,10 @@ import { queueNext } from './scene-loader/update-view/queue-next';
 import { connectLoaderToMonitor as connectLoaderToMonitorHelper } from './scene-loader/nodes/connect-loader-to-monitor';
 import type { LineWorkingSetGate, NodeBuildCtx } from './scene-loader/nodes/build-ctx';
 import { createLineWorkingSetGate } from './scene-loader/nodes/load-children-concurrently';
-import { RefinementResidencyBudget } from './scene-loader/progressive/residency-budget';
+import {
+  RefinementResidencyBudget,
+  type LadderResidency,
+} from './scene-loader/progressive/residency-budget';
 
 /**
  * Delay before `kickRefinementIfIdle` re-checks a lock-held serialization
@@ -1197,6 +1200,23 @@ export class SceneLoader {
     );
   }
 
+  /** Snapshot every sweep-registered progressive ladder, including completed ones. */
+  private progressiveLadderResidencies(): Map<string, LadderResidency> {
+    const residencies = new Map<string, LadderResidency>();
+    const collect = (loaders: ReadonlyMap<string, unknown>) => {
+      for (const [path, loader] of loaders) {
+        const ladderResidency = (loader as { ladderResidency?: () => LadderResidency })
+          .ladderResidency;
+        if (ladderResidency) residencies.set(path, ladderResidency.call(loader));
+      }
+    };
+    collect(this.gsplatLoaders);
+    collect(this.loaders);
+    collect(this.linesLoaders);
+    collect(this.meshLoaders);
+    return residencies;
+  }
+
   /**
    * Kick the progressive refinement orchestrator from OUTSIDE an update pass.
    *
@@ -1321,15 +1341,15 @@ export class SceneLoader {
       // recorded); the loop's next-pass pending check performs the hand-off.
       const refinementController = new AbortController();
       this._updateAbortController = refinementController;
-      // ONE budget for the whole run, shared by all four geometry phases. They
-      // execute sequentially below, so a single instance sees the entire scene
-      // — which is the point: Laniakea's ten line nodes are each affordable and
-      // collectively fatal, so four independent per-type budgets would admit
-      // every one of them. Scoped to the run so the next view change re-decides
-      // from scratch rather than inheriting a stale refusal.
+      // ONE budget for the whole run, shared by all four geometry phases and
+      // seeded from every sweep-registered ladder. Completed loaders return
+      // before their wrapper calls admit(), so seeding is what keeps their
+      // resident bytes in later view-triggered runs instead of ratcheting the
+      // ceiling upward. Lazy lod_group levels are not in these sweep maps.
       const residencyBudget = RefinementResidencyBudget.forSession(
         cachePoolOverrideBytes(this.config.cacheBudgetMB),
-        deviceClassPoolBytes()
+        deviceClassPoolBytes(),
+        this.progressiveLadderResidencies()
       );
       // Intermediate phases shouldn't release the lock — only the last
       // phase running to completion does.

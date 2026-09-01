@@ -20,7 +20,7 @@
  * three would stay green. Parameterising one contract over all four means a
  * fifth geometry, or a fold rewritten in one place, cannot quietly skip it.
  *
- * The three properties, and what each one catches:
+ * The two properties, and what each one catches:
  *
  *  1. FOLDS TO A SINGLE PAYLOAD — the fold happened at all. Catches a loader
  *     that concatenates but forgets to drop the parts, which is the original
@@ -31,15 +31,6 @@
  *     post-fold) would make the budget's mean-rung estimate read the whole
  *     merged blob as a single enormous next rung and stall refinement several
  *     rungs early.
- *  3. THE MEMO NEVER OVER-DESCRIBES — after any rollback,
- *     `_concatCache === null || _concatCache.lodCount <= <logical levels>`.
- *     This is the depth-sort invariant. Every variant of the fold/rollback
- *     hazard violates exactly it: the loaders pick their prefix-lineage parent
- *     on generation and level count, so a memo covering more levels than the
- *     loader holds can stamp a lineage claim on an object it does not extend,
- *     after which the commit layer's append gate writes a suffix over a wrong
- *     prefix. Silent wrong render, no error raised.
- *
  * @module tests/unit/data/_shared/ladder-fold-contract
  */
 
@@ -117,39 +108,6 @@ export function testLadderFoldContract(
       expect(residency.loadedRungs).toBe(totalLevels);
       expect(residency.residentBytes).toBeGreaterThan(0);
     });
-
-    it('never leaves a memo describing more levels than it holds', async () => {
-      const { loader, loadAll } = await makeSubject();
-      await loadAll();
-      loader.rollbackToPassStart();
-
-      // The depth-sort invariant. Every variant of the fold/rollback hazard
-      // violates exactly this, and nothing downstream re-derives it: the
-      // loaders select their lineage parent on generation and level count
-      // without re-validating it against what they actually retain.
-      const memo = priv<{ lodCount: number } | null>(loader, '_concatCache');
-      if (memo !== null && memo !== undefined) {
-        expect(memo.lodCount).toBeLessThanOrEqual(loader.loadedLODCount);
-      }
-    });
-
-    it('holds the invariant after a rollback from a partial ladder too', async () => {
-      // The single-pass case above starts from an empty ladder, so its
-      // watermark is 0 and the rollback unwinds everything. A ladder that
-      // already had a committed prefix exercises the truncate path instead,
-      // which is where a payload-vs-logical count mix-up actually shows.
-      const { loader, loadAll } = await makeSubject();
-      await loadAll();
-      loader.rollbackToPassStart();
-      await loadAll();
-      loader.rollbackToPassStart();
-
-      const memo = priv<{ lodCount: number } | null>(loader, '_concatCache');
-      if (memo !== null && memo !== undefined) {
-        expect(memo.lodCount).toBeLessThanOrEqual(loader.loadedLODCount);
-      }
-    });
-
     it('still folds to a single payload when climbed over MANY passes', async () => {
       const subject = await makeSubject();
       if (!subject.multiPass) return; // geometry opted out

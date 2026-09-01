@@ -1,5 +1,5 @@
 /**
- * Scene-wide residency budget for progressive LOD refinement.
+ * Residency budget for sweep-registered progressive LOD leaves.
  *
  * An ADDITIVE ladder is prefix accumulation: its terminal state is 100% of the
  * node, on every node, always. That bounds FIRST PAINT — the first rung is
@@ -13,28 +13,34 @@
  * budget and serialises the initial loads — but it releases in the `finally`
  * around each child's load, and refinement is scheduled later
  * (`lifecycle/load-scene.ts`), so by the time the ladders climb, nothing is
- * holding a budget at all. Before this module there was no `usedJSHeapSize`
- * read anywhere in the viewer.
+ * holding a budget at all. This gate uses the device heap LIMIT already read
+ * by the cache sizing path; it does not probe current `usedJSHeapSize`.
  *
  * This is a REFUSAL gate, never an evictor. It declines to load MORE; it never
  * discards what is already committed. A node that hits the ceiling simply stops
  * at the rung it reached and stays there — a legible partial scene rather than
- * a dead tab. The budget comes from the same
- * {@link computeWorkingSetBudgetBytes} the eager gate uses, so the two agree on
- * what the device can hold instead of drifting apart.
+ * a dead tab. Only loaders registered in the four refinement sweep maps are
+ * covered; lazy `lod_group` levels are outside those maps and outside this
+ * accounting. The budget uses the same device-derived scale as the eager gate,
+ * but it is an independent settled-residency ceiling, not a shared reservation:
+ * eager in-flight bytes and refinement residency may coexist transiently.
  *
  * Bytes are MEASURED, not modelled. `measureLodBytes` sums the actual
  * `byteLength` of every typed array a loaded ladder holds, so there are no
  * per-geometry constants to get wrong and nothing to re-tune when a payload
- * gains a column. The one estimate is the size of the NEXT rung, for which the
- * largest rung so far is used — see {@link planRefinementAdmission}.
+ * gains a column. The next rung is estimated from the mean rung so far — see
+ * {@link estimateNextRungBytes}. This models settled ladder bytes. During a
+ * fold/commit, the previous cumulative payload can remain reachable while the
+ * replacement is allocated, so the admitted node's transient peak can approach
+ * twice its settled footprint; the separately bounded slice cache is omitted.
  *
  * DECLINING MUST ALSO RETIRE THE LOADER FROM THE RUN. `runProgressiveRefinement`
  * spins while `anyHasMoreLODs()` is true, and a declined loader still has more
  * LODs. If a wrapper only returned `false` from `processLoader` the loop would
  * re-offer it every frame forever, holding the update lock — the same trap
  * `RefinementFailureTracker` avoids by excluding exhausted paths from the
- * aggregation. So callers MUST consult {@link isDeclined} in their
+ * aggregation. So callers MUST consult `RefinementResidencyBudget.isDeclined`
+ * in their
  * `anyHasMoreLODs` and `getLoaderProgress` closures, exactly as they already do
  * for `failures.isExhausted`.
  *
@@ -59,7 +65,7 @@ export type RefinementAdmissionReason =
 export interface RefinementAdmission {
   admitted: boolean;
   reason: RefinementAdmissionReason;
-  /** Scene-wide measured ladder bytes at the moment of the decision. */
+  /** Tracked sweep-loader bytes at the moment of the decision. */
   residentBytes: number;
   budgetBytes: number;
 }
@@ -69,16 +75,16 @@ export interface RefinementAdmission {
  *
  * Two rules, both from measured bytes:
  *
- *  1. a HARD STOP once the scene is already at or past the ceiling, and
+ *  1. a HARD STOP once tracked residency is already at or past the ceiling, and
  *  2. a PREDICTIVE stop when the next rung would cross it.
  *
  * Rule 2's input comes from {@link estimateNextRungBytes}, which under-estimates
  * on purpose for the ladder shape that actually hurts. Under-estimating means a
  * geometric ladder may cross the ceiling once before rule 1 catches it on the
- * following pass. That is the right direction to err — over-estimating would
- * stop equal-count ladders several rungs early, degrading scenes that were
- * never in danger. The cost of one overshoot is bounded; the cost of
- * systematically under-refining every well-behaved scene is not.
+ * following pass. Admissions reserve their estimate immediately, so later
+ * nodes in the same pass see that authorised growth. That is the right
+ * direction to err — over-estimating would stop equal-count ladders several
+ * rungs early, degrading scenes that were never in danger.
  *
  * A non-positive budget means "no signal" (no `performance.memory`, no
  * override) and admits everything. Refusing to refine because a measurement is
@@ -94,6 +100,9 @@ export function planRefinementAdmission(
   const next = Math.max(0, nextRungBytes);
   if (!(budgetBytes > 0)) {
     return { admitted: true, reason: 'unbudgeted', residentBytes: resident, budgetBytes };
+  }
+  if (next === 0) {
+    return { admitted: true, reason: 'ok', residentBytes: resident, budgetBytes };
   }
   if (resident >= budgetBytes) {
     return { admitted: false, reason: 'over-budget', residentBytes: resident, budgetBytes };
@@ -173,30 +182,39 @@ export function estimateNextRungBytes(residentBytes: number, loadedRungs: number
 }
 
 /**
- * One run's scene-wide residency accounting, shared by all four geometry
- * refinement phases (they run sequentially within a run, so one instance sees
- * the whole scene rather than each type budgeting in ignorance of the others —
- * which is the entire point, since Laniakea's ten line nodes are individually
- * affordable and collectively fatal).
+ * One run's residency accounting for sweep-registered progressive leaves,
+ * shared by all four geometry refinement phases. The map is seeded from every
+ * registered progressive loader, including completed loaders that the wrappers
+ * return from before admission, so a new view-triggered run cannot forget bytes
+ * already resident and ratchet the ceiling upward.
  */
 export class RefinementResidencyBudget {
   private readonly perPath = new Map<string, number>();
   private readonly declined = new Set<string>();
   private reported = false;
 
-  constructor(readonly budgetBytes: number) {}
+  constructor(
+    readonly budgetBytes: number,
+    initialResidencies: Iterable<readonly [string, LadderResidency]> = []
+  ) {
+    for (const [path, residency] of initialResidencies) {
+      this.perPath.set(path, ladderResidentBytes(residency));
+    }
+  }
 
   /** Build one sized from the device heap, matching the eager admission gate. */
   static forSession(
     poolOverrideBytes?: number,
-    fallbackPoolBytes?: number
+    fallbackPoolBytes?: number,
+    initialResidencies?: Iterable<readonly [string, LadderResidency]>
   ): RefinementResidencyBudget {
     return new RefinementResidencyBudget(
-      computeWorkingSetBudgetBytes(undefined, poolOverrideBytes, fallbackPoolBytes)
+      computeWorkingSetBudgetBytes(undefined, poolOverrideBytes, fallbackPoolBytes),
+      initialResidencies
     );
   }
 
-  /** Scene-wide measured ladder bytes across every reporting loader. */
+  /** Measured or optimistically reserved bytes across tracked loaders. */
   get residentBytes(): number {
     let total = 0;
     for (const bytes of this.perPath.values()) total += bytes;
@@ -216,17 +234,17 @@ export class RefinementResidencyBudget {
    * Record `path`'s current footprint and decide whether it may load one more
    * rung. A refusal is sticky for the rest of the run: re-offering the same
    * loader every pass would re-measure, re-refuse and re-log without making
-   * progress. The next view change starts a fresh run and a fresh decision.
+   * progress. An admission immediately reserves its estimated next rung so the
+   * remaining loaders in this pass see the growth already authorised.
    */
   admit(path: string, residency: LadderResidency): RefinementAdmission {
     const accounted = ladderResidentBytes(residency);
+    const nextRungBytes = estimateNextRungBytes(accounted, residency.loadedRungs);
     this.perPath.set(path, accounted);
-    const verdict = planRefinementAdmission(
-      this.residentBytes,
-      estimateNextRungBytes(accounted, residency.loadedRungs),
-      this.budgetBytes
-    );
-    if (!verdict.admitted) {
+    const verdict = planRefinementAdmission(this.residentBytes, nextRungBytes, this.budgetBytes);
+    if (verdict.admitted) {
+      this.perPath.set(path, accounted + nextRungBytes);
+    } else {
       this.declined.add(path);
       this.reportOnce(path, verdict);
     }

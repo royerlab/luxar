@@ -11,12 +11,14 @@ releases as soon as each node's first paint completes, and refinement is
 scheduled afterwards — so by the time the ladders climbed, nothing held a
 budget at all.
 
-Refinement now shares one scene-wide residency ceiling across all four geometry
-types, sized from the same device-heap signal the load-time gate uses. It is a
-refusal, never an eviction: a scene at the ceiling stops adding detail and keeps
-everything already drawn, so it settles at a legible partial view instead of
-dying. Where the ceiling is reached, the console says so once, naming the budget
-and the scene's measured footprint.
+Refinement now shares one residency ceiling across the sweep-registered
+progressive leaves of all four geometry types, sized from the same device-heap
+signal the load-time gate uses. Lazy `lod_group` levels are not registered in
+those sweeps and remain outside this accounting. The gate is a refusal, never an
+eviction: tracked leaves at the ceiling stop adding detail and keep everything
+already drawn, so the scene settles at a legible partial view instead of dying.
+Where the ceiling is reached, the console says so once, naming the budget and
+the tracked measured footprint.
 
 Sharing one budget across the four types is deliberate — Laniakea's ten line
 nodes are each individually affordable and only collectively fatal, so per-type

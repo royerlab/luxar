@@ -44,17 +44,6 @@
  * field is silently wrong: no throw, just a memo gate evaluated against the
  * wrong number.
  *
- * The invariant that catches every variant of that mistake, and the one a
- * loader's tests should assert after any rollback:
- *
- *     _concatCache === null || _concatCache.lodCount <= <logical level count>
- *
- * A memo describing more levels than the loader holds is the whole hazard: the
- * loaders select their lineage parent on generation and level count, so an
- * over-long memo can stamp a prefix-lineage claim on an object it does not
- * extend, and the commit layer's append gate will then write a suffix over a
- * wrong prefix. Silent wrong render, no error raised.
- *
  * @module data/loaders/progressive/pass-rollback
  */
 

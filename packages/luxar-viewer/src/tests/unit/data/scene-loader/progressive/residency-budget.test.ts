@@ -27,6 +27,11 @@ describe('planRefinementAdmission', () => {
     expect(v).toMatchObject({ admitted: false, reason: 'over-budget' });
   });
 
+  it('admits a zero-cost first rung even when the scene is already at the ceiling', () => {
+    const v = planRefinementAdmission(100 * MB, 0, 100 * MB);
+    expect(v).toMatchObject({ admitted: true, reason: 'ok' });
+  });
+
   it('refuses a rung that would cross the ceiling', () => {
     const v = planRefinementAdmission(90 * MB, 20 * MB, 100 * MB);
     expect(v).toMatchObject({ admitted: false, reason: 'next-rung-would-exceed' });
@@ -171,7 +176,8 @@ describe('RefinementResidencyBudget', () => {
     for (let i = 0; i < 4; i++) {
       expect(budget.admit(`/node${i}`, residency(20 * MB, 20)).admitted).toBe(true);
     }
-    expect(budget.residentBytes).toBe(80 * MB);
+    // Four measured 20 MiB ladders plus one 1 MiB reservation apiece.
+    expect(budget.residentBytes).toBe(84 * MB);
     // The fifth crosses the ceiling collectively, though it is the same size.
     expect(budget.admit('/node4', residency(20 * MB, 20))).toMatchObject({
       admitted: false,
@@ -179,14 +185,71 @@ describe('RefinementResidencyBudget', () => {
     });
   });
 
-  it('re-measures a node rather than accumulating its rungs', () => {
-    // `admit` receives the node's CURRENT total, not a delta. A loader that
-    // grows 10 -> 20 -> 30 MB must read as 30, not 60.
+  it('re-measures a node before reserving its next rung', () => {
+    // `admit` receives the node's CURRENT total, not a delta. Each call replaces
+    // the previous reservation before authorising one estimated next rung.
     const budget = new RefinementResidencyBudget(1000 * MB);
     budget.admit('/n', residency(10 * MB, 1));
     budget.admit('/n', residency(20 * MB, 2));
     budget.admit('/n', residency(30 * MB, 3));
-    expect(budget.residentBytes).toBe(30 * MB);
+    expect(budget.residentBytes).toBe(40 * MB);
+  });
+
+  it('seeds completed and pending loaders before the first admission', () => {
+    const budget = new RefinementResidencyBudget(
+      100 * MB,
+      new Map([
+        ['/complete', residency(60 * MB, 3)],
+        ['/pending', residency(20 * MB, 1)],
+      ])
+    );
+
+    expect(budget.residentBytes).toBe(80 * MB);
+    expect(budget.admit('/pending', residency(20 * MB, 1))).toMatchObject({
+      admitted: true,
+      reason: 'ok',
+    });
+    expect(budget.residentBytes).toBe(100 * MB);
+  });
+
+  it('reserves an admitted rung so later nodes in the same pass see it', () => {
+    const budget = new RefinementResidencyBudget(
+      100 * MB,
+      new Map([
+        ['/a', residency(40 * MB, 2)],
+        ['/b', residency(40 * MB, 2)],
+      ])
+    );
+
+    expect(budget.admit('/a', residency(40 * MB, 2)).admitted).toBe(true);
+    expect(budget.residentBytes).toBe(100 * MB);
+    expect(budget.admit('/b', residency(40 * MB, 2))).toMatchObject({
+      admitted: false,
+      reason: 'over-budget',
+    });
+  });
+
+  it('keeps the ceiling stable when a later run is seeded from current ladders', () => {
+    const firstRun = new RefinementResidencyBudget(
+      100 * MB,
+      new Map([
+        ['/a', residency(40 * MB, 2)],
+        ['/b', residency(40 * MB, 2)],
+      ])
+    );
+    expect(firstRun.admit('/a', residency(40 * MB, 2)).admitted).toBe(true);
+
+    const secondRun = new RefinementResidencyBudget(
+      100 * MB,
+      new Map([
+        ['/a', residency(60 * MB, 3)],
+        ['/b', residency(40 * MB, 2)],
+      ])
+    );
+    expect(secondRun.admit('/a', residency(60 * MB, 3))).toMatchObject({
+      admitted: false,
+      reason: 'over-budget',
+    });
   });
 
   it('makes a refusal sticky for the rest of the run', () => {
@@ -208,8 +271,10 @@ describe('RefinementResidencyBudget', () => {
   });
 
   it('never refuses a node its first rung', () => {
-    // Zero rungs estimates zero, so a scene already over budget still paints.
-    const budget = new RefinementResidencyBudget(10 * MB);
+    const budget = new RefinementResidencyBudget(
+      10 * MB,
+      new Map([['/complete', residency(10 * MB, 1)]])
+    );
     expect(budget.admit('/fresh', residency(0, 0)).admitted).toBe(true);
   });
 
