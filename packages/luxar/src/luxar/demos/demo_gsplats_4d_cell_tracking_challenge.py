@@ -387,10 +387,10 @@ def load_precomputed_crops(
 
     * ``--recompute`` was passed (:func:`ensure_dataset` raises
       :class:`LocalComputeDataset` for any dataset in that case), or
-    * the dataset is not hosted yet. The manifest carries it as
-      ``pending_upload``, so until the bytes are on Zenodo there is nothing to
-      resolve; that is an expected state during the migration rather than a
-      fault, and it is reported rather than swallowed.
+    * the dataset's record is not publicly reachable yet. An unpublished Zenodo
+      draft deliberately yields no download URL, so that is an expected state
+      during the migration rather than a fault, and it is reported rather than
+      swallowed.
     * the hosted record does not carry one of the CHOSEN crops. That is the same
       condition one crop at a time — ``--datasets N`` asks for the first N of a
       list the record may only partly cover — so it is routed the same way, and

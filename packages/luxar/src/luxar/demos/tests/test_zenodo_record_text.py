@@ -1585,7 +1585,7 @@ def test_refresh_reports_and_discards_an_unpinned_read_without_a_fallback(
     }
 
 
-def test_refresh_preserves_quality_prose_on_a_successful_read(
+def test_refresh_preserves_supplied_metadata_absent_from_a_successful_read(
     gen: Any,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1593,7 +1593,7 @@ def test_refresh_preserves_quality_prose_on_a_successful_read(
 ) -> None:
     key = "ds/a.gsplats.zarr.zip"
     archive = tmp_path / "a.gsplats.zarr.zip"
-    write_frame(archive)
+    write_frame(archive, psnr=None, source_bytes=None)
     digest = gen._sha256_of(archive)
     monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
     monkeypatch.setattr(
@@ -1601,8 +1601,12 @@ def test_refresh_preserves_quality_prose_on_a_successful_read(
         "load_characteristics",
         lambda: {
             key: {
+                "measured_sha256": None,
                 "quality_note": "internal provenance",
                 "quality_caveat": "reader-facing caveat",
+                "source_shape": [100, 64, 256, 256],
+                "source_dtype": "uint16",
+                "source_bytes": 838_860_800,
             }
         },
     )
@@ -1613,6 +1617,76 @@ def test_refresh_preserves_quality_prose_on_a_successful_read(
     entry = json.loads((tmp_path / "chars.json").read_text())["archives"][key]
     assert entry["quality_note"] == "internal provenance"
     assert entry["quality_caveat"] == "reader-facing caveat"
+    assert entry["source_shape"] == [100, 64, 256, 256]
+    assert entry["source_dtype"] == "uint16"
+    assert entry["source_bytes"] == 838_860_800
+
+
+def test_refresh_discards_supplied_metadata_from_different_archive_bytes(
+    gen: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    write_frame: _FrameWriter,
+) -> None:
+    key = "ds/a.gsplats.zarr.zip"
+    archive = tmp_path / "a.gsplats.zarr.zip"
+    write_frame(archive, psnr=None, source_bytes=None)
+    digest = gen._sha256_of(archive)
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(
+        gen,
+        "load_characteristics",
+        lambda: {
+            key: {
+                "measured_sha256": "0" * 64,
+                "source_shape": [100, 64, 256, 256],
+                "source_dtype": "uint16",
+                "source_bytes": 838_860_800,
+            }
+        },
+    )
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter((archive,)))
+
+    gen.refresh_characteristics(_fake_manifest([_entry(archive.name, digest)]))
+
+    entry = json.loads((tmp_path / "chars.json").read_text())["archives"][key]
+    assert entry["measured_sha256"] == digest
+    assert entry["source_shape"] is None
+    assert entry["source_dtype"] is None
+    assert entry["source_bytes"] is None
+
+
+def test_refresh_prefers_measured_metadata_over_supplied_metadata(
+    gen: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    write_frame: _FrameWriter,
+) -> None:
+    key = "ds/a.gsplats.zarr.zip"
+    archive = tmp_path / "a.gsplats.zarr.zip"
+    write_frame(archive, source_bytes=1_000_000)
+    digest = gen._sha256_of(archive)
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(
+        gen,
+        "load_characteristics",
+        lambda: {
+            key: {
+                "measured_sha256": digest,
+                "quality_note": "internal provenance",
+                "quality_caveat": "reader-facing caveat",
+                "source_bytes": 838_860_800,
+            }
+        },
+    )
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter((archive,)))
+
+    gen.refresh_characteristics(_fake_manifest([_entry(archive.name, digest)]))
+
+    entry = json.loads((tmp_path / "chars.json").read_text())["archives"][key]
+    assert entry["quality_note"] == "internal provenance"
+    assert entry["quality_caveat"] == "reader-facing caveat"
+    assert entry["source_bytes"] == 1_000_000
 
 
 def test_a_hand_recovered_null_digest_is_not_an_unpinned_marker(gen: Any) -> None:
@@ -2037,6 +2111,24 @@ def test_no_measurement_is_stale_against_its_own_digest(
 def test_committed_measurements_match_the_hosted_manifest_pins(gen: Any) -> None:
     manifest = json.loads(gen.MANIFEST.read_text())
     assert gen._stale_characteristics(manifest) == []
+
+
+def test_cell_tracking_measurements_include_the_declared_raw_volume(gen: Any) -> None:
+    chars = gen.load_characteristics()
+    infos = [
+        info for key, info in chars.items() if key.startswith("gsplats_cell_tracking/")
+    ]
+    provenance = (
+        "Source grid declared from the manifest acquisition shape "
+        "(100 x 64 x 256 x 256 uint16), not read from archive stamps."
+    )
+
+    assert len(infos) == 7
+    for info in infos:
+        assert info["source_shape"] == [100, 64, 256, 256]
+        assert info["source_dtype"] == "uint16"
+        assert info["source_bytes"] == 838_860_800
+        assert info["quality_note"] == provenance
 
 
 def test_h2afva_51tp_measurements_describe_the_pinned_flat_ladder(gen: Any) -> None:

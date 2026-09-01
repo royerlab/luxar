@@ -670,6 +670,27 @@ def refresh_characteristics(
                     for field in ("quality_note", "quality_caveat")
                     if key in existing and field in existing[key]
                 },
+                # Source-grid facts the ARCHIVE does not carry, kept across a
+                # re-read instead of being blanked. An archive built from
+                # per-timepoint fits loaded without statistics has no
+                # source_shape/dtype/bytes of its own (the cell-tracking bundle is
+                # the case in hand), so a supplied value is the only thing the
+                # compression column has to work with — and a refresh, which is the
+                # documented step after any upload, would otherwise silently drop
+                # it and bring the "no compression" gaps back.
+                #
+                # Only ever fills an ABSENCE, and only from an unmeasured entry or
+                # one measured from these same bytes. A value the fresh read DID
+                # produce always wins, and metadata from a superseded archive is
+                # dropped rather than being relabelled with the new digest.
+                **{
+                    field: existing[key][field]
+                    for field in ("source_shape", "source_dtype", "source_bytes")
+                    if key in existing
+                    and existing[key].get(field) is not None
+                    and existing[key].get("measured_sha256") in (None, measured_sha256)
+                    and info.get(field) is None
+                },
             }
 
     read = len(measured)

@@ -45,13 +45,14 @@ def test_ordinary_datasets_are_not_refused() -> None:
 def test_the_refused_set_matches_positionally_paired_datasets() -> None:
     """Spell out the coupling, so a NEW sidecar-bearing dataset cannot slip in.
 
-    The pairing is read from the MANIFEST, which lists every dataset's files
-    even when a hosted-only dataset has no in-repo archive. Anything actually on
-    disk is folded in as well, so a locally-added sidecar still trips this. Only
-    ``gsplats_*`` directories count — the shape the script's own glob visits — so
-    a dataset it could never reach cannot redden this. That is wider than what
-    is *currently* fetchable (a ``local-compute`` dataset builds into the same
-    directory), and deliberately so: the refusal keys on the directory name,
+    The pairing is read from the MANIFEST's explicit ``positional_pair`` markers,
+    which cover hosted-only datasets with no in-repo archive without mistaking an
+    independent ``.npz`` geometry file for a per-splat sidecar. Anything actually
+    on disk is folded in as well, so a locally-added sidecar still trips this.
+    Only ``gsplats_*`` directories count — the shape the script's own glob visits
+    — so a dataset it could never reach cannot redden this. That is wider than
+    what is *currently* fetchable (a ``local-compute`` dataset builds into the
+    same directory), and deliberately so: the refusal keys on the directory name,
     not on the bucket.
     The assertion is bidirectional, as the name says: a refused dir that ships no
     sidecar has no reason to be excluded.
@@ -66,12 +67,7 @@ def test_the_refused_set_matches_positionally_paired_datasets() -> None:
         if not directory.startswith("gsplats_"):
             continue
         entries = spec.get("files", [])
-        files = [f["name"] for f in entries]
         if any(entry.get("positional_pair") for entry in entries):
-            with_sidecar.add(directory)
-        if any(f.endswith(".zip") for f in files) and any(
-            f.endswith(".npz") for f in files
-        ):
             with_sidecar.add(directory)
 
     visited = {z.parent for z in rg.DATA_DIR.glob("gsplats_*/*.zip")}

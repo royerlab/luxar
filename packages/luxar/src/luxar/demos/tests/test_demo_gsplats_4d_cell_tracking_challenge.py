@@ -711,6 +711,91 @@ class TestPrecomputedRoundTrip:
         assert any("pending upload" in message for message in messages)
         assert all("has no entry" not in message for message in messages)
 
+    def test_an_unpublished_record_falls_back_instead_of_raising(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """The state the real dataset is in NOW: pinned, but not yet public.
+
+        Distinct from the `pending_upload` case above, which has no files at all.
+        Here the pins exist and name real bytes, but a record carrying
+        ``published: false`` yields no download URL — and that has to route to the
+        Kaggle fallback rather than raise, because it is what makes the pins safe
+        to land ahead of publication. The coverage preflight must not misfire on
+        it either: the crops ARE declared, so nothing should report a missing
+        entry.
+        """
+        messages: list[str] = []
+        monkeypatch.setattr(_demo, "aprint", messages.append)
+        manifest = {
+            "records": {"cc-by": {"zenodo_record": 21912280, "published": False}},
+            "datasets": {
+                _demo.PRECOMPUTED_DATASET: {
+                    "bucket": "zenodo",
+                    "record": "cc-by",
+                    "dir": "",
+                    "files": [
+                        {"name": name, "sha256": "0" * 64, "bytes": 1}
+                        for name in _demo.precomputed_file_names("crop_x")
+                    ],
+                }
+            },
+        }
+
+        assert (
+            _demo.load_precomputed_crops(
+                ["crop_x"], manifest=manifest, cache_root=tmp_path
+            )
+            is None
+        )
+        assert all("has no entry" not in message for message in messages)
+
+    def test_an_uncovered_crop_bails_out_before_fetching_anything(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """A chosen-but-undeclared crop must not fetch the covered ones first.
+
+        The sibling `test_unchosen_manifest_crops_are_not_resolved` covers the
+        SELECTION property — an unchosen crop never reaches the cache. This covers
+        the BAIL-OUT property: when a chosen crop is absent from the manifest the
+        answer is the Kaggle fallback and nothing is fetched at all. Asserting
+        `ensure_dataset` is never CALLED, rather than that the answer is ``None``,
+        is what makes it fail if the coverage check ever moves back after the
+        fetch — the answer is ``None`` either way.
+        """
+        covered = _demo.precomputed_file_names("crop_x")
+        manifest = {
+            "records": {"cc-by": {"zenodo_record": 1, "published": True}},
+            "datasets": {
+                _demo.PRECOMPUTED_DATASET: {
+                    "bucket": "zenodo",
+                    "record": "cc-by",
+                    "dir": "",
+                    "files": [
+                        {"name": n, "sha256": "0" * 64, "bytes": 1} for n in covered
+                    ],
+                }
+            },
+        }
+
+        calls: list[str] = []
+
+        def _must_not_run(*args, **kwargs):
+            calls.append("ensure_dataset")
+            raise AssertionError("ensure_dataset was called for an uncovered crop")
+
+        import luxar.demos as _demos_pkg
+
+        monkeypatch.setattr(_demos_pkg, "ensure_dataset", _must_not_run)
+
+        # crop_y is not in the manifest's file list; crop_x is.
+        assert (
+            _demo.load_precomputed_crops(
+                ["crop_x", "crop_y"], manifest=manifest, cache_root=tmp_path
+            )
+            is None
+        )
+        assert calls == [], "the uncovered crop still triggered a fetch"
+
     def test_a_fault_propagates_instead_of_triggering_kaggle_and_a_gpu_fit(
         self, tmp_path
     ) -> None:
