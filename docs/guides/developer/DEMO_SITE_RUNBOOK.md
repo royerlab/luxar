@@ -1036,27 +1036,23 @@ would be ambiguous). Each moved file keeps its outgoing digest in
 `superseded_sha256`, so one previous cache generation reads as stale rather than
 corrupt.
 
-The other three — `vh_head`, `ct_atlas`, `milkyway_dust` — were left on their
-previous pins **on purpose**, and that gap is itself a hazard to carry forward:
+The paired migration in #2334 moved `vh_head` and `ct_atlas` together with their
+positionally indexed sidecars, bringing **seven of the eight** onto the restructured
+generation. Their fits now also carry the colours or labels natively, so a writer
+reorder cannot separate the payload from the splats it describes.
 
-- `vh_head` and `ct_atlas` each ship a **positionally indexed sidecar**
-  (`vh_head_colors.npz`, `ct_atlas_labels.npz`). Row *i* of the sidecar describes
-  element *i* of the archive, so a restructure that reorders elements silently
-  mismatches colours or labels unless both move together. #2334 tracks that paired
-  migration.
-- `milkyway_dust` keeps its levels-preserving generation because its coarse levels
-  are what get selected when the galaxy is orbited at range; a flat streaming
-  ladder would regress the zoomed-out view (3.14).
+Only `milkyway_dust` remains on its previous pin **on purpose**. Its coarse levels
+are what get selected when the galaxy is orbited at range; a flat streaming ladder
+would regress the zoomed-out view (3.14).
 
 **The consequence is a publish-order constraint, not a to-do.** The drafts hold
-restructured files for all three, while the manifest pins the previous generation.
-After the in-repo payloads are removed, publishing a record in that state makes
-cold fetches and fresh installs abort with an uncaught checksum `ValueError`: the
-three affected demos catch `DatasetUnavailable`, not digest mismatches, so the
-source-download/refit fallback does not run. Either roll the draft files back to
-the pinned contracts before publishing, or land the paired sidecar migration
-first. The live gallery tiles are indifferent either way, because they serve
-already-derived scenes and never consult the pin (3.10).
+the restructured `milkyway_dust` file while the manifest pins the previous
+generation. After the in-repo payload is removed, publishing the record in that
+state makes cold fetches and fresh installs abort with an uncaught checksum
+`ValueError`: the demo catches `DatasetUnavailable`, not digest mismatches, so the
+source-download/refit fallback does not run. Roll the draft file back to the pinned
+contract before publishing. The live gallery tile is indifferent either way,
+because it serves an already-derived scene and never consults the pin (3.10).
 
 ### 3.21 Guard the artefact you ship, not only the inputs you fed it
 
