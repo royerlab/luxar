@@ -31,6 +31,7 @@ interface SubLoaderStub {
   updateView: ReturnType<typeof vi.fn>;
   updateViewWithResidency: ReturnType<typeof vi.fn>;
   prefetchChunks: ReturnType<typeof vi.fn>;
+  releaseAccumulator: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
   getMetrics: ReturnType<typeof vi.fn>;
   getActiveQueries: ReturnType<typeof vi.fn>;
@@ -139,6 +140,7 @@ function makeSubLoader(
     updateView,
     updateViewWithResidency,
     prefetchChunks: vi.fn().mockResolvedValue(undefined),
+    releaseAccumulator: vi.fn(),
     dispose: vi.fn(),
     getMetrics: vi.fn(() => stubMetrics(metrics)),
     getActiveQueries: vi.fn(() => []),
@@ -255,6 +257,9 @@ describe('LinesProgressiveLoader', () => {
 
       expect(loader.loadedLODCount).toBe(3);
       expect(retained).toEqual([result]);
+      expect(lodA.releaseAccumulator).toHaveBeenCalledTimes(1);
+      expect(lodB.releaseAccumulator).toHaveBeenCalledTimes(1);
+      expect(lodC.releaseAccumulator).toHaveBeenCalledTimes(1);
     });
 
     it('records lines additive load timing keys', async () => {

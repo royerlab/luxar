@@ -538,8 +538,12 @@ export class LinesProgressiveLoader implements LinesDataLoader {
           : null;
       const result = concatenateLinesData(this.loadedLODs);
       setPrefixParent(result, prevMemo);
-      // Keep only the cumulative payload. The decoded rung arrays total the
-      // same bytes as `result`; retaining both doubled terminal residency.
+      // Keep only the cumulative payload, and release the sub-loaders' pooled
+      // buffers that back the decoded rung views. Retaining either copy keeps
+      // roughly the same bytes as `result` and doubles terminal residency.
+      for (let level = 0; level < this._loadedLODCount; level++) {
+        this.lodLoaders[level]?.releaseAccumulator();
+      }
       this.loadedLODs = [result];
       this._concatCache = {
         generation: this._resetGeneration,
