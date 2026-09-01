@@ -49,7 +49,8 @@ import {
 } from '../loaders/progressive/streaming-policy';
 import {
   deleteLadder,
-  restoreLadder,
+  measureLodBytes,
+  restoreLadderSnapshot,
   storeLadder,
 } from '../loaders/progressive/slice-cache-helper';
 import { planLadderRollback } from '../loaders/progressive/pass-rollback';
@@ -338,6 +339,7 @@ function concatenatePointsData(
 export class PointsProgressiveLoader implements PointsDataLoader {
   private lodLoaders: PointsSpatialIndexLoader[];
   private loadedLODs: LoadedPointsData[] = [];
+  private _loadedLODCount = 0;
   private lastViewState: PointsViewState | null = null;
   private nLods: number;
   private monitor: ProgressiveMonitorAdapter;
@@ -359,6 +361,8 @@ export class PointsProgressiveLoader implements PointsDataLoader {
   // watermark `rollbackToPassStart()` unwinds to when the caller's commit
   // throws. See `../loaders/progressive/pass-rollback`.
   private _levelsAtPassStart = 0;
+  private _payloadsAtPassStart = 0;
+  private _restoredFullLadderAtPassStart = false;
   // A completed pass can still fail after loading, during projection or commit.
   // Keep it schedulable for one retry even though the ladder cursor is full.
   private _retryCompletedPass = false;
@@ -429,11 +433,11 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     // target: no background refinement between animation ticks; the commit
     // stamps the prefix complete. Mirrors GSplatsProgressiveLoader.
     if (this._frameBudgetMs !== null) return false;
-    return this.loadedLODs.length < this.nLods;
+    return this._loadedLODCount < this.nLods;
   }
 
   get loadedLODCount(): number {
-    return this.loadedLODs.length;
+    return this._loadedLODCount;
   }
 
   get totalLODCount(): number {
@@ -450,17 +454,31 @@ export class PointsProgressiveLoader implements PointsDataLoader {
    */
   rollbackToPassStart(): number {
     const plan = planLadderRollback(
-      this.loadedLODs.length,
+      this._loadedLODCount,
       this._levelsAtPassStart,
       this._concatCache?.lodCount ?? null
     );
-    if (plan.dropped === 0 && this.loadedLODs.length === this.nLods) {
-      this._retryCompletedPass = true;
+    if (plan.dropped === 0) {
+      if (this._loadedLODCount === this.nLods && this.loadedLODs.length < this._loadedLODCount) {
+        this._retryCompletedPass = true;
+      }
+      return 0;
     }
-    if (plan.dropped > 0) {
-      this.loadedLODs.length = plan.keep;
+    if (this._restoredFullLadderAtPassStart) {
+      this.loadedLODs = [];
+      this._loadedLODCount = 0;
+      this._restoredFullLadderAtPassStart = false;
       if (this.lastViewState) deleteLadder(this.sliceCache, this.path, this.lastViewState);
+      this._concatCache = null;
+      return plan.dropped;
     }
+    if (this.loadedLODs.length - this._payloadsAtPassStart < plan.dropped) {
+      this._retryCompletedPass = true;
+      return 0;
+    }
+    this.loadedLODs.length = this._payloadsAtPassStart;
+    this._loadedLODCount = plan.keep;
+    if (this.lastViewState) deleteLadder(this.sliceCache, this.path, this.lastViewState);
     if (plan.invalidateConcatCache) this._concatCache = null;
     return plan.dropped;
   }
@@ -476,7 +494,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
    */
   get committedEnergyFraction(): number | null {
     if (!this.energyTable) return null;
-    const k = this.loadedLODs.length;
+    const k = this._loadedLODCount;
     if (k === 0) return 0;
     return this.energyTable[Math.min(k, this.energyTable.length) - 1];
   }
@@ -525,15 +543,16 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       // otherwise store nothing at all (completion never happens), making
       // scrub-back — the S-cache's headline case — always cold. One clone
       // per slice-leave; upgrade-if-longer makes re-departures cheap no-ops.
-      if (this.lastViewState && this.loadedLODs.length > 0) {
+      if (this.lastViewState && this._loadedLODCount > 0) {
         storeLadder(this.sliceCache, this.path, this.lastViewState, this.loadedLODs, {
           scan: this._frameBudgetMs !== null,
           pin: viewState.prefetch === true,
+          ladderDepth: this._loadedLODCount,
           totalLODCount: this.nLods,
         });
       }
       // Try the SliceCache before discarding the ladder (see GSplats loader).
-      const restored = restoreLadder<LoadedPointsData>(
+      const restored = restoreLadderSnapshot<LoadedPointsData>(
         this.sliceCache,
         this.path,
         viewState,
@@ -542,11 +561,14 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       // Shallow-copy the CONTAINER: the streaming loop below pushes further
       // levels and must never mutate the cache's payload array (elements
       // stay shared read-only). Mirrors GSplatsProgressiveLoader.
-      this.loadedLODs = restored ? [...restored] : [];
+      this.loadedLODs = restored ? [...restored.lods] : [];
+      this._loadedLODCount = restored?.depth ?? 0;
       // A restored full ladder has not been committed for this pass. If its
       // concat or commit fails, unwind the whole restored snapshot rather than
       // preserving a cursor at nLods and silently disabling retries.
       this._levelsAtPassStart = 0;
+      this._payloadsAtPassStart = 0;
+      this._restoredFullLadderAtPassStart = false;
       this._resetGeneration++;
       this.lastViewState = {
         displayDims: [...viewState.displayDims],
@@ -559,7 +581,8 @@ export class PointsProgressiveLoader implements PointsDataLoader {
         this._lastAllResident = true;
         // FULL ladder short-circuits; a PREFIX falls through to the loop
         // (startLevel = prefix length). Mirrors GSplatsProgressiveLoader.
-        if (restored.length === this.nLods) {
+        if (restored.depth === this.nLods) {
+          this._restoredFullLadderAtPassStart = true;
           return finish();
         }
       }
@@ -580,8 +603,10 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     // full decoded ladder (abort-safe, stored per level); `refine` stops at the
     // first cold/slow level. Mirrors GSplatsProgressiveLoader.
     const pass = classifyStreamingPass(budgetDeadline !== null, isPrefetch);
-    const startLevel = this.loadedLODs.length;
+    const startLevel = this._loadedLODCount;
     this._levelsAtPassStart = startLevel;
+    this._payloadsAtPassStart = this.loadedLODs.length;
+    this._restoredFullLadderAtPassStart = false;
 
     for (let level = startLevel; level < this.nLods; level++) {
       // A dispose() racing the awaited level below clears `lodLoaders`, so
@@ -605,6 +630,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       const elapsed = performance.now() - t0;
 
       this.loadedLODs.push(lodData);
+      this._loadedLODCount++;
       this._lastAllResident = allResident;
 
       if (!this._initialLoadDone) {
@@ -642,10 +668,10 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     }
 
     const totalPoints = this.loadedLODs.reduce((s, d) => s + d.positions.length / 3, 0);
-    if (this.loadedLODs.length < this.nLods) {
+    if (this._loadedLODCount < this.nLods) {
       log.info(
         Modules.SPATIAL_INDEX_LOADER,
-        `Progressive Points: ${this.loadedLODs.length}/${this.nLods} LODs (${totalPoints} points) — refining`
+        `Progressive Points: ${this._loadedLODCount}/${this.nLods} LODs (${totalPoints} points) — refining`
       );
     } else if (startLevel < this.nLods) {
       log.info(
@@ -659,15 +685,17 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     // Snapshot into the SliceCache (upgrade-if-longer): full ladders always;
     // PREFIXES only while a playback budget is active. Mirrors
     // GSplatsProgressiveLoader.
-    if (this.loadedLODs.length === this.nLods || this._frameBudgetMs !== null) {
+    const result = finish();
+    if (this._loadedLODCount === this.nLods || this._frameBudgetMs !== null) {
       storeLadder(this.sliceCache, this.path, viewState, this.loadedLODs, {
         scan: this._frameBudgetMs !== null,
         pin: viewState.prefetch === true,
+        ladderDepth: this._loadedLODCount,
         totalLODCount: this.nLods,
       });
     }
 
-    return finish();
+    return result;
   }
 
   /**
@@ -691,7 +719,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       if (
         this._concatCache &&
         this._concatCache.generation === this._resetGeneration &&
-        this._concatCache.lodCount === this.loadedLODs.length
+        this._concatCache.lodCount === this._loadedLODCount
       ) {
         return this._concatCache.result;
       }
@@ -700,7 +728,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       const prevMemo =
         this._concatCache &&
         this._concatCache.generation === this._resetGeneration &&
-        this._concatCache.lodCount < this.loadedLODs.length
+        this._concatCache.lodCount < this._loadedLODCount
           ? this._concatCache.result
           : null;
       const result = concatenatePointsData(
@@ -709,9 +737,13 @@ export class PointsProgressiveLoader implements PointsDataLoader {
         this.warnComposeFailure
       );
       setPrefixParent(result, prevMemo);
+      for (let level = 0; level < this._loadedLODCount; level++) {
+        this.lodLoaders[level]?.releaseAccumulator();
+      }
+      this.loadedLODs = [result];
       this._concatCache = {
         generation: this._resetGeneration,
-        lodCount: this.loadedLODs.length,
+        lodCount: this._loadedLODCount,
         result,
       };
       return result;
@@ -725,7 +757,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     // awaited level and this fire-and-forget clears `lodLoaders`, and
     // indexing it would TypeError before the .catch can swallow anything.
     if (this._disposed) return;
-    const nextLevel = this.loadedLODs.length;
+    const nextLevel = this._loadedLODCount;
     if (nextLevel >= this.nLods) return;
     // Fire-and-forget; errors ignored (network failures, aborts).
     void this.lodLoaders[nextLevel].prefetchChunks(viewState).catch(() => {
@@ -751,7 +783,9 @@ export class PointsProgressiveLoader implements PointsDataLoader {
   }
 
   getMetrics(): LoaderMetrics {
-    return this.monitor.getMetrics();
+    const metrics = this.monitor.getMetrics();
+    const concatMemory = this._concatCache ? measureLodBytes([this._concatCache.result]) : 0;
+    return { ...metrics, memoryUsed: metrics.memoryUsed + concatMemory };
   }
 
   dispose(): void {
@@ -761,6 +795,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     }
     this.lodLoaders = [];
     this.loadedLODs = [];
+    this._loadedLODCount = 0;
     this._retryCompletedPass = false;
     this.lastViewState = null;
     this._concatCache = null;

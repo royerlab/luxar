@@ -27,6 +27,7 @@ interface SubLoaderStub {
   updateView: ReturnType<typeof vi.fn>;
   updateViewWithResidency: ReturnType<typeof vi.fn>;
   prefetchChunks: ReturnType<typeof vi.fn>;
+  releaseAccumulator: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
   getMetrics: ReturnType<typeof vi.fn>;
   getActiveQueries: ReturnType<typeof vi.fn>;
@@ -137,6 +138,7 @@ function makeSubLoader(
     updateView,
     updateViewWithResidency,
     prefetchChunks: vi.fn().mockResolvedValue(undefined),
+    releaseAccumulator: vi.fn(),
     dispose: vi.fn(),
     getMetrics: vi.fn(() => stubMetrics(metrics)),
     getActiveQueries: vi.fn(() => []),
@@ -273,6 +275,21 @@ describe('PointsProgressiveLoader', () => {
       const result = await loader.loadPoints(baseViewState);
       // All 3 LODs are cache-hit fast (sync mock) → all loaded → 100+50+25 = 175.
       expect(result.pointCount).toBe(175);
+    });
+
+    it('retains one cumulative payload and releases decoded rung buffers', async () => {
+      const result = await loader.loadPoints(baseViewState);
+      const retained = (
+        loader as unknown as {
+          loadedLODs: LoadedPointsData[];
+        }
+      ).loadedLODs;
+
+      expect(loader.loadedLODCount).toBe(3);
+      expect(retained).toEqual([result]);
+      expect(lodA.releaseAccumulator).toHaveBeenCalledTimes(1);
+      expect(lodB.releaseAccumulator).toHaveBeenCalledTimes(1);
+      expect(lodC.releaseAccumulator).toHaveBeenCalledTimes(1);
     });
 
     it('records points additive load timing keys', async () => {
@@ -649,7 +666,7 @@ describe('PointsProgressiveLoader', () => {
       expect(loader.hasMoreLODs).toBe(false);
     });
 
-    it('unwinds only the levels the failing pass appended', async () => {
+    it('keeps an incrementally folded prefix and cursor paired', async () => {
       lodB.updateViewWithResidency.mockImplementationOnce(async () => ({
         data: makeLodData(50, 3, { color: 'uint8' }),
         allResident: false,
@@ -659,8 +676,8 @@ describe('PointsProgressiveLoader', () => {
 
       await loader.loadPoints(baseViewState);
       expect(loader.loadedLODCount).toBe(3);
-      expect(loader.rollbackToPassStart()).toBe(1);
-      expect(loader.loadedLODCount).toBe(2);
+      expect(loader.rollbackToPassStart()).toBe(0);
+      expect(loader.loadedLODCount).toBe(3);
       expect(loader.hasMoreLODs).toBe(true);
     });
 

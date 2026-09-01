@@ -1403,6 +1403,12 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     return this._accumulator?.getStats() ?? null;
   }
 
+  releaseAccumulator(): void {
+    this._accumulator?.dispose();
+    this._accumulator = null;
+    this.metrics.memoryUsed = 0;
+  }
+
   /**
    * Clean up resources
    */

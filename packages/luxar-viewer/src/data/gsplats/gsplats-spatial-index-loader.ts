@@ -1165,6 +1165,12 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     return this._accumulator?.getStats() ?? null;
   }
 
+  releaseAccumulator(): void {
+    this._accumulator?.dispose();
+    this._accumulator = null;
+    this.metrics.memoryUsed = 0;
+  }
+
   // ────────────────────────────────────────────────────────────────────
   // LoaderMonitor surface — same shape as the points and lines facades.
   // ────────────────────────────────────────────────────────────────────

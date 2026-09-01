@@ -37,7 +37,8 @@ import {
 } from '../loaders/progressive/streaming-policy';
 import {
   deleteLadder,
-  restoreLadder,
+  measureLodBytes,
+  restoreLadderSnapshot,
   storeLadder,
 } from '../loaders/progressive/slice-cache-helper';
 import { planLadderRollback } from '../loaders/progressive/pass-rollback';
@@ -234,6 +235,7 @@ export function concatenateGSplatsData(parts: LoadedGSplatsData[]): LoadedGSplat
 export class GSplatsProgressiveLoader implements GSplatsDataLoader {
   private lodLoaders: GSplatsSpatialIndexLoader[];
   private loadedLODs: LoadedGSplatsData[] = [];
+  private _loadedLODCount = 0;
   private lastViewState: GSplatsViewState | null = null;
   private nLods: number;
   private monitor: ProgressiveMonitorAdapter;
@@ -255,6 +257,8 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
   // watermark `rollbackToPassStart()` unwinds to when the caller's commit
   // throws. See `../loaders/progressive/pass-rollback`.
   private _levelsAtPassStart = 0;
+  private _payloadsAtPassStart = 0;
+  private _restoredFullLadderAtPassStart = false;
   // A completed pass can still fail after loading, during projection or commit.
   // Keep it schedulable for one retry even though the ladder cursor is full.
   private _retryCompletedPass = false;
@@ -313,12 +317,12 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     // frame). The next budget-free updateView (pause re-trigger, scrub)
     // clears the budget and refinement resumes from the prefix.
     if (this._frameBudgetMs !== null) return false;
-    return this.loadedLODs.length < this.nLods;
+    return this._loadedLODCount < this.nLods;
   }
 
   /** Number of LOD levels currently loaded. */
   get loadedLODCount(): number {
-    return this.loadedLODs.length;
+    return this._loadedLODCount;
   }
 
   /**
@@ -332,7 +336,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
    */
   get committedEnergyFraction(): number | null {
     if (!this.energyTable) return null;
-    const k = this.loadedLODs.length;
+    const k = this._loadedLODCount;
     if (k === 0) return 0;
     return this.energyTable[Math.min(k, this.energyTable.length) - 1];
   }
@@ -352,17 +356,31 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
    */
   rollbackToPassStart(): number {
     const plan = planLadderRollback(
-      this.loadedLODs.length,
+      this._loadedLODCount,
       this._levelsAtPassStart,
       this._concatCache?.lodCount ?? null
     );
-    if (plan.dropped === 0 && this.loadedLODs.length === this.nLods) {
-      this._retryCompletedPass = true;
+    if (plan.dropped === 0) {
+      if (this._loadedLODCount === this.nLods && this.loadedLODs.length < this._loadedLODCount) {
+        this._retryCompletedPass = true;
+      }
+      return 0;
     }
-    if (plan.dropped > 0) {
-      this.loadedLODs.length = plan.keep;
+    if (this._restoredFullLadderAtPassStart) {
+      this.loadedLODs = [];
+      this._loadedLODCount = 0;
+      this._restoredFullLadderAtPassStart = false;
       if (this.lastViewState) deleteLadder(this.sliceCache, this.path, this.lastViewState);
+      this._concatCache = null;
+      return plan.dropped;
     }
+    if (this.loadedLODs.length - this._payloadsAtPassStart < plan.dropped) {
+      this._retryCompletedPass = true;
+      return 0;
+    }
+    this.loadedLODs.length = this._payloadsAtPassStart;
+    this._loadedLODCount = plan.keep;
+    if (this.lastViewState) deleteLadder(this.sliceCache, this.path, this.lastViewState);
     if (plan.invalidateConcatCache) this._concatCache = null;
     return plan.dropped;
   }
@@ -428,14 +446,15 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       // DEPARTURE store: snapshot the outgoing view's partial ladder under
       // the OUTGOING key before discarding — scrub-back stays warm even when
       // ladders never complete between navigations. Mirrors Points/Lines.
-      if (this.lastViewState && this.loadedLODs.length > 0) {
+      if (this.lastViewState && this._loadedLODCount > 0) {
         storeLadder(this.sliceCache, this.path, this.lastViewState, this.loadedLODs, {
           scan: this._frameBudgetMs !== null,
           pin: viewState.prefetch === true,
+          ladderDepth: this._loadedLODCount,
           totalLODCount: this.nLods,
         });
       }
-      const restored = restoreLadder<LoadedGSplatsData>(
+      const restored = restoreLadderSnapshot<LoadedGSplatsData>(
         this.sliceCache,
         this.path,
         viewState,
@@ -444,11 +463,14 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       // Shallow-copy the CONTAINER: the streaming loop below pushes further
       // levels into loadedLODs and must never mutate the cache's payload
       // array (the elements stay shared read-only — store deep-clones).
-      this.loadedLODs = restored ? [...restored] : [];
+      this.loadedLODs = restored ? [...restored.lods] : [];
+      this._loadedLODCount = restored?.depth ?? 0;
       // A restored full ladder has not been committed for this pass. If its
       // concat or commit fails, unwind the whole restored snapshot rather than
       // preserving a cursor at nLods and silently disabling retries.
       this._levelsAtPassStart = 0;
+      this._payloadsAtPassStart = 0;
+      this._restoredFullLadderAtPassStart = false;
       this._resetGeneration++;
       this.lastViewState = {
         displayDims: [...viewState.displayDims],
@@ -464,7 +486,8 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
         // falls through to the loop instead: loading resumes from
         // startLevel = prefix length — within this pass's budget during
         // play, or to completion when idle.
-        if (restored.length === this.nLods) {
+        if (restored.depth === this.nLods) {
+          this._restoredFullLadderAtPassStart = true;
           return finish();
         }
       }
@@ -485,8 +508,10 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     // deepens toward the full decoded ladder (bounded by the pass budget +
     // abort); `refine` stops at the first cold/slow level.
     const pass = classifyStreamingPass(budgetDeadline !== null, isPrefetch);
-    const startLevel = this.loadedLODs.length;
+    const startLevel = this._loadedLODCount;
     this._levelsAtPassStart = startLevel;
+    this._payloadsAtPassStart = this.loadedLODs.length;
+    this._restoredFullLadderAtPassStart = false;
 
     for (let level = startLevel; level < this.nLods; level++) {
       // A dispose() racing the awaited level below clears `lodLoaders`, so
@@ -510,6 +535,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       const elapsed = performance.now() - t0;
 
       this.loadedLODs.push(lodData);
+      this._loadedLODCount++;
       this._lastAllResident = allResident;
 
       if (!this._initialLoadDone) {
@@ -546,10 +572,10 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
 
     // Log LOD loading summary (compact, always shown for progressive loaders)
     const totalSplats = this.loadedLODs.reduce((s, d) => s + d.splatCount, 0);
-    if (this.loadedLODs.length < this.nLods) {
+    if (this._loadedLODCount < this.nLods) {
       log.info(
         Modules.GSPLATS_SPATIAL_INDEX_LOADER,
-        `Progressive: ${this.loadedLODs.length}/${this.nLods} LODs loaded (${totalSplats} splats) — refining`
+        `Progressive: ${this._loadedLODCount}/${this.nLods} LODs loaded (${totalSplats} splats) — refining`
       );
     } else if (startLevel < this.nLods) {
       // Only log "all loaded" when we actually loaded something new this call
@@ -568,15 +594,17 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     // deepens it with the leftover budget, converging to full ladders.
     // Gating prefixes on the budget keeps the non-play cost profile (a
     // store per refinement pass would clone O(N²) bytes per slice).
-    if (this.loadedLODs.length === this.nLods || this._frameBudgetMs !== null) {
+    const result = finish();
+    if (this._loadedLODCount === this.nLods || this._frameBudgetMs !== null) {
       storeLadder(this.sliceCache, this.path, viewState, this.loadedLODs, {
         scan: this._frameBudgetMs !== null,
         pin: viewState.prefetch === true,
+        ladderDepth: this._loadedLODCount,
         totalLODCount: this.nLods,
       });
     }
 
-    return finish();
+    return result;
   }
 
   /**
@@ -600,7 +628,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       if (
         this._concatCache &&
         this._concatCache.generation === this._resetGeneration &&
-        this._concatCache.lodCount === this.loadedLODs.length
+        this._concatCache.lodCount === this._loadedLODCount
       ) {
         return this._concatCache.result;
       }
@@ -609,14 +637,18 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       const prevMemo =
         this._concatCache &&
         this._concatCache.generation === this._resetGeneration &&
-        this._concatCache.lodCount < this.loadedLODs.length
+        this._concatCache.lodCount < this._loadedLODCount
           ? this._concatCache.result
           : null;
       const result = concatenateGSplatsData(this.loadedLODs);
       setPrefixParent(result, prevMemo);
+      for (let level = 0; level < this._loadedLODCount; level++) {
+        this.lodLoaders[level]?.releaseAccumulator();
+      }
+      this.loadedLODs = [result];
       this._concatCache = {
         generation: this._resetGeneration,
-        lodCount: this.loadedLODs.length,
+        lodCount: this._loadedLODCount,
         result,
       };
       return result;
@@ -640,7 +672,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     // awaited level and this fire-and-forget clears `lodLoaders`, and
     // indexing it would TypeError before the .catch can swallow anything.
     if (this._disposed) return;
-    const nextLevel = this.loadedLODs.length;
+    const nextLevel = this._loadedLODCount;
     if (nextLevel >= this.nLods) return;
 
     // Fire and forget — fetch chunks into cache without decoding to output buffers
@@ -667,7 +699,9 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
   }
 
   getMetrics(): LoaderMetrics {
-    return this.monitor.getMetrics();
+    const metrics = this.monitor.getMetrics();
+    const concatMemory = this._concatCache ? measureLodBytes([this._concatCache.result]) : 0;
+    return { ...metrics, memoryUsed: metrics.memoryUsed + concatMemory };
   }
 
   /**
@@ -680,6 +714,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     }
     this.lodLoaders = [];
     this.loadedLODs = [];
+    this._loadedLODCount = 0;
     this._retryCompletedPass = false;
     this.lastViewState = null;
     this._concatCache = null;
