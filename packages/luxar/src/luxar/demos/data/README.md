@@ -90,8 +90,8 @@ Each subdirectory contains pre-fitted `.gsplats.zarr.zip` files for one demo:
 > h2afva single-stack and decimation files, the seven cell-tracking crop pairs,
 > and the other hosted-only datasets are uploaded and pinned in the manifest.
 > `scripts/zenodo_migration_audit.py --live` verifies that every declared pin
-> matches the current draft records. All three records are still unsubmitted, so
-> each carries `published: false` and the fetch derives no public URL from its
+> matches the current draft records. All records are still unsubmitted, so each
+> carries `published: false` and the fetch derives no public URL from its
 > record id. Publishing the records and enabling their manifest URLs is the
 > remaining record-side step.
 

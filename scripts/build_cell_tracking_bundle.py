@@ -4,7 +4,8 @@
 The cell-tracking demo's raw source sits behind an authenticated Kaggle
 competition endpoint, so the redistributable thing is the **derived product**:
 per crop, the finished 4D Gaussian-splat volume (LOD ladder included) plus the
-track geometry. With those hosted, the demo runs with no credentials and no GPU.
+track geometry. Once those files are published, the demo runs with no credentials
+and no GPU.
 
 This reads the demo's own per-timepoint fit cache, runs the demo's own combine →
 LOD → tracks pipeline, and writes one pair of files per crop, plus the ``files``
