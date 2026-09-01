@@ -21,6 +21,7 @@ import {
   measureLodBytes,
 } from '../../../data/loaders/progressive/slice-cache-helper';
 import { getPrefixParent } from '../../../types/prefix-lineage';
+import { testLadderFoldContract } from './_shared/ladder-fold-contract';
 import {
   resetLodLoadStats,
   setLodLoadStatsEnabled,
@@ -1602,4 +1603,44 @@ describe('determinant-equal dimensions refresh (three-geometry twin of the point
     });
     expect(lod0.updateView).toHaveBeenCalled();
   });
+});
+
+testLadderFoldContract('GSplats', async () => {
+  const subs = [
+    makeSubLoader(makeLodData(100, 3, { color: 'uint8' })),
+    makeSubLoader(makeLodData(50, 3, { color: 'uint8' })),
+    makeSubLoader(makeLodData(25, 3, { color: 'uint8' })),
+  ];
+  const l = new GSplatsProgressiveLoader(
+    subs as unknown as GSplatsSpatialIndexLoader[],
+    subs.length,
+    '/fold'
+  );
+  const multiPassSubs = [100, 50, 25].map((count) => {
+    const sub = makeSubLoader(makeLodData(count, 3, { color: 'uint8' }));
+    sub.updateViewWithResidency.mockImplementation(async () => ({
+      data: makeLodData(count, 3, { color: 'uint8' }),
+      allResident: false,
+    }));
+    return sub;
+  });
+  const multiPassLoader = new GSplatsProgressiveLoader(
+    multiPassSubs as unknown as GSplatsSpatialIndexLoader[],
+    multiPassSubs.length,
+    '/fold-multi-pass'
+  );
+  return {
+    loader: l,
+    totalLevels: subs.length,
+    loadAll: async () => {
+      await l.updateView(baseViewState);
+    },
+    multiPass: {
+      loader: multiPassLoader,
+      totalLevels: multiPassSubs.length,
+      loadAll: async () => {
+        await multiPassLoader.updateView(baseViewState);
+      },
+    },
+  };
 });

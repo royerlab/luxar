@@ -18,8 +18,9 @@ numbers stay honest and its tree reads clearly:
   `getGlobalStats` collapses the K level loaders to one logical layer.
 - **Additive LOD** (`n_additive_sublods > 1` leaves): progressively
   refined. The converter records `additiveSublods`; the LOD-progress
-  provider reports `loaded / total` levels, a refining flag, and the
-  last-load cache-residency.
+  provider reports committed `loaded / total` levels (falling back to the
+  progressive loader's cursor when no commit stamp exists), a refining flag,
+  and the last-load cache-residency.
 - **Partition** (`kind=partition` groups): N disjoint BSP parts, all
   eligible to render together when in the camera frustum. The converter tags
   `kind='partition'` + `partCount`; totals sum across parts (correct — parts
@@ -38,7 +39,8 @@ toggled-off layers) don't double-count toward the visible HUD totals.
 | `monitor-wiring.ts`        | `wireMonitorAfterLoad(...)` — pushes the resolved `CacheTelemetryState`, then registers cache stats / L0 / GPU buffer pool / per-geometry accumulator-stats / profiler / LOD-progress providers, converts the scene graph for the monitor's tree view, runs the initial visible-counts pass, and calls `forceUpdate()`. The LOD-progress provider is wired with `collectPartitionGroups(sceneGraph)` (a local walk gathering `kind=partition` groups as `{ path, partCount }`).                                                         |
 | `scene-graph-converter.ts` | `convertToSceneGraphNode(node)` — pure recursive conversion from the loader's `SceneNode` to the monitor UI's `SceneGraphNode`: type whitelisting, display-name derivation (`/` → `"Scene"`), per-type stats (`pointCount`, `segmentCount` + `vertexCount`, `splatCount`, `faceCount` + `vertexCount`), and specialized-group fields (`kind`, `displayType`, `lodGroupChildCount` / `partCount`, `additiveSublods`).                                                                                                                    |
 | `visible-counts.ts`        | `updateVisibleCountsInMonitor(rootGroup, monitor)` — recurses the root group, **skipping `visible === false` subtrees**, sums per-mesh `visiblePointCount` / `visibleSegmentCount` / `visibleSplatCount` / `visibleTriangleCount` userData (all four geometry types) plus `droppedElementCount` (points + lines + gsplats only — mesh is not element-texture backed), and pushes the visible and dropped totals to the monitor. Called once per update cycle after the commits so the HUD shows post-clipping, post-LOD visible counts. |
-| `lod-progress-provider.ts` | `createLODProgressProvider({ loaderMaps, lodGroupRegistry, partitionGroups? })` — builds the `path → LODProgressState` snapshot the monitor polls each tick: additive `loaded/total/refining/lastAllResident` from the progressive loaders (duck-typed via the `ProgressiveLike` getter surface), substitutive `activeLevel/levelCount/selector` from the `LODGroupRegistry`, and static `partCount` from the partition-group snapshot.                                                                                                 |
+| `committed-lod-reader.ts`  | `createCommittedLODCountReader(rootGroup)` — reads each node's commit-time `committedLODCount` stamp from the live THREE scene so additive progress reports rungs actually on screen rather than the loader cursor.                                                                                                                                                                                                                                                                                                                     |
+| `lod-progress-provider.ts` | `createLODProgressProvider({ loaderMaps, lodGroupRegistry, partitionGroups?, committedLODCounts? })` — builds the `path → LODProgressState` snapshot the monitor polls each tick: additive `loaded/total/refining/lastAllResident` from the progressive loaders (duck-typed via the `ProgressiveLike` getter surface), with `loaded` taken from the committed-count reader when available; substitutive `activeLevel/levelCount/selector` from the `LODGroupRegistry`; and static `partCount` from the partition-group snapshot.        |
 
 ## Consumers
 

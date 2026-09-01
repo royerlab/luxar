@@ -37,6 +37,8 @@ import {
   storeLadder,
 } from '../loaders/progressive/slice-cache-helper';
 import { planLadderRollback } from '../loaders/progressive/pass-rollback';
+import { LINE_FLOATS_PER_SEGMENT } from '../../rendering/element-texture-layout';
+import type { LadderResidency } from '../scene-loader/progressive/residency-budget';
 import { viewStatesEqual } from '../loaders/progressive/view-state-equal';
 import type { SliceCache } from '../../cache/slice-cache';
 import { log, Modules, LogEmoji } from '../../utils/log';
@@ -319,6 +321,28 @@ export class LinesProgressiveLoader implements LinesDataLoader {
 
   get loadedLODCount(): number {
     return this._loadedLODCount;
+  }
+
+  /**
+   * Measured footprint of the loaded ladder, for the shared sweep residency
+   * budget (`scene-loader/progressive/residency-budget`).
+   *
+   * `measureLodBytes` sums real `byteLength`s rather than modelling a
+   * per-element cost, so this stays correct as payload columns come and go —
+   * and correct after the fold, where `loadedLODs` is one merged payload rather
+   * than one entry per rung. That is exactly why the rung count is reported
+   * from `_loadedLODCount` (LOGICAL levels) instead of `loadedLODs.length`.
+   */
+  ladderResidency(): LadderResidency {
+    return {
+      residentBytes: measureLodBytes(this.loadedLODs),
+      loadedRungs: this._loadedLODCount,
+      elementCount: this.loadedLODs.reduce((s, d) => s + d.segmentCount, 0),
+      // 6 RGBA32F texels/segment — the largest element row of any geometry, and
+      // ~3.6x this payload's own bytes per vertex. Omitting it made the
+      // shared budget under-count Lines far more than GSplats.
+      bytesPerElement: LINE_FLOATS_PER_SEGMENT * Float32Array.BYTES_PER_ELEMENT,
+    };
   }
 
   get totalLODCount(): number {

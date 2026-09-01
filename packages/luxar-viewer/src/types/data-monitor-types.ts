@@ -560,7 +560,10 @@ export interface LODProgressState {
   activeLevel?: number;
   /** substitutive: selector mode — `'auto'` or a locked level label. */
   selector?: string;
-  /** additive: number of LOD levels loaded so far. */
+  /**
+   * additive: rungs actually committed on screen; falls back to the loader's
+   * cursor when no `committedLODCount` stamp exists.
+   */
   loaded?: number;
   /** additive: total LOD levels available. */
   total?: number;

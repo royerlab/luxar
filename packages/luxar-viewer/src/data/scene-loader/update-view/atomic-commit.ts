@@ -22,6 +22,7 @@ import type { LoadedPointsData } from '../../data-loader-types';
 import type { StagedLinesCommit } from '../process/data-processor-lines';
 import type { StagedGSplatsCommit } from '../process/data-processor-gsplats';
 import type { StagedMeshCommit } from '../process/data-processor-mesh';
+import { releaseLineageIfUncommitted } from '../../../types/prefix-lineage';
 
 export interface AtomicCommitInput<TStaged> {
   staged: TStaged | null;
@@ -116,6 +117,7 @@ export function runAtomicCommit(
 
     for (const { staged, session } of pointsStaged) {
       try {
+        if (staged && discard) releaseLineageIfUncommitted(staged.data, false);
         if (staged && !discard) ctx.updatePointsGeometry(staged.path, staged.data, session);
       } catch (err) {
         recordCommitFailure(staged!.path, err);
@@ -125,6 +127,7 @@ export function runAtomicCommit(
     }
     for (const { staged, session } of linesStaged) {
       try {
+        if (staged && discard) releaseLineageIfUncommitted(staged.sourceData, false);
         if (staged && !discard) ctx.commitLinesGeometry(staged, session);
       } catch (err) {
         recordCommitFailure(staged!.path, err);
@@ -134,6 +137,7 @@ export function runAtomicCommit(
     }
     for (const { staged, session } of gsplatsStaged) {
       try {
+        if (staged && discard) releaseLineageIfUncommitted(staged.sourceData, false);
         if (staged && !discard) ctx.commitGSplatsGeometry(staged, session);
       } catch (err) {
         recordCommitFailure(staged!.path, err);

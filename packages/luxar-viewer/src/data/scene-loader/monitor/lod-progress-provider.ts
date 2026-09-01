@@ -47,6 +47,24 @@ export interface LODProgressProviderDeps {
    * Empty/omitted for scenes without partitions.
    */
   partitionGroups?: ReadonlyArray<{ path: string; partCount: number }>;
+  /**
+   * Rungs actually COMMITTED per node path, from the `committedLODCount`
+   * stamp each commit writes to the mesh userData. Supplied by the caller
+   * because it owns the live THREE root group (same arrangement as the
+   * draw-order provider).
+   *
+   * Without it the panel reports the LOADER'S CURSOR, which advances as each
+   * rung ARRIVES rather than when it is drawn. A pass whose commit fails or is
+   * superseded therefore leaves the two disagreeing — and it disagrees loudest
+   * in exactly the situation a user is trying to diagnose. On the hosted
+   * Laniakea demo, basins showed "LOD 7/7 ~100%" while rendering a coarse
+   * prefix and no longer refining; the monitor was the one surface that could
+   * have revealed the stall and it actively concealed it (#2426).
+   *
+   * Optional so a caller without a root group (tests, headless wiring) keeps
+   * the previous behaviour rather than losing the panel entirely.
+   */
+  committedLODCounts?: () => ReadonlyMap<string, number>;
 }
 
 /**
@@ -59,14 +77,21 @@ export function createLODProgressProvider(deps: LODProgressProviderDeps): LODPro
     getLODStates(): Map<string, LODProgressState> {
       const out = new Map<string, LODProgressState>();
 
+      const committed = deps.committedLODCounts?.();
+
       // Additive progressive loaders: one per node across all four maps.
       for (const map of deps.loaderMaps) {
         for (const [path, loader] of map) {
           const p = loader as ProgressiveLike;
           if (typeof p.totalLODCount === 'number' && p.totalLODCount > 1) {
+            // Report what is ON SCREEN, not what the loader has fetched — the
+            // same rule the substitutive branch below already follows. The
+            // loader cursor advances on arrival, so a node stalled after a
+            // failed or superseded commit would otherwise read as complete.
+            const onScreen = committed?.get(path);
             out.set(path, {
               kind: 'additive',
-              loaded: p.loadedLODCount ?? 0,
+              loaded: onScreen ?? p.loadedLODCount ?? 0,
               total: p.totalLODCount,
               refining: p.hasMoreLODs === true,
               lastAllResident: p.lastAllResident,
