@@ -125,9 +125,12 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // path: `navigator.deviceMemory` is Chromium-only and spec-capped at 8 GB, so
   // on a large machine it pins the budget at its ceiling and the pool's
   // eviction path can never be exercised under pressure. `?cacheBudgetMB=` is
-  // the only way to reproduce constrained-device behaviour on a roomy box, and
-  // it also constrains GPU geometry. The ambient JS heap limit is deliberately
-  // not folded in: its coarse Chromium tiers are not a GPU-memory measurement.
+  // the only way to reproduce constrained-device behaviour on a roomy box. In
+  // WebKit it is the sole signal and may raise or lower the 512 MB fallback.
+  // The persisted Settings budget remains cache-only by design; the regression
+  // guard is tests/unit/core/bootstrap.test.ts:594. The ambient JS heap limit is
+  // deliberately not folded in: its coarse Chromium tiers are not a GPU-memory
+  // measurement.
   configureGpuByteBudget(
     urlParams.gpuBudgetMB != null
       ? urlParams.gpuBudgetMB * 1_000_000
@@ -136,10 +139,6 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
       cachePoolOverrideBytes: cachePoolOverrideBytes(urlParams.cacheBudgetMB),
     }
   );
-
-  const resolvedCacheBudgetMB =
-    urlParams.cacheBudgetMB ??
-    (userSettings.caching.budgetMode === 'custom' ? userSettings.caching.budgetMB : null);
 
   // Install the session-wide line join override before any line material is
   // constructed (same shape and the same reason as the byte budget above).
@@ -290,7 +289,9 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
       clearCache: urlParams.clearCache,
       noPrefetch: urlParams.noPrefetch || !userSettings.caching.prefetch,
       prefetchDebug: urlParams.prefetchDebug,
-      cacheBudgetMB: resolvedCacheBudgetMB,
+      cacheBudgetMB:
+        urlParams.cacheBudgetMB ??
+        (userSettings.caching.budgetMode === 'custom' ? userSettings.caching.budgetMB : null),
     },
     // `?renderer=webgl|webgpu` forces a backend regardless of the
     // build-time env, then the stored Settings preference, then undefined →

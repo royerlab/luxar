@@ -5,10 +5,10 @@
  *
  * Browsers deliberately do NOT expose total/available VRAM (it's a
  * fingerprinting vector), so we can't read an "absolute max" and set to
- * it. The only portable memory signal is ``navigator.deviceMemory``
- * (system RAM in GB, privacy-rounded and capped at 8 in most browsers).
- * We derive a conservative budget from it, clamped to a safe range, with
- * an explicit override for power users. As a safety net, the budget is
+ * it. Auto-sizing uses ``navigator.deviceMemory`` when available and an
+ * explicit total cache-pool override when supplied; if both exist, the lower
+ * derived budget wins. The result has a 2 GB ceiling but no lower clamp, with
+ * 512 MB used only when neither signal exists. As a safety net, the budget is
  * halved on a WebGL context-loss event (a strong OOM signal) so an
  * over-estimate self-corrects instead of repeatedly crashing the context.
  *
@@ -46,7 +46,10 @@ import { log, Modules } from '../utils/log';
 
 /** Fraction of system RAM to devote to GPU geometry. */
 const DEVICE_MEMORY_FRACTION = 0.25;
-/** GPU-geometry share of an explicit total cache-pool override. */
+/**
+ * GPU-geometry share of an explicit total cache-pool override. Derived from
+ * (0.4 / 0.6) × 0.5 in `cache/heap-budget.ts`, but deliberately kept local.
+ */
 const CACHE_POOL_GPU_SHARE = 1 / 3;
 const MIB = 1024 * 1024;
 /**
@@ -110,8 +113,9 @@ function computeAutoBudget(memory?: GpuBudgetMemorySignals): { bytes: number; so
     };
   }
 
-  // The MINIMUM of the signals. An explicit cache budget is allowed to tighten
-  // the GPU budget; a coarse ambient heap tier is not.
+  // The MINIMUM of the available signals. The cache-pool override is a peer
+  // signal, so when deviceMemory is absent it may raise or lower the fallback;
+  // a coarse ambient heap tier is not a GPU-memory signal.
   //
   // Clamped ABOVE only. There is no floor: a floor is exactly what stopped this
   // budget from ever binding, and a budget that cannot bind cannot evict.
