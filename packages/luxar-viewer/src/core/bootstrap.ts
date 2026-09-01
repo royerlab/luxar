@@ -25,6 +25,7 @@ import { validateAndLog } from '../config/validation';
 import { readUrlParams, type UrlParams } from '../config/url-params';
 import { initUserSettings } from '../config/user-settings';
 import { configureGpuByteBudget } from '../rendering/gpu-byte-budget';
+import { cachePoolOverrideBytes } from '../cache/heap-budget';
 import { setLineJoinOverride } from '../types/line-join';
 import { setLinePrimitiveOverride, setLinePrimitivePolicy } from '../types/line-primitive';
 import { StorageKeys } from '../utils/storage-keys';
@@ -120,10 +121,23 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // Size the single GPU-geometry byte budget before any pool / LOD
   // registry is constructed. Precedence: `?gpuBudgetMB=` URL param >
   // `config.gpuPoolMaxBytes` (null=auto, 0=disable, N=pin) > auto-size.
+  // An explicit cache-pool override is threaded in as a memory signal for the auto
+  // path: `navigator.deviceMemory` is Chromium-only and spec-capped at 8 GB, so
+  // on a large machine it pins the budget at its ceiling and the pool's
+  // eviction path can never be exercised under pressure. `?cacheBudgetMB=` is
+  // the only way to reproduce constrained-device behaviour on a roomy box. In
+  // WebKit it is the sole signal and may raise or lower the 512 MB fallback.
+  // The persisted Settings budget remains cache-only by design; the regression
+  // guard is tests/unit/core/bootstrap.test.ts:594. The ambient JS heap limit is
+  // deliberately not folded in: its coarse Chromium tiers are not a GPU-memory
+  // measurement.
   configureGpuByteBudget(
     urlParams.gpuBudgetMB != null
       ? urlParams.gpuBudgetMB * 1_000_000
-      : config.dataLoading.performance.gpuPoolMaxBytes
+      : config.dataLoading.performance.gpuPoolMaxBytes,
+    {
+      cachePoolOverrideBytes: cachePoolOverrideBytes(urlParams.cacheBudgetMB),
+    }
   );
 
   // Install the session-wide line join override before any line material is

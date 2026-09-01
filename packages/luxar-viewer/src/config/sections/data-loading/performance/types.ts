@@ -48,8 +48,10 @@ export interface DataLoadingPerformanceConfig {
    * eviction). When usage exceeds it, the largest/coldest buffers are
    * disposed until back under budget.
    *
-   * - `null` (default): **auto-size** from `navigator.deviceMemory`
-   *   (clamped to [512 MB, 2 GB]) — see `rendering/gpu-byte-budget.ts`.
+   * - `null` (default): **auto-size** from `navigator.deviceMemory` with a
+   *   2 GB ceiling and a 512 MB fallback only when no signal exists. An
+   *   explicit `cacheBudgetMB` adds a peer signal at one third of the cache pool;
+   *   without `deviceMemory`, it replaces the fallback in either direction.
    * - `0`: disable byte-budget eviction entirely (count-only / unbounded
    *   resident geometry).
    * - a positive number: pin the budget to exactly that many bytes.
