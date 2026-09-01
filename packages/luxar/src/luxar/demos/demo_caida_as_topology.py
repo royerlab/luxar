@@ -1392,7 +1392,11 @@ def build_scene(
             scene = compiler.create_scene(
                 citation=DEMO_META["citation"],
                 dimensions=dims,
-                viewer_config=ViewerConfig(cinematic_mode=True),
+                viewer_config=ViewerConfig(
+                    # Thin lines lose detail at CSS resolution; see ViewerConfig.allow_high_dpr.
+                    allow_high_dpr=True,
+                    cinematic_mode=True,
+                ),
             )
 
             scene.add_points(

@@ -670,36 +670,35 @@ class TestPrecomputedRoundTrip:
         assert got["offset"] == pytest.approx(expected[1])
 
     def test_recompute_forces_the_local_path(self, tmp_path, monkeypatch) -> None:
-        cache_root, written = self._stage(self._crop(), tmp_path)
+        messages: list[str] = []
+        monkeypatch.setattr(_demo, "aprint", messages.append)
+        cache_root, written = self._stage(self._crop(name="crop_a"), tmp_path)
         monkeypatch.setitem(_demo.FLAGS, "recompute", True)
         assert (
             _demo.load_precomputed_crops(
-                ["crop_x"], manifest=self._manifest(written), cache_root=cache_root
+                ["crop_a", "crop_b"],
+                manifest=self._manifest(written),
+                cache_root=cache_root,
             )
             is None
         )
+        assert messages == []
 
-    def test_an_unpublished_record_falls_back_instead_of_raising(
-        self, tmp_path
+    def test_pending_upload_falls_back_instead_of_raising(
+        self, tmp_path, monkeypatch
     ) -> None:
-        """Pinned draft files have no public URL until the record is published."""
-        files = [
-            {"name": name, "bytes": 1}
-            for name in _demo.precomputed_file_names("crop_x")
-        ]
+        """The real manifest state today: registered, hosted nowhere yet."""
+        messages: list[str] = []
+        monkeypatch.setattr(_demo, "aprint", messages.append)
         manifest = {
-            "records": {
-                "cc-by": {
-                    "zenodo_record": 21912280,
-                    "published": False,
-                }
-            },
+            "records": {"cc-by": {}},
             "datasets": {
                 _demo.PRECOMPUTED_DATASET: {
                     "bucket": "zenodo",
                     "record": "cc-by",
                     "dir": "",
-                    "files": files,
+                    "pending_upload": True,
+                    "files": [],
                 }
             },
         }
@@ -709,21 +708,63 @@ class TestPrecomputedRoundTrip:
             )
             is None
         )
+        assert any("pending upload" in message for message in messages)
+        assert all("has no entry" not in message for message in messages)
+
+    def test_an_unpublished_record_falls_back_instead_of_raising(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """The state the real dataset is in NOW: pinned, but not yet public.
+
+        Distinct from the `pending_upload` case above, which has no files at all.
+        Here the pins exist and name real bytes, but a record carrying
+        ``published: false`` yields no download URL — and that has to route to the
+        Kaggle fallback rather than raise, because it is what makes the pins safe
+        to land ahead of publication. The coverage preflight must not misfire on
+        it either: the crops ARE declared, so nothing should report a missing
+        entry.
+        """
+        messages: list[str] = []
+        monkeypatch.setattr(_demo, "aprint", messages.append)
+        manifest = {
+            "records": {"cc-by": {"zenodo_record": 21912280, "published": False}},
+            "datasets": {
+                _demo.PRECOMPUTED_DATASET: {
+                    "bucket": "zenodo",
+                    "record": "cc-by",
+                    "dir": "",
+                    "files": [
+                        {"name": name, "sha256": "0" * 64, "bytes": 1}
+                        for name in _demo.precomputed_file_names("crop_x")
+                    ],
+                }
+            },
+        }
+
+        assert (
+            _demo.load_precomputed_crops(
+                ["crop_x"], manifest=manifest, cache_root=tmp_path
+            )
+            is None
+        )
+        assert all("has no entry" not in message for message in messages)
 
     def test_an_uncovered_crop_bails_out_before_fetching_anything(
         self, tmp_path, monkeypatch
     ) -> None:
-        """`--datasets 9` must not download the seven hosted crops to discard them.
+        """A chosen-but-undeclared crop must not fetch the covered ones first.
 
-        Coverage is decided from the manifest, which is a pure read. Asking
-        ``ensure_dataset`` first and checking coverage afterwards downloaded the
-        whole 632 MB set, rehydrated every crop that WAS present, and threw the
-        lot away before starting the 3.2 GB Kaggle download — so this asserts the
-        fetch never happens, not merely that the answer is ``None``.
+        The sibling `test_unchosen_manifest_crops_are_not_resolved` covers the
+        SELECTION property — an unchosen crop never reaches the cache. This covers
+        the BAIL-OUT property: when a chosen crop is absent from the manifest the
+        answer is the Kaggle fallback and nothing is fetched at all. Asserting
+        `ensure_dataset` is never CALLED, rather than that the answer is ``None``,
+        is what makes it fail if the coverage check ever moves back after the
+        fetch — the answer is ``None`` either way.
         """
         covered = _demo.precomputed_file_names("crop_x")
         manifest = {
-            "records": {"cc-by": {"id": 1, "published": True}},
+            "records": {"cc-by": {"zenodo_record": 1, "published": True}},
             "datasets": {
                 _demo.PRECOMPUTED_DATASET: {
                     "bucket": "zenodo",
@@ -788,23 +829,37 @@ class TestPrecomputedRoundTrip:
         assert got["tracks"] is None
 
     def test_a_missing_crop_falls_back_rather_than_half_building(
-        self, tmp_path
+        self, tmp_path, monkeypatch
     ) -> None:
-        cache_root = tmp_path / "cache"
-        staged = cache_root / _demo.PRECOMPUTED_DATASET
-        staged.mkdir(parents=True)
-        written = []
-        for name in _demo.precomputed_file_names("crop_a"):
-            path = staged / name
-            path.write_bytes(b"must not be opened")
-            written.append(path)
-
+        messages: list[str] = []
+        monkeypatch.setattr(_demo, "aprint", messages.append)
+        cache_root, written = self._stage(self._crop(name="crop_a"), tmp_path)
         got = _demo.load_precomputed_crops(
             ["crop_a", "crop_b"],
             manifest=self._manifest(written),
             cache_root=cache_root,
         )
         assert got is None, "a partially hosted set must not build a partial matrix"
+        assert any("has no entry for crop_b" in message for message in messages)
+
+    def test_unchosen_manifest_crops_are_not_resolved(self, tmp_path) -> None:
+        cache_root, written = self._stage(self._crop(name="crop_a"), tmp_path)
+        manifest = self._manifest(written)
+        manifest["datasets"][_demo.PRECOMPUTED_DATASET]["files"].extend(
+            {"name": name} for name in _demo.precomputed_file_names("crop_b")
+        )
+
+        crops = _demo.load_precomputed_crops(
+            ["crop_a"], manifest=manifest, cache_root=cache_root
+        )
+
+        assert crops is not None
+        assert [crop["name"] for crop in crops] == ["crop_a"]
+        cache_dir = cache_root / _demo.PRECOMPUTED_DATASET
+        assert all(
+            not (cache_dir / name).exists()
+            for name in _demo.precomputed_file_names("crop_b")
+        )
 
 
 class TestManifestRegistration:

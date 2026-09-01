@@ -51,7 +51,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from functools import lru_cache
 from pathlib import Path
 from types import TracebackType
@@ -247,10 +247,64 @@ def resolve_variant(
     return variants[variant].get("files") or [], variant
 
 
+def declared_file_names(
+    name: str,
+    *,
+    variant: Optional[str] = None,
+    manifest: Optional[Manifest] = None,
+) -> set[str]:
+    """Return the file names declared by the resolved dataset variant."""
+    spec = dataset_spec(name, manifest)
+    files, _variant_name = resolve_variant(name, spec, variant)
+    return {entry["name"] for entry in files}
+
+
+def _select_files(
+    name: str,
+    files: list[Manifest],
+    file_names: Optional[Collection[str]],
+    variant_name: Optional[str],
+) -> list[Manifest]:
+    """Select exact manifest entries without hiding mistakes or splitting groups.
+
+    Unknown names raise so a typo cannot silently resolve the wrong subset.
+    Positional sidecars are indexed against their partner, so selecting only
+    part of a group could pair unrelated rows and corrupt their alignment.
+    """
+    if file_names is None:
+        return files
+
+    requested = set(file_names)
+    available = {entry["name"] for entry in files}
+    unknown = requested - available
+    if unknown:
+        detail = f" variant {variant_name!r}" if variant_name else ""
+        raise ValueError(
+            f"Requested files are not declared by dataset {name!r}{detail}: "
+            f"{sorted(unknown)}"
+        )
+
+    groups: dict[str, set[str]] = {}
+    for entry in files:
+        group = entry.get("positional_pair")
+        if group:
+            groups.setdefault(group, set()).add(entry["name"])
+    for group, members in groups.items():
+        selected = requested & members
+        if selected and selected != members:
+            raise ValueError(
+                f"Requested files split positional pair {group!r} in dataset "
+                f"{name!r}; select every member: {sorted(members)}"
+            )
+
+    return [entry for entry in files if entry["name"] in requested]
+
+
 def ensure_dataset(
     name: str,
     *,
     variant: Optional[str] = None,
+    file_names: Optional[Collection[str]] = None,
     recompute: bool = False,
     cache_root: Optional[Path] = None,
     manifest: Optional[Manifest] = None,
@@ -263,6 +317,13 @@ def ensure_dataset(
         variant: For datasets with size variants (e.g. h2afva), which to fetch;
             defaults to the variant flagged ``default`` (the lighter one). An
             error for a dataset without variants, or an unknown variant name.
+        file_names: Optional exact set of manifest file names to resolve. The
+            result remains in manifest order. Unknown names and selections that
+            split a declared ``positional_pair`` are rejected. An empty
+            selection returns an empty list without creating a cache directory.
+            A non-empty selection against a dataset with no declared files is
+            rejected as unknown; query :func:`declared_file_names` first when
+            that absence should remain routable as :class:`DatasetUnavailable`.
         recompute: If True, raise :class:`LocalComputeDataset` for *any* dataset
             so the caller takes its own build path (mirrors the demos' ``--recompute``).
         cache_root: Override the cache root (tests). Defaults to ``~/.cache/luxar``.
@@ -274,6 +335,8 @@ def ensure_dataset(
     Raises:
         DatasetNotFound: unknown dataset.
         LocalComputeDataset: dataset is local-compute/regenerate (or recompute=True).
+        ValueError: unsupported bucket or variant, an unknown selected file name,
+            or a selection that splits a declared ``positional_pair``.
         DatasetUnavailable: data is neither cached, in-repo, nor hosted yet, or
             a declared ``positional_pair`` cannot resolve every member to the
             same generation — the conditions a caller may route around by
@@ -294,6 +357,9 @@ def ensure_dataset(
         raise ValueError(f"Dataset {name!r} has unsupported bucket {bucket!r}")
 
     files, variant_name = resolve_variant(name, spec, variant)
+    files = _select_files(name, files, file_names, variant_name)
+    if file_names is not None and not files:
+        return []
     if not files:
         detail = f" variant {variant_name!r}" if variant_name else ""
         raise DatasetUnavailable(

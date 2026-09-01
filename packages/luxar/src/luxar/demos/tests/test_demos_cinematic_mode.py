@@ -14,7 +14,7 @@ and flipping a rendering look on by default there would restyle every scene
 anyone writes with Luxar. So each demo states it, and this guard is what keeps
 "all of them" true for demo number 87.
 
-Five invariants, and they close different holes:
+Six invariants, and they close different holes:
 
 ``test_every_scene_passes_a_viewer_config``
     No ``create_scene`` call may omit ``viewer_config``. Without this a new demo
@@ -30,6 +30,11 @@ Five invariants, and they close different holes:
     more fragile than the rule it enforces. The rule holds because in this
     package a ``ViewerConfig`` is only ever built to be handed to a scene — if
     that stops being true, this guard is where to say so.
+``test_line_dominant_demos_allow_high_dpr``
+    The documented line-dominant demo set opts into native display resolution,
+    and no other demo does so accidentally. Each config in those modules must
+    use a literal ``allow_high_dpr=True`` so a new scene path cannot silently
+    lose the authored choice.
 ``test_every_authored_camera_uses_the_cinematic_lens``
     Every ``CameraConfig`` with an opening position leaves the preset's FOV
     unpinned and composes its distance for 63° through
@@ -119,6 +124,25 @@ SCIENTIFIC_FIDELITY_OVERRIDES = {
         {"chromatic_lens_distortion_enabled", "detector_noise_enabled"}
     ),
 }
+
+HIGH_DPR_DEMOS = frozenset(
+    {
+        "demo_bioluminescent_ocean.py",
+        "demo_caida_as_topology.py",
+        "demo_cosmicflows_laniakea.py",
+        "demo_dipc_3d_genome.py",
+        "demo_dmri_tractography.py",
+        "demo_flywire_connectome.py",
+        "demo_global_rivers_earth.py",
+        "demo_hilbert_curve_3d.py",
+        "demo_huri_interactome.py",
+        "demo_ocean_currents_earth.py",
+        "demo_particle_collision.py",
+        "demo_particle_collision_animated.py",
+        "demo_ppi_flow_field.py",
+        "demo_zebrahub_velocity_streamlines.py",
+    }
+)
 
 MODULES = scanned_demo_modules()
 
@@ -287,6 +311,33 @@ def test_every_viewer_config_enables_cinematic_mode(path: Path) -> None:
         f"{path.name}: ViewerConfig at line(s) {missing} does not set "
         f"cinematic_mode=True — the demos all open in cinematic mode; see this "
         f"module's docstring for the one-keyword fix"
+    )
+
+
+def test_line_dominant_demos_allow_high_dpr() -> None:
+    authored: dict[str, list[int]] = {}
+    incomplete: dict[str, list[int]] = {}
+
+    for path in MODULES:
+        tree = ast.parse(path.read_text(), filename=str(path))
+        configs = _viewer_configs(tree)
+        enabled = [
+            call.lineno
+            for call in configs
+            if _sets_literal(call, "allow_high_dpr", True)
+        ]
+        if enabled:
+            authored[path.name] = enabled
+        if path.name in HIGH_DPR_DEMOS and len(enabled) != len(configs):
+            incomplete[path.name] = [call.lineno for call in configs]
+
+    assert not incomplete, (
+        "every ViewerConfig in a line-dominant demo must set "
+        f"allow_high_dpr=True; config line(s) by module: {incomplete}"
+    )
+    assert authored.keys() == HIGH_DPR_DEMOS, (
+        "allow_high_dpr=True must match the documented line-dominant demo set; "
+        f"authored at line(s) {authored}"
     )
 
 

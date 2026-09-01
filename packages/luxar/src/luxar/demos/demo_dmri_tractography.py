@@ -1039,6 +1039,8 @@ def build_scene(bundles: dict, output_path: Path, *, points: int) -> Path:
             scene = c.create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(
+                    # Thin lines lose detail at CSS resolution; see ViewerConfig.allow_high_dpr.
+                    allow_high_dpr=True,
                     cinematic_mode=True,
                     tone_mapping="ACES",
                     camera=brain_camera(extent),

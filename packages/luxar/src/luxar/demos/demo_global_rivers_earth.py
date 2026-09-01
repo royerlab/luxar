@@ -442,6 +442,8 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
             scene = c.create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(
+                    # Thin lines lose detail at CSS resolution; see ViewerConfig.allow_high_dpr.
+                    allow_high_dpr=True,
                     # Orbit about the CENTRE OF THE EARTH. Without an authored
                     # target the viewer pivots on the metadata bounding-box
                     # centre, which relief exaggeration pulls ~1 unit off the
