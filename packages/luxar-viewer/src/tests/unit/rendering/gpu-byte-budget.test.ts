@@ -18,6 +18,21 @@ function withDeviceMemory(gb: number | undefined, fn: () => void): void {
   }
 }
 
+/** Temporarily set performance.memory.jsHeapSizeLimit for a test. */
+function withHeapLimit(bytes: number | undefined, fn: () => void): void {
+  const descriptor = Object.getOwnPropertyDescriptor(performance, 'memory');
+  Object.defineProperty(performance, 'memory', {
+    configurable: true,
+    value: bytes === undefined ? undefined : { jsHeapSizeLimit: bytes },
+  });
+  try {
+    fn();
+  } finally {
+    if (descriptor) Object.defineProperty(performance, 'memory', descriptor);
+    else delete (performance as Performance & { memory?: unknown }).memory;
+  }
+}
+
 const MB = 1_000_000;
 
 afterEach(() => {
@@ -112,6 +127,15 @@ describe('gpu-byte-budget', () => {
       withDeviceMemory(32, () => {
         configureGpuByteBudget(null, {});
         expect(getGpuByteBudget()).toBe(2_000 * MB);
+      });
+    });
+
+    it('does not shrink a roomy Chromium device from its measured heap tier', () => {
+      withDeviceMemory(32, () => {
+        withHeapLimit(4 * 1024 * 1024 * 1024, () => {
+          configureGpuByteBudget();
+          expect(getGpuByteBudget()).toBe(2_000 * MB);
+        });
       });
     });
   });

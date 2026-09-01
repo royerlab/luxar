@@ -78,48 +78,32 @@ let budgetBytes = NO_SIGNAL_BUDGET_BYTES;
 export interface GpuBudgetMemorySignals {
   /** `?cacheBudgetMB=` in bytes, if set. */
   cachePoolOverrideBytes?: number;
-  /** Device-class pool size, used when the heap is unmeasurable (WebKit). */
-  fallbackPoolBytes?: number;
 }
 
 /**
- * Compute the auto budget from ``navigator.deviceMemory``. Undefined
- * (Safari/Firefox) ⇒ the conservative floor.
+ * Compute the auto budget from ``navigator.deviceMemory`` and an explicit
+ * cache-pool override. An ambient JS heap limit is not a GPU-memory signal:
+ * Chromium's coarse heap tiers would otherwise cap every roomy desktop at the
+ * eager line loader's 512 MiB working-set ceiling.
  */
-function computeAutoBudget(memory?: GpuBudgetMemorySignals): number {
+function computeAutoBudget(memory?: GpuBudgetMemorySignals): { bytes: number; sources: string[] } {
   const gb = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
   const fromDeviceMemory =
     typeof gb === 'number' && gb > 0 ? gb * DEVICE_MEMORY_FRACTION * 1_000_000_000 : undefined;
-
-  // The heap-derived working set, from the SAME helper the refinement residency
-  // cap uses — so the two agree on what the device can hold instead of the pool
-  // carrying an independent constant that never binds.
-  //
-  // ONLY when there is a REAL heap signal. `computeWorkingSetBudgetBytes`
-  // returns a fixed 256 MB fallback when it has nothing to go on, and that
-  // value is indistinguishable from a derived one — folding it in would cap a
-  // 32 GB Firefox/Safari machine at 256 MB purely because it exposes no
-  // `performance.memory`, making those browsers dramatically worse than Chrome
-  // at scenes they hold comfortably. An absent measurement must never read as
-  // a small one. (The two tests that caught this are the ones asserting the
-  // deviceMemory path and the no-signal path.)
-  const heapMeasurable =
-    typeof performance !== 'undefined' &&
-    typeof (performance as Performance & { memory?: { jsHeapSizeLimit?: number } }).memory
-      ?.jsHeapSizeLimit === 'number';
-  const fromHeap =
-    memory?.cachePoolOverrideBytes != null || heapMeasurable
-      ? computeWorkingSetBudgetBytes(
-          undefined,
-          memory?.cachePoolOverrideBytes,
-          memory?.fallbackPoolBytes
-        )
+  const cachePoolOverrideBytes = memory?.cachePoolOverrideBytes;
+  const fromCachePool =
+    typeof cachePoolOverrideBytes === 'number' &&
+    Number.isFinite(cachePoolOverrideBytes) &&
+    cachePoolOverrideBytes > 0
+      ? computeWorkingSetBudgetBytes(undefined, cachePoolOverrideBytes)
       : undefined;
 
-  const candidates = [fromDeviceMemory, fromHeap && fromHeap > 0 ? fromHeap : undefined].filter(
-    (v): v is number => v !== undefined
+  const candidates = [fromDeviceMemory, fromCachePool].filter(
+    (value): value is number => value !== undefined
   );
-  if (candidates.length === 0) return NO_SIGNAL_BUDGET_BYTES;
+  if (candidates.length === 0) {
+    return { bytes: NO_SIGNAL_BUDGET_BYTES, sources: ['no memory signal fallback'] };
+  }
 
   // The MINIMUM of the signals, because a pooled allocation costs on BOTH
   // sides: VRAM for the element texture, and JS heap for the CPU-side image
@@ -130,7 +114,14 @@ function computeAutoBudget(memory?: GpuBudgetMemorySignals): number {
   //
   // Clamped ABOVE only. There is no floor: a floor is exactly what stopped this
   // budget from ever binding, and a budget that cannot bind cannot evict.
-  return Math.min(Math.min(...candidates), MAX_BUDGET_BYTES);
+  const sources: string[] = [];
+  if (fromDeviceMemory !== undefined) {
+    sources.push(`deviceMemory=${gb} GB -> ${mb(Math.min(fromDeviceMemory, MAX_BUDGET_BYTES))} MB`);
+  }
+  if (fromCachePool !== undefined) {
+    sources.push(`cacheBudgetMB=${mb(cachePoolOverrideBytes!)} -> ${mb(fromCachePool)} MB`);
+  }
+  return { bytes: Math.min(Math.min(...candidates), MAX_BUDGET_BYTES), sources };
 }
 
 /**
@@ -146,13 +137,12 @@ export function configureGpuByteBudget(
   memory?: GpuBudgetMemorySignals
 ): void {
   if (overrideBytes == null) {
-    budgetBytes = computeAutoBudget(memory);
-    const dm = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
-    const via =
-      memory?.cachePoolOverrideBytes != null
-        ? `cacheBudgetMB override + deviceMemory=${dm ?? 'n/a'} GB`
-        : `deviceMemory=${dm ?? 'n/a'} GB + heap`;
-    log.info(Modules.PERFORMANCE, `GPU byte budget: ${mb(budgetBytes)} MB (auto from ${via})`);
+    const auto = computeAutoBudget(memory);
+    budgetBytes = auto.bytes;
+    log.info(
+      Modules.PERFORMANCE,
+      `GPU byte budget: ${mb(budgetBytes)} MB (auto: ${auto.sources.join(', ')}; min)`
+    );
     return;
   }
   budgetBytes = Math.max(0, overrideBytes);
