@@ -44,30 +44,35 @@ interface FolderStub {
   addFolder: ReturnType<typeof vi.fn>;
   domElement: HTMLElement;
   controllers: ControllerStub[];
+  childOrder: string[];
   /** Sub-folders created via addFolder, keyed by display name. */
   subFolders: Map<string, FolderStub>;
 }
 
 function makeFolder(): FolderStub {
   const controllers: ControllerStub[] = [];
+  const childOrder: string[] = [];
   const subFolders = new Map<string, FolderStub>();
   const folder: FolderStub = {
     open: vi.fn(),
     close: vi.fn(),
     show: vi.fn(),
     hide: vi.fn(),
-    add: vi.fn().mockImplementation(() => {
+    add: vi.fn().mockImplementation((_object: unknown, property: string) => {
       const c = makeController();
       controllers.push(c);
+      childOrder.push(`controller:${property}`);
       return c;
     }),
     addFolder: vi.fn().mockImplementation((displayName: string) => {
       const sub = makeFolder();
       subFolders.set(displayName, sub);
+      childOrder.push(`folder:${displayName}`);
       return sub;
     }),
     domElement: document.createElement('div'),
     controllers,
+    childOrder,
     subFolders,
   };
   return folder;
@@ -148,6 +153,18 @@ describe('setupAntiAliasingControls', () => {
     setupAntiAliasingControls(stubs.context);
     expect(stubs.aaFolder.subFolders.has('SSAA Settings (Supersampling)')).toBe(true);
     expect(stubs.aaFolder.subFolders.has('MSAA Settings')).toBe(true);
+  });
+
+  it('places each settings sub-folder after its enable toggle', () => {
+    setupAntiAliasingControls(stubs.context);
+
+    expect(stubs.aaFolder.childOrder).toEqual([
+      'controller:ssaaEnabled',
+      'folder:SSAA Settings (Supersampling)',
+      'controller:fxaaEnabled',
+      'controller:msaaEnabled',
+      'folder:MSAA Settings',
+    ]);
   });
 
   it('SSAA sub-folder receives the multiplier control', () => {
