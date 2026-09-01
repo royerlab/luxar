@@ -223,6 +223,32 @@ describe('GPUBufferPool', () => {
       expect(pool.getStats().pooledBuffers).toBe(0);
     });
 
+    it('does not accumulate superseded pairs across an unsliced ladder climb', () => {
+      pool.acquirePointsGeometry('unsliced-ladder', 1000);
+      pool.acquirePointsGeometry('unsliced-ladder', 2000, { canRegrow: false });
+      pool.acquirePointsGeometry('unsliced-ladder', 4000, { canRegrow: false });
+
+      expect(pool.getStats().pooledBuffers).toBe(0);
+      expect(pool.getStats().evictions).toBe(2);
+    });
+
+    it('keeps the successful replacement when superseded disposal throws', () => {
+      const oldGeometry = pool.acquirePointsGeometry('throwing-dispose', 1000);
+      oldGeometry.addEventListener('dispose', () => {
+        throw new Error('dispose listener failed');
+      });
+
+      let replacement: THREE.InstancedBufferGeometry | undefined;
+      expect(() => {
+        replacement = pool.acquirePointsGeometry('throwing-dispose', 2000, {
+          canRegrow: false,
+        });
+      }).not.toThrow();
+
+      expect(pool.activeBuffers.get('throwing-dispose')?.geometry).toBe(replacement);
+      expect(pool.getStats().pooledBuffers).toBe(0);
+    });
+
     it('keeps the superseded geometry pooled when the node can still regrow', () => {
       const geom1 = pool.acquirePointsGeometry('growing-points', 1000);
       const disposeSpy = vi.spyOn(geom1, 'dispose');

@@ -49,6 +49,12 @@ export interface LadderStampable {
   committedEnergyFraction?: number;
 }
 
+/**
+ * Whether a committed node may later need a previously superseded capacity.
+ * Progressive nD nodes can shrink on a slice change and regrow into an old
+ * bucket; an unsliced ladder grows monotonically, so every successful grow
+ * makes its released geometry permanently obsolete.
+ */
 export function canLadderRegrow(
   userData: LadderStampable | undefined | null,
   ndim: number
@@ -56,7 +62,7 @@ export function canLadderRegrow(
   if (ndim > 3) return true;
   const loader = userData?.loader;
   if (!loader || typeof loader !== 'object' || !('hasMoreLODs' in loader)) return true;
-  return (loader as { hasMoreLODs?: boolean }).hasMoreLODs === true;
+  return false;
 }
 
 /**
