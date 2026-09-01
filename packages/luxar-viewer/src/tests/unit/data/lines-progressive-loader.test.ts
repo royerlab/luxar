@@ -614,7 +614,7 @@ describe('LinesProgressiveLoader', () => {
       expect(loader.hasMoreLODs).toBe(true);
     });
 
-    it('retries the same folded payload when the commit fails after concatenation', async () => {
+    it('keeps a completed folded pass schedulable when its commit fails', async () => {
       const result = await loader.loadLines(baseViewState);
       expect(loader.loadedLODCount).toBe(3);
       expect(loader.hasMoreLODs).toBe(false);
@@ -626,9 +626,10 @@ describe('LinesProgressiveLoader', () => {
       ).loadedLODs;
       expect(retained).toHaveLength(1);
 
-      // Once concat has released the individual rung buffers, the pre-pass
-      // representation no longer exists. Rollback must leave the cumulative
-      // payload and its logical cursor paired rather than truncating one side.
+      // A later pass starts from the completed folded ladder and appends no
+      // levels. If its geometry commit fails, rollback must still make the
+      // loader schedulable so the same cumulative payload is retried.
+      await expect(loader.loadLines(baseViewState)).resolves.toBe(result);
       expect(loader.rollbackToPassStart()).toBe(0);
       expect(loader.loadedLODCount).toBe(3);
       expect(retained).toHaveLength(1);
@@ -661,13 +662,6 @@ describe('LinesProgressiveLoader', () => {
       expect(loader.loadedLODCount).toBe(3);
       expect(loader.rollbackToPassStart()).toBe(0);
       expect(loader.loadedLODCount).toBe(3);
-    });
-
-    it('is a no-op when the pass appended nothing', async () => {
-      await loader.loadLines(baseViewState);
-      // A pass that throws during its FETCH adds no level; there is nothing to
-      // unwind and the previously committed prefix must survive untouched.
-      expect(loader.rollbackToPassStart()).toBe(0);
     });
 
     it('evicts an uncommitted full ladder snapshot before a later slice revisit', async () => {

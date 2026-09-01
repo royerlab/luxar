@@ -8,8 +8,16 @@
  * the node is stranded silently. See #2426.
  */
 
-import { describe, it, expect } from 'vitest';
-import { planLadderRollback } from '../../../../../data/loaders/progressive/pass-rollback';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import {
+  planLadderRollback,
+  tryRollbackToPassStart,
+} from '../../../../../data/loaders/progressive/pass-rollback';
+import { log, Modules } from '../../../../../utils/log';
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('planLadderRollback', () => {
   it('drops exactly the levels the failed pass appended', () => {
@@ -82,5 +90,25 @@ describe('planLadderRollback', () => {
         invalidateConcatCache: false,
       });
     });
+  });
+});
+
+describe('tryRollbackToPassStart', () => {
+  it('logs a rollback failure without replacing the original failure path', () => {
+    const rollbackError = new Error('rollback failed');
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+
+    expect(
+      tryRollbackToPassStart({
+        rollbackToPassStart: () => {
+          throw rollbackError;
+        },
+      })
+    ).toBe(0);
+    expect(warning).toHaveBeenCalledWith(
+      Modules.SCENE_LOADER,
+      'Progressive loader rollback failed',
+      rollbackError
+    );
   });
 });

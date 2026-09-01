@@ -38,6 +38,8 @@
  * @module data/loaders/progressive/pass-rollback
  */
 
+import { log, Modules } from '../../../utils/log';
+
 /** What a loader should do to undo the levels a failed pass appended. */
 export interface LadderRollbackPlan {
   /** Level count to truncate `loadedLODs` to. */
@@ -88,7 +90,8 @@ export function planLadderRollback(
 export function tryRollbackToPassStart(loader: { rollbackToPassStart?: () => number }): number {
   try {
     return loader.rollbackToPassStart?.() ?? 0;
-  } catch {
+  } catch (error) {
+    log.warning(Modules.SCENE_LOADER, 'Progressive loader rollback failed', error);
     return 0;
   }
 }
