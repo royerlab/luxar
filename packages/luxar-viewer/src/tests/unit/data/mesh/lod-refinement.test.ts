@@ -34,6 +34,7 @@ defineRefinementLoopContract('runMeshRefinement', 'Mesh', (w) =>
     releaseLock: w.releaseLock,
     retriggerUpdate: w.retriggerUpdate,
     signal: w.signal,
+    residencyBudget: w.residencyBudget,
   })
 );
 

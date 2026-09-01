@@ -26,6 +26,7 @@ import { MESH_DECODE_BUDGET_BYTES } from '../../../config/constants';
 import { CACHE_HIT_THRESHOLD_MS } from '../../../data/loaders/progressive/constants';
 import type { LoadedMeshData, MeshViewState } from '../../../types/mesh';
 import type { MeshWholeNodeLoader } from '../../../data/mesh/mesh-whole-node-loader';
+import { testLadderFoldContract } from './_shared/ladder-fold-contract';
 import {
   resetLodLoadStats,
   setLodLoadStatsEnabled,
@@ -876,4 +877,34 @@ describe('MeshProgressiveLoader — aggregate byte budget (#1517)', () => {
     const data = await inFlight;
     expect(data.faceCount).toBe(0);
   });
+});
+
+testLadderFoldContract('Mesh', async () => {
+  const levels = [
+    level(6, [0, 1, 2]),
+    level(6, [1, 2, 3], { base: 6 }),
+    level(6, [2, 3, 4], { base: 12 }),
+  ];
+  const subs = levels.map((d) => subLoader(d, { resident: true }));
+  const l = new MeshProgressiveLoader(subs, levels.length, '/fold');
+  const multiPassSubs = levels.map((data) => subLoader(data, { resident: false }));
+  const multiPassLoader = new MeshProgressiveLoader(
+    multiPassSubs,
+    levels.length,
+    '/fold-multi-pass'
+  );
+  return {
+    loader: l,
+    totalLevels: levels.length,
+    loadAll: async () => {
+      await l.updateView(VIEW);
+    },
+    multiPass: {
+      loader: multiPassLoader,
+      totalLevels: levels.length,
+      loadAll: async () => {
+        await multiPassLoader.updateView(VIEW);
+      },
+    },
+  };
 });

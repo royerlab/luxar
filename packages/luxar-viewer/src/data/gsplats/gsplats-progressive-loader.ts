@@ -42,6 +42,8 @@ import {
   storeLadder,
 } from '../loaders/progressive/slice-cache-helper';
 import { planLadderRollback } from '../loaders/progressive/pass-rollback';
+import { SPLAT_FLOATS_PER_SPLAT } from '../../rendering/element-texture-layout';
+import type { LadderResidency } from '../scene-loader/progressive/residency-budget';
 import { viewStatesEqual } from '../loaders/progressive/view-state-equal';
 import type { SliceCache } from '../../cache/slice-cache';
 import { log, Modules, LogEmoji } from '../../utils/log';
@@ -326,6 +328,24 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
   /** Number of LOD levels currently loaded. */
   get loadedLODCount(): number {
     return this._loadedLODCount;
+  }
+
+  /**
+   * Measured footprint of the loaded ladder, for the shared sweep residency
+   * budget (`scene-loader/progressive/residency-budget`). Sums real
+   * `byteLength`s rather than modelling a per-element cost. Rung count comes
+   * from `_loadedLODCount` (LOGICAL levels), not `loadedLODs.length`, which is
+   * 1 once the ladder has folded.
+   */
+  ladderResidency(): LadderResidency {
+    return {
+      residentBytes: measureLodBytes(this.loadedLODs),
+      loadedRungs: this._loadedLODCount,
+      elementCount: this.loadedLODs.reduce((s, d) => s + d.splatCount, 0),
+      // 4 RGBA32F texels/splat. See LadderResidency — the payload alone is not
+      // the node's footprint, and the ratio differs per geometry.
+      bytesPerElement: SPLAT_FLOATS_PER_SPLAT * Float32Array.BYTES_PER_ELEMENT,
+    };
   }
 
   /**

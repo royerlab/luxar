@@ -14,6 +14,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { ViewStateQueue } from '../../../../data/scene-loader/view-state/view-state-queue';
+import { RefinementResidencyBudget } from '../../../../data/scene-loader/progressive/residency-budget';
 import type { ViewState } from '../../../../data/data-loader-types';
 import { log, Modules } from '../../../../utils/log';
 
@@ -45,6 +46,8 @@ export interface RefinementRunWiring {
   processSpy: (...args: unknown[]) => unknown;
   /** Per-run abort signal, threaded into `loader.updateView` by the wrapper. */
   signal?: AbortSignal;
+  /** Optional residency ceiling passed through the geometry-specific wrapper. */
+  residencyBudget?: RefinementResidencyBudget;
 }
 
 /** A loader stub that advances through `hasMoreLODs` stages as updateView runs. */
@@ -99,6 +102,38 @@ export function defineRefinementLoopContract(
       expect(releaseLock).toHaveBeenCalledTimes(1);
       expect(updateVisibleCountsInMonitor).toHaveBeenCalledTimes(1);
       expect(loader.updateView).not.toHaveBeenCalled();
+    });
+
+    it('retires a declined loader from the loop without processing it', async () => {
+      const loader = {
+        hasMoreLODs: true,
+        loadedLODCount: 1,
+        totalLODCount: 3,
+        ladderResidency: () => ({
+          residentBytes: 2,
+          loadedRungs: 1,
+          elementCount: 0,
+          bytesPerElement: 0,
+        }),
+        updateView: vi.fn(),
+      };
+      const releaseLock = vi.fn();
+      const processSpy = vi.fn();
+
+      await run({
+        loaders: new Map([['/n', loader]]),
+        viewStateQueue: new ViewStateQueue(),
+        deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
+        updateVisibleCountsInMonitor: vi.fn(),
+        releaseLock,
+        retriggerUpdate: vi.fn(),
+        processSpy,
+        residencyBudget: new RefinementResidencyBudget(1),
+      });
+
+      expect(loader.updateView).not.toHaveBeenCalled();
+      expect(processSpy).not.toHaveBeenCalled();
+      expect(releaseLock).toHaveBeenCalledTimes(1);
     });
 
     it('stops after one successful pass that does not advance the pending loader', async () => {

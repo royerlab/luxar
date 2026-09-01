@@ -54,6 +54,8 @@ import {
   storeLadder,
 } from '../loaders/progressive/slice-cache-helper';
 import { planLadderRollback } from '../loaders/progressive/pass-rollback';
+import { POINT_FLOATS_PER_POINT } from '../../rendering/element-texture-layout';
+import type { LadderResidency } from '../scene-loader/progressive/residency-budget';
 import { viewStatesEqual } from '../loaders/progressive/view-state-equal';
 import type { SliceCache } from '../../cache/slice-cache';
 import { log, Modules, LogEmoji } from '../../utils/log';
@@ -470,6 +472,24 @@ export class PointsProgressiveLoader implements PointsDataLoader {
 
   get loadedLODCount(): number {
     return this._loadedLODCount;
+  }
+
+  /**
+   * Measured footprint of the loaded ladder, for the shared sweep residency
+   * budget (`scene-loader/progressive/residency-budget`). Sums real
+   * `byteLength`s rather than modelling a per-element cost. Rung count comes
+   * from `_loadedLODCount` (LOGICAL levels), not `loadedLODs.length`, which is
+   * 1 once the ladder has folded.
+   */
+  ladderResidency(): LadderResidency {
+    return {
+      residentBytes: measureLodBytes(this.loadedLODs),
+      loadedRungs: this._loadedLODCount,
+      elementCount: this.loadedLODs.reduce((s, d) => s + d.pointCount, 0),
+      // 3 RGBA32F texels/point. See LadderResidency — the payload alone is not
+      // the node's footprint, and the ratio differs per geometry.
+      bytesPerElement: POINT_FLOATS_PER_POINT * Float32Array.BYTES_PER_ELEMENT,
+    };
   }
 
   get totalLODCount(): number {

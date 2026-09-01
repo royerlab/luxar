@@ -185,6 +185,11 @@ import { queueNext } from './scene-loader/update-view/queue-next';
 import { connectLoaderToMonitor as connectLoaderToMonitorHelper } from './scene-loader/nodes/connect-loader-to-monitor';
 import type { LineWorkingSetGate, NodeBuildCtx } from './scene-loader/nodes/build-ctx';
 import { createLineWorkingSetGate } from './scene-loader/nodes/load-children-concurrently';
+import {
+  RefinementResidencyBudget,
+  RefinementResidencyReporter,
+  type LadderResidency,
+} from './scene-loader/progressive/residency-budget';
 
 /**
  * Delay before `kickRefinementIfIdle` re-checks a lock-held serialization
@@ -228,6 +233,7 @@ export class SceneLoader {
   private cacheBudgets: CacheBudgets | null = null;
   private registry = new LoaderRegistry();
   private readonly lineWorkingSetGate: LineWorkingSetGate;
+  private readonly refinementResidencyReporter = new RefinementResidencyReporter();
 
   // Delegate registry-backed maps used by the loader orchestration methods.
   private get loaders() {
@@ -1196,6 +1202,23 @@ export class SceneLoader {
     );
   }
 
+  /** Snapshot every sweep-registered progressive ladder, including completed ones. */
+  private progressiveLadderResidencies(): Map<string, LadderResidency> {
+    const residencies = new Map<string, LadderResidency>();
+    const collect = (loaders: ReadonlyMap<string, unknown>) => {
+      for (const [path, loader] of loaders) {
+        const ladderResidency = (loader as { ladderResidency?: () => LadderResidency })
+          .ladderResidency;
+        if (ladderResidency) residencies.set(path, ladderResidency.call(loader));
+      }
+    };
+    collect(this.gsplatLoaders);
+    collect(this.loaders);
+    collect(this.linesLoaders);
+    collect(this.meshLoaders);
+    return residencies;
+  }
+
   /**
    * Kick the progressive refinement orchestrator from OUTSIDE an update pass.
    *
@@ -1320,6 +1343,17 @@ export class SceneLoader {
       // recorded); the loop's next-pass pending check performs the hand-off.
       const refinementController = new AbortController();
       this._updateAbortController = refinementController;
+      // ONE budget for the whole run, shared by all four geometry phases and
+      // seeded from every sweep-registered ladder. Completed loaders return
+      // before their wrapper calls admit(), so seeding is what keeps their
+      // resident bytes in later view-triggered runs instead of ratcheting the
+      // ceiling upward. Lazy lod_group levels are not in these sweep maps.
+      const residencyBudget = RefinementResidencyBudget.forSession(
+        cachePoolOverrideBytes(this.config.cacheBudgetMB),
+        deviceClassPoolBytes(),
+        this.progressiveLadderResidencies(),
+        this.refinementResidencyReporter
+      );
       // Intermediate phases shouldn't release the lock — only the last
       // phase running to completion does.
       const noopReleaseLock = () => {
@@ -1358,6 +1392,7 @@ export class SceneLoader {
         isActive: () => !this._disposed,
         signal: refinementController.signal,
         profiler: this.profiler,
+        residencyBudget,
       });
       if (cancelled || this._disposed) return;
 
@@ -1375,6 +1410,7 @@ export class SceneLoader {
         isActive: () => !this._disposed,
         signal: refinementController.signal,
         profiler: this.profiler,
+        residencyBudget,
       });
       if (cancelled || this._disposed) return;
 
@@ -1393,6 +1429,7 @@ export class SceneLoader {
         isActive: () => !this._disposed,
         signal: refinementController.signal,
         profiler: this.profiler,
+        residencyBudget,
       });
       if (cancelled || this._disposed) return;
 
@@ -1417,6 +1454,7 @@ export class SceneLoader {
         isActive: () => !this._disposed,
         signal: refinementController.signal,
         profiler: this.profiler,
+        residencyBudget,
       });
     } finally {
       this._refining = false;

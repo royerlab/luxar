@@ -17,11 +17,16 @@ import type {
 import { log, Modules } from '../../utils/log';
 import { notifier } from '../../utils/cross-layer/notifier';
 import { isAbortError } from '../loaders/abort-error';
+import { releaseLineageIfUncommitted } from '../../types/prefix-lineage';
 import { tryRollbackToPassStart } from '../loaders/progressive/pass-rollback';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 import type { ViewState } from '../data-loader-types';
 import type { ViewStateQueue } from '../scene-loader/view-state/view-state-queue';
 import type { StagedLinesCommit } from '../scene-loader/process/data-processor-lines';
+import type {
+  LadderResidency,
+  RefinementResidencyBudget,
+} from '../scene-loader/progressive/residency-budget';
 import {
   MAX_CONSECUTIVE_REFINEMENT_FAILURES,
   RefinementFailureTracker,
@@ -64,6 +69,11 @@ export interface LinesRefinementCtx {
    * `AbortError` in the per-loader catch is cancellation, not failure.
    */
   signal?: AbortSignal;
+  /**
+   * Shared residency ceiling for sweep-registered progressive leaves. Absent =
+   * unbounded (today's behaviour).
+   */
+  residencyBudget?: RefinementResidencyBudget;
 }
 
 export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void> {
@@ -83,9 +93,18 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
         // `hasMoreLODs` gate above has already returned for it. Every real
         // `LinesProgressiveLoader` implements it.
         rollbackToPassStart?: () => number;
+        ladderResidency?: () => LadderResidency;
       };
       if (progressiveLoader.hasMoreLODs !== true) return false;
       if (failures.isExhausted(path)) return false;
+      // Shared sweep residency ceiling. Declining here is not enough on its own —
+      // `anyHasMoreLODs` and `getLoaderProgress` below must also exclude
+      // declined paths, or the loop re-offers this loader every frame forever
+      // while holding the update lock (the trap `isExhausted` already avoids).
+      const residency = progressiveLoader.ladderResidency?.();
+      if (residency && ctx.residencyBudget?.admit(path, residency).admitted === false) {
+        return false;
+      }
       try {
         const mesh = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
         const nodeAttrs = mesh?.userData?.attrs as LinesMetadata | undefined;
@@ -106,13 +125,21 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
         try {
           const data = await loader.updateView(linesVS, session, ctx.signal);
           if (data) {
-            const staged = await ctx.processLines(path, data, linesVS, session);
-            // Superseded/disposed while we were loading + processing: an abort
-            // landing during the async process round-trip is not a throw (so
-            // the AbortError catch below misses it). Skip the commit so no
-            // stale-slice geometry reaches the GPU — mirrors runAtomicCommit's
-            // signal.aborted guard on the main path (atomic-commit.ts).
-            if (staged && ctx.signal?.aborted !== true) ctx.commitLines(staged, session);
+            let committed = false;
+            try {
+              const staged = await ctx.processLines(path, data, linesVS, session);
+              // Superseded/disposed while we were loading + processing: an abort
+              // landing during the async process round-trip is not a throw (so
+              // the AbortError catch below misses it). Skip the commit so no
+              // stale-slice geometry reaches the GPU — mirrors runAtomicCommit's
+              // signal.aborted guard on the main path (atomic-commit.ts).
+              if (staged && ctx.signal?.aborted !== true) {
+                ctx.commitLines(staged, session);
+                committed = true;
+              }
+            } finally {
+              releaseLineageIfUncommitted(data, committed);
+            }
           }
         } finally {
           session?.end();
@@ -161,16 +188,28 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
         loadedLODCount: number;
         totalLODCount: number;
       };
-      if (failures.isExhausted(path) || progressiveLoader.hasMoreLODs !== true) return null;
+      if (
+        failures.isExhausted(path) ||
+        ctx.residencyBudget?.isDeclined(path) === true ||
+        progressiveLoader.hasMoreLODs !== true
+      ) {
+        return null;
+      }
       return {
         loaded: progressiveLoader.loadedLODCount,
         total: progressiveLoader.totalLODCount,
       };
     },
+    // A budget-declined loader still reports `hasMoreLODs`, so it MUST be
+    // excluded here as well or the loop never terminates.
     anyHasMoreLODs: () =>
       [...ctx.linesLoaders.entries()].some(([path, l]) => {
         const ll = l as LinesDataLoader & { hasMoreLODs?: boolean };
-        return !failures.isExhausted(path) && ll.hasMoreLODs === true;
+        return (
+          !failures.isExhausted(path) &&
+          ctx.residencyBudget?.isDeclined(path) !== true &&
+          ll.hasMoreLODs === true
+        );
       }),
     onNoProgress: (stalled) => {
       for (const { path, loaded, total } of stalled) {
