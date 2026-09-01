@@ -679,17 +679,27 @@ class TestPrecomputedRoundTrip:
             is None
         )
 
-    def test_pending_upload_falls_back_instead_of_raising(self, tmp_path) -> None:
-        """The real manifest state today: registered, hosted nowhere yet."""
+    def test_an_unpublished_record_falls_back_instead_of_raising(
+        self, tmp_path
+    ) -> None:
+        """Pinned draft files have no public URL until the record is published."""
+        files = [
+            {"name": name, "bytes": 1}
+            for name in _demo.precomputed_file_names("crop_x")
+        ]
         manifest = {
-            "records": {"cc-by": {}},
+            "records": {
+                "cc-by": {
+                    "zenodo_record": 21912280,
+                    "published": False,
+                }
+            },
             "datasets": {
                 _demo.PRECOMPUTED_DATASET: {
                     "bucket": "zenodo",
                     "record": "cc-by",
                     "dir": "",
-                    "pending_upload": True,
-                    "files": [],
+                    "files": files,
                 }
             },
         }

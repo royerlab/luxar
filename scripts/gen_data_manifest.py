@@ -428,18 +428,18 @@ DATASETS: dict[str, dict] = {
             "group, CZ Biohub SF. Derived product: per-crop 4D Gaussian-splat "
             "fits with substitutive LOD."
         ),
-        # Computed on obsidian, awaiting upload to the cc-by record. Redistributable
-        # as a DERIVED product because the source is CC0 — and since the raw
-        # competition data is behind an authenticated endpoint, hosting the fits is
-        # what makes the demo runnable with no Kaggle credentials and no GPU at all.
+        # Computed on obsidian and uploaded to the cc-by draft. Redistributable as a
+        # DERIVED product because the source is CC0 — and since the raw competition
+        # data is behind an authenticated endpoint, publishing the fits is what makes
+        # the demo runnable with no Kaggle credentials and no GPU at all.
         #
-        # ONE file set, at the full 100 timepoints: ~700 MB (measured — 77.3 MB per
-        # crop x 9). No lighter variant, deliberately. The demo exists to show the
-        # whole timelapse, a decimated one would undercut that, and 700 MB is modest
-        # for this catalogue (the celegans demo pulls 26 GB). The derived product is
-        # far smaller than either the ~4 GB of raw crops or the ~450 MB of
-        # per-timepoint fit cache it is built from, because a fitted splat costs
-        # about 12 bytes once encoded and zipped.
+        # ONE file set, at the full 100 timepoints: 632.4 MB across the seven crops
+        # with complete fit caches (~90 MB per crop). No lighter variant,
+        # deliberately. The demo exists to show the whole timelapse, a decimated one
+        # would undercut that, and 632.4 MB is modest for this catalogue (the celegans
+        # demo pulls 26 GB). The derived product is far smaller than either the raw
+        # crops or the per-timepoint fit cache it is built from, because a fitted
+        # splat costs about 12 bytes once encoded and zipped.
         acquisition=dict(
             description=(
                 "one competition training crop per fitted archive: an OME-Zarr "

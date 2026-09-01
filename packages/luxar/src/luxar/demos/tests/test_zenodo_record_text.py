@@ -2039,6 +2039,19 @@ def test_committed_measurements_match_the_hosted_manifest_pins(gen: Any) -> None
     assert gen._stale_characteristics(manifest) == []
 
 
+def test_cell_tracking_measurements_include_the_declared_raw_volume(gen: Any) -> None:
+    chars = gen.load_characteristics()
+    infos = [
+        info for key, info in chars.items() if key.startswith("gsplats_cell_tracking/")
+    ]
+
+    assert len(infos) == 7
+    for info in infos:
+        assert info["source_shape"] == [100, 64, 256, 256]
+        assert info["source_dtype"] == "uint16"
+        assert info["source_bytes"] == 838_860_800
+
+
 def test_h2afva_51tp_measurements_describe_the_pinned_flat_ladder(gen: Any) -> None:
     key = "h2afva/51tp/h2afva_51tp.gsplats.zarr.zip"
     info = gen.load_characteristics()[key]
