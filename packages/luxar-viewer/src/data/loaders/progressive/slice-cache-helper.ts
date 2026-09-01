@@ -236,7 +236,7 @@ export function restoreLadderSnapshot<T>(
  * (it re-decodes on every visit). Instead we store the largest COARSE-FIRST
  * prefix that fits — the additive ladder is amplitude-ordered, so the coarse
  * levels are the cheapest to keep and give a usable partial revisit; only the
- * fine tail re-decodes. A one-time warning per key surfaces the shortfall
+ * fine tail re-decodes. A one-time warning per node surfaces the shortfall
  * (deduped by the cache's `markOversizedWarned`, so it can't leak across
  * sessions or a dataset switch). Folded payloads cannot be trimmed safely
  * because payload count no longer identifies level count; those leave any
