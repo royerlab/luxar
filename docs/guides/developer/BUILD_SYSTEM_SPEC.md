@@ -909,68 +909,40 @@ attempt ran 17m53s of real steps; at the documented 3.3x `SCHED_IDLE` extreme, a
 healthy starved run projects to roughly 59 minutes, leaving the former 60-minute
 budget no headroom for any pre-step dispatch latency. A dispatch-lost leg can spend
 the same budget without starting a step. `typescript-tests` now carries 120 minutes,
-at the cost of a doubled time-to-red and delayed stale repair for that leg. Every
-scheduled window also runs the short `release-readiness` and `wheel-viewer` checks on
-GitHub-hosted runners, and `pick-runner` routes the long Python/TypeScript legs to
-hosted runners when obsidian has no fresh capacity and either no work in flight, an
-aged backlog at the configured cap, or any aged backlog when the bounded scan cannot
-inspect every eligible run. Five of the twelve most recent daily scheduled runs
-(2026-08-14 to 2026-08-25) took that billed path. Every added window therefore
-consumes hosted minutes for short jobs, while routing adds either obsidian queue
-depth or the long legs to the hosted bill. Those routed long legs alone expose
-roughly 200–240 hosted minutes/day at that observed rate; one daily pair of extra
-Python legs is small beside that baseline. (If newer interpreters ever become
-deliberately unsupported, the honest fix is a `requires-python` upper bound, not a
-quiet single-leg matrix.)
+at the cost of a doubled time-to-red for that leg. Every scheduled window also runs
+`changes`, `pick-runner`, `docs-quality`, `release-readiness`, `wheel-viewer`,
+`go-launcher`, and the 10-minute `queue-watchdog` window on GitHub-hosted runners.
+Together those jobs were about a 20-minute hosted wall-clock floor on the initial PR
+run for this policy. The watchdog now runs on every same-repo run because all such
+runs select `obsidian`. The long Python/TypeScript legs always join the obsidian queue
+unless the operator has created/set the Actions repository variable
+`LUXAR_CI_FORCE_HOSTED` to `1` under **Settings → Secrets and variables → Actions →
+Variables**; schedules have no automatic paid exception. Sustained contention can
+therefore cancel successive promotion windows. During an extended outage or promotion
+stall, set the variable before the next window, then clear it after capacity recovers.
+(If newer interpreters ever become deliberately unsupported, the honest fix is a
+`requires-python` upper bound, not a quiet single-leg matrix.)
 
 This is also why the version-equality assertion in the job matters: it proves each
 leg really ran the interpreter it claims, rather than whatever pipx picked — the
 defect behind issue #839, where all three legs silently ran the same version.
 
-The router bounds that queue/cost tradeoff after fresh capacity has been ruled out.
-Both `pick-runner` and `queue-watchdog` use the stdlib-only
-`scripts/ci_queue_scan.py` helper as the single definition of visible, queued and
-running obsidian work. Each job sparse-checks out `scripts/` with credentials
-disabled; the fork guard remains ahead of checkout, so untrusted fork code is never
-fetched before the hosted-only decision. Policy stays outside the helper: the router
-fails unreadable scans toward obsidian until backlog evidence exists, while the
-watchdog treats an unreadable liveness scan as a reason not to cancel.
+`pick-runner` is deliberately not a capacity router. Its first step sends fork PRs and
+the explicit `LUXAR_CI_FORCE_HOSTED=1` break-glass to `ubuntu-latest`; its second step
+sends every remaining event, including schedules and full-workflow reruns, to
+`obsidian`. It reads no heartbeat, repository activity, or backlog state and checks out
+no repository code. The output retains an `ubuntu-latest` fallback only for a selector
+job failure, so required checks do not receive an empty `runs-on` value.
 
-The router scans at most ten eligible queued/in-progress runs and counts only
-obsidian jobs that have waited at least five minutes. When fewer than ten runs are
-eligible, five aged jobs by default send new work to GitHub-hosted runners;
-`LUXAR_CI_MAX_QUEUED_OBSIDIAN` overrides that validated cap. Reaching the scan bound
-instead routes hosted after finding any aged backlog; without backlog evidence,
-known obsidian liveness still wins.
-Raising a long-leg timeout for queue tolerance also raises its worst-case hosted bill,
-so the cap deliberately limits how often those larger budgets burst onto paid runners.
-Router decisions are concurrent snapshots, so a burst can still overshoot the cap
-before its newly routed jobs materialise.
-
-Queue residency is bounded after routing. `ci-queue-redispatch.yml` scans every 15
-minutes and, by default, selects one first-attempt run with a required obsidian job
-(`python-tests (3.12)` or `typescript-tests`) queued for at least 30 minutes, no obsidian
-job running in that same run, and active obsidian work in another run.
-`LUXAR_CI_MAX_QUEUE_RESIDENCY_MINUTES` overrides the validated positive threshold. The
-scan reuses `scripts/ci_queue_scan.py`, acts only on a complete scan of at most 100 active
-runs, and fails unreadable or truncated data toward leaving runs alone. Before cancelling
-the whole target run it dispatches a separate hosted recovery run; that durable handoff
-waits for the cancellation to settle and then requests a full run rerun. The recovery
-step polls for up to four minutes of its five-minute job budget; if the first attempt
-could remain cancelled without an accepted rerun, the recovery job fails visibly instead
-of reporting success. Full workflow reruns enter `pick-runner` again: a fresh capacity
-heartbeat still routes obsidian, while a stale or absent heartbeat routes rerun attempts
-directly to GitHub-hosted Linux before consulting the backlog cap. Failed-job and
-job-level repairs do not rerun the already-successful router, so they retain their
-existing routing behavior. That includes `repair-cancelled-push-checks`, which can race a
-recent watchdog cancellation by issuing a job-level rerun; the recovery run then observes
-attempt 2 and declines its full rerun rather than creating another attempt. Only attempt
-1 is eligible for automatic cancellation, which caps automatic recovery at one rerun and
-prevents a persistent saturation signal from forming a cancellation loop. Cancelling an
-individual required job remains forbidden: it strands the protected context and a
-job-level rerun preserves the original routing.
-The scanner's additive JSON surface exposes the same evidence per active run in `runs[]`,
-with each entry carrying `run_id`, aged `queued` jobs, and `running` jobs.
+`queue-watchdog` still uses the stdlib-only `scripts/ci_queue_scan.py` helper to detect
+an obsidian-routed run whose jobs remain queued while no obsidian work is active. It
+sparse-checks out `scripts/` with credentials disabled and treats unreadable liveness
+data as a reason not to cancel. If two consecutive scans find queued work but no active
+obsidian jobs, it cancels the run and instructs the operator to create/set the Actions
+repository variable `LUXAR_CI_FORCE_HOSTED` to `1`, rerun all jobs, and clear it after
+capacity recovers. The former scheduled queue redispatcher was removed: under
+obsidian-only routing, cancelling a queued run and creating a fresh attempt merely
+returns it to the same queue.
 
 Scheduled and push runs differ from a PR run in *scope* as well: neither has a PR
 base, so the `changes` job cannot path-filter and selects the whole suite plus the
@@ -1029,9 +1001,7 @@ timeout before any step starts or runner name is recorded. The repair job has on
 recovered long legs reuse their original runner-routing decision and repay work that
 the scheduled run already performed. A multi-job candidate can add up to four long
 obsidian-routed legs alongside the next push run, so the two-candidate cap permits up
-to eight per window; when the original routing decision was `ubuntu-latest`, it also
-adds hosted-runner minutes. Do not widen the two-candidate cap before #2217 bounds jobs
-queued behind a live but saturated self-hosted runner.
+to eight per window. Do not widen that cap without re-measuring queue pressure.
 Reruns execute the workflow definition from their original SHA, so commits predating
 the run-id key retain the older attempt-only collision behavior; the scheduled SHA
 itself carries the new policy and provides the forward promotion candidate that clears

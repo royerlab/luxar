@@ -45,7 +45,6 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[5]
 WORKFLOW = REPO / ".github/workflows/ci.yml"
-QUEUE_REDISPATCH_WORKFLOW = REPO / ".github/workflows/ci-queue-redispatch.yml"
 
 #: One row per gate input whose required domain is not guaranteed by its ordinary
 #: source extension or package path, so an explicit pattern alternative is required.
@@ -60,15 +59,14 @@ QUEUE_REDISPATCH_WORKFLOW = REPO / ".github/workflows/ci-queue-redispatch.yml"
 #: of narrow escapes.
 GATE_INPUTS: list[tuple[str, str, str]] = [
     (
+        ".pre-commit-config.yaml",
+        "py",
+        "test_mypy_gate_targets_stay_synchronized parses the mypy hook entry",
+    ),
+    (
         ".gitattributes",
         "py",
         "test_docs_workflow.py derives the published LFS candidate set from it",
-    ),
-    (
-        ".github/workflows/ci-queue-redispatch.yml",
-        "py",
-        "test_queue_redispatch_workflow_is_bounded_and_durable guards the "
-        "redispatch workflow itself",
     ),
     (
         ".github/workflows/docs.yml",
@@ -772,31 +770,22 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     )
 
     pick_runner = jobs["pick-runner"]
-    assert pick_runner["permissions"] == {"actions": "read", "contents": "read"}, (
-        "pick-runner needs actions:read plus read-only access to its scanner"
+    assert pick_runner["permissions"] == {}, (
+        "runner selection needs no repository access"
     )
     pick_steps = {
         step.get("id", step.get("name")): step for step in pick_runner["steps"]
     }
-    assert pick_steps["pick"]["env"]["GH_TOKEN"] == "${{ github.token }}", (
-        "pick-runner must authenticate gh api with the workflow token"
+    assert set(pick_steps) == {"guard", "route"}
+    assert pick_steps["route"]["if"] == "steps.guard.outputs.label == ''"
+    assert "label=obsidian" in pick_steps["route"]["run"]
+    assert "ubuntu-latest" not in pick_steps["route"]["run"]
+    assert "github.event" not in pick_steps["route"]["if"], (
+        "schedule and rerun events must not acquire an automatic hosted exception"
     )
-    checkout = pick_steps["scanner-checkout"]
-    assert checkout["continue-on-error"] is True
-    assert checkout["with"] == {
-        "persist-credentials": False,
-        "sparse-checkout": "scripts",
-    }
-    assert list(pick_steps).index("guard") < list(pick_steps).index(
-        "scanner-checkout"
-    ), "the fork guard must run before repository code is checked out"
-    assert pick_steps["checkout-fallback"]["if"] == (
-        "steps.guard.outputs.label == '' && steps.scanner-checkout.outcome != 'success'"
-    )
-    assert "label=ubuntu-latest" in pick_steps["checkout-fallback"]["run"]
-    assert pick_steps["pick"]["if"] == (
-        "steps.guard.outputs.label == '' && steps.scanner-checkout.outcome == 'success'"
-    )
+    assert "ci_queue_scan" not in str(pick_runner)
+    assert "LUXAR_CI_HEARTBEAT" not in str(pick_runner)
+    assert "LUXAR_CI_MAX_QUEUED_OBSIDIAN" not in str(pick_runner)
 
     watchdog = jobs["queue-watchdog"]
     assert watchdog["if"] == "needs.pick-runner.outputs.label == 'obsidian'"
@@ -809,6 +798,58 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     }
     assert "not cancelling" in watchdog["steps"][1]["run"]
     assert watchdog["steps"][2]["if"] == ("steps.scanner-checkout.outcome == 'success'")
+
+
+def test_mypy_gate_targets_stay_synchronized(workflow: str) -> None:
+    """Every documented and enforced mypy entry point checks the same files."""
+    with (REPO / "pyproject.toml").open("rb") as stream:
+        lint_commands = tomllib.load(stream)["tool"]["hatch"]["envs"]["default"][
+            "scripts"
+        ]["lint"]
+
+    makefile = (REPO / "Makefile").read_text(encoding="utf-8")
+    make_command = re.search(
+        r"^type-check-python:.*\n\t(.+)$", makefile, flags=re.MULTILINE
+    )
+    assert make_command is not None
+
+    precommit = yaml.safe_load(
+        (REPO / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    )
+    precommit_hooks = [
+        hook for repo in precommit["repos"] for hook in repo.get("hooks", [])
+    ]
+
+    claude = (REPO / "CLAUDE.md").read_text(encoding="utf-8")
+    claude_command = re.search(
+        r"^hatch run mypy .+  # Type check$", claude, flags=re.MULTILINE
+    )
+    assert claude_command is not None
+
+    ci_steps = yaml.safe_load(workflow)["jobs"]["python-tests"]["steps"]
+    commands = {
+        "pyproject.toml": next(
+            command for command in lint_commands if command.startswith("mypy ")
+        ),
+        "Makefile": make_command.group(1),
+        ".pre-commit-config.yaml": next(
+            hook["entry"] for hook in precommit_hooks if hook.get("id") == "mypy"
+        ),
+        "CLAUDE.md": claude_command.group(0).removesuffix("  # Type check"),
+        ".github/workflows/ci.yml": next(
+            step["run"] for step in ci_steps if step.get("name") == "Type check (mypy)"
+        ),
+    }
+
+    targets = {}
+    for source, command in commands.items():
+        arguments = shlex.split(command)
+        mypy_index = arguments.index("mypy")
+        targets[source] = arguments[mypy_index + 1 :]
+
+    assert len({tuple(paths) for paths in targets.values()}) == 1, (
+        f"mypy target lists diverged: {targets}"
+    )
 
 
 def test_obsidian_routed_jobs_have_timeout_headroom(workflow: str) -> None:
@@ -829,33 +870,6 @@ def test_obsidian_routed_jobs_have_timeout_headroom(workflow: str) -> None:
         "every pick-runner-routed job needs at least 120 minutes of timeout "
         f"headroom; under-budget jobs: {insufficient}"
     )
-
-
-def test_queue_redispatch_workflow_is_bounded_and_durable() -> None:
-    workflow = QUEUE_REDISPATCH_WORKFLOW.read_text(encoding="utf-8")
-    parsed = yaml.load(workflow, Loader=yaml.BaseLoader)
-    job = parsed["jobs"]["redispatch"]
-
-    assert parsed["permissions"] == {"actions": "write", "contents": "read"}
-    assert parsed["concurrency"]["cancel-in-progress"] == "false"
-    assert job["runs-on"] == "ubuntu-latest"
-    assert job["timeout-minutes"] == "5"
-    assert parsed["on"]["schedule"] == [{"cron": "*/15 * * * *"}]
-    assert "persist-credentials: false" in workflow
-    assert "sparse-checkout: scripts" in workflow
-    assert "${MAX_QUEUE_RESIDENCY_MINUTES:-30}" in workflow
-    assert "--max-runs 100" in workflow
-    assert "ci_queue_redispatch.py scan" in workflow
-    assert "ci_queue_redispatch.py finish" in workflow
-    scan_step = job["steps"][1]
-    assert scan_step["env"]["DISPATCH_REF"] == (
-        "${{ github.event.repository.default_branch }}"
-    )
-    assert '--ref "$DISPATCH_REF"' in scan_step["run"]
-    finish_step = job["steps"][2]
-    assert finish_step["env"]["TARGET_RUN_ID"] == "${{ inputs.target_run_id }}"
-    assert "^[1-9][0-9]*$" in finish_step["run"]
-    assert "${{ inputs.target_run_id }}" not in finish_step["run"]
 
 
 def test_scheduled_ci_supplies_a_green_window_every_three_hours(
@@ -929,19 +943,6 @@ def test_green_schedule_repairs_cancelled_push_contexts(workflow: str) -> None:
         "docs-quality",
     ):
         assert context in script
-    redispatch_tree = ast.parse(
-        (REPO / "scripts/ci_queue_redispatch.py").read_text(encoding="utf-8")
-    )
-    required_redispatch_jobs = next(
-        ast.literal_eval(node.value)
-        for node in redispatch_tree.body
-        if isinstance(node, ast.Assign)
-        and any(
-            isinstance(target, ast.Name) and target.id == "REQUIRED_OBSIDIAN_JOBS"
-            for target in node.targets
-        )
-    )
-    assert all(context in script for context in required_redispatch_jobs)
     assert "actions/jobs/$job_id/rerun" in script
     assert "actions/runs/${push_run}/rerun-failed-jobs" in script
 
@@ -1181,177 +1182,26 @@ def _run_pick_runner(
     tmp_path: Path,
     *,
     head_repo: str = "royerlab/luxar",
-    heartbeat: str = "0",
     force_hosted: str = "0",
-    run_attempt: str = "1",
-    other_run_active: bool = False,
-    active_job_label: str = "obsidian",
-    first_run_queued_obsidian_jobs: int = 0,
-    first_run_age_seconds: int = 600,
-    queued_obsidian_jobs: int = 0,
-    queued_hosted_jobs: int = 0,
-    queued_job_age_seconds: int = 600,
-    active_run_age_seconds: int = 600,
-    old_empty_runs: int = 0,
-    max_queued_obsidian: str = "",
-    api_error: str = "",
-    scanner_error: str = "",
 ) -> tuple[subprocess.CompletedProcess[str], str]:
-    """Run the real inline router against deterministic repository activity."""
+    """Run the real inline router for a same-repo or hosted-override case."""
     steps = yaml.safe_load(workflow)["jobs"]["pick-runner"]["steps"]
     guard = next(step["run"] for step in steps if step.get("id") == "guard")
-    router = next(step["run"] for step in steps if step.get("id") == "pick")
+    route = next(step["run"] for step in steps if step.get("id") == "route")
     output_path = tmp_path / "github-output"
-
-    fake_gh = tmp_path / "gh"
-    fake_gh.write_text(
-        """#!/usr/bin/env python3
-import json
-import os
-import sys
-from datetime import UTC, datetime
-
-endpoint = next((arg for arg in sys.argv if "/actions/" in arg), "")
-with open(os.environ["ROUTER_API_LOG"], "a", encoding="utf-8") as log:
-    log.write(endpoint + "\\n")
-if os.environ["ROUTER_API_ERROR"] == "runs" and "/actions/runs?" in endpoint:
-    raise SystemExit(1)
-if os.environ["ROUTER_API_ERROR"] == "runs-json" and "/actions/runs?" in endpoint:
-    print("not-json")
-    raise SystemExit(0)
-if os.environ["ROUTER_API_ERROR"] == "later-runs-json" and "status=queued" in endpoint:
-    print("not-json")
-    raise SystemExit(0)
-if os.environ["ROUTER_API_ERROR"] == "jobs" and "/runs/" in endpoint and "/jobs?" in endpoint:
-    raise SystemExit(1)
-if os.environ["ROUTER_API_ERROR"] == "later-jobs" and "/runs/2038/jobs?" in endpoint:
-    raise SystemExit(1)
-if os.environ["ROUTER_API_ERROR"] == "later-jobs-json" and "/runs/2038/jobs?" in endpoint:
-    print("not-json")
-    raise SystemExit(0)
-if os.environ["ROUTER_API_ERROR"] == "jobs-json" and "/runs/" in endpoint and "/jobs?" in endpoint:
-    print("not-json")
-    raise SystemExit(0)
-if "/actions/runs?" in endpoint:
-    if "status=queued" in endpoint:
-        run_ids = list(range(3000, 3000 + int(os.environ["ROUTER_OLD_EMPTY_RUNS"])))
-        if int(os.environ["ROUTER_FIRST_RUN_QUEUED_OBSIDIAN_JOBS"]) > 0:
-            run_ids.append(2038)
-    else:
-        run_ids = (
-            [9999]
-            if os.environ["ROUTER_OTHER_ACTIVE"] == "1"
-            or int(os.environ["ROUTER_QUEUED_OBSIDIAN_JOBS"]) > 0
-            else []
-        )
-    print(json.dumps({"workflow_runs": [
-        {
-            "id": run_id,
-            "created_at": datetime.fromtimestamp(
-                1000 - int(os.environ["ROUTER_ACTIVE_RUN_AGE_SECONDS"]), UTC
-            ).strftime("%Y-%m-%dT%H:%M:%SZ")
-            if run_id == 9999
-            else datetime.fromtimestamp(
-                1000 - int(os.environ["ROUTER_FIRST_RUN_AGE_SECONDS"]), UTC
-            ).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        }
-        for run_id in run_ids
-    ]}))
-elif "/runs/" in endpoint and "/jobs?" in endpoint:
-    queued = (
-        os.environ["ROUTER_QUEUED_OBSIDIAN_JOBS"]
-        if "/runs/9999/jobs?" in endpoint
-        else os.environ["ROUTER_FIRST_RUN_QUEUED_OBSIDIAN_JOBS"]
-    )
-    created_at = datetime.fromtimestamp(
-        1000 - int(os.environ["ROUTER_QUEUED_JOB_AGE_SECONDS"]), UTC
-    ).strftime("%Y-%m-%dT%H:%M:%SZ")
-    jobs = [
-        {
-            "name": f"queued-{index}",
-            "status": "queued",
-            "labels": ["obsidian"],
-            "created_at": created_at,
-        }
-        for index in range(int(queued))
-    ]
-    if "/runs/9999/jobs?" in endpoint:
-        jobs.extend([
-            {
-                "name": f"hosted-{index}",
-                "status": "queued",
-                "labels": ["ubuntu-latest"],
-                "created_at": created_at,
-            }
-            for index in range(int(os.environ["ROUTER_QUEUED_HOSTED_JOBS"]))
-        ])
-    if "/runs/9999/jobs?" in endpoint and os.environ["ROUTER_OTHER_ACTIVE"] == "1":
-        jobs.append({
-            "name": "active",
-            "status": "in_progress",
-            "labels": [os.environ["ROUTER_ACTIVE_JOB_LABEL"]],
-            "created_at": "1970-01-01T00:00:00Z",
-        })
-    print(json.dumps({"jobs": jobs}))
-else:
-    print(json.dumps({"jobs": []}))
-""",
-        encoding="utf-8",
-    )
-    fake_gh.chmod(0o755)
-    fake_date = tmp_path / "date"
-    fake_date.write_text("#!/bin/sh\necho 1000\n", encoding="utf-8")
-    fake_date.chmod(0o755)
-    fake_python = tmp_path / "python3"
-    fake_python.write_text(
-        """#!/bin/sh
-case "$SCANNER_ERROR:$*" in
-  scan:*scripts/ci_queue_scan.py*scan*|all:*scripts/ci_queue_scan.py*) exit 1 ;;
-esac
-exec "$REAL_PYTHON" "$@"
-""",
-        encoding="utf-8",
-    )
-    fake_python.chmod(0o755)
-
+    script = f"""{guard}
+if ! grep -q '^label=' \"$GITHUB_OUTPUT\" 2>/dev/null; then
+{route}
+fi
+"""
     env = os.environ | {
-        "PATH": f"{tmp_path}:{os.environ['PATH']}",
         "GITHUB_OUTPUT": str(output_path),
         "GITHUB_REPOSITORY": "royerlab/luxar",
         "HEAD_REPO": head_repo,
         "FORCE_HOSTED": force_hosted,
-        "RUN_ATTEMPT": run_attempt,
-        "HEARTBEAT": heartbeat,
-        "MAX_QUEUED_OBSIDIAN": max_queued_obsidian,
-        "ROUTER_API_ERROR": api_error,
-        "ROUTER_API_LOG": str(tmp_path / "gh-calls"),
-        "ROUTER_ACTIVE_JOB_LABEL": active_job_label,
-        "ROUTER_ACTIVE_RUN_AGE_SECONDS": str(active_run_age_seconds),
-        "ROUTER_FIRST_RUN_AGE_SECONDS": str(first_run_age_seconds),
-        "ROUTER_FIRST_RUN_QUEUED_OBSIDIAN_JOBS": str(first_run_queued_obsidian_jobs),
-        "ROUTER_OLD_EMPTY_RUNS": str(old_empty_runs),
-        "ROUTER_OTHER_ACTIVE": "1" if other_run_active else "0",
-        "ROUTER_QUEUED_JOB_AGE_SECONDS": str(queued_job_age_seconds),
-        "ROUTER_QUEUED_HOSTED_JOBS": str(queued_hosted_jobs),
-        "ROUTER_QUEUED_OBSIDIAN_JOBS": str(queued_obsidian_jobs),
-        "REAL_PYTHON": sys.executable,
-        "SCANNER_ERROR": scanner_error,
     }
-    guard_result = subprocess.run(
-        ["bash", "-e", "-c", guard],
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=10,
-        env=env,
-        cwd=REPO,
-    )
-    if output_path.exists():
-        match = re.search(r"^label=(.+)$", output_path.read_text(), re.MULTILINE)
-        if match:
-            return guard_result, match.group(1)
     result = subprocess.run(
-        ["bash", "-e", "-c", router],
+        ["bash", "-eu", "-o", "pipefail", "-c", script],
         text=True,
         capture_output=True,
         check=False,
@@ -1367,278 +1217,34 @@ exec "$REAL_PYTHON" "$@"
     return result, label
 
 
-@pytest.mark.parametrize(
-    ("heartbeat", "expected"),
-    [
-        ("950", "obsidian"),
-        ("0", "ubuntu-latest"),
-        ("700", "ubuntu-latest"),
-        ("1031", "ubuntu-latest"),
-        ("not-a-number", "ubuntu-latest"),
-    ],
-)
-def test_pick_runner_routes_same_repo_on_fresh_capacity_heartbeat(
-    workflow: str,
-    tmp_path: Path,
-    heartbeat: str,
-    expected: str,
-) -> None:
-    """Fresh capacity routes obsidian; unavailable, stale, or future does not."""
-    result, label = _run_pick_runner(workflow, tmp_path, heartbeat=heartbeat)
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert label == expected
-    assert "integer expression expected" not in result.stderr
-    if expected == "obsidian":
-        assert not (tmp_path / "gh-calls").exists()
-
-
-@pytest.mark.parametrize("api_error", ["runs", "runs-json", "jobs", "jobs-json"])
-def test_pick_runner_fails_api_read_toward_obsidian(
-    workflow: str, tmp_path: Path, api_error: str
-) -> None:
-    """A transient GitHub API failure must not restart the paid overflow."""
-    result, label = _run_pick_runner(
-        workflow, tmp_path, other_run_active=True, api_error=api_error
-    )
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert label == "obsidian"
-
-
-def test_pick_runner_fails_helper_crash_toward_obsidian(
+def test_pick_runner_routes_same_repo_to_obsidian(
     workflow: str, tmp_path: Path
 ) -> None:
-    """A broken scanner must preserve the router's unpaid fail-safe."""
-    result, label = _run_pick_runner(workflow, tmp_path, scanner_error="scan")
+    """Same-repo PR, push, schedule, and rerun events must stay on obsidian."""
+    result, label = _run_pick_runner(workflow, tmp_path)
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert label == "obsidian"
-    assert "helper activity unreadable" in result.stdout
-
-
-@pytest.mark.parametrize(
-    "api_error", ["later-runs-json", "later-jobs", "later-jobs-json"]
-)
-def test_pick_runner_preserves_observed_backlog_on_later_api_failure(
-    workflow: str, tmp_path: Path, api_error: str
-) -> None:
-    """A later failed read cannot erase backlog already observed in this scan."""
-    result, label = _run_pick_runner(
-        workflow,
-        tmp_path,
-        other_run_active=True,
-        first_run_queued_obsidian_jobs=1,
-        queued_obsidian_jobs=2,
-        api_error=api_error,
-    )
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert label == "ubuntu-latest"
-
-
-@pytest.mark.parametrize("active_run_age_seconds", [10, 600])
-def test_pick_runner_routes_busy_box_to_obsidian(
-    workflow: str, tmp_path: Path, active_run_age_seconds: int
-) -> None:
-    """An active obsidian job proves a zero-capacity box is live and busy."""
-    result, label = _run_pick_runner(
-        workflow,
-        tmp_path,
-        heartbeat="0",
-        other_run_active=True,
-        active_run_age_seconds=active_run_age_seconds,
-    )
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert label == "obsidian"
-
-
-@pytest.mark.parametrize(
-    ("queued_obsidian_jobs", "queued_job_age_seconds", "expected"),
-    [
-        (4, 600, "obsidian"),
-        (5, 600, "ubuntu-latest"),
-        (5, 299, "obsidian"),
-    ],
-)
-def test_pick_runner_caps_busy_box_backlog_at_five_jobs(
-    workflow: str,
-    tmp_path: Path,
-    queued_obsidian_jobs: int,
-    queued_job_age_seconds: int,
-    expected: str,
-) -> None:
-    """Five obsidian jobs past the grace window make new work burst hosted."""
-    result, label = _run_pick_runner(
-        workflow,
-        tmp_path,
-        heartbeat="0",
-        other_run_active=True,
-        first_run_queued_obsidian_jobs=2,
-        queued_job_age_seconds=queued_job_age_seconds,
-        queued_obsidian_jobs=queued_obsidian_jobs - 2,
-    )
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert label == expected
-
-
-@pytest.mark.parametrize(
-    ("max_queued_obsidian", "queued_obsidian_jobs", "expected"),
-    [
-        ("", 4, "obsidian"),
-        ("", 5, "ubuntu-latest"),
-        ("3", 3, "ubuntu-latest"),
-        ("0", 4, "obsidian"),
-        ("0", 5, "ubuntu-latest"),
-        ("garbage", 5, "ubuntu-latest"),
-    ],
-)
-def test_pick_runner_uses_configured_backlog_cap(
-    workflow: str,
-    tmp_path: Path,
-    max_queued_obsidian: str,
-    queued_obsidian_jobs: int,
-    expected: str,
-) -> None:
-    """The repository variable overrides the five-job default."""
-    result, label = _run_pick_runner(
-        workflow,
-        tmp_path,
-        other_run_active=True,
-        queued_obsidian_jobs=queued_obsidian_jobs,
-        max_queued_obsidian=max_queued_obsidian,
-    )
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert label == expected
-
-
-def test_pick_runner_bounds_backlog_scan(workflow: str, tmp_path: Path) -> None:
-    """A bounded scan with backlog evidence fails toward hosted."""
-    result, label = _run_pick_runner(
-        workflow, tmp_path, queued_obsidian_jobs=1, old_empty_runs=10
-    )
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert label == "ubuntu-latest"
-    assert "scan reached its 10-run limit after finding aged backlog" in result.stdout
-    calls = (tmp_path / "gh-calls").read_text().splitlines()
-    assert len([call for call in calls if "/jobs?" in call]) == 10
-
-
-def test_pick_runner_scan_bound_preserves_active_liveness(
-    workflow: str, tmp_path: Path
-) -> None:
-    """An evidence-free bounded scan must preserve known obsidian liveness."""
-    result, label = _run_pick_runner(
-        workflow, tmp_path, other_run_active=True, old_empty_runs=10
-    )
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert label == "obsidian"
-    calls = (tmp_path / "gh-calls").read_text().splitlines()
-    assert len([call for call in calls if "/jobs?" in call]) == 10
-
-
-def test_pick_runner_skips_young_queued_runs(workflow: str, tmp_path: Path) -> None:
-    """Young queued runs do not spend the bounded jobs-query budget."""
-    result, label = _run_pick_runner(
-        workflow,
-        tmp_path,
-        other_run_active=True,
-        first_run_queued_obsidian_jobs=9,
-        first_run_age_seconds=60,
-    )
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert label == "obsidian"
-    calls = (tmp_path / "gh-calls").read_text().splitlines()
-    assert not any("/runs/2038/jobs?" in call for call in calls)
-
-
-def test_pick_runner_ignores_hosted_queue_depth(workflow: str, tmp_path: Path) -> None:
-    """Only aged jobs resolved to obsidian contribute to the backlog cap."""
-    result, label = _run_pick_runner(
-        workflow,
-        tmp_path,
-        other_run_active=True,
-        queued_obsidian_jobs=4,
-        queued_hosted_jobs=6,
-    )
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert label == "obsidian"
-
-
-def test_pick_runner_ignores_hosted_in_progress_jobs(
-    workflow: str, tmp_path: Path
-) -> None:
-    """Only an in-progress obsidian job proves the self-hosted box is live."""
-    result, label = _run_pick_runner(
-        workflow,
-        tmp_path,
-        other_run_active=True,
-        active_job_label="ubuntu-latest",
-    )
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert label == "ubuntu-latest"
+    assert "no automatic paid fallback" in result.stdout
 
 
 @pytest.mark.parametrize(
     ("head_repo", "force_hosted"),
     [("someone/fork", "0"), ("royerlab/luxar", "1")],
 )
-def test_pick_runner_hosted_overrides_bypass_heartbeat(
+def test_pick_runner_hosted_overrides(
     workflow: str,
     tmp_path: Path,
     head_repo: str,
     force_hosted: str,
 ) -> None:
-    """Fork safety and the operator kill switch always select hosted runners."""
+    """Forks and the explicit repository override must select hosted CI."""
     result, label = _run_pick_runner(
-        workflow,
-        tmp_path,
-        head_repo=head_repo,
-        api_error="runs",
-        force_hosted=force_hosted,
+        workflow, tmp_path, head_repo=head_repo, force_hosted=force_hosted
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert label == "ubuntu-latest"
-
-
-def test_pick_runner_routes_full_workflow_reruns_hosted_without_fresh_capacity(
-    workflow: str, tmp_path: Path
-) -> None:
-    """A queue-residency rerun must not return to the queue it escaped."""
-    result, label = _run_pick_runner(
-        workflow,
-        tmp_path,
-        heartbeat="700",
-        run_attempt="2",
-    )
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert label == "ubuntu-latest"
-    assert not (tmp_path / "gh-calls").exists()
-
-
-def test_pick_runner_keeps_full_workflow_reruns_on_fresh_capacity(
-    workflow: str, tmp_path: Path
-) -> None:
-    result, label = _run_pick_runner(
-        workflow,
-        tmp_path,
-        heartbeat="950",
-        run_attempt="2",
-    )
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert label == "obsidian"
-    assert not (tmp_path / "gh-calls").exists()
 
 
 def _run_queue_watchdog(
@@ -1807,6 +1413,7 @@ exec "$REAL_PYTHON" "$@"
 
 
 def _obsidian_job(name: str, status: str) -> dict[str, object]:
+    """Build a watchdog API job resolved to the obsidian runner label."""
     return {"name": name, "status": status, "labels": ["obsidian"]}
 
 
