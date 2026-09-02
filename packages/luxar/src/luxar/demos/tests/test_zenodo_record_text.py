@@ -1667,7 +1667,9 @@ def test_refresh_description_matches_the_committed_sidecar(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    committed_description = json.loads(gen.CHARACTERISTICS.read_text())["description"]
+    committed = json.loads(gen.CHARACTERISTICS.read_text())
+    committed_description = committed["description"]
+    assert list(committed["archives"]) == sorted(committed["archives"])
     monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
     monkeypatch.setattr(gen, "load_characteristics", lambda: {})
 
@@ -2271,6 +2273,13 @@ def test_hosted_bundle_measurements_publish_pinned_ranges(gen: Any) -> None:
         assert info["measured_sha256"] == gen._pinned_digest(spec)
         assert info["quality_quotable"] is None
         assert f"RANGE over its {frames} per-frame stores" in info["quality_caveat"]
+        if key.startswith("gsplats_celegans/"):
+            assert (
+                "foreground stamps use a separate Otsu mask per frame"
+                in info["quality_caveat"]
+            )
+            assert "high end is the near-empty early embryo" in info["quality_caveat"]
+            assert "foreground fraction is frame 0's 0.3802" in info["quality_caveat"]
 
 
 def test_h2afva_51tp_measurements_describe_the_pinned_flat_ladder(gen: Any) -> None:
@@ -2303,6 +2312,18 @@ def test_h2afva_unscored_variants_publish_consistent_caveats(gen: Any) -> None:
         assert "isotropic grid" in info["quality_caveat"]
         assert "requires a refit" in info["quality_caveat"]
         assert "every-fifth-frame slice" in info["quality_caveat"]
+
+
+def test_droso_500tp_keeps_archive_derived_quotability(gen: Any) -> None:
+    info = gen.load_characteristics()[
+        "gsplats_4d_drosophila_embryogenesis/"
+        "drosophila_embryogenesis_500tp.gsplats.zarr.zip"
+    ]
+
+    assert info["psnr_db"] is None
+    assert info["foreground_psnr_db"] is None
+    assert info["quality_quotable"] is None
+    assert "published archive carries no stamps" in info["quality_caveat"]
 
 
 def test_milkyway_hosted_archive_keeps_the_levels_generation(gen: Any) -> None:
@@ -2583,7 +2604,14 @@ class TestCheckExplainsAnAbsentFigure:
         note = gen.load_characteristics()[
             "gsplats_celegans/celegans_s1.gsplats.zarr.zip"
         ]["quality_note"]
-        for fact in ("0.0135", "0.1795", "MAX_SPLATS", "6-connected"):
+        for fact in (
+            "0.0135",
+            "0.1795",
+            "MAX_SPLATS",
+            "6-connected",
+            "26.4%",
+            "22,000",
+        ):
             assert fact in note, f"prior provenance lost from celegans note: {fact}"
 
     def test_every_absent_figure_is_explained(self, gen: Any) -> None:
