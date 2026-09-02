@@ -17,9 +17,10 @@
 /** Legacy in-repo tiles, whose filename stem WAS the demo id. */
 const README_GALLERY_PATH = /docs\/images\/readme\/gallery\/([A-Za-z0-9_-]+)\.(?:webp|webm)\b/g;
 
-/** Hosted, content-addressed tiles. The captured group is the media key. */
-const README_GALLERY_URL =
-  /https:\/\/data\.luxarviewer\.dev\/media\/([A-Za-z0-9_-]+\.(?:webp|webm))\b/g;
+function hostedGalleryPattern(baseUrl: string): RegExp {
+  const escapedBaseUrl = baseUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`${escapedBaseUrl}/([A-Za-z0-9_-]+\\.(?:webp|webm))\\b`, 'g');
+}
 
 export interface GallerySelection {
   wantedIds: ReadonlySet<string>;
@@ -31,7 +32,8 @@ export function resolveGalleryOnly(
   readmeSource: string,
   manifestIds: readonly string[],
   /** Media key (e.g. `d9d1994630f8b126.webp`) -> demo id, from media-manifest.json. */
-  mediaKeyToId: ReadonlyMap<string, string> = new Map()
+  mediaKeyToId: ReadonlyMap<string, string> = new Map(),
+  mediaBaseUrl?: string
 ): GallerySelection {
   const manifestIdSet = new Set(manifestIds);
   const wantedIds = new Set<string>();
@@ -56,10 +58,12 @@ export function resolveGalleryOnly(
     // — quietly dropping it would capture a smaller set than the README shows,
     // which is the failure this whole reserved token exists to prevent.
     const unmappedKeys: string[] = [];
-    for (const match of readmeSource.matchAll(README_GALLERY_URL)) {
-      const id = mediaKeyToId.get(match[1]);
-      if (id === undefined) unmappedKeys.push(match[1]);
-      else readmeIds.add(id);
+    if (mediaBaseUrl !== undefined) {
+      for (const match of readmeSource.matchAll(hostedGalleryPattern(mediaBaseUrl))) {
+        const id = mediaKeyToId.get(match[1]);
+        if (id === undefined) unmappedKeys.push(match[1]);
+        else readmeIds.add(id);
+      }
     }
     if (unmappedKeys.length > 0) {
       throw new Error(
@@ -86,6 +90,7 @@ export function resolveGalleryOnly(
 
 /** Build the key -> id index from a parsed `media-manifest.json`. */
 export function mediaKeyIndex(manifest: {
+  base_url?: string;
   tiles?: Record<string, Record<string, { key: string }>>;
 }): Map<string, string> {
   const index = new Map<string, string>();

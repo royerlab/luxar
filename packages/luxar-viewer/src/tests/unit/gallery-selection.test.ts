@@ -18,6 +18,7 @@ const MEDIA_MANIFEST = JSON.parse(
   readFileSync(path.join(REPO_ROOT, 'scripts/gallery/media-manifest.json'), 'utf-8')
 ) as Parameters<typeof mediaKeyIndex>[0];
 const MEDIA_KEYS = mediaKeyIndex(MEDIA_MANIFEST);
+const MEDIA_BASE_URL = MEDIA_MANIFEST.base_url;
 
 const README_GALLERY_IDS = [
   'atp_synthase',
@@ -53,7 +54,13 @@ const README_GALLERY_IDS = [
 
 describe('gallery selection', () => {
   it('resolves readme to the exact front-page media set', () => {
-    const selection = resolveGalleryOnly('readme', README_SOURCE, MANIFEST_IDS, MEDIA_KEYS);
+    const selection = resolveGalleryOnly(
+      'readme',
+      README_SOURCE,
+      MANIFEST_IDS,
+      MEDIA_KEYS,
+      MEDIA_BASE_URL
+    );
 
     expect([...selection.wantedIds].sort()).toEqual(README_GALLERY_IDS);
     expect(selection.unknownTokens).toEqual([]);
@@ -64,7 +71,8 @@ describe('gallery selection', () => {
       'readme, lorenz, desi_galaxies',
       README_SOURCE,
       MANIFEST_IDS,
-      MEDIA_KEYS
+      MEDIA_KEYS,
+      MEDIA_BASE_URL
     );
 
     expect(selection.wantedIds.size).toBe(README_GALLERY_IDS.length + 1);
@@ -98,7 +106,8 @@ describe('gallery selection', () => {
         'readme',
         'https://data.luxarviewer.dev/media/deadbeefdeadbeef.webp',
         MANIFEST_IDS,
-        MEDIA_KEYS
+        MEDIA_KEYS,
+        MEDIA_BASE_URL
       )
     ).toThrow(/absent from scripts\/gallery\/media-manifest\.json.*deadbeefdeadbeef/);
   });
@@ -119,5 +128,17 @@ describe('gallery selection', () => {
     expect(() =>
       resolveGalleryOnly('readme', '# no gallery media', MANIFEST_IDS, MEDIA_KEYS)
     ).toThrow(/no gallery media/);
+  });
+
+  it('derives the hosted media origin from the manifest', () => {
+    const selection = resolveGalleryOnly(
+      'readme',
+      'https://media.example.test/root/59b7714301144d07.webp',
+      MANIFEST_IDS,
+      MEDIA_KEYS,
+      'https://media.example.test/root'
+    );
+
+    expect([...selection.wantedIds]).toEqual(['lorenz']);
   });
 });

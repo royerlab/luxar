@@ -44,14 +44,6 @@ def _commit(repo: Path, message: str, day: int) -> None:
     _git(repo, "commit", "-m", message, day=day)
 
 
-def _lfs_pointer(size_bytes: int) -> str:
-    return (
-        "version https://git-lfs.github.com/spec/v1\n"
-        f"oid sha256:{'0' * 64}\n"
-        f"size {size_bytes}\n"
-    )
-
-
 def _write_manifest(repo: Path, title_b: str = "B", include_c: bool = False) -> None:
     demos = [
         {
@@ -548,7 +540,7 @@ def test_media_sizes_come_from_the_manifest_and_remain_report_only(
     _commit(repo, "grow gallery media", 22)
 
     report = stale.GalleryHistory(repo).report()
-    sizes = {media.path.name: media.size_bytes for media in report.media}
+    sizes = {media.key: media.size_bytes for media in report.media}
     assert sizes["aw0000000000000.webm"] == stale.GALLERY_MEDIA_WARNING_BYTES
     assert sizes["aw0000000000000.webp"] == 2048
     assert sizes["bw0000000000000.webm"] == stale.GALLERY_MEDIA_LIMIT_BYTES
@@ -557,6 +549,23 @@ def test_media_sizes_come_from_the_manifest_and_remain_report_only(
     output = capsys.readouterr().out
     assert "1 warning" in output
     assert "1 over-limit file" in output
+
+
+@pytest.mark.parametrize("bad_size", [None, "1024"])
+def test_malformed_media_size_reports_a_clean_error(
+    tmp_path: Path, capsys, bad_size: object
+) -> None:
+    repo = _repo(tmp_path)
+    manifest_path = repo / "scripts/gallery/media-manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["tiles"]["a"]["webp"]["bytes"] = bad_size
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    _commit(repo, "break media size", 22)
+
+    assert stale.main(["--repo-root", str(repo)]) == 2
+    error = capsys.readouterr().err
+    assert "ERROR:" in error
+    assert "non-integer byte count" in error
 
 
 def test_bad_rows_are_reported_unknown_without_hiding_other_tiles(

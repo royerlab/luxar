@@ -251,12 +251,13 @@ function loadManifest(): DemoEntry[] {
       ? (JSON.parse(fs.readFileSync(MEDIA_MANIFEST_PATH, 'utf-8')) as Parameters<
           typeof mediaKeyIndex
         >[0])
-      : { tiles: {} };
+      : { tiles: {}, base_url: undefined };
     const selection = resolveGalleryOnly(
       only,
       fs.readFileSync(README_PATH, 'utf-8'),
       demos.map((demo) => demo.id),
-      mediaKeyIndex(mediaManifest)
+      mediaKeyIndex(mediaManifest),
+      mediaManifest.base_url
     );
     if (selection.unknownTokens.length > 0) {
       console.warn(

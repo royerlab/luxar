@@ -901,7 +901,7 @@ check-gallery-media:  ## Verify hosted root-README media against its manifest (o
 check-external-references:  ## Run all network-backed reference audits (report-only)
 	$(HATCH) run python scripts/run_external_reference_audits.py
 
-check-gallery-staleness:  ## Report README gallery staleness and committed media sizes
+check-gallery-staleness:  ## Report README gallery staleness and manifest media sizes
 	@# Deliberately report-only: stale media are review work, not a CI failure.
 	@# Git blame/log must see full history, so this remains an opt-in local check.
 	$(HATCH) run python scripts/gallery/check_tile_staleness.py

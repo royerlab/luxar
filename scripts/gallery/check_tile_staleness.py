@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Report committed README gallery tile staleness and media sizes."""
+"""Report published README gallery tile staleness and media sizes."""
 
 from __future__ import annotations
 
@@ -39,11 +39,8 @@ MEBIBYTE = 1024 * 1024
 GALLERY_MEDIA_WARNING_BYTES = 20 * MEBIBYTE
 GALLERY_MEDIA_LIMIT_BYTES = 25 * MEBIBYTE
 LARGEST_MEDIA_COUNT = 5
-MAX_LFS_POINTER_BYTES = 1024
 
 _BLAME_HEADER = re.compile(r"^([0-9a-f]+) \d+ \d+(?: \d+)?$")
-_LFS_POINTER_HEADER = b"version https://git-lfs.github.com/spec/v1\n"
-_LFS_POINTER_SIZE = re.compile(rb"^size ([0-9]+)$", re.MULTILINE)
 
 
 class StalenessError(RuntimeError):
@@ -64,7 +61,7 @@ class LineRange:
 
 @dataclass(frozen=True)
 class GalleryMedia:
-    path: Path
+    key: str
     size_bytes: int
 
 
@@ -225,7 +222,7 @@ def direct_demo_helper_modules(source: str) -> tuple[str, ...]:
 
 
 class GalleryHistory:
-    """Read the narrow Git history inputs that can invalidate committed gallery tiles."""
+    """Read the narrow Git history inputs that can invalidate published gallery tiles."""
 
     def __init__(self, repo_root: Path) -> None:
         self.repo_root = repo_root.resolve()
@@ -242,23 +239,6 @@ class GalleryHistory:
         except (OSError, subprocess.CalledProcessError) as exc:
             detail = (
                 exc.stderr.strip()
-                if isinstance(exc, subprocess.CalledProcessError)
-                else str(exc)
-            )
-            raise StalenessError(f"git {' '.join(args)} failed: {detail}") from exc
-
-    def _git_bytes(self, *args: str, input_bytes: bytes | None = None) -> bytes:
-        try:
-            return subprocess.run(
-                ["git", *args],
-                cwd=self.repo_root,
-                check=True,
-                capture_output=True,
-                input=input_bytes,
-            ).stdout
-        except (OSError, subprocess.CalledProcessError) as exc:
-            detail = (
-                exc.stderr.decode(errors="replace").strip()
                 if isinstance(exc, subprocess.CalledProcessError)
                 else str(exc)
             )
@@ -341,60 +321,6 @@ class GalleryHistory:
             return None
         return self._git("show", f"HEAD:{path.as_posix()}")
 
-    def _small_blob_contents(self, object_ids: Sequence[str]) -> dict[str, bytes]:
-        unique_ids = tuple(dict.fromkeys(object_ids))
-        if not unique_ids:
-            return {}
-        output = self._git_bytes(
-            "cat-file",
-            "--batch",
-            input_bytes=("\n".join(unique_ids) + "\n").encode(),
-        )
-        blobs: dict[str, bytes] = {}
-        cursor = 0
-        for expected_id in unique_ids:
-            header_end = output.find(b"\n", cursor)
-            if header_end < 0:
-                raise StalenessError("truncated git cat-file batch header")
-            header = output[cursor:header_end].split()
-            if len(header) == 2 and header[1] == b"missing":
-                raise StalenessError(f"Git object is unavailable: {expected_id}")
-            if len(header) != 3:
-                raise StalenessError(
-                    f"unexpected git cat-file batch header for {expected_id}"
-                )
-            object_id, object_type, size_text = header
-            blob_size = int(size_text)
-            cursor = header_end + 1
-            blob = output[cursor : cursor + blob_size]
-            cursor += blob_size
-            if output[cursor : cursor + 1] != b"\n":
-                raise StalenessError("truncated git cat-file batch object")
-            cursor += 1
-            decoded_id = object_id.decode()
-            if decoded_id != expected_id or object_type != b"blob":
-                raise StalenessError(
-                    f"unexpected git cat-file batch object for {expected_id}"
-                )
-            blobs[decoded_id] = blob
-        return blobs
-
-    def _media_size(
-        self,
-        object_id: str,
-        blob_size: int,
-        small_blobs: dict[str, bytes],
-    ) -> int:
-        blob = small_blobs.get(object_id)
-        if blob is None:
-            return blob_size
-        if not blob.startswith(_LFS_POINTER_HEADER):
-            return blob_size
-        match = _LFS_POINTER_SIZE.search(blob)
-        if match is None:
-            raise StalenessError(f"invalid Git LFS pointer object: {object_id}")
-        return int(match.group(1))
-
     def _published_tile_media(
         self, text: str
     ) -> list[tuple[str, tuple[GalleryMedia, ...]]]:
@@ -410,17 +336,30 @@ class GalleryHistory:
             raise StalenessError("the gallery media manifest describes no tiles")
         by_demo: list[tuple[str, tuple[GalleryMedia, ...]]] = []
         for demo_id in sorted(tiles):
-            media = tuple(
-                sorted(
-                    (
-                        GalleryMedia(
-                            path=Path(entry["key"]), size_bytes=int(entry["bytes"])
-                        )
-                        for entry in tiles[demo_id].values()
-                    ),
-                    key=lambda item: item.path,
+            entries = tiles[demo_id]
+            if not isinstance(entries, dict):
+                raise StalenessError(
+                    f"gallery media manifest tile {demo_id!r} is not an object"
                 )
-            )
+            parsed_media = []
+            for entry in entries.values():
+                if not isinstance(entry, dict):
+                    raise StalenessError(
+                        f"gallery media manifest tile {demo_id!r} has a non-object variant"
+                    )
+                key = entry.get("key")
+                size_bytes = entry.get("bytes")
+                if not isinstance(key, str):
+                    raise StalenessError(
+                        f"gallery media manifest tile {demo_id!r} has a non-string key"
+                    )
+                if not isinstance(size_bytes, int) or isinstance(size_bytes, bool):
+                    raise StalenessError(
+                        f"gallery media manifest tile {demo_id!r} key {key!r} has "
+                        "a non-integer byte count"
+                    )
+                parsed_media.append(GalleryMedia(key=key, size_bytes=size_bytes))
+            media = tuple(sorted(parsed_media, key=lambda item: item.key))
             if media:
                 by_demo.append((demo_id, media))
         return by_demo
@@ -576,7 +515,7 @@ def _format_tile_media(media: tuple[GalleryMedia, ...]) -> str:
         flag = _media_flag(item)
         exact_size = f" ({item.size_bytes:,} bytes)" if flag else ""
         details.append(
-            f"{item.path.name} {_format_media_size(item.size_bytes)}{exact_size}{flag}"
+            f"{item.key} {_format_media_size(item.size_bytes)}{exact_size}{flag}"
         )
     return ", ".join(details)
 
@@ -621,12 +560,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     print("Largest gallery media:")
     for item in sorted(
         report.media,
-        key=lambda media: (-media.size_bytes, media.path.name),
+        key=lambda media: (-media.size_bytes, media.key),
     )[:LARGEST_MEDIA_COUNT]:
         print(
             f"{_format_media_size(item.size_bytes):>11} "
             f"({item.size_bytes:,} bytes)  "
-            f"{item.path.name}{_media_flag(item)}"
+            f"{item.key}{_media_flag(item)}"
         )
     warning_count = sum(
         GALLERY_MEDIA_WARNING_BYTES <= item.size_bytes < GALLERY_MEDIA_LIMIT_BYTES
