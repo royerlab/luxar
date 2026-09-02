@@ -51,7 +51,7 @@ def _checkout(tmp_path: Path, version: str = "2026.06.05") -> dict[str, Path]:
     pkg_json = tmp_path / "package.json"
     semver = ".".join(str(int(p)) for p in version.split("."))
     pkg_json.write_text(
-        json.dumps({"name": "@royerlab/luxar-viewer", "version": semver}, indent=2)
+        json.dumps({"name": "@luxar/viewer", "version": semver}, indent=2)
         + "\n"
     )
 

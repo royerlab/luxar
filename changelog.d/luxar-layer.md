@@ -14,7 +14,7 @@ streaming, LOD selection, and depth sorting correct. It owns no renderer,
 camera, controls, post-processing, or UI.
 
 ```ts
-import { LuxarLayer } from "@royerlab/luxar-viewer";
+import { LuxarLayer } from "@luxar/viewer";
 
 const layer = new LuxarLayer({
     renderer,

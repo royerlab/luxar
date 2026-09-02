@@ -79,7 +79,7 @@ ok "PyPI publish workflow present and committed"
 if [[ -f "$WORKFLOW_NPM" ]] && git ls-files --error-unmatch "$WORKFLOW_NPM" >/dev/null 2>&1; then
   ok "npm publish workflow present and committed"
 else
-  warn "$WORKFLOW_NPM missing/uncommitted — the tag will NOT publish @royerlab/luxar-viewer to npm."
+  warn "$WORKFLOW_NPM missing/uncommitted — the tag will NOT publish @luxar/viewer to npm."
 fi
 
 # ---- 3. sync with remote -----------------------------------------------------
@@ -177,7 +177,7 @@ cat <<EOF
   Will create annotated tag ${BLD}$TAG${NC} at ${REMOTE_SHA:0:12} on $BRANCH
   and push it to $REMOTE, which triggers:
     $WORKFLOW  →  build viewer+wheel (Linux/OIDC)  →  publish ${BLD}luxar $VERSION${NC} to PyPI.
-    $WORKFLOW_NPM  →  build lib bundle  →  publish ${BLD}@royerlab/luxar-viewer${NC} to npm (if configured).
+    $WORKFLOW_NPM  →  build lib bundle  →  publish ${BLD}@luxar/viewer${NC} to npm (if configured).
   This is the real, public, irreversible release (PyPI/npm versions cannot be reused).
 EOF
 
