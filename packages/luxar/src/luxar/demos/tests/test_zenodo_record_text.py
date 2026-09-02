@@ -2533,6 +2533,22 @@ class TestCheckExplainsAnAbsentFigure:
         ]
         assert not offenders, f"figures read from unpinned bytes: {offenders}"
 
+    def test_celegans_note_keeps_its_measured_provenance(self, gen: Any) -> None:
+        """A corrected note must APPEND, never replace, prior measurements.
+
+        `quality_note` is internal and never rendered, so keeping the old
+        provenance under a correction costs nothing -- and replacing it has
+        already destroyed real measurements once. These four are the ones that
+        went missing: the absolute Otsu range, the fixed-budget explanation for
+        the genuine quality decline, and the fixed-component recipe that is the
+        recorded route to a mask which does not move with image content.
+        """
+        note = gen.load_characteristics()[
+            "gsplats_celegans/celegans_s1.gsplats.zarr.zip"
+        ]["quality_note"]
+        for fact in ("0.0135", "0.1795", "MAX_SPLATS", "6-connected"):
+            assert fact in note, f"prior provenance lost from celegans note: {fact}"
+
     def test_every_absent_figure_is_explained(self, gen: Any) -> None:
         """No committed row may omit PSNR without saying why.
 
