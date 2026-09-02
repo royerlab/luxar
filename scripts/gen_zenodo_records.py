@@ -513,6 +513,7 @@ def _retain_preferred_measurements(
     measured: dict[str, Any],
     existing: dict[str, Any],
     pinned_digests: dict[str, Optional[str]],
+    recovered_source_keys: Optional[set[str]] = None,
 ) -> tuple[int, int]:
     """Blank unpinned reads and retain stronger committed measurements.
 
@@ -544,7 +545,7 @@ def _retain_preferred_measurements(
         "source_bytes",
         "frames",
     )
-    retained = 0
+    retained_keys: set[str] = set()
     rejected = 0
     for key, new_entry in list(measured.items()):
         old_entry = existing.get(key)
@@ -587,7 +588,7 @@ def _retain_preferred_measurements(
             }
             if recovered:
                 measured[key] = {**new_entry, **recovered}
-                retained += 1
+                retained_keys.add(key)
         elif (
             old_entry is not None
             and old_entry.get("measured_sha256") == pinned_digest
@@ -595,8 +596,14 @@ def _retain_preferred_measurements(
             < rank.get(old_entry.get("measured_from"), 0)
         ):
             measured[key] = old_entry
-            retained += 1
-    return retained, rejected
+            retained_keys.add(key)
+        if (
+            recovered_source_keys is not None
+            and key in recovered_source_keys
+            and new_entry.get("measured_sha256") == pinned_digest
+        ):
+            retained_keys.add(key)
+    return len(retained_keys), rejected
 
 
 def refresh_characteristics(
@@ -624,6 +631,7 @@ def refresh_characteristics(
     unpinned_unreadable = 0
     staged_selected = 0
     staged_hash_failures = 0
+    recovered_source_keys: set[str] = set()
     for dataset, entry in sorted(manifest["datasets"].items()):
         if entry.get("bucket") != "zenodo":
             continue
@@ -658,6 +666,23 @@ def refresh_characteristics(
                 else:
                     unpinned_unreadable += 1
                 continue
+            recovered_source = {
+                field: existing[key][field]
+                for field in (
+                    "psnr_db",
+                    "foreground_psnr_db",
+                    "foreground_fraction",
+                    "source_shape",
+                    "source_dtype",
+                    "source_bytes",
+                )
+                if key in existing
+                and existing[key].get(field) is not None
+                and existing[key].get("measured_sha256") in (None, measured_sha256)
+                and info.get(field) is None
+            }
+            if recovered_source:
+                recovered_source_keys.add(key)
             measured[key] = {
                 **info,
                 # Which copy was read, and what it hashed to. Without the digest a
@@ -671,38 +696,14 @@ def refresh_characteristics(
                     if key in existing and field in existing[key]
                 },
                 # Source-derived facts the ARCHIVE does not carry, kept across a
-                # re-read instead of being blanked. An archive built from
-                # per-timepoint fits loaded without statistics may have neither
-                # source_shape/dtype/bytes nor source-scored quality of its own
-                # (the cell-tracking bundle is the case in hand), so a supplied
-                # value is the only thing the record has to publish — and a
-                # refresh, which is the documented step after any upload, would
-                # otherwise silently drop it.
-                #
-                # Only ever fills an ABSENCE, and only from an unmeasured entry or
-                # one measured from these same bytes. A value the fresh read DID
-                # produce always wins, and metadata from a superseded archive is
-                # dropped rather than being relabelled with the new digest.
-                **{
-                    field: existing[key][field]
-                    for field in (
-                        "psnr_db",
-                        "foreground_psnr_db",
-                        "foreground_fraction",
-                        "source_shape",
-                        "source_dtype",
-                        "source_bytes",
-                    )
-                    if key in existing
-                    and existing[key].get(field) is not None
-                    and existing[key].get("measured_sha256") in (None, measured_sha256)
-                    and info.get(field) is None
-                },
+                # re-read instead of being blanked. Only fills an absence from an
+                # unmeasured entry or one measured from these same bytes.
+                **recovered_source,
             }
 
     read = len(measured)
     retained, rejected = _retain_preferred_measurements(
-        measured, existing, pinned_digests
+        measured, existing, pinned_digests, recovered_source_keys
     )
     preserved_entries = {
         k: v for k, v in existing.items() if k in seen and k not in measured

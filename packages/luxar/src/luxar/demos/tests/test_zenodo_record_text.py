@@ -1648,15 +1648,31 @@ def test_refresh_preserves_source_scored_quality_absent_from_same_archive_read(
     )
     monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter((archive,)))
 
-    gen.refresh_characteristics(_fake_manifest([_entry(archive.name, digest)]))
+    counts = gen.refresh_characteristics(_fake_manifest([_entry(archive.name, digest)]))
 
     payload = json.loads((tmp_path / "chars.json").read_text())
     entry = payload["archives"][key]
+    assert counts.retained == 1
     assert entry["measured_sha256"] == digest
     assert entry["psnr_db"] == [24.7, 26.5]
     assert entry["foreground_psnr_db"] == [18.3, 20.2]
     assert entry["foreground_fraction"] == 0.2033
     assert "qualifies a published quality figure" in payload["description"]
+
+
+def test_refresh_description_matches_the_committed_sidecar(
+    gen: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    committed_description = json.loads(gen.CHARACTERISTICS.read_text())["description"]
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(gen, "load_characteristics", lambda: {})
+
+    gen.refresh_characteristics({"datasets": {}})
+
+    refreshed = json.loads((tmp_path / "chars.json").read_text())
+    assert refreshed["description"] == committed_description
 
 
 def test_refresh_discards_supplied_metadata_from_different_archive_bytes(
@@ -2178,6 +2194,7 @@ def test_cell_tracking_measurements_include_the_declared_raw_volume(gen: Any) ->
         assert info["source_bytes"] == 838_860_800
         if key == measured_key:
             assert info["quality_note"].startswith(f"{provenance} Quality figures")
+            assert "voxel_size=1.625 x 0.40625 x 0.40625 um" in info["quality_note"]
         else:
             assert info["quality_note"] == provenance
             assert "same stacking pipeline" in info["quality_caveat"]
@@ -2192,6 +2209,11 @@ def test_cell_tracking_scored_crop_publishes_qualified_figures(gen: Any) -> None
     assert info["foreground_psnr_db"] == [18.3, 20.2]
     assert info["foreground_fraction"] == 0.2033
     assert info["quality_quotable"] is False
+    assert f"{info['psnr_db'][0]}–{info['psnr_db'][1]}" in info["quality_caveat"]
+    assert (
+        f"{info['foreground_psnr_db'][0]}–{info['foreground_psnr_db'][1]}"
+        in info["quality_caveat"]
+    )
     assert "about 13 dB below" in info["quality_caveat"]
     assert "about 23 dB below" in info["quality_caveat"]
     assert "scores higher in foreground" in info["quality_caveat"]
