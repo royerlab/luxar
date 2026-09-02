@@ -97,7 +97,17 @@ def test_readme_zenodo_table_matches_manifest() -> None:
         "h2afva": "10.5281/zenodo.21912283",
         "droso-timelapse": "10.5281/zenodo.22118694",
     }
+    assert set(labels) == set(manifest["records"])
     assert table.count("\n| ") == len(labels)
+
+    recorded_datasets = sum(
+        dataset.get("record") in manifest["records"]
+        for dataset in manifest["datasets"].values()
+    )
+    assert (
+        f"These records cover {recorded_datasets} of the "
+        f"{len(manifest['datasets'])} demo datasets."
+    ) in readme
 
     for record_key, label in labels.items():
         files = []
@@ -115,6 +125,7 @@ def test_readme_zenodo_table_matches_manifest() -> None:
         record = manifest["records"][record_key]
         concept_doi = record.get("zenodo_conceptdoi")
         if concept_doi is None:
+            # Transitional until #2456 adds the published records' concept DOIs.
             assert not record["published"]
             concept_doi = concept_dois[record_key]
         row = (

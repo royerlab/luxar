@@ -291,6 +291,7 @@ make generate-gallery               # Stage replacement stills + orbit videos fo
 **Prefer to just look?** Nothing to install — click any tile title above, or browse all of them at **[demos.luxarviewer.dev](https://demos.luxarviewer.dev)**, and orbit, slice and navigate the same scenes in your browser.
 
 ---
+
 ## Volume Rendering with Gaussian Splats
 
 Classical volume rendering ships **voxels**: to display a 3D image you upload the
@@ -1057,14 +1058,16 @@ the full citation.
 - **Human Multiome** — peak-accessibility UMAP of human single-cell ATAC-seq; data from Domcke et al. (2020), *A human cell atlas of fetal chromatin accessibility*, *Science* 370:eaba7612, [doi:10.1126/science.aba7612](https://doi.org/10.1126/science.aba7612); peak-UMAP analysis from Zebrahub-Multiome, Kim et al. (2024), [bioRxiv:2024.10.18.618987](https://www.biorxiv.org/content/10.1101/2024.10.18.618987v2).
 - **Mouse Multiome** — peak-accessibility UMAP of a mouse single-cell multiome; data from Argelaguet et al. (2022), *Decoding gene regulation in the mouse embryo using single-cell multi-omics*, [bioRxiv:2022.06.15.496239](https://doi.org/10.1101/2022.06.15.496239); peak-UMAP analysis from Zebrahub-Multiome, Kim et al. (2024), [bioRxiv:2024.10.18.618987](https://www.biorxiv.org/content/10.1101/2024.10.18.618987v2).
 
-Synthetic / procedurally-generated demos — **Lorenz Attractor**, **Spiral Galaxy** (3D & 5D), **Rainbow Sphere**, **Quantum Orbitals**, **Hilbert Curve**, **Bioluminescent Ocean**, and **Particle Collision** (inspired by CERN LHC events) — use no external data.
+Synthetic / procedurally-generated demos — **Lorenz Attractor**, **Spiral Galaxy** (3D & 5D), **Galaxy Simulation**, **Rainbow Sphere**, **Quantum Orbitals**, **Hilbert Curve**, **Bioluminescent Ocean**, and **Particle Collision** (inspired by CERN LHC events) — use no external data.
 
 ### Where the demo data lives
 
 The Python package does not ship these artifacts. The demos consume **derived
 products** — Gaussian-splat fits and point catalogues computed from the datasets
-credited above — archived on Zenodo in four records, grouped by licence because
-a Zenodo record carries a single licence field:
+credited above — archived on Zenodo in four records. The ShareAlike files need a
+separate record because a Zenodo record carries a single licence field; the two
+large timelapses each have their own record so the data collector is credited on
+the recording itself:
 
 | Record | Contents | Cite |
 |---|---|---|
@@ -1072,6 +1075,10 @@ a Zenodo record carries a single licence field:
 | ShareAlike (CC BY-SA 4.0) | 3 files, 20 MiB | [10.5281/zenodo.21912281](https://doi.org/10.5281/zenodo.21912281) |
 | Zebrafish histone timelapse (253 + 51 timepoints) | 2 files, 6.5 GiB | [10.5281/zenodo.21912283](https://doi.org/10.5281/zenodo.21912283) |
 | *Drosophila* embryogenesis (500 timepoints) | 1 file, 824 MiB | [10.5281/zenodo.22118694](https://doi.org/10.5281/zenodo.22118694) |
+
+These records cover 25 of the 31 demo datasets. The other six are built locally
+because redistribution is not permitted or not yet available, or because
+regeneration is cheap.
 
 `luxar demo run <name>` resolves only what that demo needs, caches it under
 `~/.cache/luxar/`, and verifies every file against a SHA-256 recorded in
