@@ -471,6 +471,19 @@ describe('MeshProgressiveLoader', () => {
     }
   });
 
+  it('stops a warmed-cache refinement pass after spending its residency allowance', async () => {
+    const { loader, subs } = makeLadder([
+      level(4, [0, 1, 2]),
+      level(3, [0, 1, 2]),
+      level(3, [0, 1, 2]),
+    ]);
+
+    await loader.updateView(VIEW, undefined, undefined, 1);
+
+    expect(loader.loadedLODCount).toBe(1);
+    expect(subs[1].calls).toBe(0);
+  });
+
   it('deepens an existing playback prefix only while budget remains', async () => {
     let now = 0;
     const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => (now += 5));

@@ -1349,9 +1349,9 @@ export class SceneLoader {
       // resident bytes in later view-triggered runs instead of ratcheting the
       // ceiling upward. Lazy lod_group levels are not in these sweep maps.
       const residencyBudget = RefinementResidencyBudget.forSession(
+        this.progressiveLadderResidencies(),
         cachePoolOverrideBytes(this.config.cacheBudgetMB),
         deviceClassPoolBytes(),
-        this.progressiveLadderResidencies(),
         this.refinementResidencyReporter
       );
       // Intermediate phases shouldn't release the lock — only the last

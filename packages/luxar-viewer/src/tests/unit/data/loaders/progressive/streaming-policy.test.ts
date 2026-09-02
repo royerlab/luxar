@@ -2,9 +2,9 @@
  * Unit tests for the shared progressive-loader streaming policy
  * (data/loaders/progressive/streaming-policy.ts).
  *
- * The three geometry loaders (GSplats/Points/Lines) all drive their LOD
+ * The four geometry loaders (GSplats/Points/Lines/Mesh) all drive their LOD
  * streaming loop through these pure decisions, so pinning them here keeps the
- * three loops identical by construction and documents the contract:
+ * four loops identical by construction and documents the contract:
  *
  *  - playback: responsive — stream CACHE-RESIDENT levels within the pass
  *    budget, stop at the first cold/slow one, never block on a cold level.
@@ -78,6 +78,16 @@ describe('shouldStopAfterLevel', () => {
 
   it('prefetch never stops here — it deepens regardless of residency', () => {
     expect(shouldStopAfterLevel('prefetch', 5, 0, false, slow)).toBe(false);
+  });
+
+  it('residency allowance takes precedence over prefetch deepening', () => {
+    expect(shouldStopAfterLevel('prefetch', 3, 0, true, fast, 10, 10)).toBe(true);
+  });
+
+  it('stops after a level spends the refinement residency allowance', () => {
+    expect(shouldStopAfterLevel('refine', 1, 0, true, fast, 9, 10)).toBe(false);
+    expect(shouldStopAfterLevel('refine', 1, 0, true, fast, 10, 10)).toBe(true);
+    expect(shouldStopAfterLevel('refine', 0, 0, true, fast, 0, 0)).toBe(false);
   });
 
   // Playback shares refine's rule: residency, not level index, is what
