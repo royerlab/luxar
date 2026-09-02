@@ -11,7 +11,7 @@ import type { SceneLoaderManager } from '../../data/scene-loader-manager';
 
 const DEFAULT_TIMELAPSE_SETTLE_MS = 8000;
 
-interface TimelapseSettlePage {
+export interface TimelapseSettlePage {
   waitForFunction(
     pageFunction: typeof isTimelapseSliceSettled,
     arg: undefined,
