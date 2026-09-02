@@ -9,7 +9,7 @@
         test-all test-python test-cov-python test-cov-typescript test-cov-all test-fixtures ensure-viewer-fixtures test-wasm test-viewer test-viewer-fixtures \
         test-e2e test-e2e-smoke test-perf-e2e \
         clean-all clean-python clean-viewer clean-examples clean-cache clean-setup enable-pre-commit run-pre-commit \
-        check-all check-cold-fetch check-typescript check-rust check-knip check-gallery-staleness check-wasm-deps setup-dev \
+        check-all check-cold-fetch check-typescript check-rust check-knip check-gallery-staleness check-gallery-media check-wasm-deps setup-dev \
         check-docs check-docs-verbose check-docs-external-links check-demo-links check-zenodo-live check-external-references clean-docs build-docs build-typedoc serve-docs \
         demo run-demos run-examples serve-examples serve-dataset install-viewer-deps viewer build-viewer build-viewer-lib rebuild-viewer \
         install-rust build-wasm clean-wasm generate-readme-demos generate-readme-images generate-doc-images \
@@ -894,6 +894,9 @@ check-cold-fetch:  ## Verify hosted demo datasets fetch from nothing and match t
 
 check-zenodo-live:  ## Opt-in live Zenodo manifest-pin audit (not a required CI gate)
 	python3 scripts/zenodo_migration_audit.py --live
+
+check-gallery-media:  ## Verify hosted root-README media against its manifest (opt-in)
+	$(HATCH) run python scripts/gallery/verify_media.py
 
 check-external-references:  ## Run all network-backed reference audits (report-only)
 	$(HATCH) run python scripts/run_external_reference_audits.py

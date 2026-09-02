@@ -25,9 +25,11 @@ def test_all_external_reference_audits_are_declared() -> None:
         "Documentation links",
         "Demo click-throughs",
         "Zenodo manifest pins",
+        "Hosted gallery media",
     ]
     assert audit_module.AUDITS[2].required_env == ("ZENODO_TOKEN",)
     assert audit_module.AUDITS[2].command == ("make", "check-zenodo-live")
+    assert audit_module.AUDITS[3].command == ("make", "check-gallery-media")
 
 
 def test_make_targets_use_the_intended_python_environments() -> None:
@@ -42,6 +44,10 @@ def test_make_targets_use_the_intended_python_environments() -> None:
         "check-zenodo-live:  ## Opt-in live Zenodo manifest-pin audit"
         " (not a required CI gate)\n\tpython3 scripts/zenodo_migration_audit.py --live"
         in makefile
+    )
+    assert (
+        "check-gallery-media:  ## Verify hosted root-README media against its manifest"
+        " (opt-in)\n\t$(HATCH) run python scripts/gallery/verify_media.py" in makefile
     )
 
 
@@ -148,6 +154,7 @@ def test_nonzero_audit_is_reported_without_stopping_later_audits(monkeypatch) ->
             (2, "audit output"),
             (0, "[OK] host-a"),
             (1, "audit output"),
+            (0, "gallery media verified"),
         )
     )
 
@@ -167,6 +174,7 @@ def test_nonzero_audit_is_reported_without_stopping_later_audits(monkeypatch) ->
         audit_module.Level.WARNING,
         audit_module.Level.PASS,
         audit_module.Level.WARNING,
+        audit_module.Level.PASS,
     ]
 
 
@@ -412,9 +420,11 @@ def test_main_writes_the_same_visible_summary_and_always_exits_zero(
     stdout = capsys.readouterr().out
     summary = summary_path.read_text()
     assert stdout.endswith(summary)
-    assert stdout.count("::warning title=External reference audit::") == 3
+    assert stdout.count("::warning title=External reference audit::") == len(
+        audit_module.AUDITS
+    )
     assert "**Worst level: WARNING**" in summary
-    assert stdout.count("**WARNING**") == 3
+    assert stdout.count("**WARNING**") == len(audit_module.AUDITS)
     assert "report-only and never gate merges" in stdout
 
 
