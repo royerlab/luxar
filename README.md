@@ -1056,10 +1056,10 @@ Synthetic / procedurally-generated demos — **Lorenz Attractor**, **Spiral Gala
 
 ### Where the demo data lives
 
-The demos do not ship their data. What they download are **derived products** —
-Gaussian-splat fits and point catalogues computed from the datasets credited
-above — archived on Zenodo in four records, grouped by licence because a Zenodo
-record carries a single licence field:
+The Python package does not ship these artifacts. The demos consume **derived
+products** — Gaussian-splat fits and point catalogues computed from the datasets
+credited above — archived on Zenodo in four records, grouped by licence because
+a Zenodo record carries a single licence field:
 
 | Record | Contents | Cite |
 |---|---|---|
@@ -1068,7 +1068,7 @@ record carries a single licence field:
 | Zebrafish histone timelapse (253 + 51 timepoints) | 2 files, 6.5 GiB | [10.5281/zenodo.21912283](https://doi.org/10.5281/zenodo.21912283) |
 | *Drosophila* embryogenesis (500 timepoints) | 1 file, 824 MiB | [10.5281/zenodo.22118694](https://doi.org/10.5281/zenodo.22118694) |
 
-`luxar demo run <name>` fetches only what that demo needs, caches it under
+`luxar demo run <name>` resolves only what that demo needs, caches it under
 `~/.cache/luxar/`, and verifies every file against a SHA-256 recorded in
 [`data_manifest.json`](packages/luxar/src/luxar/demos/data_manifest.json). Files
 fetched from Zenodo must match the hosted digest or the download is deleted.

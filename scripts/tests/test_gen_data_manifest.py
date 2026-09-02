@@ -97,6 +97,7 @@ def test_readme_zenodo_table_matches_manifest() -> None:
         "h2afva": "10.5281/zenodo.21912283",
         "droso-timelapse": "10.5281/zenodo.22118694",
     }
+    assert table.count("\n| ") == len(labels)
 
     for record_key, label in labels.items():
         files = []
