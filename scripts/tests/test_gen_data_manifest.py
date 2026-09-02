@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -40,6 +41,23 @@ def test_public_attributions_keep_required_provenance_resolvable() -> None:
 
     neuromast = generator.DATASETS["gsplats_4d_neuromast_2ch"]["attribution"]
     assert "see Jacobo et al. (2019), by the same author" in neuromast
+
+
+def test_census_attribution_uses_generator_release_default() -> None:
+    generator = _load_generator()
+    attribution = generator.DATASETS["census_umap_1m"]["attribution"]
+    census_generator = (SCRIPT.parent / "gen_census_umap.py").read_text(
+        encoding="utf-8"
+    )
+
+    release_match = re.search(r"Census release (\d{4}-\d{2}-\d{2})", attribution)
+    default_match = re.search(
+        r'add_argument\("--version", default="(\d{4}-\d{2}-\d{2})"\)',
+        census_generator,
+    )
+    assert release_match is not None
+    assert default_match is not None
+    assert release_match.group(1) == default_match.group(1)
 
 
 def test_positional_pairs_stamp_every_member() -> None:
