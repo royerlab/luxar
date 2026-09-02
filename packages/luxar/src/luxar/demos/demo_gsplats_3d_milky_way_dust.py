@@ -407,9 +407,7 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
             add_demo_caption(
                 scene,
                 # No reference here: `add_demo_caption` appends the citation, so
-                # naming it in the text renders it twice. It used to differ only
-                # because the text said "Leike & Enßlin 2020" — the duplicate was
-                # hidden behind a misattribution.
+                # naming it in the text renders it twice.
                 "3D dust density • ~1 pc/voxel",
                 DEMO_META.get("citation"),
             )

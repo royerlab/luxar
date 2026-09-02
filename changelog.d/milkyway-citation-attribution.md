@@ -17,5 +17,5 @@ That test passed before only because the duplicate was hidden behind the
 misattribution.
 
 Found by resolving every cited DOI in the demo corpus against Crossref, DataCite
-and Zenodo and comparing the author count to the citation form. All 53 other
+and Zenodo and comparing the author count to the citation form. All 52 other
 demos check out, as do the journal, volume, page and year of this one.

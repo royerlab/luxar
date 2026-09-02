@@ -79,7 +79,7 @@ Each subdirectory contains pre-fitted `.gsplats.zarr.zip` files for one demo:
 | `gsplats_cmu1_pathology/` | 2D CMU-1 pathology (H&E) | 3 channel files (pending) |
 | `gsplats_celegans/` | 4D C. elegans tracking | 1 bundle zip with 400 timepoints (~64 MB) |
 | `gsplats_cryoem_virus/` | 3D cryo-EM giant-virus capsid (EMDB EMD-5384, PBCV-1) | 1 `.gsplats.zarr.zip` |
-| `gsplats_milkyway_dust/` | 3D interstellar dust of the solar neighborhood (Leike & Enßlin 2020) | 1 `.gsplats.zarr.zip` (~8 MB) |
+| `gsplats_milkyway_dust/` | 3D interstellar dust of the solar neighborhood (Leike et al. 2020) | 1 `.gsplats.zarr.zip` (~8 MB) |
 | `gsplats_visible_human_head/` | 3D Visible Human head, true-color cryosections (NLM) | 1 `.gsplats.zarr.zip` + `vh_head_colors.npz` (per-splat RGB, indexed positionally against the fit; regenerated from a 636 x 451 x 896 volume matching the stored centers' extent, with a color distribution within TV distance 0.0065 of the original sidecar; verified on load at agreement 1.0, #1670) |
 | `gsplats_flylight_mcfo_63x/` | 3D *Drosophila* whole brain, MultiColor FlpOut (Janelia FlyLight, 63x) | 1 `.gsplats.zarr.zip` (~8 MB) |
 | `gsplats_nexrad_supercell/` | 4D NEXRAD Oklahoma convective evening incl. the El Reno tornadic supercell (KTLX, 2013-05-31 21Z - 06-01 03Z) | 1 bundle zip with 82 volume scans (~9.6 MB) |

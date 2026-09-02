@@ -654,9 +654,9 @@ def test_written_cache_dirs_are_declared(path: Path) -> None:
 # stops the walk; drop that word and the group leads with "HCP-1065", which the
 # short "Yeh 2022" does not contain, and a correct credit turns red. A guard that
 # an ordinary copy-edit can falsify gets switched off. The other two candidates
-# are worse: ``_MAX_CREDIT_GROUP_NAMES = 1`` rejects the real
-# "Leike & Enßlin 2020" footer, and a year-only rule drops the wrong-author class
-# the guard exists for.
+# are worse: ``_MAX_CREDIT_GROUP_NAMES = 1`` rejects the synthetic
+# "Leike & Enßlin 2020" shape pinned below, and a year-only rule drops the
+# wrong-author class the guard exists for.
 #
 # Every corpus count here (86 demos, 26 credited, 8 painting a dated credit, the
 # AST tallies below) describes the corpus at the time of writing; nothing derives
@@ -1378,7 +1378,7 @@ def test_credit_guard_flags_a_contradicting_footer(short: str, overlay: str) -> 
         # A leading dataset token that is NOT the credited name, and a licence
         # whose "4.0" must not read as a year.
         ("Yeh 2022", "HCP-1065 atlas (Yeh 2022, CC BY-SA 4.0) — 87 tracts"),
-        # "et al." on one side, "&" plus an eszett on the other.
+        # A synthetic "et al." versus "&" pair, including an eszett.
         ("Leike et al. 2020", "Leike & Enßlin 2020 • 3D dust density • ~1 pc/voxel"),
         ("Kim et al. 2024", "95K cells • 32 cell types • Kim et al. 2024"),
         # A leading "The", and the bullet-separated fields before it. The f-string
