@@ -16,8 +16,9 @@ command a user runs died:
     ModuleNotFoundError: No module named 'luxar.demos._support.downloads'
 
 The failure is invisible from the source tree, which is where every other check
-looks. This test looks at the one place that matters: what the packaging tool
-will be allowed to see.
+looks. This test checks what the packaging tool will be allowed to see and the
+other source trees that the repository toolchain walks, so a broad ignore rule
+cannot silently hide tracked files from packaging, linting, or documentation.
 
 Deliberately not a wheel build. Building takes minutes and needs the viewer
 dist; asking Git which tracked files it would *also* ignore is instant and
@@ -35,7 +36,12 @@ from tempfile import TemporaryDirectory
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
-PACKAGE_ROOT = "packages/luxar/src/luxar"
+TOOLCHAIN_ROOTS = (
+    "packages/luxar/src/luxar",
+    "packages/luxar-viewer/src",
+    "docs",
+    "scripts",
+)
 
 
 def _git(*args: str) -> str:
@@ -45,14 +51,14 @@ def _git(*args: str) -> str:
     ).stdout
 
 
-def _tracked_package_files() -> list[str]:
-    """Return tracked package paths without Git's pathname quoting."""
-    out = _git("ls-files", "-z", "--", PACKAGE_ROOT)
+def _tracked_toolchain_files() -> list[str]:
+    """Return tracked toolchain input paths without Git's pathname quoting."""
+    out = _git("ls-files", "-z", "--", *TOOLCHAIN_ROOTS)
     return [path for path in out.split("\0") if path]
 
 
-def _root_gitignore_matches(paths: list[str], *, cwd: Path = REPO_ROOT) -> list[str]:
-    """Return root `.gitignore` matches that can exclude Hatchling inputs."""
+def _root_gitignore_matches(paths: list[str], *, root: Path = REPO_ROOT) -> list[str]:
+    """Return root `.gitignore` matches that can hide toolchain inputs."""
     if not paths:
         return []
 
@@ -60,7 +66,7 @@ def _root_gitignore_matches(paths: list[str], *, cwd: Path = REPO_ROOT) -> list[
         isolated_root = Path(isolated_checkout)
         subprocess.run(["git", "init", "-q"], cwd=isolated_root, check=True)
         (isolated_root / ".gitignore").write_text(
-            (cwd / ".gitignore").read_text(encoding="utf-8"), encoding="utf-8"
+            (root / ".gitignore").read_text(encoding="utf-8"), encoding="utf-8"
         )
         result = subprocess.run(
             [
@@ -98,9 +104,9 @@ def _root_gitignore_matches(paths: list[str], *, cwd: Path = REPO_ROOT) -> list[
 
 @pytest.fixture(scope="module")
 def tracked_files() -> list[str]:
-    """Provide tracked package files when tests run from a Git checkout."""
+    """Provide tracked toolchain inputs when tests run from a Git checkout."""
     try:
-        files = _tracked_package_files()
+        files = _tracked_toolchain_files()
     except (subprocess.CalledProcessError, FileNotFoundError) as exc:
         pytest.skip(f"not a usable Git checkout: {exc}")
     if not files:
@@ -108,13 +114,13 @@ def tracked_files() -> list[str]:
     return files
 
 
-def test_no_tracked_package_file_is_gitignored(tracked_files: list[str]) -> None:
-    """The guard: a tracked file that `.gitignore` also matches is a wheel hole."""
+def test_no_tracked_toolchain_file_is_gitignored(tracked_files: list[str]) -> None:
+    """Tracked files must remain visible to packaging and repository tooling."""
     offenders = _root_gitignore_matches(tracked_files)
     assert not offenders, (
         "These files are tracked by Git but ALSO matched by .gitignore. Hatchling "
-        "honours .gitignore when building the wheel, so they will be silently "
-        "dropped from the distribution even though the repository looks correct:\n  "
+        "and repository tools honour .gitignore while walking source trees, so "
+        "they can be silently omitted even though the repository looks correct:\n  "
         + "\n  ".join(offenders)
         + "\n\nAnchor the offending pattern (a leading '/' scopes it to the repo "
         "root) rather than deleting it."
@@ -199,7 +205,7 @@ def test_the_guard_matches_only_hatchlings_exclusion_source(tmp_path: Path) -> N
         "src/pkg/rescued.py",
         "src/pkg/snowman-☃\nmodule.py",
     ]
-    offenders = _root_gitignore_matches(paths, cwd=tmp_path)
+    offenders = _root_gitignore_matches(paths, root=tmp_path)
 
     assert offenders == [
         ".gitignore:1:*.log\tsrc/pkg/drop.log",

@@ -38,7 +38,7 @@
       16
     ],
     "packages/luxar/src/luxar/cli/gsplat_ops/fitting/recipe_args.py::build_fit_recipe_params": [
-      12
+      11
     ],
     "packages/luxar/src/luxar/cli/gsplat_ops/inspect_commands.py::compare_quality": [
       13
@@ -83,7 +83,7 @@
       24
     ],
     "packages/luxar/src/luxar/cli/lod.py::lod_recipe": [
-      44
+      42
     ],
     "packages/luxar/src/luxar/cli/main.py::_run_native_export": [
       15
@@ -162,6 +162,18 @@
     ],
     "packages/luxar/src/luxar/demos/_support/datasets/cache.py::cached_download": [
       12
+    ],
+    "packages/luxar/src/luxar/demos/_support/downloads/download.py::robust_download": [
+      66
+    ],
+    "packages/luxar/src/luxar/demos/_support/downloads/download.py::verify_file_checksum": [
+      14
+    ],
+    "packages/luxar/src/luxar/demos/_support/downloads/remote_zip.py::_parse_remote_zip_directory": [
+      11
+    ],
+    "packages/luxar/src/luxar/demos/_support/downloads/remote_zip.py::download_zip_member": [
+      24
     ],
     "packages/luxar/src/luxar/demos/demo_arxiv_embeddings_kaggle.py::generate_paper_landscape": [
       16
