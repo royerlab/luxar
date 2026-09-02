@@ -44,14 +44,6 @@ def _commit(repo: Path, message: str, day: int) -> None:
     _git(repo, "commit", "-m", message, day=day)
 
 
-def _lfs_pointer(size_bytes: int) -> str:
-    return (
-        "version https://git-lfs.github.com/spec/v1\n"
-        f"oid sha256:{'0' * 64}\n"
-        f"size {size_bytes}\n"
-    )
-
-
 def _write_manifest(repo: Path, title_b: str = "B", include_c: bool = False) -> None:
     demos = [
         {
@@ -84,6 +76,40 @@ def _write_manifest(repo: Path, title_b: str = "B", include_c: bool = False) -> 
     path.write_text(json.dumps(manifest, indent=2) + "\n")
 
 
+def _write_media_manifest(
+    path: Path, demos: tuple[str, ...] = ("a", "b"), sizes: dict[str, int] | None = None
+) -> None:
+    """The committed record of the published tiles, keyed by content hash.
+
+    Sizes matter: the size report reads them straight from here now, rather than
+    from a Git blob or an LFS pointer.
+    """
+    sizes = sizes or {}
+    tiles = {
+        demo: {
+            suffix: {
+                "key": f"{demo}{suffix[0]}0000000000000.{suffix}",
+                "bytes": sizes.get(f"{demo}.{suffix}", 1024),
+                "sha256": "0" * 64,
+                "content_type": "image/webp" if suffix == "webp" else "video/webm",
+            }
+            for suffix in ("webp", "webm")
+        }
+        for demo in demos
+    }
+    path.write_text(
+        json.dumps(
+            {
+                "generated": "2026-09-02T00:00:00Z",
+                "base_url": "https://data.luxarviewer.dev/media",
+                "tiles": tiles,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+
+
 def _repo(tmp_path: Path) -> Path:
     for relative in (
         "scripts/gallery",
@@ -92,10 +118,10 @@ def _repo(tmp_path: Path) -> Path:
         "packages/luxar/src/luxar/shading",
         "packages/luxar/src/luxar/shading/tests",
         "packages/luxar-viewer/src/tests/screenshots",
-        "docs/images/readme/gallery",
     ):
         (tmp_path / relative).mkdir(parents=True, exist_ok=True)
     _write_manifest(tmp_path)
+    _write_media_manifest(tmp_path / "scripts/gallery/media-manifest.json")
     (tmp_path / "scripts/gallery/generate_gallery_datasets.py").write_text(
         "# generator\n"
     )
@@ -119,10 +145,6 @@ def _repo(tmp_path: Path) -> Path:
             if demo_id == "a"
             else "from luxar.demos._support._umap_utils import colors\n"
         )
-        for suffix in ("webp", "webm"):
-            (tmp_path / f"docs/images/readme/gallery/{demo_id}.{suffix}").write_text(
-                f"tile {demo_id}.{suffix}\n"
-            )
     (tmp_path / "packages/luxar/src/luxar/shading/occlusion.py").write_text(
         "# shading\n"
     )
@@ -136,13 +158,13 @@ def _repo(tmp_path: Path) -> Path:
     _git(tmp_path, "init", "-b", "dev")
     _git(tmp_path, "config", "user.name", "Gallery Test")
     _git(tmp_path, "config", "user.email", "gallery@example.com")
+    _git(tmp_path, "config", "diff.indentHeuristic", "true")
     _commit(tmp_path, "initial", 20)
 
-    for demo_id in ("a", "b"):
-        for suffix in ("webp", "webm"):
-            (tmp_path / f"docs/images/readme/gallery/{demo_id}.{suffix}").write_text(
-                f"fresh tile {demo_id}.{suffix}\n"
-            )
+    # A re-capture rewrites the whole manifest; its commit is the publish date.
+    _write_media_manifest(
+        tmp_path / "scripts/gallery/media-manifest.json", sizes={"a.webm": 2048}
+    )
     _commit(tmp_path, "capture tiles", 21)
     return tmp_path
 
@@ -154,46 +176,30 @@ def test_stale_inputs_require_a_strictly_newer_commit() -> None:
 
 
 def test_media_flags_use_inclusive_warning_and_limit_boundaries() -> None:
-    path = Path("tile.webm")
+    key = "tile.webm"
 
     assert (
         stale._format_media_size(stale.GALLERY_MEDIA_WARNING_BYTES - 1) == "19.99 MiB"
     )
     assert (
         stale._media_flag(
-            stale.GalleryMedia(path, stale.GALLERY_MEDIA_WARNING_BYTES - 1)
+            stale.GalleryMedia(key, stale.GALLERY_MEDIA_WARNING_BYTES - 1)
         )
         == ""
     )
     assert (
-        stale._media_flag(stale.GalleryMedia(path, stale.GALLERY_MEDIA_WARNING_BYTES))
+        stale._media_flag(stale.GalleryMedia(key, stale.GALLERY_MEDIA_WARNING_BYTES))
         == " [WARNING]"
     )
     assert (
-        stale._media_flag(stale.GalleryMedia(path, stale.GALLERY_MEDIA_LIMIT_BYTES - 1))
+        stale._media_flag(stale.GalleryMedia(key, stale.GALLERY_MEDIA_LIMIT_BYTES - 1))
         == " [WARNING]"
     )
     assert stale._format_media_size(stale.GALLERY_MEDIA_LIMIT_BYTES - 1) == "24.99 MiB"
     assert (
-        stale._media_flag(stale.GalleryMedia(path, stale.GALLERY_MEDIA_LIMIT_BYTES))
+        stale._media_flag(stale.GalleryMedia(key, stale.GALLERY_MEDIA_LIMIT_BYTES))
         == " [OVER LIMIT]"
     )
-
-
-def test_missing_media_blob_is_reported_as_staleness_error(
-    tmp_path: Path, capsys
-) -> None:
-    repo = _repo(tmp_path)
-    media_path = Path("docs/images/readme/gallery/a.webm")
-    object_id = _git(repo, "rev-parse", f"HEAD:{media_path.as_posix()}")
-    (repo / ".git/objects" / object_id[:2] / object_id[2:]).unlink()
-
-    message = f"Git object is unavailable: {object_id} ({media_path})"
-    with pytest.raises(stale.StalenessError, match=re.escape(message)):
-        stale.GalleryHistory(repo).report()
-
-    assert stale.main(["--repo-root", str(repo)]) == 2
-    assert capsys.readouterr().err.strip() == f"ERROR: {message}"
 
 
 def test_manifest_line_ranges_isolate_each_demo_entry() -> None:
@@ -253,32 +259,6 @@ def test_uncommitted_manifest_edit_does_not_affect_committed_report(
 
     assert by_id["a"].stale_inputs == ()
     assert by_id["b"].stale_inputs == ()
-
-
-def test_staged_uncommitted_media_does_not_affect_committed_report(
-    tmp_path: Path, capsys
-) -> None:
-    repo = _repo(tmp_path)
-    (repo / "docs/images/readme/gallery/zzz.webp").write_text("staged still\n")
-    (repo / "docs/images/readme/gallery/zzz.webm").write_text("staged video\n")
-    _git(repo, "add", "docs/images/readme/gallery")
-
-    assert stale.main(["--repo-root", str(repo)]) == 0
-    output = capsys.readouterr().out
-    assert "UNKNOWN zzz" not in output
-    assert "0 stale, 2 current, 0 unknown" in output
-
-
-def test_tile_uses_older_commit_from_still_and_video_pair(tmp_path: Path) -> None:
-    repo = _repo(tmp_path)
-    (repo / "docs/images/readme/gallery/a.webp").write_text("new still only\n")
-    _commit(repo, "replace still only", 22)
-
-    by_id = {
-        status.demo_id: status for status in stale.GalleryHistory(repo).tile_statuses()
-    }
-
-    assert by_id["a"].tile.committed_at.day == 21
 
 
 def test_demo_script_edit_stales_only_its_tile(tmp_path: Path, capsys) -> None:
@@ -479,6 +459,99 @@ def test_appending_a_manifest_entry_does_not_stale_the_previous_last_entry(
     assert by_id["b"].stale_inputs == ()
 
 
+def test_inserting_a_manifest_entry_does_not_stale_the_following_entry(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    manifest_path = repo / "scripts/gallery/manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["demos"].insert(
+        1,
+        {
+            "id": "c",
+            "title": "C",
+            "script": "demo_c.py",
+            "dataset": "datasets/demos/c.luxar.zarr",
+        },
+    )
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    (repo / "packages/luxar/src/luxar/demos/demo_c.py").write_text("# demo c\n")
+    _commit(repo, "insert c before b", 22)
+
+    by_id = {
+        status.demo_id: status for status in stale.GalleryHistory(repo).tile_statuses()
+    }
+    assert by_id["a"].stale_inputs == ()
+    assert by_id["b"].stale_inputs == ()
+
+
+def test_unrelated_media_manifest_edit_does_not_refresh_stale_tiles(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    demo = repo / "packages/luxar/src/luxar/demos/demo_b.py"
+    demo.write_text("# revised demo b\n")
+    _commit(repo, "revise demo b", 22)
+
+    manifest_path = repo / "scripts/gallery/media-manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["note"] = "unrelated metadata"
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    _commit(repo, "document media manifest", 23)
+
+    by_id = {
+        status.demo_id: status for status in stale.GalleryHistory(repo).tile_statuses()
+    }
+    assert by_id["a"].stale_inputs == ()
+    assert by_id["b"].stale_inputs == ("demo generator",)
+
+
+def test_appending_media_manifest_entry_does_not_refresh_previous_last_tile(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    demo = repo / "packages/luxar/src/luxar/demos/demo_b.py"
+    demo.write_text("# revised demo b\n")
+    _commit(repo, "revise demo b", 22)
+
+    manifest_path = repo / "scripts/gallery/media-manifest.json"
+    _write_media_manifest(manifest_path, demos=("a", "b", "zzz"))
+    _commit(repo, "append unrelated media entry", 23)
+
+    by_id = {
+        status.demo_id: status for status in stale.GalleryHistory(repo).tile_statuses()
+    }
+    assert by_id["a"].stale_inputs == ()
+    assert by_id["b"].stale_inputs == ("demo generator",)
+
+
+def test_inserting_media_manifest_entry_does_not_refresh_following_tile(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    demo = repo / "packages/luxar/src/luxar/demos/demo_b.py"
+    demo.write_text("# revised demo b\n")
+    _commit(repo, "revise demo b", 22)
+
+    manifest_path = repo / "scripts/gallery/media-manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    variants = manifest["tiles"]["a"]
+    entry_lines = json.dumps({"zzz": variants}, indent=2).splitlines()[1:-1]
+    entry_lines = [f"  {line}" for line in entry_lines]
+    entry_lines[-1] += "   ,"
+    text = manifest_path.read_text()
+    manifest_path.write_text(
+        text.replace('    "b": {', "\n".join(entry_lines) + '\n    "b": {')
+    )
+    _commit(repo, "insert unrelated media entry before b", 23)
+
+    by_id = {
+        status.demo_id: status for status in stale.GalleryHistory(repo).tile_statuses()
+    }
+    assert by_id["a"].stale_inputs == ()
+    assert by_id["b"].stale_inputs == ("demo generator",)
+
+
 def test_shading_docs_and_tests_do_not_mark_tiles_stale(tmp_path: Path, capsys) -> None:
     repo = _repo(tmp_path)
     (repo / "packages/luxar/src/luxar/shading/README.md").write_text("docs only\n")
@@ -517,60 +590,74 @@ def test_stale_findings_are_report_only(tmp_path: Path, capsys) -> None:
     assert stale.main(["--repo-root", str(repo)]) == 0
     output = capsys.readouterr().out
     assert "STALE a" in output
-    assert "media: a.webm 0.00 MiB, a.webp 0.00 MiB" in output
+    assert "media: aw0000000000000.webm 0.00 MiB" in output
     assert "STALE b" in output
     assert "2 stale, 0 current" in output
 
 
-def test_media_sizes_use_committed_lfs_metadata_and_remain_report_only(
+def test_media_sizes_come_from_the_manifest_and_remain_report_only(
     tmp_path: Path, capsys
 ) -> None:
+    """The Pages 25 MiB per-asset cap still matters; only the size SOURCE moved.
+
+    Sizes used to be read from a Git blob or an LFS pointer. They now come from
+    the manifest, which is the only record once the tiles are hosted.
+    """
     repo = _repo(tmp_path)
-    warning_path = repo / "docs/images/readme/gallery/a.webm"
-    over_limit_path = repo / "docs/images/readme/gallery/b.webm"
-    regular_path = repo / "docs/images/readme/gallery/a.webp"
-    warning_path.write_text(_lfs_pointer(stale.GALLERY_MEDIA_WARNING_BYTES))
-    over_limit_path.write_text(_lfs_pointer(stale.GALLERY_MEDIA_LIMIT_BYTES))
-    regular_path.write_bytes(b"x" * 2048)
+    _write_media_manifest(
+        repo / "scripts/gallery/media-manifest.json",
+        sizes={
+            "a.webm": stale.GALLERY_MEDIA_WARNING_BYTES,
+            "b.webm": stale.GALLERY_MEDIA_LIMIT_BYTES,
+            "a.webp": 2048,
+        },
+    )
     _commit(repo, "grow gallery media", 22)
 
-    warning_path.write_text(_lfs_pointer(1))
-
     report = stale.GalleryHistory(repo).report()
-    sizes = {media.path.name: media.size_bytes for media in report.media}
-    assert sizes["a.webm"] == stale.GALLERY_MEDIA_WARNING_BYTES
-    assert sizes["a.webp"] == 2048
-    assert sizes["b.webm"] == stale.GALLERY_MEDIA_LIMIT_BYTES
+    sizes = {media.key: media.size_bytes for media in report.media}
+    assert sizes["aw0000000000000.webm"] == stale.GALLERY_MEDIA_WARNING_BYTES
+    assert sizes["aw0000000000000.webp"] == 2048
+    assert sizes["bw0000000000000.webm"] == stale.GALLERY_MEDIA_LIMIT_BYTES
 
     assert stale.main(["--repo-root", str(repo)]) == 0
     output = capsys.readouterr().out
-    assert "a.webm 20.00 MiB (20,971,520 bytes) [WARNING]" in output
-    assert "b.webm 25.00 MiB (26,214,400 bytes) [OVER LIMIT]" in output
-    assert "a.webp 0.00 MiB (2,048 bytes)" not in output
-    assert output.index(
-        "25.00 MiB (26,214,400 bytes)  b.webm [OVER LIMIT]"
-    ) < output.index("20.00 MiB (20,971,520 bytes)  a.webm")
-    assert "Gallery media: 45.00 MiB total across 4 files" in output
-    assert (
-        "Gallery media limits: 1 warning (20.00 MiB <= size < 25.00 MiB), "
-        "1 over-limit file (>= 25.00 MiB)" in output
-    )
-    assert "Report only" in output
+    assert "1 warning" in output
+    assert "1 over-limit file" in output
+
+
+@pytest.mark.parametrize("bad_size", [None, "1024", True])
+def test_malformed_media_size_reports_a_clean_error(
+    tmp_path: Path, capsys, bad_size: object
+) -> None:
+    repo = _repo(tmp_path)
+    manifest_path = repo / "scripts/gallery/media-manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["tiles"]["a"]["webp"]["bytes"] = bad_size
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    _commit(repo, "break media size", 22)
+
+    assert stale.main(["--repo-root", str(repo)]) == 2
+    error = capsys.readouterr().err
+    assert "ERROR:" in error
+    assert "non-integer byte count" in error
 
 
 def test_bad_rows_are_reported_unknown_without_hiding_other_tiles(
     tmp_path: Path, capsys
 ) -> None:
     repo = _repo(tmp_path)
-    (repo / "docs/images/readme/gallery/zzz.webp").write_text("unknown still\n")
-    (repo / "docs/images/readme/gallery/zzz.webm").write_text("unknown video\n")
+    # Published media for a demo the gallery manifest does not describe.
+    _write_media_manifest(
+        repo / "scripts/gallery/media-manifest.json", demos=("a", "b", "zzz")
+    )
     _commit(repo, "add unmatched media", 22)
 
     assert stale.main(["--repo-root", str(repo)]) == 0
     output = capsys.readouterr().out
     assert (
-        "UNKNOWN zzz: committed tile 'zzz' has no manifest entry; "
-        "media: zzz.webm 0.00 MiB, zzz.webp 0.00 MiB" in output
+        "UNKNOWN zzz: published tile 'zzz' has no manifest entry; "
+        "media: zzzw0000000000000.webm 0.00 MiB" in output
     )
     assert "CURRENT a" in output
     assert "CURRENT b" in output
@@ -580,10 +667,9 @@ def test_bad_rows_are_reported_unknown_without_hiding_other_tiles(
 def test_uncommitted_demo_script_is_an_unknown_row(tmp_path: Path, capsys) -> None:
     repo = _repo(tmp_path)
     _write_manifest(repo, include_c=True)
-    for suffix in ("webp", "webm"):
-        (repo / f"docs/images/readme/gallery/c.{suffix}").write_text(
-            f"tile c.{suffix}\n"
-        )
+    _write_media_manifest(
+        repo / "scripts/gallery/media-manifest.json", demos=("a", "b", "c")
+    )
     _commit(repo, "add c manifest and media", 22)
     (repo / "packages/luxar/src/luxar/demos/demo_c.py").write_text("# uncommitted\n")
 

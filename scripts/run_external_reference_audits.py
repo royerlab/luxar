@@ -61,6 +61,7 @@ AUDITS = (
         ("make", "check-zenodo-live"),
         required_env=("ZENODO_TOKEN",),
     ),
+    Audit("Hosted gallery media", ("make", "check-gallery-media")),
 )
 MAX_SUMMARY_OUTPUT_CHARS = 20_000
 REPO_ROOT = Path(__file__).resolve().parents[1]
