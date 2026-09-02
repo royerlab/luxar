@@ -27,6 +27,7 @@ GLOBAL_INPUT_PATHSPECS = {
     "dataset generator": ("scripts/gallery/generate_gallery_datasets.py",),
     "gallery capture": (
         "packages/luxar-viewer/src/tests/screenshots/generate-gallery.spec.ts",
+        "packages/luxar-viewer/src/tests/screenshots/gallery-timelapse-settle.ts",
         "packages/luxar-viewer/src/tests/screenshots/orbit-axis.ts",
         "packages/luxar-viewer/playwright.gallery.config.ts",
     ),
