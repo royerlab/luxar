@@ -44,15 +44,21 @@ def test_public_attributions_keep_required_provenance_resolvable() -> None:
     # et al., Nature Physics 16 (2020). We had cited his first-author Current
     # Biology 2019 paper on the same organ; he prefers this one, and it is his
     # data. He is second author here, so the text must NOT claim a first-author
-    # role -- it says "the data author's".
+    # role -- it says he co-authored the paper.
     assert "Nature Physics 16, 949-957 (2020)" in neuromast
     assert "doi:10.1038/s41567-020-0894-9" in neuromast
-    assert "the data author's" in neuromast
+    assert "co-authored by the data author" in neuromast
     assert "Jacobo et al. (2019)" not in neuromast
+    assert "10.1016/j.cub.2019.08.060" not in neuromast
     # The substantive invariant, not the citation string: this imaging is
     # UNPUBLISHED, so the attribution must never let the cited paper read as the
     # source of the data.
     assert "unpublished" in neuromast
+
+    readme = (SCRIPT.parents[1] / "README.md").read_text(encoding="utf-8")
+    neuromast_credit = readme.split("- **Zebrafish Neuromast**", 1)[1].split("\n", 1)[0]
+    assert "doi:10.1038/s41567-020-0894-9" in neuromast_credit
+    assert "10.1016/j.cub.2019.08.060" not in neuromast_credit
 
 
 def test_census_attribution_uses_generator_release_default() -> None:

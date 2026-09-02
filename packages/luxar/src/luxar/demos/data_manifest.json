@@ -499,7 +499,7 @@
       "record": "cc-by",
       "license": "cc-by-4.0",
       "source": "Neuromast 2-channel light-sheet timelapse (iSIM)",
-      "attribution": "Adrian Jacobo (CZ Biohub SF); used with permission (CC BY 4.0). The imaging itself is unpublished; for the biology of this organ see the data author's Erzberger, A., Jacobo, A., Dasgupta, A. & Hudspeth, A. J. Mechanochemical symmetry breaking during morphogenesis of lateral-line sensory organs. Nature Physics 16, 949-957 (2020). doi:10.1038/s41567-020-0894-9.",
+      "attribution": "Adrian Jacobo (CZ Biohub SF); used with permission (CC BY 4.0). The imaging itself is unpublished; for the biology of this organ see Erzberger et al. (2020), co-authored by the data author: Erzberger, A., Jacobo, A., Dasgupta, A. & Hudspeth, A. J. Mechanochemical symmetry breaking during morphogenesis of lateral-line sensory organs. Nature Physics 16, 949-957 (2020). doi:10.1038/s41567-020-0894-9.",
       "dir": "gsplats_4d_neuromast_2ch",
       "files": [
         {

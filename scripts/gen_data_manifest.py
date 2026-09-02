@@ -443,16 +443,18 @@ DATASETS: dict[str, dict] = {
         attribution=(
             "Adrian Jacobo (CZ Biohub SF); used with permission (CC BY 4.0). "
             "The imaging itself is unpublished; for the biology of this organ "
-            "see the data author's Erzberger, A., Jacobo, A., Dasgupta, A. & "
-            "Hudspeth, A. J. Mechanochemical symmetry breaking during "
-            "morphogenesis of lateral-line sensory organs. Nature Physics 16, "
-            "949-957 (2020). doi:10.1038/s41567-020-0894-9."
+            "see Erzberger et al. (2020), co-authored by the data author: "
+            "Erzberger, A., Jacobo, A., Dasgupta, A. & Hudspeth, A. J. "
+            "Mechanochemical symmetry breaking during morphogenesis of "
+            "lateral-line sensory organs. Nature Physics 16, 949-957 (2020). "
+            "doi:10.1038/s41567-020-0894-9."
         ),
         # THE AUTHOR'S OWN CHOICE of reference, 2026-09-02. We had cited his
         # first-author Current Biology 29, 3579-3587.e7 (2019) on the same organ;
         # he asked for the Nature Physics paper instead. He is second author
-        # there, so the wording says "the data author's" rather than naming a
+        # there, so the wording says he co-authored it rather than naming a
         # first-author role. It is his data, so it is his call.
+        #
         # Permission CONFIRMED by the author 2026-08-12; both channels uploaded to
         # the cc-by record and pinned below (md5 verified against Zenodo). The
         # record is still a DRAFT, so RECORDS["cc-by"] carries its id but
