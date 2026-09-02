@@ -1622,6 +1622,43 @@ def test_refresh_preserves_supplied_metadata_absent_from_a_successful_read(
     assert entry["source_bytes"] == 838_860_800
 
 
+def test_refresh_preserves_source_scored_quality_absent_from_same_archive_read(
+    gen: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    write_frame: _FrameWriter,
+) -> None:
+    key = "ds/a.gsplats.zarr.zip"
+    archive = tmp_path / "a.gsplats.zarr.zip"
+    write_frame(archive, psnr=None, source_bytes=None)
+    digest = gen._sha256_of(archive)
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(
+        gen,
+        "load_characteristics",
+        lambda: {
+            key: {
+                "measured_sha256": digest,
+                "psnr_db": [24.7, 26.5],
+                "foreground_psnr_db": [18.3, 20.2],
+                "foreground_fraction": 0.2033,
+                "quality_caveat": "reader-facing qualification",
+            }
+        },
+    )
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter((archive,)))
+
+    gen.refresh_characteristics(_fake_manifest([_entry(archive.name, digest)]))
+
+    payload = json.loads((tmp_path / "chars.json").read_text())
+    entry = payload["archives"][key]
+    assert entry["measured_sha256"] == digest
+    assert entry["psnr_db"] == [24.7, 26.5]
+    assert entry["foreground_psnr_db"] == [18.3, 20.2]
+    assert entry["foreground_fraction"] == 0.2033
+    assert "qualifies a published quality figure" in payload["description"]
+
+
 def test_refresh_discards_supplied_metadata_from_different_archive_bytes(
     gen: Any,
     tmp_path: Path,
@@ -1639,6 +1676,9 @@ def test_refresh_discards_supplied_metadata_from_different_archive_bytes(
         lambda: {
             key: {
                 "measured_sha256": "0" * 64,
+                "psnr_db": [24.7, 26.5],
+                "foreground_psnr_db": [18.3, 20.2],
+                "foreground_fraction": 0.2033,
                 "source_shape": [100, 64, 256, 256],
                 "source_dtype": "uint16",
                 "source_bytes": 838_860_800,
@@ -1651,6 +1691,9 @@ def test_refresh_discards_supplied_metadata_from_different_archive_bytes(
 
     entry = json.loads((tmp_path / "chars.json").read_text())["archives"][key]
     assert entry["measured_sha256"] == digest
+    assert entry["psnr_db"] is None
+    assert entry["foreground_psnr_db"] is None
+    assert entry["foreground_fraction"] is None
     assert entry["source_shape"] is None
     assert entry["source_dtype"] is None
     assert entry["source_bytes"] is None
@@ -1675,6 +1718,7 @@ def test_refresh_prefers_measured_metadata_over_supplied_metadata(
                 "measured_sha256": digest,
                 "quality_note": "internal provenance",
                 "quality_caveat": "reader-facing caveat",
+                "psnr_db": 12.0,
                 "source_bytes": 838_860_800,
             }
         },
@@ -1686,6 +1730,7 @@ def test_refresh_prefers_measured_metadata_over_supplied_metadata(
     entry = json.loads((tmp_path / "chars.json").read_text())["archives"][key]
     assert entry["quality_note"] == "internal provenance"
     assert entry["quality_caveat"] == "reader-facing caveat"
+    assert entry["psnr_db"] == 40.0
     assert entry["source_bytes"] == 1_000_000
 
 
