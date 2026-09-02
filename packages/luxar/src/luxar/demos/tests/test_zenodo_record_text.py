@@ -1670,6 +1670,10 @@ def test_refresh_description_matches_the_committed_sidecar(
     committed = json.loads(gen.CHARACTERISTICS.read_text())
     committed_description = committed["description"]
     assert list(committed["archives"]) == sorted(committed["archives"])
+    for info in committed["archives"].values():
+        keys = list(info)
+        if "quality_note" in info and "quality_caveat" in info:
+            assert keys.index("quality_note") < keys.index("quality_caveat")
     monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
     monkeypatch.setattr(gen, "load_characteristics", lambda: {})
 
