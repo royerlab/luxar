@@ -474,9 +474,9 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         # alias as of 2.14, so `no-untyped-call` fires under one and not the
         # other — and both are inside the supported `torch>=2.2,<3.0` range.
         # `unused-ignore` keeps the comment legal on the torch where the first
-        # code does not fire. Same reasoning applies to the other two
-        # `Function.apply` sites (metal/gsplat_model_metal.py,
-        # rendering/volume_rendering.py), which carry the bare two-code ignore.
+        # code does not fire. The other two `Function.apply` sites
+        # (metal/gsplat_model_metal.py, gsplats/rendering/volume_rendering.py)
+        # carry the same ignore and point back here.
         output: torch.Tensor = CUDASplatFunction.apply(  # type: ignore[no-untyped-call, unused-ignore]
             centers,
             Ls,

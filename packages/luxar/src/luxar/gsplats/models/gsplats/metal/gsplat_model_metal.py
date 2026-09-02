@@ -285,6 +285,8 @@ class GaussianSplatModelMetal(GaussianSplatModel):
     def forward(self) -> torch.Tensor:
         centers, Ls, amps = self.current_params()
         if self._uses_custom_metal:
+            # For why `unused-ignore` is listed, see the note in
+            # ../cuda/gsplat_model_cuda.py (torch-version-dependent typing).
             return cast(
                 torch.Tensor,
                 MetalSplatFunction.apply(  # type: ignore[no-untyped-call, unused-ignore]

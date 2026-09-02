@@ -104,6 +104,8 @@ def render_to_volume_tensor(
 
             if CUDA_BACKEND_AVAILABLE:
                 with torch.no_grad():
+                    # For why `unused-ignore` is listed, see the note in
+                    # models/gsplats/cuda/gsplat_model_cuda.py.
                     output: torch.Tensor = CUDASplatFunction.apply(  # type: ignore[no-untyped-call, unused-ignore]
                         centers_t,
                         Ls_t,
