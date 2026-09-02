@@ -43,7 +43,12 @@ docs/_build/
 docs/_static/
 docs/_templates/
 # Documentation builds
-downloads/
+# Anchored: an unanchored `downloads/` matches at ANY depth, which silently
+# swallowed packages/luxar/src/luxar/demos/_support/downloads/. Git kept
+# tracking those files, so nothing looked wrong — but hatchling honours
+# .gitignore when selecting wheel contents, so the subpackage was dropped
+# from every built wheel and `luxar --version` died on a clean install.
+/downloads/
 .DS_Store
 *.egg
 *.egg-info/
