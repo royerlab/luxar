@@ -1,8 +1,6 @@
 docs/images/readme/*.gif filter=lfs diff=lfs merge=lfs -text
 docs/images/readme/*.webp filter=lfs diff=lfs merge=lfs -text
 docs/images/readme/*.png filter=lfs diff=lfs merge=lfs -text
-docs/images/readme/gallery/*.webp filter=lfs diff=lfs merge=lfs -text
-docs/images/readme/gallery/*.webm filter=lfs diff=lfs merge=lfs -text
 docs/images/docs/*.png filter=lfs diff=lfs merge=lfs -text
 docs/images/issues/*.jpg filter=lfs diff=lfs merge=lfs -text
 packages/luxar/src/luxar/demos/data/**/*.zip filter=lfs diff=lfs merge=lfs -text

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Report committed README gallery tile staleness and media sizes."""
+"""Report published README gallery tile staleness and media sizes."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ SHADING_PATHSPECS = (
     f"{SHADING_PATH.as_posix()}/*.py",
     f":(exclude){SHADING_PATH.as_posix()}/tests/**",
 )
-TILES_DIR = Path("docs/images/readme/gallery")
+MEDIA_MANIFEST_PATH = Path("scripts/gallery/media-manifest.json")
 GLOBAL_INPUT_PATHSPECS = {
     "dataset generator": ("scripts/gallery/generate_gallery_datasets.py",),
     "gallery capture": (
@@ -40,11 +40,8 @@ MEBIBYTE = 1024 * 1024
 GALLERY_MEDIA_WARNING_BYTES = 20 * MEBIBYTE
 GALLERY_MEDIA_LIMIT_BYTES = 25 * MEBIBYTE
 LARGEST_MEDIA_COUNT = 5
-MAX_LFS_POINTER_BYTES = 1024
 
 _BLAME_HEADER = re.compile(r"^([0-9a-f]+) \d+ \d+(?: \d+)?$")
-_LFS_POINTER_HEADER = b"version https://git-lfs.github.com/spec/v1\n"
-_LFS_POINTER_SIZE = re.compile(rb"^size ([0-9]+)$", re.MULTILINE)
 
 
 class StalenessError(RuntimeError):
@@ -65,7 +62,7 @@ class LineRange:
 
 @dataclass(frozen=True)
 class GalleryMedia:
-    path: Path
+    key: str
     size_bytes: int
 
 
@@ -141,6 +138,65 @@ def manifest_entry_line_ranges(text: str) -> dict[str, LineRange]:
     return ranges
 
 
+def _skip_json_whitespace(text: str, cursor: int) -> int:
+    while cursor < len(text) and text[cursor].isspace():
+        cursor += 1
+    return cursor
+
+
+def _decode_media_manifest_entry(
+    text: str, cursor: int, decoder: json.JSONDecoder
+) -> tuple[str, int]:
+    demo_id, consumed = decoder.raw_decode(text[cursor:])
+    if not isinstance(demo_id, str):
+        raise StalenessError("every gallery media manifest tile key must be a string")
+    cursor = _skip_json_whitespace(text, cursor + consumed)
+    if cursor >= len(text) or text[cursor] != ":":
+        raise StalenessError(
+            f"gallery media manifest tile {demo_id!r} has no object value"
+        )
+    cursor = _skip_json_whitespace(text, cursor + 1)
+    entry, consumed = decoder.raw_decode(text[cursor:])
+    if not isinstance(entry, dict):
+        raise StalenessError(
+            f"gallery media manifest tile {demo_id!r} is not an object"
+        )
+    return demo_id, cursor + consumed
+
+
+def media_manifest_entry_line_ranges(text: str) -> dict[str, LineRange]:
+    """Locate each top-level demo entry in the media manifest ``tiles`` object."""
+    key = re.search(r'"tiles"\s*:', text)
+    if key is None:
+        raise StalenessError("gallery media manifest has no 'tiles' object")
+    cursor = text.find("{", key.end())
+    if cursor < 0:
+        raise StalenessError("gallery media manifest 'tiles' value is not an object")
+    cursor += 1
+
+    decoder = json.JSONDecoder()
+    ranges: dict[str, LineRange] = {}
+    while True:
+        while cursor < len(text) and (text[cursor].isspace() or text[cursor] == ","):
+            cursor += 1
+        if cursor >= len(text) or text[cursor] == "}":
+            break
+        start = cursor
+        demo_id, cursor = _decode_media_manifest_entry(text, cursor, decoder)
+        if demo_id in ranges:
+            raise StalenessError(f"duplicate gallery media manifest id: {demo_id}")
+        start_line = text.count("\n", 0, start) + 1
+        stop_line = text.count("\n", 0, cursor) + 1
+        closing_line_start = text.rfind("\n", 0, cursor - 1) + 1
+        if text[closing_line_start:cursor].strip() == "}":
+            stop_line -= 1
+        ranges[demo_id] = LineRange(
+            start=start_line,
+            stop=max(start_line, stop_line),
+        )
+    return ranges
+
+
 def imports_luxar_shading(source: str) -> bool:
     """Return whether a demo directly imports the public shading package."""
     tree = ast.parse(source)
@@ -178,7 +234,7 @@ def direct_demo_helper_modules(source: str) -> tuple[str, ...]:
 
 
 class GalleryHistory:
-    """Read the narrow Git history inputs that can invalidate committed gallery tiles."""
+    """Read the narrow Git history inputs that can invalidate published gallery tiles."""
 
     def __init__(self, repo_root: Path) -> None:
         self.repo_root = repo_root.resolve()
@@ -195,23 +251,6 @@ class GalleryHistory:
         except (OSError, subprocess.CalledProcessError) as exc:
             detail = (
                 exc.stderr.strip()
-                if isinstance(exc, subprocess.CalledProcessError)
-                else str(exc)
-            )
-            raise StalenessError(f"git {' '.join(args)} failed: {detail}") from exc
-
-    def _git_bytes(self, *args: str, input_bytes: bytes | None = None) -> bytes:
-        try:
-            return subprocess.run(
-                ["git", *args],
-                cwd=self.repo_root,
-                check=True,
-                capture_output=True,
-                input=input_bytes,
-            ).stdout
-        except (OSError, subprocess.CalledProcessError) as exc:
-            detail = (
-                exc.stderr.decode(errors="replace").strip()
                 if isinstance(exc, subprocess.CalledProcessError)
                 else str(exc)
             )
@@ -259,14 +298,14 @@ class GalleryHistory:
     def _last_commit(self, path: Path) -> CommitStamp:
         return self._last_commit_for_pathspecs(path.as_posix())
 
-    def _manifest_entry_commit(self, line_range: LineRange) -> CommitStamp:
+    def _entry_commit(self, path: Path, line_range: LineRange) -> CommitStamp:
         output = self._git(
             "blame",
             "--line-porcelain",
             f"-L{line_range.start},{line_range.stop}",
             "HEAD",
             "--",
-            MANIFEST_PATH.as_posix(),
+            path.as_posix(),
         )
         stamps: list[CommitStamp] = []
         current_sha: str | None = None
@@ -284,7 +323,7 @@ class GalleryHistory:
                 )
         if not stamps:
             raise StalenessError(
-                f"no blame history for manifest lines {line_range.start}-{line_range.stop}"
+                f"no blame history for {path} lines {line_range.start}-{line_range.stop}"
             )
         return max(stamps, key=lambda stamp: stamp.committed_at)
 
@@ -294,97 +333,48 @@ class GalleryHistory:
             return None
         return self._git("show", f"HEAD:{path.as_posix()}")
 
-    def _small_blob_contents(self, object_ids: Sequence[str]) -> dict[str, bytes]:
-        unique_ids = tuple(dict.fromkeys(object_ids))
-        if not unique_ids:
-            return {}
-        output = self._git_bytes(
-            "cat-file",
-            "--batch",
-            input_bytes=("\n".join(unique_ids) + "\n").encode(),
-        )
-        blobs: dict[str, bytes] = {}
-        cursor = 0
-        for expected_id in unique_ids:
-            header_end = output.find(b"\n", cursor)
-            if header_end < 0:
-                raise StalenessError("truncated git cat-file batch header")
-            header = output[cursor:header_end].split()
-            if len(header) == 2 and header[1] == b"missing":
-                raise StalenessError(f"Git object is unavailable: {expected_id}")
-            if len(header) != 3:
+    def _published_tile_media(
+        self, text: str
+    ) -> list[tuple[str, tuple[GalleryMedia, ...]]]:
+        """Tiles as described by the committed media manifest."""
+        try:
+            manifest = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise StalenessError(
+                f"{MEDIA_MANIFEST_PATH} is not valid JSON: {exc}"
+            ) from exc
+        tiles = manifest.get("tiles") or {}
+        if not tiles:
+            raise StalenessError("the gallery media manifest describes no tiles")
+        by_demo: list[tuple[str, tuple[GalleryMedia, ...]]] = []
+        for demo_id in sorted(tiles):
+            entries = tiles[demo_id]
+            if not isinstance(entries, dict):
                 raise StalenessError(
-                    f"unexpected git cat-file batch header for {expected_id}"
+                    f"gallery media manifest tile {demo_id!r} is not an object"
                 )
-            object_id, object_type, size_text = header
-            blob_size = int(size_text)
-            cursor = header_end + 1
-            blob = output[cursor : cursor + blob_size]
-            cursor += blob_size
-            if output[cursor : cursor + 1] != b"\n":
-                raise StalenessError("truncated git cat-file batch object")
-            cursor += 1
-            decoded_id = object_id.decode()
-            if decoded_id != expected_id or object_type != b"blob":
-                raise StalenessError(
-                    f"unexpected git cat-file batch object for {expected_id}"
-                )
-            blobs[decoded_id] = blob
-        return blobs
-
-    def _media_size(
-        self,
-        object_id: str,
-        blob_size: int,
-        small_blobs: dict[str, bytes],
-    ) -> int:
-        blob = small_blobs.get(object_id)
-        if blob is None:
-            return blob_size
-        if not blob.startswith(_LFS_POINTER_HEADER):
-            return blob_size
-        match = _LFS_POINTER_SIZE.search(blob)
-        if match is None:
-            raise StalenessError(f"invalid Git LFS pointer object: {object_id}")
-        return int(match.group(1))
-
-    def _tracked_tile_media(self) -> list[tuple[str, tuple[GalleryMedia, ...]]]:
-        output = self._git("ls-tree", "-r", "-l", "HEAD", "--", TILES_DIR.as_posix())
-        entries: list[tuple[Path, str, int]] = []
-        for line in output.splitlines():
-            metadata, path_text = line.split("\t", 1)
-            _, object_type, object_id, size_text = metadata.split()
-            path = Path(path_text)
-            if object_type == "blob" and path.suffix in {".webp", ".webm"}:
-                if not size_text.isdigit():
+            parsed_media = []
+            for entry in entries.values():
+                if not isinstance(entry, dict):
                     raise StalenessError(
-                        f"Git object is unavailable: {object_id} ({path})"
+                        f"gallery media manifest tile {demo_id!r} has a non-object variant"
                     )
-                entries.append((path, object_id, int(size_text)))
-        small_blobs = self._small_blob_contents(
-            [
-                object_id
-                for _, object_id, blob_size in entries
-                if blob_size <= MAX_LFS_POINTER_BYTES
-            ]
-        )
-        media: list[GalleryMedia] = []
-        for path, object_id, blob_size in entries:
-            media.append(
-                GalleryMedia(
-                    path=path,
-                    size_bytes=self._media_size(object_id, blob_size, small_blobs),
-                )
-            )
-        if not media:
-            raise StalenessError("no committed README gallery tiles found")
-        by_demo: dict[str, list[GalleryMedia]] = {}
-        for item in media:
-            by_demo.setdefault(item.path.stem, []).append(item)
-        return [
-            (demo_id, tuple(sorted(items, key=lambda item: item.path)))
-            for demo_id, items in sorted(by_demo.items())
-        ]
+                key = entry.get("key")
+                size_bytes = entry.get("bytes")
+                if not isinstance(key, str):
+                    raise StalenessError(
+                        f"gallery media manifest tile {demo_id!r} has a non-string key"
+                    )
+                if not isinstance(size_bytes, int) or isinstance(size_bytes, bool):
+                    raise StalenessError(
+                        f"gallery media manifest tile {demo_id!r} key {key!r} has "
+                        "a non-integer byte count"
+                    )
+                parsed_media.append(GalleryMedia(key=key, size_bytes=size_bytes))
+            media = tuple(sorted(parsed_media, key=lambda item: item.key))
+            if media:
+                by_demo.append((demo_id, media))
+        return by_demo
 
     def _demo_code_inputs(
         self,
@@ -427,7 +417,14 @@ class GalleryHistory:
         }
         shading_input = self._last_commit_for_pathspecs(*SHADING_PATHSPECS)
 
-        tracked_media = self._tracked_tile_media()
+        media_manifest_text = self._head_text(MEDIA_MANIFEST_PATH)
+        if media_manifest_text is None:
+            raise StalenessError(
+                f"{MEDIA_MANIFEST_PATH} is not committed — the gallery media manifest "
+                "is what records the published tiles"
+            )
+        media_ranges = media_manifest_entry_line_ranges(media_manifest_text)
+        tracked_media = self._published_tile_media(media_manifest_text)
         statuses: list[TileStatus | UnknownStatus] = []
         for demo_id, media in tracked_media:
             entry: dict[str, Any] | None = entries.get(demo_id)
@@ -435,7 +432,7 @@ class GalleryHistory:
                 statuses.append(
                     UnknownStatus(
                         demo_id=demo_id,
-                        reason=f"committed tile {demo_id!r} has no manifest entry",
+                        reason=f"published tile {demo_id!r} has no manifest entry",
                         media=media,
                     )
                 )
@@ -449,11 +446,10 @@ class GalleryHistory:
                         shading_input,
                     )
                 )
-                inputs["manifest entry"] = self._manifest_entry_commit(ranges[demo_id])
-                tile = min(
-                    (self._last_commit(item.path) for item in media),
-                    key=lambda stamp: stamp.committed_at,
+                inputs["manifest entry"] = self._entry_commit(
+                    MANIFEST_PATH, ranges[demo_id]
                 )
+                tile = self._entry_commit(MEDIA_MANIFEST_PATH, media_ranges[demo_id])
             except (SyntaxError, StalenessError) as exc:
                 statuses.append(
                     UnknownStatus(demo_id=demo_id, reason=str(exc), media=media)
@@ -531,7 +527,7 @@ def _format_tile_media(media: tuple[GalleryMedia, ...]) -> str:
         flag = _media_flag(item)
         exact_size = f" ({item.size_bytes:,} bytes)" if flag else ""
         details.append(
-            f"{item.path.name} {_format_media_size(item.size_bytes)}{exact_size}{flag}"
+            f"{item.key} {_format_media_size(item.size_bytes)}{exact_size}{flag}"
         )
     return ", ".join(details)
 
@@ -576,12 +572,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     print("Largest gallery media:")
     for item in sorted(
         report.media,
-        key=lambda media: (-media.size_bytes, media.path.name),
+        key=lambda media: (-media.size_bytes, media.key),
     )[:LARGEST_MEDIA_COUNT]:
         print(
             f"{_format_media_size(item.size_bytes):>11} "
             f"({item.size_bytes:,} bytes)  "
-            f"{item.path.name}{_media_flag(item)}"
+            f"{item.key}{_media_flag(item)}"
         )
     warning_count = sum(
         GALLERY_MEDIA_WARNING_BYTES <= item.size_bytes < GALLERY_MEDIA_LIMIT_BYTES

@@ -21,7 +21,7 @@ Three hostnames on the `luxarviewer.dev` zone, each serving a different thing:
 |---|---|---|
 | `luxarviewer.dev` | The viewer alone, at the root | Cloudflare Pages project `luxar-viewer` |
 | `demos.luxarviewer.dev` | The gallery page, its media, and its viewer | Cloudflare Pages project `luxar-demos` |
-| `data.luxarviewer.dev` | The `.luxar.zarr` stores | Cloudflare R2 bucket `luxar-demos`, **direct** |
+| `data.luxarviewer.dev` | The `.luxar.zarr` stores and content-addressed root-README media | Cloudflare R2 bucket `luxar-demos`, **direct** |
 
 **Neither Pages project has a `functions/` directory or an R2 binding.** Both
 are pure static assets. This is the single most important property of the
@@ -36,8 +36,11 @@ Instead:
   custom domain that bypasses Workers entirely. The gallery emits absolute
   `?src=https://data.luxarviewer.dev/...` URLs for this reason. (Requires CORS —
   §4.3.)
-- **Gallery media** (`/media/*`, ~180 files, ~485 MiB) are **deployed files**,
-  served by Pages' CDN for free and unmetered.
+- **Demo-site gallery media** (`demos.luxarviewer.dev/media/*`, ~180 files,
+  ~485 MiB) are **deployed files**, served by Pages' CDN for free and unmetered.
+- **Root-README media** (`data.luxarviewer.dev/media/<sha256-prefix>.<ext>`) are
+  direct R2 objects. Their content-addressed keys are immutable and are recorded
+  in `scripts/gallery/media-manifest.json`.
 
 The historical marker header `x-luxar-fn: r2` is how to confirm no Worker is in
 the path. It should now appear on *nothing*:
@@ -1117,16 +1120,17 @@ a mistake persists — a CORS or header change is invisible to already-cached
 objects for the full TTL (§3.2). One day is a reasonable compromise; anything
 longer wants a purge in the change procedure.
 
-### 4.2 Media has no such protection
+### 4.2 Media cache safety
 
-`/media/*` URLs are **not** dated. They are currently Pages static assets, which
-is safe because a deploy invalidates them (§3.1). If media ever moves onto
-`data.luxarviewer.dev` or any other host behind the long-TTL cache rule, it
-needs a short TTL or hashed filenames *first*, otherwise a re-captured still is
-unfixable without a full purge.
+Demo-site `/media/*` URLs are **not** dated. They are Pages static assets, which
+is safe because a deploy invalidates them (§3.1). Root-README media also live
+under `/media/*`, but on `data.luxarviewer.dev`; those objects use SHA-256-derived
+filenames, so the long-TTL data-host cache rule is safe by construction. Any
+other media moved behind that rule needs a short TTL or hashed filenames
+*first*, otherwise a re-captured still is unfixable without a full purge.
 
-Two Pages limits bound this set: **25 MiB per file** and **20,000 files**. The
-count is comfortable (180), but the largest clip sits at **24.87 MiB** —
+Two Pages limits bound the Pages set: **25 MiB per file** and **20,000 files**.
+The count is comfortable (180), but the largest clip sits at **24.87 MiB** —
 0.13 MiB under the cap. A single oversized file fails the whole deployment, so
 the gallery harness checks every PNG, WebP and WebM immediately after it is
 written. It warns at 20 MiB, fails at the 25 MiB boundary, and prints the total
