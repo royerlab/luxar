@@ -20,8 +20,8 @@
 #
 #   1. ACCOUNT + ORG (once):
 #      - Create an npm account (npmjs.com), enable 2FA (Account -> Two-Factor Auth).
-#      - Create the free `royerlab` org (Add Organization -> Free plan). The scope
-#        must exist before any `@royerlab/*` publish.
+#      - Create the free `luxar` org (Add Organization -> Free plan). The scope
+#        must exist before any `@luxar/*` publish.
 #
 #   2. BOOTSTRAP THE FIRST PUBLISH (token, once — npm needs the package to exist
 #      before a trusted publisher can be attached). Easiest locally:

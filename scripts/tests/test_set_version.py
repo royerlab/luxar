@@ -1,9 +1,8 @@
-"""Tests for ``scripts/set_version.py`` and the version-consistency gate.
+"""Tests for release version stamping, consistency, and package metadata.
 
-These two scripts are the whole of the release version mechanism, and they run
-exactly once per release — so a defect in either surfaces on launch day, in
-front of everyone, with no earlier signal. That asymmetry is why they are
-tested here rather than trusted.
+These release mechanisms run exactly once per release — so a defect surfaces
+on launch day, in front of everyone, with no earlier signal. That asymmetry is
+why they are tested here rather than trusted.
 
 The gate tests deliberately assert that it *fails*: a consistency check that
 cannot go red is indistinguishable from no check at all.
@@ -13,6 +12,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
 from types import ModuleType
 
@@ -23,6 +23,19 @@ REPO = Path(__file__).resolve().parents[2]
 SET_VERSION = REPO / "scripts/set_version.py"
 CHECK_VERSIONS = REPO / "scripts/check_version_consistency.py"
 RELEASE = REPO / "scripts/release.sh"
+
+
+def test_legacy_npm_package_name_is_absent_from_tracked_files() -> None:
+    legacy_name = "@royerlab" + "/luxar-viewer"
+    result = subprocess.run(
+        ["git", "grep", "-n", "-F", "--", legacy_name],
+        cwd=REPO,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1, result.stdout or result.stderr
 
 
 def _load(path: Path, name: str) -> ModuleType:
@@ -51,8 +64,7 @@ def _checkout(tmp_path: Path, version: str = "2026.06.05") -> dict[str, Path]:
     pkg_json = tmp_path / "package.json"
     semver = ".".join(str(int(p)) for p in version.split("."))
     pkg_json.write_text(
-        json.dumps({"name": "@luxar/viewer", "version": semver}, indent=2)
-        + "\n"
+        json.dumps({"name": "@luxar/viewer", "version": semver}, indent=2) + "\n"
     )
 
     citation = tmp_path / "CITATION.cff"
