@@ -70,6 +70,15 @@ def test_public_attributions_keep_required_provenance_resolvable() -> None:
     assert "10.1016/j.cub.2019.08.060" not in readme
     assert "Notch-mediated" not in readme
 
+    for dataset_name in (
+        "gsplats_4d_drosophila_embryogenesis",
+        "gsplats_3d_drosophila_gastrulation",
+    ):
+        droso = generator.DATASETS[dataset_name]["attribution"]
+        assert "used with permission (CC BY 4.0)" in droso
+        assert "The imaging itself is unpublished" in droso
+        assert "for the SiMView instrument see Royer et al." in droso
+
 
 def test_census_attribution_uses_generator_release_default() -> None:
     generator = _load_generator()

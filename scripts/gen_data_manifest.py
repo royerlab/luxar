@@ -136,15 +136,25 @@ RECORDS = {
     # cross-reference in both descriptions rather than by co-location — moving
     # the existing file would break its pins.
     #
-    # PUBLICATION GATE, beyond the standing never-publish rule: this record
-    # additionally waits on a conversation with Philipp J. Keller, whose imaging
-    # it is, and which as of 2026-08-26 had not happened. Loic confirmed that and
-    # chose the sequencing: upload to the draft, gate the publish. An upload here
-    # implies no consent to publish. Recorded in the repo on purpose — Zenodo's
-    # `notes` and `description` are both PUBLISHED metadata, so an internal
-    # process gate written there would ship with the record.
-    # The timelapse dataset below points at this record; publishing remains
-    # gated on the conversation above even after the archive is uploaded.
+    # PERMISSION: CLEARED 2026-09-02. Philipp J. Keller, whose imaging this is,
+    # approved our use of the data; Loic relayed the approval. Until then this
+    # record carried an extra publication gate beyond the standing
+    # never-publish-without-Loic rule because approval had not yet been obtained.
+    # Uploading to the draft while that conversation was pending implied no
+    # consent to publish. That gate is now lifted and only the standing rule
+    # remains: publication is Loic's manual step.
+    #
+    # The dated approval and former process gate stay here because Zenodo's
+    # `notes` and `description` are both PUBLISHED metadata. The reader-facing
+    # licence basis is stated in both dataset attributions below.
+    #
+    # PUBLICATION COORDINATION still matters: the live drafts contain hand-edited
+    # cross-references in both descriptions, and this record's `isPartOf` points
+    # at the cc-by record's reserved DOI. Publish both records together so neither
+    # description points at an unresolved reserved DOI. These cross-references
+    # and `isPartOf` are not emitted by gen_zenodo_records.py or checked by this
+    # generator's --check; re-pasting a generated description can silently drop
+    # them.
     "droso-timelapse": {
         "title": (
             "Drosophila melanogaster embryogenesis: a 500-timepoint "
@@ -582,10 +592,12 @@ DATASETS: dict[str, dict] = {
         license="cc-by-4.0",
         source="Drosophila His2Av::mRFP1 embryo, 500-timepoint SiMView light-sheet timelapse (Royer/Keller)",
         attribution=(
-            "Acquired in Philipp J. Keller's lab at HHMI Janelia Research Campus, where "
-            "L. A. Royer was then a postdoctoral fellow; the splat fits were "
-            "computed later at CZ Biohub SF. Royer et al., Nat. Biotechnol. 34, "
-            "1267-1278 (2016), doi:10.1038/nbt.3708 (CC BY 4.0)."
+            "Acquired in Philipp J. Keller's lab at HHMI Janelia Research "
+            "Campus, where L. A. Royer was then a postdoctoral fellow; used "
+            "with permission (CC BY 4.0). The splat fits were computed later "
+            "at CZ Biohub SF. The imaging itself is unpublished; for the "
+            "SiMView instrument see Royer et al., Nat. Biotechnol. 34, "
+            "1267-1278 (2016), doi:10.1038/nbt.3708."
         ),
         acquisition=dict(
             # A clean 1:1 denominator, unusually: the fit consumed the WHOLE
@@ -608,11 +620,15 @@ DATASETS: dict[str, dict] = {
         license="cc-by-4.0",
         source="Drosophila His2Av::mRFP1 embryo, SiMView light-sheet (Royer/Keller)",
         attribution=(
-            "Acquired in Philipp J. Keller's lab at HHMI Janelia Research Campus, where "
-            "L. A. Royer was then a postdoctoral fellow; the splat fits were "
-            "computed later at CZ Biohub SF. Royer et al., Nat. Biotechnol. 34, "
-            "1267-1278 (2016), doi:10.1038/nbt.3708 (CC BY 4.0)."
+            "Acquired in Philipp J. Keller's lab at HHMI Janelia Research "
+            "Campus, where L. A. Royer was then a postdoctoral fellow; used "
+            "with permission (CC BY 4.0). The splat fits were computed later "
+            "at CZ Biohub SF. The imaging itself is unpublished; for the "
+            "SiMView instrument see Royer et al., Nat. Biotechnol. 34, "
+            "1267-1278 (2016), doi:10.1038/nbt.3708."
         ),
+        # Permission CONFIRMED by Philipp J. Keller 2026-09-02; see the dated
+        # record-level note in RECORDS["droso-timelapse"].
     ),
     "gsplats_3d_h2afva_stack": dict(
         bucket="zenodo",
