@@ -2252,16 +2252,24 @@ def test_hosted_bundle_measurements_publish_pinned_ranges(gen: Any) -> None:
             400,
             [29.48, 39.77],
             [21.79, 38.15],
+            0.3802,
         ),
         "gsplats_nexrad_supercell/nexrad_supercell.gsplats.zarr.zip": (
             817_989,
             82,
             [43.26, 56.82],
             [32.02, 39.74],
+            0.0014,
         ),
     }
 
-    for key, (n_splats, frames, psnr, foreground_psnr) in expected.items():
+    for key, (
+        n_splats,
+        frames,
+        psnr,
+        foreground_psnr,
+        foreground_fraction,
+    ) in expected.items():
         dataset, filename = key.split("/", 1)
         spec = next(
             spec
@@ -2273,6 +2281,7 @@ def test_hosted_bundle_measurements_publish_pinned_ranges(gen: Any) -> None:
         assert info["frames"] == frames
         assert info["psnr_db"] == psnr
         assert info["foreground_psnr_db"] == foreground_psnr
+        assert info["foreground_fraction"] == foreground_fraction
         assert info["measured_from"] == "hosted"
         assert info["measured_sha256"] == gen._pinned_digest(spec)
         assert info["quality_quotable"] is None
@@ -2283,7 +2292,10 @@ def test_hosted_bundle_measurements_publish_pinned_ranges(gen: Any) -> None:
                 in info["quality_caveat"]
             )
             assert "high end is the near-empty early embryo" in info["quality_caveat"]
-            assert "foreground fraction is frame 0's 0.3802" in info["quality_caveat"]
+            assert (
+                f"foreground fraction is frame 0's {info['foreground_fraction']}"
+                in info["quality_caveat"]
+            )
 
 
 def test_h2afva_51tp_measurements_describe_the_pinned_flat_ladder(gen: Any) -> None:
