@@ -469,7 +469,9 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         # 5-17% regression across all configs. The C++ output_buffer + output_to_zero
         # infrastructure remains for potential future use in inference-only mode
         # (no autograd) or if PyTorch adds a way to opt out of this check.
-        output: torch.Tensor = CUDASplatFunction.apply(  # type: ignore[no-untyped-call]
+        # `Function.apply` is untyped in some torch releases and typed in others,
+        # so the ignore is needed in one env and unused in the next.
+        output: torch.Tensor = CUDASplatFunction.apply(  # type: ignore[no-untyped-call, unused-ignore]
             centers,
             Ls,
             amps,
