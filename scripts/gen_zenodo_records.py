@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate the Zenodo record descriptions from the manifest and the archives.
 
-The three demo records describe several dozen files between them, each with a
+The four demo records describe several dozen files between them, each with a
 splat count, a compression figure, a reconstruction quality and a licence. Typed
 by hand that drifts from the data within one refit, and a record is the one place
 where a stale number is published rather than merely wrong.
@@ -935,6 +935,55 @@ def _acquisition_line(entry: dict[str, Any], total_stored: Optional[int]) -> str
     )
 
 
+def _splat_table(rows: list[dict[str, Any]], *, quality: bool) -> str:
+    out = []
+    if quality:
+        out.append(
+            "\n| File | Splats | Size | Detail levels | PSNR (dB) | "
+            "Foreground PSNR (dB) | vs raw voxels |\n"
+            "|---|---:|---:|---|---:|---:|---:|\n"
+        )
+        for row in rows:
+            out.append(
+                f"| `{row['file']}` | {row['splats']} | {row['size']} | "
+                f"{row['topology']} | {row['psnr']} | {row['fg_psnr']} | "
+                f"{row['vs_raw']} |\n"
+            )
+    else:
+        out.append(
+            "\n| File | Splats | Size | Detail levels | vs raw voxels |\n"
+            "|---|---:|---:|---|---:|\n"
+        )
+        for row in rows:
+            out.append(
+                f"| `{row['file']}` | {row['splats']} | {row['size']} | "
+                f"{row['topology']} | {row['vs_raw']} |\n"
+            )
+    return "".join(out)
+
+
+def _splat_legends(*, quality: bool) -> str:
+    out = ["\n---\n"]
+    if quality:
+        out.append(
+            "\n**Reading the quality columns.** PSNR is measured over the "
+            "whole volume and foreground PSNR only over voxels above the "
+            "source's Otsu threshold. On sparse data — most light-sheet and "
+            "tomography — the global figure is largely a score for reproducing "
+            "empty space, and the foreground column is the one that says "
+            "whether the signal survived the fit. Both are reported; neither "
+            "alone is the answer.\n"
+        )
+    out.append(
+        "\n**Reading the compression column.** `vs raw voxels` compares the "
+        "archive against the source grid held as uncompressed samples. Where a "
+        "dataset's stored source covers the same data as its archives, the "
+        "ratio against that download is given above the table instead — a "
+        "smaller and more honest number, since the source is itself compressed.\n"
+    )
+    return "".join(out)
+
+
 def render_record(key: str, manifest: dict[str, Any]) -> str:
     record = manifest["records"][key]
     datasets = {
@@ -966,9 +1015,19 @@ def render_record(key: str, manifest: dict[str, Any]) -> str:
         "domain or CC0).\n"
     )
     chars = load_characteristics()
+    rows_by_dataset = {
+        name: _dataset_rows(name, entry, chars)
+        for name, entry in sorted(datasets.items())
+    }
+    quality_columns = any(
+        row["psnr"] != _ABSENT or row["fg_psnr"] != _ABSENT
+        for rows in rows_by_dataset.values()
+        for row in rows
+    )
+    has_splat_table = False
 
     for name, entry in sorted(datasets.items()):
-        rows = _dataset_rows(name, entry, chars)
+        rows = rows_by_dataset[name]
         variants = entry.get("variants") or {}
         total = (
             None
@@ -992,17 +1051,12 @@ def render_record(key: str, manifest: dict[str, Any]) -> str:
         # A fit whose archive is not readable here still belongs in the splat
         # table -- demoting it to the plain list would state the opposite.
         if any(row["is_gsplat"] or row["is_fit"] for row in rows):
-            out.append(
-                "\n| File | Splats | Size | Detail levels | PSNR (dB) | "
-                "Foreground PSNR (dB) | vs raw voxels |\n"
-                "|---|---:|---:|---|---:|---:|---:|\n"
-            )
-            for row in rows:
-                out.append(
-                    f"| `{row['file']}` | {row['splats']} | {row['size']} | "
-                    f"{row['topology']} | {row['psnr']} | {row['fg_psnr']} | "
-                    f"{row['vs_raw']} |\n"
-                )
+            has_splat_table = True
+            # Quality columns are a record-level choice. Two columns of dashes
+            # cannot be distinguished from figures that were not measurable or
+            # simply not reported, so the generated report follows the live
+            # records and omits them when the whole record is unscored.
+            out.append(_splat_table(rows, quality=quality_columns))
             # An em dash in a quality column means "not stated", which a reader
             # cannot distinguish from "not measurable" or from evasion. Where the
             # sidecar records a reason meant for publication, say it here rather
@@ -1015,21 +1069,8 @@ def render_record(key: str, manifest: dict[str, Any]) -> str:
             for row in rows:
                 out.append(f"| `{row['file']}` | {row['size']} |\n")
 
-    out.append(
-        "\n---\n\n**Reading the quality columns.** PSNR is measured over the "
-        "whole volume and foreground PSNR only over voxels above the source's "
-        "Otsu threshold. On sparse data — most light-sheet and tomography — the "
-        "global figure is largely a score for reproducing empty space, and the "
-        "foreground column is the one that says whether the signal survived the "
-        "fit. Both are reported; neither alone is the answer.\n"
-    )
-    out.append(
-        "\n**Reading the compression column.** `vs raw voxels` compares the "
-        "archive against the source grid held as uncompressed samples. Where a "
-        "dataset's stored source covers the same data as its archives, the "
-        "ratio against that download is given above the table instead — a "
-        "smaller and more honest number, since the source is itself compressed.\n"
-    )
+    if has_splat_table:
+        out.append(_splat_legends(quality=quality_columns))
     return "".join(out)
 
 

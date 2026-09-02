@@ -1,0 +1,98 @@
+<p>Precomputed demo datasets for
+<a href="https://github.com/royerlab/luxar">Luxar</a> whose upstream sources carry
+ShareAlike terms.</p>
+
+<h3>Why these are a separate record</h3>
+<p>ShareAlike propagates to derivative works. A Gaussian-splat fit of a CC BY-SA
+volume is a derivative of that volume, so it must itself be released under CC
+BY-SA 4.0. Keeping these files apart from the permissively licensed ones means a
+user who takes the other record does not unknowingly acquire a ShareAlike
+obligation.</p>
+
+<h3>How to use these files</h3>
+<p>Each file is a <code>.gsplats.zarr.zip</code> archive that the Luxar demo suite
+fetches on first run and caches under
+<code>~/.cache/luxar/&lt;dataset&gt;/</code>. To fetch one directly:</p>
+<pre>from luxar.demos import ensure_dataset
+paths = ensure_dataset("gsplats_opencell_map4") # downloads, verifies, returns paths</pre>
+<p>To open one in the viewer without writing code:</p>
+<pre>luxar gsplat view opencell_map4_ch0.gsplats.zarr.zip
+luxar demo # browse every demo that uses these files</pre>
+<p>The zebrafish timelapse is a single 4D node rather than a bundle of
+per-frame stores: one archive holding four coarse-to-fine levels, each
+progressively streamed.</p>
+<p>Every file is pinned by SHA-256 in
+<a href="https://github.com/royerlab/luxar/blob/main/packages/luxar/src/luxar/demos/data_manifest.json"><code>data_manifest.json</code></a>,
+and the fetch helper verifies the checksum before use; a mismatched download is
+quarantined rather than returned.</p>
+
+<h3>How the Gaussian-splat files were produced</h3>
+<p>Each source volume was fitted with the Luxar gsplat pipeline
+(<code>luxar gsplat fit</code>) on a GPU. These are lossy representations built
+for visualisation and interactive exploration; they are not a substitute for the
+source imagery in quantitative analysis.</p>
+<p><b>Choosing the splat count.</b> The number of Gaussians K was calibrated per
+dataset by Noise2Self blind-spot cross-validation (<code>luxar gsplat cal</code>),
+and then checked by refitting at the candidate count and scoring the
+reconstruction against the whole source volume. The second step is not a
+formality. The cross-validated estimate is computed over a five percent mask of
+held-out voxels, and on these datasets it disagreed with the direct measurement
+in both directions: for one dataset it favoured half the splat budget that
+measurement showed to be better, and for another it predicted a gain of about
+1.5 dB where refitting delivered under 0.3 dB. Where two candidate budgets fell
+within roughly a decibel of each other, the choice was made from renders of both
+at matched magnification, because at that margin the metric and the eye disagree.
+Additional Gaussians capture real structure and photon noise alike, and peak
+signal-to-noise ratio rewards the two equally.</p>
+
+<h3>Level of detail</h3>
+<p>These files carry level-of-detail structure so a viewer can show something
+immediately and refine it as the camera approaches, instead of waiting for a
+whole fit to arrive. The mechanism used here is:</p>
+<ul>
+<li><b>Progressive (additive) ladders.</b> A leaf is stored as an ordered series
+of chunks whose union is the complete fit, so any prefix is a valid, dimmer
+rendering of the whole object. Every file in this record carries one.</li>
+</ul>
+<p>Both datasets here are small enough to load whole, so neither carries the
+coarse replacement levels that the larger objects in the companion record use.</p>
+
+<h3>Reconstruction quality</h3>
+<p>Two figures are reported per file, and both are stamped inside the archive
+itself rather than only quoted here:</p>
+<ul>
+<li><b>PSNR</b> over the whole volume, in decibels.</li>
+<li><b>Foreground PSNR</b>, over only those voxels above an Otsu threshold of the
+source volume, with the fraction of voxels that threshold selects.</li>
+</ul>
+<p>The foreground figure is the honest one for sparse microscopy and astronomy
+data. Where a volume is mostly empty, a global PSNR is dominated by correctly
+reconstructed emptiness and can look excellent while the structure of interest is
+poorly represented. A low foreground figure is also not automatically a defect:
+on a noisy channel it partly measures photon noise that a sum of Gaussians
+declines to reproduce, which is desirable behaviour that this metric charges for.
+Where that applies it is noted against the dataset.</p>
+<p>To read the stamps from a downloaded file, so that nothing here has to be
+taken on trust:</p>
+<pre>luxar gsplat info &lt;file&gt;.gsplats.zarr.zip</pre>
+<p>Each archive also records the grid and element type of the volume it was
+fitted from, which is what makes the compression ratio quoted against it
+reproducible rather than asserted.</p>
+<p>The files in this record were computed between 2026-08-16 and 2026-08-24; each archive records its own build timestamp, readable with <code>luxar gsplat info</code>. The date is stated here
+rather than in the structured <code>dates</code> field because Zenodo stores a
+date range only when its start and end differ, and inventing a second date to
+satisfy that would misreport when the work was done.</p>
+
+<h3>Contents</h3>
+<table>
+<tbody><tr><th>file</th><th>size</th><th>elements</th><th>level of detail</th><th>PSNR / foreground (dB)</th></tr>
+<tr><td><code>opencell_map4_ch0.gsplats.zarr.zip</code></td><td>0.8 MB</td><td>59,609</td><td>4 ladder rungs</td><td>27.4 / 20.8</td></tr>
+<tr><td><code>opencell_map4_ch1.gsplats.zarr.zip</code></td><td>0.8 MB</td><td>59,478</td><td>4 ladder rungs</td><td>24.8 / 18.0</td></tr>
+<tr><td><code>zebrafish_4d.gsplats.zarr.zip</code></td><td>19.2 MB</td><td>1,270,233</td><td>4 coarse-to-fine levels, each progressively streamed</td><td>not scored</td></tr>
+</tbody>
+</table>
+<p>Every figure above was measured from the file this record holds. &ldquo;Elements&rdquo; is what a viewer draws at full detail: splats summed over the finest level of each part, or rows for a coordinate table. Foreground PSNR is restricted to signal voxels and is the number to judge a fit by &mdash; a global PSNR on a mostly-empty volume largely measures how well the fit reproduces empty space. A timelapse bundle is scored on one representative frame, not the whole series; &ldquo;not scored&rdquo; means no quality figure was recorded at fit time and none is claimed here.</p>
+<ul>
+<li><code>gsplats_opencell_map4</code> (1.5 MB, cc-by-sa-4.0). Source: OpenCell (Biohub) MAP4. Attribution: Cho, N. H. et al. OpenCell: Endogenous tagging for the cartography of human cellular organization. Science 375 (2022). CC BY-SA 4.0.</li>
+<li><code>gsplats_zebrafish</code> (19.2 MB, cc-by-sa-4.0). Source: Zenodo 1211599 (zebrafish embryo, confocal laser-scanning). Attribution: Aanstad, Pia. Time-lapse (4D) volumetric fluorescence microscopy image sequence of a living zebrafish embryo. Zenodo (2018). CC BY-SA 4.0.</li>
+</ul>

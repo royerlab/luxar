@@ -1,0 +1,51 @@
+<p>A whole zebrafish (<em>Danio rerio</em>) embryo imaged through early development on a SiMView-type multi-view light-sheet microscope, with nuclei labelled by a histone H2A variant fusion, fitted to 3D Gaussian splats per timepoint and merged into one streamable dataset for <a href="https://github.com/royerlab/luxar">Luxar</a>.</p>
+<h3>Acquisition</h3>
+<p>253 timepoints; each volume 407 x 2048 x 2048 voxels, multi-view fused and deconvolved. Voxels are anisotropic along the axial direction by a factor of four, and the published splats carry that correction already, so the embryo has its true proportions with no further scaling. Data: Royer lab, Chan Zuckerberg Biohub San Francisco (Zebrahub).</p>
+<h3>What is in this record</h3>
+<p>Two fits of the same acquisition are included. Neither carries substitutive detail levels any more: both hold their full-resolution splats with a progressive (streaming) ladder, so a viewer paints a coarse pass immediately and refines it as the rest arrives. The longer fit is additionally tiled in space, which lets a viewer fetch tiles independently.</p>
+<ul>
+<li><strong>51 timepoints</strong>, about 1.1 GB, as a single flat node. It holds 121,163,285 splats, roughly 2.38 million per timepoint, with a 12-rung progressive ladder for fast first paint. The substitutive levels the earlier build carried were removed: only the resident timepoint is ever committed, so coarser whole-object levels were never selected and cost 40% of the download for nothing. This is the lighter download and the one the Luxar demo fetches by default.</li>
+<li><strong>253 timepoints</strong>, the complete acquisition, about 5.9 GB, in 44 spatial tiles, each with its own progressive ladder. It holds 602,580,152 splats, roughly 2.38 million per timepoint. The four substitutive levels an earlier build carried (149.4M, 37.0M and 9.2M splats above the finest) were removed for the same reason as in the shorter fit, taking the download from 9.3 GB to 5.9 GB with the full-resolution content unchanged splat for splat.</li>
+</ul>
+<p>The shorter fit covers every fifth timepoint of the same acquisition, frames 0, 5, ... 250, so it follows the whole developmental period at one fifth of the temporal sampling. Its time axis is renumbered 0 to 50, while the full fit keeps the acquisition numbering 0 to 252, so frame 7 of the short fit corresponds to frame 35 of the long one. The shorter fit is a strided slice of the longer one rather than an independent fit, so on the frames they share the two agree splat for splat. An earlier pair of independent fits did differ, by about 2.50 million against 2.38 million splats per timepoint at the finest level; slicing also puts the shorter fit's time axis back on a regular grid, which the encoder stores exactly.</p>
+<pre>from luxar.demos import ensure_dataset
+ensure_dataset("h2afva") # 51 timepoints (default)
+ensure_dataset("h2afva", variant="253tp") # full timelapse</pre>
+<h3>How the splats were produced</h3>
+<p>Splat count was calibrated by Noise2Self blind-spot cross-validation (<code>luxar gsplat cal</code>) rather than picked by eye. That estimate is computed over a five percent mask of held-out voxels and is a guide rather than a verdict: on other datasets in this collection it has disagreed with a direct measurement of the finished fit in both directions, so a calibrated count is worth confirming against the reconstruction itself. Each timepoint was then fitted on a GPU with content-adaptive tiling, which places more splats where the volume carries more structure (<code>luxar gsplat fit</code>), and the merged result was given its per-tile detail ladders (<code>luxar gsplat lod</code>). The density that results at the finest level is about 2.38 million splats per timepoint, listed exactly above. Both files are Luxar gsplat format 3.4. These are lossy representations meant for visualisation and interactive exploration, not a replacement for the source imagery in quantitative work.</p>
+<h3>How to use these files</h3>
+<p>Each file is a <code>.gsplats.zarr.zip</code> archive that the Luxar demo suite fetches on first run and caches under <code>~/.cache/luxar/&lt;dataset&gt;/</code>. To fetch one directly:</p>
+<pre>from luxar.demos import ensure_dataset
+paths = ensure_dataset("h2afva") # downloads, verifies, returns paths</pre>
+<p>To open one in the viewer without writing code:</p>
+<pre>luxar gsplat view h2afva_51tp.gsplats.zarr.zip
+luxar demo # browse every demo that uses these files</pre>
+<p>Every file is pinned by SHA-256 in <a href="https://github.com/royerlab/luxar/blob/main/packages/luxar/src/luxar/demos/data_manifest.json"><code>data_manifest.json</code></a>, and the fetch helper verifies the checksum before use; a mismatched download is quarantined rather than returned.</p>
+<h3>Contents</h3>
+<table>
+<tbody>
+<tr>
+<th>file</th>
+<th>size</th>
+<th>elements</th>
+<th>level of detail</th>
+</tr>
+<tr>
+<td><code>h2afva_253tp.gsplats.zarr.zip</code></td>
+<td>5.9 GB</td>
+<td>602,580,152</td>
+<td>44 parts, progressive ladders</td>
+</tr>
+<tr>
+<td><code>h2afva_51tp.gsplats.zarr.zip</code></td>
+<td>1.1 GB</td>
+<td>121,163,285</td>
+<td>flat, 12 ladder rungs</td>
+</tr>
+</tbody>
+</table>
+<p>Every figure above was measured from the file this record holds. &ldquo;Elements&rdquo; is what a viewer draws at full detail: splats summed over the finest level of each part, or rows for a coordinate table.</p>
+<ul>
+<li><code>h2afva_51tp.gsplats.zarr.zip</code> (1.1 GB, cc-by-4.0). Source: h2afva zebrafish histone light-sheet timelapse, 51 of 253 timepoints (Royer lab). Attribution: Royer lab, Chan Zuckerberg Biohub San Francisco. Acquired for Zebrahub: Lange, M. et al. A multimodal zebrafish developmental atlas reveals the state-transition dynamics of late-vertebrate pluripotent axial progenitors. Cell 187, 6742-6759.e17 (2024). CC BY 4.0.</li>
+<li><code>h2afva_253tp.gsplats.zarr.zip</code> (5.9 GB, cc-by-4.0). Source: h2afva zebrafish histone light-sheet timelapse, all 253 timepoints (Royer lab). Attribution: Royer lab, Chan Zuckerberg Biohub San Francisco. Acquired for Zebrahub: Lange, M. et al. A multimodal zebrafish developmental atlas reveals the state-transition dynamics of late-vertebrate pluripotent axial progenitors. Cell 187, 6742-6759.e17 (2024). CC BY 4.0.</li>
+</ul>
