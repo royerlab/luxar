@@ -73,7 +73,12 @@ describe('gallery selection', () => {
   });
 
   it('reports ordinary tokens that do not match a manifest id', () => {
-    const selection = resolveGalleryOnly('lorenz, readmes, missing', README_SOURCE, MANIFEST_IDS, MEDIA_KEYS);
+    const selection = resolveGalleryOnly(
+      'lorenz, readmes, missing',
+      README_SOURCE,
+      MANIFEST_IDS,
+      MEDIA_KEYS
+    );
 
     expect([...selection.wantedIds]).toEqual(['lorenz']);
     expect(selection.unknownTokens).toEqual(['readmes', 'missing']);
@@ -113,8 +118,6 @@ describe('gallery selection', () => {
   it('rejects a readme alias that resolves to no media', () => {
     expect(() =>
       resolveGalleryOnly('readme', '# no gallery media', MANIFEST_IDS, MEDIA_KEYS)
-    ).toThrow(
-      /no gallery media/
-    );
+    ).toThrow(/no gallery media/);
   });
 });
