@@ -9,8 +9,9 @@ the best for the README gallery (TODO **R19**).
 | File | Role |
 |------|------|
 | `manifest.json` | **Single source of truth** — the demo list + per-demo capture hints. Consumed by both the dataset generator and the capture spec. Add a demo here and nothing else needs editing. |
+| `media-manifest.json` | Published root-README media: demo id → content-addressed WebP/WebM keys, with byte counts, digests, and content types. The README and capture selection both consume it. |
 | `generate_gallery_datasets.py` | Generates each demo's `.luxar.zarr` under `datasets/demos/` (idempotent; skips ones already present; best-effort). A demo whose `DEMO_META` declares machine-local `local_data` (`manual-file` / `kaggle-auth` / `git-lfs`) is still run, but a **positive non-zero exit status** is reported in the soft `manual-data` bucket instead of failing the build — for `git-lfs`, only while one of the payload files named by its manifest caches is missing or still an unpulled pointer. A `timeout`, a `no-output` or a death by signal (negative return code) stays hard. One case remains hard on a cold checkout: `arxiv_papers_kaggle` can exhaust the per-demo timeout during its ~30 GB download. `cellxgene_census_umap` is now probeable through its manifest cache, so a missing LFS payload is demoted to `manual-data`. A demo listed in `UNBUILDABLE_IDS` is the third disposition: it is **never spawned at all** and lands in the soft `unbuildable` bucket, for a demo whose shipped input is known-broken and whose fallback would blow the timeout. The list is empty today (`gsplats_3d_visible_human_head` was removed once its colors sidecar was regenerated, #1670) and is meant to stay that way — delete an entry as soon as its input is fixed. |
-| `check_tile_staleness.py` | Report-only check for committed README still/video pairs older than the gallery dataset/capture policies, their manifest-listed demo generator and directly imported private helpers, applicable `luxar.shading` production code, or their own manifest entry. Also reports committed media sizes. Uses entry-specific blame so editing one demo does not mark every tile stale. |
+| `check_tile_staleness.py` | Report-only check for published README still/video pairs older than the gallery dataset/capture policies, their manifest-listed demo generator and directly imported private helpers, applicable `luxar.shading` production code, or their own manifest entry. Also reports manifest-recorded media sizes. Uses entry-specific blame in both manifests so editing one demo does not mark every tile stale. |
 | `../../packages/luxar-viewer/src/tests/screenshots/generate-gallery.spec.ts` | Playwright capture: auto-center + fill-to-frame, auto-exposure, orbit, still + video. |
 | `../../packages/luxar-viewer/src/tests/screenshots/exposure-policy.ts` | The auto-exposure **decision** + its tuning constants, split out of the spec so it is unit-testable without a browser (`src/tests/unit/gallery-exposure-policy.test.ts`). |
 | `../../packages/luxar-viewer/src/tests/screenshots/crop-policy.ts` | The under-fill and border-lit (**cropped subject**) verdicts + warning floors, split out of the spec so they are unit-testable without a browser (`src/tests/unit/gallery-{underfill,crop}-policy.test.ts`). |
@@ -33,21 +34,30 @@ make generate-gallery ONLY=desi_galaxies    # a subset
 
 # Under the hood (from packages/luxar-viewer/):
 GALLERY_ONLY=lorenz pnpm gallery
-GALLERY_ONLY=readme pnpm gallery             # root README media already on disk
+GALLERY_ONLY=readme pnpm gallery             # recapture the demos selected by the README
 
-# Report committed README tile staleness and media size margins
+# Report published README tile staleness and media size margins
 make check-gallery-staleness
 ```
 
 Output lands in `docs/images/gallery/<id>.{png,webp,webm}`. That directory is
-**gitignored** — it's a review staging area. Once you pick the winners, copy
-them into `docs/images/readme/` (which **is** committed) and wire them into the
-README gallery table.
+**gitignored** — it's a review staging area. To publish a reviewed refresh:
+
+1. Compute each selected WebP/WebM file's SHA-256 and use its first 16 hex
+   characters plus the extension as the object key.
+2. Upload the files to `data.luxarviewer.dev/media/` with the recorded content
+   types; content-addressed keys make existing URLs immutable.
+3. Replace the affected demo entries in `media-manifest.json` with the key,
+   full digest, byte count, and content type.
+4. Replace the corresponding root-README image and link URLs with the new keys,
+   then run the offline manifest/README consistency tests and the opt-in hosted
+   media verifier before merging.
 
 `make check-gallery-staleness` is intentionally non-gating: it prints `STALE`
 rows and still exits zero, because refreshing media is a reviewed batch action.
-For each demo it takes the older commit from the committed `.webp`/`.webm` pair,
-then compares that timestamp with the gallery dataset generator; the capture
+For each demo it takes the newest blamed line in that demo's
+`media-manifest.json` entry as the publish timestamp, then compares it with the
+gallery dataset generator; the capture
 spec together with its orbit-axis helper and Playwright gallery config; the
 exposure and crop policies; the manifest-listed demo generator and its directly
 imported private `luxar.demos` helpers; and the lines of that demo's own manifest
@@ -56,18 +66,15 @@ module imports it; shading tests/docs remain excluded.
 Global inputs are printed once above the rows, while per-demo failures print
 `UNKNOWN` and do not hide the rest of the report. All reads use committed
 `HEAD`, so an in-progress manifest edit cannot create a fake commit timestamp.
-Each row also reports the committed README WebP/WebM sizes. The 20 MiB warning
+Each row also reports the manifest-recorded README WebP/WebM sizes. The 20 MiB warning
 and 25 MiB limit shelves are borrowed from the gallery capture size guard
-(#2263) as a sanity check; the Cloudflare Pages `/media/*` deploy corpus is a
-separate set measured during capture. Git LFS pointer metadata supplies the
-content byte count even when the large object is not checked out, so the check
-requires the committed Git blobs to be available. The footer prints the corpus
-total and five largest files. The total is informational because this check
-does not enforce a corpus-size cap, and all size findings remain report-only.
-The first version intentionally does not inspect external dataset pins or
-machine-local/LFS payload contents beyond committed pointer metadata. The check
-refuses shallow clones rather than silently producing incomplete history; run
-it from a full checkout.
+(#2263) as a sanity check; the demo site's Cloudflare Pages `/media/*` deploy
+corpus is a separate set measured during capture. The footer prints the corpus
+total and five largest files. The total is informational because this check does
+not enforce a corpus-size cap, and all size findings remain report-only.
+The check intentionally does not inspect external dataset pins or
+machine-local payload contents. It refuses shallow clones rather than silently
+producing incomplete history; run it from a full checkout.
 
 ## How capture works
 

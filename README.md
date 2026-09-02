@@ -281,7 +281,7 @@ luxar demo                          # Find the key for any tile above
 luxar demo run galaxy_simulation    # Build and view one
 luxar demo run-all                  # Build every eligible demo (skips manual/Kaggle, GPU-required, >200MB, already-built)
 
-make generate-gallery               # Regenerate the stills + orbit videos above
+make generate-gallery               # Stage replacement stills + orbit videos for review and publishing
 ```
 
 ---
