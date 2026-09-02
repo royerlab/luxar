@@ -2498,8 +2498,10 @@ class TestCheckExplainsAnAbsentFigure:
             "gsplats_nexrad_supercell/nexrad_supercell.gsplats.zarr.zip",
         ):
             info = chars[key]
+            assert info["format_version"] is None
             assert info["psnr_db"] is None
             assert info["foreground_psnr_db"] is None
+            assert info.get("quality_quotable") is None
             assert info["measured_from"] is None
             assert info["measured_sha256"] is None
             assert info["unmeasured_reason"] == "unpinned-local-copy"
