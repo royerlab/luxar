@@ -373,6 +373,21 @@ export interface LayerInfo {
    * shadow the ancestor's newer choice.
    */
   blendingModeExplicit: boolean;
+  /**
+   * Authored cross-layer draw order (`LAYER_DEPTH_LEVEL_SPEC.md`), or
+   * `undefined` when this layer states none. Higher = nearer the camera =
+   * drawn later.
+   */
+  depthLevel?: number;
+  /**
+   * Whether the level is EXPLICIT — the node's OWN attr, or a user pick in the
+   * panel — as opposed to inherited or absent. Same reasoning as
+   * `blendingModeExplicit`, plus one more: an explicit level suppresses the
+   * renderer's containment rule while an unset one must not, so re-emitting an
+   * inherited level as this layer's own would silently disable that rule for
+   * the ancestor too.
+   */
+  depthLevelExplicit: boolean;
   /** Whether this layer is selected in the list */
   selected: boolean;
   /** Active colormap name (undefined = direct RGB colors) */
@@ -723,6 +738,11 @@ export class LayerStateManager {
           // display type is a geometry name but whose node authored no mode) stays
           // non-owning, exactly like a plain group.
           blendingModeExplicit: node.attrs.blending_mode != null,
+          depthLevel:
+            typeof node.attrs.depth_level === 'number' && Number.isFinite(node.attrs.depth_level)
+              ? node.attrs.depth_level
+              : undefined,
+          depthLevelExplicit: node.attrs.depth_level != null,
           selected: false,
           colormap,
           supportsColormap,
@@ -998,6 +1018,23 @@ export class LayerStateManager {
     // The user explicitly picked a mode ⇒ this layer now OWNS one, so
     // `liveLayerAttrs` may emit it as a composition setter (even a group).
     layer.blendingModeExplicit = true;
+    this.notify();
+  }
+
+  /**
+   * Set (or clear) a layer's authored cross-layer draw order.
+   *
+   * `undefined` CLEARS it, which is not the same as setting 0: an unset level
+   * hands the layer back to the renderer's inferred containment ordering, while
+   * an explicit 0 states a band and suppresses that inference. Clearing must
+   * therefore also clear `depthLevelExplicit`, or `liveLayerAttrs` would keep
+   * emitting the stale value as this layer's own setter.
+   */
+  setDepthLevel(path: string, level: number | undefined): void {
+    const layer = this.layers.get(path);
+    if (!layer) return;
+    layer.depthLevel = level === undefined ? undefined : Math.trunc(level);
+    layer.depthLevelExplicit = level !== undefined;
     this.notify();
   }
 

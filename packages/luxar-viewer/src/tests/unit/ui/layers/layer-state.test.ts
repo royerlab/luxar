@@ -1218,3 +1218,95 @@ describe('LayerStateManager', () => {
     expect(wrapper.nestedLodGroupPaths).toEqual(['/partition_root/inner_lod']);
   });
 });
+
+// `depth_level` — the authored cross-layer draw order
+// (docs/guides/specs/LAYER_DEPTH_LEVEL_SPEC.md). The panel's whole job here is
+// keeping "unset" distinguishable from "0": an unset level hands the layer back
+// to the renderer's inferred containment ordering, while an explicit 0 states a
+// band and suppresses that inference.
+describe('LayerStateManager — depth level', () => {
+  const graph = (): SceneNode =>
+    ({
+      path: '',
+      type: 'scene',
+      attrs: {},
+      hasSpatialIndex: false,
+      children: [
+        {
+          path: 'authored',
+          type: 'gsplats',
+          attrs: { layer: true, depth_level: 20 } as never,
+          hasSpatialIndex: true,
+        },
+        {
+          path: 'bare',
+          type: 'gsplats',
+          attrs: { layer: true } as never,
+          hasSpatialIndex: true,
+        },
+      ],
+    }) as SceneNode;
+
+  let mgr: LayerStateManager;
+
+  beforeEach(() => {
+    mgr = new LayerStateManager();
+    mgr.initFromSceneGraph(graph());
+  });
+
+  it('reads an authored level off the node, and leaves a bare layer unset', () => {
+    expect(mgr.getLayer('authored')?.depthLevel).toBe(20);
+    expect(mgr.getLayer('authored')?.depthLevelExplicit).toBe(true);
+    expect(mgr.getLayer('bare')?.depthLevel).toBeUndefined();
+    expect(mgr.getLayer('bare')?.depthLevelExplicit).toBe(false);
+  });
+
+  it('setDepthLevel marks the layer explicit', () => {
+    mgr.setDepthLevel('bare', -5);
+    expect(mgr.getLayer('bare')?.depthLevel).toBe(-5);
+    expect(mgr.getLayer('bare')?.depthLevelExplicit).toBe(true);
+  });
+
+  // Clearing is NOT setting 0. If `depthLevelExplicit` were left true here,
+  // `liveLayerAttrs` would keep emitting the stale value as this layer's own
+  // composition setter and the renderer would keep treating the layer as
+  // banded — permanently suppressing containment for a level just deleted.
+  it('setDepthLevel(undefined) clears BOTH the value and the explicit flag', () => {
+    mgr.setDepthLevel('authored', undefined);
+    expect(mgr.getLayer('authored')?.depthLevel).toBeUndefined();
+    expect(mgr.getLayer('authored')?.depthLevelExplicit).toBe(false);
+  });
+
+  it('an authored 0 stays explicit (a real band, not an absence)', () => {
+    mgr.setDepthLevel('bare', 0);
+    expect(mgr.getLayer('bare')?.depthLevel).toBe(0);
+    expect(mgr.getLayer('bare')?.depthLevelExplicit).toBe(true);
+  });
+
+  it('truncates a fractional level to an integer', () => {
+    mgr.setDepthLevel('bare', 3.7);
+    expect(mgr.getLayer('bare')?.depthLevel).toBe(3);
+  });
+
+  // A hand-edited store can carry junk. The renderer treats a non-finite level
+  // as absent, and the panel must agree or the field would show a value the
+  // render is not using.
+  it('treats a non-finite authored level as unset', () => {
+    const mgrJunk = new LayerStateManager();
+    mgrJunk.initFromSceneGraph({
+      path: '',
+      type: 'scene',
+      attrs: {},
+      hasSpatialIndex: false,
+      children: [
+        {
+          path: 'junk',
+          type: 'gsplats',
+          attrs: { layer: true, depth_level: 'front' } as never,
+          hasSpatialIndex: true,
+        },
+      ],
+    } as SceneNode);
+    expect(mgrJunk.getLayer('junk')?.depthLevel).toBeUndefined();
+  });
+});

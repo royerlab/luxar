@@ -110,5 +110,9 @@ export function liveLayerAttrs(layer: LayerInfo): ComposableAttrs {
     // default rather than the layer's placeholder — otherwise a plain group layer
     // over a mesh would push its `additive` default and revert the #1272 fix.
     blending_mode: layer.blendingModeExplicit ? (layer.blendingMode as string) : undefined,
+    // Same rule, and for a sharper reason: an explicit level SUPPRESSES the
+    // renderer's containment ordering, so re-emitting a merely-inherited one
+    // would disable that rule on this layer's behalf without anyone asking.
+    depth_level: layer.depthLevelExplicit ? layer.depthLevel : undefined,
   };
 }

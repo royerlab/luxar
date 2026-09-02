@@ -171,10 +171,17 @@ export function drawOrderChipContent(
 ): { text: string; title: string } | null {
   if (!state) return null;
   const dw = state.depthWrite ? 'depthWrite on' : 'depthWrite off';
+  // An authored band is prefixed (`L20 #3 transparent`) because it EXPLAINS the
+  // resolved integer beside it: with a level, the layer's position is stated and
+  // camera-independent; without one it is inferred from the geometry each frame.
+  const level = state.depthLevel === undefined ? '' : `L${state.depthLevel} `;
   return {
-    text: `#${state.renderOrder} ${state.bucket}`,
+    text: `${level}#${state.renderOrder} ${state.bucket}`,
     title:
-      `Draw order: renderOrder ${state.renderOrder} (compared ascending — lower is drawn first), ` +
+      (state.depthLevel === undefined
+        ? 'Draw order inferred from the geometry (no authored depth level). '
+        : `Authored depth level ${state.depthLevel} (higher draws nearer the camera). `) +
+      `renderOrder ${state.renderOrder} (compared ascending — lower is drawn first), ` +
       `${state.bucket} blending bucket, ${dw}. Opaque backdrops must be 'opaque' to composite ` +
       'under the transparent content in front of them.',
   };

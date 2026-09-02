@@ -630,6 +630,33 @@ export class LayerApplyEngine {
     this.applyComposed(layer);
   }
 
+  /**
+   * Push a layer's authored draw order onto the meshes the depth-sort
+   * coordinator reads it from.
+   *
+   * Deliberately NOT routed through `applyComposed`: a level is a cross-node
+   * SORT KEY, not a material uniform, so there is no `mat.updateX` to call and
+   * nothing in the shader to refresh. The coordinator re-reads
+   * `userData.attrs.depth_level` on every frame, so writing the record and
+   * waking the render loop is the whole apply.
+   *
+   * Written per affected LEAF (a group layer fans out to its descendants) to
+   * match where the node factory stamps the composed record, and set to
+   * `undefined` rather than deleted so a cleared level reads as absent through
+   * the same `!== undefined` test the renderer uses.
+   */
+  applyDepthLevel(layer: LayerInfo): void {
+    const level = layer.depthLevelExplicit ? layer.depthLevel : undefined;
+    for (const leaf of this.getAffectedDataLeaves(layer.path)) {
+      const obj = this.getMesh(leaf.path);
+      if (!obj) continue;
+      const userData = obj.userData as { attrs?: Record<string, unknown> };
+      if (!userData.attrs) userData.attrs = {};
+      userData.attrs.depth_level = level;
+    }
+    this.deps.requestRender();
+  }
+
   applyLabelStyle(layer: LayerInfo): void {
     let applied = false;
     let pickDirty = false;
