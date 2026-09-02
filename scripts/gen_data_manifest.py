@@ -253,7 +253,8 @@ DATASETS: dict[str, dict] = {
             "catalogs are defined in DESI Collaboration. DESI 2024 II: sample "
             "definitions, characteristics, and two-point clustering statistics. "
             "JCAP 2025(07), 017. doi:10.1088/1475-7516/2025/07/017. CC BY 4.0; "
-            "use requires the DESI citation and acknowledgment text."
+            "use requires the DESI citation and acknowledgment text at "
+            "https://data.desi.lbl.gov/doc/acknowledgments/."
         ),
     ),
     "gsplats_celegans": dict(
@@ -350,9 +351,10 @@ DATASETS: dict[str, dict] = {
             "resource: CZI Cell Science Program et al. CZ CELLxGENE Discover: a "
             "single-cell data platform for scalable exploration, analysis and "
             "modeling of aggregated data. Nucleic Acids Research 53, D886-D900 "
-            "(2025). doi:10.1093/nar/gkae1142. The Census aggregates many "
-            "independently published studies, whose citations travel with the "
-            "per-cell metadata. CC BY 4.0."
+            "(2025). doi:10.1093/nar/gkae1142. This artifact includes "
+            "soma_joinid values but not per-study citation metadata; underlying "
+            "study citations must be looked up in the Census release 2025-11-08. "
+            "CC BY 4.0."
         ),
     ),
     "3d_umap_coords_human": dict(
@@ -441,7 +443,7 @@ DATASETS: dict[str, dict] = {
         attribution=(
             "Adrian Jacobo (CZ Biohub SF); used with permission (CC BY 4.0). "
             "The imaging itself is unpublished; for the biology of this organ "
-            "see the data author's Jacobo, A. et al. Notch-mediated "
+            "see Jacobo et al. (2019), by the same author: Notch-mediated "
             "determination of hair-bundle polarity in mechanosensory hair cells "
             "of the zebrafish lateral line. Current Biology 29, 3579-3587.e7 "
             "(2019). doi:10.1016/j.cub.2019.08.060."

@@ -236,7 +236,7 @@
       "record": "cc-by",
       "license": "cc-by-4.0",
       "source": "DESI DR1 LSS catalogs",
-      "attribution": "DESI DR1 large-scale-structure catalogs. DESI Collaboration. Data Release 1 of the Dark Energy Spectroscopic Instrument. The Astronomical Journal (2026, accepted); arXiv:2503.14745. The catalogs are defined in DESI Collaboration. DESI 2024 II: sample definitions, characteristics, and two-point clustering statistics. JCAP 2025(07), 017. doi:10.1088/1475-7516/2025/07/017. CC BY 4.0; use requires the DESI citation and acknowledgment text.",
+      "attribution": "DESI DR1 large-scale-structure catalogs. DESI Collaboration. Data Release 1 of the Dark Energy Spectroscopic Instrument. The Astronomical Journal (2026, accepted); arXiv:2503.14745. The catalogs are defined in DESI Collaboration. DESI 2024 II: sample definitions, characteristics, and two-point clustering statistics. JCAP 2025(07), 017. doi:10.1088/1475-7516/2025/07/017. CC BY 4.0; use requires the DESI citation and acknowledgment text at https://data.desi.lbl.gov/doc/acknowledgments/.",
       "dir": "desi_galaxies",
       "files": [
         {
@@ -385,7 +385,7 @@
       "record": "cc-by",
       "license": "cc-by-4.0",
       "source": "CZ CELLxGENE Census (our computed 3D UMAP coords)",
-      "attribution": "Derived 3D UMAP over the CZ CELLxGENE Discover Census. Underlying resource: CZI Cell Science Program et al. CZ CELLxGENE Discover: a single-cell data platform for scalable exploration, analysis and modeling of aggregated data. Nucleic Acids Research 53, D886-D900 (2025). doi:10.1093/nar/gkae1142. The Census aggregates many independently published studies, whose citations travel with the per-cell metadata. CC BY 4.0.",
+      "attribution": "Derived 3D UMAP over the CZ CELLxGENE Discover Census. Underlying resource: CZI Cell Science Program et al. CZ CELLxGENE Discover: a single-cell data platform for scalable exploration, analysis and modeling of aggregated data. Nucleic Acids Research 53, D886-D900 (2025). doi:10.1093/nar/gkae1142. This artifact includes soma_joinid values but not per-study citation metadata; underlying study citations must be looked up in the Census release 2025-11-08. CC BY 4.0.",
       "dir": "",
       "files": [
         {
@@ -499,7 +499,7 @@
       "record": "cc-by",
       "license": "cc-by-4.0",
       "source": "Neuromast 2-channel light-sheet timelapse (iSIM)",
-      "attribution": "Adrian Jacobo (CZ Biohub SF); used with permission (CC BY 4.0). The imaging itself is unpublished; for the biology of this organ see the data author's Jacobo, A. et al. Notch-mediated determination of hair-bundle polarity in mechanosensory hair cells of the zebrafish lateral line. Current Biology 29, 3579-3587.e7 (2019). doi:10.1016/j.cub.2019.08.060.",
+      "attribution": "Adrian Jacobo (CZ Biohub SF); used with permission (CC BY 4.0). The imaging itself is unpublished; for the biology of this organ see Jacobo et al. (2019), by the same author: Notch-mediated determination of hair-bundle polarity in mechanosensory hair cells of the zebrafish lateral line. Current Biology 29, 3579-3587.e7 (2019). doi:10.1016/j.cub.2019.08.060.",
       "dir": "gsplats_4d_neuromast_2ch",
       "files": [
         {

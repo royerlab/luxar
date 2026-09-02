@@ -26,6 +26,22 @@ def _load_generator():
     return module
 
 
+def test_public_attributions_keep_required_provenance_resolvable() -> None:
+    generator = _load_generator()
+
+    desi = generator.DATASETS["desi_galaxies"]["attribution"]
+    assert "The Astronomical Journal (2026, accepted)" in desi
+    assert "https://data.desi.lbl.gov/doc/acknowledgments/" in desi
+
+    census = generator.DATASETS["census_umap_1m"]["attribution"]
+    assert "Census release 2025-11-08" in census
+    assert "must be looked up in the Census" in census
+    assert "citations travel with the per-cell metadata" not in census
+
+    neuromast = generator.DATASETS["gsplats_4d_neuromast_2ch"]["attribution"]
+    assert "see Jacobo et al. (2019), by the same author" in neuromast
+
+
 def test_positional_pairs_stamp_every_member() -> None:
     generator = _load_generator()
     files = [{"name": "fit.zip"}, {"name": "colors.bin"}]

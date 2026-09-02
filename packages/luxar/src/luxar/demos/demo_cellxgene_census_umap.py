@@ -59,8 +59,8 @@ DEMO_META = {
     "caches": ["census_umap_1m"],
     "outputs": ["cellxgene_census_umap"],
     "citation": {
-        "short": "CZ CELLxGENE Discover (CZI Cell Science Program 2024)",
-        "ref": "CZI Cell Science Program 2024",
+        "short": "CZ CELLxGENE Discover (CZI Cell Science Program 2025)",
+        "ref": "CZI Cell Science Program 2025",
         "doi": "10.1093/nar/gkae1142",
     },
 }

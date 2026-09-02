@@ -320,6 +320,30 @@ def test_meta_cross_validates_against_gallery_manifest() -> None:
     assert not problems, "\n".join(problems)
 
 
+@pytest.mark.parametrize(
+    ("key", "expected_short", "expected_ref"),
+    [
+        (
+            "desi_galaxies",
+            "DESI Collaboration 2026 (DR1)",
+            "DESI Collaboration 2026",
+        ),
+        (
+            "cellxgene_census_umap",
+            "CZ CELLxGENE Discover (CZI Cell Science Program 2025)",
+            "CZI Cell Science Program 2025",
+        ),
+    ],
+)
+def test_publication_year_corrections_reach_demo_credits(
+    key: str, expected_short: str, expected_ref: str
+) -> None:
+    citation = get_demo(key).citation
+    assert citation is not None
+    assert citation["short"] == expected_short
+    assert citation["ref"] == expected_ref
+
+
 def test_manifest_citation_check_catches_drift() -> None:
     """The manifest credit rule must fail on each way a tile's credit can go
     wrong — a dropped credit, an invented one, and a mismatched one."""
