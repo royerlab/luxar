@@ -140,6 +140,54 @@ def manifest_entry_line_ranges(text: str) -> dict[str, LineRange]:
     return ranges
 
 
+def media_manifest_entry_line_ranges(text: str) -> dict[str, LineRange]:
+    """Locate each top-level demo entry in the media manifest ``tiles`` object."""
+    key = re.search(r'"tiles"\s*:', text)
+    if key is None:
+        raise StalenessError("gallery media manifest has no 'tiles' object")
+    cursor = text.find("{", key.end())
+    if cursor < 0:
+        raise StalenessError("gallery media manifest 'tiles' value is not an object")
+    cursor += 1
+
+    decoder = json.JSONDecoder()
+    ranges: dict[str, LineRange] = {}
+    while True:
+        while cursor < len(text) and (text[cursor].isspace() or text[cursor] == ","):
+            cursor += 1
+        if cursor >= len(text) or text[cursor] == "}":
+            break
+        start = cursor
+        demo_id, consumed = decoder.raw_decode(text[cursor:])
+        if not isinstance(demo_id, str):
+            raise StalenessError(
+                "every gallery media manifest tile key must be a string"
+            )
+        cursor += consumed
+        while cursor < len(text) and text[cursor].isspace():
+            cursor += 1
+        if cursor >= len(text) or text[cursor] != ":":
+            raise StalenessError(
+                f"gallery media manifest tile {demo_id!r} has no object value"
+            )
+        cursor += 1
+        while cursor < len(text) and text[cursor].isspace():
+            cursor += 1
+        entry, consumed = decoder.raw_decode(text[cursor:])
+        if not isinstance(entry, dict):
+            raise StalenessError(
+                f"gallery media manifest tile {demo_id!r} is not an object"
+            )
+        cursor += consumed
+        if demo_id in ranges:
+            raise StalenessError(f"duplicate gallery media manifest id: {demo_id}")
+        ranges[demo_id] = LineRange(
+            start=text.count("\n", 0, start) + 1,
+            stop=text.count("\n", 0, cursor) + 1,
+        )
+    return ranges
+
+
 def imports_luxar_shading(source: str) -> bool:
     """Return whether a demo directly imports the public shading package."""
     tree = ast.parse(source)
@@ -258,14 +306,14 @@ class GalleryHistory:
     def _last_commit(self, path: Path) -> CommitStamp:
         return self._last_commit_for_pathspecs(path.as_posix())
 
-    def _manifest_entry_commit(self, line_range: LineRange) -> CommitStamp:
+    def _entry_commit(self, path: Path, line_range: LineRange) -> CommitStamp:
         output = self._git(
             "blame",
             "--line-porcelain",
             f"-L{line_range.start},{line_range.stop}",
             "HEAD",
             "--",
-            MANIFEST_PATH.as_posix(),
+            path.as_posix(),
         )
         stamps: list[CommitStamp] = []
         current_sha: str | None = None
@@ -283,7 +331,7 @@ class GalleryHistory:
                 )
         if not stamps:
             raise StalenessError(
-                f"no blame history for manifest lines {line_range.start}-{line_range.stop}"
+                f"no blame history for {path} lines {line_range.start}-{line_range.stop}"
             )
         return max(stamps, key=lambda stamp: stamp.committed_at)
 
@@ -347,14 +395,10 @@ class GalleryHistory:
             raise StalenessError(f"invalid Git LFS pointer object: {object_id}")
         return int(match.group(1))
 
-    def _published_tile_media(self) -> list[tuple[str, tuple[GalleryMedia, ...]]]:
+    def _published_tile_media(
+        self, text: str
+    ) -> list[tuple[str, tuple[GalleryMedia, ...]]]:
         """Tiles as described by the committed media manifest."""
-        text = self._head_text(MEDIA_MANIFEST_PATH)
-        if text is None:
-            raise StalenessError(
-                f"{MEDIA_MANIFEST_PATH} is not committed — the gallery media manifest "
-                "is what records the published tiles"
-            )
         try:
             manifest = json.loads(text)
         except json.JSONDecodeError as exc:
@@ -422,10 +466,14 @@ class GalleryHistory:
         }
         shading_input = self._last_commit_for_pathspecs(*SHADING_PATHSPECS)
 
-        # One stamp for every tile: a capture rewrites the whole manifest, so the
-        # commit that last touched it is when this generation was published.
-        published_at = self._last_commit(MEDIA_MANIFEST_PATH)
-        tracked_media = self._published_tile_media()
+        media_manifest_text = self._head_text(MEDIA_MANIFEST_PATH)
+        if media_manifest_text is None:
+            raise StalenessError(
+                f"{MEDIA_MANIFEST_PATH} is not committed — the gallery media manifest "
+                "is what records the published tiles"
+            )
+        media_ranges = media_manifest_entry_line_ranges(media_manifest_text)
+        tracked_media = self._published_tile_media(media_manifest_text)
         statuses: list[TileStatus | UnknownStatus] = []
         for demo_id, media in tracked_media:
             entry: dict[str, Any] | None = entries.get(demo_id)
@@ -447,8 +495,10 @@ class GalleryHistory:
                         shading_input,
                     )
                 )
-                inputs["manifest entry"] = self._manifest_entry_commit(ranges[demo_id])
-                tile = published_at
+                inputs["manifest entry"] = self._entry_commit(
+                    MANIFEST_PATH, ranges[demo_id]
+                )
+                tile = self._entry_commit(MEDIA_MANIFEST_PATH, media_ranges[demo_id])
             except (SyntaxError, StalenessError) as exc:
                 statuses.append(
                     UnknownStatus(demo_id=demo_id, reason=str(exc), media=media)
