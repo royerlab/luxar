@@ -124,20 +124,22 @@ RECORDS = {
     # PERMISSION: CLEARED 2026-09-02. Philipp J. Keller, whose imaging this is,
     # approved our use of the data; Loic relayed the approval. Until then this
     # record carried an extra publication gate beyond the standing
-    # never-publish-without-Loic rule, because an upload to a draft implies no
+    # never-publish-without-Loic rule because approval had not yet been obtained.
+    # Uploading to the draft while that conversation was pending implied no
     # consent to publish. That gate is now lifted and only the standing rule
     # remains: publication is Loic's manual step.
     #
-    # Kept here rather than in the record because Zenodo's `notes` and
-    # `description` are both PUBLISHED metadata — an internal process gate
-    # written there would ship with the record. The same reasoning is why the
-    # approval is recorded here instead: it is provenance for us, not for a
-    # reader.
+    # The dated approval and former process gate stay here because Zenodo's
+    # `notes` and `description` are both PUBLISHED metadata. The reader-facing
+    # licence basis is stated in both dataset attributions below.
     #
-    # PUBLICATION ORDER still matters: this record's `isPartOf` points at the
-    # cc-by record's reserved DOI, and a reserved Zenodo DOI only resolves once
-    # that record is published. So cc-by (21912280) must publish no later than
-    # this one, or the link dangles.
+    # PUBLICATION COORDINATION still matters: the live drafts contain hand-edited
+    # cross-references in both descriptions, and this record's `isPartOf` points
+    # at the cc-by record's reserved DOI. Publish both records together so neither
+    # description points at an unresolved reserved DOI. These cross-references
+    # and `isPartOf` are not emitted by gen_zenodo_records.py or checked by this
+    # generator's --check; re-pasting a generated description can silently drop
+    # them.
     "droso-timelapse": {
         "title": (
             "Drosophila melanogaster embryogenesis: a 500-timepoint "
