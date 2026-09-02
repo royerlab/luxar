@@ -22,7 +22,7 @@ from ..compositing import (
     mirror_written_colormap,
     position_bounds_from_array,
     preflight_extend_to_all,
-    reject_depth_level_inside_specialized_group,
+    reject_layer_order_inside_specialized_group,
     reject_lines_only_join,
     reject_mesh_only_appearance,
     slice_optional_array,
@@ -100,7 +100,7 @@ def add_gsplats_impl(
         validate_node_name(name)
         (parent or group)._ensure_no_duplicate_child(name)
         reject_mismatched_partition_parent(parent or group, "gsplats", name)
-        reject_depth_level_inside_specialized_group(
+        reject_layer_order_inside_specialized_group(
             "gsplats", name, attrs, parent or group
         )
         reject_lines_only_join("gsplats", name, attrs)

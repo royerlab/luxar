@@ -59,7 +59,7 @@ const partitionRankCache = new Map<THREE.Object3D, Map<number, number> | null>()
 const warnedAxisMappingWrappers = new WeakSet<THREE.Object3D>();
 
 /**
- * Once-per-object memos for the three `depth_level` diagnostics. Same shape and
+ * Once-per-object memos for the three `layer_order` diagnostics. Same shape and
  * lifetime as {@link warnedAxisMappingWrappers}: a `WeakSet`/`WeakMap` keyed on
  * the scene object, so a warning cannot repeat every frame (this module runs on
  * EVERY frame, ungated by camera motion) and cannot pin a disposed subtree.
@@ -74,8 +74,8 @@ function warnMixedBandGroup(groupKey: THREE.Object3D, kept: number, seen: number
   warnedMixedBandGroups.add(groupKey);
   log.warning(
     Modules.RENDERER,
-    `Order group '${groupKey.name || '(unnamed)'}' has members on different depth levels ` +
-      `(${kept} and ${seen}). A depth_level authored INSIDE a partition/LOD wrapper is refused ` +
+    `Order group '${groupKey.name || '(unnamed)'}' has members on different layer orders ` +
+      `(${kept} and ${seen}). A layer_order authored INSIDE a partition/LOD wrapper is refused ` +
       `at write time; this store carries one anyway. Using ${kept} for the whole group — the ` +
       'wrapper is the layer, and splitting it across bands would destroy its exact part order.'
   );
@@ -84,7 +84,7 @@ function warnMixedBandGroup(groupKey: THREE.Object3D, kept: number, seen: number
 /**
  * An authored band split a containment relation the renderer would otherwise
  * have honoured. Not an error — it is the author overriding an inferred order —
- * but it is the one way a `depth_level` can make an embedded node nearly
+ * but it is the one way a `layer_order` can make an embedded node nearly
  * disappear (the container's whole transmittance multiplies it), so it must be
  * diagnosable rather than mysterious.
  */
@@ -101,11 +101,11 @@ function warnBandSplitContainment(outer: OrderGroup, inner: OrderGroup): void {
   seen.add(innerKey);
   log.warning(
     Modules.RENDERER,
-    `'${outerKey.name || '(unnamed)'}' (depth level ${outer.level}) spatially CONTAINS ` +
-      `'${innerKey.name || '(unnamed)'}' (depth level ${inner.level}), but their authored levels ` +
+    `'${outerKey.name || '(unnamed)'}' (layer order ${outer.level}) spatially CONTAINS ` +
+      `'${innerKey.name || '(unnamed)'}' (layer order ${inner.level}), but their authored levels ` +
       'put them in different bands, so the container-draws-first rule is not applied. That is ' +
       'the authored order winning, as intended — but if the inner layer looks washed out or ' +
-      'vanishes, this is why: give both the same depth_level to restore the inferred ordering.'
+      'vanishes, this is why: give both the same layer_order to restore the inferred ordering.'
   );
 }
 
@@ -130,7 +130,7 @@ function warnBucketStraddlingBand(group: OrderGroup): void {
   warnedStraddlingBands.add(key);
   log.warning(
     Modules.RENDERER,
-    `Depth level ${group.level} on '${key.name || '(unnamed)'}' spans both render buckets ` +
+    `Layer order ${group.level} on '${key.name || '(unnamed)'}' spans both render buckets ` +
       '(opaque and transparent). renderOrder is only compared within a bucket, and every opaque ' +
       'mesh draws before any transparent one, so this level orders the transparent members and ' +
       'cannot move the opaque ones. Split them into separate layers if the order matters.'
@@ -331,7 +331,7 @@ interface OrderSlot {
    */
   radius: number;
   /**
-   * Authored cross-layer draw order (`LAYER_DEPTH_LEVEL_SPEC.md`), `0` when
+   * Authored cross-layer draw order (`LAYER_ORDER_SPEC.md`), `0` when
    * unset. Read ONCE here rather than in the comparator, which runs
    * O(G log G) times per frame.
    */
@@ -677,7 +677,7 @@ export function collectRenderOrderSlot(
     Number.isFinite(bs.radius) &&
     bs.radius >= 0;
   const scaledRadius = usable ? bs.radius * mv.getMaxScaleOnAxis() : -1;
-  const authored = authoredDepthLevel(mesh);
+  const authored = authoredLayerOrder(mesh);
   orderSlots.push({
     mesh,
     // Meshes sharing a partition wrapper form one order group; a
@@ -699,7 +699,7 @@ export function collectRenderOrderSlot(
 }
 
 /**
- * The authored `depth_level` on a mesh, or `undefined` when unset.
+ * The authored `layer_order` on a mesh, or `undefined` when unset.
  *
  * Read off `userData.attrs`, which every `create-*-node.ts` stamps with the
  * COMPOSED attrs record (`applyEffectiveAttrs`), so an ancestor-authored level
@@ -713,9 +713,9 @@ export function collectRenderOrderSlot(
  * unit fixtures), and a non-finite level would poison the band comparator for
  * the whole frame.
  */
-export function authoredDepthLevel(mesh: THREE.Mesh): number | undefined {
-  const raw = (mesh.userData as { attrs?: { depth_level?: unknown } } | undefined)?.attrs
-    ?.depth_level;
+export function authoredLayerOrder(mesh: THREE.Mesh): number | undefined {
+  const raw = (mesh.userData as { attrs?: { layer_order?: unknown } } | undefined)?.attrs
+    ?.layer_order;
   return typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
 }
 

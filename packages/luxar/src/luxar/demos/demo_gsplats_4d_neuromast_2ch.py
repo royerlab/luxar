@@ -181,7 +181,7 @@ CHANNELS = [
         # difference that is a property of where the splats landed, not of the
         # anatomy), so the inference draws nuclei first. A membrane shell
         # enclosing nuclei is the biology; state it.
-        "depth_level": 10,
+        "layer_order": 10,
         # ---- recompute recipe, per channel ----
         #: ``--source-<name> PATH``: the assembled (time, z, y, x) array.
         "source_flag": "source-membranes",
@@ -202,7 +202,7 @@ CHANNELS = [
         "marker": "she:GFP (nuclei)",
         "opacity": 1.0,
         #: Inside the membrane shell, so it composites last (on top).
-        "depth_level": 20,
+        "layer_order": 20,
         "source_flag": "source-nuclei",
         "hpc_source_dir": f"{HPC_SOURCE_ROOT}/Nuclei/Deconvolved",
         "background_floor": 103.88801574707031,
@@ -584,7 +584,7 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
                         # from bounding-sphere radii (see CHANNELS above).
                         # Inert while both layers are `additive`; correct the
                         # moment either is switched to volumetric/normal.
-                        depth_level=ch["depth_level"],
+                        layer_order=ch["layer_order"],
                         # One global order slot per node cannot interleave the
                         # two co-located volumes. Near-zero kappa only hid that
                         # limitation; additive is order-independent.

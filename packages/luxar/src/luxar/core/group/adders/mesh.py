@@ -53,7 +53,7 @@ from ..compositing import (
     is_broadcast_color,
     position_bounds_from_array,
     preflight_extend_to_all,
-    reject_depth_level_inside_specialized_group,
+    reject_layer_order_inside_specialized_group,
     reject_lines_only_join,
     slice_optional_array,
     strip_absent_attr_kwargs,
@@ -1021,7 +1021,7 @@ def add_mesh_impl(
         validate_node_name(name)
         (parent or group)._ensure_no_duplicate_child(name)
         reject_mismatched_partition_parent(parent or group, "mesh", name)
-        reject_depth_level_inside_specialized_group(
+        reject_layer_order_inside_specialized_group(
             "mesh", name, attrs, parent or group
         )
         _reject_structure_params(name, attrs)

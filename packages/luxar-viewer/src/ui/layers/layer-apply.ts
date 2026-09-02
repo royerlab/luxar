@@ -637,7 +637,7 @@ export class LayerApplyEngine {
    * Deliberately NOT routed through `applyComposed`: a level is a cross-node
    * SORT KEY, not a material uniform, so there is no `mat.updateX` to call and
    * nothing in the shader to refresh. The coordinator re-reads
-   * `userData.attrs.depth_level` on every frame, so writing the record and
+   * `userData.attrs.layer_order` on every frame, so writing the record and
    * waking the render loop is the whole apply.
    *
    * Written per affected LEAF (a group layer fans out to its descendants) to
@@ -645,14 +645,14 @@ export class LayerApplyEngine {
    * `undefined` rather than deleted so a cleared level reads as absent through
    * the same `!== undefined` test the renderer uses.
    */
-  applyDepthLevel(layer: LayerInfo): void {
-    const level = layer.depthLevelExplicit ? layer.depthLevel : undefined;
+  applyLayerOrder(layer: LayerInfo): void {
+    const level = layer.layerOrderExplicit ? layer.layerOrder : undefined;
     for (const leaf of this.getAffectedDataLeaves(layer.path)) {
       const obj = this.getMesh(leaf.path);
       if (!obj) continue;
       const userData = obj.userData as { attrs?: Record<string, unknown> };
       if (!userData.attrs) userData.attrs = {};
-      userData.attrs.depth_level = level;
+      userData.attrs.layer_order = level;
     }
     this.deps.requestRender();
   }

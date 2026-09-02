@@ -113,6 +113,6 @@ export function liveLayerAttrs(layer: LayerInfo): ComposableAttrs {
     // Same rule, and for a sharper reason: an explicit level SUPPRESSES the
     // renderer's containment ordering, so re-emitting a merely-inherited one
     // would disable that rule on this layer's behalf without anyone asking.
-    depth_level: layer.depthLevelExplicit ? layer.depthLevel : undefined,
+    layer_order: layer.layerOrderExplicit ? layer.layerOrder : undefined,
   };
 }

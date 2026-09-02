@@ -144,14 +144,14 @@ CHANNELS = [
         "colormap": "green",
         "opacity": 0.12,
         # Frontmost: top of the Layers panel list, drawn last, composites on top.
-        "depth_level": 3,
+        "layer_order": 3,
     },
     {
         "index": 1,
         "name": "Tomato Lectin (Vasculature)",
         "colormap": "red",
         "opacity": 0.30,
-        "depth_level": 2,
+        "layer_order": 2,
     },
     {
         "index": 2,
@@ -159,15 +159,15 @@ CHANNELS = [
         "colormap": "blue",
         "opacity": 0.16,
         # Backmost: drawn first, so the other two composite over it.
-        "depth_level": 1,
+        "layer_order": 1,
     },
 ]
 
-# ``depth_level`` STATES the cross-layer draw order instead of leaving the viewer
+# ``layer_order`` STATES the cross-layer draw order instead of leaving the viewer
 # to infer one: higher = nearer the camera = drawn later, the CSS ``z-index``
 # convention, so the values read top-to-bottom exactly as the Layers panel lists
 # them (nuclei 3 in front, cardiac tissue 1 behind). See
-# ``docs/guides/specs/LAYER_DEPTH_LEVEL_SPEC.md``.
+# ``docs/guides/specs/LAYER_ORDER_SPEC.md``.
 #
 # This is what lets the demo be ``volumetric`` again. #1964 moved it to
 # ``additive`` because the three co-located channels had no authored order and
@@ -631,7 +631,7 @@ Controls:
                 ch_name = ch_config["name"]
                 colormap = ch_config["colormap"]
                 opacity = ch_config["opacity"]
-                depth_level = ch_config["depth_level"]
+                layer_order = ch_config["layer_order"]
 
                 with asection(f"Adding {ch_name} (layer)"):
                     centered = gsplats.translate(-shared_centroid)
@@ -639,7 +639,7 @@ Controls:
                     n_splats = len(centered.amplitudes)
 
                     # Volumetric emission-absorption, with the cross-layer
-                    # order STATED by depth_level rather than inferred from the
+                    # order STATED by layer_order rather than inferred from the
                     # geometry (see the CHANNELS note above). Per-channel
                     # opacity keeps the dense nuclear stain from washing out the
                     # vasculature and cardiac tissue.
@@ -650,7 +650,7 @@ Controls:
                         opacity=opacity,
                         blending_mode="volumetric",
                         # Stated, not inferred — see the CHANNELS note above.
-                        depth_level=depth_level,
+                        layer_order=layer_order,
                         layer=True,
                         colormap=colormap,
                     )

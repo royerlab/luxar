@@ -612,12 +612,12 @@ export interface NodeDrawOrder {
   renderOrder: number;
   /**
    * Authored cross-layer draw order, when the layer states one
-   * (`docs/guides/specs/LAYER_DEPTH_LEVEL_SPEC.md`); `undefined` when it does
+   * (`docs/guides/specs/LAYER_ORDER_SPEC.md`); `undefined` when it does
    * not. Unlike `renderOrder` this is camera-INDEPENDENT — it says *why* a
    * layer sits where it does rather than where it happens to sit this frame —
    * which is exactly what is hard to diagnose from the resolved integer alone.
    */
-  depthLevel?: number;
+  layerOrder?: number;
 }
 
 /**

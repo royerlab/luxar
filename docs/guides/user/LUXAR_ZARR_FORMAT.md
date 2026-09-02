@@ -310,7 +310,7 @@ Group nodes organize the scene hierarchy and can contain child nodes.
                            //   not a gain (see Scalar Colormap Attributes)
   "offset": 0.0,           // -10.0-10.0, per-node additive brightness shift (black level)
   "blending_mode": "additive",
-  "depth_level": 20,           // optional: authored cross-layer draw order
+  "layer_order": 20,           // optional: authored cross-layer draw order
                                // (higher = nearer the camera). Never stamped —
                                // absence means "use the inferred ordering".  // normal, additive, max, opaque, luminous, volumetric — written
                            //   only when explicitly set; unset ⇒ inherited from the
@@ -1265,7 +1265,7 @@ Rendering attributes compose along the scene graph (nearest data/group root → 
 - `opacity`, `absorption`, `gamma`, `intensity` — multiplied (`absorption`
   has identity 1.0, is floored at 0, and has no upper clamp)
 - `offset` — summed
-- `blending_mode`, `join`, `colormap`, `depth_level` — the nearest ancestor that
+- `blending_mode`, `join`, `colormap`, `layer_order` — the nearest ancestor that
   sets it wins (`join` is lines-only; a `colormap='custom'` carries its sibling
   `colormap_lut` bytes down with the name, and a leaf that names a different
   palette does *not* inherit those bytes)
@@ -1290,7 +1290,7 @@ it (with the other compositing attrs) onto the wrapper only — see
 layer's own subtree the panel treats the layer's mode as authoritative and
 ignores a mode authored on a non-layer descendant.
 
-**`depth_level` — the authored cross-layer draw order.** An integer stating
+**`layer_order` — the authored cross-layer draw order.** An integer stating
 where a layer draws relative to the layers it overlaps: **higher = nearer the
 camera = drawn later**, the CSS `z-index` / Illustrator convention. Optional and
 **never stamped** — its absence on disk is genuine silence, which is
@@ -1314,7 +1314,7 @@ or `kind=lod` child. Unlike `blending_mode` this is not merely discouraged but
 each other from their stored BSP planes, and splitting the wrapper across bands
 would destroy that. A level on the wrapper moves the whole block while the part
 order travels with it intact. Full design:
-`docs/guides/specs/LAYER_DEPTH_LEVEL_SPEC.md`.
+`docs/guides/specs/LAYER_ORDER_SPEC.md`.
 
 An inherited `colormap` is offered to every descendant at render time, but the
 current Python adders still require Points / Lines / Mesh scalar leaves to

@@ -57,13 +57,13 @@ export function createDrawOrderProvider(rootGroup: THREE.Group | null): DrawOrde
             // depth-sort coordinator sorts by. Camera-independent, so unlike
             // `renderOrder` it is not re-derived per frame — but it is polled
             // with it because the Layers panel can change it at any time.
-            const authored = (object.userData as { attrs?: { depth_level?: unknown } }).attrs
-              ?.depth_level;
+            const authored = (object.userData as { attrs?: { layer_order?: unknown } }).attrs
+              ?.layer_order;
             states.set(object.name, {
               bucket: material?.transparent ? 'transparent' : 'opaque',
               depthWrite: !!material?.depthWrite,
               renderOrder: object.renderOrder,
-              depthLevel:
+              layerOrder:
                 typeof authored === 'number' && Number.isFinite(authored) ? authored : undefined,
             });
           }

@@ -94,7 +94,7 @@ import { hasCommittedData, invalidateCommittedDataStamp } from '../types/committ
 import type { BlendingMode } from '../types/blending';
 import {
   assignGlobalRenderOrder,
-  authoredDepthLevel,
+  authoredLayerOrder,
   clearRenderOrderFrameState,
   collectRenderOrderSlot,
   setRenderOrderDisplayDimsAccessor,
@@ -1814,8 +1814,8 @@ export function evaluateDepthSortPerFrame(): void {
     if (!isEffectivelyVisible(mesh)) continue;
     const mode = liveBlendingMode(mesh);
     const orderDependent = isLiveOrderDependent(mode);
-    // A commutative layer carrying an AUTHORED depth_level still takes part in
-    // the cross-layer band ordering (`LAYER_DEPTH_LEVEL_SPEC.md` D4): its order
+    // A commutative layer carrying an AUTHORED layer_order still takes part in
+    // the cross-layer band ordering (`LAYER_ORDER_SPEC.md` D4): its order
     // against other commutative layers is a no-op (addition commutes), but its
     // position relative to `normal`/`volumetric` layers is exactly what the
     // level exists to state — and without this it would stay pinned at
@@ -1826,7 +1826,7 @@ export function evaluateDepthSortPerFrame(): void {
     // removed at runtime would keep a stale positive rank forever — the same
     // class of bug `computeDrawOrder` already documents for opaque meshes after
     // a live blending switch.
-    const wantsRank = orderDependent || authoredDepthLevel(mesh) !== undefined;
+    const wantsRank = orderDependent || authoredLayerOrder(mesh) !== undefined;
     if (!wantsRank) {
       // Neither order-dependent nor authored — clear any cross-part renderOrder
       // bias so it doesn't strand a stale ordering.

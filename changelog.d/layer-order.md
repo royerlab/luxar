@@ -1,7 +1,7 @@
-#### Authored cross-layer draw order (`depth_level`)
+#### Authored cross-layer draw order (`layer_order`)
 
 Overlapping order-dependent layers no longer have to accept an inferred draw
-order. A layer may now state one: `depth_level`, an integer where **higher draws
+order. A layer may now state one: `layer_order`, an integer where **higher draws
 nearer the camera** — the CSS `z-index` / Illustrator convention — composed
 nearest-setter-wins like `blending_mode`, editable per layer in the Layers panel,
 and surfaced in the data monitor's draw-order chip.
@@ -53,4 +53,4 @@ What this does not do is make interpenetrating layers _correct_. For two concave
 volumes no single order is right from every viewpoint, so a level pins such a
 pair to one stated answer instead of a camera-dependent one — better, and
 diagnosable, but not a substitute for per-element compositing. Design and
-measurements: `docs/guides/specs/LAYER_DEPTH_LEVEL_SPEC.md`.
+measurements: `docs/guides/specs/LAYER_ORDER_SPEC.md`.

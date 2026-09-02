@@ -101,13 +101,13 @@ _NEUTRAL_COMPOSITING_DEFAULTS = {
 # An ancestor's `join` cannot affect a mesh ladder either way, so it is
 # always skipped, not just when the leaf happens to override it.
 #
-# `depth_level` joins `blending_mode` for exactly the same reasons: not
+# `layer_order` joins `blending_mode` for exactly the same reasons: not
 # auto-stamped (its absence on disk is genuine silence, deliberately, so that an
 # explicit level stays distinguishable from a default), and nearest-setter-wins
 # in the composer. Classified explicitly rather than left to the
 # report-by-default fall-through at the end of `_is_lost_compositing_key`, which
 # would over-report an ancestor level the picked leaf already overrides.
-_LEAF_OVERRIDES_ANCESTOR = frozenset({"blending_mode", "depth_level"})
+_LEAF_OVERRIDES_ANCESTOR = frozenset({"blending_mode", "layer_order"})
 
 
 def _is_identity_transform(raw_transform: Any) -> bool:

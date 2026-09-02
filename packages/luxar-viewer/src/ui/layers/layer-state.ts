@@ -374,11 +374,11 @@ export interface LayerInfo {
    */
   blendingModeExplicit: boolean;
   /**
-   * Authored cross-layer draw order (`LAYER_DEPTH_LEVEL_SPEC.md`), or
+   * Authored cross-layer draw order (`LAYER_ORDER_SPEC.md`), or
    * `undefined` when this layer states none. Higher = nearer the camera =
    * drawn later.
    */
-  depthLevel?: number;
+  layerOrder?: number;
   /**
    * Whether the level is EXPLICIT — the node's OWN attr, or a user pick in the
    * panel — as opposed to inherited or absent. Same reasoning as
@@ -387,7 +387,7 @@ export interface LayerInfo {
    * inherited level as this layer's own would silently disable that rule for
    * the ancestor too.
    */
-  depthLevelExplicit: boolean;
+  layerOrderExplicit: boolean;
   /** Whether this layer is selected in the list */
   selected: boolean;
   /** Active colormap name (undefined = direct RGB colors) */
@@ -738,11 +738,11 @@ export class LayerStateManager {
           // display type is a geometry name but whose node authored no mode) stays
           // non-owning, exactly like a plain group.
           blendingModeExplicit: node.attrs.blending_mode != null,
-          depthLevel:
-            typeof node.attrs.depth_level === 'number' && Number.isFinite(node.attrs.depth_level)
-              ? node.attrs.depth_level
+          layerOrder:
+            typeof node.attrs.layer_order === 'number' && Number.isFinite(node.attrs.layer_order)
+              ? node.attrs.layer_order
               : undefined,
-          depthLevelExplicit: node.attrs.depth_level != null,
+          layerOrderExplicit: node.attrs.layer_order != null,
           selected: false,
           colormap,
           supportsColormap,
@@ -1027,14 +1027,14 @@ export class LayerStateManager {
    * `undefined` CLEARS it, which is not the same as setting 0: an unset level
    * hands the layer back to the renderer's inferred containment ordering, while
    * an explicit 0 states a band and suppresses that inference. Clearing must
-   * therefore also clear `depthLevelExplicit`, or `liveLayerAttrs` would keep
+   * therefore also clear `layerOrderExplicit`, or `liveLayerAttrs` would keep
    * emitting the stale value as this layer's own setter.
    */
-  setDepthLevel(path: string, level: number | undefined): void {
+  setLayerOrder(path: string, level: number | undefined): void {
     const layer = this.layers.get(path);
     if (!layer) return;
-    layer.depthLevel = level === undefined ? undefined : Math.trunc(level);
-    layer.depthLevelExplicit = level !== undefined;
+    layer.layerOrder = level === undefined ? undefined : Math.trunc(level);
+    layer.layerOrderExplicit = level !== undefined;
     this.notify();
   }
 

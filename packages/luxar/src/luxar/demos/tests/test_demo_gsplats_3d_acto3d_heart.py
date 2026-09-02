@@ -68,8 +68,8 @@ def test_every_channel_is_volumetric(channel_nodes: dict[str, dict]) -> None:
     This replaces the earlier all-``additive`` rule (#1964). Additive was chosen
     then because the three co-located channels had no authored draw order and the
     viewer had to infer one; being commutative, additive sidestepped the question
-    rather than answering it. ``depth_level`` answers it (see
-    ``test_every_channel_states_its_depth_level``), so the specimen can occlude
+    rather than answering it. ``layer_order`` answers it (see
+    ``test_every_channel_states_its_layer_order``), so the specimen can occlude
     itself the way tissue does instead of every stain summing into a flat glow.
     """
     assert len(channel_nodes) == 3
@@ -77,7 +77,7 @@ def test_every_channel_is_volumetric(channel_nodes: dict[str, dict]) -> None:
         assert attrs.get("blending_mode") == "volumetric", name
 
 
-def test_every_channel_states_its_depth_level(channel_nodes: dict[str, dict]) -> None:
+def test_every_channel_states_its_layer_order(channel_nodes: dict[str, dict]) -> None:
     """The order is AUTHORED, not inferred — which is what makes volumetric safe.
 
     Higher draws nearer the camera, matching the order the Layers panel lists the
@@ -91,7 +91,7 @@ def test_every_channel_states_its_depth_level(channel_nodes: dict[str, dict]) ->
         "gsplats_tomato_lectin_vasculature": 2,
         "gsplats_tnni3_cardiac_tissue": 1,
     }
-    actual = {name: attrs.get("depth_level") for name, attrs in channel_nodes.items()}
+    actual = {name: attrs.get("layer_order") for name, attrs in channel_nodes.items()}
     assert actual == expected
 
     # Distinct levels, or two channels share a band and the inference decides

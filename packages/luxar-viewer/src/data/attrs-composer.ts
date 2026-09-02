@@ -14,10 +14,10 @@
  *                          for mesh — docs/specs/MESH_NODE_SPEC.md §6.3)
  *   effective_join       = nearest ancestor (root-to-leaf) that sets join,
  *                          else undefined (lines apply DEFAULT_LINE_JOIN)
- *   effective_depth_level = nearest ancestor (root-to-leaf) that sets depth_level,
+ *   effective_layer_order = nearest ancestor (root-to-leaf) that sets layer_order,
  *                          else undefined (the renderer treats unset as band 0
  *                          and keeps its inferred containment ordering — see
- *                          docs/guides/specs/LAYER_DEPTH_LEVEL_SPEC.md)
+ *                          docs/guides/specs/LAYER_ORDER_SPEC.md)
  *   effective_colormap   = nearest ancestor (root-to-leaf) that sets colormap,
  *                          else undefined (the leaf renders direct colours).
  *                          `customLutBytes` travels WITH it, from the same node
@@ -68,14 +68,14 @@ export interface ComposableAttrs {
    */
   customLutBytes?: Uint8Array;
   /**
-   * Authored cross-layer draw order (`LAYER_DEPTH_LEVEL_SPEC.md`). Higher =
+   * Authored cross-layer draw order (`LAYER_ORDER_SPEC.md`). Higher =
    * nearer the camera = drawn later. Nearest-setter-wins like `blending_mode`,
    * and deliberately kept `number | undefined` rather than defaulted here:
    * "nobody authored a level" must stay distinguishable from "someone authored
    * 0", because an EXPLICIT level suppresses the containment rule while an
    * unset one must not (spec D2/D3). The renderer applies `unset ⇒ band 0`.
    */
-  depth_level?: number;
+  layer_order?: number;
 }
 
 export interface EffectiveAttrs {
@@ -117,11 +117,11 @@ export interface EffectiveAttrs {
    */
   customLutBytes: Uint8Array | undefined;
   /**
-   * Nearest ancestor (root-to-leaf) that sets `depth_level`; `undefined` when
+   * Nearest ancestor (root-to-leaf) that sets `layer_order`; `undefined` when
    * no level of the chain does. The `undefined` is load-bearing — see the
    * `ComposableAttrs` field.
    */
-  depth_level: number | undefined;
+  layer_order: number | undefined;
 }
 
 /**
@@ -146,7 +146,7 @@ export function composeAttrs(chainRootToLeaf: readonly ComposableAttrs[]): Effec
   let join: string | undefined;
   let colormap: string | undefined;
   let customLutBytes: Uint8Array | undefined;
-  let depth_level: number | undefined;
+  let layer_order: number | undefined;
 
   for (const a of chainRootToLeaf) {
     if (a.opacity !== undefined) opacity *= a.opacity;
@@ -163,7 +163,7 @@ export function composeAttrs(chainRootToLeaf: readonly ComposableAttrs[]): Effec
       colormap = a.colormap;
       customLutBytes = a.customLutBytes;
     }
-    if (a.depth_level !== undefined) depth_level = a.depth_level;
+    if (a.layer_order !== undefined) layer_order = a.layer_order;
   }
 
   // Clamp per spec
@@ -191,7 +191,7 @@ export function composeAttrs(chainRootToLeaf: readonly ComposableAttrs[]): Effec
     customLutBytes,
     // Never defaulted to 0 here: the renderer needs to tell an authored level
     // from an absent one, because only the former suppresses containment.
-    depth_level,
+    layer_order,
   };
 }
 
@@ -282,12 +282,12 @@ function toComposable(attrs: SceneNode['attrs']): ComposableAttrs {
     join: attrs.join as string | undefined,
     colormap: attrs.colormap as string | undefined,
     customLutBytes: attrs.customLutBytes as Uint8Array | undefined,
-    depth_level: sanitizeDepthLevel(attrs.depth_level),
+    layer_order: sanitizeDepthLevel(attrs.layer_order),
   };
 }
 
 /**
- * Read an authored `depth_level` off a raw zarr attrs record.
+ * Read an authored `layer_order` off a raw zarr attrs record.
  *
  * TOLERANT read against a STRICT write: the Python writer refuses anything but
  * an `int`, but a hand-edited or third-party store can carry anything, and the

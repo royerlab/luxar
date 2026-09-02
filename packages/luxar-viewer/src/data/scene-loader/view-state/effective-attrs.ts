@@ -3,7 +3,7 @@
  *
  * Pure helper: given a scene graph and a node, return a copy of the
  * node's attrs with `opacity`, `absorption`, `gamma`, `intensity`,
- * `offset`, `blending_mode`, `join`, `depth_level`, and `colormap` (with its
+ * `offset`, `blending_mode`, `join`, `layer_order`, and `colormap` (with its
  * `customLutBytes`) replaced by the values from
  * {@link getEffectiveAttrs}. Falls back to the raw attrs when the
  * scene graph is unavailable.
@@ -48,7 +48,7 @@ export function applyEffectiveAttrs(
     // to ALL FOUR geometry types: every `create-*-node.ts` stamps the whole
     // record onto `userData.attrs`, and no material consumes the value, so the
     // depth-sort coordinator can read it straight off the mesh without any
-    // per-type plumbing (`LAYER_DEPTH_LEVEL_SPEC.md` §7).
-    depth_level: eff.depth_level,
+    // per-type plumbing (`LAYER_ORDER_SPEC.md` §7).
+    layer_order: eff.layer_order,
   };
 }

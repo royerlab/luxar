@@ -53,17 +53,17 @@ class _WriteThroughAttrs(MutableMapping[str, Any]):
             setattr(self._node, key, value)
             return
         self._reject_mesh_only_on_non_mesh(key)
-        self._reject_depth_level_inside_specialized_group(key, value)
+        self._reject_layer_order_inside_specialized_group(key, value)
         self._node._persist_attr(key, value)
 
-    def _reject_depth_level_inside_specialized_group(
+    def _reject_layer_order_inside_specialized_group(
         self, key: str, value: Any
     ) -> None:
-        """Close the second door onto ``depth_level`` inside a partition / LOD group.
+        """Close the second door onto ``layer_order`` inside a partition / LOD group.
 
         The leaf adders refuse it at authoring time, but this write-through
         mapping persists straight to the store, so
-        ``part.attrs["depth_level"] = 5`` would otherwise reach disk and split a
+        ``part.attrs["layer_order"] = 5`` would otherwise reach disk and split a
         partition wrapper across draw-order bands — destroying the exact BSP part
         order the wrapper guarantees. Same shape and same reasoning as
         :meth:`_reject_mesh_only_on_non_mesh`.
@@ -71,11 +71,11 @@ class _WriteThroughAttrs(MutableMapping[str, Any]):
         The check starts at the node ITSELF, not its parent: a post-hoc set on a
         part is exactly the case the adder cannot see.
         """
-        if key != "depth_level":
+        if key != "layer_order":
             return
         from ..group.compositing import (
             _enclosing_specialized_group,
-            depth_level_inside_specialized_group_reason,
+            layer_order_inside_specialized_group_reason,
         )
 
         wrapper = _enclosing_specialized_group(self._node)
@@ -83,9 +83,9 @@ class _WriteThroughAttrs(MutableMapping[str, Any]):
             return
         kind = str(wrapper.attrs.get("kind"))
         raise ValueError(
-            f"Cannot set depth_level={value!r} on '{self._node.name}', which is "
+            f"Cannot set layer_order={value!r} on '{self._node.name}', which is "
             f"inside a kind={kind} group. "
-            + depth_level_inside_specialized_group_reason(kind)
+            + layer_order_inside_specialized_group_reason(kind)
         )
 
     def _reject_mesh_only_on_non_mesh(self, key: str) -> None:

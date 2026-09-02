@@ -287,9 +287,9 @@ COMPOSITING_ATTRS = frozenset(
         # Copying it onto each internal child would split the wrapper across
         # draw-order bands and destroy its exact BSP part order — which is why
         # authoring one strictly inside a specialized group is refused outright
-        # (:func:`reject_depth_level_inside_specialized_group`) rather than
-        # merely discouraged. See docs/guides/specs/LAYER_DEPTH_LEVEL_SPEC.md.
-        "depth_level",
+        # (:func:`reject_layer_order_inside_specialized_group`) rather than
+        # merely discouraged. See docs/guides/specs/LAYER_ORDER_SPEC.md.
+        "layer_order",
         # Lines-only, but compositing for the same reason blending_mode is: the
         # user thinks of the wrapper as their layer, so a partitioned / LOD
         # lines node must not silently drop back to the default join style on
@@ -501,31 +501,31 @@ def _enclosing_specialized_group(node: Any) -> Optional[Any]:
     return None
 
 
-def depth_level_inside_specialized_group_reason(kind: str) -> str:
-    """Why ``depth_level`` cannot be authored inside a partition / LOD group."""
+def layer_order_inside_specialized_group_reason(kind: str) -> str:
+    """Why ``layer_order`` cannot be authored inside a partition / LOD group."""
     if kind == "partition":
         return (
             "A partition's parts are ordered EXACTLY against each other from the "
-            "stored BSP planes, valid from any camera pose. depth_level bands are "
+            "stored BSP planes, valid from any camera pose. layer_order bands are "
             "the outer key, so a level on one part would move it into a different "
             "band and its parts would interleave by band instead of by the tree, "
-            "destroying that exactness. Set depth_level on the partition WRAPPER "
+            "destroying that exactness. Set layer_order on the partition WRAPPER "
             "instead — the wrapper is the layer, and a level there moves the whole "
             "block while the part order travels with it intact."
         )
     return (
         "A kind=lod group's levels are ALTERNATIVES — only one renders at a time — "
-        "so a level on one of them would be inert. Set depth_level on the LOD "
+        "so a level on one of them would be inert. Set layer_order on the LOD "
         "wrapper instead, where it applies to whichever level is live."
     )
 
 
-def reject_depth_level_inside_specialized_group(
+def reject_layer_order_inside_specialized_group(
     geometry_type: str, name: str, attrs: Dict[str, Any], parent: Any
 ) -> None:
-    """Refuse ``depth_level=`` on a node inside a partition / LOD group.
+    """Refuse ``layer_order=`` on a node inside a partition / LOD group.
 
-    ``depth_level`` may be authored only on a node that IS a layer — the scene
+    ``layer_order`` may be authored only on a node that IS a layer — the scene
     root, a plain group, or a top-level leaf. The two reasons differ in severity
     (a partition would lose an exactness guarantee; a LOD level would be inert)
     but the rule is one ancestry check, which also covers the nested case (a LOD
@@ -538,7 +538,7 @@ def reject_depth_level_inside_specialized_group(
     must render whatever it is handed, instead warns once and falls back to the
     enclosing layer's level — strict write, tolerant read.
     """
-    if "depth_level" not in attrs:
+    if "layer_order" not in attrs:
         return
     wrapper = _enclosing_specialized_group(parent)
     if wrapper is None:
@@ -546,8 +546,8 @@ def reject_depth_level_inside_specialized_group(
     kind = str(wrapper.attrs.get("kind"))
     raise ValueError(
         f"Cannot add {geometry_type} '{name}' with "
-        f"depth_level={attrs['depth_level']!r} inside a kind={kind} group. "
-        + depth_level_inside_specialized_group_reason(kind)
+        f"layer_order={attrs['layer_order']!r} inside a kind={kind} group. "
+        + layer_order_inside_specialized_group_reason(kind)
     )
 
 

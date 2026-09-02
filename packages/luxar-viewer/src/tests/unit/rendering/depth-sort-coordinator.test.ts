@@ -5058,8 +5058,8 @@ describe('depth-sort coordinator — synchronous first sort', () => {
 });
 
 /**
- * Authored cross-layer draw order — `depth_level`
- * (docs/guides/specs/LAYER_DEPTH_LEVEL_SPEC.md).
+ * Authored cross-layer draw order — `layer_order`
+ * (docs/guides/specs/LAYER_ORDER_SPEC.md).
  *
  * Bands are the PRIMARY key: groups sort by (level, meanZ), and a containment
  * edge is honoured only within a band. With nothing authored every group is
@@ -5067,10 +5067,10 @@ describe('depth-sort coordinator — synchronous first sort', () => {
  * unchanged — which is why the ~18 containment/BSP tests above are themselves
  * the "unset is byte-identical" proof and are deliberately left untouched.
  */
-describe('depth-sort coordinator — depth_level bands', () => {
+describe('depth-sort coordinator — layer_order bands', () => {
   /** Authored level, as the composed attrs record the node factory stamps. */
   const setLevel = (mesh: THREE.Mesh, level: number): void => {
-    mesh.userData.attrs = { ...(mesh.userData.attrs ?? {}), depth_level: level };
+    mesh.userData.attrs = { ...(mesh.userData.attrs ?? {}), layer_order: level };
   };
 
   /** Two disjoint leaves: `far` genuinely behind `near` along view-z. */

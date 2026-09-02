@@ -13,9 +13,9 @@ that it takes one of them:
 
 1. **Commutative blending** — ``additive`` (or ``max`` / ``luminous``), where
    the order genuinely does not matter, so there is nothing to get wrong.
-2. **A depth-sorted mode WITH an explicit ``depth_level`` on every layer** —
+2. **A depth-sorted mode WITH an explicit ``layer_order`` on every layer** —
    the order is then stated by the author and camera-independent
-   (``docs/guides/specs/LAYER_DEPTH_LEVEL_SPEC.md``).
+   (``docs/guides/specs/LAYER_ORDER_SPEC.md``).
 
 What is refused is the third case: ``normal`` / ``volumetric`` with no level,
 which silently accepts whatever order the geometry implies.
@@ -107,18 +107,18 @@ def _authored_modes(source: Path) -> list[str]:
     return modes
 
 
-def _calls_passing_depth_level(source: Path) -> int:
-    """How many ``add_gsplats*`` calls pass a ``depth_level`` at all.
+def _calls_passing_layer_order(source: Path) -> int:
+    """How many ``add_gsplats*`` calls pass a ``layer_order`` at all.
 
     Counts the KEYWORD, not a literal: every audited demo drives its channels
     from a config list, so the value is nearly always an expression
-    (``ch["depth_level"]``) rather than a constant. Requiring a literal would
+    (``ch["layer_order"]``) rather than a constant. Requiring a literal would
     fail every real caller.
     """
     return sum(
         1
         for call in _add_gsplats_calls(source)
-        if any(kw.arg == "depth_level" for kw in call.keywords)
+        if any(kw.arg == "layer_order" for kw in call.keywords)
     )
 
 
@@ -137,7 +137,7 @@ def test_overlapping_layers_declare_their_order(demo: str) -> None:
         assert set(modes) <= set(COMMUTATIVE_MODES), (
             f"{demo}: authored modes {sorted(set(modes))} — an overlapping-layer "
             "demo must be entirely commutative, or depth-sorted with an explicit "
-            "depth_level on every layer"
+            "layer_order on every layer"
         )
         return
 
@@ -145,13 +145,13 @@ def test_overlapping_layers_declare_their_order(demo: str) -> None:
     # Fewer levels than calls means at least one layer's order is still inferred,
     # which is the case this whole rule exists to prevent.
     calls = len(_add_gsplats_calls(path))
-    with_level = _calls_passing_depth_level(path)
+    with_level = _calls_passing_layer_order(path)
     assert with_level == calls, (
         f"{demo} authors depth-sorted blending {sorted(set(depth_sorted))} on "
         f"overlapping gsplat layers, but only {with_level} of {calls} "
-        "add_gsplats* calls pass depth_level. A depth-sorted overlapping layer "
+        "add_gsplats* calls pass layer_order. A depth-sorted overlapping layer "
         "without a stated level takes whatever order the geometry implies — see "
-        "docs/guides/specs/LAYER_DEPTH_LEVEL_SPEC.md"
+        "docs/guides/specs/LAYER_ORDER_SPEC.md"
     )
 
 
@@ -170,7 +170,7 @@ def test_the_demonstrator_demos_state_a_level(demo: str) -> None:
     path = _DEMOS / demo
     calls = len(_add_gsplats_calls(path))
     assert calls, f"{demo}: no add_gsplats* call found"
-    assert _calls_passing_depth_level(path) == calls, (
-        f"{demo}: every add_gsplats* call must pass depth_level "
-        f"({_calls_passing_depth_level(path)} of {calls} do)"
+    assert _calls_passing_layer_order(path) == calls, (
+        f"{demo}: every add_gsplats* call must pass layer_order "
+        f"({_calls_passing_layer_order(path)} of {calls} do)"
     )

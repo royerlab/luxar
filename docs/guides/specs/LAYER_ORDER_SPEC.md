@@ -1,7 +1,7 @@
-# Layer Depth Level — Authored Cross-Layer Draw Order
+# Layer Order — Authored Cross-Layer Draw Order
 
-> **Status**: PROPOSED, not implemented. This document specifies an authored
-> per-layer draw order (`depth_level`), the 2D-layer-stack idea — CSS `z-index`
+> **Status**: IMPLEMENTED on branch `feat/layer-order`. This document specifies an authored
+> per-layer draw order (`layer_order`), the 2D-layer-stack idea — CSS `z-index`
 > / Illustrator layer depth — applied to Luxar's overlapping 3D layers. It is
 > the cheap, authorially honest alternative to the two mechanisms archived in
 > `CROSS_NODE_DEPTH_ORDERING_SPEC.md` §12 (Route B, depth-shard interleaving —
@@ -66,14 +66,14 @@ approximate, it is not expressible at all.
 
 ## 2. The mechanism: depth bands
 
-One authored integer per layer, `depth_level`. Higher = nearer the camera =
+One authored integer per layer, `layer_order`. Higher = nearer the camera =
 drawn later = composites on top (§3 D1).
 
 `assignGlobalRenderOrder` gains the level as its **primary key**:
 
 ```
 groups := today's grouping (partition wrapper | single leaf)
-bands  := groups partitioned by effective depth_level
+bands  := groups partitioned by effective layer_order
 for each band, ascending by level:          # lower level = farther = drawn first
     order the band exactly as today         # mean view-z, then containment hoist
     emit renderOrder = nextRank++ per member as today
@@ -107,7 +107,7 @@ visibility"). Either way the value is *uniform across Luxar's own content*, so
 per-mesh `renderOrder` remains the discriminator among Luxar layers and bands work
 unchanged.
 
-What follows is a **scope limitation** rather than a problem: `depth_level` orders
+What follows is a **scope limitation** rather than a problem: `layer_order` orders
 layers *within* the Luxar subtree only. Ordering Luxar content against a host
 application's own transparent geometry is the `LuxarLayer` `renderOrder` option's
 job — a different knob at a different scope. The two compose (host groups pick the
@@ -120,8 +120,8 @@ start splitting bands underneath us.
 
 ## 3. Pinned decisions
 
-**D1 — Higher = nearer the camera.** `depth_level = 30` draws after (on top of)
-`depth_level = 10`. This matches CSS `z-index` and Illustrator's bring-to-front,
+**D1 — Higher = nearer the camera.** `layer_order = 30` draws after (on top of)
+`layer_order = 10`. This matches CSS `z-index` and Illustrator's bring-to-front,
 i.e. every 2D layer tool an author has met, and is *inverted* from the
 renderer's internal "farthest first, lowest `renderOrder` drawn first"
 direction. The inversion lives in one comparator and is worth it; the
@@ -129,7 +129,7 @@ alternative optimises for the reader of `render-order.ts` over the author of a
 scene.
 
 **D2 — Unset ≡ 0, and unset MUST stay distinguishable from an authored 0.**
-`depth_level` gets **no writer-stamped default** — it is absent from both
+`layer_order` gets **no writer-stamped default** — it is absent from both
 `WRITER_STAMPED_APPEARANCE_DEFAULTS` and `IDENTITY_COMPOSITING_ATTRS`, joining
 `blending_mode` / `visible` / `join` / `nd_transform` whose "absence on disk is
 genuine silence". This is not tidiness: D3 makes an *explicit* level suppress
@@ -163,7 +163,7 @@ commutes) but is meaningful against `normal`/`volumetric` ones, which is the
 > to revisit and §7's collect-loop change is the only code that changes.
 
 **D5 — It is a per-LAYER property: a compositing attr, nearest-setter-wins.**
-`depth_level` joins `COMPOSITING_ATTRS` — the set that "rides on a wrapper Group
+`layer_order` joins `COMPOSITING_ATTRS` — the set that "rides on a wrapper Group
 (where the user thinks of the wrapper as *their layer*) rather than getting
 copied onto each internal child" — and `AUTHORED_APPEARANCE_ATTRS`, so a
 structure-only rebuild (`gsplat lod`, `gsplat additive`, …) carries it from
@@ -173,7 +173,7 @@ composes root→leaf **nearest-setter-wins**, like `blending_mode` / `join` /
 
 **D6 — A level authored strictly inside ANY specialized group is an ERROR.**
 That is `kind=partition` *or* `kind=lod`, at any depth, which makes the rule
-statable in one line: **`depth_level` may be authored only on a node that is a
+statable in one line: **`layer_order` may be authored only on a node that is a
 layer** — the scene root, a plain group, or a top-level leaf — never on the
 internals of a specialized group. For a partition the reason is severe (§5: it
 would split the wrapper across bands and destroy the exact Fuchs–Kedem–Naylor
@@ -184,7 +184,7 @@ One ancestry check covers both, and covers nested cases (a lod group inside a
 partition part) with no extra rule.
 
 Refused at authoring through *both* doors (the adder kwarg and a post-hoc
-`node.attrs["depth_level"] = …`), mirroring `reject_lines_only_join` +
+`node.attrs["layer_order"] = …`), mirroring `reject_lines_only_join` +
 `reject_lines_only_join_assignment`. The viewer, which must render whatever it
 is handed, instead warns once and falls back to the enclosing layer's level —
 strict write, tolerant read.
@@ -197,7 +197,7 @@ the zarr store."
 
 ## 4. Why this is cheap
 
-| | Route B (archived) | Route C (§8.2) | Depth level |
+| | Route B (archived) | Route C (§8.2) | Layer order |
 | --- | --- | --- | --- |
 | Per-frame cost | +5.5–6.4 ms at 2M (measured) | one frame of sort lag | **none** |
 | New per-element machinery | shard meshes, per-shard AABBs, k-way merge | global element storage, per-element uniform indirection | **none** |
@@ -257,7 +257,7 @@ above every view-dependent rule, below the two that are not ours to move.
 | --- | --- | --- | --- | --- |
 | 1 | three.js bucket (opaque → transmissive → transparent) | whole scene | no | **no** — §8.1 |
 | 2 | `groupOrder` (an ancestor `Group`'s `renderOrder`) | subtree | no | unused (always 0) |
-| 3 | **`depth_level` band** | layer | **no** | **yes — this spec** |
+| 3 | **`layer_order` band** | layer | **no** | **yes — this spec** |
 | 4 | Containment DAG hoist | within a band | no | indirectly (bounds) |
 | 5 | Mean view-z of groups | within a band | **yes** | no |
 | 6 | BSP part rank (exact) or member view-z | within a group | **yes** | no |
@@ -329,22 +329,22 @@ documented as one.
 ## 6. Authoring surface (Python)
 
 ```python
-scene.add_gsplats("vasculature", ..., blending_mode="volumetric", depth_level=10)
-scene.add_gsplats("tissue",      ..., blending_mode="volumetric", depth_level=20)
-scene.add_gsplats("nuclei",      ..., blending_mode="volumetric", depth_level=30)
+scene.add_gsplats("vasculature", ..., blending_mode="volumetric", layer_order=10)
+scene.add_gsplats("tissue",      ..., blending_mode="volumetric", layer_order=20)
+scene.add_gsplats("nuclei",      ..., blending_mode="volumetric", layer_order=30)
 ```
 
-- A `depth_level: int | None = None` kwarg on `add_points` / `add_lines` /
-  `add_gsplats` / `add_mesh` / `add_group`, plus a `node.depth_level` property
+- A `layer_order: int | None = None` kwarg on `add_points` / `add_lines` /
+  `add_gsplats` / `add_mesh` / `add_group`, plus a `node.layer_order` property
   with the validating setter pattern `mesh.py::blending_mode` uses.
-- Validation (`validation/types.py::validate_depth_level`): a finite Python
+- Validation (`validation/types.py::validate_layer_order`): a finite Python
   `int` (a `bool` is refused — `isinstance(True, int)` is the classic hole);
   any sign; no range clamp, since the value's only meaning is its order.
 - Registered in `COMPOSITING_ATTRS` and `AUTHORED_APPEARANCE_ATTRS`; **absent**
   from `WRITER_STAMPED_APPEARANCE_DEFAULTS` and `IDENTITY_COMPOSITING_ATTRS`
   (D2). Also added to `ABSENT_WHEN_NONE_RENDER_ATTRS` so a
   present-but-`None` kwarg means ABSENT rather than 0.
-- D6's refusal: a new `reject_depth_level_inside_partition` in
+- D6's refusal: a new `reject_layer_order_inside_partition` in
   `core/group/compositing.py` plus its assignment-door twin in
   `core/node/node.py::_WriteThroughAttrs`.
 
@@ -354,11 +354,11 @@ scene.add_gsplats("nuclei",      ..., blending_mode="volumetric", depth_level=30
 
 | File | Change |
 | --- | --- |
-| `data/attrs-composer.ts` | `ComposableAttrs.depth_level?: number`; `EffectiveAttrs.depthLevel?: number`; nearest-setter-wins, beside `blending_mode`. Header prose lists the new rule. |
-| `rendering/node-factory/*` | Stamp the composed level onto `mesh.userData.depthLevel` at node creation, alongside the other composed appearance values. |
+| `data/attrs-composer.ts` | `ComposableAttrs.layer_order?: number`; `EffectiveAttrs.layerOrder?: number`; nearest-setter-wins, beside `blending_mode`. Header prose lists the new rule. |
+| `rendering/node-factory/*` | Stamp the composed level onto `mesh.userData.layerOrder` at node creation, alongside the other composed appearance values. |
 | `rendering/depth-sort-coordinator/render-order.ts` | `OrderSlot` / `OrderGroup` gain `level` + `levelExplicit`; `assignGlobalRenderOrder` partitions into bands before today's sort; `orderGroupsWithContainment` runs **per band** and reports the containment edges it had to drop across a band boundary (D3's warning). |
 | `rendering/depth-sort-coordinator.ts` | The collect loop (`~:2107`) currently `continue`s on a non-order-dependent node after resetting `renderOrder = 0`. Under D4 it must instead collect a commutative node **that carries an explicit level**, and keep the reset for the rest. This is the only code D4 touches. |
-| `ui/layers/layer-controls.ts`, `layer-state.ts`, `layer-apply.ts` | A **Depth level** control per layer row (a small stepper, blank = unset). Session-only (D7). |
+| `ui/layers/layer-controls.ts`, `layer-state.ts`, `layer-apply.ts` | A **Layer order** control per layer row (a small stepper, blank = unset). Session-only (D7). |
 | `ui/data-loading-monitor/templates/scene-graph.ts` | The live draw-order chip already prints `#renderOrder` + bucket; add the band so an author can see *why* a layer sits where it does. |
 
 Deliberately unchanged: the sort worker, the WASM/TS kernels, `element-storage`,
@@ -372,7 +372,7 @@ data.
 1. **The opaque/transparent bucket split.** three.js renders opaque, then
    transmissive, then transparent, and `renderOrder` only sorts *within* a
    bucket. `opaque` is the one blending mode with `transparent: false`
-   (`blending-state.ts:292`), so **no `depth_level` can place an `opaque` mesh
+   (`blending-state.ts:292`), so **no `layer_order` can place an `opaque` mesh
    in front of a transparent layer.** A level spanning the two buckets is
    silently partially honoured — which argues for warning on that combination
    too, and is listed in §12 as an open question rather than decided here.
@@ -408,7 +408,7 @@ Phases 1–3 are independently landable; Phase 4 is the one that can say no.
 | **Unset is byte-identical** | Golden: for every existing test scene and the E2E fixtures, the assigned `renderOrder` integers with no level authored anywhere must equal today's exactly. This is the invariant that makes the change safe; it should fail loudly if the band loop is ever not a no-op on one band. |
 | Band ordering | `fast-check` property over random (level, view-z, radius) sets: never a member of a lower band after a member of a higher band; within a band, today's order reproduced. |
 | BSP exactness preserved | The #843 / #565 containment and BSP fixtures must pass unchanged with levels unset, AND with a level authored on the wrapper (which must not perturb internal part order at all). |
-| D6 refusals | Both doors, both directions: the adder kwarg on a partition part, and `node.attrs["depth_level"] = …` post-hoc. Plus the viewer's warn-and-ignore on a hand-built store carrying an inner level. |
+| D6 refusals | Both doors, both directions: the adder kwarg on a partition part, and `node.attrs["layer_order"] = …` post-hoc. Plus the viewer's warn-and-ignore on a hand-built store carrying an inner level. |
 | D3 warning fires | A fixture where a containment relation is broken by a band split must emit exactly one warning naming both paths — a "fires-proof" test, not just a no-crash one. |
 | Commutative scope (D4) | An `additive` layer with an explicit level must receive a positive `renderOrder`; without one it must stay at 0. |
 | E2E, non-vacuous | A two-layer fixture where compositing order alone decides the dominant channel at the projected overlap: author level A>B, assert the pixel; swap to B>A, assert it inverted. **Fail-first verified** by pinning both levels equal. |
@@ -419,7 +419,7 @@ Phases 1–3 are independently landable; Phase 4 is the one that can say no.
 ## 11. Risks
 
 1. **D2 is the whole safety argument.** If anything ever stamps a default
-   `depth_level`, rule 3 silently switches off for every store written after
+   `layer_order`, rule 3 silently switches off for every store written after
    that point. The `IDENTITY_COMPOSITING_ATTRS` registration is the thing to
    guard with a test that asserts *absence*, not presence.
 2. **D4 widens the collected set.** Commutative nodes have never received a
@@ -451,7 +451,7 @@ Phases 1–3 are independently landable; Phase 4 is the one that can say no.
    #1964 added a test pinning "overlapping gsplat layers are additive"; if
    Phase 4 moves demos back to `volumetric` + levels, that test's rule needs
    restating as "overlapping order-dependent layers must carry explicit levels".
-4. **URL override** (`?depthLevels=path:level,…`) for A/B measurement without
+4. **URL override** (`?layerOrders=path:level,…`) for A/B measurement without
    re-authoring — cheap, and the archived work showed how much it matters to be
    able to pin a knob across scenes. Not specified above.
 5. **Should a leaf be allowed to escape its group's band?** (§5.2.)

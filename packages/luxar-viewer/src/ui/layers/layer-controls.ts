@@ -74,7 +74,7 @@ export class LayerControls {
   private shininessSlider: LabeledSlider | null = null;
   private alphaCutoffSlider: LabeledSlider | null = null;
   private blendSelect: HTMLSelectElement | null = null;
-  private depthLevelInput: HTMLInputElement | null = null;
+  private layerOrderInput: HTMLInputElement | null = null;
   private colormapSelect: HTMLSelectElement | null = null;
   private labelColorSelect: HTMLSelectElement | null = null;
   private labelFilterSelect: HTMLSelectElement | null = null;
@@ -152,7 +152,7 @@ export class LayerControls {
     this.alphaCutoffSlider?.dispose();
     this.alphaCutoffSlider = null;
     this.blendSelect = null;
-    this.depthLevelInput = null;
+    this.layerOrderInput = null;
     this.colormapSelect = null;
     this.lodLevelSelect = null;
     this.lodLevelStatus = null;
@@ -433,49 +433,49 @@ export class LayerControls {
     blendGroup.appendChild(this.blendSelect);
     this.controlsEl.appendChild(blendGroup);
 
-    // Depth level — the authored cross-layer draw order
-    // (`LAYER_DEPTH_LEVEL_SPEC.md`). A number input rather than a slider,
+    // Layer order — the authored cross-layer draw order
+    // (`LAYER_ORDER_SPEC.md`). A number input rather than a slider,
     // because the value is an unbounded signed integer AND must be able to be
     // BLANK: empty means "unset", which hands the layer back to the renderer's
     // inferred containment ordering and is a genuinely different state from 0.
-    const depthGroup = document.createElement('div');
-    depthGroup.className = 'luxar-layers-panel__control-group';
-    const depthLabel = document.createElement('div');
-    depthLabel.className = 'luxar-layers-panel__control-label';
-    depthLabel.textContent = 'Depth level';
+    const orderGroup = document.createElement('div');
+    orderGroup.className = 'luxar-layers-panel__control-group';
+    const orderLabel = document.createElement('div');
+    orderLabel.className = 'luxar-layers-panel__control-label';
+    orderLabel.textContent = 'Layer order';
 
-    this.depthLevelInput = document.createElement('input');
-    this.depthLevelInput.type = 'number';
-    this.depthLevelInput.step = '1';
-    this.depthLevelInput.className = 'luxar-layers-panel__number';
-    this.depthLevelInput.placeholder = 'auto';
-    this.depthLevelInput.title =
+    this.layerOrderInput = document.createElement('input');
+    this.layerOrderInput.type = 'number';
+    this.layerOrderInput.step = '1';
+    this.layerOrderInput.className = 'luxar-layers-panel__number';
+    this.layerOrderInput.placeholder = 'auto';
+    this.layerOrderInput.title =
       'Draw order against the layers this one overlaps. Higher draws nearer the ' +
       'camera (on top), like a CSS z-index. Leave blank to let the viewer infer ' +
       'the order from the geometry. Sparse values (10/20/30) leave room to insert.';
-    this.events.on(this.depthLevelInput, 'change', () => {
+    this.events.on(this.layerOrderInput, 'change', () => {
       this.controlsInteracting = true;
-      const raw = this.depthLevelInput!.value.trim();
+      const raw = this.layerOrderInput!.value.trim();
       // Blank CLEARS. A non-numeric entry is treated as blank rather than as 0,
       // since 0 is a real band and guessing it from junk would state an order
       // the user did not choose.
       const parsed = raw === '' ? undefined : Number.parseInt(raw, 10);
       const level = parsed === undefined || !Number.isFinite(parsed) ? undefined : parsed;
       this.deps.state.applyToSelected((l) => {
-        l.depthLevel = level;
-        l.depthLevelExplicit = level !== undefined;
+        l.layerOrder = level;
+        l.layerOrderExplicit = level !== undefined;
       });
       for (const sel of this.deps.state.getSelected()) {
-        this.deps.apply.applyDepthLevel(sel);
+        this.deps.apply.applyLayerOrder(sel);
       }
       // Echo back what was actually stored, so junk input does not sit in the
       // field looking authoritative.
-      this.depthLevelInput!.value = level === undefined ? '' : String(level);
+      this.layerOrderInput!.value = level === undefined ? '' : String(level);
       this.controlsInteracting = false;
     });
-    depthGroup.appendChild(depthLabel);
-    depthGroup.appendChild(this.depthLevelInput);
-    this.controlsEl.appendChild(depthGroup);
+    orderGroup.appendChild(orderLabel);
+    orderGroup.appendChild(this.layerOrderInput);
+    this.controlsEl.appendChild(orderGroup);
 
     // Colormap selector (only shown for layers that support colormap)
     const cmGroup = document.createElement('div');
@@ -699,12 +699,12 @@ export class LayerControls {
     }
 
     this.gammaSlider?.setValue(primary.gamma);
-    if (this.depthLevelInput) {
+    if (this.layerOrderInput) {
       // Blank when the layer states no level, so the placeholder ('auto')
       // shows the inferred-ordering state rather than a fabricated 0.
-      this.depthLevelInput.value =
-        primary.depthLevelExplicit && primary.depthLevel !== undefined
-          ? String(primary.depthLevel)
+      this.layerOrderInput.value =
+        primary.layerOrderExplicit && primary.layerOrder !== undefined
+          ? String(primary.layerOrder)
           : '';
     }
     this.opacitySlider?.setValue(primary.opacity);
