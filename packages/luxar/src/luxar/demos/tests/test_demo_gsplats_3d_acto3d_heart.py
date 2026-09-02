@@ -62,15 +62,41 @@ def channel_nodes(tmp_path_factory) -> dict[str, dict]:
     return {name: dict(root[name].attrs) for name in names}
 
 
-def test_every_channel_is_additive(channel_nodes: dict[str, dict]) -> None:
-    """All three stains composite additively — none may occlude another.
+def test_every_channel_is_volumetric(channel_nodes: dict[str, dict]) -> None:
+    """All three stains composite volumetrically (emission-absorption).
 
-    The channels are independent fluorescence emitters of one specimen, and
-    one order slot per node cannot interleave their co-located volumes.
+    This replaces the earlier all-``additive`` rule (#1964). Additive was chosen
+    then because the three co-located channels had no authored draw order and the
+    viewer had to infer one; being commutative, additive sidestepped the question
+    rather than answering it. ``depth_level`` answers it (see
+    ``test_every_channel_states_its_depth_level``), so the specimen can occlude
+    itself the way tissue does instead of every stain summing into a flat glow.
     """
     assert len(channel_nodes) == 3
     for name, attrs in channel_nodes.items():
-        assert attrs.get("blending_mode") == "additive", name
+        assert attrs.get("blending_mode") == "volumetric", name
+
+
+def test_every_channel_states_its_depth_level(channel_nodes: dict[str, dict]) -> None:
+    """The order is AUTHORED, not inferred — which is what makes volumetric safe.
+
+    Higher draws nearer the camera, matching the order the Layers panel lists the
+    channels in (top of the list is in front). Pinned as exact values because the
+    whole point is that they cannot drift: without them the order comes from
+    bounding-sphere containment, and the vasculature/cardiac-tissue spheres differ
+    by 2.2 units out of 1130 (0.19%), so a refit could silently swap that pair.
+    """
+    expected = {
+        "gsplats_sytox_green_nuclei": 3,
+        "gsplats_tomato_lectin_vasculature": 2,
+        "gsplats_tnni3_cardiac_tissue": 1,
+    }
+    actual = {name: attrs.get("depth_level") for name, attrs in channel_nodes.items()}
+    assert actual == expected
+
+    # Distinct levels, or two channels share a band and the inference decides
+    # between them again — the exact thing the levels exist to prevent.
+    assert len(set(actual.values())) == 3
 
 
 def test_every_channel_keeps_its_authored_opacity(

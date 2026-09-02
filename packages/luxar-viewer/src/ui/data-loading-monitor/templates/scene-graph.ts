@@ -175,15 +175,35 @@ export function drawOrderChipContent(
   // resolved integer beside it: with a level, the layer's position is stated and
   // camera-independent; without one it is inferred from the geometry each frame.
   const level = state.depthLevel === undefined ? '' : `L${state.depthLevel} `;
+  // `transparent` / `opaque` names a RENDER BUCKET, not an opacity. Spelling
+  // that out matters because the word invites the wrong reading: a fully opaque
+  // additive layer still sits in the `transparent` bucket, and a layer at 5%
+  // opacity in `opaque` mode still sits in the `opaque` one.
+  const bucket =
+    state.bucket === 'opaque'
+      ? "'opaque' render bucket — NOT an opacity: it means this mesh is drawn in " +
+        "THREE's depth-first pass, before every transparent mesh in the scene " +
+        'regardless of renderOrder. `opaque` is the only Luxar blending mode that ' +
+        'lands here, and a backdrop must use it to composite under the content in ' +
+        'front of it.'
+      : "'transparent' render bucket — NOT an opacity: it means this mesh is drawn " +
+        "in THREE's blended pass, after every opaque mesh, and its order there is " +
+        'what renderOrder decides. Every blending mode except `opaque` lands here ' +
+        '(additive, volumetric, normal, max, luminous), however opaque the pixels ' +
+        'themselves look.';
+
   return {
     text: `${level}#${state.renderOrder} ${state.bucket}`,
     title:
       (state.depthLevel === undefined
-        ? 'Draw order inferred from the geometry (no authored depth level). '
-        : `Authored depth level ${state.depthLevel} (higher draws nearer the camera). `) +
-      `renderOrder ${state.renderOrder} (compared ascending — lower is drawn first), ` +
-      `${state.bucket} blending bucket, ${dw}. Opaque backdrops must be 'opaque' to composite ` +
-      'under the transparent content in front of them.',
+        ? 'Depth level: none authored, so the cross-layer order is INFERRED from the ' +
+          'geometry each frame (mean view depth, then bounding-sphere containment). '
+        : `Depth level ${state.depthLevel}: the cross-layer order is STATED by the author ` +
+          'and does not change with the camera. Higher draws nearer the viewer, like a ' +
+          'CSS z-index. ') +
+      `renderOrder ${state.renderOrder} — compared ascending, so lower is drawn first, ` +
+      'and only ever compared against meshes in the SAME bucket. ' +
+      `${bucket} ${dw}.`,
   };
 }
 
