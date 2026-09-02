@@ -1125,8 +1125,8 @@ filenames, so the long-TTL data-host cache rule is safe by construction. Any
 other media moved behind that rule needs a short TTL or hashed filenames
 *first*, otherwise a re-captured still is unfixable without a full purge.
 
-Two Pages limits bound this set: **25 MiB per file** and **20,000 files**. The
-count is comfortable (180), but the largest clip sits at **24.87 MiB** —
+Two Pages limits bound the Pages set: **25 MiB per file** and **20,000 files**.
+The count is comfortable (180), but the largest clip sits at **24.87 MiB** —
 0.13 MiB under the cap. A single oversized file fails the whole deployment, so
 the gallery harness checks every PNG, WebP and WebM immediately after it is
 written. It warns at 20 MiB, fails at the 25 MiB boundary, and prints the total

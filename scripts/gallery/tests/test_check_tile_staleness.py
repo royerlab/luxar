@@ -174,28 +174,28 @@ def test_stale_inputs_require_a_strictly_newer_commit() -> None:
 
 
 def test_media_flags_use_inclusive_warning_and_limit_boundaries() -> None:
-    path = Path("tile.webm")
+    key = "tile.webm"
 
     assert (
         stale._format_media_size(stale.GALLERY_MEDIA_WARNING_BYTES - 1) == "19.99 MiB"
     )
     assert (
         stale._media_flag(
-            stale.GalleryMedia(path, stale.GALLERY_MEDIA_WARNING_BYTES - 1)
+            stale.GalleryMedia(key, stale.GALLERY_MEDIA_WARNING_BYTES - 1)
         )
         == ""
     )
     assert (
-        stale._media_flag(stale.GalleryMedia(path, stale.GALLERY_MEDIA_WARNING_BYTES))
+        stale._media_flag(stale.GalleryMedia(key, stale.GALLERY_MEDIA_WARNING_BYTES))
         == " [WARNING]"
     )
     assert (
-        stale._media_flag(stale.GalleryMedia(path, stale.GALLERY_MEDIA_LIMIT_BYTES - 1))
+        stale._media_flag(stale.GalleryMedia(key, stale.GALLERY_MEDIA_LIMIT_BYTES - 1))
         == " [WARNING]"
     )
     assert stale._format_media_size(stale.GALLERY_MEDIA_LIMIT_BYTES - 1) == "24.99 MiB"
     assert (
-        stale._media_flag(stale.GalleryMedia(path, stale.GALLERY_MEDIA_LIMIT_BYTES))
+        stale._media_flag(stale.GalleryMedia(key, stale.GALLERY_MEDIA_LIMIT_BYTES))
         == " [OVER LIMIT]"
     )
 

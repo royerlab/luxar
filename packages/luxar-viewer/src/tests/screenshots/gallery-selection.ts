@@ -99,3 +99,11 @@ export function mediaKeyIndex(manifest: {
   }
   return index;
 }
+
+/** Return the hosted origin required by a present media manifest. */
+export function requireMediaBaseUrl(manifest: { base_url?: string }): string {
+  if (typeof manifest.base_url !== 'string' || manifest.base_url.length === 0) {
+    throw new Error('scripts/gallery/media-manifest.json is missing required base_url');
+  }
+  return manifest.base_url;
+}

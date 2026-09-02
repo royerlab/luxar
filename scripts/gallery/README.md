@@ -12,6 +12,7 @@ the best for the README gallery (TODO **R19**).
 | `media-manifest.json` | Published root-README media: demo id → content-addressed WebP/WebM keys, with byte counts, digests, and content types. The README and capture selection both consume it. |
 | `generate_gallery_datasets.py` | Generates each demo's `.luxar.zarr` under `datasets/demos/` (idempotent; skips ones already present; best-effort). A demo whose `DEMO_META` declares machine-local `local_data` (`manual-file` / `kaggle-auth` / `git-lfs`) is still run, but a **positive non-zero exit status** is reported in the soft `manual-data` bucket instead of failing the build — for `git-lfs`, only while one of the payload files named by its manifest caches is missing or still an unpulled pointer. A `timeout`, a `no-output` or a death by signal (negative return code) stays hard. One case remains hard on a cold checkout: `arxiv_papers_kaggle` can exhaust the per-demo timeout during its ~30 GB download. `cellxgene_census_umap` is now probeable through its manifest cache, so a missing LFS payload is demoted to `manual-data`. A demo listed in `UNBUILDABLE_IDS` is the third disposition: it is **never spawned at all** and lands in the soft `unbuildable` bucket, for a demo whose shipped input is known-broken and whose fallback would blow the timeout. The list is empty today (`gsplats_3d_visible_human_head` was removed once its colors sidecar was regenerated, #1670) and is meant to stay that way — delete an entry as soon as its input is fixed. |
 | `check_tile_staleness.py` | Report-only check for published README still/video pairs older than the gallery dataset/capture policies, their manifest-listed demo generator and directly imported private helpers, applicable `luxar.shading` production code, or their own manifest entry. Also reports manifest-recorded media sizes. Uses entry-specific blame in both manifests so editing one demo does not mark every tile stale. |
+| `verify_media.py` | Checks manifest/README consistency offline, then optionally fetches every hosted object and verifies its content type, byte count, and SHA-256 digest. |
 | `../../packages/luxar-viewer/src/tests/screenshots/generate-gallery.spec.ts` | Playwright capture: auto-center + fill-to-frame, auto-exposure, orbit, still + video. |
 | `../../packages/luxar-viewer/src/tests/screenshots/exposure-policy.ts` | The auto-exposure **decision** + its tuning constants, split out of the spec so it is unit-testable without a browser (`src/tests/unit/gallery-exposure-policy.test.ts`). |
 | `../../packages/luxar-viewer/src/tests/screenshots/crop-policy.ts` | The under-fill and border-lit (**cropped subject**) verdicts + warning floors, split out of the spec so they are unit-testable without a browser (`src/tests/unit/gallery-{underfill,crop}-policy.test.ts`). |
@@ -38,6 +39,9 @@ GALLERY_ONLY=readme pnpm gallery             # recapture the demos selected by t
 
 # Report published README tile staleness and media size margins
 make check-gallery-staleness
+
+# Verify every hosted README media object (opt-in network audit)
+make check-gallery-media
 ```
 
 Output lands in `docs/images/gallery/<id>.{png,webp,webm}`. That directory is
@@ -50,19 +54,19 @@ Output lands in `docs/images/gallery/<id>.{png,webp,webm}`. That directory is
 3. Replace the affected demo entries in `media-manifest.json` with the key,
    full digest, byte count, and content type.
 4. Replace the corresponding root-README image and link URLs with the new keys,
-   then run the offline manifest/README consistency tests and the opt-in hosted
-   media verifier before merging.
+   then run `hatch run pytest scripts/gallery/tests/test_verify_media.py` and
+   `make check-gallery-media` before merging.
 
 `make check-gallery-staleness` is intentionally non-gating: it prints `STALE`
 rows and still exits zero, because refreshing media is a reviewed batch action.
 For each demo it takes the newest blamed line in that demo's
 `media-manifest.json` entry as the publish timestamp, then compares it with the
-gallery dataset generator; the capture
-spec together with its orbit-axis helper and Playwright gallery config; the
-exposure and crop policies; the manifest-listed demo generator and its directly
-imported private `luxar.demos` helpers; and the lines of that demo's own manifest
-object. Production `luxar.shading` history applies only when the committed demo
-module imports it; shading tests/docs remain excluded.
+gallery dataset generator; the capture spec together with its orbit-axis helper
+and Playwright gallery config; the exposure and crop policies; the manifest-listed
+demo generator and its directly imported private `luxar.demos` helpers; and the
+lines of that demo's own manifest object. Production `luxar.shading` history
+applies only when the committed demo module imports it; shading tests/docs remain
+excluded.
 Global inputs are printed once above the rows, while per-demo failures print
 `UNKNOWN` and do not hide the rest of the report. All reads use committed
 `HEAD`, so an in-progress manifest edit cannot create a fake commit timestamp.

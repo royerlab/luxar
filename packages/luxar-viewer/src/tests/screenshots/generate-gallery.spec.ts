@@ -81,7 +81,7 @@ import {
   type CoverageMeasurement,
   type CropFraming,
 } from './crop-policy';
-import { mediaKeyIndex, resolveGalleryOnly } from './gallery-selection';
+import { mediaKeyIndex, requireMediaBaseUrl, resolveGalleryOnly } from './gallery-selection';
 import {
   checkGalleryMediaSize,
   collectGalleryMediaSizeIssues,
@@ -247,7 +247,8 @@ function loadManifest(): DemoEntry[] {
   if (only) {
     // The README's gallery media is content-addressed and hosted, so its URLs
     // carry no demo id; media-manifest.json is what maps key -> id.
-    const mediaManifest = fs.existsSync(MEDIA_MANIFEST_PATH)
+    const hasMediaManifest = fs.existsSync(MEDIA_MANIFEST_PATH);
+    const mediaManifest = hasMediaManifest
       ? (JSON.parse(fs.readFileSync(MEDIA_MANIFEST_PATH, 'utf-8')) as Parameters<
           typeof mediaKeyIndex
         >[0])
@@ -257,7 +258,7 @@ function loadManifest(): DemoEntry[] {
       fs.readFileSync(README_PATH, 'utf-8'),
       demos.map((demo) => demo.id),
       mediaKeyIndex(mediaManifest),
-      mediaManifest.base_url
+      hasMediaManifest ? requireMediaBaseUrl(mediaManifest) : undefined
     );
     if (selection.unknownTokens.length > 0) {
       console.warn(

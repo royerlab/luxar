@@ -2,7 +2,11 @@ import { readFileSync } from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { describe, expect, it } from 'vitest';
-import { mediaKeyIndex, resolveGalleryOnly } from '../screenshots/gallery-selection';
+import {
+  mediaKeyIndex,
+  requireMediaBaseUrl,
+  resolveGalleryOnly,
+} from '../screenshots/gallery-selection';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '../../../../..');
@@ -140,5 +144,11 @@ describe('gallery selection', () => {
     );
 
     expect([...selection.wantedIds]).toEqual(['lorenz']);
+  });
+
+  it('names a present media manifest that omits base_url', () => {
+    expect(() => requireMediaBaseUrl({})).toThrow(
+      /scripts\/gallery\/media-manifest\.json.*base_url/
+    );
   });
 });
