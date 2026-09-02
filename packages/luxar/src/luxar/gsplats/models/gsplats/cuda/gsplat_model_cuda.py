@@ -470,9 +470,13 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         # infrastructure remains for potential future use in inference-only mode
         # (no autograd) or if PyTorch adds a way to opt out of this check.
 
-        # `Function.apply` is an untyped classmethod up to torch 2.13 (so
-        # `no-untyped-call` fires) and an `Any` alias from 2.14 (so the ignore
-        # goes unused). Both torches are in range, hence both codes.
+        # `Function.apply` is an untyped classmethod in torch 2.13 and an `Any`
+        # alias as of 2.14, so `no-untyped-call` fires under one and not the
+        # other — and both are inside the supported `torch>=2.2,<3.0` range.
+        # `unused-ignore` keeps the comment legal on the torch where the first
+        # code does not fire. Same reasoning applies to the other two
+        # `Function.apply` sites (metal/gsplat_model_metal.py,
+        # rendering/volume_rendering.py), which carry the bare two-code ignore.
         output: torch.Tensor = CUDASplatFunction.apply(  # type: ignore[no-untyped-call, unused-ignore]
             centers,
             Ls,

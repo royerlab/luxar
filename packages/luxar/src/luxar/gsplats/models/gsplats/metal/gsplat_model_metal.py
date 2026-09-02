@@ -285,9 +285,6 @@ class GaussianSplatModelMetal(GaussianSplatModel):
     def forward(self) -> torch.Tensor:
         centers, Ls, amps = self.current_params()
         if self._uses_custom_metal:
-            # `Function.apply` is an untyped classmethod up to torch 2.13 (so
-            # `no-untyped-call` fires) and an `Any` alias from 2.14 (so the
-            # ignore goes unused). Both torches are in range, hence both codes.
             return cast(
                 torch.Tensor,
                 MetalSplatFunction.apply(  # type: ignore[no-untyped-call, unused-ignore]
