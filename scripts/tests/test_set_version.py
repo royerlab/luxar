@@ -1,4 +1,4 @@
-"""Tests for ``scripts/set_version.py`` and the version-consistency gate.
+"""Tests for release version stamping, consistency, and preflight checks.
 
 These scripts are the whole of the release version mechanism, and they run
 exactly once per release — so a defect surfaces on launch day, in front of
