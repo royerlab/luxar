@@ -1,12 +1,17 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import * as fs from 'fs';
+import * as path from 'path';
+import { fileURLToPath } from 'url';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   isTimelapseSliceSettled,
   resolveTimelapseSettleMs,
+  waitForTimelapseSliceSettled,
 } from '../../../tests/screenshots/gallery-timelapse-settle';
 
 describe('gallery timelapse settling', () => {
   afterEach(() => {
     delete (globalThis as any).__luxarDebug;
+    vi.restoreAllMocks();
   });
 
   it('waits through progressive refinement even after the load-pass signal clears', () => {
@@ -46,5 +51,32 @@ describe('gallery timelapse settling', () => {
     ['1500', 1500],
   ])('resolves settle timeout %j to %d ms', (raw, expected) => {
     expect(resolveTimelapseSettleMs(raw)).toBe(expected);
+  });
+
+  it('warns with the demo and timeout when refinement does not settle', async () => {
+    const timeout = new Error('timeout');
+    const page = { waitForFunction: vi.fn().mockRejectedValue(timeout) };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await waitForTimelapseSliceSettled(page, 'gsplats_4d_h2afva_timelapse', 1500);
+
+    expect(page.waitForFunction).toHaveBeenCalledWith(isTimelapseSliceSettled, undefined, {
+      timeout: 1500,
+    });
+    expect(warn).toHaveBeenCalledWith(
+      '[gsplats_4d_h2afva_timelapse] timelapse slice did not settle within 1500 ms: Error: timeout'
+    );
+  });
+
+  it('settles the timelapse still after its frame-point jump', () => {
+    const specPath = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '../../screenshots/generate-gallery.spec.ts'
+    );
+    const source = fs.readFileSync(specPath, 'utf-8');
+
+    expect(source).toMatch(
+      /await jumpTimeDimToFrac\(page, frac\);\s+await waitForTimelapseSliceSettled\(page, demo\.id, TL_SETTLE_MS\);/
+    );
   });
 });
