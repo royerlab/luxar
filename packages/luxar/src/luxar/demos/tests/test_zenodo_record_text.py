@@ -2217,6 +2217,11 @@ def test_cell_tracking_scored_crop_publishes_qualified_figures(gen: Any) -> None
     assert info["foreground_psnr_db"] == [18.3, 20.2]
     assert info["foreground_fraction"] == 0.2033
     assert info["quality_quotable"] is False
+    assert "all-zero floor was 17.5-19.5 dB" in info["quality_note"]
+    assert (
+        "foreground fraction is the median over the sampled frames"
+        in info["quality_note"]
+    )
     assert f"{info['psnr_db'][0]}–{info['psnr_db'][1]}" in info["quality_caveat"]
     assert (
         f"{info['foreground_psnr_db'][0]}–{info['foreground_psnr_db'][1]}"
