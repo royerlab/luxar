@@ -121,15 +121,23 @@ RECORDS = {
     # cross-reference in both descriptions rather than by co-location — moving
     # the existing file would break its pins.
     #
-    # PUBLICATION GATE, beyond the standing never-publish rule: this record
-    # additionally waits on a conversation with Philipp J. Keller, whose imaging
-    # it is, and which as of 2026-08-26 had not happened. Loic confirmed that and
-    # chose the sequencing: upload to the draft, gate the publish. An upload here
-    # implies no consent to publish. Recorded in the repo on purpose — Zenodo's
-    # `notes` and `description` are both PUBLISHED metadata, so an internal
-    # process gate written there would ship with the record.
-    # The timelapse dataset below points at this record; publishing remains
-    # gated on the conversation above even after the archive is uploaded.
+    # PERMISSION: CLEARED 2026-09-02. Philipp J. Keller, whose imaging this is,
+    # approved our use of the data; Loic relayed the approval. Until then this
+    # record carried an extra publication gate beyond the standing
+    # never-publish-without-Loic rule, because an upload to a draft implies no
+    # consent to publish. That gate is now lifted and only the standing rule
+    # remains: publication is Loic's manual step.
+    #
+    # Kept here rather than in the record because Zenodo's `notes` and
+    # `description` are both PUBLISHED metadata — an internal process gate
+    # written there would ship with the record. The same reasoning is why the
+    # approval is recorded here instead: it is provenance for us, not for a
+    # reader.
+    #
+    # PUBLICATION ORDER still matters: this record's `isPartOf` points at the
+    # cc-by record's reserved DOI, and a reserved Zenodo DOI only resolves once
+    # that record is published. So cc-by (21912280) must publish no later than
+    # this one, or the link dangles.
     "droso-timelapse": {
         "title": (
             "Drosophila melanogaster embryogenesis: a 500-timepoint "
