@@ -20,7 +20,8 @@ figure for data that has one. Digest-backed archive measurements carry a
 ``measured_sha256`` so ``--check`` can say when the bytes read by ``--refresh`` are
 no longer pinned, which is the drift a refit causes. Source-derived figures may
 retain their own provenance note after a later pinned archive read supplies that
-digest.
+digest. ``measured_from`` names the refresh source (``staged``, ``repo``, or
+``cache``); ``hosted`` records a manual read of deposition-verified hosted bytes.
 
 ``quality_note`` is internal provenance and is never rendered. ``quality_caveat``
 is reader-facing text that qualifies a published quality figure or explains an
@@ -721,6 +722,9 @@ def refresh_characteristics(
                     "recovered from the stated source rather than archive bytes; "
                     "a later pinned archive read may supply the digest while "
                     "retaining those source-derived figures. "
+                    "measured_from names the refresh source (staged, repo, or "
+                    "cache); hosted records a manual read of deposition-verified "
+                    "hosted bytes. "
                     "quality_note is internal provenance; quality_caveat qualifies "
                     "a published quality figure or explains an absent one to "
                     "--check. unmeasured_reason records why refresh deliberately "

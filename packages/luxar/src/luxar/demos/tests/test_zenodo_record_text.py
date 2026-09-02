@@ -1675,6 +1675,7 @@ def test_refresh_description_matches_the_committed_sidecar(
 
     refreshed = json.loads((tmp_path / "chars.json").read_text())
     assert refreshed["description"] == committed_description
+    assert "hosted records a manual read" in refreshed["description"]
 
 
 def test_refresh_discards_supplied_metadata_from_different_archive_bytes(
@@ -2234,6 +2235,42 @@ def test_cell_tracking_scored_crop_publishes_qualified_figures(gen: Any) -> None
     assert "about 23 dB below" in info["quality_caveat"]
     assert "scores higher in foreground" in info["quality_caveat"]
     assert "archive scores lower" in info["quality_caveat"]
+
+
+def test_hosted_bundle_measurements_publish_pinned_ranges(gen: Any) -> None:
+    manifest = json.loads(gen.MANIFEST.read_text())
+    chars = gen.load_characteristics()
+    expected = {
+        "gsplats_celegans/celegans_s1.gsplats.zarr.zip": (
+            5_640_070,
+            400,
+            [29.48, 39.77],
+            [21.79, 38.15],
+        ),
+        "gsplats_nexrad_supercell/nexrad_supercell.gsplats.zarr.zip": (
+            817_989,
+            82,
+            [43.26, 56.82],
+            [32.02, 39.74],
+        ),
+    }
+
+    for key, (n_splats, frames, psnr, foreground_psnr) in expected.items():
+        dataset, filename = key.split("/", 1)
+        spec = next(
+            spec
+            for _variant, spec in gen._files_of(manifest["datasets"][dataset])
+            if spec["name"] == filename
+        )
+        info = chars[key]
+        assert info["n_splats"] == n_splats
+        assert info["frames"] == frames
+        assert info["psnr_db"] == psnr
+        assert info["foreground_psnr_db"] == foreground_psnr
+        assert info["measured_from"] == "hosted"
+        assert info["measured_sha256"] == gen._pinned_digest(spec)
+        assert info["quality_quotable"] is None
+        assert f"RANGE over its {frames} per-frame stores" in info["quality_caveat"]
 
 
 def test_h2afva_51tp_measurements_describe_the_pinned_flat_ladder(gen: Any) -> None:
