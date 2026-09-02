@@ -659,7 +659,7 @@
       "bucket": "zenodo",
       "record": "droso-timelapse",
       "license": "cc-by-4.0",
-      "source": "Drosophila His2Av::mRFP1 embryo, 500-timepoint SiMView light-sheet timelapse (Royer/Keller)",
+      "source": "Drosophila His2Av::mRFP1 embryo, 500-timepoint SiMView light-sheet timelapse (Keller lab, HHMI Janelia Research Campus)",
       "attribution": "Acquired in Philipp J. Keller's lab at HHMI Janelia Research Campus, where L. A. Royer was then a postdoctoral fellow; used with permission (CC BY 4.0). The splat fits were computed later at CZ Biohub SF. The imaging itself is unpublished; for the SiMView instrument see Royer et al., Nat. Biotechnol. 34, 1267-1278 (2016), doi:10.1038/nbt.3708.",
       "acquisition": {
         "description": "the whole 500-timepoint SiMView recording (500 x 108 x 1352 x 532 uint16), every timepoint fitted at full resolution",
@@ -679,7 +679,7 @@
       "bucket": "zenodo",
       "record": "cc-by",
       "license": "cc-by-4.0",
-      "source": "Drosophila His2Av::mRFP1 embryo, SiMView light-sheet (Royer/Keller)",
+      "source": "Drosophila His2Av::mRFP1 embryo, SiMView light-sheet (Keller lab, HHMI Janelia Research Campus)",
       "attribution": "Acquired in Philipp J. Keller's lab at HHMI Janelia Research Campus, where L. A. Royer was then a postdoctoral fellow; used with permission (CC BY 4.0). The splat fits were computed later at CZ Biohub SF. The imaging itself is unpublished; for the SiMView instrument see Royer et al., Nat. Biotechnol. 34, 1267-1278 (2016), doi:10.1038/nbt.3708.",
       "dir": "gsplats_3d_drosophila_gastrulation",
       "files": [

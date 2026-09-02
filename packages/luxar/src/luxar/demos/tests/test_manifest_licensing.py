@@ -6,9 +6,9 @@ model is only as good as its enforcement: a ShareAlike dataset filed under the
 CC-BY record, or a non-redistributable one given a record at all, is a
 licensing error that is invisible until someone downloads it.
 
-The publication rail is the other half. The records are drafts, and
-whether they go public is the maintainer's call, not an automated one — so
-``published`` staying false is asserted here rather than left to discipline.
+The publication rail is the other half. Whether records go public is the
+maintainer's call, made by hand on Zenodo, so a published record must carry the
+evidence Zenodo minted at that transition rather than relying on discipline.
 """
 
 from __future__ import annotations
@@ -69,12 +69,18 @@ def test_publication_is_recorded_with_its_evidence() -> None:
     deposition id. Setting `published` without one now fails, so the flag still
     cannot be flipped speculatively -- while a genuinely published record passes.
     """
-    for name, record in _manifest()["records"].items():
+    records = _manifest()["records"]
+    assert {name for name, record in records.items() if record.get("published")} >= {
+        "cc-by",
+        "cc-by-sa",
+        "h2afva",
+        "droso-timelapse",
+    }
+
+    for name, record in records.items():
+        if not record.get("published"):
+            continue
         concept = record.get("zenodo_conceptdoi")
-        assert record.get("published") is True, (
-            f"record {name!r} is not marked published, but all four were "
-            "published on 2026-09-02"
-        )
         assert concept and re.fullmatch(r"10\.5281/zenodo\.\d+", concept), (
             f"record {name!r} is marked published but carries no concept DOI. "
             "Zenodo mints that identifier at publication, so its absence means "

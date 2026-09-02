@@ -64,9 +64,7 @@ MANIFEST = REPO_ROOT / "packages/luxar/src/luxar/demos/data_manifest.json"
 #
 # The record ids and DOIs below are REAL and final: Zenodo reserves a DOI at
 # deposition time and the deposition id becomes the record id on publication, so
-# `https://zenodo.org/records/<id>/...` is already the right URL. What is not yet
-# true is that the records are PUBLIC — all of them are still unsubmitted drafts,
-# and a file URL into a draft 404s for everyone.
+# `https://zenodo.org/records/<id>/...` is the stable version-specific URL.
 #
 # `zenodo_doi` is that reserved DOI, i.e. the VERSION DOI of this deposition —
 # NOT the version-independent concept DOI, which is a different identifier Zenodo
@@ -590,7 +588,7 @@ DATASETS: dict[str, dict] = {
         bucket="zenodo",
         record="droso-timelapse",
         license="cc-by-4.0",
-        source="Drosophila His2Av::mRFP1 embryo, 500-timepoint SiMView light-sheet timelapse (Royer/Keller)",
+        source="Drosophila His2Av::mRFP1 embryo, 500-timepoint SiMView light-sheet timelapse (Keller lab, HHMI Janelia Research Campus)",
         attribution=(
             "Acquired in Philipp J. Keller's lab at HHMI Janelia Research "
             "Campus, where L. A. Royer was then a postdoctoral fellow; used "
@@ -618,7 +616,7 @@ DATASETS: dict[str, dict] = {
         bucket="zenodo",
         record="cc-by",
         license="cc-by-4.0",
-        source="Drosophila His2Av::mRFP1 embryo, SiMView light-sheet (Royer/Keller)",
+        source="Drosophila His2Av::mRFP1 embryo, SiMView light-sheet (Keller lab, HHMI Janelia Research Campus)",
         attribution=(
             "Acquired in Philipp J. Keller's lab at HHMI Janelia Research "
             "Campus, where L. A. Royer was then a postdoctoral fellow; used "
