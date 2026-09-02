@@ -42,6 +42,15 @@ def test_public_attributions_keep_required_provenance_resolvable() -> None:
     neuromast = generator.DATASETS["gsplats_4d_neuromast_2ch"]["attribution"]
     assert "see Jacobo et al. (2019), by the same author" in neuromast
 
+    for dataset_name in (
+        "gsplats_4d_drosophila_embryogenesis",
+        "gsplats_3d_drosophila_gastrulation",
+    ):
+        droso = generator.DATASETS[dataset_name]["attribution"]
+        assert "used with permission (CC BY 4.0)" in droso
+        assert "The imaging itself is unpublished" in droso
+        assert "for the SiMView instrument see Royer et al." in droso
+
 
 def test_census_attribution_uses_generator_release_default() -> None:
     generator = _load_generator()

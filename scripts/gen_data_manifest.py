@@ -566,7 +566,12 @@ DATASETS: dict[str, dict] = {
         record="droso-timelapse",
         license="cc-by-4.0",
         source="Drosophila His2Av::mRFP1 embryo, 500-timepoint SiMView light-sheet timelapse (Royer/Keller)",
-        attribution="Royer & Keller labs — Royer et al., Nat. Biotechnol. 34, 1267-1278 (2016), doi:10.1038/nbt.3708 (CC BY 4.0).",
+        attribution=(
+            "Royer & Keller labs; used with permission (CC BY 4.0). "
+            "The imaging itself is unpublished; for the SiMView instrument see "
+            "Royer et al., Nat. Biotechnol. 34, 1267-1278 (2016), "
+            "doi:10.1038/nbt.3708."
+        ),
         acquisition=dict(
             # A clean 1:1 denominator, unusually: the fit consumed the WHOLE
             # recording — all 500 timepoints, full spatial extent, the single
@@ -587,7 +592,12 @@ DATASETS: dict[str, dict] = {
         record="cc-by",
         license="cc-by-4.0",
         source="Drosophila His2Av::mRFP1 embryo, SiMView light-sheet (Royer/Keller)",
-        attribution="Royer & Keller labs — Royer et al., Nat. Biotechnol. 34, 1267-1278 (2016), doi:10.1038/nbt.3708 (CC BY 4.0).",
+        attribution=(
+            "Royer & Keller labs; used with permission (CC BY 4.0). "
+            "The imaging itself is unpublished; for the SiMView instrument see "
+            "Royer et al., Nat. Biotechnol. 34, 1267-1278 (2016), "
+            "doi:10.1038/nbt.3708."
+        ),
     ),
     "gsplats_3d_h2afva_stack": dict(
         bucket="zenodo",
