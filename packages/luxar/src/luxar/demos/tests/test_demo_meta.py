@@ -648,12 +648,12 @@ def test_written_cache_dirs_are_declared(path: Path) -> None:
 #     anyway). The other 20 still catch it.
 #
 # WHY KEEP THE ANY-NAME RULE at that cost: the alternative — demand the LEADING
-# name of the group — rejects ZERO of today's real footers, but it is one deleted
-# lowercase word away from rejecting the real dmri one. "HCP-1065 atlas (Yeh 2022,
-# CC BY-SA 4.0)" passes a leading-name rule only because the lowercase "atlas"
-# stops the walk; drop that word and the group leads with "HCP-1065", which the
-# short "Yeh 2022" does not contain, and a correct credit turns red. A guard that
-# an ordinary copy-edit can falsify gets switched off. The other two candidates
+# name of the group — rejects ZERO of today's real footers, but a constructed
+# dmri-shaped footer shows its fragility. "HCP-1065 atlas (Yeh 2022, CC BY-SA
+# 4.0)" passes a leading-name rule only because the lowercase "atlas" stops the
+# walk; drop that word and the group leads with "HCP-1065", which the short "Yeh
+# 2022" does not contain, and a correct credit turns red. A guard that an ordinary
+# copy-edit can falsify gets switched off. The other two candidates
 # are worse: ``_MAX_CREDIT_GROUP_NAMES = 1`` rejects the real cytoself footer
 # because it collects only "Methods" beside 2022, which its ``short`` does not
 # name, and a year-only rule drops the wrong-author class the guard exists for.
@@ -1371,10 +1371,11 @@ def test_credit_guard_flags_a_contradicting_footer(short: str, overlay: str) -> 
 @pytest.mark.parametrize(
     "short,overlay",
     [
-        # Correct credits the guard must not reject. The first seven are corpus
-        # shapes: six are real (short, footer) pairs, while the Leike pair is
-        # synthetic since the demo stopped painting its own credit. They are
-        # pinned because naive rules get these shapes wrong.
+        # Correct credits the guard must not reject. These are corpus-derived
+        # shapes: a real ``short`` paired with the footer its demo paints, some
+        # abridged or reordered to isolate the shape. The Leike pair is synthetic
+        # since the demo stopped painting its own credit. They are pinned because
+        # naive rules get these shapes wrong.
         ("Tan et al. 2018", "Tan et al. 2018 • chromosomes as 3D polylines"),
         # A leading dataset token that is NOT the credited name, and a licence
         # whose "4.0" must not read as a year.
