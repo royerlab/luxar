@@ -28,11 +28,11 @@ means someone edited a record and the repo has not caught up.
 ## The quality-column rule
 
 A record carries the PSNR / foreground columns **iff at least one row on that
-record has a real figure**. Chosen by Loic on 2026-09-02: he removed those
-columns from `h2afva` and `droso-timelapse`, where nothing is scored, and kept
-them on `cc-by` and `cc-by-sa`, where something is. Two columns of dashes cannot
-be told apart from "unmeasurable" or from evasion.
+record has a real figure**. The live descriptions omit them from `h2afva` and
+`droso-timelapse`, where nothing is scored, and keep them on `cc-by` and
+`cc-by-sa`, where something is. Two columns of dashes cannot be told apart from
+"unmeasurable" or from evasion.
 
 `render_record` implements this and
-`test_quality_columns_appear_only_where_a_figure_exists` holds it, so a
-re-render cannot put back what was deliberately removed.
+`test_quality_columns_are_a_record_level_choice` holds it, so the generated
+report follows the authoritative records rather than contradicting them.

@@ -7,6 +7,7 @@ recover it from. They are captured verbatim under `scripts/zenodo_record_text/`
 with a per-record `description_sha256`, so drift between the repo and the live
 drafts is detectable instead of invisible.
 
-The record renderer now also carries the quality columns only where at least one
-row has a real figure, matching the maintainer's own editing of the records:
-two columns of dashes cannot be told apart from "unmeasurable" or from evasion.
+The record renderer now also follows the published descriptions' rule of
+carrying the quality columns only where at least one row has a real figure, so
+the generated report does not misleadingly show two columns of dashes where the
+authoritative record omits them.

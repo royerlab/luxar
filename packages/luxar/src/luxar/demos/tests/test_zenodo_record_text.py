@@ -2606,34 +2606,94 @@ def test_an_additive_count_is_absent_if_any_chunk_is_unreadable(
 # ---------------------------------------------------------------------------
 
 
-def test_quality_columns_appear_only_where_a_figure_exists(gen: Any) -> None:
-    """A record with nothing scored must not carry two columns of dashes.
+def _quality_manifest(
+    gen: Any, scores: dict[str, tuple[float | None, float | None]]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    manifest = {
+        "records": {"r": {"title": "T", "license": "cc-by-4.0", "zenodo_doi": "d"}},
+        "datasets": {},
+    }
+    chars = {}
+    for name, (psnr, foreground_psnr) in scores.items():
+        filename = f"{name}.gsplats.zarr.zip"
+        manifest["datasets"][name] = {
+            "bucket": "zenodo",
+            "record": "r",
+            "dir": name,
+            "license": "cc-by-4.0",
+            "files": [{"name": filename, "bytes": 1024}],
+        }
+        chars[gen._char_key(name, "", filename)] = {
+            "measured_sha256": "a" * 64,
+            "n_splats": 1,
+            "psnr_db": psnr,
+            "foreground_psnr_db": foreground_psnr,
+            "source_bytes": 2048,
+        }
+    return manifest, chars
 
-    Loic removed the PSNR columns by hand on 2026-09-02 from the two records
-    where no row has a figure (h2afva and the Drosophila timelapse) and kept
-    them on the two where something does. A reader cannot tell a dash from
-    "unmeasurable" or from evasion, which is the same argument the renderer
-    already makes for demoting a non-fit dataset to a plain file list -- applied
-    one level up, to the record.
 
-    Without this, a `--refresh` and re-render would quietly put back the columns
-    he deleted, on the record he deleted them from.
-    """
+@pytest.mark.parametrize(
+    ("scores", "quality_columns"),
+    [
+        ({"scored": (30.0, None)}, True),
+        ({"unscored": (None, None)}, False),
+        ({"scored": (None, 20.0), "unscored": (None, None)}, True),
+    ],
+    ids=["one-scored", "all-unscored", "mixed-record"],
+)
+def test_quality_columns_are_a_record_level_choice(
+    gen: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    scores: dict[str, tuple[float | None, float | None]],
+    quality_columns: bool,
+) -> None:
+    """One real figure enables both quality columns for every fit on a record."""
+    manifest, chars = _quality_manifest(gen, scores)
+    monkeypatch.setattr(gen, "load_characteristics", lambda: chars)
+
+    rendered = gen.render_record("r", manifest)
+
+    assert ("PSNR (dB)" in rendered) is quality_columns
+    assert ("Reading the quality columns" in rendered) is quality_columns
+    for name in scores:
+        table = rendered.split(f"## `{name}`", 1)[1].split("\n## `", 1)[0]
+        assert ("PSNR (dB)" in table) is quality_columns
+
+
+def test_unscored_live_records_have_no_quality_columns(gen: Any) -> None:
     manifest = json.loads(gen.MANIFEST.read_text())
-    for key in manifest["records"]:
-        rendered = gen.render_record(key, manifest)
-        scored = any(
-            row["psnr"] != gen._ABSENT or row["fg_psnr"] != gen._ABSENT
-            for name, entry in manifest["datasets"].items()
-            if entry.get("record") == key and entry.get("bucket") == "zenodo"
-            for row in gen._dataset_rows(name, entry, gen.load_characteristics())
-        )
-        has_cols = "PSNR (dB)" in rendered
-        assert has_cols == scored, (
-            f"{key}: quality columns present={has_cols} but any-figure={scored}"
-        )
-        # The explainer must travel with the columns, not outlive them.
-        assert ("Reading the quality columns" in rendered) == scored, key
+    for key in ("h2afva", "droso-timelapse"):
+        assert "PSNR (dB)" not in gen.render_record(key, manifest), key
+
+
+def test_unscored_record_keeps_rule_before_compression_legend(gen: Any) -> None:
+    manifest = json.loads(gen.MANIFEST.read_text())
+    rendered = gen.render_record("h2afva", manifest)
+    assert "\n---\n\n**Reading the compression column.**" in rendered
+
+
+def test_plain_file_record_has_no_splat_legends(
+    gen: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest = {
+        "records": {"r": {"title": "T", "license": "cc-by-4.0", "zenodo_doi": "d"}},
+        "datasets": {
+            "table": {
+                "bucket": "zenodo",
+                "record": "r",
+                "dir": "table",
+                "files": [{"name": "coordinates.npz", "bytes": 1024}],
+            }
+        },
+    }
+    monkeypatch.setattr(gen, "load_characteristics", lambda: {})
+
+    rendered = gen.render_record("r", manifest)
+
+    assert "| File | Size |" in rendered
+    assert "vs raw voxels" not in rendered
+    assert "Reading the compression column" not in rendered
 
 
 class TestCheckExplainsAnAbsentFigure:
