@@ -287,7 +287,7 @@ class GaussianSplatModelMetal(GaussianSplatModel):
         if self._uses_custom_metal:
             return cast(
                 torch.Tensor,
-                MetalSplatFunction.apply(  # type: ignore[no-untyped-call]
+                MetalSplatFunction.apply(  # type: ignore[no-untyped-call, unused-ignore]
                     centers,
                     Ls,
                     amps,

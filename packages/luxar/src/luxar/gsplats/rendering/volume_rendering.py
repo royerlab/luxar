@@ -104,7 +104,7 @@ def render_to_volume_tensor(
 
             if CUDA_BACKEND_AVAILABLE:
                 with torch.no_grad():
-                    output: torch.Tensor = CUDASplatFunction.apply(  # type: ignore[no-untyped-call]
+                    output: torch.Tensor = CUDASplatFunction.apply(  # type: ignore[no-untyped-call, unused-ignore]
                         centers_t,
                         Ls_t,
                         amps_t,
