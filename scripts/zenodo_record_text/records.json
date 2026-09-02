@@ -6,7 +6,7 @@
     "license": "cc-by-4.0",
     "version": "1.0.0",
     "language": "eng",
-    "publication_date": "2026-08-13",
+    "publication_date": "2026-09-02",
     "keywords": [
       "Gaussian splatting",
       "volume visualization",
@@ -133,7 +133,7 @@
     "submitted": false,
     "description_sha256": "32eab51f9497c7ef0450b06cf213743426149565ec93b265865b27447510558f",
     "description_chars": 22937,
-    "zenodo_modified": "2026-09-02T18:26:19.678782+00:00"
+    "zenodo_modified": "2026-09-02T20:53:40.103780+00:00"
   },
   "cc-by-sa": {
     "deposition": "21912282",
@@ -142,7 +142,7 @@
     "license": "cc-by-sa-4.0",
     "version": "1.0.0",
     "language": "eng",
-    "publication_date": "2026-08-13",
+    "publication_date": "2026-09-02",
     "keywords": [
       "Gaussian splatting",
       "volume visualization",
@@ -184,7 +184,7 @@
     "submitted": false,
     "description_sha256": "78ed4ec7b56918ecfcc21f912fcf972c01f035a9c6a9b32913356a008c0e7807",
     "description_chars": 6856,
-    "zenodo_modified": "2026-09-02T20:01:47.543081+00:00"
+    "zenodo_modified": "2026-09-02T20:53:43.406450+00:00"
   },
   "h2afva": {
     "deposition": "21912284",
@@ -193,7 +193,7 @@
     "license": "cc-by-4.0",
     "version": "1.0.0",
     "language": "eng",
-    "publication_date": "2026-08-13",
+    "publication_date": "2026-09-02",
     "keywords": [
       "Gaussian splatting",
       "light-sheet microscopy",
@@ -237,7 +237,7 @@
     "submitted": false,
     "description_sha256": "35a9be49c758d91c5d7107e4888b76623553414fbc71269a1a043300c4ceb536",
     "description_chars": 6299,
-    "zenodo_modified": "2026-09-02T19:58:52.922857+00:00"
+    "zenodo_modified": "2026-09-02T20:53:45.667967+00:00"
   },
   "droso-timelapse": {
     "deposition": "22118695",
@@ -246,7 +246,7 @@
     "license": "cc-by-4.0",
     "version": "1.0.0",
     "language": "eng",
-    "publication_date": "2026-08-27",
+    "publication_date": "2026-09-02",
     "keywords": [
       "Gaussian splatting",
       "light-sheet microscopy",
@@ -307,7 +307,7 @@
     "submitted": false,
     "description_sha256": "5e61cb110e88b655f3a604d281411fd19c8aea57da92f6d7e5d55b30e782ea7a",
     "description_chars": 3282,
-    "zenodo_modified": "2026-09-02T19:50:36.644861+00:00"
+    "zenodo_modified": "2026-09-02T20:53:48.019925+00:00"
   },
-  "_captured_utc": "2026-09-02T20:52:03Z"
+  "_captured_utc": "2026-09-02T20:54:07Z"
 }
