@@ -134,6 +134,17 @@ const ORBIT_FRAMES = Number(process.env.GALLERY_ORBIT_FRAMES ?? 120);
 // slow; ~40 distinct steps (each held ~3 frames) keeps the development legible
 // while cutting loads 3×. The camera still rocks smoothly over all 120 frames.
 const TL_STEPS = 40;
+// After a timelapse steps to a new timepoint, how long to wait for that slice to
+// finish loading before resuming screenshots. `waitForUpdate()` only resolves the
+// dimension change; the slice's chunks are still in flight, and shooting during
+// that is what bakes pop-in into the clip (measured: 15.7x frame-to-frame spike
+// on gsplats_4d_zebrafish_timelapse vs <1.8x for a clean rock). Bounded so one
+// stubborn slice cannot stall a 120-frame x ~90-demo sweep; on timeout we shoot
+// anyway and lose one frame's fidelity rather than the run.
+const TL_SETTLE_MS = Number(process.env.GALLERY_TL_SETTLE_MS ?? 8000);
+// Beat after the loader reports idle, so the renderer draws the settled slice
+// before it is screenshotted. Idle means "no work pending", not "already drawn".
+const TL_SETTLE_DRAW_MS = 250;
 const ORBIT_AMPLITUDE_DEG = 20; // ± rock amplitude
 const ORBIT_FPS = 12; // 120 frames ⇒ a 10 s cycle, played 1:1 (no interpolation)
 const WEBM_WIDTH = 900; // VP9 master (archival / click-through)
@@ -1054,6 +1065,25 @@ async function captureOrbitFrames(
           },
           { timeIdx: tl.timeIdx, value: v }
         );
+        // The dimension update resolving is NOT the slice being on screen:
+        // `waitForUpdate()` returns once the change is applied while the new
+        // slice's chunks are still streaming. Capturing straight after is what
+        // put visible LOD/chunk pop-in into the published clips. Wait for the
+        // loader to go idle, then let one draw land.
+        await page
+          .waitForFunction(
+            () => {
+              const d = (window as any).__luxarDebug;
+              const s = d?.getState?.();
+              return !!s && !s.isLoading;
+            },
+            undefined,
+            { timeout: TL_SETTLE_MS }
+          )
+          .catch(() => {
+            // Non-fatal on purpose — see TL_SETTLE_MS.
+          });
+        await page.waitForTimeout(TL_SETTLE_DRAW_MS);
       }
     }
     await page.evaluate(
