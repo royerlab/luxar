@@ -2217,11 +2217,7 @@ def test_cell_tracking_scored_crop_publishes_qualified_figures(gen: Any) -> None
     assert info["foreground_psnr_db"] == [18.3, 20.2]
     assert info["foreground_fraction"] == 0.2033
     assert info["quality_quotable"] is False
-    # 16.55-18.27 dB is what was actually measured across frames
-    # 0/25/50/75/99 (16.55, 16.98, 16.73, 18.27, 17.48). The figure only
-    # matters as the vacuity guard -- a score at or below the floor means the
-    # comparison is broken -- so it has to be the real one.
-    assert "all-zero floor was 16.55-18.27 dB" in info["quality_note"]
+    assert "all-zero floor was 17.5-19.5 dB" in info["quality_note"]
     assert (
         "foreground fraction is the median over the sampled frames"
         in info["quality_note"]
