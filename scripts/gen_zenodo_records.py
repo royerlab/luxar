@@ -60,6 +60,15 @@ CACHE_DIR = Path.home() / ".cache/luxar"
 CHARACTERISTICS = REPO_ROOT / "scripts/demo_archive_characteristics.json"
 
 _ABSENT = "—"
+_RECOVERED_SOURCE_FIELDS = (
+    "psnr_db",
+    "foreground_psnr_db",
+    "foreground_fraction",
+    "source_shape",
+    "source_dtype",
+    "source_bytes",
+    "frames",
+)
 
 
 class RefreshResult(NamedTuple):
@@ -521,6 +530,7 @@ def _retain_preferred_measurements(
     sidecar churn when a later local refresh sees the same pinned archive.
     Source-derived figures survive a stampless pinned read, while the read still
     supplies archive metadata and provenance that the committed row lacks.
+    ``recovered_source_keys`` includes pre-filled rows in the retained count.
     """
     rank = {"staged": 2, "repo": 1, "cache": 1}
     measurement_fields = (
@@ -528,15 +538,6 @@ def _retain_preferred_measurements(
         "ndim",
         "format_version",
         "topology",
-        "psnr_db",
-        "foreground_psnr_db",
-        "foreground_fraction",
-        "source_shape",
-        "source_dtype",
-        "source_bytes",
-        "frames",
-    )
-    recovered_fields = (
         "psnr_db",
         "foreground_psnr_db",
         "foreground_fraction",
@@ -583,7 +584,7 @@ def _retain_preferred_measurements(
         elif old_entry is not None and old_entry.get("measured_sha256") is None:
             recovered = {
                 field: old_entry[field]
-                for field in recovered_fields
+                for field in _RECOVERED_SOURCE_FIELDS
                 if old_entry.get(field) is not None and new_entry.get(field) is None
             }
             if recovered:
@@ -668,14 +669,7 @@ def refresh_characteristics(
                 continue
             recovered_source = {
                 field: existing[key][field]
-                for field in (
-                    "psnr_db",
-                    "foreground_psnr_db",
-                    "foreground_fraction",
-                    "source_shape",
-                    "source_dtype",
-                    "source_bytes",
-                )
+                for field in _RECOVERED_SOURCE_FIELDS
                 if key in existing
                 and existing[key].get(field) is not None
                 and existing[key].get("measured_sha256") in (None, measured_sha256)
@@ -696,8 +690,10 @@ def refresh_characteristics(
                     if key in existing and field in existing[key]
                 },
                 # Source-derived facts the ARCHIVE does not carry, kept across a
-                # re-read instead of being blanked. Only fills an absence from an
-                # unmeasured entry or one measured from these same bytes.
+                # re-read instead of being blanked, because refresh is required
+                # after upload and must not reopen published metadata gaps. Only
+                # fills an absence from an unmeasured entry or one measured from
+                # these same bytes.
                 **recovered_source,
             }
 
@@ -1189,7 +1185,8 @@ def main() -> int:
         print(
             f"read {result.read} archive(s) here, skipped {result.rejected} read(s) "
             f"taken from bytes the manifest does not pin, kept {result.retained} "
-            "committed measurement(s) that outrank the local copy, preserved "
+            "committed measurement(s) that outrank or complete the local copy, "
+            "preserved "
             f"{result.preserved} committed measurement(s) without a fresh "
             "read -> "
             f"{CHARACTERISTICS.relative_to(REPO_ROOT)}"

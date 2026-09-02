@@ -1642,6 +1642,7 @@ def test_refresh_preserves_source_scored_quality_absent_from_same_archive_read(
                 "psnr_db": [24.7, 26.5],
                 "foreground_psnr_db": [18.3, 20.2],
                 "foreground_fraction": 0.2033,
+                "frames": 100,
                 "quality_caveat": "reader-facing qualification",
             }
         },
@@ -1657,6 +1658,7 @@ def test_refresh_preserves_source_scored_quality_absent_from_same_archive_read(
     assert entry["psnr_db"] == [24.7, 26.5]
     assert entry["foreground_psnr_db"] == [18.3, 20.2]
     assert entry["foreground_fraction"] == 0.2033
+    assert entry["frames"] == 100
     assert "qualifies a published quality figure" in payload["description"]
 
 
@@ -1844,7 +1846,10 @@ def test_refresh_summary_distinguishes_rejected_and_retained_reads(
     summary = capsys.readouterr().out
     assert "read 4 archive(s)" in summary
     assert "skipped 1 read(s) taken from bytes the manifest does not pin" in summary
-    assert "kept 2 committed measurement(s) that outrank the local copy" in summary
+    assert (
+        "kept 2 committed measurement(s) that outrank or complete the local copy"
+        in summary
+    )
     assert "preserved 3 committed measurement(s) without a fresh read" in summary
     assert "skipped 0 pinned fit archive(s)" in summary
     assert "matched the manifest pin but could not be parsed" in summary
@@ -2197,6 +2202,9 @@ def test_cell_tracking_measurements_include_the_declared_raw_volume(gen: Any) ->
             assert "voxel_size=1.625 x 0.40625 x 0.40625 um" in info["quality_note"]
         else:
             assert info["quality_note"] == provenance
+            assert info["psnr_db"] is None
+            assert info["foreground_psnr_db"] is None
+            assert info["foreground_fraction"] is None
             assert "same stacking pipeline" in info["quality_caveat"]
             assert "was not measured" in info["quality_caveat"]
 
