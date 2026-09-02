@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GSplats Demo: 3D Interstellar Dust of the Solar Neighborhood (Leike & Enßlin 2020)
+"""GSplats Demo: 3D Interstellar Dust of the Solar Neighborhood (Leike et al. 2020)
 
 Gaussian-splats a real 3D reconstruction of the Milky Way's interstellar dust
 around the Sun. Unlike the microscopy gsplat demos, the "volume" here is a
@@ -56,7 +56,7 @@ Controls:
 DEMO_META = {
     "key": "gsplats_3d_milky_way_dust",
     "title": "Milky Way Dust (Gaussian splats)",
-    "description": "Real 3D dust reconstruction of the solar neighborhood (Leike & Ensslin 2020) as Gaussian splats.",
+    "description": "Real 3D dust reconstruction of the solar neighborhood (Leike et al. 2020) as Gaussian splats.",
     "category": "astronomy",
     "geometry": "gsplats",
     "requirements": {
@@ -185,7 +185,7 @@ def load_dust_volume(target_size: int = TARGET_SIZE) -> tuple:
 
     from luxar.demos import robust_download
 
-    with asection("Downloading 3D dust reconstruction (Leike & Enßlin 2020)"):
+    with asection("Downloading 3D dust reconstruction (Leike et al. 2020)"):
         aprint("Source: https://doi.org/10.5281/zenodo.3993082  (mean_std.h5, 2.4 GB)")
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         robust_download(
@@ -361,7 +361,7 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
                 citation=DEMO_META["citation"],
             )
             scene.attrs["title"] = (
-                "GSplats: Milky Way Interstellar Dust (Leike & Enßlin 2020)"
+                "GSplats: Milky Way Interstellar Dust (Leike et al. 2020)"
             )
 
             scene.add_gsplats_from_data(
@@ -406,7 +406,11 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
             )
             add_demo_caption(
                 scene,
-                "Leike & Enßlin 2020 • 3D dust density • ~1 pc/voxel",
+                # No reference here: `add_demo_caption` appends the citation, so
+                # naming it in the text renders it twice. It used to differ only
+                # because the text said "Leike & Enßlin 2020" — the duplicate was
+                # hidden behind a misattribution.
+                "3D dust density • ~1 pc/voxel",
                 DEMO_META.get("citation"),
             )
         aprint(f"Scene saved: {output_path}")
@@ -420,7 +424,7 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
 
 def main() -> None:
     aprint("=" * 70)
-    aprint("GSplats Demo: Milky Way Interstellar Dust (Leike & Enßlin 2020)")
+    aprint("GSplats Demo: Milky Way Interstellar Dust (Leike et al. 2020)")
     aprint("=" * 70)
     aprint("Real 3D dust reconstruction → Gaussian splatting → glowing fog")
     aprint("")
