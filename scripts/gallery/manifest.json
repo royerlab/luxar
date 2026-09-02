@@ -63,7 +63,7 @@
       "category": "astronomy",
       "script": "demo_desi_galaxies.py",
       "dataset": "datasets/demos/desi_galaxies.luxar.zarr",
-      "citation": "DESI Collaboration 2025 (DR1)",
+      "citation": "DESI Collaboration 2026 (DR1)",
       "fillTarget": 0.55,
       "viewAngle": {
         "azimuth": 90,
@@ -237,7 +237,7 @@
       "category": "embeddings",
       "script": "demo_cellxgene_census_umap.py",
       "dataset": "datasets/demos/cellxgene_census_umap.luxar.zarr",
-      "citation": "CZ CELLxGENE Discover (CZI Cell Science Program 2024)"
+      "citation": "CZ CELLxGENE Discover (CZI Cell Science Program 2025)"
     },
     {
       "id": "cosmicflows_laniakea",
