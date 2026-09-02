@@ -62,6 +62,13 @@ def test_public_attributions_keep_required_provenance_resolvable() -> None:
     assert "Nature Physics* 16:949-957" in neuromast_credit
     assert "doi:10.1038/s41567-020-0894-9" in neuromast_credit
     assert "10.1016/j.cub.2019.08.060" not in neuromast_credit
+    # File-wide, not just this bullet: the retired reference could reappear in
+    # another README section (a gallery caption, a dataset table) and a
+    # bullet-scoped check would not see it. Guard the title as well as the DOI,
+    # since either one alone still points a reader at the paper the data author
+    # asked us to move off.
+    assert "10.1016/j.cub.2019.08.060" not in readme
+    assert "Notch-mediated" not in readme
 
 
 def test_census_attribution_uses_generator_release_default() -> None:
