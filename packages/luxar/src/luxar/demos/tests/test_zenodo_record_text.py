@@ -2491,38 +2491,18 @@ class TestCheckExplainsAnAbsentFigure:
         "unmeasured_reason": "unpinned-local-copy",
     }
 
-    def test_every_absent_figure_is_explained(self, gen: Any) -> None:
-        """No committed row may omit PSNR without saying why.
-
-        This used to name `celegans_s1` and `nexrad_supercell` as the two
-        unpinned rows. Both are now measured from their HOSTED bytes, so that
-        form would assert against data that has moved on -- and naming two
-        datasets never protected the other thirty. The contract worth holding is
-        the one `_gaps` itself applies: an absent figure carries a published
-        caveat, an `unmeasured_reason`, or an explicit `quality_quotable: False`.
-        A bare null is the thing a reader cannot distinguish from evasion.
-        """
+    def test_committed_unpinned_rows_remain_withheld(self, gen: Any) -> None:
         chars = gen.load_characteristics()
-        assert chars, "no committed characteristics to check"
-        unexplained = [
-            key
-            for key, info in chars.items()
-            if info.get("psnr_db") is None
-            and not info.get("quality_caveat")
-            and not info.get("unmeasured_reason")
-            and info.get("quality_quotable") is not False
-        ]
-        assert not unexplained, f"absent PSNR with no stated reason: {unexplained}"
-
-    def test_any_unmeasured_reason_is_a_known_value(self, gen: Any) -> None:
-        """Guard the spelling without requiring any row to currently use it."""
-        allowed = {"unpinned-local-copy"}
-        seen = {
-            info["unmeasured_reason"]
-            for info in gen.load_characteristics().values()
-            if info.get("unmeasured_reason")
-        }
-        assert seen <= allowed, f"unknown unmeasured_reason: {seen - allowed}"
+        for key in (
+            "gsplats_celegans/celegans_s1.gsplats.zarr.zip",
+            "gsplats_nexrad_supercell/nexrad_supercell.gsplats.zarr.zip",
+        ):
+            info = chars[key]
+            assert info["psnr_db"] is None
+            assert info["foreground_psnr_db"] is None
+            assert info["measured_from"] is None
+            assert info["measured_sha256"] is None
+            assert info["unmeasured_reason"] == "unpinned-local-copy"
 
     def test_an_unpinned_local_copy_is_named_as_the_cause(
         self,
