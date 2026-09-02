@@ -30,7 +30,7 @@ DATA SOURCE & CITATION
 ----------------------
 DESI DR1 LSS clustering catalogs (iron / v1.5):
     https://data.desi.lbl.gov/public/dr1/survey/catalogs/dr1/LSS/iron/LSScats/v1.5/
-DESI Collaboration (2025), "Data Release 1 of the Dark Energy Spectroscopic
+DESI Collaboration (2026), "Data Release 1 of the Dark Energy Spectroscopic
     Instrument", arXiv:2503.14745. Data released under CC BY 4.0.
     Acknowledgment: this product uses data obtained with the Dark Energy
     Spectroscopic Instrument (DESI). Derived 3D positions are a transform of the
@@ -75,8 +75,8 @@ DEMO_META = {
     "caches": ["desi_galaxies"],
     "outputs": ["desi_galaxies"],
     "citation": {
-        "short": "DESI Collaboration 2025 (DR1)",
-        "ref": "DESI Collaboration 2025",
+        "short": "DESI Collaboration 2026 (DR1)",
+        "ref": "DESI Collaboration 2026",
         "doi": "10.48550/arXiv.2503.14745",
         "license": "CC BY 4.0",
     },
@@ -963,7 +963,7 @@ def main() -> None:
     if NO_SERVE:
         aprint(f"Dataset generated at {output_path}")
     else:
-        aprint("Data credit: DESI DR1 (DESI Collaboration 2025, arXiv:2503.14745)")
+        aprint("Data credit: DESI DR1 (DESI Collaboration 2026, arXiv:2503.14745)")
         launch_viewer(output_path)
 
 
