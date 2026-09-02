@@ -81,7 +81,7 @@ import {
   type CoverageMeasurement,
   type CropFraming,
 } from './crop-policy';
-import { resolveGalleryOnly } from './gallery-selection';
+import { mediaKeyIndex, resolveGalleryOnly } from './gallery-selection';
 import {
   checkGalleryMediaSize,
   collectGalleryMediaSizeIssues,
@@ -96,6 +96,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '../../../../..');
 const MANIFEST_PATH = path.join(REPO_ROOT, 'scripts/gallery/manifest.json');
 const README_PATH = path.join(REPO_ROOT, 'README.md');
+const MEDIA_MANIFEST_PATH = path.join(REPO_ROOT, 'scripts/gallery/media-manifest.json');
 const OUTPUT_DIR = path.join(REPO_ROOT, 'docs/images/gallery');
 const capturedMedia: GalleryMediaFile[] = [];
 
@@ -244,10 +245,18 @@ function loadManifest(): DemoEntry[] {
   let demos = raw.demos;
   const only = process.env.GALLERY_ONLY;
   if (only) {
+    // The README's gallery media is content-addressed and hosted, so its URLs
+    // carry no demo id; media-manifest.json is what maps key -> id.
+    const mediaManifest = fs.existsSync(MEDIA_MANIFEST_PATH)
+      ? (JSON.parse(fs.readFileSync(MEDIA_MANIFEST_PATH, 'utf-8')) as Parameters<
+          typeof mediaKeyIndex
+        >[0])
+      : { tiles: {} };
     const selection = resolveGalleryOnly(
       only,
       fs.readFileSync(README_PATH, 'utf-8'),
-      demos.map((demo) => demo.id)
+      demos.map((demo) => demo.id),
+      mediaKeyIndex(mediaManifest)
     );
     if (selection.unknownTokens.length > 0) {
       console.warn(

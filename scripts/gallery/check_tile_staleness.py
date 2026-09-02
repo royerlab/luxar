@@ -22,7 +22,7 @@ SHADING_PATHSPECS = (
     f"{SHADING_PATH.as_posix()}/*.py",
     f":(exclude){SHADING_PATH.as_posix()}/tests/**",
 )
-TILES_DIR = Path("docs/images/readme/gallery")
+MEDIA_MANIFEST_PATH = Path("scripts/gallery/media-manifest.json")
 GLOBAL_INPUT_PATHSPECS = {
     "dataset generator": ("scripts/gallery/generate_gallery_datasets.py",),
     "gallery capture": (
@@ -347,43 +347,39 @@ class GalleryHistory:
             raise StalenessError(f"invalid Git LFS pointer object: {object_id}")
         return int(match.group(1))
 
-    def _tracked_tile_media(self) -> list[tuple[str, tuple[GalleryMedia, ...]]]:
-        output = self._git("ls-tree", "-r", "-l", "HEAD", "--", TILES_DIR.as_posix())
-        entries: list[tuple[Path, str, int]] = []
-        for line in output.splitlines():
-            metadata, path_text = line.split("\t", 1)
-            _, object_type, object_id, size_text = metadata.split()
-            path = Path(path_text)
-            if object_type == "blob" and path.suffix in {".webp", ".webm"}:
-                if not size_text.isdigit():
-                    raise StalenessError(
-                        f"Git object is unavailable: {object_id} ({path})"
-                    )
-                entries.append((path, object_id, int(size_text)))
-        small_blobs = self._small_blob_contents(
-            [
-                object_id
-                for _, object_id, blob_size in entries
-                if blob_size <= MAX_LFS_POINTER_BYTES
-            ]
-        )
-        media: list[GalleryMedia] = []
-        for path, object_id, blob_size in entries:
-            media.append(
-                GalleryMedia(
-                    path=path,
-                    size_bytes=self._media_size(object_id, blob_size, small_blobs),
+    def _published_tile_media(self) -> list[tuple[str, tuple[GalleryMedia, ...]]]:
+        """Tiles as described by the committed media manifest."""
+        text = self._head_text(MEDIA_MANIFEST_PATH)
+        if text is None:
+            raise StalenessError(
+                f"{MEDIA_MANIFEST_PATH} is not committed — the gallery media manifest "
+                "is what records the published tiles"
+            )
+        try:
+            manifest = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise StalenessError(
+                f"{MEDIA_MANIFEST_PATH} is not valid JSON: {exc}"
+            ) from exc
+        tiles = manifest.get("tiles") or {}
+        if not tiles:
+            raise StalenessError("the gallery media manifest describes no tiles")
+        by_demo: list[tuple[str, tuple[GalleryMedia, ...]]] = []
+        for demo_id in sorted(tiles):
+            media = tuple(
+                sorted(
+                    (
+                        GalleryMedia(
+                            path=Path(entry["key"]), size_bytes=int(entry["bytes"])
+                        )
+                        for entry in tiles[demo_id].values()
+                    ),
+                    key=lambda item: item.path,
                 )
             )
-        if not media:
-            raise StalenessError("no committed README gallery tiles found")
-        by_demo: dict[str, list[GalleryMedia]] = {}
-        for item in media:
-            by_demo.setdefault(item.path.stem, []).append(item)
-        return [
-            (demo_id, tuple(sorted(items, key=lambda item: item.path)))
-            for demo_id, items in sorted(by_demo.items())
-        ]
+            if media:
+                by_demo.append((demo_id, media))
+        return by_demo
 
     def _demo_code_inputs(
         self,
@@ -426,7 +422,10 @@ class GalleryHistory:
         }
         shading_input = self._last_commit_for_pathspecs(*SHADING_PATHSPECS)
 
-        tracked_media = self._tracked_tile_media()
+        # One stamp for every tile: a capture rewrites the whole manifest, so the
+        # commit that last touched it is when this generation was published.
+        published_at = self._last_commit(MEDIA_MANIFEST_PATH)
+        tracked_media = self._published_tile_media()
         statuses: list[TileStatus | UnknownStatus] = []
         for demo_id, media in tracked_media:
             entry: dict[str, Any] | None = entries.get(demo_id)
@@ -434,7 +433,7 @@ class GalleryHistory:
                 statuses.append(
                     UnknownStatus(
                         demo_id=demo_id,
-                        reason=f"committed tile {demo_id!r} has no manifest entry",
+                        reason=f"published tile {demo_id!r} has no manifest entry",
                         media=media,
                     )
                 )
@@ -449,10 +448,7 @@ class GalleryHistory:
                     )
                 )
                 inputs["manifest entry"] = self._manifest_entry_commit(ranges[demo_id])
-                tile = min(
-                    (self._last_commit(item.path) for item in media),
-                    key=lambda stamp: stamp.committed_at,
-                )
+                tile = published_at
             except (SyntaxError, StalenessError) as exc:
                 statuses.append(
                     UnknownStatus(demo_id=demo_id, reason=str(exc), media=media)
