@@ -12,7 +12,7 @@ autoresearch-results.tsv
 *.bak
 # Benchmarking
 .benchmarks/
-benchmarks/
+/benchmarks/
 build/
 # Build outputs
 .cache

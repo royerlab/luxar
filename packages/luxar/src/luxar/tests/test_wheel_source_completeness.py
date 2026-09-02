@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import pytest
 
@@ -55,22 +56,28 @@ def _root_gitignore_matches(paths: list[str], *, cwd: Path = REPO_ROOT) -> list[
     if not paths:
         return []
 
-    result = subprocess.run(
-        [
-            "git",
-            "-c",
-            "core.excludesFile=/dev/null",
-            "check-ignore",
-            "--no-index",
-            "--verbose",
-            "-z",
-            "--stdin",
-        ],
-        cwd=cwd,
-        input="\0".join(paths) + "\0",
-        capture_output=True,
-        text=True,
-    )
+    with TemporaryDirectory() as isolated_checkout:
+        isolated_root = Path(isolated_checkout)
+        subprocess.run(["git", "init", "-q"], cwd=isolated_root, check=True)
+        (isolated_root / ".gitignore").write_text(
+            (cwd / ".gitignore").read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        result = subprocess.run(
+            [
+                "git",
+                "-c",
+                "core.excludesFile=/dev/null",
+                "check-ignore",
+                "--no-index",
+                "--verbose",
+                "-z",
+                "--stdin",
+            ],
+            cwd=isolated_root,
+            input="\0".join(paths) + "\0",
+            capture_output=True,
+            text=True,
+        )
     if result.returncode not in (0, 1):
         pytest.fail(f"git check-ignore failed: {result.stderr.strip()}")
 
@@ -173,7 +180,7 @@ def test_the_guard_matches_only_hatchlings_exclusion_source(tmp_path: Path) -> N
     package = tmp_path / "src" / "pkg"
     package.mkdir(parents=True)
     (tmp_path / ".gitignore").write_text("*.log\n!keep.log\n*.py\n")
-    (package / ".gitignore").write_text("nested.txt\n")
+    (package / ".gitignore").write_text("nested.txt\n!rescued.py\n")
     (tmp_path / ".git" / "info" / "exclude").write_text("info.txt\n")
     global_excludes = tmp_path / "global-excludes"
     global_excludes.write_text("global.txt\n")
@@ -189,11 +196,13 @@ def test_the_guard_matches_only_hatchlings_exclusion_source(tmp_path: Path) -> N
         "src/pkg/nested.txt",
         "src/pkg/info.txt",
         "src/pkg/global.txt",
+        "src/pkg/rescued.py",
         "src/pkg/snowman-☃\nmodule.py",
     ]
     offenders = _root_gitignore_matches(paths, cwd=tmp_path)
 
     assert offenders == [
         ".gitignore:1:*.log\tsrc/pkg/drop.log",
+        ".gitignore:3:*.py\tsrc/pkg/rescued.py",
         ".gitignore:3:*.py\tsrc/pkg/snowman-☃\nmodule.py",
     ]
