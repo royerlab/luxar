@@ -86,7 +86,7 @@ export interface RefinementAdmission {
 
 /** Admission plus this loader's share of additional settled bytes. */
 export interface RefinementPassAdmission extends RefinementAdmission {
-  /** Fair share of headroom, lower-bounded by the estimated next rung; `null` unbudgeted. */
+  /** Per-pass share across tracked paths, lower-bounded by one estimated rung; `null` unbudgeted. */
   allowanceBytes: number | null;
 }
 
