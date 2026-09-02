@@ -1052,6 +1052,35 @@ the full citation.
 - **Human Multiome** — peak-accessibility UMAP of human single-cell ATAC-seq; data from Domcke et al. (2020), *A human cell atlas of fetal chromatin accessibility*, *Science* 370:eaba7612, [doi:10.1126/science.aba7612](https://doi.org/10.1126/science.aba7612); peak-UMAP analysis from Zebrahub-Multiome, Kim et al. (2024), [bioRxiv:2024.10.18.618987](https://www.biorxiv.org/content/10.1101/2024.10.18.618987v2).
 - **Mouse Multiome** — peak-accessibility UMAP of a mouse single-cell multiome; data from Argelaguet et al. (2022), *Decoding gene regulation in the mouse embryo using single-cell multi-omics*, [bioRxiv:2022.06.15.496239](https://doi.org/10.1101/2022.06.15.496239); peak-UMAP analysis from Zebrahub-Multiome, Kim et al. (2024), [bioRxiv:2024.10.18.618987](https://www.biorxiv.org/content/10.1101/2024.10.18.618987v2).
 
+### Where the demo data lives
+
+The demos do not ship their data. What they download are **derived products** —
+Gaussian-splat fits and point catalogues computed from the datasets credited
+above — archived on Zenodo in four records, grouped by licence because a Zenodo
+record carries a single licence field:
+
+| Record | Contents | Cite |
+|---|---|---|
+| Permissively licensed (CC-BY, CC0, public domain) | 46 files, 1.2 GiB | [10.5281/zenodo.21912279](https://doi.org/10.5281/zenodo.21912279) |
+| ShareAlike (CC BY-SA 4.0) | 3 files, 20 MiB | [10.5281/zenodo.21912281](https://doi.org/10.5281/zenodo.21912281) |
+| Zebrafish histone timelapse (253 + 51 timepoints) | 2 files, 6.5 GiB | [10.5281/zenodo.21912283](https://doi.org/10.5281/zenodo.21912283) |
+| *Drosophila* embryogenesis (500 timepoints) | 1 file, 824 MiB | [10.5281/zenodo.22118694](https://doi.org/10.5281/zenodo.22118694) |
+
+`luxar demo run <name>` fetches only what that demo needs, caches it under
+`~/.cache/luxar/`, and verifies every file against a SHA-256 recorded in
+[`data_manifest.json`](packages/luxar/src/luxar/demos/data_manifest.json). A
+download that does not match is quarantined rather than used, so a corrupted or
+substituted file fails loudly instead of rendering something subtly wrong.
+
+The DOIs above are *concept* DOIs: they always resolve to the newest version of
+a record. Each individual version also has its own DOI, which is what to use
+when a result needs to be reproducible against exact bytes.
+
+**Citing these**: the records hold derived representations, and every one is
+lossy — built for interactive visualisation, not as a substitute for the source
+imagery in quantitative work. If you use them, please cite the upstream dataset
+credited above as well; each record's description names it per file.
+
 Synthetic / procedurally-generated demos — **Lorenz Attractor**, **Spiral Galaxy** (3D & 5D), **Rainbow Sphere**, **Quantum Orbitals**, **Hilbert Curve**, **Bioluminescent Ocean**, and **Particle Collision** (inspired by CERN LHC events) — use no external data.
 
 ---
@@ -1072,6 +1101,10 @@ BSD-3-Clause License. See [LICENSE](LICENSE) for details.
   url = {https://github.com/royerlab/luxar}
 }
 ```
+
+If you use the **demo datasets**, please cite the Zenodo record they came from
+as well as the upstream data — see
+[Where the demo data lives](#where-the-demo-data-lives) for the DOIs.
 
 ---
 
