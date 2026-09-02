@@ -841,6 +841,42 @@ def validate_blending_mode(mode: Any) -> BlendingMode:
     return cast(BlendingMode, mode)
 
 
+def validate_depth_level(level: Any) -> int:
+    """Validate an authored cross-layer draw order.
+
+    ``depth_level`` states where a layer draws relative to the other layers it
+    overlaps: higher = nearer the camera = drawn later, the CSS ``z-index`` /
+    Illustrator convention. See ``docs/guides/specs/LAYER_DEPTH_LEVEL_SPEC.md``.
+
+    Deliberately unbounded and signed: the value's only meaning is its ORDER,
+    so there is nothing to clamp to, and negative levels are the natural way to
+    push a backdrop behind everything else. Sparse values (10/20/30) leave room
+    to insert a layer later without renumbering.
+
+    A ``bool`` is refused even though ``isinstance(True, int)`` is true in
+    Python: ``depth_level=True`` almost certainly means the author confused this
+    with a flag, and silently banding that layer at level 1 would be a wrong
+    answer rather than an error.
+
+    Args:
+        level: Draw order to validate. Any Python or NumPy integer.
+
+    Returns:
+        The level as a plain ``int``.
+
+    Raises:
+        TypeError: If ``level`` is not an integer (``bool`` included).
+    """
+    if isinstance(level, (bool, np.bool_)) or not isinstance(level, (int, np.integer)):
+        raise TypeError(
+            f"depth_level must be an integer, got {level!r} ({type(level).__name__}). "
+            "Higher draws nearer the camera (CSS z-index convention); sparse values "
+            "like 10/20/30 leave room to insert a layer later."
+        )
+
+    return int(level)
+
+
 def validate_line_join(style: Any) -> str:
     """Validate a line join style string.
 

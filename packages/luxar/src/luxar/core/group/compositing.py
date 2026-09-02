@@ -281,6 +281,15 @@ COMPOSITING_ATTRS = frozenset(
         "intensity",
         "offset",
         "blending_mode",
+        # The authored cross-layer draw order. Compositing for the strongest
+        # version of the blending_mode reason: the wrapper IS the layer, so a
+        # partitioned / LOD node must carry ONE level for the whole block.
+        # Copying it onto each internal child would split the wrapper across
+        # draw-order bands and destroy its exact BSP part order — which is why
+        # authoring one strictly inside a specialized group is refused outright
+        # (:func:`reject_depth_level_inside_specialized_group`) rather than
+        # merely discouraged. See docs/guides/specs/LAYER_DEPTH_LEVEL_SPEC.md.
+        "depth_level",
         # Lines-only, but compositing for the same reason blending_mode is: the
         # user thinks of the wrapper as their layer, so a partitioned / LOD
         # lines node must not silently drop back to the default join style on
@@ -468,6 +477,78 @@ def reject_lines_only_join(
             f"Cannot add {geometry_type} '{name}' with join={attrs['join']!r}. "
             + lines_only_join_reason(geometry_type)
         )
+
+
+def _enclosing_specialized_group(node: Any) -> Optional[Any]:
+    """The nearest ``kind=partition`` / ``kind=lod`` ancestor of ``node``, if any.
+
+    Walks the whole parent chain, unlike
+    :func:`~luxar.core.group.partition.reject_mismatched_partition_parent`, which
+    only inspects the IMMEDIATE parent — a level authored two levels down (on a
+    part's own LOD wrapper, say) is exactly as damaging as one on the part.
+    ``node`` itself is included, so passing a wrapper reports that wrapper.
+    """
+    current = node
+    while current is not None:
+        kind = None
+        try:
+            kind = current.attrs.get("kind")
+        except Exception:  # pragma: no cover - a detached//partial node
+            kind = None
+        if kind in ("partition", "lod"):
+            return current
+        current = getattr(current, "parent", None)
+    return None
+
+
+def depth_level_inside_specialized_group_reason(kind: str) -> str:
+    """Why ``depth_level`` cannot be authored inside a partition / LOD group."""
+    if kind == "partition":
+        return (
+            "A partition's parts are ordered EXACTLY against each other from the "
+            "stored BSP planes, valid from any camera pose. depth_level bands are "
+            "the outer key, so a level on one part would move it into a different "
+            "band and its parts would interleave by band instead of by the tree, "
+            "destroying that exactness. Set depth_level on the partition WRAPPER "
+            "instead — the wrapper is the layer, and a level there moves the whole "
+            "block while the part order travels with it intact."
+        )
+    return (
+        "A kind=lod group's levels are ALTERNATIVES — only one renders at a time — "
+        "so a level on one of them would be inert. Set depth_level on the LOD "
+        "wrapper instead, where it applies to whichever level is live."
+    )
+
+
+def reject_depth_level_inside_specialized_group(
+    geometry_type: str, name: str, attrs: Dict[str, Any], parent: Any
+) -> None:
+    """Refuse ``depth_level=`` on a node inside a partition / LOD group.
+
+    ``depth_level`` may be authored only on a node that IS a layer — the scene
+    root, a plain group, or a top-level leaf. The two reasons differ in severity
+    (a partition would lose an exactness guarantee; a LOD level would be inert)
+    but the rule is one ancestry check, which also covers the nested case (a LOD
+    group inside a partition part) with no extra branch.
+
+    Refused rather than ignored, and at the adder rather than in the value
+    validator, for the same reasons as :func:`reject_lines_only_join`: the
+    validator never sees the tree, and an attr that writes cleanly and silently
+    does nothing is this codebase's most expensive failure mode. The viewer, which
+    must render whatever it is handed, instead warns once and falls back to the
+    enclosing layer's level — strict write, tolerant read.
+    """
+    if "depth_level" not in attrs:
+        return
+    wrapper = _enclosing_specialized_group(parent)
+    if wrapper is None:
+        return
+    kind = str(wrapper.attrs.get("kind"))
+    raise ValueError(
+        f"Cannot add {geometry_type} '{name}' with "
+        f"depth_level={attrs['depth_level']!r} inside a kind={kind} group. "
+        + depth_level_inside_specialized_group_reason(kind)
+    )
 
 
 def reject_mesh_only_appearance(

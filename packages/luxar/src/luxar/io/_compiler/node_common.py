@@ -190,6 +190,11 @@ KNOWN_RENDER_ATTRS: FrozenSet[str] = frozenset(
         # lines-only ``join``: they are real knobs a user authors, so a typo
         # deserves to see them in the hint.
         "copy",
+        # Authored cross-layer draw order (higher = nearer the camera = drawn
+        # later). Advertised here for the same reason as lines-only ``join``:
+        # a real knob a user authors, so a typo must see it in the hint. See
+        # ``docs/guides/specs/LAYER_DEPTH_LEVEL_SPEC.md``.
+        "depth_level",
         "gamma",
         "intensity",
         "link",
@@ -709,6 +714,15 @@ def validate_render_attrs(
         from ...validation.types import validate_blending_mode
 
         validate_blending_mode(attrs["blending_mode"])
+
+    if "depth_level" in attrs:
+        # Runs UNCONDITIONALLY, which is what keeps ``depth_level`` out of
+        # ``ABSENT_WHEN_NONE_RENDER_ATTRS``: a ``depth_level=None`` refuses
+        # loudly here (like ``blending_mode=None``) rather than reaching disk,
+        # so there is nothing for the absent-when-None strip to rescue.
+        from ...validation.types import validate_depth_level
+
+        validate_depth_level(attrs["depth_level"])
 
     if "join" in attrs:
         # The KEY allowlist above catches ``jion=``; this catches ``join="mitre"``.

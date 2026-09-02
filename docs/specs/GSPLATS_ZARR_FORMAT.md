@@ -536,6 +536,17 @@ ancestor that sets it (viewer default: `additive`). No default is stamped:
 blending has no identity value, so a stamped default would shadow
 ancestor-set modes.
 
+`depth_level` — the authored cross-layer draw order, an integer where **higher =
+nearer the camera = drawn later** — follows the identical rule for an identical
+reason: written only when explicitly set, inherited nearest-setter-wins, and with
+**no default stamped**. Here the absence carries meaning rather than merely
+avoiding a shadow: an unset level means "use the viewer's inferred containment
+ordering", so a stamped 0 would be indistinguishable from an authored one and
+would silently disable that inference everywhere. It is refused outright inside a
+`kind=partition` / `kind=lod` group, where it would respectively destroy the
+exact BSP part order or be inert — set it on the wrapper, which is the layer.
+See `docs/guides/specs/LAYER_DEPTH_LEVEL_SPEC.md`.
+
 **`slice_dims` is read, not just recorded**: besides describing the compound
 ordering, the barrier (categorical) column indices it lists are the set
 `compute_chunk_bounds_gsplats` gave the fixed epsilon pad plus any encoder

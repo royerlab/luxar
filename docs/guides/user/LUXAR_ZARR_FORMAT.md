@@ -309,7 +309,10 @@ Group nodes organize the scene hierarchy and can contain child nodes.
                            //   colormapped node this is the scalar display window,
                            //   not a gain (see Scalar Colormap Attributes)
   "offset": 0.0,           // -10.0-10.0, per-node additive brightness shift (black level)
-  "blending_mode": "additive",  // normal, additive, max, opaque, luminous, volumetric — written
+  "blending_mode": "additive",
+  "depth_level": 20,           // optional: authored cross-layer draw order
+                               // (higher = nearer the camera). Never stamped —
+                               // absence means "use the inferred ordering".  // normal, additive, max, opaque, luminous, volumetric — written
                            //   only when explicitly set; unset ⇒ inherited from the
                            //   nearest ancestor that sets it (viewer default: additive)
   "colormap": "viridis",   // Optional palette; nearest-setter-wins for rendering. GSplats
@@ -1262,8 +1265,8 @@ Rendering attributes compose along the scene graph (nearest data/group root → 
 - `opacity`, `absorption`, `gamma`, `intensity` — multiplied (`absorption`
   has identity 1.0, is floored at 0, and has no upper clamp)
 - `offset` — summed
-- `blending_mode`, `join`, `colormap` — the nearest ancestor that sets it wins
-  (`join` is lines-only; a `colormap='custom'` carries its sibling
+- `blending_mode`, `join`, `colormap`, `depth_level` — the nearest ancestor that
+  sets it wins (`join` is lines-only; a `colormap='custom'` carries its sibling
   `colormap_lut` bytes down with the name, and a leaf that names a different
   palette does *not* inherit those bytes)
 
@@ -1286,6 +1289,32 @@ it (with the other compositing attrs) onto the wrapper only — see
 `COMPOSITING_ATTRS` in `core/group/compositing.py`. Correspondingly, within a
 layer's own subtree the panel treats the layer's mode as authoritative and
 ignores a mode authored on a non-layer descendant.
+
+**`depth_level` — the authored cross-layer draw order.** An integer stating
+where a layer draws relative to the layers it overlaps: **higher = nearer the
+camera = drawn later**, the CSS `z-index` / Illustrator convention. Optional and
+**never stamped** — its absence on disk is genuine silence, which is
+load-bearing: the viewer treats an unset level as band 0 and keeps its *inferred*
+ordering (bounding-sphere containment forces a container to draw before its
+contents), while an *explicit* level overrides that inference. A stamped default
+would silently disable the inferred ordering for every store written afterwards.
+
+Layers with different levels never interleave, whatever the camera does, which is
+the point: it converts an inferred, geometry-dependent order into a stated one.
+Sparse values (10/20/30) leave room to insert a layer later. Negative values are
+fine. Two things it deliberately does not do: it cannot reorder across the
+opaque/transparent render split (an `opaque` mesh always draws before any
+transparent layer), and it buys *stability* rather than correctness — for two
+concave interpenetrating layers no single order is right from every viewpoint.
+
+Like `blending_mode`, set it on the **layer**, never on a `kind=partition` part
+or `kind=lod` child. Unlike `blending_mode` this is not merely discouraged but
+**refused** by the Python writers, through both the adder kwarg and a post-hoc
+`node.attrs[...]` assignment: a partition's parts are ordered exactly against
+each other from their stored BSP planes, and splitting the wrapper across bands
+would destroy that. A level on the wrapper moves the whole block while the part
+order travels with it intact. Full design:
+`docs/guides/specs/LAYER_DEPTH_LEVEL_SPEC.md`.
 
 An inherited `colormap` is offered to every descendant at render time, but the
 current Python adders still require Points / Lines / Mesh scalar leaves to
