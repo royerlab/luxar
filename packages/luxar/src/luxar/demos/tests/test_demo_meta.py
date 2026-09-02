@@ -344,6 +344,41 @@ def test_publication_year_corrections_reach_demo_credits(
     assert citation["ref"] == expected_ref
 
 
+def test_desi_publication_year_reaches_static_public_credits() -> None:
+    path = registry._DEMOS_DIR / "demo_desi_galaxies.py"
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    citation = get_demo("desi_galaxies").citation
+    assert citation is not None
+    year = citation["ref"].rsplit(" ", 1)[-1]
+
+    docstring = ast.get_docstring(tree)
+    assert docstring is not None
+    assert f"DESI Collaboration ({year})" in docstring
+
+    aprint_strings = [
+        arg.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "aprint"
+        for arg in node.args
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+    ]
+    assert any(f"DESI Collaboration {year}" in text for text in aprint_strings)
+
+    readme = (registry._DEMOS_DIR / "README.md").read_text(encoding="utf-8")
+    section = readme.split("#### demo_desi_galaxies.py", 1)[1].split("\n---", 1)[0]
+    assert "Data: [DESI DR1]" in section
+    assert f"DESI Collaboration {year}" in section
+
+
+def test_human_peak_umap_description_does_not_claim_multiome_input() -> None:
+    description = get_demo("human_multiome_peak_umap").description
+    assert "single-cell ATAC-seq peaks" in description
+    assert "(human multiome)" not in description
+
+
 def test_manifest_citation_check_catches_drift() -> None:
     """The manifest credit rule must fail on each way a tile's credit can go
     wrong — a dropped credit, an invented one, and a mismatched one."""

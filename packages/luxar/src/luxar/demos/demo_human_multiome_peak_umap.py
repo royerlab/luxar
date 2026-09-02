@@ -29,7 +29,7 @@ Controls:
 DEMO_META = {
     "key": "human_multiome_peak_umap",
     "title": "Human Multiome Peak UMAP",
-    "description": "3D UMAP of ~1M single-cell ATAC-seq peaks (human multiome), colored by cell type and lineage.",
+    "description": "3D UMAP of ~1M single-cell ATAC-seq peaks, colored by cell type and lineage.",
     "category": "embeddings",
     "geometry": "points",
     "requirements": {
