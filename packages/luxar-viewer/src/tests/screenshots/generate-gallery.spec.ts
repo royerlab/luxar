@@ -82,6 +82,7 @@ import {
   type CropFraming,
 } from './crop-policy';
 import { resolveGalleryOnly } from './gallery-selection';
+import { resolveTimelapseSettleMs, waitForTimelapseSliceSettled } from './gallery-timelapse-settle';
 import {
   checkGalleryMediaSize,
   collectGalleryMediaSizeIssues,
@@ -134,6 +135,14 @@ const ORBIT_FRAMES = Number(process.env.GALLERY_ORBIT_FRAMES ?? 120);
 // slow; ~40 distinct steps (each held ~3 frames) keeps the development legible
 // while cutting loads 3×. The camera still rocks smoothly over all 120 frames.
 const TL_STEPS = 40;
+// How long cache priming and capture wait for each timelapse slice's full
+// progressive ladder to drain. `waitForUpdate()` resolves at the first geometry
+// commit, while later rungs are still arriving; shooting during that drain is
+// what bakes pop-in into the clip (measured: 15.7x frame-to-frame spike on
+// gsplats_4d_zebrafish_timelapse vs <1.8x for a clean rock). Bounded so one
+// stubborn slice cannot stall a 120-frame x ~90-demo sweep; invalid/non-positive
+// overrides fall back to the finite default.
+const TL_SETTLE_MS = resolveTimelapseSettleMs(process.env.GALLERY_TL_SETTLE_MS);
 const ORBIT_AMPLITUDE_DEG = 20; // ± rock amplitude
 const ORBIT_FPS = 12; // 120 frames ⇒ a 10 s cycle, played 1:1 (no interpolation)
 const WEBM_WIDTH = 900; // VP9 master (archival / click-through)
@@ -891,7 +900,7 @@ async function captureOrbitFrames(
   // first so the slice cache is primed (the built-in t+1 prefetch warms the next
   // timepoint), then we step it deterministically during capture. Returns the
   // discovered time-dimension index + range so we can pace the warm-up and steps.
-  let tl: { timeIdx: number; min: number; max: number; lo: number } | null = null;
+  let tl: { timeIdx: number; min: number; max: number; lo: number; demoId: string } | null = null;
   if (demo?.timelapse) {
     const found = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
@@ -913,11 +922,11 @@ async function captureOrbitFrames(
     });
     if (found) {
       const lo = Math.round(found.min + 0.12 * (found.max - found.min)); // skip near-empty start
-      const tlv = { ...found, lo };
+      const tlv = { ...found, lo, demoId: demo.id };
       tl = tlv;
-      // Prime the slice cache: load each of the TL_STEPS distinct capture
-      // timepoints once (much cheaper than the old 400-frame play warm-up). The
-      // capture pass then largely hits cache.
+      // Prime the slice cache: fully load each of the TL_STEPS distinct capture
+      // timepoints once (much cheaper than the old 400-frame play warm-up), so
+      // the capture pass can restore the complete ladder from cache.
       for (let k = 0; k < TL_STEPS; k++) {
         const v = Math.round(tlv.lo + ((tlv.max - tlv.lo) * k) / (TL_STEPS - 1));
         await page.evaluate(
@@ -928,6 +937,7 @@ async function captureOrbitFrames(
           },
           { timeIdx: tlv.timeIdx, value: v }
         );
+        await waitForTimelapseSliceSettled(page, tlv.demoId, TL_SETTLE_MS);
       }
     }
   }
@@ -1054,6 +1064,11 @@ async function captureOrbitFrames(
           },
           { timeIdx: tl.timeIdx, value: v }
         );
+        // `waitForUpdate()` resolves at the first commit, before progressive
+        // refinement releases the loader's broad update lock. Wait through the
+        // ladder drain; the explicit synchronous render below then draws it at
+        // the orbit pose immediately before the screenshot.
+        await waitForTimelapseSliceSettled(page, tl.demoId, TL_SETTLE_MS);
       }
     }
     await page.evaluate(
@@ -1341,6 +1356,7 @@ for (const demo of DEMOS) {
     if (demo.timelapse) {
       const frac = demo.timelapse.framePoint ?? 0.85;
       await jumpTimeDimToFrac(page, frac);
+      await waitForTimelapseSliceSettled(page, demo.id, TL_SETTLE_MS);
       console.log(`[${demo.id}] timelapse still framePoint=${frac}`);
     }
 
