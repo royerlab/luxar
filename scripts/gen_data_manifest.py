@@ -246,7 +246,15 @@ DATASETS: dict[str, dict] = {
         record="cc-by",
         license="cc-by-4.0",
         source="DESI DR1 LSS catalogs",
-        attribution="DESI DR1 (arXiv:2503.14745; CC BY 4.0).",
+        attribution=(
+            "DESI DR1 large-scale-structure catalogs. DESI Collaboration. "
+            "Data Release 1 of the Dark Energy Spectroscopic Instrument. The "
+            "Astronomical Journal (2026, accepted); arXiv:2503.14745. The "
+            "catalogs are defined in DESI Collaboration. DESI 2024 II: sample "
+            "definitions, characteristics, and two-point clustering statistics. "
+            "JCAP 2025(07), 017. doi:10.1088/1475-7516/2025/07/017. CC BY 4.0; "
+            "use requires the DESI citation and acknowledgment text."
+        ),
     ),
     "gsplats_celegans": dict(
         bucket="zenodo",
@@ -337,23 +345,45 @@ DATASETS: dict[str, dict] = {
         license="cc-by-4.0",
         dir="",
         source="CZ CELLxGENE Census (our computed 3D UMAP coords)",
-        attribution="Derived UMAP coordinates over CZ CELLxGENE Census (CC BY 4.0).",
+        attribution=(
+            "Derived 3D UMAP over the CZ CELLxGENE Discover Census. Underlying "
+            "resource: CZI Cell Science Program et al. CZ CELLxGENE Discover: a "
+            "single-cell data platform for scalable exploration, analysis and "
+            "modeling of aggregated data. Nucleic Acids Research 53, D886-D900 "
+            "(2025). doi:10.1093/nar/gkae1142. The Census aggregates many "
+            "independently published studies, whose citations travel with the "
+            "per-cell metadata. CC BY 4.0."
+        ),
     ),
     "3d_umap_coords_human": dict(
         bucket="zenodo",
         record="cc-by",
         license="cc-by-4.0",
         dir="",
-        source="Human multiome peak UMAP (our computed coords)",
-        attribution="Derived UMAP coordinates (CC BY 4.0 upstream).",
+        source="Human fetal ATAC-seq peaks (Domcke et al. 2020), our 3D UMAP",
+        attribution=(
+            "3D UMAP of human single-cell ATAC-seq peaks, embedded by Yang-Joon "
+            "Kim (CZ Biohub SF) for the Zebrahub-Multiome project. Underlying "
+            "data: Domcke, S. et al. A human cell atlas of fetal chromatin "
+            "accessibility. Science 370, eaba7612 (2020). "
+            "doi:10.1126/science.aba7612. Analysis: Kim, Y.-J. et al. bioRxiv "
+            "(2024). doi:10.1101/2024.10.18.618987. CC BY 4.0."
+        ),
     ),
     "3d_umap_coords_mouse": dict(
         bucket="zenodo",
         record="cc-by",
         license="cc-by-4.0",
         dir="",
-        source="Mouse multiome peak UMAP (our computed coords)",
-        attribution="Derived UMAP coordinates (CC BY 4.0 upstream).",
+        source="Mouse embryo multiome peaks (Argelaguet et al. 2022), our 3D UMAP",
+        attribution=(
+            "3D UMAP of mouse embryo single-cell multi-omic peaks, embedded by "
+            "Yang-Joon Kim (CZ Biohub SF) for the Zebrahub-Multiome project. "
+            "Underlying data: Argelaguet, R. et al. Decoding gene regulation in "
+            "the mouse embryo using single-cell multi-omics. bioRxiv (2022). "
+            "doi:10.1101/2022.06.15.496239. Analysis: Kim, Y.-J. et al. bioRxiv "
+            "(2024). doi:10.1101/2024.10.18.618987. CC BY 4.0."
+        ),
     ),
     # -- CC BY-SA (derived product must be relicensed CC BY-SA 4.0) ---------
     "gsplats_opencell_map4": dict(
@@ -408,7 +438,14 @@ DATASETS: dict[str, dict] = {
         record="cc-by",
         license="cc-by-4.0",
         source="Neuromast 2-channel light-sheet timelapse (iSIM)",
-        attribution="Adrian Jacobo (CZ Biohub SF); used with permission (CC BY 4.0).",
+        attribution=(
+            "Adrian Jacobo (CZ Biohub SF); used with permission (CC BY 4.0). "
+            "The imaging itself is unpublished; for the biology of this organ "
+            "see the data author's Jacobo, A. et al. Notch-mediated "
+            "determination of hair-bundle polarity in mechanosensory hair cells "
+            "of the zebrafish lateral line. Current Biology 29, 3579-3587.e7 "
+            "(2019). doi:10.1016/j.cub.2019.08.060."
+        ),
         # Permission CONFIRMED by the author 2026-08-12; both channels uploaded to
         # the cc-by record and pinned below (md5 verified against Zenodo). The
         # record is still a DRAFT, so RECORDS["cc-by"] carries its id but
