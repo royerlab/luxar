@@ -23,9 +23,11 @@
  * covered; lazy `lod_group` levels are outside those maps and outside this
  * accounting. The budget uses the eager gate's working-set calculation, including
  * its `EAGER_WORKING_SET_CAP_BYTES` ceiling: sufficiently large desktop heaps all
- * resolve to that same cap rather than scaling without bound. This remains an
- * independent settled-residency ceiling, not a shared reservation; eager in-flight
- * bytes and refinement residency may coexist transiently.
+ * resolve to that same cap rather than scaling without bound. The GPU buffer
+ * pool is also sized from that figure and covers some of the same renderer
+ * element-row bytes. These remain independent ceilings, not a shared
+ * reservation; eager in-flight bytes, pooled GPU bytes, and refinement
+ * residency may coexist transiently.
  *
  * Decoded payload bytes are measured from the typed arrays. Renderer element
  * rows are derived from each geometry's authoritative layout constant, because
@@ -33,13 +35,18 @@
  * Uint32 ordering buffers (8 B/element) are intentionally omitted, as is the
  * separately bounded slice cache. The next pass is estimated from the mean
  * accounted rung so far — see {@link estimateNextRungBytes}. An admitted loader
- * receives a fair share of the remaining headroom, with enough allowance for
- * its estimated next rung, and stops after the first level that spends it. That
- * prevents a warmed cache from consuming the rest of the ladder under one
- * admission. During a fold/commit, the previous cumulative CPU payload can
- * remain reachable while the replacement is allocated, so the transient peak
- * may add nearly one extra decoded cumulative on top of the settled payload +
- * element-row accounting.
+ * receives a per-pass share of the remaining headroom across tracked,
+ * non-declined paths, with enough allowance for its estimated next rung, and
+ * stops after the first level that spends it. The tracked-set denominator
+ * deliberately includes completed or currently filtered paths from the raw
+ * sweep maps, so it may under-grant relative to the loaders currently offered.
+ * This is not scene-wide round-robin fairness: geometry phases run sequentially,
+ * and an earlier phase can consume the ceiling before a later phase is offered.
+ * The allowance still prevents a warmed cache from consuming the rest of the
+ * ladder under one admission. During a fold/commit, the previous cumulative CPU
+ * payload can remain reachable while the replacement is allocated, so the
+ * transient peak may add nearly one extra decoded cumulative on top of the
+ * settled payload + element-row accounting.
  *
  * DECLINING MUST ALSO RETIRE THE LOADER FROM THE RUN. `runProgressiveRefinement`
  * spins while `anyHasMoreLODs()` is true, and a declined loader still has more

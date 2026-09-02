@@ -179,6 +179,50 @@ export function defineRefinementLoopContract(
       expect(residencyBudget.residentBytes).toBe(35);
     });
 
+    it('records the post-rollback footprint when updateView rejects', async () => {
+      let residentBytes = 20;
+      let loadedRungs = 2;
+      const loader = {
+        hasMoreLODs: true,
+        get loadedLODCount() {
+          return loadedRungs;
+        },
+        totalLODCount: 4,
+        ladderResidency: () => ({
+          residentBytes,
+          loadedRungs,
+          elementCount: 0,
+          bytesPerElement: 0,
+        }),
+        rollbackToPassStart: vi.fn().mockImplementation(() => {
+          residentBytes = 20;
+          loadedRungs = 2;
+          return 2;
+        }),
+        updateView: vi.fn().mockImplementation(async () => {
+          residentBytes = 35;
+          loadedRungs = 4;
+          throw new Error('synthetic load failure');
+        }),
+      };
+      const residencyBudget = new RefinementResidencyBudget(40);
+
+      await run({
+        loaders: new Map([['/n', loader]]),
+        viewStateQueue: new ViewStateQueue(),
+        deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
+        updateVisibleCountsInMonitor: vi.fn(),
+        releaseLock: vi.fn(),
+        retriggerUpdate: vi.fn(),
+        processSpy: vi.fn(),
+        residencyBudget,
+      });
+
+      expect(loader.updateView).toHaveBeenCalledTimes(3);
+      expect(loader.rollbackToPassStart).toHaveBeenCalledTimes(3);
+      expect(residencyBudget.residentBytes).toBe(20);
+    });
+
     it('stops after one successful pass that does not advance the pending loader', async () => {
       const loader = {
         hasMoreLODs: true,
