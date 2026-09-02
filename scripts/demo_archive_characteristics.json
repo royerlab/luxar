@@ -177,22 +177,32 @@
       "quality_note": "measured 2026-08-25 PER TIMEPOINT against the background-subtracted volume the fit consumed; range is over frames 0/25/50/75/99. A stacked archive cannot be scored whole -- its time axis is last and the source's is first, which understates foreground PSNR by ~33 dB"
     },
     "gsplats_celegans/celegans_s1.gsplats.zarr.zip": {
-      "n_splats": null,
-      "ndim": null,
-      "format_version": null,
-      "topology": null,
-      "psnr_db": null,
-      "foreground_psnr_db": null,
-      "foreground_fraction": null,
-      "source_shape": null,
-      "source_dtype": null,
-      "source_bytes": null,
-      "frames": null,
-      "measured_from": null,
-      "measured_sha256": null,
-      "unmeasured_reason": "unpinned-local-copy",
-      "quality_note": "DELIBERATELY ABSENT, not unmeasured. Measured 2026-08-25 per timepoint against the *_preprocessed.npy volumes the fit consumed (global PSNR 35.57/30.03/19.65/21.11 dB and foreground 30.17/13.12/9.52/8.51 dB at t0/t100/t200/t300), and the foreground figures are NOT publishable: Otsu drifts 13.3x over the recording (0.0135 -> 0.1795), so 'foreground' is a different region at every timepoint. At t0 the low threshold admits 26.4% of a nearly-empty one-cell embryo, inflating that end, so the apparent trend mixes real quality loss with threshold drift. Real quality DOES fall across the recording -- MAX_SPLATS is a fixed 22,000 per timepoint while the embryo goes from one cell to hundreds of nuclei -- but a stable mask is needed to say by how much. Template: the zebrafish demo's fixed component-based definition (voxels inside 6-connected components of >= 27 voxels in the raw frame), which does not move with image content.",
-      "quality_caveat": "PSNR is withheld rather than unmeasured. The fit consumed preprocessed volumes, so a figure against them scores the fit plus the preprocessing and is not comparable with the other archives here; per-frame values were measured and deliberately not published for that reason."
+      "n_splats": 5640070,
+      "ndim": 3,
+      "format_version": "3.4",
+      "topology": "progressive ladder, 4 steps",
+      "psnr_db": [
+        29.48,
+        39.77
+      ],
+      "foreground_psnr_db": [
+        21.79,
+        38.15
+      ],
+      "foreground_fraction": 0.3802,
+      "source_shape": [
+        41,
+        512,
+        512
+      ],
+      "source_dtype": "uint16",
+      "source_bytes": 8598323200,
+      "frames": 400,
+      "measured_from": "hosted",
+      "measured_sha256": "7e0e7c170b9619f865bd15b8b71301854a3cc1edfaf0482c2021155d36494e76",
+      "quality_note": "Measured 2026-09-01 from the HOSTED bytes with the generator's own _read_archive -- the same code path the records are built from, so the sidecar and the table agree by construction rather than by transcription. The download was md5-verified against the deposition and its sha256 matches the manifest's pinned digest for the copy the record serves, which is recorded in measured_sha256. This is NOT the unpinned local copy: that one is the older in-repo generation and its figures differ (local celegans stamps 53.49 dB with no foreground figure; local nexrad carries no stamp at all), which is exactly why reading it would have published a wrong number and why the earlier all-null state was correct at the time. Figures are the RANGE of the per-frame stamps, not frame 0: frame 0 is not representative. Frame 0 alone is 38.53 / 37.99, near the TOP of the 29.48-39.77 / 21.79-38.15 spread, so quoting it as the figure overstated foreground quality by up to 16 dB. The earlier per-timepoint measurement against the preprocessed volumes (global 35.57/30.03/19.65/21.11 and foreground 30.17/13.12/9.52/8.51 at t0/t100/t200/t300) stays unpublished: Otsu drifts 13.3x over the recording, so its \"foreground\" is a moving region.",
+      "quality_caveat": "Figures are the archive's own fit-time stamps, given as the RANGE over its 400 per-frame stores. They are not reproducible by re-scoring the shipped bytes: the fit consumed preprocessed volumes, so a post-hoc figure against the raw source would score the preprocessing as well as the fit. The spread is real and expected -- a fixed per-frame splat budget covers an embryo growing from one cell to hundreds of nuclei, so later frames reconstruct less well. A separate per-frame measurement against the preprocessed volumes is deliberately not published, because the Otsu threshold drifts 13.3x over the recording, which makes \"foreground\" a different region at every timepoint.",
+      "quality_quotable": true
     },
     "gsplats_cell_tracking/6bba_09961292.gsplats.zarr.zip": {
       "n_splats": 4054345,
@@ -220,7 +230,7 @@
       "quality_quotable": false,
       "measured_from": "staged",
       "measured_sha256": "a2333a14baa6a08254698612693e0d1490e59f0eaf267abc411cb988cec3b1c9",
-      "quality_note": "Source grid declared from the manifest acquisition shape (100 x 64 x 256 x 256 uint16), not read from archive stamps. Quality figures measured 2026-09-01 against the crop's own source timepoints (100x64x256x256 uint16, Kaggle CTC cache), per timepoint over frames 0/25/50/75/99 \u2014 the neuromast convention; foreground fraction is the median over the sampled frames. The archive is TRANSFORMED relative to the fit (recentre + 95th-percentile scale filter + per-timepoint amplitude renormalisation), so it was NOT scored on trust: a control arm scored the replayed-filter fit DIRECTLY (same splat set, no 4D stack, no marginalisation) and agreed to 0.017 dB at every frame. The replayed filter also reproduced the shipped per-timepoint splat count EXACTLY (41,129 at t=0), confirming the inversion. Centers are in micrometres (the fit used voxel_size=1.625 x 0.40625 x 0.40625 um), so a diag(1/voxel) transform maps them to render_to_volume's index space; the all-zero floor was 17.5-19.5 dB against measured 24.7-26.5, so the comparison is live. The shipped store carries no image_min, so each frame borrowed its own fit's floor (same data, same basis).",
+      "quality_note": "Source grid declared from the manifest acquisition shape (100 x 64 x 256 x 256 uint16), not read from archive stamps. Quality figures measured 2026-09-01 against the crop's own source timepoints (100x64x256x256 uint16, Kaggle CTC cache), per timepoint over frames 0/25/50/75/99 \u2014 the neuromast convention; foreground fraction is the median over the sampled frames. The archive is TRANSFORMED relative to the fit (recentre + 95th-percentile scale filter + per-timepoint amplitude renormalisation), so it was NOT scored on trust: a control arm scored the replayed-filter fit DIRECTLY (same splat set, no 4D stack, no marginalisation) and agreed to 0.017 dB at every frame. The replayed filter also reproduced the shipped per-timepoint splat count EXACTLY (41,129 at t=0), confirming the inversion. Centers are in micrometres (the fit used voxel_size=1.625 x 0.40625 x 0.40625 um), so a diag(1/voxel) transform maps them to render_to_volume's index space; the all-zero floor was 16.55-18.27 dB against measured 24.7-26.5, so the comparison is live. The shipped store carries no image_min, so each frame borrowed its own fit's floor (same data, same basis).",
       "quality_caveat": "Figures are for the STACKED ARCHIVE as served, measured per timepoint over frames 0/25/50/75/99. Whole-volume scores sit about 13 dB below the underlying fit (24.7\u201326.5 versus 37.9\u201339.6), while foreground scores sit about 23 dB below it (18.3\u201320.2 versus 41.3\u201343.1). The underlying fit scores higher in foreground than whole-volume, but the stacked archive scores lower, because stacking deliberately drops the largest 5% of splats by scale: under volumetric blending that diffuse tail renders as opaque discs that bury the nuclei beneath it, so the archive trades reconstruction fidelity for a legible render."
     },
     "gsplats_cell_tracking/6bba_57b7cc1e.gsplats.zarr.zip": {
@@ -650,21 +660,32 @@
       "measured_sha256": "a3122f86ed8aa5a14e815ad9770cd4a5e55d8d0b4cc4fd0947d6b3b0de980441"
     },
     "gsplats_nexrad_supercell/nexrad_supercell.gsplats.zarr.zip": {
-      "n_splats": null,
-      "ndim": null,
-      "format_version": null,
-      "topology": null,
-      "psnr_db": null,
-      "foreground_psnr_db": null,
-      "foreground_fraction": null,
-      "source_shape": null,
-      "source_dtype": null,
-      "source_bytes": null,
-      "frames": null,
-      "measured_from": null,
-      "measured_sha256": null,
-      "unmeasured_reason": "unpinned-local-copy",
-      "quality_caveat": "PSNR is not recoverable for this archive, which is a property of the coordinate system rather than of the fit. The splats are authored in kilometres while the reference is a radar voxel grid, and raw reflectivity carries a no-data fill, so a direct comparison measures the regridding. The archive itself renders correctly."
+      "n_splats": 817989,
+      "ndim": 3,
+      "format_version": "3.4",
+      "topology": "progressive ladder, 4 steps",
+      "psnr_db": [
+        43.26,
+        56.82
+      ],
+      "foreground_psnr_db": [
+        32.02,
+        39.74
+      ],
+      "foreground_fraction": 0.0014,
+      "source_shape": [
+        12,
+        400,
+        400
+      ],
+      "source_dtype": "float32",
+      "source_bytes": 629760000,
+      "frames": 82,
+      "measured_from": "hosted",
+      "measured_sha256": "299288a14d8563c610fe01650ab04b694b6b8f3895122e88be8a5c1573f8b53d",
+      "quality_caveat": "Figures are the archive's own fit-time stamps, given as the RANGE over its 82 per-frame stores. They are not reproducible by re-scoring the shipped bytes: the splats are authored in kilometres while the reference is a radar voxel grid, and raw reflectivity carries a no-data fill, so a post-hoc comparison would measure the regridding rather than the fit. The compression ratio is against the regridded voxel volume the fit consumed, which is why the acquisition line separately declines a ratio against the stored polar scans.",
+      "quality_quotable": true,
+      "quality_note": "Measured 2026-09-01 from the HOSTED bytes with the generator's own _read_archive -- the same code path the records are built from, so the sidecar and the table agree by construction rather than by transcription. The download was md5-verified against the deposition and its sha256 matches the manifest's pinned digest for the copy the record serves, which is recorded in measured_sha256. This is NOT the unpinned local copy: that one is the older in-repo generation and its figures differ (local celegans stamps 53.49 dB with no foreground figure; local nexrad carries no stamp at all), which is exactly why reading it would have published a wrong number and why the earlier all-null state was correct at the time. Figures are the RANGE of the per-frame stamps, not frame 0: frame 0 is not representative. The previous caveat said PSNR was \"not recoverable\", which is true of RE-SCORING the shipped bytes but not of the archive's own fit-time stamps, which exist and are what the record publishes."
     },
     "gsplats_opencell_map4/opencell_map4_ch0.gsplats.zarr.zip": {
       "n_splats": 59609,
@@ -733,14 +754,19 @@
       "psnr_db": null,
       "foreground_psnr_db": null,
       "foreground_fraction": null,
-      "source_shape": null,
-      "source_dtype": null,
-      "source_bytes": null,
-      "frames": null,
+      "source_shape": [
+        44,
+        512,
+        512
+      ],
+      "source_dtype": "uint8",
+      "source_bytes": 1741684736,
+      "frames": 151,
       "quality_quotable": null,
       "measured_from": "repo",
       "measured_sha256": "b4c0cf690f6906414c449fb8c713b78ed7d5f5f88c270ab58cf741f019456f93",
-      "quality_caveat": "No reconstruction quality was recorded at fit time for this archive, and its splats are scaled off the source voxel grid, so a figure measured after the fact would describe the rescaling as much as the fit. A refit would stamp one."
+      "quality_caveat": "No reconstruction quality was recorded at fit time for this archive, and its splats are scaled off the source voxel grid, so a figure measured after the fact would describe the rescaling as much as the fit. A refit would stamp one.",
+      "quality_note": "Source geometry DERIVED 2026-09-01 from the manifest acquisition line (\"151 timepoints of 44 x 512 x 512 uint8, every one of which is fitted\"): 151 x 44 x 512 x 512 x 1 B = 1,741,684,736, matching the acquisition's own stored_bytes exactly because this uint8 store is uncompressed. NOT read from archive stamps -- reading the pinned hosted bytes on 2026-09-01 confirmed the archive carries no source_shape and no quality stamps, which is why its PSNR stays absent. Supplies the compression ratio only."
     },
     "h2afva/253tp/h2afva_253tp.gsplats.zarr.zip": {
       "n_splats": 602580152,
@@ -750,14 +776,18 @@
       "psnr_db": null,
       "foreground_psnr_db": null,
       "foreground_fraction": null,
-      "source_shape": null,
-      "source_dtype": null,
-      "source_bytes": null,
-      "frames": null,
+      "source_shape": [
+        407,
+        2048,
+        2048
+      ],
+      "source_dtype": "uint16",
+      "source_bytes": 863783354368,
+      "frames": 253,
       "quality_quotable": null,
       "measured_from": "staged",
       "measured_sha256": "7dc107ec464d08628bf01c1ba6da943cab3729b99aa10b484920733d5a894765",
-      "quality_note": "PSNR ABSENT, and not honestly recoverable from the published archive. The splat count is the sum of the pinned store's finest per-part levels. The fit predates quality stamping, and the shipped splats use an isotropic grid while the source h2afva/fused volume is anisotropic, so post-hoc comparison would score the resampling as well as the fit. A refit against the source is the only honest route to global and foreground PSNR. The published 51-frame variant is the demo's every-fifth-frame slice of this same 253-timepoint fit.",
+      "quality_note": "PSNR ABSENT, and not honestly recoverable from the published archive. The splat count is the sum of the pinned store's finest per-part levels. The fit predates quality stamping, and the shipped splats use an isotropic grid while the source h2afva/fused volume is anisotropic, so post-hoc comparison would score the resampling as well as the fit. A refit against the source is the only honest route to global and foreground PSNR. The published 51-frame variant is the demo's every-fifth-frame slice of this same 253-timepoint fit. Source geometry DERIVED 2026-09-01, not read: the pinned archive retains no source_shape (verified 2026-08-28), so no download can supply it. Basis is h2afva/fused = (253, 407, 2048, 2048) uint16, cross-checked against the h2afva_decimation entries which independently commit the same per-timepoint [407, 2048, 2048] uint16 = 3,414,163,456 B; 253 x that = 863,783,354,368 B. Supplies the compression ratio ONLY -- PSNR stays absent and still needs a refit.",
       "quality_caveat": "No reconstruction quality was recorded at fit time for this timelapse. Its splats use an isotropic grid while the source volume's grid is anisotropic, so scoring the shipped bytes would measure the resampling as well as the fit; an honest figure requires a refit. The published 51-frame variant is the demo's every-fifth-frame slice of this same fit."
     },
     "h2afva/51tp/h2afva_51tp.gsplats.zarr.zip": {
@@ -768,15 +798,41 @@
       "psnr_db": null,
       "foreground_psnr_db": null,
       "foreground_fraction": null,
-      "source_shape": null,
-      "source_dtype": null,
-      "source_bytes": null,
-      "frames": null,
+      "source_shape": [
+        407,
+        2048,
+        2048
+      ],
+      "source_dtype": "uint16",
+      "source_bytes": 174122336256,
+      "frames": 51,
       "quality_quotable": null,
       "measured_from": "staged",
       "measured_sha256": "037806639a787ac1270b07bfaa6918a5144e45f5d3198cf2165381316c29afae",
-      "quality_note": "PSNR ABSENT, and not obtainable from this archive. Verified 2026-08-28 by reading the pinned store: fitting/ exists but contains only a timestamp, while pipeline/ records recipe 'stream', lod_n_lods 12, and cutpoints ending at 121,163,285; neither group carries fit-time quality stamps or a recorded source_shape to score against. The archive is one 4D leaf with a twelve-step progressive ladder (121,163,285 splats; format 3.4), not a partition with per-tile detail levels. It does not retain source_archive, source_stride, source_timepoints, or stacked_axis_renumbered; its every-fifth-frame provenance comes from the generation history and demo contract rather than embedded lineage attributes. Obtaining a PSNR therefore means refitting the full 253-timepoint timelapse (a 9.25 GB batch-fit) so the figure is stamped at fit time, which is the only honest route for an archive whose fit reference is no longer identifiable. Scoring the shipped bytes post-hoc is not a substitute: the splats use an isotropic grid while the source volume's own grid is anisotropic, so a straight comparison measures the resampling rather than the fit.",
+      "quality_note": "PSNR ABSENT, and not obtainable from this archive. Verified 2026-08-28 by reading the pinned store: fitting/ exists but contains only a timestamp, while pipeline/ records recipe 'stream', lod_n_lods 12, and cutpoints ending at 121,163,285; neither group carries fit-time quality stamps or a recorded source_shape to score against. The archive is one 4D leaf with a twelve-step progressive ladder (121,163,285 splats; format 3.4), not a partition with per-tile detail levels. It does not retain source_archive, source_stride, source_timepoints, or stacked_axis_renumbered; its every-fifth-frame provenance comes from the generation history and demo contract rather than embedded lineage attributes. Obtaining a PSNR therefore means refitting the full 253-timepoint timelapse (a 9.25 GB batch-fit) so the figure is stamped at fit time, which is the only honest route for an archive whose fit reference is no longer identifiable. Scoring the shipped bytes post-hoc is not a substitute: the splats use an isotropic grid while the source volume's own grid is anisotropic, so a straight comparison measures the resampling rather than the fit. Source geometry DERIVED 2026-09-01, not read (same reason as the 253tp parent). Every FIFTH frame of the 253-timepoint recording, so ceil(253/5) = 51 frames of [407, 2048, 2048] uint16 = 174,122,336,256 B. Supplies the compression ratio ONLY -- PSNR stays absent and still needs a refit.",
       "quality_caveat": "No reconstruction quality was recorded at fit time for this timelapse. Its splats use an isotropic grid while the source volume's grid is anisotropic, so scoring the shipped bytes would measure the resampling as well as the fit; an honest figure requires a refit. This published 51-frame variant is the demo's every-fifth-frame slice of the same 253-timepoint fit, although the pinned archive does not retain those lineage attributes."
+    },
+    "gsplats_4d_drosophila_embryogenesis/drosophila_embryogenesis_500tp.gsplats.zarr.zip": {
+      "n_splats": 83221420,
+      "ndim": 4,
+      "format_version": "3.4",
+      "topology": "progressive ladder, 14 steps",
+      "psnr_db": null,
+      "foreground_psnr_db": null,
+      "foreground_fraction": null,
+      "source_shape": [
+        108,
+        1352,
+        532
+      ],
+      "source_dtype": "uint16",
+      "source_bytes": 77680512000,
+      "frames": 500,
+      "quality_quotable": false,
+      "measured_from": "hosted",
+      "measured_sha256": "11d3e2d9b2ae374e39d1916b5ac0ba126fdae57a9c311f306aa3ec8c98d4a17b",
+      "quality_caveat": "No reconstruction quality was recorded at fit time for this timelapse, and the published archive carries no stamps to recover one from -- verified by reading the hosted bytes rather than inferred. An honest figure needs either a refit that stamps quality as it fits, or a scoring run against the full 500-timepoint source recording, which is 77 GB of raw voxels and is not redistributed here. The compression ratio is against that raw voxel total and is exact.",
+      "quality_note": "Created 2026-09-01. Archive metadata READ from the HOSTED bytes with _read_archive after md5-verifying the download against the deposition (2f03fe31) and sha256-matching the manifest pin (11d3e2d9, 863,811,020 B): 83,221,420 splats, 4D, format 3.4, a 14-step progressive ladder. The read SETTLES the PSNR question rather than leaving it open -- the archive carries no fit-time stamps at all. A first download attempt was TRUNCATED at 146,800,640 B and was caught only by checking the size against the deposition, so the verify-then-parse order matters here. Source geometry is DERIVED from the manifest acquisition line (500 x 108 x 1352 x 532 uint16): 500 x 108 x 1352 x 532 x 2 B = 77,680,512,000, the RAW voxel total the compression column uses; the acquisition line's stored_bytes (19,333,771,628) is the source's COMPRESSED size, a different quantity. The single-timepoint sibling droso_gastrulation scores 41.65 / 37.07 on tp150 of the same recording, but that is a different archive from a different fit and is not quotable for this one."
     }
   }
 }

@@ -2217,7 +2217,10 @@ def test_cell_tracking_scored_crop_publishes_qualified_figures(gen: Any) -> None
     assert info["foreground_psnr_db"] == [18.3, 20.2]
     assert info["foreground_fraction"] == 0.2033
     assert info["quality_quotable"] is False
-    assert "all-zero floor was 17.5-19.5 dB" in info["quality_note"]
+    # Measured across frames 0/25/50/75/99: 16.55, 16.98, 16.73, 18.27,
+    # 17.48 dB. This is the vacuity guard -- a score at or below the floor
+    # means the comparison is broken -- so it must be the real range.
+    assert "all-zero floor was 16.55-18.27 dB" in info["quality_note"]
     assert (
         "foreground fraction is the median over the sampled frames"
         in info["quality_note"]
@@ -2447,8 +2450,15 @@ def test_an_additive_count_is_absent_if_any_chunk_is_unreadable(
 # copy would describe a generation the record does not serve. Printed
 # identically to "nobody measured this yet", it reads as an invitation to make
 # the generator read the archive -- which republishes precisely the unpinned
-# numbers the marker withholds. celegans and nexrad both sit in this state with
-# local copies whose bytes do not match the hosted pins.
+# numbers the marker withholds.
+#
+# The rule is about WHICH BYTES were read, not about which datasets. celegans
+# and nexrad sat all-null for exactly this reason while only their older
+# in-repo copies were on hand; both are now measured from the HOSTED artifacts,
+# whose sha256 matches the manifest's pinned digest. So the invariant below is
+# expressed as "figures require pinned provenance" rather than by naming rows:
+# that still blocks a careless local read, and it does not go stale when a
+# dataset is legitimately measured.
 # ---------------------------------------------------------------------------
 
 
@@ -2491,20 +2501,66 @@ class TestCheckExplainsAnAbsentFigure:
         "unmeasured_reason": "unpinned-local-copy",
     }
 
-    def test_committed_unpinned_rows_remain_withheld(self, gen: Any) -> None:
+    def test_published_figures_come_from_pinned_bytes(self, gen: Any) -> None:
+        """A row may only publish figures read from the PINNED artifact.
+
+        This is the rule the all-null marker exists to protect, stated over every
+        committed row instead of by naming two datasets. A row that carries a
+        PSNR must record the digest it was measured from, and that digest must be
+        the one the manifest pins for the copy the record serves
+        (``hosted_sha256`` where the hosted and in-repo copies diverged, else
+        ``sha256``). Measuring an unpinned local copy therefore still fails,
+        while a dataset legitimately measured from its hosted bytes does not
+        break the test.
+        """
+        manifest = json.loads(gen.MANIFEST.read_text())
+        pinned = {
+            gen._char_key(dataset, variant, spec["name"]): gen._pinned_digest(spec)
+            for dataset, entry in manifest["datasets"].items()
+            if entry.get("bucket") == "zenodo"
+            for variant, spec in gen._files_of(entry)
+        }
+        offenders = [
+            (key, info["measured_sha256"], pinned.get(key))
+            for key, info in gen.load_characteristics().items()
+            # A NULL digest is legitimate and documented: the schema says it
+            # marks figures recovered from the stated source rather than read
+            # from archive bytes (the h2afva and neuromast rows). What must never
+            # happen is a digest that is NOT the pinned one -- that is a read of
+            # some other generation, which is the mistake the marker guards.
+            if info.get("measured_sha256") is not None
+            and info["measured_sha256"] != pinned.get(key)
+        ]
+        assert not offenders, f"figures read from unpinned bytes: {offenders}"
+
+    def test_every_absent_figure_is_explained(self, gen: Any) -> None:
+        """No committed row may omit PSNR without saying why.
+
+        A bare null is the one thing a reader cannot distinguish from evasion, so
+        an absence must carry a published caveat, an ``unmeasured_reason``, or an
+        explicit ``quality_quotable: False``.
+        """
         chars = gen.load_characteristics()
-        for key in (
-            "gsplats_celegans/celegans_s1.gsplats.zarr.zip",
-            "gsplats_nexrad_supercell/nexrad_supercell.gsplats.zarr.zip",
-        ):
-            info = chars[key]
-            assert info["format_version"] is None
-            assert info["psnr_db"] is None
-            assert info["foreground_psnr_db"] is None
-            assert info.get("quality_quotable") is None
-            assert info["measured_from"] is None
-            assert info["measured_sha256"] is None
-            assert info["unmeasured_reason"] == "unpinned-local-copy"
+        assert chars, "no committed characteristics to check"
+        unexplained = [
+            key
+            for key, info in chars.items()
+            if info.get("psnr_db") is None
+            and not info.get("quality_caveat")
+            and not info.get("unmeasured_reason")
+            and info.get("quality_quotable") is not False
+        ]
+        assert not unexplained, f"absent PSNR with no stated reason: {unexplained}"
+
+    def test_any_unmeasured_reason_is_a_known_value(self, gen: Any) -> None:
+        """Guard the spelling without requiring any row to currently use it."""
+        allowed = {"unpinned-local-copy"}
+        seen = {
+            info["unmeasured_reason"]
+            for info in gen.load_characteristics().values()
+            if info.get("unmeasured_reason")
+        }
+        assert seen <= allowed, f"unknown unmeasured_reason: {seen - allowed}"
 
     def test_an_unpinned_local_copy_is_named_as_the_cause(
         self,
