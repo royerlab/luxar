@@ -137,6 +137,32 @@ def manifest_entry_line_ranges(text: str) -> dict[str, LineRange]:
     return ranges
 
 
+def _skip_json_whitespace(text: str, cursor: int) -> int:
+    while cursor < len(text) and text[cursor].isspace():
+        cursor += 1
+    return cursor
+
+
+def _decode_media_manifest_entry(
+    text: str, cursor: int, decoder: json.JSONDecoder
+) -> tuple[str, int]:
+    demo_id, consumed = decoder.raw_decode(text[cursor:])
+    if not isinstance(demo_id, str):
+        raise StalenessError("every gallery media manifest tile key must be a string")
+    cursor = _skip_json_whitespace(text, cursor + consumed)
+    if cursor >= len(text) or text[cursor] != ":":
+        raise StalenessError(
+            f"gallery media manifest tile {demo_id!r} has no object value"
+        )
+    cursor = _skip_json_whitespace(text, cursor + 1)
+    entry, consumed = decoder.raw_decode(text[cursor:])
+    if not isinstance(entry, dict):
+        raise StalenessError(
+            f"gallery media manifest tile {demo_id!r} is not an object"
+        )
+    return demo_id, cursor + consumed
+
+
 def media_manifest_entry_line_ranges(text: str) -> dict[str, LineRange]:
     """Locate each top-level demo entry in the media manifest ``tiles`` object."""
     key = re.search(r'"tiles"\s*:', text)
@@ -155,27 +181,7 @@ def media_manifest_entry_line_ranges(text: str) -> dict[str, LineRange]:
         if cursor >= len(text) or text[cursor] == "}":
             break
         start = cursor
-        demo_id, consumed = decoder.raw_decode(text[cursor:])
-        if not isinstance(demo_id, str):
-            raise StalenessError(
-                "every gallery media manifest tile key must be a string"
-            )
-        cursor += consumed
-        while cursor < len(text) and text[cursor].isspace():
-            cursor += 1
-        if cursor >= len(text) or text[cursor] != ":":
-            raise StalenessError(
-                f"gallery media manifest tile {demo_id!r} has no object value"
-            )
-        cursor += 1
-        while cursor < len(text) and text[cursor].isspace():
-            cursor += 1
-        entry, consumed = decoder.raw_decode(text[cursor:])
-        if not isinstance(entry, dict):
-            raise StalenessError(
-                f"gallery media manifest tile {demo_id!r} is not an object"
-            )
-        cursor += consumed
+        demo_id, cursor = _decode_media_manifest_entry(text, cursor, decoder)
         if demo_id in ranges:
             raise StalenessError(f"duplicate gallery media manifest id: {demo_id}")
         start_line = text.count("\n", 0, start) + 1
