@@ -94,6 +94,7 @@ import { hasCommittedData, invalidateCommittedDataStamp } from '../types/committ
 import type { BlendingMode } from '../types/blending';
 import {
   assignGlobalRenderOrder,
+  authoredDepthLevel,
   clearRenderOrderFrameState,
   collectRenderOrderSlot,
   setRenderOrderDisplayDimsAccessor,
@@ -1812,9 +1813,23 @@ export function evaluateDepthSortPerFrame(): void {
     const mesh = state.mesh;
     if (!isEffectivelyVisible(mesh)) continue;
     const mode = liveBlendingMode(mesh);
-    if (!isLiveOrderDependent(mode)) {
-      // No longer order-dependent (e.g. switched to additive) — clear any
-      // cross-part renderOrder bias so it doesn't strand a stale ordering.
+    const orderDependent = isLiveOrderDependent(mode);
+    // A commutative layer carrying an AUTHORED depth_level still takes part in
+    // the cross-layer band ordering (`LAYER_DEPTH_LEVEL_SPEC.md` D4): its order
+    // against other commutative layers is a no-op (addition commutes), but its
+    // position relative to `normal`/`volumetric` layers is exactly what the
+    // level exists to state — and without this it would stay pinned at
+    // renderOrder 0 and always draw first.
+    //
+    // ONE predicate drives both branches on purpose. Written as two conditions
+    // (collect here, reset there) they can disagree, and a layer whose level is
+    // removed at runtime would keep a stale positive rank forever — the same
+    // class of bug `computeDrawOrder` already documents for opaque meshes after
+    // a live blending switch.
+    const wantsRank = orderDependent || authoredDepthLevel(mesh) !== undefined;
+    if (!wantsRank) {
+      // Neither order-dependent nor authored — clear any cross-part renderOrder
+      // bias so it doesn't strand a stale ordering.
       if (mesh.renderOrder !== 0) mesh.renderOrder = 0;
       continue;
     }
@@ -1838,6 +1853,11 @@ export function evaluateDepthSortPerFrame(): void {
     // renderOrder scale (full rationale in
     // `depth-sort-coordinator/render-order.ts`).
     collectRenderOrderSlot(mesh, scratch.mv, scratch.camPos);
+
+    // A commutative layer earns a cross-layer rank (above) but must never
+    // request a within-mesh sort: its elements composite in any order, so the
+    // worker round-trip would buy nothing. Bail before the dispatch block.
+    if (!orderDependent) continue;
 
     // Everything below dispatches or evaluates a within-mesh worker sort.
     // Keep that work paused during a loader sweep, but do not pause the

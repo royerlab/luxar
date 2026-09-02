@@ -59,6 +59,85 @@ const partitionRankCache = new Map<THREE.Object3D, Map<number, number> | null>()
 const warnedAxisMappingWrappers = new WeakSet<THREE.Object3D>();
 
 /**
+ * Once-per-object memos for the three `depth_level` diagnostics. Same shape and
+ * lifetime as {@link warnedAxisMappingWrappers}: a `WeakSet`/`WeakMap` keyed on
+ * the scene object, so a warning cannot repeat every frame (this module runs on
+ * EVERY frame, ungated by camera motion) and cannot pin a disposed subtree.
+ */
+const warnedMixedBandGroups = new WeakSet<THREE.Object3D>();
+const warnedBandSplitContainers = new WeakMap<THREE.Object3D, WeakSet<THREE.Object3D>>();
+const warnedStraddlingBands = new WeakSet<THREE.Object3D>();
+
+/** A group whose members disagree on their band (spec D6 violated on disk). */
+function warnMixedBandGroup(groupKey: THREE.Object3D, kept: number, seen: number): void {
+  if (warnedMixedBandGroups.has(groupKey)) return;
+  warnedMixedBandGroups.add(groupKey);
+  log.warning(
+    Modules.RENDERER,
+    `Order group '${groupKey.name || '(unnamed)'}' has members on different depth levels ` +
+      `(${kept} and ${seen}). A depth_level authored INSIDE a partition/LOD wrapper is refused ` +
+      `at write time; this store carries one anyway. Using ${kept} for the whole group — the ` +
+      'wrapper is the layer, and splitting it across bands would destroy its exact part order.'
+  );
+}
+
+/**
+ * An authored band split a containment relation the renderer would otherwise
+ * have honoured. Not an error — it is the author overriding an inferred order —
+ * but it is the one way a `depth_level` can make an embedded node nearly
+ * disappear (the container's whole transmittance multiplies it), so it must be
+ * diagnosable rather than mysterious.
+ */
+function warnBandSplitContainment(outer: OrderGroup, inner: OrderGroup): void {
+  const outerKey = outer.slots[0]?.groupKey;
+  const innerKey = inner.slots[0]?.groupKey;
+  if (!outerKey || !innerKey) return;
+  let seen = warnedBandSplitContainers.get(outerKey);
+  if (!seen) {
+    seen = new WeakSet<THREE.Object3D>();
+    warnedBandSplitContainers.set(outerKey, seen);
+  }
+  if (seen.has(innerKey)) return;
+  seen.add(innerKey);
+  log.warning(
+    Modules.RENDERER,
+    `'${outerKey.name || '(unnamed)'}' (depth level ${outer.level}) spatially CONTAINS ` +
+      `'${innerKey.name || '(unnamed)'}' (depth level ${inner.level}), but their authored levels ` +
+      'put them in different bands, so the container-draws-first rule is not applied. That is ' +
+      'the authored order winning, as intended — but if the inner layer looks washed out or ' +
+      'vanishes, this is why: give both the same depth_level to restore the inferred ordering.'
+  );
+}
+
+/**
+ * A band spanning both render buckets. THREE draws its whole opaque list before
+ * any transparent mesh and `renderOrder` is only compared WITHIN a bucket
+ * (`painterSortStable` / `reversePainterSortStable`), so such a level is
+ * honoured for its transparent members and silently ignored for its opaque
+ * ones. `opaque` is the only blending mode with `transparent: false`.
+ */
+function warnBucketStraddlingBand(group: OrderGroup): void {
+  let sawOpaque = false;
+  let sawTransparent = false;
+  for (const slot of group.slots) {
+    const material = Array.isArray(slot.mesh.material) ? slot.mesh.material[0] : slot.mesh.material;
+    if (material?.transparent) sawTransparent = true;
+    else sawOpaque = true;
+  }
+  if (!sawOpaque || !sawTransparent) return;
+  const key = group.slots[0]?.groupKey;
+  if (!key || warnedStraddlingBands.has(key)) return;
+  warnedStraddlingBands.add(key);
+  log.warning(
+    Modules.RENDERER,
+    `Depth level ${group.level} on '${key.name || '(unnamed)'}' spans both render buckets ` +
+      '(opaque and transparent). renderOrder is only compared within a bucket, and every opaque ' +
+      'mesh draws before any transparent one, so this level orders the transparent members and ' +
+      'cannot move the opaque ones. Split them into separate layers if the order matters.'
+  );
+}
+
+/**
  * Nearest partition-wrapper ancestor of `mesh` plus the mesh's part index
  * (the `userData.partIndex` stamped on the wrapper's direct child by
  * `load-partition-group-node`). Returns `null` when `mesh` is not inside a
@@ -251,6 +330,18 @@ interface OrderSlot {
    * center then still carries a valid depth reference).
    */
   radius: number;
+  /**
+   * Authored cross-layer draw order (`LAYER_DEPTH_LEVEL_SPEC.md`), `0` when
+   * unset. Read ONCE here rather than in the comparator, which runs
+   * O(G log G) times per frame.
+   */
+  level: number;
+  /**
+   * Whether the level was authored, as opposed to defaulted to 0. Unset must
+   * stay distinguishable from an authored 0: only an authored level may
+   * suppress a containment relation (spec D2/D3).
+   */
+  levelExplicit: boolean;
 }
 let orderSlots: OrderSlot[] = [];
 
@@ -258,6 +349,16 @@ let orderSlots: OrderSlot[] = [];
 interface OrderGroup {
   slots: OrderSlot[];
   sumZ: number;
+  /**
+   * The group's band. Taken from its FIRST member: composition gives every
+   * part of a wrapper its wrapper's level, and authoring a level strictly
+   * inside a specialized group is refused (spec D6), so members normally
+   * agree. A hand-edited store can disagree — that warns once and the first
+   * member wins, which keeps the band deterministic either way.
+   */
+  level: number;
+  /** True when the winning member's level was authored rather than defaulted. */
+  levelExplicit: boolean;
 }
 
 /**
@@ -469,6 +570,20 @@ function orderGroupsWithContainment(byDepth: OrderGroup[]): OrderGroup[] {
         groupContains(spheres[a].tight, spheres[b].tight) &&
         groupContains(spheres[a].legacy, spheres[b].legacy)
       ) {
+        // A containment edge is honoured only WITHIN a band. Bands are hard
+        // partitions of the draw order, so a cross-band edge is not merely
+        // outranked — it is unrepresentable, and an authored level is the
+        // author's stated intent overriding an inferred relation (spec D3).
+        //
+        // Dropping the edge is what makes the whole band scheme work with the
+        // EXISTING Kahn pass and no restructuring: indegree then counts only
+        // same-band predecessors, so every band always holds a zero-indegree
+        // member, and the "lowest ready index first" rule below walks the
+        // (level, meanZ)-sorted array band by band on its own.
+        if (byDepth[a].level !== byDepth[b].level) {
+          warnBandSplitContainment(byDepth[a], byDepth[b]);
+          continue;
+        }
         edges.push(b);
         indegree[b]++;
         anyEdge = true;
@@ -476,6 +591,8 @@ function orderGroupsWithContainment(byDepth: OrderGroup[]): OrderGroup[] {
     }
     containsEdges[a] = edges;
   }
+  // No honoured edge → the incoming (level, meanZ) order already IS the answer,
+  // bands included, since it is sorted band-first.
   if (!anyEdge) return byDepth;
 
   // Kahn's algorithm; among ready groups always emit the farthest first
@@ -560,6 +677,7 @@ export function collectRenderOrderSlot(
     Number.isFinite(bs.radius) &&
     bs.radius >= 0;
   const scaledRadius = usable ? bs.radius * mv.getMaxScaleOnAxis() : -1;
+  const authored = authoredDepthLevel(mesh);
   orderSlots.push({
     mesh,
     // Meshes sharing a partition wrapper form one order group; a
@@ -575,7 +693,30 @@ export function collectRenderOrderSlot(
     viewX: usable ? scratch.center.x : 0,
     viewY: usable ? scratch.center.y : 0,
     radius: Number.isFinite(scaledRadius) ? scaledRadius : -1,
+    level: authored ?? 0,
+    levelExplicit: authored !== undefined,
   });
+}
+
+/**
+ * The authored `depth_level` on a mesh, or `undefined` when unset.
+ *
+ * Read off `userData.attrs`, which every `create-*-node.ts` stamps with the
+ * COMPOSED attrs record (`applyEffectiveAttrs`), so an ancestor-authored level
+ * has already won its nearest-setter-wins contest by the time it lands here.
+ * A plain property read on purpose: `rendering/` may not import `data/`
+ * (`layer-rendering-no-upward`, enforced by `pnpm check:layers`), which is why
+ * this takes no type from the composer.
+ *
+ * Re-sanitised even though the composer already did: a mesh can reach the
+ * coordinator without passing through `applyEffectiveAttrs` (synthetic scenes,
+ * unit fixtures), and a non-finite level would poison the band comparator for
+ * the whole frame.
+ */
+export function authoredDepthLevel(mesh: THREE.Mesh): number | undefined {
+  const raw = (mesh.userData as { attrs?: { depth_level?: unknown } } | undefined)?.attrs
+    ?.depth_level;
+  return typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
 }
 
 /**
@@ -622,21 +763,37 @@ export function assignGlobalRenderOrder(): void {
   if (slots.length === 0) return;
 
   // Group by wrapper/leaf identity (insertion order is stable).
-  const groups = new Map<THREE.Object3D, { slots: OrderSlot[]; sumZ: number }>();
+  const groups = new Map<THREE.Object3D, OrderGroup>();
   for (const slot of slots) {
     const group = groups.get(slot.groupKey);
     if (group) {
       group.slots.push(slot);
       group.sumZ += slot.viewZ;
+      // The wrapper defines the band, so its members must agree. Disagreement
+      // is only reachable from a store that authored a level strictly inside a
+      // specialized group (refused at write time, tolerated on read): warn and
+      // keep the first member's band.
+      if (slot.level !== group.level) warnMixedBandGroup(slot.groupKey, group.level, slot.level);
     } else {
-      groups.set(slot.groupKey, { slots: [slot], sumZ: slot.viewZ });
+      groups.set(slot.groupKey, {
+        slots: [slot],
+        sumZ: slot.viewZ,
+        level: slot.level,
+        levelExplicit: slot.levelExplicit,
+      });
     }
   }
 
-  // Farthest group first (ascending mean view-z: more negative = farther),
-  // then hoist strict bounding-sphere containers before their contents.
+  // Band first (lower level = farther = drawn first), then farthest group
+  // within a band (ascending mean view-z: more negative = farther), then hoist
+  // strict bounding-sphere containers before their contents.
+  //
+  // With no level authored anywhere every group is band 0, so the first term is
+  // always 0 and this falls through to EXACTLY today's comparator — which,
+  // together with the intra-band edge restriction below, is what makes an
+  // unauthored scene bit-identical to before the feature existed.
   const byDepth = [...groups.values()].sort(
-    (a, b) => a.sumZ / a.slots.length - b.sumZ / b.slots.length
+    (a, b) => a.level - b.level || a.sumZ / a.slots.length - b.sumZ / b.slots.length
   );
   const ordered = orderGroupsWithContainment(byDepth);
 
@@ -657,6 +814,10 @@ export function assignGlobalRenderOrder(): void {
     // stored tree does not name, so the mixed case is reachable from data alone;
     // falling the whole group back to depth keeps the result a well-defined
     // (if approximate) order instead of an arbitrary one.
+    // Only an AUTHORED band can be half-honoured across the bucket split; an
+    // unset one is band 0 for everything and promises nothing.
+    if (group.levelExplicit) warnBucketStraddlingBand(group);
+
     const everyMemberRanked = group.slots.every((slot) => slot.partRank >= 0);
     group.slots.sort(
       everyMemberRanked ? (a, b) => a.partRank - b.partRank : (a, b) => a.viewZ - b.viewZ

@@ -93,9 +93,28 @@ Two properties fall out, and both are load-bearing:
 
 The output is still the same `renderOrder` 1..M integer sequence, so nothing
 downstream changes — no scene-graph change, no new attribute, no per-element
-work, no shader change, and no interaction with three.js `groupOrder` (verified:
-nothing in the viewer sets `renderOrder` on a `Group`, so `groupOrder` is
-uniformly 0 and our integer is the sole key).
+work, no shader change.
+
+**On three.js `groupOrder`, which outranks `renderOrder`.** Both painter
+comparators (`three.module.js:8112` `painterSortStable`, `:8142`
+`reversePainterSortStable`) compare `groupOrder` → `renderOrder` → `z` → `id`, and
+`groupOrder` is derived from the *innermost* `Group` ancestor's `renderOrder`
+during `projectObject`. In the standalone app that is 0 everywhere; in the
+**embed** path `LuxarLayer` deliberately stamps its configured `renderOrder`
+(default 10) onto **every owned `THREE.Group`** (`src/core/layer/luxar-layer.ts:737-741`),
+a documented contract to host applications (`LUXAR_LAYER_SPEC.md`, "Draw order and
+visibility"). Either way the value is *uniform across Luxar's own content*, so
+per-mesh `renderOrder` remains the discriminator among Luxar layers and bands work
+unchanged.
+
+What follows is a **scope limitation** rather than a problem: `depth_level` orders
+layers *within* the Luxar subtree only. Ordering Luxar content against a host
+application's own transparent geometry is the `LuxarLayer` `renderOrder` option's
+job — a different knob at a different scope. The two compose (host groups pick the
+band block's position; levels order inside it) and must stay documented as
+separate. This also means the uniformity above is an invariant worth keeping: if
+Luxar ever gave two of its own Groups different `renderOrder`, `groupOrder` would
+start splitting bands underneath us.
 
 ---
 
@@ -152,12 +171,23 @@ source root to output root instead of dropping it (#1600's class of bug). It
 composes root→leaf **nearest-setter-wins**, like `blending_mode` / `join` /
 `colormap`, not multiplicatively.
 
-**D6 — A level authored strictly inside a partition wrapper is an ERROR.** See
-§5. Refused at authoring through *both* doors (the adder kwarg and a post-hoc
+**D6 — A level authored strictly inside ANY specialized group is an ERROR.**
+That is `kind=partition` *or* `kind=lod`, at any depth, which makes the rule
+statable in one line: **`depth_level` may be authored only on a node that is a
+layer** — the scene root, a plain group, or a top-level leaf — never on the
+internals of a specialized group. For a partition the reason is severe (§5: it
+would split the wrapper across bands and destroy the exact Fuchs–Kedem–Naylor
+part order); for a `kind=lod` group it is that a level is an *alternative*, only
+one of which renders, so a level on one would be inert — and an attr that writes
+cleanly and silently does nothing is this codebase's most expensive failure mode.
+One ancestry check covers both, and covers nested cases (a lod group inside a
+partition part) with no extra rule.
+
+Refused at authoring through *both* doors (the adder kwarg and a post-hoc
 `node.attrs["depth_level"] = …`), mirroring `reject_lines_only_join` +
 `reject_lines_only_join_assignment`. The viewer, which must render whatever it
-is handed, instead warns once and falls back to the wrapper's level — strict
-write, tolerant read.
+is handed, instead warns once and falls back to the enclosing layer's level —
+strict write, tolerant read.
 
 **D7 — Layers-panel edits are session-only.** Matching every other control in
 that panel: "Edits made in the panel are viewer-only and not persisted back to
@@ -195,8 +225,8 @@ Fuchs–Kedem–Naylor order, valid for any camera pose including inside the vol
 so **a partition is never split across bands**, and the two mechanisms never
 meet.
 
-**That is exactly why a per-part level must be refused (D6) rather than
-ignored.** If parts could carry their own levels, the wrapper would split across
+**That is exactly why a per-part level must be refused (D6, which extends the
+same refusal to `kind=lod` internals) rather than ignored.** If parts could carry their own levels, the wrapper would split across
 bands and its parts would interleave *by band* instead of *by the tree* —
 silently destroying the one ordering guarantee in the system that is exact. An
 author writing a per-part level has expressed something the renderer cannot

@@ -5056,3 +5056,213 @@ describe('depth-sort coordinator — synchronous first sort', () => {
     expect(activeOrdering(mesh, 3)).toEqual(SENTINEL);
   });
 });
+
+/**
+ * Authored cross-layer draw order — `depth_level`
+ * (docs/guides/specs/LAYER_DEPTH_LEVEL_SPEC.md).
+ *
+ * Bands are the PRIMARY key: groups sort by (level, meanZ), and a containment
+ * edge is honoured only within a band. With nothing authored every group is
+ * band 0, so the comparator falls through to today's and the edge set is
+ * unchanged — which is why the ~18 containment/BSP tests above are themselves
+ * the "unset is byte-identical" proof and are deliberately left untouched.
+ */
+describe('depth-sort coordinator — depth_level bands', () => {
+  /** Authored level, as the composed attrs record the node factory stamps. */
+  const setLevel = (mesh: THREE.Mesh, level: number): void => {
+    mesh.userData.attrs = { ...(mesh.userData.attrs ?? {}), depth_level: level };
+  };
+
+  /** Two disjoint leaves: `far` genuinely behind `near` along view-z. */
+  function twoDisjointLeaves(mode = 'volumetric') {
+    const far = makeGSplatsMesh(2, mode);
+    far.geometry.boundingSphere!.center.set(0, 0, -50);
+    far.geometry.boundingSphere!.radius = 1;
+    const near = makeGSplatsMesh(2, mode);
+    near.geometry.boundingSphere!.center.set(0, 0, -10);
+    near.geometry.boundingSphere!.radius = 1;
+    return { far, near };
+  }
+
+  // The CONTROL ARM. Without it the inversion test below could pass for the
+  // wrong reason (e.g. if bands were ignored and the order were accidental).
+  it('with no level authored, orders purely by depth (today behaviour)', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const { far, near } = twoDisjointLeaves();
+    for (const m of [near, far]) coord.noteDepthSortCommit(m, new Float32Array([0, 0, -1]), 1);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(far.renderOrder).toBe(1);
+    expect(near.renderOrder).toBe(2);
+  });
+
+  it('a lower band draws first even when it is the NEARER layer', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const { far, near } = twoDisjointLeaves();
+    // Invert the depth order by authoring bands: lower level = farther = first.
+    setLevel(near, -1);
+    setLevel(far, 0);
+    for (const m of [near, far]) coord.noteDepthSortCommit(m, new Float32Array([0, 0, -1]), 1);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(near.renderOrder).toBe(1);
+    expect(far.renderOrder).toBe(2);
+  });
+
+  it('an authored band overrides the containment hoist, and warns', async () => {
+    const coord = await loadCoordinator();
+    const { log } = await import('../../../utils/log');
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    // The #843 fixture: a big cloud strictly containing a small marker. Without
+    // levels the cloud is forced FIRST so the marker composites on top.
+    const cloud = makeGSplatsMesh(2, 'volumetric');
+    cloud.geometry.boundingSphere!.center.set(0, 0, -10);
+    cloud.geometry.boundingSphere!.radius = 100;
+    const marker = makeGSplatsMesh(2, 'volumetric');
+    marker.geometry.boundingSphere!.center.set(0, 0, -30);
+    marker.geometry.boundingSphere!.radius = 1;
+    // Author the OPPOSITE of what containment would choose.
+    setLevel(marker, 5);
+    setLevel(cloud, 10);
+    for (const m of [marker, cloud]) coord.noteDepthSortCommit(m, new Float32Array([0, 0, -1]), 1);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(marker.renderOrder).toBe(1);
+    expect(cloud.renderOrder).toBe(2);
+    // Fires-proof: a dropped containment edge is the one way a level can wash
+    // out an embedded layer, so it must be diagnosable, not silent.
+    const warned = (log.warning as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    expect(warned.some((c) => String(c[1]).includes('spatially CONTAINS'))).toBe(true);
+  });
+
+  it('containment still applies between layers sharing a band', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const cloud = makeGSplatsMesh(2, 'volumetric');
+    cloud.geometry.boundingSphere!.center.set(0, 0, -10);
+    cloud.geometry.boundingSphere!.radius = 100;
+    const marker = makeGSplatsMesh(2, 'volumetric');
+    marker.geometry.boundingSphere!.center.set(0, 0, -30);
+    marker.geometry.boundingSphere!.radius = 1;
+    // Same level on both: the author has stated a band, not a relative order.
+    setLevel(marker, 7);
+    setLevel(cloud, 7);
+    for (const m of [marker, cloud]) coord.noteDepthSortCommit(m, new Float32Array([0, 0, -1]), 1);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(cloud.renderOrder).toBe(1);
+    expect(marker.renderOrder).toBe(2);
+  });
+
+  it('a level on a partition WRAPPER leaves its exact BSP part order intact', async () => {
+    // The load-bearing guarantee: a band moves the whole partition as a rigid
+    // block; the view-dynamic Fuchs-Kedem-Naylor order inside it travels along
+    // unchanged. Composition puts every part in the wrapper's band, so the
+    // wrapper is never split.
+    const bspTree = {
+      axis: 0,
+      split: 0,
+      left: { axis: 0, split: -50, left: { part: 0 }, right: { part: 1 } },
+      right: { axis: 0, split: 50, left: { part: 2 }, right: { part: 3 } },
+    };
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => cameraAt(1000, 0, 0), requestRender: vi.fn() });
+
+    const parts = [0, 1, 2, 3].map(() => makeGSplatsMesh(2, 'normal'));
+    for (const m of parts) setLevel(m, 42);
+    makePartitionWrapper(bspTree, parts);
+    for (const m of parts) coord.noteDepthSortCommit(m, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    // Byte-identical to the same fixture without a level.
+    expect(parts.map((m) => m.renderOrder)).toEqual([1, 2, 3, 4]);
+  });
+
+  it('a COMMUTATIVE layer takes a rank only when it authored a level', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    // additive is commutative, so it is normally pinned at renderOrder 0 and
+    // always draws FIRST. An authored level is the only way to state where it
+    // sits relative to an order-dependent layer (spec D4).
+    const bare = makeGSplatsMesh(2, 'additive');
+    bare.geometry.boundingSphere!.center.set(0, 0, -50);
+    const levelled = makeGSplatsMesh(2, 'additive');
+    levelled.geometry.boundingSphere!.center.set(0, 0, -10);
+    setLevel(levelled, 3);
+    const sorted = makeGSplatsMesh(2, 'volumetric');
+    sorted.geometry.boundingSphere!.center.set(0, 0, -30);
+    setLevel(sorted, 1);
+    for (const m of [bare, levelled, sorted]) {
+      coord.noteDepthSortCommit(m, new Float32Array([0, 0, -1]), 1);
+    }
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(bare.renderOrder).toBe(0);
+    // Band 1 before band 3, regardless of the additive layer being nearer.
+    expect(sorted.renderOrder).toBe(1);
+    expect(levelled.renderOrder).toBe(2);
+  });
+
+  it('resets the rank when a commutative layer LOSES its level', async () => {
+    // The two-latch bug: collect and reset must be one predicate. Written as
+    // two conditions they can disagree, stranding a positive rank on a layer
+    // that no longer takes part in the ordering.
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const mesh = makeGSplatsMesh(2, 'additive');
+    setLevel(mesh, 9);
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1]), 1);
+    await flush();
+    coord.evaluateDepthSortPerFrame();
+    expect(mesh.renderOrder).toBe(1);
+
+    // Withdraw the level, as the Layers panel does when the field is cleared.
+    mesh.userData.attrs = {};
+    coord.evaluateDepthSortPerFrame();
+
+    expect(mesh.renderOrder).toBe(0);
+  });
+
+  it('warns once when an authored band spans both render buckets', async () => {
+    const coord = await loadCoordinator();
+    const { log } = await import('../../../utils/log');
+    coord.configureDepthSort({ getCamera: () => cameraAt(1000, 0, 0), requestRender: vi.fn() });
+
+    // renderOrder is only compared WITHIN a bucket and every opaque mesh draws
+    // before any transparent one, so a band holding both is half-honoured.
+    const bspTree = { axis: 0, split: 0, left: { part: 0 }, right: { part: 1 } };
+    const transparent = makeGSplatsMesh(2, 'volumetric');
+    const opaque = makeGSplatsMesh(2, 'volumetric');
+    (transparent.material as THREE.Material).transparent = true;
+    (opaque.material as THREE.Material).transparent = false;
+    for (const m of [transparent, opaque]) setLevel(m, 4);
+    makePartitionWrapper(bspTree, [transparent, opaque]);
+    for (const m of [transparent, opaque]) {
+      coord.noteDepthSortCommit(m, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    }
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+    coord.evaluateDepthSortPerFrame();
+
+    const straddle = (log.warning as unknown as { mock: { calls: unknown[][] } }).mock.calls.filter(
+      (c) => String(c[1]).includes('spans both render buckets')
+    );
+    expect(straddle).toHaveLength(1);
+  });
+});
