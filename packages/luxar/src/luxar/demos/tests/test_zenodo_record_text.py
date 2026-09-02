@@ -2241,10 +2241,14 @@ def test_cell_tracking_scored_crop_publishes_qualified_figures(gen: Any) -> None
     assert info["foreground_psnr_db"] == [18.3, 20.2]
     assert info["foreground_fraction"] == 0.2033
     assert info["quality_quotable"] is False
-    # The published figures use each fit's floor-subtracted target. Against that
-    # same basis the all-zero scores span 17.5-19.5 dB; 16.55-18.27 is the raw
-    # source result and must not be mixed into this comparison.
-    assert "all-zero floor was 17.5-19.5 dB" in info["quality_note"]
+    # The published figures use each fit's floor-subtracted target. Record the
+    # raw-source baseline too, but label it as non-comparable so neither valid
+    # measurement can silently replace the other again.
+    assert (
+        "all-zero floor was 17.5-19.5 dB on that same floor-subtracted basis "
+        "(16.55-18.27 against the raw source, not comparable to these figures)"
+        in info["quality_note"]
+    )
     assert (
         "foreground fraction is the median over the sampled frames"
         in info["quality_note"]
