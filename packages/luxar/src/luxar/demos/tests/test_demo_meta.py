@@ -648,15 +648,15 @@ def test_written_cache_dirs_are_declared(path: Path) -> None:
 #     anyway). The other 20 still catch it.
 #
 # WHY KEEP THE ANY-NAME RULE at that cost: the alternative — demand the LEADING
-# name of the group — rejects ZERO of today's real footers, but it is one deleted
-# lowercase word away from rejecting the real dmri one. "HCP-1065 atlas (Yeh 2022,
-# CC BY-SA 4.0)" passes a leading-name rule only because the lowercase "atlas"
-# stops the walk; drop that word and the group leads with "HCP-1065", which the
-# short "Yeh 2022" does not contain, and a correct credit turns red. A guard that
-# an ordinary copy-edit can falsify gets switched off. The other two candidates
-# are worse: ``_MAX_CREDIT_GROUP_NAMES = 1`` rejects the real
-# "Leike & Enßlin 2020" footer, and a year-only rule drops the wrong-author class
-# the guard exists for.
+# name of the group — rejects ZERO of today's real footers, but a constructed
+# dmri-shaped footer shows its fragility. "HCP-1065 atlas (Yeh 2022, CC BY-SA
+# 4.0)" passes a leading-name rule only because the lowercase "atlas" stops the
+# walk; drop that word and the group leads with "HCP-1065", which the short "Yeh
+# 2022" does not contain, and a correct credit turns red. A guard that an ordinary
+# copy-edit can falsify gets switched off. The other two candidates
+# are worse: ``_MAX_CREDIT_GROUP_NAMES = 1`` rejects the real cytoself footer
+# because it collects only "Methods" beside 2022, which its ``short`` does not
+# name, and a year-only rule drops the wrong-author class the guard exists for.
 #
 # Every corpus count here (86 demos, 26 credited, 8 painting a dated credit, the
 # AST tallies below) describes the corpus at the time of writing; nothing derives
@@ -1371,14 +1371,16 @@ def test_credit_guard_flags_a_contradicting_footer(short: str, overlay: str) -> 
 @pytest.mark.parametrize(
     "short,overlay",
     [
-        # Correct credits the guard must not reject. The first seven are real
-        # (short, footer) pairs from the corpus; they are the shapes a naive rule
-        # gets wrong, so they are pinned rather than merely observed to pass.
+        # Correct credits the guard must not reject. These are corpus-derived
+        # shapes: a real ``short`` paired with the footer its demo paints, some
+        # abridged or reordered to isolate the shape. The Leike pair is synthetic
+        # since the demo stopped painting its own credit. They are pinned because
+        # naive rules get these shapes wrong.
         ("Tan et al. 2018", "Tan et al. 2018 • chromosomes as 3D polylines"),
         # A leading dataset token that is NOT the credited name, and a licence
         # whose "4.0" must not read as a year.
         ("Yeh 2022", "HCP-1065 atlas (Yeh 2022, CC BY-SA 4.0) — 87 tracts"),
-        # "et al." on one side, "&" plus an eszett on the other.
+        # A synthetic "et al." versus "&" pair, including an eszett.
         ("Leike et al. 2020", "Leike & Enßlin 2020 • 3D dust density • ~1 pc/voxel"),
         ("Kim et al. 2024", "95K cells • 32 cell types • Kim et al. 2024"),
         # A leading "The", and the bullet-separated fields before it. The f-string
@@ -1406,15 +1408,15 @@ def test_credit_guard_flags_a_contradicting_footer(short: str, overlay: str) -> 
         # ``short`` with a title-led footer nobody writes today, and a
         # leading-name rule would reject all four ('Nuclear', 'OpenCell',
         # 'Dip-C', 'Human'). Being hypotheticals, they are not the argument for
-        # the any-name rule — the row below them, a real footer minus one word,
-        # is (see the section comment).
+        # the any-name rule; the final, dmri-shaped row demonstrates the
+        # copy-edit fragility described in the section comment.
         ("Bui et al. 2013", "Nuclear Pore Complex (Bui et al. 2013)"),
         ("Cho et al. 2022", "OpenCell MAP4 (Cho et al. 2022)"),
         ("Tan et al. 2018", "Dip-C, Tan et al. 2018"),
         ("Luck et al. 2020", "Human Reference Interactome, Luck et al. 2020"),
-        # The "HCP-1065 atlas" corpus footer near the top of this list, with its
-        # one lowercase word removed: under a leading-name rule 'atlas' is the only
-        # thing stopping the walk, so deleting a word turns a correct credit red.
+        # Constructed from the dmri footer by moving its appended year inside the
+        # credit parentheses, then removing "atlas": under a leading-name rule,
+        # that ordinary copy-edit turns a correct credit red.
         ("Yeh 2022", "HCP-1065 (Yeh 2022, CC BY-SA 4.0) — 87 tracts"),
     ],
 )

@@ -911,7 +911,7 @@ Large isotropic 3D light-sheet volume of a developing beetle (*Tribolium castane
 
 ---
 
-#### demo_gsplats_3d_milky_way_dust.py - 3D Interstellar Dust of the Solar Neighborhood (Leike & Enßlin 2020)
+#### demo_gsplats_3d_milky_way_dust.py - 3D Interstellar Dust of the Solar Neighborhood (Leike et al. 2020)
 Gaussian-splats a real 3D reconstruction of the Milky Way's interstellar dust around the Sun — the splat pipeline applied to astrophysics rather than microscopy. The "volume" is a cube of *space*: a 740 × 740 × 540 pc reconstruction of dust extinction density at 1 pc resolution, fit into glowing 3D fog revealing the Local Bubble and the Orion / Taurus / Perseus molecular clouds.
 
 **Run**: `luxar demo run gsplats_3d_milky_way_dust [-- --recompute]`
