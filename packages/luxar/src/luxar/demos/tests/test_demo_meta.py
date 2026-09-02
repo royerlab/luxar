@@ -1371,9 +1371,10 @@ def test_credit_guard_flags_a_contradicting_footer(short: str, overlay: str) -> 
 @pytest.mark.parametrize(
     "short,overlay",
     [
-        # Correct credits the guard must not reject. The first seven are real
-        # (short, footer) pairs from the corpus; they are the shapes a naive rule
-        # gets wrong, so they are pinned rather than merely observed to pass.
+        # Correct credits the guard must not reject. The first seven are corpus
+        # shapes: six are real (short, footer) pairs, while the Leike pair is
+        # synthetic since the demo stopped painting its own credit. They are
+        # pinned because naive rules get these shapes wrong.
         ("Tan et al. 2018", "Tan et al. 2018 • chromosomes as 3D polylines"),
         # A leading dataset token that is NOT the credited name, and a licence
         # whose "4.0" must not read as a year.
