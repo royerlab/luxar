@@ -2115,25 +2115,42 @@ def test_committed_measurements_match_the_hosted_manifest_pins(gen: Any) -> None
 
 def test_cell_tracking_measurements_include_the_declared_raw_volume(gen: Any) -> None:
     chars = gen.load_characteristics()
-    infos = [
-        info for key, info in chars.items() if key.startswith("gsplats_cell_tracking/")
-    ]
+    infos = {
+        key: info
+        for key, info in chars.items()
+        if key.startswith("gsplats_cell_tracking/")
+    }
     provenance = (
         "Source grid declared from the manifest acquisition shape "
         "(100 x 64 x 256 x 256 uint16), not read from archive stamps."
     )
+    measured_key = "gsplats_cell_tracking/6bba_09961292.gsplats.zarr.zip"
 
     assert len(infos) == 7
-    for info in infos:
+    for key, info in infos.items():
         assert info["source_shape"] == [100, 64, 256, 256]
         assert info["source_dtype"] == "uint16"
         assert info["source_bytes"] == 838_860_800
-        # Substring, not equality: the source grid stays manifest-declared for
-        # every crop, but a crop that HAS been scored appends its own
-        # measurement provenance after it. Equality would forbid that while
-        # protecting nothing extra -- the invariant is that the declaration is
-        # stated, so a reader never mistakes these figures for archive stamps.
-        assert info["quality_note"].startswith(provenance)
+        if key == measured_key:
+            assert info["quality_note"].startswith(f"{provenance} Quality figures")
+        else:
+            assert info["quality_note"] == provenance
+            assert "same stacking pipeline" in info["quality_caveat"]
+            assert "was not measured" in info["quality_caveat"]
+
+
+def test_cell_tracking_scored_crop_publishes_qualified_figures(gen: Any) -> None:
+    key = "gsplats_cell_tracking/6bba_09961292.gsplats.zarr.zip"
+    info = gen.load_characteristics()[key]
+
+    assert info["psnr_db"] == [24.7, 26.5]
+    assert info["foreground_psnr_db"] == [18.3, 20.2]
+    assert info["foreground_fraction"] == 0.2033
+    assert info["quality_quotable"] is False
+    assert "about 13 dB below" in info["quality_caveat"]
+    assert "about 23 dB below" in info["quality_caveat"]
+    assert "scores higher in foreground" in info["quality_caveat"]
+    assert "archive scores lower" in info["quality_caveat"]
 
 
 def test_h2afva_51tp_measurements_describe_the_pinned_flat_ladder(gen: Any) -> None:

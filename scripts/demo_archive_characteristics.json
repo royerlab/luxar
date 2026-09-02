@@ -204,8 +204,8 @@
         26.5
       ],
       "foreground_psnr_db": [
-        18.32,
-        20.18
+        18.3,
+        20.2
       ],
       "foreground_fraction": 0.2033,
       "source_shape": [
@@ -217,11 +217,11 @@
       "source_dtype": "uint16",
       "source_bytes": 838860800,
       "frames": 100,
-      "quality_quotable": true,
+      "quality_quotable": false,
       "measured_from": "staged",
       "measured_sha256": "a2333a14baa6a08254698612693e0d1490e59f0eaf267abc411cb988cec3b1c9",
       "quality_note": "Source grid declared from the manifest acquisition shape (100 x 64 x 256 x 256 uint16), not read from archive stamps. Quality figures measured 2026-09-01 against the crop's own source timepoints (100x64x256x256 uint16, Kaggle CTC cache), per timepoint over frames 0/25/50/75/99 \u2014 the neuromast convention. The archive is TRANSFORMED relative to the fit (recentre + 95th-percentile scale filter + per-timepoint amplitude renormalisation), so it was NOT scored on trust: a control arm scored the replayed-filter fit DIRECTLY (same splat set, no 4D stack, no marginalisation) and agreed to 0.017 dB at every frame. The replayed filter also reproduced the shipped per-timepoint splat count EXACTLY (41,129 at t=0), confirming the inversion. Centers are in micrometres (the fit used voxel_size=), so a diag(1/voxel) transform maps them to render_to_volume's index space; the all-zero floor was 16.6-18.3 dB against measured 24.7-26.5, so the comparison is live. The shipped store carries no image_min, so each frame borrowed its own fit's floor (same data, same basis).",
-      "quality_caveat": "Figures are for the STACKED ARCHIVE as served, measured per timepoint over frames 0/25/50/75/99. They sit about 13 dB below the underlying fit (37.9\u201339.6 whole-volume, 41.3\u201343.1 foreground) because stacking deliberately drops the largest 5% of splats by scale: under volumetric blending that diffuse tail renders as opaque discs that bury the nuclei beneath it, so the archive trades reconstruction fidelity for a legible render. The other six crops are built by the same pipeline but were not measured."
+      "quality_caveat": "Figures are for the STACKED ARCHIVE as served, measured per timepoint over frames 0/25/50/75/99. Whole-volume scores sit about 13 dB below the underlying fit (24.7\u201326.5 versus 37.9\u201339.6), while foreground scores sit about 23 dB below it (18.3\u201320.2 versus 41.3\u201343.1). The underlying fit scores higher in foreground than whole-volume, but the stacked archive scores lower, because stacking deliberately drops the largest 5% of splats by scale: under volumetric blending that diffuse tail renders as opaque discs that bury the nuclei beneath it, so the archive trades reconstruction fidelity for a legible render."
     },
     "gsplats_cell_tracking/6bba_57b7cc1e.gsplats.zarr.zip": {
       "n_splats": 2178516,
@@ -243,7 +243,8 @@
       "quality_quotable": false,
       "measured_from": "staged",
       "measured_sha256": "41483ef53a07935faa93edaf9765675bf1628a0cf3c117ab62e85a457eb37006",
-      "quality_note": "Source grid declared from the manifest acquisition shape (100 x 64 x 256 x 256 uint16), not read from archive stamps."
+      "quality_note": "Source grid declared from the manifest acquisition shape (100 x 64 x 256 x 256 uint16), not read from archive stamps.",
+      "quality_caveat": "This crop is built by the same stacking pipeline as 6bba_09961292 but was not measured against its source volume."
     },
     "gsplats_cell_tracking/6bba_5dfe9ad1.gsplats.zarr.zip": {
       "n_splats": 4649701,
@@ -265,7 +266,8 @@
       "quality_quotable": false,
       "measured_from": "staged",
       "measured_sha256": "fbcbfa8b8b2e57de9f05191a10221112918157e943dbf75bf28c5334d748c9b6",
-      "quality_note": "Source grid declared from the manifest acquisition shape (100 x 64 x 256 x 256 uint16), not read from archive stamps."
+      "quality_note": "Source grid declared from the manifest acquisition shape (100 x 64 x 256 x 256 uint16), not read from archive stamps.",
+      "quality_caveat": "This crop is built by the same stacking pipeline as 6bba_09961292 but was not measured against its source volume."
     },
     "gsplats_cell_tracking/6bba_784a78c9.gsplats.zarr.zip": {
       "n_splats": 4520586,
@@ -287,7 +289,8 @@
       "quality_quotable": false,
       "measured_from": "staged",
       "measured_sha256": "22707e543e4d09823df3f48cbc3df4330fab2c72f7b7d19cd193d7bbbc326120",
-      "quality_note": "Source grid declared from the manifest acquisition shape (100 x 64 x 256 x 256 uint16), not read from archive stamps."
+      "quality_note": "Source grid declared from the manifest acquisition shape (100 x 64 x 256 x 256 uint16), not read from archive stamps.",
+      "quality_caveat": "This crop is built by the same stacking pipeline as 6bba_09961292 but was not measured against its source volume."
     },
     "gsplats_cell_tracking/6bba_ae82a791.gsplats.zarr.zip": {
       "n_splats": 4197409,
@@ -309,7 +312,8 @@
       "quality_quotable": false,
       "measured_from": "staged",
       "measured_sha256": "b11bb3d43cd79ea2cdd8636881acc17a0bc20387d91b2fcb1eec8efc3fdd2aef",
-      "quality_note": "Source grid declared from the manifest acquisition shape (100 x 64 x 256 x 256 uint16), not read from archive stamps."
+      "quality_note": "Source grid declared from the manifest acquisition shape (100 x 64 x 256 x 256 uint16), not read from archive stamps.",
+      "quality_caveat": "This crop is built by the same stacking pipeline as 6bba_09961292 but was not measured against its source volume."
     },
     "gsplats_cell_tracking/6bba_bb9f20c3.gsplats.zarr.zip": {
       "n_splats": 4283665,
@@ -331,7 +335,8 @@
       "quality_quotable": false,
       "measured_from": "staged",
       "measured_sha256": "ddf60dec17c0df4a28aee0687b7ddf5c88510101d55af92c386d789024e3d3e9",
-      "quality_note": "Source grid declared from the manifest acquisition shape (100 x 64 x 256 x 256 uint16), not read from archive stamps."
+      "quality_note": "Source grid declared from the manifest acquisition shape (100 x 64 x 256 x 256 uint16), not read from archive stamps.",
+      "quality_caveat": "This crop is built by the same stacking pipeline as 6bba_09961292 but was not measured against its source volume."
     },
     "gsplats_cell_tracking/6bba_cff5865f.gsplats.zarr.zip": {
       "n_splats": 4101691,
@@ -353,7 +358,8 @@
       "quality_quotable": false,
       "measured_from": "staged",
       "measured_sha256": "8ece34f7bf84d1fdc82336abf442bd4635bd1c80a7e5b05b7cf3cb11b0a7dc27",
-      "quality_note": "Source grid declared from the manifest acquisition shape (100 x 64 x 256 x 256 uint16), not read from archive stamps."
+      "quality_note": "Source grid declared from the manifest acquisition shape (100 x 64 x 256 x 256 uint16), not read from archive stamps.",
+      "quality_caveat": "This crop is built by the same stacking pipeline as 6bba_09961292 but was not measured against its source volume."
     },
     "gsplats_cells3d/cells3d_ch0.gsplats.zarr.zip": {
       "n_splats": 41975,
