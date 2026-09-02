@@ -398,10 +398,24 @@ else:
         check=True,
     )
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-m", "fixture"], cwd=repo, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--no-verify",
+            "-m",
+            "fixture",
+        ],
+        cwd=repo,
+        check=True,
+    )
     origin = tmp_path / "origin.git"
     subprocess.run(["git", "clone", "--bare", str(repo), str(origin)], check=True)
-    subprocess.run(["git", "remote", "add", "origin", str(origin)], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "remote", "add", "origin", str(origin)], cwd=repo, check=True
+    )
 
     env = os.environ.copy()
     env.update(
