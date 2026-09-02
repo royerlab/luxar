@@ -80,6 +80,49 @@ def test_public_attributions_keep_required_provenance_resolvable() -> None:
         assert "for the SiMView instrument see Royer et al." in droso
 
 
+def test_readme_zenodo_table_matches_manifest() -> None:
+    generator = _load_generator()
+    manifest = json.loads(generator.MANIFEST.read_text(encoding="utf-8"))
+    readme = (SCRIPT.parents[1] / "README.md").read_text(encoding="utf-8")
+    table = readme.split("| Record | Contents | Cite |", 1)[1].split("\n\n", 1)[0]
+    labels = {
+        "cc-by": "Permissively licensed (CC-BY, CC0, public domain)",
+        "cc-by-sa": "ShareAlike (CC BY-SA 4.0)",
+        "h2afva": "Zebrafish histone timelapse (253 + 51 timepoints)",
+        "droso-timelapse": "*Drosophila* embryogenesis (500 timepoints)",
+    }
+    concept_dois = {
+        "cc-by": "10.5281/zenodo.21912279",
+        "cc-by-sa": "10.5281/zenodo.21912281",
+        "h2afva": "10.5281/zenodo.21912283",
+        "droso-timelapse": "10.5281/zenodo.22118694",
+    }
+
+    for record_key, label in labels.items():
+        files = []
+        for dataset in manifest["datasets"].values():
+            if dataset.get("record") != record_key:
+                continue
+            files.extend(dataset.get("files") or [])
+            for variant in (dataset.get("variants") or {}).values():
+                files.extend(variant.get("files") or [])
+        total_bytes = sum(entry.get("hosted_bytes", entry["bytes"]) for entry in files)
+        if total_bytes >= 2**30:
+            size = f"{total_bytes / 2**30:.1f} GiB"
+        else:
+            size = f"{total_bytes / 2**20:.0f} MiB"
+        record = manifest["records"][record_key]
+        concept_doi = record.get("zenodo_conceptdoi")
+        if concept_doi is None:
+            assert not record["published"]
+            concept_doi = concept_dois[record_key]
+        row = (
+            f"| {label} | {len(files)} file{'s' if len(files) != 1 else ''}, {size} | "
+            f"[{concept_doi}](https://doi.org/{concept_doi}) |"
+        )
+        assert row in table
+
+
 def test_census_attribution_uses_generator_release_default() -> None:
     generator = _load_generator()
     attribution = generator.DATASETS["census_umap_1m"]["attribution"]
