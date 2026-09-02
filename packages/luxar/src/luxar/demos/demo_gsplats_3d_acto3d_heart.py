@@ -143,20 +143,43 @@ CHANNELS = [
         "name": "SYTOX Green (Nuclei)",
         "colormap": "green",
         "opacity": 0.12,
+        # Innermost structure, so it composites LAST (on top). See the
+        # depth_level note below the list.
+        "depth_level": 30,
     },
     {
         "index": 1,
         "name": "Tomato Lectin (Vasculature)",
         "colormap": "red",
         "opacity": 0.30,
+        "depth_level": 10,
     },
     {
         "index": 2,
         "name": "TNNI3 (Cardiac Tissue)",
         "colormap": "blue",
         "opacity": 0.16,
+        "depth_level": 20,
     },
 ]
+
+# ``depth_level`` STATES the cross-layer draw order instead of leaving the viewer
+# to infer one (higher = nearer the camera = drawn later; see
+# ``docs/guides/specs/LAYER_DEPTH_LEVEL_SPEC.md``).
+#
+# The layers ship ``additive``, which is commutative, so these levels do not
+# change what this demo renders as authored — they matter the moment anyone
+# switches a layer to ``volumetric`` or ``normal`` in the Layers panel, which is
+# exactly the thing that used to composite in an arbitrary order.
+#
+# The values match the order the viewer already inferred from bounding-sphere
+# containment (measured on the built store: vasculature r=1130.7, tnni3 r=1126.8,
+# nuclei r=1064.7, giving vasculature -> tnni3 -> nuclei), verified as producing
+# a byte-identical draw order. The point is not to change that order but to make
+# it a contract: the vasculature/tnni3 containment edge clears its test by 2.2
+# units out of 1130 — 0.19% — so a refit that nudged either channel's extent
+# would silently flip the pair and bring back the popping this demo was moved off
+# ``volumetric`` to avoid (#1964, #880).
 
 # Fit parameters (fixed-K, seeds=K*)
 MAX_SPLATS = 860000
@@ -602,6 +625,7 @@ Controls:
                 ch_name = ch_config["name"]
                 colormap = ch_config["colormap"]
                 opacity = ch_config["opacity"]
+                depth_level = ch_config["depth_level"]
 
                 with asection(f"Adding {ch_name} (layer)"):
                     centered = gsplats.translate(-shared_centroid)
@@ -619,6 +643,8 @@ Controls:
                         dim_order=["z", "y", "x"],
                         opacity=opacity,
                         blending_mode="additive",
+                        # Stated, not inferred — see the CHANNELS note above.
+                        depth_level=depth_level,
                         layer=True,
                         colormap=colormap,
                     )
