@@ -2359,8 +2359,57 @@ def test_droso_500tp_keeps_archive_derived_quotability(gen: Any) -> None:
 
     assert info["psnr_db"] is None
     assert info["foreground_psnr_db"] is None
+    assert info["measured_from"] == "hosted"
     assert info["quality_quotable"] is None
     assert "published archive carries no stamps" in info["quality_caveat"]
+
+
+def test_droso_gastrulation_keeps_the_archive_measurement(gen: Any) -> None:
+    """A refresh must not replace this row's figures with its fit-time stamp.
+
+    The committed 41.65 / 37.07 are the ARCHIVE measured with
+    `gsplat compare`. The archive's own fit-time stamp is 41.76 / 37.15, and
+    the note rejects it deliberately: a stamp is taken before culling, so it
+    describes a fit rather than the bytes that ship. Here the two agree to
+    0.1 dB because `--preset standard` culls little (55,977 of 256,000), but
+    the same note records the case that makes this matter -- at the API
+    default of n_iters=1000 the same fit culled 98,349 and the stamp
+    OVERSTATED the archive by 9.7 dB.
+
+    Nothing else catches this. The cache copy IS the pinned artifact (sha256
+    2ea85b37 matches the manifest), so the read is legitimate and
+    `measured_sha256` stays correct throughout -- which means
+    `test_published_figures_come_from_pinned_bytes` passes while the figure
+    changes underneath it. A provenance check that validates WHICH BYTES
+    were read cannot see a disagreement about WHAT TO READ FROM THEM.
+
+    Verified 2026-09-02 by running `--refresh` and diffing the sidecar: it
+    rewrites psnr_db to 41.75973892211914 and foreground to
+    37.15470223941284. After a refresh, restore the two archive-comparison
+    figures; a genuine refit must update both figures and this note together.
+    """
+    manifest = json.loads(gen.MANIFEST.read_text())
+    spec = next(
+        spec
+        for _variant, spec in gen._files_of(
+            manifest["datasets"]["gsplats_3d_drosophila_gastrulation"]
+        )
+        if spec["name"] == "droso_gastrulation.gsplats.zarr.zip"
+    )
+    info = gen.load_characteristics()[
+        "gsplats_3d_drosophila_gastrulation/droso_gastrulation.gsplats.zarr.zip"
+    ]
+    assert info["psnr_db"] == 41.65, (
+        "expected the gsplat-compare figure; 41.76 is the fit-time stamp the "
+        "note rejects"
+    )
+    assert info["foreground_psnr_db"] == 37.07, (
+        "expected the gsplat-compare foreground figure; 37.15 is the fit-time "
+        "stamp the note rejects"
+    )
+    assert info["measured_from"] is None
+    assert info["measured_sha256"] == gen._pinned_digest(spec)
+    assert "not the fit-time stamp" in info["quality_note"]
 
 
 def test_milkyway_hosted_archive_keeps_the_levels_generation(gen: Any) -> None:
