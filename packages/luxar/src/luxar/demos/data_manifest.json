@@ -7,32 +7,36 @@
       "license": "cc-by-4.0",
       "zenodo_doi": "10.5281/zenodo.21912280",
       "zenodo_record": "21912280",
+      "zenodo_conceptdoi": "10.5281/zenodo.21912279",
       "base_url": null,
-      "published": false
+      "published": true
     },
     "cc-by-sa": {
       "title": "Luxar demo datasets: ShareAlike (CC BY-SA 4.0)",
       "license": "cc-by-sa-4.0",
       "zenodo_doi": "10.5281/zenodo.21912282",
       "zenodo_record": "21912282",
+      "zenodo_conceptdoi": "10.5281/zenodo.21912281",
       "base_url": null,
-      "published": false
+      "published": true
     },
     "h2afva": {
       "title": "Zebrafish embryogenesis, histone-labelled nuclei: 253-timepoint light-sheet timelapse as Gaussian splats (with a lighter 51-timepoint fit)",
       "license": "cc-by-4.0",
       "zenodo_doi": "10.5281/zenodo.21912284",
       "zenodo_record": "21912284",
+      "zenodo_conceptdoi": "10.5281/zenodo.21912283",
       "base_url": null,
-      "published": false
+      "published": true
     },
     "droso-timelapse": {
       "title": "Drosophila melanogaster embryogenesis: a 500-timepoint light-sheet timelapse as Gaussian splats",
       "license": "cc-by-4.0",
       "zenodo_doi": "10.5281/zenodo.22118695",
       "zenodo_record": "22118695",
+      "zenodo_conceptdoi": "10.5281/zenodo.22118694",
       "base_url": null,
-      "published": false
+      "published": true
     }
   },
   "datasets": {
@@ -656,7 +660,7 @@
       "record": "droso-timelapse",
       "license": "cc-by-4.0",
       "source": "Drosophila His2Av::mRFP1 embryo, 500-timepoint SiMView light-sheet timelapse (Royer/Keller)",
-      "attribution": "Royer & Keller labs \u2014 Royer et al., Nat. Biotechnol. 34, 1267-1278 (2016), doi:10.1038/nbt.3708 (CC BY 4.0).",
+      "attribution": "Acquired in Philipp J. Keller's lab at HHMI Janelia Research Campus, where L. A. Royer was then a postdoctoral fellow; the splat fits were computed later at CZ Biohub SF. Royer et al., Nat. Biotechnol. 34, 1267-1278 (2016), doi:10.1038/nbt.3708 (CC BY 4.0).",
       "acquisition": {
         "description": "the whole 500-timepoint SiMView recording (500 x 108 x 1352 x 532 uint16), every timepoint fitted at full resolution",
         "comparable": true,
@@ -676,7 +680,7 @@
       "record": "cc-by",
       "license": "cc-by-4.0",
       "source": "Drosophila His2Av::mRFP1 embryo, SiMView light-sheet (Royer/Keller)",
-      "attribution": "Royer & Keller labs \u2014 Royer et al., Nat. Biotechnol. 34, 1267-1278 (2016), doi:10.1038/nbt.3708 (CC BY 4.0).",
+      "attribution": "Acquired in Philipp J. Keller's lab at HHMI Janelia Research Campus, where L. A. Royer was then a postdoctoral fellow; the splat fits were computed later at CZ Biohub SF. Royer et al., Nat. Biotechnol. 34, 1267-1278 (2016), doi:10.1038/nbt.3708 (CC BY 4.0).",
       "dir": "gsplats_3d_drosophila_gastrulation",
       "files": [
         {

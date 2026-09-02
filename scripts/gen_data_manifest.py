@@ -72,12 +72,24 @@ MANIFEST = REPO_ROOT / "packages/luxar/src/luxar/demos/data_manifest.json"
 # NOT the version-independent concept DOI, which is a different identifier Zenodo
 # mints on publication and which cannot be known from the deposition id.
 #
-# Hence `published`: while it is false the fetch helper builds no URL at all, so
-# the Zenodo leg stays dormant exactly as it did when the ids were null, and
-# demos keep resolving cache -> in-repo LFS. Flipping those flags at
-# publication time is what activates fetching, and it is the only edit needed.
-# Recording the ids now (rather than at publish time) means the manifest, the
-# record descriptions and the reserved DOIs cannot drift apart in the meantime.
+# `published` gates the fetch: while it was false the helper built no URL at all,
+# so the Zenodo leg stayed dormant and demos resolved cache -> in-repo LFS.
+#
+# ALL FOUR RECORDS WERE PUBLISHED 2026-09-02, so the flags are now true and the
+# Zenodo leg is live. Concept DOIs were minted at publication and are recorded
+# here for citation, since they are the identifiers that follow the latest
+# version rather than pinning one:
+#     cc-by            10.5281/zenodo.21912279
+#     cc-by-sa         10.5281/zenodo.21912281
+#     h2afva           10.5281/zenodo.21912283
+#     droso-timelapse  10.5281/zenodo.22118694
+# `zenodo_doi` remains the VERSION DOI, which is what a pinned artifact needs.
+#
+# Note what this flag does NOT do: the resolution order is still
+# cache -> in-repo LFS -> Zenodo, so on a machine that still carries the in-repo
+# payloads those win over the record on a cache miss. For 20 of these files the
+# in-repo copy is the PRE-REFIT generation, so "fetches from Zenodo" is only
+# true once those payloads are gone -- see the LFS teardown.
 #
 # Titles are kept in step with the live record titles on purpose: they are what a
 # `luxar demo` user is pointed at, and the h2afva one in particular used to
@@ -88,16 +100,18 @@ RECORDS = {
         "license": "cc-by-4.0",
         "zenodo_doi": "10.5281/zenodo.21912280",
         "zenodo_record": "21912280",
+        "zenodo_conceptdoi": "10.5281/zenodo.21912279",
         "base_url": None,
-        "published": False,
+        "published": True,
     },
     "cc-by-sa": {
         "title": "Luxar demo datasets: ShareAlike (CC BY-SA 4.0)",
         "license": "cc-by-sa-4.0",
         "zenodo_doi": "10.5281/zenodo.21912282",
         "zenodo_record": "21912282",
+        "zenodo_conceptdoi": "10.5281/zenodo.21912281",
         "base_url": None,
-        "published": False,
+        "published": True,
     },
     "h2afva": {
         "title": (
@@ -108,8 +122,9 @@ RECORDS = {
         "license": "cc-by-4.0",
         "zenodo_doi": "10.5281/zenodo.21912284",
         "zenodo_record": "21912284",
+        "zenodo_conceptdoi": "10.5281/zenodo.21912283",
         "base_url": None,
-        "published": False,
+        "published": True,
     },
     # Its OWN record rather than a 33rd file on `cc-by`, decided by Loic on
     # 2026-08-26. The deciding argument was attribution granularity: on a mixed
@@ -138,8 +153,9 @@ RECORDS = {
         "license": "cc-by-4.0",
         "zenodo_doi": "10.5281/zenodo.22118695",
         "zenodo_record": "22118695",
+        "zenodo_conceptdoi": "10.5281/zenodo.22118694",
         "base_url": None,
-        "published": False,
+        "published": True,
     },
 }
 
@@ -565,7 +581,12 @@ DATASETS: dict[str, dict] = {
         record="droso-timelapse",
         license="cc-by-4.0",
         source="Drosophila His2Av::mRFP1 embryo, 500-timepoint SiMView light-sheet timelapse (Royer/Keller)",
-        attribution="Royer & Keller labs — Royer et al., Nat. Biotechnol. 34, 1267-1278 (2016), doi:10.1038/nbt.3708 (CC BY 4.0).",
+        attribution=(
+            "Acquired in Philipp J. Keller's lab at HHMI Janelia Research Campus, where "
+            "L. A. Royer was then a postdoctoral fellow; the splat fits were "
+            "computed later at CZ Biohub SF. Royer et al., Nat. Biotechnol. 34, "
+            "1267-1278 (2016), doi:10.1038/nbt.3708 (CC BY 4.0)."
+        ),
         acquisition=dict(
             # A clean 1:1 denominator, unusually: the fit consumed the WHOLE
             # recording — all 500 timepoints, full spatial extent, the single
@@ -586,7 +607,12 @@ DATASETS: dict[str, dict] = {
         record="cc-by",
         license="cc-by-4.0",
         source="Drosophila His2Av::mRFP1 embryo, SiMView light-sheet (Royer/Keller)",
-        attribution="Royer & Keller labs — Royer et al., Nat. Biotechnol. 34, 1267-1278 (2016), doi:10.1038/nbt.3708 (CC BY 4.0).",
+        attribution=(
+            "Acquired in Philipp J. Keller's lab at HHMI Janelia Research Campus, where "
+            "L. A. Royer was then a postdoctoral fellow; the splat fits were "
+            "computed later at CZ Biohub SF. Royer et al., Nat. Biotechnol. 34, "
+            "1267-1278 (2016), doi:10.1038/nbt.3708 (CC BY 4.0)."
+        ),
     ),
     "gsplats_3d_h2afva_stack": dict(
         bucket="zenodo",

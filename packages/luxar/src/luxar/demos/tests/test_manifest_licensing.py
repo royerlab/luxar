@@ -14,6 +14,7 @@ whether they go public is the maintainer's call, not an automated one — so
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -53,17 +54,35 @@ def _hosted() -> dict[str, Any]:
     }
 
 
-def test_the_records_are_still_drafts() -> None:
+def test_publication_is_recorded_with_its_evidence() -> None:
     """Publishing is the maintainer's decision, made by hand, on Zenodo.
 
-    Nothing in this repository should be able to flip it, and a change that
-    tried to would land here first.
+    This test used to assert every record was still a draft, so nothing in the
+    repository could flip the flag and any attempt landed here first. It said
+    that if publication genuinely happened, this was the place to record it
+    deliberately. THE MAINTAINER PUBLISHED ALL FOUR RECORDS ON 2026-09-02, so
+    this is that deliberate record.
+
+    The guard is kept rather than dropped, by demanding EVIDENCE instead of a
+    fixed answer: a published record must carry a concept DOI, which Zenodo
+    mints only at publication and which therefore cannot be derived from a
+    deposition id. Setting `published` without one now fails, so the flag still
+    cannot be flipped speculatively -- while a genuinely published record passes.
     """
     for name, record in _manifest()["records"].items():
-        assert record.get("published") is False, (
-            f"record {name!r} is marked published. Publication is done by hand on "
-            "Zenodo by the maintainer; if that has genuinely happened, this test "
-            "is the place to record it deliberately."
+        concept = record.get("zenodo_conceptdoi")
+        assert record.get("published") is True, (
+            f"record {name!r} is not marked published, but all four were "
+            "published on 2026-09-02"
+        )
+        assert concept and re.fullmatch(r"10\.5281/zenodo\.\d+", concept), (
+            f"record {name!r} is marked published but carries no concept DOI. "
+            "Zenodo mints that identifier at publication, so its absence means "
+            "the flag was set without the record actually being public."
+        )
+        assert concept != record.get("zenodo_doi"), (
+            f"record {name!r} lists its version DOI as the concept DOI; the "
+            "concept DOI is version-independent and is a different identifier"
         )
 
 

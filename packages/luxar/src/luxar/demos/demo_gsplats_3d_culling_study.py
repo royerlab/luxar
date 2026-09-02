@@ -80,7 +80,8 @@ complementary: merge when you need the count down and the mass kept; cull when
 what you want gone is genuinely background.
 
 DATA SOURCE & CITATIONS:
-    Royer & Keller labs. Imaged on a SiMView multi-view light-sheet microscope
+    Keller lab, HHMI Janelia Research Campus (L. A. Royer was then a postdoctoral
+    fellow there). Imaged on a SiMView multi-view light-sheet microscope
     under the AutoPilot adaptive framework:
 
       Royer, L.A., Lemon, W.C., Chhetri, R.K., Wan, Y., Coleman, M., Myers, E.W.
