@@ -1052,6 +1052,8 @@ the full citation.
 - **Human Multiome** — peak-accessibility UMAP of human single-cell ATAC-seq; data from Domcke et al. (2020), *A human cell atlas of fetal chromatin accessibility*, *Science* 370:eaba7612, [doi:10.1126/science.aba7612](https://doi.org/10.1126/science.aba7612); peak-UMAP analysis from Zebrahub-Multiome, Kim et al. (2024), [bioRxiv:2024.10.18.618987](https://www.biorxiv.org/content/10.1101/2024.10.18.618987v2).
 - **Mouse Multiome** — peak-accessibility UMAP of a mouse single-cell multiome; data from Argelaguet et al. (2022), *Decoding gene regulation in the mouse embryo using single-cell multi-omics*, [bioRxiv:2022.06.15.496239](https://doi.org/10.1101/2022.06.15.496239); peak-UMAP analysis from Zebrahub-Multiome, Kim et al. (2024), [bioRxiv:2024.10.18.618987](https://www.biorxiv.org/content/10.1101/2024.10.18.618987v2).
 
+Synthetic / procedurally-generated demos — **Lorenz Attractor**, **Spiral Galaxy** (3D & 5D), **Rainbow Sphere**, **Quantum Orbitals**, **Hilbert Curve**, **Bioluminescent Ocean**, and **Particle Collision** (inspired by CERN LHC events) — use no external data.
+
 ### Where the demo data lives
 
 The demos do not ship their data. What they download are **derived products** —
@@ -1068,20 +1070,21 @@ record carries a single licence field:
 
 `luxar demo run <name>` fetches only what that demo needs, caches it under
 `~/.cache/luxar/`, and verifies every file against a SHA-256 recorded in
-[`data_manifest.json`](packages/luxar/src/luxar/demos/data_manifest.json). A
-download that does not match is quarantined rather than used, so a corrupted or
-substituted file fails loudly instead of rendering something subtly wrong.
+[`data_manifest.json`](packages/luxar/src/luxar/demos/data_manifest.json). Files
+fetched from Zenodo must match the hosted digest or the download is deleted.
+Existing cache and packaged copies are also checksum-checked, but while the
+hosted and in-repo digests differ the resolver may accept either current pin;
+see [#2454](https://github.com/royerlab/luxar/issues/2454).
 
 The DOIs above are *concept* DOIs: they always resolve to the newest version of
 a record. Each individual version also has its own DOI, which is what to use
 when a result needs to be reproducible against exact bytes.
 
-**Citing these**: the records hold derived representations, and every one is
-lossy — built for interactive visualisation, not as a substitute for the source
-imagery in quantitative work. If you use them, please cite the upstream dataset
-credited above as well; each record's description names it per file.
-
-Synthetic / procedurally-generated demos — **Lorenz Attractor**, **Spiral Galaxy** (3D & 5D), **Rainbow Sphere**, **Quantum Orbitals**, **Hilbert Curve**, **Bioluminescent Ocean**, and **Particle Collision** (inspired by CERN LHC events) — use no external data.
+**Citing these**: the Gaussian-splat fits are lossy representations built for
+interactive visualisation, not substitutes for source imagery in quantitative
+work. The coordinate, label, and point-catalogue files are derived analysis
+outputs. If you use either kind, please cite the upstream dataset credited
+above as well; each record's description names it per dataset.
 
 ---
 
