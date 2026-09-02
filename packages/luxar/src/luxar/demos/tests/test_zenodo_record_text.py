@@ -174,8 +174,25 @@ def test_a_flat_store_is_read_from_its_archive_root(
 def test_every_record_renders(gen: Any, manifest: dict[str, Any]) -> None:
     for key in manifest["records"]:
         text = gen.render_record(key, manifest)
-        assert manifest["records"][key]["title"] in text
-        assert manifest["records"][key]["zenodo_doi"] in text
+        record = manifest["records"][key]
+        assert record["title"] in text
+        assert f"DOI: `{record['zenodo_doi']}`" in text
+        assert f"Concept DOI: `{record['zenodo_conceptdoi']}`" in text
+        assert "Reserved DOI:" not in text
+
+
+def test_a_draft_record_keeps_the_reserved_doi_label(
+    gen: Any, manifest: dict[str, Any]
+) -> None:
+    draft_manifest = json.loads(json.dumps(manifest))
+    draft = draft_manifest["records"]["cc-by"]
+    draft["published"] = False
+    draft.pop("zenodo_conceptdoi")
+
+    text = gen.render_record("cc-by", draft_manifest)
+
+    assert f"Reserved DOI: `{draft['zenodo_doi']}`" in text
+    assert "Concept DOI:" not in text
 
 
 def test_record_intro_does_not_claim_every_source_is_public(

@@ -520,8 +520,19 @@ def check_deposition(
             size = entry.get("size")
         hosted[str(name)] = {**entry, "filesize": size}
 
-    # Publishing is a one-way door, so this is checked before anything else.
-    fails = [f"{tag} ALREADY SUBMITTED — stop"] if dep.get("submitted") else []
+    live_published = bool(dep.get("submitted"))
+    manifest_published = bool(
+        record_meta.get("published") or record_meta.get("base_url")
+    )
+
+    # Publishing is a one-way door. A submitted deposition is only an error
+    # while the manifest still claims it is a draft; otherwise it is the
+    # expected live state of a published record.
+    fails = (
+        [f"{tag} ALREADY SUBMITTED — stop"]
+        if live_published and not manifest_published
+        else []
+    )
     fails += malformed
     fails += _check_pins(tag, rec, hosted, pins)
     fails += _check_no_scratch(tag, hosted)
@@ -538,11 +549,13 @@ def check_deposition(
         if not meta.get(key)
     ]
 
-    # The manifest's publication switches are flipped BY HAND at publish time.
-    # Finding them already set means a premature edit, or a publish that happened
-    # without this gate running.
-    if record_meta.get("published") or record_meta.get("base_url"):
-        warns.append(f"{tag} manifest already marks this published / base_url set")
+    if manifest_published != live_published:
+        state = (
+            "live deposition is published but manifest is not"
+            if live_published
+            else "manifest marks published but live deposition is not"
+        )
+        warns.append(f"{tag} {state}")
     return fails, warns
 
 

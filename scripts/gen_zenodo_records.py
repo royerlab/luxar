@@ -949,9 +949,16 @@ def render_record(key: str, manifest: dict[str, Any]) -> str:
             "<!-- DRAFT. This record is unpublished; publication is a manual "
             "step taken by the maintainer. -->\n"
         )
-    out.append(
-        f"\nLicence: **{record['license']}** · Reserved DOI: `{record['zenodo_doi']}`\n"
-    )
+    if record.get("published", False):
+        out.append(
+            f"\nLicence: **{record['license']}** · DOI: `{record['zenodo_doi']}`"
+            f" · Concept DOI: `{record['zenodo_conceptdoi']}`\n"
+        )
+    else:
+        out.append(
+            f"\nLicence: **{record['license']}** · Reserved DOI: "
+            f"`{record['zenodo_doi']}`\n"
+        )
     out.append(
         "\nGaussian-splat and point-cloud scenes for the "
         "[Luxar](https://github.com/royerlab/luxar) viewer. Each archive is a "
