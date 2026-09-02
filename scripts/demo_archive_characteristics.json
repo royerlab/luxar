@@ -199,9 +199,15 @@
       "ndim": null,
       "format_version": "3.4",
       "topology": "4 coarse-to-fine levels",
-      "psnr_db": null,
-      "foreground_psnr_db": null,
-      "foreground_fraction": null,
+      "psnr_db": [
+        24.7,
+        26.5
+      ],
+      "foreground_psnr_db": [
+        18.32,
+        20.18
+      ],
+      "foreground_fraction": 0.2033,
       "source_shape": [
         100,
         64,
@@ -211,10 +217,11 @@
       "source_dtype": "uint16",
       "source_bytes": 838860800,
       "frames": 100,
-      "quality_quotable": false,
+      "quality_quotable": true,
       "measured_from": "staged",
       "measured_sha256": "a2333a14baa6a08254698612693e0d1490e59f0eaf267abc411cb988cec3b1c9",
-      "quality_note": "Source grid declared from the manifest acquisition shape (100 x 64 x 256 x 256 uint16), not read from archive stamps."
+      "quality_note": "Source grid declared from the manifest acquisition shape (100 x 64 x 256 x 256 uint16), not read from archive stamps. Quality figures measured 2026-09-01 against the crop's own source timepoints (100x64x256x256 uint16, Kaggle CTC cache), per timepoint over frames 0/25/50/75/99 \u2014 the neuromast convention. The archive is TRANSFORMED relative to the fit (recentre + 95th-percentile scale filter + per-timepoint amplitude renormalisation), so it was NOT scored on trust: a control arm scored the replayed-filter fit DIRECTLY (same splat set, no 4D stack, no marginalisation) and agreed to 0.017 dB at every frame. The replayed filter also reproduced the shipped per-timepoint splat count EXACTLY (41,129 at t=0), confirming the inversion. Centers are in micrometres (the fit used voxel_size=), so a diag(1/voxel) transform maps them to render_to_volume's index space; the all-zero floor was 16.6-18.3 dB against measured 24.7-26.5, so the comparison is live. The shipped store carries no image_min, so each frame borrowed its own fit's floor (same data, same basis).",
+      "quality_caveat": "Figures are for the STACKED ARCHIVE as served, measured per timepoint over frames 0/25/50/75/99. They sit about 13 dB below the underlying fit (37.9\u201339.6 whole-volume, 41.3\u201343.1 foreground) because stacking deliberately drops the largest 5% of splats by scale: under volumetric blending that diffuse tail renders as opaque discs that bury the nuclei beneath it, so the archive trades reconstruction fidelity for a legible render. The other six crops are built by the same pipeline but were not measured."
     },
     "gsplats_cell_tracking/6bba_57b7cc1e.gsplats.zarr.zip": {
       "n_splats": 2178516,

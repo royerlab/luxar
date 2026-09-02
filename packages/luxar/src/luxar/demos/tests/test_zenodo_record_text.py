@@ -2128,7 +2128,12 @@ def test_cell_tracking_measurements_include_the_declared_raw_volume(gen: Any) ->
         assert info["source_shape"] == [100, 64, 256, 256]
         assert info["source_dtype"] == "uint16"
         assert info["source_bytes"] == 838_860_800
-        assert info["quality_note"] == provenance
+        # Substring, not equality: the source grid stays manifest-declared for
+        # every crop, but a crop that HAS been scored appends its own
+        # measurement provenance after it. Equality would forbid that while
+        # protecting nothing extra -- the invariant is that the declaration is
+        # stated, so a reader never mistakes these figures for archive stamps.
+        assert info["quality_note"].startswith(provenance)
 
 
 def test_h2afva_51tp_measurements_describe_the_pinned_flat_ladder(gen: Any) -> None:
