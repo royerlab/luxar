@@ -62,4 +62,4 @@ keeps one appearance scale across every frame and ladder rung, and documents the
 fit, cull, physical scaling, and streaming-optimisation pipeline.
 
 The 824 MB archive is pinned to Zenodo record `22118695`; the record remains
-unpublished until its recorded publication gate is cleared.
+unpublished until it is published by hand.

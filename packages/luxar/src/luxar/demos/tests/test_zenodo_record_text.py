@@ -178,6 +178,16 @@ def test_every_record_renders(gen: Any, manifest: dict[str, Any]) -> None:
         assert manifest["records"][key]["zenodo_doi"] in text
 
 
+def test_record_intro_does_not_claim_every_source_is_public(
+    gen: Any, manifest: dict[str, Any]
+) -> None:
+    text = gen.render_record("droso-timelapse", manifest)
+
+    assert "fitted representation of a scientific dataset" in text
+    assert "fitted representation of a public dataset" not in text
+    assert "The imaging itself is unpublished" in text
+
+
 def test_every_hosted_dataset_appears_in_its_record(
     gen: Any, manifest: dict[str, Any]
 ) -> None:

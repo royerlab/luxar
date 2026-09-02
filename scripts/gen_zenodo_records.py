@@ -955,7 +955,7 @@ def render_record(key: str, manifest: dict[str, Any]) -> str:
     out.append(
         "\nGaussian-splat and point-cloud scenes for the "
         "[Luxar](https://github.com/royerlab/luxar) viewer. Each archive is a "
-        "fitted representation of a public dataset, published so that a scene "
+        "fitted representation of a scientific dataset, published so that a scene "
         "can be opened in seconds rather than refitted on a GPU. Luxar fetches "
         "these on demand — `luxar demo run <name>` — and verifies every file "
         "against a recorded checksum.\n"
