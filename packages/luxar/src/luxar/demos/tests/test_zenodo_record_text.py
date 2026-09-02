@@ -2448,7 +2448,7 @@ def test_an_additive_count_is_absent_if_any_chunk_is_unreadable(
 # identically to "nobody measured this yet", it reads as an invitation to make
 # the generator read the archive -- which republishes precisely the unpinned
 # numbers the marker withholds. celegans and nexrad both sit in this state with
-# a local copy whose size matches the pin EXACTLY and whose digest does not.
+# local copies whose bytes do not match the hosted pins.
 # ---------------------------------------------------------------------------
 
 
