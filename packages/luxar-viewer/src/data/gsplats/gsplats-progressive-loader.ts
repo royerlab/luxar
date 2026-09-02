@@ -43,7 +43,10 @@ import {
 } from '../loaders/progressive/slice-cache-helper';
 import { planLadderRollback } from '../loaders/progressive/pass-rollback';
 import { SPLAT_FLOATS_PER_SPLAT } from '../../rendering/element-texture-layout';
-import type { LadderResidency } from '../scene-loader/progressive/residency-budget';
+import {
+  ladderResidentBytes,
+  type LadderResidency,
+} from '../scene-loader/progressive/residency-budget';
 import { viewStatesEqual } from '../loaders/progressive/view-state-equal';
 import type { SliceCache } from '../../cache/slice-cache';
 import { log, Modules, LogEmoji } from '../../utils/log';
@@ -442,7 +445,8 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
   async updateView(
     viewState: GSplatsViewState,
     session?: UpdateSession,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    residencyAllowanceBytes?: number
   ): Promise<LoadedGSplatsData> {
     // Record the per-pass playback budget FIRST (before the restore branch:
     // a pause re-trigger arrives with the SAME view state — it must still
@@ -533,6 +537,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     // abort); `refine` stops at the first cold/slow level.
     const pass = classifyStreamingPass(budgetDeadline !== null, isPrefetch);
     const startLevel = this._loadedLODCount;
+    const residentBytesAtPassStart = ladderResidentBytes(this.ladderResidency());
     this._levelsAtPassStart = startLevel;
     this._payloadsAtPassStart = this.loadedLODs.length;
     this._restoredFullLadderAtPassStart = false;
@@ -585,7 +590,21 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       // permanently blank. The same reasoning forbids inferring anything from a
       // restored cache PREFIX whose LOD 0 is empty.
 
-      if (shouldStopAfterLevel(pass, level, startLevel, allResident, elapsed)) {
+      const additionalResidentBytes = Math.max(
+        0,
+        ladderResidentBytes(this.ladderResidency()) - residentBytesAtPassStart
+      );
+      if (
+        shouldStopAfterLevel(
+          pass,
+          level,
+          startLevel,
+          allResident,
+          elapsed,
+          additionalResidentBytes,
+          residencyAllowanceBytes
+        )
+      ) {
         break;
       }
     }

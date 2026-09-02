@@ -564,7 +564,8 @@ export interface MeshDataLoader {
   updateView(
     viewState: MeshViewState,
     session?: UpdateSession,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    residencyAllowanceBytes?: number
   ): Promise<LoadedMeshData>;
 
   /** Clean up resources */

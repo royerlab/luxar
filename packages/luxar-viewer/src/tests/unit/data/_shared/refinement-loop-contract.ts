@@ -136,6 +136,93 @@ export function defineRefinementLoopContract(
       expect(releaseLock).toHaveBeenCalledTimes(1);
     });
 
+    it('passes the loader headroom share and records measured pass growth', async () => {
+      let hasMoreLODs = true;
+      let residentBytes = 20;
+      let loadedRungs = 2;
+      const loader = {
+        get hasMoreLODs() {
+          return hasMoreLODs;
+        },
+        get loadedLODCount() {
+          return loadedRungs;
+        },
+        totalLODCount: 4,
+        ladderResidency: () => ({
+          residentBytes,
+          loadedRungs,
+          elementCount: 0,
+          bytesPerElement: 0,
+        }),
+        updateView: vi.fn().mockImplementation(async () => {
+          residentBytes = 35;
+          loadedRungs = 4;
+          hasMoreLODs = false;
+          return null;
+        }),
+      };
+      const residencyBudget = new RefinementResidencyBudget(40);
+
+      await run({
+        loaders: new Map([['/n', loader]]),
+        viewStateQueue: new ViewStateQueue(),
+        deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
+        updateVisibleCountsInMonitor: vi.fn(),
+        releaseLock: vi.fn(),
+        retriggerUpdate: vi.fn(),
+        processSpy: vi.fn(),
+        residencyBudget,
+      });
+
+      expect(loader.updateView).toHaveBeenCalledTimes(1);
+      expect(loader.updateView.mock.calls[0][3]).toBe(20);
+      expect(residencyBudget.residentBytes).toBe(35);
+    });
+
+    it('records the post-rollback footprint when updateView rejects', async () => {
+      let residentBytes = 20;
+      let loadedRungs = 2;
+      const loader = {
+        hasMoreLODs: true,
+        get loadedLODCount() {
+          return loadedRungs;
+        },
+        totalLODCount: 4,
+        ladderResidency: () => ({
+          residentBytes,
+          loadedRungs,
+          elementCount: 0,
+          bytesPerElement: 0,
+        }),
+        rollbackToPassStart: vi.fn().mockImplementation(() => {
+          residentBytes = 20;
+          loadedRungs = 2;
+          return 2;
+        }),
+        updateView: vi.fn().mockImplementation(async () => {
+          residentBytes = 35;
+          loadedRungs = 4;
+          throw new Error('synthetic load failure');
+        }),
+      };
+      const residencyBudget = new RefinementResidencyBudget(40);
+
+      await run({
+        loaders: new Map([['/n', loader]]),
+        viewStateQueue: new ViewStateQueue(),
+        deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
+        updateVisibleCountsInMonitor: vi.fn(),
+        releaseLock: vi.fn(),
+        retriggerUpdate: vi.fn(),
+        processSpy: vi.fn(),
+        residencyBudget,
+      });
+
+      expect(loader.updateView).toHaveBeenCalledTimes(3);
+      expect(loader.rollbackToPassStart).toHaveBeenCalledTimes(3);
+      expect(residencyBudget.residentBytes).toBe(20);
+    });
+
     it('stops after one successful pass that does not advance the pending loader', async () => {
       const loader = {
         hasMoreLODs: true,

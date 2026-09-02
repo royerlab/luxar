@@ -463,7 +463,8 @@ export interface LinesDataLoader {
   updateView(
     viewState: LinesViewState,
     session?: UpdateSession,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    residencyAllowanceBytes?: number
   ): Promise<LoadedLinesData>;
 
   /** Clean up resources */

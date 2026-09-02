@@ -101,7 +101,8 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
       // declined paths, or the loop re-offers this loader every frame forever
       // while holding the update lock (the trap `isExhausted` already avoids).
       const residency = progressiveLoader.ladderResidency?.();
-      if (residency && ctx.residencyBudget?.admit(path, residency).admitted === false) {
+      const admission = residency ? ctx.residencyBudget?.admit(path, residency) : undefined;
+      if (admission?.admitted === false) {
         return false;
       }
       try {
@@ -120,7 +121,12 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
         const pass = ctx.profiler?.beginPass();
         const session = pass?.begin(`Points (${path})`);
         try {
-          const data = await loader.updateView(pointsVS, session, ctx.signal);
+          const data = await progressiveLoader.updateView(
+            pointsVS,
+            session,
+            ctx.signal,
+            admission?.allowanceBytes ?? undefined
+          );
           let committed = false;
           try {
             // Superseded/disposed while we were loading: an abort that raced the
@@ -174,6 +180,9 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
           );
         }
         return false;
+      } finally {
+        const measured = progressiveLoader.ladderResidency?.();
+        if (measured) ctx.residencyBudget?.record(path, measured);
       }
     },
     getLoaderProgress: (path, loader) => {

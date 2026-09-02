@@ -455,7 +455,8 @@ export interface DataLoader {
   updateView(
     viewState: ViewState,
     session?: UpdateSession,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    residencyAllowanceBytes?: number
   ): Promise<LoadedPointsData>;
 
   /** Clean up resources */
