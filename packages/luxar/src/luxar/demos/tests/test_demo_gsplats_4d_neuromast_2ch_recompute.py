@@ -35,6 +35,41 @@ SMALL = (4, 3, 5, 6)
 REAL_SOURCE_SHAPE = demo.SOURCE_SHAPE
 
 
+def test_resolve_channel_paths_prefers_the_complete_local_override(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(demo, "DATA_DIR", tmp_path)
+    expected = []
+    for channel in demo.CHANNELS:
+        path = tmp_path / channel["file"]
+        path.touch()
+        expected.append(path)
+    monkeypatch.setattr(
+        demo,
+        "ensure_dataset",
+        lambda name: pytest.fail(f"unexpected download of {name}"),
+    )
+
+    assert demo.resolve_channel_paths() == expected
+
+
+def test_resolve_channel_paths_fetches_the_published_pair(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(demo, "DATA_DIR", tmp_path)
+    expected = [tmp_path / "membranes", tmp_path / "nuclei"]
+    calls = []
+
+    def fetch(name: str):
+        calls.append(name)
+        return expected
+
+    monkeypatch.setattr(demo, "ensure_dataset", fetch)
+
+    assert demo.resolve_channel_paths() == expected
+    assert calls == ["gsplats_4d_neuromast_2ch"]
+
+
 @pytest.fixture(autouse=True)
 def _small_shape(monkeypatch):
     """Run the subtraction against a 360-voxel array, not an 11 GB one."""
@@ -171,9 +206,7 @@ class TestBothChannelsNeedTheirOwnSource:
 
 
 class TestEmptyFitTilesSurviveTheCullStage:
-    def test_empty_markers_are_copied_beside_culled_tiles(
-        self, monkeypatch, tmp_path
-    ):
+    def test_empty_markers_are_copied_beside_culled_tiles(self, monkeypatch, tmp_path):
         fit_dir = tmp_path / "fit"
         tiles = fit_dir / "tiles"
         tiles.mkdir(parents=True)

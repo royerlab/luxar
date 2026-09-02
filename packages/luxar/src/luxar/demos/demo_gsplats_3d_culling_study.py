@@ -117,7 +117,7 @@ DEMO_META = {
         "compute": "light",
         "gpu": "none",
         # Reuses the single-frame Drosophila archive; see `caches` below.
-        "local_data": "manual-file",
+        "local_data": None,
     },
     "caches": ["gsplats_3d_drosophila_gastrulation"],
     "outputs": ["gsplats_3d_culling_study"],

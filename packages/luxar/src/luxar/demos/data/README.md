@@ -99,10 +99,9 @@ Each subdirectory contains pre-fitted `.gsplats.zarr.zip` files for one demo:
 > generator refuses a re-pin that moves one member of a pair without the other.
 > Do the upload BEFORE the record is published: publication freezes the files.
 > `scripts/zenodo_migration_audit.py --live`
-> verifies that every declared pin matches the current draft records. All four
-> records are still unsubmitted, so each carries `published: false` and the fetch
-> derives no public URL from its record id. Publishing the records and enabling
-> their manifest URLs is the remaining record-side step.
+> verifies that every declared pin matches the published records. All four were
+> published on 2026-09-02, so each carries `published: true` and the fetch derives
+> a checksum-verified public URL from its record id.
 
 ### Other Data Files (top level)
 

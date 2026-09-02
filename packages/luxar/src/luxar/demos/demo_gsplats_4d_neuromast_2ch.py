@@ -65,14 +65,9 @@ PIPELINE — reproducible per channel with ``--recompute``:
 DATA STORAGE (important):
     These fitted gsplats are ~220 MB unzipped and are **not bundled with the
     repo**. Both channels are uploaded to the ``cc-by`` Zenodo record and pinned
-    by SHA-256 in ``demos/data_manifest.json`` (as the 133 MB
-    ``.gsplats.zarr.zip`` pair), but that record is still an unsubmitted draft —
-    it carries ``published: false``, so the fetch leg builds no URL and nothing
-    is downloadable yet. For now the data lives in a local store on this machine
-    (see ``DATA_DIR`` below), so the demo runs only where ``DATA_DIR`` is
-    populated. Once the record is published, switch ``resolve_channel_paths`` to
-    ``ensure_dataset("gsplats_4d_neuromast_2ch")`` (as the other gsplat demos do
-    via ``load_precomputed_gsplats``) and drop the local store.
+    by SHA-256 in ``demos/data_manifest.json`` as a 133 MB archive pair. The
+    published record is fetched and verified on demand. ``DATA_DIR`` remains a
+    local override for the acquisition machine and existing hand-placed copies.
 
 USAGE:
     python demo_gsplats_4d_neuromast_2ch.py [--no-serve] [--serve-only]
@@ -97,12 +92,12 @@ DEMO_META = {
     "category": "microscopy",
     "geometry": "gsplats",
     "requirements": {
-        "download_mb": 220,  # approx (local store, not bundled/hosted)
+        "download_mb": 133,
         "compute": "medium",
         "gpu": "none",
-        "local_data": "manual-file",
+        "local_data": None,
     },
-    "caches": [],
+    "caches": ["gsplats_4d_neuromast_2ch"],
     "outputs": ["gsplats_4d_neuromast_2ch"],
     "citation": {
         "short": "Jacobo lab, CZ Biohub San Francisco",
@@ -124,6 +119,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     add_demo_caption,
+    ensure_dataset,
     launch_viewer,
     parse_demo_flags,
     parse_path_arg,
@@ -137,8 +133,8 @@ from luxar.utils.paths import get_demos_output_dir
 # Configuration
 # =============================================================================
 
-# Local store for the fitted gsplats. NOT bundled/hosted yet (see the module
-# docstring's DATA STORAGE note). Override with $LUXAR_NEUROMAST_DATA_DIR.
+# Optional local override for the fitted gsplats. The normal path resolves the
+# published archive pair through the manifest.
 DATA_DIR = Path(
     os.environ.get(
         "LUXAR_NEUROMAST_DATA_DIR",
@@ -485,26 +481,13 @@ def recompute_channel_paths(work_dir: Path) -> list[Path]:
 
 
 def resolve_channel_paths() -> list[Path]:
-    """Resolve the per-channel gsplat paths in the local store.
-
-    Returns the list of existing ``.gsplats.zarr`` paths (channel order), or
-    raises with an actionable message if the local store isn't populated — the
-    files are pinned in the manifest but their Zenodo record is still an
-    unpublished draft, so there is nothing to download yet.
-    """
+    """Resolve the per-channel gsplats, preferring the local override."""
     paths = [DATA_DIR / ch["file"] for ch in CHANNELS]
-    missing = [p for p in paths if not p.exists()]
-    if missing:
-        raise FileNotFoundError(
-            "Neuromast gsplat data not found in the local store:\n"
-            + "\n".join(f"  - {p}" for p in missing)
-            + f"\n\nThis demo's fitted gsplats (~220 MB) are not bundled with the "
-            f"repo, and their Zenodo record is still an unpublished draft, so "
-            f"they cannot be fetched yet.\nPopulate {DATA_DIR} with the two "
-            "`.gsplats.zarr` (or set $LUXAR_NEUROMAST_DATA_DIR to their location).\n"
-            "See the module docstring's PIPELINE / DATA STORAGE notes."
-        )
-    return paths
+    return (
+        paths
+        if all(path.exists() for path in paths)
+        else ensure_dataset("gsplats_4d_neuromast_2ch")
+    )
 
 
 # =============================================================================

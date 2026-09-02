@@ -244,7 +244,7 @@ DEMO_META = {
         # (~3.6 GB) to stack and write them, which is not a laptop-idle task.
         "compute": "heavy",
         "gpu": "none",
-        "local_data": "manual-file",
+        "local_data": None,
     },
     "caches": ["gsplats_4d_drosophila_embryogenesis"],
     "outputs": ["gsplats_4d_drosophila_embryogenesis"],

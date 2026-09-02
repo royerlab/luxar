@@ -48,10 +48,7 @@ MANIFEST = registry._DEMOS_DIR / "data_manifest.json"
 
 LFS_ONLY = {"load_precomputed_gsplats", "load_precomputed_bundle"}
 MANIFEST_DRIVEN = {"load_dataset_gsplats", "load_dataset_bundle", "ensure_dataset"}
-HOSTED_DATASET_EXCEPTIONS = {
-    # Record unpublished; the module documents its machine-local store until CC BY publishes.
-    "gsplats_4d_neuromast_2ch": "documented machine-local store",
-}
+HOSTED_DATASET_EXCEPTIONS: dict[str, str] = {}
 
 
 def _manifest() -> dict:
