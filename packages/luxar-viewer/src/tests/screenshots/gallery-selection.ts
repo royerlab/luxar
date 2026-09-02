@@ -18,7 +18,7 @@
 const README_GALLERY_PATH = /docs\/images\/readme\/gallery\/([A-Za-z0-9_-]+)\.(?:webp|webm)\b/g;
 
 function hostedGalleryPattern(baseUrl: string): RegExp {
-  const escapedBaseUrl = baseUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const escapedBaseUrl = baseUrl.replace(/\/+$/, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`${escapedBaseUrl}/([A-Za-z0-9_-]+\\.(?:webp|webm))\\b`, 'g');
 }
 

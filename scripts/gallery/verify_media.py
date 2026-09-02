@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import re
 import sys
@@ -107,6 +108,8 @@ def verify_hosted_entry(base_url: str, entry: MediaEntry) -> None:
     request = Request(f"{base_url}/{entry.key}", headers={"User-Agent": USER_AGENT})
     try:
         with urlopen(request, timeout=TIMEOUT_SECONDS) as response:  # nosec B310
+            if urlsplit(response.url).scheme != "https":
+                raise VerificationError("redirected to a non-HTTPS URL")
             if response.status != 200:
                 raise VerificationError(f"HTTP {response.status}")
             content_length = response.headers.get("Content-Length")
@@ -128,6 +131,8 @@ def verify_hosted_entry(base_url: str, entry: MediaEntry) -> None:
         raise VerificationError(f"HTTP {exc.code}") from exc
     except URLError as exc:
         raise VerificationError(str(exc.reason)) from exc
+    except (OSError, http.client.HTTPException) as exc:
+        raise VerificationError(str(exc)) from exc
     if size_bytes != entry.size_bytes:
         raise VerificationError(f"read {size_bytes} bytes, expected {entry.size_bytes}")
     if digest.hexdigest() != entry.sha256:
