@@ -1408,15 +1408,15 @@ def test_credit_guard_flags_a_contradicting_footer(short: str, overlay: str) -> 
         # ``short`` with a title-led footer nobody writes today, and a
         # leading-name rule would reject all four ('Nuclear', 'OpenCell',
         # 'Dip-C', 'Human'). Being hypotheticals, they are not the argument for
-        # the any-name rule — the row below them, a real footer minus one word,
-        # is (see the section comment).
+        # the any-name rule; the final, dmri-shaped row demonstrates the
+        # copy-edit fragility described in the section comment.
         ("Bui et al. 2013", "Nuclear Pore Complex (Bui et al. 2013)"),
         ("Cho et al. 2022", "OpenCell MAP4 (Cho et al. 2022)"),
         ("Tan et al. 2018", "Dip-C, Tan et al. 2018"),
         ("Luck et al. 2020", "Human Reference Interactome, Luck et al. 2020"),
-        # The "HCP-1065 atlas" corpus footer near the top of this list, with its
-        # one lowercase word removed: under a leading-name rule 'atlas' is the only
-        # thing stopping the walk, so deleting a word turns a correct credit red.
+        # Constructed from the dmri footer by moving its appended year inside the
+        # credit parentheses, then removing "atlas": under a leading-name rule,
+        # that ordinary copy-edit turns a correct credit red.
         ("Yeh 2022", "HCP-1065 (Yeh 2022, CC BY-SA 4.0) — 87 tracts"),
     ],
 )
