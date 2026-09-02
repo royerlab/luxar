@@ -20,13 +20,14 @@ figure for data that has one. Digest-backed archive measurements carry a
 ``measured_sha256`` so ``--check`` can say when the bytes read by ``--refresh`` are
 no longer pinned, which is the drift a refit causes. Source-derived figures may
 retain their own provenance note after a later pinned archive read supplies that
-digest.
+digest. ``measured_from`` names the refresh source (``staged``, ``repo``, or
+``cache``); ``hosted`` records a manual read of deposition-verified hosted bytes.
 
 ``quality_note`` is internal provenance and is never rendered. ``quality_caveat``
-is reader-facing text rendered next to an absent quality figure and tells
-``--check`` that the absence is explained. ``unmeasured_reason`` is written by
-``--refresh`` when a local file exists but is not the pinned artifact and no
-committed measurement survives that rejected read.
+is reader-facing text that qualifies a published quality figure or explains an
+absent one to ``--check``. ``unmeasured_reason`` is written by ``--refresh`` when
+a local file exists but is not the pinned artifact and no committed measurement
+survives that rejected read.
 
 This script NEVER talks to Zenodo. It writes markdown for a human to paste into
 a draft, and publication stays a manual act.
@@ -60,6 +61,15 @@ CACHE_DIR = Path.home() / ".cache/luxar"
 CHARACTERISTICS = REPO_ROOT / "scripts/demo_archive_characteristics.json"
 
 _ABSENT = "—"
+_RECOVERED_SOURCE_FIELDS = (
+    "psnr_db",
+    "foreground_psnr_db",
+    "foreground_fraction",
+    "source_shape",
+    "source_dtype",
+    "source_bytes",
+    "frames",
+)
 
 
 class RefreshResult(NamedTuple):
@@ -513,6 +523,7 @@ def _retain_preferred_measurements(
     measured: dict[str, Any],
     existing: dict[str, Any],
     pinned_digests: dict[str, Optional[str]],
+    recovered_source_keys: Optional[set[str]] = None,
 ) -> tuple[int, int]:
     """Blank unpinned reads and retain stronger committed measurements.
 
@@ -520,6 +531,7 @@ def _retain_preferred_measurements(
     sidecar churn when a later local refresh sees the same pinned archive.
     Source-derived figures survive a stampless pinned read, while the read still
     supplies archive metadata and provenance that the committed row lacks.
+    ``recovered_source_keys`` includes pre-filled rows in the retained count.
     """
     rank = {"staged": 2, "repo": 1, "cache": 1}
     measurement_fields = (
@@ -535,16 +547,7 @@ def _retain_preferred_measurements(
         "source_bytes",
         "frames",
     )
-    recovered_fields = (
-        "psnr_db",
-        "foreground_psnr_db",
-        "foreground_fraction",
-        "source_shape",
-        "source_dtype",
-        "source_bytes",
-        "frames",
-    )
-    retained = 0
+    retained_keys: set[str] = set()
     rejected = 0
     for key, new_entry in list(measured.items()):
         old_entry = existing.get(key)
@@ -582,12 +585,12 @@ def _retain_preferred_measurements(
         elif old_entry is not None and old_entry.get("measured_sha256") is None:
             recovered = {
                 field: old_entry[field]
-                for field in recovered_fields
+                for field in _RECOVERED_SOURCE_FIELDS
                 if old_entry.get(field) is not None and new_entry.get(field) is None
             }
             if recovered:
                 measured[key] = {**new_entry, **recovered}
-                retained += 1
+                retained_keys.add(key)
         elif (
             old_entry is not None
             and old_entry.get("measured_sha256") == pinned_digest
@@ -595,8 +598,37 @@ def _retain_preferred_measurements(
             < rank.get(old_entry.get("measured_from"), 0)
         ):
             measured[key] = old_entry
-            retained += 1
-    return retained, rejected
+            retained_keys.add(key)
+        if (
+            recovered_source_keys is not None
+            and key in recovered_source_keys
+            and new_entry.get("measured_sha256") == pinned_digest
+        ):
+            retained_keys.add(key)
+    return len(retained_keys), rejected
+
+
+def _recover_source_fields(
+    key: str,
+    existing: Optional[dict[str, Any]],
+    measured: dict[str, Any],
+    measured_sha256: Optional[str],
+    recovered_keys: set[str],
+) -> dict[str, Any]:
+    """Fill compatible prior facts and mark the row retained when any survive."""
+    if existing is None or existing.get("measured_sha256") not in (
+        None,
+        measured_sha256,
+    ):
+        return {}
+    recovered = {
+        field: existing[field]
+        for field in _RECOVERED_SOURCE_FIELDS
+        if existing.get(field) is not None and measured.get(field) is None
+    }
+    if recovered:
+        recovered_keys.add(key)
+    return recovered
 
 
 def refresh_characteristics(
@@ -624,6 +656,7 @@ def refresh_characteristics(
     unpinned_unreadable = 0
     staged_selected = 0
     staged_hash_failures = 0
+    recovered_source_keys: set[str] = set()
     for dataset, entry in sorted(manifest["datasets"].items()):
         if entry.get("bucket") != "zenodo":
             continue
@@ -658,6 +691,13 @@ def refresh_characteristics(
                 else:
                     unpinned_unreadable += 1
                 continue
+            recovered_source = _recover_source_fields(
+                key,
+                existing.get(key),
+                info,
+                measured_sha256,
+                recovered_source_keys,
+            )
             measured[key] = {
                 **info,
                 # Which copy was read, and what it hashed to. Without the digest a
@@ -670,32 +710,17 @@ def refresh_characteristics(
                     for field in ("quality_note", "quality_caveat")
                     if key in existing and field in existing[key]
                 },
-                # Source-grid facts the ARCHIVE does not carry, kept across a
-                # re-read instead of being blanked. An archive built from
-                # per-timepoint fits loaded without statistics has no
-                # source_shape/dtype/bytes of its own (the cell-tracking bundle is
-                # the case in hand), so a supplied value is the only thing the
-                # compression column has to work with — and a refresh, which is the
-                # documented step after any upload, would otherwise silently drop
-                # it and bring the "no compression" gaps back.
-                #
-                # Only ever fills an ABSENCE, and only from an unmeasured entry or
-                # one measured from these same bytes. A value the fresh read DID
-                # produce always wins, and metadata from a superseded archive is
-                # dropped rather than being relabelled with the new digest.
-                **{
-                    field: existing[key][field]
-                    for field in ("source_shape", "source_dtype", "source_bytes")
-                    if key in existing
-                    and existing[key].get(field) is not None
-                    and existing[key].get("measured_sha256") in (None, measured_sha256)
-                    and info.get(field) is None
-                },
+                # Source-derived facts the ARCHIVE does not carry, kept across a
+                # re-read instead of being blanked, because refresh is required
+                # after upload and must not reopen published metadata gaps. Only
+                # fills an absence from an unmeasured entry or one measured from
+                # these same bytes.
+                **recovered_source,
             }
 
     read = len(measured)
     retained, rejected = _retain_preferred_measurements(
-        measured, existing, pinned_digests
+        measured, existing, pinned_digests, recovered_source_keys
     )
     preserved_entries = {
         k: v for k, v in existing.items() if k in seen and k not in measured
@@ -717,10 +742,13 @@ def refresh_characteristics(
                     "recovered from the stated source rather than archive bytes; "
                     "a later pinned archive read may supply the digest while "
                     "retaining those source-derived figures. "
-                    "quality_note is internal provenance; quality_caveat is "
-                    "published beside an absent quality figure and tells --check "
-                    "that the absence is explained. unmeasured_reason records why "
-                    "refresh deliberately withheld measurements."
+                    "measured_from names the refresh source (staged, repo, or "
+                    "cache); hosted records a manual read of deposition-verified "
+                    "hosted bytes. "
+                    "quality_note is internal provenance; quality_caveat qualifies "
+                    "a published quality figure or explains an absent one to "
+                    "--check. unmeasured_reason records why refresh deliberately "
+                    "withheld measurements."
                 ),
                 "archives": archives,
             },
@@ -1181,7 +1209,8 @@ def main() -> int:
         print(
             f"read {result.read} archive(s) here, skipped {result.rejected} read(s) "
             f"taken from bytes the manifest does not pin, kept {result.retained} "
-            "committed measurement(s) that outrank the local copy, preserved "
+            "committed measurement(s) that outrank or complete the local copy, "
+            "preserved "
             f"{result.preserved} committed measurement(s) without a fresh "
             "read -> "
             f"{CHARACTERISTICS.relative_to(REPO_ROOT)}"

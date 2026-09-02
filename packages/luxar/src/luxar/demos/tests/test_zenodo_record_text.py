@@ -1622,6 +1622,85 @@ def test_refresh_preserves_supplied_metadata_absent_from_a_successful_read(
     assert entry["source_bytes"] == 838_860_800
 
 
+def test_refresh_preserves_source_scored_quality_absent_from_same_archive_read(
+    gen: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    write_frame: _FrameWriter,
+) -> None:
+    key = "ds/a.gsplats.zarr.zip"
+    archive = tmp_path / "a.gsplats.zarr.zip"
+    write_frame(archive, psnr=None, source_bytes=None)
+    digest = gen._sha256_of(archive)
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(
+        gen,
+        "load_characteristics",
+        lambda: {
+            key: {
+                "measured_sha256": digest,
+                "psnr_db": [24.7, 26.5],
+                "foreground_psnr_db": [18.3, 20.2],
+                "foreground_fraction": 0.2033,
+                "frames": 100,
+                "quality_caveat": "reader-facing qualification",
+            }
+        },
+    )
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter((archive,)))
+
+    counts = gen.refresh_characteristics(_fake_manifest([_entry(archive.name, digest)]))
+
+    payload = json.loads((tmp_path / "chars.json").read_text())
+    entry = payload["archives"][key]
+    assert counts.retained == 1
+    assert entry["measured_sha256"] == digest
+    assert entry["psnr_db"] == [24.7, 26.5]
+    assert entry["foreground_psnr_db"] == [18.3, 20.2]
+    assert entry["foreground_fraction"] == 0.2033
+    assert entry["frames"] == 100
+    assert "qualifies a published quality figure" in payload["description"]
+
+
+def test_refresh_description_matches_the_committed_sidecar(
+    gen: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    refresh_key_order = [
+        "n_splats",
+        "ndim",
+        "format_version",
+        "topology",
+        "psnr_db",
+        "foreground_psnr_db",
+        "foreground_fraction",
+        "source_shape",
+        "source_dtype",
+        "source_bytes",
+        "frames",
+        "quality_quotable",
+        "measured_from",
+        "measured_sha256",
+        "quality_note",
+        "quality_caveat",
+    ]
+    committed = json.loads(gen.CHARACTERISTICS.read_text())
+    committed_description = committed["description"]
+    assert list(committed["archives"]) == sorted(committed["archives"])
+    for info in committed["archives"].values():
+        emitted_keys = [key for key in info if key in refresh_key_order]
+        assert emitted_keys == [key for key in refresh_key_order if key in info]
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(gen, "load_characteristics", lambda: {})
+
+    gen.refresh_characteristics({"datasets": {}})
+
+    refreshed = json.loads((tmp_path / "chars.json").read_text())
+    assert refreshed["description"] == committed_description
+    assert "hosted records a manual read" in refreshed["description"]
+
+
 def test_refresh_discards_supplied_metadata_from_different_archive_bytes(
     gen: Any,
     tmp_path: Path,
@@ -1639,6 +1718,9 @@ def test_refresh_discards_supplied_metadata_from_different_archive_bytes(
         lambda: {
             key: {
                 "measured_sha256": "0" * 64,
+                "psnr_db": [24.7, 26.5],
+                "foreground_psnr_db": [18.3, 20.2],
+                "foreground_fraction": 0.2033,
                 "source_shape": [100, 64, 256, 256],
                 "source_dtype": "uint16",
                 "source_bytes": 838_860_800,
@@ -1651,6 +1733,9 @@ def test_refresh_discards_supplied_metadata_from_different_archive_bytes(
 
     entry = json.loads((tmp_path / "chars.json").read_text())["archives"][key]
     assert entry["measured_sha256"] == digest
+    assert entry["psnr_db"] is None
+    assert entry["foreground_psnr_db"] is None
+    assert entry["foreground_fraction"] is None
     assert entry["source_shape"] is None
     assert entry["source_dtype"] is None
     assert entry["source_bytes"] is None
@@ -1675,6 +1760,7 @@ def test_refresh_prefers_measured_metadata_over_supplied_metadata(
                 "measured_sha256": digest,
                 "quality_note": "internal provenance",
                 "quality_caveat": "reader-facing caveat",
+                "psnr_db": 12.0,
                 "source_bytes": 838_860_800,
             }
         },
@@ -1686,6 +1772,7 @@ def test_refresh_prefers_measured_metadata_over_supplied_metadata(
     entry = json.loads((tmp_path / "chars.json").read_text())["archives"][key]
     assert entry["quality_note"] == "internal provenance"
     assert entry["quality_caveat"] == "reader-facing caveat"
+    assert entry["psnr_db"] == 40.0
     assert entry["source_bytes"] == 1_000_000
 
 
@@ -1783,7 +1870,10 @@ def test_refresh_summary_distinguishes_rejected_and_retained_reads(
     summary = capsys.readouterr().out
     assert "read 4 archive(s)" in summary
     assert "skipped 1 read(s) taken from bytes the manifest does not pin" in summary
-    assert "kept 2 committed measurement(s) that outrank the local copy" in summary
+    assert (
+        "kept 2 committed measurement(s) that outrank or complete the local copy"
+        in summary
+    )
     assert "preserved 3 committed measurement(s) without a fresh read" in summary
     assert "skipped 0 pinned fit archive(s)" in summary
     assert "matched the manifest pin but could not be parsed" in summary
@@ -2115,20 +2205,114 @@ def test_committed_measurements_match_the_hosted_manifest_pins(gen: Any) -> None
 
 def test_cell_tracking_measurements_include_the_declared_raw_volume(gen: Any) -> None:
     chars = gen.load_characteristics()
-    infos = [
-        info for key, info in chars.items() if key.startswith("gsplats_cell_tracking/")
-    ]
+    infos = {
+        key: info
+        for key, info in chars.items()
+        if key.startswith("gsplats_cell_tracking/")
+    }
     provenance = (
         "Source grid declared from the manifest acquisition shape "
         "(100 x 64 x 256 x 256 uint16), not read from archive stamps."
     )
+    measured_key = "gsplats_cell_tracking/6bba_09961292.gsplats.zarr.zip"
 
     assert len(infos) == 7
-    for info in infos:
+    for key, info in infos.items():
         assert info["source_shape"] == [100, 64, 256, 256]
         assert info["source_dtype"] == "uint16"
         assert info["source_bytes"] == 838_860_800
-        assert info["quality_note"] == provenance
+        if key == measured_key:
+            assert info["quality_note"].startswith(f"{provenance} Quality figures")
+            assert "voxel_size=1.625 x 0.40625 x 0.40625 um" in info["quality_note"]
+        else:
+            assert info["quality_note"] == provenance
+            assert info["psnr_db"] is None
+            assert info["foreground_psnr_db"] is None
+            assert info["foreground_fraction"] is None
+            assert "same stacking pipeline" in info["quality_caveat"]
+            assert "was not measured" in info["quality_caveat"]
+
+
+def test_cell_tracking_scored_crop_publishes_qualified_figures(gen: Any) -> None:
+    key = "gsplats_cell_tracking/6bba_09961292.gsplats.zarr.zip"
+    info = gen.load_characteristics()[key]
+
+    assert info["psnr_db"] == [24.7, 26.5]
+    assert info["foreground_psnr_db"] == [18.3, 20.2]
+    assert info["foreground_fraction"] == 0.2033
+    assert info["quality_quotable"] is False
+    # The published figures use each fit's floor-subtracted target. Against that
+    # same basis the all-zero scores span 17.5-19.5 dB; 16.55-18.27 is the raw
+    # source result and must not be mixed into this comparison.
+    assert "all-zero floor was 17.5-19.5 dB" in info["quality_note"]
+    assert (
+        "foreground fraction is the median over the sampled frames"
+        in info["quality_note"]
+    )
+    assert f"{info['psnr_db'][0]}–{info['psnr_db'][1]}" in info["quality_caveat"]
+    assert (
+        f"{info['foreground_psnr_db'][0]}–{info['foreground_psnr_db'][1]}"
+        in info["quality_caveat"]
+    )
+    assert "about 13 dB below" in info["quality_caveat"]
+    assert "about 23 dB below" in info["quality_caveat"]
+    assert "scores higher in foreground" in info["quality_caveat"]
+    assert "archive scores lower" in info["quality_caveat"]
+
+
+def test_hosted_bundle_measurements_publish_pinned_ranges(gen: Any) -> None:
+    manifest = json.loads(gen.MANIFEST.read_text())
+    chars = gen.load_characteristics()
+    expected = {
+        "gsplats_celegans/celegans_s1.gsplats.zarr.zip": (
+            5_640_070,
+            400,
+            [29.48, 39.77],
+            [21.79, 38.15],
+            0.3802,
+        ),
+        "gsplats_nexrad_supercell/nexrad_supercell.gsplats.zarr.zip": (
+            817_989,
+            82,
+            [43.26, 56.82],
+            [32.02, 39.74],
+            0.0014,
+        ),
+    }
+
+    for key, (
+        n_splats,
+        frames,
+        psnr,
+        foreground_psnr,
+        foreground_fraction,
+    ) in expected.items():
+        dataset, filename = key.split("/", 1)
+        spec = next(
+            spec
+            for _variant, spec in gen._files_of(manifest["datasets"][dataset])
+            if spec["name"] == filename
+        )
+        info = chars[key]
+        assert info["n_splats"] == n_splats
+        assert info["frames"] == frames
+        assert info["psnr_db"] == psnr
+        assert info["foreground_psnr_db"] == foreground_psnr
+        assert info["foreground_fraction"] == foreground_fraction
+        assert info["measured_from"] == "hosted"
+        assert info["measured_sha256"] == gen._pinned_digest(spec)
+        assert info["quality_quotable"] is None
+        assert f"RANGE over its {frames} per-frame stores" in info["quality_caveat"]
+        if key.startswith("gsplats_celegans/"):
+            assert (
+                "foreground stamps use a separate Otsu mask per frame"
+                in info["quality_caveat"]
+            )
+            assert "high end is the near-empty early embryo" in info["quality_caveat"]
+            assert (
+                f"foreground fraction is frame 0's {info['foreground_fraction']}"
+                in info["quality_caveat"]
+            )
 
 
 def test_h2afva_51tp_measurements_describe_the_pinned_flat_ladder(gen: Any) -> None:
@@ -2161,6 +2345,18 @@ def test_h2afva_unscored_variants_publish_consistent_caveats(gen: Any) -> None:
         assert "isotropic grid" in info["quality_caveat"]
         assert "requires a refit" in info["quality_caveat"]
         assert "every-fifth-frame slice" in info["quality_caveat"]
+
+
+def test_droso_500tp_keeps_archive_derived_quotability(gen: Any) -> None:
+    info = gen.load_characteristics()[
+        "gsplats_4d_drosophila_embryogenesis/"
+        "drosophila_embryogenesis_500tp.gsplats.zarr.zip"
+    ]
+
+    assert info["psnr_db"] is None
+    assert info["foreground_psnr_db"] is None
+    assert info["quality_quotable"] is None
+    assert "published archive carries no stamps" in info["quality_caveat"]
 
 
 def test_milkyway_hosted_archive_keeps_the_levels_generation(gen: Any) -> None:
@@ -2345,8 +2541,15 @@ def test_an_additive_count_is_absent_if_any_chunk_is_unreadable(
 # copy would describe a generation the record does not serve. Printed
 # identically to "nobody measured this yet", it reads as an invitation to make
 # the generator read the archive -- which republishes precisely the unpinned
-# numbers the marker withholds. celegans and nexrad both sit in this state with
-# a local copy whose size matches the pin EXACTLY and whose digest does not.
+# numbers the marker withholds.
+#
+# The rule is about WHICH BYTES were read, not about which datasets. celegans
+# and nexrad sat all-null for exactly this reason while only their older
+# in-repo copies were on hand; both are now measured from the HOSTED artifacts,
+# whose sha256 matches the manifest's pinned digest. So the invariant below is
+# expressed as "figures require pinned provenance" rather than by naming rows:
+# that still blocks a careless local read, and it does not go stale when a
+# dataset is legitimately measured.
 # ---------------------------------------------------------------------------
 
 
@@ -2389,13 +2592,89 @@ class TestCheckExplainsAnAbsentFigure:
         "unmeasured_reason": "unpinned-local-copy",
     }
 
-    def test_committed_unpinned_rows_carry_the_reason(self, gen: Any) -> None:
-        chars = gen.load_characteristics()
-        for key in (
-            "gsplats_celegans/celegans_s1.gsplats.zarr.zip",
-            "gsplats_nexrad_supercell/nexrad_supercell.gsplats.zarr.zip",
+    def test_published_figures_come_from_pinned_bytes(self, gen: Any) -> None:
+        """A row may only publish figures read from the PINNED artifact.
+
+        This is the rule the all-null marker exists to protect, stated over every
+        committed row instead of by naming two datasets. A row that carries a
+        PSNR must record the digest it was measured from, and that digest must be
+        the one the manifest pins for the copy the record serves
+        (``hosted_sha256`` where the hosted and in-repo copies diverged, else
+        ``sha256``). Measuring an unpinned local copy therefore still fails,
+        while a dataset legitimately measured from its hosted bytes does not
+        break the test.
+        """
+        manifest = json.loads(gen.MANIFEST.read_text())
+        pinned = {
+            gen._char_key(dataset, variant, spec["name"]): gen._pinned_digest(spec)
+            for dataset, entry in manifest["datasets"].items()
+            if entry.get("bucket") == "zenodo"
+            for variant, spec in gen._files_of(entry)
+        }
+        offenders = [
+            (key, info["measured_sha256"], pinned.get(key))
+            for key, info in gen.load_characteristics().items()
+            # A NULL digest is legitimate and documented: the schema says it
+            # marks figures recovered from the stated source rather than read
+            # from archive bytes (the h2afva and neuromast rows). What must never
+            # happen is a digest that is NOT the pinned one -- that is a read of
+            # some other generation, which is the mistake the marker guards.
+            if info.get("measured_sha256") is not None
+            and info["measured_sha256"] != pinned.get(key)
+        ]
+        assert not offenders, f"figures read from unpinned bytes: {offenders}"
+
+    def test_celegans_note_keeps_its_measured_provenance(self, gen: Any) -> None:
+        """A corrected note must APPEND, never replace, prior measurements.
+
+        `quality_note` is internal and never rendered, so keeping the old
+        provenance under a correction costs nothing -- and replacing it has
+        already destroyed real measurements once. These four are the ones that
+        went missing: the absolute Otsu range, the fixed-budget explanation for
+        the genuine quality decline, and the fixed-component recipe that is the
+        recorded route to a mask which does not move with image content.
+        """
+        note = gen.load_characteristics()[
+            "gsplats_celegans/celegans_s1.gsplats.zarr.zip"
+        ]["quality_note"]
+        for fact in (
+            "0.0135",
+            "0.1795",
+            "MAX_SPLATS",
+            "6-connected",
+            "26.4%",
+            "22,000",
         ):
-            assert chars[key]["unmeasured_reason"] == "unpinned-local-copy"
+            assert fact in note, f"prior provenance lost from celegans note: {fact}"
+
+    def test_every_absent_figure_is_explained(self, gen: Any) -> None:
+        """No committed row may omit PSNR without saying why.
+
+        A bare null is the one thing a reader cannot distinguish from evasion, so
+        an absence must carry a published caveat, an ``unmeasured_reason``, or an
+        explicit ``quality_quotable: False``.
+        """
+        chars = gen.load_characteristics()
+        assert chars, "no committed characteristics to check"
+        unexplained = [
+            key
+            for key, info in chars.items()
+            if info.get("psnr_db") is None
+            and not info.get("quality_caveat")
+            and not info.get("unmeasured_reason")
+            and info.get("quality_quotable") is not False
+        ]
+        assert not unexplained, f"absent PSNR with no stated reason: {unexplained}"
+
+    def test_any_unmeasured_reason_is_a_known_value(self, gen: Any) -> None:
+        """Guard the spelling without requiring any row to currently use it."""
+        allowed = {"unpinned-local-copy"}
+        seen = {
+            info["unmeasured_reason"]
+            for info in gen.load_characteristics().values()
+            if info.get("unmeasured_reason")
+        }
+        assert seen <= allowed, f"unknown unmeasured_reason: {seen - allowed}"
 
     def test_an_unpinned_local_copy_is_named_as_the_cause(
         self,
