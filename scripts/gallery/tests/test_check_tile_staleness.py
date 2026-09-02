@@ -477,6 +477,25 @@ def test_unrelated_media_manifest_edit_does_not_refresh_stale_tiles(
     assert by_id["b"].stale_inputs == ("demo generator",)
 
 
+def test_appending_media_manifest_entry_does_not_refresh_previous_last_tile(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    demo = repo / "packages/luxar/src/luxar/demos/demo_b.py"
+    demo.write_text("# revised demo b\n")
+    _commit(repo, "revise demo b", 22)
+
+    manifest_path = repo / "scripts/gallery/media-manifest.json"
+    _write_media_manifest(manifest_path, demos=("a", "b", "zzz"))
+    _commit(repo, "append unrelated media entry", 23)
+
+    by_id = {
+        status.demo_id: status for status in stale.GalleryHistory(repo).tile_statuses()
+    }
+    assert by_id["a"].stale_inputs == ()
+    assert by_id["b"].stale_inputs == ("demo generator",)
+
+
 def test_shading_docs_and_tests_do_not_mark_tiles_stale(tmp_path: Path, capsys) -> None:
     repo = _repo(tmp_path)
     (repo / "packages/luxar/src/luxar/shading/README.md").write_text("docs only\n")
