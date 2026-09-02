@@ -608,6 +608,29 @@ def _retain_preferred_measurements(
     return len(retained_keys), rejected
 
 
+def _recover_source_fields(
+    key: str,
+    existing: Optional[dict[str, Any]],
+    measured: dict[str, Any],
+    measured_sha256: Optional[str],
+    recovered_keys: set[str],
+) -> dict[str, Any]:
+    """Fill compatible prior facts and mark the row retained when any survive."""
+    if existing is None or existing.get("measured_sha256") not in (
+        None,
+        measured_sha256,
+    ):
+        return {}
+    recovered = {
+        field: existing[field]
+        for field in _RECOVERED_SOURCE_FIELDS
+        if existing.get(field) is not None and measured.get(field) is None
+    }
+    if recovered:
+        recovered_keys.add(key)
+    return recovered
+
+
 def refresh_characteristics(
     manifest: dict[str, Any], extra_root: Optional[Path] = None
 ) -> RefreshResult:
@@ -668,16 +691,13 @@ def refresh_characteristics(
                 else:
                     unpinned_unreadable += 1
                 continue
-            recovered_source = {
-                field: existing[key][field]
-                for field in _RECOVERED_SOURCE_FIELDS
-                if key in existing
-                and existing[key].get(field) is not None
-                and existing[key].get("measured_sha256") in (None, measured_sha256)
-                and info.get(field) is None
-            }
-            if recovered_source:
-                recovered_source_keys.add(key)
+            recovered_source = _recover_source_fields(
+                key,
+                existing.get(key),
+                info,
+                measured_sha256,
+                recovered_source_keys,
+            )
             measured[key] = {
                 **info,
                 # Which copy was read, and what it hashed to. Without the digest a
