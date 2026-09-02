@@ -1667,13 +1667,30 @@ def test_refresh_description_matches_the_committed_sidecar(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    refresh_key_order = [
+        "n_splats",
+        "ndim",
+        "format_version",
+        "topology",
+        "psnr_db",
+        "foreground_psnr_db",
+        "foreground_fraction",
+        "source_shape",
+        "source_dtype",
+        "source_bytes",
+        "frames",
+        "quality_quotable",
+        "measured_from",
+        "measured_sha256",
+        "quality_note",
+        "quality_caveat",
+    ]
     committed = json.loads(gen.CHARACTERISTICS.read_text())
     committed_description = committed["description"]
     assert list(committed["archives"]) == sorted(committed["archives"])
     for info in committed["archives"].values():
-        keys = list(info)
-        if "quality_note" in info and "quality_caveat" in info:
-            assert keys.index("quality_note") < keys.index("quality_caveat")
+        emitted_keys = [key for key in info if key in refresh_key_order]
+        assert emitted_keys == [key for key in refresh_key_order if key in info]
     monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
     monkeypatch.setattr(gen, "load_characteristics", lambda: {})
 
