@@ -158,6 +158,7 @@ def _repo(tmp_path: Path) -> Path:
     _git(tmp_path, "init", "-b", "dev")
     _git(tmp_path, "config", "user.name", "Gallery Test")
     _git(tmp_path, "config", "user.email", "gallery@example.com")
+    _git(tmp_path, "config", "diff.indentHeuristic", "true")
     _commit(tmp_path, "initial", 20)
 
     # A re-capture rewrites the whole manifest; its commit is the publish date.
@@ -458,6 +459,32 @@ def test_appending_a_manifest_entry_does_not_stale_the_previous_last_entry(
     assert by_id["b"].stale_inputs == ()
 
 
+def test_inserting_a_manifest_entry_does_not_stale_the_following_entry(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    manifest_path = repo / "scripts/gallery/manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["demos"].insert(
+        1,
+        {
+            "id": "c",
+            "title": "C",
+            "script": "demo_c.py",
+            "dataset": "datasets/demos/c.luxar.zarr",
+        },
+    )
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    (repo / "packages/luxar/src/luxar/demos/demo_c.py").write_text("# demo c\n")
+    _commit(repo, "insert c before b", 22)
+
+    by_id = {
+        status.demo_id: status for status in stale.GalleryHistory(repo).tile_statuses()
+    }
+    assert by_id["a"].stale_inputs == ()
+    assert by_id["b"].stale_inputs == ()
+
+
 def test_unrelated_media_manifest_edit_does_not_refresh_stale_tiles(
     tmp_path: Path,
 ) -> None:
@@ -490,6 +517,33 @@ def test_appending_media_manifest_entry_does_not_refresh_previous_last_tile(
     manifest_path = repo / "scripts/gallery/media-manifest.json"
     _write_media_manifest(manifest_path, demos=("a", "b", "zzz"))
     _commit(repo, "append unrelated media entry", 23)
+
+    by_id = {
+        status.demo_id: status for status in stale.GalleryHistory(repo).tile_statuses()
+    }
+    assert by_id["a"].stale_inputs == ()
+    assert by_id["b"].stale_inputs == ("demo generator",)
+
+
+def test_inserting_media_manifest_entry_does_not_refresh_following_tile(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    demo = repo / "packages/luxar/src/luxar/demos/demo_b.py"
+    demo.write_text("# revised demo b\n")
+    _commit(repo, "revise demo b", 22)
+
+    manifest_path = repo / "scripts/gallery/media-manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    variants = manifest["tiles"]["a"]
+    entry_lines = json.dumps({"zzz": variants}, indent=2).splitlines()[1:-1]
+    entry_lines = [f"  {line}" for line in entry_lines]
+    entry_lines[-1] += "   ,"
+    text = manifest_path.read_text()
+    manifest_path.write_text(
+        text.replace('    "b": {', "\n".join(entry_lines) + '\n    "b": {')
+    )
+    _commit(repo, "insert unrelated media entry before b", 23)
 
     by_id = {
         status.demo_id: status for status in stale.GalleryHistory(repo).tile_statuses()
@@ -572,7 +626,7 @@ def test_media_sizes_come_from_the_manifest_and_remain_report_only(
     assert "1 over-limit file" in output
 
 
-@pytest.mark.parametrize("bad_size", [None, "1024"])
+@pytest.mark.parametrize("bad_size", [None, "1024", True])
 def test_malformed_media_size_reports_a_clean_error(
     tmp_path: Path, capsys, bad_size: object
 ) -> None:

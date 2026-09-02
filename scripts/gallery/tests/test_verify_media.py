@@ -6,7 +6,9 @@ import copy
 import importlib.util
 import json
 import sys
+from email.message import Message
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -36,28 +38,103 @@ def test_committed_manifest_is_consistent_with_readme() -> None:
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
+        (None, None, "entry must be an object"),
         ("key", "deadbeefdeadbeef.webp", "key must be"),
         ("bytes", 0, "positive integer"),
+        ("bytes", True, "positive integer"),
         ("content_type", "video/webm", "content_type must be image/webp"),
         ("sha256", "not-a-digest", "64 lowercase hex"),
+        ("sha256", "0" * 65, "64 lowercase hex"),
     ],
 )
 def test_invalid_manifest_entry_is_rejected(
-    field: str, value: object, message: str
+    field: str | None, value: object, message: str
 ) -> None:
     manifest = _manifest()
-    manifest["tiles"]["atp_synthase"]["webp"][field] = value
+    if field is None:
+        manifest["tiles"]["atp_synthase"]["webp"] = value
+    else:
+        manifest["tiles"]["atp_synthase"]["webp"][field] = value
 
     with pytest.raises(verify.VerificationError, match=message):
         verify.validated_entries(manifest, (REPO_ROOT / "README.md").read_text())
 
 
-def test_readme_and_manifest_must_be_an_exact_bijection() -> None:
+@pytest.mark.parametrize("mismatch", ["missing", "duplicate", "extra", "wrong-origin"])
+def test_readme_and_manifest_must_be_an_exact_bijection(mismatch: str) -> None:
     manifest = _manifest()
     readme = (REPO_ROOT / "README.md").read_text()
+    base_url = manifest["base_url"]
     key = manifest["tiles"]["atp_synthase"]["webp"]["key"]
+    url = f"{base_url}/{key}"
+    if mismatch == "missing":
+        readme = readme.replace(key, "0" * 16 + ".webp")
+    elif mismatch == "duplicate":
+        readme += f"\n{url}\n"
+    elif mismatch == "extra":
+        readme += f"\n{base_url}/{'f' * 16}.webp\n"
+    else:
+        readme = readme.replace(url, f"https://example.com/media/{key}")
 
     with pytest.raises(verify.VerificationError, match="README media URLs differ"):
-        verify.validated_entries(
-            copy.deepcopy(manifest), readme.replace(key, "0" * 16 + ".webp")
-        )
+        verify.validated_entries(copy.deepcopy(manifest), readme)
+
+
+def _entry(variant: str) -> verify.MediaEntry:
+    content_type = verify.CONTENT_TYPES[variant]
+    return verify.MediaEntry(
+        demo_id="demo",
+        variant=variant,
+        key=f"{'0' * 16}.{variant}",
+        size_bytes=123,
+        sha256="0" * 64,
+        content_type=content_type,
+    )
+
+
+def _response(
+    *,
+    url: str = "https://data.luxarviewer.dev/media/object.webp",
+    status: int = 200,
+    content_length: str = "123",
+    content_type: str = "image/webp",
+) -> SimpleNamespace:
+    headers = Message()
+    headers["Content-Length"] = content_length
+    headers["Content-Type"] = content_type
+    return SimpleNamespace(url=url, status=status, headers=headers)
+
+
+@pytest.mark.parametrize(
+    ("response", "message"),
+    [
+        (
+            _response(url="http://example.com/object.webp"),
+            "redirected to a non-HTTPS URL",
+        ),
+        (_response(status=404), "HTTP 404"),
+        (_response(content_length="122"), "Content-Length '122', expected 123"),
+        (
+            _response(content_type="image/png"),
+            "Content-Type 'image/png', expected image/webp",
+        ),
+    ],
+)
+def test_response_metadata_rejects_mismatches(
+    response: SimpleNamespace, message: str
+) -> None:
+    with pytest.raises(verify.VerificationError, match=message):
+        verify._validate_response_metadata(response, _entry("webp"))
+
+
+@pytest.mark.parametrize(
+    ("variant", "content_type"), [("webp", "image/webp"), ("webm", "video/webm")]
+)
+def test_response_metadata_accepts_exact_match(variant: str, content_type: str) -> None:
+    verify._validate_response_metadata(
+        _response(
+            url=f"https://data.luxarviewer.dev/media/object.{variant}",
+            content_type=content_type,
+        ),
+        _entry(variant),
+    )
