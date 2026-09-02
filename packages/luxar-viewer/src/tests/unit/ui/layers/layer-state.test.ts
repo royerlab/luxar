@@ -1291,7 +1291,10 @@ describe('LayerStateManager — layer order', () => {
   // A hand-edited store can carry junk. The renderer treats a non-finite level
   // as absent, and the panel must agree or the field would show a value the
   // render is not using.
-  it('treats a non-finite authored level as unset', () => {
+  // Both fields must derive from the same sanitized read. A loose `!= null` on
+  // the raw attr would report explicit=true alongside layerOrder=undefined —
+  // the panel claiming this layer authored an order the renderer discards.
+  it('treats a non-finite authored order as unset in BOTH fields', () => {
     const mgrJunk = new LayerStateManager();
     mgrJunk.initFromSceneGraph({
       path: '',
@@ -1308,5 +1311,30 @@ describe('LayerStateManager — layer order', () => {
       ],
     } as SceneNode);
     expect(mgrJunk.getLayer('junk')?.layerOrder).toBeUndefined();
+    expect(mgrJunk.getLayer('junk')?.layerOrderExplicit).toBe(false);
+  });
+
+  // The pair can never be half-set: explicit implies a value, and a value
+  // implies explicit. Anything else is a state no consumer knows how to read.
+  it('never reports explicit without a value, or a value without explicit', () => {
+    for (const raw of [3, 0, -5, 'front', null, Number.NaN, Number.POSITIVE_INFINITY, true]) {
+      const m = new LayerStateManager();
+      m.initFromSceneGraph({
+        path: '',
+        type: 'scene',
+        attrs: {},
+        hasSpatialIndex: false,
+        children: [
+          {
+            path: 'n',
+            type: 'gsplats',
+            attrs: { layer: true, layer_order: raw } as never,
+            hasSpatialIndex: true,
+          },
+        ],
+      } as SceneNode);
+      const layer = m.getLayer('n')!;
+      expect(layer.layerOrderExplicit).toBe(layer.layerOrder !== undefined);
+    }
   });
 });

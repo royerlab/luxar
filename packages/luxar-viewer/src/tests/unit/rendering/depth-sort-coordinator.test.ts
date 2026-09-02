@@ -5198,12 +5198,17 @@ describe('depth-sort coordinator — layer_order bands', () => {
     // always draws FIRST. An authored level is the only way to state where it
     // sits relative to an order-dependent layer (spec D4).
     const bare = makeGSplatsMesh(2, 'additive');
-    bare.geometry.boundingSphere!.center.set(0, 0, -50);
+    bare.geometry.boundingSphere!.center.set(0, 0, -30);
+    // Depths chosen to CONTRADICT the bands: the band-3 layer is the FARTHEST
+    // and the band-1 layer the NEAREST, so depth alone would order them the
+    // other way round and only the band key can produce the expectation below.
+    // (With the two agreeing, this test passed even when the band term was
+    // removed from the comparator — found by mutation testing.)
     const levelled = makeGSplatsMesh(2, 'additive');
-    levelled.geometry.boundingSphere!.center.set(0, 0, -10);
+    levelled.geometry.boundingSphere!.center.set(0, 0, -50);
     setLevel(levelled, 3);
     const sorted = makeGSplatsMesh(2, 'volumetric');
-    sorted.geometry.boundingSphere!.center.set(0, 0, -30);
+    sorted.geometry.boundingSphere!.center.set(0, 0, -10);
     setLevel(sorted, 1);
     for (const m of [bare, levelled, sorted]) {
       coord.noteDepthSortCommit(m, new Float32Array([0, 0, -1]), 1);
@@ -5213,7 +5218,8 @@ describe('depth-sort coordinator — layer_order bands', () => {
     coord.evaluateDepthSortPerFrame();
 
     expect(bare.renderOrder).toBe(0);
-    // Band 1 before band 3, regardless of the additive layer being nearer.
+    // Band 1 before band 3 even though band 1 is the NEARER layer — the
+    // inverse of what depth alone would give.
     expect(sorted.renderOrder).toBe(1);
     expect(levelled.renderOrder).toBe(2);
   });
@@ -5236,6 +5242,62 @@ describe('depth-sort coordinator — layer_order bands', () => {
     coord.evaluateDepthSortPerFrame();
 
     expect(mesh.renderOrder).toBe(0);
+  });
+
+  // D3's precise wording: it is a DIFFERENCE in order that overrides
+  // containment, not the act of authoring one. The obvious paraphrase ("an
+  // explicit order wins over containment") is wrong, and this is the case that
+  // proves it — authoring 0 on the container while the inner layer states
+  // nothing leaves BOTH in band 0, so containment still decides.
+  it('an authored order EQUAL to an unset neighbour does not override containment', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const cloud = makeGSplatsMesh(2, 'volumetric');
+    cloud.geometry.boundingSphere!.center.set(0, 0, -10);
+    cloud.geometry.boundingSphere!.radius = 100;
+    const marker = makeGSplatsMesh(2, 'volumetric');
+    marker.geometry.boundingSphere!.center.set(0, 0, -30);
+    marker.geometry.boundingSphere!.radius = 1;
+    // Explicit 0 on the container; the marker authors nothing (also band 0).
+    setLevel(cloud, 0);
+    for (const m of [marker, cloud]) coord.noteDepthSortCommit(m, new Float32Array([0, 0, -1]), 1);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    // Containment still hoists the container first — the authored 0 changed
+    // nothing, because it did not create a band DIFFERENCE.
+    expect(cloud.renderOrder).toBe(1);
+    expect(marker.renderOrder).toBe(2);
+  });
+
+  // The renderer re-sanitises the order even though the composer already did,
+  // because a mesh can reach the coordinator without passing through
+  // `applyEffectiveAttrs` (synthetic scenes, embedder code, fixtures). That
+  // guard was caught by NO test — found by mutation testing — and it is
+  // load-bearing rather than belt-and-braces: `NaN - x` is NaN, so a single
+  // non-finite order makes the band comparator inconsistent and
+  // `Array.prototype.sort` may then return ANY permutation of the whole scene.
+  it.each([
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['-Infinity', Number.NEGATIVE_INFINITY],
+    ['a string', 'front'],
+    ['null', null],
+  ])('treats a %s order as unset rather than poisoning the sort', async (_label, bad) => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const { far, near } = twoDisjointLeaves();
+    // Bypasses every sanitising path, exactly like a synthetic scene would.
+    far.userData.attrs = { layer_order: bad };
+    for (const m of [near, far]) coord.noteDepthSortCommit(m, new Float32Array([0, 0, -1]), 1);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    // Falls back to band 0 for both, so the pure depth order survives intact.
+    expect(far.renderOrder).toBe(1);
+    expect(near.renderOrder).toBe(2);
   });
 
   it('warns once when an authored band spans both render buckets', async () => {

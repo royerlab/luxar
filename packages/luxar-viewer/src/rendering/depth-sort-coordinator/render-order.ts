@@ -102,7 +102,7 @@ function warnBandSplitContainment(outer: OrderGroup, inner: OrderGroup): void {
   log.warning(
     Modules.RENDERER,
     `'${outerKey.name || '(unnamed)'}' (layer order ${outer.level}) spatially CONTAINS ` +
-      `'${innerKey.name || '(unnamed)'}' (layer order ${inner.level}), but their authored levels ` +
+      `'${innerKey.name || '(unnamed)'}' (layer order ${inner.level}), but their authored orders ` +
       'put them in different bands, so the container-draws-first rule is not applied. That is ' +
       'the authored order winning, as intended — but if the inner layer looks washed out or ' +
       'vanishes, this is why: give both the same layer_order to restore the inferred ordering.'
@@ -112,7 +112,7 @@ function warnBandSplitContainment(outer: OrderGroup, inner: OrderGroup): void {
 /**
  * A band spanning both render buckets. THREE draws its whole opaque list before
  * any transparent mesh and `renderOrder` is only compared WITHIN a bucket
- * (`painterSortStable` / `reversePainterSortStable`), so such a level is
+ * (`painterSortStable` / `reversePainterSortStable`), so such an order is
  * honoured for its transparent members and silently ignored for its opaque
  * ones. `opaque` is the only blending mode with `transparent: false`.
  */
@@ -132,7 +132,7 @@ function warnBucketStraddlingBand(group: OrderGroup): void {
     Modules.RENDERER,
     `Layer order ${group.level} on '${key.name || '(unnamed)'}' spans both render buckets ` +
       '(opaque and transparent). renderOrder is only compared within a bucket, and every opaque ' +
-      'mesh draws before any transparent one, so this level orders the transparent members and ' +
+      'mesh draws before any transparent one, so this order applies to the transparent members and ' +
       'cannot move the opaque ones. Split them into separate layers if the order matters.'
   );
 }
@@ -337,8 +337,8 @@ interface OrderSlot {
    */
   level: number;
   /**
-   * Whether the level was authored, as opposed to defaulted to 0. Unset must
-   * stay distinguishable from an authored 0: only an authored level may
+   * Whether the order was authored, as opposed to defaulted to 0. Unset must
+   * stay distinguishable from an authored 0: only an authored order may
    * suppress a containment relation (spec D2/D3).
    */
   levelExplicit: boolean;
@@ -351,13 +351,13 @@ interface OrderGroup {
   sumZ: number;
   /**
    * The group's band. Taken from its FIRST member: composition gives every
-   * part of a wrapper its wrapper's level, and authoring a level strictly
+   * part of a wrapper its wrapper's order, and authoring one strictly
    * inside a specialized group is refused (spec D6), so members normally
    * agree. A hand-edited store can disagree — that warns once and the first
    * member wins, which keeps the band deterministic either way.
    */
   level: number;
-  /** True when the winning member's level was authored rather than defaulted. */
+  /** True when the winning member's order was authored rather than defaulted. */
   levelExplicit: boolean;
 }
 

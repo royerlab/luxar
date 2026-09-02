@@ -30,6 +30,7 @@ from luxar.core.group.compositing import (
     COMPOSITING_ATTRS,
     IDENTITY_COMPOSITING_ATTRS,
     WRITER_STAMPED_APPEARANCE_DEFAULTS,
+    _enclosing_specialized_group,
 )
 from luxar.io._compiler.node_common import KNOWN_RENDER_ATTRS
 from luxar.validation.types import validate_layer_order
@@ -37,7 +38,7 @@ from luxar.validation.types import validate_layer_order
 from .conftest import cholesky_rows, open_scene, random_positions
 
 
-class TestValidateDepthLevel:
+class TestValidateLayerOrder:
     @pytest.mark.parametrize("value", [0, 1, 10, -5, 999999, np.int32(7), np.int64(-2)])
     def test_accepts_any_integer(self, value: Any) -> None:
         assert validate_layer_order(value) == int(value)
@@ -126,6 +127,74 @@ class TestAuthoringOnALayer:
         with compiler:
             with pytest.raises((TypeError, ValueError)):
                 scene.add_points("pts", random_positions(8, seed=4), layer_order=None)
+
+
+class TestEnclosingSpecializedGroupWalk:
+    """Direct tests of the ancestry walk the refusals rest on.
+
+    Its docstring claims it walks the WHOLE parent chain — "a level authored two
+    levels down (on a part's own LOD wrapper, say) is exactly as damaging as one
+    on the part" — and that is the property that distinguishes it from
+    ``reject_mismatched_partition_parent``, which only inspects the immediate
+    parent. Every other test in this file exercises depth 1 only (a part, or a
+    LOD level), so the claim was untested. These pin it.
+
+    The walk only needs ``.attrs`` and ``.parent``, so plain stand-ins exercise
+    it without building four real stores.
+    """
+
+    class _N:
+        def __init__(self, attrs, parent=None):
+            self.attrs = attrs
+            self.parent = parent
+
+    def test_finds_a_grandparent_wrapper(self) -> None:
+        wrapper = self._N({"kind": "partition"})
+        part = self._N({}, parent=wrapper)
+        leaf = self._N({}, parent=part)
+        assert _enclosing_specialized_group(leaf) is wrapper
+
+    def test_finds_the_NEAREST_wrapper_when_two_are_nested(self) -> None:
+        """A LOD group inside a partition part — the `adaptive` recipe's shape."""
+        outer = self._N({"kind": "partition"})
+        part = self._N({}, parent=outer)
+        inner = self._N({"kind": "lod"}, parent=part)
+        level = self._N({}, parent=inner)
+        assert _enclosing_specialized_group(level) is inner
+
+    def test_includes_the_node_itself(self) -> None:
+        wrapper = self._N({"kind": "partition"})
+        assert _enclosing_specialized_group(wrapper) is wrapper
+
+    def test_returns_none_for_a_plain_chain(self) -> None:
+        root = self._N({})
+        group = self._N({}, parent=root)
+        leaf = self._N({}, parent=group)
+        assert _enclosing_specialized_group(leaf) is None
+
+    def test_a_plain_group_ancestor_does_not_count(self) -> None:
+        """Only a SPECIALIZED group blocks a layer order; a plain group is a
+        legitimate layer and may carry one."""
+        plain = self._N({"kind": None})
+        leaf = self._N({}, parent=plain)
+        assert _enclosing_specialized_group(leaf) is None
+
+    def test_survives_a_node_whose_attrs_raise(self) -> None:
+        """The walk's ``except Exception`` covers a detached/partial node.
+
+        Without it a half-constructed ancestor would turn a refusal check into a
+        crash during authoring — worse than the thing being guarded against.
+        """
+
+        class Broken:
+            parent = None
+
+            @property
+            def attrs(self):
+                raise RuntimeError("detached node")
+
+        leaf = self._N({}, parent=Broken())
+        assert _enclosing_specialized_group(leaf) is None
 
 
 class TestRefusedInsideASpecializedGroup:

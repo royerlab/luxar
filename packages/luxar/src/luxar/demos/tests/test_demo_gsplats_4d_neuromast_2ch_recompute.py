@@ -161,6 +161,33 @@ class TestBothChannelsNeedTheirOwnSource:
         counts = {ch["name"]: ch["expected_splats"] for ch in demo.CHANNELS}
         assert len(set(counts.values())) == 2
 
+    def test_every_channel_carries_a_layer_order(self):
+        """``create_luxar_scene`` reads ``ch["layer_order"]`` per channel.
+
+        Nothing else in this suite builds the scene — these tests exercise the
+        recompute recipe — so that subscript is executed by no test and a
+        misspelled or missing key would be a latent ``KeyError``, surfacing only
+        when someone runs the demo against its multi-gigabyte sources. Checking
+        the config directly costs nothing and closes that gap.
+        """
+        orders = {ch["name"]: ch["layer_order"] for ch in demo.CHANNELS}
+        assert len(orders) == 2
+        for name, order in orders.items():
+            assert isinstance(order, int) and not isinstance(order, bool), name
+
+    def test_the_channels_do_not_share_a_layer_order(self):
+        """Distinct orders, or the two layers land in one band and the viewer
+        goes back to inferring their order from bounding-sphere radii — which
+        for this fit is backwards (the nuclei sphere is marginally the larger,
+        so containment draws nuclei first even though the membrane shell
+        encloses them). Sharing a band would silently reinstate that."""
+        orders = [ch["layer_order"] for ch in demo.CHANNELS]
+        assert len(set(orders)) == len(orders)
+
+        # The enclosing structure must composite FIRST (lower order).
+        by_name = {ch["name"]: ch["layer_order"] for ch in demo.CHANNELS}
+        assert by_name["membranes"] < by_name["nuclei"]
+
     def test_a_nonexistent_source_path_is_reported_with_its_flag(
         self, monkeypatch, tmp_path
     ):
@@ -171,9 +198,7 @@ class TestBothChannelsNeedTheirOwnSource:
 
 
 class TestEmptyFitTilesSurviveTheCullStage:
-    def test_empty_markers_are_copied_beside_culled_tiles(
-        self, monkeypatch, tmp_path
-    ):
+    def test_empty_markers_are_copied_beside_culled_tiles(self, monkeypatch, tmp_path):
         fit_dir = tmp_path / "fit"
         tiles = fit_dir / "tiles"
         tiles.mkdir(parents=True)

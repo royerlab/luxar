@@ -841,7 +841,7 @@ def validate_blending_mode(mode: Any) -> BlendingMode:
     return cast(BlendingMode, mode)
 
 
-def validate_layer_order(level: Any) -> int:
+def validate_layer_order(order: Any) -> int:
     """Validate an authored cross-layer draw order.
 
     ``layer_order`` states where a layer draws relative to the other layers it
@@ -849,32 +849,32 @@ def validate_layer_order(level: Any) -> int:
     Illustrator convention. See ``docs/guides/specs/LAYER_ORDER_SPEC.md``.
 
     Deliberately unbounded and signed: the value's only meaning is its ORDER,
-    so there is nothing to clamp to, and negative levels are the natural way to
+    so there is nothing to clamp to, and negative values are the natural way to
     push a backdrop behind everything else. Sparse values (10/20/30) leave room
     to insert a layer later without renumbering.
 
     A ``bool`` is refused even though ``isinstance(True, int)`` is true in
     Python: ``layer_order=True`` almost certainly means the author confused this
-    with a flag, and silently banding that layer at level 1 would be a wrong
+    with a flag, and silently banding that layer at order 1 would be a wrong
     answer rather than an error.
 
     Args:
-        level: Draw order to validate. Any Python or NumPy integer.
+        order: Draw order to validate. Any Python or NumPy integer.
 
     Returns:
-        The level as a plain ``int``.
+        The order as a plain ``int``.
 
     Raises:
-        TypeError: If ``level`` is not an integer (``bool`` included).
+        TypeError: If ``order`` is not an integer (``bool`` included).
     """
-    if isinstance(level, (bool, np.bool_)) or not isinstance(level, (int, np.integer)):
+    if isinstance(order, (bool, np.bool_)) or not isinstance(order, (int, np.integer)):
         raise TypeError(
-            f"layer_order must be an integer, got {level!r} ({type(level).__name__}). "
+            f"layer_order must be an integer, got {order!r} ({type(order).__name__}). "
             "Higher draws nearer the camera (CSS z-index convention); sparse values "
             "like 10/20/30 leave room to insert a layer later."
         )
 
-    return int(level)
+    return int(order)
 
 
 def validate_line_join(style: Any) -> str:

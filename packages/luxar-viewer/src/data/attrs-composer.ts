@@ -71,8 +71,8 @@ export interface ComposableAttrs {
    * Authored cross-layer draw order (`LAYER_ORDER_SPEC.md`). Higher =
    * nearer the camera = drawn later. Nearest-setter-wins like `blending_mode`,
    * and deliberately kept `number | undefined` rather than defaulted here:
-   * "nobody authored a level" must stay distinguishable from "someone authored
-   * 0", because an EXPLICIT level suppresses the containment rule while an
+   * "nobody authored an order" must stay distinguishable from "someone authored
+   * 0", because an EXPLICIT order suppresses the containment rule while an
    * unset one must not (spec D2/D3). The renderer applies `unset ⇒ band 0`.
    */
   layer_order?: number;
@@ -282,7 +282,7 @@ function toComposable(attrs: SceneNode['attrs']): ComposableAttrs {
     join: attrs.join as string | undefined,
     colormap: attrs.colormap as string | undefined,
     customLutBytes: attrs.customLutBytes as Uint8Array | undefined,
-    layer_order: sanitizeDepthLevel(attrs.layer_order),
+    layer_order: sanitizeLayerOrder(attrs.layer_order),
   };
 }
 
@@ -299,6 +299,6 @@ function toComposable(attrs: SceneNode['attrs']): ComposableAttrs {
  * only meaning is its order, so `1.5` bands perfectly well, and rounding would
  * silently merge two bands the author separated.
  */
-function sanitizeDepthLevel(raw: unknown): number | undefined {
+function sanitizeLayerOrder(raw: unknown): number | undefined {
   return typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
 }

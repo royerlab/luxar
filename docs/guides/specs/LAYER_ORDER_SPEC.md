@@ -132,19 +132,43 @@ scene.
 `layer_order` gets **no writer-stamped default** — it is absent from both
 `WRITER_STAMPED_APPEARANCE_DEFAULTS` and `IDENTITY_COMPOSITING_ATTRS`, joining
 `blending_mode` / `visible` / `join` / `nd_transform` whose "absence on disk is
-genuine silence". This is not tidiness: D3 makes an *explicit* level suppress
-containment, so a stamped default would silently disable rule 3 for every
-existing store. `opacity` is the cautionary precedent — its stamped identity
+genuine silence". `opacity` is the cautionary precedent — its stamped identity
 "cannot be distinguished from a deliberate authored identity".
 
-**D3 — An explicit level wins over containment; containment operates only
-within a band.** Because bands are hard partitions, a containment edge between
-two different bands cannot be represented at all — the relation is simply
-dropped. The viewer therefore **warns once per node pair** when a band split
-breaks a containment relation, naming both paths, so "my embedded marker
+Be precise about *why*, because the tempting justification is wrong. A stamped
+`0` would **not** break the ordering: every group would land in band 0, that is
+one band, and containment would go on operating exactly as it does for an
+unauthored scene (D3 — it is a band *difference* that overrides containment, not
+explicitness). What a stamped default would destroy is the ability to tell the
+two states APART, and three things depend on that:
+
+- the bucket-straddle diagnostic is gated on the order being authored, so it
+  would start firing on scenes that authored nothing;
+- the Layers panel would show `0` in every field instead of a blank `auto`, so
+  no one could see which layers actually state an order;
+- any future rule that wants to treat "the author chose 0" differently from
+  "nobody chose" would have no way to, and the distinction cannot be recovered
+  after the fact — every store written in the meantime would already claim it.
+
+**D3 — A DIFFERENCE in layer order wins over containment; containment operates
+only within a band.** Because bands are hard partitions, a containment edge
+between two different bands cannot be represented at all — the relation is
+simply dropped. The viewer therefore **warns once per node pair** when a band
+split breaks a containment relation, naming both paths, so "my embedded marker
 vanished" is diagnosable rather than mysterious. Containment continues to
 operate unchanged between groups in the *same* band (including two groups whose
-levels are both unset, which is every scene today).
+orders are both unset, which is every scene today).
+
+Note the precise wording, because the obvious paraphrase is wrong: it is the
+*difference* that overrides containment, not the mere act of authoring. Two
+layers that share a band are still ordered by containment, and **an authored
+order equal to a neighbour's has no ordering effect** — including the easy-to-hit
+case of authoring `0` on one layer while its neighbour states nothing, since
+unset also resolves to band 0. Stating an order between two layers therefore
+means giving them *distinct* values. `levelExplicit` is tracked per group but
+deliberately does not enter the ordering: it gates only the bucket-straddle
+diagnostic, because a warning about a half-honoured order should not fire for a
+scene that authored no order at all.
 
 **D4 — Applies to every blending mode, commutative included.** A level on an
 `additive` layer is a no-op against other `additive` layers (addition
@@ -299,7 +323,8 @@ the sentence above:
   §8.1 is a whole-scene limit, but a *group* makes it far likelier to bite: one
   level on a group holding an `opaque` mesh and a `volumetric` gsplat cannot
   move the mesh out of the opaque bucket, so half the block obeys the level and
-  half does not — silently. This is the strongest argument for §12.2's warning.
+  half does not — silently. This is what §12.2's warning was built for, and it
+  fires only when the straddling order was actually authored.
 
 Two smaller cases, checked and benign:
 
@@ -374,8 +399,9 @@ data.
    bucket. `opaque` is the one blending mode with `transparent: false`
    (`blending-state.ts:292`), so **no `layer_order` can place an `opaque` mesh
    in front of a transparent layer.** A level spanning the two buckets is
-   silently partially honoured — which argues for warning on that combination
-   too, and is listed in §12 as an open question rather than decided here.
+   silently partially honoured, which is why the renderer warns once per layer
+   on that combination (`warnBucketStraddlingBand`, §12.2) rather than leaving
+   it to be discovered.
 2. **Interpenetrating concave layers** — §5's honest limit.
 3. **Per-pixel ordering.** Out of reach of any per-element scheme
    (StopThePop's class of artifact); unchanged deferral.
@@ -445,12 +471,20 @@ Phases 1–3 are independently landable; Phase 4 is the one that can say no.
    rows is the familiar 2D-tool gesture, but needs a rule for turning list
    position into levels (renumber all layers? sparse 10/20/30 with insertion
    between?) and interacts with D7's session-only edits.
-2. **Should a level spanning the opaque/transparent bucket boundary warn?**
-   (§8.1.) It is silently partially honoured today under this design.
-3. **Should `luxar info` / the demo authoring audit report authored levels?**
-   #1964 added a test pinning "overlapping gsplat layers are additive"; if
-   Phase 4 moves demos back to `volumetric` + levels, that test's rule needs
-   restating as "overlapping order-dependent layers must carry explicit levels".
+2. ~~**Should a level spanning the opaque/transparent bucket boundary warn?**~~
+   **DECIDED — yes, and implemented.** `warnBucketStraddlingBand` compares
+   `material.transparent` across a band's members and warns once per layer,
+   gated on the order being *authored* (an unset one promises nothing, so a
+   warning would be noise). See §8.1 for why the limit exists at all.
+3. ~~**Should the demo authoring audit report authored orders?**~~
+   **DECIDED — the audit rule was restated rather than extended.**
+   `test_overlapping_gsplat_layers_declare_order.py` replaces #1964's
+   all-additive rule with: an overlapping-layer demo must be *either* entirely
+   commutative *or* depth-sorted with an explicit `layer_order` on every layer.
+   Relaxed in one direction (the old rule would now forbid the correct thing),
+   tightened in another (a depth-sorted layer must now carry an order, which
+   the old rule had no way to require). `luxar info` is untouched and remains a
+   genuinely open, separate question.
 4. **URL override** (`?layerOrders=path:level,…`) for A/B measurement without
    re-authoring — cheap, and the archived work showed how much it matters to be
    able to pin a knob across scenes. Not specified above.

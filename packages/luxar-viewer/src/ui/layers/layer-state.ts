@@ -88,6 +88,19 @@ function deriveScalarRangeFromDescendants(node: SceneNode): [number, number] | u
 
 type LabelVocabulary = Array<{ id: string; name: string }>;
 
+/**
+ * Read an authored `layer_order` off a raw attrs record, or `undefined`.
+ *
+ * The SAME predicate the renderer uses (`render-order.ts::authoredLayerOrder`)
+ * and the composer uses (`attrs-composer.ts::sanitizeLayerOrder`): a
+ * non-number, NaN or ±Infinity is ABSENT, not a band. Kept identical on purpose
+ * — if the panel and the renderer disagreed about what counts as authored, the
+ * field would show a value the render is not using.
+ */
+function sanitizedLayerOrder(raw: unknown): number | undefined {
+  return typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
+}
+
 function labelVocabularyFromAttrs(node: SceneNode): LabelVocabulary | undefined {
   const vocabulary = node.attrs.label_vocabulary as Record<string, string> | undefined;
   return vocabulary ? Object.entries(vocabulary).map(([id, name]) => ({ id, name })) : undefined;
@@ -738,11 +751,16 @@ export class LayerStateManager {
           // display type is a geometry name but whose node authored no mode) stays
           // non-owning, exactly like a plain group.
           blendingModeExplicit: node.attrs.blending_mode != null,
-          layerOrder:
-            typeof node.attrs.layer_order === 'number' && Number.isFinite(node.attrs.layer_order)
-              ? node.attrs.layer_order
-              : undefined,
-          layerOrderExplicit: node.attrs.layer_order != null,
+          // Both fields derive from the SAME sanitized read, so they cannot
+          // disagree. A loose `!= null` on the raw attr (the shape
+          // `blendingModeExplicit` above can afford, because a mode has a
+          // per-type fallback) would report `explicit: true` alongside
+          // `layerOrder: undefined` for a junk value like `'front'` — a state
+          // that says "this layer authored an order" about an order the
+          // renderer discards, so the panel would claim authored where the
+          // render is inferring.
+          layerOrder: sanitizedLayerOrder(node.attrs.layer_order),
+          layerOrderExplicit: sanitizedLayerOrder(node.attrs.layer_order) !== undefined,
           selected: false,
           colormap,
           supportsColormap,
