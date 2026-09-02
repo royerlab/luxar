@@ -10,9 +10,12 @@ own record.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import io
 import json
 import sys
+import urllib.error
 import zipfile
 from functools import partial
 from pathlib import Path
@@ -24,6 +27,13 @@ from luxar.demos.demo_gsplats_4d_h2afva_timelapse import PARENT_FINEST_SPLATS
 
 #: .../packages/luxar/src/luxar/demos/tests/this_file.py -> repo root is 6 up.
 _SCRIPT = Path(__file__).resolve().parents[6] / "scripts" / "gen_zenodo_records.py"
+_CAPTURE_SCRIPT = (
+    Path(__file__).resolve().parents[6]
+    / "scripts"
+    / "zenodo_record_text"
+    / "capture.py"
+)
+_SNAPSHOT_DIR = _CAPTURE_SCRIPT.parent
 # "wrapped" is zipped from outside the store directory; "root" from inside it.
 _ArchiveLayout = Literal["wrapped", "root"]
 
@@ -59,9 +69,26 @@ def _load_module() -> Any:
     return module
 
 
+def _load_capture_module() -> Any:
+    assert _CAPTURE_SCRIPT.exists(), f"capture script not found at {_CAPTURE_SCRIPT}"
+    spec = importlib.util.spec_from_file_location(
+        "capture_zenodo_record_text", _CAPTURE_SCRIPT
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["capture_zenodo_record_text"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 @pytest.fixture(scope="module")
 def gen() -> Any:
     return _load_module()
+
+
+@pytest.fixture(scope="module")
+def capture() -> Any:
+    return _load_capture_module()
 
 
 @pytest.fixture(scope="module")
@@ -2694,6 +2721,166 @@ def test_plain_file_record_has_no_splat_legends(
     assert "| File | Size |" in rendered
     assert "vs raw voxels" not in rendered
     assert "Reading the compression column" not in rendered
+
+
+def test_committed_record_snapshots_match_their_index(gen: Any) -> None:
+    manifest = json.loads(gen.MANIFEST.read_text(encoding="utf-8"))
+    index = json.loads((_SNAPSHOT_DIR / "records.json").read_text(encoding="utf-8"))
+    assert set(index) - {"_captured_utc"} == set(manifest["records"])
+    for key, record in manifest["records"].items():
+        snapshot = _SNAPSHOT_DIR / f"{key}.html"
+        assert snapshot.exists(), key
+        description_bytes = snapshot.read_bytes()
+        description = description_bytes.decode("utf-8")
+        assert (
+            hashlib.sha256(description_bytes).hexdigest()
+            == index[key]["description_sha256"]
+        ), key
+        assert len(description) == index[key]["description_chars"], key
+        assert index[key]["doi"] == record["zenodo_doi"], key
+
+
+def _deposition(description: str) -> dict[str, Any]:
+    return {
+        "metadata": {"description": description, "title": "Title"},
+        "submitted": False,
+        "modified": "2026-09-02T00:00:00Z",
+    }
+
+
+def _capture_manifest(path: Path, records: dict[str, int]) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "records": {
+                    key: {
+                        "zenodo_record": str(deposition),
+                        "zenodo_doi": f"10.5281/zenodo.{deposition}",
+                    }
+                    for key, deposition in records.items()
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_capture_fetches_every_record_before_writing(
+    capture: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest = tmp_path / "manifest.json"
+    _capture_manifest(manifest, {"first": 1, "second": 2})
+    (tmp_path / "first.html").write_text("old first", encoding="utf-8")
+    (tmp_path / "second.html").write_text("old second", encoding="utf-8")
+    (tmp_path / "records.json").write_text("old index", encoding="utf-8")
+    monkeypatch.setattr(capture, "HERE", tmp_path)
+    monkeypatch.setattr(capture, "MANIFEST", manifest)
+    monkeypatch.setenv("ZENODO_TOKEN", "token")
+    monkeypatch.setattr(capture.time, "sleep", lambda _delay: None)
+
+    def fail_second(request: Any, **_kwargs: Any) -> Any:
+        if request.full_url.endswith("/2"):
+            raise urllib.error.HTTPError("url", 404, "not found", {}, None)
+        return io.StringIO(json.dumps(_deposition("new first")))
+
+    monkeypatch.setattr(capture.urllib.request, "urlopen", fail_second)
+
+    with pytest.raises(urllib.error.HTTPError) as error:
+        capture.main()
+
+    assert error.value.code == 404
+    assert (tmp_path / "first.html").read_text(encoding="utf-8") == "old first"
+    assert (tmp_path / "second.html").read_text(encoding="utf-8") == "old second"
+    assert (tmp_path / "records.json").read_text(encoding="utf-8") == "old index"
+
+
+def test_capture_uses_manifest_records_and_hashes_written_utf8(
+    capture: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest = tmp_path / "manifest.json"
+    _capture_manifest(manifest, {"first": 10, "new-record": 20})
+    monkeypatch.setattr(capture, "HERE", tmp_path)
+    monkeypatch.setattr(capture, "MANIFEST", manifest)
+    monkeypatch.setenv("ZENODO_TOKEN", "token")
+
+    def urlopen(request: Any, **_kwargs: Any) -> Any:
+        deposition = int(request.full_url.rsplit("/", 1)[1])
+        return io.StringIO(json.dumps(_deposition(f"Loïc {deposition}")))
+
+    monkeypatch.setattr(capture.urllib.request, "urlopen", urlopen)
+
+    assert capture.main() == 0
+
+    index = json.loads((tmp_path / "records.json").read_text(encoding="utf-8"))
+    assert set(index) - {"_captured_utc"} == {"first", "new-record"}
+    for key, deposition in {"first": 10, "new-record": 20}.items():
+        description_bytes = (tmp_path / f"{key}.html").read_bytes()
+        assert description_bytes == f"Loïc {deposition}".encode("utf-8")
+        assert (
+            index[key]["description_sha256"]
+            == hashlib.sha256(description_bytes).hexdigest()
+        )
+
+
+def test_capture_does_not_retry_client_errors(
+    capture: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = 0
+    sleeps = []
+
+    def unauthorized(*_args: Any, **_kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        raise urllib.error.HTTPError("url", 401, "unauthorized", {}, None)
+
+    monkeypatch.setattr(capture.urllib.request, "urlopen", unauthorized)
+    monkeypatch.setattr(capture.time, "sleep", sleeps.append)
+
+    with pytest.raises(urllib.error.HTTPError) as error:
+        capture.fetch(1, "token")
+
+    assert error.value.code == 401
+    assert calls == 1
+    assert sleeps == []
+
+
+def test_capture_retries_server_errors_then_succeeds(
+    capture: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    responses: list[Any] = [
+        urllib.error.HTTPError("url", 503, "unavailable", {}, None),
+        io.StringIO(json.dumps(_deposition("ok"))),
+    ]
+    sleeps = []
+
+    def urlopen(*_args: Any, **_kwargs: Any) -> Any:
+        response = responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    monkeypatch.setattr(capture.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(capture.time, "sleep", sleeps.append)
+
+    assert capture.fetch(1, "token") == _deposition("ok")
+    assert sleeps == [3]
+
+
+def test_capture_does_not_sleep_after_the_final_retry(
+    capture: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sleeps = []
+
+    def unavailable(*_args: Any, **_kwargs: Any) -> Any:
+        raise urllib.error.URLError("offline")
+
+    monkeypatch.setattr(capture.urllib.request, "urlopen", unavailable)
+    monkeypatch.setattr(capture.time, "sleep", sleeps.append)
+
+    with pytest.raises(SystemExit, match="zenodo unreachable"):
+        capture.fetch(1, "token")
+
+    assert sleeps == [3, 6, 9, 12, 15]
 
 
 class TestCheckExplainsAnAbsentFigure:
