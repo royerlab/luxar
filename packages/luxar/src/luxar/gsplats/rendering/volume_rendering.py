@@ -104,8 +104,10 @@ def render_to_volume_tensor(
 
             if CUDA_BACKEND_AVAILABLE:
                 with torch.no_grad():
-                    # `Function.apply` is untyped in some torch releases and
-                    # typed in others, so the ignore is env-dependent.
+                    # `Function.apply` is an untyped classmethod up to torch
+                    # 2.13 (so `no-untyped-call` fires) and an `Any` alias from
+                    # 2.14 (so the ignore goes unused). Both torches are in
+                    # range, hence both codes.
                     output: torch.Tensor = CUDASplatFunction.apply(  # type: ignore[no-untyped-call, unused-ignore]
                         centers_t,
                         Ls_t,
