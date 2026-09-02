@@ -654,9 +654,9 @@ def test_written_cache_dirs_are_declared(path: Path) -> None:
 # stops the walk; drop that word and the group leads with "HCP-1065", which the
 # short "Yeh 2022" does not contain, and a correct credit turns red. A guard that
 # an ordinary copy-edit can falsify gets switched off. The other two candidates
-# are worse: ``_MAX_CREDIT_GROUP_NAMES = 1`` rejects the synthetic
-# "Leike & Enßlin 2020" shape pinned below, and a year-only rule drops the
-# wrong-author class the guard exists for.
+# are worse: ``_MAX_CREDIT_GROUP_NAMES = 1`` rejects the real cytoself footer
+# because it collects only "Methods" beside 2022, which its ``short`` does not
+# name, and a year-only rule drops the wrong-author class the guard exists for.
 #
 # Every corpus count here (86 demos, 26 credited, 8 painting a dated credit, the
 # AST tallies below) describes the corpus at the time of writing; nothing derives
