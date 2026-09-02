@@ -40,7 +40,19 @@ def test_public_attributions_keep_required_provenance_resolvable() -> None:
     assert "citations travel with the per-cell metadata" not in census
 
     neuromast = generator.DATASETS["gsplats_4d_neuromast_2ch"]["attribution"]
-    assert "see Jacobo et al. (2019), by the same author" in neuromast
+    # The reference is the one the DATA AUTHOR asked for (2026-09-02): Erzberger
+    # et al., Nature Physics 16 (2020). We had cited his first-author Current
+    # Biology 2019 paper on the same organ; he prefers this one, and it is his
+    # data. He is second author here, so the text must NOT claim a first-author
+    # role -- it says "the data author's".
+    assert "Nature Physics 16, 949-957 (2020)" in neuromast
+    assert "doi:10.1038/s41567-020-0894-9" in neuromast
+    assert "the data author's" in neuromast
+    assert "Jacobo et al. (2019)" not in neuromast
+    # The substantive invariant, not the citation string: this imaging is
+    # UNPUBLISHED, so the attribution must never let the cited paper read as the
+    # source of the data.
+    assert "unpublished" in neuromast
 
 
 def test_census_attribution_uses_generator_release_default() -> None:
