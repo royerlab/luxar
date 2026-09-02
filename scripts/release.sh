@@ -73,11 +73,31 @@ ok "working tree clean"
 git ls-files --error-unmatch "$WORKFLOW" >/dev/null 2>&1 || die "$WORKFLOW is not committed — commit it (via PR) before releasing."
 ok "PyPI publish workflow present and committed"
 
-# The npm viewer publish is also tag-triggered on v*. It's optional at launch
-# (publishes only if the npm-side trusted publisher / NPM_TOKEN is configured),
-# so a missing/uncommitted file is a warning, not a hard stop.
+# The npm viewer publish is also tag-triggered on v*, but publish-npm.yml gates
+# the actual `npm publish` on the repo variable ENABLE_NPM_PUBLISH. Checking only
+# that the workflow FILE exists prints a reassuring green for a tag that will
+# publish nothing, so check the switch too and say plainly which way it will go.
+# The three states are kept distinct on purpose: "off" and "could not check" are
+# different answers, and collapsing them is how a preflight starts lying.
 if [[ -f "$WORKFLOW_NPM" ]] && git ls-files --error-unmatch "$WORKFLOW_NPM" >/dev/null 2>&1; then
-  ok "npm publish workflow present and committed"
+  NPM_VARS=""
+  if NPM_VARS="$(gh api "repos/$SLUG/actions/variables" --jq '.variables[].name' 2>/dev/null)"; then
+    if grep -qx 'ENABLE_NPM_PUBLISH' <<<"$NPM_VARS"; then
+      NPM_SWITCH="$(gh api "repos/$SLUG/actions/variables/ENABLE_NPM_PUBLISH" --jq '.value' 2>/dev/null || echo '?')"
+      if [[ "$NPM_SWITCH" == "true" ]]; then
+        ok "npm workflow committed, ENABLE_NPM_PUBLISH=true — the tag WILL publish @royerlab/luxar-viewer"
+      else
+        warn "npm workflow committed, but ENABLE_NPM_PUBLISH='$NPM_SWITCH' (not 'true') — the tag will NOT publish to npm."
+      fi
+    else
+      warn "npm workflow committed, but ENABLE_NPM_PUBLISH is UNSET — the tag will build and pack"
+      warn "  @royerlab/luxar-viewer and then skip the publish."
+      warn "  npm has no 'pending publisher', so the FIRST publish must be a manual,"
+      warn "  token-authenticated 'npm publish'. Steps: publish-npm.yml header."
+    fi
+  else
+    warn "could not read repo variables (gh api) — cannot tell whether the tag will publish to npm."
+  fi
 else
   warn "$WORKFLOW_NPM missing/uncommitted — the tag will NOT publish @royerlab/luxar-viewer to npm."
 fi
