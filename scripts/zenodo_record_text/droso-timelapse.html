@@ -1,0 +1,28 @@
+<p>A <em>Drosophila melanogaster</em> embryo imaged through early embryogenesis on a SiMView-type multi-view light-sheet microscope, with nuclei labelled by a histone H2A variant fusion (<code>w; His2Av::mRFP1; +</code>), fitted to 3D Gaussian splats per timepoint and published as a single 4D archive for the <a href="https://github.com/royerlab/luxar">Luxar</a> viewer.</p>
+<h3>Contents</h3>
+<p>500 timepoints spanning 4 h 10 min of development, from cellular blastoderm through gastrulation to the fully extended germband. One stacked 4D node with time as a real axis, so a viewer scrubs through development rather than loading separate files. Spatial coordinates are physical microns (Z 1.93, XY 0.40625); the time axis is in minutes.</p>
+<table>
+<tbody>
+<tr>
+<th>file</th>
+<th>size</th>
+<th>elements</th>
+<th>level of detail</th>
+</tr>
+<tr>
+<td><code>drosophila_embryogenesis_500tp.gsplats.zarr.zip</code></td>
+<td>863.8 MB</td>
+<td>83,221,420</td>
+<td>flat, 14 ladder rungs</td>
+</tr>
+</tbody>
+</table>
+<p>83,221,420 splats across 500 timepoints is about 166,000 per frame. Only the timepoint being viewed is resident, so the whole-node total is not what a GPU commits: a single frame sits far below the per-node element limit. The archive is one flat node with a progressive ladder rather than a tiled or multi-level tree. On a time-stacked node the writer already orders storage by the time barrier, so spatial tiling buys nothing, and coarser whole-object levels are never selected when only one frame is ever shown.</p>
+<h3>Relationship to the other Luxar demo records</h3>
+<p>The permissively-licensed Luxar demo record (doi:10.5281/zenodo.21912280) holds <em>a single frame</em> of this same recording as a standalone still, fitted independently. This record holds the whole timelapse. The two are the same specimen on the same instrument; cite whichever you use, and cite the upstream publication in addition to either.</p>
+<h3>Provenance and licence</h3>
+<p>Derived product: Gaussian-splat fits computed with the Luxar gsplat pipeline. These are lossy representations built for visualisation and interactive exploration; they are not a substitute for the source imagery in quantitative analysis. Splat counts were reduced by a cull applied using a fixed-amplitude cutoff: the archive's own statistics show a hard floor at amplitude 33.4046. The operation was intended as a cumulative-amplitude cull at retention 0.960, but the implementation in use at the time summed in float32 and tripped its threshold early, so it behaved as a fixed cutoff. Re-running a cumulative cull at 0.960 today does not reproduce this file; the fixed cutoff does.</p>
+<ul>
+<li><code>drosophila_embryogenesis_500tp.gsplats.zarr.zip</code> (863.8 MB, cc-by-4.0). Source: Drosophila melanogaster embryogenesis, SiMView-type multi-view light-sheet, nuclei labeled <code>w; His2Av::mRFP1; +</code> (Royer lab). Attribution: Royer lab, Chan Zuckerberg Biohub San Francisco; imaging described in Royer et al., Nature Biotechnology 34, 1267-1278 (2016), doi:10.1038/nbt.3708.</li>
+</ul>
+<p>The imaging is described in Royer et al., <em>Nature Biotechnology</em> 34, 1267-1278 (2016), doi:10.1038/nbt.3708, CC BY 4.0. Users of this record should cite that publication in addition to this record.</p>

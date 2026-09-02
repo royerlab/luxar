@@ -2606,6 +2606,36 @@ def test_an_additive_count_is_absent_if_any_chunk_is_unreadable(
 # ---------------------------------------------------------------------------
 
 
+def test_quality_columns_appear_only_where_a_figure_exists(gen: Any) -> None:
+    """A record with nothing scored must not carry two columns of dashes.
+
+    Loic removed the PSNR columns by hand on 2026-09-02 from the two records
+    where no row has a figure (h2afva and the Drosophila timelapse) and kept
+    them on the two where something does. A reader cannot tell a dash from
+    "unmeasurable" or from evasion, which is the same argument the renderer
+    already makes for demoting a non-fit dataset to a plain file list -- applied
+    one level up, to the record.
+
+    Without this, a `--refresh` and re-render would quietly put back the columns
+    he deleted, on the record he deleted them from.
+    """
+    manifest = json.loads(gen.MANIFEST.read_text())
+    for key in manifest["records"]:
+        rendered = gen.render_record(key, manifest)
+        scored = any(
+            row["psnr"] != gen._ABSENT or row["fg_psnr"] != gen._ABSENT
+            for name, entry in manifest["datasets"].items()
+            if entry.get("record") == key and entry.get("bucket") == "zenodo"
+            for row in gen._dataset_rows(name, entry, gen.load_characteristics())
+        )
+        has_cols = "PSNR (dB)" in rendered
+        assert has_cols == scored, (
+            f"{key}: quality columns present={has_cols} but any-figure={scored}"
+        )
+        # The explainer must travel with the columns, not outlive them.
+        assert ("Reading the quality columns" in rendered) == scored, key
+
+
 class TestCheckExplainsAnAbsentFigure:
     def _gaps_for(
         self,

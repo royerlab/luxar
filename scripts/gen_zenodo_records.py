@@ -967,6 +967,18 @@ def render_record(key: str, manifest: dict[str, Any]) -> str:
     )
     chars = load_characteristics()
 
+    # Does ANY row on this record carry a real quality figure? Decided once for
+    # the whole record, because the columns are a record-level choice: two
+    # columns of dashes cannot be told apart from "unmeasurable" or from
+    # evasion, which is the same reason a non-fit dataset is demoted to a plain
+    # file list below. `_ABSENT` covers both a missing figure and an explicit
+    # n/a, so a record of sidecars and coordinate tables counts as none.
+    quality_columns = any(
+        row["psnr"] != _ABSENT or row["fg_psnr"] != _ABSENT
+        for name, entry in sorted(datasets.items())
+        for row in _dataset_rows(name, entry, chars)
+    )
+
     for name, entry in sorted(datasets.items()):
         rows = _dataset_rows(name, entry, chars)
         variants = entry.get("variants") or {}
@@ -992,17 +1004,37 @@ def render_record(key: str, manifest: dict[str, Any]) -> str:
         # A fit whose archive is not readable here still belongs in the splat
         # table -- demoting it to the plain list would state the opposite.
         if any(row["is_gsplat"] or row["is_fit"] for row in rows):
-            out.append(
-                "\n| File | Splats | Size | Detail levels | PSNR (dB) | "
-                "Foreground PSNR (dB) | vs raw voxels |\n"
-                "|---|---:|---:|---|---:|---:|---:|\n"
-            )
-            for row in rows:
+            # Carry the quality columns only where at least one row on this
+            # RECORD has a figure. Where none does, the columns are two of
+            # dashes and the reader cannot tell "unmeasurable" from "we did not
+            # bother" -- the same argument the paragraph above makes for
+            # demoting a non-fit dataset to a plain file list, applied one level
+            # up. Chosen by Loic on 2026-09-02, who removed those columns by
+            # hand from the two records where nothing is scored (h2afva and the
+            # Drosophila timelapse) and kept them on the two where something is.
+            if quality_columns:
                 out.append(
-                    f"| `{row['file']}` | {row['splats']} | {row['size']} | "
-                    f"{row['topology']} | {row['psnr']} | {row['fg_psnr']} | "
-                    f"{row['vs_raw']} |\n"
+                    "\n| File | Splats | Size | Detail levels | PSNR (dB) | "
+                    "Foreground PSNR (dB) | vs raw voxels |\n"
+                    "|---|---:|---:|---|---:|---:|---:|\n"
                 )
+            else:
+                out.append(
+                    "\n| File | Splats | Size | Detail levels | vs raw voxels |\n"
+                    "|---|---:|---:|---|---:|\n"
+                )
+            for row in rows:
+                if quality_columns:
+                    out.append(
+                        f"| `{row['file']}` | {row['splats']} | {row['size']} | "
+                        f"{row['topology']} | {row['psnr']} | {row['fg_psnr']} | "
+                        f"{row['vs_raw']} |\n"
+                    )
+                else:
+                    out.append(
+                        f"| `{row['file']}` | {row['splats']} | {row['size']} | "
+                        f"{row['topology']} | {row['vs_raw']} |\n"
+                    )
             # An em dash in a quality column means "not stated", which a reader
             # cannot distinguish from "not measurable" or from evasion. Where the
             # sidecar records a reason meant for publication, say it here rather
@@ -1015,14 +1047,16 @@ def render_record(key: str, manifest: dict[str, Any]) -> str:
             for row in rows:
                 out.append(f"| `{row['file']}` | {row['size']} |\n")
 
-    out.append(
-        "\n---\n\n**Reading the quality columns.** PSNR is measured over the "
-        "whole volume and foreground PSNR only over voxels above the source's "
-        "Otsu threshold. On sparse data — most light-sheet and tomography — the "
-        "global figure is largely a score for reproducing empty space, and the "
-        "foreground column is the one that says whether the signal survived the "
-        "fit. Both are reported; neither alone is the answer.\n"
-    )
+    if quality_columns:
+        out.append(
+            "\n---\n\n**Reading the quality columns.** PSNR is measured over the "
+            "whole volume and foreground PSNR only over voxels above the "
+            "source's Otsu threshold. On sparse data — most light-sheet and "
+            "tomography — the global figure is largely a score for reproducing "
+            "empty space, and the foreground column is the one that says "
+            "whether the signal survived the fit. Both are reported; neither "
+            "alone is the answer.\n"
+        )
     out.append(
         "\n**Reading the compression column.** `vs raw voxels` compares the "
         "archive against the source grid held as uncompressed samples. Where a "

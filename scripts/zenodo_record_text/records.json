@@ -1,0 +1,313 @@
+{
+  "cc-by": {
+    "deposition": "21912280",
+    "doi": "10.5281/zenodo.21912280",
+    "title": "Luxar demo datasets: permissively licensed (CC-BY, CC0, public domain)",
+    "license": "cc-by-4.0",
+    "version": "1.0.0",
+    "language": "eng",
+    "publication_date": "2026-08-13",
+    "keywords": [
+      "Gaussian splatting",
+      "volume visualization",
+      "nD imaging",
+      "Luxar",
+      "light-sheet microscopy",
+      "confocal microscopy",
+      "cryo-electron microscopy",
+      "computed tomography",
+      "digital pathology",
+      "weather radar",
+      "galaxy survey",
+      "single-cell embedding"
+    ],
+    "creators": [
+      {
+        "name": "Royer, Loïc A.",
+        "affiliation": "Chan Zuckerberg Biohub San Francisco"
+      }
+    ],
+    "contributors": [
+      {
+        "name": "Jacobo, Adrian",
+        "affiliation": "Chan Zuckerberg Biohub San Francisco",
+        "type": "DataCollector"
+      },
+      {
+        "name": "Keller, Philipp J.",
+        "affiliation": "HHMI Janelia Research Campus",
+        "type": "DataCollector"
+      },
+      {
+        "name": "Lange, Merlin",
+        "affiliation": "Chan Zuckerberg Biohub San Francisco",
+        "type": "DataCollector"
+      },
+      {
+        "name": "Kim, Yang-Joon",
+        "affiliation": "Chan Zuckerberg Biohub San Francisco",
+        "type": "Researcher"
+      }
+    ],
+    "related_identifiers": [
+      {
+        "identifier": "https://github.com/royerlab/luxar",
+        "relation": "isSupplementTo",
+        "scheme": "url"
+      },
+      {
+        "identifier": "10.1101/2024.10.18.618987",
+        "relation": "isDerivedFrom",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.48550/arXiv.2503.14745",
+        "relation": "isDerivedFrom",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.1038/nbt.3708",
+        "relation": "isDerivedFrom",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.1016/j.cell.2024.09.047",
+        "relation": "isDerivedFrom",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.5281/zenodo.6460303",
+        "relation": "isDerivedFrom",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.1073/pnas.1107847108",
+        "relation": "isDerivedFrom",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.1148/ryai.230024",
+        "relation": "isDerivedFrom",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.1371/journal.pbio.3000388",
+        "relation": "isDerivedFrom",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.5281/zenodo.3993082",
+        "relation": "isDerivedFrom",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.1126/science.aba7612",
+        "relation": "isDerivedFrom",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.1101/2022.06.15.496239",
+        "relation": "isDerivedFrom",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.1093/nar/gkae1142",
+        "relation": "isDerivedFrom",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.1088/1475-7516/2025/07/017",
+        "relation": "isDerivedFrom",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.1038/s41567-020-0894-9",
+        "relation": "references",
+        "scheme": "doi"
+      }
+    ],
+    "notes": "Copyright (C) 2026 Loïc A. Royer for the derived Gaussian-splat and point-catalog files in this record. Rights in the underlying source datasets remain with their respective holders, listed per dataset in the description. Items derived from CC0 or public-domain sources carry no additional copyright claim.",
+    "custom": {
+      "code:codeRepository": "https://github.com/royerlab/luxar"
+    },
+    "submitted": false,
+    "description_sha256": "32eab51f9497c7ef0450b06cf213743426149565ec93b265865b27447510558f",
+    "description_chars": 22937,
+    "zenodo_modified": "2026-09-02T18:26:19.678782+00:00"
+  },
+  "cc-by-sa": {
+    "deposition": "21912282",
+    "doi": "10.5281/zenodo.21912282",
+    "title": "Luxar demo datasets: ShareAlike (CC BY-SA 4.0)",
+    "license": "cc-by-sa-4.0",
+    "version": "1.0.0",
+    "language": "eng",
+    "publication_date": "2026-08-13",
+    "keywords": [
+      "Gaussian splatting",
+      "volume visualization",
+      "nD imaging",
+      "Luxar",
+      "confocal microscopy",
+      "fluorescence microscopy",
+      "zebrafish",
+      "protein localization"
+    ],
+    "creators": [
+      {
+        "name": "Royer, Loïc A.",
+        "affiliation": "Chan Zuckerberg Biohub San Francisco"
+      }
+    ],
+    "contributors": null,
+    "related_identifiers": [
+      {
+        "identifier": "https://github.com/royerlab/luxar",
+        "relation": "isSupplementTo",
+        "scheme": "url"
+      },
+      {
+        "identifier": "10.1126/science.abi6983",
+        "relation": "isDerivedFrom",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.5281/zenodo.1211599",
+        "relation": "isDerivedFrom",
+        "scheme": "doi"
+      }
+    ],
+    "notes": "Copyright (C) 2026 Loïc A. Royer for the derived files in this record, released under CC BY-SA 4.0 as required by the ShareAlike terms of their sources. Rights in the underlying datasets remain with their respective holders.",
+    "custom": {
+      "code:codeRepository": "https://github.com/royerlab/luxar"
+    },
+    "submitted": false,
+    "description_sha256": "78ed4ec7b56918ecfcc21f912fcf972c01f035a9c6a9b32913356a008c0e7807",
+    "description_chars": 6856,
+    "zenodo_modified": "2026-09-02T20:01:47.543081+00:00"
+  },
+  "h2afva": {
+    "deposition": "21912284",
+    "doi": "10.5281/zenodo.21912284",
+    "title": "Zebrafish embryogenesis, histone-labelled nuclei: 253-timepoint light-sheet timelapse as Gaussian splats (with a lighter 51-timepoint fit)",
+    "license": "cc-by-4.0",
+    "version": "1.0.0",
+    "language": "eng",
+    "publication_date": "2026-08-13",
+    "keywords": [
+      "Gaussian splatting",
+      "light-sheet microscopy",
+      "nD imaging",
+      "Luxar",
+      "zebrafish",
+      "Danio rerio",
+      "embryogenesis",
+      "developmental biology",
+      "timelapse microscopy",
+      "level of detail",
+      "Zebrahub"
+    ],
+    "creators": [
+      {
+        "name": "Lange, Merlin",
+        "affiliation": "Chan Zuckerberg Biohub San Francisco"
+      },
+      {
+        "name": "Royer, Loïc A.",
+        "affiliation": "Chan Zuckerberg Biohub San Francisco"
+      }
+    ],
+    "contributors": null,
+    "related_identifiers": [
+      {
+        "identifier": "https://github.com/royerlab/luxar",
+        "relation": "isSupplementTo",
+        "scheme": "url"
+      },
+      {
+        "identifier": "10.1016/j.cell.2024.09.047",
+        "relation": "isDerivedFrom",
+        "scheme": "doi"
+      }
+    ],
+    "notes": "Copyright (C) 2026 Loïc A. Royer for the derived Gaussian-splat files in this record. Rights in the underlying light-sheet recording remain with its holders. Released under CC BY 4.0.",
+    "custom": {
+      "code:codeRepository": "https://github.com/royerlab/luxar"
+    },
+    "submitted": false,
+    "description_sha256": "35a9be49c758d91c5d7107e4888b76623553414fbc71269a1a043300c4ceb536",
+    "description_chars": 6299,
+    "zenodo_modified": "2026-09-02T19:58:52.922857+00:00"
+  },
+  "droso-timelapse": {
+    "deposition": "22118695",
+    "doi": "10.5281/zenodo.22118695",
+    "title": "Drosophila melanogaster embryogenesis: a 500-timepoint light-sheet timelapse as Gaussian splats",
+    "license": "cc-by-4.0",
+    "version": "1.0.0",
+    "language": "eng",
+    "publication_date": "2026-08-27",
+    "keywords": [
+      "Gaussian splatting",
+      "light-sheet microscopy",
+      "Drosophila melanogaster",
+      "embryogenesis",
+      "gastrulation",
+      "4D imaging",
+      "scientific visualisation"
+    ],
+    "creators": [
+      {
+        "name": "Royer, Loïc A.",
+        "affiliation": "Chan Zuckerberg Biohub San Francisco"
+      }
+    ],
+    "contributors": [
+      {
+        "name": "Keller, Philipp J.",
+        "affiliation": "HHMI Janelia Research Campus",
+        "type": "DataCollector"
+      }
+    ],
+    "related_identifiers": [
+      {
+        "identifier": "https://github.com/royerlab/luxar",
+        "relation": "isSupplementTo",
+        "scheme": "url"
+      },
+      {
+        "identifier": "10.1038/nbt.3708",
+        "relation": "isDerivedFrom",
+        "scheme": "doi"
+      },
+      {
+        "identifier": "10.5281/zenodo.21912280",
+        "relation": "isPartOf",
+        "scheme": "doi"
+      }
+    ],
+    "notes": "Copyright (C) 2026 Loïc A. Royer for the derived Gaussian-splat files in this record. Rights in the underlying light-sheet recording remain with its holders. Released under CC BY 4.0.",
+    "custom": {
+      "code:codeRepository": "https://github.com/royerlab/luxar",
+      "code:programmingLanguage": [
+        {
+          "id": "python",
+          "title": {
+            "en": "Python"
+          }
+        }
+      ],
+      "code:developmentStatus": {
+        "id": "active",
+        "title": {
+          "en": "Active"
+        }
+      }
+    },
+    "submitted": false,
+    "description_sha256": "5e61cb110e88b655f3a604d281411fd19c8aea57da92f6d7e5d55b30e782ea7a",
+    "description_chars": 3282,
+    "zenodo_modified": "2026-09-02T19:50:36.644861+00:00"
+  },
+  "_captured_utc": "2026-09-02T20:52:03Z"
+}
