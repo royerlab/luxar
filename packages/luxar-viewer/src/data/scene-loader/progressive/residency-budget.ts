@@ -282,11 +282,13 @@ export class RefinementResidencyBudget {
   }
 
   /**
-   * Record `path`'s current footprint and decide whether it may load one more
-   * rung. A refusal is sticky for the rest of the run: re-offering the same
-   * loader every pass would re-measure, re-refuse and re-log without making
-   * progress. An admission immediately reserves its estimated next rung so the
-   * remaining loaders in this pass see the growth already authorised.
+   * Record `path`'s current footprint and return whether it may refine plus its
+   * per-pass `allowanceBytes`. A refusal is sticky for the rest of the run:
+   * re-offering the same loader every pass would re-measure, re-refuse and
+   * re-log without making progress. An admission immediately reserves only its
+   * estimated next rung. `runProgressiveRefinement` awaits loaders serially, so
+   * the wrapper's measured `record()` replaces that estimate before the next
+   * loader is admitted and the gap to the larger allowance is never observed.
    */
   admit(path: string, residency: LadderResidency): RefinementPassAdmission {
     const accounted = ladderResidentBytes(residency);
