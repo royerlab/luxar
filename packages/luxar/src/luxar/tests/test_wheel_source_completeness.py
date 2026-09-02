@@ -21,7 +21,9 @@ will be allowed to see.
 
 Deliberately not a wheel build. Building takes minutes and needs the viewer
 dist; asking Git which tracked files it would *also* ignore is instant and
-catches the same class.
+catches the same class. Hatchling applies only the repository-root `.gitignore`
+to its project walk, while force-included files bypass that exclusion spec and
+are deliberately outside this guard's scope.
 """
 
 from __future__ import annotations
@@ -36,18 +38,60 @@ PACKAGE_ROOT = "packages/luxar/src/luxar"
 
 
 def _git(*args: str) -> str:
+    """Run Git in the repository and return its standard output."""
     return subprocess.run(
         ["git", *args], cwd=REPO_ROOT, capture_output=True, text=True, check=True
     ).stdout
 
 
 def _tracked_package_files() -> list[str]:
-    out = _git("ls-files", "--", PACKAGE_ROOT)
-    return [line for line in out.splitlines() if line.strip()]
+    """Return tracked package paths without Git's pathname quoting."""
+    out = _git("ls-files", "-z", "--", PACKAGE_ROOT)
+    return [path for path in out.split("\0") if path]
+
+
+def _root_gitignore_matches(paths: list[str], *, cwd: Path = REPO_ROOT) -> list[str]:
+    """Return root `.gitignore` matches that can exclude Hatchling inputs."""
+    if not paths:
+        return []
+
+    result = subprocess.run(
+        [
+            "git",
+            "-c",
+            "core.excludesFile=/dev/null",
+            "check-ignore",
+            "--no-index",
+            "--verbose",
+            "-z",
+            "--stdin",
+        ],
+        cwd=cwd,
+        input="\0".join(paths) + "\0",
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode not in (0, 1):
+        pytest.fail(f"git check-ignore failed: {result.stderr.strip()}")
+
+    fields = result.stdout.split("\0")
+    if fields[-1:] == [""]:
+        fields.pop()
+    if len(fields) % 4:
+        pytest.fail(f"unexpected git check-ignore output: {result.stdout!r}")
+
+    offenders = []
+    for source, line_number, pattern, path in zip(
+        fields[0::4], fields[1::4], fields[2::4], fields[3::4], strict=True
+    ):
+        if source == ".gitignore" and not pattern.startswith("!"):
+            offenders.append(f"{source}:{line_number}:{pattern}\t{path}")
+    return offenders
 
 
 @pytest.fixture(scope="module")
 def tracked_files() -> list[str]:
+    """Provide tracked package files when tests run from a Git checkout."""
     try:
         files = _tracked_package_files()
     except (subprocess.CalledProcessError, FileNotFoundError) as exc:
@@ -59,23 +103,7 @@ def tracked_files() -> list[str]:
 
 def test_no_tracked_package_file_is_gitignored(tracked_files: list[str]) -> None:
     """The guard: a tracked file that `.gitignore` also matches is a wheel hole."""
-    # `--no-index` is the whole point — without it Git short-circuits on tracked
-    # paths and reports nothing, which is exactly the blind spot that let the
-    # `downloads/` rule sit unnoticed.
-    result = subprocess.run(
-        ["git", "check-ignore", "--no-index", "--verbose", "--stdin"],
-        cwd=REPO_ROOT,
-        input="\n".join(tracked_files),
-        capture_output=True,
-        text=True,
-    )
-    # Exit 0 = at least one path matched; 1 = none matched (the healthy case).
-    if result.returncode == 1:
-        return
-    if result.returncode not in (0, 1):
-        pytest.fail(f"git check-ignore failed: {result.stderr.strip()}")
-
-    offenders = [line for line in result.stdout.splitlines() if line.strip()]
+    offenders = _root_gitignore_matches(tracked_files)
     assert not offenders, (
         "These files are tracked by Git but ALSO matched by .gitignore. Hatchling "
         "honours .gitignore when building the wheel, so they will be silently "
@@ -97,16 +125,10 @@ def test_the_downloads_subpackage_specifically_survives(
     downloads = [f for f in tracked_files if "/demos/_support/downloads/" in f]
     assert downloads, "the downloads subpackage vanished from the tracked set"
 
-    result = subprocess.run(
-        ["git", "check-ignore", "--no-index", "--verbose", "--stdin"],
-        cwd=REPO_ROOT,
-        input="\n".join(downloads),
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 1, (
+    offenders = _root_gitignore_matches(downloads)
+    assert not offenders, (
         "luxar.demos._support.downloads is gitignored again — it will be dropped "
-        f"from the wheel and the CLI will not import:\n{result.stdout}"
+        f"from the wheel and the CLI will not import:\n{offenders}"
     )
 
 
@@ -143,3 +165,35 @@ def test_the_guard_can_actually_fire(tmp_path: Path) -> None:
         text=True,
     )
     assert anchored.returncode == 1, "anchoring should stop the nested match"
+
+
+def test_the_guard_matches_only_hatchlings_exclusion_source(tmp_path: Path) -> None:
+    """Negations and Git-only exclusion sources must not create false failures."""
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    package = tmp_path / "src" / "pkg"
+    package.mkdir(parents=True)
+    (tmp_path / ".gitignore").write_text("*.log\n!keep.log\n*.py\n")
+    (package / ".gitignore").write_text("nested.txt\n")
+    (tmp_path / ".git" / "info" / "exclude").write_text("info.txt\n")
+    global_excludes = tmp_path / "global-excludes"
+    global_excludes.write_text("global.txt\n")
+    subprocess.run(
+        ["git", "config", "core.excludesFile", str(global_excludes)],
+        cwd=tmp_path,
+        check=True,
+    )
+
+    paths = [
+        "src/pkg/drop.log",
+        "src/pkg/keep.log",
+        "src/pkg/nested.txt",
+        "src/pkg/info.txt",
+        "src/pkg/global.txt",
+        "src/pkg/snowman-☃\nmodule.py",
+    ]
+    offenders = _root_gitignore_matches(paths, cwd=tmp_path)
+
+    assert offenders == [
+        ".gitignore:1:*.log\tsrc/pkg/drop.log",
+        ".gitignore:3:*.py\tsrc/pkg/snowman-☃\nmodule.py",
+    ]
