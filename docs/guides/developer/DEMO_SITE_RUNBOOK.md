@@ -1054,6 +1054,10 @@ source-download/refit fallback does not run. Roll the draft file back to the pin
 contract before publishing. The live gallery tile is indifferent either way,
 because it serves an already-derived scene and never consults the pin (3.10).
 
+Publish Zenodo records `21912280` and `22118695` together: the Drosophila
+record's `isPartOf` and both descriptions' cross-references name the other
+record's reserved DOI, which does not resolve until publication.
+
 ### 3.21 Guard the artefact you ship, not only the inputs you fed it
 
 A publish deployed a gallery page carrying **9 tiles instead of 85**, and every

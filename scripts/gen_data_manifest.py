@@ -600,6 +600,8 @@ DATASETS: dict[str, dict] = {
             "Royer et al., Nat. Biotechnol. 34, 1267-1278 (2016), "
             "doi:10.1038/nbt.3708."
         ),
+        # Permission CONFIRMED by Philipp J. Keller 2026-09-02; see the dated
+        # record-level note in RECORDS["droso-timelapse"].
     ),
     "gsplats_3d_h2afva_stack": dict(
         bucket="zenodo",
