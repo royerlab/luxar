@@ -3736,3 +3736,112 @@ describe('LayersPanel — filter + context-menu lifecycle across dataset reloads
     panel.dispose();
   });
 });
+
+/**
+ * The SHIPPED Layer order control.
+ *
+ * `LayerStateManager.setLayerOrder` is covered in `layer-state.test.ts`, but the
+ * panel does NOT call it — the control mutates through `applyToSelected` inline,
+ * the house pattern for a multi-select control. So the mutator's tests do not
+ * cover the path a user actually drives. These do: they render the real panel,
+ * select the row, and dispatch on the real field.
+ */
+describe('LayersPanel — Layer order control (the shipped path)', () => {
+  let container: HTMLElement;
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    showToastMock.mockClear();
+  });
+
+  function openPanel(extraLeafAttrs: Record<string, unknown> = {}) {
+    const panel = new LayersPanel(container, makeAnimationController());
+    panel.initFromScene(new THREE.Group(), makeLayeredSceneGraph('points', extraLeafAttrs));
+    panel.show();
+    // Select the row so the controls act on it.
+    // 'single' rather than 'add': add TOGGLES, and the panel already selects a
+    // row on init, so add would deselect it.
+    const first = panel.layerState.getLayers()[0];
+    if (first) panel.layerState.select(first.path, 'single');
+    return panel;
+  }
+
+  const field = (): HTMLInputElement | null =>
+    container.querySelector<HTMLInputElement>('.luxar-layers-panel__number');
+
+  function setField(value: string): void {
+    const input = field()!;
+    input.value = value;
+    input.dispatchEvent(new Event('change'));
+  }
+
+  it('renders the field, blank when the layer authored no order', () => {
+    const panel = openPanel();
+    expect(field()).toBeTruthy();
+    expect(field()!.value).toBe('');
+    expect(field()!.placeholder).toBe('auto');
+    panel.dispose();
+  });
+
+  it('shows an authored order', () => {
+    const panel = openPanel({ layer_order: 7 });
+    expect(field()!.value).toBe('7');
+    panel.dispose();
+  });
+
+  it('typing a value marks the layer explicit', () => {
+    const panel = openPanel();
+    setField('4');
+    const layer = panel.layerState.getLayer('/cloud')!;
+    expect(layer.layerOrder).toBe(4);
+    expect(layer.layerOrderExplicit).toBe(true);
+    panel.dispose();
+  });
+
+  it('an authored 0 is kept as a real band, not read as absent', () => {
+    const panel = openPanel();
+    setField('0');
+    const layer = panel.layerState.getLayer('/cloud')!;
+    expect(layer.layerOrder).toBe(0);
+    expect(layer.layerOrderExplicit).toBe(true);
+    panel.dispose();
+  });
+
+  it('blanking the field clears BOTH the value and the explicit flag', () => {
+    const panel = openPanel({ layer_order: 7 });
+    setField('');
+    const layer = panel.layerState.getLayer('/cloud')!;
+    expect(layer.layerOrder).toBeUndefined();
+    expect(layer.layerOrderExplicit).toBe(false);
+    panel.dispose();
+  });
+
+  it('accepts a negative order', () => {
+    const panel = openPanel();
+    setField('-3');
+    expect(panel.layerState.getLayer('/cloud')!.layerOrder).toBe(-3);
+    panel.dispose();
+  });
+
+  // Junk must clear rather than become 0: 0 is a real band, and inventing it
+  // from unparseable input would state an order the user did not choose. The
+  // field then echoes back what was actually stored.
+  it('junk input clears, and the field echoes the stored state', () => {
+    const panel = openPanel({ layer_order: 7 });
+    setField('front');
+    const layer = panel.layerState.getLayer('/cloud')!;
+    expect(layer.layerOrder).toBeUndefined();
+    expect(layer.layerOrderExplicit).toBe(false);
+    expect(field()!.value).toBe('');
+    panel.dispose();
+  });
+
+  it('truncates a fractional entry toward zero', () => {
+    const panel = openPanel();
+    setField('3.7');
+    expect(panel.layerState.getLayer('/cloud')!.layerOrder).toBe(3);
+    panel.dispose();
+  });
+});

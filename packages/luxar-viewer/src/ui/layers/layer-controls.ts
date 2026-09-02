@@ -449,6 +449,11 @@ export class LayerControls {
     this.layerOrderInput.step = '1';
     this.layerOrderInput.className = 'luxar-layers-panel__number';
     this.layerOrderInput.placeholder = 'auto';
+    // The visible label is a sibling `div`, matching every other control here,
+    // so nothing associates it with the field. A `select` at least announces
+    // its selected option; a bare number input announces nothing, so give it a
+    // name of its own.
+    this.layerOrderInput.setAttribute('aria-label', 'Layer order');
     this.layerOrderInput.title =
       'Draw order against the layers this one overlaps. Higher draws nearer the ' +
       'camera (on top), like a CSS z-index. Leave blank to let the viewer infer ' +

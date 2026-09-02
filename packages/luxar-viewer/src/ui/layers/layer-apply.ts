@@ -192,6 +192,12 @@ export class LayerApplyEngine {
     // layer's Blend control wins — but only when that layer actually OWNS a
     // mode. A wrapper owning none has nothing to impose (see doc comment; #1275).
     const editedLayerOwnsMode = this.deps.state.getLayer(layerPath)?.blendingModeExplicit ?? false;
+    // Same rule as the mode, tracked separately: a layer exposes exactly ONE
+    // Layer order control, so an order authored on a non-layer DESCENDANT would
+    // make that control inert. A nested LAYER descendant is different — it has
+    // its own control and its own row, so it goes through `liveLayerAttrs`
+    // below and rightly wins by nearest-setter-wins.
+    const editedLayerOwnsOrder = this.deps.state.getLayer(layerPath)?.layerOrderExplicit ?? false;
     const chain: ComposableAttrs[] = ancestors.map((node, i) => {
       const layerInfo = this.deps.state.getLayer(node.path);
       if (layerInfo) {
@@ -212,6 +218,12 @@ export class LayerApplyEngine {
           insideLayerSubtree && editedLayerOwnsMode
             ? undefined
             : (node.attrs.blending_mode as string | undefined),
+        // Omitting this dropped an order authored on a non-layer intermediate
+        // group from composition entirely.
+        layer_order:
+          insideLayerSubtree && editedLayerOwnsOrder
+            ? undefined
+            : (node.attrs.layer_order as number | undefined),
       };
     });
     return composeAttrs(chain);
@@ -631,28 +643,35 @@ export class LayerApplyEngine {
   }
 
   /**
-   * Push a layer's authored draw order onto the meshes the depth-sort
-   * coordinator reads it from.
+   * Push the composed draw order onto the meshes the depth-sort coordinator
+   * reads it from.
    *
-   * Deliberately NOT routed through `applyComposed`: a level is a cross-node
-   * SORT KEY, not a material uniform, so there is no `mat.updateX` to call and
-   * nothing in the shader to refresh. The coordinator re-reads
-   * `userData.attrs.layer_order` on every frame, so writing the record and
-   * waking the render loop is the whole apply.
+   * Does not go through `applyComposed` — an order is a cross-node SORT KEY,
+   * not a material uniform, so there is no `mat.updateX` to call and nothing in
+   * the shader to refresh. But it DOES compose: the value written to each leaf
+   * is `composeEffective`'s, not this layer's raw one.
    *
-   * Written per affected LEAF (a group layer fans out to its descendants) to
-   * match where the node factory stamps the composed record, and set to
-   * `undefined` rather than deleted so a cleared level reads as absent through
-   * the same `!== undefined` test the renderer uses.
+   * That distinction is the bug this replaced. Assigning `layer.layerOrder`
+   * directly to every affected leaf clobbered the order of a nested leaf that
+   * is ITSELF a layer with its own authored order — `getAffectedDataLeaves`
+   * returns every data descendant, including nested layers, and
+   * nearest-setter-wins says the nested one should win. Composing per leaf
+   * restores that, and lets an order on a non-layer intermediate group
+   * participate too.
+   *
+   * `undefined` is written rather than the key deleted, so a cleared order
+   * reads as absent through the same `!== undefined` test the renderer uses.
    */
   applyLayerOrder(layer: LayerInfo): void {
-    const level = layer.layerOrderExplicit ? layer.layerOrder : undefined;
+    const sceneGraph = this.deps.getSceneGraph();
     for (const leaf of this.getAffectedDataLeaves(layer.path)) {
       const obj = this.getMesh(leaf.path);
       if (!obj) continue;
+      const ancestors = sceneGraph ? collectAncestorNodes(sceneGraph, leaf.path) : undefined;
+      const eff = this.composeEffective(leaf.path, layer.path, false, ancestors);
       const userData = obj.userData as { attrs?: Record<string, unknown> };
       if (!userData.attrs) userData.attrs = {};
-      userData.attrs.layer_order = level;
+      userData.attrs.layer_order = eff?.layer_order;
     }
     this.deps.requestRender();
   }
