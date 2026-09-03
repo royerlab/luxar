@@ -534,7 +534,8 @@ export class LayerStateManager {
     root: SceneNode,
     inheritedLayerOrder: number | undefined
   ): void {
-    const ownLayerOrder = sanitizedLayerOrder(node.attrs.layer_order);
+    const ownLayerOrder =
+      node.type === 'scene' ? undefined : sanitizedLayerOrder(node.attrs.layer_order);
     const effectiveLayerOrder = ownLayerOrder ?? inheritedLayerOrder;
     // Skip the root scene node; collect anything else with layer=true.
     // Groups exposed as layers act as composites — their controls fan out

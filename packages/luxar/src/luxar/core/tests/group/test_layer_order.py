@@ -2,9 +2,10 @@
 
 ``layer_order`` states where a layer draws relative to the layers it overlaps
 (higher = nearer the camera = drawn later, the CSS ``z-index`` convention). It
-is a compositing attr composed nearest-setter-wins by the viewer, and it may be
-authored ONLY on a node that is a layer — the scene root, a plain group, or a
-top-level leaf.
+is a compositing attr composed nearest-setter-wins by the viewer, and it may
+participate only when authored on a node that is a layer — a plain group or a
+top-level leaf. A value on the scene root is accepted as carrier metadata but
+is excluded from viewer composition and ignored.
 
 The refusals below are the load-bearing half. A level authored strictly inside a
 ``kind=partition`` wrapper would split that wrapper across draw-order bands and

@@ -1261,6 +1261,19 @@ describe('LayerStateManager — layer order', () => {
     expect(mgr.getLayer('bare')?.layerOrderExplicit).toBe(false);
   });
 
+  it('ignores a layer order authored on the scene root', () => {
+    const rooted = graph();
+    rooted.attrs = { layer_order: 5 } as never;
+
+    const rootedManager = new LayerStateManager();
+    rootedManager.initFromSceneGraph(rooted);
+
+    expect(rootedManager.getLayer('authored')?.layerOrder).toBe(20);
+    expect(rootedManager.getLayer('authored')?.inheritedLayerOrder).toBeUndefined();
+    expect(rootedManager.getLayer('bare')?.layerOrder).toBeUndefined();
+    expect(rootedManager.getLayer('bare')?.inheritedLayerOrder).toBeUndefined();
+  });
+
   it('setLayerOrder marks the layer explicit', () => {
     mgr.setLayerOrder('bare', -5);
     expect(mgr.getLayer('bare')?.layerOrder).toBe(-5);

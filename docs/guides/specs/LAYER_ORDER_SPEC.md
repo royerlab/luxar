@@ -195,9 +195,11 @@ composes root→leaf **nearest-setter-wins**, like `blending_mode` / `join` /
 
 **D6 — A level authored strictly inside ANY specialized group is an ERROR.**
 That is `kind=partition` *or* `kind=lod`, at any depth, which makes the rule
-statable in one line: **`layer_order` may be authored only on a node that is a
-layer** — the scene root, a plain group, or a top-level leaf — never on the
-internals of a specialized group. For a partition the reason is severe (§5: it
+statable in one line: **`layer_order` may participate only when authored on a
+node that is a layer** — a plain group or a top-level leaf — never on the
+internals of a specialized group. The scene root may carry the attr, but like
+every rendering attr there it is excluded from composition and ignored. For a
+partition the reason is severe (§5: it
 would split the wrapper across bands and destroy the exact Fuchs–Kedem–Naylor
 part order); for a `kind=lod` group it is that a level is an *alternative*, only
 one of which renders, so a level on one would be inert — and an attr that writes
@@ -328,8 +330,8 @@ Two smaller cases, checked and benign:
   meshes the coordinator does not track; collected slots always receive 1..M
   regardless of band, so a negative band cannot alias 0 and untracked geometry
   still draws first. Unchanged from today.
-- **A level on the scene root** composes to every layer, yielding one band —
-  i.e. exactly today's behaviour. A harmless no-op rather than a special case.
+- **A level on the scene root** is ignored, like every other rendering attr
+  there. The scene root is a carrier and is excluded from the composition chain.
 
 And one free benefit worth naming: because a band is camera-independent, it adds
 **no re-sort trigger and no per-frame work** — and it makes the LOD case stable
