@@ -13,7 +13,18 @@
     "`mutate` is deliberately NARROW -- the modules with characterization tests",
     "written against them. Stryker's default would mutate the whole 218K-LOC tree",
     "and run for hours. Override per investigation instead of widening this:",
-    "    pnpm test:mutation -- --mutate 'src/some/other/file.ts'"
+    "    pnpm test:mutation -- --mutate 'src/some/other/file.ts'",
+    "",
+    "`disableTypeChecks: false` matters more than it looks. Left at its default,",
+    "Stryker prepends `// @ts-nocheck` to EVERY file in the project before a run --",
+    "~1,500 files here -- and only restores them at the end, so an interrupted run",
+    "leaves the whole tree modified. Vitest transpiles through esbuild and never",
+    "type-checks, so stripping type errors buys nothing: the score is identical",
+    "either way (52.65% on input-handler.ts, measured both ways) while the files",
+    "touched drop from ~1,500 to the one being mutated.",
+    "",
+    "Related hazard: an in-place run restores every file it backed up, so an edit",
+    "made WHILE a run is in flight is silently reverted when it finishes."
   ],
   "packageManager": "pnpm",
   "testRunner": "vitest",
@@ -42,5 +53,6 @@
   },
   "timeoutMS": 20000,
   "tempDirName": ".stryker-tmp",
+  "disableTypeChecks": false,
   "cleanTempDir": true
 }

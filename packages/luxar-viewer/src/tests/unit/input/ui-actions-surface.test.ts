@@ -234,6 +234,46 @@ describe('InputHandler UI-action surface', () => {
     expect(panels.getLayersPanel()).toBe(layers);
   });
 
+  it('removes the keydown/keyup listeners it added, by the same reference', () => {
+    // Mutation testing found this gap: both
+    // `() => window.removeEventListener('keydown', onKeyDown)` teardowns could
+    // be replaced with `() => undefined` and every test still passed. That is
+    // the leak class CLAUDE.md calls out under "Event Listener Memory Leaks",
+    // and the subtle version of it is a reference mismatch — re-binding at
+    // removal time produces a NEW function, so removeEventListener silently
+    // removes nothing. Asserting the identity between the two calls is what
+    // catches that; asserting "remove was called" would not.
+    const added = new Map<string, EventListenerOrEventListenerObject>();
+    const removed = new Map<string, EventListenerOrEventListenerObject>();
+    const addSpy = vi
+      .spyOn(window, 'addEventListener')
+      .mockImplementation((type, listener) => {
+        if (type === 'keydown' || type === 'keyup') added.set(type, listener);
+      });
+    const removeSpy = vi
+      .spyOn(window, 'removeEventListener')
+      .mockImplementation((type, listener) => {
+        if (type === 'keydown' || type === 'keyup') removed.set(type, listener);
+      });
+
+    handler = makeHandler();
+    handler.init();
+    expect([...added.keys()].sort()).toEqual(['keydown', 'keyup']);
+    expect(removed.size).toBe(0);
+
+    handler.dispose();
+    handler = undefined;
+
+    expect([...removed.keys()].sort()).toEqual(['keydown', 'keyup']);
+    // The identity check — a re-bound handler would be a different function
+    // and would leak while looking correctly cleaned up.
+    expect(removed.get('keydown')).toBe(added.get('keydown'));
+    expect(removed.get('keyup')).toBe(added.get('keyup'));
+
+    addSpy.mockRestore();
+    removeSpy.mockRestore();
+  });
+
   it('dispatches the exact CustomEvents the rest of the app listens for', () => {
     handler = makeHandler();
     handler.init();
