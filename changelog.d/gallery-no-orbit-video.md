@@ -17,6 +17,6 @@ skipping only the `.webm` would have left the pulsing exactly as it was while
 looking like a fix. The flag therefore encodes a genuinely static webp, and the
 tile survives having no video.
 
-A skipped encode does not delete an existing file, so an already-published
-`.webm` has to be retired from the deploy tree and R2 by hand — done for both
-demos.
+When the flag is set, capture also removes any stale staged `.webm` before the
+disk-based summary and publish sweep can mistake it for a fresh encode. The two
+previously published objects were retired from the deploy tree and R2.

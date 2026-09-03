@@ -89,6 +89,7 @@ import {
   formatGalleryCaptureMetrics,
   formatMediaSize,
   galleryDroppedElementsWarning,
+  skipGalleryMediaWhenRequested,
   summarizeGalleryMedia,
   type GalleryMediaFile,
 } from './gallery-media-reporting';
@@ -1292,22 +1293,22 @@ function convertFramesToWebm(framesDir: string, output: string): void {
   );
 }
 
-/** Small animated WebP loop for the README (inline on GitHub) from the frames. */
 /**
- * Single-frame WebP from the first captured frame, for demos that opt out of an
- * orbit clip. The animated `.webp` is what the gallery uses as a tile's `still`,
- * so a subject that should not move needs a STATIC one here — dropping only the
+ * Single-frame WebP from the curated still, for demos that opt out of an orbit
+ * clip. The animated `.webp` is what the gallery uses as a tile's `still`, so a
+ * subject that should not move needs a STATIC one here — dropping only the
  * `.webm` would leave the animation in place.
  */
-function convertFrameToStaticWebp(framesDir: string, output: string): void {
+function convertFrameToStaticWebp(input: string, output: string): void {
   execSync(
-    `ffmpeg -y -i "${framesDir}/f0000.png" ` +
+    `ffmpeg -y -i "${input}" ` +
       `-vf "scale=${WEBP_WIDTH}:-1" -vcodec libwebp -lossless 0 ` +
       `-compression_level 6 -q:v ${WEBP_QUALITY} -frames:v 1 "${output}"`,
     { stdio: 'pipe' }
   );
 }
 
+/** Small animated WebP loop for the README (inline on GitHub) from the frames. */
 function convertFramesToWebp(framesDir: string, output: string): void {
   // Same 1:1 assembly (no minterpolate) — real frames only, no warping.
   execSync(
@@ -1534,7 +1535,7 @@ for (const demo of DEMOS) {
         if (noOrbit) {
           // Subject should not be rocked (see noOrbitVideo in the manifest):
           // a static tile rather than a clip that pulses as the view changes.
-          convertFrameToStaticWebp(framesDir, webpPath);
+          convertFrameToStaticWebp(pngPath, webpPath);
         } else {
           convertFramesToWebp(framesDir, webpPath); // README inline (GitHub)
         }
@@ -1549,15 +1550,13 @@ for (const demo of DEMOS) {
         );
       }
       let webmEncoded = false;
-      try {
-        if (noOrbit) {
-          console.log(`[${demo.id}] noOrbitVideo — static tile, skipping webm`);
-          throw new Error('__skip_webm__');
-        }
-        convertFramesToWebm(framesDir, webmPathOut); // full-quality master
-        webmEncoded = true;
-      } catch (e) {
-        if (!(e instanceof Error && e.message === '__skip_webm__')) {
+      if (skipGalleryMediaWhenRequested(noOrbit, webmPathOut)) {
+        console.log(`[${demo.id}] noOrbitVideo — static tile, skipping webm`);
+      } else {
+        try {
+          convertFramesToWebm(framesDir, webmPathOut); // full-quality master
+          webmEncoded = true;
+        } catch (e) {
           console.error(`[${demo.id}] webm failed:`, e);
         }
       }

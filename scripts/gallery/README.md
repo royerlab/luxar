@@ -220,8 +220,9 @@ auto-exposure), `autoExpose` / `autoFrame` (set `false` to use the scene's baked
 revolves about; default = the camera's own signed up axis, so set it only to
 override — and note it re-parks the camera and so usually wants a `viewAngle`
 beside it), `dimensionNav`
-(`{key, steps}` for nD), `timelapse` (`{framePoint}` for 4D series), `lodFinest`, `noOrbitVideo` (see below),
-`note` (free-text human annotation; the capture code never reads it).
+(`{key, steps}` for nD), `timelapse` (`{framePoint}` for 4D series), `lodFinest`,
+`noOrbitVideo` (see below), `note` (free-text human annotation; the capture code
+never reads it).
 
 `noOrbitVideo` (optional): capture a **static single-frame** tile and skip the
 orbit video entirely. For a subject whose apparent extent changes sharply with
@@ -233,9 +234,13 @@ so no amplitude fixes it.
 Note the `.webp` **is** the animated loop (`build_gallery_data.py` uses it as the
 tile's `still`, and `has_media` is `video or still`), so dropping only the
 `.webm` would leave the pulsing in place. Set on `gsplats_lod_embryo_line` and
-`gsplats_2d_codex_pancreas`. A skipped encode does not delete an existing file —
-retire the old `.webm` from the deploy tree and R2 by hand, and reverse that if
-you ever re-enable a video.
+`gsplats_2d_codex_pancreas`. The capture removes a stale staged `.webm` whenever
+the flag is set, so the summary and the publish sweep cannot mistake it for a
+fresh encode.
+
+Root-README tiles currently require both WebP and WebM entries in
+`media-manifest.json` and `verify_media.py`. Before promoting a `noOrbitVideo`
+demo there, extend that publishing contract to support a WebP-only tile.
 
 `citation` (optional, not a capture hint): the dataset credit, copied verbatim
 from the demo's `DEMO_META["citation"]["short"]`. It is here so a tile's credit
