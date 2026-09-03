@@ -3755,11 +3755,10 @@ describe('LayersPanel — filter + context-menu lifecycle across dataset reloads
 /**
  * The SHIPPED Layer order control.
  *
- * `LayerStateManager.setLayerOrder` is covered in `layer-state.test.ts`, but the
- * panel does NOT call it — the control mutates through `applyToSelected` inline,
- * the house pattern for a multi-select control. So the mutator's tests do not
- * cover the path a user actually drives. These do: they render the real panel,
- * select the row, and dispatch on the real field.
+ * `LayerStateManager.setLayerOrder` is covered in `layer-state.test.ts`, but
+ * those unit tests do not cover the DOM event path a user actually drives.
+ * These do: they render the real panel, select the row, and dispatch on the
+ * real field that routes through the state setter.
  */
 describe('LayersPanel — Layer order control (the shipped path)', () => {
   let container: HTMLElement;

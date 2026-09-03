@@ -116,40 +116,64 @@ function warnBandSplitContainment(outer: OrderGroup, inner: OrderGroup): void {
  * level is greater. Equal levels cover the mixed-band case: the groups are
  * meant to share one band, but the bucket split still separates them.
  */
+function orderGroupBucket(group: OrderGroup): 'opaque' | 'transparent' | 'mixed' {
+  let sawOpaque = false;
+  let sawTransparent = false;
+  for (const slot of group.slots) {
+    const material = Array.isArray(slot.mesh.material) ? slot.mesh.material[0] : slot.mesh.material;
+    if (material?.transparent) sawTransparent = true;
+    else sawOpaque = true;
+  }
+  return sawOpaque && sawTransparent ? 'mixed' : sawOpaque ? 'opaque' : 'transparent';
+}
+
 function warnBucketOrderConflict(groups: OrderGroup[]): void {
-  const bucket = (group: OrderGroup): 'opaque' | 'transparent' | 'mixed' => {
-    let sawOpaque = false;
-    let sawTransparent = false;
-    for (const slot of group.slots) {
-      const material = Array.isArray(slot.mesh.material)
-        ? slot.mesh.material[0]
-        : slot.mesh.material;
-      if (material?.transparent) sawTransparent = true;
-      else sawOpaque = true;
+  let hasUnwarnedAuthoredGroup = false;
+  for (const group of groups) {
+    const key = group.slots[0]?.groupKey;
+    if (group.levelExplicit && key && !warnedBucketOrderGroups.has(key)) {
+      hasUnwarnedAuthoredGroup = true;
+      break;
     }
-    return sawOpaque && sawTransparent ? 'mixed' : sawOpaque ? 'opaque' : 'transparent';
-  };
+  }
+  if (!hasUnwarnedAuthoredGroup) return;
 
-  const authored = groups.filter((group) => group.levelExplicit);
-  const opaque = authored.filter((group) => bucket(group) !== 'transparent');
-  const transparent = authored.filter((group) => bucket(group) !== 'opaque');
-  const conflict = opaque
-    .flatMap((opaqueGroup) =>
-      transparent.map((transparentGroup) => ({ opaqueGroup, transparentGroup }))
-    )
-    .find(({ opaqueGroup, transparentGroup }) => opaqueGroup.level >= transparentGroup.level);
-  if (!conflict) return;
+  let conflictOpaque: OrderGroup | undefined;
+  let conflictTransparent: OrderGroup | undefined;
+  conflict: for (const opaqueGroup of groups) {
+    if (!opaqueGroup.levelExplicit || orderGroupBucket(opaqueGroup) === 'transparent') continue;
+    for (const transparentGroup of groups) {
+      if (
+        !transparentGroup.levelExplicit ||
+        orderGroupBucket(transparentGroup) === 'opaque' ||
+        opaqueGroup.level < transparentGroup.level
+      ) {
+        continue;
+      }
+      const opaqueKey = opaqueGroup.slots[0]?.groupKey;
+      const transparentKey = transparentGroup.slots[0]?.groupKey;
+      if (!opaqueKey && !transparentKey) continue;
+      if (
+        (!opaqueKey || warnedBucketOrderGroups.has(opaqueKey)) &&
+        (!transparentKey || warnedBucketOrderGroups.has(transparentKey))
+      ) {
+        continue;
+      }
+      conflictOpaque = opaqueGroup;
+      conflictTransparent = transparentGroup;
+      break conflict;
+    }
+  }
+  if (!conflictOpaque || !conflictTransparent) return;
 
-  const keys = [
-    conflict.opaqueGroup.slots[0]?.groupKey,
-    conflict.transparentGroup.slots[0]?.groupKey,
-  ].filter((key): key is THREE.Object3D => key !== undefined);
-  if (keys.length === 0 || keys.every((key) => warnedBucketOrderGroups.has(key))) return;
-  keys.forEach((key) => warnedBucketOrderGroups.add(key));
+  const opaqueKey = conflictOpaque.slots[0]?.groupKey;
+  const transparentKey = conflictTransparent.slots[0]?.groupKey;
+  if (opaqueKey) warnedBucketOrderGroups.add(opaqueKey);
+  if (transparentKey) warnedBucketOrderGroups.add(transparentKey);
   log.warning(
     Modules.RENDERER,
-    `Authored layer order puts an opaque group at ${conflict.opaqueGroup.level} and a transparent ` +
-      `group at ${conflict.transparentGroup.level}, but every opaque mesh draws before every ` +
+    `Authored layer order puts an opaque group at ${conflictOpaque.level} and a transparent ` +
+      `group at ${conflictTransparent.level}, but every opaque mesh draws before every ` +
       'transparent mesh. renderOrder is only compared within a bucket, so this ordering cannot be ' +
       'honoured. Use compatible blending modes if their relative order matters.'
   );

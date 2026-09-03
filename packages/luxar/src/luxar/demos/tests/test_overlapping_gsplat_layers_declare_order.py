@@ -162,10 +162,9 @@ def test_overlapping_layers_declare_their_order(demo: str) -> None:
 def test_the_demonstrator_demos_state_a_level(demo: str) -> None:
     """The two demos updated to demonstrate the feature must keep stating one.
 
-    They ship ``additive``, so option 1 above would let them drop the levels and
-    still pass. That would quietly undo the point: the levels are what make them
-    composite correctly when a viewer switches a layer to volumetric by hand,
-    which is the exact thing that prompted the feature.
+    The Acto3D heart exercises option 2 above directly; the neuromast ships
+    ``additive``, so option 1 would otherwise let it drop the levels and still
+    pass. Both are deliberate demonstrations of authored order.
     """
     path = _DEMOS / demo
     calls = len(_add_gsplats_calls(path))

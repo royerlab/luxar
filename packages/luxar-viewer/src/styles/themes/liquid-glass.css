@@ -485,16 +485,19 @@
 }
 
 /* Select controls - glass style (matches GUI selects) */
-[data-theme='liquid-glass'] .luxar-layers-panel__select {
+[data-theme='liquid-glass'] .luxar-layers-panel__select,
+[data-theme='liquid-glass'] .luxar-layers-panel__number {
   background-color: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.15);
 }
 
-[data-theme='liquid-glass'] .luxar-layers-panel__select:hover {
+[data-theme='liquid-glass'] .luxar-layers-panel__select:hover,
+[data-theme='liquid-glass'] .luxar-layers-panel__number:hover {
   background-color: rgba(255, 255, 255, 0.1);
 }
 
-[data-theme='liquid-glass'] .luxar-layers-panel__select:focus {
+[data-theme='liquid-glass'] .luxar-layers-panel__select:focus,
+[data-theme='liquid-glass'] .luxar-layers-panel__number:focus {
   background-color: rgba(255, 255, 255, 0.12);
   border-color: var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
 }

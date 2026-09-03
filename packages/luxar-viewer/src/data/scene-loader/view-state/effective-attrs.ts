@@ -44,11 +44,10 @@ export function applyEffectiveAttrs(
     // winning name did — never mixed with this node's own leftovers.
     colormap: eff.colormap,
     customLutBytes: eff.customLutBytes,
-    // The authored cross-layer draw order. This single line is what carries it
-    // to ALL FOUR geometry types: every `create-*-node.ts` stamps the whole
-    // record onto `userData.attrs`, and no material consumes the value, so the
-    // depth-sort coordinator can read it straight off the mesh without any
-    // per-type plumbing (`LAYER_ORDER_SPEC.md` §7).
+    // The authored cross-layer draw order. Each `create-*-node.ts` factory
+    // picks this composed value from its effective attrs argument and stamps
+    // it onto the mesh's dedicated `userData.layerOrder` render-state slot
+    // (`LAYER_ORDER_SPEC.md` §7).
     layer_order: eff.layer_order,
   };
 }

@@ -354,7 +354,7 @@ scene.add_gsplats("tissue",      ..., blending_mode="volumetric", layer_order=20
 scene.add_gsplats("nuclei",      ..., blending_mode="volumetric", layer_order=30)
 ```
 
-- A `layer_order: int | None = None` kwarg on `add_points` / `add_lines` /
+- A `layer_order` keyword accepted by `add_points` / `add_lines` /
   `add_gsplats` / `add_mesh` / `add_group`, plus post-hoc assignment through
   `node.attrs["layer_order"]`.
 - Validation (`validation/types.py::validate_layer_order`): a finite Python
@@ -379,8 +379,8 @@ scene.add_gsplats("nuclei",      ..., blending_mode="volumetric", layer_order=30
 | --- | --- |
 | `data/attrs-composer.ts` | `ComposableAttrs.layer_order?: number`; `EffectiveAttrs.layer_order?: number`; nearest-setter-wins, beside `blending_mode`. Header prose lists the new rule. |
 | `rendering/node-factory/*` | Stamp the composed level onto `mesh.userData.layerOrder` at node creation, alongside the other composed appearance values. |
-| `rendering/depth-sort-coordinator/render-order.ts` | `OrderSlot` / `OrderGroup` gain `level` + `levelExplicit`; `assignGlobalRenderOrder` partitions into bands before today's sort; `orderGroupsWithContainment` runs **per band** and reports the containment edges it had to drop across a band boundary (D3's warning). |
-| `rendering/depth-sort-coordinator.ts` | The collect loop (`~:2107`) currently `continue`s on a non-order-dependent node after resetting `renderOrder = 0`. Under D4 it must instead collect a commutative node **that carries an explicit level**, and keep the reset for the rest. This is the only code D4 touches. |
+| `rendering/depth-sort-coordinator/render-order.ts` | `OrderSlot` / `OrderGroup` gain `level` + `levelExplicit`; `assignGlobalRenderOrder` sorts once by `(level, meanZ)`, and `orderGroupsWithContainment` restricts edges to groups in the same band so the existing Kahn pass drains bands in order while reporting harmful dropped containment edges (D3's warning). |
+| `rendering/depth-sort-coordinator.ts` | The collect loop (`~:1815`) now collects a commutative node **when it carries an explicit level**; other non-order-dependent nodes still reset to `renderOrder = 0` and skip collection. This is the only code D4 touches. |
 | `ui/layers/layer-controls.ts`, `layer-state.ts`, `layer-apply.ts` | A **Layer order** control per layer row (a small stepper, blank = unset). Session-only (D7). |
 | `ui/data-loading-monitor/templates/scene-graph.ts` | The live draw-order chip already prints `#renderOrder` + bucket; add the band so an author can see *why* a layer sits where it does. |
 

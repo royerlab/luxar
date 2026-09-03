@@ -46,12 +46,11 @@ embedded layer), an authored opaque level at or above a transparent one
 disagree on their band.
 
 Two demos now state their order — the Acto3D heart and the 2-channel neuromast.
-Both still ship `additive`, so nothing about them changes as authored; the levels
-matter the moment a viewer switches a layer to `volumetric` by hand. For the
-neuromast the stated order deliberately differs from the inferred one: the
-membrane shell encloses the nuclei, but this fit gives the nuclei channel the
-marginally larger bounding sphere (555.5 vs 546.4), so containment had it
-backwards.
+The heart returns to `volumetric` with orders 3/2/1 for nuclei, vasculature, and
+cardiac tissue. The neuromast stays `additive` and states an order that
+deliberately differs from the inferred one: the membrane shell encloses the
+nuclei, but this fit gives the nuclei channel the marginally larger bounding
+sphere (555.5 vs 546.4), so containment had it backwards.
 
 What this does not do is make interpenetrating layers _correct_. For two concave
 volumes no single order is right from every viewpoint, so a level pins such a

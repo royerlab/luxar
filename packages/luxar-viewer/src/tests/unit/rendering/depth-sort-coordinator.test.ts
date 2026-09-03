@@ -5338,6 +5338,21 @@ describe('depth-sort coordinator — layer_order bands', () => {
     const opaque = makeGSplatsMesh(2, 'volumetric');
     (transparent.material as THREE.Material).transparent = true;
     (opaque.material as THREE.Material).transparent = false;
+    let bucketReads = 0;
+    Object.defineProperty(transparent.material, 'transparent', {
+      configurable: true,
+      get: () => {
+        bucketReads++;
+        return true;
+      },
+    });
+    Object.defineProperty(opaque.material, 'transparent', {
+      configurable: true,
+      get: () => {
+        bucketReads++;
+        return false;
+      },
+    });
     for (const m of [transparent, opaque]) setLevel(m, 4);
     makePartitionWrapper(bspTree, [transparent, opaque]);
     for (const m of [transparent, opaque]) {
@@ -5346,12 +5361,15 @@ describe('depth-sort coordinator — layer_order bands', () => {
     await flush();
 
     coord.evaluateDepthSortPerFrame();
+    const firstPassBucketReads = bucketReads;
     coord.evaluateDepthSortPerFrame();
 
     const straddle = (log.warning as unknown as { mock: { calls: unknown[][] } }).mock.calls.filter(
       (c) => String(c[1]).includes('ordering cannot be honoured')
     );
     expect(straddle).toHaveLength(1);
+    expect(firstPassBucketReads).toBeGreaterThan(0);
+    expect(bucketReads).toBe(firstPassBucketReads);
   });
 
   it('warns when separate authored groups ask opaque to draw after transparent', async () => {
