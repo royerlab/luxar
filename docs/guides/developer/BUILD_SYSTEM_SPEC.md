@@ -952,45 +952,44 @@ SHA rather than resolving the branch again when its job starts.
 
 Scheduled runs sit in their own `concurrency` group. While `dev` is the default,
 they share `refs/heads/dev` with merge-triggered runs; after the default flips,
-their event ref becomes `refs/heads/main`, but `github.event_name` still keeps
-the groups separate. Under one shared group `cancel-in-progress` let whichever
-started second cancel the other. A merge
-landing mid-schedule killed the scheduled run; a cron firing over an in-flight merge
-killed that merge's push run, which is the only place the new `dev` commit gets
-the full matrix at all. Scheduled runs still share a group with each other, so a
-window that remains in flight three hours later is cancelled by its successor —
-which is itself a promotion window, so a lost window costs three hours rather than
-the cadence. *Unloaded*, a floor-only window is one Python leg beside
-`typescript-tests`, about 83–91 minutes against the 180 minutes of spacing; the
-09:17 full-matrix window is three legs at `max-parallel: 2`, so two waves, roughly
-166–182 minutes plus the hosted `changes`/`pick-runner` preamble — at the spacing
-rather than under it. Both are unloaded figures on a deliberately `SCHED_IDLE` box,
-so neither window is guaranteed to finish. The full-matrix one is simply the first
-to lose, and the 3.13/3.14 coverage it carries then waits for the next day. A
-floor-only window needs about half as much quiet and is therefore the last to be
-lost; sustained contention at the documented 2.4–3.3x stretch can cancel both until
-the box quiets. The cron fires the whole workflow rather than `python-tests` alone —
-a schedule event has no PR base, so change detection selects the full suite and the
-documentation gate as well.
+their event ref becomes `refs/heads/main`, but `github.event_name` still keeps the
+groups separate. Under one shared group `cancel-in-progress` let whichever started
+second cancel the other. A merge landing mid-schedule killed the scheduled run; a
+cron firing over an in-flight merge killed that merge's push run, which is the only
+place the new `dev` commit gets the full matrix at all. Scheduled runs still share a
+group with each other, so a window that remains in flight three hours later is
+cancelled by its successor — which is itself a promotion window, so a lost window
+costs three hours rather than the cadence. *Unloaded*, a floor-only window is one
+Python leg beside `typescript-tests`, about 83–91 minutes against the 180 minutes of
+spacing; the 09:17 full-matrix window is three legs at `max-parallel: 2`, so two
+waves, roughly 166–182 minutes plus the hosted `changes`/`pick-runner` preamble — at
+the spacing rather than under it. Both are unloaded figures on a deliberately
+`SCHED_IDLE` box, so neither window is guaranteed to finish. The full-matrix one is
+simply the first to lose, and the 3.13/3.14 coverage it carries then waits for the
+next day. A floor-only window needs about half as much quiet and is therefore the
+last to be lost; sustained contention at the documented 2.4–3.3x stretch can cancel
+both until the box quiets. The cron fires the whole workflow rather than
+`python-tests` alone — a schedule event has no PR base, so change detection selects
+the full suite and the documentation gate as well.
 
 GitHub branch protection does not necessarily replace a cancelled push check with a
 later successful scheduled check of the same name on the same SHA. After a scheduled
 run has completed the five protected contexts successfully,
-`repair-cancelled-push-checks` resolves dev's tip and enumerates every commit still
-in `main..dev`, newest first, then inspects each completed push run. This covers commits skipped by the
-three-hour schedule instead of repairing only the scheduled tip. The promotion daemon
-fast-forwards `main` to the newest green ancestor, so the walk stops after successfully
-enqueueing two candidates: the second is a hedge against a genuinely red newest
-candidate, while repairing still-older commits cannot advance the same promotion.
-Cancelled jobs for any of the five protected contexts are rerun. A single cancelled
-context uses a job-level rerun. Two or more use one failed-jobs rerun because GitHub
-returns `403` once the first job-level rerun has moved the run into a new attempt; the
-run-level path also re-enqueues cancelled or failed non-required matrix legs such as
-Python 3.13/3.14. A schedule whose own protected contexts are not all green performs no
-repair. Candidate API read failures and rejected reruns are reported as warnings; one
-candidate cannot abort the remaining walk. A failed repaired job is terminal for that
-SHA unless it is included in the multi-job failed-jobs rerun; otherwise recovery
-requires a manual rerun.
+`repair-cancelled-push-checks` resolves dev's tip and enumerates every commit still in
+`main..dev`, newest first, then inspects each completed push run. This covers commits
+skipped by the three-hour schedule instead of repairing only the scheduled tip. The
+promotion daemon fast-forwards `main` to the newest green ancestor, so the walk stops
+after successfully enqueueing two candidates: the second is a hedge against a
+genuinely red newest candidate, while repairing still-older commits cannot advance the
+same promotion. Cancelled jobs for any of the five protected contexts are rerun. A
+single cancelled context uses a job-level rerun. Two or more use one failed-jobs
+rerun because GitHub returns `403` once the first job-level rerun has moved the run
+into a new attempt; the run-level path also re-enqueues cancelled or failed
+non-required matrix legs such as Python 3.13/3.14. A schedule whose own protected
+contexts are not all green performs no repair. Candidate API read failures and
+rejected reruns are reported as warnings; one candidate cannot abort the remaining
+walk. A failed repaired job is terminal for that SHA unless it is included in the
+multi-job failed-jobs rerun; otherwise recovery requires a manual rerun.
 
 Fresh runs keep coalescing by event and ref, while reruns use their original run id in
 the concurrency key. A later merge therefore cannot cancel a repaired attempt, and
