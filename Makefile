@@ -2892,7 +2892,7 @@ define PUBLISH_DISABLED
 	echo "   launcher binary baked in, and bypass OIDC entirely."; \
 	echo; \
 	echo "   To release:"; \
-	echo "     make set-version        # bump CalVer, then open a PR and merge to main"; \
+	echo "     make set-version        # bump CalVer, open a PR against dev, then release from main once promoted"; \
 	echo "     make release-check      # dry-run preflight (safe)"; \
 	echo "     make release            # tag + push -> CI builds & publishes"; \
 	exit 1
