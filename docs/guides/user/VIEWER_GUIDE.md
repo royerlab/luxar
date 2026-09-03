@@ -39,6 +39,82 @@ pointing `src` at a running Luxar data server. Port `8000` is the default for
 Both trailing-slash forms are accepted. Prefer data source URLs without a
 trailing slash as the canonical spelling used in examples and logs.
 
+### Opening your own data in the hosted viewer
+
+There is a fourth way that needs no install at all. The viewer is deployed
+standalone at **[luxarviewer.dev](https://luxarviewer.dev)** and will open any
+scene it can reach over HTTP:
+
+```
+https://luxarviewer.dev/?src=https://example.org/path/to/scene.luxar.zarr
+```
+
+Nothing is uploaded. The browser fetches the store directly from wherever you
+host it, so the data never passes through luxarviewer.dev — which also means the
+scene is exactly as private, and as durable, as the host you put it on.
+
+#### Your host must allow cross-origin reads
+
+This is the one thing that reliably goes wrong. The page is served from
+`luxarviewer.dev` while the data comes from your host, so the browser treats
+every chunk request as cross-origin and your host has to opt in. What it needs
+depends on the store shape:
+
+| store | requirements |
+|---|---|
+| directory `.luxar.zarr` | `Access-Control-Allow-Origin`. Metadata and chunks are simple GETs, so byte ranges are not needed. |
+| zipped `.zarr.zip` | the above, **plus** byte-range support: honour `Range`, allow the `Range` request header, and expose `Content-Range`, `Content-Length`, `Accept-Ranges` and `ETag`. |
+
+A plain static file host with CORS enabled is enough for a directory store.
+
+**What the failure looks like:** the viewer loads but the scene stays empty, and
+the browser console shows requests blocked by CORS policy — not a 404. A 404
+means the URL is wrong; a CORS error means the URL is right and the host is
+refusing to share it. Check the console before changing the URL.
+
+#### Configuration for common hosts
+
+Amazon S3 — bucket CORS configuration:
+
+```json
+[{
+  "AllowedOrigins": ["https://luxarviewer.dev"],
+  "AllowedMethods": ["GET", "HEAD"],
+  "AllowedHeaders": ["Range"],
+  "ExposeHeaders": ["Content-Range", "Content-Length", "Accept-Ranges", "ETag"],
+  "MaxAgeSeconds": 3600
+}]
+```
+
+Cloudflare R2 takes the same JSON shape (Settings -> CORS policy). Google Cloud
+Storage takes the equivalent via `gsutil cors set`, with `responseHeader`
+carrying the exposed headers.
+
+nginx:
+
+```nginx
+location /scenes/ {
+    add_header Access-Control-Allow-Origin "https://luxarviewer.dev" always;
+    add_header Access-Control-Allow-Headers "Range" always;
+    add_header Access-Control-Expose-Headers "Content-Range, Content-Length, Accept-Ranges, ETag" always;
+    if ($request_method = OPTIONS) { return 204; }
+}
+```
+
+`Access-Control-Allow-Origin: *` also works and is simpler if the data is public
+anyway; naming the origin only matters when you want to keep the store readable
+from your own pages but not from arbitrary ones. Note that neither choice makes
+the data private — a public bucket is public to anyone with the URL, CORS or not.
+
+If you would rather not host anything, `luxar export scene.luxar.zarr -o out/`
+writes a self-contained folder with the viewer and a stdlib-only `serve.py`; the
+recipient runs `python serve.py` (`file://` cannot open the viewer directly).
+
+See [Distributing scenes](../../tutorials/distributing_scenes.rst) for the wider
+picture on sharing scenes, and
+[DEMO_SITE_RUNBOOK](../developer/DEMO_SITE_RUNBOOK.md) for how the demo corpus
+itself is hosted, including its CORS setup and failure modes.
+
 ### Opening a Zipped Scene
 
 The viewer can open a `.luxar.zarr.zip` scene without extracting it.

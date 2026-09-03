@@ -262,7 +262,7 @@ The viewer is a static build parameterised entirely by ``?src=``, so nothing
 needs to be deployed per scene — the same viewer opens any archive it can
 reach. The public demo gallery at
 `demos.luxarviewer.dev <https://demos.luxarviewer.dev>`_ works exactly this
-way: 85 archives on object storage, one viewer.
+way: 86 archives on object storage, one viewer.
 
 Requirements on the host serving the data depend on the store shape:
 
