@@ -165,6 +165,7 @@ def apply_dynamic_operations(
     with torch.no_grad():
         operation_seed = cfg.seed
         if operation_seed is not None and relocation_tracker is not None:
+            # Avoid repeating the same random samples at every dynamic-ops step.
             operation_seed += relocation_tracker.current_step
 
         # === Cache model parameters once (avoid repeated current_params() calls) ===
