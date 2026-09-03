@@ -120,11 +120,11 @@ with asection("C. elegans — Contribution-Based Culling Demo"):
     aprint(f"Culling levels (error_percentile): {CULL_LEVELS}")
 
     # --- Load pre-computed splats ---
-    from luxar.demos import load_precomputed_bundle
+    from luxar.demos import load_dataset_bundle
 
     file_names = [f"celegans_s1_t{t:04d}.gsplats.zarr.zip" for t in TIMEPOINTS]
 
-    gsplats_list = load_precomputed_bundle(
+    gsplats_list = load_dataset_bundle(
         "gsplats_celegans",
         "celegans_s1.gsplats.zarr.zip",
         file_names,

@@ -70,7 +70,7 @@ DEMO_META = {
         "download_mb": 73,
         "compute": "heavy",
         "gpu": "none",
-        "local_data": "git-lfs",
+        "local_data": None,
     },
     "caches": ["desi_galaxies"],
     "outputs": ["desi_galaxies"],

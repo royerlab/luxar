@@ -45,6 +45,10 @@ from luxar.demos import demo_gsplats_4d_neuromast_2ch as neuromast_demo
 from luxar.gsplats.gsplat_data import GSplatData
 
 DEMO_PATHS = sorted(registry._DEMOS_DIR.glob("demo_*.py"))
+AUXILIARY_DEMO_PATHS = sorted(
+    (registry._DEMOS_DIR.parent / "gsplats" / "demos").glob("demo_*.py")
+)
+FETCH_PATHS = DEMO_PATHS + AUXILIARY_DEMO_PATHS
 MANIFEST = registry._DEMOS_DIR / "data_manifest.json"
 
 LFS_ONLY = {"load_precomputed_gsplats", "load_precomputed_bundle"}
@@ -145,6 +149,34 @@ def _manifest() -> dict:
     return json.loads(MANIFEST.read_text())["datasets"]
 
 
+def test_git_lfs_requirements_name_materialized_manifest_files() -> None:
+    """A Git-LFS requirement must correspond to files present in the checkout."""
+    datasets = _manifest()
+    for path in DEMO_PATHS:
+        meta = registry.extract_demo_meta(path)
+        if meta["requirements"]["local_data"] != "git-lfs":
+            continue
+        for cache_key in meta["caches"]:
+            spec = datasets.get(cache_key)
+            assert spec is not None, (
+                f"{path.name}: git-lfs requirement names unknown dataset {cache_key!r}"
+            )
+            directory = spec.get("dir", cache_key)
+            files = spec.get("files")
+            assert isinstance(directory, str) and isinstance(files, list) and files, (
+                f"{path.name}: git-lfs dataset {cache_key!r} has no materialized files"
+            )
+            missing = [
+                file_info["name"]
+                for file_info in files
+                if not (registry._DEMOS_DIR / "data" / directory / file_info["name"]).exists()
+            ]
+            assert not missing, (
+                f"{path.name}: local_data='git-lfs' advertises absent files {missing}; "
+                "use None when the manifest fetch is the provisioning path"
+            )
+
+
 def _string_consts(tree: ast.Module) -> dict[str, str]:
     out: dict[str, str] = {}
     for node in ast.walk(tree):
@@ -181,7 +213,7 @@ def _fetch_calls(path: Path) -> dict[str, set[str]]:
     return out
 
 
-@pytest.mark.parametrize("path", DEMO_PATHS, ids=lambda p: p.stem)
+@pytest.mark.parametrize("path", FETCH_PATHS, ids=lambda p: p.stem)
 def test_hosted_datasets_are_fetched_through_the_manifest(path: Path) -> None:
     ds = _manifest()
     for helper, names in _fetch_calls(path).items():

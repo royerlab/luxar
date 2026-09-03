@@ -63,7 +63,7 @@ DEMO_META = {
         "download_mb": 8,
         "compute": "medium",
         "gpu": "optional",
-        "local_data": "git-lfs",
+        "local_data": None,
     },
     "caches": ["gsplats_milkyway_dust"],
     "outputs": ["gsplats_3d_milky_way_dust"],

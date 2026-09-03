@@ -163,7 +163,7 @@ DEMO_META = {
         # Ships in-repo under git-LFS, like every other bundled gsplat demo.
         # `ensure_dataset` still prefers the checksum-verified cache, and will
         # switch to the Zenodo leg by itself once that record URL is populated.
-        "local_data": "git-lfs",
+        "local_data": None,
     },
     "caches": ["gsplats_flylight_mcfo_63x"],
     "outputs": ["gsplats_3d_flylight_mcfo_63x_brain"],

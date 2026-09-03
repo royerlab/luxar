@@ -109,7 +109,7 @@ DEMO_META = {
         "download_mb": 150,  # approx
         "compute": "medium",
         "gpu": "optional",
-        "local_data": "git-lfs",
+        "local_data": None,
     },
     "caches": ["gsplats_cmu1_pathology"],
     "outputs": ["gsplats_2d_cmu1_pathology"],

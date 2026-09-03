@@ -104,7 +104,7 @@ DEMO_META = {
         "download_mb": 1,
         "compute": "medium",
         "gpu": "optional",
-        "local_data": "git-lfs",
+        "local_data": None,
     },
     "caches": ["gsplats_multichannel"],
     "outputs": ["gsplats_3d_blastocyst_multichannel"],

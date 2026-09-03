@@ -127,7 +127,7 @@ DEMO_META = {
         "compute": "medium",
         # Still "optional": the fit genuinely runs on CPU (slowly).
         "gpu": "optional",
-        "local_data": "git-lfs",
+        "local_data": None,
     },
     "caches": ["gsplats_visible_human_head"],
     "outputs": ["gsplats_3d_visible_human_head"],

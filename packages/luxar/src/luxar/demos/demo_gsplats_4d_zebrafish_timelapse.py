@@ -332,7 +332,7 @@ DEMO_META = {
         "download_mb": 19,  # the 19,229,817-byte archive, and nothing else
         "compute": "medium",
         "gpu": "optional",
-        "local_data": "git-lfs",
+        "local_data": None,
     },
     "caches": ["gsplats_zebrafish"],
     "outputs": ["gsplats_4d_zebrafish_timelapse"],

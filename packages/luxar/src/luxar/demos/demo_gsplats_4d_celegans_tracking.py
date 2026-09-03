@@ -94,7 +94,7 @@ DEMO_META = {
         "download_mb": 72,
         "compute": "medium",
         "gpu": "optional",
-        "local_data": "git-lfs",
+        "local_data": None,
     },
     "caches": ["gsplats_celegans"],
     "outputs": ["gsplats_4d_celegans_tracking"],

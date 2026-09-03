@@ -36,7 +36,7 @@ DEMO_META = {
         "download_mb": 7,
         "compute": "light",
         "gpu": "none",
-        "local_data": "git-lfs",
+        "local_data": None,
     },
     "citation": {
         "short": "Argelaguet et al. 2022; peak-UMAP analysis Kim et al. 2024",

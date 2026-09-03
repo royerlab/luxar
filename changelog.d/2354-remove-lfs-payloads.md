@@ -19,6 +19,10 @@ digest already describes the record copy and needed no re-pin —
 `dipc_genome/dipc_gm12878.npz` stays. Its bucket is `regenerate` and it is on no
 record, so deleting it would leave a pin nothing can satisfy.
 
+The 19 demos that now resolve exclusively from records no longer advertise a
+`git-lfs` local-data requirement in the catalogue. Dip-C remains the sole
+LFS-backed demo.
+
 A cache populated from the old in-repo copies no longer matches the collapsed pin
 and is re-downloaded once — 23 of 36 files on a developer machine. Recording each
 outgoing repo digest in `superseded_sha256` would avoid that, at the cost of

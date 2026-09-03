@@ -71,7 +71,7 @@ DEMO_META = {
         "download_mb": 7,
         "compute": "medium",
         "gpu": "optional",
-        "local_data": "git-lfs",
+        "local_data": None,
     },
     "caches": ["gsplats_ct_totalsegmentator"],
     "outputs": ["gsplats_3d_ct_totalsegmentator"],
@@ -806,7 +806,7 @@ def _save_atlas_fit(fit: GSplatData) -> None:
 def local_refit_pair() -> tuple[GSplatData, np.ndarray] | None:
     """A pair THIS machine refitted earlier, or None if there is nothing usable.
 
-    Consulted after the manifest fetch and the shipped LFS assets, and BEFORE
+    Consulted after the manifest fetch and BEFORE
     refitting, which is what makes the refit one-time (#1618). It gets the same
     alignment guard as every other source: the labels are indexed positionally,
     and a half-written pair is exactly the case the guard is for.
