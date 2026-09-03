@@ -64,18 +64,18 @@ PIPELINE — reproducible per channel with ``--recompute``:
 
 DATA STORAGE:
     These fitted gsplats are ~220 MB unzipped and are **not bundled with the
-    repo**. Both channels live on the ``cc-by`` Zenodo record as the 136 MB
-    ``.gsplats.zarr.zip`` pair, pinned by SHA-256 in
-    ``demos/data_manifest.json``. ``resolve_channel_paths`` first tries
-    ``ensure_dataset("gsplats_4d_neuromast_2ch")``; while the packaged manifest
-    still marks the record unpublished and builds no download URL, it falls back
-    to the machine-local store used before publication.
+    repo**. Both channels live on the published ``cc-by`` Zenodo record as the
+    130 MB ``.gsplats.zarr.zip`` pair, pinned by SHA-256 in
+    ``demos/data_manifest.json``, so ``resolve_channel_paths`` fetches them on
+    demand through ``ensure_dataset("gsplats_4d_neuromast_2ch")``: the pair is
+    verified against those digests, cached under ``~/.cache/luxar/`` and
+    expanded to a temporary directory on read. The ``.zip`` suffix is why
+    fetched paths differ from each channel's ``file`` key, which names the
+    *unzipped* store that ``--recompute`` and the local fallback use.
 
-    Once the manifest enables the published record, the zip pair stays in
-    ``~/.cache/luxar/`` and is expanded to a temporary directory on read. The
-    ``.zip`` suffix is why fetched paths differ from each channel's ``file`` key,
-    which names the *unzipped* store that ``--recompute`` and the local fallback
-    use.
+    ``DATA_DIR`` (below) remains that local fallback — the acquisition machine
+    and any hand-placed copy, and the one way to run this demo from a manifest
+    that cannot build a download URL for the record.
 
 USAGE:
     python demo_gsplats_4d_neuromast_2ch.py [--no-serve] [--serve-only]
@@ -100,11 +100,10 @@ DEMO_META = {
     "category": "microscopy",
     "geometry": "gsplats",
     "requirements": {
-        "download_mb": 136,  # the zipped pair on the cc-by record
+        "download_mb": 130,  # the zipped pair on the cc-by record
         "compute": "medium",
         "gpu": "none",
-        # Becomes None once data_manifest.json enables the published record URL.
-        "local_data": "manual-file",
+        "local_data": None,
     },
     "caches": ["gsplats_4d_neuromast_2ch"],
     "outputs": ["gsplats_4d_neuromast_2ch"],
@@ -146,8 +145,9 @@ from luxar.utils.paths import get_demos_output_dir
 #: Manifest key for the hosted pair (``cc-by`` record, SHA-256 pinned).
 DATASET_NAME = "gsplats_4d_neuromast_2ch"
 
-# Local fallback while the packaged manifest still marks the record unpublished.
-# Override with $LUXAR_NEUROMAST_DATA_DIR.
+# Optional local store of the UNZIPPED pair: the acquisition machine, a
+# hand-placed copy, or a manifest that cannot resolve the record. The normal
+# path is the fetch above. Override with $LUXAR_NEUROMAST_DATA_DIR.
 DATA_DIR = Path(
     os.environ.get(
         "LUXAR_NEUROMAST_DATA_DIR",
@@ -496,10 +496,11 @@ def recompute_channel_paths(work_dir: Path) -> list[Path]:
 def resolve_channel_paths() -> list[Path]:
     """Resolve the per-channel gsplats, in ``CHANNELS`` order.
 
-    Prefer the manifest path so the published archive pair is downloaded,
-    SHA-256 verified and cached as soon as its record URL is enabled. The
-    packaged manifest still marks that record unpublished, so its specific
-    ``DatasetUnavailable`` absence falls back to the existing local store.
+    The manifest is the normal path: the record is published, so the archive
+    pair is downloaded, SHA-256 verified and cached on first use. Only its
+    specific ``DatasetUnavailable`` absence — a manifest that can build no
+    download URL — falls back to the local store, which is what keeps the
+    acquisition machine and hand-placed copies working.
 
     Paired by NAME rather than by position. ``ensure_dataset`` returns the
     manifest's file order, which happens to match ``CHANNELS`` today; relying on

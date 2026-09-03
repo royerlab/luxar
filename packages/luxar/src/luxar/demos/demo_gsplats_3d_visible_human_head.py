@@ -119,12 +119,12 @@ DEMO_META = {
     "category": "medical",
     "geometry": "gsplats",
     "requirements": {
-        # When a precomputed pair is available, the default path is the small
-        # assets, not the 1.1 GB cryosection download: either the two Git-LFS
-        # files (20.6 MB colorless fit + 5.0 MB sidecar) or, once the record is
-        # published, the hosted pair — a 25.1 MB fit that carries its own colors
-        # plus the 5.1 MB sidecar the manifest still lists for the Git-LFS shape.
-        # Until then, a checkout without LFS takes the source-download/refit path.
+        # The default path resolves the small precomputed assets before the
+        # 1.1 GB cryosection download: cache, the two Git-LFS files when present
+        # (20.6 MB colorless fit + 5.0 MB sidecar), then the hosted pair — a
+        # 25.1 MB fit that carries its own colors plus the 5.1 MB sidecar the
+        # manifest still lists for the Git-LFS shape. Source download and refit
+        # are only the fallback when no verified precomputed pair is available.
         # 31 covers the larger precomputed pair. Read by `luxar demo run-all`,
         # whose `--max-download-mb` default of 200 therefore keeps this demo in.
         "download_mb": 31,

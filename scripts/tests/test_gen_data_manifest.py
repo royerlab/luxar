@@ -74,10 +74,13 @@ def test_public_attributions_keep_required_provenance_resolvable() -> None:
         "gsplats_4d_drosophila_embryogenesis",
         "gsplats_3d_drosophila_gastrulation",
     ):
-        droso = generator.DATASETS[dataset_name]["attribution"]
-        assert "used with permission (CC BY 4.0)" in droso
-        assert "The imaging itself is unpublished" in droso
-        assert "for the SiMView instrument see Royer et al." in droso
+        dataset = generator.DATASETS[dataset_name]
+        attribution = dataset["attribution"]
+        assert "Keller lab, HHMI Janelia Research Campus" in dataset["source"]
+        assert "Royer/Keller" not in dataset["source"]
+        assert "used with permission (CC BY 4.0)" in attribution
+        assert "The imaging itself is unpublished" in attribution
+        assert "for the SiMView instrument see Royer et al." in attribution
 
 
 def test_readme_zenodo_table_matches_manifest() -> None:
