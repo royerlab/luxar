@@ -978,7 +978,7 @@ with asection("Processing"):
 ## Testing
 
 ### Strategy
-- **Minimum coverage**: 80%
+- **Minimum coverage**: Enforced by `pyproject.toml` for Python and `packages/luxar-viewer/coverage-thresholds.mjs` for TypeScript
 - **NEVER skip tests** - fix them or create proper mocks
 - **Run before committing**: `make test-all && make check-all`
 

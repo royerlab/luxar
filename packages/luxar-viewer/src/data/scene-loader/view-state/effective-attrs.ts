@@ -3,7 +3,7 @@
  *
  * Pure helper: given a scene graph and a node, return a copy of the
  * node's attrs with `opacity`, `absorption`, `gamma`, `intensity`,
- * `offset`, `blending_mode`, `join`, and `colormap` (with its
+ * `offset`, `blending_mode`, `join`, `layer_order`, and `colormap` (with its
  * `customLutBytes`) replaced by the values from
  * {@link getEffectiveAttrs}. Falls back to the raw attrs when the
  * scene graph is unavailable.
@@ -44,5 +44,10 @@ export function applyEffectiveAttrs(
     // winning name did — never mixed with this node's own leftovers.
     colormap: eff.colormap,
     customLutBytes: eff.customLutBytes,
+    // The authored cross-layer draw order. Each `create-*-node.ts` factory
+    // picks this composed value from its effective attrs argument and stamps
+    // it onto the mesh's dedicated `userData.layerOrder` render-state slot
+    // (`LAYER_ORDER_SPEC.md` §7).
+    layer_order: eff.layer_order,
   };
 }

@@ -94,6 +94,7 @@ export function createGSplatsNode(
     nodeType: 'gsplats',
     loader,
     attrs,
+    layerOrder: nodeAttrs.layer_order,
     // Clamped like the commit path's stamp — the mesh draws at most the
     // per-node texture bound, and debug/UI counts must agree (mirrors
     // create-points-node).

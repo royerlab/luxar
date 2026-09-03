@@ -3,19 +3,19 @@
  *
  * Importing this module is **side-effect-free**:
  * - No console patching.
- * - No CSS injection (consumers import `luxar-viewer/styles.css` separately).
+ * - No CSS injection (consumers import `@luxar/viewer/styles.css` separately).
  * - No DOM mutation.
  * - No singleton instantiation.
  *
  * That's the contract that lets a third-party host page do
- * `import { LuxarApp } from 'luxar-viewer'` without surprising changes to
+ * `import { LuxarApp } from '@luxar/viewer'` without surprising changes to
  * its environment.
  *
  * The minimal embed shape:
  *
  * ```ts
- * import { LuxarApp } from 'luxar-viewer';
- * import 'luxar-viewer/styles.css';   // optional but typical
+ * import { LuxarApp } from '@luxar/viewer';
+ * import '@luxar/viewer/styles.css';   // optional but typical
  *
  * const canvas = document.querySelector('canvas#viewer') as HTMLCanvasElement;
  * const app = new LuxarApp();

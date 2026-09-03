@@ -6,6 +6,8 @@
  * encoder's constant-quality policy while making size drift visible before a
  * deployment fails.
  */
+import fs from 'node:fs';
+
 import type { CoverageMeasurement } from './crop-policy';
 
 const MEBIBYTE = 1024 * 1024;
@@ -18,6 +20,13 @@ export interface GalleryMediaFile {
   demoId: string;
   fileName: string;
   sizeBytes: number;
+}
+
+/** Delete stale media when this capture intentionally skips that variant. */
+export function skipGalleryMediaWhenRequested(skip: boolean, filePath: string): boolean {
+  if (!skip) return false;
+  fs.rmSync(filePath, { force: true });
+  return true;
 }
 
 /** Format bytes as a two-decimal mebibyte value for compact logs. */

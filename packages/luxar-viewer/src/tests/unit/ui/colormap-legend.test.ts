@@ -52,6 +52,9 @@ function makeLayer(overrides: Partial<LayerInfo> = {}): LayerInfo {
     gamma: 1,
     blendingMode: 'additive',
     blendingModeExplicit: true,
+    // No authored draw order: the default state, where the renderer keeps its
+    // inferred containment ordering. `layerOrder` stays undefined.
+    layerOrderExplicit: false,
     selected: false,
     colormap: 'viridis',
     supportsColormap: true,

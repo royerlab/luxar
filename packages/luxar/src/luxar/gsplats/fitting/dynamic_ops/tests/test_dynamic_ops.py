@@ -9,6 +9,7 @@ import torch
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.fitting.dynamic_ops import (
     DynamicOpsConfig,
+    RecentlyRelocatedTracker,
     _calculate_splat_importance,
     _find_residual_peaks,
     _select_weak_splats,
@@ -265,6 +266,112 @@ class TestWeakSplatSelection:
 
         assert len(weak_indices) == 2  # 40% of 5 = 2
         assert weak_indices.tolist() == [1, 3]
+
+    def test_select_weak_splats_is_reproducible_under_a_fixed_seed(self) -> None:
+        """A seeded call must be bit-reproducible.
+
+        The residual-percentile sample draws 10k voxels out of the volume. It
+        used to draw from the global torch RNG, which made every default fit
+        non-reproducible even though ``DynamicOpsConfig.seed`` documents a
+        fixed default for exactly this reason. Regression for that.
+
+        The residual must be LARGER than the 10k sample cap and have a spread
+        of positive values, or the sampling branch is never taken and the test
+        passes vacuously.
+        """
+        n_splats = 400
+        torch.manual_seed(0)
+        importance = torch.rand(n_splats)
+        centers = torch.rand(n_splats, 3) * 20.0
+        residual = torch.rand(21, 21, 41)  # 18_081 voxels > the 10_000 cap
+        assert residual.numel() > 10_000, "sampling branch must be exercised"
+
+        first = _select_weak_splats(
+            importance, centers, residual, relocation_percentile=25.0, seed=1234
+        )
+        second = _select_weak_splats(
+            importance, centers, residual, relocation_percentile=25.0, seed=1234
+        )
+        assert torch.equal(first, second)
+
+        # Every seed must be reproducible, not just this one.
+        other = _select_weak_splats(
+            importance, centers, residual, relocation_percentile=25.0, seed=99
+        )
+        assert torch.equal(
+            other,
+            _select_weak_splats(
+                importance, centers, residual, relocation_percentile=25.0, seed=99
+            ),
+        )
+        # And the seed must actually reach the sampler. A different seed draws
+        # a different residual sample, so the estimated 25th-percentile cutoff
+        # moves and a different number of splats survives the filter. If this
+        # ever stops differing, the parameter has been silently dropped.
+        assert not torch.equal(first, other)
+
+    def test_select_weak_splats_uses_global_rng_when_unseeded(self) -> None:
+        """An unseeded call must consume PyTorch's global RNG stream."""
+        data_rng = torch.Generator().manual_seed(7)
+        n_splats = 400
+        importance = torch.rand(n_splats, generator=data_rng)
+        centers = torch.rand(n_splats, 3, generator=data_rng) * 20.0
+        residual = torch.rand((21, 21, 41), generator=data_rng)
+        assert residual.numel() > 10_000, "sampling branch must be exercised"
+
+        torch.manual_seed(2)
+        rng_state_before = torch.get_rng_state()
+        _select_weak_splats(
+            importance, centers, residual, relocation_percentile=25.0, seed=None
+        )
+
+        assert not torch.equal(torch.get_rng_state(), rng_state_before)
+
+    def test_dynamic_ops_advances_its_seed_between_steps(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The config seed reaches both samplers and advances reproducibly."""
+        from luxar.gsplats.fitting.dynamic_ops import operations
+
+        seen_peak_seeds = []
+        seen_weak_seeds = []
+
+        def fake_find_residual_peaks(*_args, seed=None, **_kwargs):
+            seen_peak_seeds.append(seed)
+            return torch.tensor([[0, 0]])
+
+        def fake_select_weak_splats(*_args, seed=None, **_kwargs):
+            seen_weak_seeds.append(seed)
+            return torch.empty(0, dtype=torch.long)
+
+        monkeypatch.setattr(
+            operations, "_find_residual_peaks", fake_find_residual_peaks
+        )
+        monkeypatch.setattr(operations, "_select_weak_splats", fake_select_weak_splats)
+
+        class Model:
+            @staticmethod
+            def current_params():
+                return torch.zeros((1, 2)), torch.eye(2)[None], torch.ones(1)
+
+        cfg = DynamicOpsConfig(seed=1234)
+        tracker = RecentlyRelocatedTracker(1)
+        target = torch.ones((2, 2))
+        prediction = torch.zeros((2, 2))
+
+        for _ in range(2):
+            apply_dynamic_operations(
+                Model(),
+                target,
+                prediction,
+                cfg,
+                max_abs_error_threshold=0.0,
+                relocation_tracker=tracker,
+            )
+            tracker.advance_step()
+
+        assert seen_peak_seeds == [1234, 1235]
+        assert seen_weak_seeds == [1234, 1235]
 
     def test_select_weak_splats_minimum_one(self) -> None:
         """Test that at least one splat is always selected."""

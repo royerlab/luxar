@@ -10,7 +10,7 @@ bookkeeping. It does not create or own host rendering infrastructure.
 The supported public entry point is:
 
 ```ts
-import { LuxarLayer } from '@royerlab/luxar-viewer';
+import { LuxarLayer } from '@luxar/viewer';
 ```
 
 The runnable reference host is `packages/luxar-viewer/examples/layer/`.

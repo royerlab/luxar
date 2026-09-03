@@ -18,3 +18,11 @@ test-results-perf/
 # Keep the README (it's the directory's docs) but ignore generated runs.
 perf-results/*
 !perf-results/README.md
+
+# Stryker mutation testing: sandbox + generated HTML report. The config
+# (stryker.conf.json) is tracked; its output is not. The per-runner
+# `stryker-setup-N.js` files are written next to the config, one per concurrent
+# runner; they are cleaned up on a successful run but survive a crash.
+.stryker-tmp/
+reports/mutation/
+stryker-setup-*.js

@@ -408,6 +408,7 @@ export function createEmptyMeshNode(
     _layerMaterialCloned: true,
   };
   mesh.userData = userData;
+  mesh.userData.layerOrder = (attrs as unknown as Record<string, unknown>).layer_order;
 
   const texturePlaceholders: THREE.Texture[] = [];
   const visualPlaceholder = material.uniforms.uBaseColorTex?.value;

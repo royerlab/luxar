@@ -119,7 +119,7 @@ The project enforces quality standards automatically through pre-commit hooks an
 - **Linting**: Ruff with comprehensive rules
 - **Type Safety**: MyPy strict mode with full type annotations
 - **Security**: Bandit security vulnerability scanning
-- **Testing**: 80%+ code coverage requirement
+- **Testing**: Coverage thresholds are enforced by `pyproject.toml` and the viewer's `coverage-thresholds.mjs`
 - **Documentation**: Google-style docstrings for all public APIs
 
 ### 🌐 TypeScript Code Quality
@@ -151,7 +151,7 @@ def test_new_feature(tmp_path):
 - All new public methods must have tests
 - Edge cases and error conditions must be covered
 - Use pytest fixtures for common setup
-- Maintain 80%+ coverage (enforced automatically)
+- Maintain the enforced coverage floors; after viewer test changes, run `pnpm test:coverage && pnpm check:coverage-slack` and refresh `coverage-thresholds.mjs` when required
 - Mark slow tests with `@pytest.mark.slow`
 - Mark integration tests with `@pytest.mark.integration`
 

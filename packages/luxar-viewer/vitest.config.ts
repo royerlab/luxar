@@ -1,4 +1,6 @@
 import { defineConfig } from 'vitest/config';
+
+import { COVERAGE_THRESHOLDS } from './coverage-thresholds.mjs';
 import { resolve } from 'path';
 
 export default defineConfig({
@@ -85,16 +87,18 @@ export default defineConfig({
         // controlled, hand-written app code.
         'public/wasm/**',
       ],
-      // Coverage thresholds: ratcheted floor that should always be at
-      // or below the actual measured coverage. Bumped upward in a
-      // dedicated commit when a batch of new tests crosses the next
-      // band. Long-term target: 80% across the board.
-      thresholds: {
-        lines: 71,
-        functions: 74,
-        branches: 61,
-        statements: 71,
-      },
+      // Vitest 4 removed `coverage.all`, and `include` defaults to "only files
+      // some test imported" -- which left 45 source files (including
+      // core/app/options.ts at 191 LOC) outside every threshold, so adding a
+      // brand-new untested module could RAISE the reported number. Naming the
+      // whole tree closes that hole; `exclude` above still applies.
+      include: ['src/**/*.ts'],
+      // Floors live in ./coverage-thresholds.mjs so that this config and
+      // scripts/check-coverage-slack.mjs cannot drift apart. Read that file
+      // before editing a number — it documents the vitest 4 semantics that
+      // constrain the design (glob keys are additive-only; `perFile` and
+      // `autoUpdate` must stay unset; a zero-match glob passes silently).
+      thresholds: COVERAGE_THRESHOLDS,
     },
   },
   resolve: {

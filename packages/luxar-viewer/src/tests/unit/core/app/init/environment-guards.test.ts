@@ -146,7 +146,7 @@ describe('assertThreeRevision', () => {
     for (const candidate of candidates) {
       try {
         const parsed = JSON.parse(readFileSync(candidate, 'utf8')) as typeof manifest;
-        if (parsed?.name === '@royerlab/luxar-viewer') {
+        if (parsed?.name === '@luxar/viewer') {
           manifest = parsed;
           break;
         }

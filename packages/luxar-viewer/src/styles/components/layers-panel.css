@@ -303,6 +303,29 @@
   background-color: var(--luxar-interactive-hover);
 }
 
+.luxar-layers-panel__number {
+  width: 100%;
+  padding: var(--luxar-spacing-2) var(--luxar-spacing-3);
+  background-color: var(--luxar-interactive-default);
+  border: 1px solid var(--luxar-border-strong);
+  border-radius: var(--luxar-radius-sm);
+  color: var(--luxar-text-primary);
+  font-size: var(--luxar-text-sm);
+  font-family: inherit;
+  outline: none;
+  transition: var(--luxar-transition-fast);
+}
+
+.luxar-layers-panel__number:hover {
+  background-color: var(--luxar-interactive-hover);
+  border-color: color-mix(in srgb, var(--luxar-highlight) 50%, transparent);
+}
+
+.luxar-layers-panel__number:focus {
+  border-color: var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
+  background-color: var(--luxar-interactive-hover);
+}
+
 /* <select> option + optgroup colors are centralised in
    styles/components/select-menu.css (token-driven, --luxar-menu-*). */
 
@@ -464,7 +487,8 @@
   .luxar-layers-panel__close,
   .luxar-layer-row,
   .luxar-layer-row__eye,
-  .luxar-layers-panel__select {
+  .luxar-layers-panel__select,
+  .luxar-layers-panel__number {
     transition: none;
   }
 }

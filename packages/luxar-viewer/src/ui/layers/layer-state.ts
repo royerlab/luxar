@@ -88,6 +88,19 @@ function deriveScalarRangeFromDescendants(node: SceneNode): [number, number] | u
 
 type LabelVocabulary = Array<{ id: string; name: string }>;
 
+/**
+ * Read an authored `layer_order` off a raw attrs record, or `undefined`.
+ *
+ * The SAME predicate the renderer uses (`render-order.ts::authoredLayerOrder`)
+ * and the composer uses (`attrs-composer.ts::sanitizeLayerOrder`): a
+ * non-number, NaN or ±Infinity is ABSENT, not a band. Kept identical on purpose
+ * — if the panel and the renderer disagreed about what counts as authored, the
+ * field would show a value the render is not using.
+ */
+function sanitizedLayerOrder(raw: unknown): number | undefined {
+  return typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
+}
+
 function labelVocabularyFromAttrs(node: SceneNode): LabelVocabulary | undefined {
   const vocabulary = node.attrs.label_vocabulary as Record<string, string> | undefined;
   return vocabulary ? Object.entries(vocabulary).map(([id, name]) => ({ id, name })) : undefined;
@@ -373,6 +386,22 @@ export interface LayerInfo {
    * shadow the ancestor's newer choice.
    */
   blendingModeExplicit: boolean;
+  /**
+   * Effective cross-layer draw order (`LAYER_ORDER_SPEC.md`), including an
+   * inherited value, or `undefined` when the ancestry states none. Higher =
+   * nearer the camera = drawn later.
+   */
+  layerOrder?: number;
+  /** Effective order inherited from ancestors when this layer owns none. */
+  inheritedLayerOrder?: number;
+  /**
+   * Whether the level is EXPLICIT — the node's OWN attr, or a user pick in the
+   * panel — as opposed to inherited or absent. Same reasoning as
+   * `blendingModeExplicit`: re-emitting an inherited level as this layer's own
+   * would change which node owns the setter and make clearing the ancestor no
+   * longer restore `auto` here.
+   */
+  layerOrderExplicit: boolean;
   /** Whether this layer is selected in the list */
   selected: boolean;
   /** Active colormap name (undefined = direct RGB colors) */
@@ -497,10 +526,17 @@ export class LayerStateManager {
     this.layerOrder = [];
     this.lastClickedPath = null;
 
-    this.walkSceneGraph(root, root);
+    this.walkSceneGraph(root, root, undefined);
   }
 
-  private walkSceneGraph(node: SceneNode, root: SceneNode): void {
+  private walkSceneGraph(
+    node: SceneNode,
+    root: SceneNode,
+    inheritedLayerOrder: number | undefined
+  ): void {
+    const ownLayerOrder =
+      node.type === 'scene' ? undefined : sanitizedLayerOrder(node.attrs.layer_order);
+    const effectiveLayerOrder = ownLayerOrder ?? inheritedLayerOrder;
     // Skip the root scene node; collect anything else with layer=true.
     // Groups exposed as layers act as composites — their controls fan out
     // to every data descendant when applied in the scene.
@@ -653,7 +689,8 @@ export class LayerStateManager {
         // the canonical inherited/authored mode (#1272). The `undefined` case is
         // exactly what tells us to fall back to the per-type default AND to leave
         // the layer non-explicit so it does not impose that default on descendants.
-        const composedBlendingMode = getEffectiveAttrs(root, node.path).blending_mode;
+        const effectiveAttrs = getEffectiveAttrs(root, node.path);
+        const composedBlendingMode = effectiveAttrs.blending_mode;
 
         this.layerOrder.push(node.path);
         this.layers.set(node.path, {
@@ -723,6 +760,14 @@ export class LayerStateManager {
           // display type is a geometry name but whose node authored no mode) stays
           // non-owning, exactly like a plain group.
           blendingModeExplicit: node.attrs.blending_mode != null,
+          // Display the COMPOSED value the renderer uses, while ownership
+          // remains the node's OWN sanitized attr. A loose `!= null` on the raw
+          // attr (the shape `blendingModeExplicit` above can afford, because a
+          // mode has a per-type fallback) would report `explicit: true` for a
+          // junk value like `'front'` that the renderer discards.
+          layerOrder: effectiveLayerOrder,
+          inheritedLayerOrder,
+          layerOrderExplicit: ownLayerOrder !== undefined,
           selected: false,
           colormap,
           supportsColormap,
@@ -743,7 +788,7 @@ export class LayerStateManager {
     // Recurse into children
     if (node.children) {
       for (const child of node.children) {
-        this.walkSceneGraph(child, root);
+        this.walkSceneGraph(child, root, effectiveLayerOrder);
       }
     }
   }
@@ -998,6 +1043,24 @@ export class LayerStateManager {
     // The user explicitly picked a mode ⇒ this layer now OWNS one, so
     // `liveLayerAttrs` may emit it as a composition setter (even a group).
     layer.blendingModeExplicit = true;
+    this.notify();
+  }
+
+  /**
+   * Set (or clear) a layer's authored cross-layer draw order.
+   *
+   * `undefined` CLEARS it, which is not the same authored state as setting 0:
+   * both resolve to band 0, but only the latter remains a stated value in the
+   * panel and authored-band diagnostics. Clearing must therefore also clear
+   * `layerOrderExplicit`, or `liveLayerAttrs` would keep emitting the stale
+   * value as this layer's own setter.
+   */
+  setLayerOrder(path: string, level: number | undefined): void {
+    const layer = this.layers.get(path);
+    if (!layer) return;
+    const sanitizedLevel = level !== undefined && Number.isSafeInteger(level) ? level : undefined;
+    layer.layerOrder = sanitizedLevel ?? layer.inheritedLayerOrder;
+    layer.layerOrderExplicit = sanitizedLevel !== undefined;
     this.notify();
   }
 

@@ -192,6 +192,12 @@ export class LayerApplyEngine {
     // layer's Blend control wins — but only when that layer actually OWNS a
     // mode. A wrapper owning none has nothing to impose (see doc comment; #1275).
     const editedLayerOwnsMode = this.deps.state.getLayer(layerPath)?.blendingModeExplicit ?? false;
+    // Same rule as the mode, tracked separately: a layer exposes exactly ONE
+    // Layer order control, so an order authored on a non-layer DESCENDANT would
+    // make that control inert. A nested LAYER descendant is different — it has
+    // its own control and its own row, so it goes through `liveLayerAttrs`
+    // below and rightly wins by nearest-setter-wins.
+    const editedLayerOwnsOrder = this.deps.state.getLayer(layerPath)?.layerOrderExplicit ?? false;
     const chain: ComposableAttrs[] = ancestors.map((node, i) => {
       const layerInfo = this.deps.state.getLayer(node.path);
       if (layerInfo) {
@@ -212,6 +218,12 @@ export class LayerApplyEngine {
           insideLayerSubtree && editedLayerOwnsMode
             ? undefined
             : (node.attrs.blending_mode as string | undefined),
+        // Omitting this dropped an order authored on a non-layer intermediate
+        // group from composition entirely.
+        layer_order:
+          insideLayerSubtree && editedLayerOwnsOrder
+            ? undefined
+            : (node.attrs.layer_order as number | undefined),
       };
     });
     return composeAttrs(chain);
@@ -628,6 +640,39 @@ export class LayerApplyEngine {
 
   applyAbsorption(layer: LayerInfo): void {
     this.applyComposed(layer);
+  }
+
+  /**
+   * Push the composed draw order onto the meshes the depth-sort coordinator
+   * reads it from.
+   *
+   * Does not go through `applyComposed` — an order is a cross-node SORT KEY,
+   * not a material uniform, so there is no `mat.updateX` to call and nothing in
+   * the shader to refresh. But it DOES compose: the value written to each leaf
+   * is `composeEffective`'s, not this layer's raw one.
+   *
+   * That distinction is the bug this replaced. Assigning `layer.layerOrder`
+   * directly to every affected leaf clobbered the order of a nested leaf that
+   * is ITSELF a layer with its own authored order — `getAffectedDataLeaves`
+   * returns every data descendant, including nested layers, and
+   * nearest-setter-wins says the nested one should win. Composing per leaf
+   * restores that, and lets an order on a non-layer intermediate group
+   * participate too.
+   *
+   * This is render-only session state. It must not be written into
+   * `userData.attrs`, which is the loaded SceneNode attrs object for lines and
+   * gsplats and would make a panel edit look authored on the next composition.
+   */
+  applyLayerOrder(layer: LayerInfo): void {
+    const sceneGraph = this.deps.getSceneGraph();
+    for (const leaf of this.getAffectedDataLeaves(layer.path)) {
+      const obj = this.getMesh(leaf.path);
+      if (!obj) continue;
+      const ancestors = sceneGraph ? collectAncestorNodes(sceneGraph, leaf.path) : undefined;
+      const eff = this.composeEffective(leaf.path, layer.path, false, ancestors);
+      obj.userData.layerOrder = eff?.layer_order;
+    }
+    this.deps.requestRender();
   }
 
   applyLabelStyle(layer: LayerInfo): void {

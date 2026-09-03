@@ -171,12 +171,42 @@ export function drawOrderChipContent(
 ): { text: string; title: string } | null {
   if (!state) return null;
   const dw = state.depthWrite ? 'depthWrite on' : 'depthWrite off';
+  // An authored band is prefixed (`O2 #2 transparent`) because it EXPLAINS the
+  // resolved integer beside it: with a level, the layer's position is stated and
+  // camera-independent; without one it is inferred from the geometry each frame.
+  // `O`, not `L`: the LOD chip immediately to the left of this one already
+  // renders `L{active}/{count}`, so an `L3` here reads as an LOD level rather
+  // than a layer order — the exact misreading this prefix has to avoid.
+  const order = state.layerOrder === undefined ? '' : `O${state.layerOrder} `;
+  // `transparent` / `opaque` names a RENDER BUCKET, not an opacity. Spelling
+  // that out matters because the word invites the wrong reading: a fully opaque
+  // additive layer still sits in the `transparent` bucket, and a layer at 5%
+  // opacity in `opaque` mode still sits in the `opaque` one.
+  const bucket =
+    state.bucket === 'opaque'
+      ? "'opaque' render bucket — NOT an opacity: it means this mesh is drawn in " +
+        "THREE's depth-first pass, before every transparent mesh in the scene " +
+        'regardless of renderOrder. `opaque` is the only Luxar blending mode that ' +
+        'lands here, and a backdrop must use it to composite under the content in ' +
+        'front of it.'
+      : "'transparent' render bucket — NOT an opacity: it means this mesh is drawn " +
+        "in THREE's blended pass, after every opaque mesh, and its order there is " +
+        'what renderOrder decides. Every blending mode except `opaque` lands here ' +
+        '(additive, volumetric, normal, max, luminous), however opaque the pixels ' +
+        'themselves look.';
+
   return {
-    text: `#${state.renderOrder} ${state.bucket}`,
+    text: `${order}#${state.renderOrder} ${state.bucket}`,
     title:
-      `Draw order: renderOrder ${state.renderOrder} (compared ascending — lower is drawn first), ` +
-      `${state.bucket} blending bucket, ${dw}. Opaque backdrops must be 'opaque' to composite ` +
-      'under the transparent content in front of them.',
+      (state.layerOrder === undefined
+        ? 'Layer order: none authored, so the cross-layer order is INFERRED from the ' +
+          'geometry each frame (mean view depth, then bounding-sphere containment). '
+        : `Layer order ${state.layerOrder}: the cross-layer order is STATED by the author ` +
+          'and does not change with the camera. Higher draws nearer the viewer, like a ' +
+          'CSS z-index. ') +
+      `renderOrder ${state.renderOrder} — compared ascending, so lower is drawn first, ` +
+      'and only ever compared against meshes in the SAME bucket. ' +
+      `${bucket} ${dw}.`,
   };
 }
 

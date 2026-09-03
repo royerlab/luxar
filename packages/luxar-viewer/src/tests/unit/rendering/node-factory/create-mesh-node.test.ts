@@ -74,6 +74,16 @@ describe('resolveMeshShading — the §3.4 rule in one place', () => {
 });
 
 describe('createEmptyMeshNode — the attribute set is complete from birth', () => {
+  it('stamps an ancestor-composed layer order', () => {
+    const node = createEmptyMeshNode(
+      '/surface',
+      { ...ATTRS, layer_order: 7 } as unknown as MeshMetadata,
+      loader,
+      null
+    );
+    expect(node.userData.layerOrder).toBe(7);
+  });
+
   it('binds normal + aScalar STUBS when the metadata declares them', () => {
     // Not cosmetic: the attribute set is baked into the WebGPU vertex layout at first
     // draw and never rebuilt, so an attribute that appears on the first commit

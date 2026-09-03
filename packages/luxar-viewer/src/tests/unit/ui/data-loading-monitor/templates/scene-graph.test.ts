@@ -324,6 +324,15 @@ describe('renderSceneGraphTree — kind badges', () => {
       const html = renderSceneGraphTree(tree(gsplatsNode), new Set(), new Map(), drawOrderStates);
       expect(html).toContain('data-draworder-path="/cloud"');
       expect(html).toContain('#3 transparent');
+      expect(html).not.toContain('O0 #3 transparent');
+    });
+
+    it('prefixes an authored layer order', () => {
+      const drawOrderStates = new Map<string, NodeDrawOrder>([
+        ['/cloud', { bucket: 'transparent', depthWrite: false, renderOrder: 3, layerOrder: 2 }],
+      ]);
+      const html = renderSceneGraphTree(tree(gsplatsNode), new Set(), new Map(), drawOrderStates);
+      expect(html).toContain('O2 #3 transparent');
     });
 
     it('renders a persistent EMPTY chip slot for a drawable node without state', () => {
