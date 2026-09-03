@@ -61,12 +61,12 @@ Output lands in `docs/images/gallery/<id>.{png,webp,webm}`. That directory is
 rows and still exits zero, because refreshing media is a reviewed batch action.
 For each demo it takes the newest blamed line in that demo's
 `media-manifest.json` entry as the publish timestamp, then compares it with the
-gallery dataset generator; the capture spec together with its orbit-axis helper
-and Playwright gallery config; the exposure and crop policies; the manifest-listed
-demo generator and its directly imported private `luxar.demos` helpers; and the
-lines of that demo's own manifest object. Production `luxar.shading` history
-applies only when the committed demo module imports it; shading tests/docs remain
-excluded.
+gallery dataset generator; the capture spec together with its media-reporting,
+timelapse-settle, and orbit-axis helpers and Playwright gallery config; the
+exposure and crop policies; the manifest-listed demo generator and its directly
+imported private `luxar.demos` helpers; and the lines of that demo's own manifest
+object. Production `luxar.shading` history applies only when the committed demo
+module imports it; shading tests/docs remain excluded.
 Global inputs are printed once above the rows, while per-demo failures print
 `UNKNOWN` and do not hide the rest of the report. All reads use committed
 `HEAD`, so an in-progress manifest edit cannot create a fake commit timestamp.
