@@ -77,6 +77,7 @@ import {
   borderSampleFrames,
   evaluateBorderLit,
   evaluateUnderfill,
+  selectCropVerdictSamples,
   type BorderSample,
   type CoverageMeasurement,
   type CropFraming,
@@ -1517,9 +1518,11 @@ for (const demo of DEMOS) {
       distance: demo.distance,
       autoFrame: demo.autoFrame,
     };
-    // Still first, so a tie names the pose easiest to reproduce by hand.
+    // Keep every measurement in the log, but judge only poses that reach the
+    // published media. Still first, so a tie names the easiest pose to reproduce.
     const samples = [...(stillSample ? [stillSample] : []), ...borderSamples];
-    const verdict = evaluateBorderLit({ demoId: demo.id, samples, framing });
+    const verdictSamples = selectCropVerdictSamples(stillSample, borderSamples, noOrbit);
+    const verdict = evaluateBorderLit({ demoId: demo.id, samples: verdictSamples, framing });
     // ALWAYS report measured/attempted poses: the verdict is the worst of whatever
     // could be measured, so a skipped pose (each one warned about above) would
     // otherwise print an ordinary-looking count that silently misses a crop
