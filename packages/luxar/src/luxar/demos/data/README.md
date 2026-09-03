@@ -1,7 +1,8 @@
 # Demo Data Files
 
-This directory holds precomputed data files for Luxar GSplat demos, stored in
-**Git Large File Storage (Git LFS)**.
+This directory holds the one remaining in-repo demo payload,
+`dipc_genome/dipc_gm12878.npz`, in **Git Large File Storage (Git LFS)**. Hosted
+demo payloads are fetched from the records pinned by the manifest.
 
 > **The manifest, not this README, is the source of truth.**
 > [`../data_manifest.json`](../data_manifest.json) records how *every* demo
@@ -85,7 +86,7 @@ dataset in the manifest.
 > would spend the single honoured fallback slot on the older generation, so it is
 > left as a reviewer's call rather than assumed.
 
-Each subdirectory contains pre-fitted `.gsplats.zarr.zip` files for one demo:
+The hosted datasets formerly stored in these subdirectories are:
 
 | Directory | Demo | Contents |
 |-----------|------|----------|
@@ -161,11 +162,11 @@ git lfs pull             # Download all LFS files
 
 ### Verifying LFS Files
 
-If demo files are very small (< 1 KB), they're pointer files — run `git lfs pull`.
+If the Dip-C file is very small (< 1 KB), it is a pointer — run `git lfs pull`.
 
 ```bash
 # Should show actual file sizes, not ~130 bytes
-ls -lh packages/luxar/src/luxar/demos/data/gsplats_kidney/
+ls -lh packages/luxar/src/luxar/demos/data/dipc_genome/
 ```
 
 ## File Formats

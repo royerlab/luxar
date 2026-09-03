@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Add an additive LOD ladder to every gsplat demo's LFS baseline.
+"""Add an additive LOD ladder to every fetched gsplat demo baseline.
+
+The baselines now live on the records and must be fetched and staged under their
+former ``packages/luxar/src/luxar/demos/data/gsplats_*/`` paths before running.
 
 Web-viewing-friendly level design (cumulative splat counts):
 
