@@ -225,6 +225,8 @@ the disagreement remains visible where the work continues.
 
 GitHub pre-fills the canonical [pull request template](.github/PULL_REQUEST_TEMPLATE.md).
 Use its verification and documentation checklist when preparing your PR.
+If the on-disk format changes, update
+[the Luxar Zarr format specification](docs/guides/user/LUXAR_ZARR_FORMAT.md).
 
 ## 🎯 Development Focus Areas
 
