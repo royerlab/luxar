@@ -654,9 +654,10 @@ def validate_render_attrs(
     Called as the FIRST step of every geometry writer — before the zarr group
     is created — so an invalid value fails the write without leaving a partial
     node on disk. Covers every pure attr validator (no store access needed):
-    blending_mode / absorption / opacity / gamma / intensity / offset / mesh
-    appearance / layer / visible / colormap. The values are validated only (not converted) — the
-    writer stores the caller's attrs unchanged.
+    blending_mode / layer_order / absorption / opacity / gamma / intensity /
+    offset / mesh appearance / layer / visible / colormap. The values are
+    validated only (not converted) — the writer stores the caller's attrs
+    unchanged.
 
     When ``reject_unknown`` is set, any attr key that is neither a known render
     attr (``KNOWN_RENDER_ATTRS``), an accepted non-render/structural key
@@ -710,19 +711,7 @@ def validate_render_attrs(
                 f"it or use a supported attribute."
             )
 
-    if "blending_mode" in attrs:
-        from ...validation.types import validate_blending_mode
-
-        validate_blending_mode(attrs["blending_mode"])
-
-    if "layer_order" in attrs:
-        # Runs UNCONDITIONALLY, which is what keeps ``layer_order`` out of
-        # ``ABSENT_WHEN_NONE_RENDER_ATTRS``: a ``layer_order=None`` refuses
-        # loudly here (like ``blending_mode=None``) rather than reaching disk,
-        # so there is nothing for the absent-when-None strip to rescue.
-        from ...validation.types import validate_layer_order
-
-        validate_layer_order(attrs["layer_order"])
+    _validate_compositing_attrs(attrs)
 
     if "join" in attrs:
         # The KEY allowlist above catches ``jion=``; this catches ``join="mitre"``.
@@ -788,6 +777,22 @@ def _validate_mesh_appearance_attrs(attrs: Dict[str, Any]) -> None:
     for key, (validator, label) in _MESH_APPEARANCE_VALIDATORS.items():
         if key in attrs:
             validator(attrs[key], label)
+
+
+def _validate_compositing_attrs(attrs: Dict[str, Any]) -> None:
+    """Validate authored compositing controls in the shared attr gate."""
+    if "blending_mode" in attrs:
+        from ...validation.types import validate_blending_mode
+
+        validate_blending_mode(attrs["blending_mode"])
+
+    if "layer_order" in attrs:
+        # Runs UNCONDITIONALLY, which keeps ``layer_order`` out of
+        # ``ABSENT_WHEN_NONE_RENDER_ATTRS``: a ``layer_order=None`` refuses
+        # loudly here (like ``blending_mode=None``) rather than reaching disk.
+        from ...validation.types import validate_layer_order
+
+        validate_layer_order(attrs["layer_order"])
 
 
 def _validate_interaction_attrs(attrs: Dict[str, Any]) -> None:
