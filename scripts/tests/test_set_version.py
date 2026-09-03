@@ -1,4 +1,4 @@
-"""Tests for release version stamping, consistency, preflight, and packaging.
+"""Tests for release version stamping, consistency, preflight, and package naming.
 
 These release mechanisms run exactly once per release — so a defect surfaces
 on launch day, in front of everyone, with no earlier signal. That asymmetry is
@@ -30,12 +30,18 @@ def test_legacy_npm_package_specifiers_are_absent_from_tracked_files() -> None:
     # Split the retired names so this guard does not match its own source.
     bare_name = "luxar" + "-viewer"
     legacy_scope = "@royerlab" + f"/{bare_name}"
+    # Only surfaces where the bare name can ONLY mean the published package are
+    # matched. Prose is deliberately left out: the source directory
+    # packages/luxar-viewer/ and the Cloudflare Pages project share the name, so
+    # a general prose pattern would be false positives all the way down.
     pattern = "|".join(
         (
             legacy_scope,
-            rf"(from|import) ['\"]{bare_name}(['\"]|/styles\.css['\"])",
+            # Any module specifier, not just the root and styles.css: a subpath
+            # import such as 'luxar-viewer/data' names the retired package too.
+            rf"(from|import) ['\"]{bare_name}(/[^'\"]*)?['\"]",
             rf"{bare_name}/styles\.css",
-            rf"npm (install|i) {bare_name}([[:space:]]|$)",
+            rf"(npm (install|i)|pnpm add|yarn add) {bare_name}([[:space:]]|$)",
             rf"`{bare_name}` ships",
             rf"of {bare_name}\.",
         )
@@ -48,7 +54,12 @@ def test_legacy_npm_package_specifiers_are_absent_from_tracked_files() -> None:
         check=False,
     )
 
-    assert result.returncode == 1, result.stdout or result.stderr
+    # git grep exits 1 for "no match" and 0 for "matched"; anything else (128
+    # outside a work tree, 127 with no git) is a broken guard, not a clean tree.
+    assert result.returncode in (0, 1), (
+        f"git grep could not run (exit {result.returncode}): {result.stderr}"
+    )
+    assert result.returncode == 1, result.stdout
 
 
 def _load(path: Path, name: str) -> ModuleType:
