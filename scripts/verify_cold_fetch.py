@@ -72,10 +72,11 @@ Three requirements, each load-bearing
    have not yet collapsed their separate repo and record contracts.
 
    Honest scoping of this one: the download leg inside ``ensure_dataset``
-   already validates strictly against the hosted pin, so on a cold cache it is
-   what rejects wrong bytes first, and the re-check below is a backstop. It is
-   kept because it makes this gate independent of that internal — a resolver
-   that ever accepted either contract on the download path (as
+   already validates strictly against the record pin (the legacy hosted pin
+   when present, otherwise ``sha256``), so on a cold cache it is what rejects
+   wrong bytes first, and the re-check below is a backstop. It is kept because
+   it makes this gate independent of that internal — a resolver that ever
+   accepted either legacy contract on the download path (as
    ``_accepted_contract`` already does for a CACHED file) would otherwise pass
    a mis-uploaded record silently. Requirement 2, not this one, is what makes
    the harness irreplaceable.
