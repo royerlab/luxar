@@ -154,6 +154,49 @@ def test_cited_demo_keys_exist() -> None:
     )
 
 
+def test_gallery_tiles_match_registry_credits() -> None:
+    gallery = _readme_text().split("## Gallery", 1)[1].split("\n---\n", 1)[0]
+    tiles: dict[str, bool] = {}
+    for line in gallery.splitlines():
+        if "https://demos.luxarviewer.dev/d/" not in line:
+            continue
+        for cell in line.strip("|").split(" | "):
+            match = re.search(
+                r"https://demos\.luxarviewer\.dev/d/([a-z][a-z0-9_-]*)", cell
+            )
+            if match is None:
+                continue
+            key = match.group(1)
+            assert key not in tiles, f"gallery repeats demo key {key}"
+            tiles[key] = "<sub>" in cell
+
+    assert len(tiles) == gallery.count("[!["), (
+        "every gallery preview must have one linked demo title"
+    )
+    demos = {demo.key: demo for demo in iter_demos()}
+    unknown = sorted(set(tiles) - set(demos))
+    assert not unknown, f"gallery links demo keys absent from the registry: {unknown}"
+    for key, has_credit in tiles.items():
+        assert has_credit == (demos[key].citation is not None), (
+            f"gallery credit for {key} does not match DEMO_META citation"
+        )
+
+
+def test_published_demo_count_agrees_across_readmes() -> None:
+    root = get_project_root()
+    readmes = (
+        root / "README.md",
+        root / "packages/luxar/README.md",
+        root / "packages/luxar-viewer/README.md",
+    )
+    counts = {}
+    for readme in readmes:
+        matches = re.findall(r"— (\d+) (?:live )?demos", readme.read_text())
+        assert len(matches) == 1, f"expected one published demo count in {readme}"
+        counts[readme] = int(matches[0])
+    assert len(set(counts.values())) == 1, f"published demo counts disagree: {counts}"
+
+
 def test_demo_count_matches_registry() -> None:
     # The banner and the quick-start blurb both hard-code the demo count; adding
     # a demo whose key sorts late leaves the sampled indices intact, so guard the
