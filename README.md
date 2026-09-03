@@ -915,6 +915,8 @@ layout and how to add a new skill.
 | [Build System](docs/guides/developer/BUILD_SYSTEM_SPEC.md) | Development environment setup |
 | [Project Statistics](stats/PROJECT_STATS.md) | Codebase size, language mix, test coverage, git activity (see [`project_stats.html`](stats/project_stats.html) for the styled report) |
 | [Contributing](CONTRIBUTING.md) | How to contribute |
+| [Code of Conduct](CODE_OF_CONDUCT.md) | Contributor Covenant 2.1 |
+| [Security Policy](SECURITY.md) | How to report a vulnerability privately |
 
 ---
 
@@ -1029,6 +1031,8 @@ the full citation.
 **Microscopy & cell biology**
 - **Cells3D** — fluorescence microscopy provided by the [Allen Institute for Cell Science](https://www.allencell.org/), distributed as scikit-image sample data (`skimage.data.cells3d`); scikit-image itself: van der Walt et al. (2014), *PeerJ* 2:e453, [doi:10.7717/peerj.453](https://doi.org/10.7717/peerj.453).
 - **Mouse Blastocyst** — Blin et al. (2019), via the [Image Data Resource](https://idr.openmicroscopy.org/) (IDR; Williams et al. 2017, *Nat. Methods*, [doi:10.1038/nmeth.4326](https://doi.org/10.1038/nmeth.4326)).
+- **Drosophila Embryogenesis** — acquired in Philipp J. Keller's lab at HHMI Janelia Research Campus, where L. A. Royer was then a postdoctoral fellow; used with permission. Imaged on the SiMView instrument described by Royer et al. (2016), *Nat. Biotechnol.* 34:1267-1278, [doi:10.1038/nbt.3708](https://doi.org/10.1038/nbt.3708).
+- **Zebrafish h2afva** — Royer lab, CZ Biohub San Francisco; light-sheet histone timelapse from the Zebrahub imaging corpus. Please cite Lange et al. (2024), *Cell*, [doi:10.1016/j.cell.2024.09.047](https://doi.org/10.1016/j.cell.2024.09.047).
 - **Zebrafish Neuromast** — Adrian Jacobo lab (CZ Biohub SF / Rockefeller); unpublished iSIM, deconvolved 4D timelapse. Related biology: Erzberger et al. (2020), *Mechanochemical symmetry breaking during morphogenesis of lateral-line sensory organs*, *Nature Physics* 16:949-957, [doi:10.1038/s41567-020-0894-9](https://doi.org/10.1038/s41567-020-0894-9).
 - **Tribolium Embryo** — [Cell Tracking Challenge](https://celltrackingchallenge.net/) ([Zenodo](https://zenodo.org/records/5270323)); Barry et al. (2022), *J. Cell Sci.* 135, jcs259511, [doi:10.1242/jcs.259511](https://doi.org/10.1242/jcs.259511); Maška et al. (2023), *Nat. Methods*.
 - **C. elegans nuclei tracking** — Hirsch et al. (2022), 3D+time confocal nuclei dataset, [Zenodo 6460303](https://doi.org/10.5281/zenodo.6460303).

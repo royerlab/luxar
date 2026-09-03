@@ -40,7 +40,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from luxar.demos import registry
+from luxar.demos import DatasetUnavailable, registry
+from luxar.demos import demo_gsplats_4d_neuromast_2ch as neuromast_demo
 from luxar.gsplats.gsplat_data import GSplatData
 
 DEMO_PATHS = sorted(registry._DEMOS_DIR.glob("demo_*.py"))
@@ -48,10 +49,96 @@ MANIFEST = registry._DEMOS_DIR / "data_manifest.json"
 
 LFS_ONLY = {"load_precomputed_gsplats", "load_precomputed_bundle"}
 MANIFEST_DRIVEN = {"load_dataset_gsplats", "load_dataset_bundle", "ensure_dataset"}
-HOSTED_DATASET_EXCEPTIONS = {
-    # Record unpublished; the module documents its machine-local store until CC BY publishes.
-    "gsplats_4d_neuromast_2ch": "documented machine-local store",
-}
+#: Demos that legitimately do not route their hosted dataset through
+#: ``ensure_dataset``. Empty since 2026-09-02: the last entry,
+#: ``gsplats_4d_neuromast_2ch``, now resolves its hosted pair through
+#: ``ensure_dataset`` and keeps the machine-local store only as a fallback.
+HOSTED_DATASET_EXCEPTIONS: dict[str, str] = {}
+
+
+def test_neuromast_resolver_pairs_reversed_archives_by_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    expected = [
+        tmp_path / f"{channel['file']}.zip" for channel in neuromast_demo.CHANNELS
+    ]
+    monkeypatch.setattr(
+        neuromast_demo, "ensure_dataset", lambda _name: list(reversed(expected))
+    )
+
+    assert neuromast_demo.resolve_channel_paths() == expected
+
+
+def test_neuromast_resolver_rejects_a_diverged_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fetched = [
+        tmp_path / "neuromast_membranes.gsplats.zarr.zip",
+        tmp_path / "renamed_nuclei.gsplats.zarr.zip",
+    ]
+    monkeypatch.setattr(neuromast_demo, "ensure_dataset", lambda _name: fetched)
+
+    with pytest.raises(FileNotFoundError, match="have diverged"):
+        neuromast_demo.resolve_channel_paths()
+
+
+def test_neuromast_resolver_falls_back_when_the_record_is_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    messages: list[str] = []
+    expected = []
+    for channel in neuromast_demo.CHANNELS:
+        path = tmp_path / channel["file"]
+        path.mkdir()
+        expected.append(path)
+    monkeypatch.setattr(neuromast_demo, "DATA_DIR", tmp_path, raising=False)
+    monkeypatch.setattr(neuromast_demo, "aprint", messages.append)
+    monkeypatch.setattr(
+        neuromast_demo,
+        "ensure_dataset",
+        lambda _name: (_ for _ in ()).throw(DatasetUnavailable("draft record")),
+    )
+
+    assert neuromast_demo.resolve_channel_paths() == expected
+    assert messages == ["Manifest fetch unavailable (draft record)."]
+
+
+def test_neuromast_unavailable_record_reports_missing_local_channels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    messages: list[str] = []
+    monkeypatch.setattr(neuromast_demo, "DATA_DIR", tmp_path, raising=False)
+    monkeypatch.setattr(neuromast_demo, "aprint", messages.append)
+    monkeypatch.setattr(
+        neuromast_demo,
+        "ensure_dataset",
+        lambda _name: (_ for _ in ()).throw(DatasetUnavailable("draft record")),
+    )
+
+    with pytest.raises(FileNotFoundError, match="local store"):
+        neuromast_demo.resolve_channel_paths()
+    assert messages == ["Manifest fetch unavailable (draft record)."]
+
+
+def test_neuromast_cache_is_claimed_by_registry(
+    tmp_path: Path,
+) -> None:
+    cache_dir = tmp_path / "gsplats_4d_neuromast_2ch"
+    cache_dir.mkdir()
+    (cache_dir / "archive.zip").write_bytes(b"cached")
+    info = registry.get_demo("gsplats_4d_neuromast_2ch")
+
+    assert registry.demo_cache_dirs(info, cache_root=tmp_path) == [cache_dir]
+    entry = next(
+        item for item in registry.inventory_caches(tmp_path) if item.path == cache_dir
+    )
+    assert entry.demo_keys == ("gsplats_4d_neuromast_2ch",)
+    assert entry.size_bytes == 6
+
+
+def test_neuromast_no_longer_needs_a_hand_placed_copy() -> None:
+    """The record is published, so the fetch — not a local store — is the path."""
+    assert neuromast_demo.DEMO_META["requirements"]["local_data"] is None
 
 
 def _manifest() -> dict:

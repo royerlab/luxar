@@ -294,8 +294,8 @@ def _result_exit_code(
     if checked == 0 and skipped:
         print(
             "NOTE: nothing was actually verified — every target was skipped. "
-            "That is expected while no record is published, and is NOT evidence "
-            "any payload is safe to remove."
+            "That is expected only for records that are not yet published, and "
+            "is NOT evidence any payload is safe to remove."
         )
     return 0
 

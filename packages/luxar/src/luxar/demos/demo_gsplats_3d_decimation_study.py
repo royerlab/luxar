@@ -107,7 +107,7 @@ DEMO_META = {
         "download_mb": 27,
         "compute": "light",
         "gpu": "none",
-        "local_data": "manual-file",
+        "local_data": None,
     },
     "caches": ["gsplats_3d_h2afva_decimation"],
     "outputs": ["gsplats_3d_decimation_study"],

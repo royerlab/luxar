@@ -330,24 +330,18 @@ def test_a_file_with_no_declared_digest_fails(
 # --------------------------------------------------------------------------- #
 
 
-def test_every_shipped_dataset_is_currently_dormant(harness: ModuleType) -> None:
-    """Documents today's state, and fails loudly the day it stops being true.
-
-    No record is published yet, so nothing should be reachable. When the first
-    record goes live this test must be updated *and* a real cold fetch run —
-    which is exactly the moment someone should be forced to think about it.
-    """
+def test_every_shipped_dataset_is_currently_reachable(harness: ModuleType) -> None:
+    """Every hosted target must have a published download route."""
     manifest = harness.data_fetch.load_manifest()
     targets = harness.verification_targets(manifest, harness.hosted_datasets(manifest))
-    reachable = [
+    dormant = [
         harness.target_label(name, variant)
         for name, variant in targets
-        if harness.is_reachable(manifest, name, variant)
+        if not harness.is_reachable(manifest, name, variant)
     ]
-    assert reachable == [], (
-        "a dataset became reachable: run `hatch run python "
-        "scripts/verify_cold_fetch.py` against it and update this test. "
-        f"Reachable: {reachable}"
+    assert dormant == [], (
+        "a hosted dataset lost its published route; restore the record URL or "
+        f"move it out of the hosted set. Dormant: {dormant}"
     )
 
 
@@ -365,7 +359,12 @@ def test_main_lists_without_fetching(harness: ModuleType, capsys) -> None:
     assert harness.main(["--list"]) == 0
     out = capsys.readouterr().out
     assert "gsplats_kidney" in out
-    assert "dormant" in out
+    assert (
+        harness._listing_state(
+            harness.data_fetch.load_manifest(), "gsplats_kidney", None
+        )
+        in out
+    )
 
 
 def test_help_documents_skip_and_teardown_guards(harness: ModuleType, capsys) -> None:

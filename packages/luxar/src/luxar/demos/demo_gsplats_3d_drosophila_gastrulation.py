@@ -13,7 +13,8 @@ the structure Gaussian splatting represents well: a dense field of compact,
 locally-ellipsoidal emitters. The fit below spends ~200,000 splats on it.
 
 DATA SOURCE & CITATIONS:
-    Royer & Keller labs. Imaged on a SiMView multi-view light-sheet microscope
+    Keller lab, HHMI Janelia Research Campus (L. A. Royer was then a postdoctoral
+    fellow there). Imaged on a SiMView multi-view light-sheet microscope
     under the AutoPilot adaptive framework:
 
       Royer, L.A., Lemon, W.C., Chhetri, R.K., Wan, Y., Coleman, M., Myers, E.W.
@@ -86,10 +87,7 @@ DEMO_META = {
         "download_mb": 3,
         "compute": "light",
         "gpu": "none",
-        # Pending the Zenodo upload (R17 step 2) the data resolves from the
-        # local cache only, so this is a manual-file demo today. It becomes a
-        # plain download (local_data None) once the record URL is populated.
-        "local_data": "manual-file",
+        "local_data": None,
     },
     "caches": ["gsplats_3d_drosophila_gastrulation"],
     "outputs": ["gsplats_3d_drosophila_gastrulation"],

@@ -14,8 +14,8 @@
 #   bash scripts/release.sh               # preflight + tag + push tag      (make release)
 #
 # The release version is read from packages/luxar/src/luxar/__init__.py
-# (__version__). Bump that via a normal PR FIRST (see `make set-version`), let it
-# merge to main with CI green, then run this to tag the release.
+# (__version__). Bump that via a normal PR FIRST (see `make set-version`), then
+# promote it to main with CI green before running this to tag the release.
 #
 # Env overrides (all optional):
 #   SKIP_CI_CHECK=1   skip the "main CI is green" gate (NOT recommended)
@@ -159,7 +159,7 @@ VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$VERSION_FILE")"
 [[ -n "$VERSION" ]] || die "could not read __version__ from $VERSION_FILE."
 # CalVer: zero-padded YYYY.MM.DD
 [[ "$VERSION" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}$ ]] || \
-  die "version '$VERSION' is not CalVer YYYY.MM.DD (zero-padded). Run 'make set-version' and merge it first."
+  die "version '$VERSION' is not CalVer YYYY.MM.DD (zero-padded). Run 'make set-version' and promote it first."
 TAG="v$VERSION"
 ok "release version: $VERSION  →  tag: $TAG"
 
@@ -167,7 +167,7 @@ ok "release version: $VERSION  →  tag: $TAG"
 # published artifact would carry a version that disagrees with the release tag.
 if command -v python3 >/dev/null 2>&1; then
   python3 scripts/check_version_consistency.py \
-    || die "Release version mismatch. Run 'make set-version DATE=$VERSION' and merge it first."
+    || die "Release version mismatch. Run 'make set-version DATE=$VERSION' and promote it first."
   ok "Python, viewer, and citation versions are consistent"
 else
   warn "python3 not found; skipped release version-consistency check"

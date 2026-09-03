@@ -1,0 +1,65 @@
+name: Bug report
+description: Something behaves differently from how it is documented or intended.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file this. The most useful bug report is
+        one someone else can reproduce — everything below is in service of that.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what you expected instead
+      placeholder: |
+        Loading a 4D gsplat scene renders nothing after the first timepoint.
+        I expected the scene to stay visible as the time slider moves.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: >
+        The smallest sequence that shows it. A bundled demo (`luxar demo run <key>`)
+        or a scene URL is ideal, because it means we are looking at the same bytes
+        you are.
+      placeholder: |
+        1. luxar demo run gsplats_4d_celegans_tracking
+        2. Press ] to advance the time dimension
+        3. Scene goes black from the second timepoint onward
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: >
+        `luxar --version`, plus OS and browser if the problem is in the viewer.
+        For rendering issues, the GPU line from `chrome://gpu` or `about:support`
+        is often the thing that explains it.
+      render: text
+      placeholder: |
+        luxar 2026.09.02
+        macOS 15.2, Chrome 141, Apple M4 Max
+    validations:
+      required: true
+  - type: textarea
+    id: console
+    attributes:
+      label: Console output or traceback
+      description: >
+        For a viewer problem, append `&debug` to the URL and paste the browser
+        console. Errors there are usually more specific than what the UI shows.
+      render: shell
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before filing
+      options:
+        - label: I searched existing issues and this is not already reported.
+          required: true
+        - label: This is not a security vulnerability (those go through private reporting).
+          required: true

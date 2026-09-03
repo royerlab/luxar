@@ -85,10 +85,7 @@ DEMO_META = {
         "download_mb": 27,
         "compute": "light",
         "gpu": "none",
-        # Pending the Zenodo upload (R17 step 2) the data resolves from the
-        # local cache only, so this is a manual-file demo today. It becomes a
-        # plain download (local_data None) once the record URL is populated.
-        "local_data": "manual-file",
+        "local_data": None,
     },
     "caches": ["gsplats_3d_h2afva_stack"],
     "outputs": ["gsplats_3d_h2afva_stack"],

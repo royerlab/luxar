@@ -62,17 +62,20 @@ PIPELINE — reproducible per channel with ``--recompute``:
     was OOM-killed (``exit -9``) before a single tile landed — an
     over-subscribed GPU here fails all-at-once rather than degrading.
 
-DATA STORAGE (important):
+DATA STORAGE:
     These fitted gsplats are ~220 MB unzipped and are **not bundled with the
-    repo**. Both channels are uploaded to the ``cc-by`` Zenodo record and pinned
-    by SHA-256 in ``demos/data_manifest.json`` (as the 133 MB
-    ``.gsplats.zarr.zip`` pair), but that record is still an unsubmitted draft —
-    it carries ``published: false``, so the fetch leg builds no URL and nothing
-    is downloadable yet. For now the data lives in a local store on this machine
-    (see ``DATA_DIR`` below), so the demo runs only where ``DATA_DIR`` is
-    populated. Once the record is published, switch ``resolve_channel_paths`` to
-    ``ensure_dataset("gsplats_4d_neuromast_2ch")`` (as the other gsplat demos do
-    via ``load_precomputed_gsplats``) and drop the local store.
+    repo**. Both channels live on the published ``cc-by`` Zenodo record as the
+    130 MB ``.gsplats.zarr.zip`` pair, pinned by SHA-256 in
+    ``demos/data_manifest.json``, so ``resolve_channel_paths`` fetches them on
+    demand through ``ensure_dataset("gsplats_4d_neuromast_2ch")``: the pair is
+    verified against those digests, cached under ``~/.cache/luxar/`` and
+    expanded to a temporary directory on read. The ``.zip`` suffix is why
+    fetched paths differ from each channel's ``file`` key, which names the
+    *unzipped* store that ``--recompute`` and the local fallback use.
+
+    ``DATA_DIR`` (below) remains that local fallback — the acquisition machine
+    and any hand-placed copy, and the one way to run this demo from a manifest
+    that cannot build a download URL for the record.
 
 USAGE:
     python demo_gsplats_4d_neuromast_2ch.py [--no-serve] [--serve-only]
@@ -97,12 +100,12 @@ DEMO_META = {
     "category": "microscopy",
     "geometry": "gsplats",
     "requirements": {
-        "download_mb": 220,  # approx (local store, not bundled/hosted)
+        "download_mb": 130,  # the zipped pair on the cc-by record
         "compute": "medium",
         "gpu": "none",
-        "local_data": "manual-file",
+        "local_data": None,
     },
-    "caches": [],
+    "caches": ["gsplats_4d_neuromast_2ch"],
     "outputs": ["gsplats_4d_neuromast_2ch"],
     "citation": {
         "short": "Jacobo lab, CZ Biohub San Francisco",
@@ -123,7 +126,9 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
+    DatasetUnavailable,
     add_demo_caption,
+    ensure_dataset,
     launch_viewer,
     parse_demo_flags,
     parse_path_arg,
@@ -137,8 +142,12 @@ from luxar.utils.paths import get_demos_output_dir
 # Configuration
 # =============================================================================
 
-# Local store for the fitted gsplats. NOT bundled/hosted yet (see the module
-# docstring's DATA STORAGE note). Override with $LUXAR_NEUROMAST_DATA_DIR.
+#: Manifest key for the hosted pair (``cc-by`` record, SHA-256 pinned).
+DATASET_NAME = "gsplats_4d_neuromast_2ch"
+
+# Optional local store of the UNZIPPED pair: the acquisition machine, a
+# hand-placed copy, or a manifest that cannot resolve the record. The normal
+# path is the fetch above. Override with $LUXAR_NEUROMAST_DATA_DIR.
 DATA_DIR = Path(
     os.environ.get(
         "LUXAR_NEUROMAST_DATA_DIR",
@@ -485,26 +494,47 @@ def recompute_channel_paths(work_dir: Path) -> list[Path]:
 
 
 def resolve_channel_paths() -> list[Path]:
-    """Resolve the per-channel gsplat paths in the local store.
+    """Resolve the per-channel gsplats, in ``CHANNELS`` order.
 
-    Returns the list of existing ``.gsplats.zarr`` paths (channel order), or
-    raises with an actionable message if the local store isn't populated — the
-    files are pinned in the manifest but their Zenodo record is still an
-    unpublished draft, so there is nothing to download yet.
+    The manifest is the normal path: the record is published, so the archive
+    pair is downloaded, SHA-256 verified and cached on first use. Only its
+    specific ``DatasetUnavailable`` absence — a manifest that can build no
+    download URL — falls back to the local store, which is what keeps the
+    acquisition machine and hand-placed copies working.
+
+    Paired by NAME rather than by position. ``ensure_dataset`` returns the
+    manifest's file order, which happens to match ``CHANNELS`` today; relying on
+    that would silently swap the two markers' colormaps and opacities if either
+    list were ever reordered, and a swapped-channel render looks plausible.
     """
-    paths = [DATA_DIR / ch["file"] for ch in CHANNELS]
-    missing = [p for p in paths if not p.exists()]
+    try:
+        fetched = {path.name: path for path in ensure_dataset(DATASET_NAME)}
+    except DatasetUnavailable as unavailable:
+        aprint(f"Manifest fetch unavailable ({unavailable}).")
+        paths = [DATA_DIR / channel["file"] for channel in CHANNELS]
+        missing = [path for path in paths if not path.exists()]
+        if missing:
+            raise FileNotFoundError(
+                "Neuromast gsplat data is unavailable from the manifest and "
+                "missing from the local store:\n"
+                + "\n".join(f"  - {path}" for path in missing)
+                + f"\n\nPopulate {DATA_DIR} with the two `.gsplats.zarr` stores "
+                "(or set $LUXAR_NEUROMAST_DATA_DIR to their location)."
+            ) from unavailable
+        return paths
+
+    # ``file`` names the unzipped store that ``--recompute`` writes; the record
+    # hosts it zipped.
+    wanted = [f"{channel['file']}.zip" for channel in CHANNELS]
+    missing = [name for name in wanted if name not in fetched]
     if missing:
         raise FileNotFoundError(
-            "Neuromast gsplat data not found in the local store:\n"
-            + "\n".join(f"  - {p}" for p in missing)
-            + f"\n\nThis demo's fitted gsplats (~220 MB) are not bundled with the "
-            f"repo, and their Zenodo record is still an unpublished draft, so "
-            f"they cannot be fetched yet.\nPopulate {DATA_DIR} with the two "
-            "`.gsplats.zarr` (or set $LUXAR_NEUROMAST_DATA_DIR to their location).\n"
-            "See the module docstring's PIPELINE / DATA STORAGE notes."
+            f"{DATASET_NAME!r} did not provide: {missing}\n"
+            f"It provided: {sorted(fetched)}\n"
+            f"One archive per channel was expected: {wanted}\n"
+            "The manifest entry and this demo's CHANNELS list have diverged."
         )
-    return paths
+    return [fetched[name] for name in wanted]
 
 
 # =============================================================================

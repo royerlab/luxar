@@ -101,6 +101,24 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "gallery-selection.test.ts validates README capture ids against it",
     ),
     (
+        "scripts/benchmarks/benchmark_bisect.sh",
+        "py",
+        "test_benchmark_bisect.py executes the committed launcher directly",
+    ),
+    (
+        "scripts/demo_archive_characteristics.json",
+        "py",
+        "test_demo_gsplats_3d_flylight_mcfo_63x_brain.py checks its measured "
+        "splat count against the hosted demo recipe",
+    ),
+    (
+        "scripts/release.sh",
+        "py",
+        "test_set_version.py asserts its `make set-version` remedy string, and a "
+        "shell file matches no other domain, so a release.sh-only diff would "
+        "otherwise run zero tests",
+    ),
+    (
         "docs/guides/user/CLI_REFERENCE.md",
         "py",
         "test_docs_command_coverage.py drift-guards it against the live Typer app; "
@@ -1111,6 +1129,31 @@ def test_single_cancelled_required_job_uses_job_rerun(
 
 
 def test_rejected_multi_job_rerun_is_reported(workflow: str, tmp_path: Path) -> None:
+    endpoint = "repos/royerlab/luxar/actions/runs/900/rerun-failed-jobs"
+    result, calls = _run_cancelled_push_repair(
+        workflow, tmp_path, rejected_endpoint=endpoint
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == [endpoint]
+    assert (
+        "rerun rejected for push run 900 (deadbeef; 3 cancelled required jobs)"
+        in result.stdout
+    )
+
+
+def test_cancelled_count_is_not_padded_by_a_bsd_wc(
+    workflow: str, tmp_path: Path
+) -> None:
+    """BSD wc pads its count; the warning text must not carry that padding."""
+    padding_wc = tmp_path / "wc"
+    padding_wc.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        'print("%8d" % sys.stdin.buffer.read().count(b"\\n"))\n',
+        encoding="utf-8",
+    )
+    padding_wc.chmod(0o755)
     endpoint = "repos/royerlab/luxar/actions/runs/900/rerun-failed-jobs"
     result, calls = _run_cancelled_push_repair(
         workflow, tmp_path, rejected_endpoint=endpoint

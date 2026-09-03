@@ -1,6 +1,7 @@
 # 🤝 Contributing to Luxar
 
 We welcome contributions! The project uses automated tooling to maintain high code quality.
+By participating, you agree to follow our [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## 🚀 Quick Start for Contributors
 
@@ -13,7 +14,7 @@ cd luxar
 make setup-dev  # Installs dependencies and pre-commit hooks
 
 # 3. Create feature branch
-git checkout -b feature/amazing-feature
+git checkout -b feature/amazing-feature origin/dev
 
 # 4. Make your changes
 # ... edit code ...
@@ -27,6 +28,7 @@ git commit -m "Add amazing feature"
 
 # 7. Push and create Pull Request
 git push origin feature/amazing-feature
+gh pr create --base dev
 ```
 
 ## 🛠️ Development Environment
@@ -181,6 +183,19 @@ Maintainers review for:
 
 ## 📝 Pull Request Guidelines
 
+### Target `dev`, not `main`
+
+Open pull requests against **`dev`**, the integration branch:
+
+```bash
+gh pr create --base dev
+```
+
+`main` is the promoted branch. It is protected, it is what release tags are cut
+from, and changes reach it by promotion from `dev` rather than directly. Name
+the base explicitly rather than relying on the repository default, so the
+command keeps meaning the same thing if that default ever changes.
+
 ### Coordinate Issue Work
 
 Before creating a branch for a numbered issue, check whether an open pull
@@ -221,44 +236,11 @@ Also copy any materially different review conclusion onto the surviving PR so
 the disagreement remains visible where the work continues.
 
 ### Before Submitting
-- ✅ `make check-all` passes without errors
-- ✅ `make test-cov-python` shows adequate coverage
-- ✅ All pre-commit hooks pass
-- ✅ Documentation updated for new features
-- ✅ Examples added for new functionality
-- ✅ docs/guides/user/LUXAR_ZARR_FORMAT.md updated (if data format changes)
-- ✅ CLAUDE.md updated (if significant learnings)
-- ✅ `changelog.d/<PR-number>.md` fragment added (if applicable) — do NOT edit
-  `CHANGELOG.md` directly; see `changelog.d/README.md`
 
-### PR Description Template
-```markdown
-## Description
-Brief description of changes
-
-## Motivation and Context
-Why is this change needed? What problem does it solve?
-
-## Type of Change
-- [ ] Bug fix (non-breaking change which fixes an issue)
-- [ ] New feature (non-breaking change which adds functionality)
-- [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
-- [ ] Documentation update
-
-## Testing
-- [ ] Tests pass locally with `make test-cov-python`
-- [ ] New tests added for new functionality
-- [ ] Existing tests updated if needed
-
-## Screenshots (if applicable)
-Add screenshots for UI changes
-
-## Breaking Changes
-List any breaking changes and migration steps
-
-## Related Issues
-Closes #(issue_number)
-```
+GitHub pre-fills the canonical [pull request template](.github/PULL_REQUEST_TEMPLATE.md).
+Use its verification and documentation checklist when preparing your PR.
+If the on-disk format changes, update
+[the Luxar Zarr format specification](docs/guides/user/LUXAR_ZARR_FORMAT.md).
 
 ## 🎯 Development Focus Areas
 

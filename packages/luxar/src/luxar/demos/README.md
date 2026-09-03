@@ -1038,18 +1038,18 @@ Five hours of zebrafish gastrulation (Zenodo 1211599, confocal, 151 timepoints t
 
 **Run**: `luxar demo run gsplats_4d_zebrafish_timelapse`
 
-**Requires**: Nothing but the bundled fit to view. The same archive is pinned on the still-unpublished `cc-by-sa` record for the future hosted path. `--recompute` downloads the ~2.1 GB LSM from Zenodo and refits all 151 timepoints (GPU strongly recommended).
+**Requires**: Nothing but the bundled fit to view. The same archive is pinned on the published `cc-by-sa` record for the hosted path. `--recompute` downloads the ~2.1 GB LSM from Zenodo and refits all 151 timepoints (GPU strongly recommended).
 
 **Demonstrates**: stacking per-timepoint 3D fits into one 4D node; barrier-aware substitutive LOD over a time axis; `extend_to_all` for a static reference layer that survives every scrub; a discrete viewer dimension carrying real physical units; and reading acquisition geometry out of a Zeiss LSM instead of assuming it.
 
 ---
 
 #### demo_gsplats_4d_neuromast_2ch.py - 4D Two-Channel Zebrafish Neuromast Time-Lapse
-100-timepoint iSIM recording of a developing zebrafish lateral-line **neuromast** (`she:GFP; cldnb:lyn-mScarlet`), shown as **two independently-toggleable Gaussian-splat layers**: membranes (mScarlet, `bop_blue` LUT) + nuclei (GFP, `bop_orange` LUT). Both channels are co-registered and share one 4D coordinate space, so they animate together — play the **Time** slider to scrub development, press **L** for the Layers panel to control each channel. The bundled gsplats are pre-fit (per-channel calibration K*=64k → `batch-fit` → Z×2.5 anisotropy correction → redundancy cull), so no fitting/GPU is needed to view.
+100-timepoint iSIM recording of a developing zebrafish lateral-line **neuromast** (`she:GFP; cldnb:lyn-mScarlet`), shown as **two independently-toggleable Gaussian-splat layers**: membranes (mScarlet, `bop_blue` LUT) + nuclei (GFP, `bop_orange` LUT). Both channels are co-registered and share one 4D coordinate space, so they animate together — play the **Time** slider to scrub development, press **L** for the Layers panel to control each channel. The gsplats are pre-fit (per-channel calibration K*=64k → `batch-fit` → Z×2.5 anisotropy correction → redundancy cull), so no fitting/GPU is needed to view.
 
 **Run**: `luxar demo run gsplats_4d_neuromast_2ch`
 
-**Requires**: The two pre-fit `.gsplats.zarr` (~220 MB) in a local store (`~/luxar_demo_data/gsplats_neuromast_2ch/`, or `$LUXAR_NEUROMAST_DATA_DIR`). ⚠️ **Not bundled, and not downloadable yet** — both channels are uploaded to the `cc-by` Zenodo record and pinned by SHA-256 in `demos/data_manifest.json`, but that record is still an unsubmitted draft (`published: false`), so nothing can be fetched until it is published; the remaining follow-up is to publish it and switch to `ensure_dataset`, like the other gsplat demos. No network/GPU needed once the store is populated.
+**Requires**: The two pre-fit channels are not bundled with the repo. The resolver fetches the 130 MB `.gsplats.zarr.zip` pair from the published `cc-by` record through `ensure_dataset` (SHA-256 verified, cached under `~/.cache/luxar/gsplats_4d_neuromast_2ch/`, expanded to a temporary directory on read), and falls back to an unzipped local pair under `$LUXAR_NEUROMAST_DATA_DIR` (default `~/luxar_demo_data/gsplats_neuromast_2ch/`) only when the manifest can build no download URL for the record. No GPU is needed.
 
 **Demonstrates**: 4D + multi-channel gsplats, per-channel `layer=True` + named colormaps (`bop_blue`/`bop_orange`) for the Layers panel, `add_gsplats_from_file` grafting of pre-fit multi-LOD (`stream`, 8 LODs) nodes, Z-anisotropy correction baked via `transform --scale`, redundancy-based culling, and additive compositing because the two superimposed channels have no meaningful cross-layer order. Options: `--no-serve`, `--serve-only`.
 
