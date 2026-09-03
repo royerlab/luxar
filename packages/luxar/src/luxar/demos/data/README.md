@@ -31,7 +31,7 @@ the manifest as one of:
 
 | Bucket | Meaning |
 |--------|---------|
-| `zenodo` | Redistributable derived product. Fetched on demand from a Zenodo record into `~/.cache/luxar/`, falling back to the in-repo LFS copy until the record URL is populated. |
+| `zenodo` | Redistributable derived product. Resolved from the cache, then the in-repo LFS copy, then the Zenodo record; while an in-repo payload is present it wins over the hosted copy. |
 | `local-compute` | The demo fetches the raw source and fits/builds locally. Most are not redistributable; `gsplats_flylight_mcfo` is waiting for a record. |
 | `regenerate` | Cheap to rebuild client-side (no GPU); not hosted at all. |
 
