@@ -153,7 +153,7 @@ def _digest(data: bytes) -> str:
 def test_a_healthy_origin_passes(harness: ModuleType, origin, tmp_path: Path) -> None:
     base_url, served = origin
     (served / "thing.zarr.zip").write_bytes(PAYLOAD)
-    manifest = _manifest(base_url, sha=_digest(PAYLOAD), hosted_sha=_digest(PAYLOAD))
+    manifest = _manifest(base_url, sha=_digest(PAYLOAD))
 
     ok, detail, _ = harness.verify("thing", manifest, keep=False)
     assert ok, detail
@@ -303,8 +303,16 @@ def test_the_record_digest_is_the_primary_contract(harness: ModuleType) -> None:
     entry = {"name": "x", "sha256": "record-digest"}
     assert harness.expected_digest(entry) == ("record-digest", "record")
 
-    legacy = {"name": "x", "hosted_sha256": "hosted-digest"}
+    legacy = {
+        "name": "x",
+        "sha256": "repo-digest",
+        "hosted_sha256": "hosted-digest",
+    }
     assert harness.expected_digest(legacy) == ("hosted-digest", "legacy hosted")
+    assert harness.expected_digest({"name": "x", "hosted_sha256": "hosted-digest"}) == (
+        "hosted-digest",
+        "legacy hosted",
+    )
 
     assert harness.expected_digest({"name": "x"})[0] is None
 

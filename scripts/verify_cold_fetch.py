@@ -169,9 +169,11 @@ def is_reachable(
 
 def expected_digest(entry: dict[str, Any]) -> tuple[Optional[str], str]:
     """The digest to check against, and which contract it came from."""
-    if entry.get("sha256"):
+    sha = entry.get("sha256")
+    hosted_sha = entry.get("hosted_sha256")
+    if sha and not hosted_sha:
         return entry["sha256"], "record"
-    if entry.get("hosted_sha256"):
+    if hosted_sha:
         return entry["hosted_sha256"], "legacy hosted"
     return None, "none declared"
 

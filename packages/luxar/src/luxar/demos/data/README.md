@@ -5,8 +5,8 @@ This directory holds precomputed data files for Luxar GSplat demos, stored in
 
 > **The manifest, not this README, is the source of truth.**
 > [`../data_manifest.json`](../data_manifest.json) records how *every* demo
-> dataset is obtained, plus its true per-dataset license and, for each file, a
-> `sha256` and `bytes` pinning what the Zenodo record serves. Legacy manifests
+> dataset is obtained, plus its true per-dataset license and, for each hosted
+> file, a `sha256` and `bytes` pinning what the Zenodo record serves. Legacy manifests
 > may also carry `hosted_sha256` / `hosted_bytes` when an in-repo copy differs.
 > The optional
 > `superseded_sha256` lists earlier pinned digests, newest last. Files carrying
