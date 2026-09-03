@@ -73,11 +73,72 @@ ok "working tree clean"
 git ls-files --error-unmatch "$WORKFLOW" >/dev/null 2>&1 || die "$WORKFLOW is not committed — commit it (via PR) before releasing."
 ok "PyPI publish workflow present and committed"
 
-# The npm viewer publish is also tag-triggered on v*. It's optional at launch
-# (publishes only if the npm-side trusted publisher / NPM_TOKEN is configured),
-# so a missing/uncommitted file is a warning, not a hard stop.
+# The npm viewer publish is also tag-triggered on v*, but publish-npm.yml gates
+# the actual `npm publish` on ENABLE_NPM_PUBLISH from the job's vars context.
+# GitHub resolves that context environment -> repository -> organization and
+# compares strings case-insensitively, so the preflight must do the same. The
+# three states stay distinct: "off" and "could not check" are different answers.
 if [[ -f "$WORKFLOW_NPM" ]] && git ls-files --error-unmatch "$WORKFLOW_NPM" >/dev/null 2>&1; then
-  ok "npm publish workflow present and committed"
+  npm_variable_at() { # $1=API endpoint; sets NPM_SWITCH when found
+    local result
+    if ! result="$(gh api "$1" --paginate \
+      --jq '.variables[] | select(.name == "ENABLE_NPM_PUBLISH") | "found\t\(.value)\tvalue-end"' \
+      2>/dev/null)"; then
+      return 2
+    fi
+    if [[ "$result" == found$'\t'*$'\t'value-end ]]; then
+      result="${result#found$'\t'}"
+      NPM_SWITCH="${result%$'\t'value-end}"
+      return 0
+    fi
+    return 1
+  }
+
+  resolve_npm_switch() {
+    local endpoints sources index status
+    endpoints=(
+      "repos/$SLUG/environments/npm/variables"
+      "repos/$SLUG/actions/variables"
+      "repos/$SLUG/actions/organization-variables"
+    )
+    sources=("npm environment" "repository" "organization")
+    for ((index = 0; index < ${#endpoints[@]}; index++)); do
+      if npm_variable_at "${endpoints[$index]}"; then
+        NPM_SOURCE="${sources[$index]}"
+        return 0
+      else
+        status=$?
+      fi
+      if [[ $status -eq 2 ]]; then
+        NPM_LOOKUP_ERROR="${sources[$index]}"
+        return 2
+      fi
+    done
+    return 1
+  }
+
+  NPM_SWITCH=""
+  NPM_SOURCE=""
+  NPM_LOOKUP_ERROR=""
+  if resolve_npm_switch; then
+    NPM_SWITCH_NORMALIZED="$(printf '%s\tvalue-end' "$NPM_SWITCH" | tr '[:upper:]' '[:lower:]')"
+    NPM_SWITCH_NORMALIZED="${NPM_SWITCH_NORMALIZED%$'\t'value-end}"
+    if [[ "$NPM_SWITCH_NORMALIZED" == "true" ]]; then
+      ok "npm workflow committed, ENABLE_NPM_PUBLISH=$NPM_SWITCH from $NPM_SOURCE — the tag WILL publish @luxar/viewer"
+    else
+      warn "npm workflow committed, but ENABLE_NPM_PUBLISH='$NPM_SWITCH' from $NPM_SOURCE (not 'true') — the tag will NOT publish to npm."
+    fi
+  else
+    NPM_RESOLVE_STATUS=$?
+    if [[ $NPM_RESOLVE_STATUS -eq 2 ]]; then
+      warn "could not read $NPM_LOOKUP_ERROR variables (gh api) — cannot tell whether the tag will publish to npm."
+    else
+      warn "npm workflow committed, but ENABLE_NPM_PUBLISH is UNSET — the tag will build and pack"
+      warn "  @luxar/viewer and then skip the publish."
+      warn "  npm has no 'pending publisher', so the FIRST publish must be a manual,"
+      warn "  token-authenticated 'npm publish'. Steps: publish-npm.yml header."
+    fi
+  fi
 else
   warn "$WORKFLOW_NPM missing/uncommitted — the tag will NOT publish @luxar/viewer to npm."
 fi

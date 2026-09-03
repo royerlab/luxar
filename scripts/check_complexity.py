@@ -44,6 +44,7 @@ from arbol import aprint
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # Lint targets, kept in sync with the `lint` script in pyproject.toml.
+# `scripts/benchmarks` is an explicit safety net against a broadened ignore rule.
 DEFAULT_TARGETS: tuple[str, ...] = (
     "packages/luxar/src",
     "scripts",
