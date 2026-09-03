@@ -606,9 +606,11 @@ def _verdict_from_one_pass(
                 return kind
 
         if verbose:
-            local_label = "in-repo:" if any(
-                kind == "hosted" for _, kind in candidates
-            ) else "record:"
+            local_label = (
+                "in-repo:"
+                if any(kind == "hosted" for _, kind in candidates)
+                else "record:"
+            )
             aprint("❌ SHA256 mismatch!")
             label = {
                 "hosted": "hosted:",

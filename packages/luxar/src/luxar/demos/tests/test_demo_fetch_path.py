@@ -169,7 +169,9 @@ def test_git_lfs_requirements_name_materialized_manifest_files() -> None:
             missing = [
                 file_info["name"]
                 for file_info in files
-                if not (registry._DEMOS_DIR / "data" / directory / file_info["name"]).exists()
+                if not (
+                    registry._DEMOS_DIR / "data" / directory / file_info["name"]
+                ).exists()
             ]
             assert not missing, (
                 f"{path.name}: local_data='git-lfs' advertises absent files {missing}; "
