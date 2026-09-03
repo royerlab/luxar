@@ -109,6 +109,26 @@ describe('evaluate', () => {
     expect(failures[0]).toMatch(/matched 0 files/);
   });
 
+  it('fails a glob metric that has zero countable items', () => {
+    const zeroFunctions = {
+      ...entry(90, 100),
+      functions: { covered: 0, total: 0, skipped: 0, pct: 100 },
+    };
+    const noFunctionSummary = {
+      total: zeroFunctions,
+      [`${ROOT}/src/constants/a.ts`]: zeroFunctions,
+    };
+    const { failures, rows } = evaluate(
+      noFunctionSummary,
+      { 'src/constants/**': { functions: 90 } },
+      ROOT,
+      3
+    );
+    expect(rows).toHaveLength(0);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatch(/functions has 0 countable items/);
+  });
+
   it('reports a floor the measurement has fallen below', () => {
     const { failures } = evaluate(summary, { lines: 95 }, ROOT, 3);
     expect(failures.some((f) => /is BELOW floor 95/.test(f))).toBe(true);

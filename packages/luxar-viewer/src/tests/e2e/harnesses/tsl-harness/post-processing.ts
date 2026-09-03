@@ -117,7 +117,7 @@ export const POST_PROCESSING_SHADERS: Record<string, RegistryEntry> = {
     }),
   },
   // The other two thirds of the bloom chain. Both were production
-  // `ShaderSource` values with no harness entry at all (audit A4-08), so their
+  // `ShaderSource` values with no harness entry at all, so their
   // TSL and GLSL halves had never been compared — the registry-completeness
   // test in `tsl-registry-completeness.test.ts` now makes that omission
   // impossible rather than merely fixed.

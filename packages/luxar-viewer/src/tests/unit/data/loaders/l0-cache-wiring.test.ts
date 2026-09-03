@@ -34,9 +34,9 @@
  *   4. Degenerate control arm: with no L0 cache, nothing is wrapped and the
  *      loader still loads.
  *
- * This is the acceptance criterion for refactor target A2-07 (extracting
- * the shared `load<Geom>Internal` / array-open body), written before the
- * extraction so the extraction has something to be checked against.
+ * This is the acceptance criterion for extracting the shared
+ * `load<Geom>Internal` / array-open body, written before the extraction so the
+ * extraction has something to be checked against.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

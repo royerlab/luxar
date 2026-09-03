@@ -15,7 +15,8 @@
  * matching zero files yields pct `"Unknown"`, and `"Unknown" < 86` is `false`,
  * so a renamed directory silently turns its gate into one that inspects
  * nothing. Verified empirically against vitest 4.1.10. Every glob key is
- * therefore asserted to match at least one file.
+ * therefore asserted to match at least one file and each configured metric is
+ * asserted to have at least one countable item.
  *
  * Usage: node scripts/check-coverage-slack.mjs [--max-slack N] [--summary PATH]
  * Reads the `json-summary` reporter output that `pnpm test:coverage` emits.
@@ -75,7 +76,8 @@ export function relativizeSummary(summary, viewerRoot) {
  * Compare every floor against the measurement.
  *
  * Returns `{ failures, rows }`. A failure is either excessive slack or — the
- * hole vitest leaves open — a glob that matched nothing.
+ * holes vitest leaves open — a glob that matched nothing or a configured glob
+ * metric with no countable items.
  */
 export function evaluate(summary, thresholds, viewerRoot, maxSlack) {
   const files = relativizeSummary(summary, viewerRoot);
@@ -101,7 +103,16 @@ export function evaluate(summary, thresholds, viewerRoot, maxSlack) {
     const constraints = glob ? value : { [key]: value };
     for (const [metric, floor] of Object.entries(constraints)) {
       const { pct } = aggregate(entries, metric);
-      if (pct === null) continue;
+      if (pct === null) {
+        if (glob) {
+          failures.push(
+            `${key}: ${metric} has 0 countable items across ${entries.length} ` +
+              `matched file(s), so this floor currently inspects nothing. ` +
+              `Fix the glob or delete the metric floor.`
+          );
+        }
+        continue;
+      }
       const slack = pct - floor;
       rows.push({ key, metric, floor, measured: pct, slack, files: entries.length });
       if (slack > maxSlack) {

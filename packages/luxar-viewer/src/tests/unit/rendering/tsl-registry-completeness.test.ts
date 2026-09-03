@@ -10,7 +10,7 @@
  * halves compared by nothing at all, silently.
  *
  * That had already happened: `BLOOM_DOWNSAMPLE_SOURCE` and
- * `BLOOM_UPSAMPLE_SOURCE` were production shaders with no entry (audit A4-08).
+ * `BLOOM_UPSAMPLE_SOURCE` were production shaders with no entry.
  * Adding the two entries fixes today; this test fixes tomorrow, which is the
  * more valuable half. Adding a shader without registering it now fails here.
  *
