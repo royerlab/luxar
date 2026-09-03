@@ -800,7 +800,7 @@ skip_covered = false
 # push/schedule runs the 3.12/3.13/3.14 matrix, so a floor tuned tight to one
 # interpreter can redden `dev` after a green PR. Re-measure with
 # `hatch run test-cov` before raising.
-fail_under = 89
+fail_under = 99
 
 [tool.coverage.html]
 directory = "coverage/python/htmlcov"
