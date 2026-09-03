@@ -27,7 +27,7 @@ A GPU-accelerated WebGL renderer for arbitrarily large n-dimensional scientific 
 
 ## 📦 Embedding (single viewer per page)
 
-`luxar-viewer` ships as a side-effect-free ES module. Importing the
+`@luxar/viewer` ships as a side-effect-free ES module. Importing the
 package does not patch your `console`, inject CSS into your `body`, or
 mutate `:root` — the viewer only touches DOM you give it via the `canvas`
 option, plus the UI overlays it mounts into the `container` you provide

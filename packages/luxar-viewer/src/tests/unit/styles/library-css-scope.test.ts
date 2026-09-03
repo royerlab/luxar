@@ -2,7 +2,7 @@
  * Asserts that the library's published CSS entry point (`styles/index.css`)
  * does NOT contain global selectors that would clobber a host page.
  *
- * Embedders import `luxar-viewer/styles.css` (= styles/index.css). Any rule
+ * Embedders import `@luxar/viewer/styles.css` (= styles/index.css). Any rule
  * targeting `body`, `html`, `*`, `:focus-visible`, list elements, or form
  * elements would override their page styling without warning. Rules of that
  * shape belong in `styles/standalone.css`, which only the standalone-app

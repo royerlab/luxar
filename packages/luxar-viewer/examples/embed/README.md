@@ -7,10 +7,10 @@ regression on the embed-isolation contract is visible at a glance.
 
 ## What this proves
 
-1. **CSS isolation** — `luxar-viewer/styles.css` adds component styles for
+1. **CSS isolation** — `@luxar/viewer/styles.css` adds component styles for
    the viewer's UI overlays but does not touch `body`, `html`, `*`, lists,
    buttons, or scrollbars. The host page's styling is intact.
-2. **No console hijack** — `import { LuxarApp } from 'luxar-viewer'` is
+2. **No console hijack** — `import { LuxarApp } from '@luxar/viewer'` is
    side-effect-free: it does not monkey-patch `console.*`. Only an
    explicit call to `consoleInterceptor.patch()` (which embedders almost
    never want) does that.
@@ -74,8 +74,8 @@ In a real app you install from npm and let your bundler resolve the
 specifiers — no importmap or `/path/to/` URLs:
 
 ```ts
-import { LuxarApp } from 'luxar-viewer';
-import 'luxar-viewer/styles.css'; // component styles, scoped under .luxar-*
+import { LuxarApp } from '@luxar/viewer';
+import '@luxar/viewer/styles.css'; // component styles, scoped under .luxar-*
 
 const app = new LuxarApp();
 await app.init({ canvas, src: 'https://example.com/data.zarr', updateBrowserUrl: false });

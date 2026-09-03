@@ -25,10 +25,21 @@ CHECK_VERSIONS = REPO / "scripts/check_version_consistency.py"
 RELEASE = REPO / "scripts/release.sh"
 
 
-def test_legacy_npm_package_name_is_absent_from_tracked_files() -> None:
-    legacy_name = "@royerlab" + "/luxar-viewer"
+def test_legacy_npm_package_specifiers_are_absent_from_tracked_files() -> None:
+    # Split the retired names so this guard does not match its own source.
+    bare_name = "luxar" + "-viewer"
+    legacy_scope = "@royerlab" + f"/{bare_name}"
+    pattern = "|".join(
+        (
+            legacy_scope,
+            rf"(from|import) ['\"]{bare_name}(['\"]|/styles\.css['\"])",
+            rf"{bare_name}/styles\.css",
+            rf"`{bare_name}` ships",
+            rf"of {bare_name}\.",
+        )
+    )
     result = subprocess.run(
-        ["git", "grep", "-n", "-F", "--", legacy_name],
+        ["git", "grep", "-n", "-E", "--", pattern],
         cwd=REPO,
         text=True,
         capture_output=True,

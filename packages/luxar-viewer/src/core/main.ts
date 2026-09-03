@@ -10,7 +10,7 @@
 
 // Standalone-only chrome (html/body sizing, CSS reset, scrollbars) AND the
 // library's component/utility/theme styles. Embedders never import
-// standalone.css — only `luxar-viewer/styles.css` (= index.css).
+// standalone.css — only `@luxar/viewer/styles.css` (= index.css).
 import '../styles/standalone.css';
 import '../styles/index.css';
 import { bootstrapStandalone } from './bootstrap';

@@ -25,8 +25,8 @@ inside a subpackage.
 
 | File                                           | Purpose                                                                                                                                                                                                                                                                                                                                     |
 | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`index.ts`](./index.ts)                       | Public ES-module barrel. Side-effect-free: re-exports `LuxarApp`, `bootstrapStandalone`, URL helpers, `StorageKeys`, `LoaderConfig`, `ZarrViewerConfig`, and a small set of stable rendering helpers (`getCompleteBlendingState`, `applyColormapTextureToMaterial`, …). This is what `import { LuxarApp } from 'luxar-viewer'` resolves to. |
-| [`lib-styles-entry.ts`](./lib-styles-entry.ts) | CSS-only entry for the library build. Imports `styles/index.css` so Vite emits `dist/lib/luxar-viewer.css`, which consumers reach via `import 'luxar-viewer/styles.css'`. Exists solely to keep `index.ts` free of side effects.                                                                                                            |
+| [`index.ts`](./index.ts)                       | Public ES-module barrel. Side-effect-free: re-exports `LuxarApp`, `bootstrapStandalone`, URL helpers, `StorageKeys`, `LoaderConfig`, `ZarrViewerConfig`, and a small set of stable rendering helpers (`getCompleteBlendingState`, `applyColormapTextureToMaterial`, …). This is what `import { LuxarApp } from '@luxar/viewer'` resolves to. |
+| [`lib-styles-entry.ts`](./lib-styles-entry.ts) | CSS-only entry for the library build. Imports `styles/index.css` so Vite emits `dist/lib/luxar-viewer.css`, which consumers reach via `import '@luxar/viewer/styles.css'`. Exists solely to keep `index.ts` free of side effects.                                                                                                            |
 
 The actual application class (`LuxarApp`) and the standalone
 bootstrap live in [`core/`](./core/README.md); the public barrel just
@@ -129,7 +129,7 @@ for the established pattern and examples
 
 ## Side-effect contract
 
-`import 'luxar-viewer'` resolves to [`./index.ts`](./index.ts), which
+`import '@luxar/viewer'` resolves to [`./index.ts`](./index.ts), which
 must remain **side-effect-free**:
 
 - No `console` patching.
@@ -138,7 +138,7 @@ must remain **side-effect-free**:
 - No singleton instantiation.
 
 CSS is opt-in via a separate import path
-(`import 'luxar-viewer/styles.css'`, served from
+(`import '@luxar/viewer/styles.css'`, served from
 [`./lib-styles-entry.ts`](./lib-styles-entry.ts) → `styles/index.css`).
 Standalone-app conveniences (URL parsing, theme from `?theme`,
 console interceptor, codec warming) live in `core/bootstrap.ts` and
