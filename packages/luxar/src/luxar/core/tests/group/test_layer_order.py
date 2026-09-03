@@ -1,0 +1,411 @@
+"""Authoring tests for ``layer_order`` — the cross-layer draw order.
+
+``layer_order`` states where a layer draws relative to the layers it overlaps
+(higher = nearer the camera = drawn later, the CSS ``z-index`` convention). It
+is a compositing attr composed nearest-setter-wins by the viewer, and it may
+participate only when authored on a node that is a layer — a plain group or a
+top-level leaf. A value on the scene root is accepted as carrier metadata but
+is excluded from viewer composition and ignored.
+
+The refusals below are the load-bearing half. A level authored strictly inside a
+``kind=partition`` wrapper would split that wrapper across draw-order bands and
+destroy the exact Fuchs-Kedem-Naylor part order its stored BSP planes guarantee;
+one inside a ``kind=lod`` group would simply be inert, since only one level
+renders. Both are refused rather than ignored, through BOTH doors — the adder
+kwarg and the post-hoc ``node.attrs[...] = ...`` write-through — because an attr
+that writes cleanly and silently does nothing is the most expensive kind of bug
+this codebase produces.
+
+Spec: ``docs/guides/specs/LAYER_ORDER_SPEC.md``.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import numpy as np
+import pytest
+
+from luxar.core.group.compositing import (
+    AUTHORED_APPEARANCE_ATTRS,
+    COMPOSITING_ATTRS,
+    IDENTITY_COMPOSITING_ATTRS,
+    WRITER_STAMPED_APPEARANCE_DEFAULTS,
+    _enclosing_specialized_group,
+)
+from luxar.io._compiler.node_common import KNOWN_RENDER_ATTRS
+from luxar.typing_utils.constants import JS_SAFE_INTEGER_MAX
+from luxar.validation.types import validate_layer_order
+
+from .conftest import cholesky_rows, open_scene, random_positions
+
+
+class TestValidateLayerOrder:
+    @pytest.mark.parametrize("value", [0, 1, 10, -5, 999999])
+    def test_accepts_python_integers(self, value: Any) -> None:
+        assert validate_layer_order(value) == int(value)
+        assert isinstance(validate_layer_order(value), int)
+
+    @pytest.mark.parametrize("value", [np.int32(7), np.int64(-2)])
+    def test_refuses_numpy_integers_before_json_serialization(self, value: Any) -> None:
+        with pytest.raises(
+            TypeError, match=r"layer_order must be an integer.*int(32|64)"
+        ):
+            validate_layer_order(value)
+
+    # `isinstance(True, int)` is true in Python, so a bool would sail through a
+    # naive check and silently band the layer at level 1. Almost certainly the
+    # author confused this with a flag.
+    @pytest.mark.parametrize("value", [True, False, np.bool_(True)])
+    def test_refuses_a_bool(self, value: Any) -> None:
+        with pytest.raises(TypeError, match="layer_order must be an integer"):
+            validate_layer_order(value)
+
+    @pytest.mark.parametrize("value", [1.5, 2.0, "10", None, [1], {"a": 1}])
+    def test_refuses_a_non_integer(self, value: Any) -> None:
+        with pytest.raises(TypeError, match="layer_order must be an integer"):
+            validate_layer_order(value)
+
+
+class TestTheJsSafeIntegerBound:
+    """The bound is the representable domain, not a taste-based clamp.
+
+    ``layer_order`` is written to JSON and read by the viewer as a JS
+    ``number``. Past 2**53 - 1 an integer shares its representation with its
+    neighbours, so two orders an author deliberately separated can collapse into
+    one band — and the draw order between those layers silently falls back to
+    the geometry-derived inference this whole attribute exists to override. The
+    magnitude is never meaningful on its own; only the order is.
+    """
+
+    def test_accepts_the_boundary(self) -> None:
+        assert validate_layer_order(JS_SAFE_INTEGER_MAX) == JS_SAFE_INTEGER_MAX
+        assert validate_layer_order(-JS_SAFE_INTEGER_MAX) == -JS_SAFE_INTEGER_MAX
+
+    @pytest.mark.parametrize(
+        "value",
+        [JS_SAFE_INTEGER_MAX + 1, -(JS_SAFE_INTEGER_MAX + 1), 10**18, -(10**18)],
+    )
+    def test_refuses_beyond_the_boundary(self, value: int) -> None:
+        with pytest.raises(ValueError, match="safe-integer range"):
+            validate_layer_order(value)
+
+    def test_the_message_says_what_to_do_instead(self) -> None:
+        with pytest.raises(ValueError) as excinfo:
+            validate_layer_order(10**18)
+        message = str(excinfo.value)
+        # A refusal that does not name the remedy is just an obstacle.
+        assert "10/20/30" in message
+        assert "order" in message.lower()
+
+    # The two orders that actually collide in JS. Python keeps them distinct, so
+    # without the bound the writer would happily record an ordering the viewer
+    # cannot represent.
+    def test_the_collision_this_prevents_is_real(self) -> None:
+        a, b = 2**53, 2**53 + 1
+        assert a != b, "Python keeps these distinct"
+        assert float(a) == float(b), "but they share one JS number"
+        for value in (a, b):
+            with pytest.raises(ValueError):
+                validate_layer_order(value)
+
+    def test_refused_at_the_adder_too_not_just_the_validator(
+        self, tmp_path: Any
+    ) -> None:
+        """The gate that matters is the one on the write path."""
+        compiler, scene, path = open_scene(tmp_path, "toobig.luxar.zarr")
+        with compiler:
+            with pytest.raises((ValueError, TypeError)):
+                scene.add_points(
+                    "pts", random_positions(8, seed=11), layer_order=10**18
+                )
+
+
+class TestRegistryMembership:
+    """The four set memberships that define the attr's behaviour."""
+
+    def test_is_a_compositing_attr(self) -> None:
+        # The wrapper IS the layer, so a partitioned node carries ONE level for
+        # the whole block rather than copying it onto every internal child.
+        assert "layer_order" in COMPOSITING_ATTRS
+
+    def test_is_carried_through_structure_only_rebuilds(self) -> None:
+        # Otherwise `gsplat lod` and friends would silently drop it (#1600).
+        assert "layer_order" in AUTHORED_APPEARANCE_ATTRS
+
+    def test_is_advertised_as_a_known_render_attr(self) -> None:
+        # Without this the writer's unknown-key gate rejects the attr outright
+        # before any validator runs.
+        assert "layer_order" in KNOWN_RENDER_ATTRS
+
+    # THE safety property (spec D2). Authored 0 and absence order identically,
+    # but the panel's `auto` state and authored-band diagnostics must tell them
+    # apart. A stamped default would falsely label every future store's band 0 as
+    # author intent. Asserting ABSENCE is the only way to catch that.
+    def test_has_no_writer_stamped_default(self) -> None:
+        assert "layer_order" not in WRITER_STAMPED_APPEARANCE_DEFAULTS
+        assert "layer_order" not in IDENTITY_COMPOSITING_ATTRS
+
+
+class TestAuthoringOnALayer:
+    def test_round_trips_on_a_leaf(self, tmp_path: Any) -> None:
+        compiler, scene, path = open_scene(tmp_path, "leaf.luxar.zarr")
+        with compiler:
+            node = scene.add_points(
+                "pts", random_positions(16, seed=0), layer_order=30, layer=True
+            )
+            assert node.attrs["layer_order"] == 30
+
+    def test_round_trips_on_a_group(self, tmp_path: Any) -> None:
+        compiler, scene, path = open_scene(tmp_path, "grp.luxar.zarr")
+        with compiler:
+            group = scene.add_group("layer", layer_order=10, layer=True)
+            scene.add_points("pts", random_positions(16, seed=1), parent=group)
+            assert group.attrs["layer_order"] == 10
+
+    def test_accepts_a_negative_level(self, tmp_path: Any) -> None:
+        compiler, scene, path = open_scene(tmp_path, "neg.luxar.zarr")
+        with compiler:
+            node = scene.add_points(
+                "back", random_positions(8, seed=2), layer_order=-10
+            )
+            assert node.attrs["layer_order"] == -10
+
+    def test_refuses_a_bad_value_before_writing(self, tmp_path: Any) -> None:
+        compiler, scene, path = open_scene(tmp_path, "bad.luxar.zarr")
+        with compiler:
+            with pytest.raises((TypeError, ValueError)):
+                scene.add_points(
+                    "pts", random_positions(8, seed=3), layer_order="front"
+                )
+
+    def test_refuses_a_numpy_integer_before_json_serialization(
+        self, tmp_path: Any
+    ) -> None:
+        compiler, scene, path = open_scene(tmp_path, "numpy-int.luxar.zarr")
+        with compiler:
+            with pytest.raises(
+                ValueError, match=r"layer_order must be an integer.*int32"
+            ):
+                scene.add_points(
+                    "pts", random_positions(8, seed=31), layer_order=np.int32(4)
+                )
+
+    # A `None` refuses loudly here rather than being read as "absent", which is
+    # why `layer_order` is NOT in ABSENT_WHEN_NONE_RENDER_ATTRS: that set is for
+    # attrs whose None would otherwise reach disk unchecked.
+    def test_refuses_none_rather_than_treating_it_as_absent(
+        self, tmp_path: Any
+    ) -> None:
+        compiler, scene, path = open_scene(tmp_path, "none.luxar.zarr")
+        with compiler:
+            with pytest.raises((TypeError, ValueError)):
+                scene.add_points("pts", random_positions(8, seed=4), layer_order=None)
+
+
+class TestEnclosingSpecializedGroupWalk:
+    """Direct tests of the ancestry walk the refusals rest on.
+
+    Its docstring claims it walks the WHOLE parent chain — "a level authored two
+    levels down (on a part's own LOD wrapper, say) is exactly as damaging as one
+    on the part" — and that is the property that distinguishes it from
+    ``reject_mismatched_partition_parent``, which only inspects the immediate
+    parent. Every other test in this file exercises depth 1 only (a part, or a
+    LOD level), so the claim was untested. These pin it.
+
+    The walk only needs ``.attrs`` and ``.parent``, so plain stand-ins exercise
+    it without building four real stores.
+    """
+
+    class _N:
+        def __init__(self, attrs, parent=None):
+            self.attrs = attrs
+            self.parent = parent
+
+    def test_finds_a_grandparent_wrapper(self) -> None:
+        wrapper = self._N({"kind": "partition"})
+        part = self._N({}, parent=wrapper)
+        leaf = self._N({}, parent=part)
+        assert _enclosing_specialized_group(leaf) is wrapper
+
+    def test_finds_the_NEAREST_wrapper_when_two_are_nested(self) -> None:
+        """A LOD group inside a partition part — the `adaptive` recipe's shape."""
+        outer = self._N({"kind": "partition"})
+        part = self._N({}, parent=outer)
+        inner = self._N({"kind": "lod"}, parent=part)
+        level = self._N({}, parent=inner)
+        assert _enclosing_specialized_group(level) is inner
+
+    def test_includes_the_node_itself(self) -> None:
+        wrapper = self._N({"kind": "partition"})
+        assert _enclosing_specialized_group(wrapper) is wrapper
+
+    def test_returns_none_for_a_plain_chain(self) -> None:
+        root = self._N({})
+        group = self._N({}, parent=root)
+        leaf = self._N({}, parent=group)
+        assert _enclosing_specialized_group(leaf) is None
+
+    def test_a_plain_group_ancestor_does_not_count(self) -> None:
+        """Only a SPECIALIZED group blocks a layer order; a plain group is a
+        legitimate layer and may carry one."""
+        plain = self._N({"kind": None})
+        leaf = self._N({}, parent=plain)
+        assert _enclosing_specialized_group(leaf) is None
+
+    def test_survives_a_node_whose_attrs_raise(self) -> None:
+        """The walk's ``except Exception`` covers a detached/partial node.
+
+        Without it a half-constructed ancestor would turn a refusal check into a
+        crash during authoring — worse than the thing being guarded against.
+        """
+
+        class Broken:
+            parent = None
+
+            @property
+            def attrs(self):
+                raise RuntimeError("detached node")
+
+        leaf = self._N({}, parent=Broken())
+        assert _enclosing_specialized_group(leaf) is None
+
+
+class TestRefusedInsideASpecializedGroup:
+    """Both doors, both kinds — the rule the exact BSP part order depends on."""
+
+    @staticmethod
+    def _partition(scene: Any, seed: int) -> Any:
+        return scene.add_gsplats(
+            "tiles",
+            random_positions(64, seed=seed),
+            amplitudes=np.ones(64, dtype=np.float32),
+            cholesky_factors=cholesky_rows(64),
+            partition={"max_elements": 16},
+        )
+
+    def test_adder_refuses_inside_a_partition(self, tmp_path: Any) -> None:
+        compiler, scene, path = open_scene(tmp_path, "part.luxar.zarr")
+        with compiler:
+            wrapper = self._partition(scene, seed=5)
+            # A GSPLATS child, so the partition-homogeneity guard
+            # (`reject_mismatched_partition_parent`, which refuses a foreign
+            # display_type) passes and the layer_order refusal is the one that
+            # fires. A points child here is rejected earlier for a different
+            # reason and would make this test prove nothing.
+            with pytest.raises(ValueError, match="layer_order"):
+                scene.add_gsplats(
+                    "sneak",
+                    random_positions(8, seed=6),
+                    amplitudes=np.ones(8, dtype=np.float32),
+                    cholesky_factors=cholesky_rows(8),
+                    parent=wrapper,
+                    layer_order=5,
+                )
+
+    def test_write_through_door_refuses_on_a_part(self, tmp_path: Any) -> None:
+        compiler, scene, path = open_scene(tmp_path, "part2.luxar.zarr")
+        with compiler:
+            wrapper = scene.add_gsplats(
+                "tiles",
+                random_positions(64, seed=7),
+                amplitudes=np.ones(64, dtype=np.float32),
+                cholesky_factors=cholesky_rows(64),
+                partition={"max_elements": 16},
+            )
+            parts = [c for c in wrapper.children if c.name.startswith("part_")]
+            assert parts, "expected the partition to have produced parts"
+            with pytest.raises(ValueError, match="layer_order"):
+                parts[0].attrs["layer_order"] = 5
+
+    def test_the_wrapper_itself_is_allowed(self, tmp_path: Any) -> None:
+        """The wrapper IS the layer — a level there moves the whole block."""
+        compiler, scene, path = open_scene(tmp_path, "part3.luxar.zarr")
+        with compiler:
+            wrapper = scene.add_gsplats(
+                "tiles",
+                random_positions(64, seed=8),
+                amplitudes=np.ones(64, dtype=np.float32),
+                cholesky_factors=cholesky_rows(64),
+                partition={"max_elements": 16},
+                layer_order=40,
+            )
+            assert wrapper.attrs["layer_order"] == 40
+            # And it must NOT have been copied onto the parts, or they would
+            # each carry their own band.
+            for child in wrapper.children:
+                assert "layer_order" not in child.attrs
+
+            wrapper.attrs["layer_order"] = 41
+            assert wrapper.attrs["layer_order"] == 41
+
+    def test_message_names_the_wrapper_and_the_fix(self, tmp_path: Any) -> None:
+        compiler, scene, path = open_scene(tmp_path, "part4.luxar.zarr")
+        with compiler:
+            wrapper = self._partition(scene, seed=9)
+            with pytest.raises(ValueError) as excinfo:
+                scene.add_gsplats(
+                    "sneak",
+                    random_positions(8, seed=10),
+                    amplitudes=np.ones(8, dtype=np.float32),
+                    cholesky_factors=cholesky_rows(8),
+                    parent=wrapper,
+                    layer_order=1,
+                )
+        message = str(excinfo.value)
+        assert "kind=partition" in message
+        # A refusal has to say what to do instead, or it is just an obstacle.
+        assert "WRAPPER" in message
+        assert "BSP" in message
+
+    def test_refuses_inside_a_lod_group_too(self, tmp_path: Any) -> None:
+        """D6 covers `kind=lod`, where a level would simply be INERT.
+
+        Only one level of a LOD group renders at a time, so banding one of them
+        separately means nothing. Refused for the same reason the codebase
+        refuses every other write-cleanly-do-nothing attr.
+        """
+        compiler, scene, path = open_scene(tmp_path, "lod.luxar.zarr")
+        with compiler:
+            wrapper = scene.add_points(
+                "ladder",
+                random_positions(64, seed=11),
+                substitutive_lod={"levels": 2},
+            )
+            assert wrapper.attrs.get("kind") == "lod"
+            levels = list(wrapper.children)
+            assert levels, "expected the ladder to have produced levels"
+            with pytest.raises(ValueError, match="layer_order") as excinfo:
+                levels[0].attrs["layer_order"] = 3
+        assert "kind=lod" in str(excinfo.value)
+
+    def test_a_level_on_a_lod_WRAPPER_is_allowed(self, tmp_path: Any) -> None:
+        compiler, scene, path = open_scene(tmp_path, "lod2.luxar.zarr")
+        with compiler:
+            wrapper = scene.add_points(
+                "ladder",
+                random_positions(64, seed=12),
+                substitutive_lod={"levels": 2},
+                layer_order=25,
+            )
+            assert wrapper.attrs["layer_order"] == 25
+            wrapper.attrs["layer_order"] = 26
+            assert wrapper.attrs["layer_order"] == 26
+
+    @pytest.mark.parametrize("kind", ["partition", "lod"])
+    def test_add_group_refuses_inside_a_specialized_group(
+        self, tmp_path: Any, kind: str
+    ) -> None:
+        compiler, scene, path = open_scene(tmp_path, f"group-{kind}.luxar.zarr")
+        with compiler:
+            if kind == "partition":
+                wrapper = self._partition(scene, seed=13)
+            else:
+                wrapper = scene.add_points(
+                    "ladder",
+                    random_positions(64, seed=14),
+                    substitutive_lod={"levels": 2},
+                )
+
+            with pytest.raises(ValueError, match=f"kind={kind}"):
+                wrapper.add_group("inner", layer_order=5)

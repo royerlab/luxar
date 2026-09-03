@@ -32,6 +32,7 @@ from ..compositing import (
     is_broadcast_color,
     position_bounds_from_array,
     preflight_extend_to_all,
+    reject_layer_order_inside_specialized_group,
     reject_lines_only_join,
     reject_mesh_only_appearance,
     slice_optional_array,
@@ -99,6 +100,9 @@ def add_points_impl(
         validate_node_name(name)
         (parent or group)._ensure_no_duplicate_child(name)
         reject_mismatched_partition_parent(parent or group, "points", name)
+        reject_layer_order_inside_specialized_group(
+            "points", name, attrs, parent or group
+        )
         reject_lines_only_join("points", name, attrs)
         reject_mesh_only_appearance("points", name, attrs)
 

@@ -110,6 +110,17 @@ describe('NodeFactory', () => {
     factory = new NodeFactory();
   });
 
+  it('stamps an ancestor-composed layer order on points', () => {
+    const loader = { dispose: vi.fn() } as never;
+    const mesh = factory.createEmptyPointsNode(
+      '/points',
+      { type: 'points', n_points: 0, layer_order: 7 } as never,
+      loader
+    );
+
+    expect(mesh.userData.layerOrder).toBe(7);
+  });
+
   describe('createPointsGeometry', () => {
     // Read one float of point i's texel block (layout in point-geometry.ts:
     // [0..2] center, [3] radius, [4..6] color, [7] sharpness, [8] scalar,

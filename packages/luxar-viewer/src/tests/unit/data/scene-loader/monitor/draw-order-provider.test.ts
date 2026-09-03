@@ -146,4 +146,23 @@ describe('createDrawOrderProvider', () => {
     mesh.renderOrder = 7;
     expect(provider.getDrawOrderStates().get('/line')?.renderOrder).toBe(7);
   });
+
+  it('reads layer order from the dedicated live render-state slot', () => {
+    const root = new THREE.Group();
+    const mesh = makeDataMesh('gsplats', {
+      name: '/cloud',
+      transparent: true,
+      depthWrite: false,
+      renderOrder: 1,
+    });
+    mesh.userData.attrs = { layer_order: 3 };
+    mesh.userData.layerOrder = 7;
+    root.add(mesh);
+    const provider = createDrawOrderProvider(root);
+
+    expect(provider.getDrawOrderStates().get('/cloud')?.layerOrder).toBe(7);
+
+    mesh.userData.layerOrder = -2;
+    expect(provider.getDrawOrderStates().get('/cloud')?.layerOrder).toBe(-2);
+  });
 });

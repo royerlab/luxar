@@ -1218,3 +1218,156 @@ describe('LayerStateManager', () => {
     expect(wrapper.nestedLodGroupPaths).toEqual(['/partition_root/inner_lod']);
   });
 });
+
+// `layer_order` — the authored cross-layer draw order
+// (docs/guides/specs/LAYER_ORDER_SPEC.md). The panel's whole job here is
+// keeping "unset" distinguishable from "0": both resolve to band 0 and preserve
+// containment ordering within that band, but only the explicit value remains a
+// stated panel value and participates in authored-band diagnostics.
+describe('LayerStateManager — layer order', () => {
+  const graph = (): SceneNode =>
+    ({
+      path: '',
+      type: 'scene',
+      attrs: {},
+      hasSpatialIndex: false,
+      children: [
+        {
+          path: 'authored',
+          type: 'gsplats',
+          attrs: { layer: true, layer_order: 20 } as never,
+          hasSpatialIndex: true,
+        },
+        {
+          path: 'bare',
+          type: 'gsplats',
+          attrs: { layer: true } as never,
+          hasSpatialIndex: true,
+        },
+      ],
+    }) as SceneNode;
+
+  let mgr: LayerStateManager;
+
+  beforeEach(() => {
+    mgr = new LayerStateManager();
+    mgr.initFromSceneGraph(graph());
+  });
+
+  it('reads an authored level off the node, and leaves a bare layer unset', () => {
+    expect(mgr.getLayer('authored')?.layerOrder).toBe(20);
+    expect(mgr.getLayer('authored')?.layerOrderExplicit).toBe(true);
+    expect(mgr.getLayer('bare')?.layerOrder).toBeUndefined();
+    expect(mgr.getLayer('bare')?.layerOrderExplicit).toBe(false);
+  });
+
+  it('ignores a layer order authored on the scene root', () => {
+    const rooted = graph();
+    rooted.attrs = { layer_order: 5 } as never;
+
+    const rootedManager = new LayerStateManager();
+    rootedManager.initFromSceneGraph(rooted);
+
+    expect(rootedManager.getLayer('authored')?.layerOrder).toBe(20);
+    expect(rootedManager.getLayer('authored')?.inheritedLayerOrder).toBeUndefined();
+    expect(rootedManager.getLayer('bare')?.layerOrder).toBeUndefined();
+    expect(rootedManager.getLayer('bare')?.inheritedLayerOrder).toBeUndefined();
+  });
+
+  it('keeps a layer order authored on a standalone data root', () => {
+    const standaloneManager = new LayerStateManager();
+    standaloneManager.initFromSceneGraph({
+      path: '/',
+      type: 'gsplats',
+      attrs: { layer: true, layer_order: 8 } as never,
+      hasSpatialIndex: true,
+    });
+
+    expect(standaloneManager.getLayer('/')?.layerOrder).toBe(8);
+    expect(standaloneManager.getLayer('/')?.layerOrderExplicit).toBe(true);
+  });
+
+  it('setLayerOrder marks the layer explicit', () => {
+    mgr.setLayerOrder('bare', -5);
+    expect(mgr.getLayer('bare')?.layerOrder).toBe(-5);
+    expect(mgr.getLayer('bare')?.layerOrderExplicit).toBe(true);
+  });
+
+  // Clearing is NOT setting 0. If `layerOrderExplicit` were left true here,
+  // `liveLayerAttrs` would keep emitting the stale value as this layer's own
+  // composition setter, so the panel and diagnostics would keep reporting an
+  // authored order that was just deleted.
+  it('setLayerOrder(undefined) clears BOTH the value and the explicit flag', () => {
+    mgr.setLayerOrder('authored', undefined);
+    expect(mgr.getLayer('authored')?.layerOrder).toBeUndefined();
+    expect(mgr.getLayer('authored')?.layerOrderExplicit).toBe(false);
+  });
+
+  it('an authored 0 stays explicit (a real band, not an absence)', () => {
+    mgr.setLayerOrder('bare', 0);
+    expect(mgr.getLayer('bare')?.layerOrder).toBe(0);
+    expect(mgr.getLayer('bare')?.layerOrderExplicit).toBe(true);
+  });
+
+  it('rejects a fractional level instead of silently changing its order', () => {
+    mgr.setLayerOrder('bare', 3.7);
+    expect(mgr.getLayer('bare')?.layerOrder).toBeUndefined();
+    expect(mgr.getLayer('bare')?.layerOrderExplicit).toBe(false);
+  });
+
+  it('rejects an order outside the JavaScript safe-integer range', () => {
+    mgr.setLayerOrder('bare', Number.MAX_SAFE_INTEGER + 1);
+    expect(mgr.getLayer('bare')?.layerOrder).toBeUndefined();
+    expect(mgr.getLayer('bare')?.layerOrderExplicit).toBe(false);
+  });
+
+  // A hand-edited store can carry junk. The renderer treats a non-finite level
+  // as absent, and the panel must agree or the field would show a value the
+  // render is not using.
+  // Both fields must derive from the same sanitized read. A loose `!= null` on
+  // the raw attr would report explicit=true alongside layerOrder=undefined —
+  // the panel claiming this layer authored an order the renderer discards.
+  it('treats a non-finite authored order as unset in BOTH fields', () => {
+    const mgrJunk = new LayerStateManager();
+    mgrJunk.initFromSceneGraph({
+      path: '',
+      type: 'scene',
+      attrs: {},
+      hasSpatialIndex: false,
+      children: [
+        {
+          path: 'junk',
+          type: 'gsplats',
+          attrs: { layer: true, layer_order: 'front' } as never,
+          hasSpatialIndex: true,
+        },
+      ],
+    } as SceneNode);
+    expect(mgrJunk.getLayer('junk')?.layerOrder).toBeUndefined();
+    expect(mgrJunk.getLayer('junk')?.layerOrderExplicit).toBe(false);
+  });
+
+  // The pair can never be half-set: explicit implies a value, and a value
+  // implies explicit. Anything else is a state no consumer knows how to read.
+  it('never reports explicit without a value, or a value without explicit', () => {
+    for (const raw of [3, 0, -5, 'front', null, Number.NaN, Number.POSITIVE_INFINITY, true]) {
+      const m = new LayerStateManager();
+      m.initFromSceneGraph({
+        path: '',
+        type: 'scene',
+        attrs: {},
+        hasSpatialIndex: false,
+        children: [
+          {
+            path: 'n',
+            type: 'gsplats',
+            attrs: { layer: true, layer_order: raw } as never,
+            hasSpatialIndex: true,
+          },
+        ],
+      } as SceneNode);
+      const layer = m.getLayer('n')!;
+      expect(layer.layerOrderExplicit).toBe(layer.layerOrder !== undefined);
+    }
+  });
+});

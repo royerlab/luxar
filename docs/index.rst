@@ -122,6 +122,7 @@ Features
    guides/specs/GSPLAT_DEPTH_SORTING_SPEC
    guides/specs/VOLUMETRIC_BLENDING_SPEC
    guides/specs/SUBPIXEL_JITTER_TAA_SPEC
+   guides/specs/LAYER_ORDER_SPEC
    specs/GSPLATS_DIMENSION_MAPPING
    specs/LUXAR_LAYER_SPEC
 

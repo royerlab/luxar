@@ -6146,6 +6146,11 @@ class TestLODCarriesAuthoredAppearance:
         # ARRAY the attrs-only carry deliberately refuses to fake (see
         # ``read_authored_appearance``).
         "colormap": "inferno",
+        # The authored cross-layer draw order. The writer stamps NO default for
+        # it (its absence on disk is genuine silence, deliberately), so any
+        # value proves the carry — but a non-zero one also fails loudly if a
+        # future change ever starts defaulting it to 0.
+        "layer_order": 20,
     }
 
     #: Carried by the registry but not exercised here, each for a stated reason.

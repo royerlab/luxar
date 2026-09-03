@@ -183,6 +183,14 @@ CHANNELS = [
         # Membranes are a dense diffuse shell that otherwise dominates and hides
         # the nuclei — render at half opacity so both channels read.
         "opacity": 0.5,
+        # The enclosing structure, so it composites FIRST and the nuclei read on
+        # top of it. This deliberately does NOT match the order the viewer would
+        # infer: containment goes by bounding-sphere radius, and this fit gives
+        # the nuclei channel the marginally LARGER sphere (555.5 vs 546.4, a 1.6%
+        # difference that is a property of where the splats landed, not of the
+        # anatomy), so the inference draws nuclei first. A membrane shell
+        # enclosing nuclei is the biology; state it.
+        "layer_order": 10,
         # ---- recompute recipe, per channel ----
         #: ``--source-<name> PATH``: the assembled (time, z, y, x) array.
         "source_flag": "source-membranes",
@@ -202,6 +210,8 @@ CHANNELS = [
         "colormap": "bop_orange",  # GFP nuclei, iSIM 488/525
         "marker": "she:GFP (nuclei)",
         "opacity": 1.0,
+        #: Inside the membrane shell, so it composites last (on top).
+        "layer_order": 20,
         "source_flag": "source-nuclei",
         "hpc_source_dir": f"{HPC_SOURCE_ROOT}/Nuclei/Deconvolved",
         "background_floor": 103.88801574707031,
@@ -600,6 +610,11 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
                         name=ch["name"],
                         path=str(path),
                         opacity=ch.get("opacity", 1.0),
+                        # Cross-layer draw order, stated rather than inferred
+                        # from bounding-sphere radii (see CHANNELS above).
+                        # Inert while both layers are `additive`; correct the
+                        # moment either is switched to volumetric/normal.
+                        layer_order=ch["layer_order"],
                         # One global order slot per node cannot interleave the
                         # two co-located volumes. Near-zero kappa only hid that
                         # limitation; additive is order-independent.
