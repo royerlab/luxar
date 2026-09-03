@@ -73,6 +73,7 @@
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage",
+    "test:mutation": "stryker run",
     "test:perf": "vitest --run --config vitest.perf.config.ts",
     "test:perf:strict": "LUXAR_PERF_QUIET_HOST=1 vitest --run --config vitest.perf.config.ts",
     "bench:zip:fixtures": "cd ../.. && hatch run python packages/luxar-viewer/tools/make-zip-bench-fixtures.py \"${LUXAR_BENCH_FIXTURES:-packages/luxar-viewer/bench-fixtures}\"",
@@ -122,6 +123,8 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.62.1",
+    "@stryker-mutator/core": "^10.0.0",
+    "@stryker-mutator/vitest-runner": "^10.0.0",
     "@types/node": "^26.3.0",
     "@types/three": "~0.185.1",
     "@typescript-eslint/eslint-plugin": "^8.67.0",

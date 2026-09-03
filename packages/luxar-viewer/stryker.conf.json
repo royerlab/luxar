@@ -1,0 +1,46 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "_comment": [
+    "Mutation testing. Coverage says a line RAN; a mutation score says a change to",
+    "that line FAILS something. The two diverge exactly where tests assert on spies",
+    "instead of behaviour, which the code-health audit measured at 1,091 spy-only",
+    "assertions concentrated in the orchestration files on the refactor list.",
+    "",
+    "REPORT ONLY, NOT A GATE. `thresholds.break` is null on purpose: a score has no",
+    "meaning without a baseline, and runtime is O(mutants x suite). Read it before",
+    "restructuring a module, not on every push.",
+    "",
+    "`mutate` is deliberately NARROW -- the modules with characterization tests",
+    "written against them. Stryker's default would mutate the whole 218K-LOC tree",
+    "and run for hours. Override per investigation instead of widening this:",
+    "    pnpm test:mutation -- --mutate 'src/some/other/file.ts'"
+  ],
+  "packageManager": "pnpm",
+  "testRunner": "vitest",
+  "plugins": [
+    "@stryker-mutator/vitest-runner"
+  ],
+  "reporters": [
+    "html",
+    "clear-text",
+    "progress"
+  ],
+  "htmlReporter": {
+    "fileName": "reports/mutation/index.html"
+  },
+  "mutate": [
+    "src/data/points/points-spatial-index-loader.ts",
+    "src/data/lines/lines-spatial-index-loader.ts",
+    "src/data/gsplats/gsplats-spatial-index-loader.ts",
+    "src/input/input-handler.ts"
+  ],
+  "coverageAnalysis": "perTest",
+  "thresholds": {
+    "high": 80,
+    "low": 60,
+    "break": null
+  },
+  "timeoutMS": 20000,
+  "tempDirName": ".stryker-tmp",
+  "cleanTempDir": true
+}
