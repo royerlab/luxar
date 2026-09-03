@@ -435,8 +435,8 @@ export class LayerControls {
 
     // Layer order — the authored cross-layer draw order
     // (`LAYER_ORDER_SPEC.md`). A number input rather than a slider,
-    // because the value is an unbounded signed integer AND must be able to be
-    // BLANK: empty means "unset", which hands the layer back to the renderer's
+    // because the value is a signed safe integer AND must be able to be BLANK:
+    // empty means "unset", which hands the layer back to the renderer's
     // inferred containment ordering and is a genuinely different state from 0.
     const orderGroup = document.createElement('div');
     orderGroup.className = 'luxar-layers-panel__control-group';
