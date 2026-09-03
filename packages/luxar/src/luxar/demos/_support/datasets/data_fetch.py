@@ -752,11 +752,10 @@ def _ensure_one(
     (``hosted_sha`` for a legacy dual contract, otherwise ``sha``): bytes
     arriving from the record must be the record's bytes.
 
-    One consequence worth stating: while an in-repo payload is present it wins
-    over a newer hosted artifact, so a checkout with a stale LFS object keeps
-    serving the older generation (loudly). That is the intended trade — it is
-    what lets the pins be truthful while the payloads are still in the tree — and
-    it ends when the payloads are removed.
+    The in-repo preference remains for legacy dual-contract manifests, but no
+    current ``zenodo`` dataset has an in-repo payload; non-``zenodo`` datasets
+    raise :class:`LocalComputeDataset` before reaching this helper. Current
+    manifests therefore resolve through the checksum-verified cache or record.
 
     The checksum authority at every step:
 
