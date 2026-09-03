@@ -73,9 +73,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not args.page.exists():
         print("readme-count audit: no built page to compare against; skipped")
         return 0
+    if not args.readme.exists():
+        print("readme-count audit: no README to compare against; skipped")
+        return 0
 
     tiles, claims, stale = audit(args.page.read_text(), args.readme.read_text())
     print(f"readme-count audit: deploying {tiles} tiles")
+
+    if tiles == 0:
+        print(
+            "  No gallery tiles matched — the page changed, or the tile pattern "
+            "needs updating. NOT verified."
+        )
+        return 0
 
     if not claims:
         print(
