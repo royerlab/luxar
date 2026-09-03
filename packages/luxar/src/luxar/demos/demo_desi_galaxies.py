@@ -651,11 +651,15 @@ def _finest_level(layer: Any) -> Any:
     return layer[child_names[-1]] if child_names else layer
 
 
+def _partition_nodes(level: Any) -> list[Any]:
+    """Return a level's partition leaves, or the level itself when flat."""
+    if level.attrs.get("kind") != "partition":
+        return [level]
+    return [level[name] for name in _numbered_children(level, "part_")]
+
+
 def _finest_nodes(layer: Any) -> list[Any]:
-    finest = _finest_level(layer)
-    if finest.attrs.get("kind") != "partition":
-        return [finest]
-    return [finest[name] for name in _numbered_children(finest, "part_")]
+    return _partition_nodes(_finest_level(layer))
 
 
 def scene_exceeds_node_capacity(scene_path: Path) -> bool:
@@ -722,7 +726,7 @@ def warn_if_scene_is_stale(scene_path: Path) -> None:
         n_points = 0
         max_node_points = 0
         increments = []
-        for node in _finest_nodes(finest):
+        for node in _partition_nodes(finest):
             n_sublods = int(node.attrs.get("n_additive_sublods", 1))
             sublod_counts.append(n_sublods)
             node_points = int(node.attrs.get("n_points", 0))
@@ -912,7 +916,10 @@ def restructure_scene(scene_path: Path) -> Path:
     if has_existing_lod and substitutive_lod_or_flat(LOD) is None:
         aprint(
             "  ⚠ Keeping the fetched scene's existing substitutive LOD: this "
-            "installation cannot rebuild those levels without torch and scipy."
+            "installation cannot rebuild those levels without torch and scipy. "
+            "Install the gsplat dependencies, then delete the scene and re-run:\n"
+            "      pip install 'luxar[gsplats]'\n"
+            f"      rm -rf {scene_path}"
         )
         return scene_path
 
@@ -968,7 +975,7 @@ def restructure_scene(scene_path: Path) -> Path:
         if backup.exists() and not scene_path.exists():
             backup.rename(scene_path)
         raise
-    shutil.rmtree(backup)
+    shutil.rmtree(backup, ignore_errors=True)
     return scene_path
 
 
@@ -1177,6 +1184,16 @@ def _discard_incomplete_scene(scene_path: Path) -> bool:
     return True
 
 
+def _discard_rebuild_artifacts(scene_path: Path) -> None:
+    """Remove stale staging/backup siblings left by an interrupted rebuild."""
+    import shutil
+
+    stem = scene_path.name.removesuffix(".luxar.zarr")
+    for suffix in ("rebuild", "previous"):
+        sibling = scene_path.with_name(f"{stem}.{suffix}.luxar.zarr")
+        shutil.rmtree(sibling, ignore_errors=True)
+
+
 def _restructure_fetched_scene_if_needed(scene_path: Path) -> None:
     if not scene_exceeds_node_capacity(scene_path):
         return
@@ -1196,6 +1213,7 @@ def main() -> None:
 
     output_path = get_demos_output_dir() / "desi_galaxies.luxar.zarr"
     _discard_incomplete_scene(output_path)
+    _discard_rebuild_artifacts(output_path)
 
     if SERVE_ONLY:
         if output_path.exists():

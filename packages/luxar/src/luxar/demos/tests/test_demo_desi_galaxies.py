@@ -732,7 +732,10 @@ class TestRestructureFetchedScene:
                     )
 
     def test_existing_lod_is_kept_when_rebuild_cannot_recreate_it(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         scene = tmp_path / "desi.luxar.zarr"
         root = open_group(scene, mode="w")
@@ -749,6 +752,9 @@ class TestRestructureFetchedScene:
         reopened = open_group(scene, mode="r")
         assert "child_0" in reopened["By tracer type"]
         assert "child_0" in reopened["By redshift"]
+        notice = capsys.readouterr().out
+        assert "pip install 'luxar[gsplats]'" in notice
+        assert f"rm -rf {scene}" in notice
 
     def test_failed_rebuild_leaves_the_original_scene_intact(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -785,6 +791,49 @@ class TestRestructureFetchedScene:
 
         assert sentinel.read_text() == "keep me"
         assert not (tmp_path / "desi.rebuild.luxar.zarr").exists()
+
+    def test_backup_cleanup_failure_does_not_misreport_a_successful_rebuild(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import shutil
+
+        scene = tmp_path / "desi.luxar.zarr"
+        backup = tmp_path / "desi.previous.luxar.zarr"
+        positions = np.arange(12, dtype=np.float32).reshape(4, 3)
+        colors = np.zeros((4, 3), dtype=np.float32)
+        root = open_group(scene, mode="w")
+        for layer_name in ("By tracer type", "By redshift"):
+            root.create_group(layer_name)
+        (scene / "original").write_text("old")
+        monkeypatch.setattr(
+            _demo,
+            "_finest_level_cloud",
+            lambda root, layer: (positions, colors),
+        )
+        monkeypatch.setattr(
+            _demo,
+            "_finest_level_colors",
+            lambda root, layer: (len(positions), colors),
+        )
+
+        def build_scene(*args, **kwargs) -> None:
+            output = args[3]
+            output.mkdir()
+            (output / "rebuilt").write_text("new")
+
+        monkeypatch.setattr(_demo, "create_scene", build_scene)
+        real_rmtree = shutil.rmtree
+
+        def fail_unguarded_backup_cleanup(path, ignore_errors=False) -> None:
+            if Path(path) == backup and not ignore_errors:
+                raise OSError("backup cleanup failed")
+            real_rmtree(path, ignore_errors=ignore_errors)
+
+        monkeypatch.setattr(shutil, "rmtree", fail_unguarded_backup_cleanup)
+
+        assert _demo.restructure_scene(scene) == scene
+        assert (scene / "rebuilt").read_text() == "new"
+        assert not backup.exists()
 
     def test_the_authored_scene_partitions_within_capacity_by_construction(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1147,6 +1196,31 @@ class TestEnsureOriginFraming:
 
 
 class TestMainSceneReuse:
+    def test_stale_rebuild_siblings_are_discarded_before_reuse(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        output = tmp_path / "desi_galaxies.luxar.zarr"
+        open_group(output, mode="w")
+        staging = tmp_path / "desi_galaxies.rebuild.luxar.zarr"
+        backup = tmp_path / "desi_galaxies.previous.luxar.zarr"
+        unrelated = tmp_path / "other.previous.luxar.zarr"
+        for path in (staging, backup, unrelated):
+            path.mkdir()
+
+        monkeypatch.setattr(_demo, "SERVE_ONLY", False)
+        monkeypatch.setattr(_demo, "RECOMPUTE", False)
+        monkeypatch.setattr(_demo, "NO_SERVE", True)
+        monkeypatch.setattr(_demo, "get_demos_output_dir", lambda: tmp_path)
+        monkeypatch.setattr(_demo, "ensure_origin_framing", lambda path: None)
+        monkeypatch.setattr(_demo, "warn_if_scene_is_stale", lambda path: None)
+
+        _demo.main()
+
+        assert output.exists()
+        assert not staging.exists()
+        assert not backup.exists()
+        assert unrelated.exists()
+
     def test_cold_scene_uses_the_manifest_resolved_archive(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
