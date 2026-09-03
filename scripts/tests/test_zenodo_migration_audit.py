@@ -33,14 +33,23 @@ def _deposition(*, submitted: bool) -> dict:
     }
 
 
-@pytest.mark.parametrize("published", [False, True])
-def test_matching_publication_state_emits_no_warning(audit, published: bool) -> None:
+@pytest.mark.parametrize(
+    ("record_meta", "live_published"),
+    [
+        ({"published": False}, False),
+        ({"published": True}, True),
+        ({"published": False, "base_url": "https://example.test/files"}, False),
+    ],
+)
+def test_matching_publication_state_emits_no_warning(
+    audit, record_meta: dict, live_published: bool
+) -> None:
     fails, warns = audit.check_deposition(
         "record",
-        _deposition(submitted=published),
+        _deposition(submitted=live_published),
         {},
         {},
-        {"published": published},
+        record_meta,
     )
 
     assert fails == []

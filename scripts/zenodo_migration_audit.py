@@ -521,9 +521,7 @@ def check_deposition(
         hosted[str(name)] = {**entry, "filesize": size}
 
     live_published = bool(dep.get("submitted"))
-    manifest_published = bool(
-        record_meta.get("published") or record_meta.get("base_url")
-    )
+    manifest_published = bool(record_meta.get("published"))
 
     # Publishing is a one-way door. A submitted deposition is only an error
     # while the manifest still claims it is a draft; otherwise it is the
