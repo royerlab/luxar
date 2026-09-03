@@ -1,5 +1,4 @@
 {
-  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
   "_comment": [
     "Mutation testing. Coverage says a line RAN; a mutation score says a change to",
     "that line FAILS something. The two diverge exactly where tests assert on spies",
@@ -9,11 +8,13 @@
     "REPORT ONLY, NOT A GATE. `thresholds.break` is null on purpose: a score has no",
     "meaning without a baseline, and runtime is O(mutants x suite). Read it before",
     "restructuring a module, not on every push.",
+    "The package script uses pinned `pnpm dlx` packages so report-only tooling does",
+    "not enlarge every ordinary install, audit, or CI job.",
     "",
     "`mutate` is deliberately NARROW -- the modules with characterization tests",
     "written against them. Stryker's default would mutate the whole 218K-LOC tree",
     "and run for hours. Override per investigation instead of widening this:",
-    "    pnpm test:mutation -- --mutate 'src/some/other/file.ts'",
+    "    pnpm test:mutation --mutate 'src/some/other/file.ts'",
     "",
     "`disableTypeChecks: false` matters more than it looks. Left at its default,",
     "Stryker prepends `// @ts-nocheck` to EVERY file in the project before a run --",
@@ -53,6 +54,7 @@
   },
   "timeoutMS": 20000,
   "tempDirName": ".stryker-tmp",
+  "inPlace": true,
   "disableTypeChecks": false,
   "cleanTempDir": true
 }
