@@ -339,10 +339,22 @@ mutants), but the denominator is the selected pool, not the entire suite.
 **Two survivors worth acting on directly.** These are not statistical; each is a specific
 untested behaviour:
 
-- `isNotFoundError` can be replaced by an **empty body** and every test still passes. That
-  function decides whether a missing optional array is genuinely absent or a real failure being
-  swallowed — a documented hazard class in this codebase. `registerBounds` likewise empties
-  clean, so prefetcher bounds registration is unverified.
+- `isNotFoundError` can be replaced by an **empty body** and every test still passes.
+  *Corrected on inspection, and the correction is the more interesting result.* My first reading
+  was that this decides whether a missing optional array is genuinely absent or a real failure
+  being swallowed. That is true of `zarr.isNotFoundError` — the shared one in `data/zarr.ts`,
+  which the gsplats loader uses at two sites to gate `throw e`. But the surviving mutant is a
+  **second, local copy** at `points-spatial-index-loader.ts:92`, and all four of its call sites
+  gate nothing but a `log.info` line. Emptying it changes log noise, not behaviour: an
+  effectively equivalent mutant, and not worth a test.
+
+  What it does expose is a duplicate: the local copy tests only `'404'` and `'Not Found'`, while
+  the shared one also accepts a `zarrita.NotFoundError` instance, `'Node not found'` and a
+  lowercase `'not found'`. The duplicate is the weaker of the two. Harmless where it currently
+  sits (logging only), but it is the same predicate implemented twice with different semantics,
+  and it should collapse into the shared one during the A2-07 extraction. **Read every survivor
+  before believing it — a mutation score counts equivalent mutants as failures.**
+- `registerBounds` likewise empties clean, so prefetcher bounds registration is unverified.
 - In `input-handler.ts`, `() => window.removeEventListener('keydown', onKeyDown)` mutates to
   `() => undefined` and survives — for both the keydown and keyup teardowns. **Listener cleanup
   on dispose is untested**, which is precisely the leak class CLAUDE.md calls out under "Event
