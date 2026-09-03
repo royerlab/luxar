@@ -769,12 +769,13 @@ export function authoredLayerOrder(mesh: THREE.Mesh): number | undefined {
  * Every visible sorted-mode mesh lands on ONE global integer
  * renderOrder scale, farthest first:
  * 1. Slots group by partition wrapper (single leaves are groups of one).
- * 2. Groups order by the MEAN view-z of their members' content centroids —
+ * 2. Groups band by authored `layer_order`, lower first; unset means band 0.
+ * 3. Within a band, groups order by the MEAN view-z of their members' content centroids —
  *    a documented approximation: exact inter-group ordering does not exist
  *    for arbitrarily interleaved groups, but wrappers/leaves are normally
  *    spatially disjoint datasets, and co-located overlapping layers have
  *    no meaningful cross order anyway.
- * 3. CONTAINMENT overrides depth: when one group's bounding sphere
+ * 4. Within a band, CONTAINMENT overrides depth: when one group's bounding sphere
  *    strictly contains another's (a small reference-marker node embedded
  *    inside a huge cloud), NO single per-mesh order integer is correct —
  *    the container's centroid sorts nearer than the embedded node for
@@ -787,13 +788,13 @@ export function authoredLayerOrder(mesh: THREE.Mesh): number | undefined {
  *    a strictly larger to a strictly smaller sphere, so the relation is
  *    acyclic and the remaining freedom is still resolved farthest-first
  *    (a priority topological order).
- * 4. Within a group, BSP painter ranks order the parts where a stored
+ * 5. Within a group, BSP painter ranks order the parts where a stored
  *    tree ranks EVERY member (EXACT Fuchs–Kedem–Naylor order, any camera
  *    pose, including inside the volume — the #565 guarantee, preserved as
  *    the single-wrapper special case); otherwise the whole group falls
  *    back to member view-z (a partition with no stored tree, or one whose
  *    tree does not name every part).
- * 5. Sequential global integers 1..M are written to mesh.renderOrder.
+ * 6. Sequential global integers 1..M are written to mesh.renderOrder.
  *
  * Transparent objects OUTSIDE the coordinator's sorted set (commutative
  * modes, plus empty parts that have never committed) keep renderOrder 0

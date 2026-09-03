@@ -48,6 +48,9 @@ Exposed:
   points / gsplats / mesh leaf, where it would write cleanly and do nothing.
 * :func:`reject_lines_only_join_assignment` — the same refusal for the second
   door into the same attr, the ``node.join = ...`` property setter.
+* :func:`reject_layer_order_inside_specialized_group` — refuse ``layer_order``
+  inside partition / LOD groups through adders; the matching post-hoc attrs
+  door is guarded by ``core/node/node.py::_WriteThroughAttrs``.
 * :func:`reject_mesh_only_appearance` — refuse mesh-only appearance attrs on
   points / lines / gsplats leaves and on Groups, where they do not compose. The
   second door into the same attrs (a post-hoc ``node.attrs[...] = ...``) is guarded
