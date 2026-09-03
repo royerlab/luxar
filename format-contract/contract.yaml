@@ -1,7 +1,7 @@
 # Luxar cross-language format contract — SINGLE SOURCE OF TRUTH.
 #
 # This file is the authoritative descriptor of the format vocabulary that the
-# Python WRITER (luxar) and the TypeScript CONSUMER (luxar-viewer) must agree
+# Python WRITER (luxar) and the TypeScript CONSUMER (@luxar/viewer) must agree
 # on. Rust holds zero format strings (it exposes one decode function per scheme
 # and TS decides which to call), so it is intentionally NOT a party here.
 #

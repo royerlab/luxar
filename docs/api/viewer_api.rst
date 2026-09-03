@@ -5,7 +5,7 @@ The TypeScript viewer API documentation is generated with TypeDoc.
 
 `Open Full TypeScript API Reference <viewer/index.html>`_
 
-The ``luxar-viewer`` package provides:
+The ``@luxar/viewer`` package provides:
 
 * **Scene Management** -- Loading and displaying Luxar Zarr scenes
 * **nD Navigation** -- Dimension sliders, keyboard navigation, animation

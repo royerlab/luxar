@@ -16,7 +16,7 @@
  * The minimal embed shape:
  *
  * ```ts
- * import { LuxarLayer } from '@royerlab/luxar-viewer';
+ * import { LuxarLayer } from '@luxar/viewer';
  *
  * const layer = new LuxarLayer({
  *   renderer,                                  // host-owned

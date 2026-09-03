@@ -1,9 +1,8 @@
-"""Tests for release version stamping, consistency, and preflight checks.
+"""Tests for release version stamping, consistency, preflight, and package naming.
 
-These scripts are the whole of the release version mechanism, and they run
-exactly once per release — so a defect surfaces on launch day, in front of
-everyone, with no earlier signal. That asymmetry is why they are tested here
-rather than trusted.
+These release mechanisms run exactly once per release — so a defect surfaces
+on launch day, in front of everyone, with no earlier signal. That asymmetry is
+why they are tested here rather than trusted.
 
 The gate tests deliberately assert that it *fails*: a consistency check that
 cannot go red is indistinguishable from no check at all.
@@ -26,6 +25,99 @@ SET_VERSION = REPO / "scripts/set_version.py"
 CHECK_VERSIONS = REPO / "scripts/check_version_consistency.py"
 RELEASE = REPO / "scripts/release.sh"
 MAKEFILE = REPO / "Makefile"
+
+
+def _legacy_name_pattern() -> str:
+    """An ERE matching every surface where the retired npm name can only mean
+    the package.
+
+    Prose is deliberately excluded: the source directory
+    ``packages/luxar-viewer/`` and the Cloudflare Pages project of the same name
+    are both legitimate, so a general prose alternative would be false positives
+    all the way down.
+    """
+    # Split the retired names so this module never matches its own source.
+    bare_name = "luxar" + "-viewer"
+    legacy_scope = "@royerlab" + f"/{bare_name}"
+    return "|".join(
+        (
+            legacy_scope,
+            # Any module specifier, not only the root and styles.css: a subpath
+            # such as <bare-name>/data names the retired package just as much.
+            rf"(from|import) ['\"]{bare_name}(/[^'\"]*)?['\"]",
+            rf"{bare_name}/styles\.css",
+            rf"(npm (install|i)|pnpm add|yarn add) {bare_name}([[:space:]]|$)",
+        )
+    )
+
+
+def _git_grep(
+    pattern: str,
+    *flags: str,
+    paths: tuple[str, ...] = (),
+    cwd: Path = REPO,
+) -> subprocess.CompletedProcess[str]:
+    # -e keeps the pattern from being read as a pathspec once paths are given.
+    try:
+        return subprocess.run(
+            ["git", "grep", "-n", "-E", *flags, "-e", pattern, "--", *paths],
+            cwd=cwd,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    except FileNotFoundError as exc:  # pragma: no cover - git is a hard dep here
+        pytest.fail(f"git is required to run this guard: {exc}")
+
+
+def test_legacy_name_pattern_matches_the_specifiers_it_claims_to(
+    tmp_path: Path,
+) -> None:
+    """The positive control: a pattern that compiles to something matching
+    nothing would let the guard below pass over a tree full of stale names."""
+    bare_name = "luxar" + "-viewer"
+    stale = tmp_path / "stale.md"
+    lines = (
+        f"import {{ x }} from '{bare_name}';",
+        f"import {{ x }} from '{bare_name}/data';",
+        f'import type {{ T }} from "{bare_name}/ui/data-monitor-manager";',
+        f'<link href="{bare_name}/styles.css" />',
+        f"pnpm add {bare_name}",
+        f"yarn add {bare_name}",
+        f"npm install {bare_name}",
+        f"npm install {bare_name} three",
+        f"npm i {bare_name}",
+        "@royerlab" + f"/{bare_name}",
+    )
+    stale.write_text("\n".join(lines) + "\n")
+
+    # --no-index refuses paths outside the cwd's tree, so search from tmp_path.
+    result = _git_grep(
+        _legacy_name_pattern(), "--no-index", paths=(stale.name,), cwd=tmp_path
+    )
+
+    assert result.returncode == 0, (
+        f"the guard's pattern matched none of the stale specifiers "
+        f"(exit {result.returncode}): {result.stderr}"
+    )
+    assert len(result.stdout.splitlines()) == len(lines), result.stdout
+
+
+def test_legacy_npm_package_specifiers_are_absent_from_tracked_files() -> None:
+    # The changelog is the one place the retired name belongs: an entry that
+    # cannot say what the package used to be called is no use to whoever has to
+    # update their install line.
+    result = _git_grep(
+        _legacy_name_pattern(),
+        paths=(".", ":(exclude)CHANGELOG.md", ":(exclude)changelog.d/*"),
+    )
+
+    # git grep exits 1 for "no match" and 0 for "matched"; anything else (128
+    # outside a work tree, say) is a broken guard, not a clean tree.
+    assert result.returncode in (0, 1), (
+        f"git grep could not run (exit {result.returncode}): {result.stderr}"
+    )
+    assert result.returncode == 1, result.stdout
 
 
 def _load(path: Path, name: str) -> ModuleType:
@@ -54,8 +146,7 @@ def _checkout(tmp_path: Path, version: str = "2026.06.05") -> dict[str, Path]:
     pkg_json = tmp_path / "package.json"
     semver = ".".join(str(int(p)) for p in version.split("."))
     pkg_json.write_text(
-        json.dumps({"name": "@royerlab/luxar-viewer", "version": semver}, indent=2)
-        + "\n"
+        json.dumps({"name": "@luxar/viewer", "version": semver}, indent=2) + "\n"
     )
 
     citation = tmp_path / "CITATION.cff"
@@ -488,7 +579,7 @@ def test_release_preflight_matches_case_insensitive_workflow_comparison(
     output, _ = _run_release_preflight(tmp_path, repository="True")
 
     assert "ENABLE_NPM_PUBLISH=True from repository" in output
-    assert "the tag WILL publish @royerlab/luxar-viewer" in output
+    assert "the tag WILL publish @luxar/viewer" in output
 
 
 def test_release_preflight_does_not_trim_the_switch_value(tmp_path: Path) -> None:
@@ -502,7 +593,7 @@ def test_release_preflight_reads_shared_organization_variable(tmp_path: Path) ->
     output, calls = _run_release_preflight(tmp_path, organization="true")
 
     assert "ENABLE_NPM_PUBLISH=true from organization" in output
-    assert "the tag WILL publish @royerlab/luxar-viewer" in output
+    assert "the tag WILL publish @luxar/viewer" in output
     assert calls == [
         "repos/royerlab/luxar/environments/npm/variables",
         "repos/royerlab/luxar/actions/variables",
@@ -518,7 +609,7 @@ def test_release_preflight_does_not_turn_a_failed_second_get_into_off(
     )
 
     assert "ENABLE_NPM_PUBLISH=true from repository" in output
-    assert "the tag WILL publish @royerlab/luxar-viewer" in output
+    assert "the tag WILL publish @luxar/viewer" in output
     assert calls == [
         "repos/royerlab/luxar/environments/npm/variables",
         "repos/royerlab/luxar/actions/variables",

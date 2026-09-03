@@ -1,4 +1,4 @@
-# Publish the Luxar Viewer library (@royerlab/luxar-viewer) to npm.
+# Publish the Luxar Viewer library (@luxar/viewer) to npm.
 #
 # Sibling of publish.yml (which ships the Python package to PyPI). Same trigger:
 # pushing a version tag (e.g. `v2026.06.29`). The tag MUST match the `version`
@@ -20,21 +20,21 @@
 #
 #   1. ACCOUNT + ORG (once):
 #      - Create an npm account (npmjs.com), enable 2FA (Account -> Two-Factor Auth).
-#      - Create the free `royerlab` org (Add Organization -> Free plan). The scope
-#        must exist before any `@royerlab/*` publish.
+#      - Create the free `luxar` org (Add Organization -> Free plan). The scope
+#        must exist before any `@luxar/*` publish.
 #
 #   2. BOOTSTRAP THE FIRST PUBLISH (token, once — npm needs the package to exist
 #      before a trusted publisher can be attached). Easiest locally:
 #          npm login                       # browser auth + 2FA
 #          cd packages/luxar-viewer
 #          pnpm run ci:release              # builds dist/lib (sourcemap-free)
-#          npm publish --access public      # creates @royerlab/luxar-viewer
+#          npm publish --access public      # creates @luxar/viewer
 #      (Or in CI: add a Granular Access Token as the `NPM_TOKEN` secret on the
 #      `npm` environment — this workflow already wires NODE_AUTH_TOKEN to it —
 #      set ENABLE_NPM_PUBLISH=true, and push a tag.)
 #
 #   3. CONFIGURE THE TRUSTED PUBLISHER (the OIDC part). On
-#      npmjs.com/package/@royerlab/luxar-viewer -> Settings tab -> "Trusted
+#      npmjs.com/package/@luxar/viewer -> Settings tab -> "Trusted
 #      Publisher" -> GitHub Actions, enter EXACTLY:
 #          Organization or user : royerlab
 #          Repository           : luxar
@@ -73,11 +73,11 @@ permissions:
 
 jobs:
   publish-npm:
-    name: Build + publish @royerlab/luxar-viewer
+    name: Build + publish @luxar/viewer
     runs-on: ubuntu-latest
     environment:
       name: npm
-      url: https://www.npmjs.com/package/@royerlab/luxar-viewer
+      url: https://www.npmjs.com/package/@luxar/viewer
     permissions:
       contents: read
       id-token: write # provenance attestation + (optional) OIDC trusted publishing

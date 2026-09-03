@@ -7,7 +7,7 @@
 
     <!--
       Host-page styling that the embed must NOT clobber. If the viewer's
-      CSS (`luxar-viewer/styles.css`) was leaking global rules, the page
+      CSS (`@luxar/viewer/styles.css`) was leaking global rules, the page
       heading would lose its margin and serif font.
     -->
     <style>
@@ -60,7 +60,7 @@
     </style>
 
     <!--
-      `three` is a peer dependency of luxar-viewer. In a real app you'd
+      `three` is a peer dependency of @luxar/viewer. In a real app you'd
       install it from npm and let your bundler resolve the import. For
       this static example we use an importmap pointing at jsdelivr so the
       page works with `python -m http.server`.
@@ -84,11 +84,11 @@
       </p>
       <ul>
         <li>
-          Importing <code>luxar-viewer/styles.css</code> must not change the host page's margins,
+          Importing <code>@luxar/viewer/styles.css</code> must not change the host page's margins,
           fonts, or scrollbars.
         </li>
         <li>
-          Importing <code>{ LuxarApp } from 'luxar-viewer'</code> must not patch the host page's
+          Importing <code>{ LuxarApp } from '@luxar/viewer'</code> must not patch the host page's
           <code>console.*</code>.
         </li>
         <li>

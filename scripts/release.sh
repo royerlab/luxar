@@ -124,7 +124,7 @@ if [[ -f "$WORKFLOW_NPM" ]] && git ls-files --error-unmatch "$WORKFLOW_NPM" >/de
     NPM_SWITCH_NORMALIZED="$(printf '%s\tvalue-end' "$NPM_SWITCH" | tr '[:upper:]' '[:lower:]')"
     NPM_SWITCH_NORMALIZED="${NPM_SWITCH_NORMALIZED%$'\t'value-end}"
     if [[ "$NPM_SWITCH_NORMALIZED" == "true" ]]; then
-      ok "npm workflow committed, ENABLE_NPM_PUBLISH=$NPM_SWITCH from $NPM_SOURCE — the tag WILL publish @royerlab/luxar-viewer"
+      ok "npm workflow committed, ENABLE_NPM_PUBLISH=$NPM_SWITCH from $NPM_SOURCE — the tag WILL publish @luxar/viewer"
     else
       warn "npm workflow committed, but ENABLE_NPM_PUBLISH='$NPM_SWITCH' from $NPM_SOURCE (not 'true') — the tag will NOT publish to npm."
     fi
@@ -134,13 +134,13 @@ if [[ -f "$WORKFLOW_NPM" ]] && git ls-files --error-unmatch "$WORKFLOW_NPM" >/de
       warn "could not read $NPM_LOOKUP_ERROR variables (gh api) — cannot tell whether the tag will publish to npm."
     else
       warn "npm workflow committed, but ENABLE_NPM_PUBLISH is UNSET — the tag will build and pack"
-      warn "  @royerlab/luxar-viewer and then skip the publish."
+      warn "  @luxar/viewer and then skip the publish."
       warn "  npm has no 'pending publisher', so the FIRST publish must be a manual,"
       warn "  token-authenticated 'npm publish'. Steps: publish-npm.yml header."
     fi
   fi
 else
-  warn "$WORKFLOW_NPM missing/uncommitted — the tag will NOT publish @royerlab/luxar-viewer to npm."
+  warn "$WORKFLOW_NPM missing/uncommitted — the tag will NOT publish @luxar/viewer to npm."
 fi
 
 # ---- 3. sync with remote -----------------------------------------------------
@@ -238,7 +238,7 @@ cat <<EOF
   Will create annotated tag ${BLD}$TAG${NC} at ${REMOTE_SHA:0:12} on $BRANCH
   and push it to $REMOTE, which triggers:
     $WORKFLOW  →  build viewer+wheel (Linux/OIDC)  →  publish ${BLD}luxar $VERSION${NC} to PyPI.
-    $WORKFLOW_NPM  →  build lib bundle  →  publish ${BLD}@royerlab/luxar-viewer${NC} to npm (if configured).
+    $WORKFLOW_NPM  →  build lib bundle  →  publish ${BLD}@luxar/viewer${NC} to npm (if configured).
   This is the real, public, irreversible release (PyPI/npm versions cannot be reused).
 EOF
 
