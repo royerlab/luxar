@@ -33,6 +33,7 @@ from luxar.core.group.compositing import (
     _enclosing_specialized_group,
 )
 from luxar.io._compiler.node_common import KNOWN_RENDER_ATTRS
+from luxar.typing_utils.constants import JS_SAFE_INTEGER_MAX
 from luxar.validation.types import validate_layer_order
 
 from .conftest import cholesky_rows, open_scene, random_positions
@@ -56,6 +57,60 @@ class TestValidateLayerOrder:
     def test_refuses_a_non_integer(self, value: Any) -> None:
         with pytest.raises(TypeError, match="layer_order must be an integer"):
             validate_layer_order(value)
+
+
+class TestTheJsSafeIntegerBound:
+    """The bound is the representable domain, not a taste-based clamp.
+
+    ``layer_order`` is written to JSON and read by the viewer as a JS
+    ``number``. Past 2**53 - 1 an integer shares its representation with its
+    neighbours, so two orders an author deliberately separated can collapse into
+    one band — and the draw order between those layers silently falls back to
+    the geometry-derived inference this whole attribute exists to override. The
+    magnitude is never meaningful on its own; only the order is.
+    """
+
+    def test_accepts_the_boundary(self) -> None:
+        assert validate_layer_order(JS_SAFE_INTEGER_MAX) == JS_SAFE_INTEGER_MAX
+        assert validate_layer_order(-JS_SAFE_INTEGER_MAX) == -JS_SAFE_INTEGER_MAX
+
+    @pytest.mark.parametrize(
+        "value",
+        [JS_SAFE_INTEGER_MAX + 1, -(JS_SAFE_INTEGER_MAX + 1), 10**18, -(10**18)],
+    )
+    def test_refuses_beyond_the_boundary(self, value: int) -> None:
+        with pytest.raises(ValueError, match="safe-integer range"):
+            validate_layer_order(value)
+
+    def test_the_message_says_what_to_do_instead(self) -> None:
+        with pytest.raises(ValueError) as excinfo:
+            validate_layer_order(10**18)
+        message = str(excinfo.value)
+        # A refusal that does not name the remedy is just an obstacle.
+        assert "10/20/30" in message
+        assert "order" in message.lower()
+
+    # The two orders that actually collide in JS. Python keeps them distinct, so
+    # without the bound the writer would happily record an ordering the viewer
+    # cannot represent.
+    def test_the_collision_this_prevents_is_real(self) -> None:
+        a, b = 2**53, 2**53 + 1
+        assert a != b, "Python keeps these distinct"
+        assert float(a) == float(b), "but they share one JS number"
+        for value in (a, b):
+            with pytest.raises(ValueError):
+                validate_layer_order(value)
+
+    def test_refused_at_the_adder_too_not_just_the_validator(
+        self, tmp_path: Any
+    ) -> None:
+        """The gate that matters is the one on the write path."""
+        compiler, scene, path = open_scene(tmp_path, "toobig.luxar.zarr")
+        with compiler:
+            with pytest.raises((ValueError, TypeError)):
+                scene.add_points(
+                    "pts", random_positions(8, seed=11), layer_order=10**18
+                )
 
 
 class TestRegistryMembership:

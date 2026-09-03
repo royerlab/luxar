@@ -364,7 +364,11 @@ scene.add_gsplats("nuclei",      ..., blending_mode="volumetric", layer_order=30
   with the validating setter pattern `mesh.py::blending_mode` uses.
 - Validation (`validation/types.py::validate_layer_order`): a finite Python
   `int` (a `bool` is refused — `isinstance(True, int)` is the classic hole);
-  any sign; no range clamp, since the value's only meaning is its order.
+  any sign. Bounded to the JS safe-integer range (`JS_SAFE_INTEGER_MAX`,
+  2^53 - 1) — not an arbitrary clamp but the representable domain: the attr
+  crosses to the viewer as a JS `number`, and past that magnitude two orders
+  the author separated can collapse into one band, handing the choice back to
+  the inference this attribute exists to override.
 - Registered in `COMPOSITING_ATTRS` and `AUTHORED_APPEARANCE_ATTRS`; **absent**
   from `WRITER_STAMPED_APPEARANCE_DEFAULTS` and `IDENTITY_COMPOSITING_ATTRS`
   (D2). Also added to `ABSENT_WHEN_NONE_RENDER_ATTRS` so a

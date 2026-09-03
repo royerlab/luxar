@@ -4,7 +4,11 @@ Overlapping order-dependent layers no longer have to accept an inferred draw
 order. A layer may now state one: `layer_order`, an integer where **higher draws
 nearer the camera** — the CSS `z-index` / Illustrator convention — composed
 nearest-setter-wins like `blending_mode`, editable per layer in the Layers panel,
-and surfaced in the data monitor's draw-order chip.
+and surfaced in the data monitor's draw-order chip. Any sign, and bounded to the
+JS safe-integer range — the attr is read by the viewer as a JS number, and past
+2^53 - 1 two orders you separated would silently collapse into one band, so the
+writer refuses that magnitude rather than recording an order the viewer cannot
+represent.
 
 Until now the order came from geometry. Groups sorted by mean view-z, and a
 bounding-sphere containment rule then forced a container to draw before its

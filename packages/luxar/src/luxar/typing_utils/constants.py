@@ -341,3 +341,12 @@ MAX_SEGMENTS_PER_LINES_NODE: Final[int] = max_elements_per_node("lines")
 MAX_POINTS_PER_POINTS_NODE: Final[int] = max_elements_per_node("points")
 #: 4,194,304 splats — the conservative per-node cap for GSplats.
 MAX_SPLATS_PER_GSPLATS_NODE: Final[int] = max_elements_per_node("gsplats")
+
+
+#: Largest integer JavaScript represents exactly (``Number.MAX_SAFE_INTEGER``,
+#: 2**53 - 1). The bound for any attr whose VALUE the viewer must round-trip
+#: exactly rather than merely approximately — today ``layer_order``, whose only
+#: property is its order relative to other layers, so a magnitude that collapses
+#: two distinct orders into one JS number is a silent wrong answer rather than a
+#: rounding nicety.
+JS_SAFE_INTEGER_MAX = 2**53 - 1
