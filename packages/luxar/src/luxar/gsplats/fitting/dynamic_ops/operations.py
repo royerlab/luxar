@@ -123,6 +123,14 @@ class RecentlyRelocatedTracker:
         }
 
 
+def _resolve_operation_seed(
+    seed: Optional[int], relocation_tracker: Optional[RecentlyRelocatedTracker]
+) -> Optional[int]:
+    if seed is None or relocation_tracker is None:
+        return seed
+    return seed + relocation_tracker.current_step
+
+
 def apply_dynamic_operations(
     model: Any,
     V_target: torch.Tensor,
@@ -163,10 +171,7 @@ def apply_dynamic_operations(
         bool: True if any splats were relocated
     """
     with torch.no_grad():
-        operation_seed = cfg.seed
-        if operation_seed is not None and relocation_tracker is not None:
-            # Avoid repeating the same random samples at every dynamic-ops step.
-            operation_seed += relocation_tracker.current_step
+        operation_seed = _resolve_operation_seed(cfg.seed, relocation_tracker)
 
         # === Cache model parameters once (avoid repeated current_params() calls) ===
         centers, Ls, amps = model.current_params()
