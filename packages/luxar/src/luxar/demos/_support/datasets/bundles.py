@@ -219,13 +219,9 @@ def load_dataset_bundle(
         # which one matched, so use the bundle's (size, mtime) stamp rather than
         # falsely stamping those frames with the current pin.
         #
-        # There are TWO contracts now (`sha256` = the repo's copy,
-        # `hosted_sha256` = the record's), and `ensure_dataset` accepts bytes
-        # satisfying either — so no single field is guaranteed to describe what
-        # actually landed. Both are folded into the key when they DISAGREE, so a
-        # change to either manifest contract changes the extraction stamp. When
-        # they agree, or there is only one pin, the key uses that digest alone:
-        # no spurious re-extraction for datasets that never diverged.
+        # `sha256` is the current record pin. The retained `hosted_sha256`
+        # compatibility path still accepts older dual-contract manifests, so fold
+        # both values into the key only when such a manifest makes them disagree.
         files, _ = resolve_variant(name, dataset_spec(name, manifest), None)
         entry = next((e for e in files if e.get("name") == bundle_name), {})
         superseded = entry.get("superseded_sha256")

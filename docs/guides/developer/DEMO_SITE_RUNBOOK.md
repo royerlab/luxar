@@ -448,10 +448,9 @@ Applied to the current demo code:
   and grafts its own output, so its groups are authored rather than inherited.
   Its structure changes through recipe settings such as `max_elements`, not by
   flattening a separately supplied artifact.
-- **`cmu1_pathology`** re-authors the flat in-repo copy but grafts the hosted
-  partition, so either way the archive's structure reaches the scene (3.10).
-  Flattening the hosted archives is a real win *and* collapses that divergence —
-  but measure the generation before claiming either.
+- **`cmu1_pathology`** grafts the record's partition, so its archive structure
+  reaches the scene node-for-node (3.10). Flattening that archive is a real load
+  win, but measure the resulting topology before claiming it.
 - **`cryoem_virus`**, **`milkyway_dust`**, **`dapi`**, **`multichannel`**, and
   **`opencell_map4`** pass `GSplatData` through, so their digest-confirmed hosted
   ladders and levels become scene nodes rather than being flattened by the demo.
@@ -938,7 +937,7 @@ So the rule is not "re-run before publish" — it is:
 - **Re-check the record's prose too.** Descriptions carry sizes and part counts and
   go stale with the same write.
 
-#### A partial re-pin leaves the drafts and the manifest deliberately disagreeing
+#### The partial re-pin left one archive on its deliberate previous generation
 
 PR #2333 resolved this for **five of the eight restructured archives** —
 `cmu1_ch0/1/2`, `cryoem_virus`, and the hosted-only `h2afva_51tp` (whose
@@ -956,18 +955,15 @@ Only `milkyway_dust` remains on its previous pin **on purpose**. Its coarse leve
 are what get selected when the galaxy is orbited at range; a flat streaming ladder
 would regress the zoomed-out view (3.14).
 
-**The consequence is a publish-order constraint, not a to-do.** The drafts hold
-the restructured `milkyway_dust` file while the manifest pins the previous
-generation. After the in-repo payload is removed, publishing the record in that
-state makes cold fetches and fresh installs abort with an uncaught checksum
-`ValueError`: the demo catches `DatasetUnavailable`, not digest mismatches, so the
-source-download/refit fallback does not run. Roll the draft file back to the pinned
-contract before publishing. The live gallery tile is indifferent either way,
-because it serves an already-derived scene and never consults the pin (3.10).
-
-Publish Zenodo records `21912280` and `22118695` together: the Drosophila
-record's `isPartOf` and both descriptions' cross-references name the other
-record's reserved DOI, which does not resolve until publication.
+**That publish-order constraint was discharged before #2354.** The
+`milkyway_dust` file on record `21912280` was rolled back to the manifest's
+10,647,985-byte pin, and records `21912280` and `22118695` were published
+together on 2026-09-02. Cold fetches therefore receive the generation the
+manifest verifies. The general rule remains: never publish a record whose bytes
+disagree with the committed pin, because a checksum `ValueError` is an integrity
+failure rather than an ordinary `DatasetUnavailable` fallback. The live gallery
+tile is indifferent because it serves an already-derived scene and never
+consults the pin (3.10).
 
 ### 3.21 Guard the artefact you ship, not only the inputs you fed it
 

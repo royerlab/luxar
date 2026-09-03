@@ -197,9 +197,8 @@ DEVICE = None  # Auto-detect (cuda/mps/cpu)
 # quarantined on the next launch for failing the pinned sha256 (#1618).
 DEMO_NAME = "gsplats_multichannel"
 # Renamed with the rest. These are the pinned artifact names in
-# `data_manifest.json` and on the published Zenodo record. The in-repo bytes
-# keep their original pins; the record's re-encoded copies are recorded under
-# the separate `hosted_sha256` / `hosted_bytes` contract.
+# `data_manifest.json` and on the published Zenodo record; `sha256` / `bytes`
+# describe the record copies directly.
 GSPLATS_FILES = [
     "blastocyst_ch0.gsplats.zarr.zip",
     "blastocyst_ch1.gsplats.zarr.zip",

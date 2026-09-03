@@ -347,11 +347,9 @@ _STALE_MANIFEST_SHARE = 0.66
 def hosted_size(entry: dict) -> int:
     """The size of the copy the RECORD serves, not the one this repo ships.
 
-    A manifest entry carries both once a refit makes them differ: `bytes` and
-    `sha256` describe the in-repo copy, `hosted_bytes` and `hosted_sha256` the
-    record's. Comparing the local size against a deposition reports a mismatch
-    for every diverged file — correct arithmetic, wrong end of the contract — so
-    every live comparison must resolve the hosted value first.
+    `bytes` is the current record contract. `hosted_bytes` is retained only for
+    compatibility with older dual-contract manifests, so live comparisons still
+    resolve that legacy override first when it is present.
     """
     return int(entry.get("hosted_bytes") or entry.get("bytes") or 0)
 

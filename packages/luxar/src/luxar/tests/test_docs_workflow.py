@@ -135,18 +135,24 @@ def test_runbook_archive_size_example_matches_active_manifest_pin() -> None:
     assert int(byte_text.replace(",", "")) == cmu1_ch0["bytes"]
 
 
-def test_runbook_publish_constraint_names_only_unmigrated_archive() -> None:
-    """Keep the rollback instruction scoped to the one intentionally stale pin."""
+def test_runbook_publish_constraint_is_recorded_as_discharged() -> None:
+    """Keep the historical hazard closed after the records were published."""
     text = DEMO_SITE_RUNBOOK.read_text()
     section = text.split(
-        "#### A partial re-pin leaves the drafts and the manifest deliberately disagreeing",
+        "#### The partial re-pin left one archive on its deliberate previous generation",
         1,
     )[1].split("### 3.21", 1)[0]
     prose = " ".join(section.split())
 
     assert "**seven of the eight**" in prose
     assert "Only `milkyway_dust` remains on its previous pin" in prose
-    assert "Roll the draft file back to the pinned contract before publishing" in prose
+    assert "publish-order constraint was discharged before #2354" in prose
+    assert "10,647,985-byte pin" in prose
+    assert "published together on 2026-09-02" in prose
+    assert "never publish a record whose bytes disagree with the committed pin" in prose
+    assert (
+        "Roll the draft file back to the pinned contract before publishing" not in prose
+    )
     assert "drafts hold restructured files for all three" not in prose
     assert "land the paired sidecar migration first" not in prose
 
