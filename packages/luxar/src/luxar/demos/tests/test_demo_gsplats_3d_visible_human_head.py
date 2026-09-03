@@ -24,7 +24,6 @@ pytest.importorskip("scipy")
 _DEMO_PATH = (
     Path(__file__).resolve().parents[1] / "demo_gsplats_3d_visible_human_head.py"
 )
-_DATA_MANIFEST_PATH = _DEMO_PATH.parent / "data_manifest.json"
 # The in-repo Git-LFS pair was removed with the rest of the payloads (#2354).
 # The record fit carries its colours natively, so its sidecar is vestigial for
 # rendering; pair atomicity remains guarded by test_data_fetch.py and artifact
