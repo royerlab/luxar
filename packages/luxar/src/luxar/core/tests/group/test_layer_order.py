@@ -317,6 +317,9 @@ class TestRefusedInsideASpecializedGroup:
             for child in wrapper.children:
                 assert "layer_order" not in child.attrs
 
+            wrapper.attrs["layer_order"] = 41
+            assert wrapper.attrs["layer_order"] == 41
+
     def test_message_names_the_wrapper_and_the_fix(self, tmp_path: Any) -> None:
         compiler, scene, path = open_scene(tmp_path, "part4.luxar.zarr")
         with compiler:
@@ -367,3 +370,23 @@ class TestRefusedInsideASpecializedGroup:
                 layer_order=25,
             )
             assert wrapper.attrs["layer_order"] == 25
+            wrapper.attrs["layer_order"] = 26
+            assert wrapper.attrs["layer_order"] == 26
+
+    @pytest.mark.parametrize("kind", ["partition", "lod"])
+    def test_add_group_refuses_inside_a_specialized_group(
+        self, tmp_path: Any, kind: str
+    ) -> None:
+        compiler, scene, path = open_scene(tmp_path, f"group-{kind}.luxar.zarr")
+        with compiler:
+            if kind == "partition":
+                wrapper = self._partition(scene, seed=13)
+            else:
+                wrapper = scene.add_points(
+                    "ladder",
+                    random_positions(64, seed=14),
+                    substitutive_lod={"levels": 2},
+                )
+
+            with pytest.raises(ValueError, match=f"kind={kind}"):
+                wrapper.add_group("inner", layer_order=5)
