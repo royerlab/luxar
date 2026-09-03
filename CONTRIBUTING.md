@@ -1,6 +1,7 @@
 # 🤝 Contributing to Luxar
 
 We welcome contributions! The project uses automated tooling to maintain high code quality.
+By participating, you agree to follow our [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## 🚀 Quick Start for Contributors
 

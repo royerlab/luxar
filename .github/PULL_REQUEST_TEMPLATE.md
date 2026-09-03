@@ -11,7 +11,7 @@ with a clear "why" is better than a long one filled in out of obligation.
 
 <!--
 The part reviewers cannot reconstruct from the diff. If it fixes an issue,
-"Closes #123" here.
+"Closes #<issue-number>" here.
 -->
 
 ## How it was verified
