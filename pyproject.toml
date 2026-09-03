@@ -751,10 +751,14 @@ data_file = "coverage/python/.coverage"
 source = ["packages/luxar/src/luxar"]
 omit = [
     "*/tests/*",                              # test code, not shipped logic
-    "*/__init__.py",                          # re-export shims
     "*/luxar/demos/*.py",                     # *.py is load-bearing: root demos omitted, nested _support measured
     "*/luxar/demos/_support/_umap_utils.py",  # optional umap-extra paths are not available in core CI
     "*/luxar/demos/_support/runtime/device.py", # hardware-gated CUDA/MPS detection branches
+    # Demo helpers split out of luxar/demos/ by #2079; same rationale as the
+    # demos omit above. This exact set is asserted by demos/tests/
+    # test_demo_import_spelling.py::test_coverage_omits_only_the_split_demo_utilities,
+    # which compares the "/utils/" patterns here for EQUALITY -- adding or
+    # removing one fails that test by design.
     "*/luxar/utils/colors.py",
     "*/luxar/utils/scenes.py",
     "*/gsplats/**/demos/*",                   # research demos (run-on-import; compile-smoke-tested only)
@@ -763,19 +767,40 @@ omit = [
 ]
 
 [tool.coverage.report]
+# Each entry is a REGEX that coverage.py searches against every physical
+# line, and a hit inside a multi-line statement is attributed to that
+# statement's FIRST line -- so an unanchored word excludes the whole clause
+# it lands in. `"pass"` used to be here unanchored: a `passes` substring in a
+# Typer `help=` string, or a `*_per_pass` parameter name inside a multi-line
+# `def`, silently deleted the entire function body. Measured blast radius
+# before anchoring: 76 files / ~1102 statements, including all of
+# `run_fit_volume` (the `luxar gsplat fit` entry point), `lod_recipe`,
+# `fit_progressive_gaussian_splats` and `run_batch_submit`. Anchor anything
+# added here.
 exclude_lines = [
     "pragma: no cover",
-    "def __repr__",
-    "def __str__",
+    "^\\s*def __repr__",
+    "^\\s*def __str__",
     "raise AssertionError",
     "raise NotImplementedError",
     "if __name__ == .__main__.:",
     "if TYPE_CHECKING:",
-    "pass",
+    "^\\s*pass\\s*$",
 ]
 show_missing = true
 skip_covered = false
-fail_under = 80
+# Held just under measured so the gate actually gates. This is the floor for
+# `hatch run test-cov` -- the `-m 'not slow'` subset CI runs (ci.yml) -- NOT the
+# full suite, which measures higher. Measured 91.58% on 2026-09 after anchoring
+# the exclude_lines regexes and dropping the `*/__init__.py` omit (42,847
+# statements, up from 41,347 when a stray "pass" substring was deleting whole
+# function bodies from the denominator).
+#
+# The ~2.5 pt margin is deliberate, not slack: PRs run 3.12 only, while
+# push/schedule runs the 3.12/3.13/3.14 matrix, so a floor tuned tight to one
+# interpreter can redden `dev` after a green PR. Re-measure with
+# `hatch run test-cov` before raising.
+fail_under = 89
 
 [tool.coverage.html]
 directory = "coverage/python/htmlcov"
