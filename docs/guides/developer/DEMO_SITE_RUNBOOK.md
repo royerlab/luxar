@@ -41,6 +41,10 @@ Instead:
 - **Root-README media** (`data.luxarviewer.dev/media/<sha256-prefix>.<ext>`) are
   direct R2 objects. Their content-addressed keys are immutable and are recorded
   in `scripts/gallery/media-manifest.json`.
+- **Stable demo deep links** (`demos.luxarviewer.dev/d/<demo-key>`) redirect to
+  that scene under the current dated data prefix. The root README's gallery
+  titles depend on these routes, so every publish wave must preserve and update
+  them alongside the gallery.
 
 The historical marker header `x-luxar-fn: r2` is how to confirm no Worker is in
 the path. It should now appear on *nothing*:
