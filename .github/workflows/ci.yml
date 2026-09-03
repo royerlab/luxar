@@ -1340,6 +1340,9 @@ jobs:
         working-directory: packages/luxar-viewer
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Scheduled runs test the captured dev commit; empty on push/PR == default.
+          ref: ${{ needs.changes.outputs.dev_sha || '' }}
 
       # playwright.config.ts starts a second webServer — tools/range-http-server.py
       # — for every run, and global-setup probes both servers' identity markers.
