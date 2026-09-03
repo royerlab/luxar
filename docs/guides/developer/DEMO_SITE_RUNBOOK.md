@@ -1434,9 +1434,10 @@ The README states the live demo count in two places and nothing else watches it
 
 ### 8.2 `noOrbitVideo` — two tiles are deliberately static
 
-`gsplats_lod_embryo_line` and `gsplats_2d_codex_pancreas` carry
-`"noOrbitVideo": true` in `scripts/gallery/manifest.json`. Their subjects are
-planar arrangements viewed face-on, so any rock swings them toward edge-on:
+PR #2477 adds `"noOrbitVideo": true` to `gsplats_lod_embryo_line` and
+`gsplats_2d_codex_pancreas` in `scripts/gallery/manifest.json`. Until that change
+lands, regenerating the gallery still emits orbit clips for both. Their subjects
+are planar arrangements viewed face-on, so any rock swings them toward edge-on:
 embryo_line's mean luminance swings **13x** over ±20°, twice per loop, which
 reads as violent flashing. Measured, at ±6° it is still 8.2x — no amplitude
 fixes it. Same convention as `exotic_surfaces` ("near face-on only, NO orbit

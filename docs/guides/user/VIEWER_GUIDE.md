@@ -107,7 +107,8 @@ from your own pages but not from arbitrary ones. Note that neither choice makes
 the data private — a public bucket is public to anyone with the URL, CORS or not.
 
 If you would rather not host anything, `luxar export scene.luxar.zarr -o out/`
-writes a self-contained folder with the viewer bundled, which opens from disk.
+writes a self-contained folder with the viewer and a stdlib-only `serve.py`; the
+recipient runs `python serve.py` (`file://` cannot open the viewer directly).
 
 See [Distributing scenes](../../tutorials/distributing_scenes.rst) for the wider
 picture on sharing scenes, and
