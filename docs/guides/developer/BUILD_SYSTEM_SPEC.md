@@ -946,11 +946,15 @@ returns it to the same queue.
 
 Scheduled and push runs differ from a PR run in *scope* as well: neither has a PR
 base, so the `changes` job cannot path-filter and selects the whole suite plus the
-documentation gate.
+documentation gate. On a scheduled run, `changes` checks out dev and captures that
+commit once; every downstream suite and repair checkout uses the captured immutable
+SHA rather than resolving the branch again when its job starts.
 
-Scheduled runs sit in their own `concurrency` group: they share
-`refs/heads/dev` with merge-triggered runs, so under one shared group
-`cancel-in-progress` let whichever started second cancel the other. A merge
+Scheduled runs sit in their own `concurrency` group. While `dev` is the default,
+they share `refs/heads/dev` with merge-triggered runs; after the default flips,
+their event ref becomes `refs/heads/main`, but `github.event_name` still keeps
+the groups separate. Under one shared group `cancel-in-progress` let whichever
+started second cancel the other. A merge
 landing mid-schedule killed the scheduled run; a cron firing over an in-flight merge
 killed that merge's push run, which is the only place the new `dev` commit gets
 the full matrix at all. Scheduled runs still share a group with each other, so a
@@ -972,8 +976,8 @@ documentation gate as well.
 GitHub branch protection does not necessarily replace a cancelled push check with a
 later successful scheduled check of the same name on the same SHA. After a scheduled
 run has completed the five protected contexts successfully,
-`repair-cancelled-push-checks` enumerates every commit still in `main..GITHUB_SHA`,
-newest first, and inspects each completed push run. This covers commits skipped by the
+`repair-cancelled-push-checks` resolves dev's tip and enumerates every commit still
+in `main..dev`, newest first, then inspects each completed push run. This covers commits skipped by the
 three-hour schedule instead of repairing only the scheduled tip. The promotion daemon
 fast-forwards `main` to the newest green ancestor, so the walk stops after successfully
 enqueueing two candidates: the second is a hedge against a genuinely red newest
