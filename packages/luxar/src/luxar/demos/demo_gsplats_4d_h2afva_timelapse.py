@@ -110,12 +110,7 @@ DEMO_META = {
         "download_mb": 1064,
         "compute": "light",
         "gpu": "none",
-        # Hosted-only: the fitted archive lives on Zenodo record 21912284, which
-        # is still an unpublished draft with no base_url, so `ensure_dataset`
-        # can build no URL for it. Until that record is published this resolves
-        # from a hand-placed cache copy only — the same state the single-stack
-        # companion is in.
-        "local_data": "manual-file",
+        "local_data": None,
     },
     "caches": ["h2afva"],
     "outputs": ["gsplats_4d_h2afva_timelapse"],

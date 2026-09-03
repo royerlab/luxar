@@ -51,8 +51,8 @@ LFS_ONLY = {"load_precomputed_gsplats", "load_precomputed_bundle"}
 MANIFEST_DRIVEN = {"load_dataset_gsplats", "load_dataset_bundle", "ensure_dataset"}
 #: Demos that legitimately do not route their hosted dataset through
 #: ``ensure_dataset``. Empty since 2026-09-02: the last entry,
-#: ``gsplats_4d_neuromast_2ch``, now tries the manifest before its documented
-#: machine-local fallback while the packaged record remains unpublished.
+#: ``gsplats_4d_neuromast_2ch``, now resolves its hosted pair through
+#: ``ensure_dataset`` and keeps the machine-local store only as a fallback.
 HOSTED_DATASET_EXCEPTIONS: dict[str, str] = {}
 
 
@@ -136,8 +136,9 @@ def test_neuromast_cache_is_claimed_by_registry(
     assert entry.size_bytes == 6
 
 
-def test_neuromast_remains_manual_until_the_manifest_enables_the_record() -> None:
-    assert neuromast_demo.DEMO_META["requirements"]["local_data"] == "manual-file"
+def test_neuromast_no_longer_needs_a_hand_placed_copy() -> None:
+    """The record is published, so the fetch — not a local store — is the path."""
+    assert neuromast_demo.DEMO_META["requirements"]["local_data"] is None
 
 
 def _manifest() -> dict:

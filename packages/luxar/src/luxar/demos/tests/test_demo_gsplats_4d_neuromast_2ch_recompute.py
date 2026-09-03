@@ -1,6 +1,6 @@
 """Tests for the neuromast demo's per-channel recompute path.
 
-Four things here are worth pinning, each with a quiet failure mode:
+Five things here are worth pinning, each with a quiet failure mode:
 
 1. **The background subtraction.** A single measured floor per channel,
    subtracted with a clip at 0. Forgetting the clip leaves negative intensities,
@@ -15,7 +15,12 @@ Four things here are worth pinning, each with a quiet failure mode:
 4. **The upstream provenance.** The durable HPC directories, numeric TIFF order,
    axis convention and floor measurement are the recipe for rebuilding the two
    assembled arrays if the current copies disappear.
+5. **The download estimate.** It must stay derived from both manifest archives,
+   or metadata can silently drift when either channel is re-uploaded.
 """
+
+import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -27,12 +32,72 @@ from luxar.gsplats.gsplat_data import AdditiveSubLOD
 from luxar.gsplats.tree import GSplatLeaf
 
 SMALL = (4, 3, 5, 6)
+_MANIFEST_PATH = Path(__file__).resolve().parents[1] / "data_manifest.json"
 
 #: Captured at IMPORT, before the autouse fixture below shrinks the module
 #: constant. The constants tests must compare against the real recorded extent;
 #: reading ``demo.SOURCE_SHAPE`` inside a test would read the 360-voxel stand-in
 #: and assert nothing.
 REAL_SOURCE_SHAPE = demo.SOURCE_SHAPE
+
+
+def test_resolve_channel_paths_prefers_the_record_over_a_local_copy(
+    tmp_path, monkeypatch
+) -> None:
+    """A hand-placed local pair must not shadow the published record.
+
+    The local store is the fallback, so precedence is only observable with BOTH
+    sources present: a complete unzipped pair on disk AND a fetch that works.
+    The sibling test below has an empty ``DATA_DIR``, which proves the fetch
+    path but says nothing about order — and getting the order backwards would
+    quietly serve a stale hand-placed copy for ever, with the checksum gate
+    never consulted.
+    """
+    local_dir = tmp_path / "local_store"
+    local_dir.mkdir()
+    monkeypatch.setattr(demo, "DATA_DIR", local_dir)
+    for channel in demo.CHANNELS:
+        (local_dir / channel["file"]).touch()
+
+    fetched = [
+        tmp_path / "cache" / f"{channel['file']}.zip" for channel in demo.CHANNELS
+    ]
+    calls = []
+
+    def fetch(name: str):
+        calls.append(name)
+        return list(fetched)
+
+    monkeypatch.setattr(demo, "ensure_dataset", fetch)
+
+    assert demo.resolve_channel_paths() == fetched
+    assert calls == ["gsplats_4d_neuromast_2ch"]
+
+
+def test_resolve_channel_paths_fetches_the_published_pair(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(demo, "DATA_DIR", tmp_path)
+    expected = [tmp_path / f"{channel['file']}.zip" for channel in demo.CHANNELS]
+    calls = []
+
+    def fetch(name: str):
+        calls.append(name)
+        return list(reversed(expected))
+
+    monkeypatch.setattr(demo, "ensure_dataset", fetch)
+
+    assert demo.resolve_channel_paths() == expected
+    assert calls == ["gsplats_4d_neuromast_2ch"]
+
+
+def test_manifest_and_download_size_pin_the_channel_pair() -> None:
+    manifest = json.loads(_MANIFEST_PATH.read_text())
+    files = manifest["datasets"]["gsplats_4d_neuromast_2ch"]["files"]
+
+    assert demo.DEMO_META["requirements"]["download_mb"] == round(
+        sum(file["bytes"] for file in files) / 1024**2
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -171,9 +236,7 @@ class TestBothChannelsNeedTheirOwnSource:
 
 
 class TestEmptyFitTilesSurviveTheCullStage:
-    def test_empty_markers_are_copied_beside_culled_tiles(
-        self, monkeypatch, tmp_path
-    ):
+    def test_empty_markers_are_copied_beside_culled_tiles(self, monkeypatch, tmp_path):
         fit_dir = tmp_path / "fit"
         tiles = fit_dir / "tiles"
         tiles.mkdir(parents=True)
