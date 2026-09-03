@@ -232,7 +232,7 @@ function gsplatsGeometry(): Geometry {
       path: '/test_gsplats',
       type: 'gsplats',
       attrs: {
-        n_gsplats: 1000,
+        n_splats: 1000,
         ndim: 3,
         ordering: 'none',
         has_colors: true,
@@ -371,7 +371,7 @@ describe('L0 cache wiring (differential across the three spatial-index loaders)'
       wireZarr(geometry);
       const loader = geometry.construct(makeMockZarrLocation(), geometry.node, undefined);
 
-      await geometry.load(loader).catch(() => undefined);
+      await expect(geometry.load(loader)).resolves.toBeDefined();
 
       expect(opened.length).toBeGreaterThan(0);
       expect(wrapSpy).not.toHaveBeenCalled();
