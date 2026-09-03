@@ -1449,6 +1449,26 @@ for (const demo of DEMOS) {
       `[${demo.id}] still → ${path.basename(pngPath)} (${formatMediaSize(pngMedia.sizeBytes)})`
     );
 
+    const noOrbit = demo.noOrbitVideo === true;
+    const webpPath = path.join(OUTPUT_DIR, `${demo.id}.webp`);
+    const webmPathOut = path.join(OUTPUT_DIR, `${demo.id}.webm`);
+    if (noOrbit) {
+      try {
+        // Subject should not be rocked (see noOrbitVideo in the manifest):
+        // a static tile rather than a clip that pulses as the view changes.
+        convertFrameToStaticWebp(pngPath, webpPath);
+        const webpMedia = recordGalleryMedia(demo.id, webpPath);
+        console.log(
+          `[${demo.id}] webp → ${path.basename(webpPath)} (${formatMediaSize(webpMedia.sizeBytes)})`
+        );
+      } catch (e) {
+        fs.rmSync(webpPath, { force: true });
+        console.error(`[${demo.id}] webp failed:`, e);
+      }
+      skipGalleryMediaWhenRequested(noOrbit, webmPathOut);
+      console.log(`[${demo.id}] noOrbitVideo — static tile, skipping webm`);
+    }
+
     // Orbit: capture explicit per-angle frames (reliable in headless), then
     // assemble the WebM master + animated WebP.
     const framesDir = path.join(OUTPUT_DIR, `_frames_${demo.id}`);
@@ -1526,45 +1546,35 @@ for (const demo of DEMOS) {
     }
     console.log(`[${demo.id}] captured ${n} orbit frames`);
 
-    const webpPath = path.join(OUTPUT_DIR, `${demo.id}.webp`);
-    const webmPathOut = path.join(OUTPUT_DIR, `${demo.id}.webm`);
     try {
-      const noOrbit = demo.noOrbitVideo === true;
-      let webpEncoded = false;
-      try {
-        if (noOrbit) {
-          // Subject should not be rocked (see noOrbitVideo in the manifest):
-          // a static tile rather than a clip that pulses as the view changes.
-          convertFrameToStaticWebp(pngPath, webpPath);
-        } else {
+      if (!noOrbit) {
+        let webpEncoded = false;
+        try {
           convertFramesToWebp(framesDir, webpPath); // README inline (GitHub)
+          webpEncoded = true;
+        } catch (e) {
+          fs.rmSync(webpPath, { force: true });
+          console.error(`[${demo.id}] webp failed:`, e);
         }
-        webpEncoded = true;
-      } catch (e) {
-        console.error(`[${demo.id}] webp failed:`, e);
-      }
-      if (webpEncoded) {
-        const webpMedia = recordGalleryMedia(demo.id, webpPath);
-        console.log(
-          `[${demo.id}] webp → ${path.basename(webpPath)} (${formatMediaSize(webpMedia.sizeBytes)})`
-        );
-      }
-      let webmEncoded = false;
-      if (skipGalleryMediaWhenRequested(noOrbit, webmPathOut)) {
-        console.log(`[${demo.id}] noOrbitVideo — static tile, skipping webm`);
-      } else {
+        if (webpEncoded) {
+          const webpMedia = recordGalleryMedia(demo.id, webpPath);
+          console.log(
+            `[${demo.id}] webp → ${path.basename(webpPath)} (${formatMediaSize(webpMedia.sizeBytes)})`
+          );
+        }
+        let webmEncoded = false;
         try {
           convertFramesToWebm(framesDir, webmPathOut); // full-quality master
           webmEncoded = true;
         } catch (e) {
           console.error(`[${demo.id}] webm failed:`, e);
         }
-      }
-      if (webmEncoded) {
-        const webmMedia = recordGalleryMedia(demo.id, webmPathOut);
-        console.log(
-          `[${demo.id}] webm → ${path.basename(webmPathOut)} (${formatMediaSize(webmMedia.sizeBytes)})`
-        );
+        if (webmEncoded) {
+          const webmMedia = recordGalleryMedia(demo.id, webmPathOut);
+          console.log(
+            `[${demo.id}] webm → ${path.basename(webmPathOut)} (${formatMediaSize(webmMedia.sizeBytes)})`
+          );
+        }
       }
     } finally {
       fs.rmSync(framesDir, { recursive: true, force: true }); // clean up frames
