@@ -517,7 +517,7 @@ class TestNativeColorsWinOverTheSidecar:
     This is what retires the #1670/#2334 failure mode rather than guarding
     against it: the writer permutes a native color attribute in lockstep with the
     centers, so the two cannot fall out of order. The sidecar branch remains for
-    the record's positional pair and for locally recomputed colorless fits.
+    the record's positional pair and for older local colorless fits.
     """
 
     @staticmethod

@@ -547,8 +547,8 @@ def _labels_for(
     A fit carrying its own ids is self-consistent by construction, so its sidecar
     — if one is even still pinned — is never read.
 
-    The sidecar branch stays for the record's positional pair and for locally
-    recomputed label-less fits. Returns None when neither source is usable,
+    The sidecar branch stays for the record's positional pair and for older
+    local label-less fits. Returns None when neither source is usable,
     which every caller treats as "refit".
     """
     native = _native_labels(fit)

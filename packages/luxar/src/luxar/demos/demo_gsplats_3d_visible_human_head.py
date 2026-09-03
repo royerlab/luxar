@@ -86,17 +86,17 @@ resample change, and the shape check alone says nothing about content.
 Anyone regenerating that sidecar should reproduce all three rather than trusting
 the agreement number alone.
 
-THE SIDECAR IS ON ITS WAY OUT, though, and none of the above applies to the
-hosted archive any more: it carries its per-splat colors as a NATIVE gsplat
+THE SIDECAR IS VESTIGIAL FOR RECORD RENDERING, and none of the above applies to
+the hosted archive any more: it carries its per-splat colors as a NATIVE gsplat
 attribute, so the writer permutes them in lockstep with the centers and the two
 cannot fall out of order. That is what retires this failure mode instead of
 guarding against it — the guard needs two arrays to compare, and there is now
 only one. ``--recompute`` writes that shape (see :func:`save_and_sample_colors`).
 
 The sidecar branch remains because the published record still pins
-``vh_head_colors.npz`` beside the fit, and locally recomputed legacy fits may be
-colorless. Native colors always win; the sidecar is only consulted when a fit
-does not describe its own colors.
+``vh_head_colors.npz`` beside the fit, and older local refits may be colorless.
+Native colors always win; the sidecar is only consulted when a fit does not
+describe its own colors.
 
 USAGE
 -----
@@ -500,8 +500,8 @@ def _colors_for(
     that carries its own colors is self-consistent by construction and its
     sidecar — if one is even still pinned — is vestigial, so it is never read.
 
-    The sidecar branch remains for the record's positional pair and for locally
-    recomputed colorless fits. Native colors always win, so the record sidecar
+    The sidecar branch remains for the record's positional pair and for older
+    local colorless fits. Native colors always win, so the record sidecar
     is vestigial for rendering but still checked as part of the pair contract.
 
     Returns None when neither source is usable, which the callers treat as
