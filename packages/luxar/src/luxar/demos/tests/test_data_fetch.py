@@ -1954,6 +1954,57 @@ def test_a_divergent_pin_is_reported_not_silently_accepted(
     assert "hosted_sha256 differs" in out, out
 
 
+def test_a_current_hosted_positional_pair_is_not_reverted(fake_repo, capsys):
+    """The current hosted pair survives with an older in-repo copy available.
+
+    This is the #2454 defect 2 shape missing from the existing hosted-cache
+    coverage: both files belong to one positional pair, carry superseded history,
+    and one still has an in-repo generation the resolver could copy over it. The
+    assertion is intentionally scoped to the current record generation; a cached
+    superseded generation is still refreshed when a current source exists, as
+    ``test_a_superseded_cache_is_replaced_when_a_route_exists`` requires.
+    """
+    manifest, cache = fake_repo
+    entries = manifest["datasets"]["gsplats_toy"]["files"]
+    entries[:] = [
+        {
+            "name": "fit.gsplats.zarr.zip",
+            "sha256": hashlib.sha256(b"local-fit").hexdigest(),
+            "hosted_sha256": hashlib.sha256(b"hosted-fit").hexdigest(),
+            "superseded_sha256": [hashlib.sha256(b"old-hosted-fit").hexdigest()],
+            "positional_pair": "toy",
+        },
+        {
+            "name": "colors.npz",
+            "sha256": hashlib.sha256(b"local-colors").hexdigest(),
+            "hosted_sha256": hashlib.sha256(b"hosted-colors").hexdigest(),
+            "superseded_sha256": [hashlib.sha256(b"old-hosted-colors").hexdigest()],
+            "positional_pair": "toy",
+        },
+    ]
+    lfs_dir = data_fetch._DEMOS_DATA_DIR / "gsplats_toy"
+    (lfs_dir / "fit.gsplats.zarr.zip").write_bytes(b"local-fit")
+
+    cache_dir = cache / "gsplats_toy"
+    cache_dir.mkdir(parents=True)
+    (cache_dir / "fit.gsplats.zarr.zip").write_bytes(b"hosted-fit")
+    (cache_dir / "colors.npz").write_bytes(b"hosted-colors")
+
+    paths = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+
+    assert [path.read_bytes() for path in paths] == [
+        b"hosted-fit",
+        b"hosted-colors",
+    ], "cache was reverted to the in-repo copy"
+    assert [find_quarantined_files(path) for path in paths] == [
+        [],
+        [],
+    ], "the correctly-seeded pair was churned"
+    assert "Using SUPERSEDED positional pair" not in capsys.readouterr().out
+
+
 def test_agreeing_pins_report_nothing_unusual(fake_repo, capsys):
     """A hosted pin EQUAL to the local one is the 16-dataset majority case.
 
