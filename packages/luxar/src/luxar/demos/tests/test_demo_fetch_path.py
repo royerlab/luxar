@@ -114,8 +114,23 @@ def test_neuromast_unavailable_record_reports_missing_local_channels(
         neuromast_demo.resolve_channel_paths()
 
 
-def test_neuromast_declares_its_manifest_cache_and_manual_fallback() -> None:
-    assert neuromast_demo.DEMO_META["caches"] == [neuromast_demo.DATASET_NAME]
+def test_neuromast_cache_is_claimed_by_registry(
+    tmp_path: Path,
+) -> None:
+    cache_dir = tmp_path / "gsplats_4d_neuromast_2ch"
+    cache_dir.mkdir()
+    (cache_dir / "archive.zip").write_bytes(b"cached")
+    info = registry.get_demo("gsplats_4d_neuromast_2ch")
+
+    assert registry.demo_cache_dirs(info, cache_root=tmp_path) == [cache_dir]
+    entry = next(
+        item for item in registry.inventory_caches(tmp_path) if item.path == cache_dir
+    )
+    assert entry.demo_keys == ("gsplats_4d_neuromast_2ch",)
+    assert entry.size_bytes == 6
+
+
+def test_neuromast_remains_manual_until_the_manifest_enables_the_record() -> None:
     assert neuromast_demo.DEMO_META["requirements"]["local_data"] == "manual-file"
 
 
