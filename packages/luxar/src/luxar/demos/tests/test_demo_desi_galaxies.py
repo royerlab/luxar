@@ -49,6 +49,14 @@ def test_per_node_budget_stays_under_the_point_texture_bound() -> None:
     assert _demo.SCENE_MAX_POINTS_PER_NODE <= MAX_POINTS_PER_POINTS_NODE
 
 
+def test_create_scene_requires_scalars_when_colours_are_not_supplied(
+    tmp_path: Path,
+) -> None:
+    positions = np.zeros((2, 3), dtype=np.float32)
+    with pytest.raises(ValueError, match="redshift and tracer_ids"):
+        _demo.create_scene(positions, None, None, tmp_path / "scene.luxar.zarr")
+
+
 class TestRadecToXyz:
     def test_origin_axis_directions(self) -> None:
         # (RA=0, Dec=0) at distance d → +x axis.
@@ -712,10 +720,71 @@ class TestRestructureFetchedScene:
         for layer in ("By tracer type", "By redshift"):
             positions_before, colors_before = before[layer]
             positions_after, colors_after = after[layer]
-            assert positions_after.shape == positions_before.shape
-            assert np.array_equal(
-                np.sort(colors_after.reshape(-1)), np.sort(colors_before.reshape(-1))
-            ), f"{layer}: the colour multiset changed through the restructure"
+            for color in np.unique(colors_before, axis=0):
+                before_mask = np.all(colors_before == color, axis=1)
+                after_mask = np.all(colors_after == color, axis=1)
+                assert after_mask.sum() == before_mask.sum()
+                for axis in range(3):
+                    np.testing.assert_allclose(
+                        np.sort(positions_after[after_mask, axis]),
+                        np.sort(positions_before[before_mask, axis]),
+                        atol=0.01,
+                    )
+
+    def test_existing_lod_is_kept_when_rebuild_cannot_recreate_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        scene = tmp_path / "desi.luxar.zarr"
+        root = open_group(scene, mode="w")
+        for layer_name in ("By tracer type", "By redshift"):
+            root.create_group(layer_name).create_group("child_0")
+        monkeypatch.setattr(_demo, "substitutive_lod_or_flat", lambda spec: None)
+        monkeypatch.setattr(
+            _demo,
+            "create_scene",
+            lambda *args, **kwargs: pytest.fail("must not discard existing LOD levels"),
+        )
+
+        assert _demo.restructure_scene(scene) == scene
+        reopened = open_group(scene, mode="r")
+        assert "child_0" in reopened["By tracer type"]
+        assert "child_0" in reopened["By redshift"]
+
+    def test_failed_rebuild_leaves_the_original_scene_intact(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        scene = tmp_path / "desi.luxar.zarr"
+        positions = np.arange(12, dtype=np.float32).reshape(4, 3)
+        colors = np.zeros((4, 3), dtype=np.float32)
+        root = open_group(scene, mode="w")
+        for layer_name in ("By tracer type", "By redshift"):
+            root.create_group(layer_name)
+        sentinel = scene / "original"
+        sentinel.write_text("keep me")
+        monkeypatch.setattr(
+            _demo,
+            "_finest_level_cloud",
+            lambda root, layer: (positions, colors),
+        )
+        monkeypatch.setattr(
+            _demo,
+            "_finest_level_colors",
+            lambda root, layer: (len(positions), colors),
+        )
+
+        def fail_build(*args, **kwargs):
+            output = args[3]
+            output.mkdir()
+            (output / "zarr.json").write_text("incomplete")
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(_demo, "create_scene", fail_build)
+
+        with pytest.raises(KeyboardInterrupt):
+            _demo.restructure_scene(scene)
+
+        assert sentinel.read_text() == "keep me"
+        assert not (tmp_path / "desi.rebuild.luxar.zarr").exists()
 
     def test_the_authored_scene_partitions_within_capacity_by_construction(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1136,6 +1205,105 @@ class TestMainSceneReuse:
             ("frame", output),
             ("warn", output),
         ]
+
+    @pytest.mark.parametrize("needs_restructure", [False, True])
+    def test_cold_scene_restructures_only_when_required(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        needs_restructure: bool,
+    ) -> None:
+        resolved = tmp_path / "resolved-scene.zip"
+        resolved.write_bytes(b"scene")
+        calls: list[str] = []
+        monkeypatch.setattr(_demo, "SERVE_ONLY", False)
+        monkeypatch.setattr(_demo, "RECOMPUTE", False)
+        monkeypatch.setattr(_demo, "NO_SERVE", True)
+        monkeypatch.setattr(_demo, "get_demos_output_dir", lambda: tmp_path)
+        monkeypatch.setattr(_demo, "ensure_dataset", lambda name: [resolved])
+        monkeypatch.setattr(
+            _demo,
+            "extract_shipped_scene",
+            lambda source, path: calls.append("extract"),
+        )
+        monkeypatch.setattr(
+            _demo,
+            "scene_exceeds_node_capacity",
+            lambda path: calls.append("check") or needs_restructure,
+        )
+        monkeypatch.setattr(
+            _demo, "restructure_scene", lambda path: calls.append("restructure")
+        )
+        monkeypatch.setattr(_demo, "ensure_origin_framing", lambda path: None)
+        monkeypatch.setattr(_demo, "warn_if_scene_is_stale", lambda path: None)
+
+        _demo.main()
+
+        assert calls == ["extract", "check"] + (
+            ["restructure"] if needs_restructure else []
+        )
+
+    def test_failed_restructure_warns_and_uses_the_fetched_scene(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        resolved = tmp_path / "resolved-scene.zip"
+        resolved.write_bytes(b"scene")
+        calls: list[str] = []
+        monkeypatch.setattr(_demo, "SERVE_ONLY", False)
+        monkeypatch.setattr(_demo, "RECOMPUTE", False)
+        monkeypatch.setattr(_demo, "NO_SERVE", True)
+        monkeypatch.setattr(_demo, "get_demos_output_dir", lambda: tmp_path)
+        monkeypatch.setattr(_demo, "ensure_dataset", lambda name: [resolved])
+        monkeypatch.setattr(_demo, "extract_shipped_scene", lambda source, path: None)
+        monkeypatch.setattr(_demo, "scene_exceeds_node_capacity", lambda path: True)
+        monkeypatch.setattr(
+            _demo,
+            "restructure_scene",
+            lambda path: (_ for _ in ()).throw(ValueError("cannot decode")),
+        )
+        monkeypatch.setattr(
+            _demo, "ensure_origin_framing", lambda path: calls.append("frame")
+        )
+        monkeypatch.setattr(
+            _demo, "warn_if_scene_is_stale", lambda path: calls.append("warn")
+        )
+
+        _demo.main()
+
+        assert calls == ["frame", "warn"]
+        assert "Could not re-ladder" in capsys.readouterr().out
+
+    def test_incomplete_cached_scene_is_reextracted(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        output = tmp_path / "desi_galaxies.luxar.zarr"
+        root = open_group(output, mode="w")
+        root.attrs["incomplete"] = True
+        resolved = tmp_path / "resolved-scene.zip"
+        resolved.write_bytes(b"scene")
+        calls: list[str] = []
+        monkeypatch.setattr(_demo, "SERVE_ONLY", False)
+        monkeypatch.setattr(_demo, "RECOMPUTE", False)
+        monkeypatch.setattr(_demo, "NO_SERVE", True)
+        monkeypatch.setattr(_demo, "get_demos_output_dir", lambda: tmp_path)
+        monkeypatch.setattr(_demo, "ensure_dataset", lambda name: [resolved])
+
+        def extract(source: Path, path: Path) -> None:
+            assert not path.exists()
+            calls.append("extract")
+            path.mkdir()
+
+        monkeypatch.setattr(_demo, "extract_shipped_scene", extract)
+        monkeypatch.setattr(_demo, "scene_exceeds_node_capacity", lambda path: False)
+        monkeypatch.setattr(_demo, "ensure_origin_framing", lambda path: None)
+        monkeypatch.setattr(_demo, "warn_if_scene_is_stale", lambda path: None)
+
+        _demo.main()
+
+        assert calls == ["extract"]
 
     def test_unavailable_manifest_scene_falls_back_to_catalog_build(
         self,

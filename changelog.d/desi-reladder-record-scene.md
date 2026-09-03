@@ -58,3 +58,13 @@ already-compliant scene wastes minutes and changes nothing, while skipping a
 non-compliant one renders a node that can lose its tail with no further signal.
 This defect existed in the first place because a check that could not tell said
 nothing and carried on.
+
+The repair itself remains conservative. It builds into a sibling staging store
+and swaps it into place only after compiler finalization, so an interruption or
+failed build leaves the fetched scene intact. If the scene cannot be decoded,
+the demo reports the failed repair and continues with the existing stale-scene
+diagnostics instead of crashing. On a core-only installation without
+`torch`/`scipy`, an existing substitutive ladder is preserved rather than being
+silently replaced by a flat scene; an already-flat record can still be
+partitioned and given its additive streaming ladder. Compiler-marked incomplete
+caches are discarded and fetched again instead of being launched as valid.

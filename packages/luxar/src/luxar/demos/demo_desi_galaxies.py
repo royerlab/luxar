@@ -40,9 +40,9 @@ SELF-CONTAINED / CACHING
 ------------------------
 On a fresh machine this demo bootstraps itself with no manual steps:
   1. Fast path: a fully-built scene (both LOD colorings, ~73 MB) resolved through
-     the checksum-verified dataset manifest from cache, Git LFS, or Zenodo; it is
-     unzipped once into the demos output dir and loads instantly — no per-launch
-     LOD build.
+     the checksum-verified dataset manifest from cache, Git LFS, or Zenodo. It is
+     unzipped once into the demos output dir, then re-laddered once if its stored
+     structure predates the current per-node safety ceiling.
   2. If that asset is unavailable, ``--recompute`` (or a missing asset)
      AUTOMATICALLY downloads the ~1 GB of DR1 LSS catalogs to
      ``~/.cache/luxar/desi_galaxies/`` (resumable), reads them with ``astropy``,
@@ -638,6 +638,26 @@ def _warn_if_node_exceeds_capacity(
     )
 
 
+def _numbered_children(group: Any, prefix: str) -> list[str]:
+    return sorted(
+        (key for key in group.group_keys() if key.startswith(prefix)),
+        key=lambda key: int(key.split("_", 1)[1]),
+    )
+
+
+def _finest_level(layer: Any) -> Any:
+    """Return the finest substitutive level, or the layer itself when flat."""
+    child_names = _numbered_children(layer, "child_")
+    return layer[child_names[-1]] if child_names else layer
+
+
+def _finest_nodes(layer: Any) -> list[Any]:
+    finest = _finest_level(layer)
+    if finest.attrs.get("kind") != "partition":
+        return [finest]
+    return [finest[name] for name in _numbered_children(finest, "part_")]
+
+
 def scene_exceeds_node_capacity(scene_path: Path) -> bool:
     """True when any layer's finest level holds a node above the demo ceiling.
 
@@ -667,19 +687,7 @@ def scene_exceeds_node_capacity(scene_path: Path) -> bool:
 
     for layer_name in ("By tracer type", "By redshift"):
         try:
-            layer = root[layer_name]
-            child_names = sorted(
-                (key for key in layer.group_keys() if key.startswith("child_")),
-                key=lambda key: int(key.split("_", 1)[1]),
-            )
-            finest = layer[child_names[-1]] if child_names else layer
-            nodes = [finest]
-            if finest.attrs.get("kind") == "partition":
-                part_names = [
-                    key for key in finest.group_keys() if key.startswith("part_")
-                ]
-                nodes = [finest[name] for name in part_names]
-            for node in nodes:
+            for node in _finest_nodes(root[layer_name]):
                 if int(node.attrs.get("n_points", 0)) > SCENE_MAX_POINTS_PER_NODE:
                     return True
         except Exception as exc:
@@ -710,19 +718,11 @@ def warn_if_scene_is_stale(scene_path: Path) -> None:
         return
 
     def streaming_stats(finest) -> tuple[int, int, int, list[int]]:
-        nodes = [finest]
-        if finest.attrs.get("kind") == "partition":
-            part_names = sorted(
-                (key for key in finest.group_keys() if key.startswith("part_")),
-                key=lambda key: int(key.split("_", 1)[1]),
-            )
-            nodes = [finest[name] for name in part_names]
-
         sublod_counts = []
         n_points = 0
         max_node_points = 0
         increments = []
-        for node in nodes:
+        for node in _finest_nodes(finest):
             n_sublods = int(node.attrs.get("n_additive_sublods", 1))
             sublod_counts.append(n_sublods)
             node_points = int(node.attrs.get("n_points", 0))
@@ -738,18 +738,7 @@ def warn_if_scene_is_stale(scene_path: Path) -> None:
     for layer_name in ("By tracer type", "By redshift"):
         try:
             layer = root[layer_name]
-            # LOD children are stored coarsest→finest, so the finest level is
-            # the highest-numbered child_N. Don't hardcode a level count: a
-            # change to LOD["levels"] renames the finest child and would
-            # otherwise silently degrade this check to "Could not inspect".
-            child_names = sorted(
-                (k for k in layer.group_keys() if k.startswith("child_")),
-                key=lambda k: int(k.split("_", 1)[1]),
-            )
-            # No children means substitutive LOD was skipped (no torch/scipy at
-            # build time — see substitutive_lod_or_flat), so the layer IS the
-            # finest level and still carries its own streaming ladder.
-            finest = layer[child_names[-1]] if child_names else layer
+            finest = _finest_level(layer)
             n_sublods, n_points, max_node_points, increments = streaming_stats(finest)
         except Exception as exc:
             aprint(
@@ -826,27 +815,11 @@ def _finest_level_cloud(root: Any, layer_name: str) -> tuple[np.ndarray, np.ndar
 
     decoder = ArrayDecoder()
     layer = root[layer_name]
-    child_names = sorted(
-        (key for key in layer.group_keys() if key.startswith("child_")),
-        key=lambda key: int(key.split("_", 1)[1]),
-    )
-    finest = layer[child_names[-1]] if child_names else layer
-
-    nodes = [finest]
-    if finest.attrs.get("kind") == "partition":
-        part_names = sorted(
-            (key for key in finest.group_keys() if key.startswith("part_")),
-            key=lambda key: int(key.split("_", 1)[1]),
-        )
-        nodes = [finest[name] for name in part_names]
 
     positions: list[np.ndarray] = []
     colors: list[np.ndarray] = []
-    for node in nodes:
-        sub_names = sorted(
-            (key for key in node.group_keys() if key.startswith("additive_")),
-            key=lambda key: int(key.split("_", 1)[1]),
-        )
+    for node in _finest_nodes(layer):
+        sub_names = _numbered_children(node, "additive_")
         # An additive ladder stores DISJOINT increments, so concatenating every
         # rung reconstructs the level exactly once — not a prefix, and not a
         # duplicate of the whole.
@@ -860,6 +833,28 @@ def _finest_level_cloud(root: Any, layer_name: str) -> tuple[np.ndarray, np.ndar
     if not positions:
         raise ValueError(f"{layer_name!r} carries no decodable positions")
     return np.concatenate(positions), np.concatenate(colors)
+
+
+def _finest_level_colors(root: Any, layer_name: str) -> tuple[int, np.ndarray]:
+    """Decode RGB without materialising a second copy of shared positions."""
+    from luxar.encoding.decoder import ArrayDecoder
+
+    decoder = ArrayDecoder()
+    nodes = _finest_nodes(root[layer_name])
+    colors: list[np.ndarray] = []
+    for node in nodes:
+        sub_names = _numbered_children(node, "additive_")
+        sources = [node[name] for name in sub_names] or [node]
+        colors.extend(
+            decoder.decode(source["colors"], root)
+            for source in sources
+            if "colors" in source
+        )
+    if not colors:
+        raise ValueError(f"{layer_name!r} carries no decodable colors")
+    return sum(int(node.attrs.get("n_points", 0)) for node in nodes), np.concatenate(
+        colors
+    )
 
 
 def read_scene_clouds(scene_path: Path) -> dict[str, tuple[np.ndarray, np.ndarray]]:
@@ -905,32 +900,76 @@ def restructure_scene(scene_path: Path) -> Path:
     because there is no general "extract a node's data from a compiled scene"
     API yet. Rewrite onto that surface when it lands -- see #2482.
     """
-    clouds = read_scene_clouds(scene_path)
-    tracer_positions, tracer_rgb = clouds["By tracer type"]
-    redshift_positions, redshift_rgb = clouds["By redshift"]
+    import shutil
+
+    import zarr
+
+    root = zarr.open(str(scene_path), mode="r")
+    has_existing_lod = any(
+        _numbered_children(root[layer_name], "child_")
+        for layer_name in ("By tracer type", "By redshift")
+    )
+    if has_existing_lod and substitutive_lod_or_flat(LOD) is None:
+        aprint(
+            "  ⚠ Keeping the fetched scene's existing substitutive LOD: this "
+            "installation cannot rebuild those levels without torch and scipy."
+        )
+        return scene_path
+
+    tracer_positions, tracer_rgb = _finest_level_cloud(root, "By tracer type")
+    redshift_count, redshift_rgb = _finest_level_colors(root, "By redshift")
 
     # The author shares ONE positions array between the layers (deduplicated by
-    # the encoder's array_ref), so a divergence here means the scene is not the
-    # shape this function was written for -- refuse rather than silently pick one.
-    if tracer_positions.shape != redshift_positions.shape:
+    # the encoder's array_ref). The stored point counts let us verify that
+    # contract without decoding another ~117 MB copy of those shared positions.
+    if tracer_positions.shape[0] != redshift_count:
         raise ValueError(
             "the two layers carry different point counts "
-            f"({tracer_positions.shape[0]:,} vs {redshift_positions.shape[0]:,}); "
+            f"({tracer_positions.shape[0]:,} vs {redshift_count:,}); "
             "this scene is not the two-layer shape restructure_scene expects"
+        )
+    if tracer_rgb.shape[0] != tracer_positions.shape[0]:
+        raise ValueError(
+            f"'By tracer type' carries {tracer_positions.shape[0]:,} points but "
+            f"{tracer_rgb.shape[0]:,} colors"
+        )
+    if redshift_rgb.shape[0] != redshift_count:
+        raise ValueError(
+            f"'By redshift' carries {redshift_count:,} points but "
+            f"{redshift_rgb.shape[0]:,} colors"
         )
 
     aprint(
         f"  ♻ Re-laddering {tracer_positions.shape[0]:,} points under the current "
         f"recipe ({SCENE_MAX_POINTS_PER_NODE:,}/node ceiling)"
     )
-    return create_scene(
-        tracer_positions,
-        None,
-        None,
-        scene_path,
-        tracer_rgb=tracer_rgb,
-        redshift_rgb=redshift_rgb,
-    )
+    stem = scene_path.name.removesuffix(".luxar.zarr")
+    staging = scene_path.with_name(f"{stem}.rebuild.luxar.zarr")
+    backup = scene_path.with_name(f"{stem}.previous.luxar.zarr")
+    shutil.rmtree(staging, ignore_errors=True)
+    shutil.rmtree(backup, ignore_errors=True)
+    try:
+        create_scene(
+            tracer_positions,
+            None,
+            None,
+            staging,
+            tracer_rgb=tracer_rgb,
+            redshift_rgb=redshift_rgb,
+        )
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+
+    try:
+        scene_path.rename(backup)
+        staging.rename(scene_path)
+    except BaseException:
+        if backup.exists() and not scene_path.exists():
+            backup.rename(scene_path)
+        raise
+    shutil.rmtree(backup)
+    return scene_path
 
 
 def create_scene(
@@ -964,6 +1003,10 @@ def create_scene(
                 "SCENE_MAX_POINTS is set, which samples rows; that path needs "
                 "the redshift/tracer scalars, not precomputed colours"
             )
+    elif redshift is None or tracer_ids is None:
+        raise ValueError(
+            "redshift and tracer_ids are required when precomputed colours are not supplied"
+        )
     with asection("Creating Luxar Scene"):
         dims = Dimensions(
             [
@@ -1119,12 +1162,40 @@ def _load_or_build_or_exit() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         raise SystemExit(1) from None
 
 
+def _discard_incomplete_scene(scene_path: Path) -> bool:
+    """Remove a compiler-marked partial store so the normal fetch path retries."""
+    import shutil
+
+    try:
+        root = open_group(scene_path, mode="r")
+    except Exception:
+        return False
+    if not root.attrs.get("incomplete"):
+        return False
+    aprint(f"  ⚠ Discarding incomplete cached scene: {scene_path}")
+    shutil.rmtree(scene_path)
+    return True
+
+
+def _restructure_fetched_scene_if_needed(scene_path: Path) -> None:
+    if not scene_exceeds_node_capacity(scene_path):
+        return
+    try:
+        restructure_scene(scene_path)
+    except Exception as exc:
+        aprint(
+            f"  ⚠ Could not re-ladder the fetched scene ({exc}); "
+            "keeping the original scene and continuing with diagnostics."
+        )
+
+
 def main() -> None:
     aprint("=" * 70)
     aprint("DESI DR1 Demo: The Cosmic Web in 3D")
     aprint("=" * 70)
 
     output_path = get_demos_output_dir() / "desi_galaxies.luxar.zarr"
+    _discard_incomplete_scene(output_path)
 
     if SERVE_ONLY:
         if output_path.exists():
@@ -1141,7 +1212,7 @@ def main() -> None:
         aprint(f"Points: {len(positions):,}")
         create_scene(positions, redshift, tracer_ids, output_path)
     elif not output_path.exists():
-        # Fast path: resolve and unzip the fully-built scene (instant, no LOD build).
+        # Fast path: resolve and unzip the fully-built scene.
         try:
             scene_zip = ensure_dataset(DEMO_NAME)[0]
         except DatasetUnavailable as exc:
@@ -1152,9 +1223,10 @@ def main() -> None:
             # The record's scene is a pre-built artifact, so its STRUCTURE is
             # whatever the build that produced it chose. Re-derive it under the
             # current recipe when it breaches the per-node ceiling, instead of
-            # warning and rendering a node that can lose its tail.
-            if scene_exceeds_node_capacity(output_path):
-                restructure_scene(output_path)
+            # warning and rendering a node that can lose its tail. The other
+            # stale-scene warnings also cover arbitrary user-built caches whose
+            # provenance/shape is not established, so they remain diagnostic.
+            _restructure_fetched_scene_if_needed(output_path)
             ensure_origin_framing(output_path)
             warn_if_scene_is_stale(output_path)
         else:
