@@ -36,7 +36,7 @@ Nothing in the data, cache, LOD, or material path reaches for `SceneManager`.
 ## Usage
 
 ```ts
-import { LuxarLayer } from '@royerlab/luxar-viewer';
+import { LuxarLayer } from '@luxar/viewer';
 
 const layer = new LuxarLayer({
   renderer, // host-owned

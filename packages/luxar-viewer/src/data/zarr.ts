@@ -60,7 +60,7 @@ export type OpenOptions = {
  * The annotation is intentionally loose (`Promise<unknown>` instead of the
  * inferred `Promise<CodecEntry>`) to keep the lib-build's emitted `.d.ts`
  * portable — zarrita's `CodecEntry` is defined in the transitive
- * `numcodecs` package, which isn't a public dep of luxar-viewer. The only
+ * `numcodecs` package, which isn't a public dep of @luxar/viewer. The only
  * consumer (`bootstrap.ts`) just chains `.catch()` on the returned
  * promise, so the loosened element type is sufficient.
  */

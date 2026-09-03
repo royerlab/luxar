@@ -23,7 +23,7 @@ source-barrel import in `layer.js` with the package import below. The example us
 only because Vite and Playwright run it directly without first building the library bundle.
 
 ```js
-import { LuxarLayer } from '@royerlab/luxar-viewer';
+import { LuxarLayer } from '@luxar/viewer';
 ```
 
 The important ordering is visible in `animate()`: `layer.update()` runs before

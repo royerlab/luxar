@@ -4,7 +4,7 @@
  * side-effect-free.
  *
  * This is the contract that makes Luxar safely embeddable: a third-party
- * page doing `import { LuxarApp } from 'luxar-viewer'` must NOT find its
+ * page doing `import { LuxarApp } from '@luxar/viewer'` must NOT find its
  * console silently monkey-patched, its `:root` CSS variables overwritten,
  * or its `<body>` mutated by a singleton waking up at module-load.
  *

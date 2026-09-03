@@ -27,19 +27,19 @@ A GPU-accelerated WebGL renderer for arbitrarily large n-dimensional scientific 
 
 ## 📦 Embedding (single viewer per page)
 
-`luxar-viewer` ships as a side-effect-free ES module. Importing the
+`@luxar/viewer` ships as a side-effect-free ES module. Importing the
 package does not patch your `console`, inject CSS into your `body`, or
 mutate `:root` — the viewer only touches DOM you give it via the `canvas`
 option, plus the UI overlays it mounts into the `container` you provide
 (defaulting to `document.body`).
 
 ```bash
-npm install @royerlab/luxar-viewer three   # three is a peer dep
+npm install @luxar/viewer three   # three is a peer dep
 ```
 
 ```ts
-import { LuxarApp } from '@royerlab/luxar-viewer';
-import '@royerlab/luxar-viewer/styles.css'; // component styles, prefixed under .luxar-*
+import { LuxarApp } from '@luxar/viewer';
+import '@luxar/viewer/styles.css'; // component styles, prefixed under .luxar-*
 
 const canvas = document.querySelector<HTMLCanvasElement>('#viewer-canvas')!;
 const app = new LuxarApp();
@@ -180,7 +180,7 @@ already has a Three.js scene and wants Luxar's data as one more thing in it,
 sharing a single WebGL context, camera, and set of controls.
 
 ```ts
-import { LuxarLayer } from '@royerlab/luxar-viewer';
+import { LuxarLayer } from '@luxar/viewer';
 
 const layer = new LuxarLayer({
   renderer, // host-owned

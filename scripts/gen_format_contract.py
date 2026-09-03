@@ -3,7 +3,7 @@
 
 ``format-contract/contract.yaml`` is the single source of truth for the format
 vocabulary shared by the Python writer (``luxar``) and the TypeScript consumer
-(``luxar-viewer``): format versions, encoding-scheme names, node types/kinds,
+(``@luxar/viewer``): format versions, encoding-scheme names, node types/kinds,
 and the canonical attr/array keys. This script mechanically projects it into:
 
     packages/luxar/src/luxar/typing_utils/_format_contract.py   (constants + Literals)
