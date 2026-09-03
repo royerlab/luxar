@@ -480,10 +480,8 @@ DATASETS: dict[str, dict] = {
         # first-author role. It is his data, so it is his call.
         #
         # Permission CONFIRMED by the author 2026-08-12; both channels uploaded to
-        # the cc-by record and pinned below (md5 verified against Zenodo). The
-        # record is still a DRAFT, so RECORDS["cc-by"] carries its id but
-        # `published: False`, and the fetch leg stays dormant until that flips —
-        # the pins are what publication turns on.
+        # the cc-by record and pinned below (md5 verified against Zenodo). Those
+        # pins became the active fetch contract when the record was published.
     ),
     "gsplats_cell_tracking": dict(
         bucket="zenodo",
