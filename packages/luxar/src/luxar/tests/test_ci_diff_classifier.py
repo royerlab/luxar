@@ -101,6 +101,24 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "gallery-selection.test.ts validates README capture ids against it",
     ),
     (
+        "scripts/benchmarks/benchmark_bisect.sh",
+        "py",
+        "test_benchmark_bisect.py executes the committed launcher directly",
+    ),
+    (
+        "scripts/demo_archive_characteristics.json",
+        "py",
+        "test_demo_gsplats_3d_flylight_mcfo_63x_brain.py checks its measured "
+        "splat count against the hosted demo recipe",
+    ),
+    (
+        "scripts/release.sh",
+        "py",
+        "test_set_version.py asserts its `make set-version` remedy string, and a "
+        "shell file matches no other domain, so a release.sh-only diff would "
+        "otherwise run zero tests",
+    ),
+    (
         "docs/guides/user/CLI_REFERENCE.md",
         "py",
         "test_docs_command_coverage.py drift-guards it against the live Typer app; "
