@@ -54,7 +54,11 @@ export const COVERAGE_THRESHOLDS = {
   'src/controls/**': { lines: 93, functions: 85, branches: 86 }, //  95.0 / 87.7 / 88.0
 
   // The bulk of the codebase.
-  'src/data/**': { lines: 90, functions: 87, branches: 84 }, //      92.1 / 89.2 / 86.4
+  // functions 87 -> 90 after the L0-cache-wiring + spatial-extend-dims
+  // characterization tests (2026-09) lifted the subtree 89.2 -> 91.2. Raised
+  // because check-coverage-slack.mjs flagged the old floor as stale, which is
+  // the ratchet working: tests move the measurement, the guard moves the floor.
+  'src/data/**': { lines: 90, functions: 90, branches: 84 }, //      92.7 / 91.2 / 86.7
   'src/workers/**': { lines: 89, functions: 88, branches: 85 }, //   91.6 / 90.6 / 87.5
   'src/ui/**': { lines: 89, functions: 84, branches: 76 }, //        91.4 / 86.1 / 78.5
   'src/core/**': { lines: 86, functions: 70, branches: 83 }, //      88.4 / 72.0 / 85.6
