@@ -208,7 +208,12 @@ def apply_dynamic_operations(
         # === STEP 2: Identify Weak Splats ===
         importance = _calculate_splat_importance(Ls, amps)
         weak_splat_indices = _select_weak_splats(
-            importance, centers, residual, cfg.relocation_percentile, relocation_tracker
+            importance,
+            centers,
+            residual,
+            cfg.relocation_percentile,
+            relocation_tracker,
+            seed=cfg.seed,
         )
 
         if len(weak_splat_indices) == 0:
@@ -314,6 +319,7 @@ def _select_weak_splats(
     residual: torch.Tensor,
     relocation_percentile: float,
     relocation_tracker: Optional[RecentlyRelocatedTracker] = None,
+    seed: int | None = None,
 ) -> torch.Tensor:
     """
     Select weak splats that are safe to relocate.
@@ -334,6 +340,10 @@ def _select_weak_splats(
         residual: Residual image (target - prediction)
         relocation_percentile: Percentage of least important splats to consider
         relocation_tracker: Optional tracker for cooldown filtering
+        seed: RNG seed for the residual-percentile sample. None →
+            nondeterministic (the sample only estimates a quantile, so the
+            result is stable in distribution either way, but a fixed seed
+            makes a re-fit bit-reproducible).
 
     Returns:
         Tensor of splat indices sorted by importance (weakest first)
@@ -369,8 +379,21 @@ def _select_weak_splats(
             # Random sampling (optimized)
             # Use randint instead of randperm (2-3x faster: generates only sample_size random numbers)
             # Use reshape instead of flatten (avoids copy when tensor is contiguous)
+            # Seeded from cfg.seed so the whole dynamic-ops path is
+            # reproducible: DynamicOpsConfig.seed documents a fixed default
+            # precisely so a re-fit reproduces a published store, and
+            # _find_residual_peaks already honours it. Drawing from the global
+            # torch RNG here made every default fit non-reproducible.
+            generator: torch.Generator | None = None
+            if seed is not None:
+                generator = torch.Generator(device=residual.device)
+                generator.manual_seed(seed)
             indices = torch.randint(
-                0, residual.numel(), (sample_size,), device=residual.device
+                0,
+                residual.numel(),
+                (sample_size,),
+                device=residual.device,
+                generator=generator,
             )
             sampled = torch.clamp(residual.reshape(-1)[indices], min=0)
             # Only compute quantile on positive values from sample

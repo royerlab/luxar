@@ -266,6 +266,62 @@ class TestWeakSplatSelection:
         assert len(weak_indices) == 2  # 40% of 5 = 2
         assert weak_indices.tolist() == [1, 3]
 
+    def test_select_weak_splats_is_reproducible_under_a_fixed_seed(self) -> None:
+        """A seeded call must be bit-reproducible.
+
+        The residual-percentile sample draws 10k voxels out of the volume. It
+        used to draw from the global torch RNG, which made every default fit
+        non-reproducible even though ``DynamicOpsConfig.seed`` documents a
+        fixed default for exactly this reason. Regression for that.
+
+        The residual must be LARGER than the 10k sample cap and have a spread
+        of positive values, or the sampling branch is never taken and the test
+        passes vacuously.
+        """
+        n_splats = 400
+        torch.manual_seed(0)
+        importance = torch.rand(n_splats)
+        centers = torch.rand(n_splats, 3) * 20.0
+        residual = torch.rand(21, 21, 41)  # 18_081 voxels > the 10_000 cap
+        assert residual.numel() > 10_000, "sampling branch must be exercised"
+
+        first = _select_weak_splats(
+            importance, centers, residual, relocation_percentile=25.0, seed=1234
+        )
+        second = _select_weak_splats(
+            importance, centers, residual, relocation_percentile=25.0, seed=1234
+        )
+        assert torch.equal(first, second)
+
+        # Every seed must be reproducible, not just this one.
+        other = _select_weak_splats(
+            importance, centers, residual, relocation_percentile=25.0, seed=99
+        )
+        assert torch.equal(
+            other,
+            _select_weak_splats(
+                importance, centers, residual, relocation_percentile=25.0, seed=99
+            ),
+        )
+        # And the seed must actually reach the sampler. A different seed draws
+        # a different residual sample, so the estimated 25th-percentile cutoff
+        # moves and a different number of splats survives the filter. If this
+        # ever stops differing, the parameter has been silently dropped.
+        assert not torch.equal(first, other)
+
+    def test_dynamic_ops_threads_its_seed_into_weak_splat_selection(self) -> None:
+        """The config seed must reach the sampler, not just the peak finder."""
+        import inspect
+
+        from luxar.gsplats.fitting.dynamic_ops import operations
+
+        source = inspect.getsource(operations.apply_dynamic_operations)
+        assert "seed=cfg.seed" in source, (
+            "apply_dynamic_operations must forward cfg.seed to _select_weak_splats; "
+            "without it the residual sample falls back to the global torch RNG"
+        )
+        assert "seed" in inspect.signature(operations._select_weak_splats).parameters
+
     def test_select_weak_splats_minimum_one(self) -> None:
         """Test that at least one splat is always selected."""
         importance = torch.tensor([0.5, 0.6, 0.7, 0.8, 0.9])
