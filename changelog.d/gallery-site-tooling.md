@@ -19,9 +19,10 @@ Two behaviours are deliberate and easy to lose in a rewrite:
   `nd_transforms_bench`, …). The store comes from each entry's `dataset`, never
   its `id`, and routes are emitted for both spellings.
 - **`--check-contract`** fails the build naming any README-linked key without a
-  route, sourced from `media-manifest.json` rather than the
-  `docs/images/readme/gallery/` basenames — those files no longer exist, so a
-  guard reading them would pass on an empty set.
+  route. Its source is the union of `media-manifest.json` tile keys and the
+  README's own `/d/` links, rather than the `docs/images/readme/gallery/`
+  basenames, which no longer exist. The check fails closed when neither source
+  is present or their union is empty.
 
 There is no `/d/*` catch-all on purpose: an unknown key should not quietly land
 on the gallery, because that hides a typo behind a page that looks fine.

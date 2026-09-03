@@ -23,9 +23,10 @@ Two things here are load-bearing and easy to get wrong in a rewrite:
 2. **The README contract.** Tile titles in the root README link to these routes,
    so a key losing its route is a broken public link. ``--check-contract``
    fails the build naming any README-linked key without a route. Its source is
-   ``media-manifest.json`` rather than the ``docs/images/readme/gallery/``
-   basenames, because those files no longer exist — a guard reading them would
-   pass on an empty set, which is worse than failing.
+   the union of ``media-manifest.json`` tile keys and the README's own ``/d/``
+   links, rather than the ``docs/images/readme/gallery/`` basenames, because
+   those files no longer exist. The check fails closed when neither source is
+   present or their union is empty.
 
 There is deliberately no ``/d/*`` catch-all: an unknown key should not quietly
 land on the gallery, because that hides a typo behind a page that looks fine.
