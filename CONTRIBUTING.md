@@ -14,7 +14,7 @@ cd luxar
 make setup-dev  # Installs dependencies and pre-commit hooks
 
 # 3. Create feature branch
-git checkout -b feature/amazing-feature
+git checkout -b feature/amazing-feature origin/dev
 
 # 4. Make your changes
 # ... edit code ...
@@ -28,6 +28,7 @@ git commit -m "Add amazing feature"
 
 # 7. Push and create Pull Request
 git push origin feature/amazing-feature
+gh pr create --base dev
 ```
 
 ## 🛠️ Development Environment
@@ -181,6 +182,19 @@ Maintainers review for:
 - Breaking changes impact
 
 ## 📝 Pull Request Guidelines
+
+### Target `dev`, not `main`
+
+Open pull requests against **`dev`**, the integration branch:
+
+```bash
+gh pr create --base dev
+```
+
+`main` is the promoted branch. It is protected, it is what release tags are cut
+from, and changes reach it by promotion from `dev` rather than directly. Name
+the base explicitly rather than relying on the repository default, so the
+command keeps meaning the same thing if that default ever changes.
 
 ### Coordinate Issue Work
 

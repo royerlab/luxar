@@ -5,8 +5,8 @@ Updates the single source of truth — ``__version__`` in
 ``packages/luxar/src/luxar/__init__.py`` — and keeps the viewer's
 ``package.json`` and the root ``CITATION.cff`` in sync. Because ``main`` is
 branch-protected, this only edits files locally; commit the change on a branch
-and open a PR, then tag the release with ``make release`` once it has merged
-with CI green.
+and open a PR, then switch to ``main`` and tag the release with ``make release``
+once the bump has been promoted with CI green.
 
 Usage:
     python scripts/set_version.py            # today, zero-padded YYYY.MM.DD
@@ -131,11 +131,13 @@ def main(argv: list[str]) -> int:
     print("Next steps (main is branch-protected — no direct push):")
     print(f"  git switch -c release/v{version}")
     print(f"  git commit -am 'release: v{version}'")
-    print("  gh pr create --fill   # merge once CI is green")
+    # `--base dev` is explicit on purpose: without it `gh` targets the repo's
+    # DEFAULT branch, so this hint would silently change meaning if the default
+    # ever moves to `main` (which is protected and would reject the PR anyway).
+    print("  gh pr create --base dev --fill   # merge once CI is green")
     print(
-        "  make release          # tags v{0} and triggers the PyPI publish".format(
-            version
-        )
+        "  make release          # switch to main after the bump is promoted; "
+        "tags v{0} and publishes".format(version)
     )
     return 0
 
