@@ -605,9 +605,9 @@ describe('applyEffectiveAttrs — colormap reaches the consumer record (#1600)',
 
 // `layer_order` — the authored cross-layer draw order
 // (docs/guides/specs/LAYER_ORDER_SPEC.md). Composes nearest-setter-wins
-// like `blending_mode`, and its `undefined` is load-bearing: only an AUTHORED
-// level suppresses the renderer's containment rule, so "nobody set one" must
-// stay distinguishable from "someone set 0" (spec D2/D3).
+// like `blending_mode`, and its `undefined` is load-bearing: "nobody set one"
+// must stay distinguishable from "someone set 0" for the panel's `auto` state
+// and authored-band diagnostics, although both order in band 0 (spec D2/D3).
 describe('composeAttrs — layer_order', () => {
   it('is undefined for an unset chain', () => {
     expect(composeAttrs([]).layer_order).toBeUndefined();

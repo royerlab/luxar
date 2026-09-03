@@ -1269,8 +1269,8 @@ describe('LayerStateManager — layer order', () => {
 
   // Clearing is NOT setting 0. If `layerOrderExplicit` were left true here,
   // `liveLayerAttrs` would keep emitting the stale value as this layer's own
-  // composition setter and the renderer would keep treating the layer as
-  // banded — permanently suppressing containment for a level just deleted.
+  // composition setter, so the panel and diagnostics would keep reporting an
+  // authored order that was just deleted.
   it('setLayerOrder(undefined) clears BOTH the value and the explicit flag', () => {
     mgr.setLayerOrder('authored', undefined);
     expect(mgr.getLayer('authored')?.layerOrder).toBeUndefined();
