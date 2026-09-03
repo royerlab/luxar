@@ -831,11 +831,19 @@ def test_live_ci_checkouts_share_one_scheduled_dev_sha(workflow: str) -> None:
         for job_name, job in jobs.items()
         if job_name == "changes"
         or "changes"
-        in ([job["needs"]] if isinstance(job.get("needs"), str) else job.get("needs", []))
+        in (
+            [job["needs"]]
+            if isinstance(job.get("needs"), str)
+            else job.get("needs", [])
+        )
     }
     checkout_jobs = {
         job_name: next(
-            (step for step in job["steps"] if "actions/checkout" in step.get("uses", "")),
+            (
+                step
+                for step in job["steps"]
+                if "actions/checkout" in step.get("uses", "")
+            ),
             None,
         )
         for job_name, job in jobs.items()
@@ -1448,9 +1456,7 @@ def test_promotion_guard_green_on_merge_during_checkout(
     assert calls == []
 
 
-def test_promotion_guard_reds_on_unknown_branch(
-    workflow: str, tmp_path: Path
-) -> None:
+def test_promotion_guard_reds_on_unknown_branch(workflow: str, tmp_path: Path) -> None:
     """HEAD is neither main's tip nor an ancestor of dev's tip -> LOUD RED."""
     result, calls = _run_cancelled_push_repair(
         workflow,
