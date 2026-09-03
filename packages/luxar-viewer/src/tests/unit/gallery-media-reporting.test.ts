@@ -1,3 +1,7 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 import {
   GALLERY_MEDIA_LIMIT_BYTES,
@@ -6,6 +10,7 @@ import {
   collectGalleryMediaSizeIssues,
   formatGalleryCaptureMetrics,
   galleryDroppedElementsWarning,
+  skipGalleryMediaWhenRequested,
   summarizeGalleryMedia,
   type GalleryMediaFile,
 } from '../screenshots/gallery-media-reporting';
@@ -70,6 +75,23 @@ describe('gallery media reporting', () => {
       '[first-oversized] first-oversized.webm is 25.00 MiB (26,214,400 bytes); Pages requires each file below 25.00 MiB',
       '[second-oversized] second-oversized.webp is 25.00 MiB (26,214,401 bytes); Pages requires each file below 25.00 MiB',
     ]);
+  });
+
+  it('deletes stale media only when that variant is intentionally skipped', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'luxar-gallery-media-'));
+    const filePath = path.join(directory, 'demo.webm');
+    try {
+      fs.writeFileSync(filePath, 'stale video');
+
+      expect(skipGalleryMediaWhenRequested(false, filePath)).toBe(false);
+      expect(fs.existsSync(filePath)).toBe(true);
+
+      expect(skipGalleryMediaWhenRequested(true, filePath)).toBe(true);
+      expect(fs.existsSync(filePath)).toBe(false);
+      expect(skipGalleryMediaWhenRequested(true, filePath)).toBe(true);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it('prints renderer truncation beside final coverage metrics', () => {

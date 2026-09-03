@@ -77,6 +77,7 @@ import {
   borderSampleFrames,
   evaluateBorderLit,
   evaluateUnderfill,
+  selectCropVerdictSamples,
   type BorderSample,
   type CoverageMeasurement,
   type CropFraming,
@@ -89,6 +90,7 @@ import {
   formatGalleryCaptureMetrics,
   formatMediaSize,
   galleryDroppedElementsWarning,
+  skipGalleryMediaWhenRequested,
   summarizeGalleryMedia,
   type GalleryMediaFile,
 } from './gallery-media-reporting';
@@ -243,6 +245,17 @@ interface DemoEntry {
   // software-GL frame take minutes: the viewport-relative coverage LOD then
   // picks a lighter level sized to the framing, so the orbit video is feasible.
   lodFinest?: boolean;
+  // Capture a STATIC single-frame tile and skip the orbit video entirely, for a
+  // subject whose apparent extent changes sharply with view angle — a row of
+  // objects foreshortening, a flat wall going edge-on — where the rock reads as
+  // flashing rather than motion. gsplats_lod_embryo_line swings 13x in mean
+  // luminance twice per loop at the default ±20°, and still 8.2x at ±6°, so no
+  // amplitude fixes it.
+  //
+  // Note the `.webp` IS the animated loop (build_gallery_data uses it as the
+  // tile's `still`, and has_media is `video or still`), so skipping only the
+  // `.webm` would leave the pulsing in place — hence the static webp.
+  noOrbitVideo?: boolean;
   // Free-text human annotation carried in the manifest (why a demo is framed a
   // certain way, what still needs tuning). Declared so the manifest and this
   // interface agree; the capture code never reads it.
@@ -1281,6 +1294,21 @@ function convertFramesToWebm(framesDir: string, output: string): void {
   );
 }
 
+/**
+ * Single-frame WebP from the curated still, for demos that opt out of an orbit
+ * clip. The animated `.webp` is what the gallery uses as a tile's `still`, so a
+ * subject that should not move needs a STATIC one here — dropping only the
+ * `.webm` would leave the animation in place.
+ */
+function convertFrameToStaticWebp(input: string, output: string): void {
+  execSync(
+    `ffmpeg -y -i "${input}" ` +
+      `-vf "scale=${WEBP_WIDTH}:-1" -vcodec libwebp -lossless 0 ` +
+      `-compression_level 6 -q:v ${WEBP_QUALITY} -frames:v 1 "${output}"`,
+    { stdio: 'pipe' }
+  );
+}
+
 /** Small animated WebP loop for the README (inline on GitHub) from the frames. */
 function convertFramesToWebp(framesDir: string, output: string): void {
   // Same 1:1 assembly (no minterpolate) — real frames only, no warping.
@@ -1422,6 +1450,26 @@ for (const demo of DEMOS) {
       `[${demo.id}] still → ${path.basename(pngPath)} (${formatMediaSize(pngMedia.sizeBytes)})`
     );
 
+    const noOrbit = demo.noOrbitVideo === true;
+    const webpPath = path.join(OUTPUT_DIR, `${demo.id}.webp`);
+    const webmPathOut = path.join(OUTPUT_DIR, `${demo.id}.webm`);
+    if (noOrbit) {
+      try {
+        // Subject should not be rocked (see noOrbitVideo in the manifest):
+        // a static tile rather than a clip that pulses as the view changes.
+        convertFrameToStaticWebp(pngPath, webpPath);
+        const webpMedia = recordGalleryMedia(demo.id, webpPath);
+        console.log(
+          `[${demo.id}] webp → ${path.basename(webpPath)} (${formatMediaSize(webpMedia.sizeBytes)})`
+        );
+      } catch (e) {
+        fs.rmSync(webpPath, { force: true });
+        console.error(`[${demo.id}] webp failed:`, e);
+      }
+      skipGalleryMediaWhenRequested(noOrbit, webmPathOut);
+      console.log(`[${demo.id}] noOrbitVideo — static tile, skipping webm`);
+    }
+
     // Orbit: capture explicit per-angle frames (reliable in headless), then
     // assemble the WebM master + animated WebP.
     const framesDir = path.join(OUTPUT_DIR, `_frames_${demo.id}`);
@@ -1470,9 +1518,11 @@ for (const demo of DEMOS) {
       distance: demo.distance,
       autoFrame: demo.autoFrame,
     };
-    // Still first, so a tie names the pose easiest to reproduce by hand.
+    // Keep every measurement in the log, but judge only poses that reach the
+    // published media. Still first, so a tie names the easiest pose to reproduce.
     const samples = [...(stillSample ? [stillSample] : []), ...borderSamples];
-    const verdict = evaluateBorderLit({ demoId: demo.id, samples, framing });
+    const verdictSamples = selectCropVerdictSamples(stillSample, borderSamples, noOrbit);
+    const verdict = evaluateBorderLit({ demoId: demo.id, samples: verdictSamples, framing });
     // ALWAYS report measured/attempted poses: the verdict is the worst of whatever
     // could be measured, so a skipped pose (each one warned about above) would
     // otherwise print an ordinary-looking count that silently misses a crop
@@ -1499,34 +1549,36 @@ for (const demo of DEMOS) {
     }
     console.log(`[${demo.id}] captured ${n} orbit frames`);
 
-    const webpPath = path.join(OUTPUT_DIR, `${demo.id}.webp`);
-    const webmPathOut = path.join(OUTPUT_DIR, `${demo.id}.webm`);
     try {
-      let webpEncoded = false;
-      try {
-        convertFramesToWebp(framesDir, webpPath); // README inline (GitHub)
-        webpEncoded = true;
-      } catch (e) {
-        console.error(`[${demo.id}] webp failed:`, e);
-      }
-      if (webpEncoded) {
-        const webpMedia = recordGalleryMedia(demo.id, webpPath);
-        console.log(
-          `[${demo.id}] webp → ${path.basename(webpPath)} (${formatMediaSize(webpMedia.sizeBytes)})`
-        );
-      }
-      let webmEncoded = false;
-      try {
-        convertFramesToWebm(framesDir, webmPathOut); // full-quality master
-        webmEncoded = true;
-      } catch (e) {
-        console.error(`[${demo.id}] webm failed:`, e);
-      }
-      if (webmEncoded) {
-        const webmMedia = recordGalleryMedia(demo.id, webmPathOut);
-        console.log(
-          `[${demo.id}] webm → ${path.basename(webmPathOut)} (${formatMediaSize(webmMedia.sizeBytes)})`
-        );
+      if (!noOrbit) {
+        let webpEncoded = false;
+        try {
+          convertFramesToWebp(framesDir, webpPath); // README inline (GitHub)
+          webpEncoded = true;
+        } catch (e) {
+          fs.rmSync(webpPath, { force: true });
+          console.error(`[${demo.id}] webp failed:`, e);
+        }
+        if (webpEncoded) {
+          const webpMedia = recordGalleryMedia(demo.id, webpPath);
+          console.log(
+            `[${demo.id}] webp → ${path.basename(webpPath)} (${formatMediaSize(webpMedia.sizeBytes)})`
+          );
+        }
+        let webmEncoded = false;
+        try {
+          convertFramesToWebm(framesDir, webmPathOut); // full-quality master
+          webmEncoded = true;
+        } catch (e) {
+          fs.rmSync(webmPathOut, { force: true });
+          console.error(`[${demo.id}] webm failed:`, e);
+        }
+        if (webmEncoded) {
+          const webmMedia = recordGalleryMedia(demo.id, webmPathOut);
+          console.log(
+            `[${demo.id}] webm → ${path.basename(webmPathOut)} (${formatMediaSize(webmMedia.sizeBytes)})`
+          );
+        }
       }
     } finally {
       fs.rmSync(framesDir, { recursive: true, force: true }); // clean up frames

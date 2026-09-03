@@ -23,6 +23,7 @@ import {
   borderLitPercent,
   borderSampleFrames,
   evaluateBorderLit,
+  selectCropVerdictSamples,
   BORDER_LIT_MAX,
   BORDER_SAMPLE_STEP_DEG,
   FILL_TARGET_MIN,
@@ -113,6 +114,15 @@ describe('gallery crop policy', () => {
   });
 
   describe('verdict', () => {
+    it('judges no-orbit tiles from the published still while preserving normal orbit checks', () => {
+      const still = sample('still', 0);
+      const croppedOrbit = sample('rock +20°', BORDER_LIT_MAX + 1);
+
+      expect(selectCropVerdictSamples(still, [croppedOrbit], true)).toEqual([still]);
+      expect(selectCropVerdictSamples(still, [croppedOrbit], false)).toEqual([still, croppedOrbit]);
+      expect(selectCropVerdictSamples(null, [croppedOrbit], true)).toEqual([]);
+    });
+
     it('reports no crop when nothing is lit on the border', () => {
       const samples = [sample('still', 0), sample('rock +20°', 0), sample('rock -20°', 0)];
       const v = evaluateBorderLit({ demoId: 'lorenz', samples, framing: fill(0.95) });
