@@ -593,6 +593,37 @@ class TestNodeCapacityPredicate:
         assert sum([part] * 4) > _demo.SCENE_MAX_POINTS_PER_NODE
         assert _demo.scene_exceeds_node_capacity(scene) is False
 
+    def test_an_unopenable_scene_fails_CLOSED(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Cannot-tell must mean "repair", never "fine".
+
+        The asymmetry is what decides it: re-laddering an already-compliant
+        scene wastes minutes and changes nothing, while skipping a
+        non-compliant one renders a node that can lose its tail silently. This
+        defect existed in the first place because a check that could not tell
+        said nothing and carried on.
+        """
+        missing = tmp_path / "not-a-scene.luxar.zarr"
+        assert _demo.scene_exceeds_node_capacity(missing) is True
+        assert "⚠" in capsys.readouterr().out
+
+    def test_an_uninspectable_layer_fails_CLOSED(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A scene missing a layer is repaired, not waved through."""
+        import zarr
+
+        scene = tmp_path / "desi.luxar.zarr"
+        root = zarr.open(str(scene), mode="w")
+        # 'By tracer type' is compliant; 'By redshift' is absent entirely.
+        finest = root.create_group("By tracer type").create_group("child_2")
+        finest.attrs["kind"] = "partition"
+        finest.create_group("part_0").attrs["n_points"] = 10
+
+        assert _demo.scene_exceeds_node_capacity(scene) is True
+        assert "By redshift" in capsys.readouterr().out
+
     def test_one_breaching_layer_is_enough(self, tmp_path: Path) -> None:
         scene = tmp_path / "desi.luxar.zarr"
         part = _demo.SCENE_MAX_POINTS_PER_NODE // 4
@@ -1075,6 +1106,11 @@ class TestMainSceneReuse:
             "extract_shipped_scene",
             lambda source, output: calls.append(("extract", (source, output))),
         )
+        # This test pins WHICH archive is resolved, and stubs extraction, so no
+        # scene is ever written. The capacity check therefore fails closed on a
+        # path that does not exist — correctly, but it is not what is under
+        # test, so stub it alongside the other steps.
+        monkeypatch.setattr(_demo, "scene_exceeds_node_capacity", lambda path: False)
         monkeypatch.setattr(
             _demo,
             "ensure_origin_framing",

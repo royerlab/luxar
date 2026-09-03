@@ -644,14 +644,26 @@ def scene_exceeds_node_capacity(scene_path: Path) -> bool:
     The decision half of :func:`_warn_if_node_exceeds_capacity`: that reports,
     this answers. Kept separate so the fetch path can ACT on the same condition
     the warning describes rather than duplicating the threshold.
+
+    FAILS CLOSED. A scene this cannot inspect returns True — "repair it" — not
+    False. Unknown is not the same as fine, and the asymmetry is cheap in one
+    direction only: re-laddering a scene that was already compliant costs a few
+    minutes of compute and changes nothing, while skipping a scene that was NOT
+    compliant renders a node that can lose its tail with no further signal. The
+    cost of being wrong is minutes one way and a silently truncated catalog the
+    other, so the tie goes to repairing. This whole defect existed because a
+    check that could not tell said nothing and carried on.
     """
     import zarr
 
     try:
         root = zarr.open(str(scene_path), mode="r")
-    except Exception as exc:  # pragma: no cover - diagnostics only
-        aprint(f"  ⚠ Could not inspect {scene_path} for node capacity: {exc}")
-        return False
+    except Exception as exc:
+        aprint(
+            f"  ⚠ Could not open {scene_path} to check node capacity ({exc}); "
+            "treating it as needing a re-ladder rather than assuming it is fine."
+        )
+        return True
 
     for layer_name in ("By tracer type", "By redshift"):
         try:
@@ -670,9 +682,12 @@ def scene_exceeds_node_capacity(scene_path: Path) -> bool:
             for node in nodes:
                 if int(node.attrs.get("n_points", 0)) > SCENE_MAX_POINTS_PER_NODE:
                     return True
-        except Exception as exc:  # pragma: no cover - diagnostics only
-            aprint(f"  ⚠ Could not inspect [{layer_name}] for node capacity: {exc}")
-            continue
+        except Exception as exc:
+            aprint(
+                f"  ⚠ Could not inspect [{layer_name}] for node capacity ({exc}); "
+                "treating it as needing a re-ladder rather than assuming it is fine."
+            )
+            return True
     return False
 
 

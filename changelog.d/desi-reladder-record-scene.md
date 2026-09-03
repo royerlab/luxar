@@ -51,3 +51,10 @@ yet (#2482), and this should move onto it when it lands. Note the demo's own
 `dequantize_positions` is NOT that tool — it inverts the demo's `.npz` scheme
 (one global offset/scale), while a compiled scene uses per-chunk bounds, so
 reaching for it yields plausible-looking wrong coordinates.
+
+The capacity check fails CLOSED: a scene it cannot inspect is treated as needing
+a re-ladder, not as fine. The asymmetry decides it — re-laddering an
+already-compliant scene wastes minutes and changes nothing, while skipping a
+non-compliant one renders a node that can lose its tail with no further signal.
+This defect existed in the first place because a check that could not tell said
+nothing and carried on.
