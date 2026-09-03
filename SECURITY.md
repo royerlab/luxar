@@ -39,7 +39,7 @@ The parts where a security issue is most plausible:
 - **`luxar serve` and `luxar export`.** These serve files over HTTP. Path
   traversal or serving outside the intended root is in scope.
 - **The published artifacts.** Anything that could let a third party publish to
-  `luxar` on PyPI or `@luxar/viewer` on npm, or tamper with a release, is very
+  `luxar` on PyPI or `@royerlab/luxar-viewer` on npm, or tamper with a release, is very
   much in scope.
 
 ## What is not
