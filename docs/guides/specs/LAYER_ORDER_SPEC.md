@@ -210,8 +210,8 @@ partition part) with no extra rule.
 Refused at authoring through *both* doors (the adder kwarg and a post-hoc
 `node.attrs["layer_order"] = …`), mirroring `reject_lines_only_join` +
 `reject_lines_only_join_assignment`. The viewer, which must render whatever it
-is handed, instead warns once and falls back to the enclosing layer's level —
-strict write, tolerant read.
+is handed, instead warns once and uses one level for the whole order group,
+keeping the first collected member's — strict write, tolerant read.
 
 **D7 — Layers-panel edits are session-only.** Matching every other control in
 that panel: "Edits made in the panel are viewer-only and not persisted back to

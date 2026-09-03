@@ -1221,9 +1221,9 @@ describe('LayerStateManager', () => {
 
 // `layer_order` — the authored cross-layer draw order
 // (docs/guides/specs/LAYER_ORDER_SPEC.md). The panel's whole job here is
-// keeping "unset" distinguishable from "0": an unset level hands the layer back
-// to the renderer's inferred containment ordering, while an explicit 0 states a
-// band and suppresses that inference.
+// keeping "unset" distinguishable from "0": both resolve to band 0 and preserve
+// containment ordering within that band, but only the explicit value remains a
+// stated panel value and participates in authored-band diagnostics.
 describe('LayerStateManager — layer order', () => {
   const graph = (): SceneNode =>
     ({
