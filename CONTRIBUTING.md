@@ -13,7 +13,7 @@ cd luxar
 make setup-dev  # Installs dependencies and pre-commit hooks
 
 # 3. Create feature branch
-git checkout -b feature/amazing-feature
+git checkout -b feature/amazing-feature origin/dev
 
 # 4. Make your changes
 # ... edit code ...
@@ -27,6 +27,7 @@ git commit -m "Add amazing feature"
 
 # 7. Push and create Pull Request
 git push origin feature/amazing-feature
+gh pr create --base dev
 ```
 
 ## 🛠️ Development Environment
