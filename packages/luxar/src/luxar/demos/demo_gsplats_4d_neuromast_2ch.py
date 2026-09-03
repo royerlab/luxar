@@ -509,6 +509,7 @@ def resolve_channel_paths() -> list[Path]:
     try:
         fetched = {path.name: path for path in ensure_dataset(DATASET_NAME)}
     except DatasetUnavailable as unavailable:
+        aprint(f"Manifest fetch unavailable ({unavailable}).")
         paths = [DATA_DIR / channel["file"] for channel in CHANNELS]
         missing = [path for path in paths if not path.exists()]
         if missing:

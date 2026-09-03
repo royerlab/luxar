@@ -85,12 +85,14 @@ def test_neuromast_resolver_rejects_a_diverged_manifest(
 def test_neuromast_resolver_falls_back_when_the_record_is_unavailable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    messages: list[str] = []
     expected = []
     for channel in neuromast_demo.CHANNELS:
         path = tmp_path / channel["file"]
         path.mkdir()
         expected.append(path)
     monkeypatch.setattr(neuromast_demo, "DATA_DIR", tmp_path, raising=False)
+    monkeypatch.setattr(neuromast_demo, "aprint", messages.append)
     monkeypatch.setattr(
         neuromast_demo,
         "ensure_dataset",
@@ -98,6 +100,7 @@ def test_neuromast_resolver_falls_back_when_the_record_is_unavailable(
     )
 
     assert neuromast_demo.resolve_channel_paths() == expected
+    assert messages == ["Manifest fetch unavailable (draft record)."]
 
 
 def test_neuromast_unavailable_record_reports_missing_local_channels(
