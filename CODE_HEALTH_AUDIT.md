@@ -667,6 +667,35 @@ Do this before the structural work so the structural work is protected.
 
 1. `ruff` select `B, C4, RUF, NPY, SIM` with `RUF001/2/3, B008` ignored; land **B905** and
    **B006** first — they are the families that produce wrong numbers rather than crashes. **L**
+
+   *Measured 2026-09-02, and it reframes the size of this item.* The headline "834 production
+   hits" is dominated by cosmetic rules: a wider select over the package reports ~6,700
+   annotation modernizations (`UP045`/`UP006`/`UP037`/`UP035`/`UP007`), ~1,000 ambiguous-unicode
+   findings in docstrings (`RUF001/2/3` — mostly deliberate em-dashes and arrows), and 939
+   `TID252` relative-imports, which is a style the codebase clearly chose. Enabling everything
+   would be a very large diff for very little safety.
+
+   The **defect-bearing** subset on the shipping surface (tests and demos excluded) is only
+   **129**:
+
+   | Rule | Hits | Why it matters |
+   |---|---:|---|
+   | `B905` zip-without-explicit-strict | 67 | silent truncation to the shortest input |
+   | `B904` raise-without-from-inside-except | 55 | destroys the exception cause chain |
+   | `RUF012` mutable-class-default | 5 | shared mutable state across instances |
+   | `B006` mutable-argument-default | 2 | the classic |
+
+   `B008` is 83 hits and **all 83 are `typer.Argument` / `typer.Option` under `cli/`** — the
+   mandatory Typer idiom, not a defect. Configure
+   `lint.flake8-bugbear.extend-immutable-calls` rather than ignoring the rule wholesale, so the
+   rule still fires on a genuine mutable call elsewhere.
+
+   **`B905` is not a mechanical fix, which is the argument for ratcheting rather than
+   bulk-fixing.** `strict=True` raises when the inputs differ in length, so applying it blindly
+   changes behaviour at any site that is *currently* relying on truncation — possibly correctly.
+   Each of the 67 needs a per-site decision between `strict=True` and an explicit
+   `strict=False`. Land the rules with a baseline (the `scripts/complexity_baseline.json`
+   pattern), so new code is blocked immediately and the 129 burn down deliberately.
 2. ESLint: spread `recommendedTypeChecked`, or at minimum land `no-floating-promises`,
    `no-misused-promises`, `await-thenable`, `no-base-to-string` (24 production sites). **M**
 3. CI lint parity + `ruff format --check`. **S**
