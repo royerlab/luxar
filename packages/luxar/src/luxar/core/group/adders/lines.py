@@ -31,6 +31,7 @@ from ..compositing import (
     is_broadcast_color,
     position_bounds_from_array,
     preflight_extend_to_all,
+    reject_layer_order_inside_specialized_group,
     reject_mesh_only_appearance,
     slice_optional_array,
     strip_absent_attr_kwargs,
@@ -197,6 +198,9 @@ def add_lines_impl(
         validate_node_name(name)
         (parent or group)._ensure_no_duplicate_child(name)
         reject_mismatched_partition_parent(parent or group, "lines", name)
+        reject_layer_order_inside_specialized_group(
+            "lines", name, attrs, parent or group
+        )
         reject_mesh_only_appearance("lines", name, attrs)
 
         scene = group._find_scene()

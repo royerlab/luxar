@@ -74,6 +74,7 @@ export class LayerControls {
   private shininessSlider: LabeledSlider | null = null;
   private alphaCutoffSlider: LabeledSlider | null = null;
   private blendSelect: HTMLSelectElement | null = null;
+  private layerOrderInput: HTMLInputElement | null = null;
   private colormapSelect: HTMLSelectElement | null = null;
   private labelColorSelect: HTMLSelectElement | null = null;
   private labelFilterSelect: HTMLSelectElement | null = null;
@@ -151,6 +152,7 @@ export class LayerControls {
     this.alphaCutoffSlider?.dispose();
     this.alphaCutoffSlider = null;
     this.blendSelect = null;
+    this.layerOrderInput = null;
     this.colormapSelect = null;
     this.lodLevelSelect = null;
     this.lodLevelStatus = null;
@@ -431,6 +433,53 @@ export class LayerControls {
     blendGroup.appendChild(this.blendSelect);
     this.controlsEl.appendChild(blendGroup);
 
+    // Layer order — the authored cross-layer draw order
+    // (`LAYER_ORDER_SPEC.md`). A number input rather than a slider,
+    // because the value is a signed safe integer AND must be able to be BLANK:
+    // empty means "unset", which hands the layer back to the renderer's
+    // inferred containment ordering and is a genuinely different state from 0.
+    const orderGroup = document.createElement('div');
+    orderGroup.className = 'luxar-layers-panel__control-group';
+    const orderLabel = document.createElement('div');
+    orderLabel.className = 'luxar-layers-panel__control-label';
+    orderLabel.textContent = 'Layer order';
+
+    this.layerOrderInput = document.createElement('input');
+    this.layerOrderInput.type = 'number';
+    this.layerOrderInput.step = '1';
+    this.layerOrderInput.className = 'luxar-layers-panel__number';
+    this.layerOrderInput.placeholder = 'auto';
+    // The visible label is a sibling `div`, matching every other control here,
+    // so nothing associates it with the field. A `select` at least announces
+    // its selected option; a bare number input announces nothing, so give it a
+    // name of its own.
+    this.layerOrderInput.setAttribute('aria-label', 'Layer order');
+    this.layerOrderInput.title =
+      'Draw order against the layers this one overlaps. Higher draws nearer the ' +
+      'camera (on top), like a CSS z-index. Leave blank to let the viewer infer ' +
+      'the order from the geometry. Sparse values (10/20/30) leave room to insert.';
+    this.events.on(this.layerOrderInput, 'change', () => {
+      this.controlsInteracting = true;
+      const raw = this.layerOrderInput!.value.trim();
+      // Blank CLEARS. A non-numeric entry is treated as blank rather than as 0,
+      // since 0 is a real band and guessing it from junk would state an order
+      // the user did not choose.
+      const parsed = raw === '' ? undefined : Number(raw);
+      const level = parsed === undefined || !Number.isSafeInteger(parsed) ? undefined : parsed;
+      const selected = this.deps.state.getSelected();
+      for (const sel of selected) {
+        this.deps.state.setLayerOrder(sel.path, level);
+        this.deps.apply.applyLayerOrder(sel);
+      }
+      // Echo back what was actually stored, so junk input does not sit in the
+      // field looking authoritative.
+      this.layerOrderInput!.value = level === undefined ? '' : String(level);
+      this.controlsInteracting = false;
+    });
+    orderGroup.appendChild(orderLabel);
+    orderGroup.appendChild(this.layerOrderInput);
+    this.controlsEl.appendChild(orderGroup);
+
     // Colormap selector (only shown for layers that support colormap)
     const cmGroup = document.createElement('div');
     cmGroup.className = 'luxar-layers-panel__control-group';
@@ -653,6 +702,19 @@ export class LayerControls {
     }
 
     this.gammaSlider?.setValue(primary.gamma);
+    if (this.layerOrderInput) {
+      // Blank when the layer owns no level. If it inherits one, surface the
+      // effective band in the placeholder without making it look editable as
+      // this layer's own value.
+      this.layerOrderInput.value =
+        primary.layerOrderExplicit && primary.layerOrder !== undefined
+          ? String(primary.layerOrder)
+          : '';
+      this.layerOrderInput.placeholder =
+        !primary.layerOrderExplicit && primary.layerOrder !== undefined
+          ? `auto (${primary.layerOrder})`
+          : 'auto';
+    }
     this.opacitySlider?.setValue(primary.opacity);
     // Seat the thumb on a track that can represent THIS layer's live κ. The
     // track itself is now layer-independent — every geometry family builds

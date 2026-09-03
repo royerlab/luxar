@@ -53,7 +53,41 @@ class _WriteThroughAttrs(MutableMapping[str, Any]):
             setattr(self._node, key, value)
             return
         self._reject_mesh_only_on_non_mesh(key)
+        self._reject_layer_order_inside_specialized_group(key, value)
         self._node._persist_attr(key, value)
+
+    def _reject_layer_order_inside_specialized_group(
+        self, key: str, value: Any
+    ) -> None:
+        """Close the second door onto ``layer_order`` inside a partition / LOD group.
+
+        The leaf adders refuse it at authoring time, but this write-through
+        mapping persists straight to the store, so
+        ``part.attrs["layer_order"] = 5`` would otherwise reach disk and split a
+        partition wrapper across draw-order bands — destroying the exact BSP part
+        order the wrapper guarantees. Same shape and same reasoning as
+        :meth:`_reject_mesh_only_on_non_mesh`.
+
+        The walk starts at the node's parent so the partition / LOD wrapper
+        itself remains a valid authoring surface while parts and levels are
+        still refused.
+        """
+        if key != "layer_order":
+            return
+        from ..group.compositing import (
+            _enclosing_specialized_group,
+            layer_order_inside_specialized_group_reason,
+        )
+
+        wrapper = _enclosing_specialized_group(self._node.parent)
+        if wrapper is None:
+            return
+        kind = str(wrapper.attrs.get("kind"))
+        raise ValueError(
+            f"Cannot set layer_order={value!r} on '{self._node.name}', which is "
+            f"inside a kind={kind} group. "
+            + layer_order_inside_specialized_group_reason(kind)
+        )
 
     def _reject_mesh_only_on_non_mesh(self, key: str) -> None:
         """Close the second door onto mesh-only appearance attrs (#1782).
@@ -493,12 +527,16 @@ class Node:
             ValueError: If group creation fails
         """
         from ..group import Group
-        from ..group.compositing import reject_mesh_only_appearance
+        from ..group.compositing import (
+            reject_layer_order_inside_specialized_group,
+            reject_mesh_only_appearance,
+        )
 
         try:
             aprint(f"Adding child group '{name}' to node '{self.name}'.")
 
             reject_mesh_only_appearance("group", name, attrs)
+            reject_layer_order_inside_specialized_group("group", name, attrs, self)
 
             # Duplicate child check and writing to storage, attr validation,
             # and caching are all handled by Node.__init__.

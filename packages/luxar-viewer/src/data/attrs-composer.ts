@@ -14,6 +14,10 @@
  *                          for mesh — docs/specs/MESH_NODE_SPEC.md §6.3)
  *   effective_join       = nearest ancestor (root-to-leaf) that sets join,
  *                          else undefined (lines apply DEFAULT_LINE_JOIN)
+ *   effective_layer_order = nearest ancestor (root-to-leaf) that sets layer_order,
+ *                          else undefined (the renderer treats unset as band 0
+ *                          and keeps its inferred containment ordering — see
+ *                          docs/guides/specs/LAYER_ORDER_SPEC.md)
  *   effective_colormap   = nearest ancestor (root-to-leaf) that sets colormap,
  *                          else undefined (the leaf renders direct colours).
  *                          `customLutBytes` travels WITH it, from the same node
@@ -63,6 +67,16 @@ export interface ComposableAttrs {
    * two can never be composed from different nodes.
    */
   customLutBytes?: Uint8Array;
+  /**
+   * Authored cross-layer draw order (`LAYER_ORDER_SPEC.md`). Higher =
+   * nearer the camera = drawn later. Nearest-setter-wins like `blending_mode`,
+   * and deliberately kept `number | undefined` rather than defaulted here:
+   * "nobody authored an order" must stay distinguishable from "someone authored
+   * 0" for the panel's blank `auto` state and authored-band diagnostics (spec
+   * D2/D3). Ordering itself depends only on band values; the renderer applies
+   * `unset ⇒ band 0`.
+   */
+  layer_order?: number;
 }
 
 export interface EffectiveAttrs {
@@ -103,6 +117,12 @@ export interface EffectiveAttrs {
    * `undefined` when that node declared no `'custom'` palette.
    */
   customLutBytes: Uint8Array | undefined;
+  /**
+   * Nearest ancestor (root-to-leaf) that sets `layer_order`; `undefined` when
+   * no level of the chain does. The `undefined` is load-bearing — see the
+   * `ComposableAttrs` field.
+   */
+  layer_order: number | undefined;
 }
 
 /**
@@ -127,6 +147,7 @@ export function composeAttrs(chainRootToLeaf: readonly ComposableAttrs[]): Effec
   let join: string | undefined;
   let colormap: string | undefined;
   let customLutBytes: Uint8Array | undefined;
+  let layer_order: number | undefined;
 
   for (const a of chainRootToLeaf) {
     if (a.opacity !== undefined) opacity *= a.opacity;
@@ -143,6 +164,7 @@ export function composeAttrs(chainRootToLeaf: readonly ComposableAttrs[]): Effec
       colormap = a.colormap;
       customLutBytes = a.customLutBytes;
     }
+    if (a.layer_order !== undefined) layer_order = a.layer_order;
   }
 
   // Clamp per spec
@@ -168,6 +190,9 @@ export function composeAttrs(chainRootToLeaf: readonly ComposableAttrs[]): Effec
     // owns the unknown-name → viridis fallback and its warning.
     colormap,
     customLutBytes,
+    // Never defaulted to 0 here: authored 0 and absence order identically, but
+    // the panel and authored-band diagnostics must still tell them apart.
+    layer_order,
   };
 }
 
@@ -258,5 +283,23 @@ function toComposable(attrs: SceneNode['attrs']): ComposableAttrs {
     join: attrs.join as string | undefined,
     colormap: attrs.colormap as string | undefined,
     customLutBytes: attrs.customLutBytes as Uint8Array | undefined,
+    layer_order: sanitizeLayerOrder(attrs.layer_order),
   };
+}
+
+/**
+ * Read an authored `layer_order` off a raw zarr attrs record.
+ *
+ * TOLERANT read against a STRICT write: the Python writer refuses anything but
+ * an `int`, but a hand-edited or third-party store can carry anything, and the
+ * viewer must still render. A non-number, `NaN` or `±Infinity` would poison the
+ * band comparator, so it is treated as *absent* — the node falls back to today's
+ * inferred ordering rather than to an arbitrary band.
+ *
+ * A finite non-integer is accepted as authored rather than rounded: the value's
+ * only meaning is its order, so `1.5` bands perfectly well, and rounding would
+ * silently merge two bands the author separated.
+ */
+function sanitizeLayerOrder(raw: unknown): number | undefined {
+  return typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
 }

@@ -602,3 +602,84 @@ describe('applyEffectiveAttrs — colormap reaches the consumer record (#1600)',
     expect(applyEffectiveAttrs(bare, bare.children![0]).colormap).toBeUndefined();
   });
 });
+
+// `layer_order` — the authored cross-layer draw order
+// (docs/guides/specs/LAYER_ORDER_SPEC.md). Composes nearest-setter-wins
+// like `blending_mode`, and its `undefined` is load-bearing: "nobody set one"
+// must stay distinguishable from "someone set 0" for the panel's `auto` state
+// and authored-band diagnostics, although both order in band 0 (spec D2/D3).
+describe('composeAttrs — layer_order', () => {
+  it('is undefined for an unset chain', () => {
+    expect(composeAttrs([]).layer_order).toBeUndefined();
+    expect(composeAttrs([{ opacity: 0.5 }, { gamma: 2 }]).layer_order).toBeUndefined();
+  });
+
+  it('inherits an ancestor level when the leaf sets none', () => {
+    expect(composeAttrs([{ layer_order: 20 }, { opacity: 0.5 }]).layer_order).toBe(20);
+  });
+
+  it('lets the leaf override an ancestor level (nearest-setter-wins)', () => {
+    expect(composeAttrs([{ layer_order: 20 }, { layer_order: 30 }]).layer_order).toBe(30);
+  });
+
+  it('takes the LAST setter across a three-level chain', () => {
+    expect(
+      composeAttrs([{ layer_order: 10 }, { layer_order: 20 }, { opacity: 0.5 }]).layer_order
+    ).toBe(20);
+  });
+
+  // An authored 0 is a real band, not an absence. If these two ever agree, the
+  // renderer can no longer tell an explicit level from a default and every
+  // legacy store silently loses its containment ordering.
+  it('preserves an authored 0 as distinct from unset', () => {
+    expect(composeAttrs([{ layer_order: 0 }]).layer_order).toBe(0);
+    expect(composeAttrs([{}]).layer_order).toBeUndefined();
+  });
+
+  it('carries a negative level (bands are ordered, not counted)', () => {
+    expect(composeAttrs([{ layer_order: -5 }]).layer_order).toBe(-5);
+  });
+});
+
+// The raw-attrs → ComposableAttrs hop is an explicit ALLOWLIST
+// (`toComposable`), so a field missing from it writes cleanly, reads cleanly and
+// does nothing. These go through `getEffectiveAttrs`, which is the only path
+// that exercises it.
+describe('layer_order survives the raw-attrs allowlist', () => {
+  const graph = (rootAttrs: Record<string, unknown>, leafAttrs: Record<string, unknown>) => ({
+    path: '',
+    type: 'group',
+    attrs: rootAttrs,
+    children: [{ path: '/gs', type: 'gsplats', hasSpatialIndex: true, attrs: leafAttrs }],
+  });
+
+  it('reaches EffectiveAttrs from a leaf', () => {
+    const g = graph({}, { layer_order: 30 });
+    expect(getEffectiveAttrs(g as never, '/gs').layer_order).toBe(30);
+  });
+
+  it('reaches EffectiveAttrs from an ancestor group', () => {
+    const g = graph({ layer_order: 10 }, {});
+    expect(getEffectiveAttrs(g as never, '/gs').layer_order).toBe(10);
+  });
+
+  // Tolerant read against a strict write: the Python writer refuses anything
+  // but an int, but a hand-edited store can carry junk, and a non-finite level
+  // would poison the band comparator for the whole frame. Treated as ABSENT so
+  // the node falls back to the inferred ordering rather than an arbitrary band.
+  it.each([
+    ['a string', 'front'],
+    ['null', null],
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['-Infinity', Number.NEGATIVE_INFINITY],
+  ])('treats %s as unset', (_label, value) => {
+    const g = graph({}, { layer_order: value });
+    expect(getEffectiveAttrs(g as never, '/gs').layer_order).toBeUndefined();
+  });
+
+  it('applyEffectiveAttrs puts the composed level on the consumer record', () => {
+    const g = graph({ layer_order: 10 }, {});
+    expect(applyEffectiveAttrs(g as never, g.children[0] as never).layer_order).toBe(10);
+  });
+});

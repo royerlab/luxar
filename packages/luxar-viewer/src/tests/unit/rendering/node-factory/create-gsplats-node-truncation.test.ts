@@ -134,3 +134,14 @@ describe('createGSplatsNode — truncation_radius sanitization', () => {
     expect(box.max.x - box.min.x).toBeGreaterThan(0);
   });
 });
+
+describe('createGSplatsNode — composed layer order', () => {
+  it('stamps an ancestor-composed order separately from raw leaf attrs', () => {
+    const raw = {} as unknown as GSplatsMetadata;
+    const mesh = createGSplatsNode('/gs', { layer_order: 7 }, raw, meshConfig(), loader, null);
+
+    expect(mesh.userData.layerOrder).toBe(7);
+    expect(mesh.userData.attrs).toBe(raw);
+    expect((raw as unknown as Record<string, unknown>).layer_order).toBeUndefined();
+  });
+});

@@ -23,6 +23,7 @@ from ..typing_utils.constants import (
     GAMMA_MIN,
     INTENSITY_MAX,
     INTENSITY_MIN,
+    JS_SAFE_INTEGER_MAX,
     LINE_JOIN_STYLES,
     LINK_SCHEMES,
     LINK_TARGETS,
@@ -839,6 +840,66 @@ def validate_blending_mode(mode: Any) -> BlendingMode:
         )
 
     return cast(BlendingMode, mode)
+
+
+def validate_layer_order(order: Any) -> int:
+    """Validate an authored cross-layer draw order.
+
+    ``layer_order`` states where a layer draws relative to the other layers it
+    overlaps: higher = nearer the camera = drawn later, the CSS ``z-index`` /
+    Illustrator convention. See ``docs/guides/specs/LAYER_ORDER_SPEC.md``.
+
+    Signed, and bounded only by what survives the trip to the viewer: negative
+    values are the natural way to push a backdrop behind everything else, and
+    sparse values (10/20/30) leave room to insert a layer later without
+    renumbering.
+
+    The bound is the JavaScript safe-integer range, and it is not an arbitrary
+    clamp. This attr is written to JSON and read by the viewer as a JS
+    ``number``, where every integer above 2**53 - 1 shares its representation
+    with its neighbours. Since the ONLY property this value has is its order
+    relative to other layers, a magnitude past that point can silently collapse
+    two orders the author deliberately separated into one band — handing the
+    choice between those layers back to the geometry-derived inference the whole
+    attribute exists to override. A loud refusal at write time is the only place
+    that failure can be caught.
+
+    A ``bool`` is refused even though ``isinstance(True, int)`` is true in
+    Python: ``layer_order=True`` almost certainly means the author confused this
+    with a flag, and silently banding that layer at order 1 would be a wrong
+    answer rather than an error.
+
+    Args:
+        order: Draw order to validate. A Python integer whose magnitude is at
+            most ``JS_SAFE_INTEGER_MAX``.
+
+    Returns:
+        The order as a plain ``int``.
+
+    Raises:
+        TypeError: If ``order`` is not an integer (``bool`` included).
+        ValueError: If ``order`` is outside the JS safe-integer range.
+    """
+    if isinstance(order, (bool, np.bool_)) or not isinstance(order, int):
+        raise TypeError(
+            f"layer_order must be an integer, got {order!r} ({type(order).__name__}). "
+            "Higher draws nearer the camera (CSS z-index convention); sparse values "
+            "like 10/20/30 leave room to insert a layer later."
+        )
+
+    value = int(order)
+    if abs(value) > JS_SAFE_INTEGER_MAX:
+        raise ValueError(
+            f"layer_order={value} exceeds the JavaScript safe-integer range "
+            f"(+/-{JS_SAFE_INTEGER_MAX}). The viewer reads this attr as a JS number, "
+            "where integers past that magnitude share a representation with their "
+            "neighbours — so two orders you separated could silently collapse into one "
+            "band and the draw order between those layers would fall back to being "
+            "inferred from the geometry. Only the ORDER matters, never the magnitude: "
+            "use small sparse values such as 10/20/30."
+        )
+
+    return value
 
 
 def validate_line_join(style: Any) -> str:

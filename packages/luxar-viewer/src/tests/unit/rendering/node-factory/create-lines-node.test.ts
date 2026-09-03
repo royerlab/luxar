@@ -80,6 +80,21 @@ describe('createLinesNode material wiring', () => {
     __resetMaterialManagerForTests();
   });
 
+  it('stamps an ancestor-composed order separately from raw leaf attrs', () => {
+    const factory = new NodeFactory();
+    const mesh = factory.createLinesNode(
+      '/line',
+      { layer_order: 7 },
+      rawAttrs,
+      makeProcessed(),
+      makeLoader()
+    );
+
+    expect(mesh.userData.layerOrder).toBe(7);
+    expect(mesh.userData.attrs).toBe(rawAttrs);
+    expect((rawAttrs as unknown as Record<string, unknown>).layer_order).toBeUndefined();
+  });
+
   describe('composed effective attrs drive the material', () => {
     it('ancestor opacity 0.5 × own opacity 0.5 → material opacity 0.25', () => {
       // Real composition path: group(0.5) → lines leaf(0.5).

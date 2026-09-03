@@ -247,6 +247,9 @@ export class LayersPanel {
       // applyColormap restores the authored colormap (or none) and then
       // recomposes opacity/gamma/intensity/offset/blending via applyComposed.
       this.applyEngine.applyColormap(layer);
+      // Layer order lives in a dedicated render-state slot rather than a
+      // material, so applyComposed cannot restore it.
+      this.applyEngine.applyLayerOrder(layer);
       // applyLabelStyle restores authored colours / all classes on both the
       // visual and pick materials.
       this.applyEngine.applyLabelStyle(layer);
@@ -555,6 +558,7 @@ export class LayersPanel {
     // the mesh-only shading uniforms, which are not composed.
     this.applyEngine.applyVisibility(path, live.visible);
     this.applyEngine.applyColormap(live);
+    this.applyEngine.applyLayerOrder(live);
     this.applyEngine.applyLabelStyle(live);
     this.applyEngine.applyMeshAppearance(live);
     this.refreshRowVisual(path);
@@ -619,9 +623,10 @@ export class LayersPanel {
    * rather than the copied one — a window is only meaningful within one
    * mode, so carrying it across the flip would mis-scale the new value.
    * Deliberately NOT copied: mesh-only knobs, volumetric-only absorption,
-   * and opacity/visibility — those are per-layer compositing choices, not
-   * "appearance" (copying opacity would flatten a scene the user balanced
-   * layer-by-layer).
+   * layer order, and opacity/visibility — those are per-layer compositing
+   * choices, not "appearance" (copying opacity would flatten a scene the user
+   * balanced layer-by-layer, while copying order would collapse every layer
+   * into one band).
    */
   private applyAppearanceToAll(sourcePath: string): void {
     const src = this.state.getLayer(sourcePath);

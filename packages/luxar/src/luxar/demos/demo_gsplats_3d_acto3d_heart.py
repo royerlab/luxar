@@ -143,20 +143,49 @@ CHANNELS = [
         "name": "SYTOX Green (Nuclei)",
         "colormap": "green",
         "opacity": 0.12,
+        # Frontmost: top of the Layers panel list, drawn last, composites on top.
+        "layer_order": 3,
     },
     {
         "index": 1,
         "name": "Tomato Lectin (Vasculature)",
         "colormap": "red",
         "opacity": 0.30,
+        "layer_order": 2,
     },
     {
         "index": 2,
         "name": "TNNI3 (Cardiac Tissue)",
         "colormap": "blue",
         "opacity": 0.16,
+        # Backmost: drawn first, so the other two composite over it.
+        "layer_order": 1,
     },
 ]
+
+# ``layer_order`` STATES the cross-layer draw order instead of leaving the viewer
+# to infer one: higher = nearer the camera = drawn later, the CSS ``z-index``
+# convention, so the values read top-to-bottom exactly as the Layers panel lists
+# them (nuclei 3 in front, cardiac tissue 1 behind). See
+# ``docs/guides/specs/LAYER_ORDER_SPEC.md``.
+#
+# This is what lets the demo be ``volumetric`` again. #1964 moved it to
+# ``additive`` because the three co-located channels had no authored order and
+# the viewer had to infer one — from mean view-z, then from bounding-sphere
+# containment, both properties of where the splats landed rather than of the
+# anatomy. Additive is commutative, so it sidestepped the question; it could not
+# answer it. A stated order answers it, and volumetric emission-absorption is
+# what this specimen wants: the channels occlude each other the way the tissue
+# does, instead of every stain summing into one flat glow.
+#
+# How little the inference rested on is the other half of the argument: measured
+# on the built store the channels' bounding spheres are r=1130.7 (vasculature),
+# r=1126.8 (cardiac tissue) and r=1064.7 (nuclei), so the first two differ by 2.2
+# units out of 1130 — 0.19%. A refit that nudged either extent would silently
+# swap that pair. Authored levels cannot be swapped by a refit.
+#
+# Sparse values (10/20/30) would leave room to insert a layer without
+# renumbering; 1/2/3 is used here because three channels are the whole scene.
 
 # Fit parameters (fixed-K, seeds=K*)
 MAX_SPLATS = 860000
@@ -602,23 +631,26 @@ Controls:
                 ch_name = ch_config["name"]
                 colormap = ch_config["colormap"]
                 opacity = ch_config["opacity"]
+                layer_order = ch_config["layer_order"]
 
                 with asection(f"Adding {ch_name} (layer)"):
                     centered = gsplats.translate(-shared_centroid)
                     centered = centered.scale_intensity(0.1)
                     n_splats = len(centered.amplitudes)
 
-                    # One global order slot per node cannot interleave these
-                    # co-located volumes; additive is order-independent. This
-                    # supersedes the volumetric appearance tuning from #880.
-                    # Per-channel opacity keeps the dense nuclear stain from
-                    # washing out the vasculature and cardiac tissue.
+                    # Volumetric emission-absorption, with the cross-layer
+                    # order STATED by layer_order rather than inferred from the
+                    # geometry (see the CHANNELS note above). Per-channel
+                    # opacity keeps the dense nuclear stain from washing out the
+                    # vasculature and cardiac tissue.
                     scene.add_gsplats_from_data(
                         name=f"gsplats_{ch_name.lower().replace(' ', '_').replace('(', '').replace(')', '')}",
                         result=centered,
                         dim_order=["z", "y", "x"],
                         opacity=opacity,
-                        blending_mode="additive",
+                        blending_mode="volumetric",
+                        # Stated, not inferred — see the CHANNELS note above.
+                        layer_order=layer_order,
                         layer=True,
                         colormap=colormap,
                     )

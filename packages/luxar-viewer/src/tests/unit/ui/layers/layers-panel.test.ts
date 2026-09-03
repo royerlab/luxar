@@ -1786,6 +1786,21 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     );
   });
 
+  it('reset restores the authored layer order on the render object', () => {
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.Material());
+    mesh.name = '/cloud';
+    mesh.userData.nodeType = 'gsplats';
+    mesh.userData.layerOrder = 99;
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, makeLayeredSceneGraph('gsplats', { layer_order: 7 }));
+
+    panel.resetAllLayers();
+
+    expect(mesh.userData.layerOrder).toBe(7);
+  });
+
   it('reset reapplies an inherited custom palette with its composed LUT bytes', () => {
     const lut = new Uint8Array(768);
     lut[767] = 255;
@@ -3503,6 +3518,28 @@ describe('LayersPanel — filter + context-menu lifecycle across dataset reloads
     panel.dispose();
   });
 
+  it('resetLayer restores the authored layer order on the render object', () => {
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.Material());
+    mesh.name = '/cloud';
+    mesh.userData.nodeType = 'gsplats';
+    mesh.userData.layerOrder = 99;
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, makeLayeredSceneGraph('gsplats', { layer_order: 7 }));
+
+    const row = container.querySelector<HTMLElement>('.luxar-layer-row')!;
+    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const reset = Array.from(
+      document.querySelectorAll<HTMLElement>('.luxar-context-menu__item')
+    ).find((el) => el.textContent === 'Reset this layer')!;
+    reset.click();
+
+    expect(mesh.userData.layerOrder).toBe(7);
+    panel.dispose();
+  });
+
   it('Escape from the HEADER menu returns focus to the focused header child, not <body>', () => {
     const panel = new LayersPanel(container, animationController);
     panel.initFromScene(new THREE.Group(), makeManyLayerSceneGraph());
@@ -3733,6 +3770,171 @@ describe('LayersPanel — filter + context-menu lifecycle across dataset reloads
     // Eye menu = visibility verbs only; the row menu's items must be absent.
     expect(labels).toContain('Invert visibility');
     expect(labels).not.toContain('Copy layer path');
+    panel.dispose();
+  });
+});
+
+/**
+ * The SHIPPED Layer order control.
+ *
+ * `LayerStateManager.setLayerOrder` is covered in `layer-state.test.ts`, but
+ * those unit tests do not cover the DOM event path a user actually drives.
+ * These do: they render the real panel, select the row, and dispatch on the
+ * real field that routes through the state setter.
+ */
+describe('LayersPanel — Layer order control (the shipped path)', () => {
+  let container: HTMLElement;
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    showToastMock.mockClear();
+  });
+
+  function openPanel(extraLeafAttrs: Record<string, unknown> = {}) {
+    const panel = new LayersPanel(container, makeAnimationController());
+    panel.initFromScene(new THREE.Group(), makeLayeredSceneGraph('points', extraLeafAttrs));
+    panel.show();
+    // Select the row so the controls act on it.
+    // 'single' rather than 'add': add TOGGLES, and the panel already selects a
+    // row on init, so add would deselect it.
+    const first = panel.layerState.getLayers()[0];
+    if (first) panel.layerState.select(first.path, 'single');
+    return panel;
+  }
+
+  const field = (): HTMLInputElement | null =>
+    container.querySelector<HTMLInputElement>('.luxar-layers-panel__number');
+
+  function setField(value: string): void {
+    const input = field()!;
+    input.value = value;
+    input.dispatchEvent(new Event('change'));
+  }
+
+  it('renders the field, blank when the layer authored no order', () => {
+    const panel = openPanel();
+    expect(field()).toBeTruthy();
+    expect(field()!.value).toBe('');
+    expect(field()!.placeholder).toBe('auto');
+    panel.dispose();
+  });
+
+  it('shows an authored order', () => {
+    const panel = openPanel({ layer_order: 7 });
+    expect(field()!.value).toBe('7');
+    panel.dispose();
+  });
+
+  it('shows an inherited order in the auto placeholder', () => {
+    const graph: SceneNode = {
+      path: '/',
+      type: 'scene',
+      attrs: {},
+      hasSpatialIndex: false,
+      children: [
+        {
+          path: '/ordered',
+          type: 'group',
+          attrs: { layer_order: 5 },
+          hasSpatialIndex: false,
+          children: [
+            {
+              path: '/ordered/cloud',
+              type: 'points',
+              attrs: { layer: true },
+              hasSpatialIndex: true,
+            },
+          ],
+        },
+      ],
+    };
+    const panel = new LayersPanel(container, makeAnimationController());
+    panel.initFromScene(new THREE.Group(), graph);
+    panel.show();
+    panel.layerState.select('/ordered/cloud', 'single');
+
+    expect(panel.layerState.getLayer('/ordered/cloud')!.layerOrder).toBe(5);
+    expect(panel.layerState.getLayer('/ordered/cloud')!.layerOrderExplicit).toBe(false);
+    expect(field()!.value).toBe('');
+    expect(field()!.placeholder).toBe('auto (5)');
+
+    setField('9');
+    setField('');
+    panel.layerState.select('/ordered/cloud', 'single');
+    expect(field()!.value).toBe('');
+    expect(field()!.placeholder).toBe('auto (5)');
+    panel.dispose();
+  });
+
+  it('typing a value marks the layer explicit', () => {
+    const panel = openPanel();
+    setField('4');
+    const layer = panel.layerState.getLayer('/cloud')!;
+    expect(layer.layerOrder).toBe(4);
+    expect(layer.layerOrderExplicit).toBe(true);
+    panel.dispose();
+  });
+
+  it('an authored 0 is kept as a real band, not read as absent', () => {
+    const panel = openPanel();
+    setField('0');
+    const layer = panel.layerState.getLayer('/cloud')!;
+    expect(layer.layerOrder).toBe(0);
+    expect(layer.layerOrderExplicit).toBe(true);
+    panel.dispose();
+  });
+
+  it('blanking the field clears BOTH the value and the explicit flag', () => {
+    const panel = openPanel({ layer_order: 7 });
+    setField('');
+    const layer = panel.layerState.getLayer('/cloud')!;
+    expect(layer.layerOrder).toBeUndefined();
+    expect(layer.layerOrderExplicit).toBe(false);
+    panel.dispose();
+  });
+
+  it('accepts a negative order', () => {
+    const panel = openPanel();
+    setField('-3');
+    expect(panel.layerState.getLayer('/cloud')!.layerOrder).toBe(-3);
+    panel.dispose();
+  });
+
+  // Junk must clear rather than become 0: 0 is a real band, and inventing it
+  // from unparseable input would state an order the user did not choose. The
+  // field then echoes back what was actually stored.
+  it('junk input clears, and the field echoes the stored state', () => {
+    const panel = openPanel({ layer_order: 7 });
+    setField('front');
+    const layer = panel.layerState.getLayer('/cloud')!;
+    expect(layer.layerOrder).toBeUndefined();
+    expect(layer.layerOrderExplicit).toBe(false);
+    expect(field()!.value).toBe('');
+    panel.dispose();
+  });
+
+  it('rejects a fractional entry instead of silently changing it', () => {
+    const panel = openPanel();
+    setField('3.7');
+    expect(panel.layerState.getLayer('/cloud')!.layerOrder).toBeUndefined();
+    expect(field()!.value).toBe('');
+    panel.dispose();
+  });
+
+  it('accepts exponent notation as the exact integer it denotes', () => {
+    const panel = openPanel();
+    setField('1e3');
+    expect(panel.layerState.getLayer('/cloud')!.layerOrder).toBe(1000);
+    panel.dispose();
+  });
+
+  it('rejects integers outside the JavaScript safe range', () => {
+    const panel = openPanel();
+    setField('9007199254740992');
+    expect(panel.layerState.getLayer('/cloud')!.layerOrder).toBeUndefined();
+    expect(field()!.value).toBe('');
     panel.dispose();
   });
 });
