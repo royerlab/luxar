@@ -525,18 +525,19 @@ def reject_layer_order_inside_specialized_group(
 ) -> None:
     """Refuse ``layer_order=`` on a node inside a partition / LOD group.
 
-    ``layer_order`` may be authored only on a node that IS a layer — the scene
-    root, a plain group, or a top-level leaf. The two reasons differ in severity
-    (a partition would lose an exactness guarantee; a LOD level would be inert)
-    but the rule is one ancestry check, which also covers the nested case (a LOD
-    group inside a partition part) with no extra branch.
+    ``layer_order`` may participate only when authored on a node that IS a layer
+    — a plain group or a top-level leaf. A value on the scene root is accepted as
+    carrier metadata and ignored. The two reasons differ in severity (a partition
+    would lose an exactness guarantee; a LOD level would be inert), but the rule
+    is one ancestry check, which also covers the nested case (a LOD group inside
+    a partition part) with no extra branch.
 
     Refused rather than ignored, and at the adder rather than in the value
     validator, for the same reasons as :func:`reject_lines_only_join`: the
     validator never sees the tree, and an attr that writes cleanly and silently
     does nothing is this codebase's most expensive failure mode. The viewer, which
-    must render whatever it is handed, instead warns once and falls back to the
-    enclosing layer's level — strict write, tolerant read.
+    must render whatever it is handed, instead warns once and uses one level for
+    the whole group, keeping the first member's — strict write, tolerant read.
     """
     if "layer_order" not in attrs:
         return
