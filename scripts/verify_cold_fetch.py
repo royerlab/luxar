@@ -28,12 +28,35 @@ by deliberately hiding it.
 Three requirements, each load-bearing
 -------------------------------------
 1. **Assert on sha256, never on "a file appeared."**
-   The demo-site origin — and Cloudflare Pages generally — answers a miss with
-   **HTTP 200 and ``text/html``**, not 404. A status-code check therefore passes
-   on a missing object. Worse, ``ensure_dataset`` would then quarantine the HTML
-   error page as a corrupt archive, reporting *data corruption* where the truth
-   is *missing file*. Only the digest tells those two apart. Do not "simplify"
-   this to a status or size check.
+   Not because the host lies about status — measured 2026-09-02, ``zenodo.org``
+   (which is where ``zenodo_file_url`` sends every fetch unless a record sets an
+   explicit ``base_url``) answers a missing file AND a missing record with a
+   correct **404**, HTML error body but honest status. The soft-404 that returns
+   **200 ``text/html``** on a miss is Cloudflare **Pages**
+   (``demos.luxarviewer.dev``); the R2 data origin 404s properly too. Do not
+   justify this requirement by the soft-404: that reason is false for the host
+   this gate actually targets, and a false reason is the fragile kind — someone
+   measures zenodo.org, finds it honest, and "simplifies" the digest into a
+   status check.
+
+   The reasons that DO apply, none of which a 200 can catch:
+     - **truncation** — a short read is a 200 with fewer bytes. The download
+       path is hardened against the obvious version of this (every fetch stages
+       to a sibling ``.part`` and is atomically promoted only on completion, so
+       an interrupted transfer cannot leave partial bytes at the destination),
+       and a cache hit is digest-checked before it is returned. So this is the
+       class the digest closes, not a known live hole: the 140 MiB truncation
+       seen during this migration is why the class is taken seriously, not a
+       bug that is still open.
+     - **a wrong-file or wrong-generation swap** — the right name serving the
+       wrong bytes, e.g. a re-upload after a refit.
+     - **proving the record matches what the manifest DECLARES**, which is the
+       whole question being asked before a payload is deleted.
+
+   And downstream of any of those, ``ensure_dataset`` quarantines the bad bytes
+   as a *corrupt archive* — so the failure it reports is "data corruption" when
+   the truth may be "wrong file". Only the digest distinguishes them. Do not
+   "simplify" this to a status or size check.
 
 2. **Hide the in-repo copy, do not merely use a fresh cache.**
    ``ensure_dataset`` resolves cache -> in-repo LFS -> hosted. A fresh
