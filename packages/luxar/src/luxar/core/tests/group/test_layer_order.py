@@ -137,11 +137,10 @@ class TestRegistryMembership:
         # before any validator runs.
         assert "layer_order" in KNOWN_RENDER_ATTRS
 
-    # THE safety property (spec D2). An explicit level suppresses the
-    # containment rule while an unset one must not, so the viewer has to be able
-    # to tell them apart. A stamped default would put every store ever written
-    # afterwards on band 0 EXPLICITLY, silently disabling containment for all of
-    # them. Asserting ABSENCE is the only way to catch that.
+    # THE safety property (spec D2). Authored 0 and absence order identically,
+    # but the panel's `auto` state and authored-band diagnostics must tell them
+    # apart. A stamped default would falsely label every future store's band 0 as
+    # author intent. Asserting ABSENCE is the only way to catch that.
     def test_has_no_writer_stamped_default(self) -> None:
         assert "layer_order" not in WRITER_STAMPED_APPEARANCE_DEFAULTS
         assert "layer_order" not in IDENTITY_COMPOSITING_ATTRS
