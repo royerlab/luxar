@@ -5,6 +5,7 @@ import {
   evaluate,
   isGlobKey,
   matchesGlob,
+  parseArgs,
   relativizeSummary,
 } from './check-coverage-slack.mjs';
 
@@ -62,6 +63,19 @@ describe('relativizeSummary', () => {
       ROOT
     );
     expect([...files.keys()]).toEqual(['src/a.ts']);
+  });
+});
+
+describe('parseArgs', () => {
+  it('accepts a finite max-slack override', () => {
+    expect(parseArgs(['--max-slack', '1.5']).maxSlack).toBe(1.5);
+  });
+
+  it.each([
+    ['missing', ['--max-slack']],
+    ['non-numeric', ['--max-slack', 'nope']],
+  ])('rejects a %s max-slack value', (_label, argv) => {
+    expect(() => parseArgs(argv)).toThrow(/requires a finite number/);
   });
 });
 

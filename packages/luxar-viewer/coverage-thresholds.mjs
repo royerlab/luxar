@@ -12,6 +12,8 @@
  *
  * Trailing comments record the measurement each floor was set from
  * (2026-09, 686 files). Re-derive with `pnpm vitest run --coverage`.
+ * Any test change can move these measurements, so updating tests and refreshing
+ * this file with `pnpm check:coverage-slack` is one atomic change.
  *
  * ## vitest 4 semantics — read before editing
  *
@@ -39,33 +41,33 @@ export const MAX_SLACK_POINTS = 3;
 
 export const COVERAGE_THRESHOLDS = {
   // Global — every file in the report, the subtrees below included.
-  lines: 86, //       measured 88.08
-  statements: 85, //  measured 87.22
-  functions: 84, //   measured 85.43
-  branches: 80, //    measured 81.71
+  lines: 86, //       measured 88.57
+  statements: 85, //  measured 87.69
+  functions: 84, //   measured 85.67
+  branches: 80, //    measured 82.12
 
   // Crown jewels: high floors so a refactor cannot quietly erode them.
-  'src/types/**': { lines: 97, functions: 94, branches: 96 }, //     98.9 / 96.6 / 97.9
-  'src/wasm/**': { lines: 96, functions: 98, branches: 95 }, //      98.6 /  100 / 96.9
-  'src/config/**': { lines: 94, functions: 98, branches: 91 }, //    96.3 /  100 / 93.5
-  'src/utils/**': { lines: 94, functions: 92, branches: 93 }, //     96.2 / 94.4 / 95.1
-  'src/scene/**': { lines: 93, functions: 85, branches: 89 }, //     95.6 / 87.8 / 91.0
-  'src/cache/**': { lines: 93, functions: 93, branches: 82 }, //     95.0 / 95.1 / 84.8
-  'src/controls/**': { lines: 93, functions: 85, branches: 86 }, //  95.0 / 87.7 / 88.0
+  'src/types/**': { lines: 97, functions: 94, branches: 96 }, //     98.87 / 96.61 / 97.93
+  'src/wasm/**': { lines: 96, functions: 98, branches: 95 }, //      98.61 /   100 / 96.88
+  'src/config/**': { lines: 94, functions: 98, branches: 91 }, //    96.30 /   100 / 93.47
+  'src/utils/**': { lines: 97, functions: 97, branches: 93 }, //     98.36 / 98.39 / 95.51
+  'src/scene/**': { lines: 93, functions: 85, branches: 89 }, //     95.59 / 87.50 / 91.15
+  'src/cache/**': { lines: 93, functions: 93, branches: 82 }, //     94.99 / 95.15 / 84.88
+  'src/controls/**': { lines: 93, functions: 85, branches: 86 }, //  95.01 / 87.68 / 88.01
 
   // The bulk of the codebase.
   // functions 87 -> 90 after the L0-cache-wiring + spatial-extend-dims
   // characterization tests (2026-09) lifted the subtree 89.2 -> 91.2. Raised
   // because check-coverage-slack.mjs flagged the old floor as stale, which is
   // the ratchet working: tests move the measurement, the guard moves the floor.
-  'src/data/**': { lines: 92, functions: 90, branches: 84 }, //      93.0 / 91.3 / 86.7
-  'src/workers/**': { lines: 89, functions: 88, branches: 85 }, //   91.6 / 90.6 / 87.5
-  'src/ui/**': { lines: 89, functions: 84, branches: 76 }, //        91.4 / 86.1 / 78.5
-  'src/core/**': { lines: 86, functions: 70, branches: 83 }, //      88.4 / 72.0 / 85.6
+  'src/data/**': { lines: 92, functions: 90, branches: 86 }, //      93.40 / 91.66 / 87.36
+  'src/workers/**': { lines: 89, functions: 88, branches: 85 }, //   91.58 / 90.60 / 87.27
+  'src/ui/**': { lines: 89, functions: 84, branches: 76 }, //        91.41 / 86.15 / 78.60
+  'src/core/**': { lines: 86, functions: 70, branches: 83 }, //      88.41 / 72.03 / 85.69
   // input jumped when ui-actions-surface.test.ts began invoking the command
   // table InputHandler builds in registerAllKeyBindings (27 thunks no test
-  // had ever called): functions 76.0 -> 88.2.
-  'src/input/**': { lines: 91, functions: 87, branches: 84 }, //     92.4 / 88.2 / 85.3
+  // had ever called): functions 76.0 -> 90.39.
+  'src/input/**': { lines: 91, functions: 89, branches: 84 }, //     93.09 / 90.39 / 85.26
 
   // NOT a health floor — a CEILING ON THE DEBT. This subtree holds the
   // hand-written TSL/GLSL shader bodies, exercised by
@@ -74,5 +76,5 @@ export const COVERAGE_THRESHOLDS = {
   // NOT excluded from coverage: that spec does not yet run in CI, and
   // excluding code on the strength of a gate that never fires is how a metric
   // starts lying. Revisit once the `tsl-parity` job is green and required.
-  'src/rendering/**': { lines: 72, functions: 73, branches: 70 }, // 74.1 / 75.2 / 71.1
+  'src/rendering/**': { lines: 72, functions: 73, branches: 70 }, // 74.25 / 75.41 / 71.07
 };

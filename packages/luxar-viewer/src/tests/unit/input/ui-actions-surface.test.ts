@@ -245,11 +245,9 @@ describe('InputHandler UI-action surface', () => {
     // catches that; asserting "remove was called" would not.
     const added = new Map<string, EventListenerOrEventListenerObject>();
     const removed = new Map<string, EventListenerOrEventListenerObject>();
-    const addSpy = vi
-      .spyOn(window, 'addEventListener')
-      .mockImplementation((type, listener) => {
-        if (type === 'keydown' || type === 'keyup') added.set(type, listener);
-      });
+    const addSpy = vi.spyOn(window, 'addEventListener').mockImplementation((type, listener) => {
+      if (type === 'keydown' || type === 'keyup') added.set(type, listener);
+    });
     const removeSpy = vi
       .spyOn(window, 'removeEventListener')
       .mockImplementation((type, listener) => {

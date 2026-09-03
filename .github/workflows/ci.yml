@@ -494,7 +494,7 @@ jobs:
     # `hatch run test-cov` runs `pytest -m 'not slow'` — the heavy CPU-fitting
     # tests (content-fit CLI, tiled/progressive fitting) are marked `slow` and
     # excluded here, cutting the serial 1-core run from >60 min to ~15 min while
-    # coverage stays ~85% (≥ the 80% gate; slow tests' code is redundantly
+    # coverage stays above the 89% gate (slow tests' code is redundantly
     # covered by fast unit tests). The FULL suite (incl. slow) is the local
     # pre-push gate (`hatch run test`).
     #
@@ -854,6 +854,7 @@ jobs:
         #   → typecheck → lint → check:layers (dependency-cruiser)
         #   → check:knip:ci (dead-file + unlisted-dependency gate)
         #   → test:coverage (vitest with thresholds)
+        #   → check:coverage-slack (reject stale or empty coverage floors)
         # knip:ci runs with --include files,dependencies so policy-level
         # "unused exports" findings (test builders, type guards) don't fail
         # CI; only true dead files and unlisted deps do.

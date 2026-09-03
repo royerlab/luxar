@@ -122,11 +122,16 @@ export function evaluate(summary, thresholds, viewerRoot, maxSlack) {
   return { failures, rows };
 }
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const args = { maxSlack: MAX_SLACK_POINTS, summary: DEFAULT_SUMMARY };
   for (let i = 0; i < argv.length; i += 1) {
-    if (argv[i] === '--max-slack') args.maxSlack = Number(argv[(i += 1)]);
-    else if (argv[i] === '--summary') args.summary = argv[(i += 1)];
+    if (argv[i] === '--max-slack') {
+      const value = Number(argv[(i += 1)]);
+      if (!Number.isFinite(value)) {
+        throw new Error('--max-slack requires a finite number');
+      }
+      args.maxSlack = value;
+    } else if (argv[i] === '--summary') args.summary = argv[(i += 1)];
   }
   return args;
 }

@@ -28,18 +28,18 @@ pnpm run test:coverage
 # Quality gates
 pnpm run check                # Fast dev-loop: typecheck + lint + unit tests
 pnpm run check:static         # check:ci minus the tests — what `make check-all` runs
-pnpm run check:ci             # Merge gate: check:static + coverage thresholds
+pnpm run check:ci             # Merge gate: check:static + coverage thresholds/slack
 ```
 
 `check` keeps the iteration fast. `check:ci` is what CI runs — it adds
 the `check:overrides` pnpm
 security-pin guard, the dependency-cruiser
 layer rule check, the `check:knip:ci` unused-export/unused-file gate,
-and enforces the ratcheted coverage thresholds
-declared in `vitest.config.ts`. A PR can pass `check` while
+and enforces the ratcheted coverage thresholds and slack budget
+declared in `coverage-thresholds.mjs`. A PR can pass `check` while
 violating layers, leaving dead exports, or dropping coverage; that
 cannot happen with `check:ci`. `check:static` is that same set minus
-`test:coverage`, so `make check-all` no longer re-runs a suite
+`test:coverage` and its slack check, so `make check-all` no longer re-runs a suite
 `make test-all` has already run.
 
 ### Test environment: `node` by default, jsdom on request

@@ -376,7 +376,7 @@ NUMEXPR_NUM_THREADS = "{env:NUMEXPR_NUM_THREADS:1}"
 # run locally before every push. `test-cov` (what CI runs) deselects `slow` so
 # the 1-core GitHub runner stays well under the job timeout; the heavy CPU-fitting
 # tests (content-fit CLI, tiled/progressive fitting) still run locally and their
-# code stays covered by fast unit tests (coverage holds at ~87% ≥ the 80% gate).
+# code stays covered by fast unit tests (coverage holds above the 89% gate).
 [tool.hatch.envs.default.scripts]
 # `-n ... --dist loadfile` on the two LOCAL-ONLY scripts. Override the worker
 # count with LUXAR_PYTEST_JOBS.
@@ -781,10 +781,10 @@ exclude_lines = [
     "pragma: no cover",
     "^\\s*def __repr__",
     "^\\s*def __str__",
-    "raise AssertionError",
-    "raise NotImplementedError",
+    "^\\s*raise AssertionError",
+    "^\\s*raise NotImplementedError",
     "if __name__ == .__main__.:",
-    "if TYPE_CHECKING:",
+    "^\\s*if TYPE_CHECKING:",
     "^\\s*pass\\s*$",
 ]
 show_missing = true
