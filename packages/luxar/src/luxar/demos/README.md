@@ -1049,7 +1049,7 @@ Five hours of zebrafish gastrulation (Zenodo 1211599, confocal, 151 timepoints t
 
 **Run**: `luxar demo run gsplats_4d_neuromast_2ch`
 
-**Requires**: Internet access for the first checksum-verified download (~133 MB compressed), or an existing local store at `~/luxar_demo_data/gsplats_neuromast_2ch/` / `$LUXAR_NEUROMAST_DATA_DIR`. No GPU is needed once the archives are available.
+**Requires**: Internet access for the first checksum-verified download (~130 MB compressed), or an existing local store at `~/luxar_demo_data/gsplats_neuromast_2ch/` / `$LUXAR_NEUROMAST_DATA_DIR`. No GPU is needed once the archives are available.
 
 **Demonstrates**: 4D + multi-channel gsplats, per-channel `layer=True` + named colormaps (`bop_blue`/`bop_orange`) for the Layers panel, `add_gsplats_from_file` grafting of pre-fit multi-LOD (`stream`, 8 LODs) nodes, Z-anisotropy correction baked via `transform --scale`, redundancy-based culling, and additive compositing because the two superimposed channels have no meaningful cross-layer order. Options: `--no-serve`, `--serve-only`.
 

@@ -57,7 +57,7 @@ def test_matching_publication_state_emits_no_warning(audit, published: bool) -> 
 def test_publication_state_disagreement_is_reported(
     audit, manifest_published: bool, live_published: bool, message: str
 ) -> None:
-    _fails, warns = audit.check_deposition(
+    fails, warns = audit.check_deposition(
         "record",
         _deposition(submitted=live_published),
         {},
@@ -65,4 +65,6 @@ def test_publication_state_disagreement_is_reported(
         {"published": manifest_published},
     )
 
+    expected_fails = ["[record] ALREADY SUBMITTED — stop"] if live_published else []
+    assert fails == expected_fails
     assert warns == [f"[record] {message}"]

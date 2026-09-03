@@ -57,12 +57,12 @@ def test_resolve_channel_paths_fetches_the_published_pair(
     tmp_path, monkeypatch
 ) -> None:
     monkeypatch.setattr(demo, "DATA_DIR", tmp_path)
-    expected = [tmp_path / "membranes", tmp_path / "nuclei"]
+    expected = [tmp_path / f"{channel['file']}.zip" for channel in demo.CHANNELS]
     calls = []
 
     def fetch(name: str):
         calls.append(name)
-        return expected
+        return list(reversed(expected))
 
     monkeypatch.setattr(demo, "ensure_dataset", fetch)
 

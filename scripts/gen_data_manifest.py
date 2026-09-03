@@ -85,7 +85,7 @@ MANIFEST = REPO_ROOT / "packages/luxar/src/luxar/demos/data_manifest.json"
 #
 # Note what this flag does NOT do: the resolution order is still
 # cache -> in-repo LFS -> Zenodo, so on a machine that still carries the in-repo
-# payloads those win over the record on a cache miss. For 20 of these files the
+# payloads those win over the record on a cache miss. For 23 of these files the
 # in-repo copy is the PRE-REFIT generation, so "fetches from Zenodo" is only
 # true once those payloads are gone -- see the LFS teardown.
 #
@@ -146,10 +146,10 @@ RECORDS = {
     # `notes` and `description` are both PUBLISHED metadata. The reader-facing
     # licence basis is stated in both dataset attributions below.
     #
-    # PUBLICATION COORDINATION still matters: the live drafts contain hand-edited
+    # PUBLICATION COORDINATION still matters: the live records contain hand-edited
     # cross-references in both descriptions, and this record's `isPartOf` points
-    # at the cc-by record's reserved DOI. Publish both records together so neither
-    # description points at an unresolved reserved DOI. These cross-references
+    # at the cc-by record's DOI. Both records were published together so neither
+    # description pointed at an unresolved reserved DOI. These cross-references
     # and `isPartOf` are not emitted by gen_zenodo_records.py or checked by this
     # generator's --check; re-pasting a generated description can silently drop
     # them.

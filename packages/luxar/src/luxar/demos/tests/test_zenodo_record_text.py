@@ -172,13 +172,24 @@ def test_a_flat_store_is_read_from_its_archive_root(
 
 
 def test_every_record_renders(gen: Any, manifest: dict[str, Any]) -> None:
-    for key in manifest["records"]:
+    manifest = json.loads(json.dumps(manifest))
+    manifest["records"]["future-draft"] = {
+        "title": "Future draft",
+        "license": "cc-by-4.0",
+        "zenodo_doi": "10.5281/zenodo.12345678",
+        "published": False,
+    }
+
+    for key, record in manifest["records"].items():
         text = gen.render_record(key, manifest)
-        record = manifest["records"][key]
         assert record["title"] in text
-        assert f"DOI: `{record['zenodo_doi']}`" in text
-        assert f"Concept DOI: `{record['zenodo_conceptdoi']}`" in text
-        assert "Reserved DOI:" not in text
+        if record.get("published"):
+            assert f"DOI: `{record['zenodo_doi']}`" in text
+            assert f"Concept DOI: `{record['zenodo_conceptdoi']}`" in text
+            assert "Reserved DOI:" not in text
+        else:
+            assert f"Reserved DOI: `{record['zenodo_doi']}`" in text
+            assert "Concept DOI:" not in text
 
 
 def test_a_draft_record_keeps_the_reserved_doi_label(

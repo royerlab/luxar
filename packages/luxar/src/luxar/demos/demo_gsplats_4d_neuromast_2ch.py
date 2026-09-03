@@ -65,7 +65,7 @@ PIPELINE — reproducible per channel with ``--recompute``:
 DATA STORAGE (important):
     These fitted gsplats are ~220 MB unzipped and are **not bundled with the
     repo**. Both channels are uploaded to the ``cc-by`` Zenodo record and pinned
-    by SHA-256 in ``demos/data_manifest.json`` as a 133 MB archive pair. The
+    by SHA-256 in ``demos/data_manifest.json`` as a 130 MB archive pair. The
     published record is fetched and verified on demand. ``DATA_DIR`` remains a
     local override for the acquisition machine and existing hand-placed copies.
 
@@ -92,7 +92,7 @@ DEMO_META = {
     "category": "microscopy",
     "geometry": "gsplats",
     "requirements": {
-        "download_mb": 133,
+        "download_mb": 130,
         "compute": "medium",
         "gpu": "none",
         "local_data": None,
@@ -483,11 +483,13 @@ def recompute_channel_paths(work_dir: Path) -> list[Path]:
 def resolve_channel_paths() -> list[Path]:
     """Resolve the per-channel gsplats, preferring the local override."""
     paths = [DATA_DIR / ch["file"] for ch in CHANNELS]
-    return (
-        paths
-        if all(path.exists() for path in paths)
-        else ensure_dataset("gsplats_4d_neuromast_2ch")
-    )
+    if all(path.exists() for path in paths):
+        return paths
+    fetched = {
+        path.name.removesuffix(".zip"): path
+        for path in ensure_dataset("gsplats_4d_neuromast_2ch")
+    }
+    return [fetched[ch["file"]] for ch in CHANNELS]
 
 
 # =============================================================================
