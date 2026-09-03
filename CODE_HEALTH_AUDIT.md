@@ -404,6 +404,45 @@ before restructuring a module, not on every push — runtime is O(mutants x suit
 means nothing without a baseline. The committed `mutate` list is narrow on purpose; Stryker's
 default would mutate the whole 218K-LOC tree.
 
+### 0.9 The gates were proven to fire IN CI, not just locally (Step 7)
+
+A gate verified on a laptop is a hypothesis about CI. Both floors were therefore overshot in a
+commit deliberately kept in the PR history (`fail_under` 89 -> 99, viewer `lines` 86 -> 99),
+pushed, and reverted by the next commit. Run
+[33711456024](https://github.com/royerlab/luxar/actions/runs/33711456024) on PR #2471:
+
+| Required context | Result | Evidence |
+|---|---|---|
+| `python-tests (3.12)` | **failure** | `FAIL Required test coverage of 99.0% not reached. Total coverage: 91.38%` |
+| `typescript-tests` | **failure** | `ERROR: Coverage for lines (88.46%) does not meet global threshold (99%)` |
+
+Both exited 1 and both are *required* contexts, which is the distinction that matters: a script
+returning non-zero is not the same as the check that blocks a merge going red.
+
+**The measurement transfers between the laptop and the obsidian container**, which is what makes
+a locally-derived floor legitimate at all:
+
+| Suite | Local | CI | Delta |
+|---|---:|---:|---:|
+| Viewer lines | 88.44% | 88.46% | +0.02 |
+| Python total | 91.58% | 91.38% | **-0.20** |
+
+The Python figure is slightly *lower* in CI. At `fail_under = 89` that still leaves 2.38 points,
+but it vindicates leaving margin rather than pinning the floor just under the local number —
+and it is a second reason beyond the 3.12/3.13/3.14 matrix to keep roughly two points of room.
+
+Two things this did NOT prove, stated so the evidence is not over-read:
+
+- The run had `ci.yml` in its diff, which forces every domain on, so it does not demonstrate
+  that `pyproject.toml` alone routes `dom_py`. That narrower claim is carried by the
+  `GATE_INPUTS` rows in `test_ci_diff_classifier.py`, which evaluate the workflow's actual grep
+  patterns against those paths.
+- `tsl-parity` passed here (2m58s on a hosted runner) but is **not** a required context yet.
+
+One operational note worth recording: the two obsidian-routed jobs sat queued for roughly three
+hours behind fleet-generated CI on six busy runners, while the eight hosted jobs finished in
+minutes. Anything needing a required-context result from obsidian should assume that latency.
+
 ---
 
 ## Findings
