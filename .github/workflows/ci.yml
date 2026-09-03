@@ -1113,7 +1113,11 @@ jobs:
               continue
             fi
 
-            cancelled_count=$(wc -l <<<"$cancelled_jobs")
+            # `tr -d " "` because BSD wc pads its count ("       3") while GNU wc
+            # does not. CI is Linux so the padding never showed there, but it made
+            # the harness test red on every macOS checkout and would have landed a
+            # padded count in the warning text if this ever ran on a Mac runner.
+            cancelled_count=$(wc -l <<<"$cancelled_jobs" | tr -d ' ')
             if [ "$cancelled_count" -gt 1 ]; then
               echo "Rerunning unsuccessful push jobs for $candidate_sha after finding $cancelled_count cancelled required jobs"
               if gh api --method POST \
