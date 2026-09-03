@@ -46,10 +46,11 @@ def _demo_catalogue_text() -> str:
 
 def _demo_catalogue_sections() -> dict[str, str]:
     text = _demo_catalogue_text()
+    demo_keys = {demo.path.stem: demo.key for demo in iter_demos()}
     return {
-        match.group(1): match.group(0)
+        demo_keys[match.group(1)]: match.group(0)
         for match in re.finditer(
-            r"^#### demo_([a-z0-9_]+)\.py\b.*?(?=^---$)",
+            r"^#### (demo_[a-z0-9_]+)\.py\b.*?(?=^#### |^## |\Z)",
             text,
             re.MULTILINE | re.DOTALL,
         )
@@ -193,6 +194,16 @@ def test_catalogue_lfs_provisioning_matches_demo_metadata() -> None:
         "catalogue LFS provisioning claims disagree with DEMO_META.local_data: "
         f"documented={sorted(documented)}, declared={sorted(declared)}"
     )
+
+
+def test_catalogue_sections_use_registry_keys_and_cover_every_entry() -> None:
+    text = _demo_catalogue_text()
+    demo_keys = {demo.path.stem: demo.key for demo in iter_demos()}
+    expected = {
+        demo_keys[match.group(1)]
+        for match in re.finditer(r"^#### (demo_[a-z0-9_]+)\.py\b", text, re.MULTILINE)
+    }
+    assert set(_demo_catalogue_sections()) == expected
 
 
 def test_gallery_tiles_match_registry_credits() -> None:
