@@ -96,6 +96,13 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "test_demo_meta.py cross-validates it against the demo registry",
     ),
     (
+        "scripts/release.sh",
+        "py",
+        "test_set_version.py asserts its `make set-version` remedy string, and a "
+        "shell file matches no other domain, so a release.sh-only diff would else "
+        "run zero tests",
+    ),
+    (
         "scripts/gallery/manifest.json",
         "ts",
         "gallery-selection.test.ts validates README capture ids against it",
@@ -468,6 +475,31 @@ def test_every_gate_input_is_classified(
     assert _classifies(pattern, path), (
         f"{path} does not set dom_{domain}, so its gate skips green for a "
         f"diff that touches only it — {why}"
+    )
+
+
+def test_release_script_only_change_runs_a_real_test_domain(workflow: str) -> None:
+    """A ``scripts/release.sh``-only diff must not sail through untested.
+
+    ``release.sh`` carries no source extension and matches none of the ts/rust/go
+    patterns, so before it was named by ``dom_py`` a release-script-only PR set
+    every domain false and ran zero legs — shipping the release driver untested,
+    even though ``test_set_version.py`` reads and asserts against it in the
+    ``python-tests`` suite. It must switch on at least one language domain.
+    """
+    patterns = _domain_patterns(workflow)
+    triggered = [
+        domain
+        for domain in ("py", "ts", "rust", "go")
+        if _classifies(patterns[domain], "scripts/release.sh")
+    ]
+    assert triggered, (
+        "scripts/release.sh sets no language domain, so a release.sh-only diff "
+        "runs zero test legs — a release-script change would ship untested"
+    )
+    assert "py" in triggered, (
+        "scripts/release.sh must set dom_py: test_set_version.py reads it inside "
+        "the python-tests suite"
     )
 
 
