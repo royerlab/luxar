@@ -41,7 +41,7 @@ export const COVERAGE_THRESHOLDS = {
   // Global — every file in the report, the subtrees below included.
   lines: 86, //       measured 88.08
   statements: 85, //  measured 87.22
-  functions: 82, //   measured 84.40
+  functions: 84, //   measured 85.43
   branches: 80, //    measured 81.71
 
   // Crown jewels: high floors so a refactor cannot quietly erode them.
@@ -58,11 +58,14 @@ export const COVERAGE_THRESHOLDS = {
   // characterization tests (2026-09) lifted the subtree 89.2 -> 91.2. Raised
   // because check-coverage-slack.mjs flagged the old floor as stale, which is
   // the ratchet working: tests move the measurement, the guard moves the floor.
-  'src/data/**': { lines: 90, functions: 90, branches: 84 }, //      92.7 / 91.2 / 86.7
+  'src/data/**': { lines: 92, functions: 90, branches: 84 }, //      93.0 / 91.3 / 86.7
   'src/workers/**': { lines: 89, functions: 88, branches: 85 }, //   91.6 / 90.6 / 87.5
   'src/ui/**': { lines: 89, functions: 84, branches: 76 }, //        91.4 / 86.1 / 78.5
   'src/core/**': { lines: 86, functions: 70, branches: 83 }, //      88.4 / 72.0 / 85.6
-  'src/input/**': { lines: 85, functions: 74, branches: 81 }, //     87.9 / 76.0 / 83.5
+  // input jumped when ui-actions-surface.test.ts began invoking the command
+  // table InputHandler builds in registerAllKeyBindings (27 thunks no test
+  // had ever called): functions 76.0 -> 88.2.
+  'src/input/**': { lines: 91, functions: 87, branches: 84 }, //     92.4 / 88.2 / 85.3
 
   // NOT a health floor — a CEILING ON THE DEBT. This subtree holds the
   // hand-written TSL/GLSL shader bodies, exercised by
@@ -71,5 +74,5 @@ export const COVERAGE_THRESHOLDS = {
   // NOT excluded from coverage: that spec does not yet run in CI, and
   // excluding code on the strength of a gate that never fires is how a metric
   // starts lying. Revisit once the `tsl-parity` job is green and required.
-  'src/rendering/**': { lines: 72, functions: 73, branches: 68 }, // 74.1 / 75.2 / 70.8
+  'src/rendering/**': { lines: 72, functions: 73, branches: 70 }, // 74.1 / 75.2 / 71.1
 };
