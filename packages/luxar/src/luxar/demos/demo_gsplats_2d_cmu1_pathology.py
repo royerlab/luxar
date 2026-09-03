@@ -519,8 +519,8 @@ def create_luxar_scene(
     levels. ``add_gsplats_from_file`` routes the record partition through the
     graft and a local matrix-shaped result down the ordinary data path. To tell
     which generation a given cached file is, hash it against the record's
-    ``sha256`` pin in ``data_manifest.json``; a local ``--recompute`` matches
-    neither, which is itself the diagnosis. Byte size is only suggestive.
+    ``sha256`` pin in ``data_manifest.json``; a local ``--recompute`` does not
+    match it, which is itself the diagnosis. Byte size is only suggestive.
 
     Args:
         cache_paths: Per-channel ``.gsplats.zarr[.zip]`` artifacts, in channel
