@@ -614,7 +614,7 @@ pnpm test:e2e:report
 pnpm run test:coverage
 
 # Coverage requirements
-# - Minimum: 80%
+# - Thresholds: see coverage-thresholds.mjs
 # - Critical paths: 100%
 ```
 
@@ -891,7 +891,7 @@ Tests run automatically on:
 **CI Requirements**:
 
 - All unit tests pass (see CI for current count)
-- Coverage ≥ 80%
+- Coverage meets the floors in `coverage-thresholds.mjs`
 - No TypeScript errors
 - No linting errors
 
