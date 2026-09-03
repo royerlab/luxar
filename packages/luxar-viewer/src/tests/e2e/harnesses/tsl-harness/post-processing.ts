@@ -11,7 +11,11 @@ import * as THREE from 'three';
 import { vec4 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { FXAA_SOURCE } from '../../../../rendering/post-processing/fxaa/shaders';
-import { BLOOM_THRESHOLD_SOURCE } from '../../../../rendering/post-processing/bloom/shaders';
+import {
+  BLOOM_THRESHOLD_SOURCE,
+  BLOOM_DOWNSAMPLE_SOURCE,
+  BLOOM_UPSAMPLE_SOURCE,
+} from '../../../../rendering/post-processing/bloom/shaders';
 import { MEGA_SOURCE } from '../../../../rendering/post-processing/mega/shader.glsl';
 import { megaWebGPUFactory } from '../../../../rendering/post-processing/mega/shader.tsl';
 import type { ShaderSource } from '../../../../rendering/materials/_shared/shader-source';
@@ -110,6 +114,28 @@ export const POST_PROCESSING_SHADERS: Record<string, RegistryEntry> = {
       uTexelSize: { value: new THREE.Vector2(1 / 8, 1 / 8) },
       uThreshold: { value: 0.5 },
       uSmoothing: { value: 0.5 },
+    }),
+  },
+  // The other two thirds of the bloom chain. Both were production
+  // `ShaderSource` values with no harness entry at all (audit A4-08), so their
+  // TSL and GLSL halves had never been compared — the registry-completeness
+  // test in `tsl-registry-completeness.test.ts` now makes that omission
+  // impossible rather than merely fixed.
+  'bloom-downsample': {
+    source: BLOOM_DOWNSAMPLE_SOURCE,
+    buildUniforms: () => ({
+      uInput: { value: buildTestTexture() },
+      uTexelSize: { value: new THREE.Vector2(1 / 8, 1 / 8) },
+    }),
+  },
+  'bloom-upsample': {
+    source: BLOOM_UPSAMPLE_SOURCE,
+    buildUniforms: () => ({
+      uInput: { value: buildTestTexture() },
+      uTexelSize: { value: new THREE.Vector2(1 / 8, 1 / 8) },
+      // Non-unit radius so the tent taps land off-centre; at 1.0 an
+      // implementation that ignored uRadius entirely would still match.
+      uRadius: { value: 2.0 },
     }),
   },
   // Mega-shader: default configuration only (no bloom, no lens
