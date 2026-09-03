@@ -1051,8 +1051,9 @@ export class LayerStateManager {
   setLayerOrder(path: string, level: number | undefined): void {
     const layer = this.layers.get(path);
     if (!layer) return;
-    layer.layerOrder = level === undefined ? undefined : Math.trunc(level);
-    layer.layerOrderExplicit = level !== undefined;
+    const sanitizedLevel = level !== undefined && Number.isSafeInteger(level) ? level : undefined;
+    layer.layerOrder = sanitizedLevel;
+    layer.layerOrderExplicit = sanitizedLevel !== undefined;
     this.notify();
   }
 

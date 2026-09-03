@@ -1283,9 +1283,16 @@ describe('LayerStateManager — layer order', () => {
     expect(mgr.getLayer('bare')?.layerOrderExplicit).toBe(true);
   });
 
-  it('truncates a fractional level to an integer', () => {
+  it('rejects a fractional level instead of silently changing its order', () => {
     mgr.setLayerOrder('bare', 3.7);
-    expect(mgr.getLayer('bare')?.layerOrder).toBe(3);
+    expect(mgr.getLayer('bare')?.layerOrder).toBeUndefined();
+    expect(mgr.getLayer('bare')?.layerOrderExplicit).toBe(false);
+  });
+
+  it('rejects an order outside the JavaScript safe-integer range', () => {
+    mgr.setLayerOrder('bare', Number.MAX_SAFE_INTEGER + 1);
+    expect(mgr.getLayer('bare')?.layerOrder).toBeUndefined();
+    expect(mgr.getLayer('bare')?.layerOrderExplicit).toBe(false);
   });
 
   // A hand-edited store can carry junk. The renderer treats a non-finite level

@@ -41,9 +41,9 @@ part order travels with it intact.
 
 Three diagnostics say when a level is not doing what it looks like it is doing:
 a band that splits a containment relation (the one way a level can wash out an
-embedded layer), a band spanning both render buckets (`renderOrder` cannot cross
-the opaque/transparent split, so such a level is half-honoured), and an order
-group whose members disagree on their band.
+embedded layer), an authored opaque level at or above a transparent one
+(`renderOrder` cannot cross that bucket split), and an order group whose members
+disagree on their band.
 
 Two demos now state their order — the Acto3D heart and the 2-channel neuromast.
 Both still ship `additive`, so nothing about them changes as authored; the levels
