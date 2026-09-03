@@ -47,12 +47,11 @@ on:
     #
     # DEFAULT-BRANCH DEPENDENCE. GitHub runs `schedule:` triggers only on the
     # repository DEFAULT branch, at its tip. While `dev` is the default the event
-    # SHA is dev's tip at dispatch, while `changes` captures dev's tip at checkout;
-    # those differ only if dev advances in that short gap. The captured SHA pins
-    # every downstream suite checkout to one immutable TREE, while the repair walk
-    # also resolves dev explicitly. After the default flips to main, however, GitHub
-    # will attach these contexts to main's event SHA even though the jobs test
-    # dev's tree; #2466 tracks replacing this cron trigger before that flip.
+    # SHA is dev's tip at dispatch, and every suite checkout is pinned to that exact
+    # event SHA so the contexts attest the tree they test. The repair walk also
+    # resolves dev explicitly. After the default flips to main, however, the event
+    # SHA and scheduled checkouts both point at main; #2466 tracks replacing this
+    # cron trigger before that flip so promotion windows still run against dev.
     - cron: '17 9 * * *'
     - cron: '17 0,3,6,12,15,18,21 * * *'
 
@@ -137,9 +136,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Scheduled runs test dev's tip regardless of the repository default
-          # branch (see the schedule note above). Empty on push/PR == default.
-          ref: ${{ github.event_name == 'schedule' && 'refs/heads/dev' || '' }}
+          # While dev is the default, the scheduled event SHA is dev's immutable
+          # tip at dispatch. Empty on push/PR == default.
+          ref: ${{ github.event_name == 'schedule' && github.sha || '' }}
           fetch-depth: 0
       - id: scheduled-dev
         if: github.event_name == 'schedule'

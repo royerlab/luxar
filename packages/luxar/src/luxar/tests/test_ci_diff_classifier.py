@@ -857,7 +857,7 @@ def test_live_ci_checkouts_share_one_scheduled_dev_sha(workflow: str) -> None:
     assert set(checkout_jobs) == scheduled_suite_jobs
 
     assert checkout_jobs["changes"]["with"]["ref"] == (
-        "${{ github.event_name == 'schedule' && 'refs/heads/dev' || '' }}"
+        "${{ github.event_name == 'schedule' && github.sha || '' }}"
     )
     changes = jobs["changes"]
     assert changes["outputs"]["dev_sha"] == (

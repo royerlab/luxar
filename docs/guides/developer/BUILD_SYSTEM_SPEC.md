@@ -946,9 +946,10 @@ returns it to the same queue.
 
 Scheduled and push runs differ from a PR run in *scope* as well: neither has a PR
 base, so the `changes` job cannot path-filter and selects the whole suite plus the
-documentation gate. On a scheduled run, `changes` checks out dev and captures that
-commit once; every downstream suite and repair checkout uses the captured immutable
-SHA rather than resolving the branch again when its job starts.
+documentation gate. On a scheduled run, `changes` checks out the immutable event SHA
+and captures that commit once; every downstream suite and repair checkout uses the
+captured SHA. The run's check contexts attach to that same event SHA regardless of
+what the jobs check out, so the pin keeps the tested tree and its contexts aligned.
 
 Scheduled runs sit in their own `concurrency` group. While `dev` is the default,
 they share `refs/heads/dev` with merge-triggered runs; after the default flips,
