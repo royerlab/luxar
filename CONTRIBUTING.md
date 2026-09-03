@@ -181,6 +181,19 @@ Maintainers review for:
 
 ## 📝 Pull Request Guidelines
 
+### Target `dev`, not `main`
+
+Open pull requests against **`dev`**, the integration branch:
+
+```bash
+gh pr create --base dev
+```
+
+`main` is the promoted branch. It is protected, it is what release tags are cut
+from, and changes reach it by promotion from `dev` rather than directly. Name
+the base explicitly rather than relying on the repository default, so the
+command keeps meaning the same thing if that default ever changes.
+
 ### Coordinate Issue Work
 
 Before creating a branch for a numbered issue, check whether an open pull

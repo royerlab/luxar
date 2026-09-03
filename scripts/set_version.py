@@ -131,7 +131,10 @@ def main(argv: list[str]) -> int:
     print("Next steps (main is branch-protected — no direct push):")
     print(f"  git switch -c release/v{version}")
     print(f"  git commit -am 'release: v{version}'")
-    print("  gh pr create --fill   # merge once CI is green")
+    # `--base dev` is explicit on purpose: without it `gh` targets the repo's
+    # DEFAULT branch, so this hint would silently change meaning if the default
+    # ever moves to `main` (which is protected and would reject the PR anyway).
+    print("  gh pr create --base dev --fill   # merge once CI is green")
     print(
         "  make release          # tags v{0} and triggers the PyPI publish".format(
             version
