@@ -126,6 +126,7 @@ class RecentlyRelocatedTracker:
 def _resolve_operation_seed(
     seed: Optional[int], relocation_tracker: Optional[RecentlyRelocatedTracker]
 ) -> Optional[int]:
+    """Advance seeded sampling so dynamic-ops steps do not repeat one draw."""
     if seed is None or relocation_tracker is None:
         return seed
     return seed + relocation_tracker.current_step
