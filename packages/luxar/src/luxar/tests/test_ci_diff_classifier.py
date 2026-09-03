@@ -811,11 +811,67 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     watchdog_checkout = watchdog["steps"][0]
     assert watchdog_checkout["continue-on-error"] is True
     assert watchdog_checkout["with"] == {
+        # Pinned to dev's tip on the schedule event; empty (== default) otherwise.
+        "ref": "${{ github.event_name == 'schedule' && 'refs/heads/dev' || '' }}",
         "persist-credentials": False,
         "sparse-checkout": "scripts",
     }
     assert "not cancelling" in watchdog["steps"][1]["run"]
     assert watchdog["steps"][2]["if"] == ("steps.scanner-checkout.outcome == 'success'")
+
+
+def test_live_ci_checkouts_share_one_scheduled_dev_sha(workflow: str) -> None:
+    """A scheduled run must test one immutable tree across every suite job."""
+    parsed = yaml.safe_load(workflow)
+    jobs = parsed["jobs"]
+    expected_ref = "${{ needs.changes.outputs.dev_sha || '' }}"
+
+    scheduled_suite_jobs = {
+        job_name
+        for job_name, job in jobs.items()
+        if job_name == "changes"
+        or "changes"
+        in (
+            [job["needs"]]
+            if isinstance(job.get("needs"), str)
+            else job.get("needs", [])
+        )
+    }
+    checkout_jobs = {
+        job_name: next(
+            (
+                step
+                for step in job["steps"]
+                if "actions/checkout" in step.get("uses", "")
+            ),
+            None,
+        )
+        for job_name, job in jobs.items()
+        if job_name in scheduled_suite_jobs and job.get("if") is not False
+    }
+    checkout_jobs = {
+        job_name: checkout
+        for job_name, checkout in checkout_jobs.items()
+        if checkout is not None
+    }
+    assert set(checkout_jobs) == scheduled_suite_jobs
+
+    assert checkout_jobs["changes"]["with"]["ref"] == (
+        "${{ github.event_name == 'schedule' && github.sha || '' }}"
+    )
+    changes = jobs["changes"]
+    assert changes["outputs"]["dev_sha"] == (
+        "${{ steps.scheduled-dev.outputs.dev_sha }}"
+    )
+    capture_step = next(
+        step for step in changes["steps"] if step.get("id") == "scheduled-dev"
+    )
+    assert capture_step["if"] == "github.event_name == 'schedule'"
+    assert "git rev-parse HEAD" in capture_step["run"]
+    for job_name, checkout in checkout_jobs.items():
+        if job_name == "changes":
+            continue
+        assert checkout["with"]["ref"] == expected_ref, job_name
 
 
 def test_mypy_gate_targets_stay_synchronized(workflow: str) -> None:
@@ -930,6 +986,7 @@ def test_green_schedule_repairs_cancelled_push_contexts(workflow: str) -> None:
     repair = jobs["repair-cancelled-push-checks"]
 
     assert set(repair["needs"]) == {
+        "changes",
         "python-tests",
         "typescript-tests",
         "release-readiness",
@@ -941,11 +998,33 @@ def test_green_schedule_repairs_cancelled_push_contexts(workflow: str) -> None:
     assert "always()" in condition
     assert "!cancelled()" in condition
     assert repair["permissions"] == {"actions": "write", "contents": "read"}
-    assert repair["steps"][0]["env"]["GH_TOKEN"] == "${{ github.token }}"
 
-    script = repair["steps"][0]["run"]
+    # The job checks out the captured dev commit so the guard can cross-check it.
+    checkout_step = next(step for step in repair["steps"] if "checkout" in step["uses"])
+    assert checkout_step["with"] == {
+        "ref": "${{ needs.changes.outputs.dev_sha || '' }}",
+    }
+
+    run_step = next(step for step in repair["steps"] if "run" in step)
+    assert run_step["env"]["GH_TOKEN"] == "${{ github.token }}"
+
+    script = run_step["run"]
     assert "actions/runs/${GITHUB_RUN_ID}/jobs?filter=latest" in script
-    assert "compare/main...${GITHUB_SHA}" in script
+    # REGRESSION TRIPWIRE: the walk must resolve dev's tip explicitly and must
+    # NOT anchor on ${GITHUB_SHA} (the run's own ref == main's tip after the
+    # default-branch flip), which would silently stall promotion.
+    assert "git/refs/heads/dev" in script
+    assert "compare/main...${dev_sha}" in script
+    assert "compare/main...${GITHUB_SHA}" not in script
+    # Scheduled runs belong to dev only while dev is the repository default.
+    # The guard must assert that contract directly, then verify that the immutable
+    # event checkout remains on dev's ancestry even if dev advances mid-window.
+    assert 'default_branch=$(gh api "repos/${GITHUB_REPOSITORY}"' in script
+    assert "'.default_branch'" in script
+    assert "rev-parse HEAD" in script
+    assert "rev-parse origin/dev" in script
+    assert "git/refs/heads/main" not in script
+    assert "merge-base --is-ancestor" in script
     assert "event=push" in script
     assert "status=completed" in script
     assert "head_sha=${candidate_sha}" in script
@@ -976,11 +1055,15 @@ def _run_cancelled_push_repair(
     rejected_endpoint: str = "",
     failed_get_endpoint: str = "",
     candidate_shas: tuple[str, ...] = ("deadbeef",),
+    dev_ref_sha: str = "deadbeef",
+    git_origin_dev: str = "deadbeef",
+    git_head_sha: str = "deadbeef",
+    default_branch: str = "dev",
+    git_is_ancestor: str = "1",
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     """Execute the repair shell against deterministic workflow/job snapshots."""
-    script = yaml.safe_load(workflow)["jobs"]["repair-cancelled-push-checks"]["steps"][
-        0
-    ]["run"]
+    steps = yaml.safe_load(workflow)["jobs"]["repair-cancelled-push-checks"]["steps"]
+    script = next(step for step in steps if "run" in step)["run"]
     calls_path = tmp_path / "calls"
     fake_gh = tmp_path / "gh"
     fake_gh.write_text(
@@ -997,6 +1080,14 @@ if "--method" in sys.argv:
         raise SystemExit(1)
 elif endpoint == os.environ["FAILED_GET_ENDPOINT"]:
     raise SystemExit(1)
+elif endpoint == f"repos/{os.environ['GITHUB_REPOSITORY']}":
+    if not os.environ["DEFAULT_BRANCH"]:
+        raise SystemExit(1)
+    print(os.environ["DEFAULT_BRANCH"])
+elif endpoint.endswith("/git/refs/heads/dev"):
+    # `gh --jq .object.sha` is applied by real gh; the fake prints the value the
+    # jq filter would yield. This is the walk anchor (dev's tip).
+    print(os.environ["DEV_REF_SHA"])
 elif f"/runs/{os.environ['GITHUB_RUN_ID']}/jobs?" in endpoint:
     print(json.dumps([{"jobs": [
         {"id": 10, "name": "python-tests (3.12)", "conclusion": "cancelled"},
@@ -1048,6 +1139,32 @@ else:
         encoding="utf-8",
     )
     fake_gh.chmod(0o755)
+
+    # A fake `git`: `rev-parse HEAD` echoes the checked-out commit and
+    # `rev-parse origin/dev` echoes dev's tip (two INDEPENDENT observables, so
+    # the guard's HEAD-vs-dev comparison can be exercised for real);
+    # `merge-base --is-ancestor` exits 0/1 per GIT_IS_ANCESTOR so the
+    # mismatch-classification branch can be driven; `fetch` (and anything else)
+    # is a silent no-op so the guard runs without a real repo.
+    fake_git = tmp_path / "git"
+    fake_git.write_text(
+        """#!/usr/bin/env python3
+import os
+import sys
+
+if len(sys.argv) > 1 and sys.argv[1] == "rev-parse":
+    target = sys.argv[2] if len(sys.argv) > 2 else ""
+    if target == "HEAD":
+        print(os.environ["GIT_HEAD_SHA"])
+    else:
+        print(os.environ["GIT_ORIGIN_DEV"])
+elif len(sys.argv) > 2 and sys.argv[1] == "merge-base" and sys.argv[2] == "--is-ancestor":
+    raise SystemExit(0 if os.environ["GIT_IS_ANCESTOR"] == "1" else 1)
+""",
+        encoding="utf-8",
+    )
+    fake_git.chmod(0o755)
+
     result = subprocess.run(
         ["bash", "-e", "-c", script],
         text=True,
@@ -1068,6 +1185,15 @@ else:
             "REJECTED_ENDPOINT": rejected_endpoint,
             "FAILED_GET_ENDPOINT": failed_get_endpoint,
             "CANDIDATE_SHAS": ",".join(candidate_shas),
+            # DEV_REF_SHA = the gh-resolved walk anchor. GIT_HEAD_SHA = the
+            # commit the run actually checked out. GIT_ORIGIN_DEV = dev's tip.
+            # HEAD == origin/dev is the common healthy path; an older ancestor
+            # models a merge landing after the immutable checkout.
+            "DEV_REF_SHA": dev_ref_sha,
+            "GIT_ORIGIN_DEV": git_origin_dev,
+            "GIT_HEAD_SHA": git_head_sha,
+            "DEFAULT_BRANCH": default_branch,
+            "GIT_IS_ANCESTOR": git_is_ancestor,
         },
     )
     calls = calls_path.read_text().splitlines() if calls_path.exists() else []
@@ -1218,6 +1344,175 @@ def test_non_green_schedule_does_not_repair_push_jobs(
     assert result.returncode == 0, result.stdout + result.stderr
     assert calls == []
     assert "python-tests (3.12)=failure" in result.stdout
+
+
+# --- Precondition guard: the scheduled walk must operate on dev, loudly. -------
+# GitHub runs `schedule:` on the default branch; after the dev->main flip the
+# run's own ref/SHA is main's tip, so a walk anchored there silently finds
+# nothing to promote and NOTHING goes red. The guard asserts the resolved walk
+# SHA is genuinely origin/dev's tip. Its three arms are tested explicitly, the
+# broken (negative) arm most of all, because this failure has no other signal.
+
+
+def test_promotion_guard_green_when_dev_is_ahead_of_main(
+    workflow: str, tmp_path: Path
+) -> None:
+    """Healthy, dev AHEAD of main -> GREEN and the backlog is repaired.
+
+    Dev being ahead is modelled by a non-empty candidate list; ``deadbeef`` is
+    the fake push-run map's head SHA so a real rerun is issued.
+    """
+    result, calls = _run_cancelled_push_repair(
+        workflow,
+        tmp_path,
+        dev_ref_sha="deadbeef",
+        git_origin_dev="deadbeef",
+        candidate_shas=("deadbeef",),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Walking commits ahead of main through dev tip deadbeef" in result.stdout
+    assert calls == ["repos/royerlab/luxar/actions/runs/900/rerun-failed-jobs"]
+
+
+def test_promotion_guard_green_when_dev_equals_main(
+    workflow: str, tmp_path: Path
+) -> None:
+    """Healthy post-promote-ff steady state (dev == main) -> GREEN, no repair.
+
+    This is the false positive the guard is written to AVOID: a naive
+    ``dev_sha != main-tip`` check would redden this normal, nothing-to-do path.
+    """
+    result, calls = _run_cancelled_push_repair(
+        workflow,
+        tmp_path,
+        dev_ref_sha="deadbeef",
+        git_origin_dev="deadbeef",
+        candidate_shas=(),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == []
+    assert "dev is level with main" in result.stdout
+
+
+def test_promotion_guard_reds_when_run_operates_on_main_not_dev(
+    workflow: str, tmp_path: Path
+) -> None:
+    """A scheduled run dispatched on main fails before attempting the dev walk."""
+    result, calls = _run_cancelled_push_repair(
+        workflow,
+        tmp_path,
+        dev_ref_sha="devtip",
+        git_origin_dev="devtip",
+        git_head_sha="maintip",
+        default_branch="main",
+        candidate_shas=("devtip",),
+    )
+
+    assert result.returncode != 0
+    output = result.stdout + result.stderr
+    assert "scheduled runs are dispatched on 'main', not dev" in output
+    assert "refusing to walk" in output
+    assert calls == []
+
+
+def test_promotion_guard_green_on_merge_during_checkout(
+    workflow: str, tmp_path: Path
+) -> None:
+    """Merge landed BETWEEN checkout and read -> HEAD is an ANCESTOR of dev's
+    tip (not main): benign GREEN with a note. This is the race the re-read could
+    not fix (HEAD is frozen at an older dev commit; re-fetching only moves the
+    tip further ahead) -- classification tolerates it.
+    """
+    result, calls = _run_cancelled_push_repair(
+        workflow,
+        tmp_path,
+        dev_ref_sha="devtip",
+        git_origin_dev="devtip",
+        git_head_sha="olddev",  # an earlier dev commit
+        git_is_ancestor="1",  # HEAD is an ancestor of dev's tip
+        candidate_shas=(),  # nothing further to promote in this scenario
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "dev advanced since checkout (olddev -> devtip)" in result.stdout
+    assert calls == []
+
+
+def test_promotion_guard_green_when_main_catches_up_during_window(
+    workflow: str, tmp_path: Path
+) -> None:
+    """Promotion reaching the tested SHA does not invalidate an older dev checkout."""
+    result, calls = _run_cancelled_push_repair(
+        workflow,
+        tmp_path,
+        dev_ref_sha="devtip",
+        git_origin_dev="devtip",
+        git_head_sha="deadbeef",
+        git_is_ancestor="1",
+        candidate_shas=("deadbeef",),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "dev advanced since checkout (deadbeef -> devtip)" in result.stdout
+    assert calls == ["repos/royerlab/luxar/actions/runs/900/rerun-failed-jobs"]
+
+
+def test_promotion_guard_reds_on_unknown_branch(workflow: str, tmp_path: Path) -> None:
+    """HEAD outside dev's ancestry fails loudly."""
+    result, calls = _run_cancelled_push_repair(
+        workflow,
+        tmp_path,
+        dev_ref_sha="devtip",
+        git_origin_dev="devtip",
+        git_head_sha="rogue",
+        git_is_ancestor="0",  # not an ancestor of dev either
+        candidate_shas=("devtip",),
+    )
+
+    assert result.returncode != 0
+    output = result.stdout + result.stderr
+    assert "unknown branch" in output
+    assert "checked out rogue is not an ancestor of origin/dev" in output
+    assert calls == []
+
+
+def test_promotion_guard_reds_when_default_branch_is_unresolvable(
+    workflow: str, tmp_path: Path
+) -> None:
+    """An unreadable default branch fails closed before topology checks."""
+    result, calls = _run_cancelled_push_repair(
+        workflow,
+        tmp_path,
+        dev_ref_sha="devtip",
+        git_origin_dev="devtip",
+        git_head_sha="maintip",
+        default_branch="",
+        git_is_ancestor="1",
+        candidate_shas=("devtip",),
+    )
+
+    assert result.returncode != 0
+    assert "could not resolve the repository default branch" in (
+        result.stdout + result.stderr
+    )
+    assert calls == []
+
+
+def test_promotion_guard_reds_when_dev_ref_is_unresolvable(
+    workflow: str, tmp_path: Path
+) -> None:
+    """A scheduled promotion run that cannot resolve dev fails loudly, not idle."""
+    result, calls = _run_cancelled_push_repair(
+        workflow,
+        tmp_path,
+        dev_ref_sha="",
+    )
+
+    assert result.returncode != 0
+    assert "could not resolve refs/heads/dev" in (result.stdout + result.stderr)
+    assert calls == []
 
 
 def _run_pick_runner(
