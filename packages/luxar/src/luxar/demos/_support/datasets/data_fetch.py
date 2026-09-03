@@ -606,13 +606,13 @@ def _verdict_from_one_pass(
                 return kind
 
         if verbose:
-            # Keep the historical labels: "hosted:" / "in-repo:" name the
-            # CONTRACT rather than the internal verdict string, and the existing
-            # reporting test reads them.
+            local_label = "in-repo:" if any(
+                kind == "hosted" for _, kind in candidates
+            ) else "record:"
             aprint("❌ SHA256 mismatch!")
             label = {
                 "hosted": "hosted:",
-                "local": "in-repo:",
+                "local": local_label,
                 "superseded": "superseded:",
             }
             for digest, kind in candidates:
@@ -680,8 +680,13 @@ def _resolve_from_cache(
         reason=(
             "unpulled git-LFS pointer"
             if is_lfs_pointer(dest)
-            else "matches neither the in-repo nor the hosted sha256 (corrupt, "
-            "or superseded by a data update)"
+            else (
+                "matches neither the in-repo nor the hosted sha256 (corrupt, "
+                "or superseded by a data update)"
+                if hosted_sha
+                else "matches neither the record nor a superseded sha256 (corrupt, "
+                "or superseded by a data update)"
+            )
         ),
         verbose=verbose,
     )

@@ -2028,6 +2028,23 @@ def test_bytes_matching_neither_contract_are_still_quarantined(fake_repo, capsys
     assert [p.name for p in find_quarantined_files(good)] == [good.name + ".corrupt"]
 
 
+def test_collapsed_record_pin_is_labelled_as_record_on_mismatch(fake_repo, capsys):
+    manifest, cache = fake_repo
+    entry = manifest["datasets"]["gsplats_toy"]["files"][0]
+    entry["superseded_sha256"] = ["0" * 64]
+    (good,) = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+    _corrupt_in_place_preserving_stat(good)
+
+    ensure_dataset("gsplats_toy", manifest=manifest, cache_root=cache, verbose=True)
+
+    out = capsys.readouterr().out
+    assert "Expected record:" in out
+    assert "Expected in-repo:" not in out
+    assert "matches neither the record nor a superseded sha256" in out
+
+
 def test_a_divergent_pin_on_a_variant_needs_no_extra_plumbing(fake_repo):
     """Variants resolve through the same single loop, so they inherit this.
 
