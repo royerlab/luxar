@@ -3518,6 +3518,28 @@ describe('LayersPanel — filter + context-menu lifecycle across dataset reloads
     panel.dispose();
   });
 
+  it('resetLayer restores the authored layer order on the render object', () => {
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.Material());
+    mesh.name = '/cloud';
+    mesh.userData.nodeType = 'gsplats';
+    mesh.userData.layerOrder = 99;
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, makeLayeredSceneGraph('gsplats', { layer_order: 7 }));
+
+    const row = container.querySelector<HTMLElement>('.luxar-layer-row')!;
+    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const reset = Array.from(
+      document.querySelectorAll<HTMLElement>('.luxar-context-menu__item')
+    ).find((el) => el.textContent === 'Reset this layer')!;
+    reset.click();
+
+    expect(mesh.userData.layerOrder).toBe(7);
+    panel.dispose();
+  });
+
   it('Escape from the HEADER menu returns focus to the focused header child, not <body>', () => {
     const panel = new LayersPanel(container, animationController);
     panel.initFromScene(new THREE.Group(), makeManyLayerSceneGraph());
@@ -3802,6 +3824,41 @@ describe('LayersPanel — Layer order control (the shipped path)', () => {
   it('shows an authored order', () => {
     const panel = openPanel({ layer_order: 7 });
     expect(field()!.value).toBe('7');
+    panel.dispose();
+  });
+
+  it('shows an inherited order in the auto placeholder', () => {
+    const graph: SceneNode = {
+      path: '/',
+      type: 'scene',
+      attrs: {},
+      hasSpatialIndex: false,
+      children: [
+        {
+          path: '/ordered',
+          type: 'group',
+          attrs: { layer_order: 5 },
+          hasSpatialIndex: false,
+          children: [
+            {
+              path: '/ordered/cloud',
+              type: 'points',
+              attrs: { layer: true },
+              hasSpatialIndex: true,
+            },
+          ],
+        },
+      ],
+    };
+    const panel = new LayersPanel(container, makeAnimationController());
+    panel.initFromScene(new THREE.Group(), graph);
+    panel.show();
+    panel.layerState.select('/ordered/cloud', 'single');
+
+    expect(panel.layerState.getLayer('/ordered/cloud')!.layerOrder).toBe(5);
+    expect(panel.layerState.getLayer('/ordered/cloud')!.layerOrderExplicit).toBe(false);
+    expect(field()!.value).toBe('');
+    expect(field()!.placeholder).toBe('auto (5)');
     panel.dispose();
   });
 

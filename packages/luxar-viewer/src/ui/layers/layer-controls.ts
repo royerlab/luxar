@@ -703,12 +703,17 @@ export class LayerControls {
 
     this.gammaSlider?.setValue(primary.gamma);
     if (this.layerOrderInput) {
-      // Blank when the layer states no level, so the placeholder ('auto')
-      // shows the inferred-ordering state rather than a fabricated 0.
+      // Blank when the layer owns no level. If it inherits one, surface the
+      // effective band in the placeholder without making it look editable as
+      // this layer's own value.
       this.layerOrderInput.value =
         primary.layerOrderExplicit && primary.layerOrder !== undefined
           ? String(primary.layerOrder)
           : '';
+      this.layerOrderInput.placeholder =
+        !primary.layerOrderExplicit && primary.layerOrder !== undefined
+          ? `auto (${primary.layerOrder})`
+          : 'auto';
     }
     this.opacitySlider?.setValue(primary.opacity);
     // Seat the thumb on a track that can represent THIS layer's live κ. The

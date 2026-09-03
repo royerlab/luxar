@@ -387,9 +387,9 @@ export interface LayerInfo {
    */
   blendingModeExplicit: boolean;
   /**
-   * Authored cross-layer draw order (`LAYER_ORDER_SPEC.md`), or
-   * `undefined` when this layer states none. Higher = nearer the camera =
-   * drawn later.
+   * Effective cross-layer draw order (`LAYER_ORDER_SPEC.md`), including an
+   * inherited value, or `undefined` when the ancestry states none. Higher =
+   * nearer the camera = drawn later.
    */
   layerOrder?: number;
   /**
@@ -680,7 +680,9 @@ export class LayerStateManager {
         // the canonical inherited/authored mode (#1272). The `undefined` case is
         // exactly what tells us to fall back to the per-type default AND to leave
         // the layer non-explicit so it does not impose that default on descendants.
-        const composedBlendingMode = getEffectiveAttrs(root, node.path).blending_mode;
+        const effectiveAttrs = getEffectiveAttrs(root, node.path);
+        const composedBlendingMode = effectiveAttrs.blending_mode;
+        const composedLayerOrder = sanitizedLayerOrder(effectiveAttrs.layer_order);
 
         this.layerOrder.push(node.path);
         this.layers.set(node.path, {
@@ -750,15 +752,12 @@ export class LayerStateManager {
           // display type is a geometry name but whose node authored no mode) stays
           // non-owning, exactly like a plain group.
           blendingModeExplicit: node.attrs.blending_mode != null,
-          // Both fields derive from the SAME sanitized read, so they cannot
-          // disagree. A loose `!= null` on the raw attr (the shape
-          // `blendingModeExplicit` above can afford, because a mode has a
-          // per-type fallback) would report `explicit: true` alongside
-          // `layerOrder: undefined` for a junk value like `'front'` — a state
-          // that says "this layer authored an order" about an order the
-          // renderer discards, so the panel would claim authored where the
-          // render is inferring.
-          layerOrder: sanitizedLayerOrder(node.attrs.layer_order),
+          // Display the COMPOSED value the renderer uses, while ownership
+          // remains the node's OWN sanitized attr. A loose `!= null` on the raw
+          // attr (the shape `blendingModeExplicit` above can afford, because a
+          // mode has a per-type fallback) would report `explicit: true` for a
+          // junk value like `'front'` that the renderer discards.
+          layerOrder: composedLayerOrder,
           layerOrderExplicit: sanitizedLayerOrder(node.attrs.layer_order) !== undefined,
           selected: false,
           colormap,
