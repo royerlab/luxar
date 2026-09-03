@@ -76,21 +76,19 @@ def test_legacy_name_pattern_matches_the_specifiers_it_claims_to(
     nothing would let the guard below pass over a tree full of stale names."""
     bare_name = "luxar" + "-viewer"
     stale = tmp_path / "stale.md"
-    stale.write_text(
-        "\n".join(
-            (
-                f"import {{ x }} from '{bare_name}';",
-                f"import {{ x }} from '{bare_name}/data';",
-                f'import type {{ T }} from "{bare_name}/ui/data-monitor-manager";',
-                f'<link href="{bare_name}/styles.css" />',
-                f"pnpm add {bare_name}",
-                f"yarn add {bare_name}",
-                f"npm install {bare_name}",
-                "@royerlab" + f"/{bare_name}",
-            )
-        )
-        + "\n"
+    lines = (
+        f"import {{ x }} from '{bare_name}';",
+        f"import {{ x }} from '{bare_name}/data';",
+        f'import type {{ T }} from "{bare_name}/ui/data-monitor-manager";',
+        f'<link href="{bare_name}/styles.css" />',
+        f"pnpm add {bare_name}",
+        f"yarn add {bare_name}",
+        f"npm install {bare_name}",
+        f"npm install {bare_name} three",
+        f"npm i {bare_name}",
+        "@royerlab" + f"/{bare_name}",
     )
+    stale.write_text("\n".join(lines) + "\n")
 
     # --no-index refuses paths outside the cwd's tree, so search from tmp_path.
     result = _git_grep(
@@ -101,7 +99,7 @@ def test_legacy_name_pattern_matches_the_specifiers_it_claims_to(
         f"the guard's pattern matched none of the stale specifiers "
         f"(exit {result.returncode}): {result.stderr}"
     )
-    assert len(result.stdout.splitlines()) == 8, result.stdout
+    assert len(result.stdout.splitlines()) == len(lines), result.stdout
 
 
 def test_legacy_npm_package_specifiers_are_absent_from_tracked_files() -> None:
