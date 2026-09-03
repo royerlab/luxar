@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Question, idea, or "how do I …?"
+    url: https://github.com/royerlab/luxar/discussions
+    about: Discussions is the better home for questions and open-ended ideas.
+  - name: Try it before filing
+    url: https://demos.luxarviewer.dev
+    about: 85 demos run live in the browser — useful for checking whether a problem is your data or the viewer.
+  - name: Report a security vulnerability
+    url: https://github.com/royerlab/luxar/security/advisories/new
+    about: Please do NOT open a public issue for a security problem.
