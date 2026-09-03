@@ -344,10 +344,9 @@ def _select_weak_splats(
         residual: Residual image (target - prediction)
         relocation_percentile: Percentage of least important splats to consider
         relocation_tracker: Optional tracker for cooldown filtering
-        seed: RNG seed for the residual-percentile sample. None →
-            nondeterministic (the sample only estimates a quantile, so the
-            result is stable in distribution either way, but a fixed seed
-            makes a re-fit bit-reproducible).
+        seed: RNG seed for the residual-percentile sample. None uses PyTorch's
+            global RNG stream; a fixed seed uses a private generator and makes
+            a re-fit bit-reproducible.
 
     Returns:
         Tensor of splat indices sorted by importance (weakest first)
