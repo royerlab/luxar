@@ -318,6 +318,23 @@ def test_release_remedy_passes_the_version_as_a_make_variable() -> None:
     assert "make set-version DATE=$VERSION" in RELEASE.read_text()
 
 
+def test_set_version_prints_explicit_pr_base_and_release_branch(
+    set_version_module: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    paths = _checkout(tmp_path)
+    _point_at(set_version_module, paths, tmp_path, monkeypatch)
+
+    assert set_version_module.main(["set_version.py", "2026.09.15"]) == 0
+
+    output = capsys.readouterr().out
+    assert "gh pr create --base dev --fill" in output
+    assert "gh pr create --fill" not in output
+    assert "switch to main after the bump is promoted" in output
+
+
 def test_set_version_and_the_gate_agree_on_where_the_files_are() -> None:
     """A path that drifts between the writer and the checker fails silently."""
     writer = _load(SET_VERSION, "set_version_paths")
