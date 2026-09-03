@@ -194,7 +194,7 @@ Two remedies, both printed by the demo itself:
 ```bash
 luxar demo run <key> -- --recompute       # recompute from source
 rm -rf datasets/demos/<key>.luxar.zarr    # or drop it and let the demo unpack
-                                          # the current shipped Git-LFS asset
+                                          # the current record-fetched asset
 ```
 
 Grep build logs for `Using cached scene` after any sweep. One gallery tile in
