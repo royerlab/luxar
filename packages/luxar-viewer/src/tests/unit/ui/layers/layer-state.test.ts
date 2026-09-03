@@ -1274,6 +1274,19 @@ describe('LayerStateManager — layer order', () => {
     expect(rootedManager.getLayer('bare')?.inheritedLayerOrder).toBeUndefined();
   });
 
+  it('keeps a layer order authored on a standalone data root', () => {
+    const standaloneManager = new LayerStateManager();
+    standaloneManager.initFromSceneGraph({
+      path: '/',
+      type: 'gsplats',
+      attrs: { layer: true, layer_order: 8 } as never,
+      hasSpatialIndex: true,
+    });
+
+    expect(standaloneManager.getLayer('/')?.layerOrder).toBe(8);
+    expect(standaloneManager.getLayer('/')?.layerOrderExplicit).toBe(true);
+  });
+
   it('setLayerOrder marks the layer explicit', () => {
     mgr.setLayerOrder('bare', -5);
     expect(mgr.getLayer('bare')?.layerOrder).toBe(-5);
