@@ -49,18 +49,17 @@ _NO_SCRIPT = "generator script not present (packaged install without repo script
 # This contract deliberately tracks the pinned digests and their history depths.
 # Update it as part of a reviewed re-pin.
 #
-# The digests below are unchanged by the Git-LFS teardown (#2354) — they are the
-# same HOSTED values — but the field holding them moved. With no in-repo payload
-# left there is nothing for a repo `sha256` to describe, so the hosted digest IS
-# `sha256` now and `hosted_sha256` is gone. What the test guards is unchanged:
+# The digests below are unchanged by the Git-LFS teardown (#2354), but the field
+# holding them moved. With no in-repo payload left, the record digest is
+# `sha256` and `hosted_sha256` is gone. What the test guards is unchanged:
 # both members of a positional pair must move together, at equal history depth.
-_EXPECTED_POSITIONAL_HOSTED_CONTRACTS = {
+_EXPECTED_POSITIONAL_CONTRACTS = {
     # Re-pinned when the hosted fit gained an exact NATIVE categorical label
     # channel (#2387), retiring the sidecar's ordering hazard for the hosted copy
     # (#2334). The pair moved atomically: the sidecar was re-exported FROM the new
     # archive's own ids, so it is aligned by construction rather than by a
-    # measurement that happened to pass. Both retire with the in-repo Git-LFS
-    # payloads (#2354).
+    # measurement that happened to pass. Both pins became the single record
+    # contract when the in-repo Git-LFS payloads retired (#2354).
     (
         "gsplats_ct_totalsegmentator",
         "ct_atlas.gsplats.zarr.zip",
@@ -74,7 +73,7 @@ _EXPECTED_POSITIONAL_HOSTED_CONTRACTS = {
     # atomically, as the generator and this test both require: the sidecar was
     # re-exported FROM the new archive's own colors, so it is aligned by
     # construction rather than by a measurement that happened to pass. Both
-    # entries retire with the in-repo Git-LFS payloads (#2354).
+    # pins became the single record contract when the Git-LFS payloads retired.
     (
         "gsplats_visible_human_head",
         "vh_head.gsplats.zarr.zip",
@@ -113,8 +112,8 @@ def test_manifest_loads_and_has_expected_shape():
         assert key in m["records"], f"missing record group {key}"
 
 
-def test_positional_sidecar_hosted_pairs_move_atomically():
-    """Each positional group advances together and matches its hosted contract."""
+def test_positional_sidecar_pairs_move_atomically():
+    """Each positional group advances together and matches its record contract."""
     expected_pairs = {
         ("gsplats_ct_totalsegmentator", "ct_atlas"),
         ("gsplats_visible_human_head", "vh_head"),
@@ -133,7 +132,7 @@ def test_positional_sidecar_hosted_pairs_move_atomically():
         for (dataset_name, _pair), entries in groups.items()
         for entry in entries
     }
-    assert pair_members == set(_EXPECTED_POSITIONAL_HOSTED_CONTRACTS)
+    assert pair_members == set(_EXPECTED_POSITIONAL_CONTRACTS)
     for (dataset_name, pair), entries in groups.items():
         assert len(entries) >= 2, f"{dataset_name}/{pair} has no positional partner"
         history_lengths = {
@@ -144,19 +143,18 @@ def test_positional_sidecar_hosted_pairs_move_atomically():
         )
         for entry in entries:
             history = entry.get("superseded_sha256") or ()
-            expected_contract = _EXPECTED_POSITIONAL_HOSTED_CONTRACTS[
+            expected_contract = _EXPECTED_POSITIONAL_CONTRACTS[
                 (dataset_name, entry["name"])
             ]
             assert (entry.get("sha256"), len(history)) == expected_contract, (
-                f"{dataset_name}/{entry['name']} hosted pin or history depth changed; "
+                f"{dataset_name}/{entry['name']} pin or history depth changed; "
                 "update the committed expectation only after reviewing the re-pin"
             )
             if history:
-                for key in ("sha256",):
-                    assert entry.get(key) != history[-1], (
-                        f"{dataset_name}/{entry['name']} still names its "
-                        f"superseded pin as {key}"
-                    )
+                assert entry.get("sha256") != history[-1], (
+                    f"{dataset_name}/{entry['name']} still names its "
+                    "superseded pin as sha256"
+                )
 
 
 def test_load_manifest_hands_out_an_independent_copy():
