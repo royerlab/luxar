@@ -106,7 +106,9 @@ def test_neuromast_resolver_falls_back_when_the_record_is_unavailable(
 def test_neuromast_unavailable_record_reports_missing_local_channels(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    messages: list[str] = []
     monkeypatch.setattr(neuromast_demo, "DATA_DIR", tmp_path, raising=False)
+    monkeypatch.setattr(neuromast_demo, "aprint", messages.append)
     monkeypatch.setattr(
         neuromast_demo,
         "ensure_dataset",
@@ -115,6 +117,7 @@ def test_neuromast_unavailable_record_reports_missing_local_channels(
 
     with pytest.raises(FileNotFoundError, match="local store"):
         neuromast_demo.resolve_channel_paths()
+    assert messages == ["Manifest fetch unavailable (draft record)."]
 
 
 def test_neuromast_cache_is_claimed_by_registry(
