@@ -1016,14 +1016,14 @@ def test_green_schedule_repairs_cancelled_push_contexts(workflow: str) -> None:
     assert "git/refs/heads/dev" in script
     assert "compare/main...${dev_sha}" in script
     assert "compare/main...${GITHUB_SHA}" not in script
-    # And it must guard on what the run ACTUALLY checked out (rev-parse HEAD),
-    # comparing it to origin/dev -- not to ${GITHUB_SHA}, which checkout never
-    # rewrites. Comparing dev-by-name to dev-by-name would be vacuous.
+    # Scheduled runs belong to dev only while dev is the repository default.
+    # The guard must assert that contract directly, then verify that the immutable
+    # event checkout remains on dev's ancestry even if dev advances mid-window.
+    assert 'default_branch=$(gh api "repos/${GITHUB_REPOSITORY}"' in script
+    assert "'.default_branch'" in script
     assert "rev-parse HEAD" in script
     assert "rev-parse origin/dev" in script
-    # Mismatch classification (main-tip first, then ancestry) -- ordering is
-    # load-bearing, so both machinery pieces must be present.
-    assert "git/refs/heads/main" in script
+    assert "git/refs/heads/main" not in script
     assert "merge-base --is-ancestor" in script
     assert "event=push" in script
     assert "status=completed" in script
@@ -1058,7 +1058,7 @@ def _run_cancelled_push_repair(
     dev_ref_sha: str = "deadbeef",
     git_origin_dev: str = "deadbeef",
     git_head_sha: str = "deadbeef",
-    main_tip_sha: str = "cafef00d",
+    default_branch: str = "dev",
     git_is_ancestor: str = "1",
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     """Execute the repair shell against deterministic workflow/job snapshots."""
@@ -1080,18 +1080,14 @@ if "--method" in sys.argv:
         raise SystemExit(1)
 elif endpoint == os.environ["FAILED_GET_ENDPOINT"]:
     raise SystemExit(1)
+elif endpoint == f"repos/{os.environ['GITHUB_REPOSITORY']}":
+    if not os.environ["DEFAULT_BRANCH"]:
+        raise SystemExit(1)
+    print(os.environ["DEFAULT_BRANCH"])
 elif endpoint.endswith("/git/refs/heads/dev"):
     # `gh --jq .object.sha` is applied by real gh; the fake prints the value the
     # jq filter would yield. This is the walk anchor (dev's tip).
     print(os.environ["DEV_REF_SHA"])
-elif endpoint.endswith("/git/refs/heads/main"):
-    # main's tip, resolved by the guard only to CLASSIFY a HEAD-vs-dev mismatch.
-    # An empty MAIN_TIP_SHA models an unresolvable ref (rate limit / 5xx): the
-    # real gh exits non-zero, which the guard's `|| main_tip=""` turns into the
-    # cannot-tell fail-closed path.
-    if not os.environ["MAIN_TIP_SHA"]:
-        raise SystemExit(1)
-    print(os.environ["MAIN_TIP_SHA"])
 elif f"/runs/{os.environ['GITHUB_RUN_ID']}/jobs?" in endpoint:
     print(json.dumps([{"jobs": [
         {"id": 10, "name": "python-tests (3.12)", "conclusion": "cancelled"},
@@ -1190,16 +1186,13 @@ elif len(sys.argv) > 2 and sys.argv[1] == "merge-base" and sys.argv[2] == "--is-
             "FAILED_GET_ENDPOINT": failed_get_endpoint,
             "CANDIDATE_SHAS": ",".join(candidate_shas),
             # DEV_REF_SHA = the gh-resolved walk anchor. GIT_HEAD_SHA = the
-            # commit the run actually checked out (what the guard observes).
-            # GIT_ORIGIN_DEV = dev's tip. HEAD == origin/dev is the healthy path;
-            # HEAD = main's tip while dev is ahead models the pin removed / the
-            # scheduled-checkout default followed -> the guard's TRUE positive.
+            # commit the run actually checked out. GIT_ORIGIN_DEV = dev's tip.
+            # HEAD == origin/dev is the common healthy path; an older ancestor
+            # models a merge landing after the immutable checkout.
             "DEV_REF_SHA": dev_ref_sha,
             "GIT_ORIGIN_DEV": git_origin_dev,
             "GIT_HEAD_SHA": git_head_sha,
-            # main's tip (mismatch classification) and whether HEAD is an
-            # ancestor of dev's tip (the benign merge-during-checkout race).
-            "MAIN_TIP_SHA": main_tip_sha,
+            "DEFAULT_BRANCH": default_branch,
             "GIT_IS_ANCESTOR": git_is_ancestor,
         },
     )
@@ -1406,29 +1399,21 @@ def test_promotion_guard_green_when_dev_equals_main(
 def test_promotion_guard_reds_when_run_operates_on_main_not_dev(
     workflow: str, tmp_path: Path
 ) -> None:
-    """BROKEN: the checkout landed on MAIN while dev is ahead -> LOUD RED.
-
-    This exercises the guard for the RIGHT reason: ``git_head_sha`` is main's tip
-    (the checkout ref pin removed / the scheduled-checkout default followed) and
-    ``main_tip_sha`` matches it, so the ``== main_tip`` branch fires; ``git_origin_dev``
-    is dev's genuine, ahead tip. The walk anchor (``dev_ref_sha``) is left CORRECT
-    to prove the guard fires on HEAD, not on a forced walk-anchor mismatch. The
-    guard must fail non-zero, name main as the cause, and refuse to walk.
-    """
+    """A scheduled run dispatched on main fails before attempting the dev walk."""
     result, calls = _run_cancelled_push_repair(
         workflow,
         tmp_path,
         dev_ref_sha="devtip",
         git_origin_dev="devtip",
         git_head_sha="maintip",
-        main_tip_sha="maintip",
+        default_branch="main",
         candidate_shas=("devtip",),
     )
 
     assert result.returncode != 0
     output = result.stdout + result.stderr
-    assert "refusing to walk the wrong branch" in output
-    assert "checked out maintip == main's tip" in output  # HEAD=main is the cause
+    assert "scheduled runs are dispatched on 'main', not dev" in output
+    assert "refusing to walk" in output
     assert calls == []
 
 
@@ -1446,7 +1431,6 @@ def test_promotion_guard_green_on_merge_during_checkout(
         dev_ref_sha="devtip",
         git_origin_dev="devtip",
         git_head_sha="olddev",  # an earlier dev commit
-        main_tip_sha="maincommit",  # not main
         git_is_ancestor="1",  # HEAD is an ancestor of dev's tip
         candidate_shas=(),  # nothing further to promote in this scenario
     )
@@ -1456,15 +1440,33 @@ def test_promotion_guard_green_on_merge_during_checkout(
     assert calls == []
 
 
+def test_promotion_guard_green_when_main_catches_up_during_window(
+    workflow: str, tmp_path: Path
+) -> None:
+    """Promotion reaching the tested SHA does not invalidate an older dev checkout."""
+    result, calls = _run_cancelled_push_repair(
+        workflow,
+        tmp_path,
+        dev_ref_sha="devtip",
+        git_origin_dev="devtip",
+        git_head_sha="deadbeef",
+        git_is_ancestor="1",
+        candidate_shas=("deadbeef",),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "dev advanced since checkout (deadbeef -> devtip)" in result.stdout
+    assert calls == ["repos/royerlab/luxar/actions/runs/900/rerun-failed-jobs"]
+
+
 def test_promotion_guard_reds_on_unknown_branch(workflow: str, tmp_path: Path) -> None:
-    """HEAD is neither main's tip nor an ancestor of dev's tip -> LOUD RED."""
+    """HEAD outside dev's ancestry fails loudly."""
     result, calls = _run_cancelled_push_repair(
         workflow,
         tmp_path,
         dev_ref_sha="devtip",
         git_origin_dev="devtip",
         git_head_sha="rogue",
-        main_tip_sha="maincommit",  # not head
         git_is_ancestor="0",  # not an ancestor of dev either
         candidate_shas=("devtip",),
     )
@@ -1472,32 +1474,29 @@ def test_promotion_guard_reds_on_unknown_branch(workflow: str, tmp_path: Path) -
     assert result.returncode != 0
     output = result.stdout + result.stderr
     assert "unknown branch" in output
-    assert "checked out rogue is neither main's tip nor an ancestor" in output
+    assert "checked out rogue is not an ancestor of origin/dev" in output
     assert calls == []
 
 
-def test_promotion_guard_reds_when_main_tip_unresolvable(
+def test_promotion_guard_reds_when_default_branch_is_unresolvable(
     workflow: str, tmp_path: Path
 ) -> None:
-    """CANNOT-TELL: HEAD != dev but main's tip is unresolvable -> fail CLOSED.
-
-    An API hiccup on the main lookup must not let a (possibly-main) checkout slip
-    through the ancestry branch as benign. "Cannot tell" fails loudly, mirroring
-    dev_sha-unresolvable.
-    """
+    """An unreadable default branch fails closed before topology checks."""
     result, calls = _run_cancelled_push_repair(
         workflow,
         tmp_path,
         dev_ref_sha="devtip",
         git_origin_dev="devtip",
         git_head_sha="maintip",
-        main_tip_sha="",  # gh api heads/main fails -> main_tip empty
-        git_is_ancestor="1",  # even though HEAD would pass ancestry, we fail closed
+        default_branch="",
+        git_is_ancestor="1",
         candidate_shas=("devtip",),
     )
 
     assert result.returncode != 0
-    assert "could not resolve refs/heads/main" in (result.stdout + result.stderr)
+    assert "could not resolve the repository default branch" in (
+        result.stdout + result.stderr
+    )
     assert calls == []
 
 

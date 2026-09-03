@@ -1131,9 +1131,25 @@ jobs:
             fi
           done
 
+          # PRECONDITION GUARD: scheduled runs are dispatched on the repository
+          # default branch, and this workflow only serves promotion while that
+          # branch is dev. Ask that question directly rather than inferring it
+          # from commit topology, where a caught-up main tip is indistinguishable
+          # from the scheduled event SHA after the default-branch flip.
+          default_branch=$(gh api "repos/${GITHUB_REPOSITORY}" \
+            --jq '.default_branch') || default_branch=""
+          if [ -z "$default_branch" ]; then
+            echo "::error::could not resolve the repository default branch; cannot verify that this scheduled run belongs to dev -- failing loudly rather than risking a silent pass"
+            exit 1
+          fi
+          if [ "$default_branch" != "dev" ]; then
+            echo "::error::scheduled runs are dispatched on '$default_branch', not dev; this promotion window cannot attest dev after the default-branch flip -- refusing to walk"
+            exit 1
+          fi
+
           # Resolve dev's tip EXPLICITLY as the WALK ANCHOR. ${GITHUB_SHA} is the
-          # default branch's tip (dev's while dev is default, main's after the
-          # flip), so it cannot anchor the walk -- see the job comment above.
+          # scheduled event's immutable dev commit, but dev may advance while the
+          # window runs, so the repair must walk through the current tip.
           dev_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/refs/heads/dev" \
             --jq '.object.sha') || dev_sha=""
           if [ -z "$dev_sha" ]; then
@@ -1141,62 +1157,21 @@ jobs:
             exit 1
           fi
 
-          # PRECONDITION GUARD (the whole failure this job guards against is
-          # SILENT, so correctness alone is not enough -- assert it out loud).
-          # Observe what this run is ACTUALLY operating on -- the checked-out
-          # commit, `git rev-parse HEAD` -- and require it to be dev. The job
-          # checks out the SHA captured from dev, so HEAD is dev when the pin works;
-          # if the pin is removed (or GitHub's scheduled-checkout default changes)
-          # the checkout lands on the default branch -- main after the flip.
-          # (Comparing dev-by-name to dev-by-name would be VACUOUS: both sides
-          # equal dev on every real failure mode, so it could never fire.)
-          #
-          # Do NOT compare against ${GITHUB_SHA}: that is the EVENT's SHA, which
-          # actions/checkout NEVER rewrites, so post-flip it stays main's tip even
-          # when the pin works perfectly -- it would redden every healthy run.
-          #
-          # A plain `HEAD != origin/dev` cannot stand alone: a merge landing on
-          # dev BETWEEN checkout and this read leaves HEAD one commit behind the
-          # tip through no fault of the pin, and a re-fetch can't reconcile it
-          # (HEAD is frozen at checkout; re-reading origin/dev only moves it
-          # FURTHER ahead, never back). So CLASSIFY the mismatch instead:
+          # Cross-check that the immutable event commit remains on dev's line.
+          # HEAD normally equals origin/dev, but a merge landing during the window
+          # leaves HEAD behind the tip. That older ancestor is healthy; any commit
+          # outside dev's ancestry is an unknown checkout and fails closed.
           git fetch -q origin +refs/heads/dev:refs/remotes/origin/dev
           origin_dev=$(git rev-parse origin/dev)
           head_sha=$(git rev-parse HEAD)
           if [ "$head_sha" != "$origin_dev" ]; then
-            # THREE-OUTCOME DISCIPLINE for a HEAD-vs-dev mismatch: FINE (a merge
-            # landed, HEAD is an ancestor of dev), BROKEN (HEAD is main -> the pin
-            # is gone), or CANNOT-TELL (main's tip is unresolvable). Cannot-tell
-            # must NEVER render as fine: if this lookup fails (rate limit /
-            # transient 5xx) main_tip is empty, the true-positive branch is
-            # skipped, and a main checkout would slip through the ancestry branch
-            # (main IS an ancestor of dev) as a benign note -- the exact silent
-            # false-green this guard exists to prevent. So fail CLOSED on an
-            # unresolvable main_tip, exactly as dev_sha does three lines up.
-            main_tip=$(gh api "repos/${GITHUB_REPOSITORY}/git/refs/heads/main" \
-              --jq '.object.sha') || main_tip=""
-            if [ -z "$main_tip" ]; then
-              echo "::error::could not resolve refs/heads/main; cannot classify the checkout mismatch -- failing loudly rather than risking a silent pass"
-              exit 1
-            fi
-            # main_tip is guaranteed non-empty here, so no `-n` guard is needed.
-            if [ "$head_sha" = "$main_tip" ]; then
-              # BROKEN, the TRUE positive: the run is on main, not dev.
-              echo "::error::scheduled promotion checked out $head_sha == main's tip -- the checkout ref pin was removed or the scheduled-checkout default changed; refusing to walk the wrong branch"
-              exit 1
-            elif git merge-base --is-ancestor "$head_sha" "$origin_dev"; then
+            if git merge-base --is-ancestor "$head_sha" "$origin_dev"; then
               # HEAD is an ANCESTOR of dev's tip: a merge landed between checkout
               # and this read. Benign -- the walk anchor `dev_sha` is resolved
               # fresh from the API, so the repair still targets dev's real tip.
-              # NB: this ancestry test is safe ONLY because the `== main_tip`
-              # branch runs FIRST -- main is itself an ancestor of dev (it is
-              # fast-forwarded FROM dev), so ancestry alone would wave a main
-              # checkout through. Ordering is load-bearing: main check, then
-              # ancestry, never the reverse.
               echo "note: dev advanced since checkout ($head_sha -> $origin_dev), a merge landed between checkout and this read; benign -- the walk anchor dev_sha is resolved fresh"
             else
-              # Neither dev's tip, nor an ancestor of it, nor main: unknown state.
-              echo "::error::checked out $head_sha is neither main's tip nor an ancestor of origin/dev ($origin_dev) -- unknown branch; refusing to walk"
+              echo "::error::checked out $head_sha is not an ancestor of origin/dev ($origin_dev) -- unknown branch; refusing to walk"
               exit 1
             fi
           fi
