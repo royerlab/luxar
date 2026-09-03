@@ -40,9 +40,10 @@ class DynamicOpsConfig:
         None  # Auto: 16 for 2D, 6 for 3D, 4 for 4D, 2 for 5D+
     )
     # RNG seed for the probabilistic per-tile keep decision used when
-    # k_per_tile < 1 (tiled seeding). A fixed default makes dynamic seeding
-    # reproducible run-to-run, matching the seed=42 convention used by the
-    # farthest-point-sampling seeder. Set to None for nondeterministic behavior.
+    # k_per_tile < 1 and for the weak-splat residual sample. Explicit seeds
+    # advance with each dynamic-ops step, keeping a fit reproducible without
+    # repeating the same samples. None leaves the residual sample on PyTorch's
+    # global RNG stream and the per-tile keep decision unseeded.
     seed: Optional[int] = 42
 
     # Step 2: Weak Splat Identification

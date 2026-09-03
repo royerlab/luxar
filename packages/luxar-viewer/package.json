@@ -72,7 +72,8 @@
     "test:generate-fixtures": "cd ../.. && hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_test_data.py && hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_expectations.py && cd packages/luxar-viewer && tsx tools/fixture-freshness.ts",
     "test": "vitest",
     "test:ui": "vitest --ui",
-    "test:coverage": "vitest --coverage",
+    "test:coverage": "vitest run --coverage",
+    "test:mutation": "pnpm dlx --package=@stryker-mutator/core@10.0.0 --package=@stryker-mutator/vitest-runner@10.0.0 stryker run",
     "test:perf": "vitest --run --config vitest.perf.config.ts",
     "test:perf:strict": "LUXAR_PERF_QUIET_HOST=1 vitest --run --config vitest.perf.config.ts",
     "bench:zip:fixtures": "cd ../.. && hatch run python packages/luxar-viewer/tools/make-zip-bench-fixtures.py \"${LUXAR_BENCH_FIXTURES:-packages/luxar-viewer/bench-fixtures}\"",
@@ -108,7 +109,8 @@
     "check:format": "prettier --check --cache --cache-strategy content src",
     "check": "pnpm run check:format && pnpm run typecheck && pnpm run lint && pnpm test --run",
     "check:static": "pnpm run check:overrides && pnpm run check:format && pnpm run typecheck && pnpm run lint && pnpm run check:layers && pnpm run check:knip:ci",
-    "check:ci": "pnpm run check:static && pnpm run test:coverage",
+    "check:coverage-slack": "node scripts/check-coverage-slack.mjs",
+    "check:ci": "pnpm run check:static && pnpm run test:coverage && pnpm run check:coverage-slack",
     "ci:release": "pnpm run build:lib && pnpm run build:lib:check"
   },
   "dependencies": {
