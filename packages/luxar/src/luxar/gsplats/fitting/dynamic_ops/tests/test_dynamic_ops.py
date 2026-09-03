@@ -9,6 +9,7 @@ import torch
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.fitting.dynamic_ops import (
     DynamicOpsConfig,
+    RecentlyRelocatedTracker,
     _calculate_splat_importance,
     _find_residual_peaks,
     _select_weak_splats,
@@ -309,18 +310,51 @@ class TestWeakSplatSelection:
         # ever stops differing, the parameter has been silently dropped.
         assert not torch.equal(first, other)
 
-    def test_dynamic_ops_threads_its_seed_into_weak_splat_selection(self) -> None:
-        """The config seed must reach the sampler, not just the peak finder."""
-        import inspect
-
+    def test_dynamic_ops_advances_its_seed_between_steps(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The config seed reaches both samplers and advances reproducibly."""
         from luxar.gsplats.fitting.dynamic_ops import operations
 
-        source = inspect.getsource(operations.apply_dynamic_operations)
-        assert "seed=cfg.seed" in source, (
-            "apply_dynamic_operations must forward cfg.seed to _select_weak_splats; "
-            "without it the residual sample falls back to the global torch RNG"
+        seen_peak_seeds = []
+        seen_weak_seeds = []
+
+        def fake_find_residual_peaks(*_args, seed=None, **_kwargs):
+            seen_peak_seeds.append(seed)
+            return torch.tensor([[0, 0]])
+
+        def fake_select_weak_splats(*_args, seed=None, **_kwargs):
+            seen_weak_seeds.append(seed)
+            return torch.empty(0, dtype=torch.long)
+
+        monkeypatch.setattr(
+            operations, "_find_residual_peaks", fake_find_residual_peaks
         )
-        assert "seed" in inspect.signature(operations._select_weak_splats).parameters
+        monkeypatch.setattr(operations, "_select_weak_splats", fake_select_weak_splats)
+
+        class Model:
+            @staticmethod
+            def current_params():
+                return torch.zeros((1, 2)), torch.eye(2)[None], torch.ones(1)
+
+        cfg = DynamicOpsConfig(seed=1234)
+        tracker = RecentlyRelocatedTracker(1)
+        target = torch.ones((2, 2))
+        prediction = torch.zeros((2, 2))
+
+        for _ in range(2):
+            apply_dynamic_operations(
+                Model(),
+                target,
+                prediction,
+                cfg,
+                max_abs_error_threshold=0.0,
+                relocation_tracker=tracker,
+            )
+            tracker.advance_step()
+
+        assert seen_peak_seeds == [1234, 1235]
+        assert seen_weak_seeds == [1234, 1235]
 
     def test_select_weak_splats_minimum_one(self) -> None:
         """Test that at least one splat is always selected."""

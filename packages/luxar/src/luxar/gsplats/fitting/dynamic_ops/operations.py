@@ -163,6 +163,10 @@ def apply_dynamic_operations(
         bool: True if any splats were relocated
     """
     with torch.no_grad():
+        operation_seed = cfg.seed
+        if operation_seed is not None and relocation_tracker is not None:
+            operation_seed += relocation_tracker.current_step
+
         # === Cache model parameters once (avoid repeated current_params() calls) ===
         centers, Ls, amps = model.current_params()
 
@@ -178,7 +182,7 @@ def apply_dynamic_operations(
             num_tiles_per_dim=cfg.num_tiles_per_dim
             if cfg.num_tiles_per_dim is not None
             else 8,
-            seed=cfg.seed,
+            seed=operation_seed,
         )
 
         if len(peak_locations) == 0:
@@ -213,7 +217,7 @@ def apply_dynamic_operations(
             residual,
             cfg.relocation_percentile,
             relocation_tracker,
-            seed=cfg.seed,
+            seed=operation_seed,
         )
 
         if len(weak_splat_indices) == 0:
@@ -384,17 +388,15 @@ def _select_weak_splats(
             # precisely so a re-fit reproduces a published store, and
             # _find_residual_peaks already honours it. Drawing from the global
             # torch RNG here made every default fit non-reproducible.
-            generator: torch.Generator | None = None
-            if seed is not None:
-                generator = torch.Generator(device=residual.device)
+            generator = torch.Generator()
+            if seed is None:
+                generator.seed()
+            else:
                 generator.manual_seed(seed)
             indices = torch.randint(
-                0,
-                residual.numel(),
-                (sample_size,),
-                device=residual.device,
-                generator=generator,
+                0, residual.numel(), (sample_size,), generator=generator
             )
+            indices = indices.to(residual.device)
             sampled = torch.clamp(residual.reshape(-1)[indices], min=0)
             # Only compute quantile on positive values from sample
             positive_sample = sampled[sampled > 0]
