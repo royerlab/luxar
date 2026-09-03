@@ -857,7 +857,7 @@ For very large datasets:
 ### Basic Loading
 
 ```typescript
-import { loadScene, updateView } from '@luxar/viewer/data';
+import { loadScene, updateView } from '../data';
 
 // Load a Zarr dataset (point spatial index required)
 const scene = await loadScene('http://server.com/data/points.luxar.zarr');
@@ -876,8 +876,8 @@ await updateView({
 ### nD Dataset Loading
 
 ```typescript
-import { loadScene, updateSceneForDimensions } from '@luxar/viewer/data';
-import type { SimpleDims } from '@luxar/viewer/types';
+import { loadScene, updateSceneForDimensions } from '../data';
+import type { SimpleDims } from '../types/dims';
 
 // Load 5D dataset (x, y, z, time, channel)
 const scene = await loadScene('http://server.com/data/5d-points.luxar.zarr');
@@ -899,7 +899,7 @@ await updateSceneForDimensions(dims, scene);
 ### Directory Navigation
 
 ```typescript
-import { DirectoryNavigator } from '@luxar/viewer/data';
+import { DirectoryNavigator } from '../data';
 
 const navigator = new DirectoryNavigator('http://data.server.com/');
 
@@ -926,7 +926,7 @@ if (selected) {
 ### Multiple Loader Instances
 
 ```typescript
-import { loadScene, updateView, dispose } from '@luxar/viewer/data';
+import { loadScene, updateView, dispose } from '../data';
 
 // Create multiple independent loaders for different datasets
 const scene1 = await loadScene('http://server.com/data1.luxar.zarr', config, 'loader1');
@@ -946,7 +946,7 @@ dispose();
 ### Cache Management
 
 ```typescript
-import { SceneLoaderManager } from '@luxar/viewer/data';
+import { SceneLoaderManager } from '../data';
 
 // Monitor cache usage for default loader
 const loader = SceneLoaderManager.getInstance().getDefaultLoader();
@@ -976,10 +976,10 @@ directly).
 // core/app.ts) instead of importing DataMonitorManager directly.
 // Production code resolves the monitor through that port; the example
 // below shows direct registry access for diagnostic/advanced cases.
-import { SceneLoaderManager } from '@luxar/viewer/data';
+import { SceneLoaderManager } from '../data';
 // DataMonitorManager lives in ui/ now; only import it from there if you
 // truly need to inspect the monitor singleton (rare).
-import { DataMonitorManager } from '@luxar/viewer/ui/data-monitor-manager';
+import { DataMonitorManager } from '../ui/data-monitor-manager';
 
 // Direct access to manager for advanced use cases
 const loaderManager = SceneLoaderManager.getInstance();
@@ -1037,7 +1037,7 @@ const scene = await loadScene(url, { noCache: true });
 
 // Or inspect the live cache stats via SceneLoaderManager and clear
 // the persistent L2 tier (or every tier) when needed.
-import { SceneLoaderManager } from '@luxar/viewer/data';
+import { SceneLoaderManager } from '../data';
 const loader = SceneLoaderManager.getInstance().getDefaultLoader();
 const stats = loader?.getCacheStats();
 if (stats?.l2 && stats.l2.bytes > threshold) {
