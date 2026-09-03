@@ -169,7 +169,9 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
     (
         "pyproject.toml",
         "py",
-        "hatch envs, ruff/mypy targets and the import-linter contracts",
+        "hatch envs, ruff/mypy targets, the import-linter contracts, and the "
+        "coverage floor (`[tool.coverage.report] fail_under`) the python-tests "
+        "gate enforces — a floor-only diff must run the gate it configures",
     ),
     (
         "format-contract/contract.yaml",
@@ -322,6 +324,13 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "packages/luxar-launcher/go.mod",
         "go",
         "the launcher module graph `go build`/`go test` resolve",
+    ),
+    (
+        "packages/luxar-viewer/coverage-thresholds.mjs",
+        "ts",
+        "the viewer coverage floors, read by both vitest.config.ts and "
+        "check-coverage-slack.mjs; the counterpart of pyproject.toml's "
+        "`fail_under`, and likewise must trigger the gate it configures",
     ),
 ]
 

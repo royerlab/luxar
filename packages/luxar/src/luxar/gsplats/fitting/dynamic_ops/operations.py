@@ -123,6 +123,15 @@ class RecentlyRelocatedTracker:
         }
 
 
+def _resolve_operation_seed(
+    seed: Optional[int], relocation_tracker: Optional[RecentlyRelocatedTracker]
+) -> Optional[int]:
+    """Advance seeded sampling so dynamic-ops steps do not repeat one draw."""
+    if seed is None or relocation_tracker is None:
+        return seed
+    return seed + relocation_tracker.current_step
+
+
 def apply_dynamic_operations(
     model: Any,
     V_target: torch.Tensor,
@@ -163,6 +172,8 @@ def apply_dynamic_operations(
         bool: True if any splats were relocated
     """
     with torch.no_grad():
+        operation_seed = _resolve_operation_seed(cfg.seed, relocation_tracker)
+
         # === Cache model parameters once (avoid repeated current_params() calls) ===
         centers, Ls, amps = model.current_params()
 
@@ -178,7 +189,7 @@ def apply_dynamic_operations(
             num_tiles_per_dim=cfg.num_tiles_per_dim
             if cfg.num_tiles_per_dim is not None
             else 8,
-            seed=cfg.seed,
+            seed=operation_seed,
         )
 
         if len(peak_locations) == 0:
@@ -208,7 +219,12 @@ def apply_dynamic_operations(
         # === STEP 2: Identify Weak Splats ===
         importance = _calculate_splat_importance(Ls, amps)
         weak_splat_indices = _select_weak_splats(
-            importance, centers, residual, cfg.relocation_percentile, relocation_tracker
+            importance,
+            centers,
+            residual,
+            cfg.relocation_percentile,
+            relocation_tracker,
+            seed=operation_seed,
         )
 
         if len(weak_splat_indices) == 0:
@@ -314,6 +330,7 @@ def _select_weak_splats(
     residual: torch.Tensor,
     relocation_percentile: float,
     relocation_tracker: Optional[RecentlyRelocatedTracker] = None,
+    seed: int | None = None,
 ) -> torch.Tensor:
     """
     Select weak splats that are safe to relocate.
@@ -334,6 +351,9 @@ def _select_weak_splats(
         residual: Residual image (target - prediction)
         relocation_percentile: Percentage of least important splats to consider
         relocation_tracker: Optional tracker for cooldown filtering
+        seed: RNG seed for the residual-percentile sample. None uses PyTorch's
+            global RNG stream; a fixed seed uses a private generator and makes
+            a re-fit bit-reproducible.
 
     Returns:
         Tensor of splat indices sorted by importance (weakest first)
@@ -369,9 +389,17 @@ def _select_weak_splats(
             # Random sampling (optimized)
             # Use randint instead of randperm (2-3x faster: generates only sample_size random numbers)
             # Use reshape instead of flatten (avoids copy when tensor is contiguous)
+            # Use a private CPU generator for explicit seeds so the whole
+            # dynamic-ops path is reproducible without perturbing global state.
+            # With seed=None, preserve the caller-controlled global RNG stream.
+            generator = None
+            if seed is not None:
+                generator = torch.Generator()
+                generator.manual_seed(seed)
             indices = torch.randint(
-                0, residual.numel(), (sample_size,), device=residual.device
+                0, residual.numel(), (sample_size,), generator=generator
             )
+            indices = indices.to(residual.device)
             sampled = torch.clamp(residual.reshape(-1)[indices], min=0)
             # Only compute quantile on positive values from sample
             positive_sample = sampled[sampled > 0]
