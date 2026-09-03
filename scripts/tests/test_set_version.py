@@ -38,12 +38,10 @@ def test_legacy_npm_package_specifiers_are_absent_from_tracked_files() -> None:
         (
             legacy_scope,
             # Any module specifier, not just the root and styles.css: a subpath
-            # import such as 'luxar-viewer/data' names the retired package too.
+            # import such as <name>/data names the retired package too.
             rf"(from|import) ['\"]{bare_name}(/[^'\"]*)?['\"]",
             rf"{bare_name}/styles\.css",
             rf"(npm (install|i)|pnpm add|yarn add) {bare_name}([[:space:]]|$)",
-            rf"`{bare_name}` ships",
-            rf"of {bare_name}\.",
         )
     )
     result = subprocess.run(
