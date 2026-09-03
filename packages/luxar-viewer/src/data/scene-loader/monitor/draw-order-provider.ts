@@ -53,12 +53,11 @@ export function createDrawOrderProvider(rootGroup: THREE.Group | null): DrawOrde
             // Materials can be arrays; bucket + depthWrite are shared, so the
             // first material is representative.
             const material = Array.isArray(object.material) ? object.material[0] : object.material;
-            // The authored band, read off the same composed attrs record the
-            // depth-sort coordinator sorts by. Camera-independent, so unlike
-            // `renderOrder` it is not re-derived per frame — but it is polled
-            // with it because the Layers panel can change it at any time.
-            const authored = (object.userData as { attrs?: { layer_order?: unknown } }).attrs
-              ?.layer_order;
+            // The authored band, read from the same dedicated render-state
+            // slot the depth-sort coordinator uses. Camera-independent, so
+            // unlike `renderOrder` it is not re-derived per frame — but it is
+            // polled with it because the Layers panel can change it at any time.
+            const authored = (object.userData as { layerOrder?: unknown }).layerOrder;
             states.set(object.name, {
               bucket: material?.transparent ? 'transparent' : 'opaque',
               depthWrite: !!material?.depthWrite,

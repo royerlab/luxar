@@ -5144,6 +5144,32 @@ describe('depth-sort coordinator — layer_order bands', () => {
     expect(warned.some((c) => String(c[1]).includes('spatially CONTAINS'))).toBe(true);
   });
 
+  it('does not warn when authored bands preserve container-first order', async () => {
+    const coord = await loadCoordinator();
+    const { log } = await import('../../../utils/log');
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const cloud = makeGSplatsMesh(2, 'volumetric');
+    cloud.geometry.boundingSphere!.center.set(0, 0, -10);
+    cloud.geometry.boundingSphere!.radius = 100;
+    const marker = makeGSplatsMesh(2, 'volumetric');
+    marker.geometry.boundingSphere!.center.set(0, 0, -30);
+    marker.geometry.boundingSphere!.radius = 1;
+    setLevel(cloud, 1);
+    setLevel(marker, 2);
+    for (const mesh of [marker, cloud]) {
+      coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1]), 1);
+    }
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(cloud.renderOrder).toBe(1);
+    expect(marker.renderOrder).toBe(2);
+    const warned = (log.warning as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    expect(warned.some((call) => String(call[1]).includes('spatially CONTAINS'))).toBe(false);
+  });
+
   it('containment still applies between layers sharing a band', async () => {
     const coord = await loadCoordinator();
     coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });

@@ -599,7 +599,9 @@ function orderGroupsWithContainment(byDepth: OrderGroup[]): OrderGroup[] {
         // member, and the "lowest ready index first" rule below walks the
         // (level, meanZ)-sorted array band by band on its own.
         if (byDepth[a].level !== byDepth[b].level) {
-          warnBandSplitContainment(byDepth[a], byDepth[b]);
+          if (byDepth[b].level < byDepth[a].level) {
+            warnBandSplitContainment(byDepth[a], byDepth[b]);
+          }
           continue;
         }
         edges.push(b);
