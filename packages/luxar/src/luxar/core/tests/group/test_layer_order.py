@@ -179,6 +179,18 @@ class TestAuthoringOnALayer:
                     "pts", random_positions(8, seed=3), layer_order="front"
                 )
 
+    def test_refuses_a_numpy_integer_before_json_serialization(
+        self, tmp_path: Any
+    ) -> None:
+        compiler, scene, path = open_scene(tmp_path, "numpy-int.luxar.zarr")
+        with compiler:
+            with pytest.raises(
+                ValueError, match=r"layer_order must be an integer.*int32"
+            ):
+                scene.add_points(
+                    "pts", random_positions(8, seed=31), layer_order=np.int32(4)
+                )
+
     # A `None` refuses loudly here rather than being read as "absent", which is
     # why `layer_order` is NOT in ABSENT_WHEN_NONE_RENDER_ATTRS: that set is for
     # attrs whose None would otherwise reach disk unchecked.
