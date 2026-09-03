@@ -1,9 +1,9 @@
-"""Tests for ``scripts/set_version.py`` and the version-consistency gate.
+"""Tests for release version stamping, consistency, and preflight checks.
 
-These two scripts are the whole of the release version mechanism, and they run
-exactly once per release — so a defect in either surfaces on launch day, in
-front of everyone, with no earlier signal. That asymmetry is why they are
-tested here rather than trusted.
+These scripts are the whole of the release version mechanism, and they run
+exactly once per release — so a defect surfaces on launch day, in front of
+everyone, with no earlier signal. That asymmetry is why they are tested here
+rather than trusted.
 
 The gate tests deliberately assert that it *fails*: a consistency check that
 cannot go red is indistinguishable from no check at all.
@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import subprocess
 from pathlib import Path
 from types import ModuleType
 
@@ -341,6 +343,218 @@ def test_set_version_prints_explicit_pr_base_and_release_branch(
     assert "gh pr create --base dev --fill" in output
     assert "gh pr create --fill" not in output
     assert "switch to main after the bump is promoted" in output
+
+
+def _run_release_preflight(
+    tmp_path: Path,
+    *,
+    environment: str = "UNSET",
+    repository: str = "UNSET",
+    organization: str = "UNSET",
+    repository_direct: str | None = None,
+) -> tuple[str, list[str]]:
+    repo = tmp_path / "release-repo"
+    (repo / "scripts").mkdir(parents=True)
+    (repo / ".github/workflows").mkdir(parents=True)
+    (repo / "packages/luxar/src/luxar").mkdir(parents=True)
+    (repo / "scripts/release.sh").write_text(RELEASE.read_text())
+    (repo / "scripts/check_version_consistency.py").write_text("")
+    (repo / ".github/workflows/publish.yml").write_text("name: PyPI\n")
+    (repo / ".github/workflows/publish-npm.yml").write_text("name: npm\n")
+    (repo / "packages/luxar/src/luxar/__init__.py").write_text(
+        '__version__ = "2099.01.01"\n'
+    )
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "python3").write_text("#!/bin/sh\nexit 0\n")
+    (bin_dir / "python3").chmod(0o755)
+    gh_log = tmp_path / "gh-calls.log"
+    (bin_dir / "gh").write_text(
+        """#!/usr/bin/python3
+import os
+import sys
+
+args = sys.argv[1:]
+if args[:1] == ["auth"]:
+    raise SystemExit(0)
+if args[:1] == ["repo"]:
+    print("royerlab/luxar")
+    raise SystemExit(0)
+
+endpoint = args[1]
+with open(os.environ["GH_CALL_LOG"], "a", encoding="utf-8") as log:
+    log.write(f"{endpoint}\\n")
+
+settings = {
+    "repos/royerlab/luxar/environments/npm/variables": "NPM_ENV_RESULT",
+    "repos/royerlab/luxar/actions/variables": "NPM_REPO_RESULT",
+    "repos/royerlab/luxar/actions/organization-variables": "NPM_ORG_RESULT",
+}
+if endpoint == "repos/royerlab/luxar/actions/variables/ENABLE_NPM_PUBLISH":
+    setting = os.environ.get(
+        "NPM_REPO_DIRECT_RESULT", os.environ.get("NPM_REPO_RESULT", "UNSET")
+    )
+else:
+    setting = os.environ.get(settings[endpoint], "UNSET")
+    if "--paginate" not in args:
+        raise SystemExit(1)
+if setting == "ERROR":
+    raise SystemExit(1)
+if setting == "UNSET":
+    raise SystemExit(0)
+
+jq_expression = args[args.index("--jq") + 1]
+if jq_expression == ".variables[].name":
+    print("ENABLE_NPM_PUBLISH")
+elif jq_expression == ".value":
+    print(setting)
+else:
+    print(f"found\\t{setting}\\tvalue-end")
+"""
+    )
+    (bin_dir / "gh").chmod(0o755)
+
+    subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Release Test"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "release-test@example.com"],
+        cwd=repo,
+        check=True,
+    )
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--no-verify",
+            "-m",
+            "fixture",
+        ],
+        cwd=repo,
+        check=True,
+    )
+    origin = tmp_path / "origin.git"
+    subprocess.run(["git", "clone", "--bare", str(repo), str(origin)], check=True)
+    subprocess.run(
+        ["git", "remote", "add", "origin", str(origin)], cwd=repo, check=True
+    )
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "GH_CALL_LOG": str(gh_log),
+            "NPM_ENV_RESULT": environment,
+            "NPM_REPO_RESULT": repository,
+            "NPM_ORG_RESULT": organization,
+            "PATH": f"{bin_dir}:{env['PATH']}",
+            "SKIP_CI_CHECK": "1",
+        }
+    )
+    if repository_direct is not None:
+        env["NPM_REPO_DIRECT_RESULT"] = repository_direct
+    result = subprocess.run(
+        ["bash", "scripts/release.sh", "--dry-run"],
+        cwd=repo,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    calls = gh_log.read_text().splitlines() if gh_log.exists() else []
+    return result.stdout, calls
+
+
+def test_release_preflight_honors_environment_precedence(tmp_path: Path) -> None:
+    output, calls = _run_release_preflight(
+        tmp_path, environment="false", repository="true", organization="true"
+    )
+
+    assert "ENABLE_NPM_PUBLISH='false' from npm environment" in output
+    assert "the tag will NOT publish to npm" in output
+    assert "the tag WILL publish" not in output
+    assert calls == ["repos/royerlab/luxar/environments/npm/variables"]
+
+
+def test_release_preflight_matches_case_insensitive_workflow_comparison(
+    tmp_path: Path,
+) -> None:
+    output, _ = _run_release_preflight(tmp_path, repository="True")
+
+    assert "ENABLE_NPM_PUBLISH=True from repository" in output
+    assert "the tag WILL publish @royerlab/luxar-viewer" in output
+
+
+def test_release_preflight_does_not_trim_the_switch_value(tmp_path: Path) -> None:
+    output, _ = _run_release_preflight(tmp_path, repository="true\n")
+
+    assert "the tag will NOT publish to npm" in output
+    assert "the tag WILL publish" not in output
+
+
+def test_release_preflight_reads_shared_organization_variable(tmp_path: Path) -> None:
+    output, calls = _run_release_preflight(tmp_path, organization="true")
+
+    assert "ENABLE_NPM_PUBLISH=true from organization" in output
+    assert "the tag WILL publish @royerlab/luxar-viewer" in output
+    assert calls == [
+        "repos/royerlab/luxar/environments/npm/variables",
+        "repos/royerlab/luxar/actions/variables",
+        "repos/royerlab/luxar/actions/organization-variables",
+    ]
+
+
+def test_release_preflight_does_not_turn_a_failed_second_get_into_off(
+    tmp_path: Path,
+) -> None:
+    output, calls = _run_release_preflight(
+        tmp_path, repository="true", repository_direct="ERROR"
+    )
+
+    assert "ENABLE_NPM_PUBLISH=true from repository" in output
+    assert "the tag WILL publish @royerlab/luxar-viewer" in output
+    assert calls == [
+        "repos/royerlab/luxar/environments/npm/variables",
+        "repos/royerlab/luxar/actions/variables",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("environment", "repository", "organization", "failed_level"),
+    [
+        ("ERROR", "true", "true", "npm environment"),
+        ("UNSET", "ERROR", "true", "repository"),
+        ("UNSET", "UNSET", "ERROR", "organization"),
+    ],
+)
+def test_release_preflight_reports_lookup_failures_as_unknown(
+    tmp_path: Path,
+    environment: str,
+    repository: str,
+    organization: str,
+    failed_level: str,
+) -> None:
+    output, _ = _run_release_preflight(
+        tmp_path,
+        environment=environment,
+        repository=repository,
+        organization=organization,
+    )
+
+    assert f"could not read {failed_level} variables" in output
+    assert "cannot tell whether the tag will publish to npm" in output
+    assert "the tag WILL publish" not in output
+    assert "the tag will NOT publish" not in output
+
+
+def test_release_preflight_distinguishes_unset_from_unreadable(tmp_path: Path) -> None:
+    output, _ = _run_release_preflight(tmp_path)
+
+    assert "ENABLE_NPM_PUBLISH is UNSET" in output
+    assert "the FIRST publish must be a manual" in output
+    assert "cannot tell" not in output
 
 
 def test_set_version_and_the_gate_agree_on_where_the_files_are() -> None:

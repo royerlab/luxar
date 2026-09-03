@@ -402,9 +402,8 @@ test = "pytest -n {env:LUXAR_PYTEST_JOBS:6} --dist loadfile {args:packages/luxar
 # yourself for a fast local coverage run.
 test-cov = "mkdir -p coverage/python && pytest -m 'not slow' --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests}"
 test-cov-all = "mkdir -p coverage/python && pytest -n {env:LUXAR_PYTEST_JOBS:6} --dist loadfile --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests}"
-# `scripts/benchmarks` is listed explicitly: a broad `benchmarks/` entry in
-# .gitignore makes ruff's directory walk skip it, but pre-commit still formats
-# those tracked files, so it must be covered here to keep them in sync.
+# `scripts/benchmarks` remains explicit as a safety net if the anchored
+# `/benchmarks/` ignore rule ever regresses to matching nested directories.
 format = [
     "ruff format packages/luxar/src scripts scripts/benchmarks stats hatch_build.py",
     "ruff check --fix packages/luxar/src scripts scripts/benchmarks stats hatch_build.py"
