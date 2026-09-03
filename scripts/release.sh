@@ -14,8 +14,8 @@
 #   bash scripts/release.sh               # preflight + tag + push tag      (make release)
 #
 # The release version is read from packages/luxar/src/luxar/__init__.py
-# (__version__). Bump that via a normal PR FIRST (see `make set-version`), let it
-# merge to main with CI green, then run this to tag the release.
+# (__version__). Bump that via a normal PR FIRST (see `make set-version`), then
+# promote it to main with CI green before running this to tag the release.
 #
 # Env overrides (all optional):
 #   SKIP_CI_CHECK=1   skip the "main CI is green" gate (NOT recommended)

@@ -23,6 +23,7 @@ REPO = Path(__file__).resolve().parents[2]
 SET_VERSION = REPO / "scripts/set_version.py"
 CHECK_VERSIONS = REPO / "scripts/check_version_consistency.py"
 RELEASE = REPO / "scripts/release.sh"
+MAKEFILE = REPO / "Makefile"
 
 
 def _load(path: Path, name: str) -> ModuleType:
@@ -316,6 +317,13 @@ def test_the_committed_tree_is_consistent(check_module: ModuleType) -> None:
 
 def test_release_remedy_passes_the_version_as_a_make_variable() -> None:
     assert "make set-version DATE=$VERSION" in RELEASE.read_text()
+
+
+def test_release_handoff_targets_dev_then_promoted_main() -> None:
+    assert "open a PR against dev, then release from main once promoted" in (
+        MAKEFILE.read_text()
+    )
+    assert "promote it to main with CI green" in RELEASE.read_text()
 
 
 def test_set_version_prints_explicit_pr_base_and_release_branch(
