@@ -1,6 +1,6 @@
 """Tests for the neuromast demo's per-channel recompute path.
 
-Four things here are worth pinning, each with a quiet failure mode:
+Five things here are worth pinning, each with a quiet failure mode:
 
 1. **The background subtraction.** A single measured floor per channel,
    subtracted with a clip at 0. Forgetting the clip leaves negative intensities,
@@ -15,6 +15,8 @@ Four things here are worth pinning, each with a quiet failure mode:
 4. **The upstream provenance.** The durable HPC directories, numeric TIFF order,
    axis convention and floor measurement are the recipe for rebuilding the two
    assembled arrays if the current copies disappear.
+5. **The download estimate.** It must stay derived from both manifest archives,
+   or metadata can silently drift when either channel is re-uploaded.
 """
 
 import json
@@ -30,7 +32,7 @@ from luxar.gsplats.gsplat_data import AdditiveSubLOD
 from luxar.gsplats.tree import GSplatLeaf
 
 SMALL = (4, 3, 5, 6)
-_MANIFEST_PATH = Path(demo.__file__).with_name("data_manifest.json")
+_MANIFEST_PATH = Path(__file__).resolve().parents[1] / "data_manifest.json"
 
 #: Captured at IMPORT, before the autouse fixture below shrinks the module
 #: constant. The constants tests must compare against the real recorded extent;
