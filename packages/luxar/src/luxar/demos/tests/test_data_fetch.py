@@ -1954,6 +1954,36 @@ def test_a_divergent_pin_is_reported_not_silently_accepted(
     assert "hosted_sha256 differs" in out, out
 
 
+def test_a_cache_seeded_with_the_hosted_bytes_is_not_reverted(fake_repo):
+    """Regression for #2454 defect 2: a correctly-seeded cache must survive.
+
+    A cache slot holding the HOSTED (record) generation matches the ``hosted``
+    contract in ``_accepted_contract``, so the resolver keeps it — it is NOT
+    quarantined and re-copied from the older in-repo LFS payload. The reported
+    revert happened only while ``hosted_sha256`` was absent (record unpublished):
+    the cache holding record bytes then failed the sole ``sha256`` = in-repo pin,
+    was quarantined, and got re-seeded from the in-repo (older) copy. With the
+    hosted pin present a deliberate manual reseed now outlives a demo run.
+    """
+    manifest, cache = fake_repo
+    entry = manifest["datasets"]["gsplats_toy"]["files"][0]
+    hosted_bytes = b"hosted-splat-bytes"  # the record's (refit) generation
+    entry["hosted_sha256"] = hashlib.sha256(hosted_bytes).hexdigest()
+
+    # Pre-seed the manifest cache slot with the hosted generation, exactly as a
+    # manual reseed from the verified record archive would.
+    cache_dir = cache / "gsplats_toy"
+    cache_dir.mkdir(parents=True)
+    (cache_dir / "toy_ch0.gsplats.zarr.zip").write_bytes(hosted_bytes)
+
+    (path,) = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+
+    assert path.read_bytes() == hosted_bytes, "cache was reverted to the in-repo copy"
+    assert find_quarantined_files(path) == [], "the correctly-seeded cache was churned"
+
+
 def test_agreeing_pins_report_nothing_unusual(fake_repo, capsys):
     """A hosted pin EQUAL to the local one is the 16-dataset majority case.
 
