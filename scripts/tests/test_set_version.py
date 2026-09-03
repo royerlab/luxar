@@ -26,34 +26,95 @@ CHECK_VERSIONS = REPO / "scripts/check_version_consistency.py"
 RELEASE = REPO / "scripts/release.sh"
 
 
-def test_legacy_npm_package_specifiers_are_absent_from_tracked_files() -> None:
-    # Split the retired names so this guard does not match its own source.
+def _legacy_name_pattern() -> str:
+    """An ERE matching every surface where the retired npm name can only mean
+    the package.
+
+    Prose is deliberately excluded: the source directory
+    ``packages/luxar-viewer/`` and the Cloudflare Pages project of the same name
+    are both legitimate, so a general prose alternative would be false positives
+    all the way down.
+    """
+    # Split the retired names so this module never matches its own source.
     bare_name = "luxar" + "-viewer"
     legacy_scope = "@royerlab" + f"/{bare_name}"
-    # Only surfaces where the bare name can ONLY mean the published package are
-    # matched. Prose is deliberately left out: the source directory
-    # packages/luxar-viewer/ and the Cloudflare Pages project share the name, so
-    # a general prose pattern would be false positives all the way down.
-    pattern = "|".join(
+    return "|".join(
         (
             legacy_scope,
-            # Any module specifier, not just the root and styles.css: a subpath
-            # import such as <name>/data names the retired package too.
+            # Any module specifier, not only the root and styles.css: a subpath
+            # such as <bare-name>/data names the retired package just as much.
             rf"(from|import) ['\"]{bare_name}(/[^'\"]*)?['\"]",
             rf"{bare_name}/styles\.css",
             rf"(npm (install|i)|pnpm add|yarn add) {bare_name}([[:space:]]|$)",
         )
     )
-    result = subprocess.run(
-        ["git", "grep", "-n", "-E", "--", pattern],
-        cwd=REPO,
-        text=True,
-        capture_output=True,
-        check=False,
+
+
+def _git_grep(
+    pattern: str,
+    *flags: str,
+    paths: tuple[str, ...] = (),
+    cwd: Path = REPO,
+) -> subprocess.CompletedProcess[str]:
+    # -e keeps the pattern from being read as a pathspec once paths are given.
+    try:
+        return subprocess.run(
+            ["git", "grep", "-n", "-E", *flags, "-e", pattern, "--", *paths],
+            cwd=cwd,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    except FileNotFoundError as exc:  # pragma: no cover - git is a hard dep here
+        pytest.fail(f"git is required to run this guard: {exc}")
+
+
+def test_legacy_name_pattern_matches_the_specifiers_it_claims_to(
+    tmp_path: Path,
+) -> None:
+    """The positive control: a pattern that compiles to something matching
+    nothing would let the guard below pass over a tree full of stale names."""
+    bare_name = "luxar" + "-viewer"
+    stale = tmp_path / "stale.md"
+    stale.write_text(
+        "\n".join(
+            (
+                f"import {{ x }} from '{bare_name}';",
+                f"import {{ x }} from '{bare_name}/data';",
+                f'import type {{ T }} from "{bare_name}/ui/data-monitor-manager";',
+                f'<link href="{bare_name}/styles.css" />',
+                f"pnpm add {bare_name}",
+                f"yarn add {bare_name}",
+                f"npm install {bare_name}",
+                "@royerlab" + f"/{bare_name}",
+            )
+        )
+        + "\n"
+    )
+
+    # --no-index refuses paths outside the cwd's tree, so search from tmp_path.
+    result = _git_grep(
+        _legacy_name_pattern(), "--no-index", paths=(stale.name,), cwd=tmp_path
+    )
+
+    assert result.returncode == 0, (
+        f"the guard's pattern matched none of the stale specifiers "
+        f"(exit {result.returncode}): {result.stderr}"
+    )
+    assert len(result.stdout.splitlines()) == 8, result.stdout
+
+
+def test_legacy_npm_package_specifiers_are_absent_from_tracked_files() -> None:
+    # The changelog is the one place the retired name belongs: an entry that
+    # cannot say what the package used to be called is no use to whoever has to
+    # update their install line.
+    result = _git_grep(
+        _legacy_name_pattern(),
+        paths=(".", ":(exclude)CHANGELOG.md", ":(exclude)changelog.d/*"),
     )
 
     # git grep exits 1 for "no match" and 0 for "matched"; anything else (128
-    # outside a work tree, 127 with no git) is a broken guard, not a clean tree.
+    # outside a work tree, say) is a broken guard, not a clean tree.
     assert result.returncode in (0, 1), (
         f"git grep could not run (exit {result.returncode}): {result.stderr}"
     )
