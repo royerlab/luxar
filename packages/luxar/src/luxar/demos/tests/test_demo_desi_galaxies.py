@@ -17,7 +17,6 @@ import numpy as np
 import pytest
 
 from luxar._zarr_compat import consolidate, create_array, open_group
-from luxar.demos import is_lfs_pointer
 from luxar.typing_utils.constants import MAX_POINTS_PER_POINTS_NODE
 
 _DEMO_PATH = Path(__file__).resolve().parents[1] / "demo_desi_galaxies.py"
@@ -216,7 +215,8 @@ class TestCatalogDownloadErrors:
         assert expected_url in message
         assert "HTTP 404 Not Found" in message
         assert "data.desi.lbl.gov" in message
-        assert "git lfs pull" in message
+        assert "dataset manifest" in message
+        assert "published record" in message
         assert "without --recompute" in message
         assert isinstance(exc_info.value.__cause__, requests.HTTPError)
 
@@ -237,7 +237,8 @@ class TestCatalogDownloadErrors:
         message = str(exc_info.value)
         assert "ConnectionError: network unreachable" in message
         assert f"{_demo.BASE_URL}/BGS_BRIGHT_NGC_clustering.dat.fits" in message
-        assert "git lfs pull" in message
+        assert "dataset manifest" in message
+        assert "separate problem from the DESI host outage" in message
         assert isinstance(exc_info.value.__cause__, requests.ConnectionError)
 
     def test_non_request_failure_is_not_hidden(
@@ -258,7 +259,7 @@ class TestCatalogDownloadErrors:
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        message = "DESI host unavailable; run git lfs pull"
+        message = "DESI host unavailable; use the published record"
 
         def _fail_build() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
             raise _demo.DESICatalogDownloadError(message)
@@ -679,13 +680,15 @@ class TestSceneRowBudget:
             for array in redshift_positions
         )
 
-    def test_shipped_scene_carries_the_full_catalog(self) -> None:
+    def test_cached_record_scene_carries_the_full_catalog(self) -> None:
         import json
         import zipfile
 
-        scene_zip = _demo.SCENE_ZIP_SHIPPED
-        if not scene_zip.exists() or is_lfs_pointer(scene_zip):
-            pytest.skip("DESI Git LFS scene is not available")
+        scene_zip = (
+            Path.home() / ".cache" / "luxar" / _demo.DEMO_NAME / _demo.SCENE_ZIP_FILE
+        )
+        if not scene_zip.exists():
+            pytest.skip("DESI record scene is not present in the local cache")
 
         with zipfile.ZipFile(scene_zip) as archive:
             names = set(archive.namelist())
@@ -884,19 +887,12 @@ class TestMainSceneReuse:
     ) -> None:
         resolved = tmp_path / "resolved-scene.zip"
         resolved.write_bytes(b"manifest-resolved")
-        packaged = tmp_path / "packaged-scene.zip"
-        packaged.write_bytes(b"packaged-decoy")
         calls: list[tuple[str, object]] = []
 
         monkeypatch.setattr(_demo, "SERVE_ONLY", False)
         monkeypatch.setattr(_demo, "RECOMPUTE", False)
         monkeypatch.setattr(_demo, "NO_SERVE", True)
         monkeypatch.setattr(_demo, "get_demos_output_dir", lambda: tmp_path)
-        monkeypatch.setattr(
-            _demo,
-            "SCENE_ZIP_SHIPPED",
-            packaged,
-        )
         monkeypatch.setattr(
             _demo,
             "ensure_dataset",
@@ -957,7 +953,7 @@ class TestMainSceneReuse:
             _demo,
             "ensure_dataset",
             lambda name: (_ for _ in ()).throw(
-                DatasetUnavailable(f"{name} unavailable; run `git lfs pull`")
+                DatasetUnavailable(f"{name} record unavailable")
             ),
         )
         monkeypatch.setattr(_demo, "_load_or_build_or_exit", lambda: arrays)
@@ -978,9 +974,7 @@ class TestMainSceneReuse:
         assert redshift is arrays[1]
         assert tracers is arrays[2]
         assert path == output
-        assert (
-            "desi_galaxies unavailable; run `git lfs pull`" in capsys.readouterr().out
-        )
+        assert "desi_galaxies record unavailable" in capsys.readouterr().out
 
     def test_manifest_integrity_fault_does_not_trigger_catalog_build(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
