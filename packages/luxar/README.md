@@ -660,7 +660,8 @@ hatch run lint && hatch run type-check
 
 1. **Design**: Consider nD compatibility and streaming requirements
 2. **Implement**: Follow existing patterns in `node.py` and `points.py`
-3. **Test**: Add comprehensive tests with >80% coverage
+3. **Test**: Add comprehensive tests that preserve the enforced
+   `[tool.coverage.report] fail_under` threshold in `pyproject.toml`
 4. **Document**: Update this README and add docstrings
 5. **Type**: Ensure full type annotations for mypy strict mode
 
