@@ -214,16 +214,39 @@ would close this.
 
 ### 0.6 Phase 0 checklist
 
-1. Raise both coverage floors to just under measured (viewer 86/80/83; Python keep 80 but
-   re-measure after the `pass` fix). **S**
-2. Anchor the `"pass"` regex; drop or narrow the `*/__init__.py` omit; re-run and read
-   `term-missing` for `cli/lod.py`, `batch/submit.py`, `fit_progressive_gsplats.py`. **S**
-3. Add a `coverage exclude` (or a documented carve-out) for the TSL cone and Numba kernels so
-   the metric stops lying in both directions. **S**
-4. Write characterization tests for the 0.3 table, branch coverage first, starting with
-   `input-handler.ts`. **L**
-5. Stand up the narrow TSL-parity CI job; add the two missing bloom harness entries. **M**
-6. Scoped mutation run on each refactor target immediately before touching it. **M, per target**
+Status as of PR #2471. Two items were changed on contact with evidence rather than executed as
+written; both are noted, because a checklist that quietly edits itself is worth less than one
+that records where it was wrong.
+
+1. **Done.** Both floors raised to just under measured — Python `fail_under` 80 → 89 (91.58
+   measured), viewer 71/71/74/61 → 86/85/82/80 plus 13 per-subtree floors. Every floor was
+   verified to fire by overshooting it first.
+2. **Done, and the estimate was wrong in an interesting direction.** Anchoring `"pass"` and
+   dropping the `*/__init__.py` omit moved the denominator 41,347 → 42,847. But the regex was
+   hiding *well-tested* code: `cli/lod.py` reads 91%, `batch/submit.py` 90%,
+   `fit_progressive_gsplats.py` 91%. The value was making them visible, not finding a gap.
+3. **Deliberately NOT done — decision reversed.** The plan was to exclude the TSL cone so the
+   metric stops lying. Checking first showed the proposed glob would have hidden nine files the
+   parity harness never imports (it imports 5 `shader-tsl*` + 6 `*.tsl`, and zero
+   `material-tsl`), one of them at 29.2% lines / 19.2% functions — and that
+   `tsl-shader-parity.spec.ts` appeared in no workflow at all, so "gated by the parity spec" was
+   a false premise. Excluding code on the strength of a gate that never fires is how a metric
+   starts lying. The cone stays in, capped by an explicit debt ceiling
+   (`src/rendering/**` at 72/73/68), and item 5 supplies the missing gate. Revisit after the
+   parity job has run green in CI for a while. The Numba half stands as written and is unbuilt.
+4. **Partly done.** See §0.7 — but the selection rule changed: *low branch coverage INTERSECT
+   named refactor target*, not the §0.3 table alone. Most of that table is on no refactor list.
+   `input-handler.ts` (44 of 96 functions never invoked) and the nine `material-tsl.ts` files
+   remain outstanding.
+5. **Done for the job**, non-required, verified locally at 105 passed in 1.4 min. Promoting it to
+   required is a four-file change and belongs in its own PR. The two missing bloom harness
+   entries (`BLOOM_DOWNSAMPLE_SOURCE`, `BLOOM_UPSAMPLE_SOURCE`) are **not** done.
+6. **Done for the target touched**, by hand rather than by tool — six mutants, six kills (§0.7).
+   Still to do per-target as Phase 3 reaches each one.
+
+Added during execution, and not in the original list: an anti-decay guard
+(`check-coverage-slack.mjs`). Without it this is a one-time correction that rots back to the
+same 12–17 pts of slack, which is how the 71/61 floors happened in the first place.
 
 ### 0.7 Characterization tests landed (Step 8, 2026-09-02)
 
@@ -292,6 +315,82 @@ and `check-coverage-slack.mjs` failed the build with *"floor 87 is 4.2 pts under
 (budget 3). Raise it to 90."* The floor was raised in a separate change from the tests, which is
 the intended loop: tests move the measurement, the guard moves the floor. Viewer global after:
 **88.22 L / 87.34 S / 84.85 F / 81.80 B**, `pnpm run check:ci` exit 0.
+
+### 0.8 Mutation testing: what the coverage number does not say (Step 10, 2026-09-02)
+
+Stryker is installed and committed, **report only** (`thresholds.break: null`). Coverage says a
+line RAN; a mutation score says a change to that line FAILS something. §0.4 predicted the two
+would diverge wherever tests assert on spies rather than behaviour. They do, by a lot.
+
+| File | Line cov | Branch cov | **Mutation score** | Killed | Survived | No cov | Runtime |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `points-spatial-index-loader.ts` | ~72% | ~64% | **33.7%** (44.4% of covered) | 252 | **315** | 180 | 1m45s / 747 mutants |
+| `input-handler.ts` | 86.8% | 75.5% | **48.8%** (54.1% of covered) | 138 | **117** | 28 | 58s / 284 mutants |
+
+Read the first row carefully: on the loader, **roughly half the code the tests execute is not
+actually checked.** That is A10-04 (1,091 spy-only assertions) confirmed by measurement rather
+than by counting occurrences.
+
+**Measurement caveat, stated so the number is not over-read.** Stryker scoped the test pool via
+the module graph — 1,185 of 13,734 tests for the loader, 310 for the input handler — not the
+whole suite. That is the correct pool (a test that never imports the file cannot kill its
+mutants), but the denominator is the selected pool, not the entire suite.
+
+**Two survivors worth acting on directly.** These are not statistical; each is a specific
+untested behaviour:
+
+- `isNotFoundError` can be replaced by an **empty body** and every test still passes. That
+  function decides whether a missing optional array is genuinely absent or a real failure being
+  swallowed — a documented hazard class in this codebase. `registerBounds` likewise empties
+  clean, so prefetcher bounds registration is unverified.
+- In `input-handler.ts`, `() => window.removeEventListener('keydown', onKeyDown)` mutates to
+  `() => undefined` and survives — for both the keydown and keyup teardowns. **Listener cleanup
+  on dispose is untested**, which is precisely the leak class CLAUDE.md calls out under "Event
+  Listener Memory Leaks". Worth a test on its own merits.
+
+**It also caught a weakness in the characterization test written earlier the same day**, which
+is the strongest argument for keeping the tool. `ui-actions-surface.test.ts` invokes all 27
+command thunks and asserts they do not throw — but 34 `ArrowFunction` mutants survived,
+including `getScaleBar: () => this.scaleBar` becoming `() => undefined`. Executing a thunk while
+asserting nothing about its result is a spy assertion wearing different clothes. (The identity
+and CustomEvent assertions in the same file are sound — hand-built mutants killed them.)
+
+Fixed, and the fix was verified the same way rather than assumed. A new arm captures the five
+panel getters at registration, attaches panels afterwards through the public setters, and
+asserts the same getter objects observe the change — the real contract, since panels attach
+after `init()` and a snapshotting getter would hand the key bindings `undefined` forever. The
+invocation arm now states in the file that it is a robustness check that cannot stand alone.
+
+| `input-handler.ts` | Score | Killed | `ArrowFunction` survivors |
+|---|---:|---:|---:|
+| as first measured | 48.76% | 138 | 34 |
+| + 3 panel getters asserted | 50.18% | 142 | 31 |
+| + all 5 asserted | **50.88%** | 144 | 29 |
+
+Five targeted assertions, five mutants killed, +2.1 points. Small — and that is the honest
+shape of this work. The wider lesson stands: **a test can raise coverage 29 points and still not
+test much**, and only a mutation run distinguishes the two.
+
+**Three environment facts, each of which cost a failed run** (all commented in
+`stryker.conf.json` so nobody rediscovers them):
+
+1. `plugins` must name `@stryker-mutator/vitest-runner` explicitly — Stryker finds plugins by
+   scanning `node_modules` for `@stryker-mutator/*`, and pnpm's symlinked store hides them
+   ("no TestRunner plugins were loaded").
+2. Runs need `--inPlace`. The vitest `globalSetup` regenerates zarr fixtures via Python, those
+   fixtures are gitignored, so Stryker's sandbox copy omits them and regeneration fails inside
+   the sandbox. In-place instruments the file once with every mutant behind an activation
+   switch, so concurrency is unaffected, and restores the original afterwards.
+3. Clear `node_modules/.vite` between in-place runs. A second consecutive run failed its dry run
+   with `Failed to resolve import "./debug-state"` for a file that exists and is tracked —
+   Vite's transform cache reacting to the in-place file swap, the same family as the known
+   stale-transform-after-checkout trap. It is transient, not damage; verify with `git status`
+   before believing otherwise.
+
+**How to use it**: `pnpm test:mutation`, or `--mutate <path>` for one investigation. Read it
+before restructuring a module, not on every push — runtime is O(mutants x suite) and a score
+means nothing without a baseline. The committed `mutate` list is narrow on purpose; Stryker's
+default would mutate the whole 218K-LOC tree.
 
 ---
 

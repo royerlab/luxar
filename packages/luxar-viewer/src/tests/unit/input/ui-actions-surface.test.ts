@@ -163,6 +163,12 @@ describe('InputHandler UI-action surface', () => {
     // legend, overlay manager, recording panel and layers panel are all
     // attached later. Every entry dereferences one of those or a handler
     // method, so this is the state they genuinely run in.
+    //
+    // Scope note: this arm is a ROBUSTNESS check, not a behavioural one — it
+    // proves no command explodes against absent panels, and deliberately
+    // nothing more. Mutation testing confirmed it cannot stand alone (a thunk
+    // returning `undefined` passes it), which is why the liveness and
+    // CustomEvent assertions above and below carry the behavioural weight.
     handler = makeHandler();
     handler.init();
     const { commands } = handler.getUiActions();
@@ -187,6 +193,45 @@ describe('InputHandler UI-action surface', () => {
     }
 
     expect(failures).toEqual([]);
+  });
+
+  it('exposes the panel getters as LIVE views, not snapshots taken at init()', () => {
+    // Stryker found the weakness this replaces: the invocation arm below ran
+    // every thunk but asserted nothing about what came back, so mutating
+    // `getScaleBar: () => this.scaleBar` to `() => undefined` survived. Panels
+    // are attached AFTER init(), so a getter that captured its value at
+    // registration time would hand the key bindings `undefined` forever.
+    const spy = vi.spyOn(registerAll, 'registerAllKeyBindings');
+    handler = makeHandler();
+    handler.init();
+    const { panels } = spy.mock.calls[0][0];
+
+    const scaleBar = { toggle: vi.fn(), setVisible: vi.fn(), isVisible: () => false };
+    const legend = { toggle: vi.fn(), setVisible: vi.fn(), isVisible: () => false };
+    const overlays = { toggle: vi.fn(), setVisible: vi.fn(), isVisible: () => false };
+    const recording = { toggle: vi.fn(), setVisible: vi.fn(), isVisible: () => false };
+    const layers = { toggle: vi.fn(), setVisible: vi.fn(), isVisible: () => false };
+
+    // All five, not a sample: a getter left unasserted is a getter that can be
+    // snapshotted without anything noticing.
+    expect(panels.getScaleBar()).toBeUndefined();
+    expect(panels.getColormapLegend()).toBeUndefined();
+    expect(panels.getOverlayManager()).toBeUndefined();
+    expect(panels.getRecordingPanel()).toBeUndefined();
+    expect(panels.getLayersPanel()).toBeUndefined();
+
+    handler.setScaleBar(scaleBar as never);
+    handler.setColormapLegend(legend as never);
+    handler.setOverlayManager(overlays as never);
+    handler.setRecordingPanel(recording as never);
+    handler.setLayersPanel(layers as never);
+
+    // Same getter objects, captured before the setters ran.
+    expect(panels.getScaleBar()).toBe(scaleBar);
+    expect(panels.getColormapLegend()).toBe(legend);
+    expect(panels.getOverlayManager()).toBe(overlays);
+    expect(panels.getRecordingPanel()).toBe(recording);
+    expect(panels.getLayersPanel()).toBe(layers);
   });
 
   it('dispatches the exact CustomEvents the rest of the app listens for', () => {
