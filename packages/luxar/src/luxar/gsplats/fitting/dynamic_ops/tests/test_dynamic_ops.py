@@ -310,6 +310,23 @@ class TestWeakSplatSelection:
         # ever stops differing, the parameter has been silently dropped.
         assert not torch.equal(first, other)
 
+    def test_select_weak_splats_uses_global_rng_when_unseeded(self) -> None:
+        """An unseeded call must consume PyTorch's global RNG stream."""
+        data_rng = torch.Generator().manual_seed(7)
+        n_splats = 400
+        importance = torch.rand(n_splats, generator=data_rng)
+        centers = torch.rand(n_splats, 3, generator=data_rng) * 20.0
+        residual = torch.rand((21, 21, 41), generator=data_rng)
+        assert residual.numel() > 10_000, "sampling branch must be exercised"
+
+        torch.manual_seed(2)
+        rng_state_before = torch.get_rng_state()
+        _select_weak_splats(
+            importance, centers, residual, relocation_percentile=25.0, seed=None
+        )
+
+        assert not torch.equal(torch.get_rng_state(), rng_state_before)
+
     def test_dynamic_ops_advances_its_seed_between_steps(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

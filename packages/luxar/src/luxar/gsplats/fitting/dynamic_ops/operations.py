@@ -383,15 +383,12 @@ def _select_weak_splats(
             # Random sampling (optimized)
             # Use randint instead of randperm (2-3x faster: generates only sample_size random numbers)
             # Use reshape instead of flatten (avoids copy when tensor is contiguous)
-            # Seeded from cfg.seed so the whole dynamic-ops path is
-            # reproducible: DynamicOpsConfig.seed documents a fixed default
-            # precisely so a re-fit reproduces a published store, and
-            # _find_residual_peaks already honours it. Drawing from the global
-            # torch RNG here made every default fit non-reproducible.
-            generator = torch.Generator()
-            if seed is None:
-                generator.seed()
-            else:
+            # Use a private CPU generator for explicit seeds so the whole
+            # dynamic-ops path is reproducible without perturbing global state.
+            # With seed=None, preserve the caller-controlled global RNG stream.
+            generator = None
+            if seed is not None:
+                generator = torch.Generator()
                 generator.manual_seed(seed)
             indices = torch.randint(
                 0, residual.numel(), (sample_size,), generator=generator
