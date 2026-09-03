@@ -1176,6 +1176,95 @@ jobs:
         if: needs.changes.outputs.dom_go != 'false'
         run: go test ./...
 
+  # Narrow browser gate for the TSL↔GLSL shader cone — the ONLY equivalence
+  # check the dual-backend shaders have.
+  #
+  # Deliberately distinct from the disabled `e2e-tests` job below. That job's
+  # rationale is that software WebGL is too slow and unreliable for
+  # RENDERING-DEPENDENT specs — specs that load datasets and compare rendered
+  # frames against baselines. `tsl-shader-parity` is not that class: it renders
+  # a 64×64 canvas through BOTH backends (`WebGLRenderer` vs
+  # `WebGPURenderer({ forceWebGL: true })`) and compares them to EACH OTHER, so
+  # rasterizer identity cancels out and llvmpipe is not merely tolerable, it is
+  # the deterministic choice. It reads no zarr fixtures, no example datasets and
+  # no LFS payloads, takes no screenshots, and imports `test` from
+  # `@playwright/test` directly — skipping the per-spec console-error teardown
+  # that dominates E2E wall clock.
+  #
+  # Pinned to ubuntu-latest on purpose: NOT routed through pick-runner, so it
+  # neither draws obsidian capacity nor flips between a real GPU and llvmpipe
+  # (which would be a flake source for a pixel comparison).
+  #
+  # No `pnpm build:wasm`: the harness's transitive imports stop at
+  # rendering/{point,line,gsplat,mesh}-geometry and element-storage, and the
+  # vite dev server only transforms what is imported.
+  #
+  # `tsl-codegen-snapshot.spec.ts` is deliberately NOT run here — it pins
+  # literal generated GLSL including a capability-derived precision/extensions
+  # preamble recorded on a GPU box, and `ignoreSnapshots` is false on Linux.
+  #
+  # NOT YET REQUIRED. Until `tsl-parity` is added to the branch-protection
+  # contexts (which also needs repair-cancelled-push-checks + the exact-equality
+  # assertions in test_ci_diff_classifier.py), a red run here does not block a
+  # merge. Promote it after a few green runs.
+  tsl-parity:
+    needs: [changes]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: packages/luxar-viewer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # playwright.config.ts starts a second webServer — tools/range-http-server.py
+      # — for every run, and global-setup probes both servers' identity markers.
+      # The parity spec reads no dataset, but the server must still come up.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
+        with:
+          python-version: '3.12'
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
+        with:
+          package_json_file: packages/luxar-viewer/package.json
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: packages/luxar-viewer/pnpm-lock.yaml
+
+      - name: Install viewer dependencies
+        if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium
+        if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
+        run: npx playwright install --with-deps chromium
+
+      - name: Install software OpenGL for headless WebGL
+        if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1-mesa-dri libegl-mesa0 libgbm1
+
+      - name: TSL ↔ GLSL shader parity
+        if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
+        run: pnpm playwright test tsl-shader-parity.spec.ts --workers=1 --retries 2
+        env:
+          CI: true
+          LUXAR_E2E_NO_FIXTURES: '1'
+
+      - name: Upload the Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tsl-parity-report
+          path: packages/luxar-viewer/test-results/
+          retention-days: 7
+
   # E2E tests disabled — software WebGL on standard ubuntu-latest runners is
   # too slow and unreliable for rendering-dependent specs. Run locally with:
   # make test-e2e.
