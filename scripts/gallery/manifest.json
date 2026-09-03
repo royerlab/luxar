@@ -206,7 +206,8 @@
       "script": "demo_gsplats_lod_embryo_line.py",
       "dataset": "datasets/demos/gsplats_lod_embryo_line.luxar.zarr",
       "citation": "Barry 2021 (GIANI, Zenodo 5270323); Cell Tracking Challenge (Ma\u0161ka et al. 2023)",
-      "autoFrame": false
+      "autoFrame": false,
+      "noOrbitVideo": true
     },
     {
       "id": "dipc_3d_genome",
@@ -888,7 +889,8 @@
       "script": "demo_gsplats_2d_codex_pancreas.py",
       "dataset": "datasets/demos/gsplats_2d_codex_pancreas.luxar.zarr",
       "citation": "Bj\u00f6rklund et al. 2023",
-      "lodFinest": false
+      "lodFinest": false,
+      "noOrbitVideo": true
     },
     {
       "id": "gsplats_4d_cell_tracking_challenge",

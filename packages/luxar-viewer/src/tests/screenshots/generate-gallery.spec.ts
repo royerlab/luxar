@@ -243,6 +243,17 @@ interface DemoEntry {
   // software-GL frame take minutes: the viewport-relative coverage LOD then
   // picks a lighter level sized to the framing, so the orbit video is feasible.
   lodFinest?: boolean;
+  // Capture a STATIC single-frame tile and skip the orbit video entirely, for a
+  // subject whose apparent extent changes sharply with view angle — a row of
+  // objects foreshortening, a flat wall going edge-on — where the rock reads as
+  // flashing rather than motion. gsplats_lod_embryo_line swings 13x in mean
+  // luminance twice per loop at the default ±20°, and still 8.2x at ±6°, so no
+  // amplitude fixes it.
+  //
+  // Note the `.webp` IS the animated loop (build_gallery_data uses it as the
+  // tile's `still`, and has_media is `video or still`), so skipping only the
+  // `.webm` would leave the pulsing in place — hence the static webp.
+  noOrbitVideo?: boolean;
   // Free-text human annotation carried in the manifest (why a demo is framed a
   // certain way, what still needs tuning). Declared so the manifest and this
   // interface agree; the capture code never reads it.
@@ -1282,6 +1293,21 @@ function convertFramesToWebm(framesDir: string, output: string): void {
 }
 
 /** Small animated WebP loop for the README (inline on GitHub) from the frames. */
+/**
+ * Single-frame WebP from the first captured frame, for demos that opt out of an
+ * orbit clip. The animated `.webp` is what the gallery uses as a tile's `still`,
+ * so a subject that should not move needs a STATIC one here — dropping only the
+ * `.webm` would leave the animation in place.
+ */
+function convertFrameToStaticWebp(framesDir: string, output: string): void {
+  execSync(
+    `ffmpeg -y -i "${framesDir}/f0000.png" ` +
+      `-vf "scale=${WEBP_WIDTH}:-1" -vcodec libwebp -lossless 0 ` +
+      `-compression_level 6 -q:v ${WEBP_QUALITY} -frames:v 1 "${output}"`,
+    { stdio: 'pipe' }
+  );
+}
+
 function convertFramesToWebp(framesDir: string, output: string): void {
   // Same 1:1 assembly (no minterpolate) — real frames only, no warping.
   execSync(
@@ -1502,9 +1528,16 @@ for (const demo of DEMOS) {
     const webpPath = path.join(OUTPUT_DIR, `${demo.id}.webp`);
     const webmPathOut = path.join(OUTPUT_DIR, `${demo.id}.webm`);
     try {
+      const noOrbit = demo.noOrbitVideo === true;
       let webpEncoded = false;
       try {
-        convertFramesToWebp(framesDir, webpPath); // README inline (GitHub)
+        if (noOrbit) {
+          // Subject should not be rocked (see noOrbitVideo in the manifest):
+          // a static tile rather than a clip that pulses as the view changes.
+          convertFrameToStaticWebp(framesDir, webpPath);
+        } else {
+          convertFramesToWebp(framesDir, webpPath); // README inline (GitHub)
+        }
         webpEncoded = true;
       } catch (e) {
         console.error(`[${demo.id}] webp failed:`, e);
@@ -1517,10 +1550,16 @@ for (const demo of DEMOS) {
       }
       let webmEncoded = false;
       try {
+        if (noOrbit) {
+          console.log(`[${demo.id}] noOrbitVideo — static tile, skipping webm`);
+          throw new Error('__skip_webm__');
+        }
         convertFramesToWebm(framesDir, webmPathOut); // full-quality master
         webmEncoded = true;
       } catch (e) {
-        console.error(`[${demo.id}] webm failed:`, e);
+        if (!(e instanceof Error && e.message === '__skip_webm__')) {
+          console.error(`[${demo.id}] webm failed:`, e);
+        }
       }
       if (webmEncoded) {
         const webmMedia = recordGalleryMedia(demo.id, webmPathOut);
