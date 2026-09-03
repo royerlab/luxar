@@ -542,6 +542,174 @@ class TestWarnIfSceneIsStale:
         assert "full ~9.75M-object DR1 catalog" in out
 
 
+class TestNodeCapacityPredicate:
+    """``scene_exceeds_node_capacity`` must answer what the warning describes.
+
+    Fast synthetic stores, no compiler and no record: this is the check the
+    fetch path acts on, so it has to be exercised on a machine that has never
+    downloaded anything. The record-reading test in ``TestSceneRowBudget``
+    SKIPS without a populated cache, which is precisely how an over-capacity
+    record reached a published state unnoticed.
+    """
+
+    @staticmethod
+    def _write(path: Path, layers: dict[str, object]) -> None:
+        import zarr
+
+        root = zarr.open(str(path), mode="w")
+        for layer, spec in layers.items():
+            finest = root.create_group(layer).create_group("child_2")
+            if isinstance(spec, int):
+                # a bare leaf holding `spec` points
+                finest.attrs["n_points"] = spec
+            else:
+                # a partition whose parts hold `spec` points each
+                finest.attrs["kind"] = "partition"
+                for index, count in enumerate(spec):
+                    finest.create_group(f"part_{index}").attrs["n_points"] = count
+
+    def test_a_single_over_capacity_leaf_is_detected(self, tmp_path: Path) -> None:
+        scene = tmp_path / "desi.luxar.zarr"
+        over = _demo.SCENE_MAX_POINTS_PER_NODE + 1
+        self._write(scene, {"By tracer type": over, "By redshift": over})
+        assert _demo.scene_exceeds_node_capacity(scene) is True
+
+    def test_a_partition_within_capacity_is_accepted(self, tmp_path: Path) -> None:
+        scene = tmp_path / "desi.luxar.zarr"
+        part = _demo.SCENE_MAX_POINTS_PER_NODE // 4
+        self._write(scene, {"By tracer type": [part] * 4, "By redshift": [part] * 4})
+        assert _demo.scene_exceeds_node_capacity(scene) is False
+
+    def test_the_parts_are_measured_not_their_total(self, tmp_path: Path) -> None:
+        """A partition whose TOTAL exceeds the cap is still fine.
+
+        The ceiling is per NODE — that is the whole point of partitioning. If
+        this predicate summed the parts it would reject every correctly built
+        scene, and the fetch path would re-ladder on every run.
+        """
+        scene = tmp_path / "desi.luxar.zarr"
+        part = _demo.SCENE_MAX_POINTS_PER_NODE - 1
+        self._write(scene, {"By tracer type": [part] * 4, "By redshift": [part] * 4})
+        assert sum([part] * 4) > _demo.SCENE_MAX_POINTS_PER_NODE
+        assert _demo.scene_exceeds_node_capacity(scene) is False
+
+    def test_one_breaching_layer_is_enough(self, tmp_path: Path) -> None:
+        scene = tmp_path / "desi.luxar.zarr"
+        part = _demo.SCENE_MAX_POINTS_PER_NODE // 4
+        self._write(
+            scene,
+            {
+                "By tracer type": [part] * 4,
+                "By redshift": _demo.SCENE_MAX_POINTS_PER_NODE + 1,
+            },
+        )
+        assert _demo.scene_exceeds_node_capacity(scene) is True
+
+
+@pytest.mark.slow
+class TestRestructureFetchedScene:
+    """The authored scene must be partitioned within capacity — always.
+
+    This is the guard for the regression that prompted it: the Zenodo record
+    carries a PRE-BUILT scene (the only record that does), and its finest level
+    is one unpartitioned node of ~9.75M points, 2.4x the ceiling. The fetch path
+    used to warn and render it anyway.
+
+    Deliberately builds from scratch into ``tmp_path`` and asserts on the
+    AUTHORED scene. It must never read ``datasets/demos/`` — running the demo
+    over an existing scene REUSES it (no compile, sub-second), so a guard that
+    inspected that directory could pass while the authoring code was broken.
+    And it must not need the record: a guard that skips without a populated
+    cache is how this defect stayed invisible.
+    """
+
+    @staticmethod
+    def _author(path: Path, monkeypatch: pytest.MonkeyPatch, cap: int, n: int) -> None:
+        rng = np.random.default_rng(0)
+        positions = rng.normal(scale=100.0, size=(n, 3)).astype(np.float32)
+        tracer_ids = (np.arange(n) % 4).astype(np.uint8)
+        redshift = rng.uniform(0.0, 2.0, size=n).astype(np.float32)
+        monkeypatch.setattr(_demo, "SCENE_MAX_POINTS_PER_NODE", cap)
+        _demo.create_scene(positions, redshift, tracer_ids, path)
+
+    @staticmethod
+    def _finest(root: object, layer: str) -> object:
+        children = sorted(
+            (key for key in root[layer].group_keys() if key.startswith("child_")),
+            key=lambda key: int(key.split("_", 1)[1]),
+        )
+        return root[layer][children[-1]] if children else root[layer]
+
+    def test_a_fetched_over_capacity_scene_is_restructured_within_capacity(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import zarr
+
+        scene = tmp_path / "desi.luxar.zarr"
+        # Author with a cap far above the cloud, which is the shape the record
+        # is in: one node holding everything.
+        self._author(scene, monkeypatch, cap=1_000_000, n=4_000)
+        assert _demo.scene_exceeds_node_capacity(scene) is False, (
+            "precondition: not yet over capacity, because the cap is still high"
+        )
+
+        before = _demo.read_scene_clouds(scene)
+
+        # Now the ceiling drops — exactly what happened between the record's
+        # build and today's code — so the same scene is over capacity.
+        monkeypatch.setattr(_demo, "SCENE_MAX_POINTS_PER_NODE", 1_000)
+        assert _demo.scene_exceeds_node_capacity(scene) is True
+
+        _demo.restructure_scene(scene)
+
+        assert _demo.scene_exceeds_node_capacity(scene) is False
+        root = zarr.open(str(scene), mode="r")
+        for layer in ("By tracer type", "By redshift"):
+            finest = self._finest(root, layer)
+            assert finest.attrs.get("kind") == "partition", (
+                f"{layer}: the finest level must be partitioned after restructuring"
+            )
+            parts = [key for key in finest.group_keys() if key.startswith("part_")]
+            assert len(parts) > 1, f"{layer}: expected a real split, got {parts}"
+            for part in parts:
+                assert int(finest[part].attrs["n_points"]) <= 1_000
+
+        # The points and colours must SURVIVE the round trip. Colours are
+        # stored as a uint8 index into a float32 row LUT, so the decode is
+        # lossless and this is an equality check, not a tolerance.
+        after = _demo.read_scene_clouds(scene)
+        for layer in ("By tracer type", "By redshift"):
+            positions_before, colors_before = before[layer]
+            positions_after, colors_after = after[layer]
+            assert positions_after.shape == positions_before.shape
+            assert np.array_equal(
+                np.sort(colors_after.reshape(-1)), np.sort(colors_before.reshape(-1))
+            ), f"{layer}: the colour multiset changed through the restructure"
+
+    def test_the_authored_scene_partitions_within_capacity_by_construction(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The invariant, asserted on a scene the current code just authored.
+
+        Independent of any record or cache: whatever `create_scene` produces
+        must respect the per-node ceiling. This is the assertion whose absence
+        let a non-compliant scene be published.
+        """
+        import zarr
+
+        scene = tmp_path / "desi.luxar.zarr"
+        self._author(scene, monkeypatch, cap=1_000, n=4_000)
+
+        assert _demo.scene_exceeds_node_capacity(scene) is False
+        root = zarr.open(str(scene), mode="r")
+        for layer in ("By tracer type", "By redshift"):
+            finest = self._finest(root, layer)
+            assert finest.attrs.get("kind") == "partition"
+            for key in finest.group_keys():
+                if key.startswith("part_"):
+                    assert int(finest[key].attrs["n_points"]) <= 1_000
+
+
 class TestStreamingBreakpoints:
     """The ladder shape is what makes the full catalog streamable.
 
