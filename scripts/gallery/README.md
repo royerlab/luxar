@@ -44,8 +44,9 @@ make check-gallery-staleness
 make check-gallery-media
 ```
 
-Output lands in `docs/images/gallery/<id>.{png,webp,webm}`. That directory is
-**gitignored** — it's a review staging area. To publish a reviewed refresh:
+Output lands in `docs/images/gallery/<id>.{png,webp,webm}`, except that a
+`noOrbitVideo` demo has no `.webm`. That directory is **gitignored** — it's a
+review staging area. To publish a reviewed refresh:
 
 1. Compute each selected WebP/WebM file's SHA-256 and use its first 16 hex
    characters plus the extension as the object key.
