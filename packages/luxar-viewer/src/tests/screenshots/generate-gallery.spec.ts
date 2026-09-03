@@ -1567,6 +1567,7 @@ for (const demo of DEMOS) {
           convertFramesToWebm(framesDir, webmPathOut); // full-quality master
           webmEncoded = true;
         } catch (e) {
+          fs.rmSync(webmPathOut, { force: true });
           console.error(`[${demo.id}] webm failed:`, e);
         }
         if (webmEncoded) {
