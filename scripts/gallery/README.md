@@ -202,9 +202,11 @@ producing incomplete history; run it from a full checkout.
   framed at `timelapse.framePoint` while frame 0 sits at the clip start, so the
   two legitimately differ.
 
-  **Judge a tile on its orbit frames, not on the still.** The README embeds the
-  animated WebP; the PNG is a byproduct that ships nowhere. A framing tuned on
-  the still can crop at rock extremes the still never visits.
+  **Judge an animated tile on its orbit frames, not on the still.** The README
+  embeds the animated WebP; the PNG is a byproduct that ships nowhere. A framing
+  tuned on the still can crop at rock extremes the still never visits. For a
+  `noOrbitVideo` tile, judge the curated still instead: it is the source of the
+  published static WebP, and the rock extremes do not ship.
 
 ## Manifest fields
 
