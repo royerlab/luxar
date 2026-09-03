@@ -1,6 +1,6 @@
-"""Deep alignment checks for current hosted positional-pair generations.
+"""Deep alignment checks for current record positional-pair generations.
 
-Run this slow test from the staging checkout after editing the hosted pins to
+Run this slow test from the staging checkout after editing the record pins to
 the new digests, with the new bytes under ``delme/``, before committing or
 uploading the re-pin.
 """
@@ -63,8 +63,8 @@ def _candidates(dataset: str, filename: str) -> Iterator[Path]:
 
 
 def _locate(dataset: str, entry: dict[str, Any]) -> tuple[Path | None, list[str]]:
-    digest = entry.get("hosted_sha256")
-    expected_bytes = entry.get("hosted_bytes")
+    digest = entry.get("sha256")
+    expected_bytes = entry.get("bytes")
     rejections: list[str] = []
     if not digest:
         return None, rejections
@@ -75,14 +75,14 @@ def _locate(dataset: str, entry: dict[str, Any]) -> tuple[Path | None, list[str]
             actual_bytes = candidate.stat().st_size
             if expected_bytes is not None and actual_bytes != expected_bytes:
                 rejections.append(
-                    f"{candidate}: size {actual_bytes} != hosted_bytes {expected_bytes}"
+                    f"{candidate}: size {actual_bytes} != bytes {expected_bytes}"
                 )
                 continue
             actual_digest = _sha256(candidate)
             if actual_digest == digest:
                 return candidate, rejections
             rejections.append(
-                f"{candidate}: sha256 {actual_digest} != hosted_sha256 {digest}"
+                f"{candidate}: sha256 {actual_digest} != manifest sha256 {digest}"
             )
         except OSError as exc:
             rejections.append(f"{candidate}: {exc}")
@@ -129,7 +129,7 @@ def test_cache_hit_does_not_walk_staging(
 ) -> None:
     dataset = "toy"
     filename = "fit.zip"
-    payload = b"current hosted bytes"
+    payload = b"current record bytes"
     cache = tmp_path / "cache"
     staging = tmp_path / "staging"
     cache_file = cache / dataset / filename
@@ -138,8 +138,8 @@ def test_cache_hit_does_not_walk_staging(
     cache_file.write_bytes(payload)
     entry = {
         "name": filename,
-        "hosted_sha256": hashlib.sha256(payload).hexdigest(),
-        "hosted_bytes": len(payload),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "bytes": len(payload),
     }
 
     def fail_rglob(_path: Path, _pattern: str) -> Iterator[Path]:
@@ -158,7 +158,7 @@ def test_size_mismatch_is_not_hashed(
 ) -> None:
     dataset = "toy"
     filename = "fit.zip"
-    payload = b"current hosted bytes"
+    payload = b"current record bytes"
     cache = tmp_path / "cache"
     staging = tmp_path / "staging"
     cache_file = cache / dataset / filename
@@ -169,8 +169,8 @@ def test_size_mismatch_is_not_hashed(
     staged_file.write_bytes(payload)
     entry = {
         "name": filename,
-        "hosted_sha256": hashlib.sha256(payload).hexdigest(),
-        "hosted_bytes": len(payload),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "bytes": len(payload),
     }
     hashed: list[Path] = []
 
@@ -187,25 +187,25 @@ def test_size_mismatch_is_not_hashed(
 
     assert located == staged_file
     assert rejections == [
-        f"{cache_file}: size {len(b'wrong size')} != hosted_bytes {len(payload)}"
+        f"{cache_file}: size {len(b'wrong size')} != bytes {len(payload)}"
     ]
     assert hashed == [staged_file]
 
 
-def test_lookup_reports_a_stale_hosted_size(
+def test_lookup_reports_a_stale_record_size(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     dataset = "toy"
     filename = "fit.zip"
-    payload = b"new hosted bytes"
+    payload = b"new record bytes"
     staging = tmp_path / "staging"
     staged_file = staging / filename
     staging.mkdir()
     staged_file.write_bytes(payload)
     entry = {
         "name": filename,
-        "hosted_sha256": hashlib.sha256(payload).hexdigest(),
-        "hosted_bytes": len(payload) - 1,
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "bytes": len(payload) - 1,
     }
 
     module = sys.modules[__name__]
@@ -216,16 +216,16 @@ def test_lookup_reports_a_stale_hosted_size(
 
     assert located is None
     assert rejections == [
-        f"{staged_file}: size {len(payload)} != hosted_bytes {len(payload) - 1}"
+        f"{staged_file}: size {len(payload)} != bytes {len(payload) - 1}"
     ]
 
     sidecar_entry = {
         "name": "payload.npz",
-        "hosted_sha256": "0" * 64,
-        "hosted_bytes": 1,
+        "sha256": "0" * 64,
+        "bytes": 1,
     }
-    with pytest.raises(pytest.skip.Exception, match="hosted_bytes"):
-        test_locatable_hosted_positional_pair_is_aligned(
+    with pytest.raises(pytest.skip.Exception, match="bytes"):
+        test_locatable_record_positional_pair_is_aligned(
             dataset,
             entry,
             sidecar_entry,
@@ -247,7 +247,7 @@ def test_lookup_reports_a_stale_hosted_size(
     ),
     _pair_cases(),
 )
-def test_locatable_hosted_positional_pair_is_aligned(
+def test_locatable_record_positional_pair_is_aligned(
     dataset: str,
     fit_entry: dict[str, Any],
     sidecar_entry: dict[str, Any],
@@ -255,8 +255,8 @@ def test_locatable_hosted_positional_pair_is_aligned(
     threshold: float,
     native_check: Callable[[GSplatData], bool],
 ) -> None:
-    if not fit_entry.get("hosted_sha256") or not sidecar_entry.get("hosted_sha256"):
-        pytest.skip("positional pair has no current hosted pin")
+    if not fit_entry.get("sha256") or not sidecar_entry.get("sha256"):
+        pytest.skip("positional pair has no current record pin")
     fit_path, fit_rejections = _locate(dataset, fit_entry)
     sidecar_path, sidecar_rejections = _locate(dataset, sidecar_entry)
     if fit_path is None or sidecar_path is None:
@@ -270,21 +270,21 @@ def test_locatable_hosted_positional_pair_is_aligned(
                     rejections or [f"{entry['name']}: no matching filename found"]
                 )
         pytest.skip(
-            "current hosted pair is not present in cache or staging: "
+            "current record pair is not present in cache or staging: "
             + "; ".join(details)
         )
 
     fit = GSplatData.load(fit_path, include_stats=False)
     payload = payload_loader(sidecar_path)
 
-    assert native_check(fit), f"{dataset} hosted fit lacks its native payload channel"
+    assert native_check(fit), f"{dataset} record fit lacks its native payload channel"
     assert len(payload) == len(fit.centers), (
-        f"{dataset} hosted pair has {len(payload):,} payload rows for "
+        f"{dataset} record pair has {len(payload):,} payload rows for "
         f"{len(fit.centers):,} splats"
     )
     agreement = voxel_sampled_payload_agreement(fit.centers, payload)
     assert agreement is not None, f"{dataset} has too few same-voxel splats to verify"
     assert agreement >= threshold, (
-        f"{dataset} hosted pair agrees at {agreement:.5f} < {threshold}; "
+        f"{dataset} record pair agrees at {agreement:.5f} < {threshold}; "
         "the fit and sidecar are not from the same aligned generation"
     )
