@@ -583,8 +583,8 @@ class DocumentationChecker:
             flagged even when its basename no longer exists anywhere (fully
             deleted file). External paths (`three/src/...`) fail this test.
             A first segment naming a package directory itself (an immediate
-            child of `packages/`) is exempt: `luxar-viewer/src/...` is a
-            package-qualified repository path resolved by the checks above.
+            child of `packages/`) is exempt: `luxar-viewer/src/...` may be a
+            package-qualified repository path rather than a path rooted here.
             """
             first_segment = token.split("/", 1)[0]
             anchor = Path(readme_path).parent
