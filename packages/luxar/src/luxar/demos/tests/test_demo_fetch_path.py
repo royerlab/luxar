@@ -40,7 +40,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from luxar.demos import registry
+from luxar.demos import DatasetUnavailable, registry
+from luxar.demos import demo_gsplats_4d_neuromast_2ch as neuromast_demo
 from luxar.gsplats.gsplat_data import GSplatData
 
 DEMO_PATHS = sorted(registry._DEMOS_DIR.glob("demo_*.py"))
@@ -50,9 +51,72 @@ LFS_ONLY = {"load_precomputed_gsplats", "load_precomputed_bundle"}
 MANIFEST_DRIVEN = {"load_dataset_gsplats", "load_dataset_bundle", "ensure_dataset"}
 #: Demos that legitimately do not route their hosted dataset through
 #: ``ensure_dataset``. Empty since 2026-09-02: the last entry,
-#: ``gsplats_4d_neuromast_2ch``, read a machine-local store only because its
-#: record was an unpublished draft, and now fetches like every other demo.
+#: ``gsplats_4d_neuromast_2ch``, now tries the manifest before its documented
+#: machine-local fallback while the packaged record remains unpublished.
 HOSTED_DATASET_EXCEPTIONS: dict[str, str] = {}
+
+
+def test_neuromast_resolver_pairs_reversed_archives_by_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    expected = [
+        tmp_path / f"{channel['file']}.zip" for channel in neuromast_demo.CHANNELS
+    ]
+    monkeypatch.setattr(
+        neuromast_demo, "ensure_dataset", lambda _name: list(reversed(expected))
+    )
+
+    assert neuromast_demo.resolve_channel_paths() == expected
+
+
+def test_neuromast_resolver_rejects_a_diverged_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fetched = [
+        tmp_path / "neuromast_membranes.gsplats.zarr.zip",
+        tmp_path / "renamed_nuclei.gsplats.zarr.zip",
+    ]
+    monkeypatch.setattr(neuromast_demo, "ensure_dataset", lambda _name: fetched)
+
+    with pytest.raises(FileNotFoundError, match="have diverged"):
+        neuromast_demo.resolve_channel_paths()
+
+
+def test_neuromast_resolver_falls_back_when_the_record_is_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    expected = []
+    for channel in neuromast_demo.CHANNELS:
+        path = tmp_path / channel["file"]
+        path.mkdir()
+        expected.append(path)
+    monkeypatch.setattr(neuromast_demo, "DATA_DIR", tmp_path, raising=False)
+    monkeypatch.setattr(
+        neuromast_demo,
+        "ensure_dataset",
+        lambda _name: (_ for _ in ()).throw(DatasetUnavailable("draft record")),
+    )
+
+    assert neuromast_demo.resolve_channel_paths() == expected
+
+
+def test_neuromast_unavailable_record_reports_missing_local_channels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(neuromast_demo, "DATA_DIR", tmp_path, raising=False)
+    monkeypatch.setattr(
+        neuromast_demo,
+        "ensure_dataset",
+        lambda _name: (_ for _ in ()).throw(DatasetUnavailable("draft record")),
+    )
+
+    with pytest.raises(FileNotFoundError, match="local store"):
+        neuromast_demo.resolve_channel_paths()
+
+
+def test_neuromast_declares_its_manifest_cache_and_manual_fallback() -> None:
+    assert neuromast_demo.DEMO_META["caches"] == [neuromast_demo.DATASET_NAME]
+    assert neuromast_demo.DEMO_META["requirements"]["local_data"] == "manual-file"
 
 
 def _manifest() -> dict:

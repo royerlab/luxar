@@ -66,16 +66,16 @@ DATA STORAGE:
     These fitted gsplats are ~220 MB unzipped and are **not bundled with the
     repo**. Both channels live on the ``cc-by`` Zenodo record as the 136 MB
     ``.gsplats.zarr.zip`` pair, pinned by SHA-256 in
-    ``demos/data_manifest.json``, and ``resolve_channel_paths`` fetches them
-    through ``ensure_dataset("gsplats_4d_neuromast_2ch")`` — so the demo runs
-    anywhere with a network connection, like every other gsplat demo.
+    ``demos/data_manifest.json``. ``resolve_channel_paths`` first tries
+    ``ensure_dataset("gsplats_4d_neuromast_2ch")``; while the packaged manifest
+    still marks the record unpublished and builds no download URL, it falls back
+    to the machine-local store used before publication.
 
-    It did not always. Until the record was published on 2026-09-02 it carried
-    ``published: false``, which builds no download URL, so the demo read a
-    machine-local store instead and ran only where that store happened to be
-    populated. The zipped store loads directly; nothing is unpacked. Note the
-    ``.zip`` suffix is why the paths this returns differ from each channel's
-    ``file`` key, which names the *unzipped* store that ``--recompute`` writes.
+    Once the manifest enables the published record, the zip pair stays in
+    ``~/.cache/luxar/`` and is expanded to a temporary directory on read. The
+    ``.zip`` suffix is why fetched paths differ from each channel's ``file`` key,
+    which names the *unzipped* store that ``--recompute`` and the local fallback
+    use.
 
 USAGE:
     python demo_gsplats_4d_neuromast_2ch.py [--no-serve] [--serve-only]
@@ -103,9 +103,10 @@ DEMO_META = {
         "download_mb": 136,  # the zipped pair on the cc-by record
         "compute": "medium",
         "gpu": "none",
-        "local_data": None,
+        # Becomes None once data_manifest.json enables the published record URL.
+        "local_data": "manual-file",
     },
-    "caches": [],
+    "caches": ["gsplats_4d_neuromast_2ch"],
     "outputs": ["gsplats_4d_neuromast_2ch"],
     "citation": {
         "short": "Jacobo lab, CZ Biohub San Francisco",
@@ -114,6 +115,7 @@ DEMO_META = {
     },
 }
 
+import os
 import shutil
 from contextlib import contextmanager
 from pathlib import Path
@@ -125,6 +127,7 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
+    DatasetUnavailable,
     add_demo_caption,
     ensure_dataset,
     launch_viewer,
@@ -139,6 +142,18 @@ from luxar.utils.paths import get_demos_output_dir
 # =============================================================================
 # Configuration
 # =============================================================================
+
+#: Manifest key for the hosted pair (``cc-by`` record, SHA-256 pinned).
+DATASET_NAME = "gsplats_4d_neuromast_2ch"
+
+# Local fallback while the packaged manifest still marks the record unpublished.
+# Override with $LUXAR_NEUROMAST_DATA_DIR.
+DATA_DIR = Path(
+    os.environ.get(
+        "LUXAR_NEUROMAST_DATA_DIR",
+        str(Path.home() / "luxar_demo_data" / "gsplats_neuromast_2ch"),
+    )
+)
 
 HPC_SOURCE_ROOT = (
     "/hpc/projects/jacobo_group/Adrian/RU_Processed_Data/No_Ablations_Aligned/"
@@ -159,9 +174,6 @@ BACKGROUND_FLOOR_REDUCTION = "median"
 # Channel configuration — each becomes an independently-toggleable layer.
 # Named colormaps (not baked RGB) so the viewer applies the LUT at display
 # time and the Layers panel can switch it interactively.
-#: Manifest key for the hosted pair (``cc-by`` record, SHA-256 pinned).
-DATASET_NAME = "gsplats_4d_neuromast_2ch"
-
 CHANNELS = [
     {
         "name": "membranes",
@@ -482,21 +494,35 @@ def recompute_channel_paths(work_dir: Path) -> list[Path]:
 
 
 def resolve_channel_paths() -> list[Path]:
-    """Fetch the per-channel gsplat archives, in ``CHANNELS`` order.
+    """Resolve the per-channel gsplats, in ``CHANNELS`` order.
 
-    Delegates to ``ensure_dataset``, so the pair is downloaded from the
-    ``cc-by`` Zenodo record on first use, SHA-256 verified against
-    ``data_manifest.json``, and cached under ``~/.cache/luxar/``.
+    Prefer the manifest path so the published archive pair is downloaded,
+    SHA-256 verified and cached as soon as its record URL is enabled. The
+    packaged manifest still marks that record unpublished, so its specific
+    ``DatasetUnavailable`` absence falls back to the existing local store.
 
     Paired by NAME rather than by position. ``ensure_dataset`` returns the
     manifest's file order, which happens to match ``CHANNELS`` today; relying on
     that would silently swap the two markers' colormaps and opacities if either
     list were ever reordered, and a swapped-channel render looks plausible.
     """
-    fetched = {path.name: path for path in ensure_dataset(DATASET_NAME)}
+    try:
+        fetched = {path.name: path for path in ensure_dataset(DATASET_NAME)}
+    except DatasetUnavailable as unavailable:
+        paths = [DATA_DIR / channel["file"] for channel in CHANNELS]
+        missing = [path for path in paths if not path.exists()]
+        if missing:
+            raise FileNotFoundError(
+                "Neuromast gsplat data is unavailable from the manifest and "
+                "missing from the local store:\n"
+                + "\n".join(f"  - {path}" for path in missing)
+                + f"\n\nPopulate {DATA_DIR} with the two `.gsplats.zarr` stores "
+                "(or set $LUXAR_NEUROMAST_DATA_DIR to their location)."
+            ) from unavailable
+        return paths
 
     # ``file`` names the unzipped store that ``--recompute`` writes; the record
-    # hosts it zipped, and the zip is loaded as-is.
+    # hosts it zipped.
     wanted = [f"{channel['file']}.zip" for channel in CHANNELS]
     missing = [name for name in wanted if name not in fetched]
     if missing:
