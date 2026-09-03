@@ -34,6 +34,7 @@ def test_legacy_npm_package_specifiers_are_absent_from_tracked_files() -> None:
             legacy_scope,
             rf"(from|import) ['\"]{bare_name}(['\"]|/styles\.css['\"])",
             rf"{bare_name}/styles\.css",
+            rf"npm (install|i) {bare_name}([[:space:]]|$)",
             rf"`{bare_name}` ships",
             rf"of {bare_name}\.",
         )
