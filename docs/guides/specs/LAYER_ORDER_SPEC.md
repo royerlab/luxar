@@ -3,12 +3,10 @@
 > **Status**: IMPLEMENTED on branch `feat/layer-order`. This document specifies an authored
 > per-layer draw order (`layer_order`), the 2D-layer-stack idea — CSS `z-index`
 > / Illustrator layer depth — applied to Luxar's overlapping 3D layers. It is
-> the cheap, authorially honest alternative to the two mechanisms archived in
-> `CROSS_NODE_DEPTH_ORDERING_SPEC.md` §12 (Route B, depth-shard interleaving —
-> implemented, measured, archived) and its §8.2 Route C (one globally merged
-> draw — multi-month). Unlike both, it adds no per-frame cost and no new
-> per-element machinery: it is one integer per layer feeding the `renderOrder`
-> assignment that already exists.
+> the cheap, authorially honest alternative to per-element cross-node
+> interleaving or one globally merged draw. It adds no new per-element
+> machinery: one integer per layer feeds the `renderOrder` assignment that
+> already exists.
 
 ---
 
@@ -319,12 +317,10 @@ the sentence above:
   a plain group carries no exactness guarantee to destroy. But it is the
   opposite of "the group moves as a unit", so it is a decision (§12.5), not an
   accident.
-- **A group straddling the opaque/transparent buckets is only half-honoured.**
-  §8.1 is a whole-scene limit, but a *group* makes it far likelier to bite: one
-  level on a group holding an `opaque` mesh and a `volumetric` gsplat cannot
-  move the mesh out of the opaque bucket, so half the block obeys the level and
-  half does not — silently. This is what §12.2's warning was built for, and it
-  fires only when the straddling order was actually authored.
+- **An authored order cannot override the opaque/transparent bucket split.**
+  If an opaque group has an equal or higher order than a transparent group,
+  THREE still draws it first. The renderer warns once for the involved order
+  groups, including the case where one band contains both bucket types.
 
 Two smaller cases, checked and benign:
 
@@ -343,11 +339,10 @@ therefore flip a containment edge mid-orbit.
 **The honest limit.** A level is the right tool when the author knows the
 answer, and the wrong tool when there is not one to know. For two *concave
 interpenetrating* layers no valid whole-object order exists from every
-viewpoint (`CROSS_NODE_DEPTH_ORDERING_SPEC.md` §1) — a level pins such a pair to
-one stated wrong answer instead of a camera-dependent wrong answer. Stable and
-diagnosable beats flickering, which is why this is worth shipping; but it is not
-a fix for the case the archived routes targeted, and it should never be
-documented as one.
+viewpoint — a level pins such a pair to one stated wrong answer instead of a
+camera-dependent wrong answer. Stable and diagnosable beats flickering, which
+is why this is worth shipping; it should never be documented as a geometric
+correctness fix.
 
 ---
 
@@ -360,8 +355,8 @@ scene.add_gsplats("nuclei",      ..., blending_mode="volumetric", layer_order=30
 ```
 
 - A `layer_order: int | None = None` kwarg on `add_points` / `add_lines` /
-  `add_gsplats` / `add_mesh` / `add_group`, plus a `node.layer_order` property
-  with the validating setter pattern `mesh.py::blending_mode` uses.
+  `add_gsplats` / `add_mesh` / `add_group`, plus post-hoc assignment through
+  `node.attrs["layer_order"]`.
 - Validation (`validation/types.py::validate_layer_order`): a finite Python
   `int` (a `bool` is refused — `isinstance(True, int)` is the classic hole);
   any sign. Bounded to the JS safe-integer range (`JS_SAFE_INTEGER_MAX`,
@@ -371,9 +366,8 @@ scene.add_gsplats("nuclei",      ..., blending_mode="volumetric", layer_order=30
   the inference this attribute exists to override.
 - Registered in `COMPOSITING_ATTRS` and `AUTHORED_APPEARANCE_ATTRS`; **absent**
   from `WRITER_STAMPED_APPEARANCE_DEFAULTS` and `IDENTITY_COMPOSITING_ATTRS`
-  (D2). Also added to `ABSENT_WHEN_NONE_RENDER_ATTRS` so a
-  present-but-`None` kwarg means ABSENT rather than 0.
-- D6's refusal: a new `reject_layer_order_inside_partition` in
+  (D2). A present-but-`None` value is rejected rather than treated as absent.
+- D6's refusal: `reject_layer_order_inside_specialized_group` in
   `core/group/compositing.py` plus its assignment-door twin in
   `core/node/node.py::_WriteThroughAttrs`.
 
@@ -383,7 +377,7 @@ scene.add_gsplats("nuclei",      ..., blending_mode="volumetric", layer_order=30
 
 | File | Change |
 | --- | --- |
-| `data/attrs-composer.ts` | `ComposableAttrs.layer_order?: number`; `EffectiveAttrs.layerOrder?: number`; nearest-setter-wins, beside `blending_mode`. Header prose lists the new rule. |
+| `data/attrs-composer.ts` | `ComposableAttrs.layer_order?: number`; `EffectiveAttrs.layer_order?: number`; nearest-setter-wins, beside `blending_mode`. Header prose lists the new rule. |
 | `rendering/node-factory/*` | Stamp the composed level onto `mesh.userData.layerOrder` at node creation, alongside the other composed appearance values. |
 | `rendering/depth-sort-coordinator/render-order.ts` | `OrderSlot` / `OrderGroup` gain `level` + `levelExplicit`; `assignGlobalRenderOrder` partitions into bands before today's sort; `orderGroupsWithContainment` runs **per band** and reports the containment edges it had to drop across a band boundary (D3's warning). |
 | `rendering/depth-sort-coordinator.ts` | The collect loop (`~:2107`) currently `continue`s on a non-order-dependent node after resetting `renderOrder = 0`. Under D4 it must instead collect a commutative node **that carries an explicit level**, and keep the reset for the rest. This is the only code D4 touches. |
@@ -404,8 +398,11 @@ data.
    (`blending-state.ts:292`), so **no `layer_order` can place an `opaque` mesh
    in front of a transparent layer.** A level spanning the two buckets is
    silently partially honoured, which is why the renderer warns once per layer
-   on that combination (`warnBucketStraddlingBand`, §12.2) rather than leaving
-   it to be discovered.
+   when an authored order conflicts with that bucket order
+   (`warnBucketOrderConflict`, §12.2) rather than leaving it to be discovered.
+   Opaque layers with authored orders also receive positive `renderOrder`
+   values, which can reduce front-to-back early-Z efficiency relative to
+   untracked opaque meshes; this is a performance tradeoff, not a visual one.
 2. **Interpenetrating concave layers** — §5's honest limit.
 3. **Per-pixel ordering.** Out of reach of any per-element scheme
    (StopThePop's class of artifact); unchanged deferral.
@@ -475,11 +472,11 @@ Phases 1–3 are independently landable; Phase 4 is the one that can say no.
    rows is the familiar 2D-tool gesture, but needs a rule for turning list
    position into levels (renumber all layers? sparse 10/20/30 with insertion
    between?) and interacts with D7's session-only edits.
-2. ~~**Should a level spanning the opaque/transparent bucket boundary warn?**~~
-   **DECIDED — yes, and implemented.** `warnBucketStraddlingBand` compares
-   `material.transparent` across a band's members and warns once per layer,
-   gated on the order being *authored* (an unset one promises nothing, so a
-   warning would be noise). See §8.1 for why the limit exists at all.
+2. ~~**Should an authored order conflicting with the opaque/transparent bucket
+   boundary warn?**~~ **DECIDED — yes, and implemented.**
+   `warnBucketOrderConflict` compares authored opaque and transparent groups
+   and warns once for the involved groups when the requested ordering cannot be
+   honoured. See §8.1 for why the limit exists at all.
 3. ~~**Should the demo authoring audit report authored orders?**~~
    **DECIDED — the audit rule was restated rather than extended.**
    `test_overlapping_gsplat_layers_declare_order.py` replaces #1964's
@@ -490,8 +487,7 @@ Phases 1–3 are independently landable; Phase 4 is the one that can say no.
    the old rule had no way to require). `luxar info` is untouched and remains a
    genuinely open, separate question.
 4. **URL override** (`?layerOrders=path:level,…`) for A/B measurement without
-   re-authoring — cheap, and the archived work showed how much it matters to be
-   able to pin a knob across scenes. Not specified above.
+   re-authoring. Not specified above.
 5. **Should a leaf be allowed to escape its group's band?** (§5.2.)
    Nearest-setter-wins says yes and every other compositing attr agrees, but
    "set the group's level" then does not guarantee the group stays together. The
@@ -507,9 +503,6 @@ Phases 1–3 are independently landable; Phase 4 is the one that can say no.
 
 ## 13. References
 
-- `CROSS_NODE_DEPTH_ORDERING_SPEC.md` — Route B (archived, §12) and Route C
-  (§8.2); §1 for why no valid whole-object order exists for interpenetrating
-  concave sets.
 - `rendering/depth-sort-coordinator/render-order.ts` — the three rules, the
   containment test, the per-group all-or-nothing rank choice.
 - `core/group/compositing.py` — `COMPOSITING_ATTRS`,

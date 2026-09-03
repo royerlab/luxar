@@ -309,12 +309,12 @@ Group nodes organize the scene hierarchy and can contain child nodes.
                            //   colormapped node this is the scalar display window,
                            //   not a gain (see Scalar Colormap Attributes)
   "offset": 0.0,           // -10.0-10.0, per-node additive brightness shift (black level)
-  "blending_mode": "additive",
-  "layer_order": 20,           // optional: authored cross-layer draw order
-                               // (higher = nearer the camera). Never stamped —
-                               // absence means "use the inferred ordering".  // normal, additive, max, opaque, luminous, volumetric — written
+  "blending_mode": "additive", // normal, additive, max, opaque, luminous, volumetric — written
                            //   only when explicitly set; unset ⇒ inherited from the
                            //   nearest ancestor that sets it (viewer default: additive)
+  "layer_order": 20,           // optional: authored cross-layer draw order
+                               // (higher = nearer the camera). Never stamped —
+                               // absence means "use the inferred ordering".
   "colormap": "viridis",   // Optional palette; nearest-setter-wins for rendering. GSplats
                            //   inherit it directly; Points / Lines / Mesh scalar leaves must
                            //   still author their own colormap today (see Rendering Attribute
