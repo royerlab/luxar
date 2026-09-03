@@ -1,0 +1,413 @@
+{
+  "base_url": "https://data.luxarviewer.dev/media",
+  "generated": "2026-09-02T16:16:51Z",
+  "note": "Content-addressed gallery media for the root README. Keys are the first 16 hex chars of the file's sha256, so a URL names its bytes and a pin cannot rot. This file is also the provenance record: it is the only way to answer what the README's media looked like at a given commit once the tiles no longer live in the repo.",
+  "tiles": {
+    "atp_synthase": {
+      "webm": {
+        "bytes": 2050217,
+        "content_type": "video/webm",
+        "key": "955f21cfd7c54c43.webm",
+        "sha256": "955f21cfd7c54c434c2a500e5eec9f6923ad94dc842450150d964333541f974a"
+      },
+      "webp": {
+        "bytes": 205146,
+        "content_type": "image/webp",
+        "key": "d9d1994630f8b126.webp",
+        "sha256": "d9d1994630f8b126372c1533f4415eb08782ac4fc79062c8ea0db30f60f01df2"
+      }
+    },
+    "caida_as_topology": {
+      "webm": {
+        "bytes": 4263720,
+        "content_type": "video/webm",
+        "key": "4d397bcf0404748e.webm",
+        "sha256": "4d397bcf0404748ecbb539b6bf1f782d7616b2866a0f1983c5c8545193b130f9"
+      },
+      "webp": {
+        "bytes": 578834,
+        "content_type": "image/webp",
+        "key": "c3370e8b29dd5522.webp",
+        "sha256": "c3370e8b29dd55223768617b42d88a14f43fc1a8e33b86778e5ce5a74f40cf40"
+      }
+    },
+    "collision": {
+      "webm": {
+        "bytes": 17011322,
+        "content_type": "video/webm",
+        "key": "5041a2035cbed16d.webm",
+        "sha256": "5041a2035cbed16d76dd32f9315db9b072f9f78e57f7ee731e3156d7fe2b2fa1"
+      },
+      "webp": {
+        "bytes": 1574554,
+        "content_type": "image/webp",
+        "key": "f69a603488d5897e.webp",
+        "sha256": "f69a603488d5897ea7367b3f04f9d6afec86d5910546223202d36ec01b579da4"
+      }
+    },
+    "dipc_3d_genome": {
+      "webm": {
+        "bytes": 1854300,
+        "content_type": "video/webm",
+        "key": "77ced36306375c34.webm",
+        "sha256": "77ced36306375c346c895317a387fa4010ce27d1931e9f83c0c27e49d9c9e7fb"
+      },
+      "webp": {
+        "bytes": 187212,
+        "content_type": "image/webp",
+        "key": "54580524ec54c072.webp",
+        "sha256": "54580524ec54c0723b81afa6c0f998a3208a8388ea3af2018d7e149fe1625651"
+      }
+    },
+    "dmri_tractography": {
+      "webm": {
+        "bytes": 1678232,
+        "content_type": "video/webm",
+        "key": "a5ab670e3390f45b.webm",
+        "sha256": "a5ab670e3390f45b86f766d036c0921f1d39179c34a1bfe2ec73af70fb003bfa"
+      },
+      "webp": {
+        "bytes": 246694,
+        "content_type": "image/webp",
+        "key": "1a6726e9b58e4c8a.webp",
+        "sha256": "1a6726e9b58e4c8a76cf79427ca1f2b9a509904d8654b5d0833b921a133597fd"
+      }
+    },
+    "earthquakes": {
+      "webm": {
+        "bytes": 5184961,
+        "content_type": "video/webm",
+        "key": "d05c55e7ede7ca65.webm",
+        "sha256": "d05c55e7ede7ca658c387a0c06aea289fe00a7f21d581309c2a0e391a6a110f9"
+      },
+      "webp": {
+        "bytes": 394244,
+        "content_type": "image/webp",
+        "key": "dc4b3e44dcac6de8.webp",
+        "sha256": "dc4b3e44dcac6de85ce536167cb41c26ffacdcc5cd12ba882d11ac231fda92cc"
+      }
+    },
+    "flywire_connectome": {
+      "webm": {
+        "bytes": 362354,
+        "content_type": "video/webm",
+        "key": "6323bf2395b9e871.webm",
+        "sha256": "6323bf2395b9e8712def0a80429be80d4ada7ac2e9c5b11898e643324d951526"
+      },
+      "webp": {
+        "bytes": 110986,
+        "content_type": "image/webp",
+        "key": "8a4163b0ec90b5d6.webp",
+        "sha256": "8a4163b0ec90b5d6c3a88a7ab87882e644fd09a8a6410e7f4acecd4df089a944"
+      }
+    },
+    "galaxy_simulation": {
+      "webm": {
+        "bytes": 7842934,
+        "content_type": "video/webm",
+        "key": "6dea0c44152aa88f.webm",
+        "sha256": "6dea0c44152aa88f39221cd67cced7d2e5f9759eb503e74ec383046c0502510c"
+      },
+      "webp": {
+        "bytes": 716324,
+        "content_type": "image/webp",
+        "key": "9770a88b525190b5.webp",
+        "sha256": "9770a88b525190b54d6f0b15c4475f7743f865dcec8a19cc8a5171542d27ffe0"
+      }
+    },
+    "global_rivers_earth": {
+      "webm": {
+        "bytes": 2328553,
+        "content_type": "video/webm",
+        "key": "acc224755930426d.webm",
+        "sha256": "acc224755930426da0c2a09d210807fd91b044d85304735c395be224677ee9e8"
+      },
+      "webp": {
+        "bytes": 125696,
+        "content_type": "image/webp",
+        "key": "62f7ac63f2a7055a.webp",
+        "sha256": "62f7ac63f2a7055a543aa830b1f41b002b3c7e5b654c83d2de4693e70b072af1"
+      }
+    },
+    "gsplats_3d_blastocyst_multichannel": {
+      "webm": {
+        "bytes": 1753121,
+        "content_type": "video/webm",
+        "key": "69c59ecd170fae0b.webm",
+        "sha256": "69c59ecd170fae0b29ff1ed90738f97db365e2f92e0dfa19560215d2fc2e8838"
+      },
+      "webp": {
+        "bytes": 125492,
+        "content_type": "image/webp",
+        "key": "68a7d25d2fcaa240.webp",
+        "sha256": "68a7d25d2fcaa240f92b10188f80701a98746c7e447a1d3db0af685026a56067"
+      }
+    },
+    "gsplats_3d_cells3d_multichannel": {
+      "webm": {
+        "bytes": 19462021,
+        "content_type": "video/webm",
+        "key": "cc4e61c71ee45989.webm",
+        "sha256": "cc4e61c71ee459894e37650de26c8112697fe1388449905edb807d5e7a4bd906"
+      },
+      "webp": {
+        "bytes": 657456,
+        "content_type": "image/webp",
+        "key": "99b6a58b7ab89e70.webp",
+        "sha256": "99b6a58b7ab89e704c3eac8edf8c6076ad87d1e76660dba2a883c88d9506e5a5"
+      }
+    },
+    "gsplats_3d_ct_totalsegmentator": {
+      "webm": {
+        "bytes": 2519752,
+        "content_type": "video/webm",
+        "key": "77c1fed5db8e70af.webm",
+        "sha256": "77c1fed5db8e70afadf302f3d9aafaed1d0cf3bde79dadab92216afc58ab93b8"
+      },
+      "webp": {
+        "bytes": 190336,
+        "content_type": "image/webp",
+        "key": "9334f8298377e7cd.webp",
+        "sha256": "9334f8298377e7cd4962d7e9140e6c3b835169ef78535ed3d18218822f61d7d5"
+      }
+    },
+    "gsplats_3d_milky_way_dust": {
+      "webm": {
+        "bytes": 4761012,
+        "content_type": "video/webm",
+        "key": "f1921c6b3c604bb5.webm",
+        "sha256": "f1921c6b3c604bb5bcee8480f09fa400af4e9893461a8bdd8c6702c703a58746"
+      },
+      "webp": {
+        "bytes": 370042,
+        "content_type": "image/webp",
+        "key": "32beb7d243228050.webp",
+        "sha256": "32beb7d2432280506d240319a3943d82f5e99330d820b1abb1fd3bcd3a823c21"
+      }
+    },
+    "gsplats_3d_tribolium_embryo": {
+      "webm": {
+        "bytes": 25054540,
+        "content_type": "video/webm",
+        "key": "535f397a960bd108.webm",
+        "sha256": "535f397a960bd1085a2d7d0abb3a8a6909b81c3b13a46164da8e21a42594fdd6"
+      },
+      "webp": {
+        "bytes": 188214,
+        "content_type": "image/webp",
+        "key": "e42b46b168783747.webp",
+        "sha256": "e42b46b1687837471dbdd74c2befb87246068b604d5b1cc8c756643a16e24e06"
+      }
+    },
+    "gsplats_4d_celegans_tracking": {
+      "webm": {
+        "bytes": 1895137,
+        "content_type": "video/webm",
+        "key": "32357e2574e1ee44.webm",
+        "sha256": "32357e2574e1ee44b53b49f3603e416b1b16f46fe49f81c86b67fb6e51abca0d"
+      },
+      "webp": {
+        "bytes": 154112,
+        "content_type": "image/webp",
+        "key": "8e7ade5dbe3f2a10.webp",
+        "sha256": "8e7ade5dbe3f2a10714378b4f58f63cf36df92135bbe53872226463f9d7f4ca6"
+      }
+    },
+    "gsplats_4d_neuromast_2ch": {
+      "webm": {
+        "bytes": 508680,
+        "content_type": "video/webm",
+        "key": "4e27c8ba7018ad0a.webm",
+        "sha256": "4e27c8ba7018ad0a29227093609e6e0e88c9870f5bc06c898f3bb9412295226e"
+      },
+      "webp": {
+        "bytes": 209648,
+        "content_type": "image/webp",
+        "key": "7d6cc6a57c5a5584.webp",
+        "sha256": "7d6cc6a57c5a5584f82ce87bd42bad5511cc529d9fe35589e380e2ccb0565176"
+      }
+    },
+    "hilbert_curve_3d": {
+      "webm": {
+        "bytes": 10316881,
+        "content_type": "video/webm",
+        "key": "ac0ca6cb3852e9c1.webm",
+        "sha256": "ac0ca6cb3852e9c18dedf53b6f75243ccc4584431956d79384d16d2d202a2625"
+      },
+      "webp": {
+        "bytes": 857330,
+        "content_type": "image/webp",
+        "key": "fd6783ee4a5019b8.webp",
+        "sha256": "fd6783ee4a5019b821e1ad88256621ba1f6f49e57ab20ed9e8aef441e09271ae"
+      }
+    },
+    "human_multiome_peak_umap": {
+      "webm": {
+        "bytes": 5045054,
+        "content_type": "video/webm",
+        "key": "fde5da5b8e088552.webm",
+        "sha256": "fde5da5b8e088552231880a8b2f64a096d97bc93998db564444f2c15943f090e"
+      },
+      "webp": {
+        "bytes": 363662,
+        "content_type": "image/webp",
+        "key": "0537e5927e4f7813.webp",
+        "sha256": "0537e5927e4f78132449392831e21b225bc01bd2076a180afbea10f509d39c69"
+      }
+    },
+    "huri_interactome": {
+      "webm": {
+        "bytes": 3131286,
+        "content_type": "video/webm",
+        "key": "129fa8a15eec01c1.webm",
+        "sha256": "129fa8a15eec01c18436ffdf495f6c1f777e694cac51f1ae9cea9e2d81c17162"
+      },
+      "webp": {
+        "bytes": 234714,
+        "content_type": "image/webp",
+        "key": "8feb73b6cd217f65.webp",
+        "sha256": "8feb73b6cd217f65455da105a77716fd91f001ea3f4ac72c8c5925ecb9582746"
+      }
+    },
+    "lorenz": {
+      "webm": {
+        "bytes": 8250990,
+        "content_type": "video/webm",
+        "key": "73917f691e02cf9a.webm",
+        "sha256": "73917f691e02cf9a8212c3f9716a8b1e9c9651825202a119a02e09e81dffef9b"
+      },
+      "webp": {
+        "bytes": 718500,
+        "content_type": "image/webp",
+        "key": "59b7714301144d07.webp",
+        "sha256": "59b7714301144d072939319f386cf81d26e6832f8079fcbf437acc31a0ba8bb4"
+      }
+    },
+    "mesh_isosurface_cells3d": {
+      "webm": {
+        "bytes": 3408660,
+        "content_type": "video/webm",
+        "key": "63c090e9c9e15cfd.webm",
+        "sha256": "63c090e9c9e15cfd6885a3490f96d61eba968b6bbf9577ba0d299e002bce83f5"
+      },
+      "webp": {
+        "bytes": 232034,
+        "content_type": "image/webp",
+        "key": "a1c3a92470d26a69.webp",
+        "sha256": "a1c3a92470d26a696705bc3f85661db14dfbb82237c5f4b4530d6d60f3b5e939"
+      }
+    },
+    "ocean": {
+      "webm": {
+        "bytes": 6839767,
+        "content_type": "video/webm",
+        "key": "ca062349f7ed8b8d.webm",
+        "sha256": "ca062349f7ed8b8d2e63b6a3a4581e8f6224e271931f077b92587c26d69314d4"
+      },
+      "webp": {
+        "bytes": 753480,
+        "content_type": "image/webp",
+        "key": "da7d144cab71ac33.webp",
+        "sha256": "da7d144cab71ac33b7a936593850a7003a1038eb6755f1f8a1b214133a88bc9a"
+      }
+    },
+    "protein_landscape": {
+      "webm": {
+        "bytes": 6011908,
+        "content_type": "video/webm",
+        "key": "44971e188a905b8c.webm",
+        "sha256": "44971e188a905b8c2fc81b4bb5306d682e991c1ac340f7c37a5702b66a230069"
+      },
+      "webp": {
+        "bytes": 769814,
+        "content_type": "image/webp",
+        "key": "397b1162496bb4e9.webp",
+        "sha256": "397b1162496bb4e9acd798a23a6b8c8690435886a59f1beb4fef1573d990b774"
+      }
+    },
+    "quantum_orbitals": {
+      "webm": {
+        "bytes": 2333023,
+        "content_type": "video/webm",
+        "key": "9adc484ae6b8ee3f.webm",
+        "sha256": "9adc484ae6b8ee3fdd4c8fa78dca0838548c881ff14bd1a092d8923f13242291"
+      },
+      "webp": {
+        "bytes": 91068,
+        "content_type": "image/webp",
+        "key": "4c98b8733cfe67c3.webp",
+        "sha256": "4c98b8733cfe67c3fe75f937b04a00bd7934d76015d10c9e4b15c663222e1db9"
+      }
+    },
+    "rainbow_sphere": {
+      "webm": {
+        "bytes": 4040090,
+        "content_type": "video/webm",
+        "key": "6962f8d833a8f20b.webm",
+        "sha256": "6962f8d833a8f20bc3e24986dc2c4fe67d4767d0884482d11fe6a871b419227c"
+      },
+      "webp": {
+        "bytes": 155472,
+        "content_type": "image/webp",
+        "key": "75006268b34f0730.webp",
+        "sha256": "75006268b34f0730bca834ef7a98e07838eb12fc7214d9a07c82b591cd2bba89"
+      }
+    },
+    "spiral_galaxy": {
+      "webm": {
+        "bytes": 9684633,
+        "content_type": "video/webm",
+        "key": "8c78f4437882452c.webm",
+        "sha256": "8c78f4437882452c6092c1358f0232286e4cdc475c79a879365f7408d79c7e45"
+      },
+      "webp": {
+        "bytes": 1312800,
+        "content_type": "image/webp",
+        "key": "c412a7b78b54f22a.webp",
+        "sha256": "c412a7b78b54f22ad3c255d8260ccafc07112ced07ad25187ffac9d5116b2aa2"
+      }
+    },
+    "spotify_tracks": {
+      "webm": {
+        "bytes": 2417564,
+        "content_type": "video/webm",
+        "key": "c9e0e6b051b4e28f.webm",
+        "sha256": "c9e0e6b051b4e28f86e8a4db6f0693c8937665a556f889caeac10a745d6e3e10"
+      },
+      "webp": {
+        "bytes": 180616,
+        "content_type": "image/webp",
+        "key": "531b5a277960ccae.webp",
+        "sha256": "531b5a277960ccae2873dc76c4f88f10acee71bac16468492c60cf7ca3c5c5e3"
+      }
+    },
+    "tabula_sapiens": {
+      "webm": {
+        "bytes": 17857014,
+        "content_type": "video/webm",
+        "key": "f7ac0cc31aff917d.webm",
+        "sha256": "f7ac0cc31aff917de0736a42473084f641517b600334cced6eafabe2f7e6f472"
+      },
+      "webp": {
+        "bytes": 1482866,
+        "content_type": "image/webp",
+        "key": "c2c0a1e64e13d76e.webp",
+        "sha256": "c2c0a1e64e13d76e02c51ea8b3c0f81e0d7a8e000dde2b54d020284c6243b7bc"
+      }
+    },
+    "zebrahub_multiome": {
+      "webm": {
+        "bytes": 5863806,
+        "content_type": "video/webm",
+        "key": "3560cd22b27a75da.webm",
+        "sha256": "3560cd22b27a75dae3908c067e37b8bd4454d9c4bc7a9391c941acedf5ab24c2"
+      },
+      "webp": {
+        "bytes": 480108,
+        "content_type": "image/webp",
+        "key": "773fce285f464bbc.webp",
+        "sha256": "773fce285f464bbc1d7c3dd8b22c39e7647028be8766bb152843d9845ce27796"
+      }
+    }
+  }
+}

@@ -83,7 +83,7 @@ Each subdirectory contains pre-fitted `.gsplats.zarr.zip` files for one demo:
 | `gsplats_visible_human_head/` | 3D Visible Human head, true-color cryosections (NLM) | 1 `.gsplats.zarr.zip` + `vh_head_colors.npz` (per-splat RGB, indexed positionally against the fit; regenerated from a 636 x 451 x 896 volume matching the stored centers' extent, with a color distribution within TV distance 0.0065 of the original sidecar; verified on load at agreement 1.0, #1670) |
 | `gsplats_flylight_mcfo_63x/` | 3D *Drosophila* whole brain, MultiColor FlpOut (Janelia FlyLight, 63x) | 1 `.gsplats.zarr.zip` (~8 MB) |
 | `gsplats_nexrad_supercell/` | 4D NEXRAD Oklahoma convective evening incl. the El Reno tornadic supercell (KTLX, 2013-05-31 21Z - 06-01 03Z) | 1 bundle zip with 82 volume scans (~9.6 MB) |
-| _(not bundled)_ `gsplats_4d_neuromast_2ch` | 4D two-channel neuromast timelapse | 2 channel `.gsplats.zarr` (~220 MB unzipped) — **not in Git LFS**; the zips (~130 MB compressed) are in the published `cc-by` record and pinned in the manifest, and the demo fetches them unless a complete local store overrides them |
+| _(not bundled)_ `gsplats_4d_neuromast_2ch` | 4D two-channel neuromast timelapse | 2 channel `.gsplats.zarr` (~220 MB unzipped) — **not in Git LFS**; the zips (130 MiB) are in the published `cc-by` record and pinned in the manifest. The demo tries the manifest fetch first, then falls back to the unzipped local pair |
 | _(not bundled)_ `gsplats_cell_tracking` | 4D zebrafish cell-tracking challenge | 7 crop pairs (4D splats + lineage tracks, 632.4 MB) — **not in Git LFS**; uploaded to the published `cc-by` record and pinned in the manifest |
 
 > **Note — uploads.** The neuromast pair, both h2afva timelapse variants, the

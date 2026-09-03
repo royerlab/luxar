@@ -41,22 +41,37 @@ _MANIFEST_PATH = Path(__file__).resolve().parents[1] / "data_manifest.json"
 REAL_SOURCE_SHAPE = demo.SOURCE_SHAPE
 
 
-def test_resolve_channel_paths_prefers_the_complete_local_override(
+def test_resolve_channel_paths_prefers_the_record_over_a_local_copy(
     tmp_path, monkeypatch
 ) -> None:
-    monkeypatch.setattr(demo, "DATA_DIR", tmp_path)
-    expected = []
-    for channel in demo.CHANNELS:
-        path = tmp_path / channel["file"]
-        path.touch()
-        expected.append(path)
-    monkeypatch.setattr(
-        demo,
-        "ensure_dataset",
-        lambda name: pytest.fail(f"unexpected download of {name}"),
-    )
+    """A hand-placed local pair must not shadow the published record.
 
-    assert demo.resolve_channel_paths() == expected
+    The local store is the fallback, so precedence is only observable with BOTH
+    sources present: a complete unzipped pair on disk AND a fetch that works.
+    The sibling test below has an empty ``DATA_DIR``, which proves the fetch
+    path but says nothing about order — and getting the order backwards would
+    quietly serve a stale hand-placed copy for ever, with the checksum gate
+    never consulted.
+    """
+    local_dir = tmp_path / "local_store"
+    local_dir.mkdir()
+    monkeypatch.setattr(demo, "DATA_DIR", local_dir)
+    for channel in demo.CHANNELS:
+        (local_dir / channel["file"]).touch()
+
+    fetched = [
+        tmp_path / "cache" / f"{channel['file']}.zip" for channel in demo.CHANNELS
+    ]
+    calls = []
+
+    def fetch(name: str):
+        calls.append(name)
+        return list(fetched)
+
+    monkeypatch.setattr(demo, "ensure_dataset", fetch)
+
+    assert demo.resolve_channel_paths() == fetched
+    assert calls == ["gsplats_4d_neuromast_2ch"]
 
 
 def test_resolve_channel_paths_fetches_the_published_pair(
