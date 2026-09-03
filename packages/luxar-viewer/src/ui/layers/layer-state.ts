@@ -392,6 +392,8 @@ export interface LayerInfo {
    * nearer the camera = drawn later.
    */
   layerOrder?: number;
+  /** Effective order inherited from ancestors when this layer owns none. */
+  inheritedLayerOrder?: number;
   /**
    * Whether the level is EXPLICIT — the node's OWN attr, or a user pick in the
    * panel — as opposed to inherited or absent. Same reasoning as
@@ -524,10 +526,16 @@ export class LayerStateManager {
     this.layerOrder = [];
     this.lastClickedPath = null;
 
-    this.walkSceneGraph(root, root);
+    this.walkSceneGraph(root, root, undefined);
   }
 
-  private walkSceneGraph(node: SceneNode, root: SceneNode): void {
+  private walkSceneGraph(
+    node: SceneNode,
+    root: SceneNode,
+    inheritedLayerOrder: number | undefined
+  ): void {
+    const ownLayerOrder = sanitizedLayerOrder(node.attrs.layer_order);
+    const effectiveLayerOrder = ownLayerOrder ?? inheritedLayerOrder;
     // Skip the root scene node; collect anything else with layer=true.
     // Groups exposed as layers act as composites — their controls fan out
     // to every data descendant when applied in the scene.
@@ -682,7 +690,6 @@ export class LayerStateManager {
         // the layer non-explicit so it does not impose that default on descendants.
         const effectiveAttrs = getEffectiveAttrs(root, node.path);
         const composedBlendingMode = effectiveAttrs.blending_mode;
-        const composedLayerOrder = sanitizedLayerOrder(effectiveAttrs.layer_order);
 
         this.layerOrder.push(node.path);
         this.layers.set(node.path, {
@@ -757,8 +764,9 @@ export class LayerStateManager {
           // attr (the shape `blendingModeExplicit` above can afford, because a
           // mode has a per-type fallback) would report `explicit: true` for a
           // junk value like `'front'` that the renderer discards.
-          layerOrder: composedLayerOrder,
-          layerOrderExplicit: sanitizedLayerOrder(node.attrs.layer_order) !== undefined,
+          layerOrder: effectiveLayerOrder,
+          inheritedLayerOrder,
+          layerOrderExplicit: ownLayerOrder !== undefined,
           selected: false,
           colormap,
           supportsColormap,
@@ -779,7 +787,7 @@ export class LayerStateManager {
     // Recurse into children
     if (node.children) {
       for (const child of node.children) {
-        this.walkSceneGraph(child, root);
+        this.walkSceneGraph(child, root, effectiveLayerOrder);
       }
     }
   }
@@ -1050,7 +1058,7 @@ export class LayerStateManager {
     const layer = this.layers.get(path);
     if (!layer) return;
     const sanitizedLevel = level !== undefined && Number.isSafeInteger(level) ? level : undefined;
-    layer.layerOrder = sanitizedLevel;
+    layer.layerOrder = sanitizedLevel ?? layer.inheritedLayerOrder;
     layer.layerOrderExplicit = sanitizedLevel !== undefined;
     this.notify();
   }

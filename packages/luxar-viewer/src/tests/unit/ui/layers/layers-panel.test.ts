@@ -3859,6 +3859,12 @@ describe('LayersPanel — Layer order control (the shipped path)', () => {
     expect(panel.layerState.getLayer('/ordered/cloud')!.layerOrderExplicit).toBe(false);
     expect(field()!.value).toBe('');
     expect(field()!.placeholder).toBe('auto (5)');
+
+    setField('9');
+    setField('');
+    panel.layerState.select('/ordered/cloud', 'single');
+    expect(field()!.value).toBe('');
+    expect(field()!.placeholder).toBe('auto (5)');
     panel.dispose();
   });
 
