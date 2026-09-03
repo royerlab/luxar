@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -48,6 +49,7 @@ from typing import Iterable, Sequence
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_PATH = REPO_ROOT / "scripts/gallery/manifest.json"
 MEDIA_MANIFEST_PATH = REPO_ROOT / "scripts/gallery/media-manifest.json"
+README_PATH = REPO_ROOT / "README.md"
 DEFAULT_DATA_HOST = "https://data.luxarviewer.dev"
 VIEWER_PATH = "/viewer/index.html"
 
@@ -60,7 +62,7 @@ def store_of(entry: dict) -> str | None:
     """Store name for a manifest entry, from ``dataset`` — never from ``id``."""
     dataset = entry.get("dataset") or ""
     base = Path(dataset).name
-    return base.replace(".luxar.zarr", "") if base else None
+    return base.removesuffix(".luxar.zarr") if base else None
 
 
 def normalise_stores(names: Iterable[str]) -> set[str]:
@@ -70,7 +72,7 @@ def normalise_stores(names: Iterable[str]) -> set[str]:
         name = raw.strip().rstrip("/")
         if not name:
             continue
-        out.add(name.replace(".luxar.zarr", ""))
+        out.add(name.removesuffix(".luxar.zarr"))
     return out
 
 
@@ -98,26 +100,40 @@ def build_routes(
             skipped.append((key, store))
             continue
         target = f"{VIEWER_PATH}?src={data_host}/data/{prefix}/{store}.luxar.zarr"
-        lines.append(f"/d/{key}  {target}  302")
-        routed.add(key)
-        if store != key:
-            # Alias so an older or store-spelled link keeps resolving.
-            lines.append(f"/d/{store}  {target}  302")
-            routed.add(store)
+        for route_key in (key, store) if store != key else (key,):
+            if route_key in routed:
+                raise RouteError(f"duplicate route path: /d/{route_key}")
+            lines.append(f"/d/{route_key}  {target}  302")
+            routed.add(route_key)
     return lines, routed, skipped
 
 
-def readme_linked_keys(media_manifest: Path | None = None) -> set[str]:
-    """Keys the root README links at ``/d/``; empty set when absent.
+def readme_linked_keys(
+    media_manifest: Path | None = None, readme: Path | None = None
+) -> set[str]:
+    """Keys linked at ``/d/`` by the README and its gallery tile manifest.
 
     Resolved at call time, not bound as a default argument: a module-level
     default would be captured at import and could never be redirected, which
     silently pins the contract check to one path.
     """
-    path = media_manifest if media_manifest is not None else MEDIA_MANIFEST_PATH
-    if not path.exists():
-        return set()
-    return set(json.loads(path.read_text()).get("tiles", {}))
+    media_path = media_manifest if media_manifest is not None else MEDIA_MANIFEST_PATH
+    readme_path = readme if readme is not None else README_PATH
+    keys: set[str] = set()
+    found_source = False
+    if media_path.exists():
+        found_source = True
+        keys.update(json.loads(media_path.read_text()).get("tiles", {}))
+    if readme_path.exists():
+        found_source = True
+        keys.update(re.findall(r"/d/([\w-]+)", readme_path.read_text()))
+    if not found_source:
+        raise RouteError(
+            f"README contract sources not found: {media_path} and {readme_path}"
+        )
+    if not keys:
+        raise RouteError("README contract sources contain no /d/<demo-key> links")
+    return keys
 
 
 def render(lines: Sequence[str], prefix: str) -> str:
@@ -147,6 +163,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("-o", "--output", required=True, type=Path)
     parser.add_argument("--data-host", default=DEFAULT_DATA_HOST)
     parser.add_argument("--manifest", type=Path, default=MANIFEST_PATH)
+    parser.add_argument("--media-manifest", type=Path, default=MEDIA_MANIFEST_PATH)
+    parser.add_argument("--readme", type=Path, default=README_PATH)
     parser.add_argument(
         "--check-contract",
         action="store_true",
@@ -170,8 +188,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not lines:
         raise RouteError("no routes generated; check --prefix and --live-stores")
 
-    linked = readme_linked_keys()
-    if args.check_contract and linked:
+    linked: set[str] = set()
+    if args.check_contract:
+        linked = readme_linked_keys(args.media_manifest, args.readme)
         missing = sorted(linked - routed)
         if missing:
             raise RouteError(
