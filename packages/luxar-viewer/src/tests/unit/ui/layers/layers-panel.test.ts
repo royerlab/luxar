@@ -3853,10 +3853,26 @@ describe('LayersPanel — Layer order control (the shipped path)', () => {
     panel.dispose();
   });
 
-  it('truncates a fractional entry toward zero', () => {
+  it('rejects a fractional entry instead of silently changing it', () => {
     const panel = openPanel();
     setField('3.7');
-    expect(panel.layerState.getLayer('/cloud')!.layerOrder).toBe(3);
+    expect(panel.layerState.getLayer('/cloud')!.layerOrder).toBeUndefined();
+    expect(field()!.value).toBe('');
+    panel.dispose();
+  });
+
+  it('accepts exponent notation as the exact integer it denotes', () => {
+    const panel = openPanel();
+    setField('1e3');
+    expect(panel.layerState.getLayer('/cloud')!.layerOrder).toBe(1000);
+    panel.dispose();
+  });
+
+  it('rejects integers outside the JavaScript safe range', () => {
+    const panel = openPanel();
+    setField('9007199254740992');
+    expect(panel.layerState.getLayer('/cloud')!.layerOrder).toBeUndefined();
+    expect(field()!.value).toBe('');
     panel.dispose();
   });
 });

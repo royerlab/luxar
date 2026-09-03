@@ -66,7 +66,7 @@ const warnedAxisMappingWrappers = new WeakSet<THREE.Object3D>();
  */
 const warnedMixedBandGroups = new WeakSet<THREE.Object3D>();
 const warnedBandSplitContainers = new WeakMap<THREE.Object3D, WeakSet<THREE.Object3D>>();
-const warnedStraddlingBands = new WeakSet<THREE.Object3D>();
+const warnedBucketOrderGroups = new WeakSet<THREE.Object3D>();
 
 /** A group whose members disagree on their band (spec D6 violated on disk). */
 function warnMixedBandGroup(groupKey: THREE.Object3D, kept: number, seen: number): void {
@@ -110,30 +110,48 @@ function warnBandSplitContainment(outer: OrderGroup, inner: OrderGroup): void {
 }
 
 /**
- * A band spanning both render buckets. THREE draws its whole opaque list before
- * any transparent mesh and `renderOrder` is only compared WITHIN a bucket
- * (`painterSortStable` / `reversePainterSortStable`), so such an order is
- * honoured for its transparent members and silently ignored for its opaque
- * ones. `opaque` is the only blending mode with `transparent: false`.
+ * An authored order that conflicts with THREE's fixed opaque-before-transparent
+ * bucket order. `renderOrder` is compared only WITHIN a bucket, so an opaque
+ * group cannot actually draw after a transparent group even when its authored
+ * level is greater. Equal levels cover the mixed-band case: the groups are
+ * meant to share one band, but the bucket split still separates them.
  */
-function warnBucketStraddlingBand(group: OrderGroup): void {
-  let sawOpaque = false;
-  let sawTransparent = false;
-  for (const slot of group.slots) {
-    const material = Array.isArray(slot.mesh.material) ? slot.mesh.material[0] : slot.mesh.material;
-    if (material?.transparent) sawTransparent = true;
-    else sawOpaque = true;
-  }
-  if (!sawOpaque || !sawTransparent) return;
-  const key = group.slots[0]?.groupKey;
-  if (!key || warnedStraddlingBands.has(key)) return;
-  warnedStraddlingBands.add(key);
+function warnBucketOrderConflict(groups: OrderGroup[]): void {
+  const bucket = (group: OrderGroup): 'opaque' | 'transparent' | 'mixed' => {
+    let sawOpaque = false;
+    let sawTransparent = false;
+    for (const slot of group.slots) {
+      const material = Array.isArray(slot.mesh.material)
+        ? slot.mesh.material[0]
+        : slot.mesh.material;
+      if (material?.transparent) sawTransparent = true;
+      else sawOpaque = true;
+    }
+    return sawOpaque && sawTransparent ? 'mixed' : sawOpaque ? 'opaque' : 'transparent';
+  };
+
+  const authored = groups.filter((group) => group.levelExplicit);
+  const opaque = authored.filter((group) => bucket(group) !== 'transparent');
+  const transparent = authored.filter((group) => bucket(group) !== 'opaque');
+  const conflict = opaque
+    .flatMap((opaqueGroup) =>
+      transparent.map((transparentGroup) => ({ opaqueGroup, transparentGroup }))
+    )
+    .find(({ opaqueGroup, transparentGroup }) => opaqueGroup.level >= transparentGroup.level);
+  if (!conflict) return;
+
+  const keys = [
+    conflict.opaqueGroup.slots[0]?.groupKey,
+    conflict.transparentGroup.slots[0]?.groupKey,
+  ].filter((key): key is THREE.Object3D => key !== undefined);
+  if (keys.length === 0 || keys.every((key) => warnedBucketOrderGroups.has(key))) return;
+  keys.forEach((key) => warnedBucketOrderGroups.add(key));
   log.warning(
     Modules.RENDERER,
-    `Layer order ${group.level} on '${key.name || '(unnamed)'}' spans both render buckets ` +
-      '(opaque and transparent). renderOrder is only compared within a bucket, and every opaque ' +
-      'mesh draws before any transparent one, so this order applies to the transparent members and ' +
-      'cannot move the opaque ones. Split them into separate layers if the order matters.'
+    `Authored layer order puts an opaque group at ${conflict.opaqueGroup.level} and a transparent ` +
+      `group at ${conflict.transparentGroup.level}, but every opaque mesh draws before every ` +
+      'transparent mesh. renderOrder is only compared within a bucket, so this ordering cannot be ' +
+      'honoured. Use compatible blending modes if their relative order matters.'
   );
 }
 
@@ -796,6 +814,7 @@ export function assignGlobalRenderOrder(): void {
     (a, b) => a.level - b.level || a.sumZ / a.slots.length - b.sumZ / b.slots.length
   );
   const ordered = orderGroupsWithContainment(byDepth);
+  warnBucketOrderConflict(ordered);
 
   // Reserve THREE's default 0 for meshes the coordinator does not track yet,
   // so an empty never-committed partition placeholder cannot alias a live rank.
@@ -814,10 +833,6 @@ export function assignGlobalRenderOrder(): void {
     // stored tree does not name, so the mixed case is reachable from data alone;
     // falling the whole group back to depth keeps the result a well-defined
     // (if approximate) order instead of an arbitrary one.
-    // Only an AUTHORED band can be half-honoured across the bucket split; an
-    // unset one is band 0 for everything and promises nothing.
-    if (group.levelExplicit) warnBucketStraddlingBand(group);
-
     const everyMemberRanked = group.slots.every((slot) => slot.partRank >= 0);
     group.slots.sort(
       everyMemberRanked ? (a, b) => a.partRank - b.partRank : (a, b) => a.viewZ - b.viewZ

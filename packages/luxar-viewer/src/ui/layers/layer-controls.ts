@@ -464,8 +464,8 @@ export class LayerControls {
       // Blank CLEARS. A non-numeric entry is treated as blank rather than as 0,
       // since 0 is a real band and guessing it from junk would state an order
       // the user did not choose.
-      const parsed = raw === '' ? undefined : Number.parseInt(raw, 10);
-      const level = parsed === undefined || !Number.isFinite(parsed) ? undefined : parsed;
+      const parsed = raw === '' ? undefined : Number(raw);
+      const level = parsed === undefined || !Number.isSafeInteger(parsed) ? undefined : parsed;
       const selected = this.deps.state.getSelected();
       for (const sel of selected) {
         this.deps.state.setLayerOrder(sel.path, level);

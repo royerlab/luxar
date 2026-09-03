@@ -5068,9 +5068,9 @@ describe('depth-sort coordinator — synchronous first sort', () => {
  * the "unset is byte-identical" proof and are deliberately left untouched.
  */
 describe('depth-sort coordinator — layer_order bands', () => {
-  /** Authored level, as the composed attrs record the node factory stamps. */
+  /** Authored level, as the node factory's dedicated render-state stamp. */
   const setLevel = (mesh: THREE.Mesh, level: number): void => {
-    mesh.userData.attrs = { ...(mesh.userData.attrs ?? {}), layer_order: level };
+    mesh.userData.layerOrder = level;
   };
 
   /** Two disjoint leaves: `far` genuinely behind `near` along view-z. */
@@ -5238,7 +5238,7 @@ describe('depth-sort coordinator — layer_order bands', () => {
     expect(mesh.renderOrder).toBe(1);
 
     // Withdraw the level, as the Layers panel does when the field is cleared.
-    mesh.userData.attrs = {};
+    mesh.userData.layerOrder = undefined;
     coord.evaluateDepthSortPerFrame();
 
     expect(mesh.renderOrder).toBe(0);
@@ -5289,7 +5289,7 @@ describe('depth-sort coordinator — layer_order bands', () => {
     coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
     const { far, near } = twoDisjointLeaves();
     // Bypasses every sanitising path, exactly like a synthetic scene would.
-    far.userData.attrs = { layer_order: bad };
+    far.userData.layerOrder = bad;
     for (const m of [near, far]) coord.noteDepthSortCommit(m, new Float32Array([0, 0, -1]), 1);
     await flush();
 
@@ -5323,8 +5323,33 @@ describe('depth-sort coordinator — layer_order bands', () => {
     coord.evaluateDepthSortPerFrame();
 
     const straddle = (log.warning as unknown as { mock: { calls: unknown[][] } }).mock.calls.filter(
-      (c) => String(c[1]).includes('spans both render buckets')
+      (c) => String(c[1]).includes('ordering cannot be honoured')
     );
     expect(straddle).toHaveLength(1);
+  });
+
+  it('warns when separate authored groups ask opaque to draw after transparent', async () => {
+    const coord = await loadCoordinator();
+    const { log } = await import('../../../utils/log');
+    coord.configureDepthSort({ getCamera: () => cameraAt(1000, 0, 0), requestRender: vi.fn() });
+
+    const transparent = makeGSplatsMesh(1, 'volumetric');
+    const opaque = makeGSplatsMesh(1, 'volumetric');
+    (transparent.material as THREE.Material).transparent = true;
+    (opaque.material as THREE.Material).transparent = false;
+    setLevel(transparent, 1);
+    setLevel(opaque, 10);
+    for (const mesh of [transparent, opaque]) {
+      coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1]), 1);
+    }
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(
+      (log.warning as unknown as { mock: { calls: unknown[][] } }).mock.calls.some((call) =>
+        String(call[1]).includes('opaque group at 10 and a transparent group at 1')
+      )
+    ).toBe(true);
   });
 });
