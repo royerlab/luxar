@@ -123,7 +123,7 @@ The hosted datasets formerly stored in these subdirectories are:
 > published on 2026-09-02, so each carries `published: true` and the fetch derives
 > a checksum-verified public URL from its record id.
 
-### Other Data Files (top level)
+### Other Data Files
 
 - `dipc_genome/dipc_gm12878.npz` — Single-cell 3D genome (Dip-C) bead coordinates, GM12878 cell (Lines demo `demo_dipc_3d_genome.py`)
 
