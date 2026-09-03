@@ -1954,34 +1954,48 @@ def test_a_divergent_pin_is_reported_not_silently_accepted(
     assert "hosted_sha256 differs" in out, out
 
 
-def test_a_cache_seeded_with_the_hosted_bytes_is_not_reverted(fake_repo):
-    """Regression for #2454 defect 2: a correctly-seeded cache must survive.
+def test_a_current_hosted_positional_pair_is_not_reverted(fake_repo):
+    """The current hosted pair survives with an older in-repo copy available.
 
-    A cache slot holding the HOSTED (record) generation matches the ``hosted``
-    contract in ``_accepted_contract``, so the resolver keeps it — it is NOT
-    quarantined and re-copied from the older in-repo LFS payload. The reported
-    revert happened only while ``hosted_sha256`` was absent (record unpublished):
-    the cache holding record bytes then failed the sole ``sha256`` = in-repo pin,
-    was quarantined, and got re-seeded from the in-repo (older) copy. With the
-    hosted pin present a deliberate manual reseed now outlives a demo run.
+    This is the #2454 defect 2 shape missing from the existing hosted-cache
+    coverage: both files belong to one positional pair, carry superseded history,
+    and one still has an in-repo generation the resolver could copy over it. The
+    assertion is intentionally scoped to the current record generation; a cached
+    superseded generation is still refreshed when a current source exists, as
+    ``test_a_superseded_cache_is_replaced_when_a_route_exists`` requires.
     """
     manifest, cache = fake_repo
-    entry = manifest["datasets"]["gsplats_toy"]["files"][0]
-    hosted_bytes = b"hosted-splat-bytes"  # the record's (refit) generation
-    entry["hosted_sha256"] = hashlib.sha256(hosted_bytes).hexdigest()
+    entries = manifest["datasets"]["gsplats_toy"]["files"]
+    entries[:] = [
+        {
+            "name": "fit.gsplats.zarr.zip",
+            "sha256": hashlib.sha256(b"local-fit").hexdigest(),
+            "hosted_sha256": hashlib.sha256(b"hosted-fit").hexdigest(),
+            "superseded_sha256": [hashlib.sha256(b"old-hosted-fit").hexdigest()],
+            "positional_pair": "toy",
+        },
+        {
+            "name": "colors.npz",
+            "sha256": hashlib.sha256(b"local-colors").hexdigest(),
+            "hosted_sha256": hashlib.sha256(b"hosted-colors").hexdigest(),
+            "superseded_sha256": [hashlib.sha256(b"old-hosted-colors").hexdigest()],
+            "positional_pair": "toy",
+        },
+    ]
+    lfs_dir = data_fetch._DEMOS_DATA_DIR / "gsplats_toy"
+    (lfs_dir / "fit.gsplats.zarr.zip").write_bytes(b"local-fit")
 
-    # Pre-seed the manifest cache slot with the hosted generation, exactly as a
-    # manual reseed from the verified record archive would.
     cache_dir = cache / "gsplats_toy"
     cache_dir.mkdir(parents=True)
-    (cache_dir / "toy_ch0.gsplats.zarr.zip").write_bytes(hosted_bytes)
+    (cache_dir / "fit.gsplats.zarr.zip").write_bytes(b"hosted-fit")
+    (cache_dir / "colors.npz").write_bytes(b"hosted-colors")
 
-    (path,) = ensure_dataset(
+    paths = ensure_dataset(
         "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
     )
 
-    assert path.read_bytes() == hosted_bytes, "cache was reverted to the in-repo copy"
-    assert find_quarantined_files(path) == [], "the correctly-seeded cache was churned"
+    assert [path.read_bytes() for path in paths] == [b"hosted-fit", b"hosted-colors"]
+    assert all(find_quarantined_files(path) == [] for path in paths)
 
 
 def test_agreeing_pins_report_nothing_unusual(fake_repo, capsys):
