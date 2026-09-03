@@ -62,17 +62,20 @@ PIPELINE — reproducible per channel with ``--recompute``:
     was OOM-killed (``exit -9``) before a single tile landed — an
     over-subscribed GPU here fails all-at-once rather than degrading.
 
-DATA STORAGE (important):
+DATA STORAGE:
     These fitted gsplats are ~220 MB unzipped and are **not bundled with the
-    repo**. Both channels are uploaded to the ``cc-by`` Zenodo record and pinned
-    by SHA-256 in ``demos/data_manifest.json`` (as the 133 MB
-    ``.gsplats.zarr.zip`` pair), but that record is still an unsubmitted draft —
-    it carries ``published: false``, so the fetch leg builds no URL and nothing
-    is downloadable yet. For now the data lives in a local store on this machine
-    (see ``DATA_DIR`` below), so the demo runs only where ``DATA_DIR`` is
-    populated. Once the record is published, switch ``resolve_channel_paths`` to
-    ``ensure_dataset("gsplats_4d_neuromast_2ch")`` (as the other gsplat demos do
-    via ``load_precomputed_gsplats``) and drop the local store.
+    repo**. Both channels live on the ``cc-by`` Zenodo record as the 136 MB
+    ``.gsplats.zarr.zip`` pair, pinned by SHA-256 in
+    ``demos/data_manifest.json``, and ``resolve_channel_paths`` fetches them
+    through ``ensure_dataset("gsplats_4d_neuromast_2ch")`` — so the demo runs
+    anywhere with a network connection, like every other gsplat demo.
+
+    It did not always. Until the record was published on 2026-09-02 it carried
+    ``published: false``, which builds no download URL, so the demo read a
+    machine-local store instead and ran only where that store happened to be
+    populated. The zipped store loads directly; nothing is unpacked. Note the
+    ``.zip`` suffix is why the paths this returns differ from each channel's
+    ``file`` key, which names the *unzipped* store that ``--recompute`` writes.
 
 USAGE:
     python demo_gsplats_4d_neuromast_2ch.py [--no-serve] [--serve-only]
@@ -97,10 +100,10 @@ DEMO_META = {
     "category": "microscopy",
     "geometry": "gsplats",
     "requirements": {
-        "download_mb": 220,  # approx (local store, not bundled/hosted)
+        "download_mb": 136,  # the zipped pair on the cc-by record
         "compute": "medium",
         "gpu": "none",
-        "local_data": "manual-file",
+        "local_data": None,
     },
     "caches": [],
     "outputs": ["gsplats_4d_neuromast_2ch"],
@@ -111,7 +114,6 @@ DEMO_META = {
     },
 }
 
-import os
 import shutil
 from contextlib import contextmanager
 from pathlib import Path
@@ -124,6 +126,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     add_demo_caption,
+    ensure_dataset,
     launch_viewer,
     parse_demo_flags,
     parse_path_arg,
@@ -136,15 +139,6 @@ from luxar.utils.paths import get_demos_output_dir
 # =============================================================================
 # Configuration
 # =============================================================================
-
-# Local store for the fitted gsplats. NOT bundled/hosted yet (see the module
-# docstring's DATA STORAGE note). Override with $LUXAR_NEUROMAST_DATA_DIR.
-DATA_DIR = Path(
-    os.environ.get(
-        "LUXAR_NEUROMAST_DATA_DIR",
-        str(Path.home() / "luxar_demo_data" / "gsplats_neuromast_2ch"),
-    )
-)
 
 HPC_SOURCE_ROOT = (
     "/hpc/projects/jacobo_group/Adrian/RU_Processed_Data/No_Ablations_Aligned/"
@@ -165,6 +159,9 @@ BACKGROUND_FLOOR_REDUCTION = "median"
 # Channel configuration — each becomes an independently-toggleable layer.
 # Named colormaps (not baked RGB) so the viewer applies the LUT at display
 # time and the Layers panel can switch it interactively.
+#: Manifest key for the hosted pair (``cc-by`` record, SHA-256 pinned).
+DATASET_NAME = "gsplats_4d_neuromast_2ch"
+
 CHANNELS = [
     {
         "name": "membranes",
@@ -485,26 +482,31 @@ def recompute_channel_paths(work_dir: Path) -> list[Path]:
 
 
 def resolve_channel_paths() -> list[Path]:
-    """Resolve the per-channel gsplat paths in the local store.
+    """Fetch the per-channel gsplat archives, in ``CHANNELS`` order.
 
-    Returns the list of existing ``.gsplats.zarr`` paths (channel order), or
-    raises with an actionable message if the local store isn't populated — the
-    files are pinned in the manifest but their Zenodo record is still an
-    unpublished draft, so there is nothing to download yet.
+    Delegates to ``ensure_dataset``, so the pair is downloaded from the
+    ``cc-by`` Zenodo record on first use, SHA-256 verified against
+    ``data_manifest.json``, and cached under ``~/.cache/luxar/``.
+
+    Paired by NAME rather than by position. ``ensure_dataset`` returns the
+    manifest's file order, which happens to match ``CHANNELS`` today; relying on
+    that would silently swap the two markers' colormaps and opacities if either
+    list were ever reordered, and a swapped-channel render looks plausible.
     """
-    paths = [DATA_DIR / ch["file"] for ch in CHANNELS]
-    missing = [p for p in paths if not p.exists()]
+    fetched = {path.name: path for path in ensure_dataset(DATASET_NAME)}
+
+    # ``file`` names the unzipped store that ``--recompute`` writes; the record
+    # hosts it zipped, and the zip is loaded as-is.
+    wanted = [f"{channel['file']}.zip" for channel in CHANNELS]
+    missing = [name for name in wanted if name not in fetched]
     if missing:
         raise FileNotFoundError(
-            "Neuromast gsplat data not found in the local store:\n"
-            + "\n".join(f"  - {p}" for p in missing)
-            + f"\n\nThis demo's fitted gsplats (~220 MB) are not bundled with the "
-            f"repo, and their Zenodo record is still an unpublished draft, so "
-            f"they cannot be fetched yet.\nPopulate {DATA_DIR} with the two "
-            "`.gsplats.zarr` (or set $LUXAR_NEUROMAST_DATA_DIR to their location).\n"
-            "See the module docstring's PIPELINE / DATA STORAGE notes."
+            f"{DATASET_NAME!r} did not provide: {missing}\n"
+            f"It provided: {sorted(fetched)}\n"
+            f"One archive per channel was expected: {wanted}\n"
+            "The manifest entry and this demo's CHANNELS list have diverged."
         )
-    return paths
+    return [fetched[name] for name in wanted]
 
 
 # =============================================================================
