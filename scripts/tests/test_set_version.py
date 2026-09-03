@@ -325,7 +325,11 @@ def test_release_handoff_targets_dev_then_promoted_main() -> None:
     assert "open a PR against dev, then release from main once promoted" in (
         MAKEFILE.read_text()
     )
-    assert "promote it to main with CI green" in RELEASE.read_text()
+    release_text = RELEASE.read_text()
+    assert "promote it to main with CI green" in release_text
+    assert "Run 'make set-version' and promote it first." in release_text
+    assert "Run 'make set-version DATE=$VERSION' and promote it first." in release_text
+    assert "merge it first" not in release_text
 
 
 def test_set_version_prints_explicit_pr_base_and_release_branch(
