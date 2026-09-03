@@ -1,0 +1,38 @@
+name: Feature request
+description: Suggest a capability Luxar does not have yet.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If you are unsure whether something is a feature request or a question,
+        [Discussions](https://github.com/royerlab/luxar/discussions) is the
+        friendlier place to start — nothing is lost by asking there first.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: >
+        Describe the underlying task rather than the solution you have in mind.
+        Knowing the goal often surfaces an approach that already works, or a
+        better one than either of us would have proposed.
+      placeholder: |
+        I have a 200-timepoint lightsheet timelapse per condition and want to
+        compare four conditions side by side in one scene.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like Luxar to do?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What have you tried, or what are you doing instead?
+      description: >
+        Including "nothing yet" is fine. A workaround that nearly works is
+        useful information.
+    validations:
+      required: false

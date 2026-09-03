@@ -915,6 +915,8 @@ layout and how to add a new skill.
 | [Build System](docs/guides/developer/BUILD_SYSTEM_SPEC.md) | Development environment setup |
 | [Project Statistics](stats/PROJECT_STATS.md) | Codebase size, language mix, test coverage, git activity (see [`project_stats.html`](stats/project_stats.html) for the styled report) |
 | [Contributing](CONTRIBUTING.md) | How to contribute |
+| [Code of Conduct](CODE_OF_CONDUCT.md) | Contributor Covenant 2.1 |
+| [Security Policy](SECURITY.md) | How to report a vulnerability privately |
 
 ---
 
