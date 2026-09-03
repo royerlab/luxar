@@ -453,10 +453,12 @@ Phases 1–3 are independently landable; Phase 4 is the one that can say no.
    guard with a test that asserts *absence*, not presence.
 2. **D4 widens the collected set.** Commutative nodes have never received a
    positive `renderOrder`; an `additive` layer moving out of the "draws first"
-   position changes appearance for anyone who authors a level on it. Contained
-   by D2 (nobody has authored one yet), but it means Phase 1 must not be
-   described as behaviour-preserving for authored scenes — only for unauthored
-   ones.
+   position can change appearance. The neuromast is the first authored case,
+   but its two levelled layers are both `additive` and no untracked content
+   participates, so their relative order is unobservable. The risk remains for
+   future scenes that mix a levelled commutative layer with untracked
+   `renderOrder = 0` content. Phase 1 is behaviour-preserving only for
+   unauthored scenes.
 3. **A level is a promise the renderer cannot always keep** (§8.1's bucket
    split, §5's interpenetration limit). Documenting where it is partially
    honoured matters more than the mechanism, because a silently-half-applied
