@@ -1954,7 +1954,7 @@ def test_a_divergent_pin_is_reported_not_silently_accepted(
     assert "hosted_sha256 differs" in out, out
 
 
-def test_a_current_hosted_positional_pair_is_not_reverted(fake_repo):
+def test_a_current_hosted_positional_pair_is_not_reverted(fake_repo, capsys):
     """The current hosted pair survives with an older in-repo copy available.
 
     This is the #2454 defect 2 shape missing from the existing hosted-cache
@@ -1994,8 +1994,15 @@ def test_a_current_hosted_positional_pair_is_not_reverted(fake_repo):
         "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
     )
 
-    assert [path.read_bytes() for path in paths] == [b"hosted-fit", b"hosted-colors"]
-    assert all(find_quarantined_files(path) == [] for path in paths)
+    assert [path.read_bytes() for path in paths] == [
+        b"hosted-fit",
+        b"hosted-colors",
+    ], "cache was reverted to the in-repo copy"
+    assert [find_quarantined_files(path) for path in paths] == [
+        [],
+        [],
+    ], "the correctly-seeded pair was churned"
+    assert "Using SUPERSEDED positional pair" not in capsys.readouterr().out
 
 
 def test_agreeing_pins_report_nothing_unusual(fake_repo, capsys):
