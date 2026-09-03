@@ -935,20 +935,8 @@ def _acquisition_line(entry: dict[str, Any], total_stored: Optional[int]) -> str
     )
 
 
-def render_record(key: str, manifest: dict[str, Any]) -> str:
-    record = manifest["records"][key]
-    datasets = {
-        name: entry
-        for name, entry in manifest["datasets"].items()
-        if entry.get("record") == key and entry.get("bucket") == "zenodo"
-    }
-    out: list[str] = []
-    out.append(f"# {record['title']}\n")
-    if not record.get("published", False):
-        out.append(
-            "<!-- DRAFT. This record is unpublished; publication is a manual "
-            "step taken by the maintainer. -->\n"
-        )
+def _record_header(record: dict[str, Any]) -> str:
+    out = [f"# {record['title']}\n"]
     if record.get("published", False):
         out.append(
             f"\nLicence: **{record['license']}** · DOI: `{record['zenodo_doi']}`"
@@ -956,9 +944,24 @@ def render_record(key: str, manifest: dict[str, Any]) -> str:
         )
     else:
         out.append(
+            "<!-- DRAFT. This record is unpublished; publication is a manual "
+            "step taken by the maintainer. -->\n"
+        )
+        out.append(
             f"\nLicence: **{record['license']}** · Reserved DOI: "
             f"`{record['zenodo_doi']}`\n"
         )
+    return "".join(out)
+
+
+def render_record(key: str, manifest: dict[str, Any]) -> str:
+    record = manifest["records"][key]
+    datasets = {
+        name: entry
+        for name, entry in manifest["datasets"].items()
+        if entry.get("record") == key and entry.get("bucket") == "zenodo"
+    }
+    out = [_record_header(record)]
     out.append(
         "\nGaussian-splat and point-cloud scenes for the "
         "[Luxar](https://github.com/royerlab/luxar) viewer. Each archive is a "
