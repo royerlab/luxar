@@ -94,7 +94,7 @@ test.describe('Transform Hierarchy - Basic Composition', () => {
       return levels;
     });
 
-    // Should have objects at multiple layer orders
+    // Should have objects at multiple hierarchy depths
     const maxDepth = Math.max(...hierarchy.map((h) => h.depth));
     expect(maxDepth).toBeGreaterThanOrEqual(2); // At least 3 levels (0, 1, 2)
   });

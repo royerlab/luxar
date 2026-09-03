@@ -395,10 +395,9 @@ export interface LayerInfo {
   /**
    * Whether the level is EXPLICIT — the node's OWN attr, or a user pick in the
    * panel — as opposed to inherited or absent. Same reasoning as
-   * `blendingModeExplicit`, plus one more: an explicit level suppresses the
-   * renderer's containment rule while an unset one must not, so re-emitting an
-   * inherited level as this layer's own would silently disable that rule for
-   * the ancestor too.
+   * `blendingModeExplicit`: re-emitting an inherited level as this layer's own
+   * would change which node owns the setter and make clearing the ancestor no
+   * longer restore `auto` here.
    */
   layerOrderExplicit: boolean;
   /** Whether this layer is selected in the list */
@@ -1042,11 +1041,11 @@ export class LayerStateManager {
   /**
    * Set (or clear) a layer's authored cross-layer draw order.
    *
-   * `undefined` CLEARS it, which is not the same as setting 0: an unset level
-   * hands the layer back to the renderer's inferred containment ordering, while
-   * an explicit 0 states a band and suppresses that inference. Clearing must
-   * therefore also clear `layerOrderExplicit`, or `liveLayerAttrs` would keep
-   * emitting the stale value as this layer's own setter.
+   * `undefined` CLEARS it, which is not the same authored state as setting 0:
+   * both resolve to band 0, but only the latter remains a stated value in the
+   * panel and authored-band diagnostics. Clearing must therefore also clear
+   * `layerOrderExplicit`, or `liveLayerAttrs` would keep emitting the stale
+   * value as this layer's own setter.
    */
   setLayerOrder(path: string, level: number | undefined): void {
     const layer = this.layers.get(path);

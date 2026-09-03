@@ -40,10 +40,17 @@ from .conftest import cholesky_rows, open_scene, random_positions
 
 
 class TestValidateLayerOrder:
-    @pytest.mark.parametrize("value", [0, 1, 10, -5, 999999, np.int32(7), np.int64(-2)])
-    def test_accepts_any_integer(self, value: Any) -> None:
+    @pytest.mark.parametrize("value", [0, 1, 10, -5, 999999])
+    def test_accepts_python_integers(self, value: Any) -> None:
         assert validate_layer_order(value) == int(value)
         assert isinstance(validate_layer_order(value), int)
+
+    @pytest.mark.parametrize("value", [np.int32(7), np.int64(-2)])
+    def test_refuses_numpy_integers_before_json_serialization(self, value: Any) -> None:
+        with pytest.raises(
+            TypeError, match=r"layer_order must be an integer.*int(32|64)"
+        ):
+            validate_layer_order(value)
 
     # `isinstance(True, int)` is true in Python, so a bool would sail through a
     # naive check and silently band the layer at level 1. Almost certainly the

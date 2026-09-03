@@ -22,9 +22,9 @@ channel's extent would silently flip the pair.
 Layers on different levels never interleave, whatever the camera does. Unset
 changes nothing anywhere — every group lands in one band, the comparator falls
 through to today's, and the emitted order is bit-identical, which is why absence
-is never stamped on disk. That is load-bearing rather than tidy: an _explicit_
-level suppresses the containment rule while an unset one must not, so the two
-states have to stay distinguishable, `0` included.
+is never stamped on disk. That is load-bearing rather than tidy: an authored
+`0` orders exactly like an unset value, but the panel's blank `auto` state and
+authored-band diagnostics must still distinguish the two.
 
 It applies to every blending mode. A level on an `additive` layer is inert
 against other commutative layers but decides where it sits relative to a

@@ -540,9 +540,10 @@ ancestor-set modes.
 nearer the camera = drawn later** — follows the identical rule for an identical
 reason: written only when explicitly set, inherited nearest-setter-wins, and with
 **no default stamped**. Here the absence carries meaning rather than merely
-avoiding a shadow: an unset level means "use the viewer's inferred containment
-ordering", so a stamped 0 would be indistinguishable from an authored one and
-would silently disable that inference everywhere. It is refused outright inside a
+avoiding a shadow: an unset level and an authored 0 order identically, but a
+stamped 0 would erase the distinction used by the panel's blank `auto` state and
+authored-band diagnostics. Different band values, not explicitness itself,
+override containment inference. It is refused outright inside a
 `kind=partition` / `kind=lod` group, where it would respectively destroy the
 exact BSP part order or be inert — set it on the wrapper, which is the layer.
 See `docs/guides/specs/LAYER_ORDER_SPEC.md`.

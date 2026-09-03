@@ -72,8 +72,9 @@ export interface ComposableAttrs {
    * nearer the camera = drawn later. Nearest-setter-wins like `blending_mode`,
    * and deliberately kept `number | undefined` rather than defaulted here:
    * "nobody authored an order" must stay distinguishable from "someone authored
-   * 0", because an EXPLICIT order suppresses the containment rule while an
-   * unset one must not (spec D2/D3). The renderer applies `unset ⇒ band 0`.
+   * 0" for the panel's blank `auto` state and authored-band diagnostics (spec
+   * D2/D3). Ordering itself depends only on band values; the renderer applies
+   * `unset ⇒ band 0`.
    */
   layer_order?: number;
 }
@@ -189,8 +190,8 @@ export function composeAttrs(chainRootToLeaf: readonly ComposableAttrs[]): Effec
     // owns the unknown-name → viridis fallback and its warning.
     colormap,
     customLutBytes,
-    // Never defaulted to 0 here: the renderer needs to tell an authored level
-    // from an absent one, because only the former suppresses containment.
+    // Never defaulted to 0 here: authored 0 and absence order identically, but
+    // the panel and authored-band diagnostics must still tell them apart.
     layer_order,
   };
 }

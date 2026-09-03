@@ -1294,10 +1294,10 @@ ignores a mode authored on a non-layer descendant.
 where a layer draws relative to the layers it overlaps: **higher = nearer the
 camera = drawn later**, the CSS `z-index` / Illustrator convention. Optional and
 **never stamped** — its absence on disk is genuine silence, which is
-load-bearing: the viewer treats an unset level as band 0 and keeps its *inferred*
-ordering (bounding-sphere containment forces a container to draw before its
-contents), while an *explicit* level overrides that inference. A stamped default
-would silently disable the inferred ordering for every store written afterwards.
+load-bearing: the viewer treats an unset level as band 0, so an authored `0`
+orders identically, but the panel's blank `auto` state and authored-band
+diagnostics must still distinguish those states. Different band values, not
+explicitness itself, override bounding-sphere containment inference.
 
 Layers with different levels never interleave, whatever the camera does, which is
 the point: it converts an inferred, geometry-dependent order into a stated one.

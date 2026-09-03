@@ -379,9 +379,9 @@ interface OrderSlot {
    */
   level: number;
   /**
-   * Whether the order was authored, as opposed to defaulted to 0. Unset must
-   * stay distinguishable from an authored 0: only an authored order may
-   * suppress a containment relation (spec D2/D3).
+   * Whether the order was authored, as opposed to defaulted to 0. Ordering is
+   * based only on `level`; this bit gates the cross-bucket diagnostic so an
+   * inferred band is not reported as author intent (spec D2/D3).
    */
   levelExplicit: boolean;
 }

@@ -870,8 +870,8 @@ def validate_layer_order(order: Any) -> int:
     answer rather than an error.
 
     Args:
-        order: Draw order to validate. Any Python or NumPy integer whose
-            magnitude is at most ``JS_SAFE_INTEGER_MAX``.
+        order: Draw order to validate. A Python integer whose magnitude is at
+            most ``JS_SAFE_INTEGER_MAX``.
 
     Returns:
         The order as a plain ``int``.
@@ -880,7 +880,7 @@ def validate_layer_order(order: Any) -> int:
         TypeError: If ``order`` is not an integer (``bool`` included).
         ValueError: If ``order`` is outside the JS safe-integer range.
     """
-    if isinstance(order, (bool, np.bool_)) or not isinstance(order, (int, np.integer)):
+    if isinstance(order, (bool, np.bool_)) or not isinstance(order, int):
         raise TypeError(
             f"layer_order must be an integer, got {order!r} ({type(order).__name__}). "
             "Higher draws nearer the camera (CSS z-index convention); sparse values "
