@@ -44,16 +44,35 @@ on:
     # outage or promotion stall, create/set the Actions repository variable
     # LUXAR_CI_FORCE_HOSTED to 1 before the next window, then clear it after
     # capacity recovers.
+    #
+    # DEFAULT-BRANCH DEPENDENCE. GitHub runs `schedule:` triggers only on the
+    # repository DEFAULT branch, at its tip. While `dev` is the default the event
+    # SHA is dev's tip at dispatch, and every suite checkout is pinned to that exact
+    # event SHA so the contexts attest the tree they test. The repair walk also
+    # resolves dev explicitly. After the default flips to main, however, the event
+    # SHA and scheduled checkouts both point at main; #2466 tracks replacing this
+    # cron trigger before that flip so promotion windows still run against dev.
     - cron: '17 9 * * *'
     - cron: '17 0,3,6,12,15,18,21 * * *'
 
 concurrency:
   # `github.event_name` is in the key ONLY to keep scheduled and push-to-dev
-  # in separate groups. A scheduled run's ref is `refs/heads/dev`, the same as a
-  # merge's, so under one shared group whichever of the two starts SECOND cancels
-  # the other -- and they collide constantly: over the 31 days before this was
-  # written a merge landed inside the daily cron's ~30min window on 17 days, and
-  # inside the half hour before it on 12.
+  # in separate groups. While `dev` was the repository default a scheduled run's
+  # ref was `refs/heads/dev`, the same as a merge's; once the default flips to
+  # `main` a scheduled run's ref becomes `refs/heads/main`. This group is LEFT
+  # KEYED ON `github.ref` DELIBERATELY (considered, no change made): it only has
+  # to be STABLE and to keep the two event kinds apart, and `github.event_name`
+  # already does the separating -- a `push` fires only on `dev` and a
+  # `pull_request` never carries the `schedule` event, so no push or PR run ever
+  # shares a scheduled run's group regardless of ref, and scheduled runs still
+  # coalesce with each other post-flip (all `...-schedule-refs/heads/main-...`).
+  # Keying it on a pinned `refs/heads/dev` would only rename the group without
+  # changing behaviour, so it stays as-is; the scheduled suite jobs test one
+  # captured dev SHA via their checkout pins, not via this group. Under one
+  # shared group whichever of the two starts SECOND cancels the other -- and they
+  # collide constantly: over the 31 days before this was written a merge landed
+  # inside the daily cron's ~30min window on 17 days, and inside the half hour
+  # before it on 12.
   #
   # The expensive direction is the cron killing a merge's push run: a push run
   # has no PR base either, so like a scheduled run it selects the WHOLE suite,
@@ -108,6 +127,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
+      dev_sha: ${{ steps.scheduled-dev.outputs.dev_sha }}
       docs_relevant: ${{ steps.filter.outputs.docs_relevant }}
       dom_py: ${{ steps.filter.outputs.dom_py }}
       dom_ts: ${{ steps.filter.outputs.dom_ts }}
@@ -116,7 +136,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # While dev is the default, the scheduled event SHA is dev's immutable
+          # tip at dispatch. Empty on push/PR == default.
+          ref: ${{ github.event_name == 'schedule' && github.sha || '' }}
           fetch-depth: 0
+      - id: scheduled-dev
+        if: github.event_name == 'schedule'
+        name: Capture the scheduled dev commit
+        run: echo "dev_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - id: filter
         name: Classify the diff (language domains + documentation relevance)
         run: |
@@ -304,6 +331,9 @@ jobs:
         continue-on-error: true
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Scheduled runs materialise dev's scanner (see the schedule note).
+          # Empty on push/PR == default.
+          ref: ${{ github.event_name == 'schedule' && 'refs/heads/dev' || '' }}
           persist-credentials: false
           sparse-checkout: scripts
 
@@ -438,6 +468,9 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Scheduled runs test the captured dev commit; empty on push/PR == default.
+          ref: ${{ needs.changes.outputs.dev_sha || '' }}
 
       - name: No documentation-relevant changes
         if: needs.changes.outputs.docs_relevant == 'false'
@@ -500,7 +533,7 @@ jobs:
     # `hatch run test-cov` runs `pytest -m 'not slow'` — the heavy CPU-fitting
     # tests (content-fit CLI, tiled/progressive fitting) are marked `slow` and
     # excluded here, cutting the serial 1-core run from >60 min to ~15 min while
-    # coverage stays ~85% (≥ the 80% gate; slow tests' code is redundantly
+    # coverage stays above the 89% gate (slow tests' code is redundantly
     # covered by fast unit tests). The FULL suite (incl. slow) is the local
     # pre-push gate (`hatch run test`).
     #
@@ -629,6 +662,9 @@ jobs:
       # checkout fail catastrophically when the repo's GitHub LFS budget was
       # exhausted; the LFS pointer files in the work tree are sufficient.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Scheduled runs test the captured dev commit; empty on push/PR == default.
+          ref: ${{ needs.changes.outputs.dev_sha || '' }}
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         id: setup-python
@@ -763,6 +799,9 @@ jobs:
           df -h /
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Scheduled runs test the captured dev commit; empty on push/PR == default.
+          ref: ${{ needs.changes.outputs.dev_sha || '' }}
 
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
@@ -860,6 +899,7 @@ jobs:
         #   → typecheck → lint → check:layers (dependency-cruiser)
         #   → check:knip:ci (dead-file + unlisted-dependency gate)
         #   → test:coverage (vitest with thresholds)
+        #   → check:coverage-slack (reject stale or empty coverage floors)
         # knip:ci runs with --include files,dependencies so policy-level
         # "unused exports" findings (test builders, type guards) don't fail
         # CI; only true dead files and unlisted deps do.
@@ -879,6 +919,9 @@ jobs:
         working-directory: packages/luxar-viewer
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Scheduled runs test the captured dev commit; empty on push/PR == default.
+          ref: ${{ needs.changes.outputs.dev_sha || '' }}
 
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
@@ -970,6 +1013,9 @@ jobs:
         working-directory: packages/luxar-viewer
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Scheduled runs test the captured dev commit; empty on push/PR == default.
+          ref: ${{ needs.changes.outputs.dev_sha || '' }}
 
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         if: (needs.changes.outputs.dom_py != 'false' || needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
@@ -1033,12 +1079,21 @@ jobs:
   # A scheduled run can put fresh successful checks on the same SHA as an older
   # cancelled push run, but branch protection's rollup can retain the cancelled
   # duplicate for each required context. Once this run has proved the five
-  # protected contexts green, walk commits still ahead of main through this
-  # scheduled SHA newest first and rerun cancelled required jobs from up to two
-  # push suites. This repairs skipped commits without an unbounded runner burst.
+  # protected contexts green, walk commits still ahead of main through DEV'S TIP
+  # newest first and rerun cancelled required jobs from up to two push suites.
+  # This repairs skipped commits without an unbounded runner burst.
+  #
+  # The walk anchors on dev's tip resolved EXPLICITLY (git/refs/heads/dev), NOT
+  # on the scheduled run's own ref/SHA: GitHub runs schedules on the default
+  # branch, so ${GITHUB_SHA} is `dev`'s tip only while `dev` is the default. Once
+  # the default flips to `main`, ${GITHUB_SHA} is main's tip, `main...${GITHUB_SHA}`
+  # collapses to `main...main`, the walk finds nothing, and promotion stalls
+  # SILENTLY. The checkout + guard below assert the resolved SHA really is
+  # origin/dev's tip and fail LOUDLY otherwise, because this failure has no other
+  # red signal.
   repair-cancelled-push-checks:
     needs:
-      [python-tests, typescript-tests, release-readiness, wheel-viewer, docs-quality]
+      [changes, python-tests, typescript-tests, release-readiness, wheel-viewer, docs-quality]
     if: ${{ github.event_name == 'schedule' && always() && !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -1046,6 +1101,13 @@ jobs:
       actions: write
       contents: read
     steps:
+      # Use the same dev commit as the suite so the guard can cross-check it
+      # against git's current view of origin/dev. Keep checkout credentials: the
+      # next step must fetch that tracking ref from this private repository.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.changes.outputs.dev_sha || '' }}
+
       - name: Rerun cancelled required push jobs
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1070,11 +1132,59 @@ jobs:
             fi
           done
 
+          # PRECONDITION GUARD: scheduled runs are dispatched on the repository
+          # default branch, and this workflow only serves promotion while that
+          # branch is dev. Ask that question directly rather than inferring it
+          # from commit topology, where a caught-up main tip is indistinguishable
+          # from the scheduled event SHA after the default-branch flip.
+          default_branch=$(gh api "repos/${GITHUB_REPOSITORY}" \
+            --jq '.default_branch') || default_branch=""
+          if [ -z "$default_branch" ]; then
+            echo "::error::could not resolve the repository default branch; cannot verify that this scheduled run belongs to dev -- failing loudly rather than risking a silent pass"
+            exit 1
+          fi
+          if [ "$default_branch" != "dev" ]; then
+            echo "::error::scheduled runs are dispatched on '$default_branch', not dev; this promotion window cannot attest dev after the default-branch flip -- refusing to walk"
+            exit 1
+          fi
+
+          # Resolve dev's tip EXPLICITLY as the WALK ANCHOR. ${GITHUB_SHA} is the
+          # scheduled event's immutable dev commit, but dev may advance while the
+          # window runs, so the repair must walk through the current tip.
+          dev_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/refs/heads/dev" \
+            --jq '.object.sha') || dev_sha=""
+          if [ -z "$dev_sha" ]; then
+            echo "::error::could not resolve refs/heads/dev; a scheduled promotion run must walk dev's tip -- failing loudly rather than silently skipping repair"
+            exit 1
+          fi
+
+          # Cross-check that the immutable event commit remains on dev's line.
+          # HEAD normally equals origin/dev, but a merge landing during the window
+          # leaves HEAD behind the tip. That older ancestor is healthy; any commit
+          # outside dev's ancestry is an unknown checkout and fails closed.
+          git fetch -q origin +refs/heads/dev:refs/remotes/origin/dev
+          origin_dev=$(git rev-parse origin/dev)
+          head_sha=$(git rev-parse HEAD)
+          if [ "$head_sha" != "$origin_dev" ]; then
+            if git merge-base --is-ancestor "$head_sha" "$origin_dev"; then
+              # HEAD is an ANCESTOR of dev's tip: a merge landed between checkout
+              # and this read. Benign -- the walk anchor `dev_sha` is resolved
+              # fresh from the API, so the repair still targets dev's real tip.
+              echo "note: dev advanced since checkout ($head_sha -> $origin_dev), a merge landed between checkout and this read; benign -- the walk anchor dev_sha is resolved fresh"
+            else
+              echo "::error::checked out $head_sha is not an ancestor of origin/dev ($origin_dev) -- unknown branch; refusing to walk"
+              exit 1
+            fi
+          fi
+          echo "Walking commits ahead of main through dev tip $dev_sha (checked out $head_sha; scheduled run SHA ${GITHUB_SHA})"
+
           comparison=$(gh api --paginate --slurp \
-            "repos/${GITHUB_REPOSITORY}/compare/main...${GITHUB_SHA}?per_page=100")
+            "repos/${GITHUB_REPOSITORY}/compare/main...${dev_sha}?per_page=100")
           candidate_shas=$(jq -r '[.[] | .commits[]?.sha] | reverse[]' <<<"$comparison")
           if [ -z "$candidate_shas" ]; then
-            echo "No commits ahead of main through ${GITHUB_SHA}"
+            # Guaranteed benign by the guard above: the walk really is on dev, so
+            # an empty compare means dev is level with main (nothing to promote).
+            echo "No commits ahead of main through dev (${dev_sha}); dev is level with main -- nothing to promote"
             exit 0
           fi
 
@@ -1160,6 +1270,9 @@ jobs:
         working-directory: packages/luxar-launcher
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Scheduled runs test the captured dev commit; empty on push/PR == default.
+          ref: ${{ needs.changes.outputs.dev_sha || '' }}
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         if: needs.changes.outputs.dom_go != 'false'
@@ -1185,6 +1298,98 @@ jobs:
       - name: go test
         if: needs.changes.outputs.dom_go != 'false'
         run: go test ./...
+
+  # Narrow browser gate for the TSL↔GLSL shader cone — the ONLY equivalence
+  # check the dual-backend shaders have.
+  #
+  # Deliberately distinct from the disabled `e2e-tests` job below. That job's
+  # rationale is that software WebGL is too slow and unreliable for
+  # RENDERING-DEPENDENT specs — specs that load datasets and compare rendered
+  # frames against baselines. `tsl-shader-parity` is not that class: it renders
+  # a 64×64 canvas through BOTH backends (`WebGLRenderer` vs
+  # `WebGPURenderer({ forceWebGL: true })`) and compares them to EACH OTHER, so
+  # rasterizer identity cancels out and llvmpipe is not merely tolerable, it is
+  # the deterministic choice. It reads no zarr fixtures, no example datasets and
+  # no LFS payloads, takes no screenshots, and imports `test` from
+  # `@playwright/test` directly — skipping the per-spec console-error teardown
+  # that dominates E2E wall clock.
+  #
+  # Pinned to ubuntu-latest on purpose: NOT routed through pick-runner, so it
+  # neither draws obsidian capacity nor flips between a real GPU and llvmpipe
+  # (which would be a flake source for a pixel comparison).
+  #
+  # No `pnpm build:wasm`: the harness's transitive imports stop at
+  # rendering/{point,line,gsplat,mesh}-geometry and element-storage, and the
+  # vite dev server only transforms what is imported.
+  #
+  # `tsl-codegen-snapshot.spec.ts` is deliberately NOT run here — it pins
+  # literal generated GLSL including a capability-derived precision/extensions
+  # preamble recorded on a GPU box, and `ignoreSnapshots` is false on Linux.
+  #
+  # NOT YET REQUIRED. Until `tsl-parity` is added to the branch-protection
+  # contexts (which also needs repair-cancelled-push-checks + the exact-equality
+  # assertions in test_ci_diff_classifier.py), a red run here does not block a
+  # merge. Promote it after a few green runs.
+  tsl-parity:
+    needs: [changes]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: packages/luxar-viewer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Scheduled runs test the captured dev commit; empty on push/PR == default.
+          ref: ${{ needs.changes.outputs.dev_sha || '' }}
+
+      # playwright.config.ts starts a second webServer — tools/range-http-server.py
+      # — for every run, and global-setup probes both servers' identity markers.
+      # The parity spec reads no dataset, but the server must still come up.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
+        with:
+          python-version: '3.12'
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
+        with:
+          package_json_file: packages/luxar-viewer/package.json
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: packages/luxar-viewer/pnpm-lock.yaml
+
+      - name: Install viewer dependencies
+        if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium
+        if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
+        run: npx playwright install --with-deps chromium
+
+      - name: Install software OpenGL for headless WebGL
+        if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1-mesa-dri libegl-mesa0 libgbm1
+
+      - name: TSL ↔ GLSL shader parity
+        if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
+        run: pnpm playwright test tsl-shader-parity.spec.ts --workers=1 --retries 2
+        env:
+          CI: true
+          LUXAR_E2E_NO_FIXTURES: '1'
+
+      - name: Upload the Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tsl-parity-report
+          path: packages/luxar-viewer/test-results/
+          retention-days: 7
 
   # E2E tests disabled — software WebGL on standard ubuntu-latest runners is
   # too slow and unreliable for rendering-dependent specs. Run locally with:
