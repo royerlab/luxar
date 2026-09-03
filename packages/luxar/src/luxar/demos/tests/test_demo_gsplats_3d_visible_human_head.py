@@ -25,11 +25,10 @@ _DEMO_PATH = (
     Path(__file__).resolve().parents[1] / "demo_gsplats_3d_visible_human_head.py"
 )
 _DATA_MANIFEST_PATH = _DEMO_PATH.parent / "data_manifest.json"
-# The in-repo Git-LFS pair this demo used to ship was removed with the rest of
-# the payloads (#2354); the manifest now pins the HOSTED fit directly, and that
-# fit carries its colours natively (#2334) so there is no pair left to keep
-# aligned. The guard itself is still exercised throughout this file on
-# synthetic pairs, which is what the legacy sidecar branch still needs.
+# The in-repo Git-LFS pair was removed with the rest of the payloads (#2354).
+# The record fit carries its colours natively, so its sidecar is vestigial for
+# rendering; pair atomicity remains guarded by test_data_fetch.py and artifact
+# alignment by test_positional_pair_alignment.py.
 
 
 def _load_demo_module():
@@ -57,11 +56,10 @@ _load_colors_f32 = _demo._load_colors_f32
 def _legacy_pair(rgb_vol: np.ndarray, fit: GSplatData):
     """Write the LEGACY shape: a COLORLESS fit plus a positional sidecar.
 
-    This is what the in-repo Git-LFS payload is, and it is now the only shape on
-    which the ordering guard can fire at all — the hosted archive carries its
-    colors natively, so it has no second array to misorder. Tests of the guard
-    therefore have to build this shape explicitly; ``save_and_sample_colors`` no
-    longer produces it. Retires with the payloads themselves (#2354).
+    This is the synthetic shape on which the ordering guard can fire: the record
+    archive carries its colors natively, so rendering never consults its
+    sidecar. Tests therefore build a colorless fit explicitly;
+    ``save_and_sample_colors`` no longer produces one.
 
     Written through the demo's own ``_save_fit`` and ``_save_colors_u8`` so the
     recipe and the quantization rule cannot drift away from the real ones.
@@ -518,10 +516,8 @@ class TestNativeColorsWinOverTheSidecar:
 
     This is what retires the #1670/#2334 failure mode rather than guarding
     against it: the writer permutes a native color attribute in lockstep with the
-    centers, so the two cannot fall out of order. The sidecar branch survives
-    only for the in-repo Git-LFS payload, which is a COLORLESS generation of this
-    fit (1,911,192 splats against the hosted 1,908,888) and retires with it
-    (#2354).
+    centers, so the two cannot fall out of order. The sidecar branch remains for
+    the record's positional pair and for locally recomputed colorless fits.
     """
 
     @staticmethod
@@ -557,7 +553,7 @@ class TestNativeColorsWinOverTheSidecar:
     def test_a_colorless_fit_still_falls_back_to_its_sidecar(
         self, tmp_path, monkeypatch
     ) -> None:
-        """The in-repo Git-LFS path, which must keep working until #2354."""
+        """A colorless fit still requires its matching positional sidecar."""
         rgb_vol, fit = self._fixture(tmp_path, monkeypatch, "legacy-")
         stored, colors = _legacy_pair(rgb_vol, fit)
 

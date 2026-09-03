@@ -36,14 +36,14 @@ U.S. National Library of Medicine — The Visible Human Project® (Male).
 SELF-CONTAINED / CACHING
 ------------------------
 The hosted and locally recomputed fits carry colors as a native gsplat channel,
-so the writer permutes them in lockstep with the centers. The in-repo Git-LFS fit
-is an older colorless generation and still uses its positional sidecar; that pair
-is verified on load, and a mismatch is refitted rather than rendered.
+so the writer permutes them in lockstep with the centers. The record still pins
+the positional sidecar; it is only consulted for a colorless fit, and a mismatch
+is refitted rather than rendered.
 
 On a fresh machine this demo bootstraps itself with no manual steps:
   1. Fast path: the manifest resolves a checksum-verified precomputed fit from
-     the in-repo Git LFS copies or the hosted record. Hosted fits carry colors
-     natively; the older in-repo fit resolves its matching sidecar.
+     the published record. The fit carries colors natively, so its positional
+     sidecar is vestigial for rendering.
   2. If no precomputed pair is available, it downloads the 377 color slices
      (~1.1 GB) to ``~/.cache/luxar/gsplats_visible_human_head/``, builds the
      masked RGB volume, fits luminance on the GPU, then caches the fit with its
@@ -93,16 +93,10 @@ cannot fall out of order. That is what retires this failure mode instead of
 guarding against it — the guard needs two arrays to compare, and there is now
 only one. ``--recompute`` writes that shape (see :func:`save_and_sample_colors`).
 
-What keeps the sidecar branch alive is the IN-REPO Git-LFS payload, which is a
-different, COLORLESS generation of this fit (1,911,192 splats against the hosted
-1,908,888) and is still what a checkout resolves first. It retires with those
-payloads (#2354), not before. Until then, the cheaper repair for a lost in-repo
-sidecar remains unwired (see the refusal in :func:`load_or_build`): set
-``data_dir`` to ``Path(__file__).parent / "data" / DEMO_NAME``, call
-``vol, _ = assemble_volume(PNG_DIR)``, :func:`sample_colors` at
-``GSplatData.load(data_dir / FIT_FILE).centers``, then :func:`_save_colors_u8` to
-``data_dir / COLORS_FILE`` and run ``make gen-data-manifest``. This preserves the
-shipped fit and the 20 MB of Git LFS history that goes with it.
+The sidecar branch remains because the published record still pins
+``vh_head_colors.npz`` beside the fit, and locally recomputed legacy fits may be
+colorless. Native colors always win; the sidecar is only consulted when a fit
+does not describe its own colors.
 
 USAGE
 -----
@@ -120,11 +114,10 @@ DEMO_META = {
     "geometry": "gsplats",
     "requirements": {
         # The default path resolves the small precomputed assets before the
-        # 1.1 GB cryosection download: cache, the two Git-LFS files when present
-        # (20.6 MB colorless fit + 5.0 MB sidecar), then the hosted pair — a
-        # 25.1 MB fit that carries its own colors plus the 5.1 MB sidecar the
-        # manifest still lists for the Git-LFS shape. Source download and refit
-        # are only the fallback when no verified precomputed pair is available.
+        # 1.1 GB cryosection download: the manifest resolves the published pair,
+        # a 25.1 MB fit that carries its own colors plus its 5.1 MB positional
+        # sidecar. Source download and refit are only the fallback when no
+        # verified precomputed pair is available.
         # 31 covers the larger precomputed pair. Read by `luxar demo run-all`,
         # whose `--max-download-mb` default of 200 therefore keeps this demo in.
         "download_mb": 31,
@@ -507,11 +500,9 @@ def _colors_for(
     that carries its own colors is self-consistent by construction and its
     sidecar — if one is even still pinned — is vestigial, so it is never read.
 
-    The sidecar branch remains because the IN-REPO Git-LFS payload is a
-    different, COLORLESS generation of this fit (1,911,192 splats against the
-    hosted 1,908,888) and is still what a checkout resolves first. It retires
-    with those payloads (#2354), not before; removing it now would break the
-    default path on every machine that has them.
+    The sidecar branch remains for the record's positional pair and for locally
+    recomputed colorless fits. Native colors always win, so the record sidecar
+    is vestigial for rendering but still checked as part of the pair contract.
 
     Returns None when neither source is usable, which the callers treat as
     "refit", never as "render without colors".

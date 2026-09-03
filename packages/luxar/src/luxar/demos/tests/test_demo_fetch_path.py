@@ -1430,8 +1430,6 @@ def test_ct_atlas_reaches_the_manifest_on_a_cold_cache(tmp_path, monkeypatch) ->
     monkeypatch.setattr(demo, "LOCAL_FIT", tmp_path / "absent.gsplats.zarr.zip")
     monkeypatch.setattr(demo, "LOCAL_LABELS", tmp_path / "absent-local.npz")
     monkeypatch.setattr(demo, "CACHE_LABELS", labels)
-    monkeypatch.setattr(demo, "LFS_FIT", tmp_path / "absent-lfs.gsplats.zarr.zip")
-    monkeypatch.setattr(demo, "LFS_LABELS", tmp_path / "absent-lfs.npz")
     monkeypatch.setattr(demo, "load_dataset_gsplats", _fake_fetch)
     monkeypatch.setattr(demo, "_load_labels", lambda p: stub_labels)
 

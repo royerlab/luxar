@@ -511,21 +511,16 @@ def create_luxar_scene(
     one whole.
 
     That entry point is deliberately topology-agnostic, which matters here
-    because the generations do not agree. The record's archives are four
+    because the record and a local recompute do not agree. The record's archives are four
     top-level parts carrying no ``child_`` detail levels
     (``scripts/demo_archive_characteristics.json`` records the topology,
-    measured on the pinned ``hosted_sha256``), so a ``--recompute`` differs from
+    measured on the pinned ``sha256``), so a ``--recompute`` differs from
     them in tile count — four against roughly sixty — as much as in per-tile
-    levels. The in-repo copies are a third shape again: one flat leaf with a
-    four-rung progressive ladder and no spatial tiles at all. They come before
-    Zenodo in ``resolve_data``'s order, so a checkout with its LFS payloads
-    pulled and no cached copy matching the hosted pin renders that flat leaf.
-    ``add_gsplats_from_file`` routes a matrix-shaped file down the ordinary data
-    path and a partition through the graft, so any of them renders. To tell which
-    generation a given cached file is, hash it (sha256) and see which
-    ``data_manifest.json`` pin it matches: ``sha256`` is the in-repo copy,
-    ``hosted_sha256`` the record, and a local ``--recompute`` matches neither —
-    which is itself the diagnosis. Byte size is only suggestive.
+    levels. ``add_gsplats_from_file`` routes the record partition through the
+    graft and a local matrix-shaped result down the ordinary data path. To tell
+    which generation a given cached file is, hash it against the record's
+    ``sha256`` pin in ``data_manifest.json``; a local ``--recompute`` matches
+    neither, which is itself the diagnosis. Byte size is only suggestive.
 
     Args:
         cache_paths: Per-channel ``.gsplats.zarr[.zip]`` artifacts, in channel
