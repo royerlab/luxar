@@ -349,4 +349,4 @@ MAX_SPLATS_PER_GSPLATS_NODE: Final[int] = max_elements_per_node("gsplats")
 #: property is its order relative to other layers, so a magnitude that collapses
 #: two distinct orders into one JS number is a silent wrong answer rather than a
 #: rounding nicety.
-JS_SAFE_INTEGER_MAX = 2**53 - 1
+JS_SAFE_INTEGER_MAX: Final[int] = 2**53 - 1
