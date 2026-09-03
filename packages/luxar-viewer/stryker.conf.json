@@ -2,8 +2,8 @@
   "_comment": [
     "Mutation testing. Coverage says a line RAN; a mutation score says a change to",
     "that line FAILS something. The two diverge exactly where tests assert on spies",
-    "instead of behaviour, which the code-health audit measured at 1,091 spy-only",
-    "assertions concentrated in the orchestration files on the refactor list.",
+    "instead of behaviour. This repository has 1,091 spy-only assertions",
+    "concentrated in the orchestration files on the refactor list.",
     "",
     "REPORT ONLY, NOT A GATE. `thresholds.break` is null on purpose: a score has no",
     "meaning without a baseline, and runtime is O(mutants x suite). Read it before",

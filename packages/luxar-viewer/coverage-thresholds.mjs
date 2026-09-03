@@ -73,8 +73,8 @@ export const COVERAGE_THRESHOLDS = {
   // hand-written TSL/GLSL shader bodies, exercised by
   // `src/tests/e2e/tsl-shader-parity.spec.ts` (a browser cross-backend pixel
   // comparison) and therefore unreachable from vitest. They are deliberately
-  // NOT excluded from coverage: that spec does not yet run in CI, and
-  // excluding code on the strength of a gate that never fires is how a metric
-  // starts lying. Revisit once the `tsl-parity` job is green and required.
+  // NOT excluded from coverage: that spec runs in CI as the non-required
+  // `tsl-parity` job, and excluding code on the strength of a non-required gate
+  // is how a metric starts lying. Revisit once the job is required.
   'src/rendering/**': { lines: 72, functions: 73, branches: 70 }, // 74.25 / 75.41 / 71.07
 };
