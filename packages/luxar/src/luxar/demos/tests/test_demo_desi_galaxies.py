@@ -49,6 +49,14 @@ def test_per_node_budget_stays_under_the_point_texture_bound() -> None:
     assert _demo.SCENE_MAX_POINTS_PER_NODE <= MAX_POINTS_PER_POINTS_NODE
 
 
+def test_create_scene_requires_scalars_when_colours_are_not_supplied(
+    tmp_path: Path,
+) -> None:
+    positions = np.zeros((2, 3), dtype=np.float32)
+    with pytest.raises(ValueError, match="redshift and tracer_ids"):
+        _demo.create_scene(positions, None, None, tmp_path / "scene.luxar.zarr")
+
+
 class TestRadecToXyz:
     def test_origin_axis_directions(self) -> None:
         # (RA=0, Dec=0) at distance d → +x axis.
@@ -542,6 +550,315 @@ class TestWarnIfSceneIsStale:
         assert "full ~9.75M-object DR1 catalog" in out
 
 
+class TestNodeCapacityPredicate:
+    """``scene_exceeds_node_capacity`` must answer what the warning describes.
+
+    Fast synthetic stores, no compiler and no record: this is the check the
+    fetch path acts on, so it has to be exercised on a machine that has never
+    downloaded anything. The record-reading test in ``TestSceneRowBudget``
+    SKIPS without a populated cache, which is precisely how an over-capacity
+    record reached a published state unnoticed.
+    """
+
+    @staticmethod
+    def _write(path: Path, layers: dict[str, object]) -> None:
+        import zarr
+
+        root = zarr.open(str(path), mode="w")
+        for layer, spec in layers.items():
+            finest = root.create_group(layer).create_group("child_2")
+            if isinstance(spec, int):
+                # a bare leaf holding `spec` points
+                finest.attrs["n_points"] = spec
+            else:
+                # a partition whose parts hold `spec` points each
+                finest.attrs["kind"] = "partition"
+                for index, count in enumerate(spec):
+                    finest.create_group(f"part_{index}").attrs["n_points"] = count
+
+    def test_a_single_over_capacity_leaf_is_detected(self, tmp_path: Path) -> None:
+        scene = tmp_path / "desi.luxar.zarr"
+        over = _demo.SCENE_MAX_POINTS_PER_NODE + 1
+        self._write(scene, {"By tracer type": over, "By redshift": over})
+        assert _demo.scene_exceeds_node_capacity(scene) is True
+
+    def test_a_partition_within_capacity_is_accepted(self, tmp_path: Path) -> None:
+        scene = tmp_path / "desi.luxar.zarr"
+        part = _demo.SCENE_MAX_POINTS_PER_NODE // 4
+        self._write(scene, {"By tracer type": [part] * 4, "By redshift": [part] * 4})
+        assert _demo.scene_exceeds_node_capacity(scene) is False
+
+    def test_the_parts_are_measured_not_their_total(self, tmp_path: Path) -> None:
+        """A partition whose TOTAL exceeds the cap is still fine.
+
+        The ceiling is per NODE — that is the whole point of partitioning. If
+        this predicate summed the parts it would reject every correctly built
+        scene, and the fetch path would re-ladder on every run.
+        """
+        scene = tmp_path / "desi.luxar.zarr"
+        part = _demo.SCENE_MAX_POINTS_PER_NODE - 1
+        self._write(scene, {"By tracer type": [part] * 4, "By redshift": [part] * 4})
+        assert sum([part] * 4) > _demo.SCENE_MAX_POINTS_PER_NODE
+        assert _demo.scene_exceeds_node_capacity(scene) is False
+
+    def test_an_unopenable_scene_fails_CLOSED(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Cannot-tell must mean "repair", never "fine".
+
+        The asymmetry is what decides it: re-laddering an already-compliant
+        scene wastes minutes and changes nothing, while skipping a
+        non-compliant one renders a node that can lose its tail silently. This
+        defect existed in the first place because a check that could not tell
+        said nothing and carried on.
+        """
+        missing = tmp_path / "not-a-scene.luxar.zarr"
+        assert _demo.scene_exceeds_node_capacity(missing) is True
+        assert "⚠" in capsys.readouterr().out
+
+    def test_an_uninspectable_layer_fails_CLOSED(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A scene missing a layer is repaired, not waved through."""
+        import zarr
+
+        scene = tmp_path / "desi.luxar.zarr"
+        root = zarr.open(str(scene), mode="w")
+        # 'By tracer type' is compliant; 'By redshift' is absent entirely.
+        finest = root.create_group("By tracer type").create_group("child_2")
+        finest.attrs["kind"] = "partition"
+        finest.create_group("part_0").attrs["n_points"] = 10
+
+        assert _demo.scene_exceeds_node_capacity(scene) is True
+        assert "By redshift" in capsys.readouterr().out
+
+    def test_one_breaching_layer_is_enough(self, tmp_path: Path) -> None:
+        scene = tmp_path / "desi.luxar.zarr"
+        part = _demo.SCENE_MAX_POINTS_PER_NODE // 4
+        self._write(
+            scene,
+            {
+                "By tracer type": [part] * 4,
+                "By redshift": _demo.SCENE_MAX_POINTS_PER_NODE + 1,
+            },
+        )
+        assert _demo.scene_exceeds_node_capacity(scene) is True
+
+
+@pytest.mark.slow
+class TestRestructureFetchedScene:
+    """The authored scene must be partitioned within capacity — always.
+
+    This is the guard for the regression that prompted it: the Zenodo record
+    carries a PRE-BUILT scene (the only record that does), and its finest level
+    is one unpartitioned node of ~9.75M points, 2.4x the ceiling. The fetch path
+    used to warn and render it anyway.
+
+    Deliberately builds from scratch into ``tmp_path`` and asserts on the
+    AUTHORED scene. It must never read ``datasets/demos/`` — running the demo
+    over an existing scene REUSES it (no compile, sub-second), so a guard that
+    inspected that directory could pass while the authoring code was broken.
+    And it must not need the record: a guard that skips without a populated
+    cache is how this defect stayed invisible.
+    """
+
+    @staticmethod
+    def _author(path: Path, monkeypatch: pytest.MonkeyPatch, cap: int, n: int) -> None:
+        rng = np.random.default_rng(0)
+        positions = rng.normal(scale=100.0, size=(n, 3)).astype(np.float32)
+        tracer_ids = (np.arange(n) % 4).astype(np.uint8)
+        redshift = rng.uniform(0.0, 2.0, size=n).astype(np.float32)
+        monkeypatch.setattr(_demo, "SCENE_MAX_POINTS_PER_NODE", cap)
+        _demo.create_scene(positions, redshift, tracer_ids, path)
+
+    @staticmethod
+    def _finest(root: object, layer: str) -> object:
+        children = sorted(
+            (key for key in root[layer].group_keys() if key.startswith("child_")),
+            key=lambda key: int(key.split("_", 1)[1]),
+        )
+        return root[layer][children[-1]] if children else root[layer]
+
+    def test_a_fetched_over_capacity_scene_is_restructured_within_capacity(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import zarr
+
+        scene = tmp_path / "desi.luxar.zarr"
+        # Author with a cap far above the cloud, which is the shape the record
+        # is in: one node holding everything.
+        self._author(scene, monkeypatch, cap=1_000_000, n=4_000)
+        assert _demo.scene_exceeds_node_capacity(scene) is False, (
+            "precondition: not yet over capacity, because the cap is still high"
+        )
+
+        before = _demo.read_scene_clouds(scene)
+
+        # Now the ceiling drops — exactly what happened between the record's
+        # build and today's code — so the same scene is over capacity.
+        monkeypatch.setattr(_demo, "SCENE_MAX_POINTS_PER_NODE", 1_000)
+        assert _demo.scene_exceeds_node_capacity(scene) is True
+
+        _demo.restructure_scene(scene)
+
+        assert _demo.scene_exceeds_node_capacity(scene) is False
+        root = zarr.open(str(scene), mode="r")
+        for layer in ("By tracer type", "By redshift"):
+            finest = self._finest(root, layer)
+            assert finest.attrs.get("kind") == "partition", (
+                f"{layer}: the finest level must be partitioned after restructuring"
+            )
+            parts = [key for key in finest.group_keys() if key.startswith("part_")]
+            assert len(parts) > 1, f"{layer}: expected a real split, got {parts}"
+            for part in parts:
+                assert int(finest[part].attrs["n_points"]) <= 1_000
+
+        # The points and colours must SURVIVE the round trip. Colours are
+        # stored as a uint8 index into a float32 row LUT, so the decode is
+        # lossless and this is an equality check, not a tolerance.
+        after = _demo.read_scene_clouds(scene)
+        for layer in ("By tracer type", "By redshift"):
+            positions_before, colors_before = before[layer]
+            positions_after, colors_after = after[layer]
+            for color in np.unique(colors_before, axis=0):
+                before_mask = np.all(colors_before == color, axis=1)
+                after_mask = np.all(colors_after == color, axis=1)
+                assert after_mask.sum() == before_mask.sum()
+                for axis in range(3):
+                    np.testing.assert_allclose(
+                        np.sort(positions_after[after_mask, axis]),
+                        np.sort(positions_before[before_mask, axis]),
+                        atol=0.01,
+                    )
+
+    def test_existing_lod_is_kept_when_rebuild_cannot_recreate_it(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        scene = tmp_path / "desi.luxar.zarr"
+        root = open_group(scene, mode="w")
+        for layer_name in ("By tracer type", "By redshift"):
+            root.create_group(layer_name).create_group("child_0")
+        monkeypatch.setattr(_demo, "substitutive_lod_or_flat", lambda spec: None)
+        monkeypatch.setattr(
+            _demo,
+            "create_scene",
+            lambda *args, **kwargs: pytest.fail("must not discard existing LOD levels"),
+        )
+
+        assert _demo.restructure_scene(scene) == scene
+        reopened = open_group(scene, mode="r")
+        assert "child_0" in reopened["By tracer type"]
+        assert "child_0" in reopened["By redshift"]
+        notice = capsys.readouterr().out
+        assert "pip install 'luxar[gsplats]'" in notice
+        assert f"rm -rf {scene}" in notice
+
+    def test_failed_rebuild_leaves_the_original_scene_intact(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        scene = tmp_path / "desi.luxar.zarr"
+        positions = np.arange(12, dtype=np.float32).reshape(4, 3)
+        colors = np.zeros((4, 3), dtype=np.float32)
+        root = open_group(scene, mode="w")
+        for layer_name in ("By tracer type", "By redshift"):
+            root.create_group(layer_name)
+        sentinel = scene / "original"
+        sentinel.write_text("keep me")
+        monkeypatch.setattr(
+            _demo,
+            "_finest_level_cloud",
+            lambda root, layer: (positions, colors),
+        )
+        monkeypatch.setattr(
+            _demo,
+            "_finest_level_colors",
+            lambda root, layer: (len(positions), colors),
+        )
+
+        def fail_build(*args, **kwargs):
+            output = args[3]
+            output.mkdir()
+            (output / "zarr.json").write_text("incomplete")
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(_demo, "create_scene", fail_build)
+
+        with pytest.raises(KeyboardInterrupt):
+            _demo.restructure_scene(scene)
+
+        assert sentinel.read_text() == "keep me"
+        assert not (tmp_path / "desi.rebuild.luxar.zarr").exists()
+
+    def test_backup_cleanup_failure_does_not_misreport_a_successful_rebuild(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import shutil
+
+        scene = tmp_path / "desi.luxar.zarr"
+        backup = tmp_path / "desi.previous.luxar.zarr"
+        positions = np.arange(12, dtype=np.float32).reshape(4, 3)
+        colors = np.zeros((4, 3), dtype=np.float32)
+        root = open_group(scene, mode="w")
+        for layer_name in ("By tracer type", "By redshift"):
+            root.create_group(layer_name)
+        (scene / "original").write_text("old")
+        monkeypatch.setattr(
+            _demo,
+            "_finest_level_cloud",
+            lambda root, layer: (positions, colors),
+        )
+        monkeypatch.setattr(
+            _demo,
+            "_finest_level_colors",
+            lambda root, layer: (len(positions), colors),
+        )
+
+        def build_scene(*args, **kwargs) -> None:
+            output = args[3]
+            output.mkdir()
+            (output / "rebuilt").write_text("new")
+
+        monkeypatch.setattr(_demo, "create_scene", build_scene)
+        real_rmtree = shutil.rmtree
+
+        def fail_unguarded_backup_cleanup(path, ignore_errors=False) -> None:
+            if Path(path) == backup and not ignore_errors:
+                raise OSError("backup cleanup failed")
+            real_rmtree(path, ignore_errors=ignore_errors)
+
+        monkeypatch.setattr(shutil, "rmtree", fail_unguarded_backup_cleanup)
+
+        assert _demo.restructure_scene(scene) == scene
+        assert (scene / "rebuilt").read_text() == "new"
+        assert not backup.exists()
+
+    def test_the_authored_scene_partitions_within_capacity_by_construction(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The invariant, asserted on a scene the current code just authored.
+
+        Independent of any record or cache: whatever `create_scene` produces
+        must respect the per-node ceiling. This is the assertion whose absence
+        let a non-compliant scene be published.
+        """
+        import zarr
+
+        scene = tmp_path / "desi.luxar.zarr"
+        self._author(scene, monkeypatch, cap=1_000, n=4_000)
+
+        assert _demo.scene_exceeds_node_capacity(scene) is False
+        root = zarr.open(str(scene), mode="r")
+        for layer in ("By tracer type", "By redshift"):
+            finest = self._finest(root, layer)
+            assert finest.attrs.get("kind") == "partition"
+            for key in finest.group_keys():
+                if key.startswith("part_"):
+                    assert int(finest[key].attrs["n_points"]) <= 1_000
+
+
 class TestStreamingBreakpoints:
     """The ladder shape is what makes the full catalog streamable.
 
@@ -879,6 +1196,31 @@ class TestEnsureOriginFraming:
 
 
 class TestMainSceneReuse:
+    def test_stale_rebuild_siblings_are_discarded_before_reuse(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        output = tmp_path / "desi_galaxies.luxar.zarr"
+        open_group(output, mode="w")
+        staging = tmp_path / "desi_galaxies.rebuild.luxar.zarr"
+        backup = tmp_path / "desi_galaxies.previous.luxar.zarr"
+        unrelated = tmp_path / "other.previous.luxar.zarr"
+        for path in (staging, backup, unrelated):
+            path.mkdir()
+
+        monkeypatch.setattr(_demo, "SERVE_ONLY", False)
+        monkeypatch.setattr(_demo, "RECOMPUTE", False)
+        monkeypatch.setattr(_demo, "NO_SERVE", True)
+        monkeypatch.setattr(_demo, "get_demos_output_dir", lambda: tmp_path)
+        monkeypatch.setattr(_demo, "ensure_origin_framing", lambda path: None)
+        monkeypatch.setattr(_demo, "warn_if_scene_is_stale", lambda path: None)
+
+        _demo.main()
+
+        assert output.exists()
+        assert not staging.exists()
+        assert not backup.exists()
+        assert unrelated.exists()
+
     def test_cold_scene_uses_the_manifest_resolved_archive(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -907,6 +1249,11 @@ class TestMainSceneReuse:
             "extract_shipped_scene",
             lambda source, output: calls.append(("extract", (source, output))),
         )
+        # This test pins WHICH archive is resolved, and stubs extraction, so no
+        # scene is ever written. The capacity check therefore fails closed on a
+        # path that does not exist — correctly, but it is not what is under
+        # test, so stub it alongside the other steps.
+        monkeypatch.setattr(_demo, "scene_exceeds_node_capacity", lambda path: False)
         monkeypatch.setattr(
             _demo,
             "ensure_origin_framing",
@@ -932,6 +1279,105 @@ class TestMainSceneReuse:
             ("frame", output),
             ("warn", output),
         ]
+
+    @pytest.mark.parametrize("needs_restructure", [False, True])
+    def test_cold_scene_restructures_only_when_required(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        needs_restructure: bool,
+    ) -> None:
+        resolved = tmp_path / "resolved-scene.zip"
+        resolved.write_bytes(b"scene")
+        calls: list[str] = []
+        monkeypatch.setattr(_demo, "SERVE_ONLY", False)
+        monkeypatch.setattr(_demo, "RECOMPUTE", False)
+        monkeypatch.setattr(_demo, "NO_SERVE", True)
+        monkeypatch.setattr(_demo, "get_demos_output_dir", lambda: tmp_path)
+        monkeypatch.setattr(_demo, "ensure_dataset", lambda name: [resolved])
+        monkeypatch.setattr(
+            _demo,
+            "extract_shipped_scene",
+            lambda source, path: calls.append("extract"),
+        )
+        monkeypatch.setattr(
+            _demo,
+            "scene_exceeds_node_capacity",
+            lambda path: calls.append("check") or needs_restructure,
+        )
+        monkeypatch.setattr(
+            _demo, "restructure_scene", lambda path: calls.append("restructure")
+        )
+        monkeypatch.setattr(_demo, "ensure_origin_framing", lambda path: None)
+        monkeypatch.setattr(_demo, "warn_if_scene_is_stale", lambda path: None)
+
+        _demo.main()
+
+        assert calls == ["extract", "check"] + (
+            ["restructure"] if needs_restructure else []
+        )
+
+    def test_failed_restructure_warns_and_uses_the_fetched_scene(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        resolved = tmp_path / "resolved-scene.zip"
+        resolved.write_bytes(b"scene")
+        calls: list[str] = []
+        monkeypatch.setattr(_demo, "SERVE_ONLY", False)
+        monkeypatch.setattr(_demo, "RECOMPUTE", False)
+        monkeypatch.setattr(_demo, "NO_SERVE", True)
+        monkeypatch.setattr(_demo, "get_demos_output_dir", lambda: tmp_path)
+        monkeypatch.setattr(_demo, "ensure_dataset", lambda name: [resolved])
+        monkeypatch.setattr(_demo, "extract_shipped_scene", lambda source, path: None)
+        monkeypatch.setattr(_demo, "scene_exceeds_node_capacity", lambda path: True)
+        monkeypatch.setattr(
+            _demo,
+            "restructure_scene",
+            lambda path: (_ for _ in ()).throw(ValueError("cannot decode")),
+        )
+        monkeypatch.setattr(
+            _demo, "ensure_origin_framing", lambda path: calls.append("frame")
+        )
+        monkeypatch.setattr(
+            _demo, "warn_if_scene_is_stale", lambda path: calls.append("warn")
+        )
+
+        _demo.main()
+
+        assert calls == ["frame", "warn"]
+        assert "Could not re-ladder" in capsys.readouterr().out
+
+    def test_incomplete_cached_scene_is_reextracted(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        output = tmp_path / "desi_galaxies.luxar.zarr"
+        root = open_group(output, mode="w")
+        root.attrs["incomplete"] = True
+        resolved = tmp_path / "resolved-scene.zip"
+        resolved.write_bytes(b"scene")
+        calls: list[str] = []
+        monkeypatch.setattr(_demo, "SERVE_ONLY", False)
+        monkeypatch.setattr(_demo, "RECOMPUTE", False)
+        monkeypatch.setattr(_demo, "NO_SERVE", True)
+        monkeypatch.setattr(_demo, "get_demos_output_dir", lambda: tmp_path)
+        monkeypatch.setattr(_demo, "ensure_dataset", lambda name: [resolved])
+
+        def extract(source: Path, path: Path) -> None:
+            assert not path.exists()
+            calls.append("extract")
+            path.mkdir()
+
+        monkeypatch.setattr(_demo, "extract_shipped_scene", extract)
+        monkeypatch.setattr(_demo, "scene_exceeds_node_capacity", lambda path: False)
+        monkeypatch.setattr(_demo, "ensure_origin_framing", lambda path: None)
+        monkeypatch.setattr(_demo, "warn_if_scene_is_stale", lambda path: None)
+
+        _demo.main()
+
+        assert calls == ["extract"]
 
     def test_unavailable_manifest_scene_falls_back_to_catalog_build(
         self,
