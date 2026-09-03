@@ -17,6 +17,9 @@ Four things here are worth pinning, each with a quiet failure mode:
    assembled arrays if the current copies disappear.
 """
 
+import json
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -27,6 +30,7 @@ from luxar.gsplats.gsplat_data import AdditiveSubLOD
 from luxar.gsplats.tree import GSplatLeaf
 
 SMALL = (4, 3, 5, 6)
+_MANIFEST_PATH = Path(demo.__file__).with_name("data_manifest.json")
 
 #: Captured at IMPORT, before the autouse fixture below shrinks the module
 #: constant. The constants tests must compare against the real recorded extent;
@@ -68,6 +72,15 @@ def test_resolve_channel_paths_fetches_the_published_pair(
 
     assert demo.resolve_channel_paths() == expected
     assert calls == ["gsplats_4d_neuromast_2ch"]
+
+
+def test_manifest_and_download_size_pin_the_channel_pair() -> None:
+    manifest = json.loads(_MANIFEST_PATH.read_text())
+    files = manifest["datasets"]["gsplats_4d_neuromast_2ch"]["files"]
+
+    assert demo.DEMO_META["requirements"]["download_mb"] == round(
+        sum(file["bytes"] for file in files) / 1024**2
+    )
 
 
 @pytest.fixture(autouse=True)
