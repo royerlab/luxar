@@ -66,10 +66,10 @@ Three requirements, each load-bearing
    real tree aside: same guarantee, but it never mutates a working tree that
    other people and jobs are using.
 
-3. **Prefer ``hosted_sha256`` over ``sha256``.**
-   They are two different contracts: ``sha256`` describes the repo copy,
-   ``hosted_sha256`` the record copy, and for most datasets they differ. Only
-   the hosted digest says anything about what a stranger will download.
+3. **Verify the record pin independently.**
+   Current Zenodo entries carry one ``sha256`` contract describing the record
+   copy. ``hosted_sha256`` remains supported only for legacy manifests that
+   have not yet collapsed their separate repo and record contracts.
 
    Honest scoping of this one: the download leg inside ``ensure_dataset``
    already validates strictly against the hosted pin, so on a cold cache it is
@@ -169,12 +169,10 @@ def is_reachable(
 
 def expected_digest(entry: dict[str, Any]) -> tuple[Optional[str], str]:
     """The digest to check against, and which contract it came from."""
-    if entry.get("hosted_sha256"):
-        return entry["hosted_sha256"], "hosted"
     if entry.get("sha256"):
-        # Falling back is worth doing but worth saying: this pins the REPO copy,
-        # so a record holding different bytes would be reported as a mismatch.
-        return entry["sha256"], "repo (no hosted_sha256 declared)"
+        return entry["sha256"], "record"
+    if entry.get("hosted_sha256"):
+        return entry["hosted_sha256"], "legacy hosted"
     return None, "none declared"
 
 
