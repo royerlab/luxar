@@ -701,9 +701,10 @@ export function collectRenderOrderSlot(
 /**
  * The authored `layer_order` on a mesh, or `undefined` when unset.
  *
- * Read off `userData.attrs`, which every `create-*-node.ts` stamps with the
- * COMPOSED attrs record (`applyEffectiveAttrs`), so an ancestor-authored level
- * has already won its nearest-setter-wins contest by the time it lands here.
+ * Read off the dedicated `userData.layerOrder` render-state slot, which every
+ * `create-*-node.ts` stamps from the COMPOSED attrs record. Keeping it separate
+ * from `userData.attrs` matters for lines/gsplats, where that record is the raw
+ * leaf attrs object owned by the loaded scene graph.
  * A plain property read on purpose: `rendering/` may not import `data/`
  * (`layer-rendering-no-upward`, enforced by `pnpm check:layers`), which is why
  * this takes no type from the composer.
@@ -714,8 +715,7 @@ export function collectRenderOrderSlot(
  * the whole frame.
  */
 export function authoredLayerOrder(mesh: THREE.Mesh): number | undefined {
-  const raw = (mesh.userData as { attrs?: { layer_order?: unknown } } | undefined)?.attrs
-    ?.layer_order;
+  const raw = (mesh.userData as { layerOrder?: unknown } | undefined)?.layerOrder;
   return typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
 }
 

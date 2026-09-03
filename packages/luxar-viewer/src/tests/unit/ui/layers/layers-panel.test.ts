@@ -1786,6 +1786,21 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     );
   });
 
+  it('reset restores the authored layer order on the render object', () => {
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.Material());
+    mesh.name = '/cloud';
+    mesh.userData.nodeType = 'gsplats';
+    mesh.userData.layerOrder = 99;
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, makeLayeredSceneGraph('gsplats', { layer_order: 7 }));
+
+    panel.resetAllLayers();
+
+    expect(mesh.userData.layerOrder).toBe(7);
+  });
+
   it('reset reapplies an inherited custom palette with its composed LUT bytes', () => {
     const lut = new Uint8Array(768);
     lut[767] = 255;

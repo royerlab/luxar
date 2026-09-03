@@ -306,6 +306,7 @@ export function createPointsNode(
     nodeType: 'points',
     loader,
     attrs,
+    layerOrder: (attrs as unknown as Record<string, unknown>).layer_order,
     maxRadius: attrs.max_radius ?? 1.0,
     // Clamped like the commit path's stamp — the geometry above wrote at
     // most the per-node texture bound, and debug/UI counts must agree

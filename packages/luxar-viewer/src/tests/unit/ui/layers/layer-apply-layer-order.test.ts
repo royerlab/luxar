@@ -75,7 +75,7 @@ function nestedLayerHarness(groupOrder?: number, leafOrder?: number) {
 }
 
 const orderOf = (mesh: THREE.Mesh): unknown =>
-  (mesh.userData as { attrs?: { layer_order?: unknown } }).attrs?.layer_order;
+  (mesh.userData as { layerOrder?: unknown }).layerOrder;
 
 describe('applyLayerOrder — composition, not assignment', () => {
   it("does NOT clobber a nested layer leaf's own authored order", () => {
@@ -117,11 +117,13 @@ describe('applyLayerOrder — composition, not assignment', () => {
     expect(orderOf(mesh)).toBeUndefined();
   });
 
-  it('creates the attrs record when a mesh has none', () => {
+  it('does not mutate the loaded leaf attrs record', () => {
     const { engine, state, mesh } = nestedLayerHarness(20, undefined);
-    delete (mesh.userData as { attrs?: unknown }).attrs;
+    const attrs = mesh.userData.attrs;
 
     expect(() => engine.applyLayerOrder(state.getLayer('/g')!)).not.toThrow();
     expect(orderOf(mesh)).toBe(20);
+    expect(mesh.userData.attrs).toBe(attrs);
+    expect(attrs).toEqual({});
   });
 });

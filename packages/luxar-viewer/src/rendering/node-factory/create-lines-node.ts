@@ -138,6 +138,7 @@ export function createLinesNode(
     nodeType: 'lines',
     loader,
     attrs,
+    layerOrder: nodeAttrs.layer_order,
     maxWidth: attrs.max_width ?? 1.0,
     // Clamped like the commit path's stamp — the geometry above wrote at
     // most the per-node texture bound, and debug/UI counts must agree

@@ -466,11 +466,9 @@ export class LayerControls {
       // the user did not choose.
       const parsed = raw === '' ? undefined : Number.parseInt(raw, 10);
       const level = parsed === undefined || !Number.isFinite(parsed) ? undefined : parsed;
-      this.deps.state.applyToSelected((l) => {
-        l.layerOrder = level;
-        l.layerOrderExplicit = level !== undefined;
-      });
-      for (const sel of this.deps.state.getSelected()) {
+      const selected = this.deps.state.getSelected();
+      for (const sel of selected) {
+        this.deps.state.setLayerOrder(sel.path, level);
         this.deps.apply.applyLayerOrder(sel);
       }
       // Echo back what was actually stored, so junk input does not sit in the

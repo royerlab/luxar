@@ -247,6 +247,9 @@ export class LayersPanel {
       // applyColormap restores the authored colormap (or none) and then
       // recomposes opacity/gamma/intensity/offset/blending via applyComposed.
       this.applyEngine.applyColormap(layer);
+      // Layer order lives in a dedicated render-state slot rather than a
+      // material, so applyComposed cannot restore it.
+      this.applyEngine.applyLayerOrder(layer);
       // applyLabelStyle restores authored colours / all classes on both the
       // visual and pick materials.
       this.applyEngine.applyLabelStyle(layer);

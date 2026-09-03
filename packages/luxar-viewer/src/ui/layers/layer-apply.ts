@@ -659,8 +659,9 @@ export class LayerApplyEngine {
    * restores that, and lets an order on a non-layer intermediate group
    * participate too.
    *
-   * `undefined` is written rather than the key deleted, so a cleared order
-   * reads as absent through the same `!== undefined` test the renderer uses.
+   * This is render-only session state. It must not be written into
+   * `userData.attrs`, which is the loaded SceneNode attrs object for lines and
+   * gsplats and would make a panel edit look authored on the next composition.
    */
   applyLayerOrder(layer: LayerInfo): void {
     const sceneGraph = this.deps.getSceneGraph();
@@ -669,9 +670,7 @@ export class LayerApplyEngine {
       if (!obj) continue;
       const ancestors = sceneGraph ? collectAncestorNodes(sceneGraph, leaf.path) : undefined;
       const eff = this.composeEffective(leaf.path, layer.path, false, ancestors);
-      const userData = obj.userData as { attrs?: Record<string, unknown> };
-      if (!userData.attrs) userData.attrs = {};
-      userData.attrs.layer_order = eff?.layer_order;
+      obj.userData.layerOrder = eff?.layer_order;
     }
     this.deps.requestRender();
   }
