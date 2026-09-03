@@ -219,6 +219,19 @@ export interface BorderSample {
 }
 
 /**
+ * Select the poses that can affect the published media's crop verdict.
+ * No-orbit tiles publish only the curated still, while the caller may continue
+ * measuring and reporting orbit poses as diagnostics.
+ */
+export function selectCropVerdictSamples(
+  stillSample: BorderSample | null,
+  orbitSamples: BorderSample[],
+  noOrbitVideo: boolean
+): BorderSample[] {
+  return [...(stillSample ? [stillSample] : []), ...(noOrbitVideo ? [] : orbitSamples)];
+}
+
+/**
  * Border-lit pixels as a PERCENTAGE of the frame perimeter — the
  * resolution-independent reading, used by the warning and by the harness's log
  * line so the one division has a single guarded home. Zero when `borderPixels`
