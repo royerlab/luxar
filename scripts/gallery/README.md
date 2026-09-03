@@ -46,8 +46,9 @@ make check-gallery-staleness
 make check-gallery-media
 ```
 
-Output lands in `docs/images/gallery/<id>.{png,webp,webm}`. That directory is
-**gitignored** — it's a review staging area. To publish a reviewed refresh:
+Output lands in `docs/images/gallery/<id>.{png,webp,webm}`, except that a
+`noOrbitVideo` demo has no `.webm`. That directory is **gitignored** — it's a
+review staging area. To publish a reviewed refresh:
 
 1. Compute each selected WebP/WebM file's SHA-256 and use its first 16 hex
    characters plus the extension as the object key.
@@ -63,12 +64,12 @@ Output lands in `docs/images/gallery/<id>.{png,webp,webm}`. That directory is
 rows and still exits zero, because refreshing media is a reviewed batch action.
 For each demo it takes the newest blamed line in that demo's
 `media-manifest.json` entry as the publish timestamp, then compares it with the
-gallery dataset generator; the capture spec together with its orbit-axis helper
-and Playwright gallery config; the exposure and crop policies; the manifest-listed
-demo generator and its directly imported private `luxar.demos` helpers; and the
-lines of that demo's own manifest object. Production `luxar.shading` history
-applies only when the committed demo module imports it; shading tests/docs remain
-excluded.
+gallery dataset generator; the capture spec together with its media-reporting,
+timelapse-settle, and orbit-axis helpers and Playwright gallery config; the
+exposure and crop policies; the manifest-listed demo generator and its directly
+imported private `luxar.demos` helpers; and the lines of that demo's own manifest
+object. Production `luxar.shading` history applies only when the committed demo
+module imports it; shading tests/docs remain excluded.
 Global inputs are printed once above the rows, while per-demo failures print
 `UNKNOWN` and do not hide the rest of the report. All reads use committed
 `HEAD`, so an in-progress manifest edit cannot create a fake commit timestamp.
@@ -203,9 +204,11 @@ producing incomplete history; run it from a full checkout.
   framed at `timelapse.framePoint` while frame 0 sits at the clip start, so the
   two legitimately differ.
 
-  **Judge a tile on its orbit frames, not on the still.** The README embeds the
-  animated WebP; the PNG is a byproduct that ships nowhere. A framing tuned on
-  the still can crop at rock extremes the still never visits.
+  **Judge an animated tile on its orbit frames, not on the still.** The README
+  embeds the animated WebP; the PNG is a byproduct that ships nowhere. A framing
+  tuned on the still can crop at rock extremes the still never visits. For a
+  `noOrbitVideo` tile, judge the curated still instead: it is the source of the
+  published static WebP, and the rock extremes do not ship.
 
 ## Manifest fields
 
@@ -223,7 +226,26 @@ revolves about; default = the camera's own signed up axis, so set it only to
 override — and note it re-parks the camera and so usually wants a `viewAngle`
 beside it), `dimensionNav`
 (`{key, steps}` for nD), `timelapse` (`{framePoint}` for 4D series), `lodFinest`,
-`note` (free-text human annotation; the capture code never reads it).
+`noOrbitVideo` (see below), `note` (free-text human annotation; the capture code
+never reads it).
+
+`noOrbitVideo` (optional): capture a **static single-frame** tile and skip the
+orbit video entirely. For a subject whose apparent extent changes sharply with
+view angle — a row of objects foreshortening, a flat wall going edge-on — where
+the rock reads as flashing rather than motion. `gsplats_lod_embryo_line` swings
+13x in mean luminance twice per loop at the default ±20°, and still 8.2x at ±6°,
+so no amplitude fixes it.
+
+Note the `.webp` **is** the animated loop (`build_gallery_data.py` uses it as the
+tile's `still`, and `has_media` is `video or still`), so dropping only the
+`.webm` would leave the pulsing in place. Set on `gsplats_lod_embryo_line` and
+`gsplats_2d_codex_pancreas`. The capture removes a stale staged `.webm` whenever
+the flag is set, so the summary and the publish sweep cannot mistake it for a
+fresh encode.
+
+Root-README tiles currently require both WebP and WebM entries in
+`media-manifest.json` and `verify_media.py`. Before promoting a `noOrbitVideo`
+demo there, extend that publishing contract to support a WebP-only tile.
 
 `citation` (optional, not a capture hint): the dataset credit, copied verbatim
 from the demo's `DEMO_META["citation"]["short"]`. It is here so a tile's credit
