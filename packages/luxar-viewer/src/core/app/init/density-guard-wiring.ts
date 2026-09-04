@@ -24,6 +24,7 @@ import {
   getProjectedDensityTracker,
   resolveDensityGuardEnabled,
 } from '../../../scene/projected-density';
+import type { NodeDensityState } from '../../../types/data-monitor-types';
 import type { DensityGuardControl } from '../../../ui/rendering-controls/types';
 
 /** What the wiring reads live each frame. Every accessor is called, never captured. */
@@ -65,6 +66,24 @@ export interface DensityGuardWiring extends DensityGuardControl {
   provider: ProjectedDensityProvider;
   /** Register as the `'projected-density'` per-frame callback. */
   perFrame(): void;
+  /** Per-path snapshot for the data monitor's `drawn 1/K` chip (`DensityProvider`). */
+  densityStates(): Map<string, NodeDensityState>;
+}
+
+/** Project the live records onto the monitor's per-node density state. */
+export function collectDensityStates(
+  tracker: ProjectedDensityTracker
+): Map<string, NodeDensityState> {
+  const out = new Map<string, NodeDensityState>();
+  for (const rec of tracker.records()) {
+    out.set(rec.path, {
+      keep: rec.keep,
+      elementsPerPixel: rec.elementsPerPixel,
+      blendable: rec.blendable,
+      onScreen: rec.onScreen,
+    });
+  }
+  return out;
 }
 
 /** Build the rung-gate provider over the tracker's records. */
@@ -157,6 +176,7 @@ export function wireDensityGuard(deps: DensityGuardWiringDeps): DensityGuardWiri
       deps.requestRender();
     },
     thinning: () => summarizeThinning(tracker),
+    densityStates: () => collectDensityStates(tracker),
     perFrame: () => {
       if (!tracker.evaluate()) return;
       // A keep-step change is a CONTENT change for the DPR controller (its

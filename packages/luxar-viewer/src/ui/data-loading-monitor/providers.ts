@@ -6,10 +6,12 @@ import {
   type CacheMetrics,
   type CacheStatsProvider,
   type CacheTelemetryState,
+  type DensityProvider,
   type DrawOrderProvider,
   type LODProgressProvider,
   type LODProgressState,
   type MemoryMetrics,
+  type NodeDensityState,
   type NodeDrawOrder,
   type PooledGeometryType,
 } from '../../types/data-monitor-types';
@@ -55,6 +57,11 @@ export class MonitorProviderRegistry {
   // drives the scene-graph tree's draw-order chip.
   drawOrderProvider: DrawOrderProvider | null = null;
   drawOrderStates = new Map<string, NodeDrawOrder>();
+  // Live per-node density-guard state (keep fraction / elements per pixel).
+  // APP-scoped, unlike the slots above: the guard outlives any one scene, so
+  // `resetSceneProviders` leaves it wired. Drives the tree's `drawn 1/K` chip.
+  densityProvider: DensityProvider | null = null;
+  densityStates = new Map<string, NodeDensityState>();
   accumulatorProviders = emptyAccumulatorSlots();
 
   constructor(private readonly markStructureDirty: () => void) {}
@@ -133,6 +140,15 @@ export class MonitorProviderRegistry {
     }
   }
 
+  setDensityProvider(provider: DensityProvider | null): void {
+    this.densityProvider = provider;
+    if (provider) {
+      log.info(Modules.DATA_MONITOR, 'Density-guard provider connected');
+    } else {
+      this.densityStates = new Map();
+    }
+  }
+
   setAccumulatorProvider(type: PooledGeometryType, provider: AccumulatorProvider | null): void {
     this.accumulatorProviders[type] = provider;
     if (provider) {
@@ -146,6 +162,9 @@ export class MonitorProviderRegistry {
     }
     if (this.drawOrderProvider) {
       this.drawOrderStates = this.drawOrderProvider.getDrawOrderStates();
+    }
+    if (this.densityProvider) {
+      this.densityStates = this.densityProvider.getDensityStates();
     }
   }
 

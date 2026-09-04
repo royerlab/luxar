@@ -514,6 +514,12 @@ export async function runInitPipeline(
     const mgr = DataMonitorManager.getInstance();
     if (!mgr.hasMonitor(monitorId)) {
       mgr.createMonitor(monitorId, document.body);
+      // The density guard is app-scoped (it outlives scenes), so its provider
+      // is wired here, once per monitor, rather than through the per-scene
+      // monitor wiring in data/ — which cannot import scene/ anyway.
+      mgr
+        .getMonitor(monitorId)
+        ?.setDensityProvider({ getDensityStates: () => densityWiring.densityStates() });
     }
     return mgr.getMonitor(monitorId) ?? null;
   });

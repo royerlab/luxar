@@ -309,6 +309,72 @@ describe('renderSceneGraphTree — kind badges', () => {
     expect(html).toContain('4 parts');
   });
 
+  describe('density-guard chip', () => {
+    const gsplatsNode: SceneGraphNode = {
+      path: '/cloud',
+      name: 'cloud',
+      type: 'gsplats',
+      children: [],
+    };
+    const thinned = { keep: 1 / 8, elementsPerPixel: 25.2, blendable: true, onScreen: true };
+
+    it('renders drawn 1/K while the node is thinned, with the density in the tooltip', () => {
+      const html = renderSceneGraphTree(
+        tree(gsplatsNode),
+        new Set(),
+        new Map(),
+        new Map(),
+        new Map([['/cloud', thinned]])
+      );
+      expect(html).toContain('data-density-path="/cloud"');
+      expect(html).toContain('drawn 1/8');
+      expect(html).toContain('25 resident elements per pixel');
+      expect(html).toContain('brightens each ×8');
+    });
+
+    it.each([
+      ['unthinned', { ...thinned, keep: 1 }],
+      ['off-screen', { ...thinned, onScreen: false }],
+    ])('renders an empty slot when %s', (_label, state) => {
+      const html = renderSceneGraphTree(
+        tree(gsplatsNode),
+        new Set(),
+        new Map(),
+        new Map(),
+        new Map([['/cloud', state]])
+      );
+      expect(html).toContain('data-density-path="/cloud"');
+      expect(html).not.toContain('drawn 1/');
+    });
+
+    it('renders an empty slot for a drawable node with no state, and none for a group', () => {
+      const html = renderSceneGraphTree(tree(gsplatsNode), new Set(), new Map(), new Map());
+      expect(html).toContain('data-density-path="/cloud"');
+      expect(html).not.toContain('drawn 1/');
+      const group: SceneGraphNode = { path: '/g', name: 'g', type: 'group', children: [] };
+      expect(renderSceneGraphTree(tree(group), new Set(), new Map(), new Map())).not.toContain(
+        'data-density-path'
+      );
+    });
+
+    it('threads the density map down to expanded children', () => {
+      const parent: SceneGraphNode = {
+        path: '/p',
+        name: 'p',
+        type: 'group',
+        children: [gsplatsNode],
+      };
+      const html = renderSceneGraphTree(
+        tree(parent),
+        new Set(['/p']),
+        new Map(),
+        new Map(),
+        new Map([['/cloud', thinned]])
+      );
+      expect(html).toContain('drawn 1/8');
+    });
+  });
+
   describe('draw-order chip', () => {
     const gsplatsNode: SceneGraphNode = {
       path: '/cloud',

@@ -84,12 +84,24 @@ describe('MonitorProviderRegistry', () => {
       ['/lod/l0', { bucket: 'opaque' as const, depthWrite: true, renderOrder: 0 }],
     ]);
 
+    const densityStates = new Map([
+      ['/lod/l0', { keep: 0.25, elementsPerPixel: 9, blendable: true, onScreen: true }],
+    ]);
+
     providers.setLODProgressProvider({ getLODStates: () => lodStates });
     providers.setDrawOrderProvider({ getDrawOrderStates: () => drawOrderStates });
+    providers.setDensityProvider({ getDensityStates: () => densityStates });
     providers.refreshLiveSnapshots();
 
     expect(providers.lodStates).toBe(lodStates);
     expect(providers.drawOrderStates).toBe(drawOrderStates);
+    expect(providers.densityStates).toBe(densityStates);
+
+    // App-scoped: a scene reset leaves the density provider wired.
+    providers.resetSceneProviders();
+    expect(providers.densityProvider).not.toBeNull();
+    providers.setDensityProvider(null);
+    expect(providers.densityStates).toEqual(new Map());
 
     providers.clearDrawOrderStates();
     expect(providers.drawOrderStates).toEqual(new Map());

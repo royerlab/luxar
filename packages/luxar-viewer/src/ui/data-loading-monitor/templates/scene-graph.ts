@@ -4,6 +4,7 @@
 
 import type {
   LODProgressState,
+  NodeDensityState,
   NodeDrawOrder,
   SceneGraphNode,
   SceneGraphState,
@@ -231,6 +232,45 @@ function renderDrawOrderChip(node: SceneGraphNode, state: NodeDrawOrder | undefi
 }
 
 /**
+ * Chip text + tooltip for a node's live density-guard state: `drawn 1/K`
+ * while the guard thins the node, `null` otherwise (unthinned, off-screen,
+ * no record, guard off). Deliberately silent at keep 1 so the row only gains
+ * a chip when something is actually being left out of the draw. The LOD chip
+ * to its left is unaffected by thinning — every resident element stays
+ * resident — which is exactly the misreading this chip is here to prevent.
+ * Shared by the initial render and the incremental patcher.
+ */
+export function densityChipContent(
+  state: NodeDensityState | undefined
+): { text: string; title: string } | null {
+  if (!state || !(state.keep < 1) || !state.onScreen) return null;
+  const k = Math.round(1 / state.keep);
+  const epp = state.elementsPerPixel;
+  const eppStr = epp >= 10 ? Math.round(epp).toLocaleString() : epp.toFixed(1);
+  return {
+    text: `drawn 1/${k}`,
+    title:
+      `Density guard: this node projects ${eppStr} resident elements per pixel, ` +
+      `so the shader draws a hashed 1/${k} of them and brightens each ×${k} — ` +
+      'the composited brightness is unchanged and nothing is unloaded (the LOD ' +
+      'chip still counts every resident level). Zooming in restores the full ' +
+      'draw step by step; the Density Guard toggle in the Performance popover ' +
+      'turns thinning off.',
+  };
+}
+
+function renderDensityChip(node: SceneGraphNode, state: NodeDensityState | undefined): string {
+  const content = densityChipContent(state);
+  // Persistent (possibly empty) slot for every drawable node, for the same
+  // reason as the draw-order chip: the per-tick patcher only fills existing
+  // elements, and thinning comes and goes with the camera.
+  if (!content && !DRAWABLE_NODE_TYPES.has(node.type)) return '';
+  const text = content ? escapeHtml(content.text) : '';
+  const title = content ? escapeHtml(content.title) : '';
+  return `<span class="luxar-scene-graph__density" data-density-path="${escapeHtml(node.path)}" title="${title}">${text}</span>`;
+}
+
+/**
  * Role of a node that is a direct child of a substitutive `kind=lod`
  * group: `active` = the level currently rendered, `inactive` = a level
  * present in the file but not rendered right now. `undefined` when the
@@ -323,7 +363,8 @@ function renderSceneGraphNode(
   depth: number = 0,
   lodStates?: ReadonlyMap<string, LODProgressState>,
   drawOrderStates?: ReadonlyMap<string, NodeDrawOrder>,
-  levelCtx?: LevelContext
+  levelCtx?: LevelContext,
+  densityStates?: ReadonlyMap<string, NodeDensityState>
 ): string {
   const hasChildren = node.children.length > 0;
   const isExpanded = expandedNodes.has(node.path);
@@ -355,6 +396,7 @@ function renderSceneGraphNode(
   const kindBadge = renderKindBadge(node);
   const lodChip = renderLodChip(node, lodStates?.get(node.path));
   const drawOrderChip = renderDrawOrderChip(node, drawOrderStates?.get(node.path));
+  const densityChip = renderDensityChip(node, densityStates?.get(node.path));
 
   // Expand/collapse toggle
   const toggleIcon = hasChildren ? (isExpanded ? '▼' : '▶') : '•';
@@ -410,6 +452,9 @@ function renderSceneGraphNode(
 
         <!-- Live draw-order chip (blending bucket / depthWrite / renderOrder) -->
         ${drawOrderChip}
+
+        <!-- Live density-guard chip (keep fraction while thinned) -->
+        ${densityChip}
       </div>
 
       <!-- Children (if expanded) -->
@@ -429,7 +474,8 @@ function renderSceneGraphNode(
                         index: i,
                         role: activeLevelRole(lodStates?.get(node.path), i),
                       }
-                    : undefined
+                    : undefined,
+                  densityStates
                 )
               )
               .join('')
@@ -461,7 +507,8 @@ export function renderSceneGraphTree(
   state: SceneGraphState,
   expandedNodes: ReadonlySet<string>,
   lodStates?: ReadonlyMap<string, LODProgressState>,
-  drawOrderStates?: ReadonlyMap<string, NodeDrawOrder>
+  drawOrderStates?: ReadonlyMap<string, NodeDrawOrder>,
+  densityStates?: ReadonlyMap<string, NodeDensityState>
 ): string {
   if (!state.root) {
     return `
@@ -502,7 +549,7 @@ export function renderSceneGraphTree(
       </div>
       ${lodSummary ? `<div class="luxar-scene-graph__lod-summary" data-field="lod-summary" title="${escapeHtml(lodSummaryTooltip)}">${lodSummary}</div>` : ''}
       <div class="luxar-scene-graph__container">
-        ${renderSceneGraphNode(state.root, expandedNodes, 0, lodStates, drawOrderStates)}
+        ${renderSceneGraphNode(state.root, expandedNodes, 0, lodStates, drawOrderStates, undefined, densityStates)}
       </div>
     </div>
   `;

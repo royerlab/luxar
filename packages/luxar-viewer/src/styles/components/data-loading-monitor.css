@@ -976,6 +976,20 @@
   display: none;
 }
 
+/* Live density-guard chip (`drawn 1/K` while a node is thinned). Same
+   persistent-slot convention as the draw-order chip: empty = not thinned. */
+.luxar-scene-graph__density {
+  font-size: var(--luxar-text-xs);
+  color: var(--luxar-text-muted);
+  margin-left: var(--luxar-spacing-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.luxar-scene-graph__density:empty {
+  display: none;
+}
+
 /* One-line LOD/partition activity summary in the scene-graph header. */
 .luxar-scene-graph__lod-summary {
   font-size: var(--luxar-text-xs);

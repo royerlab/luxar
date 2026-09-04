@@ -254,6 +254,24 @@ describe('buildDensityProvider', () => {
   });
 });
 
+describe('densityStates (monitor provider)', () => {
+  it('projects every live record onto the monitor state shape', () => {
+    const deps = makeDeps();
+    const wiring = wireDensityGuard(deps);
+    expect(wiring.densityStates().size).toBe(0);
+    wiring.perFrame();
+    const states = wiring.densityStates();
+    expect(states.get('/dense')).toMatchObject({
+      keep: densityGuardConfig.minKeepFraction,
+      blendable: true,
+      onScreen: true,
+    });
+    expect(states.get('/dense')!.elementsPerPixel).toBeGreaterThan(4);
+    wiring.setEnabled(false);
+    expect(wiring.densityStates().size).toBe(0);
+  });
+});
+
 describe('summarizeThinning', () => {
   it('counts thinned records and reports the smallest keep', () => {
     const tracker = new ProjectedDensityTracker();
