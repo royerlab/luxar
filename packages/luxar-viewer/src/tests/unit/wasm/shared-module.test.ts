@@ -31,6 +31,7 @@ function stubWasm(overrides: {
   fetchImpl?: unknown;
 }) {
   vi.stubGlobal('WebAssembly', {
+    ...WebAssembly,
     compileStreaming: overrides.compileStreaming ?? vi.fn(async () => FAKE_MODULE),
     compile: overrides.compile ?? vi.fn(async () => FAKE_MODULE),
   });
@@ -42,6 +43,7 @@ describe('getSharedWasmModule', () => {
   beforeEach(() => {
     resetSharedWasmModule();
     vi.unstubAllGlobals();
+    void new Response(new Uint8Array());
   });
 
   afterEach(() => {
@@ -119,7 +121,7 @@ describe('getSharedWasmModule', () => {
   });
 
   it('resolves null when the host has no WebAssembly.compile', async () => {
-    vi.stubGlobal('WebAssembly', {});
+    vi.stubGlobal('WebAssembly', { ...WebAssembly, compile: undefined });
     vi.stubGlobal('fetch', vi.fn());
 
     await expect(getSharedWasmModule()).resolves.toBeNull();
