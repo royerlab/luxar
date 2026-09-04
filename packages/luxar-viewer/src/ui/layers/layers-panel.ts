@@ -23,6 +23,7 @@ import * as THREE from 'three';
 import type { SceneNode } from '../../data/data-loader-types';
 import type { FailedLoadsProviderPort } from '../../data/scene-loader-monitor-port';
 import { LayerStateManager, type LayerInfo, type SelectionMode } from './layer-state';
+import type { LayerPatch, LayerSummary } from '../../core/app/embedder/events';
 import { config } from '../../config';
 import { log, Modules } from '../../utils/log';
 import { EventGroup } from '../../utils/cross-layer/event-group';
@@ -563,6 +564,81 @@ export class LayersPanel {
     this.applyEngine.applyMeshAppearance(live);
     this.refreshRowVisual(path);
     this.controls.render();
+  }
+
+  /**
+   * Stable per-layer appearance summary for the embedder API
+   * (`LuxarApp.getLayers()`). Copies, in panel display order.
+   */
+  getLayerSummaries(): LayerSummary[] {
+    return this.state.getLayers().map((l) => ({
+      path: l.path,
+      name: l.name,
+      type: l.type,
+      visible: l.visible,
+      opacity: l.opacity,
+      gamma: l.gamma,
+      displayRange: [l.displayMin, l.displayMax],
+      dataRange: [l.dataMin, l.dataMax],
+      colormap: l.colormap ?? null,
+      supportsColormap: l.supportsColormap,
+      blendingMode: l.blendingMode,
+      absorption: l.absorption,
+      layerOrder: l.layerOrderExplicit && l.layerOrder !== undefined ? l.layerOrder : null,
+    }));
+  }
+
+  /**
+   * Programmatic per-layer appearance patch (`LuxarApp.setLayer()`). Each
+   * field takes the SAME route the panel's own control does — state-manager
+   * setter (clamping, persistence, change notification) then the apply
+   * engine — so a remote controller can never put the row, the material and
+   * the stored state out of step with one another. Only the fields present
+   * in `patch` are touched.
+   *
+   * @throws on an unknown layer path: a controller typo must not fail silently.
+   */
+  setLayer(path: string, patch: LayerPatch): void {
+    const live = this.state.getLayer(path);
+    if (!live) {
+      throw new Error(`LayersPanel.setLayer: unknown layer '${path}'`);
+    }
+    if (patch.visible !== undefined) {
+      this.state.setVisible(path, patch.visible);
+      this.applyEngine.applyVisibility(path, patch.visible);
+      this.refreshRowVisual(path);
+    }
+    if (patch.displayRange !== undefined) {
+      const [min, max] = patch.displayRange;
+      this.state.setDisplayRange(path, min, max);
+      this.applyEngine.applyDisplayRange(live);
+    }
+    if (patch.gamma !== undefined) {
+      this.state.setGamma(path, patch.gamma);
+      this.applyEngine.applyGamma(live);
+    }
+    if (patch.opacity !== undefined) {
+      this.state.setOpacity(path, patch.opacity);
+      this.applyEngine.applyOpacity(live);
+    }
+    if (patch.absorption !== undefined) {
+      this.state.setAbsorption(path, patch.absorption);
+      this.applyEngine.applyAbsorption(live);
+    }
+    if (patch.layerOrder !== undefined) {
+      this.state.setLayerOrder(path, patch.layerOrder ?? undefined);
+      this.applyEngine.applyLayerOrder(live);
+    }
+    if (patch.blendingMode !== undefined) {
+      this.setLayerBlending(path, patch.blendingMode);
+    }
+    if (patch.colormap !== undefined) {
+      this.setLayerColormap(path, patch.colormap ?? undefined);
+    }
+    this.controls.render();
+    // Material changes only show when the loop runs; registration-free, so
+    // pair the change with a start (idempotent).
+    this.animationController.startAnimation();
   }
 
   /** Sync one row's eye icon + hidden class to the live state (no rebuild). */

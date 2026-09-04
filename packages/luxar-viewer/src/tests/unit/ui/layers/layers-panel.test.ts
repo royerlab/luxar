@@ -3938,3 +3938,96 @@ describe('LayersPanel — Layer order control (the shipped path)', () => {
     panel.dispose();
   });
 });
+
+describe('LayersPanel programmatic API (getLayerSummaries / setLayer)', () => {
+  let container: HTMLElement;
+  let animationController: AnimationController;
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    animationController = makeAnimationController();
+  });
+
+  function openPanel(extraLeafAttrs: Record<string, unknown> = {}): LayersPanel {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeLayeredSceneGraph('points', extraLeafAttrs));
+    return panel;
+  }
+
+  it('summarises each layer as copies in panel order', () => {
+    const panel = openPanel({ layer_order: 2 });
+    const summaries = panel.getLayerSummaries();
+    expect(summaries).toHaveLength(1);
+    const s = summaries[0];
+    expect(s.path).toBe('/cloud');
+    expect(s.name).toBe('cloud');
+    expect(s.type).toBe('points');
+    expect(s.visible).toBe(true);
+    expect(s.opacity).toBe(1);
+    expect(s.layerOrder).toBe(2);
+    expect(s.colormap).toBeNull();
+    expect(Array.isArray(s.displayRange)).toBe(true);
+    expect(Array.isArray(s.dataRange)).toBe(true);
+    // A copy: mutating it must not reach the live state.
+    s.opacity = 0.1;
+    expect(panel.layerState.getLayer('/cloud')!.opacity).toBe(1);
+    panel.dispose();
+  });
+
+  it('reports an inherited/automatic order as null', () => {
+    const panel = openPanel();
+    expect(panel.getLayerSummaries()[0].layerOrder).toBeNull();
+    panel.dispose();
+  });
+
+  it('applies only the fields present, through the state manager', () => {
+    const panel = openPanel();
+    const live = panel.layerState.getLayer('/cloud')!;
+    const before = { gamma: live.gamma, blending: live.blendingMode };
+
+    panel.setLayer('/cloud', { opacity: 0.4, visible: false });
+
+    expect(live.opacity).toBe(0.4);
+    expect(live.visible).toBe(false);
+    expect(live.gamma).toBe(before.gamma);
+    expect(live.blendingMode).toBe(before.blending);
+    expect(panel.getLayerSummaries()[0]).toMatchObject({ opacity: 0.4, visible: false });
+    // A material change is only visible when the loop runs.
+    expect(animationController.startAnimation).toHaveBeenCalled();
+    panel.dispose();
+  });
+
+  it('sets display range, gamma, blending and explicit order', () => {
+    const panel = openPanel();
+    const live = panel.layerState.getLayer('/cloud')!;
+    const mid = (live.dataMin + live.dataMax) / 2;
+
+    panel.setLayer('/cloud', {
+      displayRange: [live.dataMin, mid],
+      gamma: 2,
+      blendingMode: 'max',
+      layerOrder: 5,
+    });
+
+    expect(live.displayMin).toBe(live.dataMin);
+    expect(live.displayMax).toBe(mid);
+    expect(live.gamma).toBe(2);
+    expect(live.blendingMode).toBe('max');
+    expect(live.blendingModeExplicit).toBe(true);
+    expect(live.layerOrder).toBe(5);
+    expect(live.layerOrderExplicit).toBe(true);
+
+    panel.setLayer('/cloud', { layerOrder: null });
+    expect(live.layerOrderExplicit).toBe(false);
+    expect(panel.getLayerSummaries()[0].layerOrder).toBeNull();
+    panel.dispose();
+  });
+
+  it('throws on an unknown path instead of failing silently', () => {
+    const panel = openPanel();
+    expect(() => panel.setLayer('/nope', { opacity: 0.5 })).toThrow(/unknown layer '\/nope'/);
+    panel.dispose();
+  });
+});

@@ -72,6 +72,12 @@ export type {
   SelectionPayload,
   ElementPointerPayload,
   CameraSnapshot,
+  LayerSummary,
+  LayerPatch,
+  ViewerState,
+  FlyToOptions,
+  FlightResult,
+  FlightEasing,
   DimensionMetadata,
   Unsubscribe,
 } from './core/app/embedder/events';

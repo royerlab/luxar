@@ -111,6 +111,18 @@ Reference sensor is the 36 mm-wide 35mm-film sensor (`FILM_35MM_SENSOR_WIDTH_MM`
 
 `FOLDER_ICONS` — inline-SVG line icons for the panel's top-level folder headers (Camera, HDR, Anti-Aliasing, Post-Processing, Performance, Theme). Same convention as the control rail's `RAIL_ICONS` (`viewBox="0 0 24 24"`, no inline sizing/stroke — CSS strokes with `currentColor`); passed to `Folder.addFolder(name, icon)` so folder headers get a monochrome glyph that matches the rail instead of an emoji.
 
+### Programmatic overrides (on the parent `RenderingControls`)
+
+`applyOverrides(partial)` is the one path every non-interactive settings change
+takes: `applyZarrDefaults()` calls it with the keys extracted from a scene's
+authored `viewer_config`, and the embedder API's `LuxarApp.setRenderingSettings()`
+calls it with a controller's patch. Both therefore share validation
+(`validateRenderingSettings` clamps NaN / out-of-range input to defaults) and
+side-effects (camera FOV and planes, navigation feel, DPR ceiling, then the full
+`applySettings()` post-processing pass). Nothing is persisted — an override
+describes the current scene, not a user preference. `getSettingsSnapshot()` is
+the matching read: a copy of the live `RenderingSettings`.
+
 ## Subpackages
 
 - [`setup/`](./setup/README.md) — Per-category GUI builders that populate the rendering-controls panel: `camera-setup`, `hdr-setup`, `anti-aliasing-setup`, `post-processing-setup`. Each consumes a `SetupContext` (from `./types.ts`) and returns a `SetupResult`. (`theme-setup` and `performance-setup` also live here but are now hosted in rail popovers — see [`../rail-panels/`](../rail-panels/README.md); navigation moved to `../rail-panels/navigation-popover.ts`.)

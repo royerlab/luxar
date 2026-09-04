@@ -28,6 +28,7 @@ app/
 ├── lifecycle/      # dispose / focus / unload — teardown and runtime power-management glue
 ├── dataset/        # src URL → scene routing: browser-vs-load decision + load sequence
 ├── viewer-config/  # Apply zarr viewer_config onto the live app + panel-visibility capture
+├── camera/         # CameraFlight — the interruptible flyTo() tween (orbit-space interpolation)
 ├── snapshot/       # JSON capture/restore of camera + per-dimension slice position
 ├── embedder/       # Public programmatic embedder API — event/value types + headless screenshot
 ├── debug/          # window.__luxarDebug surface — runtime hook for AI drivers + Playwright
@@ -51,6 +52,12 @@ app/
   animation dispatch) onto the running app, plus a pure helper for snapshotting
   panel visibility around recording. Rendering knobs are routed separately via
   `RenderingControls`.
+- **`camera/`** — `CameraFlight`: the tween behind `LuxarApp.flyTo()`. Interpolates
+  between two `CameraSnapshot`s in the orbit parameterisation (target lerp, direction
+  slerp, log distance, up slerp), runs as a `continuous` per-frame callback paired with
+  `startAnimation()`, hands every frame to the controls the way `restoreCamera` does,
+  and cancels on canvas pointer/wheel/touch or document keydown. `buildFlightPath` /
+  `easeFlight` are pure and exported for tests.
 - **`snapshot/`** — `captureSnapshot` / `restoreSnapshot` + `ViewerSnapshot`
   types. JSON-serialisable view state (camera + slice position only) for
   tests, share-view links, and regression harnesses. Layer-panel and

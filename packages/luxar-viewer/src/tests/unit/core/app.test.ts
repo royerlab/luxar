@@ -172,8 +172,18 @@ describe('LuxarApp', () => {
       dispose: vi.fn(),
       renderer: { domElement: {} },
       scene: {},
-      camera: {},
-      controls: {},
+      // Enough of a camera for captureSnapshot() (the camera-changed
+      // embedder event reads position / up / near / far).
+      camera: { position: { x: 1, y: 2, z: 3 }, up: { x: 0, y: 1, z: 0 }, near: 0.1, far: 100 },
+      // The ControlsManager surface the embedder hooks subscribe to.
+      controls: {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        getFocusTarget: vi.fn(() => ({ x: 0, y: 0, z: 0 })),
+        setTarget: vi.fn(),
+        reinitialize: vi.fn(),
+        dispatchEvent: vi.fn(),
+      },
       postProcessing: {},
       // Embedder-API delegation targets.
       resizeToCanvas: vi.fn(),
@@ -226,6 +236,8 @@ describe('LuxarApp', () => {
       setZarrViewerConfig: vi.fn(),
       hasStoredSettings: vi.fn().mockReturnValue(false),
       applyZarrDefaults: vi.fn(),
+      applyOverrides: vi.fn(),
+      getSettingsSnapshot: vi.fn(() => ({})),
       updateSceneScale: vi.fn(),
       dispose: vi.fn(),
     };
@@ -1321,6 +1333,8 @@ describe('LuxarApp', () => {
         getFocusTarget: () => ({ x: 0, y: 0, z: 0 }),
         setTarget: vi.fn(),
         reinitialize: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
       };
       await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
@@ -1332,6 +1346,95 @@ describe('LuxarApp', () => {
       } catch (e) {
         expect((e as Error).message).not.toMatch(/before init/);
       }
+    });
+  });
+
+  describe('remote-control embedder API (flyTo / settings / layers / state)', () => {
+    const SRC = 'http://example.com/data.zarr';
+    const POSE = {
+      position: [0, 0, 10] as [number, number, number],
+      target: [0, 0, 0] as [number, number, number],
+      up: [0, 1, 0] as [number, number, number],
+      isOrtho: false,
+      near: 0.1,
+      far: 1000,
+    };
+
+    it('every new method throws a clear message before init()', () => {
+      expect(() => app.flyTo(POSE)).toThrow(/flyTo called before init/);
+      expect(() => app.getRenderingSettings()).toThrow(/getRenderingSettings called before init/);
+      expect(() => app.setRenderingSettings({ exposure: 1 })).toThrow(
+        /setRenderingSettings called before init/
+      );
+      expect(() => app.getLayers()).toThrow(/getLayers called before init/);
+      expect(() => app.setLayer('/x', { opacity: 1 })).toThrow(/setLayer called before init/);
+      expect(() => app.getViewerState()).toThrow(/getViewerState called before init/);
+    });
+
+    it('subscribes to the controls change stream and re-emits it as camera-changed', async () => {
+      await app.init({ canvas: mockCanvas, src: SRC });
+      const calls = mockSceneManager.controls.addEventListener.mock.calls as Array<
+        [string, () => void]
+      >;
+      const change = calls.find(([type]) => type === 'change');
+      expect(change).toBeDefined();
+
+      const onCamera = vi.fn();
+      app.on('camera-changed', onCamera);
+      change![1]();
+
+      expect(onCamera).toHaveBeenCalledTimes(1);
+      expect(onCamera.mock.calls[0][0]).toMatchObject({ position: [1, 2, 3], target: [0, 0, 0] });
+
+      // Torn down with the app: the same listener reference is removed.
+      app.dispose();
+      expect(mockSceneManager.controls.removeEventListener).toHaveBeenCalledWith(
+        'change',
+        change![1]
+      );
+    });
+
+    it('flyTo registers the flight driver and starts the loop; a dataset switch cancels it', async () => {
+      await app.init({ canvas: mockCanvas, src: SRC });
+      mockAnimationController.startAnimation.mockClear();
+
+      const done = app.flyTo(POSE, { durationMs: 1000 });
+
+      expect(mockAnimationController.addPerFrameCallback).toHaveBeenCalledWith(
+        'camera-flight',
+        expect.any(Function),
+        { continuous: true }
+      );
+      expect(mockAnimationController.startAnimation).toHaveBeenCalled();
+
+      await app.switchDataset('http://example.com/other.zarr');
+      await expect(done).resolves.toEqual({ completed: false });
+      expect(mockAnimationController.removePerFrameCallback).toHaveBeenCalledWith('camera-flight');
+    });
+
+    it('setRenderingSettings rides the same override path as an authored viewer_config', async () => {
+      await app.init({ canvas: mockCanvas, src: SRC });
+
+      app.setRenderingSettings({ exposure: 1.5, toneMapping: 'ACES' });
+
+      expect(mockRenderingControls.applyOverrides).toHaveBeenCalledWith({
+        exposure: 1.5,
+        toneMapping: 'ACES',
+      });
+    });
+
+    it('getViewerState bundles dataset, camera, dims, rendering and layers', async () => {
+      await app.init({ canvas: mockCanvas, src: SRC });
+      mockRenderingControls.getSettingsSnapshot.mockReturnValue({ exposure: 0.25 });
+
+      const state = app.getViewerState();
+
+      expect(state.src).toBe(SRC);
+      expect(state.camera).toMatchObject({ position: [1, 2, 3] });
+      expect(state.dimensions).toMatchObject({ ndim: 0 });
+      expect(state.rendering).toEqual({ exposure: 0.25 });
+      // LayersPanel is mocked: its summaries come back undefined → empty list.
+      expect(state.layers).toEqual([]);
     });
   });
 

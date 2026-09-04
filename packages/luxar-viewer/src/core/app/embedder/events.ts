@@ -14,7 +14,15 @@
 import type { DimensionMetadata } from '../../../types/dims';
 
 export type { Unsubscribe } from '../../../utils/cross-layer/event-bus';
+import type { CameraSnapshot } from '../snapshot/viewer-snapshot';
+import type { RenderingSettings } from '../../../config';
+import type { BlendingMode } from '../../../types/blending';
+import type { LayerType } from '../../../ui/layers/layer-state';
 export type { CameraSnapshot } from '../snapshot/viewer-snapshot';
+export type { RenderingSettings } from '../../../config';
+export type { BlendingMode } from '../../../types/blending';
+export type { LayerType } from '../../../ui/layers/layer-state';
+export type { FlyToOptions, FlightResult, FlightEasing } from '../camera/camera-flight';
 export type { DimensionMetadata } from '../../../types/dims';
 
 /**
@@ -169,8 +177,73 @@ export interface ElementPointerPayload extends SelectionPayload {
  *   labels and no interaction templates, subscribing afterwards leaves picking
  *   switched off and the event never fires.
  */
+/**
+ * One row of the Layers panel as the embedder API reports it: the per-layer
+ * appearance knobs a remote controller may read and (via {@link LayerPatch})
+ * write. Structural / diagnostic fields of the panel's own `LayerInfo` are
+ * deliberately left out; this is the stable subset.
+ */
+export interface LayerSummary {
+  /** Scene-graph path — the key `setLayer()` takes. */
+  path: string;
+  name: string;
+  type: LayerType;
+  visible: boolean;
+  opacity: number;
+  gamma: number;
+  /** Display window `[min, max]` in data units. */
+  displayRange: [number, number];
+  /** Authored data bounds the window is clamped into. */
+  dataRange: [number, number];
+  /** Active colormap name, or `null` for direct colour. */
+  colormap: string | null;
+  supportsColormap: boolean;
+  blendingMode: BlendingMode;
+  /** Volumetric absorption κ (meaningful in `volumetric` blending only). */
+  absorption: number;
+  /** Explicit compositing order, or `null` when inherited/automatic. */
+  layerOrder: number | null;
+}
+
+/**
+ * Partial appearance update for one layer. Every field is optional; only the
+ * fields present are applied, each through the same code path the Layers
+ * panel's own control uses. `colormap: null` returns to direct colour;
+ * `layerOrder: null` releases an explicit order.
+ */
+export interface LayerPatch {
+  visible?: boolean;
+  opacity?: number;
+  gamma?: number;
+  displayRange?: [number, number];
+  colormap?: string | null;
+  blendingMode?: BlendingMode;
+  absorption?: number;
+  layerOrder?: number | null;
+}
+
+/**
+ * Everything a remote controller needs to mirror the viewer: the dataset,
+ * the camera pose, the slice position, the rendering settings and the
+ * per-layer appearance. All values are copies — mutate freely.
+ */
+export interface ViewerState {
+  /** Dataset URL currently shown, or `null` before the first load. */
+  src: string | null;
+  camera: CameraSnapshot;
+  dimensions: EmbedderDimensions;
+  rendering: RenderingSettings;
+  layers: LayerSummary[];
+}
+
 export interface LuxarEmbedderEventMap {
   'dataset-loaded': { src: string };
+  /**
+   * Fires whenever the camera pose changes — interactive orbit/fly input,
+   * `setCameraPose()`, `flyTo()` frames, auto-rotate — at frame rate while
+   * the camera is moving. Consumers relaying over a network should throttle.
+   */
+  'camera-changed': CameraSnapshot;
   'dataset-error': { src: string; error: Error };
   'dataset-fault': DatasetFaultPayload;
   'dimensions-changed': EmbedderDimensions;

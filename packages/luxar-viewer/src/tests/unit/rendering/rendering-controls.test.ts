@@ -700,6 +700,47 @@ describe('RenderingControls', () => {
     });
   });
 
+  describe('programmatic overrides (applyOverrides / getSettingsSnapshot)', () => {
+    // The embedder API's setRenderingSettings() rides the SAME path the
+    // authored viewer_config takes, so the two can never disagree on
+    // validation or side-effects.
+    it('applyZarrDefaults is applyOverrides over the extracted zarr keys', () => {
+      const controls = renderingControls as any;
+      const spy = vi.spyOn(controls, 'applyOverrides');
+      controls.setZarrViewerConfig({ exposure: 1.5 });
+
+      controls.applyZarrDefaults();
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0][0]).toMatchObject({ exposure: 1.5 });
+      spy.mockRestore();
+    });
+
+    it('applies a partial override with its side-effects and clamps junk', () => {
+      const controls = renderingControls as any;
+      mockSceneManager.setFov.mockClear();
+      mockSceneManager.updateExposure.mockClear();
+
+      controls.applyOverrides({ fov: 35, exposure: 2, bloomStrength: Number.NaN });
+
+      expect(controls.settings.fov).toBe(35);
+      expect(mockSceneManager.setFov).toHaveBeenCalledWith(35);
+      expect(controls.settings.exposure).toBe(2);
+      expect(mockSceneManager.updateExposure).toHaveBeenCalledWith(2);
+      // NaN never reaches the renderer: validation clamps to the default.
+      expect(controls.settings.bloomStrength).toBe(config.renderingControls.defaults.bloomStrength);
+    });
+
+    it('getSettingsSnapshot returns a copy of the live settings', () => {
+      const controls = renderingControls as any;
+      controls.applyOverrides({ exposure: 0.75 });
+      const snap = controls.getSettingsSnapshot();
+      expect(snap.exposure).toBe(0.75);
+      snap.exposure = 99;
+      expect(controls.settings.exposure).toBe(0.75);
+    });
+  });
+
   describe('Zarr-authored FOV presets', () => {
     it('applies a preset-only lens and preserves its label when the panel opens', () => {
       const controls = renderingControls as any;
