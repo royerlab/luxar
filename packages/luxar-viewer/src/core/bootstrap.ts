@@ -40,6 +40,7 @@ import { consoleInterceptor } from '../utils/console-interceptor';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { getErrorMessage } from '../utils/format-error';
 import { codecRegistry } from '../data/zarr';
+import { computePerfSnapshot } from './app/debug/perf-snapshot';
 
 /**
  * Options for {@link bootstrapStandalone}.
@@ -347,6 +348,12 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
       app,
       consoleInterceptor,
       version: '1.0.0',
+      // Perf probes must not wait for the dataset load + blend warm-up that
+      // gate the runtime surface (`getState` etc.): the load timeline is
+      // readable from here on, and installDebugInterface swaps in the
+      // runtime-aware snapshot once the components exist.
+      perfReady: true,
+      getPerf: () => computePerfSnapshot(),
       showError: (message) =>
         showError(message, shortcutForAction, {
           datasetBrowser: KeyAction.toggleDatasetBrowser,

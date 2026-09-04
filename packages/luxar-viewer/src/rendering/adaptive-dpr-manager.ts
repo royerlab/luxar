@@ -177,6 +177,38 @@ const MIN_FRAMES_TO_RERUN_PROBE = 2;
  */
 export type SuppressionCause = 'load' | 'cadence' | null;
 
+/** One settled probe, as recorded for `getDiagnostics()`. */
+export interface AdaptiveDPRProbeRecord {
+  /** `confounded` = a content change ran through the window (direction not trusted). */
+  kind: 'accepted' | 'rejected' | 'inconclusive' | 'confounded';
+  previousDPR: number;
+  probedDPR: number;
+  previousFPS: number;
+  /** FPS at the verdict; `null` for inconclusive probes (no clean sample). */
+  currentFPS: number | null;
+  /** currentFPS / previousFPS; `null` for inconclusive probes. */
+  fpsRatio: number | null;
+  timestamp: number;
+}
+
+/** Bounded probe history kept for diagnostics. */
+const PROBE_RECORD_LIMIT = 16;
+
+/**
+ * `getState()` plus the controller's decision history — what a perf probe
+ * needs to tell "the DPR walked down during loading" from "a probe proved
+ * the step helped". Read via `__luxarDebug.getPerf().adaptiveDpr`.
+ */
+export interface AdaptiveDPRDiagnostics extends AdaptiveDPRState {
+  /** Why the last evaluation withheld learning, or `null` when it did not. */
+  suppressedBy: SuppressionCause;
+  backoffLevel: number;
+  scaleDowns: number;
+  scaleUps: number;
+  /** Most recent last; at most {@link PROBE_RECORD_LIMIT} entries. */
+  verdicts: AdaptiveDPRProbeRecord[];
+}
+
 /**
  * Manages adaptive pixel ratio for performance optimization
  */
@@ -241,6 +273,12 @@ export class AdaptiveDPRManager {
   // samples are treated as jank-polluted: scale-downs apply unprobed
   // and nothing feeds the estimator or settles probes.
   private loadActivityPredicate: (() => boolean) | null = null;
+
+  // Diagnostics only (`getDiagnostics()`): never read by the control logic.
+  private lastSuppressedBy: SuppressionCause = null;
+  private scaleDownCount = 0;
+  private scaleUpCount = 0;
+  private readonly probeRecords: AdaptiveDPRProbeRecord[] = [];
 
   // Coalescing clock for notifyContentChanged() — only advances on the
   // calls that are acted upon.
@@ -607,6 +645,7 @@ export class AdaptiveDPRManager {
     const suppressedBy: SuppressionCause =
       (this.loadActivityPredicate?.() ?? false) ? 'load' : cadenceUntrusted ? 'cadence' : null;
     const suppressed = suppressedBy !== null;
+    this.lastSuppressedBy = suppressedBy;
 
     // Feed the refresh-cap estimator — but only clean, full-span
     // windows, so partial post-reset windows and load jank don't
@@ -750,6 +789,7 @@ export class AdaptiveDPRManager {
     currentFPS: number
   ): void {
     if (verdict.kind === 'pending') return;
+    this.recordProbeVerdict(verdict, currentFPS, timestamp);
 
     if (verdict.kind === 'inconclusive') {
       // No clean sample within the extended window — keep the DPR,
@@ -875,6 +915,7 @@ export class AdaptiveDPRManager {
     const previousDPR = this.currentDPR;
     this.currentDPR = newDPR;
     this.applyDPR();
+    this.scaleDownCount += 1;
 
     // Update reduced resolution mode status
     this.isReducedResolution = newDPR < this.ceiling() * 0.95;
@@ -958,6 +999,7 @@ export class AdaptiveDPRManager {
     // An ascent above 1.0 is on probation: if FPS collapses within the
     // punishment window, it counts toward ceiling demotion.
     this.boundsLedger.recordAscent(newDPR, timestamp);
+    this.scaleUpCount += 1;
 
     this.currentDPR = newDPR;
     this.applyDPR();
@@ -1069,6 +1111,42 @@ export class AdaptiveDPRManager {
       dprCeiling: Math.min(this.ceiling(), this.boundsLedger.dprCeiling ?? nativeDPR),
       allowHighDPR: isHighDPRAllowed(),
     };
+  }
+
+  /**
+   * `getState()` plus the decision history: last suppression cause, ledger
+   * backoff level, scale counts and the recent probe verdicts. Diagnostics
+   * only — nothing in the controller reads these back.
+   */
+  getDiagnostics(): AdaptiveDPRDiagnostics {
+    return {
+      ...this.getState(),
+      suppressedBy: this.lastSuppressedBy,
+      backoffLevel: this.boundsLedger.backoffLevel,
+      scaleDowns: this.scaleDownCount,
+      scaleUps: this.scaleUpCount,
+      verdicts: this.probeRecords.map((record) => ({ ...record })),
+    };
+  }
+
+  private recordProbeVerdict(
+    verdict: Exclude<ProbeVerdict, { kind: 'pending' }>,
+    currentFPS: number,
+    timestamp: number
+  ): void {
+    const { probe } = verdict;
+    const settled = verdict.kind !== 'inconclusive';
+    const record: AdaptiveDPRProbeRecord = {
+      kind: settled && probe.contentConfounded ? 'confounded' : verdict.kind,
+      previousDPR: probe.previousDPR,
+      probedDPR: probe.probedDPR,
+      previousFPS: probe.previousFPS,
+      currentFPS: settled ? currentFPS : null,
+      fpsRatio: settled ? verdict.fpsRatio : null,
+      timestamp,
+    };
+    if (this.probeRecords.length >= PROBE_RECORD_LIMIT) this.probeRecords.shift();
+    this.probeRecords.push(record);
   }
 
   /**

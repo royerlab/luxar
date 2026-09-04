@@ -34,7 +34,7 @@ import * as zarr from '../../zarr';
 import { log, Modules, LogEmoji } from '../../../utils/log';
 import { notifier } from '../../../utils/cross-layer/notifier';
 import { getWorkerPool, warmUpDataWorkerPool } from '../../../workers/worker-pool';
-import { markLoad } from '../../../profiling/load-timeline';
+import { markLoad, noteRefinementComplete } from '../../../profiling/load-timeline';
 import { ZarrSceneAttrs, SceneDimensionAttrs } from '../../../types/zarr';
 import { SUPPORTED_GSPLATS_FORMAT_VERSIONS } from '../../../types/format-contract';
 import type { LoaderConfig, SceneNode, ViewState } from '../../data-loader-types';
@@ -496,7 +496,12 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   const linesNeed = [...ctx.linesLoaders.values()].some(hasMore);
   const meshNeed = [...ctx.meshLoaders.values()].some(hasMore);
 
-  if (gsplatsNeed || pointsNeed || linesNeed || meshNeed) {
+  const needsRefinement = gsplatsNeed || pointsNeed || linesNeed || meshNeed;
+  // Nothing to stream: the load timeline's "refinement complete" milestone is
+  // reached trivially (perf probes gate `isSettled` on it).
+  if (!needsRefinement) noteRefinementComplete();
+
+  if (needsRefinement) {
     log.info(
       Modules.SCENE_LOADER,
       'Scheduling post-load progressive LOD refinement ' +
