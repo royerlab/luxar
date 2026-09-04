@@ -2102,7 +2102,7 @@ finest level instead). Both paths go through the shared
     above level 1 at 64 KiB chunks). Zarr arrays self-describe their
     compressor, so readers need no changes.
   - The rescale-first principle generalised to the sibling encodings:
-    `bounded_scalar_u8/u16` now anchor at the array's own `[min, max]`
+    `bounded_scalar_uint8/uint16` now anchor at the array's own `[min, max]`
     (new `min` attr, default 0 on decode — old arrays unaffected), and the
     per-channel `log_perchannel_*` / `signed_log_perchannel_*` pair
     (Cholesky diag/offdiag) gains **`zero_level: true`**: per-column scales

@@ -1,4 +1,4 @@
-"""Tests for the geometric-log scalar encoding (``geolog_scalar_u8/u16``).
+"""Tests for the geometric-log scalar encoding (``geolog_scalar_uint8/uint16``).
 
 The rescale-first encoding for wide-dynamic-range positive scalars: the grid
 is anchored to the array's own nonzero ``[min, max]`` in true log space
