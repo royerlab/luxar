@@ -556,22 +556,24 @@ describe('SceneIdentityWatchdog', () => {
     wd.dispose();
   });
 
-  it('does not trust a 304 returned to the unconditional fallback request', async () => {
+  it('treats a 304 from the unconditional fallback as inconclusive and keeps polling', async () => {
     let calls = 0;
     const wd = makeWatchdog(async (_url, init) => {
       calls++;
       const conditional = new Headers(init?.headers).has('if-none-match');
       if (calls === 1) return okWithETag(ATTRS, '"v1"');
       if (conditional) throw new TypeError('Failed to fetch');
-      return notModified();
+      return calls === 3 ? notModified() : okResponse(ATTRS);
     });
 
     wd.start();
     await tick(5000);
     await tick(5000);
+    await tick(5000);
 
-    expect(calls).toBe(3);
-    expect(banner.shown).toEqual(['changed']);
+    expect(calls).toBe(4);
+    expect(banner.shown).toEqual([]);
+    expect(banner.hidden).toEqual(['unreachable', 'unreachable']);
     wd.dispose();
   });
 
@@ -585,10 +587,9 @@ describe('SceneIdentityWatchdog', () => {
     await tick(5000);
     await tick(5000);
     await tick(5000);
-    // REGRESSION GUARD: `res.ok` is false for 304 and 304 is not in the
-    // inconclusive set, so a missing 304 branch reports the scene as CHANGED,
-    // raises the terminal banner and stops the timer — `calls` would freeze
-    // at 2 and `shown` would contain 'changed'.
+    // REGRESSION GUARD: `res.ok` is false for 304, so a missing conditional
+    // branch treats both responses as inconclusive and raises an unreachable
+    // banner instead of confirming that the scene still matches.
     expect(calls).toBe(3);
     expect(banner.shown).toEqual([]);
     expect(banner.hidden).toEqual(['unreachable', 'unreachable', 'unreachable']);
@@ -599,14 +600,16 @@ describe('SceneIdentityWatchdog', () => {
     const sent: Array<string | null> = [];
     const wd = makeWatchdog(async (_url, init) => {
       sent.push(new Headers(init?.headers).get('if-none-match'));
-      return notModified();
+      return sent.length === 1 ? notModified() : okResponse(ATTRS);
     });
 
     wd.start();
     await tick(5000);
+    await tick(5000);
 
-    expect(sent).toEqual([null]);
-    expect(banner.shown).toEqual(['changed']);
+    expect(sent).toEqual([null, null]);
+    expect(banner.shown).toEqual([]);
+    expect(banner.hidden).toEqual(['unreachable']);
     wd.dispose();
   });
 

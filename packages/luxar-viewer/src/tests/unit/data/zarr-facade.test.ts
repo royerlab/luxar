@@ -391,8 +391,8 @@ describe('Zarr facade contract', () => {
     const store = await zarr.openStore(rawStore);
     const group = await zarr.openGroupPreferV3(zarr.root(store));
 
-    // The format-2 arm is the one that matters: flipping the order must cost a
-    // legacy store correctness, only an extra probe.
+    // The format-2 arm is the one that matters: flipping the order must not
+    // cost a legacy store correctness, only an extra probe.
     expect(group.attrs).toEqual(rootAttrs);
     expect(rawStore.callsFor('/.zgroup').length).toBeGreaterThan(0);
   });

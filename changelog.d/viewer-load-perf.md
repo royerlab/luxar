@@ -25,10 +25,11 @@ every 120 s rather than every 15 s: a hosted store under a dated prefix is repla
 publishing a new URL, not by swapping bytes under the old one, so the tight cadence buys
 nothing there. `localhost` keeps 15 s, which is the case the watchdog exists for.
 
-The `304` branch is load-bearing in an unobvious way: `res.ok` is false for 304 and 304 is
-deliberately absent from the inconclusive-status set, so without an explicit branch the
-verdict fell through to `changed` — reporting a healthy scene as swapped, raising the
-terminal banner and stopping the watchdog for good. That is pinned by its own test.
+The conditional `304` branch is load-bearing in an unobvious way: `res.ok` is false for
+304, so without an explicit branch a valid bodyless response would be treated as
+inconclusive rather than confirming the scene still matches. An unsolicited `304` remains
+inconclusive because it carries no evidence about scene identity. Both paths are pinned by
+tests.
 
 **zarrita guessed zarr format 2 first, twice.** `resolveFormats` returns `["v2", "v3"]`
 for any store its version counter has not seen, so `withMaybeConsolidatedMetadata` probed

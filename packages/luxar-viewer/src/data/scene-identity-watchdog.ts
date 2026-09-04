@@ -99,12 +99,15 @@ const PROBE_TIMEOUT_MS = 10_000;
  *   supported and their credentials expire; a refused probe is NOT evidence
  *   that the scene changed, and the terminal banner's Reload cannot repair a
  *   stale credential anyway.
+ * - 304 without a conditional request: a broken server/proxy response that
+ *   carries no evidence about which scene the address serves.
  *
  * None of these may latch the terminal verdict. A 404 is different: the
  * server answered, and this scene's root attrs are simply not there.
  */
 function isInconclusiveStatus(status: number): boolean {
   return (
+    status === 304 ||
     status === 401 ||
     status === 403 ||
     status === 408 ||
@@ -422,10 +425,8 @@ export class SceneIdentityWatchdog {
         // body to compare.
         //
         // This MUST be handled before the paths below. `res.ok` is false for
-        // 304 and 304 is deliberately absent from the inconclusive set, so
-        // falling through would run `isInconclusiveStatus(304) ? … : 'changed'`
-        // and report a perfectly healthy scene as CHANGED — latching the
-        // terminal banner and stopping the watchdog for good.
+        // 304; a conditional 304 proves identity and is `ok`, while an
+        // unsolicited 304 says nothing and falls through as inconclusive.
         if (res.status === 304 && conditional) return 'ok';
         if (res.ok) {
           // Keep the ETag paired with its document: a fallback to the other
