@@ -60,18 +60,6 @@ export interface DataLoadingPerformanceConfig {
    */
   gpuPoolMaxBytes: number | null;
 
-  /**
-   * Main-thread work budget (ms) the progressive-refinement loop spends
-   * between animation-frame yields. Each refinement pass offers every
-   * loader one more rung; the loop used to yield one frame before EVERY
-   * pass, so a 16-node scene with 8-rung ladders paid ~8 frames of pure
-   * waiting even when every rung was already resident. With a budget the
-   * loop keeps running passes while their measured cost since the last
-   * yield stays under this many ms, then yields so the browser paints the
-   * rungs committed so far. `0` restores one yield per pass.
-   */
-  refinementPassBudgetMs: number;
-
   // Debugging
   enablePerformanceMonitoring: boolean;
 }
