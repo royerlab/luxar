@@ -158,6 +158,94 @@ CURRENT_VERSION_CLAIMS: tuple[tuple[str, str], ...] = (
         r"\(\*\*format v(\d+\.\d+)\*\*",
     ),
     (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        r"v3\.0-v(\d+\.\d+) files remain readable",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        r"Convert to a new v(\d+\.\d+) file",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        r"(?:→|stamped|writes the|emits|to|migration to|Format spec \() v?(\d+\.\d+)(?: root header| node-tree| `kind=lod`| bare leaf| additive ladder leaf| node tree|\))",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        r"current node-tree format \(v3\.0-v(\d+\.\d+)\)",
+    ),
+    (
+        "CLAUDE.md",
+        r"\.gsplats\.zarr is format v(\d+\.\d+)",
+    ),
+    (
+        "CLAUDE.md",
+        r"pre-v3\.2 pixel_size lod selector attrs\) → v(\d+\.\d+)",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/README.md",
+        r"standalone v(\d+\.\d+) \.gsplats\.zarr",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/README.md",
+        r"levels; v(\d+\.\d+) kind=lod group",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/README.md",
+        r"In v(\d+\.\d+) a saved `\.gsplats\.zarr`",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/README.md",
+        r"layouts → v(\d+\.\d+)",
+    ),
+    (
+        "packages/luxar/src/luxar/cli/README.md",
+        r"standalone `\.gsplats\.zarr` is a v(\d+\.\d+) node subtree",
+    ),
+    (
+        "packages/luxar/src/luxar/cli/README.md",
+        r"single current-format \(v(\d+\.\d+)\)",
+    ),
+    (
+        "packages/luxar-viewer/src/data/codecs/README.md",
+        r"current \*\*standalone gsplat format is v(\d+\.\d+)\*\*",
+    ),
+    (
+        "packages/luxar-viewer/src/data/codecs/README.md",
+        r"Standalone gsplat format spec \(v(\d+\.\d+)\)",
+    ),
+    (
+        "packages/luxar/src/luxar/core/group/lod/README.md",
+        r"v(\d+\.\d+) node-tree (?:grammar|format)",
+    ),
+    (
+        "packages/luxar/src/luxar/core/group/gsplats_pipeline/README.md",
+        r"v(\d+\.\d+) node tree grafted into the scene",
+    ),
+    (
+        "packages/luxar/src/luxar/core/group/gsplats_pipeline/README.md",
+        r"v(\d+\.\d+) node-tree format",
+    ),
+    (
+        "scripts/reencode_gsplat_demos.py",
+        r"format v(\d+\.\d+) \+ modern quantization",
+    ),
+    (
+        "scripts/reencode_gsplat_demos.py",
+        r"AUTO/v(\d+\.\d+), rebuilding its ladder",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/tests/test_format.py",
+        r'Tests for the v(\d+\.\d+) ``\.gsplats\.zarr``',
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/tests/test_format.py",
+        r'``format_version`` = ``"(\d+\.\d+)"``',
+    ),
+    (
+        "packages/luxar-viewer/src/data/scene-loader/lifecycle/load-scene.ts",
+        r"v3\.0–v(\d+\.\d+) are all\s+// readable",
+    ),
+    (
         "docs/specs/GSPLATS_ZARR_FORMAT.md",
         r"The current format is \*\*v(\d+\.\d+)\*\*",
     ),
