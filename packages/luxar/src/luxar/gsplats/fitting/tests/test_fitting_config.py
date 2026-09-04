@@ -465,7 +465,8 @@ class TestConfigDefaultsTrackTheFitter:
     33% faster at equal PSNR, while `sigma_min_diag=None` removes the lower
     bound on splat width altogether. Unpacking a DEFAULT-constructed config
     therefore used to change behaviour while reading as "no change" — the worst
-    shape for a default.
+    shape for a default. Default agreement is enforced centrally by
+    ``test_fit_schema_agreement.py::test_no_default_disagrees_with_the_entry_point``.
     """
 
     @staticmethod
