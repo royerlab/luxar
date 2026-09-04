@@ -32,11 +32,7 @@ function fail(msg) {
 }
 
 // 1. Output files exist.
-const expected = [
-  'luxar-viewer.js',
-  'luxar-viewer.css',
-  'types/index.d.ts',
-];
+const expected = ['luxar-viewer.js', 'luxar-viewer.css', 'types/index.d.ts'];
 for (const file of expected) {
   const abs = resolve(LIB_DIR, file);
   if (!existsSync(abs)) {
@@ -103,7 +99,7 @@ if (existsSync(jsPath)) {
   const foundMarker = threeSourceMarkers.find((re) => re.test(bundleText));
   if (foundMarker) {
     fail(
-      `Bundle appears to contain an inlined THREE core / duplicate runtime ` +
+      'Bundle appears to contain an inlined THREE core / duplicate runtime ' +
         `(matched ${foundMarker}, size: ${bundleSizeKB.toFixed(0)}KB). ` +
         'three is a peer dependency: `three` and ALL `three/*` subpaths ' +
         '(three/webgpu, three/tsl, …) must be externalized so the host page ' +
@@ -112,9 +108,7 @@ if (existsSync(jsPath)) {
   }
 
   // Friendly status line.
-  console.log(
-    `Library bundle: ${bundleSizeKB.toFixed(0)}KB (excluding three peer dep)`
-  );
+  console.log(`Library bundle: ${bundleSizeKB.toFixed(0)}KB (excluding three peer dep)`);
 }
 
 // 5. The WASM shim is reachable from every chunk that names it.

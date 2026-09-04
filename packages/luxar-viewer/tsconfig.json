@@ -15,12 +15,18 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
+    // The root Vite configs import sibling tooling with an explicit `.ts`
+    // extension, which Vite's native TS config loader requires (it does no
+    // extensionless resolution). Nothing here is emitted -- `noEmit` is on and
+    // the build goes through tsconfig.build.json -- so the extension never
+    // reaches an output file.
+    "allowImportingTsExtensions": true,
     "noEmit": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "tools"],
+  "include": ["src", "tools", "*.config.ts"],
   "exclude": ["node_modules", "dist"]
 }
