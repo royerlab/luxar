@@ -38,10 +38,10 @@ has no baseline mechanism. A bare ``select = ["B", "RUF012"]`` would fail on all
 pre-existing violations (473 at the time of writing, 290 of them ``B905``), so
 it could not be turned on at all without a large, unrelated, and — for ``B905``
 specifically — *behaviour-changing* sweep: ``strict=True`` RAISES on mismatched
-lengths, so it is a decision per call site, not a mechanical edit. The only
-ruff-native suppression is ``per-file-ignores``, which is *file*-granular and
-would blind the guard to brand-new violations inside the 200-odd files that
-already hold one.
+lengths, so it is a decision per call site, not a mechanical edit. Ruff's
+suppression settings are guarded separately: per-file ignores are especially
+dangerous because they are file-granular and would blind the ratchet to
+brand-new violations inside the 200-odd files that already hold one.
 
 Note what this gate does NOT need to tolerate: ``B008`` sits at zero, because
 ``[tool.ruff.lint.flake8-bugbear] extend-immutable-calls`` in ``pyproject.toml``
