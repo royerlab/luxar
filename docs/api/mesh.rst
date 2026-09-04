@@ -20,8 +20,9 @@ than twice under two names.
 Importing Classical Mesh Files
 ------------------------------
 
-Reads PLY, OBJ, STL, VTP and glTF/GLB into a common :class:`TriangleMesh`,
-including indexed directories of per-timepoint files.
+Reads PLY, OBJ, STL, VTP and glTF/GLB into a common
+:class:`~luxar.mesh.interop.TriangleMesh`, including indexed directories of
+per-timepoint files.
 
 .. automodule:: luxar.mesh.interop
    :members:
@@ -67,4 +68,5 @@ See Also
 
 * :doc:`shading` — bake ambient occlusion for the emissive geometry types
 * :doc:`core` — the :class:`luxar.core.Mesh` node itself
-* :doc:`cli` — the ``luxar mesh import`` / ``luxar mesh lod`` commands
+* :doc:`/guides/user/CLI_REFERENCE` — the ``luxar mesh import`` /
+  ``luxar mesh lod`` commands

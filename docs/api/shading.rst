@@ -18,9 +18,11 @@ so baking one fixes it in world space and it stops reading the moment the camera
 orbits — that belongs in a material, not in a store.
 
 .. automodule:: luxar.shading
-   :members:
-   :undoc-members:
-   :show-inheritance:
+   :no-members:
+
+Everything in ``luxar.shading``'s ``__all__`` is re-exported from
+:mod:`luxar.shading.occlusion`, so the members are documented once, below,
+rather than twice under two names.
 
 Occlusion
 ---------
