@@ -179,6 +179,40 @@ export default [
     },
   },
   {
+    // Size and complexity. 218K LOC of production TypeScript had no size,
+    // nesting, parameter-count or complexity gate of any kind (audit A2-05) —
+    // 36 methods at 120+ lines and 13 at 200+ were invisible to everything,
+    // with nothing stopping the next 672-line method. The Python side has had
+    // a C901 ratchet for months and demonstrably shrank its debt with it.
+    //
+    // Thresholds are not taste. `complexity: 10` is the same number
+    // `[tool.ruff.lint.mccabe] max-complexity` enforces on the Python side, so
+    // the two languages are held to one standard; 120 lines is the audit's own
+    // stated concern. Measured at these values: 561 production findings
+    // (378 complexity, 71 length, 61 params, 51 depth), all baselined in
+    // eslint-suppressions.json so nothing goes red today.
+    //
+    // PRODUCTION ONLY, and deliberately so rather than by omission. The
+    // finding is about the shipped surface; tests are not shipped; and the
+    // rules do not mean the same thing there — a long test body is a sequence
+    // of arrange/act/assert, not tangled control flow. It is also the
+    // difference between a 561-entry baseline and a 1,121-entry one, 435 of
+    // the extra being `max-lines-per-function` in test setup alone. If tests
+    // are ever brought in, `complexity`/`max-depth`/`max-params` add only 125
+    // between them — measured — and are the defensible subset to start with.
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/tests/**', 'src/**/*.test.ts', 'src/**/*.spec.ts'],
+    rules: {
+      complexity: ['error', { max: 10 }],
+      // Blank lines and comments excluded: this measures how much CODE a
+      // function holds. Counting a long explanatory comment against it would
+      // penalise precisely the thing this codebase does well.
+      'max-lines-per-function': ['error', { max: 120, skipBlankLines: true, skipComments: true }],
+      'max-depth': ['error', { max: 4 }],
+      'max-params': ['error', { max: 5 }],
+    },
+  },
+  {
     ignores: ['dist/**', 'node_modules/**', 'coverage/**', '*.config.js', '*.config.ts'],
   },
 ];
