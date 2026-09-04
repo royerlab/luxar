@@ -125,8 +125,8 @@ def _collect_emitted_names() -> set[str]:
     names.add(_emit(wide, SemanticType.POSITIVE_SCALAR, EncodingMode.MEMORY))
 
     # Low cardinality → lut_uint8. This name appears on disk more than any other
-    # quantized encoding in the built demo stores, and had no producer-side
-    # check at all.
+    # quantized encoding in the built demo stores, and nothing required it to
+    # stay reachable from the contract side.
     names.add(
         _emit(
             np.repeat(np.arange(10, dtype=np.float32), 400),
