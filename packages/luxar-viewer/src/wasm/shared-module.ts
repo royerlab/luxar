@@ -95,14 +95,14 @@ function binaryUrlsFor(shimUrlOverride?: string): string[] {
 }
 
 async function compileCandidate(url: string): Promise<WebAssembly.Module> {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
   try {
-    return await WebAssembly.compileStreaming(fetch(url));
+    return await WebAssembly.compileStreaming(response.clone());
   } catch {
     // `compileStreaming` REQUIRES an `application/wasm` content type, which
     // plenty of static hosts (and file-backed dev setups) do not send. Buffer
     // it instead rather than losing the optimization to a MIME header.
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return WebAssembly.compile(await response.arrayBuffer());
   }
 }

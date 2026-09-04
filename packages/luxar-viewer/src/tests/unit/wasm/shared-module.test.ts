@@ -73,10 +73,24 @@ describe('getSharedWasmModule', () => {
       throw new TypeError('Incorrect response MIME type');
     });
     const compile = vi.fn(async () => FAKE_MODULE);
-    stubWasm({ compileStreaming, compile });
+    const fetchImpl = vi.fn(async () => new Response(new Uint8Array()));
+    stubWasm({ compileStreaming, compile, fetchImpl });
 
     await expect(getSharedWasmModule(HTTP_SHIM)).resolves.toBe(FAKE_MODULE);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(compile).toHaveBeenCalledTimes(1);
+  });
+
+  it('fetches a missing candidate only once', async () => {
+    const compileStreaming = vi.fn(async () => FAKE_MODULE);
+    const compile = vi.fn(async () => FAKE_MODULE);
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 404 }));
+    stubWasm({ compileStreaming, compile, fetchImpl });
+
+    await expect(getSharedWasmModule(HTTP_SHIM)).resolves.toBeNull();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(compileStreaming).not.toHaveBeenCalled();
+    expect(compile).not.toHaveBeenCalled();
   });
 
   it('resolves null — never rejects — when every candidate fails', async () => {
