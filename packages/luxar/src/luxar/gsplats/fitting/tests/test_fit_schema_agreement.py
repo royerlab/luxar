@@ -2,10 +2,10 @@
 
 Audit A2-02. `fit_gaussian_splats` is the documented entry point, and its
 parameter set is restated by `GaussianSplatFitter.fit` and
-`prepare_fit_config` (43 shared names each), and by the four config dataclasses
-users are told to unpack into it. Every restatement is a chance for a default to
-drift, and adding a knob means editing several places with nothing checking that
-you edited them all.
+`prepare_fit_config` (43 shared names each), and across `FitConfig` plus the
+three declarative config bundles. Every restatement is a chance for a default
+to drift, and adding a knob means editing several places with nothing checking
+that you edited them all.
 
 **It had already drifted, six times.** The audit found one
 (`asymmetric_penalty`); an AST comparison of every shared name found five in
