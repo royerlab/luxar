@@ -121,6 +121,8 @@ def glob_to_regex(pattern: str) -> re.Pattern[str]:
     directory_only = pattern.endswith("/")
     if directory_only:
         pattern = pattern.rstrip("/")
+    if pattern.startswith("/"):
+        pattern = pattern[1:]
 
     out = ["^(?:.*/)?" if match_any_depth else "^"]
     i = 0
@@ -129,6 +131,10 @@ def glob_to_regex(pattern: str) -> re.Pattern[str]:
             # Zero or more leading directories.
             out.append("(?:.*/)?")
             i += 3
+        elif pattern.startswith("/**/", i):
+            # Zero or more directories between two path segments.
+            out.append("(?:/.*)?/")
+            i += 4
         elif pattern.startswith("/**", i):
             # Everything below this directory.
             out.append("/.*")

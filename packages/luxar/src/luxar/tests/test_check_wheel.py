@@ -68,6 +68,8 @@ checker = _load_checker()
         ("**/demos/data", "luxar/demos/data/a.npz", True),
         ("**/gsplats/demos/**", "luxar/gsplats/demos/run.py", True),
         ("**/gsplats/demos/**", "luxar/gsplats/seeds/demos/run.py", False),
+        ("**/gsplats/**/demos/**", "luxar/gsplats/demos/run.py", True),
+        ("/luxar/demos/data/**", "luxar/demos/data/a.npz", True),
     ],
 )
 def test_glob_to_regex_distinguishes_star_from_doublestar(
