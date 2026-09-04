@@ -28,12 +28,6 @@ _DEMO_PATH = (
     Path(__file__).resolve().parents[1] / "demo_gsplats_4d_zebrafish_timelapse.py"
 )
 _MANIFEST_PATH = _DEMO_PATH.parent / "data_manifest.json"
-_SHIPPED_ARCHIVE = (
-    Path(__file__).resolve().parents[1]
-    / "data"
-    / "gsplats_zebrafish"
-    / "zebrafish_4d.gsplats.zarr.zip"
-)
 # The component-filtered build, as pinned in the manifest.
 _ARCHIVE_SHA256 = "b4c0cf690f6906414c449fb8c713b78ed7d5f5f88c270ab58cf741f019456f93"
 _ARCHIVE_BYTES = 19_229_817
@@ -55,10 +49,10 @@ _demo = _load_demo_module()
 def test_the_manifest_pins_the_component_filtered_build() -> None:
     """The pin is what a user downloads, and it can rot without anyone noticing.
 
-    The read-back below only runs where the Git LFS payload is hydrated or a
-    fetched copy is cached. This half runs everywhere: reverting the pin to the
-    deposition's pre-component-filter upload would hand the NLM build to every
-    hosted-path user and fail nothing else.
+    The read-back below only runs where a fetched copy is cached. This half runs
+    everywhere: reverting the pin to the deposition's pre-component-filter
+    upload would hand the NLM build to every hosted-path user and fail nothing
+    else.
     """
     entry = json.loads(_MANIFEST_PATH.read_text())["datasets"][_demo.DEMO_NAME]
     pins = {f["name"]: (f["sha256"], f["bytes"]) for f in entry["files"]}
@@ -71,7 +65,7 @@ def test_the_manifest_pins_the_component_filtered_build() -> None:
     )
 
 
-def test_the_shipped_archive_is_the_component_filtered_build() -> None:
+def test_the_record_archive_is_the_component_filtered_build() -> None:
     """Catch a stale precomputed archive whose preprocessing disagrees with code."""
     assert (
         _demo.SEEDS,
@@ -79,28 +73,16 @@ def test_the_shipped_archive_is_the_component_filtered_build() -> None:
         _demo.MIN_COMPONENT_VOXELS,
         _demo.COMPONENT_CONNECTIVITY,
     ) == (32_000, "none", 4, 1), (
-        "the shipped archive was fitted at these values, and the README, changelog "
+        "the record archive was fitted at these values, and the README, changelog "
         "and docstring tables quote them; changing one means refitting and reshipping"
     )
-    # In-repo first, then the fetch cache: source checkouts normally use the Git
-    # LFS payload, while installed users will eventually use the hosted copy.
-    # Both arms are matched on the pinned SIZE — a wrong copy staged by hand into
-    # the hosted slot would otherwise be read back and fail as a splat-count
+    # Match the fetch-cache copy on the pinned SIZE — a wrong copy staged by hand
+    # into the record slot would otherwise be read back and fail as a splat-count
     # mismatch, which reads like a bad fit rather than the wrong file. (The demo's
     # own refits live in the sibling `local/` namespace and are never seen here.)
-    archive_path = next(
-        (
-            p
-            for p in (_SHIPPED_ARCHIVE, _demo.CACHE_DIR / _demo.GSPLATS_FILE)
-            if p.exists() and p.stat().st_size == _ARCHIVE_BYTES
-        ),
-        None,
-    )
-    if archive_path is None:
-        pytest.skip(
-            "no copy of the pinned zebrafish archive on disk — it is "
-            "neither hydrated from Git LFS nor present in the fetch cache"
-        )
+    archive_path = _demo.CACHE_DIR / _demo.GSPLATS_FILE
+    if not archive_path.exists() or archive_path.stat().st_size != _ARCHIVE_BYTES:
+        pytest.skip("the pinned zebrafish archive is not present in the fetch cache")
 
     from luxar.gsplats.gsplat_data import GSplatData
 
@@ -111,7 +93,7 @@ def test_the_shipped_archive_is_the_component_filtered_build() -> None:
         for sublod in finest.additive_sublods
     )
     assert frame_zero_splats == 1_369, (
-        f"shipped frame 0 has {frame_zero_splats:,} splats, not the measured "
+        f"record frame 0 has {frame_zero_splats:,} splats, not the measured "
         "component-filtered 1,369; the archive may still contain the NLM build"
     )
 

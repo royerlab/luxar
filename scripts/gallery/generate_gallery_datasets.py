@@ -16,11 +16,12 @@ A demo whose ``DEMO_META`` declares machine-local ``local_data`` exits non-zero
 wherever that input is absent, which used to make the whole run report a hard
 ``failed`` and return 1. ``manual-file`` (the Gaia catalog is CC BY-NC, so it has
 to be placed by hand) and ``kaggle-auth`` are always treated this way. A
-``git-lfs`` demo is treated this way only while one of the payload files named by
-its manifest cache is missing or still an unpulled pointer; once every payload is
-present, a non-zero exit is a real failure. Such an entry is RUN like any other
-(so the machine that does have the input regenerates its tile on every route,
-``--force`` included), and only a positive exit with unavailable input is
+``git-lfs`` demo is treated this way only while one of its manifest-declared
+checkout payloads is missing or still an unpulled pointer; once every payload is
+present, a non-zero exit is a real failure. Record-backed downloads declare no
+``local_data`` requirement and therefore fail hard. Such an entry is RUN like
+any other (so the machine that does have the input regenerates its tile on every
+route, ``--force`` included), and only a positive exit with unavailable input is
 reclassified into the soft *manual-data* bucket instead of ``failed``.
 
 A demo listed in ``UNBUILDABLE_IDS`` is skipped WITHOUT being run at all — not
@@ -37,10 +38,8 @@ it stays visible. And a ``timeout``, a
 return code: the OOM killer, a segfault) stays HARD even for them. One real case
 remains unrescued: ``arxiv_papers_kaggle`` needs no credentials to start and
 declares a ~30 GB download, so on a cold machine it can exhaust
-``GEN_TIMEOUT_S`` and land in ``timeout``. ``cellxgene_census_umap`` is now
-probeable through its manifest cache and can be demoted when its LFS payload is
-missing. Skipping large downloads would stop regenerating the arXiv tile on a
-machine whose cache is warm.
+``GEN_TIMEOUT_S`` and land in ``timeout``. Skipping large downloads would stop
+regenerating the arXiv tile on a machine whose cache is warm.
 
 Usage::
 

@@ -157,7 +157,7 @@ DEMO_META = {
         "download_mb": 12,
         "compute": "medium",
         "gpu": "optional",
-        "local_data": "git-lfs",
+        "local_data": None,
     },
     "caches": ["gsplats_nexrad_supercell"],
     "outputs": ["gsplats_4d_nexrad_supercell"],

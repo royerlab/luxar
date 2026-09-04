@@ -159,7 +159,7 @@ The build system is designed to work on **fresh Linux/macOS machines** with mini
 **Prerequisites:**
 - Python 3.12+ (usually pre-installed; `python3.12` is the usual HPC module)
 - Git and curl
-- **Git LFS** (optional, required for demo data files): `brew install git-lfs` (macOS) or `sudo apt-get install git-lfs` (Ubuntu)
+- **Git LFS** (optional, required for the Dip-C demo payload): `brew install git-lfs` (macOS) or `sudo apt-get install git-lfs` (Ubuntu)
 - **Ubuntu/Debian only**: `sudo apt-get install -y pipx && pipx ensurepath`
 - **HPC/no-sudo**: no extra prerequisites — the Makefile auto-detects and uses venv fallback
 
@@ -236,7 +236,8 @@ make test-cuda
 
 **Git LFS (Large File Storage):**
 
-Some demo data files (`.npz`, `.zip`) are stored using Git LFS to keep the repository size manageable.
+The Dip-C demo payload, `dipc_genome/dipc_gm12878.npz`, is stored using Git LFS.
+Other hosted demo payloads are fetched from their checksum-pinned records.
 
 ```bash
 # Install Git LFS (one-time)
@@ -250,10 +251,11 @@ git lfs install
 git lfs pull
 
 # Verify LFS files (should show actual sizes, not ~100 bytes)
-ls -lh packages/luxar/src/luxar/demos/data/*.npz
+ls -lh packages/luxar/src/luxar/demos/data/dipc_genome/dipc_gm12878.npz
 ```
 
-If demos fail with "file not found" errors, you likely need to pull LFS files.
+If the Dip-C demo reports a tiny or missing payload, pull the LFS file. For
+other hosted demos, inspect the manifest/record fetch error instead.
 See `packages/luxar/src/luxar/demos/data/README.md` for details.
 
 See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for complete documentation.

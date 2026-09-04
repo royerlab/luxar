@@ -28,12 +28,35 @@ by deliberately hiding it.
 Three requirements, each load-bearing
 -------------------------------------
 1. **Assert on sha256, never on "a file appeared."**
-   The demo-site origin — and Cloudflare Pages generally — answers a miss with
-   **HTTP 200 and ``text/html``**, not 404. A status-code check therefore passes
-   on a missing object. Worse, ``ensure_dataset`` would then quarantine the HTML
-   error page as a corrupt archive, reporting *data corruption* where the truth
-   is *missing file*. Only the digest tells those two apart. Do not "simplify"
-   this to a status or size check.
+   Not because the host lies about status — measured 2026-09-02, ``zenodo.org``
+   (which is where ``zenodo_file_url`` sends every fetch unless a record sets an
+   explicit ``base_url``) answers a missing file AND a missing record with a
+   correct **404**, HTML error body but honest status. The soft-404 that returns
+   **200 ``text/html``** on a miss is Cloudflare **Pages**
+   (``demos.luxarviewer.dev``); the R2 data origin 404s properly too. Do not
+   justify this requirement by the soft-404: that reason is false for the host
+   this gate actually targets, and a false reason is the fragile kind — someone
+   measures zenodo.org, finds it honest, and "simplifies" the digest into a
+   status check.
+
+   The reasons that DO apply, none of which a 200 can catch:
+     - **truncation** — a short read is a 200 with fewer bytes. The download
+       path is hardened against the obvious version of this (every fetch stages
+       to a sibling ``.part`` and is atomically promoted only on completion, so
+       an interrupted transfer cannot leave partial bytes at the destination),
+       and a cache hit is digest-checked before it is returned. So this is the
+       class the digest closes, not a known live hole: the 140 MiB truncation
+       seen during this migration is why the class is taken seriously, not a
+       bug that is still open.
+     - **a wrong-file or wrong-generation swap** — the right name serving the
+       wrong bytes, e.g. a re-upload after a refit.
+     - **proving the record matches what the manifest DECLARES**, which is the
+       whole question being asked before a payload is deleted.
+
+   And downstream of any of those, ``ensure_dataset`` quarantines the bad bytes
+   as a *corrupt archive* — so the failure it reports is "data corruption" when
+   the truth may be "wrong file". Only the digest distinguishes them. Do not
+   "simplify" this to a status or size check.
 
 2. **Hide the in-repo copy, do not merely use a fresh cache.**
    ``ensure_dataset`` resolves cache -> in-repo LFS -> hosted. A fresh
@@ -43,16 +66,17 @@ Three requirements, each load-bearing
    real tree aside: same guarantee, but it never mutates a working tree that
    other people and jobs are using.
 
-3. **Prefer ``hosted_sha256`` over ``sha256``.**
-   They are two different contracts: ``sha256`` describes the repo copy,
-   ``hosted_sha256`` the record copy, and for most datasets they differ. Only
-   the hosted digest says anything about what a stranger will download.
+3. **Verify the record pin independently.**
+   Current Zenodo entries carry one ``sha256`` contract describing the record
+   copy. ``hosted_sha256`` remains supported only for legacy manifests that
+   have not yet collapsed their separate repo and record contracts.
 
    Honest scoping of this one: the download leg inside ``ensure_dataset``
-   already validates strictly against the hosted pin, so on a cold cache it is
-   what rejects wrong bytes first, and the re-check below is a backstop. It is
-   kept because it makes this gate independent of that internal — a resolver
-   that ever accepted either contract on the download path (as
+   already validates strictly against the record pin (the legacy hosted pin
+   when present, otherwise ``sha256``), so on a cold cache it is what rejects
+   wrong bytes first, and the re-check below is a backstop. It is kept because
+   it makes this gate independent of that internal — a resolver that ever
+   accepted either legacy contract on the download path (as
    ``_accepted_contract`` already does for a CACHED file) would otherwise pass
    a mis-uploaded record silently. Requirement 2, not this one, is what makes
    the harness irreplaceable.
@@ -146,12 +170,12 @@ def is_reachable(
 
 def expected_digest(entry: dict[str, Any]) -> tuple[Optional[str], str]:
     """The digest to check against, and which contract it came from."""
-    if entry.get("hosted_sha256"):
-        return entry["hosted_sha256"], "hosted"
-    if entry.get("sha256"):
-        # Falling back is worth doing but worth saying: this pins the REPO copy,
-        # so a record holding different bytes would be reported as a mismatch.
-        return entry["sha256"], "repo (no hosted_sha256 declared)"
+    sha = entry.get("sha256")
+    hosted_sha = entry.get("hosted_sha256")
+    if sha and not hosted_sha:
+        return entry["sha256"], "record"
+    if hosted_sha:
+        return entry["hosted_sha256"], "legacy hosted"
     return None, "none declared"
 
 

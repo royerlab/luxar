@@ -194,7 +194,7 @@ Two remedies, both printed by the demo itself:
 ```bash
 luxar demo run <key> -- --recompute       # recompute from source
 rm -rf datasets/demos/<key>.luxar.zarr    # or drop it and let the demo unpack
-                                          # the current shipped Git-LFS asset
+                                          # the current record-fetched asset
 ```
 
 Grep build logs for `Using cached scene` after any sweep. One gallery tile in
@@ -386,138 +386,45 @@ Consequences for this site:
   (`gen_landing.py` never reads `note`). The exposure is in the manifest `note`
   fields, which are internal.
 
-### 3.10 One path, two generations: hash before asserting
+### 3.10 One path, two generations: the closed Git-LFS migration hazard
 
-`demo_gsplats_2d_cmu1_pathology.py` used to say its hosted archives were "still
-flat leaves" (corrected here; see **And the docstring** below). Two caches
-yielded answers that could not both be true for
-`cmu1_ch0.gsplats.zarr.zip` — a flat laddered leaf with **no `kind` attr
-anywhere**, and a four-part `kind=partition` tree.
+Before #2354, a Zenodo entry could pin an in-repo Git-LFS generation with
+`sha256` / `bytes` and a different record generation with
+`hosted_sha256` / `hosted_bytes`. This explained an apparent contradiction for
+`cmu1_ch0.gsplats.zarr.zip`: the former archive was a flat laddered leaf, while
+the record archive was a four-part `kind=partition` tree.
 
-**Both were right.** The manifest pins two generations of the same filename:
+#2354 removed the Zenodo payloads from Git LFS and collapsed each entry onto the
+record contract. The active cmu1 pin is now:
 
-    cmu1_ch0   sha256         cd22645f...   bytes          38,201,205   <- in-repo copy
-               hosted_sha256  7d605c3c...   hosted_bytes   45,697,890   <- what the record serves
+    cmu1_ch0   sha256  7d605c3c...   bytes  45,697,890   <- current record pin
 
-A cache holding the in-repo generation has all three channels matching `sha256`;
-a cache holding the hosted generation has all three matching `hosted_sha256`.
-Same path string, same demo, 1.2-1.47x apart in bytes and structurally unrelated.
+There is no longer a repo generation selected by ordinary resolution. A stale
+cache from before the teardown fails the current pin and is downloaded again.
+The optional hosted fields remain supported only for legacy manifests.
 
-`_support/datasets/data_fetch.py` documents why: the two contracts were one field
-until a refit replaced the hosted artifact without touching the in-repo copy, and
-splitting them is what kept Zenodo publication off the critical path of every
-demo-data PR.
+#### The historical consequence worth retaining
 
-**The discriminator, and the only reliable one:** hash the file and match it
-against `sha256` vs `hosted_sha256`. That names the generation in one command.
-Byte size alone is suggestive; a digest is decisive. Neither measurement was
-matched to a digest before its structural claim was made.
+The migration exposed a general rule: **a tile's structure is a property of the
+artifact generation, not just the recipe.** The same path can name unrelated
+archive topology after a re-upload, and byte size alone does not identify which
+generation was measured. Hash the artifact before attaching structural claims
+to it, and inspect the scene-build call as well as the archive: re-adding raw
+arrays discards archive topology, while grafting a partition or nested tree
+preserves it.
 
-#### The consequence worth knowing
-
-`data_fetch.py` states the resolution order plainly: *"while an in-repo payload
-is present it wins over a newer hosted artifact, so a checkout with a stale LFS
-object keeps serving the older generation (loudly)."*
-
-So **the same demo builds a structurally different scene depending on which
-generation the building machine has in cache.** cmu1 re-authors the flat in-repo
-copy but grafts the hosted partition: the former produces a flat scene (12
-element nodes, 20,591,415 elements — exactly the sum of the three archives),
-while the latter produces a four-part partition per channel.
-
-Three things follow for this site:
-
-- **A tile's structure is a property of the artifact generation, not just the
-  recipe.** Record the digest used to build a tile when its demo grafts pinned
-  archives.
-- **A tile can be accidentally correct.** cmu1's live tile is flat because the
-  publishing machine held the stale in-repo generation — not because anything
-  chose that.
-- **The trigger is an LFS payload refresh** — which looks like routine
-  housekeeping, touches no code, and changes no reviewable line. That is what
-  makes this worth a runbook entry rather than a comment.
-
-**But 3.11's rule narrows the exposure by authoring path.** Four of the fourteen
-diverged datasets are loaded into `GSplatData` and re-added as raw arrays, so
-their bytes and splat content can change but their archive topology is
-discarded. Seven pass the `GSplatData` object to `add_gsplats_from_data`, which
-preserves additive rungs and lowers multiple substitutive levels into a
-`kind=lod` scene group. Three take the artifact whole: two by file path, grafted
-only when the file is a partition or nested tree, and one by unpacking a shipped
-scene:
-
-| authoring path | datasets |
-|---|---|
-| re-add raw arrays | `gsplats_kidney`, `gsplats_cells3d`, `gsplats_ct_totalsegmentator`, `gsplats_visible_human_head` |
-| pass through `add_gsplats_from_data` | `gsplats_cryoem_virus`, `gsplats_milkyway_dust`, `gsplats_celegans`, `gsplats_dapi`, `gsplats_multichannel`, `gsplats_nexrad_supercell`, `gsplats_opencell_map4` |
-| load by file path; graft only a partition or nested tree | `gsplats_flylight_mcfo_63x`, `gsplats_cmu1_pathology` |
-| unpack a shipped scene | `desi_galaxies` |
-
-Digest-confirmed copies show structural divergence for two pass-through
-datasets: `cryoem_virus` changes from a flat leaf to a flat leaf with a five-rung
-ladder (no `kind` either side; the rungs are what reaches the scene);
-`milkyway_dust` changes from flat to four substitutive levels with additive
-rungs. Of the three that take the artifact whole, only `cmu1_pathology` is
-digest-confirmed on both sides, so the confirmed armed set is **three**. The
-hosted topology of `flylight_mcfo_63x`, `desi_galaxies`, `celegans`, and
-`nexrad_supercell` remains unclassified; inspect a digest-confirmed copy before
-counting any of them. Check the scene-build call as well as the archive before
-treating a divergence as a structural risk.
-
-#### Scope: this is not a cmu1 quirk
-
-Measured across `data_manifest.json` — of 45 pinned file entries, 23 carry a
-`hosted_sha256`, and **all 23 differ from their repo `sha256`**. Fourteen
-datasets are affected:
-
-| dataset | files | repo MB | hosted MB | ratio |
-|---|---:|---:|---:|---:|
-| `gsplats_cells3d` | 2 | 0.6 | 1.3 | 2.25x |
-| `gsplats_milkyway_dust` | 1 | 7.8 | 10.6 | 1.36x |
-| `gsplats_cmu1_pathology` | 3 | 113.8 | 150.1 | 1.32x |
-| `gsplats_nexrad_supercell` | 1 | 10.1 | 12.9 | 1.28x |
-| `gsplats_dapi` | 1 | 0.1 | 0.1 | 1.22x |
-| `gsplats_visible_human_head` | 2 | 25.6 | 30.2 | 1.18x |
-| `gsplats_celegans` | 1 | 72.0 | 80.8 | 1.12x |
-| `desi_galaxies` | 1 | 74.3 | 76.8 | 1.03x |
-| `gsplats_kidney` | 3 | 2.1 | 2.1 | 0.99x |
-| `gsplats_ct_totalsegmentator` | 2 | 7.2 | 7.0 | 0.98x |
-| `gsplats_multichannel` | 2 | 0.4 | 0.4 | 0.95x |
-| `gsplats_cryoem_virus` | 1 | 11.1 | 10.6 | 0.95x |
-| `gsplats_flylight_mcfo_63x` | 1 | 8.2 | 7.7 | 0.94x |
-| `gsplats_opencell_map4` | 2 | 1.6 | 1.5 | 0.93x |
-
-So the presence of `hosted_sha256` **is** the divergence signal — there is
-currently no dataset carrying the field whose two generations agree.
-
-**The ratio column predicts nothing about structure, in either direction.** It is
-here to size the download, not the risk:
-
-- `cells3d` at **2.25x** is flat -> flat. Only the splat count moved (20,323 vs
-  41,975); both scenes have 2 element nodes.
-- `cryoem_virus` at **0.95x** is flat leaf -> flat leaf with a five-rung ladder
-  (no `kind` either side; the rungs are what reaches the scene).
-- `cmu1` at **1.32x** is flat leaf -> a four-part partition.
-
-Ratios below 1.0 are refits that shrank, and they are not exempt either. Only a
-kind-based read of a **digest-confirmed hosted copy** settles topology.
-
-Practical consequence: for any of these fourteen, a local measurement describes
-whichever generation that host cached. Hash it before attaching the result to a
-generation.
-
-#### And the docstring
-
-`demo_gsplats_2d_cmu1_pathology.py:512-518` used to describe the *hosted*
-archives as flat, even though they carry a four-part partition per channel. It
-now records that the in-repo flat generation wins while it remains in the tree,
-despite the record already serving the partitioned generation. Neither statement
-can be established from an in-repo measurement alone.
+The former dual contract covered 23 files across fourteen datasets, and every
+pair differed. That inventory and its repo/record size ratios described the
+staged migration, not the current manifest, so it was retired with the in-repo
+payloads. The structural examples remain useful: `cells3d` changed size but
+stayed flat, `cryoem_virus` gained a five-rung ladder, and `cmu1` changed from a
+flat leaf to a four-part partition. Only a digest-confirmed, kind-based read
+settles topology.
 
 Derive topology from each group's declared `kind` (children of `kind=lod` are
 substitutive levels, children of `kind=partition` are parts) rather than from
 node-name patterns. And note that **no `kind` attr anywhere means flat, not
-unreadable** — the in-repo cmu1 generation is well-formed with zero kinds.
+unreadable**.
 
 ### 3.11 Flattening only cuts requests when archive topology reaches the scene
 
@@ -541,10 +448,9 @@ Applied to the current demo code:
   and grafts its own output, so its groups are authored rather than inherited.
   Its structure changes through recipe settings such as `max_elements`, not by
   flattening a separately supplied artifact.
-- **`cmu1_pathology`** re-authors the flat in-repo copy but grafts the hosted
-  partition, so either way the archive's structure reaches the scene (3.10).
-  Flattening the hosted archives is a real win *and* collapses that divergence —
-  but measure the generation before claiming either.
+- **`cmu1_pathology`** grafts the record's partition, so its archive structure
+  reaches the scene node-for-node (3.10). Flattening that archive is a real load
+  win, but measure the resulting topology before claiming it.
 - **`cryoem_virus`**, **`milkyway_dust`**, **`dapi`**, **`multichannel`**, and
   **`opencell_map4`** pass `GSplatData` through, so their digest-confirmed hosted
   ladders and levels become scene nodes rather than being flattened by the demo.
@@ -575,12 +481,11 @@ that warning is expected for a sliced nD node that satisfies the runtime limit."
 **An `ElementCapacityWarning` on a sliced nD node is not a finding.**
 
 **The exception is a STATIC object**, which has no hidden axis to reduce the
-committed set. The hosted `cmu1` generation (`hosted_sha256`; ch0
+committed set. The current `cmu1` record generation (`sha256`; ch0
 `7d605c3c...`) flattens its three channels to 8,823,953 / 9,924,486 / 10,830,790
-splats; the in-repo `sha256` generation flattens to 6,896,619 / 7,093,383 /
-6,601,413. Both are 2D — nothing to slice on — and every channel exceeds the
-cap, so the overflow shows as a Hilbert-contiguous clean-edged hole that reads
-as missing data. There, parts stop being optional and become load-bearing.
+splats. All are 2D — nothing to slice on — and every channel exceeds the cap, so
+the overflow shows as a Hilbert-contiguous clean-edged hole that reads as
+missing data. There, parts stop being optional and become load-bearing.
 
 Do not try to confirm that by opening the tile: it renders **whole** on a
 developer Mac, because a Metal `maxTextureSize=16384` path caps at 16,777,216
@@ -977,16 +882,13 @@ Two separate hazards that showed up together.
 
 #### Local resolution does not prove the hosted pin
 
-Section 3.10 covers the fixed resolution order: verified local cache, then
-**in-repo git-LFS payload, then Zenodo**. The resolver considers
-`hosted_sha256` before `sha256`, but accepts either contract for cached and
-in-repo bytes. While the packaged payload matches `sha256`, the divergence notice
-looks the same whether the hosted pin is right or wrong; no hosted bytes were
-fetched, so an ordinary local run, CI run or demo build cannot distinguish them.
+Before #2354, section 3.10's resolution order was verified local cache, then
+**in-repo git-LFS payload, then Zenodo**. An ordinary local run could therefore
+prove only the packaged generation, not the record pin.
 
-Use the shipped cold-fetch harness before removal: `make check-cold-fetch` hides
-the in-repo payload directory, starts from an empty cache and verifies the record
-against the hosted contract. For teardown, run
+Use the shipped cold-fetch harness before any future removal:
+`make check-cold-fetch` hides the in-repo payload directory, starts from an
+empty cache and verifies the record against its manifest pin. For teardown, run
 `hatch run python scripts/verify_cold_fetch.py --require-verified N` with the
 expected target count after the final upload, so a dormant or missed variant
 cannot turn an incomplete audit green. A digest mismatch aborts with a checksum
@@ -994,8 +896,9 @@ error rather than accepting a silently wrong generation.
 
 #### An audit expires on the next write, not on a timer
 
-`gsplats_cmu1_pathology` pinned `hosted_bytes` 84,492,218 / 93,189,978 /
-100,336,780 against a draft holding 45,697,890 / 50,699,910 / 53,698,264, and
+During the migration, `gsplats_cmu1_pathology` pinned record sizes 84,492,218 /
+93,189,978 / 100,336,780 against a draft holding 45,697,890 / 50,699,910 /
+53,698,264, and
 `git log --all -S'45697890' -- packages/luxar/src/luxar/demos/data_manifest.json`
 returned **nothing at the time**. The pins later entered history in `c5cb10207`
 and `77d98994e`, so the same query is no longer empty.
@@ -1034,7 +937,7 @@ So the rule is not "re-run before publish" — it is:
 - **Re-check the record's prose too.** Descriptions carry sizes and part counts and
   go stale with the same write.
 
-#### A partial re-pin leaves the drafts and the manifest deliberately disagreeing
+#### The partial re-pin left one archive on its deliberate previous generation
 
 PR #2333 resolved this for **five of the eight restructured archives** —
 `cmu1_ch0/1/2`, `cryoem_virus`, and the hosted-only `h2afva_51tp` (whose
@@ -1052,18 +955,15 @@ Only `milkyway_dust` remains on its previous pin **on purpose**. Its coarse leve
 are what get selected when the galaxy is orbited at range; a flat streaming ladder
 would regress the zoomed-out view (3.14).
 
-**The consequence is a publish-order constraint, not a to-do.** The drafts hold
-the restructured `milkyway_dust` file while the manifest pins the previous
-generation. After the in-repo payload is removed, publishing the record in that
-state makes cold fetches and fresh installs abort with an uncaught checksum
-`ValueError`: the demo catches `DatasetUnavailable`, not digest mismatches, so the
-source-download/refit fallback does not run. Roll the draft file back to the pinned
-contract before publishing. The live gallery tile is indifferent either way,
-because it serves an already-derived scene and never consults the pin (3.10).
-
-Publish Zenodo records `21912280` and `22118695` together: the Drosophila
-record's `isPartOf` and both descriptions' cross-references name the other
-record's reserved DOI, which does not resolve until publication.
+**That publish-order constraint was discharged before #2354.** The
+`milkyway_dust` file on record `21912280` was rolled back to the manifest's
+10,647,985-byte pin, and records `21912280` and `22118695` were published
+together on 2026-09-02. Cold fetches therefore receive the generation the
+manifest verifies. The general rule remains: never publish a record whose bytes
+disagree with the committed pin, because a checksum `ValueError` is an integrity
+failure rather than an ordinary `DatasetUnavailable` fallback. The live gallery
+tile is indifferent because it serves an already-derived scene and never
+consults the pin (3.10).
 
 ### 3.21 Guard the artefact you ship, not only the inputs you fed it
 

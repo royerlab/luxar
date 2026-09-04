@@ -327,25 +327,17 @@ class TestPinnedScanList:
             assert name.endswith(".gsplats.zarr.zip")
             assert f"{i:04d}" in name
 
-    def test_shipped_bundle_inner_names_are_the_cache_names(self) -> None:
-        """Open the actual LFS bundle and compare, when it is materialized.
+    def test_cached_bundle_inner_names_are_the_cache_names(self) -> None:
+        """Open the fetched bundle and compare, when it is cached.
 
         The format check above cannot catch a token-format change that leaves
-        the pattern intact; only the real archive can. Skipped on checkouts
-        where the bundle is still an LFS pointer.
+        the pattern intact; only the real archive can.
         """
         import zipfile
 
-        from luxar.demos import is_lfs_pointer
-
-        bundle = (
-            Path(_demo.__file__).parent
-            / "data"
-            / _demo.DEMO_NAME
-            / _demo._PRECOMPUTED_BUNDLE_NAME
-        )
-        if not bundle.exists() or is_lfs_pointer(bundle):
-            pytest.skip("LFS bundle not materialized (run `git lfs pull`)")
+        bundle = _demo.CACHE_DIR / _demo._PRECOMPUTED_BUNDLE_NAME
+        if not bundle.exists():
+            pytest.skip("record bundle is not present in the Luxar cache")
         with zipfile.ZipFile(bundle) as zf:
             inner = {Path(n).name for n in zf.namelist() if not n.endswith("/")}
         expected = {

@@ -71,7 +71,7 @@ DEMO_META = {
         "download_mb": 1,
         "compute": "medium",
         "gpu": "optional",
-        "local_data": "git-lfs",
+        "local_data": None,
     },
     "caches": ["gsplats_cells3d"],
     "outputs": ["gsplats_3d_cells3d_multichannel"],

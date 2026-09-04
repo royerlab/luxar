@@ -127,18 +127,20 @@ so those demos have to build their data themselves.
 
 **That manifest is GENERATED — never hand-edit it.** Declare the dataset in
 `scripts/gen_data_manifest.py` (bucket, record, license, source, attribution) and
-run `make gen-data-manifest`; the `sha256` and byte counts are read off the tree.
-A `hosted_sha256` (present only where the Zenodo artifact differs from the
-in-repo copy) cannot be derived from the tree and is carried forward instead, so
-hand-editing one is safe across a regeneration.
+run `make gen-data-manifest`; in-repo files are measured from the tree, while a
+`zenodo` entry's `sha256` and byte count pin the published record. Legacy
+`hosted_sha256` metadata is carried forward when present because it cannot be
+derived from the tree.
 A hand-edited metadata field always fails
 `test_committed_manifest_matches_generator`; a hand-edited checksum does not when
 the payload directory is absent or empty in your checkout, since the generator
 then reuses the committed file list verbatim rather than wiping it. Re-serializing
 it yourself with the wrong `indent` rewrites all ~600 lines into diff noise (the
-generator uses `indent=2`). Replacing a payload in place is then just: copy the
-new file over the LFS-tracked one, regenerate, and check the diff is only the
-sha256/bytes lines.
+generator uses `indent=2`). To replace a `zenodo` payload, upload the new bytes to
+the record first, update its `sha256`/`bytes`, append the outgoing digest to
+`superseded_sha256`, then run `make gen-data-manifest` and inspect the focused
+diff. Copying a replacement over an LFS-tracked file applies only to the retained
+Dip-C payload; regenerate afterwards and verify its `sha256`/`bytes` change.
 
 ## Appearance is authored, not defaulted
 
