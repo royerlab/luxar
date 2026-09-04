@@ -267,6 +267,4 @@ def test_a_mixed_run_with_one_checkable_store_still_inspects(
     # rather than bailing before the compare loop.
     assert code == 1
     assert "are not demo outputs" in out
-    assert (
-        "checked 1 built scene(s); problems: 0; unrecognised: 1; skipped: 0" in out
-    )
+    assert "checked 1 built scene(s); problems: 0; unrecognised: 1; skipped: 0" in out
