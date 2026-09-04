@@ -205,7 +205,7 @@ export interface AdaptiveDPRDiagnostics extends AdaptiveDPRState {
   backoffLevel: number;
   scaleDowns: number;
   scaleUps: number;
-  /** Most recent last; at most {@link PROBE_RECORD_LIMIT} entries. */
+  /** Most recent last; at most `PROBE_RECORD_LIMIT` entries. */
   verdicts: AdaptiveDPRProbeRecord[];
 }
 

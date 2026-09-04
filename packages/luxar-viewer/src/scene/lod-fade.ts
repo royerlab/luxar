@@ -91,7 +91,7 @@ function isFadeable(mat: THREE.Material): mat is FadeableMaterial {
  */
 const BLENDABLE_MODES: ReadonlySet<string> = new Set(['additive', 'luminous', 'volumetric']);
 
-/** True when `mode` is one of {@link BLENDABLE_MODES} (opacity is a linear knob). */
+/** True when `mode` is one of `BLENDABLE_MODES` (opacity is a linear knob). */
 export function isBlendableMode(mode: string | undefined): boolean {
   return mode != null && BLENDABLE_MODES.has(mode);
 }
