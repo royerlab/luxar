@@ -109,6 +109,10 @@ def _documents() -> list[Path]:
 def _violations_in(path: Path, siblings: dict[str, str]) -> list[tuple[int, str, str]]:
     """``(lineno, wrong_token, real_name)`` for each bad claim in ``path``."""
     prose = path.suffix in PROSE_SUFFIXES
+    templates = {
+        f"{re.sub(r'\d+$', '', wrong)}{{bits}}": f"{re.sub(r'\d+$', '', real)}{{bits}}"
+        for wrong, real in siblings.items()
+    }
     out: list[tuple[int, str, str]] = []
     for lineno, line in enumerate(
         path.read_text(encoding="utf-8", errors="ignore").splitlines(), 1
@@ -117,19 +121,9 @@ def _violations_in(path: Path, siblings: dict[str, str]) -> list[tuple[int, str,
             continue
         haystacks = [line] if prose else [m.group(1) for m in BACKTICKED.finditer(line)]
         for haystack in haystacks:
-            for wrong, real in siblings.items():
-                # `..._u{bits}` stands for both widths, so check the template
-                # form too -- that is how the encoder builds these names.
-                stem = re.sub(r"(8|16)$", "", wrong)
-                for pattern in (
-                    rf"\b\w*{re.escape(wrong)}\b",
-                    rf"\b\w*{re.escape(stem)}\{{bits\}}",
-                ):
-                    for m in re.finditer(pattern, haystack):
-                        token = m.group(0)
-                        if token not in (wrong, f"{stem}{{bits}}"):
-                            continue  # part of a longer identifier
-                        out.append((lineno, token, real))
+            for wrong, real in (*siblings.items(), *templates.items()):
+                pattern = rf"(?<!\w){re.escape(wrong)}(?!\w)"
+                out.extend((lineno, wrong, real) for _ in re.finditer(pattern, haystack))
     return out
 
 
@@ -141,6 +135,14 @@ def test_source_scan_only_flags_exact_backticked_tokens(tmp_path: Path) -> None:
     )
     assert _violations_in(source, wrong_convention_siblings()) == [
         (1, "geolog_scalar_u8", "geolog_scalar_uint8")
+    ]
+
+
+def test_template_claim_is_reported_once(tmp_path: Path) -> None:
+    source = tmp_path / "encoder.py"
+    source.write_text("`geolog_scalar_u{bits}`", encoding="utf-8")
+    assert _violations_in(source, wrong_convention_siblings()) == [
+        (1, "geolog_scalar_u{bits}", "geolog_scalar_uint{bits}")
     ]
 
 
