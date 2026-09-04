@@ -8,14 +8,17 @@
  * per-channel quantized. Nothing in the suite covered that combination:
  *
  *   - `array-decoder/decoder.test.ts` covers refs through
- *     `ArrayDecoder.decode` (whole-array, Points `colors`, direct target).
+ *     `ArrayDecoder.decode` (whole-array, Points `colors`, a uniformly-
+ *     quantized `rgb_uint8` target).
  *   - the gsplats range path is a different route entirely —
  *     `loadArrayRanges` -> `RangeLoader.loadRangesResolvingRef` ->
- *     `resolveArrayRef` -> `loadPerChannel` against the target's own attrs.
+ *     `resolveArrayRef` -> `loadPerChannel` / `loadQuantized` against the
+ *     target's own attrs.
  *
- * A ref resolved against the placeholder's metadata could instead decode
- * corrupt values without throwing. This test catches that quiet failure mode
- * by comparing the decoded values with the target layer.
+ * A ref resolved against the wrong target metadata could instead decode
+ * corrupt values without throwing. The placeholder's own `array_ref` attrs
+ * fail loudly in `range-loader/array-ref.ts`; this test catches the quiet
+ * wrong-metadata failure mode by comparing decoded values with the target.
  *
  * The assertions on the STORE (not just on the loaded data) are load-bearing:
  * without them a future encoder change that stops deduplicating would leave
@@ -114,12 +117,19 @@ describe('GSplats array_ref resolution (issue #2490)', () => {
       const attrs = array.attrs as unknown as ArrayMetadata;
       expect(ArrayDecoder.isArrayRef(attrs)).toBe(true);
       expect(attrs.encoding?.target).toBe(`${TARGET_LAYER}/amplitudes`);
+      expect(array.shape).toEqual([0]);
     });
 
     it('the ref TARGET is per-channel quantized, so the perchannel decode is covered', async () => {
       const array = await openArray(TARGET_LAYER, 'centers');
       const attrs = array.attrs as unknown as ArrayMetadata;
       expect(attrs.encoding?.name).toBe('linear_perchannel_u16');
+    });
+
+    it('the amplitudes target is quantized, so the quantized decode is covered', async () => {
+      const array = await openArray(TARGET_LAYER, 'amplitudes');
+      const attrs = array.attrs as unknown as ArrayMetadata;
+      expect(attrs.encoding?.name).toBe('bounded_scalar_uint8');
     });
 
     it('colors do NOT deduplicate, so the two layers stay distinguishable', async () => {
