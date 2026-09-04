@@ -962,6 +962,42 @@ def test_nested_ruff_config_is_found_under_every_target(tmp_path: Path) -> None:
     assert checker.find_nested_ruff_configs(("first", "second"), tmp_path) == [config]
 
 
+def test_root_file_target_does_not_scan_unrelated_sibling_trees(
+    tmp_path: Path,
+) -> None:
+    """A repository-root file target must not expand discovery to the whole tree."""
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "hatch_build.py").write_text("")
+    unrelated = tmp_path / "node_modules" / "dependency" / "pyproject.toml"
+    unrelated.parent.mkdir(parents=True)
+    unrelated.write_text("[tool.ruff]\nline-length = 200\n")
+
+    assert checker.find_nested_ruff_configs(("pkg", "hatch_build.py"), tmp_path) == []
+
+
+def test_file_target_still_checks_ancestor_configs(tmp_path: Path) -> None:
+    """A file target must still inherit Ruff config from its own directory."""
+    target = tmp_path / "pkg" / "module.py"
+    target.parent.mkdir()
+    target.write_text("")
+    config = tmp_path / "pkg" / "ruff.toml"
+    config.write_text('[lint]\nselect = ["B"]\n')
+
+    assert checker.find_nested_ruff_configs(("pkg/module.py",), tmp_path) == [config]
+
+
+def test_unreadable_nested_pyproject_has_contextual_error(tmp_path: Path) -> None:
+    """A non-UTF-8 manifest must fail with the nested-config diagnostic."""
+    config = tmp_path / "pkg" / "sub" / "pyproject.toml"
+    config.parent.mkdir(parents=True)
+    config.write_bytes(b"\xff\xfe[tool.ruff]\n")
+
+    with pytest.raises(
+        RuntimeError, match=r"Could not inspect nested .*pyproject.toml"
+    ):
+        checker.find_nested_ruff_configs(("pkg",), tmp_path)
+
+
 def test_the_committed_baseline_holds_no_b008_debt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

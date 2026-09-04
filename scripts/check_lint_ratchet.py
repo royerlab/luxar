@@ -272,7 +272,7 @@ def _ruff_config_candidates(target: str, project_root: Path) -> set[Path]:
     target_path = target_path.resolve()
     target_dir = target_path if target_path.is_dir() else target_path.parent
 
-    if target_dir.is_dir():
+    if target_path.is_dir():
         for name in _RUFF_CONFIG_NAMES:
             candidates.update(target_dir.rglob(name))
 
@@ -295,7 +295,7 @@ def _is_nested_ruff_config(config: Path, project_root: Path) -> bool:
         return True
     try:
         pyproject = tomllib.loads(config.read_text())
-    except (OSError, tomllib.TOMLDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         raise RuntimeError(f"Could not inspect nested {config}: {exc}") from exc
     tool = pyproject.get("tool")
     return isinstance(tool, dict) and "ruff" in tool
