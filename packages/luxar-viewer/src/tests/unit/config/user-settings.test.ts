@@ -143,9 +143,7 @@ describe('loadUserSettings', () => {
     });
     expect(() => saveUserSettings(defaultUserSettings())).not.toThrow();
   });
-});
 
-describe('applyLiveConfigOverrides', () => {
   it('a document saved before the zoom-sensitivity field existed loads with the default', () => {
     // Same schema version, field simply absent — must NOT fall back to
     // all-defaults (that would discard the user's other preferences).

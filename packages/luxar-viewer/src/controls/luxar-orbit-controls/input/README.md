@@ -47,9 +47,9 @@ input/
   - `handleWheel` — Sign-flipped zoom via `computeZoomScale` at
     `zoomSpeed × wheelZoomSensitivity` (the latter is the global
     Settings > Input knob, read from config per event; pointer-drag
-    dolly deliberately ignores it); wakes the animation loop with
-    `dispatch('change')` so damping applies inside the orchestrator's
-    `update()`.
+    dolly and two-finger touch pinch deliberately ignore it); wakes the
+    animation loop with `dispatch('change')` so damping applies inside
+    the orchestrator's `update()`.
 - `touch.ts` — Touch-gesture bodies operating on the same
   `OrbitInputCtx`. One finger → rotate (or pan if rotation is
   disabled). Two fingers → combined `'zoom'` state that runs a pinch

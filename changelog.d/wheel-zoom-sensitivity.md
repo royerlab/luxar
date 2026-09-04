@@ -1,9 +1,9 @@
 #### Global "Zoom Sensitivity" knob for the mouse wheel
 
-Some mice and drivers deliver far larger wheel deltas than others, so on those
-machines a single notch flew through the scene and nothing in the viewer could
-be set once to fix it: the Navigation popover's "Zoom Speed" is a per-scene
-setting that bottoms out at 0.2. The Settings popover's Input folder now has a
+Some mice and drivers deliver far larger effective wheel steps than others, so
+on those machines a single notch flew through the scene and the only existing
+adjustment was the Navigation popover's per-scene "Zoom Speed", which bottoms
+out at 0.2. The Settings popover's Input folder now has a
 **Zoom Sensitivity** slider (0.05 to 2, default 1) next to FOV Sensitivity. It
 is a per-machine preference persisted with the other global settings, applies to
 the very next wheel notch, and scales every wheel zoom — orbit and ortho dolly
