@@ -185,6 +185,7 @@ import { queueNext } from './scene-loader/update-view/queue-next';
 import { connectLoaderToMonitor as connectLoaderToMonitorHelper } from './scene-loader/nodes/connect-loader-to-monitor';
 import type { LineWorkingSetGate, NodeBuildCtx } from './scene-loader/nodes/build-ctx';
 import { createLineWorkingSetGate } from './scene-loader/nodes/load-children-concurrently';
+import { noteRefinementComplete } from '../profiling/load-timeline';
 import {
   RefinementResidencyBudget,
   RefinementResidencyReporter,
@@ -1456,9 +1457,19 @@ export class SceneLoader {
         profiler: this.profiler,
         residencyBudget,
       });
+      this.noteRefinementOutcome(cancelled);
     } finally {
       this._refining = false;
     }
+  }
+
+  /**
+   * Stamp the load timeline's `refinementComplete` milestone when the final
+   * geometry phase ran every ladder to completion — not on a cancellation
+   * hand-off (the next update re-kicks refinement) and not on a dead loader.
+   */
+  private noteRefinementOutcome(cancelled: boolean): void {
+    if (!cancelled && !this._disposed) noteRefinementComplete();
   }
 
   /**

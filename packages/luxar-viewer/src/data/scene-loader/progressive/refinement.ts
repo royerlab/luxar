@@ -25,6 +25,7 @@
 import type { ViewState } from '../../data-loader-types';
 import type { ViewStateQueue } from '../view-state/view-state-queue';
 import { scheduleFrame } from '../../../utils/schedule-frame';
+import { noteRefinementPass } from '../../../profiling/load-timeline';
 
 /**
  * Consecutive per-loader failures a refinement run tolerates before giving
@@ -203,6 +204,8 @@ export async function runProgressiveRefinement<TLoader>(
         for (const [path, loader] of ctx.loaders) {
           if (await ctx.processLoader(path, loader)) successfulPaths.add(path);
         }
+
+        noteRefinementPass(successfulPaths.size);
 
         // Aggregate counts once per pass.
         ctx.updateVisibleCountsInMonitor();

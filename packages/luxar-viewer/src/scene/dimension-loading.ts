@@ -14,6 +14,7 @@ import { sceneDimsManager } from './scene-dims-manager';
 import type { AnimationController } from './animation/animation-controller';
 import type { DimensionAnimationManager } from './animation/dimension-animation-manager';
 import type { SceneManager } from './scene-manager';
+import { markLoad } from '../profiling/load-timeline';
 
 /** Dependencies needed to load the current nD slice. */
 export interface DimensionLoadingContext {
@@ -47,6 +48,8 @@ export async function updateAllNDNodes(ctx: DimensionLoadingContext): Promise<vo
       frameBudgetMs,
     }
   );
+  // Once per load: the first slice update after `loadScene` has landed.
+  markLoad('initUpdateDone');
 
   // Projected t+1 prefetch: the await above resolved at the pass's COMMIT
   // (the pass-waiter contract), i.e. the start of the idle window before
