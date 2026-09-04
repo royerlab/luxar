@@ -27,6 +27,7 @@ if HAS_TORCH:
         PreprocessedData,
     )
     from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
+    from luxar.gsplats.fitting.validation import DEFAULT_SIGMA_MIN_DIAG
 
 
 def _make_fit_config(**overrides) -> "FitConfig":
@@ -183,10 +184,10 @@ class TestOptimConfig:
         cfg = OptimConfig()
         assert cfg.n_iters == 1000
         assert cfg.lr == 0.01
-        assert cfg.gradient_clip == 1.0
+        assert cfg.gradient_clip is None
         assert cfg.scheduler_type == "plateau"
-        assert cfg.patience == 25
-        assert cfg.lr_reduction_factor == 0.98
+        assert cfg.patience == 15
+        assert cfg.lr_reduction_factor == 0.9
         assert cfg.early_stop_patience == 300
         assert cfg.sort_splats_enabled is True
         assert cfg.sort_splats_interval == 1000
@@ -237,7 +238,7 @@ class TestConstraintConfig:
     def test_default_values(self) -> None:
         """Test ConstraintConfig default values."""
         cfg = ConstraintConfig()
-        assert cfg.sigma_min_diag is None
+        assert cfg.sigma_min_diag == DEFAULT_SIGMA_MIN_DIAG
         assert cfg.sigma_max_diag is None
         assert cfg.amp_max is None
         assert cfg.max_eccentricity == 10.0
@@ -440,3 +441,82 @@ class TestModelComponents:
             scheduler=None,
         )
         assert isinstance(components.optimizer, torch.optim.Adam)
+
+
+class TestConfigDefaultsTrackTheFitter:
+    """The three configs must describe the function they claim to configure.
+
+    ``test_constants.py::test_fit_default_uses_the_constant`` already states the
+    principle for ONE field — "ConstraintConfig carries the user-facing default;
+    fit_gaussian_splats' own signature must agree with it". Nothing checked the
+    other 22, and four had drifted:
+
+        gradient_clip        config 1.0    fitter None
+        patience             config 25     fitter 15
+        lr_reduction_factor  config 0.98   fitter 0.9
+        sigma_min_diag       config None   fitter DEFAULT_SIGMA_MIN_DIAG
+
+    That is not cosmetic. The docstrings tell you to apply a config by
+    unpacking it, and 15/0.9 is the pair the fitter's own comment records as
+    33% faster at equal PSNR, while `sigma_min_diag=None` removes the lower
+    bound on splat width altogether. Unpacking a DEFAULT-constructed config
+    therefore used to change behaviour while reading as "no change" — the worst
+    shape for a default.
+    """
+
+    @staticmethod
+    def _fitter_defaults() -> dict:
+        """Default value of every keyword parameter of the fitter."""
+        import inspect
+
+        from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+
+        return {
+            name: parameter.default
+            for name, parameter in inspect.signature(
+                fit_gaussian_splats
+            ).parameters.items()
+            if parameter.default is not inspect.Parameter.empty
+        }
+
+    @pytest.mark.parametrize("config_cls", [OptimConfig, LossConfig, ConstraintConfig])
+    def test_config_defaults_match_the_fitter_signature(self, config_cls) -> None:
+        """Every field's default equals the fitter's default of the same name."""
+        import dataclasses
+
+        fitter = self._fitter_defaults()
+        mismatched = {
+            field.name: (field.default, fitter[field.name])
+            for field in dataclasses.fields(config_cls)
+            if field.name in fitter and field.default != fitter[field.name]
+        }
+
+        assert not mismatched, (
+            f"{config_cls.__name__} defaults disagree with fit_gaussian_splats "
+            f"(field: config vs fitter): {mismatched}. The docstrings tell "
+            "callers to apply a config with `**asdict(cfg)`, so a disagreeing "
+            "default silently changes behaviour on a call that reads as a no-op."
+        )
+
+    @pytest.mark.parametrize("config_cls", [OptimConfig, LossConfig, ConstraintConfig])
+    def test_every_field_is_actually_a_fitter_parameter(self, config_cls) -> None:
+        """`**asdict(cfg)` must not raise TypeError on an unknown keyword.
+
+        The other half of the contract: matching defaults are worthless if the
+        field cannot be passed at all. This is what the previous docstrings got
+        wrong in the opposite direction — they advertised `optim=`/`loss=`/
+        `constraints=` parameters that never existed.
+        """
+        import dataclasses
+
+        fitter = self._fitter_defaults()
+        unknown = [
+            field.name
+            for field in dataclasses.fields(config_cls)
+            if field.name not in fitter
+        ]
+
+        assert not unknown, (
+            f"{config_cls.__name__} has field(s) fit_gaussian_splats does not "
+            f"accept: {unknown}. `**asdict(cfg)` would raise TypeError."
+        )
