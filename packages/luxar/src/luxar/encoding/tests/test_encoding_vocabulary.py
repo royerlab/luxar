@@ -49,6 +49,7 @@ SEARCH_ROOTS = (
 )
 
 DOC_SUFFIXES = frozenset({".py", ".ts", ".rs", ".md", ".rst", ".yaml"})
+EXCLUDED_DIRS = frozenset({"node_modules", "target", "dist", "pkg"})
 
 #: Markdown/rst/yaml are prose throughout. In a source file, only a BACKTICKED
 #: token is a claim about the vocabulary -- a bare one is an ordinary
@@ -93,7 +94,7 @@ def _documents() -> list[Path]:
             for p in (REPO / root).rglob("*")
             if p.is_file()
             and p.suffix in DOC_SUFFIXES
-            and "node_modules" not in p.parts
+            and not EXCLUDED_DIRS.intersection(p.parts)
             and p.resolve() != SELF
         )
     return found
@@ -106,6 +107,8 @@ def _violations_in(path: Path, siblings: dict[str, str]) -> list[tuple[int, str,
     for lineno, line in enumerate(
         path.read_text(encoding="utf-8", errors="ignore").splitlines(), 1
     ):
+        if "_u" not in line:
+            continue
         haystacks = [line] if prose else [m.group(1) for m in BACKTICKED.finditer(line)]
         for haystack in haystacks:
             for wrong, real in siblings.items():
