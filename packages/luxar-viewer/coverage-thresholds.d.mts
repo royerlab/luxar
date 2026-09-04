@@ -1,12 +1,10 @@
 /**
  * Types for `coverage-thresholds.mjs`.
  *
- * Without this, `vitest.config.ts` imports the thresholds as `any` and TypeScript
- * checks nothing about them: a floor written under a misspelled metric key
- * (`branch` for `branches`) is accepted by vitest, gates nothing, and looks
- * exactly like a floor that passes. That is the same fail-open shape the module's
- * own header warns about for zero-match glob keys, so it should not be reachable
- * through the type system either.
+ * Without this, `vitest.config.ts` imports the thresholds as `any`, so its
+ * consumers get no checking for the module's exports or value shapes. Runtime
+ * validation of metric names and zero-match glob keys remains the responsibility
+ * of `scripts/check-coverage-slack.mjs`.
  *
  * Declared here rather than by converting the module to TypeScript because
  * `scripts/check-coverage-slack.mjs` imports it too, at plain Node with no
