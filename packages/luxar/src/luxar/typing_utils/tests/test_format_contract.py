@@ -148,6 +148,14 @@ CURRENT_VERSION_CLAIMS: tuple[tuple[str, str], ...] = (
         "docs/guides/user/FORMAT_AND_MIGRATION.md",
         r"\*\*Gsplats \(`\.gsplats\.zarr`\):\*\* current \*\*(\d+\.\d+)\*\*",
     ),
+    (
+        "docs/guides/user/LUXAR_ZARR_FORMAT.md",
+        r"current standalone format version: \*\*v(\d+\.\d+)\*\*",
+    ),
+    (
+        "docs/guides/user/LUXAR_ZARR_FORMAT.md",
+        r"The current format is \*\*v(\d+\.\d+)\*\*, which adds",
+    ),
     ("docs/guides/user/CLI_REFERENCE.md", r"to the current v(\d+\.\d+) format"),
     (
         "docs/api/gsplats.rst",
@@ -291,7 +299,7 @@ CURRENT_VERSION_CLAIMS: tuple[tuple[str, str], ...] = (
     ),
     (
         "packages/luxar/src/luxar/gsplats/io/tests/test_format.py",
-        r'Tests for the v(\d+\.\d+) ``\.gsplats\.zarr``',
+        r"Tests for the v(\d+\.\d+) ``\.gsplats\.zarr``",
     ),
     (
         "packages/luxar/src/luxar/gsplats/io/tests/test_format.py",
