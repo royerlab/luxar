@@ -838,6 +838,7 @@ export function getWorkerPool(): WorkerPool {
  * rest of the file.
  */
 export function warmUpDataWorkerPool(): void {
+  if (!config.dataLoading.performance.useWebWorkers) return;
   if (typeof Worker === 'undefined') return;
   void getWorkerPool()
     .initialize()

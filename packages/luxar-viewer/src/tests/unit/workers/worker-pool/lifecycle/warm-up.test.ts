@@ -12,7 +12,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 type MockWorker = { terminate: ReturnType<typeof vi.fn> };
 
-async function loadWorkerPool(initializeImpl: () => Promise<unknown>) {
+async function loadWorkerPool(
+  initializeImpl: () => Promise<unknown>,
+  useWebWorkers = true
+) {
   vi.resetModules();
 
   const log = {
@@ -28,6 +31,7 @@ async function loadWorkerPool(initializeImpl: () => Promise<unknown>) {
     config: {
       dataLoading: {
         performance: {
+          useWebWorkers,
           workerCount: 2,
           workerProjectionTimeoutMs: 60000,
           workerInitTimeoutMs: 0,
@@ -66,6 +70,20 @@ describe('warmUpDataWorkerPool', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it('is a no-op when web workers are disabled', async () => {
+    const { warmUpDataWorkerPool, disposeWorkerPool, workers } = await loadWorkerPool(
+      async () => ({ wasmFallback: false }),
+      false
+    );
+    vi.stubGlobal('Worker', class {});
+
+    warmUpDataWorkerPool();
+    await flush();
+
+    expect(workers).toHaveLength(0);
+    disposeWorkerPool();
   });
 
   it('is a no-op when there is no Worker global', async () => {
