@@ -1,10 +1,11 @@
 """The fit parameter schema is restated in several places; they must agree.
 
 Audit A2-02. `fit_gaussian_splats` is the documented entry point, and its
-parameter set is restated by `prepare_fit_config` (43 shared names) and by the
-four config dataclasses users are told to unpack into it. Every restatement is a
-chance for a default to drift, and adding a knob means editing several places
-with nothing checking that you edited them all.
+parameter set is restated by `GaussianSplatFitter.fit` and
+`prepare_fit_config` (43 shared names each), and by the four config dataclasses
+users are told to unpack into it. Every restatement is a chance for a default to
+drift, and adding a knob means editing several places with nothing checking that
+you edited them all.
 
 **It had already drifted, six times.** The audit found one
 (`asymmetric_penalty`); an AST comparison of every shared name found five in
@@ -33,7 +34,7 @@ from typing import Any
 
 import pytest
 
-from luxar.gsplats import fit_gaussian_splats
+from luxar.gsplats import GaussianSplatFitter, fit_gaussian_splats
 from luxar.gsplats.fitting import prepare_fit_config
 from luxar.gsplats.fitting.config import (
     ConstraintConfig,
@@ -44,6 +45,7 @@ from luxar.gsplats.fitting.config import (
 
 #: Sites that restate `fit_gaussian_splats`' parameters and must not disagree.
 RESTATEMENTS: dict[str, Any] = {
+    "GaussianSplatFitter.fit": GaussianSplatFitter.fit,
     "prepare_fit_config": prepare_fit_config,
     "OptimConfig": OptimConfig,
     "LossConfig": LossConfig,
@@ -67,11 +69,13 @@ def _defaults(obj: Any) -> dict[str, Any]:
     if isinstance(obj, type):
         import dataclasses
 
-        return {
-            field.name: field.default
-            for field in dataclasses.fields(obj)
-            if field.default is not dataclasses.MISSING
-        }
+        defaults = {}
+        for field in dataclasses.fields(obj):
+            if field.default is not dataclasses.MISSING:
+                defaults[field.name] = field.default
+            elif field.default_factory is not dataclasses.MISSING:
+                defaults[field.name] = field.default_factory()
+        return defaults
     return {
         name: param.default
         for name, param in inspect.signature(obj).parameters.items()
@@ -80,6 +84,17 @@ def _defaults(obj: Any) -> dict[str, Any]:
 
 
 ENTRY_DEFAULTS = _defaults(fit_gaussian_splats)
+
+
+def test_dataclass_default_factories_are_included() -> None:
+    """A future mutable config default must remain part of the comparison."""
+    import dataclasses
+
+    @dataclasses.dataclass
+    class FactoryConfig:
+        values: list[int] = dataclasses.field(default_factory=list)
+
+    assert _defaults(FactoryConfig) == {"values": []}
 
 
 def _shared(site: Any) -> list[tuple[str, Any, Any]]:
@@ -136,25 +151,6 @@ def test_no_default_disagrees_with_the_entry_point(site_name: str) -> None:
     )
 
 
-def test_the_bundle_dataclasses_are_a_no_op_when_unpacked() -> None:
-    """Their published usage is `fit_gaussian_splats(volume, **asdict(cfg))`.
-
-    A default bundle must therefore change nothing. This is the same property the
-    test above checks, asserted the way the docstrings tell users to invoke it —
-    so the promise and the check cannot drift apart either.
-    """
-    import dataclasses
-
-    for bundle in (OptimConfig, LossConfig, ConstraintConfig):
-        for name, value in dataclasses.asdict(bundle()).items():
-            if name in ENTRY_DEFAULTS:
-                assert value == ENTRY_DEFAULTS[name], (
-                    f"{bundle.__name__}().{name} == {value!r}, but unpacking it into "
-                    f"fit_gaussian_splats would override that function's own default "
-                    f"of {ENTRY_DEFAULTS[name]!r}. A DEFAULT bundle must be a no-op."
-                )
-
-
 def _field_names(cls: type) -> set[str]:
     """Every dataclass field name, including ones with no default."""
     import dataclasses
@@ -194,13 +190,74 @@ def test_prepare_fit_config_restates_the_config_schema_and_little_else() -> None
         union |= _field_names(cls)
     # `fitter` and `V` are positional with no default, so `_defaults` omits them.
     strays = sorted(set(_defaults(prepare_fit_config)) - union)
-    assert len(strays) <= 1, (
+    assert not strays, (
         f"prepare_fit_config declares {len(strays)} parameters that are in none of "
         f"the four config dataclasses: {strays}"
     )
 
 
-def test_source_defaults_match_the_imported_ones() -> None:
+def test_prepare_fit_config_omits_only_parameters_handled_elsewhere() -> None:
+    """A new entry-point knob must not disappear into `**seed_kwargs` silently."""
+    entry_only = set(ENTRY_DEFAULTS) - set(_defaults(prepare_fit_config))
+    expected = {
+        "cull_retention",
+        "device",
+        "dynamic_config",
+        "enable_dynamic_ops",
+        "use_cuda",
+        "use_metal",
+    }
+    assert entry_only == expected, (
+        "fit_gaussian_splats parameters absent from prepare_fit_config changed: "
+        f"expected {sorted(expected)}, got {sorted(entry_only)}. A new omission may "
+        "be swallowed by **seed_kwargs instead of configuring the fit."
+    )
+
+
+def _source_literal_defaults(obj: Any) -> dict[str, Any]:
+    """Read literal positional and keyword-only defaults from a function's AST."""
+    unwrapped = inspect.unwrap(obj)
+    source = Path(inspect.getfile(unwrapped)).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    node = next(
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef) and n.name == unwrapped.__name__
+    )
+    args = node.args
+    positional = args.posonlyargs + args.args
+    positional_pairs = (
+        list(zip(positional[-len(args.defaults) :], args.defaults, strict=True))
+        if args.defaults
+        else []
+    )
+    keyword_only_pairs = [
+        (arg, default)
+        for arg, default in zip(args.kwonlyargs, args.kw_defaults, strict=True)
+        if default is not None
+    ]
+    defaults = {}
+    for arg, default in positional_pairs + keyword_only_pairs:
+        try:
+            defaults[arg.arg] = ast.literal_eval(default)
+        except (TypeError, ValueError):
+            pass
+    return defaults
+
+
+def _keyword_only_default_fixture(*, value: int = 7) -> None:
+    pass
+
+
+def test_source_defaults_include_keyword_only_parameters() -> None:
+    """Keyword-only defaults must be visible to the independent AST route."""
+    assert _source_literal_defaults(_keyword_only_default_fixture) == {"value": 7}
+
+
+@pytest.mark.parametrize(
+    "obj", [fit_gaussian_splats, prepare_fit_config], ids=lambda obj: obj.__name__
+)
+def test_source_defaults_match_the_imported_ones(obj: Any) -> None:
     """Guard against the comparison being fooled by import-time rebinding.
 
     Everything above reads defaults through `inspect`, which sees the objects as
@@ -208,30 +265,10 @@ def test_source_defaults_match_the_imported_ones() -> None:
     to the same answer; if the two disagree, something is rewriting defaults at
     import time and neither this test nor the ones above mean what they say.
     """
-    source = Path(inspect.getfile(prepare_fit_config)).read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    node = next(
-        n
-        for n in ast.walk(tree)
-        if isinstance(n, ast.FunctionDef) and n.name == "prepare_fit_config"
-    )
-    args = node.args
-    positional = args.posonlyargs + args.args
-    from_source = {
-        arg.arg: ast.literal_eval(default)
-        # strict=True: the slice is sized to match, so a mismatch means the
-        # arithmetic is wrong -- exactly what should raise rather than
-        # silently compare a prefix.
-        for arg, default in zip(
-            positional[len(positional) - len(args.defaults) :],
-            args.defaults,
-            strict=True,
-        )
-        if isinstance(default, ast.Constant)
-    }
-    imported = _defaults(prepare_fit_config)
+    from_source = _source_literal_defaults(obj)
+    imported = _defaults(obj)
     for name, value in from_source.items():
         assert imported[name] == value, (
-            f"prepare_fit_config.{name} is {value!r} in the source but "
+            f"{obj.__name__}.{name} is {value!r} in the source but "
             f"{imported[name]!r} once imported"
         )

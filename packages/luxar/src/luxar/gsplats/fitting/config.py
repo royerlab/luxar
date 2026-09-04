@@ -57,7 +57,7 @@ class OptimConfig:
 
     Every field defaults to exactly what ``fit_gaussian_splats`` defaults to, so
     unpacking a default-constructed config is a no-op rather than a silent
-    change of behaviour. ``test_config_defaults_match_the_fitter_signature``
+    change of behaviour. ``test_no_default_disagrees_with_the_entry_point``
     enforces that for every field of all three configs.
     """
 
@@ -259,8 +259,9 @@ class FitConfig:
 
     # Constraint parameters
     # 10.0, matching `ConstraintConfig` and `fit_gaussian_splats`. It was
-    # None here, so constructing a bare `FitConfig()` removed the
-    # eccentricity limit entirely while every documented default says 10.
+    # None here, so constructing a `FitConfig(...)` without explicitly passing
+    # this optional field removed the eccentricity limit entirely while every
+    # documented default says 10.
     max_eccentricity: Optional[float] = 10.0  # Limit ratio of longest to shortest axis
 
     # Voxel footprint correction (post-processing)
