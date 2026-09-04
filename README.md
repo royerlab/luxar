@@ -986,12 +986,29 @@ If you see "GPU fitting will use slower PyTorch fallback", fitting still works �
 
 ### Browser Compatibility
 
-| Browser | Status |
-|---------|--------|
-| Chrome 90+ | Fully supported |
-| Firefox 88+ | Fully supported (recommended for large datasets) |
-| Safari 15+ | Supported |
-| Edge 90+ | Fully supported |
+Luxar needs **WebGL 2.0**; WebGPU is used when available and falls back
+automatically. The viewer builds with Vite's `target: 'esnext'` and declares no
+`browserslist`, so nothing is downlevelled and no version floor is derived from
+the toolchain — the specific version numbers previously listed here were not
+measured against anything.
+
+What is verified, by running the E2E smoke subset (13 tests across basic
+rendering, viewer initialisation, and geometry types including GSplats) on
+2026-09-04, macOS arm64, Playwright's bundled engines:
+
+| Engine   | Smoke subset | Notes                                                |
+| -------- | ------------ | ---------------------------------------------------- |
+| Chromium | 13/13 pass   | L2 (OPFS) disk cache initialises                      |
+| Firefox  | 13/13 pass   | L2 (OPFS) disk cache initialises                      |
+| WebKit   | 13/13 pass   | **runs without the L2 disk cache** — the OPFS store's init / write probe fails, so chunk data is not persisted between sessions |
+
+Reproduce with `pnpm test:e2e:browsers` from `packages/luxar-viewer/` — it needs
+`npx playwright install firefox webkit`, which the default install does not
+provide.
+
+Not verified: the full E2E suite on any engine but Chromium; **Safari and Edge
+themselves** — Playwright's WebKit is a WebKit build, not Safari, and Edge is
+Chromium-based but untested; and any performance comparison between engines.
 
 ### Viewer URL Parameters
 

@@ -182,15 +182,32 @@ export default defineConfig({
       },
     },
 
-    // Uncomment to test on other browsers (note: WebGL support varies)
-    // {
-    //   name: 'firefox',
-    //   use: { ...devices['Desktop Firefox'] },
-    // },
-    // {
-    //   name: 'webkit',
-    //   use: { ...devices['Desktop Safari'] },
-    // },
+    // Firefox and WebKit are OPT-IN, behind LUXAR_E2E_BROWSERS=all.
+    //
+    // They used to be commented out, which meant the README's four-browser
+    // support table had never been executed even once -- there was no way to
+    // run them. Real projects make the claim re-verifiable; gating them keeps
+    // the default suite at one engine, because Playwright runs every declared
+    // project and three engines would triple a ~17 min suite for a matrix the
+    // GPU-backed daemon is the right home for.
+    //
+    //   LUXAR_E2E_BROWSERS=all pnpm exec playwright test --project=firefox
+    //   LUXAR_E2E_BROWSERS=all pnpm test:e2e:browsers   (the smoke subset)
+    //
+    // Requires `npx playwright install firefox webkit` -- neither ships with
+    // the default install.
+    ...(process.env.LUXAR_E2E_BROWSERS === 'all'
+      ? [
+          {
+            name: 'firefox',
+            use: { ...devices['Desktop Firefox'] },
+          },
+          {
+            name: 'webkit',
+            use: { ...devices['Desktop Safari'] },
+          },
+        ]
+      : []),
   ],
 
   // Run local dev servers before starting tests
