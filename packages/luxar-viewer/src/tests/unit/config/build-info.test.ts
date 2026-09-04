@@ -12,6 +12,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
+import type { Plugin } from 'vite';
 
 import { buildInfo, buildInfoLine, UNKNOWN } from '../../../config/build-info';
 import {
@@ -25,6 +26,15 @@ import {
 } from '../../../../tools/build-identity';
 
 const VIEWER_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
+
+function transformIndexHtml(plugin: Plugin, html: string): string {
+  const transform = plugin.transformIndexHtml;
+  if (!transform) throw new Error('plugin has no transformIndexHtml hook');
+  const handler = typeof transform === 'function' ? transform : transform.handler;
+  const result = handler.call({} as never, html, {} as never);
+  if (typeof result !== 'string') throw new Error('transformIndexHtml did not return HTML');
+  return result;
+}
 
 describe('build-info (runtime side)', () => {
   it('reports unstamped rather than throwing when no define was injected', () => {
@@ -119,7 +129,8 @@ describe('build-identity (build side)', () => {
 
   it('injects a meta tag into the head, before </head>', () => {
     const identity = { version: '1.2.3', commit: 'abc1234', buildTime: '2026-09-15T10:00:00Z' };
-    const html = buildIdentityHtmlPlugin(identity).transformIndexHtml(
+    const html = transformIndexHtml(
+      buildIdentityHtmlPlugin(identity),
       '<html><head><title>x</title></head><body></body></html>'
     );
     expect(html).toContain(buildMetaTag(identity));
@@ -134,6 +145,6 @@ describe('build-identity (build side)', () => {
 
   it('leaves html without a head untouched rather than corrupting it', () => {
     const fragment = '<div>no head here</div>';
-    expect(buildIdentityHtmlPlugin().transformIndexHtml(fragment)).toBe(fragment);
+    expect(transformIndexHtml(buildIdentityHtmlPlugin(), fragment)).toBe(fragment);
   });
 });
