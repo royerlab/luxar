@@ -87,11 +87,11 @@ and ships an artifact with no revision on it. So the check scans the built
 `index.html`) rather than trusting the config. Both sides come from the
 tree: expected version from `package.json`, observed from the artifact.
 
-Escaping-insensitive by design — the app build emits the stamp as a plain
-string literal while the library build backslash-escapes its quotes, so a
-grep written against one spelling reports a false negative against the
-other. Covered by `check-build-identity.test.mjs`, which runs with the
-viewer unit suite (`pnpm test --run`).
+Escaping-insensitive by design — the minified app build emits the stamp as an
+unescaped payload inside a template literal while the library build
+backslash-escapes its quotes, so a grep written against one spelling reports a
+false negative against the other. Covered by `check-build-identity.test.mjs`,
+which runs with the viewer unit suite (`pnpm test --run`).
 
 ```bash
 pnpm build:check       # → check-eager-chunks.mjs && check-build-identity.mjs dist

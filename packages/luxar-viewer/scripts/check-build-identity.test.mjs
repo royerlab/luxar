@@ -28,12 +28,13 @@ function makeRoot() {
 }
 
 /**
- * Write a bundle in one of the two spellings the real builds actually emit.
+ * Write a bundle with one of the two payload spellings the real builds emit.
  *
- * The MINIFIED application build switches to single quotes to avoid escaping
- * (`'{"version":...}'`); the unminified library build keeps double quotes and
- * backslash-escapes the inner ones. Both spellings were read out of real
- * `dist/` output, not assumed.
+ * The minified application build puts unescaped JSON inside a backtick template
+ * literal; this fixture uses an equivalent single-quoted literal so the test
+ * isolates payload escaping. The unminified library build keeps double quotes
+ * and backslash-escapes the inner ones. Both payload spellings were read out of
+ * real `dist/` output, not assumed.
  */
 function writeBundle(root, stamp, { escaped = false } = {}) {
   const inner = JSON.stringify(stamp);
@@ -58,7 +59,7 @@ afterEach(() => {
 const run = (opts = {}) => check(join(root, 'dist'), { root, requireCommit: true, ...opts });
 
 describe('findStamp', () => {
-  it('reads a single-quoted literal (the minified application build spelling)', () => {
+  it('reads an unescaped literal (the minified application payload spelling)', () => {
     expect(findStamp(`x=JSON.parse('${JSON.stringify(STAMP)}')`)).toEqual(STAMP);
   });
 

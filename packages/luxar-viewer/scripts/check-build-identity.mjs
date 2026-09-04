@@ -58,8 +58,9 @@ export function bundleFiles(dir) {
 /**
  * Find the stamp inside emitted JS.
  *
- * Escaping-insensitive on purpose: the app build emits the JSON stamp as a
- * plain string literal while the library build backslash-escapes its quotes.
+ * Escaping-insensitive on purpose: the minified app build emits the JSON stamp
+ * as an unescaped payload in a template literal while the library build
+ * backslash-escapes its quotes.
  * A grep written against one of those spellings reports a confident FALSE
  * NEGATIVE against the other — which is exactly what happened while this stamp
  * was being added, and is the failure this normalisation exists to prevent.
