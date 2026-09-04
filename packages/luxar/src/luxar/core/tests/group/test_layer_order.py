@@ -33,9 +33,11 @@ from luxar.core.group.compositing import (
     WRITER_STAMPED_APPEARANCE_DEFAULTS,
     _enclosing_specialized_group,
 )
-from luxar.io._compiler.node_common import KNOWN_RENDER_ATTRS
 from luxar.typing_utils.constants import JS_SAFE_INTEGER_MAX
 from luxar.validation.types import validate_layer_order
+from luxar.validation.writing import (
+    KNOWN_RENDER_ATTRS,
+)
 
 from .conftest import cholesky_rows, open_scene, random_positions
 

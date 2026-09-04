@@ -31,6 +31,11 @@ from numpy.typing import NDArray
 
 from ....encoding import SemanticType
 from ....typing_utils.aliases import NodePath
+from ....validation.writing import (
+    MESH_RESERVED_ATTRS,
+    validate_mesh_arrays,
+    validate_render_attrs,
+)
 from ..bounds import compute_position_bounds
 from ..chunking import calculate_intelligent_chunks
 from ..context import GeometryWriteCtx
@@ -38,26 +43,18 @@ from ..dataset_writers.colors import write_colors
 from ..dataset_writers.scalars import write_scalars
 from ..dataset_writers.texture import write_texture
 from ..labels.image_labels import (
-    validate_image_labels_for_writing,
     write_image_labels_csr,
 )
 from ..labels.text_labels import write_string_channels_csr
 from ..node_common import (
-    MESH_RESERVED_ATTRS,
     apply_default_render_attrs,
     prepare_transform_attrs,
-    validate_broadcast_color,
     validate_node_path,
-    validate_render_attrs,
-    validate_scalars_preflight,
 )
 
 #: Below this face count the unwelded-vertices lint stays quiet — a handful of
 #: independent triangles is a normal test fixture, not an authoring mistake.
 _AUTHORING_LINT_MIN_FACES = 8
-
-#: Accepted shading values, public so the core read type can stay pinned to the writer.
-VALID_SHADING_MODES = ("smooth", "flat", "none")
 
 
 def _is_unwelded(faces: NDArray[np.integer], n_vertices: int) -> bool:
@@ -100,52 +97,6 @@ def _mesh_authoring_warning_key(ctx: GeometryWriteCtx, path: str) -> str:
         if getattr(parent, "attrs", {}).get("kind") == "partition":
             return parent_path
     return path
-
-
-def _validate_normal_pair(
-    normals: Any, normal_dims: Any, n_vertices: int, n_dims: int
-) -> None:
-    """Normals and their companion attr are a PAIR — each is meaningless alone.
-
-    A normal array with no ``normal_dims`` cannot be oriented (storing normals
-    against an implicit "first three dimensions" is the bug the attr exists to
-    prevent: for a ``(t, x, y, z)`` mesh those are ``(t, x, y)``), and
-    ``normal_dims`` with no normals describes nothing.
-    """
-    from ....validation.base import (
-        validate_normal_dims_for_writing,
-        validate_normals_for_writing,
-    )
-
-    if normals is not None:
-        validate_normals_for_writing(normals, n_vertices)
-        if normal_dims is None:
-            raise ValueError(
-                "normal_dims is required when normals are supplied: it names "
-                "which three dimension indices the 3-component normals describe. "
-                "Pass e.g. normal_dims=(0, 1, 2)."
-            )
-        validate_normal_dims_for_writing(normal_dims, n_dims)
-    elif normal_dims is not None:
-        raise ValueError(
-            "normal_dims was supplied without normals. It names the dimensions "
-            "that a normals array describes, so it has no meaning on its own — "
-            "pass normals=..., or drop normal_dims."
-        )
-
-
-def _validate_mesh_metadata(shading: Optional[str], double_sided: Any) -> None:
-    """Validate mesh metadata that directly controls viewer rendering."""
-    # A typo must not reach zarr: an unrecognised shading value would silently
-    # take the stored-normal path.
-    if shading is not None and shading not in VALID_SHADING_MODES:
-        raise ValueError(
-            f"shading must be one of {VALID_SHADING_MODES}, got {shading!r}"
-        )
-    if not isinstance(double_sided, bool):
-        raise ValueError(
-            f"double_sided must be a bool, got {type(double_sided).__name__}"
-        )
 
 
 def _write_mesh_texture_arrays(
@@ -221,144 +172,6 @@ def _write_mesh_texture_arrays(
             texture_color_space=texture_color_space,
         )
     return meta
-
-
-def validate_mesh_arrays(
-    vertices: Any,
-    faces: Any,
-    *,
-    normals: Any = None,
-    normal_dims: Any = None,
-    colors: Any = None,
-    scalars: Any = None,
-    uvs: Any = None,
-    texture: Any = None,
-    texture_encoding: str = "raw",
-    texture_width: Optional[int] = None,
-    texture_height: Optional[int] = None,
-    texture_channels: Optional[int] = None,
-    texture_color_space: str = "srgb",
-    texture_ktx2_mode: str = "uastc",
-    texture_ktx2_quality: Optional[int] = None,
-    texture_ktx2_rdo_l: Optional[float] = None,
-    texture_ktx2_zcmp: Optional[int] = None,
-    shading: Optional[str] = None,
-    double_sided: bool = True,
-    labels: Any = None,
-    image_labels: Any = None,
-    keys: Any = None,
-) -> Tuple[int, int]:
-    """Validate a mesh's arrays and channels. Pure — reads nothing, writes nothing.
-
-    Steps 0c-0h of :func:`write_mesh`'s fail-fast gate, factored out because a
-    SECOND caller needs exactly them and nothing else:
-    ``add_mesh(substitutive_lod=…)`` runs this before it decimates anything and
-    before ``add_lod_group`` creates the zarr group. Without that, a malformed
-    optional channel that the decimator ALSO validates per level — colours
-    with two components, a wrong-length normals array, a typo'd ``shading`` —
-    was refused only from inside whichever child's write hit it first
-    (typically ``child_0``, the coarsest, since levels are written
-    coarsest-to-finest), with the ``kind=lod`` group already on disk: that
-    left a childless ladder if the very first child failed, or a
-    finest-child-less one if a later level was the one to fail. The
-    plain-leaf path writes nothing in the same situation, and the two must
-    agree.
-
-    ``labels`` and a wrong-length ``image_labels`` (#1491) fail a DIFFERENT
-    way: both are forwarded ONLY to the FINEST child (the original,
-    undecimated surface), written LAST, never to a coarse level. Pre-fix, a
-    bad one of these was refused deep inside that finest child's own
-    ``write_mesh`` call — AFTER its vertices, faces, normals, colours and
-    scalars were already on disk — so the ladder was neither childless nor
-    finest-child-less: every level, including the finest, was fully written
-    and independently loadable. Only the finest level's own label channel
-    (the text-label CSR pair, or ``image_label_offsets`` /
-    ``image_label_bytes``) was silently absent. That is harder to notice than
-    a missing level, not milder — the ladder looks and loads like a
-    correctly-authored object that simply carries no labels.
-
-    Sharing the function rather than repeating the checks is what keeps that
-    promise true as the rules change: the ladder gate cannot drift from what the
-    child write accepts, because it IS what the child write runs.
-
-    Returns:
-        ``(n_vertices, n_dims)``, since the caller needs both and only the
-        vertex validator can produce them.
-    """
-    from ....validation.base import (
-        _texture_decoded_bytes,
-        validate_colors_for_writing,
-        validate_faces_for_writing,
-        validate_labels_for_writing,
-        validate_mesh_decode_budget,
-        validate_positions_for_writing,
-        validate_texture_for_writing,
-        validate_uvs_for_writing,
-        validate_vertices_for_writing,
-    )
-
-    # Vertices shape/finiteness (shared coordinate path), then the mesh-only
-    # vertex-count ceiling. Order matters: the cap reads shape[0], which is only
-    # meaningful once the array is known to be 2D.
-    n_vertices, n_dims = validate_positions_for_writing(vertices, context="vertices")
-    validate_vertices_for_writing(vertices)
-    # Faces: layout, integer dtype, and both index bounds. Runs before the
-    # writer's uint32 cast, which is what makes the bounds check meaningful.
-    validate_faces_for_writing(faces, n_vertices)
-    _validate_normal_pair(normals, normal_dims, n_vertices, n_dims)
-    if uvs is not None:
-        validate_uvs_for_writing(uvs, n_vertices)
-    _validate_mesh_metadata(shading, double_sided)
-    # Optional per-vertex channels.
-    if colors is not None:
-        if isinstance(colors, np.ndarray):
-            # channels=(3, 4): the optional 4th component is per-vertex opacity,
-            # load-bearing in every blending mode — mirrors points/lines.
-            validate_colors_for_writing(colors, n_vertices, channels=(3, 4))
-        elif isinstance(colors, (list, tuple)):
-            validate_broadcast_color(colors, "colors")
-    if scalars is not None:
-        validate_scalars_preflight(scalars, n_vertices)
-    if labels is not None:
-        validate_labels_for_writing(labels, n_vertices)
-    # Keys ride the same pre-flight as labels: the CSR serializer
-    # UTF-8-encodes each entry, so a non-str or a length mismatch must be
-    # caught BEFORE any array reaches disk (#1917).
-    if keys is not None:
-        validate_labels_for_writing(keys, n_vertices, context="keys", noun="Keys")
-    if image_labels is not None:
-        validate_image_labels_for_writing(image_labels, n_vertices)
-    # Last, because it needs every channel's presence and the validated shapes.
-    # A store over the viewer's per-node ceiling does not render at all, so it is
-    # refused here rather than in a browser (#2145).
-    texture_decoded_bytes = 0
-    if texture is not None:
-        texture_height, texture_width, texture_channels = validate_texture_for_writing(
-            texture,
-            texture_encoding,
-            texture_width,
-            texture_height,
-            texture_channels,
-            texture_color_space,
-            ktx2_mode=texture_ktx2_mode,
-            ktx2_quality=texture_ktx2_quality,
-            ktx2_rdo_l=texture_ktx2_rdo_l,
-            ktx2_zcmp=texture_ktx2_zcmp,
-        )
-        texture_decoded_bytes = _texture_decoded_bytes(
-            texture_encoding, texture_width, texture_height, texture_channels
-        )
-    validate_mesh_decode_budget(
-        n_vertices,
-        n_dims,
-        int(np.asarray(faces).size // 3),
-        normals=normals,
-        colors=colors,
-        scalars=scalars,
-        uvs=uvs,
-        texture_decoded_bytes=texture_decoded_bytes,
-    )
-    return n_vertices, n_dims
 
 
 def write_mesh(

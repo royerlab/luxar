@@ -21,7 +21,9 @@ from luxar import Dimensions, LuxarZarrCompiler
 from luxar._zarr_compat import create_array
 from luxar.core.mesh import Mesh, ShadingMode
 from luxar.io import LuxarScene, MeshData
-from luxar.io._compiler.geometry_writers.mesh import VALID_SHADING_MODES
+from luxar.validation.writing import (
+    VALID_SHADING_MODES,
+)
 
 # A welded tetrahedron: 4 vertices, 4 faces, every vertex shared by 3 faces.
 _V = np.array(

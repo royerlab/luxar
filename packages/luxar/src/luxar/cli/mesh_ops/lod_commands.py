@@ -827,9 +827,11 @@ def run_lod(
 
     from ...core.group.adders.mesh import validate_scalar_data_range
     from ...core.viewer_config import ViewerConfig
-    from ...io._compiler.node_common import KNOWN_RENDER_ATTRS
     from ...io.reader import LuxarScene
     from ...utils.paths import normalize_zarr_path
+    from ...validation.writing import (
+        KNOWN_RENDER_ATTRS,
+    )
 
     # NORMALIZE FIRST, and guard the normalized path only. `LuxarZarrCompiler`
     # applies exactly this normalization to whatever it is handed, so the store

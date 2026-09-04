@@ -74,6 +74,13 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
 
 import numpy as np
 
+from ...validation.writing import (
+    validate_gsplat_inputs,
+    validate_line_indices,
+    validate_lines_channels,
+    validate_points_channels,
+)
+
 #: The four addable geometry words — the only tokens a nested funnel prefix is
 #: ever allowed to name. Deliberately excludes ``group``: ``Node.add_lod_group``
 #: / ``add_partition_group`` build their OWN ``Could not create child … group
@@ -917,8 +924,6 @@ def validate_points_channels_before_split(
         ValidationError: If any channel is not a legal per-point or broadcast
             value for ``n_points`` elements.
     """
-    from ...io._compiler.geometry_writers.points import validate_points_channels
-
     validate_points_channels(
         n_points,
         colors=colors,
@@ -973,8 +978,6 @@ def validate_lines_channels_before_split(
         ValidationError: If any channel is not a legal per-vertex or broadcast
             value for ``n_vertices`` elements.
     """
-    from ...io._compiler.geometry_writers.lines import validate_lines_channels
-
     validate_lines_channels(
         n_vertices,
         widths=widths,
@@ -1016,8 +1019,6 @@ def validate_line_indices_before_split(
     """
     if line_type != "indexed" or indices is None:
         return
-    from ...io._compiler.geometry_writers.lines import validate_line_indices
-
     validate_line_indices(indices, n_vertices)
 
 
@@ -1060,7 +1061,6 @@ def validate_gsplats_channels_before_split(
             broadcast combination for ``len(centers)`` splats.
         ValidationError: If ``labels`` or ``keys`` is not one string per splat.
     """
-    from ...io._compiler.gsplat_assembly import validate_gsplat_inputs
     from ...validation.base import validate_labels_for_writing
 
     (*_normalized, n_splats, _n_dims, cholesky_is_uniform) = validate_gsplat_inputs(

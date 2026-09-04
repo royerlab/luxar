@@ -45,6 +45,13 @@ from typing import (
 import numpy as np
 from arbol import aprint, asection
 
+from ....validation.writing import (
+    MESH_RESERVED_ATTRS,
+    validate_broadcast_color,
+    validate_mesh_arrays,
+    validate_render_attrs,
+    validate_scalars_preflight,
+)
 from ...mesh import Mesh
 from ..compositing import (
     ABSENT_WHEN_NONE_RENDER_ATTRS,
@@ -665,7 +672,6 @@ def _maybe_add_mesh_additive_lod(
     if not _requested(additive_lod):
         return None
 
-    from ....io._compiler.geometry_writers.mesh import validate_mesh_arrays
     from ....mesh.split import split_mesh_by_faces
     from ..lod.mesh import make_additive_lod_mesh, resolve_additive_axis_mesh
     from ..lod.reveal import resolve_reveal_spatial_dims
@@ -1125,11 +1131,6 @@ def add_mesh_impl(
         # the count half here (to make it identical) risks the #1446
         # warning-count controls, and it is only warnings, not a state
         # divergence.
-        from ....io._compiler.node_common import (
-            MESH_RESERVED_ATTRS,
-            validate_render_attrs,
-        )
-
         validate_render_attrs(attrs, reserved_attrs=MESH_RESERVED_ATTRS)
 
         # Substitutive-LOD branch — coarse levels are DECIMATED meshes under a
@@ -1368,7 +1369,6 @@ def add_mesh_substitutive_lod_wrapper_impl(
     coarse to reduce — the ladder is abandoned and a plain leaf is written, which
     is the same degenerate-path behaviour the Points wrapper has.
     """
-    from ....io._compiler.geometry_writers.mesh import validate_mesh_arrays
     from ....mesh.decimate import decimate_ladder
     from ..lod.group import resolve_coarsen_dims, resolve_lod_ladder
 
@@ -1651,10 +1651,6 @@ def _validate_partition_sources(
     ``normals``, ``colors``, ``scalars``, ``labels``, ``keys`` order — a call
     that trips several is told about the same one it was told about before.
     """
-    from ....io._compiler.node_common import (
-        validate_broadcast_color,
-        validate_scalars_preflight,
-    )
     from ....validation.base import (
         validate_colors_for_writing,
         validate_faces_for_writing,

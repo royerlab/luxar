@@ -836,6 +836,42 @@ ignore_imports = [
 ]
 
 [[tool.importlinter.contracts]]
+# `io` sits ABOVE `core`: the compiler reads core's domain types (Dimensions,
+# transforms, the compositing constants), while core only ever NAMES
+# `ZarrWriterProtocol` -- a Protocol io implements. So core -> io is a back-edge,
+# and it was a real one: five function-local imports reached from
+# `core.group.compositing` and `core.group.gsplats_pipeline.from_io` into the
+# PRIVATE `io._compiler` tree (audit A1-03).
+#
+# Being function-local is what made it invisible. mypy does not follow deferred
+# imports for cycle purposes and neither existing contract looked at this pair,
+# so a mutual dependency between the two largest packages was carried for months
+# with every gate green. The shared pre-write validators now live in
+# `luxar.validation.writing`, below both.
+#
+# DIRECT edges only, matching the utils contract below. An indirect chain here
+# is not a layering fault: `luxar.core.tests.test_scene_structure` reaches io
+# through `luxar.utils.scenes`, and any module that imports the `luxar` package
+# root reaches it through `luxar/__init__.py`. Both are the public API working
+# as intended. The fault A1-03 found -- and the one this contract exists to
+# refuse -- is core NAMING io itself.
+#
+# `exclude_type_checking_imports` (set above) keeps the eight annotation-only
+# `ZarrWriterProtocol` imports out of scope. Those are the dependency inversion
+# working: core declares the Protocol it needs, io implements it.
+name = "core must not import io"
+type = "forbidden"
+source_modules = ["luxar.core"]
+forbidden_modules = ["luxar.io"]
+allow_indirect_imports = true
+ignore_imports = [
+    # Colocated tests drive the compiler on purpose; the contract targets
+    # production code, matching the convention of the CLI contract above.
+    "luxar.core.tests.** -> luxar.io",
+    "luxar.core.tests.** -> luxar.io.**",
+]
+
+[[tool.importlinter.contracts]]
 name = "Shared utils must not import leaf packages"
 type = "forbidden"
 source_modules = ["luxar.utils"]

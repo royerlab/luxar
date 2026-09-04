@@ -12,7 +12,7 @@ from arbol import aprint
 from luxar.gsplats.fit_basis import MISSING_BASIS_HINT, reference_on_fit_basis
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.io.save_gsplats import _FITTING_INFO_KEYS
-from luxar.io._compiler.gsplat_tree import json_safe_value
+from luxar.typing_utils.json_safe import json_safe_value
 
 _FIT_REFERENCE_KINDS = frozenset(("acquisition", "preprocessed", "synthetic"))
 
