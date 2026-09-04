@@ -109,7 +109,15 @@ export default defineConfig({
         // bundled Chromium so the GPU driver path matches what an
         // end-user would see. The user explicitly asked for "as real
         // as possible browser".
-        channel: 'chrome',
+        //
+        // LUXAR_PERF_BROWSER=chromium falls back to the bundled Chromium. Headless
+        // system Chrome on macOS was observed (2026-09, Chrome 152) to pick a 30 Hz
+        // BeginFrame cadence on some launches — every forced-continuous-render
+        // frame metric then reads 33.3 ms with a 96 %-idle main thread — and
+        // occasionally to stop firing rAF in a hidden headless window, which
+        // hangs a frame-cadence measurement until the test timeout. The bundled
+        // Chromium ran the same pages at the display's 120 Hz throughout.
+        channel: process.env.LUXAR_PERF_BROWSER === 'chromium' ? undefined : 'chrome',
       },
     },
   ],

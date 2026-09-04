@@ -45,6 +45,13 @@ per repetition) plus one warm re-load, medians of `LUXAR_PERF_AUDIT_REPEATS`
   WebGL on SwiftShader (frames of seconds, timeouts). Pass
   `LUXAR_PERF_CHROME_ARGS=--use-angle=vulkan` as the config header documents; verify
   the captured `apiSurface` names the real adapter.
+- **Headless system Chrome can misreport frame cadence on macOS**: Chrome 152 headless was
+  observed to pick a 30 Hz BeginFrame cadence on some launches (every forced-continuous-render
+  frame metric reads 33.3 ms with a 96 %-idle main thread) and occasionally to stop firing rAF
+  altogether, hanging a cadence measurement until the test timeout. When the frame rows look
+  quantised or a row runs into its timeout, re-run with `LUXAR_PERF_BROWSER=chromium` (the
+  bundled Chromium ran the same pages at the display's 120 Hz throughout) and compare only
+  runs taken with the same browser.
 - **Never a headed run on a remote box without a live desktop**: a login-screen X
   session keeps Chrome occluded, which throttles rendering to ~1 fps and produces
   plausible-looking ~1000 ms medians. Garbage with no error anywhere.
