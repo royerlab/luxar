@@ -238,6 +238,30 @@ def _print_dataset_metadata(
                     aprint(f"  {key}: {value}")
 
 
+def _is_node_tree(path: Path) -> bool:
+    """Whether the store's ROOT is a partition / lod group rather than a leaf.
+
+    One attribute read. Returns False for anything unreadable so the caller
+    still takes the normal load path and reports its error, rather than this
+    probe inventing one.
+    """
+    from luxar._zarr_compat import open_group as zarr_open_group
+    from luxar.gsplats.io._archive import resolve_store_path
+
+    tmp = None
+    try:
+        zarr_path, tmp = (path, None) if path.is_dir() else resolve_store_path(path)
+        root = zarr_open_group(str(zarr_path), mode="r")
+        return root.attrs.get("kind") in ("partition", "lod")
+    except Exception:
+        return False
+    finally:
+        if tmp is not None and tmp.exists():
+            import shutil as _shutil
+
+            _shutil.rmtree(tmp, ignore_errors=True)
+
+
 def _load_info_data(
     path: Path, *, full_provenance: bool
 ) -> tuple["Optional[GSplatData]", bool]:
@@ -245,22 +269,27 @@ def _load_info_data(
     from luxar.gsplats.gsplat_data import GSplatData
 
     with asection(f"Loading dataset: {path.name}"):
+        # Ask the store what shape it is BEFORE loading anything. A partition or
+        # nested tree has no flat GSplatData form, so the flat load below would
+        # decode every array of every leaf and then raise -- and `info` would
+        # throw all of it away. Reading one root attribute costs nothing and is
+        # the difference between 0 and ~115 MB of decode on a 6.4 MB store
+        # (audit A14-02).
+        if _is_node_tree(path):
+            try:
+                _print_gsplat_tree_summary(path, show_full_provenance=full_provenance)
+            except ValueError as summary_exc:
+                aprint(f"❌ {summary_exc}")
+                return None, False
+            return None, True
+
         try:
             data = GSplatData.load(path, include_stats=True)
-        except ValueError:
-            # GSplatData.load raises for two distinct reasons: (a) a valid v3.0
-            # partition/nested tree that has no flat GSplatData form, or (b) a
-            # legacy/invalid file the v3.0 reader rejects. Probe the raw tree
-            # instead of matching text: the rejection itself says "node-tree".
-            from luxar.gsplats.io.load_gsplats import load_gsplat_node
-
-            try:
-                load_gsplat_node(path)  # succeeds only for a valid v3.0 tree
-            except ValueError as load_exc:
-                aprint(f"❌ {load_exc}")
-                return None, False
-            _print_gsplat_tree_summary(path, show_full_provenance=full_provenance)
-            return None, True
+        except ValueError as load_exc:
+            # Not a tree and not loadable: a legacy or invalid file the v3.0
+            # reader rejects.
+            aprint(f"❌ {load_exc}")
+            return None, False
 
         n_splats = len(data.amplitudes)
         ndim = data.centers.shape[1]
@@ -1084,14 +1113,7 @@ def _print_gsplat_tree_summary(
 
     from luxar._zarr_compat import open_group as zarr_open_group
     from luxar.gsplats.io._archive import resolve_store_path
-    from luxar.gsplats.tree import (
-        GSplatLodGroup,
-        GSplatPartition,
-        iter_leaves,
-        node_ndim,
-        total_splats,
-    )
-    from luxar.io._compiler.gsplat_tree import read_gsplat_node
+    from luxar.gsplats.io.tree_summary import read_gsplat_tree_summary
 
     zarr_path = path
     tmp = None
@@ -1104,7 +1126,11 @@ def _print_gsplat_tree_summary(
             # arbitrary child).
             zarr_path, tmp = resolve_store_path(path)
         root = zarr_open_group(str(zarr_path), mode="r")
-        node = read_gsplat_node(root, root)
+        # Metadata only: attrs plus array SHAPES, never a chunk. Raises
+        # ValueError for a group that is not a gsplat node, which is the same
+        # contract the full reader had -- so this doubles as the validity gate
+        # that used to cost a whole extra decode of the tree.
+        summary = read_gsplat_tree_summary(root)
 
         aprint("\n" + "═" * 70)
         aprint("DATASET INFORMATION (node tree)")
@@ -1114,19 +1140,18 @@ def _print_gsplat_tree_summary(
         # own stat() is the ~4 KB directory entry, not the chunks in it, and a
         # partition is the shape most likely to BE a directory.
         aprint(f"Size: {format_memory_size(_store_size(path))}")
-        kind = (
-            "partition"
-            if isinstance(node, GSplatPartition)
-            else ("lod" if isinstance(node, GSplatLodGroup) else "leaf")
+        aprint(f"\nRoot kind: {summary.kind}")
+        aprint(f"Dimensions: {summary.ndim}D")
+        aprint(f"Total splats (all leaves): {summary.n_splats:,}")
+        if summary.kind in ("partition", "lod"):
+            child_word = "part" if summary.kind == "partition" else "level"
+            aprint(f"{child_word.capitalize()}s: {len(summary.children)}")
+            for i, leaf_count in enumerate(summary.leaf_counts):
+                aprint(f"  leaf {i}: {leaf_count:,} splats")
+        aprint(
+            "Full load would materialise: "
+            f"{format_memory_size(summary.estimated_decoded_bytes)} (estimated)"
         )
-        aprint(f"\nRoot kind: {kind}")
-        aprint(f"Dimensions: {node_ndim(node)}D")
-        aprint(f"Total splats (all leaves): {total_splats(node):,}")
-        if isinstance(node, (GSplatPartition, GSplatLodGroup)):
-            child_word = "part" if isinstance(node, GSplatPartition) else "level"
-            aprint(f"{child_word.capitalize()}s: {len(node.children)}")
-            for i, leaf in enumerate(iter_leaves(node)):
-                aprint(f"  leaf {i}: {leaf.n_splats:,} splats")
         pb = root.attrs.get("position_bounds")
         if pb:
             aprint(f"Position bounds: min={pb.get('min')} max={pb.get('max')}")

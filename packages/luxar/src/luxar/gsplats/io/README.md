@@ -481,6 +481,39 @@ if info["compression_ratio"] is not None:
     print(f"Compression: {info['compression_ratio']}x")
 ```
 
+### Read a Tree's Shape Without Decoding Anything
+
+`load_gsplat_node` reconstructs a full `GSplatNode`, which decodes every array of
+every leaf into RAM. That is right before rendering, refitting or rewriting — and
+wrong for *how many parts does this have, and how big is each*.
+
+`tree_summary.py` answers the second question from `attrs` and array **metadata**
+alone. Reading `array.shape` fetches no chunks.
+
+```python
+from luxar._zarr_compat import open_group
+from luxar.gsplats.io.tree_summary import read_gsplat_tree_summary
+
+summary = read_gsplat_tree_summary(open_group("part.gsplats.zarr", mode="r"))
+summary.kind             # "leaf" | "lod" | "partition"
+summary.n_splats         # total over every leaf
+summary.leaf_counts      # per-leaf, in tree order
+summary.estimated_decoded_bytes   # what a full load WOULD materialise
+```
+
+It raises `ValueError` for a group that is not a gsplat node, the same contract as
+the full reader, so it also works as a validity gate.
+
+This is what `luxar gsplat info` uses for a partition or nested store. Measured on
+a 10-part partition (960K splats, 6.4 MB on disk), `info` previously issued 120
+decode calls — exactly three full reads of the tree — materialising 115 MB to print
+25 lines of metadata. It now issues **zero** (audit A14-02).
+
+`load_gsplat_node` uses the same walk to warn, before allocating, when a full
+decode will exceed ~4 GiB. A warning rather than a refusal: loading a very large
+tree is legitimate on a machine sized for it, and what was missing is that the
+caller got no signal at all.
+
 ### Migrate a Legacy Dataset to v3.4
 
 ```python

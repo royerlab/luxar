@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import warnings
 from pathlib import Path
 from typing import AbstractSet, Any, Dict, List, Mapping, Sequence, Union
 
@@ -570,6 +571,49 @@ def read_gsplat_root_stats(root: Any, *, include_stats: bool = True) -> Dict[str
     return stats
 
 
+#: Estimated decode above which `load_gsplat_node` says so before allocating.
+#: 4 GiB is chosen to be quiet on anything a laptop handles comfortably and loud
+#: on the shape that motivated it -- the operational record has a 13 GB store
+#: reaching 116 GB RSS (audit A14-02).
+_DECODE_WARN_BYTES = 4 * 1024**3
+
+
+def _warn_if_decode_is_large(root: Any, path: "Path") -> None:
+    """Say how much a full decode will materialise, before it is allocated.
+
+    A WARNING, not a refusal. Loading a very large tree is a legitimate thing to
+    do on a machine sized for it, and a hard cap here would break working
+    pipelines to prevent a mistake the caller may not be making. What was
+    missing is that the caller got no signal at all -- the process simply grew
+    until the box gave up. Costs one metadata walk: no chunk is read.
+
+    Never raises. A store this cannot measure is one the reader below will
+    report on properly; a diagnostic must not be the thing that fails the load.
+    """
+    try:
+        from luxar.gsplats.io.tree_summary import read_gsplat_tree_summary
+
+        estimate = read_gsplat_tree_summary(root).estimated_decoded_bytes
+    except Exception:  # noqa: BLE001 - diagnostics must never break the load
+        return
+    if estimate < _DECODE_WARN_BYTES:
+        return
+    # Formatted here rather than with `cli.utils.format_memory_size`: the
+    # "Domain layers must not import the CLI" contract forbids that edge, and it
+    # is right to -- a library warning must not depend on the CLI being present.
+    gib = estimate / 1024**3
+
+    warnings.warn(
+        f"Loading {Path(path).name} will materialise about "
+        f"{gib:,.1f} GiB of splat arrays in memory. "
+        f"To inspect its structure without decoding anything, use "
+        f"`luxar.gsplats.io.tree_summary.read_gsplat_tree_summary` "
+        f"(what `luxar gsplat info` uses).",
+        ResourceWarning,
+        stacklevel=3,
+    )
+
+
 def load_gsplat_node(
     path: str | Path,
     include_stats: bool = False,
@@ -600,6 +644,8 @@ def load_gsplat_node(
         root = zc_open_group(str(zarr_path), mode="r")
 
         stats = read_gsplat_root_stats(root, include_stats=include_stats)
+
+        _warn_if_decode_is_large(root, path)
 
         # Read the node-tree subtree rooted at the file.
         from luxar.io._compiler.gsplat_tree import read_gsplat_node
