@@ -13,9 +13,9 @@
  *     `loadArrayRanges` -> `RangeLoader.loadRangesResolvingRef` ->
  *     `resolveArrayRef` -> `loadPerChannel` against the target's own attrs.
  *
- * So a `(0, 3)` placeholder that failed to resolve would have rendered an empty
- * node with no error and no failing test, which is precisely the failure #2490
- * hypothesised. This test is what distinguishes a healthy ref from an empty one.
+ * A ref resolved against the placeholder's metadata could instead decode
+ * corrupt values without throwing. This test catches that quiet failure mode
+ * by comparing the decoded values with the target layer.
  *
  * The assertions on the STORE (not just on the loaded data) are load-bearing:
  * without them a future encoder change that stops deduplicating would leave
@@ -48,10 +48,12 @@ async function openStore(): Promise<zarr.Location<zarr.Readable>> {
   return zarr.root(store);
 }
 
-async function arrayAttrs(layer: string, name: string): Promise<ArrayMetadata> {
+async function openArray(
+  layer: string,
+  name: string
+): Promise<zarr.Array<zarr.DataType, zarr.Readable>> {
   const root = await openStore();
-  const array = await zarr.open(root.resolve(`${layer}/${name}`), { kind: 'array' });
-  return array.attrs as unknown as ArrayMetadata;
+  return zarr.open(root.resolve(`${layer}/${name}`), { kind: 'array' });
 }
 
 /** Load a whole gsplats leaf through the production spatial-index loader. */
@@ -66,9 +68,8 @@ async function loadLayer(layer: string): Promise<LoadedGSplatsData> {
     children: [],
   } as unknown as SceneNode;
 
-  // `zarrStore` is what `resolveArrayRef` resolves the ref target against, so
-  // it must be supplied — a loader constructed without it can only read arrays
-  // under its own location.
+  // Pass `zarrStore` to mirror the production loader-factory wiring. The
+  // loader can also fall back to the store carried by its zarr location.
   const loader = new GSplatsSpatialIndexLoader(root.resolve(layer), node, undefined, root.store);
   await loader.initialize();
   const viewState = {
@@ -97,28 +98,33 @@ function layerData(layer: string): Promise<LoadedGSplatsData> {
 describe('GSplats array_ref resolution (issue #2490)', () => {
   describe('the fixture really is the case under test', () => {
     it('the ref layer stores centers as a (0, 3) array_ref into the target layer', async () => {
-      const attrs = await arrayAttrs(REF_LAYER, 'centers');
+      const array = await openArray(REF_LAYER, 'centers');
+      const attrs = array.attrs as unknown as ArrayMetadata;
       expect(ArrayDecoder.isArrayRef(attrs)).toBe(true);
       expect(attrs.encoding?.target).toBe(`${TARGET_LAYER}/centers`);
       // The physical placeholder carries no rows; the real extent is in
       // `original_shape`. A store diff that reads the former as the row count
       // reports 500 lost splats — the #2490 misdiagnosis in one line.
+      expect(array.shape).toEqual([0, 3]);
       expect(attrs.encoding?.original_shape).toEqual([500, 3]);
     });
 
     it('the ref layer stores amplitudes as an array_ref too', async () => {
-      const attrs = await arrayAttrs(REF_LAYER, 'amplitudes');
+      const array = await openArray(REF_LAYER, 'amplitudes');
+      const attrs = array.attrs as unknown as ArrayMetadata;
       expect(ArrayDecoder.isArrayRef(attrs)).toBe(true);
       expect(attrs.encoding?.target).toBe(`${TARGET_LAYER}/amplitudes`);
     });
 
     it('the ref TARGET is per-channel quantized, so the perchannel decode is covered', async () => {
-      const attrs = await arrayAttrs(TARGET_LAYER, 'centers');
+      const array = await openArray(TARGET_LAYER, 'centers');
+      const attrs = array.attrs as unknown as ArrayMetadata;
       expect(attrs.encoding?.name).toBe('linear_perchannel_u16');
     });
 
     it('colors do NOT deduplicate, so the two layers stay distinguishable', async () => {
-      const attrs = await arrayAttrs(REF_LAYER, 'colors');
+      const array = await openArray(REF_LAYER, 'colors');
+      const attrs = array.attrs as unknown as ArrayMetadata;
       expect(ArrayDecoder.isArrayRef(attrs)).toBe(false);
     });
   });

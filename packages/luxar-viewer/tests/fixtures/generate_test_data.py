@@ -2728,15 +2728,16 @@ def generate_gsplat_centers_array_ref_test() -> None:
 
         rng = np.random.RandomState(2490)
         # Above the RangeLoader's 1000-element worker threshold once multiplied
-        # by ndim, so the per-channel WORKER decode path is exercised too.
+        # by ndim, so Node tests request worker decoding and exercise the
+        # worker-unavailable fallback to the main thread.
         num_splats = 500
         shared_centers = (rng.rand(num_splats, 3).astype(np.float32) - 0.5) * 20.0
         shared_amplitudes = rng.rand(num_splats).astype(np.float32) + 0.1
         cholesky = np.tile(
             np.array([0.4, 0, 0.4, 0, 0, 0.4], dtype=np.float32), (num_splats, 1)
         )
-        # Only the colors differ, which is exactly why centers/amplitudes
-        # deduplicate while colors and cholesky do not.
+        # Only the colors differ, so centers/amplitudes deduplicate while colors
+        # do not. Cholesky stays materialised because its encoder disables dedup.
         colors_a = rng.rand(num_splats, 3).astype(np.float32)
         colors_b = rng.rand(num_splats, 3).astype(np.float32)
 
