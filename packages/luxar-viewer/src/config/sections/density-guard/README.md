@@ -28,4 +28,5 @@ The refinement rung gate (`data/scene-loader/progressive/density-gate.ts`)
 defers the next additive rung of any node already denser than its cap on
 screen: `capElementsPerPixel` for blendable nodes, the tighter
 `nonBlendableCapElementsPerPixel` for `max` / `normal` / `opaque`, which cannot
-be thinned. Deferred rungs resume when the camera moves in.
+be thinned. Both consumers exclude shaded triangle meshes. Deferred rungs
+resume when the camera moves in.

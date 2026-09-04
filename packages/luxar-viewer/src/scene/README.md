@@ -524,8 +524,9 @@ pure functions for testing.
 
 ### 6. Projected-Density Guard
 
-`projected-density.ts` measures, once per frame and per committed data mesh,
-how many visible elements land on each **drawing-buffer** pixel of the node's
+`projected-density.ts` measures, once per frame and per committed emissive data
+mesh (points, lines, and gsplats; shaded triangle meshes are excluded), how
+many visible elements land on each **drawing-buffer** pixel of the node's
 projected bounding sphere (`elementsPerPixel`; buffer pixels, not CSS pixels,
 so the guard never fights the adaptive-DPR controller). Frame cost on
 element-dense views tracks that density, not the pixel count: the 2026-09
