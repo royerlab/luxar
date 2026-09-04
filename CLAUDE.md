@@ -57,6 +57,9 @@ pnpm lint         # Lint (includes TYPE-AWARE rules: no-floating-promises,
                   # violation fails, including an increase inside a suppressed
                   # file (the suppression is a COUNT, not a file exemption).
                   # Fixed some? `pnpm lint --prune-suppressions` tightens it.
+                  # Moved/renamed a baselined file? Re-key with `pnpm exec
+                  # eslint src --ext .ts,.tsx --suppress-rule <rule>`, then
+                  # prune; verify the suppressions diff only moves that path.
                   # Do NOT add a `// eslint-disable` to get green: a floating
                   # promise here is a load that silently stalls, which no test
                   # asserts and E2E does not gate.

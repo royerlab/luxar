@@ -56,6 +56,13 @@ is a documented reason not to.
 - **Boolean predicates**: prefix with `is` / `has` / `should` (`isDisposed`,
   `hasTransform`).
 
+Production functions are limited to complexity 10, 120 code lines, nesting
+depth 4, and 5 parameters. Existing debt is count-baselined in
+`eslint-suppressions.json`; use `pnpm lint --prune-suppressions` after paying
+any of it down. After moving or renaming a baselined file, re-key it with
+`pnpm exec eslint src --ext .ts,.tsx --suppress-rule <rule>`, then prune and
+verify the suppressions diff only moves that path.
+
 ## 3. CSS class names (BEM)
 
 All viewer-owned class names start with `luxar-` to avoid host-page
@@ -96,11 +103,6 @@ two carve-outs (`src/utils/log.ts` and
 `src/utils/console-interceptor.ts`) are the legitimate `console.*`
 sites. Tests, benchmarks, screenshot drivers, and mocks may use
 `console.*` directly — they are tooling, not in-app code.
-
-Production functions are limited to complexity 10, 120 code lines, nesting
-depth 4, and 5 parameters. Existing debt is count-baselined in
-`eslint-suppressions.json`; use `pnpm lint --prune-suppressions` after paying
-any of it down.
 
 Output format is fixed: `[emoji] [Module] message`. Custom emojis go
 through `log.custom(emoji, module, message)`.
