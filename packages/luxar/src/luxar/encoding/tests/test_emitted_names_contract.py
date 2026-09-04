@@ -163,9 +163,9 @@ def test_every_quantized_contract_name_is_reachable() -> None:
 
     ``test_all_emitted_encoding_names_are_in_contract`` proves the encoder never
     invents a name. It cannot prove the contract has no DEAD entries, and it
-    cannot notice that a whole family goes unexercised -- half the quantized
-    vocabulary did, including ``lut_uint8``, which is the most common quantized
-    encoding in the built demo stores.
+    cannot notice that a whole family disappears from the producer surface.
+    Individual producer tests cover many exact names; this assertion enforces
+    the reverse subset across the complete contract.
     """
     quantized = _quantized_contract_names()
     emitted = _collect_emitted_names()
