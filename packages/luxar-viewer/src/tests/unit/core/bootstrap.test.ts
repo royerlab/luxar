@@ -75,7 +75,7 @@ vi.mock('zarrita', () => ({
   withMaybeConsolidatedMetadata: undefined,
 }));
 
-import { buildInfo } from '../../../config/build-info';
+import { buildInfo, buildInfoLine } from '../../../config/build-info';
 import { bootstrapStandalone } from '../../../core/bootstrap';
 import { getGpuByteBudget } from '../../../rendering/gpu-byte-budget';
 import { ArchiveFaultError } from '../../../cache/chunk-source';
@@ -228,7 +228,9 @@ describe('bootstrapStandalone', () => {
 
       expect(
         bufferedMessages.some((args) =>
-          args.some((value) => typeof value === 'string' && value.includes('Luxar viewer '))
+          args.some(
+            (value) => typeof value === 'string' && value.includes(`Luxar viewer ${buildInfoLine()}`)
+          )
         )
       ).toBe(true);
     });
