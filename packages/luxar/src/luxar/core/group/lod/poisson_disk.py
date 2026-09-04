@@ -33,7 +33,7 @@ filtering for acceptance inside the loop reads as equivalent and is
 quadratic — at the coarsest radius the grid is only a few cells across
 (measured: ``(4, 3, 3)`` for a unit cube), so ±2 spans the whole dataset
 and every candidate scans every point. That was the shipped behaviour
-until #2527: 3.1–3.4× per doubling of N, extrapolating to ~4.3 hours at
+until #2530: 3.1–3.4× per doubling of N, extrapolating to ~4.3 hours at
 1M points for a selectable public authoring option.
 
 Reference: Bridson, "Fast Poisson Disk Sampling in Arbitrary

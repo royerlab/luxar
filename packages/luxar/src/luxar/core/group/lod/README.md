@@ -497,7 +497,7 @@ selects that no coarser level already took. A cell grid **of accepted samples**
 sized at `r/√3` keeps the rejection test to a local 5×5×5 neighborhood, which is
 what makes it `O(N)` per level — measured at a flat 24 µs/point from 10K to 1M.
 Bucketing every input index there instead is quadratic and was the shipped
-behaviour until #2527 (~4.3 h at 1M points); `test_cost_grows_linearly_with_n`
+behaviour until #2530 (~4.3 h at 1M points); `test_cost_grows_linearly_with_n`
 is the regression gate.
 Same `(permutation, per_level_counts)` contract as the stratified sampler, so
 `make_additive_lod_*` stays symmetric across methods; the last level absorbs any
