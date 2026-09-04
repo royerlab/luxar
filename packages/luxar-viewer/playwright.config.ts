@@ -9,7 +9,7 @@
  * - Automatic dev server startup
  */
 
-import { defineConfig, devices } from '@playwright/test';
+import { defineConfig, devices, type PlaywrightTestConfig } from '@playwright/test';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { createE2EServerMetadata, ensureCheckoutIdentity } from './tools/e2e-server-identity';
@@ -36,6 +36,10 @@ const serverMetadata = createE2EServerMetadata(checkoutIdentity, viewerBaseURL, 
 // this file — is handed the RESOLVED config and can therefore report the count Playwright will
 // actually use after `--workers=N` / `--debug` have had their say.
 const workerPlan = e2eWorkerPlan();
+
+type ScreenshotOptionsWithRuntimeTimeout = NonNullable<
+  NonNullable<PlaywrightTestConfig['expect']>['toHaveScreenshot']
+> & { timeout: number };
 
 /**
  * See https://playwright.dev/docs/test-configuration
@@ -269,7 +273,11 @@ export default defineConfig({
 
       // Disable CSS animation detection (doesn't work with WebGL)
       animations: 'disabled' as const,
-    },
+
+      // Playwright 1.62 honours this runtime option but omits it from the
+      // public toHaveScreenshot config type.
+      timeout: 10000,
+    } as ScreenshotOptionsWithRuntimeTimeout,
 
     // Timeout for expect() assertions
     // Increased for E2E tests with real dataset loading
