@@ -31,12 +31,8 @@ import { createKTX2TextureDecoder } from '../../../rendering/ktx2-texture-decode
 import { resolveFactories, type AppFactories } from '../factories';
 import type { LuxarAppOptions } from '../options';
 import type { EventGroup } from '../../../utils/cross-layer/event-group';
-import {
-  getProjectedDensityTracker,
-  resolveDensityGuardEnabled,
-} from '../../../scene/projected-density';
-import { getDensityGuard } from '../../../scene/density-guard';
-import { isLoadActivity, refinementCompleteFromTimeline } from './load-activity';
+import { wireDensityGuard } from './density-guard-wiring';
+import { buildLoadActivityPredicate } from './load-activity';
 
 /**
  * Everything `LuxarApp.init()` constructs is returned in this result.
@@ -335,60 +331,23 @@ export async function runInitPipeline(
   // measures elements per drawing-buffer pixel for every committed data mesh
   // once per frame. Consumers read it through getProjectedDensityTracker()
   // (shader keep fraction, refinement rung cap, getPerf().density).
-  const densityGuardEnabled = resolveDensityGuardEnabled(
-    config.densityGuard.enabled,
-    ports.options.densityGuard
-  );
-  // The keep-fraction ladder rides the tracker's visit hook (blendable modes
-  // only; brightness-compensated through applyLodFade). A step change is a
-  // content change for the DPR controller, and needs a frame to show.
-  const densityGuard = getDensityGuard();
-  densityGuard.configure({
-    config: () => config.densityGuard,
-    energyComp: () => lodEnergyCompEnabled,
+  // The keep-fraction ladder, the refinement rung-gate provider and the
+  // per-frame walk are wired in density-guard-wiring.ts (unit-tested there).
+  const loaderManager = SceneLoaderManager.getInstance();
+  const densityWiring = wireDensityGuard({
+    configEnabled: config.densityGuard.enabled,
+    option: ports.options.densityGuard,
+    config: config.densityGuard,
+    energyComp: lodEnergyCompEnabled,
+    sceneManager,
     registerMaterial: (material) => materialManager.register(material),
+    setRefinementDensityProvider: (provider, caps) =>
+      loaderManager.setRefinementDensityProvider(provider, caps),
+    getDefaultLoader: () => getSceneLoader('default'),
+    getAdaptiveDpr: () => partial.adaptiveDPRManager,
+    requestRender: () => animationController.startAnimation(),
   });
-  getProjectedDensityTracker().configure({
-    enabled: () => densityGuardEnabled,
-    getRoot: () => sceneManager.scene,
-    getCamera: () => sceneManager.camera,
-    getDrawingBufferSize: () => {
-      const canvas = sceneManager.renderer.domElement;
-      return { width: canvas.width, height: canvas.height };
-    },
-    onVisit: (mesh, record) => densityGuard.observe(mesh, record),
-  });
-  // Refinement rung gate: the loaders read the same per-node records through
-  // this provider (data/ cannot import scene/) and defer a rung that would push
-  // a node past its screen cap; the per-frame hook below resumes deferred
-  // rungs once the camera moves in. Null provider (guard off) = bytes-only.
-  SceneLoaderManager.getInstance().setRefinementDensityProvider(
-    densityGuardEnabled
-      ? (path) => {
-          const rec = getProjectedDensityTracker().get(path);
-          return rec
-            ? {
-                areaPx: rec.areaPx,
-                elements: rec.elements,
-                onScreen: rec.onScreen,
-                blendable: rec.blendable,
-              }
-            : undefined;
-        }
-      : null,
-    {
-      blendable: config.densityGuard.capElementsPerPixel,
-      nonBlendable: config.densityGuard.nonBlendableCapElementsPerPixel,
-    }
-  );
-  animationController.addPerFrameCallback('projected-density', () => {
-    if (!getProjectedDensityTracker().evaluate()) return;
-    if (densityGuard.takeChanged()) {
-      partial.adaptiveDPRManager?.notifyContentChanged();
-      animationController.startAnimation();
-    }
-    getSceneLoader('default')?.resumeDensityDeferredRefinement();
-  });
+  animationController.addPerFrameCallback('projected-density', densityWiring.perFrame);
   animationController.addPerFrameCallback('lod-group-selector', () => {
     const loader = getSceneLoader('default');
     // When a substitutive-LOD group swaps its active level (a camera-move
@@ -434,13 +393,10 @@ export async function runInitPipeline(
   // — frame jank reflects that work, not steady-state render cost, and the
   // manager suppresses probe/estimator learning for those samples. Same
   // predicate the perf probes read as `getPerf().isSettled`, inverted.
-  adaptiveDPRManager.setLoadActivityPredicate(() =>
-    isLoadActivity({
-      isUpdateInProgress: () => getSceneLoader('default')?.isUpdateInProgress() ?? false,
+  adaptiveDPRManager.setLoadActivityPredicate(
+    buildLoadActivityPredicate({
+      getDefaultLoader: () => getSceneLoader('default'),
       isAnyLoadPassInProgress: () => SceneLoaderManager.getInstance().isAnyLoadPassInProgress(),
-      isAnyLodLevelLoading: () =>
-        getSceneLoader('default')?.lodGroupRegistry?.isAnyLevelLoading() === true,
-      isRefinementComplete: refinementCompleteFromTimeline,
     })
   );
 

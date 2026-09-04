@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildLoadActivityPredicate,
   isLoadActivity,
   refinementCompleteFromTimeline,
   type LoadActivityDeps,
@@ -38,6 +39,39 @@ describe('isLoadActivity', () => {
     ['the refinement drain still running', { isRefinementComplete: () => false }],
   ])('suppresses while %s', (_label, overrides) => {
     expect(isLoadActivity(deps(overrides))).toBe(true);
+  });
+});
+
+describe('buildLoadActivityPredicate', () => {
+  it('reads the live loader each tick and treats a missing loader as quiet', () => {
+    resetLoadTimeline();
+    markLoad('loadStart');
+    noteRefinementComplete();
+    let loader: {
+      isUpdateInProgress(): boolean;
+      lodGroupRegistry?: { isAnyLevelLoading(): boolean } | null;
+    } | null = null;
+    let loadPass = false;
+    const predicate = buildLoadActivityPredicate({
+      getDefaultLoader: () => loader,
+      isAnyLoadPassInProgress: () => loadPass,
+    });
+    expect(predicate()).toBe(false); // no loader yet, drain complete
+    loader = { isUpdateInProgress: () => true };
+    expect(predicate()).toBe(true);
+    loader = {
+      isUpdateInProgress: () => false,
+      lodGroupRegistry: { isAnyLevelLoading: () => true },
+    };
+    expect(predicate()).toBe(true);
+    loader = { isUpdateInProgress: () => false, lodGroupRegistry: null };
+    expect(predicate()).toBe(false);
+    loadPass = true;
+    expect(predicate()).toBe(true);
+    loadPass = false;
+    markLoad('loadStart'); // a new load: refinement not complete again
+    expect(predicate()).toBe(true);
+    resetLoadTimeline();
   });
 });
 

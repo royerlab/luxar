@@ -44,3 +44,27 @@ export function isLoadActivity(deps: LoadActivityDeps): boolean {
 export function refinementCompleteFromTimeline(): boolean {
   return getLoadTimeline().refinement.complete;
 }
+
+/** The live loader handles the predicate reads each tick (a dataset switch replaces them). */
+export interface LoadActivitySources {
+  getDefaultLoader(): {
+    isUpdateInProgress(): boolean;
+    lodGroupRegistry?: { isAnyLevelLoading(): boolean } | null;
+  } | null;
+  isAnyLoadPassInProgress(): boolean;
+}
+
+/**
+ * The production predicate: every source is read at call time through the
+ * loader manager, never captured, so it follows dataset switches.
+ */
+export function buildLoadActivityPredicate(sources: LoadActivitySources): () => boolean {
+  return () =>
+    isLoadActivity({
+      isUpdateInProgress: () => sources.getDefaultLoader()?.isUpdateInProgress() ?? false,
+      isAnyLoadPassInProgress: () => sources.isAnyLoadPassInProgress(),
+      isAnyLodLevelLoading: () =>
+        sources.getDefaultLoader()?.lodGroupRegistry?.isAnyLevelLoading() === true,
+      isRefinementComplete: refinementCompleteFromTimeline,
+    });
+}
