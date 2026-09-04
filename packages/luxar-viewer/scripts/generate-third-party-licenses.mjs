@@ -22,6 +22,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -35,6 +36,10 @@ const RULE = '='.repeat(78);
 
 /**
  * Every package in the pnpm PRODUCTION closure, deduplicated by name.
+ *
+ * pnpm currently resolves this bundle to one version per package name. If that
+ * changes, the first encountered version wins; this map does not preserve
+ * parallel installed versions.
  *
  * `problems` is optional so callers that just want the list can omit it, but
  * when supplied a tooling failure is RECORDED rather than thrown -- matching
@@ -131,17 +136,26 @@ export function javascriptSections(problems) {
 /** Crates in the WASM build graph, with their license text from the registry. */
 export function rustSections(problems) {
   let meta;
-  try {
-    meta = JSON.parse(
-      execFileSync('cargo', ['metadata', '--format-version', '1'], {
-        cwd: RUST_ROOT,
-        encoding: 'utf8',
-        maxBuffer: 64 * 1024 * 1024,
-      })
-    );
-  } catch (err) {
+  let failure;
+  const fallback = join(process.env.CARGO_HOME ?? join(homedir(), '.cargo'), 'bin', 'cargo');
+  for (const command of ['cargo', fallback]) {
+    try {
+      meta = JSON.parse(
+        execFileSync(command, ['metadata', '--format-version', '1'], {
+          cwd: RUST_ROOT,
+          encoding: 'utf8',
+          maxBuffer: 64 * 1024 * 1024,
+        })
+      );
+      break;
+    } catch (err) {
+      failure = err;
+      if (err.code !== 'ENOENT') break;
+    }
+  }
+  if (!meta) {
     problems.push(
-      `cargo metadata failed (${err.message.split('\n')[0]}). The production ` +
+      `cargo metadata failed (${failure.message.split('\n')[0]}). The production ` +
         `build already requires the Rust toolchain for build:wasm, so this is ` +
         `a broken toolchain rather than an optional step.`
     );
@@ -193,10 +207,13 @@ export function colormapSection(problems) {
   const mpl = [
     ...(src.match(/matplotlib_maps = \[([\s\S]*?)\]/)?.[1] ?? '').matchAll(/"([A-Za-z_]+)"/g),
   ].map((m) => m[1]);
-  if (ramps.length === 0 || mpl.length === 0) {
+  const computed = [...src.matchAll(/^\s*colormaps\["([a-z_]+)"\] = make_[a-z_]+\(\)$/gm)].map(
+    (m) => m[1]
+  );
+  if (ramps.length === 0 || computed.length === 0 || mpl.length === 0) {
     problems.push(
       `could not read the colormap tables out of ${gen} ` +
-        `(ramps=${ramps.length}, matplotlib=${mpl.length})`
+        `(ramps=${ramps.length}, computed=${computed.length}, matplotlib=${mpl.length})`
     );
     return '';
   }
@@ -207,7 +224,7 @@ export function colormapSection(problems) {
     '',
     `Computed by Luxar and covered by the root LICENSE (black-to-colour linear`,
     `ramps): ${ramps.join(', ')}.`,
-    `Also Luxar's own: fire, ice, phase.`,
+    `Also Luxar's own: ${computed.join(', ')}.`,
     '',
     `Sampled from matplotlib's colormaps at build time and baked as 256x3 uint8`,
     `LUTs: ${mpl.join(', ')}.`,
