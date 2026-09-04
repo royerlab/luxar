@@ -1148,7 +1148,7 @@ def get_dependency_statistics(root: Path) -> dict[str, Any]:
             prod = project.get("dependencies", []) or []
             deps["python"]["production"] = len(prod)
             deps["python"]["packages"] = [
-                re.split(r"[<>=!~\[ ]", spec, 1)[0] for spec in prod
+                re.split(r"[<>=!~\[ ]", spec, maxsplit=1)[0] for spec in prod
             ]
             optional = project.get("optional-dependencies", {}) or {}
             for grp, items in optional.items():
