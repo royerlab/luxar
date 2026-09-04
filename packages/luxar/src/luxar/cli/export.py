@@ -59,17 +59,20 @@ def export_scene(
     if not is_valid:
         raise ValueError(f"Invalid zarr store: {error}")
 
-    # Handle output directory (check before viewer so users get the right error)
+    # Preserve the existing-output error when overwrite was not requested.
     if output.exists():
         if not overwrite:
             raise FileExistsError(f"Output directory already exists: {output}")
-        shutil.rmtree(output)
 
-    # Check viewer is built
+    # Preflight the viewer before an overwrite can remove the user's old export.
     if not check_viewer_built():
         raise FileNotFoundError(
             "Viewer not built. Run: cd packages/luxar-viewer && pnpm build"
         )
+    _require_third_party_notices(get_viewer_dist_path())
+
+    if output.exists():
+        shutil.rmtree(output)
 
     output.mkdir(parents=True, exist_ok=True)
 

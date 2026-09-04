@@ -182,6 +182,23 @@ class TestExportScene:
         assert (output / "serve.py").exists()
         assert (output / "viewer").is_dir()
 
+    def test_missing_notices_does_not_wipe_existing_output(
+        self, sample_scene: Path, mock_viewer_dist: Path, tmp_path: Path
+    ) -> None:
+        """Viewer preflight must finish before overwrite removes old output."""
+        output = tmp_path / "existing"
+        output.mkdir()
+        sentinel = output / "important.txt"
+        sentinel.write_text("user's prior export")
+        (mock_viewer_dist / "THIRD_PARTY_LICENSES.txt").unlink()
+
+        p1, p2 = _patch_viewer(mock_viewer_dist)
+        with p1, p2, pytest.raises(FileNotFoundError, match="THIRD_PARTY_LICENSES"):
+            export_scene(sample_scene, output, overwrite=True)
+
+        assert sentinel.read_text() == "user's prior export"
+        assert not (output / "viewer").exists()
+
     def test_fails_on_invalid_zarr(self, tmp_path: Path) -> None:
         """ValueError for non-zarr directory."""
         source = tmp_path / "not_zarr"
@@ -696,7 +713,13 @@ class TestServeScriptTitle:
         from luxar.cli import export as export_mod
 
         captured: dict[str, object] = {}
+        viewer_dist = tmp_path / "viewer_dist"
+        viewer_dist.mkdir()
+        (viewer_dist / "THIRD_PARTY_LICENSES.txt").write_text("test notices")
         monkeypatch.setattr(export_mod, "check_viewer_built", lambda: True)
+        monkeypatch.setattr(
+            export_mod, "get_viewer_dist_path", lambda: viewer_dist
+        )
         monkeypatch.setattr(export_mod, "_copy_viewer", lambda dest: None)
         monkeypatch.setattr(export_mod, "_copy_zarr_data", lambda s, d: None)
         monkeypatch.setattr(export_mod, "_generate_readme", lambda o, d: None)
