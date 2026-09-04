@@ -39,6 +39,9 @@ from luxar.typing_utils._format_contract import ENCODING_NAMES
 REPO = Path(__file__).resolve().parents[6]
 
 SEARCH_ROOTS = (
+    "changelog.d",
+    "scripts",
+    "packages/luxar/examples",
     "packages/luxar/src/luxar",
     "packages/luxar-viewer/src",
     "docs",
@@ -83,7 +86,7 @@ def wrong_convention_siblings() -> dict[str, str]:
 
 def _documents() -> list[Path]:
     """Every file in the search roots that could name an encoding."""
-    found: list[Path] = []
+    found = [p for p in REPO.glob("*") if p.is_file() and p.suffix in DOC_SUFFIXES]
     for root in SEARCH_ROOTS:
         found.extend(
             p
@@ -127,6 +130,13 @@ def test_the_scan_reached_the_documents() -> None:
     """Fail closed: an empty scan would make the real assertion vacuous."""
     docs = _documents()
     assert len(docs) > 500, f"only found {len(docs)} documents under {REPO}"
+    expected = {
+        REPO / "CHANGELOG.md",
+        REPO / "CLAUDE.md",
+        REPO / "changelog.d/2511.md",
+        REPO / "scripts/reencode_gsplat_demos.py",
+    }
+    assert expected <= set(docs), f"scan missed required prose: {expected - set(docs)}"
     siblings = wrong_convention_siblings()
     assert len(siblings) >= 15, (
         f"derived only {len(siblings)} sibling spellings from "
