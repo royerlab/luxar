@@ -451,7 +451,7 @@ check-scene-credits = "python scripts/check_scene_credits.py {args}"
 check-complexity = "python scripts/check_complexity.py {args}"
 # Ratchet ruff's defect-bearing rules (flake8-bugbear + RUF012) against
 # scripts/lint_baseline.json. Same shape as check-complexity and for the same
-# reason: 474 pre-existing violations mean the rules cannot go into
+# reason: 473 pre-existing violations mean the rules cannot go into
 # `[tool.ruff.lint] select` without a large, behaviour-changing sweep.
 check-lint-ratchet = "python scripts/check_lint_ratchet.py {args}"
 # Everything in `check` EXCEPT the test suite. `make check-all` runs this, so
@@ -907,7 +907,7 @@ known-first-party = ["luxar"]
 
 # The whole `B` (flake8-bugbear) family plus RUF012 is enforced as a RATCHET by
 # `scripts/check_lint_ratchet.py`, not by `select` above — see that script's
-# module docstring for why (474 pre-existing violations, and B905's fix changes
+# module docstring for why (473 pre-existing violations, and B905's fix changes
 # behaviour). This setting exists so the ratchet baselines real defects only:
 # `typer.Option(...)` / `typer.Argument(...)` in a parameter default is the
 # documented Typer idiom, evaluated once at import ON PURPOSE, and it accounted

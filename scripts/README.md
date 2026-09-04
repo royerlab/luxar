@@ -292,9 +292,17 @@ baseline where a rule is a false positive at that specific site — prefer it to
 `--update-baseline`, which should be reserved for moves and deliberate
 re-baselining.
 
-The checker runs as part of `hatch run lint` and `hatch run check`, and the
-Python test suite (`packages/luxar/src/luxar/tests/test_check_lint_ratchet.py`)
-asserts the real tree is regression-free, so the ratchet gates every PR.
+**What actually enforces this in CI.** The checker runs as part of
+`hatch run lint` and `hatch run check`, which is what a developer and
+`make check-all` reach — but CI does *not* run either. Its `Lint (ruff)` step
+invokes `ruff check packages/luxar/src/luxar/` directly, which both skips the
+ratchet scripts and covers a narrower path set than they do. The gate that fires
+on a PR is therefore the pytest one,
+`test_check_lint_ratchet.py::test_repository_has_no_lint_regressions`, inside
+`python-tests` — exactly as for the complexity ratchet above. That test fails
+closed (a missing baseline reports every violation as new), and
+`scripts/lint_baseline.json` is in the `dom_py` change filter so editing the
+baseline cannot skip the test that re-derives it.
 
 ---
 
