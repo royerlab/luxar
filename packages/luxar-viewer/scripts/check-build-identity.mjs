@@ -138,6 +138,17 @@ export function check(
     } else if (requireCommit && meta.commit === UNKNOWN) {
       problems.push('index.html stamp has no commit, but this tree has git history');
     }
+    if (
+      meta &&
+      stamped.some(
+        (stamp) =>
+          stamp.version !== meta.version ||
+          stamp.commit !== meta.commit ||
+          stamp.buildTime !== meta.buildTime
+      )
+    ) {
+      problems.push('index.html and bundle stamps disagree');
+    }
   }
 
   return problems;

@@ -131,6 +131,12 @@ describe('check', () => {
     expect(run()[0]).toMatch(/carries no <meta name="luxar-build">/);
   });
 
+  it('FAILS when the meta tag and bundle carry different build identities', () => {
+    writeBundle(root, STAMP);
+    writeIndexHtml(root, { ...STAMP, buildTime: '2026-09-15T10:11:13Z' });
+    expect(run()[0]).toMatch(/index\.html and bundle stamps disagree/);
+  });
+
   it('FAILS on an unresolved commit when the tree HAS git history', () => {
     writeBundle(root, { ...STAMP, commit: 'unknown' });
     expect(run({ requireCommit: true })[0]).toMatch(/no commit, but this tree has git history/);
