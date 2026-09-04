@@ -7,6 +7,7 @@ import {
   noteRefinementComplete,
   noteRefinementDensityDeferral,
   noteRefinementPass,
+  noteRefinementStarted,
   resetLoadTimeline,
 } from '../../../profiling/load-timeline';
 
@@ -107,6 +108,11 @@ describe('load-timeline', () => {
     expect(snap.measures.refinementCompleteMs).not.toBeNull();
     const mark = snap.marks.find((m) => m.name === 'refinementComplete');
     expect(mark?.detail).toEqual({ passes: 3, rungs: 6 });
+
+    noteRefinementStarted();
+    expect(getLoadTimeline().refinement.complete).toBe(false);
+    noteRefinementComplete();
+    expect(getLoadTimeline().refinement.complete).toBe(true);
   });
 
   it('mirrors marks into the User Timing API with the luxar: prefix', () => {

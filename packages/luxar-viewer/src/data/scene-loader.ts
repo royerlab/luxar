@@ -185,7 +185,11 @@ import { queueNext } from './scene-loader/update-view/queue-next';
 import { connectLoaderToMonitor as connectLoaderToMonitorHelper } from './scene-loader/nodes/connect-loader-to-monitor';
 import type { LineWorkingSetGate, NodeBuildCtx } from './scene-loader/nodes/build-ctx';
 import { createLineWorkingSetGate } from './scene-loader/nodes/load-children-concurrently';
-import { noteRefinementComplete } from '../profiling/load-timeline';
+import {
+  noteRefinementAborted,
+  noteRefinementComplete,
+  noteRefinementStarted,
+} from '../profiling/load-timeline';
 import { viewStatesEqual } from './loaders/progressive/view-state-equal';
 import {
   RefinementResidencyBudget,
@@ -315,6 +319,7 @@ export class SceneLoader {
    * all" keep reading {@link isUpdateInProgress}.
    */
   private _refining = false;
+  private _lastUpdateWasFrameBudgeted = false;
   private _updateVersion = 0; // For logging/debugging
 
   /**
@@ -822,7 +827,12 @@ export class SceneLoader {
    * @see {@link MultiLevelCachingStore} for caching implementation
    */
   async loadScene(url: string): Promise<THREE.Group> {
-    return loadSceneHelper(url, this.makeLoadSceneCtx());
+    try {
+      return await loadSceneHelper(url, this.makeLoadSceneCtx());
+    } catch (error) {
+      noteRefinementAborted();
+      throw error;
+    }
   }
 
   /** Build the per-call LoadSceneCtx. Never passes `this` to the helper. */
@@ -1055,6 +1065,7 @@ export class SceneLoader {
       // and leave the loaders capped after playback ends. It flows to the
       // loaders only via the per-type handler ctxs (buildUpdateCtxs).
       const { frameBudgetMs, ...incomingViewState } = viewState;
+      this._lastUpdateWasFrameBudgeted = frameBudgetMs !== undefined;
       // `prefetch` is likewise a transient directive (set only on the
       // SlicePrefetcher's shadow passes); strip it too so it can never persist
       // into `this.viewState` and pin every subsequent foreground store.
@@ -1392,6 +1403,7 @@ export class SceneLoader {
       // ceiling upward. Lazy lod_group levels are not in these sweep maps.
       // The density gate is re-evaluated from scratch each run: a deferral is
       // camera-dependent, never sticky across runs.
+      noteRefinementStarted();
       this.refinementDensityGate?.beginRun();
       const residencyBudget = RefinementResidencyBudget.forSession(
         this.progressiveLadderResidencies(),
@@ -1876,6 +1888,7 @@ export class SceneLoader {
    */
   isAtViewState(candidate: ViewState): boolean {
     if (this._disposed) return false;
+    if (this._lastUpdateWasFrameBudgeted) return false;
     return viewStatesEqual(candidate, this.viewState);
   }
 

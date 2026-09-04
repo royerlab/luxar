@@ -165,12 +165,22 @@ export function noteRefinementPass(rungs: number, rungsFromCache = 0): void {
   refinement.rungsFromCache += Math.max(0, rungsFromCache);
 }
 
-/** The final geometry phase ran every ladder to completion (not cancelled). */
 /** Count one rung the projected-density gate deferred (`density-gate.ts`). */
 export function noteRefinementDensityDeferral(): void {
   refinement.densityDeferred += 1;
 }
 
+/** A new progressive-refinement drain started for the current dataset. */
+export function noteRefinementStarted(): void {
+  refinement.complete = false;
+}
+
+/** A failed initial load has no refinement drain left to wait for. */
+export function noteRefinementAborted(): void {
+  refinement.complete = true;
+}
+
+/** The final geometry phase ran every ladder to completion (not cancelled). */
 export function noteRefinementComplete(): void {
   refinement.complete = true;
   markLoad('refinementComplete', { passes: refinement.passes, rungs: refinement.rungs });

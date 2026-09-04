@@ -36,6 +36,7 @@ import {
   type LODGroupEntry,
 } from '../../../scene/lod-group-registry';
 import type { NodeBuildCtx } from '../../../data/scene-loader/nodes/build-ctx';
+import { getLoadTimeline, resetLoadTimeline } from '../../../profiling/load-timeline';
 
 // THREE is NOT mocked here. The classes SceneLoader touches —
 // Group / Points / Mesh / Box3 / Vector3 / Matrix4 /
@@ -352,6 +353,21 @@ describe('SceneLoader', () => {
   });
 
   describe('updateView', () => {
+    it('does not report a budget-truncated pass as the settled view', async () => {
+      const committed = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 4],
+        tolerance: [0, 0, 0, 0.5],
+      } satisfies ViewState;
+
+      await sceneLoader.updateView({ ...committed, frameBudgetMs: 8 });
+      const stored = (sceneLoader as unknown as { viewState: ViewState }).viewState;
+      expect(sceneLoader.isAtViewState(stored)).toBe(false);
+
+      await sceneLoader.updateView(stored);
+      expect(sceneLoader.isAtViewState(stored)).toBe(true);
+    });
+
     beforeEach(async () => {
       // Load a scene first
       await sceneLoader.loadScene('http://localhost:8000/test.zarr');
@@ -1986,6 +2002,7 @@ describe('SceneLoader', () => {
 
   describe('error handling', () => {
     it('should handle store opening failures', async () => {
+      resetLoadTimeline();
       (zarr as any).withMaybeConsolidatedMetadata.mockRejectedValue(
         new Error('Failed to open store')
       );
@@ -1993,6 +2010,8 @@ describe('SceneLoader', () => {
       await expect(sceneLoader.loadScene('http://invalid.url')).rejects.toThrow(
         'Failed to open store'
       );
+      expect(getLoadTimeline().refinement.complete).toBe(true);
+      expect(getLoadTimeline().milestones.refinementComplete).toBeUndefined();
     }, 15000);
 
     it('should handle enumeration failures gracefully', async () => {

@@ -4,6 +4,7 @@ import { computePerfSnapshot } from '../../../../../core/app/debug/perf-snapshot
 import {
   markLoad,
   noteRefinementComplete,
+  noteRefinementStarted,
   resetLoadTimeline,
 } from '../../../../../profiling/load-timeline';
 
@@ -44,6 +45,10 @@ describe('computePerfSnapshot', () => {
     };
     markLoad('loadStart');
     expect(computePerfSnapshot(hooks).isSettled).toBe(false); // refinement not complete
+    noteRefinementComplete();
+    expect(computePerfSnapshot(hooks).isSettled).toBe(true);
+    noteRefinementStarted();
+    expect(computePerfSnapshot(hooks).isSettled).toBe(false);
     noteRefinementComplete();
     expect(computePerfSnapshot(hooks).isSettled).toBe(true);
     expect(computePerfSnapshot({ ...hooks, isUpdateInProgress: () => true }).isSettled).toBe(false);
