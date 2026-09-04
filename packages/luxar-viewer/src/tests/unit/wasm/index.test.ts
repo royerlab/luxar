@@ -36,6 +36,7 @@ import {
   assertRequiredWasmExports,
   wasmShimCandidateUrls,
   importFirstWasmShim,
+  instantiateWasmShim,
 } from '../../../wasm';
 import { TypeScriptFallback } from '../../../wasm/typescript';
 
@@ -592,5 +593,51 @@ describe('importFirstWasmShim', () => {
     const err = await importFirstWasmShim([], async () => shim()).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).message).toMatch(/No WASM shim candidate URL/);
+  });
+});
+
+describe('instantiateWasmShim', () => {
+  /** A stand-in for the compiled module; only identity is asserted. */
+  const precompiled = { __fake: 'module' } as unknown as WebAssembly.Module;
+
+  // Exercised directly rather than through `initWasm`, which reaches the shim
+  // via a `new Function('url','return import(url)')` indirection that vitest's
+  // module runner never services — every candidate there rejects, so this
+  // success path is unreachable from the outside.
+
+  it('hands wasm-bindgen the precompiled module in its object form', async () => {
+    const init = vi.fn(async () => ({ memory: {} }));
+    const shim = { default: init } as unknown as Parameters<typeof instantiateWasmShim>[0];
+
+    await instantiateWasmShim(shim, precompiled);
+
+    // `{ module_or_path }` is the shape `__wbg_init` destructures, and passing
+    // an existing Module makes `__wbg_load` skip compilation entirely.
+    expect(init).toHaveBeenCalledTimes(1);
+    expect(init).toHaveBeenCalledWith({ module_or_path: precompiled });
+  });
+
+  it('calls default() bare when there is no precompiled module', async () => {
+    const init = vi.fn(async () => ({ memory: {} }));
+    const shim = { default: init } as unknown as Parameters<typeof instantiateWasmShim>[0];
+
+    await instantiateWasmShim(shim);
+
+    // Byte-identical to the pre-change behaviour: no argument at all.
+    expect(init).toHaveBeenCalledWith();
+  });
+
+  it('retries bare when the shim rejects the object form', async () => {
+    // A relocated or older shim that cannot take a module must degrade to
+    // self-initialization rather than failing the worker.
+    const init = vi.fn(async (arg?: unknown) => {
+      if (arg !== undefined) throw new TypeError('unsupported argument');
+      return { memory: {} };
+    });
+    const shim = { default: init } as unknown as Parameters<typeof instantiateWasmShim>[0];
+
+    await expect(instantiateWasmShim(shim, precompiled)).resolves.toEqual({ memory: {} });
+    expect(init).toHaveBeenCalledTimes(2);
+    expect(init).toHaveBeenLastCalledWith();
   });
 });
