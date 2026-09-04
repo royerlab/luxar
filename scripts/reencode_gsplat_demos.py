@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Upgrade fetched gsplat demo baselines to format v3.3 + modern quantization.
+"""Upgrade fetched gsplat demo baselines to format v3.4 + modern quantization.
 
 The baselines now live on the records and must be fetched and staged under their
 former ``packages/luxar/src/luxar/demos/data/gsplats_*/`` paths before running
@@ -133,7 +133,7 @@ def classify(store: Path) -> str:
 
 
 def reencode_store(src_store: Path, out_store: Path, recipe: str, tmp: Path) -> str:
-    """Re-encode one gsplat store to AUTO/v3.3, rebuilding its ladder.
+    """Re-encode one gsplat store to AUTO/v3.4, rebuilding its ladder.
 
     Returns the classification used.
     """
