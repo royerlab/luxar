@@ -701,6 +701,7 @@
     },
     {
       "id": "gsplats_2d_cmu1_pathology",
+      "exposure": -2.0,
       "title": "Whole-Slide Pathology (CMU-1)",
       "geometry": "gsplats",
       "category": "medical",
@@ -810,6 +811,7 @@
     },
     {
       "id": "ppi_flow_field",
+      "exposure": -6.0,
       "title": "Protein-Interaction Flow Field",
       "geometry": "points+lines",
       "category": "networks",
