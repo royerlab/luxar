@@ -80,7 +80,9 @@ def wrong_convention_siblings() -> dict[str, str]:
     return {wrong: real for wrong, real in siblings.items() if wrong not in contract}
 
 
-def test_sibling_derivation_supports_future_bit_widths(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sibling_derivation_supports_future_bit_widths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
         "luxar.encoding.tests.test_encoding_vocabulary.ENCODING_NAMES",
         ("future_scalar_uint32", "future_perchannel_u64"),
@@ -123,7 +125,9 @@ def _violations_in(path: Path, siblings: dict[str, str]) -> list[tuple[int, str,
         for haystack in haystacks:
             for wrong, real in (*siblings.items(), *templates.items()):
                 pattern = rf"(?<!\w){re.escape(wrong)}(?!\w)"
-                out.extend((lineno, wrong, real) for _ in re.finditer(pattern, haystack))
+                out.extend(
+                    (lineno, wrong, real) for _ in re.finditer(pattern, haystack)
+                )
     return out
 
 
