@@ -18,10 +18,12 @@ replayed as `If-None-Match`, so the steady state is a bodyless `304`. The ETag i
 only after an `ok` verdict — "unchanged since that ETag" only implies "still the scene we
 loaded" if the document it names was itself confirmed — and it is dropped whenever the
 resolved document changes, so it is never sent to a URL it did not come from. A remote
-source also polls every 120 s rather than every 15 s: a hosted store under a dated prefix
-is replaced by publishing a new URL, not by swapping bytes under the old one, so the tight
-cadence buys nothing there. `localhost` keeps 15 s, which is the case the watchdog exists
-for.
+source that rejects `If-None-Match` at CORS preflight is retried unconditionally in the
+same probe, and later probes stay unconditional; the optimization degrades to the previous
+bandwidth cost instead of manufacturing an `unreachable` banner. Remote sources also poll
+every 120 s rather than every 15 s: a hosted store under a dated prefix is replaced by
+publishing a new URL, not by swapping bytes under the old one, so the tight cadence buys
+nothing there. `localhost` keeps 15 s, which is the case the watchdog exists for.
 
 The `304` branch is load-bearing in an unobvious way: `res.ok` is false for 304 and 304 is
 deliberately absent from the inconclusive-status set, so without an explicit branch the

@@ -19,6 +19,8 @@
  * Luxar store carries the ENTIRE consolidated metadata index — 248 kB (38 kB
  * brotli) for a 92-node scene. The format-3 migration silently turned a cheap
  * poll into a ~40 kB download every 15 s, for the lifetime of every open tab.
+ * If cross-origin CORS policy rejects that header, the watchdog retries the
+ * probe unconditionally and keeps using the compatible path thereafter.
  * See {@link REMOTE_CHECK_INTERVAL_MS} for the matching cadence change.
  *
  * - `content_hash` when the loaded scene had one (every compiler-written
@@ -69,8 +71,9 @@ const CHECK_INTERVAL_MS = 15_000;
  * A hosted store is published under an immutable, usually dated, prefix and is
  * replaced by publishing a NEW url, not by swapping bytes under the old one —
  * so the fast cadence buys almost nothing while costing a request every 15 s,
- * per open tab, for the lifetime of the tab. `If-None-Match` already reduces
- * each poll to a bodyless 304; this reduces how many of them there are.
+ * per open tab, for the lifetime of the tab. `If-None-Match` usually reduces
+ * each poll to a bodyless 304; this reduces how many probes there are even
+ * when the source's CORS policy requires unconditional requests.
  * With the two-failure threshold below, an unfocused hosted scene can take up
  * to roughly four minutes to show unreachable; focus/visibility probes remain
  * immediate once the spacing guard allows them.
@@ -240,6 +243,8 @@ export class SceneIdentityWatchdog {
    * document that ETag names was itself confirmed to match the baseline.
    */
   private resolvedETag: string | null = null;
+  /** Disabled after a conditional fetch fails but the same request succeeds bare. */
+  private conditionalRequestsEnabled = true;
   /** ETag seen by the in-flight probe; promoted by {@link probe} on `ok`. */
   private pendingETag: string | null = null;
   private readonly expectedHash: string | null;
@@ -386,12 +391,31 @@ export class SceneIdentityWatchdog {
         // Conditional ONLY for the document the stored ETag came from: an ETag
         // is meaningless against any other URL, and sending it to the fallback
         // candidate could turn its 404 into a bogus 304.
-        const conditional = candidate === this.resolvedAttrsUrl && this.resolvedETag !== null;
-        const res = await this.fetchImpl(candidate, {
-          cache: 'no-store',
-          signal: abort.signal,
-          ...(conditional ? { headers: { 'If-None-Match': this.resolvedETag as string } } : {}),
-        });
+        let conditional =
+          this.conditionalRequestsEnabled &&
+          candidate === this.resolvedAttrsUrl &&
+          this.resolvedETag !== null;
+        const request = (withETag: boolean): Promise<Response> =>
+          this.fetchImpl(candidate, {
+            cache: 'no-store',
+            signal: abort.signal,
+            ...(withETag ? { headers: { 'If-None-Match': this.resolvedETag as string } } : {}),
+          });
+        let res: Response;
+        try {
+          res = await request(conditional);
+        } catch (error) {
+          if (!conditional || abort.signal.aborted) throw error;
+          // `If-None-Match` is not CORS-safelisted. A cross-origin store whose
+          // preflight omits it rejects the conditional fetch before the GET is
+          // sent. Retry this probe bare so an optional bandwidth optimization
+          // cannot manufacture an unreachable verdict, then keep later probes
+          // bare once that fallback proves the address is reachable.
+          this.resolvedETag = null;
+          res = await request(false);
+          this.conditionalRequestsEnabled = false;
+          conditional = false;
+        }
         // The whole point of the conditional request: the document is
         // byte-identical to the one whose ETag we stored, and we only store an
         // ETag after an `ok` verdict, so identity still holds and there is no

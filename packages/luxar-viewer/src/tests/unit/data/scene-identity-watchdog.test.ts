@@ -504,6 +504,77 @@ describe('SceneIdentityWatchdog', () => {
     wd.dispose();
   });
 
+  it('falls back permanently when a cross-origin conditional request is rejected', async () => {
+    const sent: Array<string | null> = [];
+    const wd = new SceneIdentityWatchdog({
+      datasetUrl: 'https://data.example.com/scene.luxar.zarr',
+      expectedContentHash: HASH,
+      intervalMs: 5000,
+      fetchImpl: (async (_url: RequestInfo | URL, init?: RequestInit) => {
+        const etag = new Headers(init?.headers).get('if-none-match');
+        sent.push(etag);
+        if (etag !== null) throw new TypeError('Failed to fetch');
+        return okWithETag(ATTRS, '"v1"');
+      }) as typeof fetch,
+    });
+
+    wd.start();
+    await tick(5000);
+    await tick(5000);
+    await tick(5000);
+
+    // The rejected conditional probe retries unconditionally in the same tick,
+    // then later probes stay unconditional instead of repeating the preflight.
+    expect(sent).toEqual([null, '"v1"', null, null]);
+    expect(banner.shown).toEqual([]);
+    expect(banner.hidden).toEqual(['unreachable', 'unreachable', 'unreachable']);
+    wd.dispose();
+  });
+
+  it('reports a real outage when both conditional and unconditional attempts fail', async () => {
+    const sent: Array<string | null> = [];
+    let reachable = true;
+    const wd = new SceneIdentityWatchdog({
+      datasetUrl: 'https://data.example.com/scene.luxar.zarr',
+      expectedContentHash: HASH,
+      intervalMs: 5000,
+      fetchImpl: (async (_url: RequestInfo | URL, init?: RequestInit) => {
+        sent.push(new Headers(init?.headers).get('if-none-match'));
+        if (!reachable) throw new TypeError('Failed to fetch');
+        reachable = false;
+        return okWithETag(ATTRS, '"v1"');
+      }) as typeof fetch,
+    });
+
+    wd.start();
+    await tick(5000);
+    await tick(5000);
+    await tick(5000);
+
+    expect(sent).toEqual([null, '"v1"', null, null]);
+    expect(banner.shown).toEqual(['unreachable']);
+    wd.dispose();
+  });
+
+  it('does not trust a 304 returned to the unconditional fallback request', async () => {
+    let calls = 0;
+    const wd = makeWatchdog(async (_url, init) => {
+      calls++;
+      const conditional = new Headers(init?.headers).has('if-none-match');
+      if (calls === 1) return okWithETag(ATTRS, '"v1"');
+      if (conditional) throw new TypeError('Failed to fetch');
+      return notModified();
+    });
+
+    wd.start();
+    await tick(5000);
+    await tick(5000);
+
+    expect(calls).toBe(3);
+    expect(banner.shown).toEqual(['changed']);
+    wd.dispose();
+  });
+
   it('treats 304 as unchanged, keeps polling, and clears an unreachable banner', async () => {
     let calls = 0;
     const wd = makeWatchdog(async () => {
