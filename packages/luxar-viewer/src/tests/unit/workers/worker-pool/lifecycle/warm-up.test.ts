@@ -12,10 +12,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 type MockWorker = { terminate: ReturnType<typeof vi.fn> };
 
-async function loadWorkerPool(
-  initializeImpl: () => Promise<unknown>,
-  useWebWorkers = true
-) {
+async function loadWorkerPool(initializeImpl: () => Promise<unknown>, useWebWorkers = true) {
   vi.resetModules();
 
   const log = {
