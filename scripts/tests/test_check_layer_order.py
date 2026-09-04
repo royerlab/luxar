@@ -149,6 +149,11 @@ class TestGate:
         assert problem is not None
         assert "1 named edge no longer exists" in problem
 
+    def test_fails_when_maximum_is_not_lowered_after_paydown(self):
+        problem = clo._debt_problem(clo.MAX_DEBT - 1, ["edge"] * (clo.MAX_DEBT - 1))
+        assert problem is not None
+        assert "lower `MAX_DEBT`" in problem
+
     def test_fails_when_a_better_order_exists(self, monkeypatch, capsys):
         declared = clo._declared_order()
         swapped = list(declared)

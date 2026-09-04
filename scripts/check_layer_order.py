@@ -235,6 +235,11 @@ def _debt_problem(total: int, ignores: list[str]) -> str | None:
             f"appended to the debt list -- that list is dated and only shrinks. "
             f"Run `--report` to see every edge."
         )
+    if len(ignores) < MAX_DEBT:
+        return (
+            f"layering debt fell to {len(ignores)} entries; lower `MAX_DEBT` from "
+            f"{MAX_DEBT} to preserve the ratchet."
+        )
     return None
 
 
