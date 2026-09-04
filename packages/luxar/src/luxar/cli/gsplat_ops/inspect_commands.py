@@ -282,34 +282,48 @@ def _load_info_data(
 ) -> tuple["Optional[GSplatData]", bool]:
     """Load a flat dataset, or print a valid tree summary or load failure."""
     from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.io._archive import resolve_store_path
 
     with asection(f"Loading dataset: {path.name}"):
-        # Ask the store what shape it is BEFORE loading anything. A partition or
-        # nested lod tree has no flat GSplatData form, so the flat load below would
-        # decode every array of every leaf and then raise -- and `info` would
-        # throw all of it away. Reading one root attribute costs nothing and is
-        # the difference between 0 and ~115 MB of decode on a 6.4 MB store
-        # (audit A14-02).
-        if _is_node_tree(path):
-            try:
-                _print_gsplat_tree_summary(path, show_full_provenance=full_provenance)
-            except ValueError as summary_exc:
-                aprint(f"❌ {summary_exc}")
-                return None, False
-            return None, True
-
+        zarr_path = path
+        tmp = None
         try:
-            data = GSplatData.load(path, include_stats=True)
-        except ValueError as load_exc:
-            # Not a tree and not loadable: a legacy or invalid file the v3.0
-            # reader rejects.
-            aprint(f"❌ {load_exc}")
-            return None, False
+            if path.is_file():
+                zarr_path, tmp = resolve_store_path(path)
 
-        n_splats = len(data.amplitudes)
-        ndim = data.centers.shape[1]
-        aprint(f"✓ Loaded {n_splats:,} splats ({ndim}D)")
-        return data, True
+            # Ask the store what shape it is BEFORE loading anything. A partition
+            # or nested lod tree has no flat GSplatData form, so the flat load below
+            # would decode every array of every leaf and then raise -- and `info`
+            # would throw all of it away. Reading one root attribute costs nothing
+            # and is the difference between 0 and ~115 MB of decode on a 6.4 MB
+            # store (audit A14-02).
+            if _is_node_tree(zarr_path):
+                try:
+                    _print_gsplat_tree_summary(
+                        zarr_path,
+                        show_full_provenance=full_provenance,
+                        source_path=path,
+                    )
+                except ValueError as summary_exc:
+                    aprint(f"❌ {summary_exc}")
+                    return None, False
+                return None, True
+
+            try:
+                data = GSplatData.load(zarr_path, include_stats=True)
+            except ValueError as load_exc:
+                # Not a tree and not loadable: a legacy or invalid file the v3.0
+                # reader rejects.
+                aprint(f"❌ {load_exc}")
+                return None, False
+
+            n_splats = len(data.amplitudes)
+            ndim = data.centers.shape[1]
+            aprint(f"✓ Loaded {n_splats:,} splats ({ndim}D)")
+            return data, True
+        finally:
+            if tmp is not None and tmp.exists():
+                shutil.rmtree(tmp, ignore_errors=True)
 
 
 def _print_color_information(colors: "Optional[np.ndarray]") -> None:
@@ -1116,7 +1130,10 @@ def _print_normalization_block(root: Any) -> None:
 
 
 def _print_gsplat_tree_summary(
-    path: Path, *, show_full_provenance: bool = False
+    path: Path,
+    *,
+    show_full_provenance: bool = False,
+    source_path: Optional[Path] = None,
 ) -> None:
     """Report the node-tree shape of a partition / nested .gsplats.zarr.
 
@@ -1124,14 +1141,13 @@ def _print_gsplat_tree_summary(
     walk the node tree and print its structure (kind, parts/levels, per-leaf
     splat counts, total, ndim, bounds) instead of failing.
     """
-    import shutil
-
     from luxar._zarr_compat import open_group as zarr_open_group
     from luxar.gsplats.io._archive import resolve_store_path
     from luxar.gsplats.io.load_gsplats import read_gsplat_root_stats
     from luxar.gsplats.io.tree_summary import read_gsplat_tree_summary
 
     zarr_path = path
+    display_path = source_path or path
     tmp = None
     try:
         if path.is_file():  # compressed archive
@@ -1147,11 +1163,11 @@ def _print_gsplat_tree_summary(
         aprint("\n" + "═" * 70)
         aprint("DATASET INFORMATION (node tree)")
         aprint("═" * 70)
-        aprint(f"\nFile: {path.name}")
+        aprint(f"\nFile: {display_path.name}")
         # Same measurement as the flat report's "Size:" line — a directory store's
         # own stat() is the ~4 KB directory entry, not the chunks in it, and a
         # partition is the shape most likely to BE a directory.
-        aprint(f"Size: {format_memory_size(_store_size(path))}")
+        aprint(f"Size: {format_memory_size(_store_size(display_path))}")
         aprint(f"\nRoot kind: {summary.kind}")
         aprint(f"Dimensions: {summary.ndim}D")
         aprint(f"Total splats (all leaves): {summary.n_splats:,}")

@@ -1534,6 +1534,36 @@ class TestInfoTreeDispatch:
         assert _is_node_tree(archive) is False
         assert calls == []
 
+    def test_matrix_lod_archive_extracts_once(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from luxar.gsplats.io import _archive
+        from luxar.gsplats.lod import RecipeParams, build_recipe
+
+        archive = tmp_path / "levels.gsplats.zarr.zip"
+        build_recipe(
+            self._data(),
+            "levels",
+            RecipeParams(compression_factor=4, levels=3),
+        ).save(archive, compress="zip")
+
+        real_extract = _archive.extract_compressed_zarr
+        calls = []
+
+        def count_extract(*args: Any, **kwargs: Any) -> Any:
+            calls.append(1)
+            return real_extract(*args, **kwargs)
+
+        monkeypatch.setattr(_archive, "extract_compressed_zarr", count_extract)
+        result = runner.invoke(app, ["gsplat", "info", str(archive)])
+
+        assert result.exit_code == 0, result.stdout
+        assert "DATASET INFORMATION (node tree)" not in _plain(result.stdout)
+        assert calls == [1]
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # Zip compression tests

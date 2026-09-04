@@ -256,6 +256,43 @@ class TestEstimatedDecodedBytes:
         )
         assert summary.estimated_decoded_bytes == decoded_bytes
 
+    def test_counts_row_lut_colors_at_decoded_shape(self, tmp_path):
+        data = _flat(1_000, colors=True)
+        palette = np.array(
+            [
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [1.0, 1.0, 0.0],
+            ],
+            dtype=np.float32,
+        )
+        data.colors[:] = palette[np.arange(data.n_splats) % len(palette)]
+        out = tmp_path / "row-lut-colors.gsplats.zarr"
+        data.save(out)
+
+        root = open_group(str(out), mode="r")
+        encoding = root["colors"].attrs["encoding"]
+        assert root["colors"].shape == (data.n_splats,)
+        assert encoding["lut_mode"] == "row"
+        assert encoding["original_shape"] == [data.n_splats, 3]
+
+        summary = read_gsplat_tree_summary(root)
+        node, _ = load_gsplat_node(out)
+        leaf = next(iter(iter_leaves(node)))
+        decoded_bytes = sum(
+            array.nbytes
+            for sublod in leaf.additive_sublods
+            for array in (
+                sublod.centers,
+                sublod.amplitudes,
+                sublod.cholesky_factors,
+                sublod.colors,
+            )
+            if array is not None
+        )
+        assert summary.estimated_decoded_bytes == decoded_bytes
+
 
 class TestRejectsWhatIsNotANode:
     def test_raises_for_a_group_that_is_not_a_gsplat_node(self, tmp_path):

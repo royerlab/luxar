@@ -614,6 +614,7 @@ def _warn_if_decode_is_large(root: Any, path: "Path") -> None:
             stacklevel=3,
         )
     except Warning:
+        # ``-W error`` turns a warning into a raise; diagnostics must not fail a load.
         return
 
 

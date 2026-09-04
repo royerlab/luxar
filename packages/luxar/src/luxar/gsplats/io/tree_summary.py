@@ -34,7 +34,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 #: The encoders quantize to uint8/uint16 on disk and always decode to float32
 #: (see ``docs/specs/GSPLATS_ZARR_FORMAT.md``), so the stored ``itemsize`` would
 #: understate the memory a load actually needs — by 4x for a uint8 encoding.
-_DECODES_TO_FLOAT32 = ("centers", "amplitudes", "cholesky_factors", "colors")
+_DECODES_TO_FLOAT32 = ("centers", "amplitudes", "colors")
 
 NodeKind = Literal["leaf", "lod", "partition"]
 
@@ -73,8 +73,8 @@ def _array_bytes(group: "zarr.Group", name: str) -> int:
         return 0
     array = group[name]
     encoding = dict(array.attrs.get("encoding", {}))
-    if encoding.get("name") == "array_ref":
-        shape = tuple(encoding.get("original_shape", array.shape))
+    if "original_shape" in encoding:
+        shape = tuple(encoding["original_shape"])
     elif encoding.get("name") == "broadcasted":
         shape = (int(encoding.get("n_elements", array.shape[0])), *array.shape[1:])
     else:
@@ -121,8 +121,8 @@ def read_gsplat_tree_summary(group: "zarr.Group") -> GSplatTreeSummary:
 
     Mirrors the dispatch in
     :func:`luxar.io._compiler.gsplat_tree.read_gsplat_node` so the two cannot
-    disagree about a store's shape — ``test_tree_summary_agrees_with_full_read``
-    asserts that on every fixture.
+    disagree about a store's shape — ``TestAgreesWithTheFullReader`` asserts
+    that on every fixture.
 
     Raises:
         ValueError: The group is not a recognisable gsplat node. Same contract
