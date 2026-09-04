@@ -22,8 +22,9 @@ This package splits cleanly into two layers:
   take both axes; mesh's vocabulary is the shortest — decimation rather than a lift,
   and a **reveal-only** additive axis.
 
-The two sampler modules (`spatial_uniform.py`, `poisson_disk.py`) are pure-NumPy
-ordering primitives shared by the Points and Lines resolvers, and `reveal.py` is a
+The two sampler modules (`spatial_uniform.py`, `poisson_disk.py`) are NumPy
+ordering primitives shared by the Points and Lines resolvers (`poisson_disk` also
+runs an interpreted rejection loop — Bridson is sequential by construction), and `reveal.py` is a
 third such primitive — the concentric-shell scorer behind `method="radial"`, plus
 the resolvers that decide which columns may be shell dimensions. It depends on
 nothing in this package (`group.py` imports *it*), which is what let it come out
@@ -492,8 +493,12 @@ uniform spatial density. Returns `(permutation, per_level_counts)`. Pure NumPy,
 
 Opt-in blue-noise alternative (Bridson, SIGGRAPH 2007). Runs progressively
 finer radii (`r_i = (diag/2) · 0.5^i`); each level keeps the points its radius
-selects that no coarser level already took. A cell grid sized at `r/√3` keeps
-the rejection test to a local 5×5×5 neighborhood (`O(N)` expected per level).
+selects that no coarser level already took. A cell grid **of accepted samples**
+sized at `r/√3` keeps the rejection test to a local 5×5×5 neighborhood, which is
+what makes it `O(N)` per level — measured at a flat 24 µs/point from 10K to 1M.
+Bucketing every input index there instead is quadratic and was the shipped
+behaviour until #2527 (~4.3 h at 1M points); `test_cost_grows_linearly_with_n`
+is the regression gate.
 Same `(permutation, per_level_counts)` contract as the stratified sampler, so
 `make_additive_lod_*` stays symmetric across methods; the last level absorbs any
 points the finest pass rejected.

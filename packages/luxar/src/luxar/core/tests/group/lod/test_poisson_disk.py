@@ -12,6 +12,8 @@ Covers:
 
 from __future__ import annotations
 
+import time
+
 import numpy as np
 import pytest
 
@@ -104,6 +106,48 @@ class TestPoissonDiskOrder:
         pos = np.zeros((5, 3), dtype=np.float32)
         with pytest.raises(ValueError, match="n_lods"):
             poisson_disk_order(pos, n_lods=0)
+
+    def test_cost_grows_linearly_with_n(self):
+        """The sampler must be O(N), which is the only reason it is usable.
+
+        This is a REGRESSION GATE, not a benchmark. `_select_blue_noise_subset`
+        used to bucket every input index per cell and filter for acceptance in
+        the innermost loop, which reads as equivalent to bucketing accepted
+        samples but is quadratic: at the coarsest radius the grid is a few cells
+        across (measured: (4, 3, 3) for a unit cube), so the +/-2 neighbourhood
+        spans the ENTIRE dataset and every candidate scans every point.
+
+        Measured on the pre-fix code: 3.1-3.4x per doubling of N, extrapolating
+        to ~4.3 hours at 1M points -- for a selectable public authoring option
+        on a project whose stated target is 100K-10M elements. Post-fix: a flat
+        24 us/point from 10K to 1M, i.e. 8x the points costs 8x the time.
+
+        A RATIO rather than a wall-clock budget, so the assertion is
+        self-normalising against machine speed and CI load. 8x the input is 8x
+        the work when linear and 64x when quadratic; the threshold sits between
+        with roughly 3x margin on each side.
+        """
+        rng = np.random.RandomState(0)
+
+        def elapsed(n: int) -> float:
+            pos = rng.uniform(0.0, 1.0, (n, 3))
+            start = time.perf_counter()
+            perm, _ = poisson_disk_order(pos, n_lods=4, seed=0)
+            duration = time.perf_counter() - start
+            # Guard against a future short-circuit making this fast by doing
+            # nothing: a timing gate that measures a no-op passes forever.
+            assert sorted(perm.tolist()) == list(range(n))
+            return duration
+
+        small = elapsed(4_000)
+        large = elapsed(32_000)
+        growth = large / max(small, 1e-6)
+        assert growth < 20.0, (
+            f"8x the points cost {growth:.1f}x the time "
+            f"({small:.3f}s -> {large:.3f}s). Linear is ~8x and quadratic ~64x, "
+            f"so this looks quadratic again -- check that the cell grid in "
+            f"_select_blue_noise_subset still holds ACCEPTED SAMPLES only."
+        )
 
     def test_rejects_invalid_shape(self):
         with pytest.raises(ValueError, match="d >= 3"):
