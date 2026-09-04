@@ -83,6 +83,14 @@ make test-perf-e2e   # Opt-in Playwright performance suite
 make check-all    # All quality checks (Python, TypeScript, Rust, Go) — reformats
 make lint-python        # read-only: ruff check
 make check-complexity   # read-only: ruff C901 ratcheted against scripts/complexity_baseline.json
+make check-lint-ratchet # read-only: ruff's DEFECT rules (flake8-bugbear + RUF012)
+                  # ratcheted against scripts/lint_baseline.json. Existing debt is
+                  # tolerated; a file that newly breaks one of these rules — or
+                  # gains another violation of one it already breaks — fails.
+                  # B905 (`zip` without `strict=`) is the bulk of the baseline and
+                  # its fix CHANGES BEHAVIOUR (`strict=True` raises), so pay it
+                  # down per call site rather than sweeping. B008 is gated at zero:
+                  # the Typer `Option`/`Argument` idiom is exempted in pyproject.
 make type-check-python  # read-only: mypy
 make security           # read-only: bandit
 make check-typescript   # read-only: typecheck + lint + unit tests
