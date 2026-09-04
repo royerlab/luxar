@@ -61,6 +61,7 @@ import {
   perspectiveNearFadeTSL,
   type TSLNode,
   sortedIndexNode,
+  densityDroppedNode,
 } from '../_shared/tsl-helpers';
 import {
   ALPHA_CLAMP,
@@ -159,6 +160,7 @@ export interface PointTSLNodes {
   readonly uIsOrtho: TSLNode;
   /** Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB. */
   readonly uSortedIndexSlot: TSLNode;
+  readonly uDensityDrop: TSLNode;
   readonly uNearCull: TSLNode;
   readonly uPixelRatio: TSLNode;
   readonly uResolution: TSLNode;
@@ -214,6 +216,7 @@ export function pointWebGPUFactory(
   // point texture; `aSortedIndex` maps the draw slot to a storage slot
   // (identity in Phase 1, permuted by the sort worker in Phase 2+).
   const aSortedIndex: TSLNode = sortedIndexNode(nodes.uSortedIndexSlot);
+  const densityDropped: TSLNode = densityDroppedNode(nodes.uDensityDrop, aSortedIndex);
 
   // Bind directly to the persistent `UniformNode`s owned by the
   // wrapper class (or by `buildPointTSLNodesFromUniforms` for the
@@ -399,6 +402,7 @@ export function pointWebGPUFactory(
     ).toVar();
     const clipPos: TSLNode = depthFade
       .lessThan(0.01)
+      .or(densityDropped)
       .select(vec4(0.0, 0.0, -2.0, 1.0), projCenter.add(vec4(offsetClip, 0.0, 0.0)));
 
     // Assign varyings (declared outside the Fn; see above). Sprite UV
@@ -583,6 +587,7 @@ export function buildPointTSLNodesFromUniforms(
     radiusScale: uniform((uniforms.radiusScale?.value as number) ?? 1.0),
     uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
     uSortedIndexSlot: uniform((uniforms.uSortedIndexSlot?.value as number) ?? 0),
+    uDensityDrop: uniform((uniforms.uDensityDrop?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 0.1),
     uPixelRatio: uniform((uniforms.uPixelRatio?.value as number) ?? 1),
     uResolution: uniform(

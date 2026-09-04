@@ -63,9 +63,10 @@ layout( std140 ) uniform object {
 	float nodeUniform24;
 	float nodeUniform25;
 	float nodeUniform27;
-	float nodeUniform30;
+	float nodeUniform28;
 	float nodeUniform31;
 	float nodeUniform32;
+	float nodeUniform33;
 };
 
 layout( std140 ) uniform render {
@@ -178,8 +179,10 @@ vec2 nodeVar85;
 vec2 nodeVar86;
 vec4 nodeVar87;
 vec4 nodeVar88;
-int nodeVar90;
-vec2 nodeVar91;
+uint nodeVar89;
+uint nodeVar90;
+int nodeVar92;
+vec2 nodeVar93;
 
 // codes
 
@@ -424,8 +427,10 @@ void main() {
 	nodeVarying0 = ( nodeVar33 * nodeVar52 );
 	nodeVarying1 = vec3( nodeVar69, nodeVar70, ( 1.0 / sqrt( max( ( nodeVar66 - ( nodeVar70 * nodeVar70 ) ), 1e-8 ) ) ) );
 	nodeVarying2 = nodeVar86;
+	nodeVar89 = ( ( uint( nodeVar7 ) ^ ( uint( nodeVar7 ) >> 16u ) ) * 2146121005u );
+	nodeVar90 = ( ( nodeVar89 ^ ( nodeVar89 >> 15u ) ) * 2221713035u );
 
-	if ( ( ( ( ( ( nodeVar46 < 0.01 ) || ( nodeVar51 < 0.01 ) ) || ( ! ( ( nodeVar33 < 1e30 ) && ( nodeVar33 > -1e30 ) ) ) ) || ( ( ( ! ( ( nodeVar64 < 1e30 ) && ( nodeVar64 > -1e30 ) ) ) || ( ! ( ( nodeVar65 < 1e30 ) && ( nodeVar65 > -1e30 ) ) ) ) || ( ! ( ( nodeVar66 < 1e30 ) && ( nodeVar66 > -1e30 ) ) ) ) ) || ( ( int( nodeUniform27 ) > 0 ) && ( int( ( nodeVar37 + 0.5 ) ) != int( nodeUniform27 ) ) ) ) ) {
+	if ( ( ( ( ( ( ( nodeVar46 < 0.01 ) || ( nodeVar51 < 0.01 ) ) || ( ! ( ( nodeVar33 < 1e30 ) && ( nodeVar33 > -1e30 ) ) ) ) || ( ( ( ! ( ( nodeVar64 < 1e30 ) && ( nodeVar64 > -1e30 ) ) ) || ( ! ( ( nodeVar65 < 1e30 ) && ( nodeVar65 > -1e30 ) ) ) ) || ( ! ( ( nodeVar66 < 1e30 ) && ( nodeVar66 > -1e30 ) ) ) ) ) || ( ( int( nodeUniform27 ) > 0 ) && ( int( ( nodeVar37 + 0.5 ) ) != int( nodeUniform27 ) ) ) ) || ( ( nodeUniform28 > 0.0 ) && ( ( float( ( nodeVar90 ^ ( nodeVar90 >> 16u ) ) ) * 2.3283064365386963e-10 ) < nodeUniform28 ) ) ) ) {
 
 		nodeVar88 = vec4( 0.0, 0.0, -2.0, 1.0 );
 
@@ -436,10 +441,10 @@ void main() {
 	}
 
 	v_clipSpace = nodeVar88;
-	nodeVarying4 = nodeUniform31;
-	nodeVar90 = ( nodeVar7 / 65536 );
-	nodeVar91 = vec2( float( ( nodeVar7 - ( nodeVar90 * 65536 ) ) ), float( nodeVar90 ) );
-	nodeVarying5 = nodeVar91;
+	nodeVarying4 = nodeUniform32;
+	nodeVar92 = ( nodeVar7 / 65536 );
+	nodeVar93 = vec2( float( ( nodeVar7 - ( nodeVar92 * 65536 ) ) ), float( nodeVar92 ) );
+	nodeVarying5 = nodeVar93;
 
 	// result
 	gl_Position = nodeVar88;

@@ -7,7 +7,12 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 
-import { applyLodFade, isBlendableSubtree } from '../../../scene/lod-fade';
+import {
+  applyLodFade,
+  densityCompensation,
+  isBlendableMode,
+  isBlendableSubtree,
+} from '../../../scene/lod-fade';
 
 interface FadeMatStub {
   userData: { blendingMode?: string };
@@ -117,6 +122,39 @@ describe('applyLodFade — opacity composition and fade-base rebase', () => {
     mesh.userData.committedEnergyFraction = 0.5;
     applyLodFade(mesh, null, true);
     expect(liveOpacity(mesh)).toBe(1);
+  });
+
+  it('density-guard keep multiplies by 1/keep on blendable leaves only', () => {
+    const additive = leafMesh('additive');
+    additive.userData.densityKeep = 1 / 8;
+    applyLodFade(additive, null, false);
+    expect(liveOpacity(additive)).toBeCloseTo(8, 6);
+    // Restored once the guard writes keep = 1 back.
+    additive.userData.densityKeep = 1;
+    applyLodFade(additive, null, false);
+    expect(liveOpacity(additive)).toBe(1);
+    // Composes multiplicatively with the streaming energy term and the
+    // cross-fade weight (independent opacity factors).
+    additive.userData.densityKeep = 1 / 4;
+    additive.userData.committedEnergyFraction = 0.5;
+    applyLodFade(additive, 0.5, true);
+    expect(liveOpacity(additive)).toBeCloseTo(0.5 * 2 * 4, 6);
+    // A max leaf is never thinned by the guard; a stale stamp must not brighten it.
+    const max = leafMesh('max');
+    max.userData.densityKeep = 1 / 8;
+    applyLodFade(max, null, true);
+    expect(liveOpacity(max)).toBe(1);
+  });
+
+  it('densityCompensation / isBlendableMode helpers', () => {
+    expect(densityCompensation(undefined)).toBe(1);
+    expect(densityCompensation(1)).toBe(1);
+    expect(densityCompensation(0)).toBe(1);
+    expect(densityCompensation(NaN)).toBe(1);
+    expect(densityCompensation(0.25)).toBe(4);
+    expect(isBlendableMode('volumetric')).toBe(true);
+    expect(isBlendableMode('normal')).toBe(false);
+    expect(isBlendableMode(undefined)).toBe(false);
   });
 
   it('group subtree: energy factors are genuinely per-leaf', () => {

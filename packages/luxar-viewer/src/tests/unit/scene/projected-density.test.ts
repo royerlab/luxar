@@ -135,6 +135,36 @@ describe('ProjectedDensityTracker', () => {
     expect(Object.keys(t.snapshot())).toEqual(['/a']);
   });
 
+  it('calls onVisit for every committed mesh (on- and off-screen) with a live record carrying keep', () => {
+    const root = new THREE.Scene();
+    const a = node('/a', 1, 1000);
+    const b = node('/b', 1, 1000);
+    b.visible = false;
+    root.add(a, b);
+    root.updateMatrixWorld(true);
+    const camera = perspective(1600, 1000, 100);
+    const seen: Array<[string, boolean, number]> = [];
+    const t = new ProjectedDensityTracker();
+    t.configure({
+      enabled: () => true,
+      getRoot: () => root,
+      getCamera: () => camera,
+      getDrawingBufferSize: () => ({ width: 1600, height: 1000 }),
+      onVisit: (mesh, rec) => {
+        seen.push([mesh.name, rec.onScreen, rec.keep]);
+        if (mesh.name === '/a') rec.keep = 0.5;
+      },
+    });
+    t.evaluate();
+    expect(seen).toEqual([
+      ['/a', true, 1],
+      ['/b', false, 1],
+    ]);
+    // The hook mutates the tracker's own record: the snapshot reports it.
+    expect(t.snapshot()['/a'].keep).toBe(0.5);
+    expect(t.get('/a')!.keep).toBe(0.5);
+  });
+
   it('applies the mesh world scale to the sphere radius', () => {
     const root = new THREE.Scene();
     const small = node('/small', 1, 100);

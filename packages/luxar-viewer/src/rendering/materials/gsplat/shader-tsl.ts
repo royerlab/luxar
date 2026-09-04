@@ -75,6 +75,7 @@ import {
   sanitizeAlpha,
   type TSLNode,
   sortedIndexNode,
+  densityDroppedNode,
 } from '../_shared/tsl-helpers';
 import {
   applyBlendingStateToMaterial,
@@ -171,6 +172,7 @@ export interface GSplatTSLNodes {
   readonly uIsOrtho: TSLNode;
   /** Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB. */
   readonly uSortedIndexSlot: TSLNode;
+  readonly uDensityDrop: TSLNode;
   readonly uNearCull: TSLNode;
   readonly uMaxExtentFactor: TSLNode;
   readonly uCov2DDilation: TSLNode;
@@ -213,6 +215,7 @@ export function gsplatWebGPUFactory(
   // slot (identity in Phase 1, permuted by the sort worker in Phase 2+).
   const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
   const aSortedIndex: TSLNode = sortedIndexNode(nodes.uSortedIndexSlot);
+  const densityDropped: TSLNode = densityDroppedNode(nodes.uDensityDrop, aSortedIndex);
 
   // Uniform leaves come from the wrapper. No per-render callbacks:
   // mutations to `material.uniforms.X.value` already route to
@@ -626,7 +629,8 @@ export function gsplatWebGPUFactory(
       .or(coverageFadeReject)
       .or(invalidAmp)
       .or(invalidCov)
-      .or(labelRejected);
+      .or(labelRejected)
+      .or(densityDropped);
 
     // Per-instance colour (LUT or attribute). aAmplitude doubles as
     // the colormap scalar — matches the GLSL `(aAmplitude - uScalarMin)`
@@ -845,6 +849,7 @@ export function buildGSplatTSLNodesFromUniforms(
     uProjectionMode: uniform((uniforms.uProjectionMode?.value as number) ?? 0),
     uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
     uSortedIndexSlot: uniform((uniforms.uSortedIndexSlot?.value as number) ?? 0),
+    uDensityDrop: uniform((uniforms.uDensityDrop?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
     uMaxExtentFactor: uniform((uniforms.uMaxExtentFactor?.value as number) ?? 1.0),
     // Neutral fallback 0 (no dilation) — matches GLSL's missing-uniform default,

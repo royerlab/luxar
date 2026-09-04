@@ -91,6 +91,22 @@ function isFadeable(mat: THREE.Material): mat is FadeableMaterial {
  */
 const BLENDABLE_MODES: ReadonlySet<string> = new Set(['additive', 'luminous', 'volumetric']);
 
+/** True when `mode` is one of {@link BLENDABLE_MODES} (opacity is a linear knob). */
+export function isBlendableMode(mode: string | undefined): boolean {
+  return mode != null && BLENDABLE_MODES.has(mode);
+}
+
+/**
+ * Brightness term for the density guard's keep-fraction thinning: a node
+ * drawing only a `keep` fraction of its elements has its opacity multiplied by
+ * `1/keep` so the sum-projected (or optical-depth) result stays at the
+ * unthinned aggregate. `1` for an unthinned or unstamped node. The guard's
+ * ladder already floors `keep` (config `minKeepFraction`), so no cap here.
+ */
+export function densityCompensation(keep: number | undefined): number {
+  return keep != null && Number.isFinite(keep) && keep > 0 && keep < 1 ? 1 / keep : 1;
+}
+
 /** Below this the finer level's blend weight is treated as 0/1 (single level). */
 export const FADE_EPSILON = 0.01;
 
@@ -187,16 +203,22 @@ export function applyLodFade(
       _lodFadeBase?: number;
       _layerMaterialCloned?: boolean;
       committedEnergyFraction?: number;
+      densityKeep?: number;
     };
     // The blend mode lives on the MATERIAL's userData; energy compensation
     // only makes physical sense where opacity linearly scales the composited
     // quantity (summed energy for additive/luminous, optical depth τ for
     // volumetric — see BLENDABLE_MODES).
+    const blendable = isBlendableMode(current.userData?.blendingMode as string | undefined);
     let energyFactor = 1;
-    if (energyComp && BLENDABLE_MODES.has((current.userData?.blendingMode as string) ?? '')) {
+    if (energyComp && blendable) {
       energyFactor = energyCompensation(ud.committedEnergyFraction, ENERGY_FLOOR);
     }
-    const product = coverageWeight * energyFactor;
+    // Density-guard thinning (scene/density-guard.ts) draws a `keep` fraction
+    // of the elements; `1/keep` restores the aggregate brightness. Same
+    // blendable-only rule — the guard never thins the other modes.
+    const densityFactor = blendable ? densityCompensation(ud.densityKeep) : 1;
+    const product = coverageWeight * energyFactor * densityFactor;
     if (Math.abs(product - 1) < FADE_EPSILON) {
       // Nothing to adjust: restore the authored opacity if we faded it, else
       // leave the shared material untouched (no clone).

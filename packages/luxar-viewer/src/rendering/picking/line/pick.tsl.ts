@@ -60,6 +60,7 @@ import {
   sanitizeNonNegative,
   type TSLNode,
   sortedIndexNode,
+  densityDroppedNode,
   tslLineEndPixelWidth,
   tslLineJoin,
   tslLineJointCapSuppression,
@@ -88,6 +89,7 @@ export interface LinePickTSLNodes {
   readonly uIsOrtho: TSLNode;
   /** Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB. */
   readonly uSortedIndexSlot: TSLNode;
+  readonly uDensityDrop: TSLNode;
   readonly uNodeId: TSLNode;
   readonly uNearCull: TSLNode;
   readonly uMaxLinePixelWidth: TSLNode;
@@ -136,6 +138,7 @@ export function linePickWebGPUFactory(
   // data lives in the line texture; `aSortedIndex` maps the draw slot
   // to a storage slot.
   const aSortedIndex: TSLNode = sortedIndexNode(nodes.uSortedIndexSlot);
+  const densityDropped: TSLNode = densityDroppedNode(nodes.uDensityDrop, aSortedIndex);
 
   // Pixel-width math consumes the CPU-precomputed
   // uPerspectiveLineScale / uOrthoLineScale (no FOV uniform exists).
@@ -443,8 +446,10 @@ export function linePickWebGPUFactory(
 
     // Real TSL control flow — see the visual factory for the rationale
     // (one branch per draw instead of evaluating both via select()).
-    const culled: TSLNode | null =
+    const culledBase: TSLNode | null =
       bothBehind && pathological ? bothBehind.or(pathological) : (bothBehind ?? pathological);
+    // Projected-density thinning: a dropped segment must not be pickable either.
+    const culled: TSLNode | null = culledBase ? culledBase.or(densityDropped) : densityDropped;
     const clipPosOut: TSLNode = vec4(0.0, 0.0, -2.0, 1.0).toVar('clipPos');
     if (culled) {
       If(culled.not(), () => {
@@ -598,6 +603,7 @@ export function buildLinePickTSLNodesFromUniforms(
     uPixelRatio: uniform((uniforms.uPixelRatio?.value as number) ?? 1),
     uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
     uSortedIndexSlot: uniform((uniforms.uSortedIndexSlot?.value as number) ?? 0),
+    uDensityDrop: uniform((uniforms.uDensityDrop?.value as number) ?? 0),
     uNodeId: uniform((uniforms.uNodeId?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
     uMaxLinePixelWidth: uniform((uniforms.uMaxLinePixelWidth?.value as number) ?? 1.0),

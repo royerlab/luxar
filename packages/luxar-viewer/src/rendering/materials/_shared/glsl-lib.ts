@@ -153,6 +153,23 @@ uint luxarSortedIndex() {
 vec2 luxarElementIdParts() {
   return luxarElementIdSplit(luxarSortedIndex());
 }
+// Projected-density thinning (scene/density-guard.ts): the fraction of this
+// node's elements to DROP, chosen per STORAGE index with a deterministic
+// integer hash so the kept subset is stable under depth re-sorting, identical
+// across the visual and picking passes, and spatially uniform (storage order
+// is Hilbert/BSP-coherent, so a prefix would be a hole). A material that does
+// not set the uniform reads 0 and drops nothing.
+uniform float uDensityDrop;
+bool luxarDensityDropped() {
+  if (uDensityDrop <= 0.0) return false;
+  uint h = luxarSortedIndex();
+  h ^= h >> 16u;
+  h *= 0x7feb352du;
+  h ^= h >> 15u;
+  h *= 0x846ca68bu;
+  h ^= h >> 16u;
+  return float(h) * (1.0 / 4294967296.0) < uDensityDrop;
+}
 `;
 
 /**

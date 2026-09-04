@@ -35,6 +35,7 @@ import {
   dot,
   float,
   int,
+  uint,
   ivec2,
   length,
   max,
@@ -98,6 +99,27 @@ export function sortedIndexNode(uSortedIndexSlot: TSLNode): TSLNode {
   const a: TSLNode = int(attribute<'uint'>('aSortedIndex', 'uint'));
   const b: TSLNode = int(attribute<'uint'>('aSortedIndexB', 'uint'));
   return a.mul(int(1).sub(slot)).add(b.mul(slot));
+}
+
+/**
+ * Projected-density thinning predicate. Mirrors GLSL `luxarDensityDropped()`
+ * (glsl-lib.ts) bit for bit: the storage index is run through the lowbias32
+ * integer hash, mapped to [0, 1) and compared against `uDensityDrop`, the
+ * fraction of the node's elements to drop. A pure arithmetic expression, so it
+ * is safe both inside and outside an `Fn()` body (see the note on
+ * `sortedIndexNode`). Zero drops nothing.
+ */
+export function densityDroppedNode(uDensityDrop: TSLNode, sortedIndex: TSLNode): TSLNode {
+  let h: TSLNode = uint(sortedIndex);
+  h = h.bitXor(h.shiftRight(uint(16)));
+  h = h.mul(uint(0x7feb352d));
+  h = h.bitXor(h.shiftRight(uint(15)));
+  h = h.mul(uint(0x846ca68b));
+  h = h.bitXor(h.shiftRight(uint(16)));
+  const unit: TSLNode = float(h).mul(1.0 / 4294967296.0);
+  return float(uDensityDrop)
+    .greaterThan(0.0)
+    .and(unit.lessThan(float(uDensityDrop)));
 }
 
 /** Sanitise a non-negative scalar. Mirrors GLSL `sanitizeNonNegative`. */

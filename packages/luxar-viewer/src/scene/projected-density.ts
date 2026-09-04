@@ -39,6 +39,11 @@ export interface NodeDensity {
   onScreen: boolean;
   /** Frame stamp of the last evaluation that saw this node. */
   frame: number;
+  /**
+   * Keep fraction the density guard currently applies to this node (1 = no
+   * thinning). Written by `scene/density-guard.ts`; 1 until it runs.
+   */
+  keep: number;
 }
 
 export interface ProjectedDensityDeps {
@@ -47,6 +52,12 @@ export interface ProjectedDensityDeps {
   getCamera(): THREE.Camera | null;
   /** Drawing-buffer size in physical pixels (`renderer.domElement.width/height`). */
   getDrawingBufferSize(): { width: number; height: number } | null;
+  /**
+   * Called for every committed data mesh after its record is refreshed (on-
+   * or off-screen). The density guard hooks here so it sees the mesh itself,
+   * which the path-keyed records deliberately do not retain.
+   */
+  onVisit?(mesh: THREE.Mesh, record: NodeDensity): void;
 }
 
 const VIEW_SCRATCH = new THREE.Matrix4();
@@ -141,19 +152,37 @@ export class ProjectedDensityTracker {
     const rec = this.recordFor(mesh.name);
     rec.frame = this.frame;
     rec.elements = readVisibleElementCount(mesh.userData) ?? 0;
+    this.measureIfVisible(mesh, bs, this.camera, rec);
+    this.deps?.onVisit?.(mesh, rec);
+  }
+
+  private measureIfVisible(
+    mesh: THREE.Mesh,
+    bs: THREE.Sphere,
+    camera: THREE.Camera,
+    rec: NodeDensity
+  ): void {
     if (isEffectivelyVisible(mesh)) {
-      this.measure(mesh, bs, this.camera, rec);
-    } else {
-      rec.areaPx = 0;
-      rec.elementsPerPixel = 0;
-      rec.onScreen = false;
+      this.measure(mesh, bs, camera, rec);
+      return;
     }
+    rec.areaPx = 0;
+    rec.elementsPerPixel = 0;
+    rec.onScreen = false;
   }
 
   private recordFor(path: string): NodeDensity {
     let rec = this.byPath.get(path);
     if (!rec) {
-      rec = { path, areaPx: 0, elements: 0, elementsPerPixel: 0, onScreen: false, frame: 0 };
+      rec = {
+        path,
+        areaPx: 0,
+        elements: 0,
+        elementsPerPixel: 0,
+        onScreen: false,
+        frame: 0,
+        keep: 1,
+      };
       this.byPath.set(path, rec);
     }
     return rec;

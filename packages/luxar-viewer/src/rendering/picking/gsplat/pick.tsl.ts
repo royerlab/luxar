@@ -55,6 +55,7 @@ import {
   invalidFloatTSL,
   type TSLNode,
   sortedIndexNode,
+  densityDroppedNode,
 } from '../../materials/_shared/tsl-helpers';
 
 const vec2: (a?: TSLNode, b?: TSLNode) => TSLNode = _vec2 as TSLNode;
@@ -85,6 +86,7 @@ export interface GSplatPickTSLNodes {
   readonly uIsOrtho: TSLNode;
   /** Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB. */
   readonly uSortedIndexSlot: TSLNode;
+  readonly uDensityDrop: TSLNode;
   readonly uNearCull: TSLNode;
   readonly uMaxExtentFactor: TSLNode;
   readonly uCov2DDilation: TSLNode;
@@ -115,6 +117,7 @@ export function gsplatPickWebGPUFactory(
   // Draw-slot -> storage-slot mapping; splat data comes from the splat
   // texture (visual-factory parity, shader-tsl.ts).
   const aSortedIndex: TSLNode = sortedIndexNode(nodes.uSortedIndexSlot);
+  const densityDropped: TSLNode = densityDroppedNode(nodes.uDensityDrop, aSortedIndex);
 
   const uSplatTex = nodes.uSplatTex;
   const uResolution = nodes.uResolution;
@@ -375,7 +378,8 @@ export function gsplatPickWebGPUFactory(
       .or(coverageFadeReject)
       .or(invalidAmp)
       .or(invalidCov)
-      .or(labelRejected);
+      .or(labelRejected)
+      .or(densityDropped);
 
     // Pickability always uses max projection — amplitude = aAmplitude · nearFade.
     vAmplitude2D.assign(aAmplitude.mul(nearFade));
@@ -539,6 +543,7 @@ export function buildGSplatPickTSLNodesFromUniforms(
     uTruncateSq: uniform((uniforms.uTruncateSq?.value as number) ?? 2.25),
     uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
     uSortedIndexSlot: uniform((uniforms.uSortedIndexSlot?.value as number) ?? 0),
+    uDensityDrop: uniform((uniforms.uDensityDrop?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
     uMaxExtentFactor: uniform((uniforms.uMaxExtentFactor?.value as number) ?? 1.0),
     // Neutral fallback 0 (harness/snapshot adapter; production sets 0.3).

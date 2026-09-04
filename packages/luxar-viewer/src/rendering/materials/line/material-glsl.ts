@@ -168,6 +168,7 @@ export class LineMaterial
         // holds a whole permutation (runtime uniform: never a define — a
         // flip must not recompile the program).
         uSortedIndexSlot: { value: 0 },
+        uDensityDrop: { value: 0 },
         uOpacity: { value: materialConfig.opacity ?? 1.0 },
         uInvGamma: { value: 1.0 / gammaValue }, // Pre-computed inverse for performance
         uIntensity: { value: materialConfig.intensity ?? 1.0 },

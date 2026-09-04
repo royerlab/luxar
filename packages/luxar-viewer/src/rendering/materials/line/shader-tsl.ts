@@ -72,6 +72,7 @@ import {
   sanitizeNonNegative,
   type TSLNode,
   sortedIndexNode,
+  densityDroppedNode,
   tslLineEndPixelWidth,
   tslLineJoin,
   tslLineJointCapSuppression,
@@ -166,6 +167,7 @@ export interface LineTSLNodes {
   readonly uIsOrtho: TSLNode;
   /** Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB. */
   readonly uSortedIndexSlot: TSLNode;
+  readonly uDensityDrop: TSLNode;
   readonly uNearCull: TSLNode;
   readonly uMaxLinePixelWidth: TSLNode;
   readonly uPerspectiveLineScale: TSLNode;
@@ -215,6 +217,7 @@ export function lineWebGPUFactory(
   // line texture; `aSortedIndex` maps the draw slot to a storage slot
   // (identity after a fresh commit, permuted by the sort worker).
   const aSortedIndex: TSLNode = sortedIndexNode(nodes.uSortedIndexSlot);
+  const densityDropped: TSLNode = densityDroppedNode(nodes.uDensityDrop, aSortedIndex);
 
   // Bind directly to the persistent `UniformNode`s owned by the
   // wrapper class (or by `buildLineTSLNodesFromUniforms` for the
@@ -647,8 +650,11 @@ export function lineWebGPUFactory(
     // from the ortho codegen, consistent with the config.isOrtho
     // graph-variant design above. Sentinel vec4(0,0,-2,1) matches the
     // point/gsplat reject convention.
-    const culled: TSLNode | null =
+    const culledBase: TSLNode | null =
       bothBehind && pathological ? bothBehind.or(pathological) : (bothBehind ?? pathological);
+    // Projected-density thinning rides the same cull path (GLSL twin folds it
+    // into `bothBehind`), so a dropped segment takes the zero-varyings path.
+    const culled: TSLNode | null = culledBase ? culledBase.or(densityDropped) : densityDropped;
     const clipPosOut: TSLNode = vec4(0.0, 0.0, -2.0, 1.0).toVar('clipPos');
     if (culled) {
       If(culled.not(), () => {
@@ -886,6 +892,7 @@ export function buildLineTSLNodesFromUniforms(
     uPixelRatio: uniform((uniforms.uPixelRatio?.value as number) ?? 1),
     uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
     uSortedIndexSlot: uniform((uniforms.uSortedIndexSlot?.value as number) ?? 0),
+    uDensityDrop: uniform((uniforms.uDensityDrop?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
     uMaxLinePixelWidth: uniform((uniforms.uMaxLinePixelWidth?.value as number) ?? 1.0),
     uPerspectiveLineScale: uniform((uniforms.uPerspectiveLineScale?.value as number) ?? 1.0),

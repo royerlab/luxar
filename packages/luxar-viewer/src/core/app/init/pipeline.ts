@@ -35,6 +35,7 @@ import {
   getProjectedDensityTracker,
   resolveDensityGuardEnabled,
 } from '../../../scene/projected-density';
+import { getDensityGuard } from '../../../scene/density-guard';
 
 /**
  * Everything `LuxarApp.init()` constructs is returned in this result.
@@ -337,6 +338,15 @@ export async function runInitPipeline(
     config.densityGuard.enabled,
     ports.options.densityGuard
   );
+  // The keep-fraction ladder rides the tracker's visit hook (blendable modes
+  // only; brightness-compensated through applyLodFade). A step change is a
+  // content change for the DPR controller, and needs a frame to show.
+  const densityGuard = getDensityGuard();
+  densityGuard.configure({
+    config: () => config.densityGuard,
+    energyComp: () => lodEnergyCompEnabled,
+    registerMaterial: (material) => materialManager.register(material),
+  });
   getProjectedDensityTracker().configure({
     enabled: () => densityGuardEnabled,
     getRoot: () => sceneManager.scene,
@@ -345,9 +355,14 @@ export async function runInitPipeline(
       const canvas = sceneManager.renderer.domElement;
       return { width: canvas.width, height: canvas.height };
     },
+    onVisit: (mesh, record) => densityGuard.observe(mesh, record),
   });
   animationController.addPerFrameCallback('projected-density', () => {
     getProjectedDensityTracker().evaluate();
+    if (densityGuard.takeChanged()) {
+      partial.adaptiveDPRManager?.notifyContentChanged();
+      animationController.startAnimation();
+    }
   });
   animationController.addPerFrameCallback('lod-group-selector', () => {
     const loader = getSceneLoader('default');

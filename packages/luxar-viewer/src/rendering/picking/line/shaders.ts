@@ -139,8 +139,11 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
       float nearCull = max(uNearCull, 1e-20);
       float startDepth = -mvStart.z;
       float endDepth = -mvEnd.z;
+      // Projected-density thinning rides the both-behind cull (see the visual
+      // line shader): a dropped segment must not be pickable either.
       bool bothBehind =
-        (uIsOrtho == 0) && (startDepth < nearCull) && (endDepth < nearCull);
+        luxarDensityDropped() ||
+        ((uIsOrtho == 0) && (startDepth < nearCull) && (endDepth < nearCull));
       if (bothBehind) {
         gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
         // Defensive: width/sharpness are computed AFTER the clip

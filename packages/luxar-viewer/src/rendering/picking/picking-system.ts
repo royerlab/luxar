@@ -37,6 +37,7 @@
 import * as THREE from 'three';
 import type { PostProcessingManager } from '../post-processing/post-processing-manager';
 import { isCameraAwareMaterial } from '../materials/_shared/camera-aware-material';
+import { getDensityDrop, setDensityDrop } from '../materials/_shared/density-drop';
 import { isSurfacePickAwareMaterial } from './gsplat/material';
 import { isMeshPickAwareMaterial } from './mesh/pick-mode';
 import { alignProvokingVertexWithWebGPU } from './mesh/provoking-vertex';
@@ -767,6 +768,11 @@ export class PickingSystem {
       if (isCameraAwareMaterial(mat)) {
         mat.updateCameraParams(fov, pickRes, isOrtho, undefined, pixelRatio);
       }
+      // Density-guard thinning sync: the pick pass must drop exactly the
+      // elements the visual pass drops (same hash of the same storage
+      // index), or hovering a thinned-away element would resolve a pick the
+      // user cannot see. Cheap no-op when unchanged.
+      setDensityDrop(mat, getDensityDrop((entry.main as THREE.Mesh).material));
 
       // Pick-depth convention sync: under the depth-ordered surface
       // modes — 'normal' (sorted alpha-over) and 'opaque' (depth-

@@ -83,6 +83,12 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
       // and only x advances. texel2 carries the colormap scalar (.x,
       // read under USE_COLORMAP) and the per-point alpha (.y, written
       // unconditionally by the texel writer — 1.0 for RGB data).
+      // Projected-density thinning (density-guard): drop this instance before
+      // any texel fetch; the rasterizer discards a z=-2 vertex.
+      if (luxarDensityDropped()) {
+        gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
+        return;
+      }
       int pointBase = int(luxarSortedIndex()) * 3;
       int pointTexW = LUXAR_POINT_TEX_W;
       ivec2 texel0 = ivec2(pointBase % pointTexW, pointBase / pointTexW);

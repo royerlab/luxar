@@ -522,6 +522,34 @@ retention (the unit-test default). `projectBoxAreaFraction`,
 `projectBoxDiagonalPx` and `pickChildWithHysteresis` are exported as
 pure functions for testing.
 
+### 6. Projected-Density Guard
+
+`projected-density.ts` measures, once per frame and per committed data mesh,
+how many visible elements land on each **drawing-buffer** pixel of the node's
+projected bounding sphere (`elementsPerPixel`; buffer pixels, not CSS pixels,
+so the guard never fights the adaptive-DPR controller). Frame cost on
+element-dense views tracks that density, not the pixel count: the 2026-09
+audit measured a 1.5 M-point example framed into ~1 600 px at 42 ms per frame
+at DPR 1 and 83 ms at DPR 0.5, while the same points dollied 4× closer ran at
+120 fps. Records are exposed through `__luxarDebug.getPerf().density`.
+
+`density-guard.ts` consumes those records through the tracker's `onVisit`
+hook and thins over-dense nodes on the GPU: every leaf material (points /
+lines / gsplats, GLSL and TSL, visual and picking) carries a `uDensityDrop`
+uniform, and the vertex stage discards an element when a hash of its
+ordering-resolved storage index falls below the dropped fraction
+(`luxarDensityDropped()` / `densityDroppedNode()`). The keep fraction is a
+quantised ladder (1, 1/2, 1/4, … `config.densityGuard.minKeepFraction`) with
+hysteresis (`enterRatio` / `leaveRatio` around `capElementsPerPixel`), and
+every step change is reported to the adaptive-DPR controller as a content
+change. Only the blendable modes (additive / luminous / volumetric) are
+thinned, and `applyLodFade` multiplies the node's opacity by `1/keep`
+(`densityCompensation`) so the composited brightness stays at the unthinned
+aggregate; `max` / `normal` / `opaque` nodes are never thinned. The pick pass
+mirrors the visual material's drop per node so a thinned-away element cannot
+be picked. `?no-density-guard` disables both the walker and the ladder for a
+session.
+
 ---
 
 ## Scene Graph Structure

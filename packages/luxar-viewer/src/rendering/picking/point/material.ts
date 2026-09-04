@@ -51,6 +51,7 @@ export class PointPickingMaterial extends THREE.ShaderMaterial implements Camera
         // holds a whole permutation (runtime uniform: never a define — a
         // flip must not recompile the program).
         uSortedIndexSlot: { value: 0 },
+        uDensityDrop: { value: 0 },
         uNearCull: { value: 0.1 },
         uPixelRatio: { value: 1 },
         uNodeId: { value: config.nodeId },
@@ -104,6 +105,7 @@ export class PointPickingMaterial extends THREE.ShaderMaterial implements Camera
     // geometry draws from slot 1 would otherwise read the stale buffer
     // until the coordinator's next per-frame re-assert.
     cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
+    cloned.uniforms.uDensityDrop.value = this.uniforms.uDensityDrop.value;
     return cloned as this;
   }
 
