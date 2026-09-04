@@ -36,6 +36,7 @@ import {
   resolveDensityGuardEnabled,
 } from '../../../scene/projected-density';
 import { getDensityGuard } from '../../../scene/density-guard';
+import { isLoadActivity, refinementCompleteFromTimeline } from './load-activity';
 
 /**
  * Everything `LuxarApp.init()` constructs is returned in this result.
@@ -427,11 +428,20 @@ export async function runInitPipeline(
     adaptiveDPRManager.pinManualDPR(ports.options.pinnedDPR);
   }
 
-  // While an updateView sweep is in flight, frame jank reflects
-  // decode/upload work, not steady-state render cost — the manager
-  // suppresses probe/estimator learning for those samples.
-  adaptiveDPRManager.setLoadActivityPredicate(
-    () => getSceneLoader('default')?.isUpdateInProgress() ?? false
+  // While the viewer is not SETTLED — an updateView sweep, any loader's load
+  // pass, a lazy LOD level load, or the post-load refinement drain (each
+  // rung is fetch + decode + commit with the lock released between passes)
+  // — frame jank reflects that work, not steady-state render cost, and the
+  // manager suppresses probe/estimator learning for those samples. Same
+  // predicate the perf probes read as `getPerf().isSettled`, inverted.
+  adaptiveDPRManager.setLoadActivityPredicate(() =>
+    isLoadActivity({
+      isUpdateInProgress: () => getSceneLoader('default')?.isUpdateInProgress() ?? false,
+      isAnyLoadPassInProgress: () => SceneLoaderManager.getInstance().isAnyLoadPassInProgress(),
+      isAnyLodLevelLoading: () =>
+        getSceneLoader('default')?.lodGroupRegistry?.isAnyLevelLoading() === true,
+      isRefinementComplete: refinementCompleteFromTimeline,
+    })
   );
 
   // Dataset/layer changes invalidate the learned DPR bounds (the floor
