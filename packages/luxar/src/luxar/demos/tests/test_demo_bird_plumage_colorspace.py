@@ -36,6 +36,7 @@ META_COLUMNS = _demo.META_COLUMNS
 N_UV_BINS = _demo.N_UV_BINS
 LAB_CENTRE_LIGHTNESS = _demo.LAB_CENTRE_LIGHTNESS
 _ColourModel = _demo._ColourModel
+_Accumulator = _demo._Accumulator
 _column_index = _demo._column_index
 _iter_rows = _demo._iter_rows
 _resolve_columns = _demo._resolve_columns
@@ -135,26 +136,37 @@ class TestColourModel:
         assert rgb.max() <= 1.0
 
 
-def _workbook(rows: list[list[tuple[str, str]]]) -> zipfile.ZipFile:
+def _workbook(
+    rows: list[list[tuple[str, str]]],
+    second_sheet: list[list[tuple[str, str]]] | None = None,
+) -> zipfile.ZipFile:
     """A minimal in-memory xlsx whose cells carry explicit column references.
 
     Each row is a list of ``(column_letter, value)`` pairs, and ONLY those
     cells are emitted — which is how a real xlsx spells an empty cell, and the
     shape the positional reader got wrong.
     """
-    cells = "".join(
-        f'<row r="{r + 1}">'
-        + "".join(f'<c r="{letter}{r + 1}"><v>{value}</v></c>' for letter, value in row)
-        + "</row>"
-        for r, row in enumerate(rows)
-    )
-    sheet = (
-        '<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org'
-        f'/spreadsheetml/2006/main"><sheetData>{cells}</sheetData></worksheet>'
-    )
+
+    def sheet_xml(sheet_rows: list[list[tuple[str, str]]]) -> str:
+        cells = "".join(
+            f'<row r="{r + 1}">'
+            + "".join(
+                f'<c r="{letter}{r + 1}"><v>{value}</v></c>' for letter, value in row
+            )
+            + "</row>"
+            for r, row in enumerate(sheet_rows)
+        )
+        return (
+            '<?xml version="1.0"?><worksheet '
+            'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            f"<sheetData>{cells}</sheetData></worksheet>"
+        )
+
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
-        archive.writestr("xl/worksheets/sheet1.xml", sheet)
+        archive.writestr("xl/worksheets/sheet1.xml", sheet_xml(rows))
+        if second_sheet is not None:
+            archive.writestr("xl/worksheets/sheet2.xml", sheet_xml(second_sheet))
     return zipfile.ZipFile(buffer)
 
 
@@ -210,6 +222,32 @@ class TestIterRows:
         )
         rows = list(_iter_rows(book))
         assert rows[1] == ["1", None, None]
+
+    def test_multiple_worksheets_fail_loudly(self) -> None:
+        book = _workbook([[("A", "header")]], second_sheet=[[("A", "other")]])
+        with pytest.raises(ValueError, match="exactly one worksheet"):
+            list(_iter_rows(book))
+
+
+class TestAccumulator:
+    def test_percent_scaling_is_decided_once_per_file(self) -> None:
+        accumulator = _Accumulator(_ColourModel(), block_size=1)
+        accumulator.begin_file()
+
+        accumulator.add([2.0] * len(WAVELENGTHS), {})
+        assert accumulator.flush() == (1, 0)
+        accumulator.add([1.0] * len(WAVELENGTHS), {})
+        assert accumulator.flush() == (1, 0)
+
+        assert accumulator.scaled_from_percent
+        assert np.max(accumulator.result()["lab"][:, 0]) < 25.0
+
+    def test_flush_reports_lightness_drops(self) -> None:
+        accumulator = _Accumulator(_ColourModel())
+        accumulator.begin_file()
+        accumulator.add([0.0] * len(WAVELENGTHS), {})
+
+        assert accumulator.flush() == (0, 1)
 
 
 class TestResolveColumns:
@@ -364,6 +402,26 @@ class TestLabels:
         labels, _keys = _labels(self._corpus())
         assert labels[0] == "Anna's Hummingbird — crown ♂ — 31% UV"
         assert "breast ♀" in labels[1]
+
+    def test_normalises_patch_placeholders_and_short_sex_codes(self) -> None:
+        corpus = self._corpus()
+        corpus["patch"] = np.array(["Crown", "not noted", "?"], dtype=object)
+        corpus["sex"] = np.array(["M", "f", "unknown"], dtype=object)
+
+        labels, _keys = _labels(corpus)
+
+        assert labels[0] == "Anna's Hummingbird — crown ♂ — 31% UV"
+        assert labels[1] == "Turdus migratorius — ♀ — 5% UV"
+        assert labels[2] == "Barn Owl — 12% UV"
+
+    @pytest.mark.parametrize("placeholder", ["not noted", "not recorded", "?", ""])
+    def test_patch_placeholders_are_omitted(self, placeholder: str) -> None:
+        corpus = self._corpus()
+        corpus["patch"][0] = placeholder
+
+        labels, _keys = _labels(corpus)
+
+        assert labels[0] == "Anna's Hummingbird — ♂ — 31% UV"
 
     def test_falls_back_to_the_scientific_name(self) -> None:
         labels, _keys = _labels(self._corpus())

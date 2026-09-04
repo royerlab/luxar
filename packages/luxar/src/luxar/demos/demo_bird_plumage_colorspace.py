@@ -5,8 +5,8 @@ Bird Plumage Colour Space — the UV axis a human figure has to throw away
 Every line in this scene is one spectrophotometer reading of one patch of
 plumage on one bird: a reflectance curve from 300 to 700 nm, measured off a
 museum specimen or a live bird, from `BirdColorBase
-<https://github.com/BirdColorBase/home>`_: 360,432 readings over 2,632
-species and 403 named patches, contributed by nine research groups.
+<https://github.com/BirdColorBase/home>`_: 360,432 readings over 2,632 species,
+contributed by ten research groups.
 
 The three DISPLAYED axes are human colour vision. Each reading is integrated
 through the CIE 1931 observer and plotted in CIELAB, drawn as a spike from the
@@ -66,7 +66,7 @@ DEMO_META = {
     "category": "embeddings",
     "geometry": "lines",
     "requirements": {
-        "download_mb": 640,
+        "download_mb": 525,
         "compute": "medium",
         "gpu": "none",
         "local_data": None,
@@ -74,7 +74,7 @@ DEMO_META = {
     "caches": ["birdcolorbase"],
     "outputs": ["bird_plumage_colorspace"],
     "citation": {
-        "short": "BirdColorBase (Gluckman & Endler, and nine contributing groups)",
+        "short": "BirdColorBase (Gluckman & Endler, and ten contributing groups)",
         "ref": "BirdColorBase",
         "license": "MIT",
         "url": "https://github.com/BirdColorBase/home",
@@ -126,13 +126,14 @@ CACHE_NAME = "birdcolorbase"
 #: Bumped whenever the parser changes which ROWS survive, independently of the
 #: colour parameters already in the cache key. v2 places cells by column
 #: reference instead of by order (see :func:`_iter_rows`), which recovers the
-#: 40% of readings a positional reader silently dropped.
-_PARSER_VERSION = 2
+#: 40% of readings a positional reader silently dropped. v3 fixes reflectance
+#: scale detection for files spanning more than one reduction block.
+_PARSER_VERSION = 3
 
-#: Repository path -> sha256. One file per contributing research group (the
-#: database is split only to keep each file openable). Checksums are verified on
-#: download, so a truncated 83 MB transfer is caught rather than silently
-#: parsed into a short corpus.
+#: Repository path -> sha256. Some contributing groups split their data across
+#: multiple files to keep each workbook openable. Checksums are verified on
+#: download, so a truncated 83 MB transfer is caught rather than silently parsed
+#: into a short corpus.
 SOURCE_FILES: dict[str, str] = {
     "Burns.Schultz/BurnsSchultz_Bananaquit.Buntings.Sparrows_27Dec24.xlsx": (
         "f803bd0573be86b46a66d2b424dd7e193566fb32890a49d084732732936ec91e"
@@ -344,37 +345,36 @@ def _iter_rows(book: zipfile.ZipFile, width: int = 0) -> Iterator[list[Optional[
     """
     strings = _shared_strings(book)
     sheets = sorted(n for n in book.namelist() if _SHEET_XML.match(n))
-    for sheet in sheets:
-        with book.open(sheet) as handle:
-            for _event, element in ET.iterparse(handle, events=("end",)):
-                if element.tag != _NS + "row":
-                    continue
-                cells: list[tuple[int, Optional[str]]] = []
-                for position, cell in enumerate(element):
-                    reference = cell.get("r")
-                    column = (
-                        _column_index(reference.rstrip(_DIGITS))
-                        if reference
-                        else position
-                    )
-                    value = cell.find(_NS + "v")
-                    if value is None or value.text is None:
-                        text = None
-                    elif cell.get("t") == "s":
-                        index = int(value.text)
-                        text = strings[index] if index < len(strings) else None
-                    else:
-                        text = value.text
-                    cells.append((column, text))
-                element.clear()
+    if len(sheets) != 1:
+        raise ValueError(f"expected exactly one worksheet, found {len(sheets)}")
+    with book.open(sheets[0]) as handle:
+        for _event, element in ET.iterparse(handle, events=("end",)):
+            if element.tag != _NS + "row":
+                continue
+            cells: list[tuple[int, Optional[str]]] = []
+            for position, cell in enumerate(element):
+                reference = cell.get("r")
+                column = (
+                    _column_index(reference.rstrip(_DIGITS)) if reference else position
+                )
+                value = cell.find(_NS + "v")
+                if value is None or value.text is None:
+                    text = None
+                elif cell.get("t") == "s":
+                    index = int(value.text)
+                    text = strings[index] if index < len(strings) else None
+                else:
+                    text = value.text
+                cells.append((column, text))
+            element.clear()
 
-                if not width:
-                    width = max((column for column, _ in cells), default=-1) + 1
-                row: list[Optional[str]] = [None] * width
-                for column, text in cells:
-                    if 0 <= column < width:
-                        row[column] = text
-                yield row
+            if not width:
+                width = max((column for column, _ in cells), default=-1) + 1
+            row: list[Optional[str]] = [None] * width
+            for column, text in cells:
+                if 0 <= column < width:
+                    row[column] = text
+            yield row
 
 
 def _resolve_columns(header: list[Optional[str]]) -> tuple[dict[str, int], np.ndarray]:
@@ -533,6 +533,17 @@ class _Accumulator:
         self.meta: dict[str, list[str]] = {field: [] for field in META_COLUMNS}
         self._spectra: list[list[float]] = []
         self._meta_block: dict[str, list[str]] = {f: [] for f in META_COLUMNS}
+        self._percent_scale: Optional[bool] = None
+
+    def begin_file(self) -> None:
+        """Reset file-scoped scale detection after the previous file is flushed."""
+        if self._spectra:
+            raise RuntimeError("cannot begin a file with a pending reduction block")
+        self._percent_scale = None
+
+    @property
+    def scaled_from_percent(self) -> bool:
+        return bool(self._percent_scale)
 
     @property
     def full(self) -> bool:
@@ -543,15 +554,18 @@ class _Accumulator:
         for field in META_COLUMNS:
             self._meta_block[field].append(meta_row.get(field, ""))
 
-    def flush(self) -> int:
-        """Reduce the pending block; return how many readings it contributed."""
+    def flush(self) -> tuple[int, int]:
+        """Reduce the pending block; return ``(kept, invalid_or_too_dark)``."""
         if not self._spectra:
-            return 0
+            return 0, 0
         spectra = np.array(self._spectra, dtype=np.float64)
         # Percent-vs-fraction: every file here stores fractions, but a group
         # storing 0-100 would silently produce L* in the thousands, so the scale
-        # is measured rather than assumed.
-        if np.nanpercentile(spectra, 99) > 1.5:
+        # is measured rather than assumed. Decide once per file so later blocks
+        # cannot use a different unit from the first.
+        if self._percent_scale is None:
+            self._percent_scale = bool(np.nanpercentile(spectra, 99) > 1.5)
+        if self._percent_scale:
             spectra /= 100.0
         # Spectrophotometry undershoots its white reference on dark patches;
         # negative reflectance is noise, not absorption.
@@ -567,7 +581,8 @@ class _Accumulator:
             self.meta[field].extend(column[keep].tolist())
             values.clear()
         self._spectra.clear()
-        return int(keep.sum())
+        kept = int(keep.sum())
+        return kept, len(keep) - kept
 
     def result(self) -> dict[str, np.ndarray]:
         corpus: dict[str, np.ndarray] = {
@@ -590,6 +605,7 @@ def _read_corpus() -> dict[str, np.ndarray]:
     for repo_path, digest in SOURCE_FILES.items():
         name = repo_path.rsplit("/", 1)[-1]
         with asection(f"{name}"):
+            accumulator.begin_file()
             local = cached_download(
                 f"{BIRDCOLORBASE_RAW}/{repo_path}", CACHE_NAME, sha256=digest
             )
@@ -603,11 +619,14 @@ def _read_corpus() -> dict[str, np.ndarray]:
             meta_index, spectral_index = _resolve_columns(header)
 
             kept = 0
+            unparseable = 0
+            reduced_out = 0
             for row in rows:
                 raw_spectrum = [row[i] for i in spectral_index]
                 try:
                     spectrum = [float(v) for v in raw_spectrum]  # type: ignore[arg-type]
                 except (TypeError, ValueError):
+                    unparseable += 1
                     continue
                 accumulator.add(
                     spectrum,
@@ -617,9 +636,21 @@ def _read_corpus() -> dict[str, np.ndarray]:
                     },
                 )
                 if accumulator.full:
-                    kept += accumulator.flush()
-            kept += accumulator.flush()
-            aprint(f"{kept:,} readings kept")
+                    block_kept, block_reduced_out = accumulator.flush()
+                    kept += block_kept
+                    reduced_out += block_reduced_out
+            block_kept, block_reduced_out = accumulator.flush()
+            kept += block_kept
+            reduced_out += block_reduced_out
+            scale_note = (
+                "; reflectance scaled from percent"
+                if accumulator.scaled_from_percent
+                else ""
+            )
+            aprint(
+                f"{kept:,} readings kept; {unparseable:,} unparseable; "
+                f"{reduced_out:,} invalid or below L* {MIN_LIGHTNESS:g}{scale_note}"
+            )
 
     return accumulator.result()
 
@@ -689,7 +720,8 @@ def _spikes(
     return vertices, colors, widths
 
 
-_SEX_SYMBOL = {"male": "♂", "female": "♀"}
+_SEX_SYMBOL = {"male": "♂", "m": "♂", "female": "♀", "f": "♀"}
+_PATCH_PLACEHOLDERS = {"", "not noted", "not recorded", "?"}
 
 
 def _labels(corpus: dict[str, np.ndarray]) -> tuple[list[str], list[str]]:
@@ -719,7 +751,17 @@ def _labels(corpus: dict[str, np.ndarray]) -> tuple[list[str], list[str]]:
         binomial = species[i].replace("_", " ")
         name = english[i] or binomial or "unidentified"
         parts = [name]
-        detail = [p for p in (patch[i], _SEX_SYMBOL.get(sex[i].lower(), "")) if p]
+        patch_name = patch[i].strip().casefold()
+        if patch_name in _PATCH_PLACEHOLDERS:
+            patch_name = ""
+        detail = [
+            value
+            for value in (
+                patch_name,
+                _SEX_SYMBOL.get(sex[i].strip().casefold(), ""),
+            )
+            if value
+        ]
         if detail:
             parts.append(" ".join(detail))
         parts.append(f"{uv[i] * 100:.0f}% UV")
