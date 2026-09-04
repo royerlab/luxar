@@ -7,7 +7,7 @@
  * below pins one of the ways that could happen.
  */
 
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -37,6 +37,11 @@ function transformIndexHtml(plugin: Plugin, html: string): string {
 }
 
 describe('build-info (runtime side)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
   it('reports unstamped rather than throwing when no define was injected', () => {
     // vitest uses vitest.config.ts, which carries no `define:` — so this run IS
     // the unstamped case. A bare `__LUXAR_BUILD__` reference here would be a
@@ -62,6 +67,36 @@ describe('build-info (runtime side)', () => {
         stamped: true,
       })
     ).toBe('2026.9.15 (abc1234, built 2026-09-15T10:00:00Z)');
+  });
+
+  it('parses the injected build stamp through the real runtime module', async () => {
+    const identity = {
+      version: '2026.9.15',
+      commit: 'abc1234',
+      buildTime: '2026-09-15T10:00:00Z',
+    };
+    vi.stubGlobal('__LUXAR_BUILD__', JSON.stringify(identity));
+    vi.resetModules();
+
+    const stamped = await import('../../../config/build-info');
+
+    expect(stamped.buildInfo()).toEqual({ ...identity, stamped: true });
+    expect(stamped.buildInfoLine()).toBe('2026.9.15 (abc1234, built 2026-09-15T10:00:00Z)');
+  });
+
+  it('falls back to unstamped when the injected build stamp is malformed', async () => {
+    vi.stubGlobal('__LUXAR_BUILD__', '{not-json');
+    vi.resetModules();
+
+    const malformed = await import('../../../config/build-info');
+
+    expect(malformed.buildInfo()).toEqual({
+      version: UNKNOWN,
+      commit: UNKNOWN,
+      buildTime: UNKNOWN,
+      stamped: false,
+    });
+    expect(malformed.buildInfoLine()).toBe('development build (unstamped)');
   });
 
   it('agrees with the producer on the placeholder spelling', () => {
