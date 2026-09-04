@@ -435,8 +435,14 @@ lint = [
     "mypy packages/luxar/src/luxar/ scripts/ci_queue_scan.py"
 ]
 security = "bandit -r packages/luxar/src/luxar -c pyproject.toml --severity-level medium --confidence-level medium -q"
-# Enforce layer direction: domain (gsplats/io/core/encoding) must not import cli.
+# Enforce layer direction: the full `Subpackage layering` stack, plus the two
+# narrower `forbidden` contracts.
 check-imports = "lint-imports"
+# Keep that contract honest: assert the declared order is still the measured
+# minimum, and that its dated debt list has not GROWN. import-linter refuses an
+# ignore matching nothing, so it already stops the list rotting; this stops a new
+# violation being waved through by appending a line.
+check-layer-order = "python scripts/check_layer_order.py"
 # Assert Python, viewer, and citation metadata describe the same release.
 check-versions = "python scripts/check_version_consistency.py"
 # Regenerate the Python + TS format-contract projections from contract.yaml.
@@ -489,6 +495,7 @@ check-static = [
     "format",
     "lint",
     "check-imports",
+    "check-layer-order",
     "check-versions",
     "check-contract",
     "check-data-manifest",
@@ -842,6 +849,128 @@ root_package = "luxar"
 # Test modules colocated under domain packages may import the CLI to exercise
 # CLI behaviour; the contract targets production code only.
 exclude_type_checking_imports = true
+
+[[tool.importlinter.contracts]]
+# THE layering contract. Until this landed, import-linter declared two
+# `forbidden` contracts and reported them kept over 1,015 files -- green, while
+# the graph carried ten mutually-cyclic subpackage pairs (audit A1-01).
+#
+# ## Why this order
+#
+# Chosen by measurement, not taste. `scripts/check_layer_order.py` scores every
+# ordering of the seven ambiguous middle packages by how many production edges
+# point UP the stack; this one is the minimum at 35. `cli`/`demos` are
+# unambiguously the top (201 and 343 outgoing edges against 2 and 6 incoming)
+# and the five zero-outgoing packages the bottom, so only the middle was in
+# question. Re-run that script after any structural change; it prints the top
+# orderings and the exact edges each would violate.
+#
+# The count alone did not settle `gsplats`: above `core`/`io` and below both
+# score within one edge of each other. It sits BELOW because of what the edges
+# ARE -- `core -> gsplats` is the scene graph consuming the splat DATA MODEL
+# (`gsplat_data`, `tree`, `lift`, `utils.trils`), which is a consumer reaching
+# down, while `gsplats -> io` is `gsplats.io.save_gsplats` reaching into the
+# private `luxar.io._compiler` tree, which is the same debt A1-03 removed from
+# `core`. Ordering it the other way would have declared that debt to be the
+# architecture.
+#
+# ## The ignore list is DATED DEBT, not design
+#
+# 35 edges, measured 2026-09-04. Every one is a layering violation someone
+# should eventually remove, and the two large groups are one job each:
+#
+#   gsplats -> io    (17)  mostly `gsplats.io.*` reaching into `io._compiler`;
+#                          the residue A1-03 left behind (see #2526).
+#   gsplats -> core  (10)  mostly `core.group.partition` / `core.group.compositing`
+#                          -- shared helpers that belong lower, same species as
+#                          the validators A1-03 moved to `luxar.validation`.
+#
+# import-linter REFUSES an `ignore_imports` entry that matches nothing, so this
+# list can only shrink: delete an edge from the code and the build tells you to
+# delete it from here too. That property is why a seeded contract is worth
+# having now rather than a perfect one later.
+name = "Subpackage layering"
+type = "layers"
+layers = [
+    "luxar.cli",
+    "luxar.demos",
+    "luxar.io",
+    "luxar.core",
+    "luxar.gsplats",
+    "luxar.encoding",
+    "luxar.validation",
+    "luxar.utils",
+    "luxar.typing_utils",
+    "luxar.colormaps",
+    "luxar.mesh",
+    "luxar.shading",
+    "luxar._zarr_compat",
+    "luxar._process",
+]
+# Direct edges only. An indirect chain through a legitimately-lower package is
+# the layering working, not a fault, and enumerating chains would make the
+# ignore list unmaintainable without catching anything the direct edges miss.
+allow_indirect_imports = true
+ignore_imports = [
+    # Colocated tests drive higher layers on purpose -- a `core` test may load
+    # the compiler. The contract targets production code, matching the two
+    # contracts below.
+    "luxar.**.tests.** -> luxar.**",
+    "luxar.**.tests.** -> luxar",
+    "luxar.tests.** -> luxar.**",
+    "luxar.tests.** -> luxar",
+    # `luxar/__init__.py` re-exports the whole public API, so ANY module that
+    # imports the package root reaches every layer through it. That is the
+    # public API working; a layers contract that called it a fault would be
+    # unusable. Only the root itself is exempted -- a direct
+    # `luxar.utils.x -> luxar.demos.y` still fails.
+    "luxar.utils.** -> luxar",
+    # gsplats -> io (17)
+    "luxar.gsplats._data.io_adapter -> luxar.io.reader",
+    "luxar.gsplats.batch.merge_orchestrator -> luxar.io.volume",
+    "luxar.gsplats.batch.slurm_gen -> luxar.io.ome_zarr",
+    "luxar.gsplats.fitting.sorting -> luxar.io.ordering",
+    "luxar.gsplats.io -> luxar.io.ordering",
+    "luxar.gsplats.io.load_gsplats -> luxar.io._compiler.gsplat_tree",
+    "luxar.gsplats.io.migrate -> luxar.io._compiler.gsplat_tree",
+    "luxar.gsplats.io.save_gsplats -> luxar.io._compiler.finalize.amplitude_window",
+    "luxar.gsplats.io.save_gsplats -> luxar.io._compiler.finalize.hashing",
+    "luxar.gsplats.io.save_gsplats -> luxar.io._compiler.gsplat_assembly",
+    "luxar.gsplats.io.save_gsplats -> luxar.io._compiler.gsplat_tree",
+    "luxar.gsplats.io.save_gsplats -> luxar.io._ordering.gsplats",
+    "luxar.gsplats.io.save_gsplats -> luxar.io.ordering",
+    "luxar.gsplats.io.save_gsplats -> luxar.io.reader",
+    "luxar.gsplats.lod._substitutive.warm_start -> luxar.io.ordering",
+    "luxar.gsplats.lod.annotate -> luxar.io._compiler.gsplat_tree",
+    "luxar.gsplats.preprocessing.denoise_pipeline -> luxar.io.volume",
+    # gsplats -> core (10)
+    "luxar.gsplats._data.composition -> luxar.core.group.partition",
+    "luxar.gsplats.batch.merge_orchestrator -> luxar.core.group.partition",
+    "luxar.gsplats.doctor.checks -> luxar.core.dimensions",
+    "luxar.gsplats.doctor.checks -> luxar.core.group.partition",
+    "luxar.gsplats.io.load_gsplats -> luxar.core.group.compositing",
+    "luxar.gsplats.io.save_gsplats -> luxar.core.group.compositing",
+    "luxar.gsplats.lod.recipes -> luxar.core.group.lod.group",
+    "luxar.gsplats.lod.recipes -> luxar.core.group.partition",
+    "luxar.gsplats.restride -> luxar.core.group.partition",
+    "luxar.gsplats.tree -> luxar.core.group.lod.group",
+    # demos -> cli (1)
+    "luxar.demos.demo_gsplats_3d_flylight_mcfo_63x_brain -> luxar.cli",
+    # gsplats -> demos (1)
+    "luxar.gsplats.demos.demo_3d_celegans_culling -> luxar.demos",
+    # typing_utils -> encoding (1)
+    "luxar.typing_utils.config -> luxar.encoding.compression",
+    # typing_utils -> io (1)
+    "luxar.typing_utils.config -> luxar.io.reader",
+    # typing_utils -> validation (1)
+    "luxar.typing_utils -> luxar.validation.types",
+    # utils -> core (1)
+    "luxar.utils.scenes -> luxar.core.dimensions",
+    # utils -> demos (1)
+    "luxar.utils.scenes -> luxar.demos.demo_lorenz",
+    # utils -> io (1)
+    "luxar.utils.scenes -> luxar.io.compiler",
+]
 
 [[tool.importlinter.contracts]]
 name = "Domain layers must not import the CLI"
