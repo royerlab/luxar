@@ -138,9 +138,10 @@ export function buildPerfDiff(base, next) {
   md += `New captured: ${next.capturedAt}\n\n`;
   md += `Sample window: ${next.sampleWindowMs ?? '?'} ms, warmup: ${next.warmupFrames ?? '?'} frames.\n\n`;
 
-  md += `## JS frame timing\n\n`;
-  md += `| Scenario / backend | API | Segs | base median (ms) | new median (ms) | Δ median | base p95 | new p95 | Δ p95 |\n`;
-  md += `|---|---|---:|---:|---:|---|---:|---:|---|\n`;
+  md += '## JS frame timing\n\n';
+  md +=
+    '| Scenario / backend | API | Segs | base median (ms) | new median (ms) | Δ median | base p95 | new p95 | Δ p95 |\n';
+  md += '|---|---|---:|---:|---:|---|---:|---:|---|\n';
 
   for (const k of sortedKeys) {
     const b = baseByKey.get(k);
@@ -219,9 +220,10 @@ export function buildPerfDiff(base, next) {
   });
 
   if (anyGpu) {
-    md += `\n## GPU pass time (timestamp-query)\n\n`;
-    md += `| Scenario / backend | API | Segs | base median (ms) | new median (ms) | Δ median | base p95 | new p95 | Δ p95 |\n`;
-    md += `|---|---|---:|---:|---:|---|---:|---:|---|\n`;
+    md += '\n## GPU pass time (timestamp-query)\n\n';
+    md +=
+      '| Scenario / backend | API | Segs | base median (ms) | new median (ms) | Δ median | base p95 | new p95 | Δ p95 |\n';
+    md += '|---|---|---:|---:|---:|---|---:|---:|---|\n';
 
     for (const k of sortedKeys) {
       const b = baseByKey.get(k);
@@ -285,10 +287,11 @@ export function buildPerfDiff(base, next) {
   // not a measurement — those cells get a `(lb)` marker and no delta.
   const anyLadder = sortedKeys.some((k) => baseByKey.get(k)?.ladder || nextByKey.get(k)?.ladder);
   if (anyLadder) {
-    md += `\n## Ladder load\n\n`;
-    md += `Wall time from navigation to ladder-complete (ms, lower is better). \`(lb)\` = lower bound: the ladder finished before polling began (\`observedGrowth: false\`), so no delta is computed.\n\n`;
-    md += `| Scenario / backend | base wallMs | new wallMs | Δ wallMs |\n`;
-    md += `|---|---:|---:|---|\n`;
+    md += '\n## Ladder load\n\n';
+    md +=
+      'Wall time from navigation to ladder-complete (ms, lower is better). `(lb)` = lower bound: the ladder finished before polling began (`observedGrowth: false`), so no delta is computed.\n\n';
+    md += '| Scenario / backend | base wallMs | new wallMs | Δ wallMs |\n';
+    md += '|---|---:|---:|---|\n';
     for (const k of sortedKeys) {
       const b = baseByKey.get(k)?.ladder;
       const n = nextByKey.get(k)?.ladder;
@@ -313,13 +316,12 @@ export function buildPerfDiff(base, next) {
   }
 
   md += '\n';
-  md += `🟢 = ≥5% faster on this metric · 🔴 = ≥5% slower\n`;
+  md += '🟢 = ≥5% faster on this metric · 🔴 = ≥5% slower\n';
 
   return md;
 }
 
 function usage() {
-  // eslint-disable-next-line no-console
   console.error('Usage: perf-diff.mjs <baseline.json> <new.json>');
   process.exit(2);
 }
@@ -329,12 +331,10 @@ function main() {
 
   const [, , basePath, newPath] = process.argv;
   if (!fs.existsSync(basePath)) {
-    // eslint-disable-next-line no-console
     console.error(`Baseline not found: ${basePath}`);
     process.exit(2);
   }
   if (!fs.existsSync(newPath)) {
-    // eslint-disable-next-line no-console
     console.error(`New results not found: ${newPath}`);
     process.exit(2);
   }
@@ -344,13 +344,12 @@ function main() {
 
   const md = buildPerfDiff(base, next);
 
-  // eslint-disable-next-line no-console
   console.log(md);
 
   // Resolve any relative paths for the user.
   const baseAbs = path.resolve(basePath);
   const newAbs = path.resolve(newPath);
-  // eslint-disable-next-line no-console
+
   console.error(`baseline: ${baseAbs}\nnew:      ${newAbs}`);
 }
 

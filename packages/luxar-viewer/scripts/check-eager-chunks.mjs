@@ -52,10 +52,10 @@ function fail(message) {
   const missing = expected.filter((s) => !found.has(s));
   if (missing.length > 0 || found.has('./lazy.js')) {
     fail(
-      `staticImportsOf() no longer parses built-chunk imports: expected ` +
+      'staticImportsOf() no longer parses built-chunk imports: expected ' +
         `${expected.join(', ')} and not './lazy.js', got ${[...found].join(', ') || '(nothing)'}. ` +
-        `Every assertion below reads the same specifiers, so they would all pass vacuously. ` +
-        `Fix the regex before trusting this check.`
+        'Every assertion below reads the same specifiers, so they would all pass vacuously. ' +
+        'Fix the regex before trusting this check.'
     );
   }
 }
@@ -69,7 +69,7 @@ for (const stem of LAZY_ONLY) {
   if (preloaded.length > 0) {
     fail(
       `dist/index.html modulepreloads ${preloaded.join(', ')}. A lazily-imported ` +
-        `chunk is never preloaded, so this means something in the eager graph ` +
+        'chunk is never preloaded, so this means something in the eager graph ' +
         `still imports '${stem}' statically.`
     );
   }
@@ -124,7 +124,7 @@ if (entryHref) {
     if (offenders.length > 0) {
       fail(
         `The entry chunk (${entryName}) statically imports ${offenders.join(', ')}. ` +
-          `It must only appear behind a dynamic import().`
+          'It must only appear behind a dynamic import().'
       );
     }
   }
@@ -147,7 +147,7 @@ if (entryHref) {
     if (source.includes(KTX2_ZSTD_DECODER_MARKER)) {
       fail(
         `Chunk '${name}' contains Three's KTX2 zstd decoder and is reachable from the entry ` +
-          `chunk. Keep zstddec.module.js in the lazy 'three-ktx2' chunk.`
+          "chunk. Keep zstddec.module.js in the lazy 'three-ktx2' chunk."
       );
     }
     for (const spec of staticImportsOf(source)) {
@@ -161,8 +161,8 @@ if (entryHref) {
             `Chunk '${name}' statically imports '${dep}', and '${name}' is reachable ` +
               `from the entry chunk. The whole '${stem}' chunk is therefore eager. ` +
               `Keep '${stem}' dynamically imported. For 'three' → 'three-webgpu', ` +
-              `the shared three.core.js needs its own codeSplitting group in ` +
-              `vite.config.ts (see #1679).`
+              'the shared three.core.js needs its own codeSplitting group in ' +
+              'vite.config.ts (see #1679).'
           );
         }
       }
@@ -180,7 +180,7 @@ for (const stem of LAZY_ONLY) {
   if (!assetFiles.some((f) => f.includes(stem) && f.endsWith('.js'))) {
     fail(
       `No '${stem}' chunk was emitted at all. The '${stem}' path must still be built ` +
-        `— it is only supposed to be LAZY, not absent.`
+        '— it is only supposed to be LAZY, not absent.'
     );
   }
 }

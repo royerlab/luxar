@@ -21,6 +21,7 @@ python3 scripts/perf/timelapse-nav-compare.py /tmp/perfbench   # markdown tables
 ```
 
 Caveats learned the hard way:
+
 - Never point two runs at the same vite port; verify no stale listener
   (`lsof -iTCP:<port> -sTCP:LISTEN`) — a server from another checkout
   silently poisons results.
@@ -40,6 +41,7 @@ adapter** (`requestAdapter()` → null), so every `?renderer=webgpu` run
 on it silently exercises the WebGL2 fallback. Real Chrome
 (`channel: 'chrome'`, works headless) has a full Metal-3 adapter — pass
 `--channel chrome` to the bench / `--chrome` to the probes. Two traps:
+
 - `navigator.gpu` only exists in SECURE contexts — probing it on
   `about:blank` reads as "no WebGPU" (goto a localhost page first).
 - `--use-gl=egl` (our E2E GPU-acceleration flag) forces ANGLE-GL and
