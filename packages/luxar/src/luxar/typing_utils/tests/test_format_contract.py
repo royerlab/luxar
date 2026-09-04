@@ -218,6 +218,18 @@ CURRENT_VERSION_CLAIMS: tuple[tuple[str, str], ...] = (
         r"v(\d+\.\d+) node-tree (?:grammar|format)",
     ),
     (
+        "packages/luxar/src/luxar/gsplats/lod/README.md",
+        r"# v(\d+\.\d+) (?:leaf|kind=lod group)",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/lod/README.md",
+        r"Output is written as a v(\d+\.\d+) `\.gsplats\.zarr` node tree",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/lod/README.md",
+        r"on-disk container is a v(\d+\.\d+)",
+    ),
+    (
         "packages/luxar/src/luxar/core/group/gsplats_pipeline/README.md",
         r"v(\d+\.\d+) node tree grafted into the scene",
     ),
