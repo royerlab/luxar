@@ -65,7 +65,7 @@ export const COVERAGE_THRESHOLDS = {
   // warm-up, shared-module) reached the gate/publish/warm-up paths nothing had
   // called: the subtree went 90.60 -> 91.41 and check-coverage-slack.mjs flagged
   // the old floor as stale. The ratchet working, same as the src/data bump above.
-  'src/workers/**': { lines: 89, functions: 90, branches: 85 }, //   91.37 / 91.41 / 86.90
+  'src/workers/**': { lines: 89, functions: 90, branches: 85 }, //   91.38 / 91.41 / 86.74
   'src/ui/**': { lines: 89, functions: 84, branches: 76 }, //        91.41 / 86.15 / 78.60
   'src/core/**': { lines: 86, functions: 70, branches: 83 }, //      88.41 / 72.03 / 85.69
   // input jumped when ui-actions-surface.test.ts began invoking the command
