@@ -537,10 +537,7 @@ describe('SceneIdentityWatchdog', () => {
     await tick(5000);
     // A 304 is a conclusive answer about THIS document, exactly like a non-404
     // status: the format-fallback loop must not try `.zattrs` as well.
-    expect(urls).toEqual([
-      'http://127.0.0.1:8000/zarr.json',
-      'http://127.0.0.1:8000/zarr.json',
-    ]);
+    expect(urls).toEqual(['http://127.0.0.1:8000/zarr.json', 'http://127.0.0.1:8000/zarr.json']);
     wd.dispose();
   });
 

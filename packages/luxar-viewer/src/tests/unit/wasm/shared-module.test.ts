@@ -54,7 +54,9 @@ describe('getSharedWasmModule', () => {
     stubWasm({ compileStreaming });
 
     // 15 workers all reach for it at once, as they do in production.
-    const results = await Promise.all(Array.from({ length: 15 }, () => getSharedWasmModule(HTTP_SHIM)));
+    const results = await Promise.all(
+      Array.from({ length: 15 }, () => getSharedWasmModule(HTTP_SHIM))
+    );
 
     expect(compileStreaming).toHaveBeenCalledTimes(1);
     expect(new Set(results).size).toBe(1);
