@@ -106,3 +106,14 @@ def test_generator_categories_preserve_ui_groups() -> None:
         "bop_orange",
         "bop_purple",
     }
+
+
+@generated
+def test_new_non_ramp_colormap_explains_required_category() -> None:
+    """A future generated map must fail with an actionable grouping error."""
+    generator = _generator()
+    colormaps = generator.generate_all()
+    colormaps["cividis"] = np.zeros((256, 3), dtype=np.uint8)
+
+    with pytest.raises(AssertionError, match="needs a _CATEGORY_ORDER entry"):
+        generator._categorise(colormaps)

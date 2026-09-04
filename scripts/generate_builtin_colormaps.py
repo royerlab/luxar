@@ -171,6 +171,9 @@ def _categorise(colormaps: dict[str, np.ndarray]) -> dict[str, list[str]]:
     assert not missing, f"generated but never written: {sorted(missing)}"
     assert set(grouped["Microscopy linear ramps"]) == set(LINEAR_RAMPS) - set(
         _CATEGORY_ORDER["BOP (Blue-Orange-Purple)"]
+    ), (
+        "a new non-ramp colormap needs a _CATEGORY_ORDER entry; otherwise it "
+        "is incorrectly filed under Microscopy linear ramps"
     )
     # Order the sections so the ramps come first, as they did before.
     return {
