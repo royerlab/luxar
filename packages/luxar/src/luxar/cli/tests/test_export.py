@@ -717,9 +717,7 @@ class TestServeScriptTitle:
         viewer_dist.mkdir()
         (viewer_dist / "THIRD_PARTY_LICENSES.txt").write_text("test notices")
         monkeypatch.setattr(export_mod, "check_viewer_built", lambda: True)
-        monkeypatch.setattr(
-            export_mod, "get_viewer_dist_path", lambda: viewer_dist
-        )
+        monkeypatch.setattr(export_mod, "get_viewer_dist_path", lambda: viewer_dist)
         monkeypatch.setattr(export_mod, "_copy_viewer", lambda dest: None)
         monkeypatch.setattr(export_mod, "_copy_zarr_data", lambda s, d: None)
         monkeypatch.setattr(export_mod, "_generate_readme", lambda o, d: None)
