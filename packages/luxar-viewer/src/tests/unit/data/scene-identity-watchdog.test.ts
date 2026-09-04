@@ -524,6 +524,21 @@ describe('SceneIdentityWatchdog', () => {
     wd.dispose();
   });
 
+  it('does not trust an unsolicited 304 before an ETag has been established', async () => {
+    const sent: Array<string | null> = [];
+    const wd = makeWatchdog(async (_url, init) => {
+      sent.push(new Headers(init?.headers).get('if-none-match'));
+      return notModified();
+    });
+
+    wd.start();
+    await tick(5000);
+
+    expect(sent).toEqual([null]);
+    expect(banner.shown).toEqual(['changed']);
+    wd.dispose();
+  });
+
   it('does not fall back to the other document when the resolved one answers 304', async () => {
     const urls: string[] = [];
     let calls = 0;

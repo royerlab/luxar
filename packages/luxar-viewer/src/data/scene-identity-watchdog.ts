@@ -402,7 +402,7 @@ export class SceneIdentityWatchdog {
         // falling through would run `isInconclusiveStatus(304) ? … : 'changed'`
         // and report a perfectly healthy scene as CHANGED — latching the
         // terminal banner and stopping the watchdog for good.
-        if (res.status === 304) return 'ok';
+        if (res.status === 304 && conditional) return 'ok';
         if (res.ok) {
           // Keep the ETag paired with its document: a fallback to the other
           // format must not leave the previous document's token behind.
