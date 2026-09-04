@@ -117,7 +117,12 @@ def glob_to_regex(pattern: str) -> re.Pattern[str]:
     ``*.pyc`` must not). ``pathlib``'s ``full_match`` would do it, but only from
     Python 3.13, and this must run wherever the wheel is built.
     """
-    out = ["^(?:.*/)?" if "/" not in pattern.rstrip("/") else "^"]
+    match_any_depth = "/" not in pattern.rstrip("/")
+    directory_only = match_any_depth and pattern.endswith("/")
+    if directory_only:
+        pattern = pattern.rstrip("/")
+
+    out = ["^(?:.*/)?" if match_any_depth else "^"]
     i = 0
     while i < len(pattern):
         if pattern.startswith("**/", i):
@@ -140,6 +145,8 @@ def glob_to_regex(pattern: str) -> re.Pattern[str]:
         else:
             out.append(re.escape(pattern[i]))
             i += 1
+    if match_any_depth:
+        out.append("(?:/.*)" if directory_only else "(?:/.*)?")
     out.append("$")
     return re.compile("".join(out))
 
