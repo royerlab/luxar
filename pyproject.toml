@@ -459,6 +459,13 @@ check-scene-credits = "python scripts/check_scene_credits.py {args}"
 # Ratchet ruff's C901 against scripts/complexity_baseline.json: existing debt is
 # tolerated, a newly over-complex (or newly worse) function fails.
 check-complexity = "python scripts/check_complexity.py {args}"
+# Inspect a BUILT wheel: package completeness against the source tree, the
+# pyproject excludes honoured, no Git-LFS pointer stubs, no member over PyPI's
+# 100 MB limit, viewer dist bundled. Deliberately NOT in `check-static` — it
+# needs `hatch build` to have run, and `make build-viewer` before that. CI runs
+# it in `wheel-viewer`, where the dist already exists.
+#   make build-viewer && hatch build && hatch run check-wheel dist/luxar-*.whl
+check-wheel = "python scripts/check_wheel.py {args}"
 # Everything in `check` EXCEPT the test suite. `make check-all` runs this, so
 # that `make test-all` is the single place the Python tests execute — following
 # the documented pre-commit checklist used to run the whole suite twice (once
