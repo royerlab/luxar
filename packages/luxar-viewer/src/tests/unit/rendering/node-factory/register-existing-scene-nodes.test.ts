@@ -31,6 +31,9 @@ import { LINE_JOIN_UNIFORM, type LineJoinStyle } from '../../../../types/line-jo
 import { DEFAULT_LINE_PRIMITIVE } from '../../../../types/line-primitive';
 import type { PickingSystem } from '../../../../rendering/picking/picking-system';
 import { applyMeshTexture } from '../../../../rendering/node-factory/create-mesh-node';
+import { attachPointStorage } from '../../../../rendering/point-geometry';
+import { attachLineStorage } from '../../../../rendering/line-geometry';
+import { attachSplatStorage } from '../../../../rendering/gsplat-geometry';
 import type { MeshDataLoader, MeshMetadata, MeshTextureData } from '../../../../types/mesh';
 
 /** Minimal PickingSystem stand-in: the three members the pass touches. */
@@ -121,6 +124,42 @@ describe('registerExistingSceneNodes', () => {
     expect(byName.get('/lines')).toBeInstanceOf(LinePickingMaterial);
     expect(byName.get('/gsplats')).toBeInstanceOf(GSplatPickingMaterial);
     expect(byName.get('/mesh')).toBeInstanceOf(MeshPickingMaterial);
+  });
+
+  it('binds the geometry-owned element texture on the pick material of every pooled type', () => {
+    // The pick material is created on the shared PLACEHOLDER texture; only a commit
+    // (or this pass) rebinds the geometry-owned one through `userData.pickNode`. On a
+    // first load this pass runs AFTER loadScene has committed every node, so without
+    // the rebind the pick shader samples the placeholder and nothing is ever hit —
+    // which stayed hidden only while the post-load slice update re-committed every
+    // node a second time.
+    const { stub, registered } = stubPickingSystem();
+    factory.setPickingSystem(stub);
+
+    const root = new THREE.Group();
+    const attach = {
+      points: attachPointStorage,
+      lines: attachLineStorage,
+      gsplats: attachSplatStorage,
+    } as const;
+    const textures = new Map<string, THREE.DataTexture>();
+    for (const [type, attachStorage] of Object.entries(attach)) {
+      const geometry = new THREE.InstancedBufferGeometry();
+      textures.set(type, attachStorage(geometry, 8));
+      const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+      mesh.name = `/${type}`;
+      mesh.userData = { nodeType: type, attrs: {} };
+      root.add(mesh);
+    }
+    factory.registerExistingSceneNodes(root);
+
+    const uniformFor = { points: 'uPointTex', lines: 'uLineTex', gsplats: 'uSplatTex' } as const;
+    for (const { main, pick } of registered) {
+      const type = main.userData.nodeType as keyof typeof uniformFor;
+      const mat = pick.material as THREE.ShaderMaterial;
+      expect(mat.uniforms[uniformFor[type]].value, main.name).toBe(textures.get(type));
+    }
+    expect(registered).toHaveLength(3);
   });
 
   it('shares the visual geometry with the pick node and copies its world matrix', () => {
