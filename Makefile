@@ -2914,8 +2914,14 @@ publish:  ## DISABLED — use `make release` (tag-triggered OIDC publish). See s
 publish-test:  ## DISABLED — use `make release` (tag-triggered OIDC publish). See scripts/release.sh
 	$(PUBLISH_DISABLED)
 
-.PHONY: changelog changelog-draft
+.PHONY: changelog changelog-draft changelog-release changelog-release-draft
 changelog: ## Fold changelog.d/*.md fragments into CHANGELOG.md (release prep)
 	python3 scripts/changelog_build.py $(if $(MONTH),--month "$(MONTH)",)
 changelog-draft: ## Preview the changelog fold without changing anything
 	python3 scripts/changelog_build.py --draft
+# Run AFTER `changelog` and AFTER `set-version`: the cut is named for
+# __version__, which is the release date and is deliberately set last.
+changelog-release: ## Cut the Unreleased section into a versioned one
+	python3 scripts/changelog_build.py --release
+changelog-release-draft: ## Preview the release cut without changing anything
+	python3 scripts/changelog_build.py --release --draft

@@ -236,7 +236,6 @@
     "packages/luxar/src/luxar/validation/writing.py::B904": 1,
     "scripts/benchmark_progressive_psnr.py::B905": 1,
     "scripts/benchmarks/benchmark_seeding_gpu.py::B007": 1,
-    "scripts/changelog_build.py::B904": 1,
     "scripts/run_examples.py::B905": 1,
     "scripts/zenodo_migration_audit.py::B007": 1,
     "scripts/zenodo_migration_audit.py::B905": 1,
