@@ -157,15 +157,33 @@ def test_parse_findings_is_empty_for_a_clean_run() -> None:
     assert checker.parse_findings("   ", PROJECT_ROOT) == {}
 
 
-def test_parse_findings_rejects_an_unparseable_file() -> None:
+@pytest.mark.parametrize(
+    "code",
+    [
+        # What ruff 0.16 actually emits, verified against a real run rather than
+        # assumed: the code is the STRING "invalid-syntax", not a null.
+        pytest.param("invalid-syntax", id="ruff-0.16-string-code"),
+        # Kept as a second arm because the JSON schema does allow a null code,
+        # and the guard must not depend on which of the two a ruff version picks.
+        pytest.param(None, id="null-code"),
+    ],
+)
+def test_parse_findings_rejects_an_unparseable_file(code: str | None) -> None:
     """A syntax error means ruff did NOT lint that file — fail, don't ignore.
 
-    ruff emits ``invalid-syntax`` with a null ``code`` whatever ``--select``
-    says. Skipping it would let a file that could not be read look like a file
-    whose baselined debt had been paid off.
+    ruff reports it whatever ``--select`` says. Skipping it would let a file
+    that could not be parsed look like a file whose baselined debt had been paid
+    off — the scan silently covers less of the tree than it claims to.
     """
     stdout = json.dumps(
-        [{"code": None, "filename": "x.py", "message": "SyntaxError: invalid syntax"}]
+        [
+            {
+                "code": code,
+                "filename": "x.py",
+                "message": "Expected a parameter or the end of the parameter list",
+                "location": {"row": 1, "column": 12},
+            }
+        ]
     )
 
     with pytest.raises(ValueError, match="not one of the ratcheted rules"):
