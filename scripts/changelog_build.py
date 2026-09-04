@@ -186,7 +186,7 @@ def _cut_release(changelog: str, version: str, date: str) -> str:
     try:
         u = next(i for i, ln in enumerate(lines) if ln.strip() == UNRELEASED)
     except StopIteration:
-        raise SystemExit(f"✗ '{UNRELEASED}' header not found in CHANGELOG.md")
+        raise SystemExit(f"✗ '{UNRELEASED}' header not found in CHANGELOG.md") from None
     # Renaming this header in place is what puts the new section ABOVE any
     # previous ones: everything already under [Unreleased] belongs to the
     # version being cut, and earlier releases are further down the file.
@@ -199,7 +199,7 @@ def _fold(changelog: str, month: str, blocks: list[str]) -> str:
     try:
         u = next(i for i, ln in enumerate(lines) if ln.strip() == UNRELEASED)
     except StopIteration:
-        raise SystemExit(f"✗ '{UNRELEASED}' header not found in CHANGELOG.md")
+        raise SystemExit(f"✗ '{UNRELEASED}' header not found in CHANGELOG.md") from None
 
     entry = "\n\n".join(blocks)
     month_hdr = f"### {month}"
