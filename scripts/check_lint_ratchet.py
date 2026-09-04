@@ -112,6 +112,7 @@ BASELINE_COMMENT = (
 # ruff's stderr line for a path it could not read at all, e.g.
 # "warning: Failed to lint stats: No such file or directory (os error 2)".
 _UNSCANNED_RE = re.compile(r"Failed to lint ")
+_RUFF_CONFIG_NAMES = ("ruff.toml", ".ruff.toml", "pyproject.toml")
 
 
 def is_ratcheted_code(code: str) -> bool:
@@ -262,49 +263,58 @@ def ruff_settings_fingerprint(target: str, project_root: Path) -> str:
     return hashlib.sha256(normalized.encode()).hexdigest()
 
 
+def _ruff_config_candidates(target: str, project_root: Path) -> set[Path]:
+    """Return possible Ruff config files affecting one lint target."""
+    candidates: set[Path] = set()
+    target_path = Path(target)
+    if not target_path.is_absolute():
+        target_path = project_root / target_path
+    target_path = target_path.resolve()
+    target_dir = target_path if target_path.is_dir() else target_path.parent
+
+    if target_dir.is_dir():
+        for name in _RUFF_CONFIG_NAMES:
+            candidates.update(target_dir.rglob(name))
+
+    for directory in (target_dir, *target_dir.parents):
+        if directory == project_root or project_root not in directory.parents:
+            break
+        candidates.update(
+            config
+            for name in _RUFF_CONFIG_NAMES
+            if (config := directory / name).is_file()
+        )
+    return candidates
+
+
+def _is_nested_ruff_config(config: Path, project_root: Path) -> bool:
+    """Return whether ``config`` is a non-root config Ruff will consume."""
+    if config.parent == project_root:
+        return False
+    if config.name != "pyproject.toml":
+        return True
+    try:
+        pyproject = tomllib.loads(config.read_text())
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise RuntimeError(f"Could not inspect nested {config}: {exc}") from exc
+    tool = pyproject.get("tool")
+    return isinstance(tool, dict) and "ruff" in tool
+
+
 def find_nested_ruff_configs(
     targets: tuple[str, ...] | list[str], project_root: Path
 ) -> list[Path]:
     """Return non-root Ruff config files that can affect ``targets``."""
     project_root = project_root.resolve()
     candidates: set[Path] = set()
-
     for target in targets:
-        target_path = Path(target)
-        if not target_path.is_absolute():
-            target_path = project_root / target_path
-        target_path = target_path.resolve()
-        target_dir = target_path if target_path.is_dir() else target_path.parent
+        candidates.update(_ruff_config_candidates(target, project_root))
 
-        if target_dir.is_dir():
-            for name in ("ruff.toml", ".ruff.toml", "pyproject.toml"):
-                candidates.update(target_dir.rglob(name))
-
-        for directory in (target_dir, *target_dir.parents):
-            if directory == project_root:
-                break
-            if project_root not in directory.parents:
-                break
-            for name in ("ruff.toml", ".ruff.toml", "pyproject.toml"):
-                config = directory / name
-                if config.is_file():
-                    candidates.add(config)
-
-    nested_configs: list[Path] = []
-    for config in sorted(candidates):
-        if config.parent == project_root:
-            continue
-        if config.name != "pyproject.toml":
-            nested_configs.append(config)
-            continue
-        try:
-            pyproject = tomllib.loads(config.read_text())
-        except (OSError, tomllib.TOMLDecodeError) as exc:
-            raise RuntimeError(f"Could not inspect nested {config}: {exc}") from exc
-        tool = pyproject.get("tool")
-        if isinstance(tool, dict) and "ruff" in tool:
-            nested_configs.append(config)
-    return nested_configs
+    return [
+        config
+        for config in sorted(candidates)
+        if _is_nested_ruff_config(config, project_root)
+    ]
 
 
 def ensure_no_nested_ruff_configs(
