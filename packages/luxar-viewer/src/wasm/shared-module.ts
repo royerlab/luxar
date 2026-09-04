@@ -25,6 +25,8 @@ import { resolveWasmShimUrls } from './index';
 
 /** Fallback deadline when the configured worker-init timeout is disabled. */
 const DEFAULT_COMPILE_DEADLINE_MS = 10_000;
+/** Shared compilation is an optimization; never spend a full init budget on it. */
+const MAX_COMPILE_DEADLINE_MS = 3_000;
 
 let sharedPromise: Promise<WebAssembly.Module | null> | null = null;
 
@@ -55,7 +57,9 @@ function compileDeadlineMs(): number {
   // because this await sits BEFORE that guard's timer starts and a stalled
   // fetch would otherwise hang every worker's init indefinitely.
   const configured = config.dataLoading.performance.workerInitTimeoutMs;
-  return configured > 0 && Number.isFinite(configured) ? configured : DEFAULT_COMPILE_DEADLINE_MS;
+  return configured > 0 && Number.isFinite(configured)
+    ? Math.min(configured, MAX_COMPILE_DEADLINE_MS)
+    : DEFAULT_COMPILE_DEADLINE_MS;
 }
 
 /**

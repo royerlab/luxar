@@ -115,7 +115,11 @@ describe('getSharedWasmModule', () => {
     });
 
     const pending = getSharedWasmModule(HTTP_SHIM);
-    await vi.advanceTimersByTimeAsync(30_000);
+    const settled = vi.fn();
+    void pending.then(settled);
+    await vi.advanceTimersByTimeAsync(2_999);
+    expect(settled).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
     await expect(pending).resolves.toBeNull();
     vi.useRealTimers();
   });
