@@ -35,7 +35,8 @@ make changelog                # fold fragments under ## [Unreleased] / ### <Mont
 make changelog MONTH="August 2026"   # pin the month heading explicitly
 ```
 
-Commit that in the normal version-bump PR, then tag the release (`make release`).
+Commit that in the normal version-bump PR, then follow **Cutting a release** below
+before tagging the release (`make release`).
 
 ## Notes
 
