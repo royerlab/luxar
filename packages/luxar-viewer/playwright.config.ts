@@ -116,7 +116,7 @@ export default defineConfig({
   reporter: [
     ['html', { outputFolder: 'playwright-report' }],
     ['list'],
-    ...(process.env.CI ? [['github' as const]] : []),
+    ...(process.env.CI ? ([['github']] as const) : []),
   ],
 
   // Shared settings for all projects
@@ -269,10 +269,6 @@ export default defineConfig({
 
       // Disable CSS animation detection (doesn't work with WebGL)
       animations: 'disabled' as const,
-
-      // Take multiple screenshots to ensure scene is stable
-      // (Three.js render loop might still be animating)
-      timeout: 10000,
     },
 
     // Timeout for expect() assertions

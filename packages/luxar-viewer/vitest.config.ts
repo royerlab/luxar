@@ -54,7 +54,6 @@ export default defineConfig({
     // over-parallelising there), so keep it there and let Vitest size the pool
     // to the machine locally.
     maxWorkers: process.env.CI ? 4 : undefined,
-    minWorkers: 1,
     exclude: [
       '**/node_modules/**',
       '**/dist/**',
