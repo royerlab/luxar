@@ -19,6 +19,7 @@ scripts/
 |--------|---------|
 | `check_documentation.py` | Baseline-driven ratchet over package README paths/content plus Python docstring and TypeScript JSDoc coverage (JSON output; fails only on new findings) |
 | `check_complexity.py` | Baseline-driven ratchet over ruff's `C901` cyclomatic-complexity rule (fails only on newly over-complex, or newly worse, functions) |
+| `check_lint_ratchet.py` | Baseline-driven ratchet over ruff's defect-bearing rules — flake8-bugbear (`B`) plus `RUF012` (fails only on newly-broken rules) |
 | `check_demo_ladders.py` | Audit built demo scenes for missing or degenerate additive streaming ladders |
 | `check_demo_links.py` | Report whether canonical demo click-through destinations still discriminate known-good and known-bad identifiers without gating on third-party availability |
 | `check_scene_credits.py` | Verify built demo stores carry the `short`, `doi`, and `license` their registry citation declares |
@@ -220,6 +221,80 @@ can never increase total debt. The checker runs as part of `hatch run lint` and
 `hatch run check`, and the Python test suite
 (`packages/luxar/src/luxar/tests/test_check_complexity.py`) asserts the real
 tree is regression-free, so the ratchet gates every PR.
+
+---
+
+## Defect-Rule Lint Ratchet
+
+### `check_lint_ratchet.py`
+
+Enforces ruff's `flake8-bugbear` (`B`) family plus `RUF012` as a baseline-driven
+ratchet — the same shape as the complexity ratchet above, applied to the
+*defect-bearing* rules rather than the cosmetic ones.
+
+Each ratcheted rule describes a way working-looking code is silently wrong:
+mutable defaults shared across calls (`B006`, `RUF012`), a closure capturing a
+loop variable by reference (`B023`), `warnings.warn` blaming the wrong line
+(`B028`), positional `maxsplit`/`count` (`B034`, also a `DeprecationWarning`
+from Python 3.13), `raise` inside `except` losing the cause (`B904`), and
+`zip()` silently truncating to its shortest input (`B905`).
+
+**Purpose:**
+- Run `ruff check --select B,RUF012` over the same paths as `hatch run lint`
+- Tolerate the pre-existing violations recorded in `scripts/lint_baseline.json`
+  (473 across 235 file/rule keys at the time of writing, 290 of them `B905`)
+- Fail (exit 1) when a file newly breaks a rule, or gains another violation of
+  a rule it already breaks
+- Report paid-down debt as advisory (exit 0) so the baseline can be tightened
+- Fail closed (exit 2) rather than green whenever the scan cannot be trusted —
+  the same three cases the complexity ratchet documents, plus a baseline whose
+  recorded `rules` disagree with the selection (shrink the selection and every
+  finding of the dropped rule would otherwise read as paid-down debt, retiring
+  the rule with a green tick), and any diagnostic outside the selection
+  (notably `invalid-syntax`: a file ruff could not parse is a file it did not
+  lint)
+
+These rules are deliberately not in `[tool.ruff.lint] select` for the same
+reason as `C901` — ruff has no baseline mechanism, and here the sweep would also
+be *behaviour-changing*: `zip(..., strict=True)` **raises** on mismatched
+lengths, so each of the 290 `B905` sites is a decision, not a mechanical edit.
+
+`B008` is absent from the baseline on purpose. All 83 findings were
+`typer.Option(...)` / `typer.Argument(...)` in a parameter default — the
+documented Typer idiom, evaluated once at import by design — so
+`[tool.ruff.lint.flake8-bugbear] extend-immutable-calls` in `pyproject.toml`
+declares those two calls immutable and the ratchet gates `B008` at **zero**.
+
+**Usage:**
+
+```bash
+# Check the tree against the baseline (the flagless, gating mode)
+hatch run check-lint-ratchet
+make check-lint-ratchet
+
+# (Re)write the baseline from the current state, then exit 0
+hatch run check-lint-ratchet --update-baseline
+
+# Restrict the scan to some paths (same restricted-run caveats as above)
+hatch run python scripts/check_lint_ratchet.py packages/luxar/src
+```
+
+Baseline keys are `<repo-relative-path>::<ruff code>` mapping to a violation
+count — no line numbers, so an unrelated edit above a violation never churns the
+baseline. Unlike the complexity ratchet there is **no move pairing**: the only
+identity available is `(file, rule)`, far weaker evidence of "the same violation,
+relocated" than a function name, so a file move fails as `new` and is fixed with
+`--update-baseline`. That is a false *red* naming the file rather than a false
+green hiding one.
+
+A `# noqa: <code>` **with a rationale** is a legitimate way to shrink the
+baseline where a rule is a false positive at that specific site — prefer it to
+`--update-baseline`, which should be reserved for moves and deliberate
+re-baselining.
+
+The checker runs as part of `hatch run lint` and `hatch run check`, and the
+Python test suite (`packages/luxar/src/luxar/tests/test_check_lint_ratchet.py`)
+asserts the real tree is regression-free, so the ratchet gates every PR.
 
 ---
 
