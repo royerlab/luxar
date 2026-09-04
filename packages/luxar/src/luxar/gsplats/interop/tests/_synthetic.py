@@ -273,7 +273,9 @@ def _codebook_encode(values: np.ndarray, n_entries: int = 256):
     if hi - lo < 1e-9:
         hi = lo + 1e-9
     codebook = np.linspace(lo, hi, n_entries)
-    idx = np.clip(np.round((values - lo) / (hi - lo) * (n_entries - 1)), 0, n_entries - 1)
+    idx = np.clip(
+        np.round((values - lo) / (hi - lo) * (n_entries - 1)), 0, n_entries - 1
+    )
     return codebook.tolist(), idx.astype(np.uint8)
 
 
@@ -343,8 +345,11 @@ def write_sog(directory: Path, gt: GroundTruth) -> None:
     meta = {
         "version": 2,
         "count": n,
-        "means": {"mins": mins.tolist(), "maxs": maxs.tolist(),
-                  "files": ["means_l.webp", "means_u.webp"]},
+        "means": {
+            "mins": mins.tolist(),
+            "maxs": maxs.tolist(),
+            "files": ["means_l.webp", "means_u.webp"],
+        },
         "scales": {"codebook": sbook, "files": ["scales.webp"]},
         "quats": {"files": ["quats.webp"]},
         "sh0": {"codebook": cbook, "files": ["sh0.webp"]},

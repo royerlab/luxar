@@ -41,6 +41,26 @@ BASELINE_COMMENT = (
     "New findings not listed here fail the check."
 )
 
+# Directory NAMES whose contents are exempt from the docstring/JSDoc coverage
+# checks, matched as a whole path component anywhere below a package.
+#
+# This gate measures the documentation of the SHIPPED SURFACE. A test module's
+# audience is the person changing it, who is reading the assertions either way,
+# so holding it to an API-documentation threshold buys nothing and would triple
+# the baseline with entries nobody will ever act on.
+#
+# Deliberately a small, closed set of exact component names rather than a glob:
+# an exclusion is the cheapest way to reintroduce the very blindness this change
+# removes, so it should be impossible to widen by accident.
+# `test_docs_gate_exclusions_stay_narrow` pins this list.
+UNDOCUMENTED_DIR_NAMES: frozenset[str] = frozenset({"tests", "__pycache__"})
+UNDOCUMENTED_TS_SUFFIXES = (".test.ts", ".spec.ts", ".d.ts")
+
+
+def is_excluded_path(path: Path) -> bool:
+    """Whether ``path`` lies under a directory exempt from the coverage checks."""
+    return any(part in UNDOCUMENTED_DIR_NAMES for part in path.parts)
+
 
 @dataclass
 class CheckResult:
@@ -213,8 +233,15 @@ class DocumentationChecker:
         else:
             self._check_readme_quality(readme, package_name)
 
-        # Check Python files for docstrings
-        for py_file in package_dir.glob("*.py"):
+        # Check Python files for docstrings.
+        #
+        # `rglob`, not `glob`. A one-level `glob` saw 219 of the 1,012 modules
+        # under these packages — 78% of the Python source was never scanned, so
+        # the near-empty baseline recorded the absence of LOOKING rather than the
+        # absence of debt (audit A11-01).
+        for py_file in sorted(package_dir.rglob("*.py")):
+            if is_excluded_path(py_file.relative_to(package_dir.parent)):
+                continue
             if not py_file.name.startswith("_") or py_file.name == "__init__.py":
                 self._check_python_file_docstrings(py_file, package_name)
 
@@ -357,9 +384,13 @@ class DocumentationChecker:
                 )
             )
 
-        # Check TypeScript files for JSDoc
-        for ts_file in package_dir.glob("*.ts"):
-            if not ts_file.name.endswith(".test.ts"):
+        # Check TypeScript files for JSDoc. `rglob` for the same reason as the
+        # Python side above: a one-level `glob` saw 146 of 819 files, leaving 82%
+        # of the viewer unscanned (audit A11-01).
+        for ts_file in sorted(package_dir.rglob("*.ts")):
+            if is_excluded_path(ts_file.relative_to(package_dir.parent)):
+                continue
+            if not ts_file.name.endswith(UNDOCUMENTED_TS_SUFFIXES):
                 self._check_typescript_jsdoc(ts_file, package_name)
 
     @staticmethod

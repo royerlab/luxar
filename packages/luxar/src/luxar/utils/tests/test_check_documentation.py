@@ -768,5 +768,179 @@ def test_malformed_baseline_exits_2_cleanly(tmp_path: Path) -> None:
     assert "Traceback" not in proc.stderr
 
 
+# ---------------------------------------------------------------------------
+# Scan depth (audit A11-01)
+# ---------------------------------------------------------------------------
+#
+# The gate used a one-level `glob("*.py")` / `glob("*.ts")`, so it saw 219 of
+# 1,012 Python modules and 146 of 819 TypeScript files — 78% and 82% of the
+# source was never scanned, and the resulting 11-entry baseline recorded the
+# absence of LOOKING rather than the absence of debt. These tests exist so that
+# cannot silently come back.
+
+
+def _make_nested_project(tmp_path: Path) -> Path:
+    """A project whose only undocumented module is THREE directories deep."""
+    pkg = tmp_path / "packages" / "luxar" / "src" / "luxar" / "widgets"
+    deep = pkg / "fitting" / "dynamic_ops"
+    deep.mkdir(parents=True)
+
+    (pkg / "README.md").write_text(
+        "# Widgets\n\n## Quick Start\n\n```python\nimport widgets\n```\n\n"
+        + ("Detailed prose about widgets. " * 40)
+    )
+    # Compliant at the top level, so ONLY the nested file can produce a finding.
+    (pkg / "gadget.py").write_text('"""Gadget module."""\n\nx = 1\n')
+    (deep / "buried.py").write_text("x = 1\n")
+    return tmp_path
+
+
+NESTED_KEY = (
+    "Module docstring::packages/luxar/src/luxar/widgets/fitting/dynamic_ops/buried.py"
+)
+
+
+def test_scan_recurses_into_nested_python_packages(tmp_path: Path) -> None:
+    """A module three directories down must be scanned.
+
+    This is the regression the audit found: with `glob` this file was invisible
+    and the whole run reported zero findings.
+    """
+    checker = _scan(_make_nested_project(tmp_path))
+
+    assert NESTED_KEY in cd.failure_keys(checker.results, tmp_path)
+
+
+def test_nested_scan_is_a_strict_superset_of_the_one_level_scan(
+    tmp_path: Path,
+) -> None:
+    """Recursing must ADD coverage, never move it.
+
+    Guards the plausible mistake of "fixing" the depth by rewriting the loop in
+    a way that changes which top-level files are visited.
+    """
+    root = _make_nested_project(tmp_path)
+    # Make the TOP-level module defective too, so both depths yield a finding.
+    top = root / "packages" / "luxar" / "src" / "luxar" / "widgets" / "gadget.py"
+    top.write_text("x = 1\n")
+
+    keys = cd.failure_keys(_scan(root).results, root)
+
+    assert "Module docstring::packages/luxar/src/luxar/widgets/gadget.py" in keys
+    assert NESTED_KEY in keys
+
+
+def test_nested_typescript_is_scanned(tmp_path: Path) -> None:
+    """The viewer half of the same fix."""
+    deep = (
+        tmp_path / "packages" / "luxar-viewer" / "src" / "data" / "loaders" / "spatial"
+    )
+    deep.mkdir(parents=True)
+    (tmp_path / "packages" / "luxar-viewer" / "src" / "data" / "README.md").write_text(
+        "# Data\n"
+    )
+    # Enough undocumented declarations to land under the 70% JSDoc threshold.
+    (deep / "buried.ts").write_text(
+        "\n".join(f"export function undocumented{i}(): void {{}}" for i in range(5))
+        + "\n"
+    )
+
+    keys = cd.failure_keys(_scan(tmp_path).results, tmp_path)
+
+    assert any("data/loaders/spatial/buried.ts" in key for key in keys)
+
+
+def test_test_directories_are_excluded_from_coverage(tmp_path: Path) -> None:
+    """A `tests/` module is not held to the API-documentation threshold."""
+    root = _make_nested_project(tmp_path)
+    pkg = root / "packages" / "luxar" / "src" / "luxar" / "widgets"
+    tests_dir = pkg / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_gadget.py").write_text("x = 1\n")
+    top_level_tests = root / "packages" / "luxar" / "src" / "luxar" / "tests"
+    top_level_tests.mkdir()
+    (top_level_tests / "test_bad.py").write_text("x = 1\n")
+    viewer_tests = root / "packages" / "luxar-viewer" / "src" / "tests"
+    viewer_tests.mkdir(parents=True)
+    (viewer_tests / "bad.ts").write_text(
+        "\n".join(f"export function undocumented{i}(): void {{}}" for i in range(5))
+        + "\n"
+    )
+
+    keys = cd.failure_keys(_scan(root).results, root)
+
+    assert not [key for key in keys if "/widgets/tests/" in key]
+    assert not [
+        key
+        for key in keys
+        if key.startswith("Module docstring::") and "/luxar/tests/" in key
+    ]
+    assert not [
+        key
+        for key in keys
+        if key.startswith("JSDoc coverage::") and "/src/tests/" in key
+    ]
+    # ...and the exclusion is narrow: the nested non-test file still fails.
+    assert NESTED_KEY in keys
+
+
+def test_docs_gate_exclusions_stay_narrow() -> None:
+    """Pin the exclusion set exactly.
+
+    An exclusion is the cheapest possible way to reintroduce the blindness this
+    change removed — adding one directory name here can silently un-scan a whole
+    subtree — so widening it must be a deliberate, reviewed edit to this list.
+    """
+    assert cd.UNDOCUMENTED_DIR_NAMES == frozenset({"tests", "__pycache__"})
+    assert cd.UNDOCUMENTED_TS_SUFFIXES == (".test.ts", ".spec.ts", ".d.ts")
+
+
+@pytest.mark.parametrize(
+    ("relpath", "excluded"),
+    [
+        ("tests/test_a.py", True),
+        ("sub/tests/test_a.py", True),
+        ("__pycache__/a.py", True),
+        # Whole path COMPONENTS only. A name that merely contains "tests", or a
+        # test-looking FILE outside a tests directory, stays in scope — matching
+        # on substrings would quietly exempt real source.
+        ("latests/a.py", False),
+        ("tests_helpers/a.py", False),
+        ("sub/test_helpers.py", False),
+        ("sub/a.py", False),
+    ],
+)
+def test_is_excluded_path_matches_whole_components(
+    relpath: str, excluded: bool
+) -> None:
+    """The exclusion is by directory component, never by substring."""
+    assert cd.is_excluded_path(Path(relpath)) is excluded
+
+
+def test_committed_baseline_reflects_a_recursive_scan() -> None:
+    """The real baseline must contain findings only a recursive scan can produce.
+
+    Reverting to `glob` would drop every nested key. Those would be reported as
+    "fixed" — ADVISORY, exit 0 — so the ratchet itself would not go red. This
+    asserts the depth directly rather than trusting that path.
+    """
+    baseline = cd.load_baseline(REPO_ROOT / cd.DEFAULT_BASELINE_RELPATH)
+    assert baseline, "the committed documentation baseline is missing or empty"
+
+    def depth_below_package(key: str) -> int:
+        """Directory levels between a package root and the file."""
+        path = key.split("::")[1]
+        for root in ("src/luxar/", "luxar-viewer/src/"):
+            if root in path:
+                return path.split(root, 1)[1].count("/")
+        return 0
+
+    assert any(depth_below_package(key) >= 2 for key in baseline), (
+        "No baselined finding lies more than one directory below a package root, "
+        "which is what a non-recursive scan produces. The gate has regressed to "
+        "`glob`, or the baseline was regenerated by a build that had."
+    )
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))

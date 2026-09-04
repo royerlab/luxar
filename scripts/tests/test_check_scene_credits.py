@@ -132,9 +132,32 @@ def test_stale_consolidated_attrs_do_not_override_live_v2_attrs(tmp_path: Path) 
 
 
 def test_no_built_scenes_is_a_clean_no_op(tmp_path: Path, capsys) -> None:
-    """A checkout without generated scenes must not fail the gate."""
+    """A checkout without generated scenes must not fail the gate.
+
+    Still exit 0 — the output directory is gitignored, so this is the normal
+    state of a fresh clone and of CI. But the message must not read like a
+    result: it now says INSPECTED NOTHING, because "no built demo scenes found;
+    nothing to check" was indistinguishable from a clean bill of health at a
+    glance (audit A9-04).
+    """
     assert main(["--demos-dir", str(tmp_path)]) == 0
-    assert "nothing to check" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "INSPECTED NOTHING" in out
+    assert "not a pass" in out
+
+
+def test_require_scenes_turns_an_empty_inventory_into_a_failure(
+    tmp_path: Path, capsys
+) -> None:
+    """The opt-in for callers that KNOW demos should be present.
+
+    The default no-op is right for a fresh checkout and wrong for release prep
+    or a demo-build pipeline, where an empty inventory means the build did not
+    produce what it was supposed to. `--require-scenes` is how such a caller
+    says "silence here is a failure".
+    """
+    assert main(["--demos-dir", str(tmp_path), "--require-scenes"]) == 1
+    assert "INSPECTED NOTHING" in capsys.readouterr().out
 
 
 def test_exit_code_is_non_zero_when_a_store_contradicts_its_demo(
@@ -156,17 +179,92 @@ def test_default_discovery_checks_built_demo_stores(tmp_path: Path, capsys) -> N
     assert "checked 1 built scene(s)" in out and "carries no citation" in out
 
 
-def test_unknown_explicit_store_is_skipped(tmp_path: Path, capsys) -> None:
+def test_unknown_explicit_store_fails_instead_of_passing(
+    tmp_path: Path, capsys
+) -> None:
+    """A named path that is not a demo output is the caller's error — exit 1.
+
+    THIS TEST PREVIOUSLY ASSERTED EXIT 0, i.e. it pinned the fail-open as
+    intended behaviour. Naming one unknown path left `targets` empty while the
+    skip list stayed populated, so the empty-inventory guard did not fire, the
+    compare loop ran zero times, and the run printed "checked 0 built scene(s);
+    problems: 0" and exited 0 — a green tick for an inspection that never
+    happened. Verified against the pre-fix script before changing it.
+
+    A typo and a demo output renamed since the caller wrote the command both
+    land here, and both deserve to be heard rather than silently tolerated.
+    """
     store = _v3_store(tmp_path, "my_analysis", {"citation": CITED})
-    assert main([str(store)]) == 0
+    assert main([str(store)]) == 1
     out = capsys.readouterr().out
-    assert "checked 0 built scene(s)" in out
+    assert "are not demo outputs" in out
     assert "not a known demo output, skipped" in out
 
 
 def test_known_explicit_archive_is_named_then_skipped(tmp_path: Path, capsys) -> None:
+    """An archive is a REAL demo output this tool cannot open — still exit 0.
+
+    Deliberately not treated as the unknown-path case above: the caller named
+    the right artifact and the limitation is ours. The report must still say
+    plainly that nothing was inspected, and `--require-scenes` still escalates.
+    """
     store = tmp_path / "cosmicflows_laniakea_full.luxar.zarr.zip"
     store.write_bytes(b"not opened")
     assert main([str(store)]) == 0
     out = capsys.readouterr().out
     assert "archive stores are not inspected, skipped" in out
+    assert "INSPECTED NOTHING" in out
+
+
+def test_unknown_path_does_not_hide_a_skipped_archive(tmp_path: Path, capsys) -> None:
+    """Every named input is reported even when none can be inspected."""
+    archive = tmp_path / "cosmicflows_laniakea_full.luxar.zarr.zip"
+    archive.write_bytes(b"not opened")
+    unknown = tmp_path / "typo.luxar.zarr"
+
+    assert main([str(unknown), str(archive)]) == 1
+
+    out = capsys.readouterr().out
+    assert "are not demo outputs" in out
+    assert "archive stores are not inspected, skipped" in out
+    assert "INSPECTED NOTHING" in out
+
+
+def test_require_scenes_escalates_an_all_skipped_run(tmp_path: Path) -> None:
+    """The archive case is tolerated by default but not when scenes are required."""
+    store = tmp_path / "cosmicflows_laniakea_full.luxar.zarr.zip"
+    store.write_bytes(b"not opened")
+    assert main([str(store), "--require-scenes"]) == 1
+
+
+def test_a_mixed_run_with_one_checkable_store_still_inspects(
+    tmp_path: Path, capsys
+) -> None:
+    """The unknown-path failure is not a blanket ban on unrecognised arguments.
+
+    One inspectable target is enough for the run to do its job; only a run that
+    inspected NOTHING is suspect. Without this the fix would be over-broad and
+    would break any caller passing a mixed glob.
+    """
+    good = _v3_store(
+        tmp_path,
+        "cosmicflows_laniakea_full",
+        {
+            "citation": {
+                "short": (
+                    "Tully et al. 2023 (Cosmicflows-4); Laniakea, Tully et al. 2014"
+                ),
+                "doi": "10.3847/1538-4357/ac94d8",
+            }
+        },
+    )
+    unknown = _v3_store(tmp_path, "my_analysis", {"citation": CITED})
+
+    code = main([str(good), str(unknown)])
+
+    out = capsys.readouterr().out
+    # Exit 1 for the unknown path, but the report must show it looked at `good`
+    # rather than bailing before the compare loop.
+    assert code == 1
+    assert "are not demo outputs" in out
+    assert "checked 1 built scene(s); problems: 0; unrecognised: 1; skipped: 0" in out

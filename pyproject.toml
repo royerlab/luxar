@@ -137,7 +137,13 @@ test = [
 ]
 dev = [
     "luxar[test]",
-    "ruff>=0.1.0",
+    # Pinned to a minor series because ruff is now a GATE, not just a helper:
+    # `hatch run lint` runs `ruff format --check`, so a formatter change in a new
+    # ruff turns CI red on an unrelated PR, at a moment nobody is thinking about
+    # ruff. `>=0.1.0` also let every machine resolve a different formatter.
+    # Keep in lockstep with `.pre-commit-config.yaml`'s ruff-pre-commit `rev`,
+    # or the hook and the gate disagree about the same file.
+    "ruff>=0.16,<0.17",
     "mypy>=1.5.0",
     "types-PyYAML>=6.0.12",
     "pre-commit>=3.3.0",
@@ -410,6 +416,11 @@ format = [
 ]
 lint = [
     "ruff check packages/luxar/src scripts scripts/benchmarks stats hatch_build.py",
+    # Formatting was enforced ONLY by an opt-in pre-commit hook, which sees just
+    # the staged files — so 10 Python files had drifted unformatted in the tree
+    # with nothing to notice (audit A12-04). Checked here so `hatch run lint`
+    # and CI ask the identical question.
+    "ruff format --check packages/luxar/src scripts scripts/benchmarks stats hatch_build.py",
     "check-complexity",
     "check-lint-ratchet",
     "mypy packages/luxar/src/luxar/ scripts/ci_queue_scan.py"
@@ -449,6 +460,13 @@ check-scene-credits = "python scripts/check_scene_credits.py {args}"
 # Ratchet ruff's C901 against scripts/complexity_baseline.json: existing debt is
 # tolerated, a newly over-complex (or newly worse) function fails.
 check-complexity = "python scripts/check_complexity.py {args}"
+# Inspect a BUILT wheel: package completeness against the source tree, the
+# pyproject excludes honoured, no Git-LFS pointer stubs, no member over PyPI's
+# 100 MB limit, viewer dist bundled. Deliberately NOT in `check-static` — it
+# needs `hatch build` to have run, and `make build-viewer` before that. CI runs
+# it in `wheel-viewer`, where the dist already exists.
+#   make build-viewer && hatch build && hatch run check-wheel dist/luxar-*.whl
+check-wheel = "python scripts/check_wheel.py {args}"
 # Ratchet ruff's defect-bearing rules (flake8-bugbear + RUF012) against
 # scripts/lint_baseline.json. Same shape as check-complexity and for the same
 # reason: 473 pre-existing violations mean the rules cannot go into
@@ -880,6 +898,20 @@ exclude = [
     # generator (see `hatch run check-contract`), not ruff.
     "packages/luxar/src/luxar/typing_utils/_format_contract.py",
 ]
+
+# The FORMATTER is Python-only. Ruff 0.16 also formats Python code blocks inside
+# Markdown, which means `hatch run format` (and therefore `make check-all`)
+# silently rewrites the code samples in 33 package READMEs — measured, not
+# hypothetical. Those samples are prose: the rewrite collapses a deliberately
+# multi-line teaching example onto one 88-column line and re-quotes it, which is
+# a documentation decision rather than a formatting one.
+#
+# Two things follow from excluding them, both wanted. `make check-all` stops
+# surprising anyone with a 33-file README diff, and `ruff format --check`
+# becomes gateable in CI (see the `lint` script) instead of red on arrival.
+# The linter is unaffected — it never read Markdown.
+[tool.ruff.format]
+exclude = ["*.md"]
 
 [tool.ruff.lint]
 # Enable various rule sets - start with essential ones

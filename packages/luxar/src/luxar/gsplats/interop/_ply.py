@@ -102,4 +102,3 @@ def _read_ply_elements(path: Path) -> dict[str, np.ndarray]:
 def _stack_fields(arr: np.ndarray, names: list[str]) -> np.ndarray:
     """Stack structured-array fields into a float32 (N, len(names)) array."""
     return np.stack([arr[name].astype(np.float32) for name in names], axis=1)
-

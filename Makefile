@@ -2763,6 +2763,13 @@ check-knip:  ## Report unused viewer files/exports/deps (non-gating)
 	@echo ""
 	@echo "ℹ️  Report only — the enforced subset (files + dependencies) runs in 'make check-all'."
 
+# The `&&` before the success echo is load-bearing, not style. The whole recipe
+# is ONE backslash-joined shell command, so a trailing `; echo "...passed!"`
+# made the echo the last command and its exit status the recipe's: clippy could
+# fail, the target printed "✅ Rust checks passed!", and make exited 0
+# (audit A12-02). Verified with a minimal recipe of the same shape — `false &&
+# true; echo PASSED` exits 0, `false && true && echo PASSED` exits 2. Not
+# macOS-specific as first reported; it is plain shell semantics.
 check-rust:  ## Run Rust type/lint checks (cargo check + clippy)
 	@if [ -f "$(HOME)/.cargo/env" ]; then \
 		. "$(HOME)/.cargo/env"; \
@@ -2773,7 +2780,7 @@ check-rust:  ## Run Rust type/lint checks (cargo check + clippy)
 		exit 1; \
 	fi; \
 	echo "🦀 Running Rust checks..."; \
-	cd packages/luxar-viewer/src/wasm/rust && cargo check && cargo clippy -- -D warnings; \
+	cd packages/luxar-viewer/src/wasm/rust && cargo check && cargo clippy --all-targets -- -D warnings && \
 	echo "✅ Rust checks passed!"
 
 check-wasm-deps:  ## Check WASM development dependencies (Rust, wasm-pack)

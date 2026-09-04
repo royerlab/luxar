@@ -99,14 +99,12 @@ jobs:
       - name: Build wheel + sdist
         run: hatch build
 
-      - name: Verify the viewer was bundled into the wheel
+      - name: Inspect wheel
         run: |
           set -euo pipefail
           WHEEL="$(ls dist/*.whl)"
           echo "Inspecting $WHEEL"
-          python -c "import zipfile,sys; names=zipfile.ZipFile(sys.argv[1]).namelist(); \
-            assert any(n.startswith('luxar/_viewer_dist/') for n in names), 'viewer dist not in wheel'; \
-            print('OK: viewer dist bundled')" "$WHEEL"
+          python scripts/check_wheel.py "$WHEEL"
 
       - name: Upload distribution artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
