@@ -6,6 +6,7 @@ function requirePositive(errors: string[], name: string, value: number): void {
   }
 }
 
+/** Append validation errors for the projected-density guard configuration. */
 export function validateDensityGuard(config: AppConfig, errors: string[]): void {
   const g = config.densityGuard;
   requirePositive(errors, 'capElementsPerPixel', g.capElementsPerPixel);

@@ -399,6 +399,28 @@ describe('WebGLBlendWarmupManager', () => {
     });
   });
 
+  it('does not transfer shared variants while clearing every source', async () => {
+    const warmupTurns = makeWarmupTurnController();
+    const manager = new WebGLBlendWarmupManager(warmupTurns.wait, vi.fn(), activateImmediately);
+    manager.configure({
+      enabled: true,
+      renderer: {} as THREE.WebGLRenderer,
+      camera: new THREE.PerspectiveCamera(),
+      targetScene: new THREE.Scene(),
+    });
+
+    const root = new THREE.Group();
+    root.add(makeRenderableMesh('points', new FakeWarmupMaterial()));
+    root.add(makeRenderableMesh('points', new FakeWarmupMaterial()));
+    void manager.warmScene(root);
+    for (let i = 0; i < 3; i++) await warmupTurns.releaseNext();
+
+    manager.clear();
+
+    expect(warmupTurns.pending).toBe(0);
+    expect(manager.getStats().ownershipTransfers).toBe(0);
+  });
+
   it('hands a shared variant to a surviving node when its owner is released', async () => {
     const warmupTurns = makeWarmupTurnController();
     const compileOne = vi.fn();

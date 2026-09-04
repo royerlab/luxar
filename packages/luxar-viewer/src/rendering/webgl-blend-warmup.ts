@@ -362,6 +362,7 @@ function createCompileObject(source: THREE.Object3D, material: THREE.Material): 
 export class WebGLBlendWarmupManager {
   private enabled = false;
   private armed = false;
+  private tearingDown = false;
   private renderer: THREE.WebGLRenderer | null = null;
   private camera: THREE.Camera | null = null;
   private targetScene: THREE.Scene | null = null;
@@ -625,7 +626,7 @@ export class WebGLBlendWarmupManager {
       if (this.variantOwner.get(variantFingerprint) !== sourceMaterial) continue;
       this.variantOwner.delete(variantFingerprint);
       const heir = users?.values().next().value;
-      if (heir) {
+      if (heir && !this.tearingDown) {
         this.adoptVariant(variantFingerprint, mode, heir);
       } else {
         this.variantUsers.delete(variantFingerprint);
@@ -647,8 +648,13 @@ export class WebGLBlendWarmupManager {
     for (const completion of Array.from(this.warmCompletions)) {
       this.settleWarmCompletion(completion);
     }
-    for (const material of Array.from(this.sourceStates.keys())) {
-      this.clearSource(material);
+    this.tearingDown = true;
+    try {
+      for (const material of Array.from(this.sourceStates.keys())) {
+        this.clearSource(material);
+      }
+    } finally {
+      this.tearingDown = false;
     }
     this.variantUsers.clear();
     this.variantOwner.clear();

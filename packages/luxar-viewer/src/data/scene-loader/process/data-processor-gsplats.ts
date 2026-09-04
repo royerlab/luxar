@@ -43,6 +43,10 @@ import { isWorkerInfrastructureError } from '../../../workers/worker-pool/errors
 import { projectGSplatsInProcess } from '../../../workers/data-worker/projection/in-process';
 import { isExtendToAll } from '../../../workers/data-worker/projection/hidden-dims';
 import { isStandardGSplats3D } from '../../../workers/data-worker/projection/gsplats';
+import { projectGSplatLabelIndices } from '../../gsplats/label-channel';
+import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../config/constants';
+import type { UpdateSession } from '../../../profiling/update-profiler';
+import type { StagedNoopCommit } from '../commit/noop-commit';
 
 /**
  * Worker-projection thresholds (splat count, exclusive). nD projections run a
@@ -52,14 +56,9 @@ import { isStandardGSplats3D } from '../../../workers/data-worker/projection/gsp
  */
 export const WORKER_MIN_SPLATS_ND = 1000;
 export const WORKER_MIN_SPLATS_3D = 100_000;
-import { projectGSplatLabelIndices } from '../../gsplats/label-channel';
-import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../config/constants';
-import type { UpdateSession } from '../../../profiling/update-profiler';
 
 /** Default truncation radius if the mesh material doesn't expose one. */
 const DEFAULT_TRUNCATE = GSPLAT_DEFAULT_TRUNCATION_RADIUS;
-
-import type { StagedNoopCommit } from '../commit/noop-commit';
 
 /** Staged data carried between async processing and the GPU commit. */
 export interface StagedGSplatsGeometryCommit {

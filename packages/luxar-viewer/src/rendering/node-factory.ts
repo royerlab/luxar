@@ -99,7 +99,7 @@ interface PickMaterialRecipe {
  * lines need the join style AND the primitive (the pick pass rasterizes the same
  * stencil the visual material draws, and under the `auto` policy that is a per-node
  * choice — see {@link linePrimitiveFromVisual}), mesh
-i * needs the node opacity and cutout threshold (they are its coverage term), while
+ * needs the node opacity and cutout threshold (they are its coverage term), while
  * gsplats restore the live class filter after a context rebuild.
  *
  * The three pooled types ALSO run their commit-time material sync here
