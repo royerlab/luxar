@@ -23,6 +23,15 @@ LINEAR_RAMPS = {
     "blue": (0, 0, 255),
     "yellow": (255, 255, 0),
     "gray": (255, 255, 255),
+    # Added to builtins.py by hand after an earlier run and never folded back
+    # here, so regenerating silently DELETED four shipped colormaps. Endpoints
+    # recovered from the shipped LUTs, which are exact make_linear_ramp output
+    # (verified bit-for-bit, and NOT copies of napari's similarly-named maps --
+    # those differ by up to 135 per channel).
+    "orange": (255, 165, 0),
+    "bop_blue": (0, 38, 255),
+    "bop_orange": (255, 128, 0),
+    "bop_purple": (153, 0, 255),
 }
 
 
@@ -127,6 +136,52 @@ def generate_all() -> dict[str, np.ndarray]:
     return colormaps
 
 
+#: Presentation grouping for the generated files. Only affects the comment
+#: headers and the order of emission -- `_categorise` guarantees that every
+#: generated colormap lands in exactly one group, so this cannot drop one.
+_CATEGORY_ORDER: dict[str, list[str]] = {
+    "BOP (Blue-Orange-Purple)": ["bop_blue", "bop_orange", "bop_purple"],
+    "Perceptually uniform": ["viridis", "inferno", "plasma", "turbo"],
+    "Domain-specific": ["fire", "ice", "phase"],
+    "Diverging": ["RdBu", "coolwarm"],
+}
+
+
+def _categorise(colormaps: dict[str, np.ndarray]) -> dict[str, list[str]]:
+    """Group every generated colormap, with the linear ramps as the remainder.
+
+    The writers used to iterate a hardcoded name list parallel to the one that
+    decides what gets GENERATED. The two drifted: `orange`, `bop_blue`,
+    `bop_orange` and `bop_purple` were hand-added to the generated files and
+    folded back into neither, so re-running this script silently deleted four
+    shipped colormaps from both the Python and the TypeScript output.
+
+    Deriving the grouping from `colormaps` removes the second list. The
+    assertion below removes the possibility of a third.
+    """
+    grouped = {
+        name: [n for n in names if n in colormaps]
+        for name, names in _CATEGORY_ORDER.items()
+    }
+    claimed = {n for names in grouped.values() for n in names}
+    grouped["Microscopy linear ramps"] = [n for n in colormaps if n not in claimed]
+
+    written = {n for names in grouped.values() for n in names}
+    missing = set(colormaps) - written
+    assert not missing, f"generated but never written: {sorted(missing)}"
+    assert set(grouped["Microscopy linear ramps"]) == set(LINEAR_RAMPS) - set(
+        _CATEGORY_ORDER["BOP (Blue-Orange-Purple)"]
+    ), (
+        "a new non-ramp colormap needs a _CATEGORY_ORDER entry; otherwise it "
+        "is incorrectly filed under Microscopy linear ramps"
+    )
+    # Order the sections so the ramps come first, as they did before.
+    return {
+        "Microscopy linear ramps": grouped["Microscopy linear ramps"],
+        **{k: v for k, v in grouped.items() if k != "Microscopy linear ramps"},
+    }
+
+
 def format_lut_python(name: str, lut: np.ndarray) -> str:
     """Format a LUT as a Python bytes literal."""
     data = lut.tobytes()
@@ -148,20 +203,7 @@ def format_lut_typescript(name: str, lut: np.ndarray) -> str:
 def write_python_builtins(colormaps: dict[str, np.ndarray], path: str) -> None:
     """Write Python builtins.py file."""
     # Categories for documentation
-    categories = {
-        "Microscopy linear ramps": [
-            "green",
-            "magenta",
-            "cyan",
-            "red",
-            "blue",
-            "yellow",
-            "gray",
-        ],
-        "Perceptually uniform": ["viridis", "inferno", "plasma", "turbo"],
-        "Domain-specific": ["fire", "ice", "phase"],
-        "Diverging": ["RdBu", "coolwarm"],
-    }
+    categories = _categorise(colormaps)
 
     lines = [
         '"""Built-in colormap lookup tables.',
@@ -238,20 +280,7 @@ def write_python_builtins(colormaps: dict[str, np.ndarray], path: str) -> None:
 
 def write_typescript_data(colormaps: dict[str, np.ndarray], path: str) -> None:
     """Write TypeScript colormap-data.ts file."""
-    categories = {
-        "Microscopy linear ramps": [
-            "green",
-            "magenta",
-            "cyan",
-            "red",
-            "blue",
-            "yellow",
-            "gray",
-        ],
-        "Perceptually uniform": ["viridis", "inferno", "plasma", "turbo"],
-        "Domain-specific": ["fire", "ice", "phase"],
-        "Diverging": ["RdBu", "coolwarm"],
-    }
+    categories = _categorise(colormaps)
 
     lines = [
         "/**",
@@ -281,12 +310,16 @@ def write_typescript_data(colormaps: dict[str, np.ndarray], path: str) -> None:
     )
     lines.append("")
     lines.append("/** Colormap categories for UI organization */")
+    lines.append("// prettier-ignore")
     lines.append("export const COLORMAP_CATEGORIES: Record<string, string[]> = {")
     for category, names in categories.items():
         names_str = ", ".join(f"'{n}'" for n in names)
         lines.append(f"  '{category}': [{names_str}],")
     lines.append("};")
-    lines.append("")
+    # No trailing "" here: the join below already terminates the file with a
+    # single newline. Appending one produced a blank final line that the
+    # end-of-file-fixer pre-commit hook then stripped, so every regeneration
+    # left a one-line diff and the output was never idempotent.
 
     with open(path, "w") as f:
         f.write("\n".join(lines) + "\n")

@@ -623,6 +623,7 @@ def _run_native_export(
     """
     import shutil
 
+    from .export import _require_third_party_notices
     from .native_app import (
         SUPPORTED_PLATFORMS,
         bundle_linux_folder,
@@ -651,6 +652,8 @@ def _run_native_export(
         raise FileNotFoundError(
             "Viewer not built. Run: cd packages/luxar-viewer && pnpm build"
         )
+    viewer_dist = get_viewer_dist_path()
+    _require_third_party_notices(viewer_dist)
 
     # Pre-validate every requested launcher binary before touching the
     # output directory. This prevents the rmtree-then-fail-on-second-
@@ -680,8 +683,6 @@ def _run_native_export(
             raise FileExistsError(f"Output directory already exists: {output}")
         shutil.rmtree(output)
     output.mkdir(parents=True, exist_ok=True)
-
-    viewer_dist = get_viewer_dist_path()
 
     with asection(f"Luxar Export (native: {', '.join(requested)})"):
         produced: list[Path] = []
