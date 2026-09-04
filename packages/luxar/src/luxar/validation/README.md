@@ -216,6 +216,39 @@ blending modes validated by `types.validate_blending_mode` — overlays use CSS
 compositing modes (`multiply`, `screen`, ...), not the geometry modes
 (`additive`, `max`, `opaque`, `luminous`).
 
+### `writing.py`
+The pre-write gates a writer and its caller must agree on **exactly**.
+
+**Purpose:**
+Every function here is called from two places that must not drift apart: the
+compiler's geometry writer, as its fail-fast gate before the first array reaches
+disk, and `luxar.core.group.compositing`, against the SOURCE element count
+before a `partition=` / `additive_lod=` / `substitutive_lod=` decomposition
+splits that source into parts.
+
+Sharing the function rather than repeating the checks is the point. A
+wrong-length channel used to ride the per-part slicer's pass-through branch into
+every part and be accepted by any part whose own count happened to match
+(#1437), while the plain leaf path refused the same input outright.
+
+Being needed by both is also why they live here rather than in either caller.
+They were in the private `luxar.io._compiler` tree, and `core` reached back into
+it through deferred, function-local imports — a `core` ↔ `io` cycle invisible to
+mypy and to both import-linter contracts precisely because the imports were
+deferred (audit A1-03). `luxar.validation` sits below both, and the
+`core must not import io` contract in `pyproject.toml` now keeps it that way.
+
+These are the *composite* gates; the per-array primitives they call live in
+`base.py`. Not re-exported at the package level — import directly from
+`luxar.validation.writing`.
+
+**Key Functions:**
+- `validate_points_channels()` / `validate_lines_channels()` / `validate_gsplat_inputs()` / `validate_mesh_arrays()`: whole-channel-set gates, one per geometry type
+- `validate_line_indices()`: segment-topology check for explicit line indices
+- `validate_render_attrs()`: appearance/compositing attrs against a reserved-name set (`POINTS_RESERVED_ATTRS`, `LINES_RESERVED_ATTRS`, `GSPLATS_RESERVED_ATTRS`, `MESH_RESERVED_ATTRS`)
+- `validate_broadcast_color()` / `validate_scalars_preflight()`: broadcast-scalar forms the array primitives do not cover
+- `validate_image_labels_for_writing()` / `check_image_label_type()`: dense-length and sparse-index checks, run before the CSR writer starts
+
 ## Categorical Dimension Validation
 
 ### Overview

@@ -9,13 +9,15 @@ import pytest
 import zarr
 
 from luxar.io._compiler.labels.image_labels import (
-    check_image_label_type,
     normalize_image_label,
-    validate_image_labels_for_writing,
     write_image_labels_csr,
 )
 from luxar.io._compiler.labels.text_labels import write_labels_csr
 from luxar.io.reader import DEFAULT_COMP
+from luxar.validation.writing import (
+    check_image_label_type,
+    validate_image_labels_for_writing,
+)
 
 
 def _group() -> zarr.Group:

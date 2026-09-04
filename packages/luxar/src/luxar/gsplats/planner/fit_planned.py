@@ -264,7 +264,7 @@ def _fit_one_box(
     from luxar.gsplats.fit_gsplats import fit_gaussian_splats
     from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.utils.trils import tril_size
-    from luxar.io._compiler.gsplat_tree import json_safe_value
+    from luxar.typing_utils.json_safe import json_safe_value
 
     # The content pipeline is voxel-space end to end: plan boxes, padded
     # bounds, and the keep-core mask below are all voxel coordinates. A

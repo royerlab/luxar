@@ -14,6 +14,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
+from ....validation.writing import (
+    GSPLATS_RESERVED_ATTRS,
+    validate_render_attrs,
+)
 from ..compositing import (
     ABSENT_WHEN_NONE_RENDER_ATTRS,
     preflight_extend_to_all,
@@ -650,11 +654,6 @@ def _reject_before_wrapper(
         # bypassed. ``scalars`` is left unexcluded with nothing done to it at all:
         # GSplats has no scalars channel (unlike Points/Mesh), so it is correctly
         # unknown on this door and a ``scalars=None`` correctly refused.
-        from ....io._compiler.node_common import (
-            GSPLATS_RESERVED_ATTRS,
-            validate_render_attrs,
-        )
-
         attrs_for_gate = {
             k: v
             for k, v in (attrs or {}).items()

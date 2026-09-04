@@ -713,7 +713,7 @@ class TestApiContract:
         is a float subclass, so it must be caught before the scalar branch), and
         non-finite floats rejected (NaN/±Inf are invalid JSON / rejected by the
         viewer's JSON.parse)."""
-        from luxar.io._compiler.gsplat_tree import json_safe_value as J
+        from luxar.typing_utils.json_safe import json_safe_value as J
 
         ok, c = J(np.float64(1.5))
         assert ok and type(c) is float and c == 1.5

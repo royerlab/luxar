@@ -18,21 +18,23 @@ from numpy.typing import NDArray
 
 from ....typing_utils.aliases import NodePath
 from ....typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
+from ....validation.writing import (
+    GSPLATS_RESERVED_ATTRS,
+    validate_gsplat_inputs,
+    validate_image_labels_for_writing,
+    validate_render_attrs,
+)
 from ..context import GSplatsWriteCtx
 from ..gsplat_assembly import (
     apply_gsplat_spatial_ordering,
-    validate_gsplat_inputs,
     write_gsplat_arrays,
 )
 from ..labels.image_labels import (
-    validate_image_labels_for_writing,
     write_image_labels_csr,
 )
 from ..labels.text_labels import write_string_channels_csr
 from ..node_common import (
-    GSPLATS_RESERVED_ATTRS,
     validate_node_path,
-    validate_render_attrs,
 )
 
 

@@ -53,6 +53,7 @@ from ..io.writer import RollbackState, ZarrWriterProtocol
 from ..typing_utils.aliases import ChunkSpec, MaxShape, NodePath, PointsMetadata
 from ..typing_utils.config import DEFAULT_VERSION
 from ..utils.arbol_warnings import arbol_warnings
+from ..validation.writing import validate_render_attrs as _validate_render_attrs
 from ._compiler.bounds import (
     WorldBoundsLeaf,
     collect_world_bounds,
@@ -93,7 +94,6 @@ from ._compiler.labels.text_labels import (
 )
 from ._compiler.node_common import prepare_transform_attrs as _prepare_transform_attrs
 from ._compiler.node_common import validate_node_path as _validate_node_path
-from ._compiler.node_common import validate_render_attrs as _validate_render_attrs
 from ._compiler.node_common import warn_if_over_element_cap
 
 # Ordering functions will be imported locally where needed to avoid circular imports
