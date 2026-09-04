@@ -33,7 +33,7 @@ import * as THREE from 'three';
 import * as zarr from '../../zarr';
 import { log, Modules, LogEmoji } from '../../../utils/log';
 import { notifier } from '../../../utils/cross-layer/notifier';
-import { getWorkerPool } from '../../../workers/worker-pool';
+import { getWorkerPool, warmUpDataWorkerPool } from '../../../workers/worker-pool';
 import { ZarrSceneAttrs, SceneDimensionAttrs } from '../../../types/zarr';
 import { SUPPORTED_GSPLATS_FORMAT_VERSIONS } from '../../../types/format-contract';
 import type { LoaderConfig, SceneNode, ViewState } from '../../data-loader-types';
@@ -251,6 +251,13 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   }
   getWorkerPool().setAbortSignal(undefined);
 
+  // Spawn the data workers NOW, in parallel with the metadata fetch and the
+  // teardown below, rather than letting the first chunk decode pay for it.
+  // Measured on a hosted demo: lazy creation started the pool 1.93 s after
+  // this point, by which time LOD 0's bytes had already arrived and were
+  // simply waiting. Fire-and-forget and idempotent across dataset switches.
+  warmUpDataWorkerPool();
+
   // Dispose of any existing loaders. Awaited so the previous caching
   // store fully drains (prefetcher tear-down, OPFS metadata flush,
   // validation cancellation) before we construct the next one — without
@@ -296,7 +303,9 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
 
   // Load scene metadata
   const rootLoc = zarr.root(zarrStore);
-  const rootZarrGroup = await zarr.open(rootLoc, { kind: 'group' });
+  // v3-first: the generic `open` guesses format 2 on a store object it has not
+  // seen, costing two 404s (`.zattrs`, `.zgroup`) before the first data byte.
+  const rootZarrGroup = await zarr.openGroupPreferV3(rootLoc);
   const sceneAttrs = rootZarrGroup.attrs as ZarrSceneAttrs;
 
   // Watch the dataset's identity from here on: a demo/dev server dying and a

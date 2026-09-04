@@ -908,6 +908,20 @@
       },
       "fillTarget": 0.75,
       "note": "fillTarget:0.75 keeps the 3x2 matrix in frame: the default lit 22.9% of the capture-frame perimeter and 0.85 still lit 15.5%, despite coverage reading 92%. lodFinest:false lets coverage LOD draw the ~30K-splat coarse levels instead of forcing the ~24M-splat finest levels"
+    },
+    {
+      "id": "bird_plumage_colorspace",
+      "title": "Bird Plumage Colour Space (ultraviolet 4th axis)",
+      "geometry": "lines",
+      "category": "embeddings",
+      "script": "demo_bird_plumage_colorspace.py",
+      "dataset": "datasets/demos/bird_plumage_colorspace.luxar.zarr",
+      "citation": "BirdColorBase (Gluckman & Endler, and ten contributing groups)",
+      "timelapse": {
+        "framePoint": 0.95
+      },
+      "fillTarget": 0.8,
+      "note": "TIMELAPSE, not dimensionNav: the hidden axis is UV chroma (10 deciles), and timelapse resolves the FIRST non-displayed dim, which here is unambiguously it. The traverse IS the finding - decile 1 is a yellow/orange carotenoid spray, decile 10 is almost entirely structural blues and violets. framePoint 0.95 frames the still on decile 10, chosen by measurement rather than taste: per-decile chroma-weighted hue-sector occupancy and mean chroma are 3 sectors / 28.8 at decile 1, falling to 5 sectors / 5.2 at decile 9, then rising to 6 sectors / 10.0 at decile 10. So the conventional 0.85 would land on decile 9 - the SHORTEST spikes of all ten and a stubby frame - while decile 10 has both the widest hue coverage and long spikes, because that bin spans 24.2-74.8% UV and catches the strongly structural colours. THE CROP WARNING ON THIS TILE IS EXPECTED OUTPUT, NOT A DEFECT: chroma is violently right-skewed (median 8.4, p99 63.8, max 117.9), so framing the true extent puts the whole corpus in the middle fifth of the frame. fillTarget 0.8 frames the p99.5 chroma quantile (70.8) and roughly 1,800 spikes overshoot the frame edge BY DESIGN. Do not tighten fillTarget to drive border-lit pixels to zero - border contact here is composition. No viewAngle: the baked pose (distance 267.7 CIELAB units, 16.3 deg elevation, 24.2 deg off the L* axis) is deliberate - looking straight down L* collapses the hedgehog into a flat rainbow star and hides the third axis, tilting further stops the hue circle reading as a circle. Judge exposure on whether the SHORT central spikes keep their hue, not on overall brightness: additive blending over 360,432 readings makes the neutral core bright on purpose, and opacity 0.33 / intensity 0.40 were tuned against exactly that after 0.55/0.55 turned the core into a flat white wedge"
     }
   ]
 }

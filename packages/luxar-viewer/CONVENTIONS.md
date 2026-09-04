@@ -56,6 +56,13 @@ is a documented reason not to.
 - **Boolean predicates**: prefix with `is` / `has` / `should` (`isDisposed`,
   `hasTransform`).
 
+Production functions are limited to complexity 10, 120 code lines, nesting
+depth 4, and 5 parameters. Existing debt is count-baselined in
+`eslint-suppressions.json`; use `pnpm lint --prune-suppressions` after paying
+any of it down. After moving or renaming a baselined file, re-key it with
+`pnpm exec eslint src --ext .ts,.tsx --suppress-rule <rule>`, then prune and
+verify the suppressions diff only moves that path.
+
 ## 3. CSS class names (BEM)
 
 All viewer-owned class names start with `luxar-` to avoid host-page
@@ -259,6 +266,9 @@ thread. Conventions:
 - `any` is allowed only with an inline `// eslint-disable-next-line
   @typescript-eslint/no-explicit-any` and a justification comment.
   See `eslint.config.js` for which directories enforce the rule.
+- Promises must be awaited, returned, explicitly ignored with `void`, or given
+  a rejection handler. Async callbacks must only be passed where the caller
+  accepts a promise; the type-aware rules in `eslint.config.js` enforce both.
 - Prefer `unknown` over `any` when typing callback args / external
   data. Narrow with type guards.
 - Mark function parameters `readonly` whenever the function does not

@@ -107,9 +107,15 @@ describe('WorkerPool.dispose — mid-init race', () => {
     // Start initialize() but don't await — let factories construct
     // their workers (synchronous) and enter the await on init.
     const initP = pool.initialize();
-    // Yield once so the IIFE runs to its first await and the
-    // workerPromises array is built; this populates pendingWorkers.
-    await Promise.resolve();
+    // Yield until every factory has actually CALLED `api.initialize()`, not
+    // just once. The pool resolves the shared, main-thread-compiled WASM module
+    // before starting each worker's init guard, so `api.initialize` is invoked
+    // an async hop later than the worker is constructed — releasing before that
+    // call lands would release nothing and hang this test.
+    for (let i = 0; i < 50 && releases.length < 3; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    expect(releases).toHaveLength(3);
 
     expect(workers.length).toBe(3);
     expect(workers.every((w) => w.terminate.mock.calls.length === 0)).toBe(true);

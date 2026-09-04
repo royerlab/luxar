@@ -17,7 +17,11 @@ export interface WorkerInitResult {
   wasmFallback: boolean;
 }
 
-export async function initialize(ctx: WasmCtx, wasmPath?: string): Promise<WorkerInitResult> {
+export async function initialize(
+  ctx: WasmCtx,
+  wasmPath?: string,
+  wasmModule?: WebAssembly.Module
+): Promise<WorkerInitResult> {
   log.info(Modules.WORKER_POOL, 'DataWorker initializing...');
 
   // Honor an embedder-supplied WASM location INSIDE the worker scope. The
@@ -32,7 +36,10 @@ export async function initialize(ctx: WasmCtx, wasmPath?: string): Promise<Worke
   // pool on the main thread as a single summary line rather than per-worker
   // here, to keep the console quiet.
   try {
-    ctx.wasm = await initWasm();
+    // Re-check the type rather than trusting the RPC: a mocked or legacy
+    // caller passing something else must be inert, not a crash.
+    const shared = wasmModule instanceof WebAssembly.Module ? wasmModule : undefined;
+    ctx.wasm = await initWasm(shared);
     // The uncapped TypeScript reference serves >16D operations (the WASM kernels
     // cap at MAX_SUPPORTED_DIMS). Reuse the same instance when WASM itself fell
     // back to TS; otherwise keep a dedicated (stateless) fallback alongside WASM.

@@ -79,6 +79,7 @@ expectations.
 | `test_quantization.luxar.zarr` | uint8 quantization of bounded scalar attributes (radii in `[0.1, 2.0]`, colors in `[0, 1]`). |
 | `test_array_refs.luxar.zarr` | Array-reference deduplication — two groups sharing identical positions/colors collapse to one stored array. |
 | `test_array_ref_broadcasting.luxar.zarr` | Mix of `array_ref` positions with scalar/broadcast attributes in the same scene. |
+| `test_gsplats_centers_array_ref.luxar.zarr` | GSplats `centers`/`amplitudes` deduplicated across two layers — the ref'd `(0, 3)` placeholder over a per-channel-quantized target, loaded through the gsplats RANGE path rather than `ArrayDecoder.decode` (issue #2490). |
 | `test_encoding_edge_cases.luxar.zarr` | Raw `ArrayEncoder` outputs covering edge cases that bypass scene-level validation. |
 | `test_encoding_contract_matrix.luxar.zarr` | Declarative cross-product of encodings × dtypes × shapes × semantic types — the broadest single fixture, used to drive the contract-matrix tests. |
 | `test_mixed.luxar.zarr` | Multiple encoding modes (raw, quantized, broadcast, LUT) coexisting within a single scene. |
