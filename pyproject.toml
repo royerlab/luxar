@@ -149,6 +149,15 @@ dev = [
     "pre-commit>=3.3.0",
     "bandit[toml]>=1.7.5",
     "import-linter>=2.0",
+    # grimp is import-linter's Rust-backed graph engine, pinned here rather than
+    # left to the transitive because 3.16 dropped the macOS arm64 wheel for
+    # STANDARD CPython 3.14 -- from 3.16 the only cp314 mac wheel is `cp314t`,
+    # the free-threaded build. A normal 3.14 interpreter therefore falls through
+    # to a source build, which needs rustc >= 1.94 and fails on anything older
+    # with an error naming ruff_python_ast rather than grimp. Linux keeps its
+    # standard cp314 wheel at every version, so CI never sees this and only
+    # Mac developers are broken. Revisit once upstream restores the wheel.
+    "grimp<3.16",
 ]
 io = [
     "tifffile>=2023.1.0",

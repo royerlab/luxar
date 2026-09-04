@@ -11,7 +11,7 @@ A GPU-accelerated WebGL renderer for arbitrarily large n-dimensional scientific 
 - **🖱️ Intuitive Navigation**: Smooth camera controls optimized for scientific data exploration
 - **📱 Responsive Design**: Seamless fullscreen support and dynamic viewport management
 - **⚡ Unlimited Performance**: GPU-accelerated pipeline designed to scale with hardware capabilities
-- **🎯 Geometry Rendering**: Extensible architecture supporting points, lines, Gaussian splats, and more
+- **🎯 Geometry Rendering**: Four first-class geometry types — points, lines, Gaussian splats, and shaded triangle meshes
 - **📊 Performance Monitoring**: Built-in FPS and timing metrics for optimization
 - **🌊 Streaming Ready**: Chunked Zarr format enables progressive loading of massive datasets
 - **🔌 Extensible Architecture**: Modular design ready for additional geometry types and rendering modes

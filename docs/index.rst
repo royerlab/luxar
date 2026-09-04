@@ -150,6 +150,8 @@ Features
    :caption: Python API Reference:
 
    api/core
+   api/mesh
+   api/shading
    api/io
    api/encoding
    api/validation
@@ -180,6 +182,15 @@ Core Packages
 * **luxar.utils** - Utilities and demo data generators
 * **luxar.typing_utils** - Type definitions and constants
 * **luxar.cli** - Command-line interface
+
+Geometry & Appearance
+~~~~~~~~~~~~~~~~~~~~~
+
+* **luxar.mesh** - Import, decimate, and split triangle meshes
+* **luxar.mesh.interop** - Read PLY / OBJ / STL / VTP / glTF files
+* **luxar.mesh.decimate** - Coarser surfaces for substitutive mesh LOD
+* **luxar.mesh.split** - By-face re-indexing behind ``add_mesh(partition=…)``
+* **luxar.shading** - Bake ambient occlusion into emissive geometry
 
 Gaussian Splatting
 ~~~~~~~~~~~~~~~~~~
