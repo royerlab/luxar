@@ -110,7 +110,12 @@ class TestFitConfig:
         assert config.init_L is None
         assert config.init_amps is None
         assert config.amp_max is None
-        assert config.max_eccentricity is None
+        # 10.0, matching `ConstraintConfig` and `fit_gaussian_splats`. This line
+        # asserted None and so PINNED a divergence (audit A2-02): a bare
+        # `FitConfig()` removed the eccentricity limit entirely while every
+        # documented default said 10. `test_fit_schema_agreement.py` now derives
+        # this rather than restating it.
+        assert config.max_eccentricity == 10.0
         assert config.voxel_footprint_correction is False
         assert config.clip_to_bounds is False
         assert config.voxel_size is None
