@@ -623,6 +623,7 @@ def _run_native_export(
     """
     import shutil
 
+    from .export import _require_third_party_notices
     from .native_app import (
         SUPPORTED_PLATFORMS,
         bundle_linux_folder,
@@ -631,7 +632,6 @@ def _run_native_export(
         validate_bundle_name,
         zip_macos_app,
     )
-    from .export import _require_third_party_notices
     from .utils import get_viewer_dist_path, validate_zarr_store
 
     is_valid, error = validate_zarr_store(source)
