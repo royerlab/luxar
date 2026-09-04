@@ -24,8 +24,8 @@ with, since the estimate is derived from the same metadata walk.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, Sequence
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     import zarr
@@ -65,8 +65,6 @@ class GSplatTreeSummary:
     #: is a floor for the peak, which is the direction that matters for a
     #: warning.
     estimated_decoded_bytes: int = 0
-    #: Root-level attributes, verbatim. Empty for non-root nodes.
-    attrs: dict[str, Any] = field(default_factory=dict)
 
 
 def _array_bytes(group: "zarr.Group", name: str) -> int:
@@ -74,8 +72,15 @@ def _array_bytes(group: "zarr.Group", name: str) -> int:
     if name not in group:
         return 0
     array = group[name]
+    encoding = dict(array.attrs.get("encoding", {}))
+    if encoding.get("name") == "array_ref":
+        shape = tuple(encoding.get("original_shape", array.shape))
+    elif encoding.get("name") == "broadcasted":
+        shape = (int(encoding.get("n_elements", array.shape[0])), *array.shape[1:])
+    else:
+        shape = array.shape
     count = 1
-    for dim in array.shape:
+    for dim in shape:
         count *= int(dim)
     itemsize = 4 if name in _DECODES_TO_FLOAT32 else int(array.dtype.itemsize)
     return count * itemsize
@@ -86,8 +91,8 @@ def _leaf_arrays_summary(group: "zarr.Group") -> tuple[int, int, int]:
     if "centers" not in group:
         return 0, 0, 0
     shape = group["centers"].shape
-    n_splats = int(shape[0])
-    ndim = int(shape[1]) if len(shape) > 1 else 0
+    n_splats = int(group.attrs.get("n_splats", shape[0]))
+    ndim = int(group.attrs.get("ndim", shape[1] if len(shape) > 1 else 0))
 
     total = _array_bytes(group, "centers") + _array_bytes(group, "amplitudes")
     total += _array_bytes(group, "colors") + _array_bytes(group, "label_ids")
@@ -111,9 +116,7 @@ def _child_names(group: "zarr.Group", prefix: str) -> list[str]:
     return sorted(names, key=lambda name: int(name.rsplit("_", 1)[1]))
 
 
-def read_gsplat_tree_summary(
-    group: "zarr.Group", *, _is_root: bool = True
-) -> GSplatTreeSummary:
+def read_gsplat_tree_summary(group: "zarr.Group") -> GSplatTreeSummary:
     """Summarise the subtree rooted at ``group`` from metadata alone.
 
     Mirrors the dispatch in
@@ -131,7 +134,7 @@ def read_gsplat_tree_summary(
     if kind in ("lod", "partition"):
         prefix = "child_" if kind == "lod" else "part_"
         children = tuple(
-            read_gsplat_tree_summary(group[name], _is_root=False)
+            read_gsplat_tree_summary(group[name])
             for name in _child_names(group, prefix)
         )
         leaf_counts = tuple(count for child in children for count in child.leaf_counts)
@@ -144,7 +147,6 @@ def read_gsplat_tree_summary(
             estimated_decoded_bytes=sum(
                 child.estimated_decoded_bytes for child in children
             ),
-            attrs=dict(group.attrs) if _is_root else {},
         )
 
     # A leaf: one splat set, or an additive ladder of them.
@@ -175,17 +177,4 @@ def read_gsplat_tree_summary(
         n_splats=n_splats,
         leaf_counts=(n_splats,),
         estimated_decoded_bytes=sum(size for _, _, size in sublods),
-        attrs=dict(group.attrs) if _is_root else {},
     )
-
-
-def iter_summary_leaves(
-    summary: GSplatTreeSummary,
-) -> "Sequence[GSplatTreeSummary]":
-    """Every leaf under ``summary``, in tree order."""
-    if summary.kind == "leaf":
-        return (summary,)
-    out: list[GSplatTreeSummary] = []
-    for child in summary.children:
-        out.extend(iter_summary_leaves(child))
-    return tuple(out)

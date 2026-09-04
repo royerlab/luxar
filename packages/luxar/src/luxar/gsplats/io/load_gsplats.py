@@ -603,15 +603,18 @@ def _warn_if_decode_is_large(root: Any, path: "Path") -> None:
     # is right to -- a library warning must not depend on the CLI being present.
     gib = estimate / 1024**3
 
-    warnings.warn(
-        f"Loading {Path(path).name} will materialise about "
-        f"{gib:,.1f} GiB of splat arrays in memory. "
-        f"To inspect its structure without decoding anything, use "
-        f"`luxar.gsplats.io.tree_summary.read_gsplat_tree_summary` "
-        f"(what `luxar gsplat info` uses).",
-        ResourceWarning,
-        stacklevel=3,
-    )
+    try:
+        warnings.warn(
+            f"Loading {Path(path).name} will materialise about "
+            f"{gib:,.1f} GiB of splat arrays in memory. "
+            f"To inspect its structure without decoding anything, use "
+            f"`luxar.gsplats.io.tree_summary.read_gsplat_tree_summary` "
+            f"(what `luxar gsplat info` uses).",
+            UserWarning,
+            stacklevel=3,
+        )
+    except Warning:
+        return
 
 
 def load_gsplat_node(

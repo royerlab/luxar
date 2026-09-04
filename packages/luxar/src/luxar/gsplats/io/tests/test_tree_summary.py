@@ -14,6 +14,8 @@ summing the ladder (5,000), which no amount of re-reading the diff had shown.
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -21,11 +23,7 @@ from luxar._zarr_compat import open_group
 from luxar.encoding import ArrayDecoder
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
-from luxar.gsplats.io.tree_summary import (
-    GSplatTreeSummary,
-    iter_summary_leaves,
-    read_gsplat_tree_summary,
-)
+from luxar.gsplats.io.tree_summary import read_gsplat_tree_summary
 from luxar.gsplats.tree import iter_leaves, node_ndim, total_splats
 
 
@@ -94,6 +92,60 @@ class TestAgreesWithTheFullReader:
         assert summary.kind == "partition"
         assert len(summary.children) == len(node.children)
         assert summary.ndim == node_ndim(node)
+        assert summary.n_splats == total_splats(node)
+        assert summary.leaf_counts == tuple(leaf.n_splats for leaf in iter_leaves(node))
+
+    def test_partition_with_deduplicated_centers(self, tmp_path):
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.tree import GSplatPartition
+
+        first = _flat(200)
+        second = _flat(200)
+        second.centers = first.centers.copy()
+        out = tmp_path / "deduplicated.gsplats.zarr"
+        write_gsplats_tree(out, GSplatPartition(children=[first.tree, second.tree]))
+
+        root = open_group(str(out), mode="r")
+        assert root["part_1/centers"].shape[0] == 0
+        assert root["part_1/centers"].attrs["encoding"]["name"] == "array_ref"
+
+        node, _ = load_gsplat_node(out)
+        summary = read_gsplat_tree_summary(root)
+        assert summary.n_splats == total_splats(node) == 400
+        assert summary.leaf_counts == (200, 200)
+
+    def test_substitutive_lod(self, tmp_path):
+        from luxar.gsplats.lod import RecipeParams, build_recipe
+
+        out = tmp_path / "levels.gsplats.zarr"
+        build_recipe(
+            _flat(400),
+            "levels",
+            RecipeParams(compression_factor=4, levels=2),
+        ).save(out)
+
+        node, _ = load_gsplat_node(out)
+        summary = read_gsplat_tree_summary(open_group(str(out), mode="r"))
+        assert summary.kind == "lod"
+        assert summary.n_splats == total_splats(node)
+        assert summary.leaf_counts == tuple(leaf.n_splats for leaf in iter_leaves(node))
+
+    def test_adaptive_nested_tree(self, tmp_path):
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.lod import RecipeParams, build_recipe
+
+        out = tmp_path / "adaptive.gsplats.zarr"
+        node = build_recipe(
+            _flat(400),
+            "adaptive",
+            RecipeParams(max_elements=120, compression_factor=4, levels=2),
+        )
+        write_gsplats_tree(out, node)
+
+        root = open_group(str(out), mode="r")
+        assert any(root[name].attrs.get("kind") for name in root)
+        node, _ = load_gsplat_node(out)
+        summary = read_gsplat_tree_summary(root)
         assert summary.n_splats == total_splats(node)
         assert summary.leaf_counts == tuple(leaf.n_splats for leaf in iter_leaves(node))
 
@@ -181,6 +233,29 @@ class TestEstimatedDecodedBytes:
         floor = n * (ndim + 1 + tri) * 4  # centers + amplitudes + cholesky, float32
         assert summary.estimated_decoded_bytes >= floor
 
+    def test_counts_broadcast_amplitudes_at_decoded_size(self, tmp_path):
+        data = _flat(1_000)
+        data.amplitudes[:] = 1.0
+        out = tmp_path / "uniform.gsplats.zarr"
+        data.save(out)
+
+        root = open_group(str(out), mode="r")
+        assert root["amplitudes"].shape == (1,)
+        assert root["amplitudes"].attrs["encoding"]["name"] == "broadcasted"
+        summary = read_gsplat_tree_summary(root)
+        node, _ = load_gsplat_node(out)
+        leaf = next(iter(iter_leaves(node)))
+        decoded_bytes = sum(
+            array.nbytes
+            for sublod in leaf.additive_sublods
+            for array in (
+                sublod.centers,
+                sublod.amplitudes,
+                sublod.cholesky_factors,
+            )
+        )
+        assert summary.estimated_decoded_bytes == decoded_bytes
+
 
 class TestRejectsWhatIsNotANode:
     def test_raises_for_a_group_that_is_not_a_gsplat_node(self, tmp_path):
@@ -191,13 +266,28 @@ class TestRejectsWhatIsNotANode:
             read_gsplat_tree_summary(open_group(str(path), mode="r"))
 
 
-class TestIterSummaryLeaves:
-    def test_flat_leaf_is_its_own_only_leaf(self, flat_store):
-        summary = read_gsplat_tree_summary(open_group(str(flat_store), mode="r"))
-        assert iter_summary_leaves(summary) == (summary,)
+class TestLargeDecodeWarning:
+    def test_default_filters_show_the_warning(self, flat_store, monkeypatch):
+        import importlib
 
-    def test_partition_yields_every_leaf(self, partition_store):
-        summary = read_gsplat_tree_summary(open_group(str(partition_store), mode="r"))
-        leaves = iter_summary_leaves(summary)
-        assert all(isinstance(leaf, GSplatTreeSummary) for leaf in leaves)
-        assert tuple(leaf.n_splats for leaf in leaves) == summary.leaf_counts
+        load_module = importlib.import_module("luxar.gsplats.io.load_gsplats")
+
+        monkeypatch.setattr(load_module, "_DECODE_WARN_BYTES", 1)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.resetwarnings()
+            load_gsplat_node(flat_store)
+
+        assert len(caught) == 1
+        assert caught[0].category is UserWarning
+        assert "will materialise about" in str(caught[0].message)
+
+    def test_warning_filters_cannot_break_the_load(self, flat_store, monkeypatch):
+        import importlib
+
+        load_module = importlib.import_module("luxar.gsplats.io.load_gsplats")
+
+        monkeypatch.setattr(load_module, "_DECODE_WARN_BYTES", 1)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            node, _ = load_gsplat_node(flat_store)
+        assert total_splats(node) == 400

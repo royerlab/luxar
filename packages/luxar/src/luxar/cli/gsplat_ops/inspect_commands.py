@@ -239,27 +239,42 @@ def _print_dataset_metadata(
 
 
 def _is_node_tree(path: Path) -> bool:
-    """Whether the store's ROOT is a partition / lod group rather than a leaf.
+    """Whether the store's root has no flat ``GSplatData`` representation.
 
-    One attribute read. Returns False for anything unreadable so the caller
-    still takes the normal load path and reports its error, rather than this
-    probe inventing one.
+    Partitions and nested lod groups are trees; a lod whose children are all
+    leaves is matrix-shaped and must keep the normal flat info report. Returns
+    False for anything unreadable so the normal load path reports its error.
     """
     from luxar._zarr_compat import open_group as zarr_open_group
-    from luxar.gsplats.io._archive import resolve_store_path
+    from luxar.gsplats.io._archive import read_archive_root_attrs, resolve_store_path
 
     tmp = None
     try:
-        zarr_path, tmp = (path, None) if path.is_dir() else resolve_store_path(path)
+        if path.is_file():
+            root_attrs = read_archive_root_attrs(path)
+            if root_attrs.get("kind") == "partition":
+                return True
+            if root_attrs.get("kind") != "lod":
+                return False
+            zarr_path, tmp = resolve_store_path(path)
+        else:
+            zarr_path = path
         root = zarr_open_group(str(zarr_path), mode="r")
-        return root.attrs.get("kind") in ("partition", "lod")
+        kind = root.attrs.get("kind")
+        if kind == "partition":
+            return True
+        if kind != "lod":
+            return False
+        return any(
+            root[name].attrs.get("kind") is not None
+            for name in root
+            if str(name).startswith("child_")
+        )
     except Exception:
         return False
     finally:
         if tmp is not None and tmp.exists():
-            import shutil as _shutil
-
-            _shutil.rmtree(tmp, ignore_errors=True)
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 def _load_info_data(
@@ -270,7 +285,7 @@ def _load_info_data(
 
     with asection(f"Loading dataset: {path.name}"):
         # Ask the store what shape it is BEFORE loading anything. A partition or
-        # nested tree has no flat GSplatData form, so the flat load below would
+        # nested lod tree has no flat GSplatData form, so the flat load below would
         # decode every array of every leaf and then raise -- and `info` would
         # throw all of it away. Reading one root attribute costs nothing and is
         # the difference between 0 and ~115 MB of decode on a 6.4 MB store
@@ -1113,19 +1128,16 @@ def _print_gsplat_tree_summary(
 
     from luxar._zarr_compat import open_group as zarr_open_group
     from luxar.gsplats.io._archive import resolve_store_path
+    from luxar.gsplats.io.load_gsplats import read_gsplat_root_stats
     from luxar.gsplats.io.tree_summary import read_gsplat_tree_summary
 
     zarr_path = path
     tmp = None
     try:
         if path.is_file():  # compressed archive
-            # The same resolver `load_gsplat_node` gated on just above: `info`
-            # uses that load purely as a gate and then re-resolves here, so the
-            # two must not be able to disagree about which node the archive holds
-            # (they did for a FLAT archive — the gate saw one node, this saw an
-            # arbitrary child).
             zarr_path, tmp = resolve_store_path(path)
         root = zarr_open_group(str(zarr_path), mode="r")
+        read_gsplat_root_stats(root, include_stats=False)
         # Metadata only: attrs plus array SHAPES, never a chunk. Raises
         # ValueError for a group that is not a gsplat node, which is the same
         # contract the full reader had -- so this doubles as the validity gate
