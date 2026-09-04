@@ -229,7 +229,8 @@ describe('bootstrapStandalone', () => {
       expect(
         bufferedMessages.some((args) =>
           args.some(
-            (value) => typeof value === 'string' && value.includes(`Luxar viewer ${buildInfoLine()}`)
+            (value) =>
+              typeof value === 'string' && value.includes(`Luxar viewer ${buildInfoLine()}`)
           )
         )
       ).toBe(true);

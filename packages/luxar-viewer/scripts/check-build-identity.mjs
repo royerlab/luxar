@@ -48,8 +48,7 @@ export function bundleFiles(dir) {
       const full = join(d, name);
       if (statSync(full).isDirectory()) {
         if (full !== libraryBuild) walk(full);
-      }
-      else if (name.endsWith('.js')) out.push(full);
+      } else if (name.endsWith('.js')) out.push(full);
     }
   };
   walk(dir);
