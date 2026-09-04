@@ -11,13 +11,23 @@ import numpy as np
 
 from luxar.gsplats.fitting.config import FitConfig
 from luxar.gsplats.gsplat_data import GSplatData
+from luxar.typing_utils.constants import (
+    DEFAULT_SIGMA_MIN_DIAG as _DEFAULT_SIGMA_MIN_DIAG,
+)
 from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
 if TYPE_CHECKING:
     from luxar.gsplats.fit_gsplats import GaussianSplatFitter
 
 
-DEFAULT_SIGMA_MIN_DIAG = float(np.sqrt(1.0 / 12.0))
+#: Re-exported from :mod:`luxar.typing_utils.constants`, where it now lives.
+#:
+#: It moved because this module imports ``FitConfig`` from
+#: ``gsplats.fitting.config``, so the config module could not name its own
+#: default from here without a circular import — which is how ``ConstraintConfig``
+#: came to default to ``None`` while the fitter defaulted to this value
+#: (audit A3-01). Kept bound here so the existing import sites do not move.
+DEFAULT_SIGMA_MIN_DIAG = _DEFAULT_SIGMA_MIN_DIAG
 
 
 def _validate_floor(floor: "str | float | None") -> None:

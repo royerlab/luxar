@@ -28,7 +28,7 @@ Spatial ordering (Hilbert/Morton) makes consecutive codes a smooth ramp; the res
 
 ### Format Version
 
-The current **standalone gsplat format is v3.3** (`GSPLATS_FORMAT_VERSION` in `src/types/format-contract.ts`; codegen'd from `format-contract/contract.yaml`). Supported versions: 3.0, 3.1, 3.2, 3.3.
+The current **standalone gsplat format is v3.4** (`GSPLATS_FORMAT_VERSION` in `src/types/format-contract.ts`; codegen'd from `format-contract/contract.yaml`). Supported versions: 3.0, 3.1, 3.2, 3.3, 3.4.
 
 ### Optional & Lossless
 
@@ -71,4 +71,4 @@ Every context that opens zarr arrays (main thread, data workers) imports `../zar
 - [`../array-decoder/`](../array-decoder/README.md) — Per-element decode kernels (quantization, LUT, broadcasting) that run **after** chunk-level codecs.
 - [`../../tests/unit/data/codecs/`](../../tests/unit/data/codecs/) — Unit tests for codec wire format and round-trip correctness.
 - `packages/luxar/src/luxar/encoding/_encoders/delta_codec.py` — Python twin (write side); cross-language test vectors.
-- `docs/specs/GSPLATS_ZARR_FORMAT.md` — Standalone gsplat format spec (v3.3).
+- `docs/specs/GSPLATS_ZARR_FORMAT.md` — Standalone gsplat format spec (v3.4).
