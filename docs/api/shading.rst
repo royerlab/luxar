@@ -6,7 +6,7 @@ Appearance baked from geometry at scene-authoring time.
 Luxar's emissive geometry types — Points, Lines and GSplats — have shaders that
 know nothing about neighbouring geometry, so shape cues a shaded renderer would
 get for free have to be computed by the author and written into the scene. This
-package holds those bakes; :func:`~luxar.shading.bake_ambient_occlusion` is the
+package holds those bakes; :func:`~luxar.shading.occlusion.bake_ambient_occlusion` is the
 sanctioned way to make a dense emissive cloud read as three-dimensional rather
 than as a flat haze.
 
