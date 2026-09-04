@@ -220,7 +220,7 @@ run; what the ratchet always guarantees is the bound, not the identity — a pai
 can never increase total debt. The checker runs as part of `hatch run lint` and
 `hatch run check`, and the Python test suite
 (`packages/luxar/src/luxar/tests/test_check_complexity.py`) asserts the real
-tree is regression-free, so the ratchet gates every PR.
+tree is regression-free and is what gates every PR in CI.
 
 ---
 
@@ -252,7 +252,9 @@ from Python 3.13), `raise` inside `except` losing the cause (`B904`), and
   finding of the dropped rule would otherwise read as paid-down debt, retiring
   the rule with a green tick), and any diagnostic outside the selection
   (notably `invalid-syntax`: a file ruff could not parse is a file it did not
-  lint)
+  lint). A full run also compares the baseline's still-existing paths with
+  `ruff check --show-files`, so a nested exclude cannot masquerade as paid-down
+  debt.
 
 These rules are deliberately not in `[tool.ruff.lint] select` for the same
 reason as `C901` — ruff has no baseline mechanism, and here the sweep would also
@@ -278,6 +280,9 @@ hatch run check-lint-ratchet --update-baseline
 # Restrict the scan to some paths (same restricted-run caveats as above)
 hatch run python scripts/check_lint_ratchet.py packages/luxar/src
 ```
+
+`--update-baseline` is refused for a restricted scan because a partial rewrite
+would discard every baselined key outside the requested paths.
 
 Baseline keys are `<repo-relative-path>::<ruff code>` mapping to a violation
 count — no line numbers, so an unrelated edit above a violation never churns the
