@@ -99,7 +99,7 @@
     "typedoc": "typedoc",
     "typedoc:check-warnings": "node scripts/check-typedoc-warnings.mjs",
     "test:typedoc-warnings": "node --test scripts/check-typedoc-warnings-tests.mjs",
-    "typecheck": "tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/tsc.tsbuildinfo",
+    "typecheck": "tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/tsc.tsbuildinfo && tsc --project tsconfig.tooling.json --incremental --tsBuildInfoFile node_modules/.cache/tsc-tooling.tsbuildinfo",
     "lint": "eslint . --cache --cache-location node_modules/.cache/.eslintcache --pass-on-unpruned-suppressions",
     "check:layers": "depcruise src --config .dependency-cruiser.cjs",
     "check:overrides": "node scripts/check-overrides.mjs",
