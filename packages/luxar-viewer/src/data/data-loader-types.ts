@@ -75,6 +75,17 @@ export interface SceneNode {
   /** Node type (group, points, etc.) */
   type: string;
 
+  /**
+   * Names of the child ARRAYS the store listing reports directly under this
+   * node (`positions`, `colors`, …), when the store exposed a consolidated
+   * listing that contained arrays. `undefined` when no such listing was
+   * available — loaders then fall back to probing optional arrays with a GET
+   * (the historical behaviour). Never an empty set from a listing that showed
+   * no arrays at all: a listing that cannot see arrays must not be read as
+   * "this node has none".
+   */
+  arrays?: ReadonlySet<string>;
+
   /** Rendering and node attributes from Zarr */
   attrs: {
     /**

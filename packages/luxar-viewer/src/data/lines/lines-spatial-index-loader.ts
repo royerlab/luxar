@@ -21,6 +21,7 @@ import type {
   SegmentRange,
 } from '../../types/lines';
 import type { SceneNode } from '../data-loader-types';
+import { isArrayListed } from '../loaders/optional-array-listing';
 import { ArrayRefRegistry, type ArrayMetadata } from '../array-decoder/decoder';
 import {
   RangeLoader,
@@ -265,62 +266,78 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       throw e;
     }
 
-    // Try to open optional arrays
-    try {
-      let widthsArray = await zarr.open(this.zarrLocation.resolve('widths'), { kind: 'array' });
-      this.registerBounds('widths', widthsArray);
-      if (this.l0Cache) {
-        widthsArray = wrapWithCache(
-          widthsArray,
-          this.l0Cache,
-          `${this.node.path}/widths`,
-          () => this._activeProbe,
-          () => this._activeSignal
-        );
+    // Try to open optional arrays — skipping any the store listing rules out
+    // (see data/loaders/optional-array-listing.ts).
+    if (!isArrayListed(this.node, 'widths')) {
+      log.info(Modules.LINES_LOADER, 'No widths array in the store listing (using default width)');
+    } else {
+      try {
+        let widthsArray = await zarr.open(this.zarrLocation.resolve('widths'), { kind: 'array' });
+        this.registerBounds('widths', widthsArray);
+        if (this.l0Cache) {
+          widthsArray = wrapWithCache(
+            widthsArray,
+            this.l0Cache,
+            `${this.node.path}/widths`,
+            () => this._activeProbe,
+            () => this._activeSignal
+          );
+        }
+        this.arrays.widths = widthsArray;
+      } catch {
+        log.info(Modules.LINES_LOADER, 'No widths array found (using default width)');
       }
-      this.arrays.widths = widthsArray;
-    } catch {
-      log.info(Modules.LINES_LOADER, 'No widths array found (using default width)');
     }
 
-    try {
-      let colorsArray = await zarr.open(this.zarrLocation.resolve('colors'), { kind: 'array' });
-      this.registerBounds('colors', colorsArray);
-      // Color channel count (3 RGB / 4 RGBA) from the LOGICAL shape —
-      // learned once at open, threaded through the accumulator into
-      // `LoadedLinesData.colorComponents` (mirrors the points loader).
-      this.colorComponents = colorComponentsOf(colorsArray);
-      if (this.l0Cache) {
-        colorsArray = wrapWithCache(
-          colorsArray,
-          this.l0Cache,
-          `${this.node.path}/colors`,
-          () => this._activeProbe,
-          () => this._activeSignal
-        );
+    if (!isArrayListed(this.node, 'colors')) {
+      log.info(Modules.LINES_LOADER, 'No colors array in the store listing (using default color)');
+    } else {
+      try {
+        let colorsArray = await zarr.open(this.zarrLocation.resolve('colors'), { kind: 'array' });
+        this.registerBounds('colors', colorsArray);
+        // Color channel count (3 RGB / 4 RGBA) from the LOGICAL shape —
+        // learned once at open, threaded through the accumulator into
+        // `LoadedLinesData.colorComponents` (mirrors the points loader).
+        this.colorComponents = colorComponentsOf(colorsArray);
+        if (this.l0Cache) {
+          colorsArray = wrapWithCache(
+            colorsArray,
+            this.l0Cache,
+            `${this.node.path}/colors`,
+            () => this._activeProbe,
+            () => this._activeSignal
+          );
+        }
+        this.arrays.colors = colorsArray;
+      } catch {
+        log.info(Modules.LINES_LOADER, 'No colors array found (using default color)');
       }
-      this.arrays.colors = colorsArray;
-    } catch {
-      log.info(Modules.LINES_LOADER, 'No colors array found (using default color)');
     }
 
-    try {
-      let sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpnesses'), {
-        kind: 'array',
-      });
-      this.registerBounds('sharpnesses', sharpnessArray);
-      if (this.l0Cache) {
-        sharpnessArray = wrapWithCache(
-          sharpnessArray,
-          this.l0Cache,
-          `${this.node.path}/sharpnesses`,
-          () => this._activeProbe,
-          () => this._activeSignal
-        );
+    if (!isArrayListed(this.node, 'sharpnesses')) {
+      log.info(
+        Modules.LINES_LOADER,
+        'No sharpnesses array in the store listing (using default sharpness)'
+      );
+    } else {
+      try {
+        let sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpnesses'), {
+          kind: 'array',
+        });
+        this.registerBounds('sharpnesses', sharpnessArray);
+        if (this.l0Cache) {
+          sharpnessArray = wrapWithCache(
+            sharpnessArray,
+            this.l0Cache,
+            `${this.node.path}/sharpnesses`,
+            () => this._activeProbe,
+            () => this._activeSignal
+          );
+        }
+        this.arrays.sharpness = sharpnessArray;
+      } catch {
+        log.info(Modules.LINES_LOADER, 'No sharpnesses array found (using default sharpness)');
       }
-      this.arrays.sharpness = sharpnessArray;
-    } catch {
-      log.info(Modules.LINES_LOADER, 'No sharpnesses array found (using default sharpness)');
     }
 
     // Open optional `scalars` zarr array when the node declares

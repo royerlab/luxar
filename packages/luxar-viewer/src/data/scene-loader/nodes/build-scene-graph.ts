@@ -107,6 +107,31 @@ async function loadCustomColormapLut(
 }
 
 /**
+ * Group the listing's ARRAY entries by their parent group path (relative
+ * array names). Returns `null` when the listing carries no array at all, so a
+ * caller can tell "no arrays visible" from "this node has none".
+ */
+export function collectArraysByParent(
+  listing: ReadonlyArray<{ path: string; kind: string }>
+): Map<string, Set<string>> | null {
+  const byParent = new Map<string, Set<string>>();
+  for (const entry of listing) {
+    if (entry.kind !== 'array') continue;
+    const slash = entry.path.lastIndexOf('/');
+    const parent = slash <= 0 ? '/' : entry.path.slice(0, slash);
+    const name = entry.path.slice(slash + 1);
+    if (!name) continue;
+    let set = byParent.get(parent);
+    if (!set) {
+      set = new Set<string>();
+      byParent.set(parent, set);
+    }
+    set.add(name);
+  }
+  return byParent.size > 0 ? byParent : null;
+}
+
+/**
  * Build the scene graph structure rooted at `rootLoc`. The optional
  * `store` argument is the same store the location was opened from —
  * `enumerateStore` is called with it to get the contents listing.
@@ -152,6 +177,16 @@ export async function buildSceneGraph(
   // Build node map
   const nodeMap = new Map<string, SceneNode>();
   nodeMap.set('/', root);
+
+  // Child arrays per group path, from the same listing. Leaf loaders consult
+  // `node.arrays` before opening an OPTIONAL array (colors / radii / widths /
+  // sharpnesses): the historical try/open-and-404 probe cost three round
+  // trips per node on a 100-node scene before any geometry moved. Only a
+  // listing that actually contains arrays is trusted — an array-less listing
+  // (fallback enumeration, an odd store) leaves `arrays` undefined so the
+  // loaders keep probing rather than silently dropping authored channels.
+  const arraysByParent = collectArraysByParent(listing);
+  if (arraysByParent) root.arrays = arraysByParent.get('/') ?? new Set();
 
   // Sort by path depth to ensure parents are created before children
   const sortedPaths = listing
@@ -217,6 +252,7 @@ export async function buildSceneGraph(
       hasSpatialIndex: false, // Will be determined by the loader
       children: [],
     };
+    if (arraysByParent) node.arrays = arraysByParent.get(entry.path) ?? new Set();
 
     await loadCustomColormapLut(node, loc);
 

@@ -7,6 +7,7 @@
  */
 
 import * as zarr from '../zarr';
+import { isArrayListed } from '../loaders/optional-array-listing';
 import { log, Modules } from '../../utils/log';
 import { clamp } from '../../utils/clamp';
 import {
@@ -351,75 +352,96 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     }
 
     // Try to open optional arrays - these may not exist and that's OK
-    try {
-      let colorsArray = await zarr.open(this.zarrLocation.resolve('colors'), { kind: 'array' });
-      this.registerBounds('colors', colorsArray);
-      // Wrap with L0 cache if enabled
-      if (this.l0Cache) {
-        colorsArray = wrapWithCache(
-          colorsArray,
-          this.l0Cache,
-          `${this.node.path}/colors`,
-          () => this._activeProbe,
-          () => this._activeSignal
-        );
-      }
-      this.arrays.colors = colorsArray;
-      // Learn the color layout (3 = RGB, 4 = RGBA) from the zarr shape at
-      // open time — it strides every downstream copy (accumulator,
-      // projection compaction, texel packing). Mirrors the gsplat loader.
-      this.colorComponents = colorComponentsOf(colorsArray);
-    } catch (e: unknown) {
-      // Colors are optional - only log if it's not a 404
-      if (!isNotFoundError(e)) {
-        log.info(Modules.SPATIAL_INDEX_LOADER, 'No colors array found (using default colors)');
-      }
-    }
-
-    try {
-      let radiiArray = await zarr.open(this.zarrLocation.resolve('radii'), { kind: 'array' });
-      this.registerBounds('radii', radiiArray);
-      // Wrap with L0 cache if enabled
-      if (this.l0Cache) {
-        radiiArray = wrapWithCache(
-          radiiArray,
-          this.l0Cache,
-          `${this.node.path}/radii`,
-          () => this._activeProbe,
-          () => this._activeSignal
-        );
-      }
-      this.arrays.radii = radiiArray;
-    } catch (e: unknown) {
-      // Radii are optional - only log if it's not a 404
-      if (!isNotFoundError(e)) {
-        log.info(Modules.SPATIAL_INDEX_LOADER, 'No radii array found (using default radii)');
+    if (!isArrayListed(this.node, 'colors')) {
+      log.info(
+        Modules.SPATIAL_INDEX_LOADER,
+        'No colors array in the store listing (using default colors)'
+      );
+    } else {
+      try {
+        let colorsArray = await zarr.open(this.zarrLocation.resolve('colors'), { kind: 'array' });
+        this.registerBounds('colors', colorsArray);
+        // Wrap with L0 cache if enabled
+        if (this.l0Cache) {
+          colorsArray = wrapWithCache(
+            colorsArray,
+            this.l0Cache,
+            `${this.node.path}/colors`,
+            () => this._activeProbe,
+            () => this._activeSignal
+          );
+        }
+        this.arrays.colors = colorsArray;
+        // Learn the color layout (3 = RGB, 4 = RGBA) from the zarr shape at
+        // open time — it strides every downstream copy (accumulator,
+        // projection compaction, texel packing). Mirrors the gsplat loader.
+        this.colorComponents = colorComponentsOf(colorsArray);
+      } catch (e: unknown) {
+        // Colors are optional - only log if it's not a 404
+        if (!isNotFoundError(e)) {
+          log.info(Modules.SPATIAL_INDEX_LOADER, 'No colors array found (using default colors)');
+        }
       }
     }
 
-    try {
-      let sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpnesses'), {
-        kind: 'array',
-      });
-      this.registerBounds('sharpnesses', sharpnessArray);
-      // Wrap with L0 cache if enabled
-      if (this.l0Cache) {
-        sharpnessArray = wrapWithCache(
-          sharpnessArray,
-          this.l0Cache,
-          `${this.node.path}/sharpnesses`,
-          () => this._activeProbe,
-          () => this._activeSignal
-        );
+    if (!isArrayListed(this.node, 'radii')) {
+      log.info(
+        Modules.SPATIAL_INDEX_LOADER,
+        'No radii array in the store listing (using default radii)'
+      );
+    } else {
+      try {
+        let radiiArray = await zarr.open(this.zarrLocation.resolve('radii'), { kind: 'array' });
+        this.registerBounds('radii', radiiArray);
+        // Wrap with L0 cache if enabled
+        if (this.l0Cache) {
+          radiiArray = wrapWithCache(
+            radiiArray,
+            this.l0Cache,
+            `${this.node.path}/radii`,
+            () => this._activeProbe,
+            () => this._activeSignal
+          );
+        }
+        this.arrays.radii = radiiArray;
+      } catch (e: unknown) {
+        // Radii are optional - only log if it's not a 404
+        if (!isNotFoundError(e)) {
+          log.info(Modules.SPATIAL_INDEX_LOADER, 'No radii array found (using default radii)');
+        }
       }
-      this.arrays.sharpness = sharpnessArray;
-    } catch (e: unknown) {
-      // Sharpness is optional - only log if it's not a 404
-      if (!isNotFoundError(e)) {
-        log.info(
-          Modules.SPATIAL_INDEX_LOADER,
-          'No sharpness array found (using default sharpness)'
-        );
+    }
+
+    if (!isArrayListed(this.node, 'sharpnesses')) {
+      log.info(
+        Modules.SPATIAL_INDEX_LOADER,
+        'No sharpnesses array in the store listing (using default sharpness)'
+      );
+    } else {
+      try {
+        let sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpnesses'), {
+          kind: 'array',
+        });
+        this.registerBounds('sharpnesses', sharpnessArray);
+        // Wrap with L0 cache if enabled
+        if (this.l0Cache) {
+          sharpnessArray = wrapWithCache(
+            sharpnessArray,
+            this.l0Cache,
+            `${this.node.path}/sharpnesses`,
+            () => this._activeProbe,
+            () => this._activeSignal
+          );
+        }
+        this.arrays.sharpness = sharpnessArray;
+      } catch (e: unknown) {
+        // Sharpness is optional - only log if it's not a 404
+        if (!isNotFoundError(e)) {
+          log.info(
+            Modules.SPATIAL_INDEX_LOADER,
+            'No sharpness array found (using default sharpness)'
+          );
+        }
       }
     }
 

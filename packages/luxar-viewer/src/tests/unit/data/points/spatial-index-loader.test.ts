@@ -213,6 +213,52 @@ describe('PointsSpatialIndexLoader', () => {
       expect(result.pointCount).toBe(result.positions.length / 3);
     });
 
+    it('does not probe optional arrays the store listing rules out', async () => {
+      (zarr.open as any).mockImplementation((_location: any) => {
+        const path = _location.toString();
+        if (path.includes('positions')) return Promise.resolve(mockArrays.positions);
+        if (path.includes('radii')) return Promise.resolve(mockArrays.radii);
+        return Promise.reject(new Error('Not found'));
+      });
+      // The consolidated listing saw `positions` and `radii` under this node and
+      // nothing else: colors / sharpnesses must not cost a 404 round trip.
+      const listedNode: SceneNode = { ...mockNode, arrays: new Set(['positions', 'radii']) };
+      const testLoader = new PointsSpatialIndexLoader(mockZarrLocation, listedNode);
+      await testLoader.loadPoints({
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 5],
+        tolerance: [0, 0, 0, 0.1],
+      });
+      const opened = (zarr.open as any).mock.calls.map((c: any[]) => String(c[0]));
+      expect(opened.some((p: string) => p.includes('positions'))).toBe(true);
+      expect(opened.some((p: string) => p.includes('radii'))).toBe(true);
+      expect(opened.some((p: string) => p.includes('colors'))).toBe(false);
+      expect(opened.some((p: string) => p.includes('sharpnesses'))).toBe(false);
+      testLoader.dispose();
+    });
+
+    it('still probes every optional array when the node carries no listing', async () => {
+      (zarr.open as any).mockImplementation((_location: any) => {
+        const path = _location.toString();
+        if (path.includes('positions')) return Promise.resolve(mockArrays.positions);
+        return Promise.reject(new Error('Not found'));
+      });
+      const testLoader = new PointsSpatialIndexLoader(mockZarrLocation, mockNode); // arrays undefined
+      await testLoader.loadPoints({
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 5],
+        tolerance: [0, 0, 0, 0.1],
+      });
+      const opened = (zarr.open as any).mock.calls.map((c: any[]) => String(c[0]));
+      for (const name of ['colors', 'radii', 'sharpnesses']) {
+        expect(
+          opened.some((p: string) => p.includes(name)),
+          name
+        ).toBe(true);
+      }
+      testLoader.dispose();
+    });
+
     it('should handle missing optional arrays gracefully', async () => {
       // Create a new loader for this test with custom mocks
       (zarr.open as any).mockImplementation((_location: any) => {
