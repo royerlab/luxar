@@ -499,12 +499,13 @@ class TestConfigDefaultsTrackTheFitter:
 
     @pytest.mark.parametrize("config_cls", [OptimConfig, LossConfig, ConstraintConfig])
     def test_every_field_is_actually_a_fitter_parameter(self, config_cls) -> None:
-        """`**asdict(cfg)` must not raise TypeError on an unknown keyword.
+        """`**asdict(cfg)` fields must not be silently ignored as seed keywords.
 
         The other half of the contract: matching defaults are worthless if the
-        field cannot be passed at all. This is what the previous docstrings got
-        wrong in the opposite direction — they advertised `optim=`/`loss=`/
-        `constraints=` parameters that never existed.
+        field is absorbed by `**seed_kwargs` instead of configuring the fitter.
+        This is what the previous docstrings got wrong in the opposite direction
+        — they advertised `optim=`/`loss=`/`constraints=` parameters that never
+        existed.
         """
         import dataclasses
 
@@ -517,7 +518,8 @@ class TestConfigDefaultsTrackTheFitter:
 
         assert not unknown, (
             f"{config_cls.__name__} has field(s) fit_gaussian_splats does not "
-            f"accept: {unknown}. `**asdict(cfg)` would raise TypeError."
+            f"accept: {unknown}. `**asdict(cfg)` would silently pass them to "
+            "`**seed_kwargs`, where they would be ignored by the fitter."
         )
 
     @pytest.mark.parametrize(
@@ -528,9 +530,7 @@ class TestConfigDefaultsTrackTheFitter:
             (LossConfig, ConstraintConfig),
         ],
     )
-    def test_config_field_sets_are_pairwise_disjoint(
-        self, left_cls, right_cls
-    ) -> None:
+    def test_config_field_sets_are_pairwise_disjoint(self, left_cls, right_cls) -> None:
         """All three configs must compose in one keyword-unpacked fitter call."""
         import dataclasses
 
