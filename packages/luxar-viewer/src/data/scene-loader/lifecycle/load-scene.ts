@@ -334,7 +334,8 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   // renames the lod selector attrs to coverage_fraction — v3.0/3.1 stores with
   // the legacy attrs are auto-adapted by load-lod-group-node; v3.3 adds the
   // optional luxar_delta_v1 filter, undone transparently by the codec that
-  // data/zarr.ts registers). The supported set is single-sourced from
+  // data/zarr.ts registers; v3.4 adds the screen-area lod selector while legacy
+  // coverage stores read unchanged). The supported set is single-sourced from
   // format-contract/contract.yaml.
   const fmtType = (sceneAttrs as Record<string, unknown>)?.format_type;
   const fmtVersion = (sceneAttrs as Record<string, unknown>)?.format_version;
