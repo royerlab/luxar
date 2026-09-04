@@ -4,13 +4,19 @@ import { fileURLToPath } from 'url';
 // Explicit `.ts` extension: Vite's future native config loader (Node's own TS
 // support) does not do extensionless resolution, and 8.2 warns about it.
 import { checkoutIdentityPlugin, ensureCheckoutIdentity } from './tools/e2e-server-identity.ts';
+import { buildDefine, buildIdentityHtmlPlugin } from './tools/build-identity.ts';
 
 const viewerRoot = fileURLToPath(new URL('.', import.meta.url));
 const projectRoot = resolve(viewerRoot, '../..');
 
 export default defineConfig(({ command }) => ({
-  plugins:
-    command === 'serve'
+  // Stamp the bundle with version + commit + build time. Reaches `dist/` and
+  // therefore the wheel, `luxar export` folders and the hosted site in one
+  // place; `tools/build-identity.ts` explains why it may never throw.
+  define: buildDefine(),
+  plugins: [
+    buildIdentityHtmlPlugin(),
+    ...(command === 'serve'
       ? [
           checkoutIdentityPlugin(ensureCheckoutIdentity(projectRoot, viewerRoot)),
           {
@@ -28,7 +34,8 @@ export default defineConfig(({ command }) => ({
             },
           },
         ]
-      : [],
+      : []),
+  ],
   base: './',
   build: {
     outDir: 'dist',
