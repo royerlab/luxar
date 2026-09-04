@@ -108,15 +108,17 @@ export class SceneLoaderManager {
   }
 
   /**
-   * Provide the projected-density source for the refinement rung gate. Called
-   * once at app boot from the init pipeline; forwarded to each subsequently
-   * created ``SceneLoader``.
+   * Provide the projected-density source for the refinement rung gate.
+   * Forwarded to every existing and subsequently created ``SceneLoader``.
    */
   setRefinementDensityProvider(
     provider: ProjectedDensityProvider | null,
     caps: DensityGateCaps
   ): void {
     this.refinementDensity = { provider, caps };
+    for (const loader of this.loaders.values()) {
+      loader.setRefinementDensityProvider(provider, caps);
+    }
   }
 
   setKTX2TextureDecoder(decoder: KTX2TextureDecoder | null): void {
