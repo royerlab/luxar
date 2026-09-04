@@ -71,13 +71,24 @@ def wrong_convention_siblings() -> dict[str, str]:
     contract = set(ENCODING_NAMES)
     siblings: dict[str, str] = {}
     for name in contract:
-        if m := re.fullmatch(r"(.+)_uint(8|16)", name):
+        if m := re.fullmatch(r"(.+)_uint(\d+)", name):
             siblings[f"{m.group(1)}_u{m.group(2)}"] = name
-        elif m := re.fullmatch(r"(.+)_u(8|16)", name):
+        elif m := re.fullmatch(r"(.+)_u(\d+)", name):
             siblings[f"{m.group(1)}_uint{m.group(2)}"] = name
     # Both conventions genuinely exist across different families, so a
     # "sibling" that is itself a real name is not a violation.
     return {wrong: real for wrong, real in siblings.items() if wrong not in contract}
+
+
+def test_sibling_derivation_supports_future_bit_widths(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "luxar.encoding.tests.test_encoding_vocabulary.ENCODING_NAMES",
+        ("future_scalar_uint32", "future_perchannel_u64"),
+    )
+    assert wrong_convention_siblings() == {
+        "future_scalar_u32": "future_scalar_uint32",
+        "future_perchannel_uint64": "future_perchannel_u64",
+    }
 
 
 def _documents() -> list[Path]:

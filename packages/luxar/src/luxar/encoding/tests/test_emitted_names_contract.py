@@ -157,7 +157,7 @@ def test_all_emitted_encoding_names_are_in_contract() -> None:
 
 def _quantized_contract_names() -> set[str]:
     """Contract names carrying a bit-width suffix -- the f-string-built ones."""
-    return {n for n in ENCODING_NAMES if re.search(r"_u(?:int)?(?:8|16)$", n)}
+    return {n for n in ENCODING_NAMES if re.search(r"_u(?:int)?\d+$", n)}
 
 
 def test_linear_perchannel_u8_remains_unreachable() -> None:
