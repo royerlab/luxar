@@ -216,7 +216,6 @@ class TestLossConfig:
         assert cfg.asymmetric_penalty == 1.0
         assert cfg.l1_amp is None
         assert cfg.l1_diag is None
-        assert cfg.boundary_penalty is None
 
     def test_custom_values(self) -> None:
         """Test LossConfig with custom values."""
@@ -519,4 +518,27 @@ class TestConfigDefaultsTrackTheFitter:
         assert not unknown, (
             f"{config_cls.__name__} has field(s) fit_gaussian_splats does not "
             f"accept: {unknown}. `**asdict(cfg)` would raise TypeError."
+        )
+
+    @pytest.mark.parametrize(
+        ("left_cls", "right_cls"),
+        [
+            (OptimConfig, LossConfig),
+            (OptimConfig, ConstraintConfig),
+            (LossConfig, ConstraintConfig),
+        ],
+    )
+    def test_config_field_sets_are_pairwise_disjoint(
+        self, left_cls, right_cls
+    ) -> None:
+        """All three configs must compose in one keyword-unpacked fitter call."""
+        import dataclasses
+
+        left_fields = {field.name for field in dataclasses.fields(left_cls)}
+        right_fields = {field.name for field in dataclasses.fields(right_cls)}
+
+        assert left_fields.isdisjoint(right_fields), (
+            f"{left_cls.__name__} and {right_cls.__name__} both define "
+            f"{sorted(left_fields & right_fields)}. Unpacking both configs in "
+            "one call would raise TypeError for duplicate keyword arguments."
         )

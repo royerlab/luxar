@@ -101,7 +101,6 @@ class LossConfig:
     asymmetric_penalty: Optional[float] = 1.0
     l1_amp: Optional[float] = None
     l1_diag: Optional[float] = None
-    boundary_penalty: Optional[float] = None
 
 
 @dataclass(frozen=True)
