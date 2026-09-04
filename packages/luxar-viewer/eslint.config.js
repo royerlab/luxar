@@ -99,7 +99,7 @@ export default [
       // 0 await-thenable) and 160 including tests. Existing findings are
       // recorded in `eslint-suppressions.json` — ESLint's own baseline
       // mechanism, not a hand-rolled ratchet — so nothing goes red today and a
-      // NEW one anywhere fails immediately. Burn them down with
+      // higher per-file count fails immediately. Burn them down with
       // `pnpm lint --prune-suppressions`.
       //
       // `no-unnecessary-type-assertion` is deliberately NOT here: 867 findings,

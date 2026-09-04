@@ -50,10 +50,12 @@ pnpm test:e2e     # E2E tests (Playwright)
 pnpm typecheck    # Type check
 pnpm lint         # Lint (includes TYPE-AWARE rules: no-floating-promises,
                   # no-misused-promises, await-thenable, no-base-to-string).
-                  # The 160 pre-existing findings are recorded in
+                  # Also caps production functions at complexity 10, 120 code
+                  # lines, depth 4, and 5 parameters. The 721 pre-existing
+                  # findings are recorded in
                   # eslint-suppressions.json — ESLint's own baseline, so a NEW
-                  # one fails even inside an already-suppressed file (the
-                  # suppression is a COUNT, not a file exemption).
+                  # violation fails, including an increase inside a suppressed
+                  # file (the suppression is a COUNT, not a file exemption).
                   # Fixed some? `pnpm lint --prune-suppressions` tightens it.
                   # Do NOT add a `// eslint-disable` to get green: a floating
                   # promise here is a load that silently stalls, which no test
