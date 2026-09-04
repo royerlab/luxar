@@ -65,6 +65,7 @@ def fake_viewer_dist(tmp_path: Path) -> Path:
     (dist / "assets" / "index.js").write_text("// app")
     (dist / "wasm").mkdir()
     (dist / "wasm" / "luxar_wasm_bg.wasm").write_bytes(b"\x00wasm")
+    (dist / "THIRD_PARTY_LICENSES.txt").write_text("test notices")
     return dist
 
 
@@ -688,6 +689,20 @@ class TestCLINativeFlag:
         assert (output / "Demo.app" / "Contents" / "MacOS" / "launcher").is_file()
         assert (output / "Demo-linux-amd64" / "luxar-launcher").is_file()
         assert (output / "Demo-linux-arm64" / "luxar-launcher").is_file()
+        assert (
+            output
+            / "Demo.app"
+            / "Contents"
+            / "Resources"
+            / "viewer"
+            / "THIRD_PARTY_LICENSES.txt"
+        ).is_file()
+        assert (
+            output / "Demo-linux-amd64" / "viewer" / "THIRD_PARTY_LICENSES.txt"
+        ).is_file()
+        assert (
+            output / "Demo-linux-arm64" / "viewer" / "THIRD_PARTY_LICENSES.txt"
+        ).is_file()
 
     def test_missing_launcher_binary_does_not_wipe_existing_output(
         self,
@@ -731,6 +746,44 @@ class TestCLINativeFlag:
         # The important sentinel must still exist — pre-validation runs
         # before rmtree.
         assert sentinel.is_file(), "rmtree fired before launcher check (regression)"
+
+    def test_missing_notices_does_not_wipe_existing_output(
+        self,
+        runner: CliRunner,
+        sample_scene: Path,
+        fake_viewer_dist: Path,
+        fake_launchers_dir: Path,
+        tmp_path: Path,
+    ) -> None:
+        output = tmp_path / "native_out"
+        output.mkdir()
+        sentinel = output / "important.txt"
+        sentinel.write_text("user's prior export")
+        (fake_viewer_dist / "THIRD_PARTY_LICENSES.txt").unlink()
+
+        with (
+            patch("luxar.cli.main.check_viewer_built", return_value=True),
+            patch(
+                "luxar.cli.utils.get_viewer_dist_path", return_value=fake_viewer_dist
+            ),
+            _patch_launchers(fake_launchers_dir),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "export",
+                    str(sample_scene),
+                    "-o",
+                    str(output),
+                    "--native",
+                    "macos",
+                    "--overwrite",
+                ],
+            )
+
+        assert result.exit_code == 1
+        assert "THIRD_PARTY_LICENSES" in _strip_ansi(result.stdout)
+        assert sentinel.read_text() == "user's prior export"
 
     def test_name_defaults_to_zarr_stem(
         self,

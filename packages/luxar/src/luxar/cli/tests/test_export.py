@@ -73,6 +73,13 @@ def mock_viewer_dist(tmp_path: Path) -> Path:
     wasm.mkdir()
     (wasm / "luxar_wasm.js").write_text("// wasm bindings")
     (wasm / "luxar_wasm_bg.wasm").write_bytes(b"\x00wasm")
+    # The production build emits this, and `_copy_viewer` refuses a dist
+    # without it: an export folder is redistribution, so it must carry the
+    # third-party notices. A fixture that omits it models a bundle we should
+    # not be able to produce.
+    (dist / "THIRD_PARTY_LICENSES.txt").write_text(
+        "THIRD-PARTY SOFTWARE NOTICES\n(test fixture)\n"
+    )
     return dist
 
 
@@ -174,6 +181,23 @@ class TestExportScene:
         assert not old_file.exists()
         assert (output / "serve.py").exists()
         assert (output / "viewer").is_dir()
+
+    def test_missing_notices_does_not_wipe_existing_output(
+        self, sample_scene: Path, mock_viewer_dist: Path, tmp_path: Path
+    ) -> None:
+        """Viewer preflight must finish before overwrite removes old output."""
+        output = tmp_path / "existing"
+        output.mkdir()
+        sentinel = output / "important.txt"
+        sentinel.write_text("user's prior export")
+        (mock_viewer_dist / "THIRD_PARTY_LICENSES.txt").unlink()
+
+        p1, p2 = _patch_viewer(mock_viewer_dist)
+        with p1, p2, pytest.raises(FileNotFoundError, match="THIRD_PARTY_LICENSES"):
+            export_scene(sample_scene, output, overwrite=True)
+
+        assert sentinel.read_text() == "user's prior export"
+        assert not (output / "viewer").exists()
 
     def test_fails_on_invalid_zarr(self, tmp_path: Path) -> None:
         """ValueError for non-zarr directory."""
@@ -482,6 +506,37 @@ class TestCopyZarrData:
 class TestCopyViewer:
     """Tests for viewer copying."""
 
+    def test_refuses_a_dist_without_third_party_notices(
+        self, mock_viewer_dist: Path, tmp_path: Path
+    ) -> None:
+        """An export folder is redistribution; it must carry its notices.
+
+        MIT / Apache-2.0 / MPL-2.0 / BSD all require their notices to accompany
+        a binary redistribution, and an export folder is zipped and handed to
+        people who never see this repository. Producing one silently without
+        them is the failure this guards, so it must be a refusal rather than a
+        warning: the folder otherwise looks complete.
+        """
+        (mock_viewer_dist / "THIRD_PARTY_LICENSES.txt").unlink()
+        dest = tmp_path / "viewer_copy"
+        with patch(
+            "luxar.cli.export.get_viewer_dist_path", return_value=mock_viewer_dist
+        ):
+            with pytest.raises(FileNotFoundError, match="THIRD_PARTY_LICENSES"):
+                _copy_viewer(dest)
+        assert not dest.exists(), "refused export must leave no partial folder"
+
+    def test_copies_the_third_party_notices(
+        self, mock_viewer_dist: Path, tmp_path: Path
+    ) -> None:
+        """And when present, the notices actually travel into the output."""
+        dest = tmp_path / "viewer_copy"
+        with patch(
+            "luxar.cli.export.get_viewer_dist_path", return_value=mock_viewer_dist
+        ):
+            _copy_viewer(dest)
+        assert (dest / "THIRD_PARTY_LICENSES.txt").is_file()
+
     def test_copies_all_files(self, mock_viewer_dist: Path, tmp_path: Path) -> None:
         """Verify all viewer files are copied."""
         dest = tmp_path / "viewer_copy"
@@ -658,7 +713,11 @@ class TestServeScriptTitle:
         from luxar.cli import export as export_mod
 
         captured: dict[str, object] = {}
+        viewer_dist = tmp_path / "viewer_dist"
+        viewer_dist.mkdir()
+        (viewer_dist / "THIRD_PARTY_LICENSES.txt").write_text("test notices")
         monkeypatch.setattr(export_mod, "check_viewer_built", lambda: True)
+        monkeypatch.setattr(export_mod, "get_viewer_dist_path", lambda: viewer_dist)
         monkeypatch.setattr(export_mod, "_copy_viewer", lambda dest: None)
         monkeypatch.setattr(export_mod, "_copy_zarr_data", lambda s, d: None)
         monkeypatch.setattr(export_mod, "_generate_readme", lambda o, d: None)

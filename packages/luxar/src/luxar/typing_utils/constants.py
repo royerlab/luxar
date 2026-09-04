@@ -4,6 +4,7 @@ This module centralizes all magic numbers and constants to improve
 maintainability and provide clear documentation of their purposes.
 """
 
+import math
 from typing import Final
 
 from ._format_contract import SCENE_FORMAT_VERSION
@@ -276,6 +277,26 @@ DEFAULT_POINT_RADIUS: Final[float] = 0.5
 #: 3.0349``. Measured radial-weighted relative L2 of the lift: 1.96% at T=3.0,
 #: 16.91% at T=2.75. See ``lift.py`` for the derivation.
 DEFAULT_TRUNCATION_RADIUS: Final[float] = 2.75
+
+#: Lower bound on each Cholesky diagonal (a splat's per-axis width), in voxels.
+#:
+#: ``sqrt(1/12)`` is the standard deviation of a uniform distribution over one
+#: voxel — the width at which a Gaussian stops describing structure and starts
+#: describing the sampling grid. Below it a splat is narrower than the data can
+#: resolve, and the fit spends capacity on a delta it cannot justify.
+#:
+#: Passing ``sigma_min_diag=None`` removes the bound entirely; that is a
+#: deliberate act, not a default. It used to be reachable by accident —
+#: ``ConstraintConfig`` defaulted to ``None`` while the fitter defaulted to this
+#: value, so unpacking a default-constructed config switched the floor off while
+#: reading as "no change" (audit A3-01).
+#:
+#: Lives here rather than in ``gsplats.fitting.validation``, where it was
+#: defined, because ``validation`` imports ``FitConfig`` from
+#: ``gsplats.fitting.config`` — so the config module could not name its own
+#: default without a circular import. ``validation`` re-exports it for the
+#: existing import sites.
+DEFAULT_SIGMA_MIN_DIAG: Final[float] = float(math.sqrt(1.0 / 12.0))
 
 
 # =============================================================================

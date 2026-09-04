@@ -11,11 +11,15 @@ perf-bench JSON captures into a Markdown table.
 ```
 scripts/
 ├── build-wasm.sh             # Rust → WASM build via wasm-pack (pnpm build:wasm[:dev])
+├── check-build-identity.mjs       # Asserts a built bundle carries its build stamp
+├── check-build-identity.test.mjs  # unit coverage for the stamp gate
 ├── check-lib-exports.mjs          # Post-build sanity check on dist/lib/
 ├── check-jsdoc-coverage.ts        # Standalone JSDoc coverage report
 ├── check-overrides.mjs            # pnpm overrides single-source guard
 ├── check-typedoc-warnings.mjs     # Baseline-driven TypeDoc warning ratchet
 ├── check-typedoc-warnings-tests.mjs # node:test coverage for the warning ratchet
+├── generate-third-party-licenses.mjs # Build redistributed dependency notices
+├── generate-third-party-licenses.test.mjs # Tests for complete notices
 ├── perf-diff.mjs                  # Markdown delta table from perf-bench JSON
 ├── perf-diff.test.mjs             # tests for perf-diff's buildPerfDiff()
 └── perf/                          # perf-bench capture fixtures / helpers
@@ -69,7 +73,29 @@ in the parent README's "Embedding" section. Checks:
 Exits non-zero on any failure with a per-issue diagnostic.
 
 ```bash
-pnpm build:lib:check   # → node scripts/check-lib-exports.mjs
+pnpm build:lib:check   # → check-lib-exports.mjs && check-build-identity.mjs dist/lib
+```
+
+### `check-build-identity.mjs`
+
+Reads the emitted artifacts and fails when they do not carry a build stamp
+that agrees with `package.json`'s version. `define:` substitution is silent
+when it goes wrong — dropping the `define` block, renaming the constant or
+adding a third Vite config that forgets it leaves every unit test passing
+and ships an artifact with no revision on it. So the check scans the built
+`.js` files (and, for the app build, the `<meta name="luxar-build">` tag in
+`index.html`) rather than trusting the config. Both sides come from the
+tree: expected version from `package.json`, observed from the artifact.
+
+Escaping-insensitive by design — the app build emits the stamp as a plain
+string literal while the library build backslash-escapes its quotes, so a
+grep written against one spelling reports a false negative against the
+other. Covered by `check-build-identity.test.mjs`, which runs with the
+viewer unit suite (`pnpm test --run`).
+
+```bash
+pnpm build:check       # → check-eager-chunks.mjs && check-build-identity.mjs dist
+pnpm build:lib:check   # → check-lib-exports.mjs && check-build-identity.mjs dist/lib
 ```
 
 ## Quality
