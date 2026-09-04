@@ -125,12 +125,14 @@ describe('bootstrapStandalone', () => {
     vi.clearAllMocks();
     mocks.init.mockResolvedValue(undefined);
     delete (window as { __luxarDebug?: unknown }).__luxarDebug;
+    delete window.__luxarBuild;
     localStorage.clear();
     resetUserSettingsForTests();
   });
 
   afterEach(() => {
     delete (window as { __luxarDebug?: unknown }).__luxarDebug;
+    delete window.__luxarBuild;
     localStorage.clear();
   });
 
@@ -239,6 +241,7 @@ describe('bootstrapStandalone', () => {
     it('patches console, validates config, and warms codecs when defaults apply', async () => {
       await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
 
+      expect(window.__luxarBuild).toEqual(buildInfo());
       expect(mocks.patch).toHaveBeenCalledTimes(1);
       expect(mocks.validateAndLog).toHaveBeenCalledTimes(1);
       expect(mocks.bloscThunk).toHaveBeenCalledTimes(1);
@@ -546,6 +549,7 @@ describe('bootstrapStandalone', () => {
         bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS })
       ).rejects.toThrow('WebGL unavailable');
 
+      expect(window.__luxarBuild).toEqual(buildInfo());
       expect(mocks.showError).toHaveBeenCalledTimes(1);
       expect(mocks.showError.mock.calls[0][0]).toMatch(/Failed to start the application/i);
       const [, resolveShortcut, shortcutActions] = mocks.showError.mock.calls[0];
