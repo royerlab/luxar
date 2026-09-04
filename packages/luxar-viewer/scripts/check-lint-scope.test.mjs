@@ -31,6 +31,7 @@ import { dirname, join, relative, resolve } from 'path';
 import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
 import { ESLint } from 'eslint';
+import ts from 'typescript';
 
 const PKG = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -79,6 +80,16 @@ function authoredFiles(root = PKG) {
 }
 
 const FILES = authoredFiles();
+
+/** Root files selected by a TypeScript project, relative to the package. */
+function typecheckedFiles(configName) {
+  const configPath = join(PKG, configName);
+  const loaded = ts.readConfigFile(configPath, ts.sys.readFile);
+  expect(loaded.error).toBeUndefined();
+  const parsed = ts.parseJsonConfigFileContent(loaded.config, ts.sys, PKG, undefined, configPath);
+  expect(parsed.errors).toEqual([]);
+  return new Set(parsed.fileNames.map((file) => relative(PKG, file)));
+}
 
 describe('authored file discovery', () => {
   it('includes module extensions and dotfiles but skips generated dot-directories', () => {
@@ -141,6 +152,20 @@ describe('lint scope', () => {
       const config = await eslint.calculateConfigForFile(join(PKG, `src/probe.${extension}`));
       expect(config?.rules?.['@typescript-eslint/no-unused-vars']).toBeUndefined();
     }
+  });
+});
+
+describe('typecheck scope', () => {
+  it('reaches every authored TypeScript source file', () => {
+    const checked = new Set([
+      ...typecheckedFiles('tsconfig.json'),
+      ...typecheckedFiles('tsconfig.tooling.json'),
+    ]);
+    const unreached = FILES.filter(
+      (file) => /\.(?:ts|tsx|mts|cts)$/.test(file) && !checked.has(file)
+    );
+
+    expect(unreached, `add these to a TypeScript project:\n${unreached.join('\n')}`).toEqual([]);
   });
 });
 

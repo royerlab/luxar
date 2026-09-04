@@ -226,7 +226,7 @@ export default [
     // and the value here is the ordinary correctness set -- unused bindings,
     // unreachable code, empty blocks. The .ts members are separately
     // type-checked: tsconfig.json covers tools and tsconfig.tooling.json covers
-    // the root configs.
+    // root configs and gate scripts.
     files: [
       '*.{ts,mts,cts,js,mjs,cjs}',
       'scripts/**/*.{ts,mts,cts,js,mjs,cjs}',
