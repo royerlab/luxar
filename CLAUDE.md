@@ -358,7 +358,7 @@ luxar mesh import smooth.ply flat.luxar.zarr --no-keep-normals
 # A DIRECTORY stacks files carrying `T<number>` and optional `Ch<number>` filename
 # coordinates into hidden discrete dimensions — a mesh timelapse is one scene.
 luxar mesh import frames/ frames.luxar.zarr --pattern '*.ply'
-luxar mesh import frames/ frames.luxar.zarr --index-regex 'frame_(?P<t>\d+)'
+luxar mesh import frames/ frames.luxar.zarr --pattern '*.ply' --index-regex 'frame_(?P<t>\d+)'
 
 # Build a mesh LOD ladder. TWO recipes, and they are not interchangeable:
 #   levels  decimated coarse levels that REPLACE one another (substitutive, default)
