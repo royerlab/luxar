@@ -71,6 +71,9 @@ const CHECK_INTERVAL_MS = 15_000;
  * so the fast cadence buys almost nothing while costing a request every 15 s,
  * per open tab, for the lifetime of the tab. `If-None-Match` already reduces
  * each poll to a bodyless 304; this reduces how many of them there are.
+ * With the two-failure threshold below, an unfocused hosted scene can take up
+ * to roughly four minutes to show unreachable; focus/visibility probes remain
+ * immediate once the spacing guard allows them.
  */
 const REMOTE_CHECK_INTERVAL_MS = 120_000;
 /** Minimum spacing between probes (guards focus+visibility double-fire). */
