@@ -991,8 +991,7 @@ If you see "GPU fitting will use slower PyTorch fallback", fitting still works �
 Luxar needs **WebGL 2.0**; WebGPU is used when available and falls back
 automatically. The viewer builds with Vite's `target: 'esnext'` and declares no
 `browserslist`, so nothing is downlevelled and no version floor is derived from
-the toolchain — the specific version numbers previously listed here were not
-measured against anything.
+the toolchain.
 
 What is verified, by running the E2E smoke subset (13 tests across basic
 rendering, viewer initialisation, and geometry types including GSplats) on
@@ -1004,13 +1003,18 @@ rendering, viewer initialisation, and geometry types including GSplats) on
 | Firefox  | 13/13 pass   | L2 (OPFS) disk cache initialises                      |
 | WebKit   | 13/13 pass   | **runs without the L2 disk cache** — the OPFS store's init / write probe fails, so chunk data is not persisted between sessions |
 
-Reproduce with `pnpm test:e2e:browsers` from `packages/luxar-viewer/` — it needs
-`npx playwright install firefox webkit`, which the default install does not
-provide.
+Reproduce from `packages/luxar-viewer/` after running `pnpm
+test:generate-fixtures` and `pnpm exec playwright install firefox webkit`, then
+run `pnpm test:e2e:browsers`. The checked-in visual snapshot corpus is
+Chromium-only, so this command ignores snapshot assertions and compares
+functional behavior rather than pixels.
 
 Not verified: the full E2E suite on any engine but Chromium; **Safari and Edge
 themselves** — Playwright's WebKit is a WebKit build, not Safari, and Edge is
 Chromium-based but untested; and any performance comparison between engines.
+WebKit lacks main-thread `FileSystemFileHandle.createWritable()`, so Safari and
+the native WKWebView launcher fall back to L1-only caching; see the
+[`opfs-unavailable` cache badge](packages/luxar-viewer/src/cache/README.md#cache-status-badges).
 
 ### Viewer URL Parameters
 
