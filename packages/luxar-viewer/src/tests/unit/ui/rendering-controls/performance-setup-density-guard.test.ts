@@ -230,10 +230,11 @@ describe('setupPerformanceControls — Density Guard', () => {
 
   it('under a session disable the stored flag is neither written nor saved', () => {
     const control = makeControl({ isEnabled: () => false, sessionDisabled: true });
+    settings.densityGuardEnabled = false;
     setupPerformanceControls(makeContext(control));
     byName(folder, 'Density Guard')._onChangeFn?.(true);
     expect(control.setEnabled).toHaveBeenCalledWith(true);
-    expect(settings.densityGuardEnabled).toBe(true); // was already true; untouched either way
+    expect(settings.densityGuardEnabled).toBe(false);
     expect(saveSettings).not.toHaveBeenCalled();
     expect(triggerAnimation).toHaveBeenCalledTimes(1);
   });
