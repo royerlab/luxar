@@ -82,9 +82,10 @@ The pool tracks `activeQueries` per worker and selects the worker with the fewes
 
 ### Initialization
 
-- Lazy: workers are spawned on the first `initialize()` call (also triggered implicitly by `getWorker`, `getWorkerWithTracking`, or `runWithTimeout`)
+- Warmed: scene loading calls `warmUpDataWorkerPool()` so startup overlaps metadata fetch; otherwise workers remain lazy until `initialize()`, `getWorker`, `getWorkerWithTracking`, or `runWithTimeout`
 - Safe: promise deduplication ensures concurrent callers share a single initialization
-- Resilient: uses `Promise.allSettled()` so partial worker failures don't block the pool
+- Incremental: `getWorker` / `getWorkerWithTracking` proceed after the first usable worker publishes, while `initialize()` retains its all-spawns-settled contract
+- Resilient: partial worker failures do not block usable workers from publishing
 - Generation-guarded: `dispose()` mid-init bumps a generation token and terminates pending workers, preventing a stale init from re-populating a disposed pool
 
 ## Data Worker API
@@ -226,6 +227,7 @@ module-level globals.
 From `worker-pool.ts`:
 
 - `getWorkerPool()` / `disposeWorkerPool()` — singleton accessor and teardown
+- `warmUpDataWorkerPool()` — fire-and-forget early initialization when Web Workers are enabled and available
 - `class WorkerPool` — pool manager (see `runWithTimeout`, `getWorkerWithTracking`, `setAbortSignal`, `reinitialize`, `getStats`, `getQueueDepth`)
 - `setDataWorkerUrl(url)` — override the worker module URL (for embedders whose bundlers can't resolve Vite's `?worker` import)
 - `class WorkerTimeoutError` / `class WorkerAbortError` — distinguish hung-worker eviction from caller-initiated cancellation
