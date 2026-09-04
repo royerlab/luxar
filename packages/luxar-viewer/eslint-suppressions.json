@@ -1,0 +1,210 @@
+{
+  "src/cache/chunk-prefetcher.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    },
+    "@typescript-eslint/no-misused-promises": {
+      "count": 1
+    }
+  },
+  "src/cache/multi-level-caching-store/fetch-retry.ts": {
+    "@typescript-eslint/no-base-to-string": {
+      "count": 1
+    }
+  },
+  "src/core/app/picking/init-picking.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 1
+    }
+  },
+  "src/data/loaders/overlays/overlay-loader.ts": {
+    "@typescript-eslint/no-base-to-string": {
+      "count": 1
+    }
+  },
+  "src/data/scene-loader.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/data/scene-loader/nodes/load-mesh-node.ts": {
+    "@typescript-eslint/no-base-to-string": {
+      "count": 2
+    }
+  },
+  "src/data/scene-loader/update-view/queue-next.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/data/scene-loader/view-state/view-state-queue.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/scene/scene-manager/render-pipeline/webgl-context-recovery.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 1
+    }
+  },
+  "src/tests/e2e/cache-system.spec.ts": {
+    "@typescript-eslint/no-base-to-string": {
+      "count": 1
+    }
+  },
+  "src/tests/e2e/dimension-animation.spec.ts": {
+    "@typescript-eslint/await-thenable": {
+      "count": 5
+    }
+  },
+  "src/tests/e2e/error-recovery.spec.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 6
+    }
+  },
+  "src/tests/e2e/helpers.ts": {
+    "@typescript-eslint/no-base-to-string": {
+      "count": 1
+    }
+  },
+  "src/tests/e2e/recording-panel.spec.ts": {
+    "@typescript-eslint/await-thenable": {
+      "count": 1
+    }
+  },
+  "src/tests/global-setup.ts": {
+    "@typescript-eslint/no-base-to-string": {
+      "count": 1
+    }
+  },
+  "src/tests/unit/core/app.test.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    }
+  },
+  "src/tests/unit/core/app/dataset/load-dataset.test.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 2
+    }
+  },
+  "src/tests/unit/core/app/dataset/should-show-browser.test.ts": {
+    "@typescript-eslint/no-base-to-string": {
+      "count": 5
+    }
+  },
+  "src/tests/unit/data/gsplats-progressive-loader.test.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 10
+    }
+  },
+  "src/tests/unit/data/gsplats/spatial-index-loader.test.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 16
+    }
+  },
+  "src/tests/unit/data/lines-progressive-loader.test.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 9
+    }
+  },
+  "src/tests/unit/data/lines/spatial-index-loader.test.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 11
+    }
+  },
+  "src/tests/unit/data/loaders/color-loader.test.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 3
+    }
+  },
+  "src/tests/unit/data/loaders/l0-cache-wiring.test.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 2
+    }
+  },
+  "src/tests/unit/data/points-progressive-loader.test.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 10
+    }
+  },
+  "src/tests/unit/data/points/spatial-extend-dims.test.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 2
+    }
+  },
+  "src/tests/unit/data/scene-identity-watchdog.test.ts": {
+    "@typescript-eslint/no-base-to-string": {
+      "count": 3
+    }
+  },
+  "src/tests/unit/data/scene-loader.test.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 7
+    }
+  },
+  "src/tests/unit/data/scene-loader/mesh-update-sweep.test.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/tests/unit/rendering/depth-sort-coordinator.test.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 23
+    }
+  },
+  "src/tests/unit/rendering/webgl-blend-warmup.test.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 9
+    }
+  },
+  "src/tests/unit/types/geometry-capabilities.test.ts": {
+    "@typescript-eslint/no-base-to-string": {
+      "count": 1
+    }
+  },
+  "src/tests/unit/ui/recording/offline-capture-drivers.test.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/tests/unit/ui/recording/zip-sequence-capture.test.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 3
+    }
+  },
+  "src/tests/unit/workers/worker-pool/selection/load-balancing.test.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 1
+    }
+  },
+  "src/ui/data-loading-monitor.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    }
+  },
+  "src/ui/dataset-browser.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 3
+    }
+  },
+  "src/ui/debug-console.ts": {
+    "@typescript-eslint/no-base-to-string": {
+      "count": 2
+    }
+  },
+  "src/ui/debug-console/formatters.ts": {
+    "@typescript-eslint/no-base-to-string": {
+      "count": 2
+    }
+  },
+  "src/ui/layers/layers-panel.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 1
+    }
+  },
+  "src/ui/recording-panel.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 2
+    }
+  }
+}

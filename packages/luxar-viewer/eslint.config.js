@@ -25,9 +25,9 @@ export default [
     rules: {
       'no-unused-vars': 'off',
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
-      'semi': ['error', 'always'],
-      'quotes': ['error', 'single', { avoidEscape: true }],
-      'indent': 'off', // Handled by prettier — eslint indent conflicts with prettier ternary formatting
+      semi: ['error', 'always'],
+      quotes: ['error', 'single', { avoidEscape: true }],
+      indent: 'off', // Handled by prettier — eslint indent conflicts with prettier ternary formatting
       'no-undef': 'off', // TypeScript handles this
       // Channel all logging through src/utils/log.ts. The two exceptions
       // (utils/log.ts itself and console-interceptor.ts which monkey-patches
@@ -83,6 +83,32 @@ export default [
           ],
         },
       ],
+
+      // Type-aware rules. The parser already sets `parserOptions.project`
+      // above, so the type information these need was being computed and then
+      // thrown away — ESLint enabled no typescript-eslint recommended set and
+      // no type-aware rule at all (audit A12-03).
+      //
+      // These four are the DEFECT-BEARING ones. In a viewer this heavy on
+      // workers, loaders and caches — hundreds of `async` occurrences — an
+      // unhandled rejection does not crash anything. It shows up as a load
+      // that silently stalls, which no test asserts and E2E does not gate.
+      //
+      // Measured before enabling: 24 findings in production
+      // (10 no-floating-promises, 6 no-misused-promises, 8 no-base-to-string,
+      // 0 await-thenable) and 160 including tests. Existing findings are
+      // recorded in `eslint-suppressions.json` — ESLint's own baseline
+      // mechanism, not a hand-rolled ratchet — so nothing goes red today and a
+      // NEW one anywhere fails immediately. Burn them down with
+      // `pnpm lint --prune-suppressions`.
+      //
+      // `no-unnecessary-type-assertion` is deliberately NOT here: 867 findings,
+      // auto-fixable, and a redundant `as` is untidy rather than wrong. Landing
+      // it would bury 867 suppression entries next to the 160 that matter.
+      '@typescript-eslint/no-floating-promises': 'error',
+      '@typescript-eslint/no-misused-promises': 'error',
+      '@typescript-eslint/await-thenable': 'error',
+      '@typescript-eslint/no-base-to-string': 'error',
     },
   },
   {
@@ -130,12 +156,7 @@ export default [
     // Tests, benchmarks, screenshot drivers and mocks are tooling — they
     // legitimately use console.* for diagnostic output that doesn't need
     // to flow through the in-app debug console.
-    files: [
-      'src/tests/**/*.ts',
-      'src/tests/**/*.tsx',
-      'src/**/*.test.ts',
-      'src/**/*.spec.ts',
-    ],
+    files: ['src/tests/**/*.ts', 'src/tests/**/*.tsx', 'src/**/*.test.ts', 'src/**/*.spec.ts'],
     rules: {
       'no-console': 'off',
     },
