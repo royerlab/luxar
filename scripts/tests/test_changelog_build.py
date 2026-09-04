@@ -330,6 +330,58 @@ def test_release_cut_requires_the_unreleased_header():
         cb._cut_release("# Changelog\n\n## [1.0] - 2020-01-01\n", "2.0", "2026-09-15")
 
 
+def test_release_refuses_while_fragments_are_pending(tmp_path, monkeypatch):
+    frag_dir = tmp_path / "changelog.d"
+    frag_dir.mkdir()
+    (frag_dir / "7.md").write_text("#### Pending\n\nProse.\n", encoding="utf-8")
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(CHANGELOG_TEMPLATE, encoding="utf-8")
+    init = tmp_path / "__init__.py"
+    init.write_text('__version__ = "2026.09.15"\n', encoding="utf-8")
+    monkeypatch.setattr(cb, "FRAG_DIR", frag_dir)
+    monkeypatch.setattr(cb, "CHANGELOG", changelog)
+    monkeypatch.setattr(cb, "INIT", init)
+    monkeypatch.setattr("sys.argv", ["changelog_build.py", "--release"])
+
+    with pytest.raises(SystemExit, match="pending"):
+        cb.main()
+
+
+def test_release_refuses_an_already_cut_version(tmp_path, monkeypatch):
+    frag_dir = tmp_path / "changelog.d"
+    frag_dir.mkdir()
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(
+        CHANGELOG_TEMPLATE + "\n## [2026.09.15] - 2026-09-15\n", encoding="utf-8"
+    )
+    init = tmp_path / "__init__.py"
+    init.write_text('__version__ = "2026.09.15"\n', encoding="utf-8")
+    monkeypatch.setattr(cb, "FRAG_DIR", frag_dir)
+    monkeypatch.setattr(cb, "CHANGELOG", changelog)
+    monkeypatch.setattr(cb, "INIT", init)
+    monkeypatch.setattr("sys.argv", ["changelog_build.py", "--release"])
+
+    with pytest.raises(SystemExit, match="already has"):
+        cb.main()
+
+
+def test_release_draft_changes_nothing(tmp_path, monkeypatch):
+    frag_dir = tmp_path / "changelog.d"
+    frag_dir.mkdir()
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(CHANGELOG_TEMPLATE, encoding="utf-8")
+    before = changelog.read_bytes()
+    init = tmp_path / "__init__.py"
+    init.write_text('__version__ = "2026.09.15"\n', encoding="utf-8")
+    monkeypatch.setattr(cb, "FRAG_DIR", frag_dir)
+    monkeypatch.setattr(cb, "CHANGELOG", changelog)
+    monkeypatch.setattr(cb, "INIT", init)
+    monkeypatch.setattr("sys.argv", ["changelog_build.py", "--release", "--draft"])
+
+    assert cb.main() == 0
+    assert changelog.read_bytes() == before
+
+
 def test_current_version_reads_the_single_source_of_truth(tmp_path, monkeypatch):
     init = tmp_path / "__init__.py"
     init.write_text('x = 1\n__version__ = "2026.09.15"\ny = 2\n', encoding="utf-8")
