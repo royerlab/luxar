@@ -525,6 +525,17 @@ Normals are optional: omit them and the shader derives a flat per-face normal
 from screen-space derivatives. `normal_dims` is required whenever you *do* pass
 them, because in nD there is no implicit "first three dimensions".
 
+Already have a mesh **file**? Skip the Python entirely — `luxar mesh import`
+reads PLY, OBJ, STL, VTP and glTF/GLB with no extra dependencies, and a
+directory of `T<number>`-indexed files stacks into a mesh timelapse:
+
+```bash
+luxar mesh import bunny.ply bunny.luxar.zarr
+luxar mesh import frames/ frames.luxar.zarr --pattern '*.ply'
+luxar mesh lod bunny.luxar.zarr bunny_lod.luxar.zarr -L 4   # coarse levels
+luxar serve bunny_lod.luxar.zarr --viewer
+```
+
 Spatial partitioning **is** supported — `add_mesh(partition=…)` splits a large
 surface into frustum-cullable parts, though each part still loads whole.
 Substitutive LOD (`add_mesh(substitutive_lod=…)`, decimated by
