@@ -442,7 +442,7 @@ check-imports = "lint-imports"
 # minimum, and that its dated debt list has not GROWN. import-linter refuses an
 # ignore matching nothing, so it already stops the list rotting; this stops a new
 # violation being waved through by appending a line.
-check-layer-order = "python scripts/check_layer_order.py"
+check-layer-order = "python scripts/check_layer_order.py {args}"
 # Assert Python, viewer, and citation metadata describe the same release.
 check-versions = "python scripts/check_version_consistency.py"
 # Regenerate the Python + TS format-contract projections from contract.yaml.
@@ -885,10 +885,11 @@ exclude_type_checking_imports = true
 #                          -- shared helpers that belong lower, same species as
 #                          the validators A1-03 moved to `luxar.validation`.
 #
-# import-linter REFUSES an `ignore_imports` entry that matches nothing, so this
-# list can only shrink: delete an edge from the code and the build tells you to
-# delete it from here too. That property is why a seeded contract is worth
-# having now rather than a perfect one later.
+# import-linter REFUSES an `ignore_imports` entry that matches nothing, while
+# `check-layer-order` pins a high-water mark of 35. Delete an edge from the code,
+# its ignore here, and lower that constant; the list can shrink but not grow.
+# That property is why a seeded contract is worth having now rather than a
+# perfect one later.
 name = "Subpackage layering"
 type = "layers"
 layers = [
@@ -907,10 +908,9 @@ layers = [
     "luxar._zarr_compat",
     "luxar._process",
 ]
-# Direct edges only. An indirect chain through a legitimately-lower package is
-# the layering working, not a fault, and enumerating chains would make the
-# ignore list unmaintainable without catching anything the direct edges miss.
-allow_indirect_imports = true
+# Layers contracts report indirect chains too. The `luxar` package root
+# re-exports the public API, so imports of that hub need explicit exemptions
+# below; direct cross-layer imports remain governed by the declared order.
 ignore_imports = [
     # Colocated tests drive higher layers on purpose -- a `core` test may load
     # the compiler. The contract targets production code, matching the two

@@ -744,8 +744,12 @@ jobs:
 
       - name: Layer check (import-linter)
         if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
-        # Domain layers (gsplats/io/core/encoding) must not import luxar.cli.
+        # Enforce the full subpackage stack plus the narrower forbidden contracts.
         run: hatch run lint-imports
+
+      - name: Layer order and debt ratchet
+        if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
+        run: hatch run check-layer-order
 
       - name: Version consistency (Python == viewer == citation)
         if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'

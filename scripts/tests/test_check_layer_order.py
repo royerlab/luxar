@@ -80,6 +80,20 @@ class TestReadsTheRealContract:
         assert all(".tests." not in entry for entry in ignores)
         assert all(" -> " in entry for entry in ignores)
 
+    def test_production_ignores_exclude_root_package_exemptions(self, monkeypatch):
+        monkeypatch.setattr(clo, "_declared_order", lambda: ["encoding", "utils"])
+        monkeypatch.setattr(
+            clo,
+            "_contract",
+            lambda: {
+                "ignore_imports": [
+                    "luxar.encoding.foo -> luxar",
+                    "luxar.encoding.foo -> luxar.utils.bar",
+                ]
+            },
+        )
+        assert clo._production_ignores() == ["luxar.encoding.foo -> luxar.utils.bar"]
+
 
 class TestGate:
     def test_passes_on_the_committed_tree(self):
@@ -105,19 +119,35 @@ class TestGate:
         assert clo.main([]) == 1
         assert "must be fixed, not appended" in capsys.readouterr().err
 
-    def test_fails_when_declared_debt_outnumbers_violations(self, monkeypatch, capsys):
+    def test_fails_when_violations_and_debt_grow_together(self, monkeypatch, capsys):
+        real_edges = clo._edges
+        real_ignores = clo._production_ignores
+        monkeypatch.setattr(
+            clo,
+            "_edges",
+            lambda: {
+                **real_edges(),
+                ("typing_utils", "cli"): [("luxar.typing_utils.x", "luxar.cli.y")],
+            },
+        )
+        monkeypatch.setattr(
+            clo,
+            "_production_ignores",
+            lambda: real_ignores() + ["luxar.typing_utils.x -> luxar.cli.y"],
+        )
+        assert clo.main([]) == 1
+        assert "exceeds the committed maximum" in capsys.readouterr().err
+
+    def test_fails_when_declared_debt_outnumbers_violations(self):
         """Paid-down debt left in the list is a failure, not a pass.
 
         import-linter catches this too, by refusing an ignore that matches
         nothing. Checked here as well so the two cannot both be relaxed at once
         without a test going red.
         """
-        real = clo._production_ignores()
-        monkeypatch.setattr(
-            clo, "_production_ignores", lambda: real + ["luxar.a -> luxar.b"]
-        )
-        assert clo.main([]) == 1
-        assert "no longer exist" in capsys.readouterr().err
+        problem = clo._debt_problem(clo.MAX_DEBT - 1, ["edge"] * clo.MAX_DEBT)
+        assert problem is not None
+        assert "1 named edge no longer exists" in problem
 
     def test_fails_when_a_better_order_exists(self, monkeypatch, capsys):
         declared = clo._declared_order()
@@ -148,6 +178,45 @@ class TestFailsClosed:
         monkeypatch.setattr(grimp, "build_graph", lambda *a, **k: _Empty())
         with pytest.raises(SystemExit):
             clo._edges()
+
+    def test_an_unlisted_subpackage_is_an_error(self, monkeypatch):
+        import grimp
+
+        class _Graph:
+            modules = ("luxar", "luxar.brandnew", "luxar.cli")
+
+            def find_modules_directly_imported_by(self, module):
+                if module == "luxar.brandnew":
+                    return {"luxar.cli"}
+                return set()
+
+        monkeypatch.setattr(grimp, "build_graph", lambda *a, **k: _Graph())
+        monkeypatch.setattr(clo, "_declared_order", lambda: ["cli"])
+        with pytest.raises(SystemExit):
+            clo._edges()
+
+    def test_graph_uses_the_configured_type_checking_setting(self, monkeypatch):
+        import grimp
+
+        seen = {}
+
+        class _Graph:
+            modules = ("luxar", "luxar.cli", "luxar.core")
+
+            def find_modules_directly_imported_by(self, module):
+                if module == "luxar.cli":
+                    return {"luxar.core"}
+                return set()
+
+        def build_graph(*args, **kwargs):
+            seen.update(kwargs)
+            return _Graph()
+
+        monkeypatch.setattr(grimp, "build_graph", build_graph)
+        monkeypatch.setattr(clo, "_exclude_type_checking_imports", lambda: False)
+        monkeypatch.setattr(clo, "_declared_order", lambda: ["cli", "core"])
+        clo._edges()
+        assert seen["exclude_type_checking_imports"] is False
 
     def test_a_missing_contract_is_an_error(self, monkeypatch):
         monkeypatch.setattr(clo, "CONTRACT_NAME", "no such contract")

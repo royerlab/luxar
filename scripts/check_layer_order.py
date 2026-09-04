@@ -13,16 +13,15 @@ new violation by appending to `ignore_imports`. This script covers both:
 
 2. **The debt list only shrinks.** The contract's `ignore_imports` are dated
    layering violations, not design. import-linter already refuses an entry that
-   matches nothing, so paid-down debt cannot linger; this adds the other
-   direction, so new debt cannot be waved through by appending a line.
+   matches nothing, so paid-down debt cannot linger; a committed high-water mark
+   prevents new debt from being waved through by appending a matching line.
 
     python scripts/check_layer_order.py            # gate (exit 1 on regression)
     python scripts/check_layer_order.py --report   # scores + the violating edges
 
-There is no `--update`: the expected debt count is DERIVED from the contract's
-own `ignore_imports`, not stored in a baseline file, so there is nothing to
-re-baseline. Pay a violation down by deleting the code edge and its ignore
-entry; both directions are then checked automatically.
+There is no `--update`: `MAX_DEBT` is a ratchet, changed only in review. Pay a
+violation down by deleting the code edge and its ignore entry, then lower the
+constant; the live equality check also keeps the list consistent with the graph.
 
 Fails closed: a graph it cannot build, or a contract it cannot find, is an error
 rather than a pass.
@@ -36,10 +35,18 @@ import sys
 import tomllib
 from collections import defaultdict
 from pathlib import Path
+from typing import Any, NoReturn, TypeAlias, cast
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 CONTRACT_NAME = "Subpackage layering"
+MAX_DEBT = 35
+
+ModuleEdge: TypeAlias = tuple[str, str]
+LayerPair: TypeAlias = tuple[str, str]
+EdgeMap: TypeAlias = dict[LayerPair, list[ModuleEdge]]
+BadEdges: TypeAlias = dict[LayerPair, int]
+RankedOrders: TypeAlias = list[tuple[int, list[str]]]
 
 #: Packages whose position is not in question, so they are held fixed while the
 #: rest are permuted. `cli`/`demos` sit at the top on a wide margin (201 and 343
@@ -49,60 +56,97 @@ FIXED_TOP = ("cli", "demos")
 FIXED_BOTTOM = ("colormaps", "mesh", "shading", "_zarr_compat", "_process")
 
 
-def _fail(message: str) -> None:
+def _fail(message: str) -> NoReturn:
     print(f"❌ {message}", file=sys.stderr)
     raise SystemExit(1)
 
 
-def _contract() -> dict:
+def _importlinter_config() -> dict[str, Any]:
     data = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
-    for contract in data.get("tool", {}).get("importlinter", {}).get("contracts", []):
-        if contract.get("name") == CONTRACT_NAME:
-            return contract
+    config = data.get("tool", {}).get("importlinter", {})
+    if not isinstance(config, dict):
+        _fail("tool.importlinter must be a TOML table")
+    return cast(dict[str, Any], config)
+
+
+def _contract() -> dict[str, Any]:
+    for contract in _importlinter_config().get("contracts", []):
+        if isinstance(contract, dict) and contract.get("name") == CONTRACT_NAME:
+            return cast(dict[str, Any], contract)
     _fail(f"no contract named {CONTRACT_NAME!r} in pyproject.toml")
     raise AssertionError("unreachable")
 
 
 def _declared_order() -> list[str]:
     layers = _contract().get("layers")
-    if not layers:
+    if not isinstance(layers, list) or not layers:
         _fail(f"contract {CONTRACT_NAME!r} declares no layers")
-    return [layer.split(".", 1)[1] for layer in layers]
+    declared = []
+    for layer in layers:
+        if not isinstance(layer, str) or not layer.startswith("luxar."):
+            _fail(f"contract {CONTRACT_NAME!r} has an invalid layer name")
+        declared.append(layer.split(".", 1)[1])
+    return declared
+
+
+def _subpackage(module: str) -> str | None:
+    parts = module.split(".")
+    return parts[1] if len(parts) >= 2 else None
 
 
 def _production_ignores() -> list[str]:
-    """`ignore_imports` entries naming concrete modules, not test globs."""
-    return [
-        entry
-        for entry in _contract().get("ignore_imports", [])
-        if ".tests." not in entry and "*" not in entry
-    ]
+    """Concrete ignored edges whose endpoints are both declared layers."""
+    declared = set(_declared_order())
+    ignores = []
+    for entry in _contract().get("ignore_imports", []):
+        if not isinstance(entry, str) or ".tests." in entry or "*" in entry:
+            continue
+        importer, imported = entry.split(" -> ", 1)
+        if _subpackage(importer) in declared and _subpackage(imported) in declared:
+            ignores.append(entry)
+    return ignores
 
 
-def _edges() -> dict[tuple[str, str], list[tuple[str, str]]]:
+def _exclude_type_checking_imports() -> bool:
+    value = _importlinter_config().get("exclude_type_checking_imports", False)
+    if not isinstance(value, bool):
+        _fail("tool.importlinter.exclude_type_checking_imports must be a boolean")
+    return value
+
+
+def _edges() -> EdgeMap:
     """Production subpackage->subpackage edges, as import-linter sees them."""
     try:
         import grimp
     except ImportError:  # pragma: no cover - grimp ships with import-linter
         _fail("grimp is not installed; `pip install import-linter`")
 
-    # MUST match `exclude_type_checking_imports` in pyproject, or this scores a
-    # graph no contract will ever enforce.
     graph = grimp.build_graph(
-        "luxar", include_external_packages=False, exclude_type_checking_imports=True
+        "luxar",
+        include_external_packages=False,
+        exclude_type_checking_imports=_exclude_type_checking_imports(),
     )
 
-    def subpackage(module: str) -> str | None:
-        parts = module.split(".")
-        return parts[1] if len(parts) >= 2 else None
+    declared = set(_declared_order())
+    discovered = {
+        package
+        for module in graph.modules
+        if (package := _subpackage(module)) is not None
+        and package not in {"__main__", "conftest", "tests"}
+    }
+    if unknown := sorted(discovered - declared):
+        _fail(
+            "subpackage(s) missing from the layering contract: "
+            + ", ".join(f"luxar.{package}" for package in unknown)
+        )
 
-    out: dict[tuple[str, str], list[tuple[str, str]]] = defaultdict(list)
+    out: EdgeMap = defaultdict(list)
     for importer in graph.modules:
-        src = subpackage(importer)
+        src = _subpackage(importer)
         if src is None or ".tests" in importer or importer.endswith(".tests"):
             continue
         for imported in graph.find_modules_directly_imported_by(importer):
-            dst = subpackage(imported)
+            dst = _subpackage(imported)
             if dst is None or dst == src or ".tests" in imported:
                 continue
             out[(src, dst)].append((importer, imported))
@@ -111,16 +155,16 @@ def _edges() -> dict[tuple[str, str], list[tuple[str, str]]]:
     return out
 
 
-def _score(order: list[str], edges) -> tuple[int, dict[tuple[str, str], int]]:
+def _score(order: list[str], edges: EdgeMap) -> tuple[int, BadEdges]:
     rank = {name: i for i, name in enumerate(order)}  # 0 = highest layer
-    bad: dict[tuple[str, str], int] = {}
+    bad: BadEdges = {}
     for (src, dst), es in edges.items():
         if src in rank and dst in rank and rank[src] > rank[dst]:
             bad[(src, dst)] = len(es)
     return sum(bad.values()), bad
 
 
-def _rank_orders(declared: list[str], edges) -> list[tuple[int, list[str]]]:
+def _rank_orders(declared: list[str], edges: EdgeMap) -> RankedOrders:
     middle = [p for p in declared if p not in FIXED_TOP and p not in FIXED_BOTTOM]
     ranked = [
         (
@@ -133,7 +177,13 @@ def _rank_orders(declared: list[str], edges) -> list[tuple[int, list[str]]]:
     return ranked
 
 
-def _print_report(declared, edges, total, bad, ranked) -> None:
+def _print_report(
+    declared: list[str],
+    edges: EdgeMap,
+    total: int,
+    bad: BadEdges,
+    ranked: RankedOrders,
+) -> None:
     """Human-readable scores and the exact edges behind them."""
     middle = [p for p in declared if p not in FIXED_TOP and p not in FIXED_BOTTOM]
     print(f"declared order ({len(declared)} layers), {total} violating edges:\n")
@@ -150,25 +200,32 @@ def _print_report(declared, edges, total, bad, ranked) -> None:
             print(f"    {importer} -> {imported}")
 
 
-def _order_problem(total: int, ranked) -> str | None:
+def _order_problem(total: int, ranked: RankedOrders) -> str | None:
     """The declared order is no longer the cheapest one available."""
     if total <= ranked[0][0]:
         return None
     return (
         f"the declared layer order costs {total} violating edges, but "
-        f"{ranked[0][0]} is achievable with {' > '.join(ranked[0][1])}. Either "
-        f"reorder the contract's `layers` to match, or -- if the declared order "
-        f"is deliberate -- say why in the contract comment. The order is an "
-        f"architectural claim, not a score."
+        f"{ranked[0][0]} is achievable with {' > '.join(ranked[0][1])}. Reorder "
+        f"the contract's `layers`, or change the imports until the declared order "
+        f"is optimal; a comment alone does not override this gate."
     )
 
 
 def _debt_problem(total: int, ignores: list[str]) -> str | None:
     """The dated debt list disagrees with the violations actually present."""
+    if len(ignores) > MAX_DEBT:
+        return (
+            f"{len(ignores)} production `ignore_imports` entries exceeds the "
+            f"committed maximum of {MAX_DEBT}. New layering debt must be fixed, "
+            f"not added to the list."
+        )
     if len(ignores) > total:
+        stale = len(ignores) - total
         return (
             f"{len(ignores)} production `ignore_imports` entries for {total} actual "
-            f"violations -- {len(ignores) - total} name edges that no longer exist. "
+            f"violations -- {stale} named edge{'s' if stale != 1 else ''} no longer "
+            f"{'exist' if stale != 1 else 'exists'}. "
             f"Delete them; import-linter refuses an ignore that matches nothing."
         )
     if len(ignores) < total:
