@@ -33,7 +33,14 @@ import { WorkerInitTimeoutError } from '../errors';
  * arm or the `preventDefault`).
  */
 export interface GuardedInitApi<TResult> {
-  initialize(wasmPath?: string): Promise<TResult>;
+  /**
+   * `wasmModule` is an already-compiled module the caller shares across
+   * workers (see `wasm/shared-module.ts`); omitted, the worker compiles its
+   * own. Declaring it here is safe for the SORT worker too: a function with
+   * fewer parameters still satisfies a wider signature in TypeScript, so its
+   * 1-argument `initialize` continues to match.
+   */
+  initialize(wasmPath?: string, wasmModule?: WebAssembly.Module): Promise<TResult>;
 }
 
 /**
@@ -51,7 +58,8 @@ export function initializeWithGuard<TResult>(
   label: string,
   timeoutMs: number,
   attachPermanentHandlers: () => void,
-  wasmPath?: string
+  wasmPath?: string,
+  wasmModule?: WebAssembly.Module
 ): Promise<TResult> {
   return new Promise<TResult>((resolve, reject) => {
     let settled = false;
@@ -98,7 +106,7 @@ export function initializeWithGuard<TResult>(
     worker.onmessageerror = () => {
       settle('err', new Error(`${label} produced an unserializable message during init`));
     };
-    api.initialize(wasmPath).then(
+    api.initialize(wasmPath, wasmModule).then(
       (result) => settle('ok', result),
       (err) => settle('err', err instanceof Error ? err : new Error(String(err)))
     );

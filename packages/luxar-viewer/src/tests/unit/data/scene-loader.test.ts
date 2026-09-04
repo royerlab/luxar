@@ -53,7 +53,14 @@ vi.mock('zarrita', () => ({
   withMaybeConsolidatedMetadata: vi.fn(),
   registry: {},
   root: vi.fn(),
-  open: vi.fn(),
+  // `open.v2` / `open.v3` are pinned per-format siblings on the real module,
+  // and the facade's v3-first root open calls `open.v3` directly. Alias all
+  // three to ONE mock so a test that configures `open` still governs the root
+  // open — separate stubs would silently resolve `undefined` instead.
+  open: (() => {
+    const openMock = vi.fn();
+    return Object.assign(openMock, { v2: openMock, v3: openMock });
+  })(),
   get: vi.fn(),
   slice: vi.fn((start, end) => ({ start, end })),
 }));

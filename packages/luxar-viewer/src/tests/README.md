@@ -165,6 +165,7 @@ tests/
 ├── test_4d.luxar.zarr                   # 4D points dataset
 ├── test_broadcasting.luxar.zarr         # Broadcasting encoding test
 ├── test_array_refs.luxar.zarr           # Array reference resolution test
+├── test_gsplats_centers_array_ref.luxar.zarr  # GSplats centers/amplitudes array_ref (#2490)
 └── ... (more fixtures)
 ```
 
@@ -526,6 +527,7 @@ packages/luxar-viewer/tests/fixtures/
 ├── test_4d.luxar.zarr                   # 4D points dataset
 ├── test_broadcasting.luxar.zarr         # Broadcasting encoding test
 ├── test_array_refs.luxar.zarr           # Array reference resolution test
+├── test_gsplats_centers_array_ref.luxar.zarr  # GSplats centers/amplitudes array_ref (#2490)
 ├── test_hdr_colors.luxar.zarr           # HDR color support test
 ├── test_hierarchical_transforms.luxar.zarr  # Transform composition test
 └── ... (more fixtures)

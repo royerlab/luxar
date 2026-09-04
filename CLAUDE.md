@@ -48,7 +48,21 @@ pnpm build        # Build
 pnpm test --run   # Unit tests
 pnpm test:e2e     # E2E tests (Playwright)
 pnpm typecheck    # Type check
-pnpm lint         # Lint
+pnpm lint         # Lint (includes TYPE-AWARE rules: no-floating-promises,
+                  # no-misused-promises, await-thenable, no-base-to-string).
+                  # Also caps production functions at complexity 10, 120 code
+                  # lines, depth 4, and 5 parameters. The 721 pre-existing
+                  # findings are recorded in
+                  # eslint-suppressions.json — ESLint's own baseline, so a NEW
+                  # violation fails, including an increase inside a suppressed
+                  # file (the suppression is a COUNT, not a file exemption).
+                  # Fixed some? `pnpm lint --prune-suppressions` tightens it.
+                  # Moved/renamed a baselined file? Re-key with `pnpm exec
+                  # eslint src --ext .ts,.tsx --suppress-rule <rule>`, then
+                  # prune; verify the suppressions diff only moves that path.
+                  # Do NOT add a `// eslint-disable` to get green: a floating
+                  # promise here is a load that silently stalls, which no test
+                  # asserts and E2E does not gate.
 pnpm format       # Format
 ```
 
@@ -83,6 +97,14 @@ make test-perf-e2e   # Opt-in Playwright performance suite
 make check-all    # All quality checks (Python, TypeScript, Rust, Go) — reformats
 make lint-python        # read-only: ruff check
 make check-complexity   # read-only: ruff C901 ratcheted against scripts/complexity_baseline.json
+make check-lint-ratchet # read-only: ruff's DEFECT rules (flake8-bugbear + RUF012)
+                  # ratcheted against scripts/lint_baseline.json. Existing debt is
+                  # tolerated; a file that newly breaks one of these rules — or
+                  # gains another violation of one it already breaks — fails.
+                  # B905 (`zip` without `strict=`) is the bulk of the baseline and
+                  # its fix CHANGES BEHAVIOUR (`strict=True` raises), so pay it
+                  # down per call site rather than sweeping. B008 is gated at zero:
+                  # the Typer `Option`/`Argument` idiom is exempted in pyproject.
 make type-check-python  # read-only: mypy
 make security           # read-only: bandit
 make check-typescript   # read-only: typecheck + lint + unit tests
@@ -262,7 +284,7 @@ See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for complete documentation.
 
 ### Luxar CLI
 ```bash
-luxar demo                       # List the 89 bundled demos (table)
+luxar demo                       # List the 90 bundled demos (table)
 luxar demo run lorenz            # Run a demo by key/index (forwards -- args)
 luxar demo stop                  # Stop running demos and free their ports (--dry-run lists)
 luxar demo cache list            # Inventory / clear demo caches (cache clear …)

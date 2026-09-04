@@ -49,7 +49,11 @@ export const workerAPI = {
   // module scope (the main-thread setWasmJsUrl override does NOT cross into the
   // worker), so a relocated WASM binary is loaded here instead of silently
   // falling back to the slower TS implementation.
-  initialize: (wasmPath?: string): Promise<WorkerInitResult> => initializeImpl(state, wasmPath),
+  // `wasmModule` is a module the MAIN THREAD already compiled and shared with
+  // every worker (structured-cloned across postMessage), so this worker only
+  // instantiates instead of compiling its own copy. Absent, it compiles.
+  initialize: (wasmPath?: string, wasmModule?: WebAssembly.Module): Promise<WorkerInitResult> =>
+    initializeImpl(state, wasmPath, wasmModule),
   // Decoding functions (main thread fetches, worker decodes)
   decodeQuantized: (p: Parameters<typeof decodeQuantizedImpl>[1]) => decodeQuantizedImpl(state, p),
   decodeLogScalar: (p: Parameters<typeof decodeLogScalarImpl>[1]) => decodeLogScalarImpl(state, p),

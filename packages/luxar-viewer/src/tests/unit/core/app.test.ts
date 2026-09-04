@@ -486,16 +486,33 @@ describe('LuxarApp', () => {
       expect(mockSceneManager.loadSceneData).not.toHaveBeenCalled();
     });
 
-    it('should load directly for valid zarr datasets', async () => {
+    it('should load a .zarr URL directly, without probing for it', async () => {
       mockFetch.mockResolvedValue({ ok: true });
       await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
+      // A `.zarr` suffix NAMES a store, so the HEAD probes are skipped
+      // entirely — they only re-confirmed what the URL already said, at the
+      // cost of a round trip ahead of everything else on first paint.
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(mockSceneManager.loadSceneData).toHaveBeenCalledWith(
+        'http://example.com/data.zarr',
+        undefined,
+        { applyViewerConfigFov: true }
+      );
+      expect(DatasetBrowser).not.toHaveBeenCalled();
+    });
+
+    it('should load directly for an unsuffixed URL whose zarr probe hits', async () => {
+      mockFetch.mockResolvedValue({ ok: true });
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/store' });
+
+      // The probe path still exists for URLs that do not name themselves.
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://example.com/data.zarr/.zgroup',
+        'http://example.com/store/.zgroup',
         expect.objectContaining({ method: 'HEAD' })
       );
       expect(mockSceneManager.loadSceneData).toHaveBeenCalledWith(
-        'http://example.com/data.zarr',
+        'http://example.com/store',
         undefined,
         { applyViewerConfigFov: true }
       );
@@ -518,7 +535,10 @@ describe('LuxarApp', () => {
       // browser (likely a directory URL or offline). Pin both behaviors.
       mockFetch.mockRejectedValue(new Error('Network error'));
 
-      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
+      // An UNSUFFIXED url, so detection actually reaches the probes: a
+      // `.zarr` URL now short-circuits ahead of them and would never exercise
+      // the rejection path this test exists for.
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/store' });
 
       expect(app.initialized).toBe(true);
       // Because all zarr-metadata probes rejected, `shouldShowBrowser`

@@ -1,0 +1,1696 @@
+{
+  "src/cache/chunk-prefetcher.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    },
+    "@typescript-eslint/no-misused-promises": {
+      "count": 1
+    },
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/cache/chunk-source/http-chunk-source.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/cache/chunk-source/zip-chunk-source.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/cache/decompressed-chunk-cache/cached-zarr-array.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/cache/heap-budget.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/cache/lru-cache.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/cache/multi-level-caching-store.ts": {
+    "complexity": {
+      "count": 4
+    }
+  },
+  "src/cache/multi-level-caching-store/fetch-retry.ts": {
+    "@typescript-eslint/no-base-to-string": {
+      "count": 1
+    },
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/cache/multi-level-caching-store/opfs-store.ts": {
+    "complexity": {
+      "count": 5
+    },
+    "max-depth": {
+      "count": 4
+    }
+  },
+  "src/cache/multi-level-caching-store/opfs-store/metadata.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/cache/multi-level-caching-store/validation-queue.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/config/sections/adaptive-dpr/validate.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/config/sections/cache/validate.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/config/sections/camera/validate.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/config/sections/depth-sort/validate.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/config/sections/rendering-controls/validate.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/config/url-params.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/config/zarr-bridge/viewer-config-utils.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/config/zarr-bridge/viewer-state-capture.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/controls/controls-manager/factories.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/controls/luxar-fly-controls/input/keyboard.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/controls/luxar-orbit-controls.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/controls/luxar-orbit-controls/input/pointer.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/controls/luxar-orbit-controls/update.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/core/app.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/core/app/dataset/load-dataset.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/core/app/debug/capture-readiness.ts": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/core/app/debug/debug-interface.ts": {
+    "max-lines-per-function": {
+      "count": 2
+    }
+  },
+  "src/core/app/debug/debug-state.ts": {
+    "complexity": {
+      "count": 2
+    },
+    "max-lines-per-function": {
+      "count": 2
+    }
+  },
+  "src/core/app/init/build-rail-items.ts": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/core/app/init/pipeline.ts": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/core/app/interaction/canvas-actions.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/core/app/overlays/init-overlays.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/core/app/picking/init-picking.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 1
+    },
+    "complexity": {
+      "count": 2
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/core/app/picking/pick-result-handler.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/core/app/viewer-config/apply-state.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/core/bootstrap.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/core/layer/luxar-layer.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/accumulators/gsplats.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/accumulators/lines.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/data/accumulators/points.ts": {
+    "complexity": {
+      "count": 3
+    }
+  },
+  "src/data/array-decoder/decoder.ts": {
+    "complexity": {
+      "count": 8
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/data/attrs-composer.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/codecs/luxar-delta.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/gsplats/gsplats-progressive-loader.ts": {
+    "complexity": {
+      "count": 3
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/data/gsplats/gsplats-spatial-index-loader.ts": {
+    "complexity": {
+      "count": 5
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/data/gsplats/handler.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/gsplats/lod-refinement.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-depth": {
+      "count": 1
+    }
+  },
+  "src/data/lines/handler.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/lines/lines-progressive-loader.ts": {
+    "complexity": {
+      "count": 3
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/data/lines/lines-spatial-index-loader.ts": {
+    "complexity": {
+      "count": 2
+    },
+    "max-lines-per-function": {
+      "count": 2
+    },
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/data/lines/lod-refinement.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-depth": {
+      "count": 1
+    }
+  },
+  "src/data/loaders/aggregate-loader-metrics.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/loaders/color-loader.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/data/loaders/element-ids.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/loaders/overlays/overlay-loader.ts": {
+    "@typescript-eslint/no-base-to-string": {
+      "count": 1
+    },
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/data/loaders/progressive/concat-helpers.ts": {
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/data/loaders/progressive/slice-cache-helper.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/data/loaders/progressive/streaming-policy.ts": {
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/data/loaders/progressive/view-state-equal.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/data/loaders/spatial-query/range-loader.ts": {
+    "max-params": {
+      "count": 2
+    }
+  },
+  "src/data/loaders/spatial-query/range-loader/broadcasted.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/data/loaders/spatial-query/range-loader/perchannel.ts": {
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/data/mesh/handler.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/mesh/lod-refinement.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/mesh/mesh-progressive-loader.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/data/mesh/mesh-whole-node-loader.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/data/mesh/preflight.ts": {
+    "complexity": {
+      "count": 5
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/data/mesh/projection.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/data/mesh/texture-decode.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/data/nav/directory-navigator.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/points/chunk-index-loader.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/points/effective-radius-calculator.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/points/lod-refinement.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/points/points-progressive-loader.ts": {
+    "complexity": {
+      "count": 4
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "max-params": {
+      "count": 2
+    }
+  },
+  "src/data/points/points-spatial-index-loader.ts": {
+    "complexity": {
+      "count": 4
+    },
+    "max-depth": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 3
+    },
+    "max-params": {
+      "count": 2
+    }
+  },
+  "src/data/points/projection.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-depth": {
+      "count": 19
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/data/scene-identity-watchdog.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/scene-loader.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    },
+    "complexity": {
+      "count": 4
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/data/scene-loader/cache/cache-api.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/scene-loader/cache/cache-setup.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/scene-loader/commit/commit-gsplats-geometry.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/scene-loader/commit/commit-lines-geometry.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/scene-loader/commit/commit-points-geometry.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-depth": {
+      "count": 1
+    },
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/data/scene-loader/geometry-descriptors.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/scene-loader/lifecycle/dispose.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/scene-loader/lifecycle/load-scene.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/data/scene-loader/lifecycle/retry.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/scene-loader/loaders/loader-factory.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/scene-loader/loaders/run-loader-updates.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/scene-loader/monitor/draw-order-provider.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/scene-loader/monitor/lod-progress-provider.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/scene-loader/monitor/scene-graph-converter.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/scene-loader/nodes/build-scene-graph.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/scene-loader/nodes/load-children-concurrently.ts": {
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/data/scene-loader/nodes/load-leaf-error-dispatch.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/scene-loader/nodes/load-lod-group-node.ts": {
+    "complexity": {
+      "count": 2
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/data/scene-loader/nodes/load-mesh-node.ts": {
+    "@typescript-eslint/no-base-to-string": {
+      "count": 2
+    }
+  },
+  "src/data/scene-loader/nodes/load-partition-group-node.ts": {
+    "complexity": {
+      "count": 4
+    }
+  },
+  "src/data/scene-loader/process/data-processor-gsplats.ts": {
+    "complexity": {
+      "count": 2
+    },
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/data/scene-loader/process/data-processor-lines.ts": {
+    "complexity": {
+      "count": 2
+    },
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/data/scene-loader/process/data-processor-mesh.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/scene-loader/progressive/refinement.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-depth": {
+      "count": 1
+    }
+  },
+  "src/data/scene-loader/update-view/atomic-commit.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/scene-loader/update-view/queue-next.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/data/scene-loader/view-state/derive-node-view-state.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/scene-loader/view-state/view-state-queue.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/data/stats/scene-stats.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/transforms/nd-transform.ts": {
+    "complexity": {
+      "count": 2
+    },
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/data/view-state-manager.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/data/zip/range-reader.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/input/input-handler.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/input/input-handler/commands/panel-coordinator.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/input/input-handler/context-manager.ts": {
+    "complexity": {
+      "count": 2
+    },
+    "max-depth": {
+      "count": 10
+    }
+  },
+  "src/input/input-handler/dimension-navigation/compute-step.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/input/input-handler/key-bindings/fly-bindings.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/input/input-handler/key-bindings/navigation-bindings.ts": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/input/input-handler/window-events/window-event-handler.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/profiling/update-profiler.ts": {
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/rendering/adaptive-dpr-manager.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/rendering/adaptive-dpr/probe-controller.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/rendering/depth-sort-coordinator.ts": {
+    "complexity": {
+      "count": 7
+    }
+  },
+  "src/rendering/depth-sort-coordinator/render-order.ts": {
+    "complexity": {
+      "count": 4
+    },
+    "max-depth": {
+      "count": 1
+    }
+  },
+  "src/rendering/depth-sort-coordinator/triangle-ordering.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/rendering/element-storage.ts": {
+    "complexity": {
+      "count": 4
+    }
+  },
+  "src/rendering/gpu-buffer-pool.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/rendering/gpu-buffer-pool/byte-budget-evictor.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/rendering/gpu-buffer-pool/geometry-bytes.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/rendering/gpu-buffer-pool/gsplats-adapter.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/rendering/gpu-buffer-pool/points-adapter.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/rendering/gpu-byte-budget.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/rendering/gsplat-geometry.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/rendering/ktx2-texture-decoder.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/rendering/line-geometry.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/rendering/material-sync-helpers.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/rendering/materials/_shared/line-capsule.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/rendering/materials/_shared/material-builder.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/rendering/materials/_shared/tsl-helpers.ts": {
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/rendering/materials/gsplat/material-glsl.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/rendering/materials/gsplat/material-tsl.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/rendering/materials/gsplat/shader-tsl.ts": {
+    "complexity": {
+      "count": 3
+    },
+    "max-lines-per-function": {
+      "count": 2
+    }
+  },
+  "src/rendering/materials/line/material-glsl.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/rendering/materials/line/material-tsl.ts": {
+    "complexity": {
+      "count": 3
+    }
+  },
+  "src/rendering/materials/line/shader-tsl-capsule.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 3
+    }
+  },
+  "src/rendering/materials/line/shader-tsl.ts": {
+    "complexity": {
+      "count": 4
+    },
+    "max-lines-per-function": {
+      "count": 2
+    }
+  },
+  "src/rendering/materials/mesh/material-glsl.ts": {
+    "complexity": {
+      "count": 3
+    }
+  },
+  "src/rendering/materials/mesh/material-tsl.ts": {
+    "complexity": {
+      "count": 3
+    }
+  },
+  "src/rendering/materials/mesh/shader-tsl.ts": {
+    "complexity": {
+      "count": 4
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/rendering/materials/point/material-glsl.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/rendering/materials/point/material-tsl.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/rendering/materials/point/shader-tsl.ts": {
+    "complexity": {
+      "count": 3
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/rendering/mesh-geometry.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/rendering/mesh-texture.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/rendering/node-factory.ts": {
+    "complexity": {
+      "count": 2
+    },
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/rendering/node-factory/create-gsplats-node.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/rendering/node-factory/create-lines-node.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/rendering/node-factory/create-mesh-node.ts": {
+    "complexity": {
+      "count": 3
+    }
+  },
+  "src/rendering/node-factory/create-points-node.ts": {
+    "complexity": {
+      "count": 2
+    },
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/rendering/node-factory/validation.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/rendering/picking/gsplat/pick.tsl.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 2
+    }
+  },
+  "src/rendering/picking/line/pick-capsule.tsl.ts": {
+    "max-lines-per-function": {
+      "count": 2
+    }
+  },
+  "src/rendering/picking/line/pick.tsl.ts": {
+    "complexity": {
+      "count": 2
+    },
+    "max-lines-per-function": {
+      "count": 2
+    }
+  },
+  "src/rendering/picking/mesh/pick.tsl.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/rendering/picking/picking-system.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/rendering/picking/point/pick.tsl.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/rendering/point-geometry.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/rendering/post-processing/mega/material-tsl.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/rendering/post-processing/mega/material.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/rendering/post-processing/mega/shader.tsl.ts": {
+    "complexity": {
+      "count": 2
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/rendering/post-processing/post-processing-manager.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-params": {
+      "count": 2
+    }
+  },
+  "src/rendering/post-processing/post-processing-manager/settings.ts": {
+    "complexity": {
+      "count": 2
+    },
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/rendering/renderer-capabilities.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/rendering/webgl-blend-warmup.ts": {
+    "complexity": {
+      "count": 4
+    }
+  },
+  "src/scene/animation/advance-value.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/scene/animation/animation-controller.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/scene/animation/dimension-animation-manager.ts": {
+    "complexity": {
+      "count": 4
+    },
+    "max-depth": {
+      "count": 1
+    }
+  },
+  "src/scene/dims/step-math.ts": {
+    "complexity": {
+      "count": 2
+    },
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/scene/lod-display-gate.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/scene/lod-eviction.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/scene/lod-fade.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/scene/lod-freshness.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/scene/lod-group-registry.ts": {
+    "complexity": {
+      "count": 5
+    },
+    "max-depth": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/scene/lod-selector-math.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/scene/scene-dims-manager.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/scene/scene-manager.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/scene/scene-manager/camera/camera-framing.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/scene/scene-manager/camera/camera-setup.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/scene/scene-manager/render-pipeline/renderer-setup.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/scene/scene-manager/render-pipeline/webgl-context-recovery.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 1
+    }
+  },
+  "src/scene/synthetic-scene.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/tests/e2e/cache-system.spec.ts": {
+    "@typescript-eslint/no-base-to-string": {
+      "count": 1
+    }
+  },
+  "src/tests/e2e/dimension-animation.spec.ts": {
+    "@typescript-eslint/await-thenable": {
+      "count": 5
+    }
+  },
+  "src/tests/e2e/error-recovery.spec.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 6
+    }
+  },
+  "src/tests/e2e/helpers.ts": {
+    "@typescript-eslint/no-base-to-string": {
+      "count": 1
+    }
+  },
+  "src/tests/e2e/recording-panel.spec.ts": {
+    "@typescript-eslint/await-thenable": {
+      "count": 1
+    }
+  },
+  "src/tests/global-setup.ts": {
+    "@typescript-eslint/no-base-to-string": {
+      "count": 1
+    }
+  },
+  "src/tests/unit/core/app.test.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    }
+  },
+  "src/tests/unit/core/app/dataset/load-dataset.test.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 2
+    }
+  },
+  "src/tests/unit/core/app/dataset/should-show-browser.test.ts": {
+    "@typescript-eslint/no-base-to-string": {
+      "count": 5
+    }
+  },
+  "src/tests/unit/data/gsplats-progressive-loader.test.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 10
+    }
+  },
+  "src/tests/unit/data/gsplats/spatial-index-loader.test.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 16
+    }
+  },
+  "src/tests/unit/data/lines-progressive-loader.test.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 9
+    }
+  },
+  "src/tests/unit/data/lines/spatial-index-loader.test.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 11
+    }
+  },
+  "src/tests/unit/data/loaders/color-loader.test.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 3
+    }
+  },
+  "src/tests/unit/data/loaders/l0-cache-wiring.test.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 2
+    }
+  },
+  "src/tests/unit/data/points-progressive-loader.test.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 10
+    }
+  },
+  "src/tests/unit/data/points/spatial-extend-dims.test.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 2
+    }
+  },
+  "src/tests/unit/data/scene-identity-watchdog.test.ts": {
+    "@typescript-eslint/no-base-to-string": {
+      "count": 3
+    }
+  },
+  "src/tests/unit/data/scene-loader.test.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 7
+    }
+  },
+  "src/tests/unit/data/scene-loader/mesh-update-sweep.test.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/tests/unit/rendering/depth-sort-coordinator.test.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 23
+    }
+  },
+  "src/tests/unit/rendering/webgl-blend-warmup.test.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 9
+    }
+  },
+  "src/tests/unit/types/geometry-capabilities.test.ts": {
+    "@typescript-eslint/no-base-to-string": {
+      "count": 1
+    }
+  },
+  "src/tests/unit/ui/recording/offline-capture-drivers.test.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/tests/unit/ui/recording/zip-sequence-capture.test.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 3
+    }
+  },
+  "src/tests/unit/workers/worker-pool/selection/load-balancing.test.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 1
+    }
+  },
+  "src/themes/glass-filters.ts": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/types/dims.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/ui/control-rail.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/ui/data-loading-monitor.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    },
+    "complexity": {
+      "count": 3
+    }
+  },
+  "src/ui/data-loading-monitor/advisor.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/ui/data-loading-monitor/metrics/cache.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/ui/data-loading-monitor/metrics/global-stats.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/ui/data-loading-monitor/tabs/cache.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/ui/data-loading-monitor/tabs/memory.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/ui/data-loading-monitor/tabs/overview.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/ui/data-loading-monitor/templates/cache.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/ui/data-loading-monitor/templates/memory.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/ui/data-loading-monitor/templates/primitives.ts": {
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/ui/data-loading-monitor/templates/scene-graph.ts": {
+    "complexity": {
+      "count": 4
+    },
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/ui/data-loading-monitor/timing-panel.ts": {
+    "complexity": {
+      "count": 7
+    },
+    "max-depth": {
+      "count": 4
+    }
+  },
+  "src/ui/dataset-browser.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 3
+    },
+    "complexity": {
+      "count": 2
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/ui/debug-console.ts": {
+    "@typescript-eslint/no-base-to-string": {
+      "count": 2
+    }
+  },
+  "src/ui/debug-console/formatters.ts": {
+    "@typescript-eslint/no-base-to-string": {
+      "count": 2
+    }
+  },
+  "src/ui/dimension-sliders.ts": {
+    "complexity": {
+      "count": 5
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/ui/error-overlay.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/ui/gui/folder.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/ui/help-overlay.ts": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/ui/help-overlay/focus-trap.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/ui/help-overlay/type-to-filter.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/ui/layers/layer-apply.ts": {
+    "complexity": {
+      "count": 4
+    }
+  },
+  "src/ui/layers/layer-controls.ts": {
+    "complexity": {
+      "count": 3
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/ui/layers/layer-state.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/ui/layers/layers-panel.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 1
+    },
+    "complexity": {
+      "count": 4
+    }
+  },
+  "src/ui/overlay-manager.ts": {
+    "complexity": {
+      "count": 5
+    }
+  },
+  "src/ui/overlay-widgets/context-menu.ts": {
+    "complexity": {
+      "count": 2
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/ui/rail-panels/navigation-popover.ts": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/ui/rail-panels/settings-popover.ts": {
+    "max-lines-per-function": {
+      "count": 2
+    }
+  },
+  "src/ui/recording-panel.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 2
+    },
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/ui/recording-panel/ffmpeg-script.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/ui/recording-panel/gui-builder.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/ui/recording-panel/offline-capture-strategy.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-depth": {
+      "count": 6
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/ui/recording-panel/overlay-compositor.ts": {
+    "complexity": {
+      "count": 2
+    },
+    "max-params": {
+      "count": 2
+    }
+  },
+  "src/ui/recording-panel/screenshot-strategy.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/ui/recording-panel/session.ts": {
+    "complexity": {
+      "count": 2
+    },
+    "max-lines-per-function": {
+      "count": 2
+    }
+  },
+  "src/ui/recording-panel/ui/gui-construction.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/ui/recording-panel/video-recording-strategy.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/ui/recording-panel/zip-sequence-capture.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/ui/rendering-controls.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/ui/rendering-controls/controls-utils.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/ui/rendering-controls/setup/anti-aliasing-setup.ts": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/ui/rendering-controls/setup/camera-setup.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/ui/rendering-controls/setup/performance-setup.ts": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/ui/rendering-controls/setup/post-processing-setup.ts": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/ui/rendering-controls/sync-current-state.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/utils/image-mime.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/wasm/typescript/decode.ts": {
+    "max-params": {
+      "count": 5
+    }
+  },
+  "src/wasm/typescript/depth-sort.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/wasm/typescript/effective-radii.ts": {
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/wasm/typescript/float32-math.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/wasm/typescript/gsplats-processing.ts": {
+    "complexity": {
+      "count": 2
+    },
+    "max-params": {
+      "count": 2
+    }
+  },
+  "src/wasm/typescript/lines-clipping.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-params": {
+      "count": 8
+    }
+  },
+  "src/wasm/typescript/mesh-culling.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/workers/data-worker/decode/lut.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/workers/data-worker/decode/perchannel.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/workers/data-worker/projection/gsplats.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/workers/data-worker/projection/lines.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/workers/data-worker/validation.ts": {
+    "complexity": {
+      "count": 4
+    },
+    "max-params": {
+      "count": 3
+    }
+  },
+  "src/workers/worker-pool.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/workers/worker-pool/lifecycle/init-with-guard.ts": {
+    "max-params": {
+      "count": 1
+    }
+  }
+}

@@ -36,7 +36,8 @@ data/
 │   ├── range-reader.ts            # Strict 206/Content-Range reader; retains + stitches the directory read
 │   └── store.ts                   # Lazily opens the archive; memoizes the directory only on success
 ├── scene-loader.ts                # Orchestrates hierarchical scene loading (spans all geometries)
-├── scene-identity-watchdog.ts     # Re-probes the dataset's root .zattrs (interval + tab focus)
+├── scene-identity-watchdog.ts     # Conditionally re-probes root attrs (zarr.json/.zattrs)
+│                                  #   every 15 s locally / 120 s remotely, plus tab focus,
 │                                  #   and raises the scene-identity banner when the ?src=
 │                                  #   address starts serving a DIFFERENT scene (a demo/dev
 │                                  #   server died and another took its port) or goes

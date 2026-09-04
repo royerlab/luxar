@@ -7,9 +7,12 @@
  * oldest messages are dropped FIFO.
  */
 
-import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { runInNewContext } from 'node:vm';
-import { consoleInterceptor } from '../../../utils/console-interceptor';
+import { consoleInterceptor, disposeConsoleInterceptor } from '../../../utils/console-interceptor';
+
+type ConsoleMethod = 'log' | 'warn' | 'error' | 'info' | 'debug';
+const CONSOLE_METHODS: readonly ConsoleMethod[] = ['log', 'warn', 'error', 'info', 'debug'];
 
 describe('ConsoleInterceptor ring buffer', () => {
   beforeEach(() => {
@@ -278,5 +281,234 @@ describe('ConsoleInterceptor stack capture', () => {
     }
 
     expect(lastMessage().stack).toBe(err.stack);
+  });
+});
+
+describe('ConsoleInterceptor info/debug capture', () => {
+  beforeEach(() => {
+    consoleInterceptor.patch();
+    consoleInterceptor.clearBuffer();
+  });
+
+  afterEach(() => {
+    consoleInterceptor.dispose();
+  });
+
+  // `log`, `warn` and `error` were already covered; `info` and `debug` are the
+  // two overrides nothing exercised. They matter because the type tag is what
+  // the debug console filters on — an override that captured the wrong tag, or
+  // dropped the pass-through, would be invisible to every other test here.
+  it.each([
+    ['info', () => console.info('hello', 1)],
+    ['debug', () => console.debug('hello', 1)],
+  ])('captures console.%s under its own type tag', (type, emit) => {
+    emit();
+
+    const messages = consoleInterceptor.getBufferedMessages();
+    expect(messages).toHaveLength(1);
+    expect(messages[0].type).toBe(type);
+    expect(messages[0].args).toEqual(['hello', 1]);
+  });
+
+  it.each(['info', 'debug'] as const)('still forwards console.%s to the host', (type) => {
+    // The interceptor is a TEE, not a sink: swallowing output would hide every
+    // message from the real devtools console.
+    const original = consoleInterceptor.getOriginalConsole();
+    const spy = vi.spyOn(original, type).mockImplementation(() => {});
+    try {
+      console[type]('passed through', 42);
+      expect(spy).toHaveBeenCalledWith('passed through', 42);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('counts info and debug separately in getStats()', () => {
+    console.info('i');
+    console.debug('d');
+    console.debug('d2');
+
+    const stats = consoleInterceptor.getStats();
+    expect(stats.types.info).toBe(1);
+    expect(stats.types.debug).toBe(2);
+  });
+});
+
+describe('ConsoleInterceptor listeners', () => {
+  beforeEach(() => {
+    consoleInterceptor.patch();
+    consoleInterceptor.clearBuffer();
+  });
+
+  afterEach(() => {
+    consoleInterceptor.dispose();
+  });
+
+  it('notifies a registered listener with the buffered message', () => {
+    const seen: Array<{ type: string; args: unknown[] }> = [];
+    const listener = (m: { type: string; args: unknown[] }) =>
+      seen.push({ type: m.type, args: m.args });
+    consoleInterceptor.addListener(listener);
+    try {
+      console.warn('watch me');
+    } finally {
+      consoleInterceptor.removeListener(listener);
+    }
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0].type).toBe('warn');
+    expect(seen[0].args).toEqual(['watch me']);
+  });
+
+  it('stops notifying after removeListener', () => {
+    const listener = vi.fn();
+    consoleInterceptor.addListener(listener);
+    console.log('first');
+    consoleInterceptor.removeListener(listener);
+    console.log('second');
+
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it('a throwing listener neither breaks console nor starves the others', () => {
+    // The per-listener catch is what stops one bad subscriber (a half-torn-down
+    // UI panel, say) from taking out console.* process-wide.
+    const thrower = () => {
+      throw new Error('listener blew up');
+    };
+    const healthy = vi.fn();
+    consoleInterceptor.addListener(thrower);
+    consoleInterceptor.addListener(healthy);
+
+    // The failure is reported through the ORIGINAL console.error so it cannot
+    // recurse back into the interceptor; silence it to keep the test output
+    // clean, and assert it actually reported rather than swallowing.
+    const original = consoleInterceptor.getOriginalConsole();
+    const errorSpy = vi.spyOn(original, 'error').mockImplementation(() => {});
+    try {
+      expect(() => console.log('still fine')).not.toThrow();
+      expect(healthy).toHaveBeenCalledTimes(1);
+      expect(errorSpy).toHaveBeenCalledWith('Error in console listener:', expect.any(Error));
+    } finally {
+      errorSpy.mockRestore();
+      consoleInterceptor.removeListener(thrower);
+      consoleInterceptor.removeListener(healthy);
+    }
+
+    // And the message still reached the buffer despite the throw.
+    expect(consoleInterceptor.getBufferedMessages().at(-1)?.args).toEqual(['still fine']);
+  });
+});
+
+describe('ConsoleInterceptor singleton disposal', () => {
+  beforeEach(() => {
+    disposeConsoleInterceptor();
+  });
+
+  afterEach(() => {
+    disposeConsoleInterceptor();
+  });
+
+  it('reports isPatched across the patch/dispose cycle', () => {
+    expect(consoleInterceptor.isPatched).toBe(false);
+    consoleInterceptor.patch();
+    expect(consoleInterceptor.isPatched).toBe(true);
+    consoleInterceptor.dispose();
+    expect(consoleInterceptor.isPatched).toBe(false);
+  });
+
+  it('un-intercepts the host console when disposed WHILE PATCHED', () => {
+    // The app dispose pipeline's contract: a mount/unmount cycle must leave the
+    // host console usable and no longer feeding the buffer. Nothing tested the
+    // while-patched path, which is the only one with work to do.
+    //
+    // Asserted FUNCTIONALLY, not by reference identity. The module stores a
+    // bound copy of `console.log`, so dispose restores that copy rather than the
+    // exact original object — deliberate, because an unbound console method
+    // throws "Illegal invocation" in some hosts.
+    const patchedMarker = { captured: 0 };
+    consoleInterceptor.patch();
+    consoleInterceptor.clearBuffer();
+    const patchedMethods = Object.fromEntries(
+      CONSOLE_METHODS.map((method) => [method, console[method]])
+    ) as Record<ConsoleMethod, typeof console.log>;
+
+    console.log('while patched');
+    patchedMarker.captured = consoleInterceptor.getBufferedMessages().length;
+    expect(patchedMarker.captured).toBe(1);
+
+    disposeConsoleInterceptor();
+
+    // The override is gone …
+    for (const method of CONSOLE_METHODS) {
+      expect(console[method], `console.${method} remained patched`).not.toBe(
+        patchedMethods[method]
+      );
+    }
+    // … the console still works …
+    expect(() => console.log('after dispose')).not.toThrow();
+    // … and nothing is being captured any more.
+    expect(consoleInterceptor.getBufferedMessages()).toEqual([]);
+  });
+
+  it('restores the same console methods across repeated singleton lifecycles', () => {
+    consoleInterceptor.patch();
+    disposeConsoleInterceptor();
+    const restoredMethods = Object.fromEntries(
+      CONSOLE_METHODS.map((method) => [method, console[method]])
+    ) as Record<ConsoleMethod, typeof console.log>;
+
+    consoleInterceptor.patch();
+    disposeConsoleInterceptor();
+
+    for (const method of CONSOLE_METHODS) {
+      expect(console[method], `console.${method} changed across lifecycles`).toBe(
+        restoredMethods[method]
+      );
+    }
+  });
+
+  it('is idempotent and side-effect-free when never patched', () => {
+    const pristine = console.log;
+
+    expect(() => disposeConsoleInterceptor()).not.toThrow();
+    expect(() => disposeConsoleInterceptor()).not.toThrow();
+
+    expect(console.log).toBe(pristine);
+  });
+
+  it('hands out a FRESH interceptor after disposal', () => {
+    consoleInterceptor.patch();
+    console.log('belongs to the old instance');
+    expect(consoleInterceptor.getBufferedMessages().length).toBeGreaterThan(0);
+
+    disposeConsoleInterceptor();
+
+    // The proxy lazily rebuilds the singleton, so the buffer must be empty
+    // rather than carrying the previous instance's messages.
+    expect(consoleInterceptor.getBufferedMessages()).toEqual([]);
+    expect(consoleInterceptor.isPatched).toBe(false);
+  });
+});
+
+describe('ConsoleInterceptor singleton proxy traps', () => {
+  afterEach(() => {
+    disposeConsoleInterceptor();
+  });
+
+  it('forwards `in` checks to the live instance', () => {
+    expect('patch' in consoleInterceptor).toBe(true);
+    expect('nonExistentMember' in consoleInterceptor).toBe(false);
+  });
+
+  it('forwards writes through to the live instance', () => {
+    // REGRESSION GUARD. The trap used to pass `receiver` to `Reflect.set`,
+    // which completes the write with CreateDataProperty(receiver, …) — landing
+    // the value on the proxy's empty `{}` target instead of the instance, and
+    // still reporting success. Reading the same property through the proxy then
+    // returned `undefined` from the live instance.
+    (consoleInterceptor as unknown as { probe: number }).probe = 1;
+
+    expect((consoleInterceptor as unknown as { probe: number }).probe).toBe(1);
   });
 });

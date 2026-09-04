@@ -28,7 +28,17 @@ vi.mock('zarrita', () => ({
   withMaybeConsolidatedMetadata: vi.fn(),
   registry: {},
   root: vi.fn(),
-  open: vi.fn(),
+  // `open.v2` / `open.v3` are pinned per-format siblings on the real module,
+  // and the facade's v3-first root open calls `open.v3`. Alias all three to ONE
+  // mock so a test configuring `open` still governs the root open.
+  open: (() => {
+    const openMock = vi.fn();
+    return Object.assign(openMock, { v2: openMock, v3: openMock });
+  })(),
+  // `openGroupPreferV3` narrows a v3 miss via `isNotFoundError`, which does an
+  // `instanceof` against these — an undefined right-hand side throws.
+  NotFoundError: class NotFoundError extends Error {},
+  InvalidMetadataError: class InvalidMetadataError extends Error {},
   get: vi.fn(),
   slice: vi.fn((start, end) => ({ start, end })),
 }));

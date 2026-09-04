@@ -1060,8 +1060,13 @@ enumerated, so **data will not load in a Pages preview deploy**. Verify against
 the canonical hostname.
 
 Directory `.luxar.zarr` stores, including the entire published corpus, fetch
-metadata and chunks with simple GETs. They require
-`Access-Control-Allow-Origin`, but no `Range` request header or preflight.
+metadata and chunks with simple GETs. The identity watchdog also uses
+`If-None-Match` so an unchanged root metadata document can return a bodyless
+`304`. They require `Access-Control-Allow-Origin`, `if-none-match` in
+`AllowedHeaders`, and `ETag` in `Access-Control-Expose-Headers`. Without the
+allowed request header, browsers reject the conditional probe at CORS
+preflight; the viewer falls back to unconditional probes, which remain correct
+but re-download the root metadata document.
 
 Zipped `.zarr.zip` stores use byte-range requests. Their host must honour
 `Range`, include `range` in `AllowedHeaders`, and expose `Content-Range`,
@@ -1074,7 +1079,12 @@ explicitly:
 
 ```bash
 curl -sI -H "Origin: https://luxarviewer.dev" "$DIRECTORY_OBJECT_URL"
-# want: access-control-allow-origin
+# want: access-control-allow-origin, access-control-expose-headers including "etag"
+
+curl -sI -X OPTIONS -H "Origin: https://luxarviewer.dev" \
+  -H "Access-Control-Request-Method: GET" \
+  -H "Access-Control-Request-Headers: if-none-match" "$DIRECTORY_OBJECT_URL"
+# want: 204, access-control-allow-headers including "if-none-match"
 
 curl -sI -X OPTIONS -H "Origin: https://luxarviewer.dev" \
   -H "Access-Control-Request-Method: GET" \
