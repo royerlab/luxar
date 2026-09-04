@@ -18,15 +18,25 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { readdirSync, readFileSync, statSync } from 'fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'fs';
 import { dirname, join, relative, resolve } from 'path';
+import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
 import { ESLint } from 'eslint';
 
 const PKG = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 /** Extensions that carry executable code and therefore must be linted. */
-const CODE = ['.ts', '.tsx', '.js', '.mjs', '.cjs'];
+const CODE = ['.ts', '.tsx', '.mts', '.cts', '.js', '.mjs', '.cjs'];
+const DECLARATIONS = ['.d.ts', '.d.mts', '.d.cts'];
 
 /**
  * Directories holding generated or downloaded output, never authored here.
@@ -46,26 +56,46 @@ const NOT_AUTHORED = new Set([
 ]);
 
 /** Every authored code file in the package, relative to it. */
-function authoredFiles(dir = PKG) {
+function authoredFiles(root = PKG) {
   const out = [];
   const walk = (d) => {
     for (const name of readdirSync(d)) {
-      if (name.startsWith('.') || NOT_AUTHORED.has(name)) continue;
       const full = join(d, name);
       if (statSync(full).isDirectory()) {
+        if (name.startsWith('.') || NOT_AUTHORED.has(name)) continue;
         // Rust's target/ lives under src/wasm/rust and is build output.
         if (name === 'target') continue;
         walk(full);
-      } else if (CODE.some((ext) => name.endsWith(ext)) && !name.endsWith('.d.ts')) {
-        out.push(relative(PKG, full));
+      } else if (
+        CODE.some((ext) => name.endsWith(ext)) &&
+        !DECLARATIONS.some((ext) => name.endsWith(ext))
+      ) {
+        out.push(relative(root, full));
       }
     }
   };
-  walk(dir);
+  walk(root);
   return out;
 }
 
 const FILES = authoredFiles();
+
+describe('authored file discovery', () => {
+  it('includes module extensions and dotfiles but skips generated dot-directories', () => {
+    const fixture = mkdtempSync(join(tmpdir(), 'luxar-lint-scope-'));
+    try {
+      mkdirSync(join(fixture, '.generated'));
+      for (const file of ['probe.mts', 'probe.cts', '.gate.cjs', 'types.d.mts']) {
+        writeFileSync(join(fixture, file), 'export {};\n');
+      }
+      writeFileSync(join(fixture, '.generated', 'ignored.ts'), 'export {};\n');
+
+      expect(authoredFiles(fixture).sort()).toEqual(['.gate.cjs', 'probe.cts', 'probe.mts']);
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('lint scope', () => {
   it('found a tree to check at all', () => {
@@ -110,12 +140,14 @@ describe('prettier scope', () => {
   /** The paths the format scripts actually pass to prettier. */
   function formatTargets() {
     const pkg = JSON.parse(readFileSync(join(PKG, 'package.json'), 'utf8'));
+    // Directory targets intentionally include authored Markdown and HTML next
+    // to the code, so those files are part of the same formatting gate.
     // Both scripts must agree, or `format` would fix files `check:format`
     // never inspects (or worse, the reverse — a permanently red gate).
     const write = pkg.scripts.format.replace('--write', '');
     const check = pkg.scripts['check:format'].replace('--check', '');
     expect(write).toBe(check);
-    return check;
+    return check.trim().split(/\s+/);
   }
 
   it('formats every top-level directory that holds authored code', () => {
@@ -132,6 +164,6 @@ describe('prettier scope', () => {
     // These are the five Playwright configs, both Vite configs and both Vitest
     // configs — the files the audit found outside every tool.
     expect(FILES.some((f) => !f.includes('/') && f.endsWith('.config.ts'))).toBe(true);
-    expect(formatTargets()).toMatch(/\*\.\{[^}]*ts[^}]*\}/);
+    expect(formatTargets().some((target) => /\*\.\{[^}]*ts[^}]*\}/.test(target))).toBe(true);
   });
 });

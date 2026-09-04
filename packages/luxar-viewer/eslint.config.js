@@ -6,7 +6,7 @@ import globals from 'globals';
 export default [
   js.configs.recommended,
   {
-    files: ['src/**/*.{ts,tsx}'],
+    files: ['src/**/*.{ts,tsx,mts,cts}'],
     languageOptions: {
       parser: typescriptParser,
       ecmaVersion: 2022,
@@ -225,11 +225,12 @@ export default [
     // NOT type-aware. Half of them are .mjs/.cjs, which no tsconfig covers,
     // and the value here is the ordinary correctness set -- unused bindings,
     // unreachable code, empty blocks. The .ts members are separately
-    // type-checked: tsconfig.json includes 'tools' and '*.config.ts'.
+    // type-checked: tsconfig.json covers tools and tsconfig.tooling.json covers
+    // the root configs.
     files: [
-      '*.{ts,js,mjs,cjs}',
-      'scripts/**/*.{ts,js,mjs,cjs}',
-      'tools/**/*.{ts,js,mjs,cjs}',
+      '*.{ts,mts,cts,js,mjs,cjs}',
+      'scripts/**/*.{ts,mts,cts,js,mjs,cjs}',
+      'tools/**/*.{ts,mts,cts,js,mjs,cjs}',
       'examples/**/*.{js,mjs}',
     ],
     languageOptions: {
