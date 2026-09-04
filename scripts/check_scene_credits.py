@@ -264,7 +264,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     aprint(
         f"checked {len(targets)} built scene(s); problems: {len(problems)}; "
-        f"skipped: {len(skipped)}"
+        f"unrecognised: {len(unknown)}; skipped: {len(skipped)}"
     )
     for line in problems:
         aprint(f"  {line}")

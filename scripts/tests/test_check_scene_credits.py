@@ -246,7 +246,18 @@ def test_a_mixed_run_with_one_checkable_store_still_inspects(
     inspected NOTHING is suspect. Without this the fix would be over-broad and
     would break any caller passing a mixed glob.
     """
-    good = _v3_store(tmp_path, "cosmicflows_laniakea_full", {"content_hash": "x"})
+    good = _v3_store(
+        tmp_path,
+        "cosmicflows_laniakea_full",
+        {
+            "citation": {
+                "short": (
+                    "Tully et al. 2023 (Cosmicflows-4); Laniakea, Tully et al. 2014"
+                ),
+                "doi": "10.3847/1538-4357/ac94d8",
+            }
+        },
+    )
     unknown = _v3_store(tmp_path, "my_analysis", {"citation": CITED})
 
     code = main([str(good), str(unknown)])
@@ -256,4 +267,6 @@ def test_a_mixed_run_with_one_checkable_store_still_inspects(
     # rather than bailing before the compare loop.
     assert code == 1
     assert "are not demo outputs" in out
-    assert "checked 1 built scene(s)" in out
+    assert (
+        "checked 1 built scene(s); problems: 0; unrecognised: 1; skipped: 0" in out
+    )
