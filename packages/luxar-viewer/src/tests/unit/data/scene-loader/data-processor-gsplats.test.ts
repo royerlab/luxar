@@ -45,6 +45,7 @@ vi.mock('../../../../config', () => ({
 
 import {
   processGSplatsData,
+  WORKER_MIN_SPLATS_3D,
   projectGSplatsTo3DUsingWorker,
 } from '../../../../data/scene-loader/process/data-processor-gsplats';
 import type { LoadedGSplatsData, GSplatsViewState } from '../../../../types/gsplats';
@@ -159,10 +160,10 @@ describe('processGSplatsData', () => {
     expect(mockProcessGSplats).not.toHaveBeenCalled();
   });
 
-  it('runs in-process dispatcher for 3D data even when splatCount > 1000', async () => {
+  it('keeps 3D data in-process below WORKER_MIN_SPLATS_3D even when splatCount > 1000', async () => {
     const root = new THREE.Group();
     root.add(makeMesh('/g'));
-    // ndim=3 → worker NOT used regardless of count
+    // ndim=3 → the nD threshold does not apply; the fast path is cheap per splat
     const result = await processGSplatsData(
       '/g',
       makeData(2000, 3),
@@ -195,13 +196,28 @@ describe('processGSplatsData', () => {
     expect(mockProcessGSplats).not.toHaveBeenCalled();
   });
 
-  // Worker is used iff: useWebWorkers && splatCount > 1000 && ndim > 3.
-  // These cases pin the exact boundary on both axes.
+  // Worker is used iff: useWebWorkers && splatCount > (ndim > 3 ? 1000 : 100_000).
+  // These cases pin the exact boundary on both axes. A 3-D node crosses only at
+  // WORKER_MIN_SPLATS_3D: its fast path is a copy, so a small node is cheaper
+  // in-process, while a multi-million-splat slide blocked the main thread for
+  // seconds per load (2026-09 audit).
   it.each([
     { splatCount: 1000, ndim: 4, expectWorker: false, label: '[1000, 4] → in-process' },
     { splatCount: 1001, ndim: 4, expectWorker: true, label: '[1001, 4] → worker' },
     { splatCount: 2000, ndim: 3, expectWorker: false, label: '[2000, 3] → in-process' },
     { splatCount: 2000, ndim: 4, expectWorker: true, label: '[2000, 4] → worker' },
+    {
+      splatCount: WORKER_MIN_SPLATS_3D,
+      ndim: 3,
+      expectWorker: false,
+      label: '[100_000, 3] → in-process',
+    },
+    {
+      splatCount: WORKER_MIN_SPLATS_3D + 1,
+      ndim: 3,
+      expectWorker: true,
+      label: '[100_001, 3] → worker',
+    },
   ])('threshold boundary $label', async ({ splatCount, ndim, expectWorker }) => {
     const root = new THREE.Group();
     root.add(makeMesh('/g'));

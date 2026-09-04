@@ -6,7 +6,10 @@
  * updateVersion) as parameters instead of reading them off `this`.
  *
  * Behavior summary:
- *   - worker projection is used when `useWebWorkers && splatCount > 1000 && ndim > 3`,
+ *   - worker projection is used when `useWebWorkers` and the splat count exceeds
+ *     `WORKER_MIN_SPLATS_ND` (1 000) for nD data or `WORKER_MIN_SPLATS_3D`
+ *     (100 000) for 3-D data (whose fast path is cheap per splat, so only a
+ *     large node amortizes the clone),
  *   - truncation radius is read from the mesh material,
  *   - the projection's 6-stride `choleskyFactors3D` flows straight to the
  *     commit (no split/re-interleave pass),
@@ -40,6 +43,15 @@ import { isWorkerInfrastructureError } from '../../../workers/worker-pool/errors
 import { projectGSplatsInProcess } from '../../../workers/data-worker/projection/in-process';
 import { isExtendToAll } from '../../../workers/data-worker/projection/hidden-dims';
 import { isStandardGSplats3D } from '../../../workers/data-worker/projection/gsplats';
+
+/**
+ * Worker-projection thresholds (splat count, exclusive). nD projections run a
+ * per-splat attenuation/compaction kernel and amortize the worker round trip
+ * early; 3-D projections take the standard fast path and only pay off off-thread
+ * once the copy itself is long enough to block frames (see `processGSplatsData`).
+ */
+export const WORKER_MIN_SPLATS_ND = 1000;
+export const WORKER_MIN_SPLATS_3D = 100_000;
 import { projectGSplatLabelIndices } from '../../gsplats/label-channel';
 import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../config/constants';
 import type { UpdateSession } from '../../../profiling/update-profiler';
@@ -289,10 +301,17 @@ export async function processGSplatsData(
     return null;
   }
 
-  // Worker only worth using for nD projections that are large enough
-  // to amortize the postMessage cost; 3D-only data short-circuits.
+  // Worker only worth using when the projection is large enough to amortize
+  // the structured-clone round trip. nD data pays a real per-splat kernel
+  // (hidden-dim attenuation + compaction), so 1 000 splats already amortize
+  // it. 3D data takes the standard fast path (a copy plus the fused bounds
+  // scan) and used to stay on the main thread at ANY size — which on a
+  // 14.8 M-splat 2-D pathology slide meant several seconds of main-thread long
+  // tasks per load (2026-09 audit, finding 4). Above WORKER_MIN_SPLATS_3D the
+  // clone is cheaper than blocking the frame loop for that long.
   const useWorkerProjection =
-    appConfig.dataLoading.performance.useWebWorkers && data.splatCount > 1000 && data.ndim > 3;
+    appConfig.dataLoading.performance.useWebWorkers &&
+    data.splatCount > (data.ndim > 3 ? WORKER_MIN_SPLATS_ND : WORKER_MIN_SPLATS_3D);
 
   const truncate = readTruncate(mesh);
 
