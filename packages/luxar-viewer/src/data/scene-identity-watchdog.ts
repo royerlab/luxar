@@ -153,6 +153,10 @@ function buildAttrsUrl(datasetUrl: string, doc: string): string {
  * Whether a dataset URL is served from this machine, and therefore subject to
  * the port-reuse race {@link CHECK_INTERVAL_MS} exists for.
  *
+ * LAN hosts (`192.168.*`, `*.local`, or a `--host 0.0.0.0` server reached from
+ * another machine) use the remote cadence because their URL does not identify
+ * this browser's loopback interface.
+ *
  * Unparseable URLs count as remote: `isWatchable` has already required an
  * `http(s)://` prefix, so anything `URL` still cannot parse is not a local
  * dev server, and the slower cadence is the safe way to be wrong.
@@ -163,7 +167,6 @@ function isLocalOrigin(datasetUrl: string): boolean {
     return (
       hostname === 'localhost' ||
       hostname === '127.0.0.1' ||
-      hostname === '::1' ||
       hostname === '[::1]' ||
       hostname === '0.0.0.0'
     );
