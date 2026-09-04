@@ -368,7 +368,12 @@ class TestPartitionMetadataSurvivesRestriding:
         )
         output = open_group(tmp_path / "out.gsplats.zarr", mode="r")
         after = read_node_attrs(tmp_path / "out.gsplats.zarr") or {}
-        assert sorted(output.group_keys()) == ["part_0", "part_1", "part_2", "provenance"]
+        assert sorted(output.group_keys()) == [
+            "part_0",
+            "part_1",
+            "part_2",
+            "provenance",
+        ]
         assert after["max_elements"] == 123
         assert after["bsp_tree"] == {
             "axis": TIME_COL,
@@ -390,9 +395,7 @@ class TestInputsThatCannotBeRestridedAreRejected:
 
     def test_a_negative_time_column_is_refused_before_reading(self, tmp_path):
         with pytest.raises(ValueError, match="time_col must be >= 0, got -1"):
-            restride_stacked_axis(
-                tmp_path / "x", tmp_path / "y", stride=1, time_col=-1
-            )
+            restride_stacked_axis(tmp_path / "x", tmp_path / "y", stride=1, time_col=-1)
 
     def test_a_time_column_past_the_centers_shape_names_the_store(self, tmp_path):
         src = _partition_of_leaves(tmp_path / "src.gsplats.zarr", [0, 1])

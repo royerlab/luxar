@@ -270,9 +270,7 @@ class TestCenterAtCentroid:
         """
         t0 = self._iso3d([10.0, 20.0, 30.0])
         t1 = self._iso3d([10.0, 20.0, 30.0])
-        gs = GSplatData.combine_as_new_dimension(
-            [t0, t1], values=[0.0, 1.0], sigma=0.0
-        )
+        gs = GSplatData.combine_as_new_dimension([t0, t1], values=[0.0, 1.0], sigma=0.0)
         centered = gs.center_at_centroid()
         # Time axis (dim3) must be untouched — still exactly {0, 1}.
         assert set(np.round(centered.centers[:, 3], 5).tolist()) == {0.0, 1.0}

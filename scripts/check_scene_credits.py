@@ -153,6 +153,64 @@ def _explicit_targets(
     return targets, skipped, unknown
 
 
+def _verdict_for_nothing_inspected(
+    targets: list[Target],
+    skipped: list[str],
+    unknown: list[str],
+    demos_dir: Path,
+    require_scenes: bool,
+) -> Optional[int]:
+    """The exit code when nothing will be compared, or ``None`` to carry on.
+
+    Three ways a run can inspect nothing, which used to be one silent exit 0
+    between them (audit A9-04). They are NOT equivalent, and conflating them is
+    what let a typo look like a clean bill of health:
+
+    1. **A named path is not a demo output.** The caller's error — a typo, or an
+       output renamed since they wrote the command. Always exit 1. Previously
+       this left ``targets`` empty while the skip list stayed populated, so the
+       empty-inventory guard never fired, the compare loop ran zero times, and
+       the run printed "checked 0 built scene(s); problems: 0" and exited 0.
+    2. **Every named store is an archive.** A real demo output this tool cannot
+       open. The caller named the right artifact, so the limitation is ours:
+       exit 0, but say plainly that nothing was inspected.
+    3. **No arguments, empty inventory.** Normal for a fresh checkout and for
+       CI, since the output directory is gitignored. Exit 0 with the same
+       plain statement.
+
+    ``require_scenes`` escalates 2 and 3 — never 1, which is already an error.
+    """
+    if unknown:
+        aprint(f"❌ {len(unknown)} named path(s) are not demo outputs:")
+        for line in unknown:
+            aprint(f"  {line}")
+        aprint(
+            "  Check the spelling against the demo registry — a renamed output "
+            "looks exactly like this."
+        )
+        return 1
+
+    if targets:
+        return None
+
+    if skipped:
+        aprint(f"INSPECTED NOTHING — all {len(skipped)} named store(s) were skipped:")
+        for line in skipped:
+            aprint(f"  {line}")
+    elif require_scenes:
+        aprint(
+            f"❌ --require-scenes: INSPECTED NOTHING — no built demo scene "
+            f"found under {demos_dir}."
+        )
+    else:
+        aprint(
+            f"no built demo scene found under {demos_dir}; INSPECTED NOTHING "
+            "(this is not a pass — build demos, or pass --require-scenes where "
+            "they are expected)"
+        )
+    return 1 if require_scenes else 0
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -184,56 +242,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         targets = list(_demo_stores(args.demos_dir))
         skipped = []
 
-    # A named path that is not a demo output at all is the CALLER's error, and
-    # it must not buy a green tick (audit A9-04, `_explicit_targets`).
-    #
-    # Before: an unknown path left `targets` empty but the skip list populated,
-    # so the empty-inventory guard below did not fire, the compare loop ran zero
-    # times, and the run printed "checked 0 built scene(s); problems: 0" and
-    # exited 0. A typo, or a demo output that had been renamed since the caller
-    # wrote the command, was indistinguishable from a clean bill of health.
-    #
-    # Deliberately narrower than "nothing was inspected": a KNOWN output in
-    # archive spelling is still exit 0 (see below). There the caller named the
-    # right artifact and the limitation is ours, not theirs.
-    if unknown:
-        aprint(f"❌ {len(unknown)} named path(s) are not demo outputs:")
-        for line in unknown:
-            aprint(f"  {line}")
-        aprint(
-            "  Check the spelling against the demo registry — a renamed output "
-            "looks exactly like this."
-        )
-        return 1
-
-    if not targets and skipped:
-        # Every named store was a real demo output this tool cannot open (an
-        # archive). Not the caller's mistake, so not an error — but nothing was
-        # inspected, and the old wording ("checked 0 built scene(s)") read like
-        # a result rather than an absence.
-        aprint(f"INSPECTED NOTHING — all {len(skipped)} named store(s) were skipped:")
-        for line in skipped:
-            aprint(f"  {line}")
-        return 1 if args.require_scenes else 0
-
-    if not targets and not skipped:
-        # No arguments and an empty inventory. This is legitimate on a checkout
-        # that has never built demos (the output directory is gitignored), which
-        # is why it is not an error by default — but it is NOT evidence that the
-        # credits are correct, and `--require-scenes` is how a caller that knows
-        # better says so.
-        if args.require_scenes:
-            aprint(
-                f"❌ --require-scenes: INSPECTED NOTHING — no built demo scene "
-                f"found under {args.demos_dir}."
-            )
-            return 1
-        aprint(
-            f"no built demo scene found under {args.demos_dir}; INSPECTED NOTHING "
-            "(this is not a pass — build demos, or pass --require-scenes where "
-            "they are expected)"
-        )
-        return 0
+    verdict = _verdict_for_nothing_inspected(
+        targets, skipped, unknown, args.demos_dir, args.require_scenes
+    )
+    if verdict is not None:
+        return verdict
 
     problems = []
     for key, store, declared in targets:

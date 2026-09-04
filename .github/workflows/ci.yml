@@ -712,9 +712,28 @@ jobs:
       # The gates below judge the SOURCE, not the runtime (ruff target-version
       # py312, mypy python_version 3.12), so they run once — on the 3.12 leg —
       # while staying under the required `python-tests (3.12)` context.
+      # The target list is the project's own (`hatch run lint`), not just the
+      # package. It used to be `packages/luxar/src/luxar/` alone, which left
+      # `scripts/` (121 files, 35K LOC — including every gate implementation),
+      # `scripts/benchmarks/`, `stats/` and `hatch_build.py` with no E/W/F/I
+      # check in CI at all (audit A12-04). The gates that guard this repository
+      # were the least-checked code in it.
       - name: Lint (ruff)
         if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
-        run: hatch run python -m ruff check packages/luxar/src/luxar/
+        run: >-
+          hatch run python -m ruff check
+          packages/luxar/src scripts scripts/benchmarks stats hatch_build.py
+
+      # Formatting was enforced ONLY by the opt-in pre-commit hook, which sees
+      # the STAGED files and nothing else — so 10 files had drifted unformatted
+      # in the tree with no gate able to notice. Same targets as the lint above.
+      # `[tool.ruff.format] exclude = ["*.md"]` keeps this to Python; see the
+      # rationale in pyproject.toml.
+      - name: Format check (ruff)
+        if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
+        run: >-
+          hatch run python -m ruff format --check
+          packages/luxar/src scripts scripts/benchmarks stats hatch_build.py
 
       - name: Type check (mypy)
         if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
@@ -823,12 +842,33 @@ jobs:
         with:
           toolchain: 1.92.0
           targets: wasm32-unknown-unknown
+          # Explicit, even though rust-toolchain.toml also lists it: this action
+          # pins the toolchain by input and installs the minimal profile, so the
+          # clippy gate below would otherwise depend on which of the two rustup
+          # happens to consult first.
+          components: clippy
 
       - name: Cache cargo build
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: packages/luxar-viewer/src/wasm/rust
+
+      # clippy ran NOWHERE in CI (audit A12-02). `cargo check` reaches CI only
+      # as a side effect of `pnpm build` -> wasm-pack, and `make check-rust` —
+      # the one place clippy was invoked at all — could not fail: the recipe is
+      # a single backslash-joined shell command that ended `; echo "...passed!"`,
+      # making the echo's status the target's. Verified with a minimal recipe of
+      # the same shape: `false && true; echo PASSED` exits 0. The Makefile is
+      # fixed in the same commit; this is the half that gates a PR.
+      #
+      # Nearly free here: the toolchain and cargo cache are already set up above
+      # for the WASM build, and a warm clippy over this crate takes ~7s.
+      # `--all-targets` lints test and bench code too, matching the Makefile.
+      - name: Lint Rust (clippy)
+        if: needs.changes.outputs.dom_rust != 'false'
+        working-directory: packages/luxar-viewer/src/wasm/rust
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Install wasm-pack
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')

@@ -39,23 +39,42 @@ from luxar.gsplats.utils.trils import unpack_tril
 # for scales/DC (synthetic writer uses a linspace codebook, so error ≤ half a
 # codebook step — the reader must tolerate that).
 _POSITION_ATOL = {
-    "inria": 1e-6, "splat": 1e-6, "spz": 5e-4, "supersplat": 5e-3, "sog": 5e-3
+    "inria": 1e-6,
+    "splat": 1e-6,
+    "spz": 5e-4,
+    "supersplat": 5e-3,
+    "sog": 5e-3,
 }
 _SCALE_RTOL = {
-    "inria": 1e-6, "splat": 1e-6, "spz": 0.04, "supersplat": 0.02, "sog": 0.02
+    "inria": 1e-6,
+    "splat": 1e-6,
+    "spz": 0.04,
+    "supersplat": 0.02,
+    "sog": 0.02,
 }
 # SPZ v2 stores (x, y, z) and recomputes w = sqrt(1 - |xyz|²): the 1/127.5
 # xyz quantization error is amplified into w when w is small, so SPZ's real
 # error profile is looser than the raw 8-bit step.
 _QUAT_ATOL = {
-    "inria": 1e-6, "splat": 0.01, "spz": 0.04, "supersplat": 0.002, "sog": 0.02
+    "inria": 1e-6,
+    "splat": 0.01,
+    "spz": 0.04,
+    "supersplat": 0.002,
+    "sog": 0.02,
 }
 _OPACITY_ATOL = {
-    "inria": 1e-6, "splat": 1 / 255, "spz": 1 / 255, "supersplat": 1 / 255,
+    "inria": 1e-6,
+    "splat": 1 / 255,
+    "spz": 1 / 255,
+    "supersplat": 1 / 255,
     "sog": 1 / 255,
 }
 _COLOR_ATOL = {
-    "inria": 1e-6, "splat": 1 / 255, "spz": 0.01, "supersplat": 0.01, "sog": 0.01
+    "inria": 1e-6,
+    "splat": 1 / 255,
+    "spz": 0.01,
+    "supersplat": 0.01,
+    "sog": 0.01,
 }
 
 
@@ -501,8 +520,12 @@ class TestSog:
             bundle = Path(tmp) / "bundle"
             write_sog(bundle, ground_truth)
             meta = json.loads((bundle / "meta.json").read_text())
-            meta["shN"] = {"count": 1, "bands": 2, "codebook": [0.0] * 256,
-                           "files": ["shN_centroids.webp", "shN_labels.webp"]}
+            meta["shN"] = {
+                "count": 1,
+                "bands": 2,
+                "codebook": [0.0] * 256,
+                "files": ["shN_centroids.webp", "shN_labels.webp"],
+            }
             (bundle / "meta.json").write_text(json.dumps(meta))
             cs = read_sog(bundle)  # must NOT try to read the (absent) shN files
         assert cs.sh_degree == 2
@@ -555,10 +578,13 @@ class TestSog:
 
         with tempfile.TemporaryDirectory() as tmp:
             b = Path(tmp)
+
             # 3 Gaussians in a 1x3 image (row-major, count=3).
             def wr(name, rows, mode):
                 arr = np.array(rows, np.uint8).reshape(1, len(rows), len(rows[0]))
-                Image.fromarray(arr, mode=mode).save(b / name, format="WEBP", lossless=True)
+                Image.fromarray(arr, mode=mode).save(
+                    b / name, format="WEBP", lossless=True
+                )
 
             # means: q16 = 0, 65535, and an ASYMMETRIC low=1/high=0 (=1) on x so
             # a swapped hi/lo byte order (→256) is caught, not just symmetric ends.
@@ -566,16 +592,25 @@ class TestSog:
             wr("means_u.webp", [[0, 0, 0], [255, 255, 255], [0, 0, 0]], "RGB")
             wr("scales.webp", [[0, 0, 0], [1, 1, 1], [0, 0, 0]], "RGB")
             # quats: splat0 alpha=253 → mode 1 (x largest); splat1 alpha=252 → w.
-            wr("quats.webp",
-               [[128, 128, 128, 253], [128, 128, 128, 252], [128, 128, 128, 252]], "RGBA")
+            wr(
+                "quats.webp",
+                [[128, 128, 128, 253], [128, 128, 128, 252], [128, 128, 128, 252]],
+                "RGBA",
+            )
             # sh0: rgb idx into DC codebook; alpha = opacity byte.
             wr("sh0.webp", [[0, 0, 0, 51], [1, 1, 1, 255], [0, 0, 0, 128]], "RGBA")
             meta = {
-                "version": 2, "count": 3,
-                "means": {"mins": [-2.0, -2.0, -2.0], "maxs": [2.0, 2.0, 2.0],
-                          "files": ["means_l.webp", "means_u.webp"]},
-                "scales": {"codebook": [np.log(0.5)] + [np.log(2.0)] + [0.0] * 254,
-                           "files": ["scales.webp"]},
+                "version": 2,
+                "count": 3,
+                "means": {
+                    "mins": [-2.0, -2.0, -2.0],
+                    "maxs": [2.0, 2.0, 2.0],
+                    "files": ["means_l.webp", "means_u.webp"],
+                },
+                "scales": {
+                    "codebook": [np.log(0.5)] + [np.log(2.0)] + [0.0] * 254,
+                    "files": ["scales.webp"],
+                },
                 "quats": {"files": ["quats.webp"]},
                 "sh0": {"codebook": [1.0, -1.0] + [0.0] * 254, "files": ["sh0.webp"]},
             }
