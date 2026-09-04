@@ -54,6 +54,10 @@ vi.mock('../../../data/scene-loader-manager', () => {
   const mockLoader = {
     loadScene: vi.fn(async (_url: string) => buildScene()),
     updateView: vi.fn().mockResolvedValue(undefined),
+    // `updateSceneForDimensions` skips the pass when the loader already holds
+    // the requested view; default to "not there yet" so the forwarding tests
+    // still see the call.
+    isAtViewState: vi.fn(() => false),
     dispose: vi.fn(),
     // `zarr-loader.loadScene` gates its success log on this — a clean fake load
     // has no failures.
@@ -176,6 +180,33 @@ describe('Data Loading Integration', () => {
 
     beforeEach(async () => {
       scene = await loadScene('http://localhost:8000/test.zarr');
+    });
+
+    it('skips the pass when the loader already holds the requested view state', async () => {
+      const { SceneLoaderManager } = await import('../../../data/scene-loader-manager');
+      const loader = SceneLoaderManager.getInstance().getDefaultLoader() as unknown as {
+        isAtViewState: ReturnType<typeof vi.fn>;
+        updateView: ReturnType<typeof vi.fn>;
+      };
+      loader.updateView.mockClear();
+      loader.isAtViewState.mockReturnValueOnce(true);
+      const dims: SimpleDims = {
+        ndim: 4,
+        displayed: [0, 1, 2],
+        currentStep: [0, 0, 0, 5],
+        metadata: [],
+      };
+      await updateSceneForDimensions(dims, scene);
+      // The candidate state was offered to the loader, and nothing was re-run:
+      // this is what turns the post-load `updateAllNDNodes` into a no-op.
+      expect(loader.isAtViewState).toHaveBeenCalledWith(
+        expect.objectContaining({ displayDims: [0, 1, 2], slicePosition: [0, 0, 0, 5] })
+      );
+      expect(loader.updateView).not.toHaveBeenCalled();
+
+      // A changed state (default mock: not at that state) still goes through.
+      await updateSceneForDimensions({ ...dims, currentStep: [0, 0, 0, 6] }, scene);
+      expect(loader.updateView).toHaveBeenCalledTimes(1);
     });
 
     it('forwards the converted view-state shape (delegating to simpleDimsToViewState)', async () => {

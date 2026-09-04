@@ -119,6 +119,17 @@ export async function updateSceneForDimensions(
     maxRadius,
     defaultTolerance: config.dataLoading.spatial.defaultTolerance,
   });
+  // The loader already holds this exact view when the caller is the post-load
+  // `updateAllNDNodes` kick (loadScene committed every node at the same
+  // state) or a slider event that changed nothing. Re-running the pass would
+  // re-query, re-decode, re-project and re-commit every node — and park the
+  // post-load refinement kick, which holds the update lock. Skip it.
+  const manager = SceneLoaderManager.getInstance();
+  const sceneLoader = loaderId ? manager.getLoader(loaderId) : manager.getDefaultLoader();
+  if (sceneLoader?.isAtViewState?.(viewState)) {
+    log.info(Modules.LUXAR, 'View state unchanged — skipping the slice update');
+    return;
+  }
   if (opts?.frameBudgetMs !== undefined) {
     viewState.frameBudgetMs = opts.frameBudgetMs;
   }

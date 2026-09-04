@@ -98,7 +98,12 @@ export class ViewStateManager {
       range: dim.range as [number, number] | undefined,
       display: dim.display,
       discrete: dim.discrete,
-      step: dim.step,
+      // Same default as `SceneDimsManager.initFromScene` (`dim.step || 1.0`):
+      // every consumer already treats a missing step as 1, and the two
+      // builders must agree so `viewStatesEqual` / the S-cache key see the
+      // eager load's state and the first slider state as the SAME state —
+      // otherwise the post-load `updateAllNDNodes` re-streams every ladder.
+      step: dim.step || 1.0,
       spatial: dim.spatial,
       cyclic: dim.cyclic,
       categories: dim.categories,
@@ -165,8 +170,14 @@ export class ViewStateManager {
       if (displayed.includes(i)) {
         // Displayed dimensions don't need tolerance
         tolerance[i] = 0;
-      } else if (metadata[i].discrete) {
-        // Discrete dimensions need exact matching
+      } else if (metadata[i].discrete && metadata[i].spatial !== true) {
+        // Non-spatial discrete axis (time, channel): exact matching. The slider
+        // builder (`simpleDimsToViewState`) uses 0.5 here; `viewStatesEqual` and
+        // the S-cache key both treat that pair as the same query. A discrete
+        // SPATIAL axis falls through to the radius below, again matching the
+        // slider builder's `maxRadius`, so the eager load and the first slider
+        // update describe the same query and the post-load
+        // `updateAllNDNodes` can be skipped instead of re-streaming every node.
         tolerance[i] = 0;
       } else {
         // Continuous non-displayed dimensions get default tolerance.

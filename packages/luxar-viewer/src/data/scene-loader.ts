@@ -186,6 +186,7 @@ import { connectLoaderToMonitor as connectLoaderToMonitorHelper } from './scene-
 import type { LineWorkingSetGate, NodeBuildCtx } from './scene-loader/nodes/build-ctx';
 import { createLineWorkingSetGate } from './scene-loader/nodes/load-children-concurrently';
 import { noteRefinementComplete } from '../profiling/load-timeline';
+import { viewStatesEqual } from './loaders/progressive/view-state-equal';
 import {
   RefinementResidencyBudget,
   RefinementResidencyReporter,
@@ -1817,6 +1818,21 @@ export class SceneLoader {
   private initializeSceneDimensions(sceneDims: unknown): void {
     const next = initializeSceneDimensionsHelper(sceneDims);
     if (next) this.viewState = next;
+  }
+
+  /**
+   * Whether `candidate` describes the view this loader has ALREADY committed
+   * (same displayed dims, slice, tolerances and per-dim query signature, by
+   * `viewStatesEqual`). Used by `updateSceneForDimensions` to turn the
+   * post-load `updateAllNDNodes` — fired unconditionally after `loadScene`
+   * has fetched, decoded, projected and committed every node at exactly this
+   * state — into a no-op instead of a second full pass (measured: L0 hits ==
+   * misses on every 3-D scene, and ~1 s of extra main-thread work on a
+   * 29.6 M-splat slide). A real slider change compares unequal and proceeds.
+   */
+  isAtViewState(candidate: ViewState): boolean {
+    if (this._disposed) return false;
+    return viewStatesEqual(candidate, this.viewState);
   }
 
   /**
