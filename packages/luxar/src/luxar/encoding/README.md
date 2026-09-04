@@ -215,9 +215,9 @@ encoder.encode(
 - `n_elements` - Broadcast target count. Required for scalar/tuple/list input; optional for arrays (opts into broadcast/uniform validation when given).
 - `bounds` - `(min, max)` for BOUNDED_SCALAR (auto-detected if omitted).
 - `positive_scalar_encoding` - `"linear"` (default) or `"log"` for POSITIVE_SCALAR.
-  `"log"` selects the geometric-log encoding (`geolog_scalar_uint16` at
-  AUTO, `geolog_scalar_uint8` at MEMORY); AUTO also falls back to it automatically when the linear
-  dynamic range exceeds 65536 (instead of the former float32).
+  `"log"` selects the geometric-log encoding (`geolog_scalar_uint16` at AUTO,
+  `geolog_scalar_uint8` at MEMORY); AUTO also falls back to it automatically
+  when the linear dynamic range exceeds 65536 (instead of the former float32).
 - `custom_encoder` - Explicit encoder name, required when `mode=CUSTOM`.
 - `color_mode` - `"sdr"` or `"hdr"`, required for float COLOR arrays.
 - `chunks` / `compressor` - Optional zarr dataset chunk shape and compressor.
