@@ -147,7 +147,18 @@ export function createStoreForUrl(url: string): AsyncReadable {
 export async function openStore<Store extends AsyncReadable>(
   rawStore: Store
 ): Promise<MaybeListableStore<Store>> {
-  return (await zarrita.withMaybeConsolidatedMetadata(rawStore)) as MaybeListableStore<Store>;
+  // Try format 3 FIRST. zarrita's `resolveFormats` defaults to `["v2", "v3"]`
+  // for any store its version counter has not seen, so without this it probes
+  // `.zmetadata` (a 404 on every format-3 store) before `zarr.json` — one
+  // wasted round trip on the critical path of first paint, measured at 268 ms
+  // against a CDN.
+  //
+  // The option takes an ORDER, not a pin, so format-2 stores keep loading —
+  // they simply pay the extra probe instead, which is the right way round now
+  // that Luxar writes format 3 and only legacy stores are format 2.
+  return (await zarrita.withMaybeConsolidatedMetadata(rawStore, {
+    format: ['v3', 'v2'],
+  })) as MaybeListableStore<Store>;
 }
 
 /** Return a root location for resolving dataset-relative paths. */
@@ -241,6 +252,37 @@ export function abortOptions(signal?: AbortSignal | null): GetOptions | undefine
 /** Build a slice selection. Pass `null` for an open start/end. */
 export function slice(start?: number | null, end?: number | null): Slice {
   return zarrita.slice(start ?? null, end ?? null);
+}
+
+/**
+ * Open a location as a zarr group, trying format 3 before format 2.
+ *
+ * The same v2-first default that {@link openStore} works around bites a second
+ * time, independently: `zarrita.open` consults its version counter keyed on the
+ * STORE OBJECT, and the consolidated wrapper `openStore` returns is a brand-new
+ * object the counter has never seen. So the very first `open` on a format-3
+ * store probes `.zattrs` and then `.zgroup` — two more 404s, measured at 279 ms
+ * and 269 ms — before falling back to v3.
+ *
+ * Only the FIRST open pays it (a successful open increments the counter, so
+ * later array opens already guess v3), which is why this helper is needed only
+ * for the root group and not everywhere.
+ *
+ * Falls back to the format-guessing {@link open} when the v3 attempt reports a
+ * missing node, so a genuine format-2 store still loads.
+ */
+export async function openGroupPreferV3<Store extends Readable>(
+  location: Location<Store> | Store
+): Promise<Group<Store>> {
+  try {
+    return await zarrita.open.v3(location, { kind: 'group' });
+  } catch (error) {
+    // A v3 miss means "not a v3 group here", not "nothing here" — fall through
+    // to the guessing open, which will find the v2 documents. Any other error
+    // (a real network fault, malformed JSON) must not be masked.
+    if (!isNotFoundError(error) && !(error instanceof zarrita.InvalidMetadataError)) throw error;
+    return openGroup(location);
+  }
 }
 
 /** Normalize backend-specific missing-node errors behind a Luxar-owned helper. */

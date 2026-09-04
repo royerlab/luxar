@@ -474,4 +474,149 @@ describe('SceneIdentityWatchdog', () => {
     expect(calls).toBe(2);
     wd.dispose();
   });
+
+  // --- Conditional polling (If-None-Match / 304) -------------------------
+  //
+  // Under zarr format 3 the root attrs document IS the consolidated metadata
+  // index (~40 kB brotli for a real scene), so an unconditional poll every
+  // 15 s re-downloads it forever. These pin the conditional-request contract.
+
+  /** A 304 carries no body; `Response` forbids one for that status. */
+  function notModified(): Response {
+    return new Response(null, { status: 304 });
+  }
+
+  function okWithETag(body: string, etag: string): Response {
+    return new Response(body, { status: 200, headers: { etag } });
+  }
+
+  it('replays the previous probe ETag as If-None-Match', async () => {
+    const sent: Array<string | null> = [];
+    const wd = makeWatchdog(async (_url, init) => {
+      sent.push(new Headers(init?.headers).get('if-none-match'));
+      return okWithETag(ATTRS, '"v1"');
+    });
+    wd.start();
+    await tick(5000);
+    await tick(5000);
+    // First probe has nothing to send; the second replays what the first saw.
+    expect(sent).toEqual([null, '"v1"']);
+    wd.dispose();
+  });
+
+  it('treats 304 as unchanged, keeps polling, and clears an unreachable banner', async () => {
+    let calls = 0;
+    const wd = makeWatchdog(async () => {
+      calls++;
+      return calls === 1 ? okWithETag(ATTRS, '"v1"') : notModified();
+    });
+    wd.start();
+    await tick(5000);
+    await tick(5000);
+    await tick(5000);
+    // REGRESSION GUARD: `res.ok` is false for 304 and 304 is not in the
+    // inconclusive set, so a missing 304 branch reports the scene as CHANGED,
+    // raises the terminal banner and stops the timer — `calls` would freeze
+    // at 2 and `shown` would contain 'changed'.
+    expect(calls).toBe(3);
+    expect(banner.shown).toEqual([]);
+    expect(banner.hidden).toEqual(['unreachable', 'unreachable', 'unreachable']);
+    wd.dispose();
+  });
+
+  it('does not fall back to the other document when the resolved one answers 304', async () => {
+    const urls: string[] = [];
+    let calls = 0;
+    const wd = makeWatchdog(async (url) => {
+      urls.push(String(url));
+      calls++;
+      return calls === 1 ? okWithETag(ATTRS, '"v1"') : notModified();
+    });
+    wd.start();
+    await tick(5000);
+    await tick(5000);
+    // A 304 is a conclusive answer about THIS document, exactly like a non-404
+    // status: the format-fallback loop must not try `.zattrs` as well.
+    expect(urls).toEqual([
+      'http://127.0.0.1:8000/zarr.json',
+      'http://127.0.0.1:8000/zarr.json',
+    ]);
+    wd.dispose();
+  });
+
+  it('never sends an ETag belonging to a different document', async () => {
+    const seen: Array<[string, string | null]> = [];
+    let calls = 0;
+    const wd = makeWatchdog(async (url, init) => {
+      seen.push([String(url), new Headers(init?.headers).get('if-none-match')]);
+      calls++;
+      // Probe 1: format-3 candidate 404s, format-2 answers with its own ETag.
+      if (calls === 1) return new Response('', { status: 404 });
+      return okWithETag(ATTRS, '"v2-tag"');
+    });
+    wd.start();
+    await tick(5000);
+    await tick(5000);
+    // The `.zattrs` fallback must not receive the (never-issued) zarr.json
+    // token, and the second probe must address only the resolved document.
+    expect(seen).toEqual([
+      ['http://127.0.0.1:8000/zarr.json', null],
+      ['http://127.0.0.1:8000/.zattrs', null],
+      ['http://127.0.0.1:8000/.zattrs', '"v2-tag"'],
+    ]);
+    wd.dispose();
+  });
+
+  it('does not trust an ETag from a body that failed the identity check', async () => {
+    const sent: Array<string | null> = [];
+    const wd = new SceneIdentityWatchdog({
+      datasetUrl: 'http://127.0.0.1:8000/',
+      expectedContentHash: HASH,
+      intervalMs: 5000,
+      fetchImpl: (async (_url: RequestInfo | URL, init?: RequestInit) => {
+        sent.push(new Headers(init?.headers).get('if-none-match'));
+        // An impostor scene, served with its own ETag.
+        return okWithETag(OTHER_ATTRS, '"impostor"');
+      }) as typeof fetch,
+    });
+    wd.start();
+    await tick(5000);
+    // Terminal 'changed' stops the timer, so there is no second probe to
+    // inspect — the contract is simply that the impostor's tag was never
+    // promoted into the trusted slot.
+    expect(banner.shown).toEqual(['changed']);
+    expect(sent).toEqual([null]);
+    wd.dispose();
+  });
+
+  it('polls a remote dataset far less often than a local one', async () => {
+    const calls = { local: 0, remote: 0 };
+    const local = new SceneIdentityWatchdog({
+      datasetUrl: 'http://localhost:8000/scene.luxar.zarr',
+      expectedContentHash: HASH,
+      fetchImpl: (async () => {
+        calls.local++;
+        return okResponse(ATTRS);
+      }) as typeof fetch,
+    });
+    const remote = new SceneIdentityWatchdog({
+      datasetUrl: 'https://data.example.com/scene.luxar.zarr',
+      expectedContentHash: HASH,
+      fetchImpl: (async () => {
+        calls.remote++;
+        return okResponse(ATTRS);
+      }) as typeof fetch,
+    });
+    local.start();
+    remote.start();
+    await vi.advanceTimersByTimeAsync(60_000);
+    // A hosted store is replaced by publishing a new URL, not by swapping
+    // bytes under the old one, so it does not need the port-reuse cadence.
+    expect(calls.local).toBe(4);
+    expect(calls.remote).toBe(0);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(calls.remote).toBe(1);
+    local.dispose();
+    remote.dispose();
+  });
 });

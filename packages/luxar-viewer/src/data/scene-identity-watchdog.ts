@@ -8,9 +8,18 @@
  * "I started demo B and got demo A" trap. The load-time cache validation
  * protects fresh loads; nothing protected a tab that simply stayed open.
  *
- * This watchdog re-fetches the dataset's root `.zattrs` (cache-bypassing)
+ * This watchdog re-fetches the dataset's root attrs document (cache-bypassing)
  * on an interval and whenever the tab regains focus/visibility — the exact
  * moment a user returns to a stale tab — and compares scene identity:
+ *
+ * The poll is CONDITIONAL: once a probe has confirmed identity, its `ETag` is
+ * replayed as `If-None-Match`, so the steady state is a bodyless `304`. That
+ * matters more than it sounds. Under zarr format 2 the root attrs document was
+ * a small `.zattrs`; under format 3 it is the root `zarr.json`, which for a
+ * Luxar store carries the ENTIRE consolidated metadata index — 248 kB (38 kB
+ * brotli) for a 92-node scene. The format-3 migration silently turned a cheap
+ * poll into a ~40 kB download every 15 s, for the lifetime of every open tab.
+ * See {@link REMOTE_CHECK_INTERVAL_MS} for the matching cadence change.
  *
  * - `content_hash` when the loaded scene had one (every compiler-written
  *   scene does): the same identity stamp the L2 cache validates against.
@@ -45,8 +54,25 @@ import { isZippedStoreUrl } from './zip/entries';
 import { log, Modules } from '../utils/log';
 import { notifier } from '../utils/cross-layer/notifier';
 
-/** Periodic probe cadence. Focus/visibility probes fire immediately. */
+/**
+ * Periodic probe cadence for a LOCAL dataset server. Focus/visibility probes
+ * fire immediately regardless.
+ *
+ * This is the case the watchdog was built for: dev/demo servers share ports, so
+ * server A can die and server B bind the same port within seconds. A tight
+ * cadence is worth it there.
+ */
 const CHECK_INTERVAL_MS = 15_000;
+/**
+ * Cadence for a REMOTE dataset.
+ *
+ * A hosted store is published under an immutable, usually dated, prefix and is
+ * replaced by publishing a NEW url, not by swapping bytes under the old one —
+ * so the fast cadence buys almost nothing while costing a request every 15 s,
+ * per open tab, for the lifetime of the tab. `If-None-Match` already reduces
+ * each poll to a bodyless 304; this reduces how many of them there are.
+ */
+const REMOTE_CHECK_INTERVAL_MS = 120_000;
 /** Minimum spacing between probes (guards focus+visibility double-fire). */
 const MIN_PROBE_SPACING_MS = 2_000;
 /** Consecutive fetch failures before the `unreachable` banner shows. */
@@ -123,6 +149,29 @@ function buildAttrsUrl(datasetUrl: string, doc: string): string {
   }
 }
 
+/**
+ * Whether a dataset URL is served from this machine, and therefore subject to
+ * the port-reuse race {@link CHECK_INTERVAL_MS} exists for.
+ *
+ * Unparseable URLs count as remote: `isWatchable` has already required an
+ * `http(s)://` prefix, so anything `URL` still cannot parse is not a local
+ * dev server, and the slower cadence is the safe way to be wrong.
+ */
+function isLocalOrigin(datasetUrl: string): boolean {
+  try {
+    const { hostname } = new URL(datasetUrl);
+    return (
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname === '::1' ||
+      hostname === '[::1]' ||
+      hostname === '0.0.0.0'
+    );
+  } catch {
+    return false;
+  }
+}
+
 function sortKeysDeep(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortKeysDeep);
   if (value === null || typeof value !== 'object') return value;
@@ -171,6 +220,22 @@ export class SceneIdentityWatchdog {
    * request. Only the first probe of a format-2 dataset pays the extra 404.
    */
   private resolvedAttrsUrl: string | null = null;
+  /**
+   * ETag of the document at {@link resolvedAttrsUrl}, sent back as
+   * `If-None-Match` so an unchanged scene answers `304` with no body.
+   *
+   * PAIRED with `resolvedAttrsUrl` — an ETag is only meaningful against the
+   * URL it came from, so this is cleared whenever the resolved document
+   * changes, and only ever sent to that one candidate.
+   *
+   * Only set from a probe that returned an `ok` verdict (see
+   * {@link probe}). That is what makes the 304 short-circuit sound: "unchanged
+   * since the ETag" is only equivalent to "still the scene we loaded" if the
+   * document that ETag names was itself confirmed to match the baseline.
+   */
+  private resolvedETag: string | null = null;
+  /** ETag seen by the in-flight probe; promoted by {@link probe} on `ok`. */
+  private pendingETag: string | null = null;
   private readonly expectedHash: string | null;
   private readonly expectedAttrsJson: string | null;
   private readonly intervalMs: number;
@@ -201,7 +266,8 @@ export class SceneIdentityWatchdog {
     this.attrsUrls = ROOT_ATTR_DOCS.map((doc) => buildAttrsUrl(this.url, doc));
     this.expectedHash = opts.expectedContentHash;
     this.expectedAttrsJson = opts.expectedAttrsJson ?? null;
-    this.intervalMs = opts.intervalMs ?? CHECK_INTERVAL_MS;
+    this.intervalMs =
+      opts.intervalMs ?? (isLocalOrigin(this.url) ? CHECK_INTERVAL_MS : REMOTE_CHECK_INTERVAL_MS);
     // Bind: an unbound window.fetch reference throws "Illegal invocation".
     this.fetchImpl = opts.fetchImpl ?? fetch.bind(globalThis);
   }
@@ -265,7 +331,14 @@ export class SceneIdentityWatchdog {
     this.probeInFlight = true;
     this.lastProbeAt = now;
     try {
-      this.apply(await this.fetchVerdict());
+      const verdict = await this.fetchVerdict();
+      // Promote the ETag ONLY for a document we just confirmed still matches
+      // the baseline. A `changed` or unparseable body must never become the
+      // token a later 304 is trusted against — that would let one bad answer
+      // freeze the watchdog into agreeing with itself forever.
+      if (verdict === 'ok' && this.pendingETag !== null) this.resolvedETag = this.pendingETag;
+      this.pendingETag = null;
+      this.apply(verdict);
     } finally {
       this.probeInFlight = false;
     }
@@ -304,12 +377,32 @@ export class SceneIdentityWatchdog {
       let text: string | null = null;
       let lastStatus = 404;
       for (const candidate of candidates) {
+        // Conditional ONLY for the document the stored ETag came from: an ETag
+        // is meaningless against any other URL, and sending it to the fallback
+        // candidate could turn its 404 into a bogus 304.
+        const conditional = candidate === this.resolvedAttrsUrl && this.resolvedETag !== null;
         const res = await this.fetchImpl(candidate, {
           cache: 'no-store',
           signal: abort.signal,
+          ...(conditional ? { headers: { 'If-None-Match': this.resolvedETag as string } } : {}),
         });
+        // The whole point of the conditional request: the document is
+        // byte-identical to the one whose ETag we stored, and we only store an
+        // ETag after an `ok` verdict, so identity still holds and there is no
+        // body to compare.
+        //
+        // This MUST be handled before the paths below. `res.ok` is false for
+        // 304 and 304 is deliberately absent from the inconclusive set, so
+        // falling through would run `isInconclusiveStatus(304) ? … : 'changed'`
+        // and report a perfectly healthy scene as CHANGED — latching the
+        // terminal banner and stopping the watchdog for good.
+        if (res.status === 304) return 'ok';
         if (res.ok) {
+          // Keep the ETag paired with its document: a fallback to the other
+          // format must not leave the previous document's token behind.
+          if (candidate !== this.resolvedAttrsUrl) this.resolvedETag = null;
           this.resolvedAttrsUrl = candidate;
+          this.pendingETag = res.headers.get('etag');
           text = await res.text();
           break;
         }

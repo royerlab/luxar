@@ -8,12 +8,29 @@ import { classifyBrowserUrl } from './browser-decision';
  *   1. Synchronous URL classification — empty / trailing-slash URLs are
  *      always must-browse, no need to probe.
  *   2. Zipped stores load directly — see below.
- *   3. HEAD-probe zarr v2 (`.zgroup`, `.zattrs`) and v3 (`zarr.json`)
+ *   3. A `.zarr`-suffixed URL loads directly — see below.
+ *   4. HEAD-probe zarr v2 (`.zgroup`, `.zattrs`) and v3 (`zarr.json`)
  *      markers in parallel; short-circuit on the first 2xx response.
  *      Returns `false` (load directly) when any probe hits.
- *   4. If all probes fail or time out after 5s, fall through to `true`
+ *   5. If all probes fail or time out after 5s, fall through to `true`
  *      (show the browser — likely a directory listing or non-zarr URL).
  */
+/**
+ * Whether the URL's PATH ends in `.zarr` — the convention every Luxar store
+ * follows (`scene.luxar.zarr`, `fit.gsplats.zarr`).
+ *
+ * Tested on the pathname, not the raw string, so a presigned/tokenized source
+ * (`…/scene.luxar.zarr?token=…`) is still recognized. Falls back to the raw
+ * string for anything `URL` cannot parse (relative `?src=` values).
+ */
+function isZarrStoreSuffix(src: string): boolean {
+  try {
+    return new URL(src).pathname.endsWith('.zarr');
+  } catch {
+    return src.endsWith('.zarr');
+  }
+}
+
 export async function shouldShowBrowser(src: string): Promise<boolean> {
   // Synchronous classification: empty / trailing-slash URLs always
   // need the browser, no point firing a zarr-metadata probe.
@@ -24,6 +41,19 @@ export async function shouldShowBrowser(src: string): Promise<boolean> {
   // every archive. Decide from the suffix and let the loader's zip store do
   // the real work.
   if (isZippedStoreUrl(src)) return false;
+
+  // Same reasoning one step further: a `.zarr` suffix (so `.luxar.zarr`,
+  // `.gsplats.zarr`) with no trailing slash NAMES a store, and the three HEAD
+  // probes below only re-confirm what the suffix already says — at the cost of
+  // a full round trip on the critical path, before scene loading may even
+  // begin. `classifyBrowserUrl` has already sent every trailing-slash URL to
+  // the browser above, so a *directory* called `foo.zarr/` is unaffected; this
+  // only ever sees non-directory URLs.
+  //
+  // The trade: a dead or mistyped `…/typo.zarr` now surfaces a load error
+  // instead of silently opening the dataset browser. That is the more honest
+  // failure for a URL that explicitly names a store.
+  if (isZarrStoreSuffix(src)) return false;
 
   // Check if it's a Zarr dataset by looking for zarr metadata files
   // Try both v2 (.zgroup) and v3 (zarr.json) formats
