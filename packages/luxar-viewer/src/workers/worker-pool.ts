@@ -832,10 +832,11 @@ export function getWorkerPool(): WorkerPool {
  * at scene-load time overlaps worker startup with the metadata fetch that has
  * to happen anyway.
  *
- * The `Worker` guard mirrors `warmUpDepthSortWorker`: the unit suite runs in
- * node/jsdom with no `Worker` constructor, where spawning fails every attempt
- * and would latch the pool's deliberately-sticky rejected `initPromise` for the
- * rest of the file.
+ * The config guard preserves the existing "Web Workers disabled" contract;
+ * warming must not fetch WASM or spawn workers no data path will use. The
+ * `Worker` guard mirrors `warmUpDepthSortWorker`: the unit suite runs in
+ * node/jsdom with no constructor, where spawning would latch the pool's
+ * deliberately-sticky rejected `initPromise` for the rest of the file.
  */
 export function warmUpDataWorkerPool(): void {
   if (!config.dataLoading.performance.useWebWorkers) return;
