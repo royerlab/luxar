@@ -8,7 +8,9 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { fileURLToPath } from 'url';
 
 import { buildInfo, buildInfoLine, UNKNOWN } from '../../../config/build-info';
@@ -17,6 +19,7 @@ import {
   buildIdentity,
   buildIdentityHtmlPlugin,
   buildMetaTag,
+  packageVersion,
   BUILD_DEFINE,
   UNKNOWN as PRODUCER_UNKNOWN,
 } from '../../../../tools/build-identity';
@@ -66,6 +69,18 @@ describe('build-identity (build side)', () => {
     expect(buildIdentity().version).toBe((pkg as { version: string }).version);
   });
 
+  it('reads package.json when the checkout path contains URL metacharacters', () => {
+    const parent = mkdtempSync(join(tmpdir(), 'luxar-build-identity-'));
+    const root = join(parent, 'viewer#copy');
+    mkdirSync(root);
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ version: '9.9.9' }));
+    try {
+      expect(packageVersion(root)).toBe('9.9.9');
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
   it('resolves a commit, or says unknown — never an empty string', () => {
     const commit = buildIdentity().commit;
     expect(commit.length).toBeGreaterThan(0);
@@ -109,6 +124,12 @@ describe('build-identity (build side)', () => {
     );
     expect(html).toContain(buildMetaTag(identity));
     expect(html.indexOf('luxar-build')).toBeLessThan(html.indexOf('</head>'));
+  });
+
+  it('escapes the build identity before placing it in an HTML attribute', () => {
+    expect(buildMetaTag({ version: '1&2', commit: 'a"b', buildTime: '<now>' })).toContain(
+      'content="1&amp;2 a&quot;b &lt;now&gt;"'
+    );
   });
 
   it('leaves html without a head untouched rather than corrupting it', () => {

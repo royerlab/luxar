@@ -22,7 +22,9 @@
 
 import { execFileSync } from 'child_process';
 import { readFileSync } from 'fs';
+import { join } from 'path';
 import { fileURLToPath } from 'url';
+import type { Plugin } from 'vite';
 
 /** Placeholder written whenever a probe cannot answer. Never an empty string. */
 export const UNKNOWN = 'unknown';
@@ -43,9 +45,9 @@ function viewerRoot(): string {
   return fileURLToPath(new URL('..', import.meta.url));
 }
 
-function packageVersion(root: string): string {
+export function packageVersion(root: string): string {
   try {
-    const raw = readFileSync(new URL('package.json', `file://${root}`), 'utf8');
+    const raw = readFileSync(join(root, 'package.json'), 'utf8');
     const parsed: unknown = JSON.parse(raw);
     const version = (parsed as { version?: unknown }).version;
     return typeof version === 'string' && version.length > 0 ? version : UNKNOWN;
@@ -110,12 +112,16 @@ export function buildDefine(identity: BuildIdentity = buildIdentity()): Record<s
  * — which is the state most bug reports arrive in.
  */
 export function buildMetaTag(identity: BuildIdentity = buildIdentity()): string {
-  const content = `${identity.version} ${identity.commit} ${identity.buildTime}`;
+  const content = `${identity.version} ${identity.commit} ${identity.buildTime}`
+    .replaceAll('&', '&amp;')
+    .replaceAll('"', '&quot;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
   return `<meta name="luxar-build" content="${content}" />`;
 }
 
 /** Vite plugin injecting {@link buildMetaTag} into `index.html`'s `<head>`. */
-export function buildIdentityHtmlPlugin(identity: BuildIdentity = buildIdentity()) {
+export function buildIdentityHtmlPlugin(identity: BuildIdentity = buildIdentity()): Plugin {
   return {
     name: 'luxar-build-identity',
     transformIndexHtml(html: string): string {
