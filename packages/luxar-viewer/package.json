@@ -88,7 +88,7 @@
     "test:e2e:visual:update": "node -e \"if(process.platform!=='linux'){console.error('Visual baselines are Linux-only.');process.exit(1)}\" && playwright test --grep '@visual' --update-snapshots=all",
     "test:e2e:smoke": "LUXAR_E2E_NO_FIXTURES=1 playwright test viewer-initialization.spec.ts url-parameters.spec.ts dataset-switching.spec.ts controls-interaction.spec.ts keyboard-input-system.spec.ts --retries 2 --timeout 60000",
     "test:e2e:smoke:strict": "LUXAR_E2E_NO_FIXTURES=1 LUXAR_E2E_STRICT_CONSOLE=1 playwright test viewer-initialization.spec.ts url-parameters.spec.ts dataset-switching.spec.ts controls-interaction.spec.ts keyboard-input-system.spec.ts --retries 2 --timeout 60000",
-    "test:e2e:browsers": "LUXAR_E2E_BROWSERS=all playwright test --project=chromium --project=firefox --project=webkit basic-rendering.spec.ts viewer-initialization.spec.ts geometry-types.spec.ts --retries 0 --timeout 60000",
+    "test:e2e:browsers": "LUXAR_E2E_BROWSERS=all playwright test --project=chromium --project=firefox --project=webkit basic-rendering.spec.ts viewer-initialization.spec.ts geometry-types.spec.ts --ignore-snapshots --retries 0 --timeout 60000",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:debug": "playwright test --debug",
     "test:e2e:report": "playwright show-report",

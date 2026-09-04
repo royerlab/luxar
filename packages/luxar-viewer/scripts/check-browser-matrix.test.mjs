@@ -19,6 +19,7 @@ const VIEWER_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const REPO_ROOT = resolve(VIEWER_ROOT, '../..');
 
 const DOCS = [join(REPO_ROOT, 'README.md'), join(VIEWER_ROOT, 'README.md')];
+const BROWSER_FLOOR = /\b(Chrome|Chromium|Firefox|Safari|Edge|WebKit)\s+\d+(?:\.\d+)*\+/g;
 
 /** Project names declared in playwright.config.ts, opt-in ones included. */
 function declaredProjects() {
@@ -36,7 +37,8 @@ function declaredProjects() {
 function claimedEngines(markdown) {
   const section = markdown.split('### Browser Compatibility')[1];
   if (section === undefined) return null;
-  const table = section.split('\n\n').find((b) => b.trimStart().startsWith('|'));
+  const boundedSection = section.split(/\n#{2,3} /, 1)[0];
+  const table = boundedSection.split('\n\n').find((b) => b.trimStart().startsWith('|'));
   if (!table) return new Set();
   return new Set(
     table
@@ -45,6 +47,10 @@ function claimedEngines(markdown) {
       .map((row) => row.split('|')[1]?.trim().toLowerCase())
       .filter((cell) => cell && !/^-+$/.test(cell))
   );
+}
+
+function browserVersionFloors(markdown) {
+  return [...markdown.matchAll(BROWSER_FLOOR)].map((match) => match[0]);
 }
 
 describe('browser support matrix', () => {
@@ -57,7 +63,10 @@ describe('browser support matrix', () => {
     for (const doc of DOCS) {
       const claimed = claimedEngines(readFileSync(doc, 'utf8'));
       expect(claimed, `${doc} has no "### Browser Compatibility" section`).not.toBeNull();
-      expect(claimed.size, `${doc} claims no engines at all`).toBeGreaterThan(0);
+      expect(
+        claimed.size,
+        `${doc}: no table found under ### Browser Compatibility`
+      ).toBeGreaterThan(0);
       for (const engine of claimed) {
         expect(
           projects,
@@ -78,9 +87,8 @@ describe('browser support matrix', () => {
     // version of this gate read only that section and missed a fourth claim in
     // the root README's Requirements callout -- exactly the N-1-of-N failure it
     // exists to prevent.
-    const FLOOR = /\b(Chrome|Chromium|Firefox|Safari|Edge|WebKit)\s+\d+\+/g;
     for (const doc of DOCS) {
-      const hits = [...readFileSync(doc, 'utf8').matchAll(FLOOR)].map((m) => m[0]);
+      const hits = browserVersionFloors(readFileSync(doc, 'utf8'));
       expect(
         hits,
         `${doc} states browser version floors ${JSON.stringify(hits)}, but the ` +
@@ -99,5 +107,37 @@ describe('browser support matrix', () => {
     for (const engine of ['firefox', 'webkit']) {
       expect(config).not.toMatch(new RegExp(`//\\s*name:\\s*'${engine}'`));
     }
+  });
+
+  it('recognizes decimal browser floors', () => {
+    expect(browserVersionFloors('Safari 15.4+ and Chromium 120.0.1+')).toEqual([
+      'Safari 15.4+',
+      'Chromium 120.0.1+',
+    ]);
+  });
+
+  it('does not read a later table as the compatibility matrix', () => {
+    const markdown = `### Browser Compatibility
+
+No matrix here.
+
+## URL Parameters
+
+| Parameter | Description |
+| --- | --- |
+| src | Dataset URL |`;
+    expect(claimedEngines(markdown)).toEqual(new Set());
+  });
+
+  it('keeps cross-engine smoke tests out of the Chromium visual corpus', () => {
+    const pkg = JSON.parse(readFileSync(join(VIEWER_ROOT, 'package.json'), 'utf8'));
+    expect(pkg.scripts['test:e2e:browsers']).toContain('--ignore-snapshots');
+  });
+
+  it('keeps Chromium launch flags scoped to Chromium', async () => {
+    const { default: config } = await import('../playwright.config.ts');
+    expect(config.use?.launchOptions).toBeUndefined();
+    const chromium = config.projects?.find((project) => project.name === 'chromium');
+    expect(chromium?.use?.launchOptions?.args).toContain('--use-gl=egl');
   });
 });

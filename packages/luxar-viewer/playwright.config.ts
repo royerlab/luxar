@@ -148,26 +148,6 @@ export default defineConfig({
 
     // Navigation timeout
     navigationTimeout: 60000,
-
-    // ========================================================================
-    // CRITICAL: GPU ACCELERATION FLAGS FOR WEBGL/THREE.JS
-    // ========================================================================
-    // These flags force Chromium to use hardware acceleration even in headless mode.
-    // Without these, WebGL falls back to software rendering (SwiftShader), which is:
-    // - 10-100x slower
-    // - Produces different pixels (visual regression tests fail)
-    // - May cause timeouts or crashes
-    launchOptions: {
-      args: [
-        '--use-gl=egl', // Force GPU acceleration
-        '--ignore-gpu-blocklist', // Unblock older/CI GPUs
-        '--enable-webgl-developer-extensions', // Enable WebGL extensions
-        '--enable-webgl-draft-extensions', // Enable draft extensions
-        '--disable-web-security', // Allow CORS for local testing
-        '--no-sandbox', // Often needed in CI environments
-        '--disable-setuid-sandbox',
-      ],
-    },
   },
 
   // Configure projects for different browsers
@@ -176,6 +156,20 @@ export default defineConfig({
       name: 'chromium',
       use: {
         ...devices['Desktop Chrome'],
+        // These flags force Chromium to use hardware acceleration even in
+        // headless mode. Without them, WebGL falls back to SwiftShader, which
+        // is slower, produces different pixels, and may time out or crash.
+        launchOptions: {
+          args: [
+            '--use-gl=egl',
+            '--ignore-gpu-blocklist',
+            '--enable-webgl-developer-extensions',
+            '--enable-webgl-draft-extensions',
+            '--disable-web-security',
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+          ],
+        },
         // Use Playwright's bundled Chromium for consistency
         // If you want to use installed Chrome, uncomment the line below:
         // channel: 'chrome',
@@ -191,8 +185,7 @@ export default defineConfig({
     // project and three engines would triple a ~17 min suite for a matrix the
     // GPU-backed daemon is the right home for.
     //
-    //   LUXAR_E2E_BROWSERS=all pnpm exec playwright test --project=firefox
-    //   LUXAR_E2E_BROWSERS=all pnpm test:e2e:browsers   (the smoke subset)
+    //   pnpm test:e2e:browsers   (functional smoke; snapshots ignored)
     //
     // Requires `npx playwright install firefox webkit` -- neither ships with
     // the default install.
