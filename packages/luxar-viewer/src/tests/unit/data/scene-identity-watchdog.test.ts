@@ -20,7 +20,7 @@ type FetchStub = (input: RequestInfo | URL, init?: RequestInit) => Promise<Respo
 
 /**
  * The URL a stub was asked for. `fetch` accepts a `Request` too, which
- * stringifies to `[object Object]` — so recording `String(input)` would turn a
+ * stringifies to `[object Request]` — so recording `String(input)` would turn a
  * `Request`-shaped call into an unreadable assertion failure instead of naming
  * the document that was probed.
  */
