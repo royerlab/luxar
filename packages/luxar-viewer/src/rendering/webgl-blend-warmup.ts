@@ -74,6 +74,30 @@ export interface SourceWarmupState {
   keepers: Set<THREE.Material>;
   objects: Set<THREE.Object3D>;
   disposeHandler: () => void;
+  /**
+   * Program variants this source USES (variant fingerprint → blend mode),
+   * whether it owns the keeper for them or shares one compiled for an
+   * identical material on another node. Released in `clearSource`.
+   */
+  variants: Map<string, BlendingMode>;
+}
+
+/** Counters for `getPerf().blendWarmup` and the unit tests. */
+export interface BlendWarmupStats {
+  /** Keeper compiles queued (one per program variant that had no live keeper). */
+  queued: number;
+  /** Keeper compiles that ran. */
+  compiled: number;
+  /** Blend modes of one source that collapsed onto an already-queued variant of the same source. */
+  dedupedWithinSource: number;
+  /**
+   * Variants a source shares with a keeper compiled for an IDENTICAL material on
+   * another node (same program) instead of queueing its own — the 100-node
+   * benchmark scene queued 400 compiles for ~4 distinct programs before this.
+   */
+  dedupedAcrossSources: number;
+  /** Shared variants re-queued under a surviving node after their owner was released. */
+  ownershipTransfers: number;
 }
 
 /**
@@ -348,6 +372,21 @@ export class WebGLBlendWarmupManager {
   private sourceStates = new Map<THREE.Material, SourceWarmupState>();
   private warmCompletions = new Set<WarmCompletion>();
   private drainPromise: Promise<void> | null = null;
+  // Cross-node dedupe. A program variant is keyed by its FULL fingerprint
+  // (material lineage + blend defines + geometry layout); every source material
+  // that uses it is a "user", and exactly one user — the "owner" — holds the
+  // keeper clone whose compile pins the program. Identical materials on many
+  // nodes (the common case: one node factory config per geometry type) share
+  // one keeper per variant instead of each queueing its own.
+  private variantUsers = new Map<string, Set<THREE.Material>>();
+  private variantOwner = new Map<string, THREE.Material>();
+  private stats: BlendWarmupStats = {
+    queued: 0,
+    compiled: 0,
+    dedupedWithinSource: 0,
+    dedupedAcrossSources: 0,
+    ownershipTransfers: 0,
+  };
 
   constructor(
     private readonly waitForWarmupTurn: WaitForWarmupTurn = defaultWaitForWarmupTurn,
@@ -462,43 +501,142 @@ export class WebGLBlendWarmupManager {
         this.clearSource(sourceMaterial);
       };
       sourceMaterial.addEventListener('dispose', disposeHandler);
-      existing = { fingerprint, keepers, objects: new Set(), disposeHandler };
+      existing = {
+        fingerprint,
+        keepers,
+        objects: new Set(),
+        disposeHandler,
+        variants: new Map(),
+      };
       this.sourceStates.set(sourceMaterial, existing);
+      this.enqueueVariantKeepers(sourceMaterial, object, existing);
 
-      const seenVariants = new Set<string>();
-
-      for (const mode of BLENDING_MODES) {
-        const keeper: THREE.Material = sourceMaterial.clone();
-        if (!hasWarmupMaterialApi(keeper)) {
-          keeper.dispose();
-          continue;
-        }
-
-        keeper.applyBlendingMode(mode);
-        const variantFingerprint = buildBlendWarmupFingerprint(keeper, object, true);
-        if (seenVariants.has(variantFingerprint)) {
-          keeper.dispose();
-          continue;
-        }
-
-        seenVariants.add(variantFingerprint);
-        keepers.add(keeper);
-        this.queue.push({
-          sourceMaterial,
-          keeperMaterial: keeper,
-          compileObject: createCompileObject(object, keeper),
-        });
-      }
-
-      if (keepers.size === 0) {
+      if (existing.variants.size === 0) {
+        // No blend mode produced a warmable variant (material without the
+        // warm-up API after cloning): nothing to pin, nothing to track.
         this.clearSource(sourceMaterial);
         return;
       }
 
-      this.startDrain();
+      // A source whose every variant is already pinned by another node's
+      // keeper queues nothing — but it still registers as a user (above) so
+      // the keeper is handed over if that node goes away first.
+      if (keepers.size > 0) this.startDrain();
     }
 
     this.attachObject(object, sourceMaterial, existing);
+  }
+
+  /**
+   * Enumerate the blend-mode variants of `sourceMaterial` and queue a keeper
+   * compile for each variant no live keeper pins yet. Two dedupe levels: modes
+   * of THIS source that land on the same program (e.g. additive/luminous
+   * differing only in blend state) collapse to one keeper, and a variant an
+   * identical material on ANOTHER node already owns is shared, not re-queued.
+   */
+  private enqueueVariantKeepers(
+    sourceMaterial: THREE.Material,
+    object: THREE.Object3D,
+    state: SourceWarmupState
+  ): void {
+    for (const mode of BLENDING_MODES) {
+      const keeper: THREE.Material = sourceMaterial.clone();
+      if (!hasWarmupMaterialApi(keeper)) {
+        keeper.dispose();
+        continue;
+      }
+
+      keeper.applyBlendingMode(mode);
+      const variantFingerprint = buildBlendWarmupFingerprint(keeper, object, true);
+      if (state.variants.has(variantFingerprint)) {
+        keeper.dispose();
+        this.stats.dedupedWithinSource += 1;
+        continue;
+      }
+      state.variants.set(variantFingerprint, mode);
+      this.registerVariantUser(variantFingerprint, sourceMaterial);
+
+      const owner = this.variantOwner.get(variantFingerprint);
+      if (owner && owner !== sourceMaterial && this.sourceStates.has(owner)) {
+        keeper.dispose();
+        this.stats.dedupedAcrossSources += 1;
+        continue;
+      }
+
+      this.variantOwner.set(variantFingerprint, sourceMaterial);
+      this.queueKeeper(sourceMaterial, object, keeper, state);
+    }
+  }
+
+  private registerVariantUser(variantFingerprint: string, sourceMaterial: THREE.Material): void {
+    let users = this.variantUsers.get(variantFingerprint);
+    if (!users) {
+      users = new Set();
+      this.variantUsers.set(variantFingerprint, users);
+    }
+    users.add(sourceMaterial);
+  }
+
+  private queueKeeper(
+    sourceMaterial: THREE.Material,
+    object: THREE.Object3D,
+    keeper: THREE.Material,
+    state: SourceWarmupState
+  ): void {
+    state.keepers.add(keeper);
+    this.queue.push({
+      sourceMaterial,
+      keeperMaterial: keeper,
+      compileObject: createCompileObject(object, keeper),
+    });
+    this.stats.queued += 1;
+  }
+
+  /**
+   * The owner of a shared variant went away while other nodes still use it:
+   * hand the keeper to one of them (a fresh clone from that node's material,
+   * queued for compile) so the program stays pinned for the survivors.
+   */
+  private adoptVariant(
+    variantFingerprint: string,
+    mode: BlendingMode,
+    newOwner: THREE.Material
+  ): void {
+    const state = this.sourceStates.get(newOwner);
+    const object = state ? state.objects.values().next().value : undefined;
+    if (!state || !object) return;
+    const keeper: THREE.Material = newOwner.clone();
+    if (!hasWarmupMaterialApi(keeper)) {
+      keeper.dispose();
+      return;
+    }
+    keeper.applyBlendingMode(mode);
+    this.variantOwner.set(variantFingerprint, newOwner);
+    this.queueKeeper(newOwner, object, keeper, state);
+    this.stats.ownershipTransfers += 1;
+    this.startDrain();
+  }
+
+  /** Release `sourceMaterial`'s variant registrations, transferring owned ones. */
+  private releaseVariants(sourceMaterial: THREE.Material, state: SourceWarmupState): void {
+    for (const [variantFingerprint, mode] of state.variants) {
+      const users = this.variantUsers.get(variantFingerprint);
+      users?.delete(sourceMaterial);
+      if (this.variantOwner.get(variantFingerprint) !== sourceMaterial) continue;
+      this.variantOwner.delete(variantFingerprint);
+      const heir = users?.values().next().value;
+      if (heir) {
+        this.adoptVariant(variantFingerprint, mode, heir);
+      } else {
+        this.variantUsers.delete(variantFingerprint);
+      }
+    }
+    state.variants.clear();
+  }
+
+  /** Snapshot of the warm-up counters (copied; safe to hand to probes). */
+  getStats(): BlendWarmupStats {
+    return { ...this.stats };
   }
 
   clear(): void {
@@ -512,6 +650,8 @@ export class WebGLBlendWarmupManager {
     for (const material of Array.from(this.sourceStates.keys())) {
       this.clearSource(material);
     }
+    this.variantUsers.clear();
+    this.variantOwner.clear();
   }
 
   private settleWarmCompletion(completion: WarmCompletion): void {
@@ -553,6 +693,7 @@ export class WebGLBlendWarmupManager {
       keeper.dispose();
     }
     state.keepers.clear();
+    this.releaseVariants(sourceMaterial, state);
   }
 
   private attachObject(
@@ -626,6 +767,7 @@ export class WebGLBlendWarmupManager {
 
       try {
         this.compileOne(this.renderer, this.camera, this.targetScene, task.compileObject);
+        this.stats.compiled += 1;
       } catch (error) {
         log.warning(
           Modules.RENDERER,
@@ -677,4 +819,9 @@ export function warmSceneBlendModePrograms(root: THREE.Object3D): Promise<void> 
  */
 export function clearBlendModeProgramWarmup(): void {
   defaultManager.clear();
+}
+
+/** Warm-up counters for `__luxarDebug.getPerf().blendWarmup` (see BlendWarmupStats). */
+export function getBlendModeProgramWarmupStats(): BlendWarmupStats {
+  return defaultManager.getStats();
 }

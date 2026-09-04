@@ -18,6 +18,7 @@ import {
   syncLineMaterialWithGeometry,
   syncPointMaterialWithGeometry,
 } from '../../../rendering/material-sync-helpers';
+import { getBlendModeProgramWarmupStats } from '../../../rendering/webgl-blend-warmup';
 import { materialManager, type BlendingMode } from '../../../rendering/material-manager';
 import { normalizeBlendingMode } from '../../../rendering/blending-state';
 import {
@@ -459,6 +460,8 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
         adaptiveDpr: () => ports.adaptiveDPRManager.getDiagnostics(),
         workers: () => getWorkerPool().getStats(),
         density: snapshotProjectedDensity,
+        cache: () => SceneLoaderManager.getInstance().getDefaultLoader()?.getCacheStats() ?? null,
+        blendWarmup: getBlendModeProgramWarmupStats,
         isUpdateInProgress: () => {
           const loader = SceneLoaderManager.getInstance().getDefaultLoader() as {
             isUpdateInProgress?: () => boolean;

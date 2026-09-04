@@ -31,6 +31,10 @@ export interface PerfSnapshotContext {
   isAnyLodLevelLoading?: () => boolean;
   /** Per-node projected density (`scene/projected-density.ts` snapshot). */
   density?: () => unknown;
+  /** Multi-level cache stats (`SceneLoader.getCacheStats()`; includes the L2 write queue). */
+  cache?: () => unknown;
+  /** Blend-mode program warm-up counters (`rendering/webgl-blend-warmup.ts`). */
+  blendWarmup?: () => unknown;
 }
 
 export interface PerfSnapshot {
@@ -44,6 +48,10 @@ export interface PerfSnapshot {
   workers: unknown;
   /** Per-node projected density records, keyed by scene path (null before init). */
   density: unknown;
+  /** Cache tier stats incl. `l2WriteQueue.{pending,inFlight,dropped}` (null before init). */
+  cache: unknown;
+  /** Warm-up counters: variants queued / compiled / deduped (null before init). */
+  blendWarmup: unknown;
   /**
    * The wide "nothing is in flight" predicate, or `null` before the runtime
    * hooks exist. See the module doc for what it covers.
@@ -98,6 +106,8 @@ export function computePerfSnapshot(ctx: PerfSnapshotContext = {}): PerfSnapshot
     adaptiveDpr: readOrNull(ctx.adaptiveDpr),
     workers: readOrNull(ctx.workers),
     density: readOrNull(ctx.density),
+    cache: readOrNull(ctx.cache),
+    blendWarmup: readOrNull(ctx.blendWarmup),
     isSettled,
     settle: { updateInProgress, loadPassInProgress, lodLevelLoading, refinementComplete },
   };

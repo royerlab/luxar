@@ -118,7 +118,7 @@ describe('WebGLBlendWarmupManager', () => {
     manager.scheduleObject(mesh);
     expect(compileOne).not.toHaveBeenCalled();
 
-    manager.warmScene(root);
+    void manager.warmScene(root);
     manager.scheduleObject(makeRenderableMesh('points'));
     expect(activations.pending).toBe(1);
     expect(warmupTurns.pending).toBe(0);
@@ -369,6 +369,87 @@ describe('WebGLBlendWarmupManager', () => {
     expect(compileOne).toHaveBeenCalledTimes(3);
   });
 
+  it('shares one keeper per program variant across nodes with identical materials', async () => {
+    const warmupTurns = makeWarmupTurnController();
+    const compileOne = vi.fn();
+    const manager = new WebGLBlendWarmupManager(warmupTurns.wait, compileOne, activateImmediately);
+    manager.configure({
+      enabled: true,
+      renderer: {} as THREE.WebGLRenderer,
+      camera: new THREE.PerspectiveCamera(),
+      targetScene: new THREE.Scene(),
+    });
+
+    // Two nodes, two DISTINCT material instances with identical compile-time
+    // state (the node factory hands every points node the same config): they
+    // compile to the same programs, so the second node must queue nothing.
+    const root = new THREE.Group();
+    root.add(makeRenderableMesh('points', new FakeWarmupMaterial()));
+    root.add(makeRenderableMesh('points', new FakeWarmupMaterial()));
+    void manager.warmScene(root);
+    expect(warmupTurns.pending).toBe(1);
+    for (let i = 0; i < 3; i++) await warmupTurns.releaseNext();
+    expect(compileOne).toHaveBeenCalledTimes(3);
+    expect(warmupTurns.pending).toBe(0);
+    expect(manager.getStats()).toMatchObject({
+      queued: 3,
+      compiled: 3,
+      dedupedAcrossSources: 3,
+      ownershipTransfers: 0,
+    });
+  });
+
+  it('hands a shared variant to a surviving node when its owner is released', async () => {
+    const warmupTurns = makeWarmupTurnController();
+    const compileOne = vi.fn();
+    const manager = new WebGLBlendWarmupManager(warmupTurns.wait, compileOne, activateImmediately);
+    manager.configure({
+      enabled: true,
+      renderer: {} as THREE.WebGLRenderer,
+      camera: new THREE.PerspectiveCamera(),
+      targetScene: new THREE.Scene(),
+    });
+
+    const owner = new FakeWarmupMaterial();
+    const root = new THREE.Group();
+    root.add(makeRenderableMesh('points', owner));
+    root.add(makeRenderableMesh('points', new FakeWarmupMaterial()));
+    void manager.warmScene(root);
+    for (let i = 0; i < 3; i++) await warmupTurns.releaseNext();
+    expect(compileOne).toHaveBeenCalledTimes(3);
+
+    // The owner's node is torn down: its keepers are disposed (the programs
+    // would be released with them), so the survivor must re-pin every shared
+    // variant with its own keeper — otherwise the warm-up silently evaporates
+    // for the node that is still on screen.
+    owner.dispose();
+    expect(warmupTurns.pending).toBe(1);
+    for (let i = 0; i < 3; i++) await warmupTurns.releaseNext();
+    expect(compileOne).toHaveBeenCalledTimes(6);
+    expect(manager.getStats()).toMatchObject({ queued: 6, compiled: 6, ownershipTransfers: 3 });
+  });
+
+  it('a variant whose last user is released is forgotten, not transferred', async () => {
+    const warmupTurns = makeWarmupTurnController();
+    const compileOne = vi.fn();
+    const manager = new WebGLBlendWarmupManager(warmupTurns.wait, compileOne, activateImmediately);
+    manager.configure({
+      enabled: true,
+      renderer: {} as THREE.WebGLRenderer,
+      camera: new THREE.PerspectiveCamera(),
+      targetScene: new THREE.Scene(),
+    });
+    const only = new FakeWarmupMaterial();
+    void manager.warmScene(makeRenderableMesh('points', only));
+    for (let i = 0; i < 3; i++) await warmupTurns.releaseNext();
+    only.dispose();
+    expect(warmupTurns.pending).toBe(0);
+    expect(manager.getStats().ownershipTransfers).toBe(0);
+    // A NEW node with the same material state owns the variants afresh.
+    manager.scheduleObject(makeRenderableMesh('points', new FakeWarmupMaterial()));
+    expect(warmupTurns.pending).toBe(1);
+  });
+
   it('drops queued keepers when the source material is disposed', async () => {
     const warmupTurns = makeWarmupTurnController();
     const compileOne = vi.fn();
@@ -436,7 +517,7 @@ describe('WebGLBlendWarmupManager', () => {
     const mesh = makeRenderableMesh('points');
     root.add(mesh);
 
-    manager.warmScene(root);
+    void manager.warmScene(root);
     expect(compileOne).not.toHaveBeenCalled();
 
     root.remove(mesh);

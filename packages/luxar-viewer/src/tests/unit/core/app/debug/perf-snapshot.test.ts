@@ -20,6 +20,7 @@ describe('computePerfSnapshot', () => {
     expect(snap.rendererInfo).toBeNull();
     expect(snap.adaptiveDpr).toBeNull();
     expect(snap.workers).toBeNull();
+    expect(snap.cache).toBeNull();
     expect(snap.timeline.milestones.loadStart).toBeDefined();
     expect(snap.settle).toEqual({
       updateInProgress: null,
@@ -27,6 +28,12 @@ describe('computePerfSnapshot', () => {
       lodLevelLoading: null,
       refinementComplete: false,
     });
+  });
+
+  it('exposes the cache tier stats (L2 write queue included) from the hook', () => {
+    const stats = { l2WriteQueue: { pending: 0, inFlight: 0, dropped: 3 } };
+    const snap = computePerfSnapshot({ isUpdateInProgress: () => false, cache: () => stats });
+    expect(snap.cache).toBe(stats);
   });
 
   it('isSettled requires no update, no load pass, no lazy level, and refinement complete', () => {
