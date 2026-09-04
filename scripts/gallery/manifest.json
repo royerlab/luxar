@@ -916,7 +916,7 @@
       "category": "embeddings",
       "script": "demo_bird_plumage_colorspace.py",
       "dataset": "datasets/demos/bird_plumage_colorspace.luxar.zarr",
-      "citation": "BirdColorBase (Gluckman & Endler, and nine contributing groups)",
+      "citation": "BirdColorBase (Gluckman & Endler, and ten contributing groups)",
       "timelapse": {
         "framePoint": 0.95
       },

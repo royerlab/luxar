@@ -1,8 +1,8 @@
 #### Bird plumage colour space, with ultraviolet as the fourth dimension
 
 A new demo, `bird_plumage_colorspace`, plots every reading in
-[BirdColorBase](https://github.com/BirdColorBase/home) — roughly half a million
-spectrophotometer measurements of plumage across ~2,500 species — as a spike in
+[BirdColorBase](https://github.com/BirdColorBase/home) — 360,432
+spectrophotometer measurements of plumage across 2,632 species — as a spike in
 CIELAB: direction is hue, length is chroma, height is lightness, and each spike
 is painted the colour it actually is.
 
@@ -20,4 +20,4 @@ The colorimetry needs no data file and no new dependency: the CIE 1931 observer
 comes from the Wyman–Sloan–Shirley multi-lobe fit already used by
 `demo_galaxy_simulation`, the illuminant is a white-balanced 6500 K Planckian,
 and the `.xlsx` sources are streamed with the standard library. Readings are
-reduced block by block, so the 640 MB corpus never lands in memory whole.
+reduced block by block, so the 525 MB corpus never lands in memory whole.
