@@ -213,6 +213,20 @@ describe('bootstrapStandalone', () => {
   });
 
   describe('opt-in flags', () => {
+    it('patches console before logging the build identity', async () => {
+      const customLog = vi.spyOn(log, 'custom');
+
+      await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
+
+      const buildLogIndex = customLog.mock.calls.findIndex(([, , message]) =>
+        message.startsWith('Luxar viewer ')
+      );
+      expect(buildLogIndex).toBeGreaterThanOrEqual(0);
+      expect(mocks.patch.mock.invocationCallOrder[0]).toBeLessThan(
+        customLog.mock.invocationCallOrder[buildLogIndex]
+      );
+    });
+
     it('patches console, validates config, and warms codecs when defaults apply', async () => {
       await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
 

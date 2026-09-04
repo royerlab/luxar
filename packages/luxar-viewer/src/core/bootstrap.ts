@@ -119,7 +119,6 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   //   - before init, because "the viewer renders black" is exactly the case
   //     where init threw and every later surface is gone.
   window.__luxarBuild = buildInfo();
-  log.custom(LogEmoji.START, Modules.LUXAR, `Luxar viewer ${buildInfoLine()}`);
 
   // Load + apply the persisted global viewer preferences (Settings popover)
   // BEFORE the first config read below: live-read values are applied by
@@ -189,6 +188,7 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   if (patchConsole) {
     consoleInterceptor.patch();
   }
+  log.custom(LogEmoji.START, Modules.LUXAR, `Luxar viewer ${buildInfoLine()}`);
 
   // Wire the cross-layer notifier surface to the concrete UI helpers.
   // Lower layers (data, scene, input) call notifier.toast / .error /
