@@ -499,7 +499,7 @@ class TestConfigDefaultsTrackTheFitter:
 
     @pytest.mark.parametrize("config_cls", [OptimConfig, LossConfig, ConstraintConfig])
     def test_every_field_is_actually_a_fitter_parameter(self, config_cls) -> None:
-        """`**asdict(cfg)` fields must not be silently ignored as seed keywords.
+        """`**asdict(cfg)` fields must not be diverted into seed generation.
 
         The other half of the contract: matching defaults are worthless if the
         field is absorbed by `**seed_kwargs` instead of configuring the fitter.
@@ -518,8 +518,8 @@ class TestConfigDefaultsTrackTheFitter:
 
         assert not unknown, (
             f"{config_cls.__name__} has field(s) fit_gaussian_splats does not "
-            f"accept: {unknown}. `**asdict(cfg)` would silently pass them to "
-            "`**seed_kwargs`, where they would be ignored by the fitter."
+            f"accept: {unknown}. `**asdict(cfg)` would pass them to "
+            "`**seed_kwargs` instead of configuring the fitter."
         )
 
     @pytest.mark.parametrize(
