@@ -167,11 +167,51 @@ CURRENT_VERSION_CLAIMS: tuple[tuple[str, str], ...] = (
     ),
     (
         "packages/luxar/src/luxar/gsplats/io/README.md",
-        r"(?:→|stamped|writes the|emits|to|migration to|Format spec \() v?(\d+\.\d+)(?: root header| node-tree| `kind=lod`| bare leaf| additive ladder leaf| node tree|\))",
+        r"→ v(\d+\.\d+) bare leaf",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        r"→ v(\d+\.\d+) additive ladder leaf",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        r"v(\d+\.\d+) `kind=lod` group",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        r"→ v(\d+\.\d+) node tree",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        r"stamped v(\d+\.\d+)",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        r"writes the v(\d+\.\d+) root header",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        r'`SUPPORTED_FORMAT_VERSIONS` \(`"3\.0"`, `"3\.1"`, `"3\.2"`, `"3\.3"`, `"(\d+\.\d+)"`\)',
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        r"current writer emits v(\d+\.\d+)",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        r"selector attrs — to v(\d+\.\d+)",
     ),
     (
         "packages/luxar/src/luxar/gsplats/io/README.md",
         r"current node-tree format \(v3\.0-v(\d+\.\d+)\)",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        r"migration to v(\d+\.\d+) node-tree layout",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        r"Format spec \(v(\d+\.\d+)\)",
     ),
     (
         "CLAUDE.md",
@@ -208,6 +248,10 @@ CURRENT_VERSION_CLAIMS: tuple[tuple[str, str], ...] = (
     (
         "packages/luxar-viewer/src/data/codecs/README.md",
         r"current \*\*standalone gsplat format is v(\d+\.\d+)\*\*",
+    ),
+    (
+        "packages/luxar-viewer/src/data/codecs/README.md",
+        r"Supported versions: 3\.0, 3\.1, 3\.2, 3\.3, (\d+\.\d+)",
     ),
     (
         "packages/luxar-viewer/src/data/codecs/README.md",
