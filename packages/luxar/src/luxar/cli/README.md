@@ -160,6 +160,9 @@ luxar info data.luxar.zarr --format json # JSON output
 share of arrays under the 16 KB floor, and the projected request count for a
 full load — computed off the same helper `luxar optimise` plans from, so a
 store that is badly chunked for streaming is visible without hosting it first.
+When the mean chunk is under 32 KB it also warns that the load will be
+round-trip bound on an HTTP/1.1 host (which `luxar serve` is): measured 10.6 s vs
+4.0 s over HTTP/2 for the same 1.5 M-point example at 25 Mbps / 30 ms RTT.
 
 ### `luxar optimise`
 Re-chunk an existing store for streaming. One structure-preserving pass: only
