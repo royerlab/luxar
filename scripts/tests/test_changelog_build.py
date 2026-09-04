@@ -207,6 +207,47 @@ def test_fragments_are_filed_under_the_month_they_were_written(tmp_path, monkeyp
     assert [p.name for p in groups["September 2026"]] == ["30.md"]
 
 
+def test_restored_fragment_keeps_its_original_authoring_month(tmp_path, monkeypatch):
+    frag_dir = _repo_with_fragments(tmp_path, {"10.md": "2026-08-10T12:00:00"})
+    env = {**os.environ, **_GIT_ENV, "HOME": str(tmp_path)}
+    september_env = {
+        **env,
+        "GIT_AUTHOR_DATE": "2026-09-01T12:00:00",
+        "GIT_COMMITTER_DATE": "2026-09-01T12:00:00",
+    }
+    subprocess.run(
+        ["git", "rm", "-q", "changelog.d/10.md"],
+        cwd=tmp_path,
+        check=True,
+        env=env,
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "remove"],
+        cwd=tmp_path,
+        check=True,
+        env=september_env,
+    )
+    frag_dir.mkdir()
+    (frag_dir / "10.md").write_text("#### Restored\n\nProse.\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "changelog.d/10.md"], cwd=tmp_path, check=True, env=env
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "restore"],
+        cwd=tmp_path,
+        check=True,
+        env=september_env,
+    )
+
+    monkeypatch.setattr(cb, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(cb, "FRAG_DIR", frag_dir)
+
+    groups = cb._group_by_month(cb._fragments(), None)
+
+    assert list(groups) == ["August 2026"]
+    assert [p.name for p in groups["August 2026"]] == ["10.md"]
+
+
 def test_an_undatable_fragment_fails_rather_than_being_mis_filed(tmp_path, monkeypatch):
     """Fail closed: guessing the month is the bug, so refuse to guess."""
     frag_dir = _repo_with_fragments(tmp_path, {"10.md": "2026-08-10T12:00:00"})
@@ -229,6 +270,28 @@ def test_pinning_a_month_overrides_the_git_dates(tmp_path, monkeypatch):
     groups = cb._group_by_month(cb._fragments(), "July 2026")
     assert list(groups) == ["July 2026"]
     assert len(groups["July 2026"]) == 2
+
+
+def test_main_folds_every_authored_month(tmp_path, monkeypatch):
+    frag_dir = _repo_with_fragments(
+        tmp_path,
+        {
+            "10.md": "2026-08-10T12:00:00",
+            "20.md": "2026-09-02T12:00:00",
+        },
+    )
+    changelog = tmp_path / "CHANGELOG.md"
+    monkeypatch.setattr(cb, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(cb, "FRAG_DIR", frag_dir)
+    monkeypatch.setattr(cb, "CHANGELOG", changelog)
+    monkeypatch.setattr("sys.argv", ["changelog_build.py"])
+
+    assert cb.main() == 0
+
+    text = changelog.read_text(encoding="utf-8")
+    assert text.index("### September 2026") < text.index("### August 2026")
+    assert "#### Entry 10.md" in text
+    assert "#### Entry 20.md" in text
 
 
 # --------------------------------------------------------------------------
