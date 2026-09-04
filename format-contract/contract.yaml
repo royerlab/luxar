@@ -72,7 +72,32 @@ node_kinds: ["lod", "partition"]
 # On-disk array encoding scheme names: emitted by the Python ArrayEncoder,
 # recognized by the TS ArrayDecoder. NOTE the two bit-width suffix conventions
 # are NOT interchangeable: the per-channel family uses `_uN`; the scalar /
-# bounded / geolog-scalar families use `_uintN`.
+# bounded / geolog-scalar / lut / rgb families use `_uintN`.
+#
+# The split is KEPT DELIBERATELY, not tolerated. Both spellings are live in
+# published stores -- a scan of the built demo and example stores found every
+# one of them carrying at least one encoding attr, including 156 occurrences of
+# the short `_uN` form -- so renaming either convention would invalidate every
+# published store and every checksum-pinned Zenodo record, or else require a
+# third alias vocabulary that is strictly worse than the wart. The names are
+# wire format; they are not free to tidy.
+#
+# What the split costs is that the wrong sibling of a real name reads exactly as
+# plausibly as the real one. That is a documentation hazard before it is a code
+# one, and its source is identifiable: the WASM/TS decode kernels are named
+# `decode_<family>_u8` -- short form, uniformly, by Rust convention -- while the
+# value they read off disk may be `<family>_uint8`. An author reads the kernel,
+# writes its spelling into prose, and the next author copies the prose into an
+# f-string that produces a store no decoder can read.
+#
+# So the split is enforced rather than merely documented:
+#   encoding/tests/test_encoding_vocabulary.py     no document may NAME a
+#                                                  non-existent sibling
+#   encoding/tests/test_emitted_names_contract.py  every name the encoder EMITS
+#                                                  is here, and every quantized
+#                                                  name here is reachable
+#   encoding/tests/test_custom_dispatch_contract   the CUSTOM dispatch keys
+#   viewer .../format-contract.test.ts             the decoder knows every name
 encodings:
   - none
   - broadcasted
