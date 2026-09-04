@@ -154,13 +154,17 @@ def test_the_scan_reached_the_documents() -> None:
     """Fail closed: an empty scan would make the real assertion vacuous."""
     docs = _documents()
     assert len(docs) > 500, f"only found {len(docs)} documents under {REPO}"
-    expected = {
+    permanent_files = {
         REPO / "CHANGELOG.md",
         REPO / "CLAUDE.md",
-        REPO / "changelog.d/2511.md",
-        REPO / "scripts/reencode_gsplat_demos.py",
     }
-    assert expected <= set(docs), f"scan missed required prose: {expected - set(docs)}"
+    assert permanent_files <= set(docs), (
+        f"scan missed required prose: {permanent_files - set(docs)}"
+    )
+    for root in ("changelog.d", "scripts", "packages/luxar/examples"):
+        assert any(path.is_relative_to(REPO / root) for path in docs), (
+            f"scan missed required prose root: {root}"
+        )
     siblings = wrong_convention_siblings()
     assert len(siblings) >= 15, (
         f"derived only {len(siblings)} sibling spellings from "
