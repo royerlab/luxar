@@ -30,6 +30,16 @@ export interface BufferedMessage {
  */
 export const DEFAULT_MAX_BUFFER_SIZE = 10000;
 
+// Captured at module load: wrappers installed after import but before patch()
+// are intentionally not retained when dispose() restores the stable originals.
+const ORIGINAL_CONSOLE = {
+  log: console.log.bind(console),
+  warn: console.warn.bind(console),
+  error: console.error.bind(console),
+  info: console.info.bind(console),
+  debug: console.debug.bind(console),
+};
+
 class ConsoleInterceptor {
   private static instance: ConsoleInterceptor;
 
@@ -49,13 +59,7 @@ class ConsoleInterceptor {
   private hasWrapped = false;
 
   /** Original console methods */
-  private originalConsole: {
-    log: typeof console.log;
-    warn: typeof console.warn;
-    error: typeof console.error;
-    info: typeof console.info;
-    debug: typeof console.debug;
-  };
+  private readonly originalConsole: typeof ORIGINAL_CONSOLE;
 
   /** Callbacks for new messages */
   private listeners: Set<(message: BufferedMessage) => void> = new Set();
@@ -64,20 +68,16 @@ class ConsoleInterceptor {
   private isIntercepting = false;
 
   private constructor() {
-    // Capture the platform's original console methods at construction time so
-    // we can later restore them. Construction does NOT patch console — call
+    // Reuse the platform's original console methods captured when this module
+    // loaded so repeated singleton lifecycles restore the same functions
+    // instead of binding another wrapper layer each time. Construction does
+    // NOT patch console — call
     // {@link patch} explicitly to start intercepting.
     //
     // This deliberate separation matters for embedding: importing this
     // module from a published library must not silently monkey-patch the
     // host page's console.
-    this.originalConsole = {
-      log: console.log.bind(console),
-      warn: console.warn.bind(console),
-      error: console.error.bind(console),
-      info: console.info.bind(console),
-      debug: console.debug.bind(console),
-    };
+    this.originalConsole = { ...ORIGINAL_CONSOLE };
   }
 
   /**
@@ -336,21 +336,28 @@ class ConsoleInterceptor {
 /**
  * Lazy proxy for the singleton. Property access on this object resolves to
  * the live `ConsoleInterceptor` (constructed on first use). Importing the
- * symbol is itself side-effect-free — no console patching, no allocations.
+ * symbol is itself side-effect-free — no console patching or singleton
+ * construction.
  *
  * Patch the host console explicitly via `consoleInterceptor.patch()` from
  * the bootstrap path that wants buffered console output (e.g. main.ts for
  * the standalone app, LuxarApp.init({ debug: true }) for embedded use).
  */
 export const consoleInterceptor: ConsoleInterceptor = new Proxy({} as ConsoleInterceptor, {
-  get(_target, prop, receiver) {
+  get(_target, prop) {
     const instance = ConsoleInterceptor.getInstance();
-    const value = Reflect.get(instance, prop, receiver);
+    const value = Reflect.get(instance, prop);
     return typeof value === 'function' ? value.bind(instance) : value;
   },
-  set(_target, prop, value, receiver) {
+  set(_target, prop, value) {
     const instance = ConsoleInterceptor.getInstance();
-    return Reflect.set(instance, prop, value, receiver);
+    // Deliberately WITHOUT the `receiver` argument. Forwarding the receiver
+    // (the proxy) makes `Reflect.set` finish the write with
+    // CreateDataProperty(receiver, …) rather than on the instance — so the
+    // value lands on the proxy's empty `{}` target and the instance never sees
+    // it, while `set` still reports success. Nothing in the app writes through
+    // this proxy today, which is why it went unnoticed.
+    return Reflect.set(instance, prop, value);
   },
   has(_target, prop) {
     return prop in ConsoleInterceptor.getInstance();
