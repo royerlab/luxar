@@ -11,7 +11,7 @@ import {
   SPHERE_SAFETY_EXPANSION,
 } from '../scene/scene-manager/clipping/bounds-math';
 
-import type { RenderingControllers } from './rendering-controls/types';
+import type { DensityGuardControl, RenderingControllers } from './rendering-controls/types';
 import { log, Modules } from '../utils/log';
 import { setupCameraControls } from './rendering-controls/setup/camera-setup';
 import { setupHDRControls } from './rendering-controls/setup/hdr-setup';
@@ -142,6 +142,7 @@ export class RenderingControls {
 
   /** Reference to adaptive DPR manager (persisted enabled state applied on load). */
   private adaptiveDPRManager?: AdaptiveDPRManager;
+  private densityGuardControl?: DensityGuardControl;
 
   /** RAF-driven mirror of the camera near/far values into the slider displays. */
   private readonly clippingDisplay: ClippingDisplay;
@@ -367,6 +368,7 @@ export class RenderingControls {
     // ceiling that `setEnabled` then settles the operating DPR against.
     this.adaptiveDPRManager?.setHighDPRAllowed(this.settings.allowHighDPR);
     this.adaptiveDPRManager?.setEnabled(this.settings.adaptiveDPREnabled);
+    this.applyDensityGuardSetting();
 
     // Apply camera settings to scene manager (before post-processing)
     this.sceneManager.setFov(this.settings.fov);
@@ -459,6 +461,27 @@ export class RenderingControls {
    */
   setAdaptiveDPRManager(manager: AdaptiveDPRManager): void {
     this.adaptiveDPRManager = manager;
+  }
+
+  /**
+   * Store the density-guard handle so {@link loadSettings} (and a reset) can
+   * apply the persisted `densityGuardEnabled` flag. The toggle itself lives in
+   * the Performance rail popover, which self-syncs from the handle when opened.
+   */
+  setDensityGuardControl(control: DensityGuardControl): void {
+    this.densityGuardControl = control;
+  }
+
+  /**
+   * Apply the stored Density Guard choice — unless `?no-density-guard` turned
+   * the guard off for this session, in which case the stored flag is left
+   * alone (neither applied nor overwritten), like a URL DPR pin.
+   */
+  private applyDensityGuardSetting(): void {
+    const control = this.densityGuardControl;
+    if (control && !control.sessionDisabled) {
+      control.setEnabled(this.settings.densityGuardEnabled);
+    }
   }
 
   /**
@@ -846,6 +869,7 @@ export class RenderingControls {
     // uncapped DPR for one step and reallocate render targets twice.
     this.adaptiveDPRManager?.setHighDPRAllowed(this.settings.allowHighDPR);
     this.adaptiveDPRManager?.setEnabled(this.settings.adaptiveDPREnabled);
+    this.applyDensityGuardSetting();
 
     // Update cinematic mode checkbox based on loaded effects state
     this.updateCinematicModeCheckbox();

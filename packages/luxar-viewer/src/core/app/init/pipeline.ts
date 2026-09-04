@@ -540,6 +540,9 @@ export async function runInitPipeline(
 
   // Connect rendering controls to adaptive DPR manager for performance UI
   renderingControls.setAdaptiveDPRManager(adaptiveDPRManager);
+  // ...and to the density guard, so the persisted per-scene Density Guard
+  // choice is applied by loadSettings alongside the two DPR flags.
+  renderingControls.setDensityGuardControl(densityWiring);
 
   // Connect rendering controls to input handler
   inputHandler.setRenderingControls(renderingControls);
@@ -622,6 +625,7 @@ export async function runInitPipeline(
     renderingControls,
     animationController,
     adaptiveDPRManager,
+    densityGuard: densityWiring,
     performanceMonitor,
     layersPanel,
     debugConsole,

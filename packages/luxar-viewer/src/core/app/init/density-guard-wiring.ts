@@ -1,6 +1,7 @@
 /**
  * Wiring for the projected-density guard: tracker deps, keep-fraction guard,
- * the refinement rung-gate provider, and the per-frame callback.
+ * the refinement rung-gate provider, the per-frame callback, and the runtime
+ * on/off handle the Performance popover and settings persistence use.
  *
  * Kept out of `pipeline.ts` so the closures can be exercised by a unit test:
  * the pipeline test mocks every collaborator and never runs a frame, so
@@ -23,6 +24,7 @@ import {
   getProjectedDensityTracker,
   resolveDensityGuardEnabled,
 } from '../../../scene/projected-density';
+import type { DensityGuardControl } from '../../../ui/rendering-controls/types';
 
 /** What the wiring reads live each frame. Every accessor is called, never captured. */
 export interface DensityGuardWiringDeps {
@@ -54,10 +56,13 @@ export interface DensityGuardWiringDeps {
   guard?: DensityGuard;
 }
 
-export interface DensityGuardWiring {
-  enabled: boolean;
-  /** The refinement rung-gate provider handed to the loader manager (null when disabled). */
-  provider: ProjectedDensityProvider | null;
+export interface DensityGuardWiring extends DensityGuardControl {
+  /**
+   * The refinement rung-gate provider over the tracker's records. Handed to
+   * the loader manager while the guard is on; the manager gets `null`
+   * (bytes-only admission) while it is off.
+   */
+  provider: ProjectedDensityProvider;
   /** Register as the `'projected-density'` per-frame callback. */
   perFrame(): void;
 }
@@ -77,8 +82,24 @@ export function buildDensityProvider(tracker: ProjectedDensityTracker): Projecte
   };
 }
 
+/** Thinned-node count and the smallest keep among them, straight off the live records. */
+export function summarizeThinning(tracker: ProjectedDensityTracker): {
+  nodes: number;
+  minKeep: number;
+} {
+  let nodes = 0;
+  let minKeep = 1;
+  for (const rec of tracker.records()) {
+    if (rec.keep >= 1) continue;
+    nodes += 1;
+    if (rec.keep < minKeep) minKeep = rec.keep;
+  }
+  return { nodes, minKeep };
+}
+
 export function wireDensityGuard(deps: DensityGuardWiringDeps): DensityGuardWiring {
-  const enabled = resolveDensityGuardEnabled(deps.configEnabled, deps.option);
+  const sessionDisabled = deps.option === false;
+  let enabled = resolveDensityGuardEnabled(deps.configEnabled, deps.option);
   const tracker = deps.tracker ?? getProjectedDensityTracker();
   const guard = deps.guard ?? getDensityGuard();
 
@@ -102,16 +123,40 @@ export function wireDensityGuard(deps: DensityGuardWiringDeps): DensityGuardWiri
 
   // Refinement rung gate: the loaders read the same per-node records through
   // this provider (data/ cannot import scene/) and defer a rung that would push
-  // a node past its screen cap. Null provider (guard off) = bytes-only.
-  const provider = enabled ? buildDensityProvider(tracker) : null;
-  deps.setRefinementDensityProvider(provider, {
+  // a node past its screen cap. Null provider (guard off) = bytes-only; the
+  // loader kicks refinement for anything the old gate was holding back.
+  const provider = buildDensityProvider(tracker);
+  const caps: DensityGateCaps = {
     blendable: deps.config.capElementsPerPixel,
     nonBlendable: deps.config.nonBlendableCapElementsPerPixel,
-  });
+  };
+  const publish = (): void => deps.setRefinementDensityProvider(enabled ? provider : null, caps);
+  publish();
+
+  // Turning the guard off must undo what it did: every thinned node back to
+  // keep 1 (uniform + brightness) and the records dropped, so a later turn-on
+  // starts from a clean ladder instead of stale steps.
+  const releaseAll = (): void => {
+    deps.sceneManager.scene?.traverse((obj) => guard.release(obj));
+    tracker.reset();
+  };
 
   return {
-    enabled,
     provider,
+    sessionDisabled,
+    isEnabled: () => enabled,
+    setEnabled: (on) => {
+      if (on === enabled) return;
+      enabled = on;
+      publish();
+      if (!on) releaseAll();
+      // Either direction changes what a frame draws (and which rungs may load):
+      // the DPR controller's probe baseline is stale, and a frame is needed —
+      // on, so the next walk thins; off, so the released nodes redraw whole.
+      deps.getAdaptiveDpr()?.notifyContentChanged();
+      deps.requestRender();
+    },
+    thinning: () => summarizeThinning(tracker),
     perFrame: () => {
       if (!tracker.evaluate()) return;
       // A keep-step change is a CONTENT change for the DPR controller (its

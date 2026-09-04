@@ -22,6 +22,7 @@ import { nextControlType } from '../../../controls/types';
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { SceneDimsManager } from '../../../scene/scene-dims-manager';
 import type { RenderingControls } from '../../../ui/rendering-controls';
+import type { DensityGuardControl } from '../../../ui/rendering-controls/types';
 import type { AnimationController } from '../../../scene/animation/animation-controller';
 import type { AdaptiveDPRManager } from '../../../rendering/adaptive-dpr-manager';
 import type { PerformanceMonitor } from '../../../ui/performance-monitor';
@@ -41,6 +42,8 @@ export interface RailItemsDeps {
   renderingControls: RenderingControls;
   animationController: AnimationController;
   adaptiveDPRManager: AdaptiveDPRManager;
+  /** Runtime handle on the projected-density guard, for the Performance popover. */
+  densityGuard: DensityGuardControl;
   performanceMonitor: PerformanceMonitor;
   layersPanel: LayersPanel;
   debugConsole: DebugConsole;
@@ -60,6 +63,7 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
     renderingControls,
     animationController,
     adaptiveDPRManager,
+    densityGuard,
     performanceMonitor,
     layersPanel,
     debugConsole,
@@ -349,6 +353,7 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
           return buildPerformancePopover(host, {
             settings: renderingControls.settings,
             manager: adaptiveDPRManager,
+            densityGuard,
             saveSettings: () => renderingControls.saveSettings(),
             triggerAnimation: () => animationController.startAnimation(),
           });

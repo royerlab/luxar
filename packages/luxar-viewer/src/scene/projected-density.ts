@@ -230,6 +230,11 @@ export class ProjectedDensityTracker {
     return this.byPath.get(path);
   }
 
+  /** Live records (no copy) — for cheap summaries such as the Performance popover's thinning row. */
+  records(): IterableIterator<NodeDensity> {
+    return this.byPath.values();
+  }
+
   /** Copy of every record, for `getPerf().density`. */
   snapshot(): Record<string, NodeDensity> {
     const out: Record<string, NodeDensity> = {};

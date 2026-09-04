@@ -48,8 +48,28 @@ export interface RenderingControllers {
   // Performance controls
   adaptiveDPREnabled?: Controller;
   allowHighDPR?: Controller;
+  densityGuardEnabled?: Controller;
   // Cinematic mode
   cinematicMode?: Controller;
+}
+
+/**
+ * Runtime handle on the projected-density guard, for the Performance popover
+ * toggle and the settings persistence layer. Implemented by
+ * `core/app/init/density-guard-wiring` (which owns the tracker + ladder).
+ */
+export interface DensityGuardControl {
+  isEnabled(): boolean;
+  /**
+   * True when `?no-density-guard` turned the guard off for this session. The
+   * stored per-scene setting is then neither applied nor overwritten, the
+   * same way a URL DPR pin leaves the stored DPR flags alone.
+   */
+  sessionDisabled: boolean;
+  /** Turn the guard on or off live: off releases every thinned node and resumes deferred rungs. */
+  setEnabled(enabled: boolean): void;
+  /** Nodes currently thinned and the smallest keep fraction among them (1 when none). */
+  thinning(): { nodes: number; minKeep: number };
 }
 
 /**

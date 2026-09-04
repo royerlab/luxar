@@ -13,7 +13,13 @@ exactly these scenes. The guard measures the density per node each frame
 thins blendable nodes on the shaders with brightness compensation, and stops
 the refinement loop from admitting rungs the view cannot resolve.
 
-`?no-density-guard` clears `enabled` for a session.
+`?no-density-guard` clears `enabled` for a session. At runtime the guard is
+also a **Density Guard** toggle in the Performance rail popover (right-click
+the gauge), persisted per scene as `renderingControls.defaults.densityGuardEnabled`
+— the same split as `adaptiveDPR.enabled` vs `adaptiveDPREnabled`. Turning it
+off releases every thinned node (keep back to 1, brightness restored) and lets
+any refinement rung the gate was holding back load; the URL flag wins over the
+stored choice for that session without overwriting it.
 
 Two consumers read the cap. The shader keep-fraction ladder
 (`scene/density-guard.ts`) thins blendable nodes down to `capElementsPerPixel`

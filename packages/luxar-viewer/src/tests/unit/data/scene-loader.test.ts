@@ -1825,6 +1825,35 @@ describe('SceneLoader', () => {
       internals.gsplatLoaders.clear();
     });
 
+    // Turning the density guard off at runtime clears the rung gate. The rungs
+    // it was holding back have no other way to load: `resumeDensityDeferred
+    // Refinement` has no gate left to consult, so the clear itself must kick.
+    it('setRefinementDensityProvider(null) kicks refinement iff the old gate held rungs back', () => {
+      const { internals, spy } = stubOrchestrator(false);
+      internals.gsplatLoaders.set('/g/part_0', { hasMoreLODs: true });
+      const caps = { blendable: 4, nonBlendable: 1 };
+      const sample = { areaPx: 100, elements: 1_000_000, onScreen: true, blendable: true };
+      type GateInternals = { refinementDensityGate: { deferred: Map<string, number> } | null };
+      try {
+        // Control arm: a gate with nothing deferred → clearing is silent.
+        sceneLoader.setRefinementDensityProvider(() => sample, caps);
+        sceneLoader.setRefinementDensityProvider(null, caps);
+        expect(spy).not.toHaveBeenCalled();
+
+        sceneLoader.setRefinementDensityProvider(() => sample, caps);
+        (sceneLoader as unknown as GateInternals).refinementDensityGate!.deferred.set(
+          '/g/part_0',
+          1e9
+        );
+        sceneLoader.setRefinementDensityProvider(null, caps);
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect((sceneLoader as unknown as GateInternals).refinementDensityGate).toBeNull();
+      } finally {
+        internals._updateInProgress = false;
+        internals.gsplatLoaders.clear();
+      }
+    });
+
     // anyLoaderHasMoreLODs consults all THREE loader maps (gsplats/points/lines),
     // not just gsplats — a points- or lines-substitutive ladder must kick too.
     it.each([

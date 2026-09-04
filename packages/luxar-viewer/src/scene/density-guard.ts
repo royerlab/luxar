@@ -138,6 +138,24 @@ export class DensityGuard {
     if (setDensityDrop(mesh.material, 1 - next)) this.changed = true;
   }
 
+  /**
+   * Undo this node's thinning (guard turned off at runtime): keep back to 1,
+   * brightness recomputed without the density term, uniform cleared. A no-op
+   * on anything that is not a thinned data mesh.
+   */
+  release(obj: THREE.Object3D): void {
+    const mesh = obj as THREE.Mesh;
+    const deps = this.deps;
+    if (!deps || !mesh.isMesh || !supportsDensityGuard(mesh.material)) return;
+    const ud = mesh.userData as GuardUserData;
+    if ((ud.densityKeep ?? 1) !== 1) {
+      ud.densityKeep = 1;
+      applyLodFade(mesh, null, deps.energyComp(), deps.registerMaterial);
+      this.changed = true;
+    }
+    if (setDensityDrop(mesh.material, 0)) this.changed = true;
+  }
+
   /** True once since the last call if any node changed step (or drifted). */
   takeChanged(): boolean {
     const c = this.changed;

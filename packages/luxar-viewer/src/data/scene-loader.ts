@@ -680,7 +680,12 @@ export class SceneLoader {
     provider: ProjectedDensityProvider | null,
     caps: DensityGateCaps
   ): void {
+    const held = this.refinementDensityGate?.deferredCount ?? 0;
     this.refinementDensityGate = provider ? new RefinementDensityGate(provider, caps) : null;
+    // Clearing a gate that was holding rungs back (the guard turned off at
+    // runtime) must let them load now: nothing else re-kicks the loop, and
+    // `resumeDensityDeferredRefinement` has no gate left to consult.
+    if (!provider && held > 0) this.kickRefinementIfIdle();
   }
 
   /**

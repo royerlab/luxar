@@ -15,12 +15,15 @@
 import type { RenderingSettings } from '../../config';
 import type { AdaptiveDPRManager } from '../../rendering/adaptive-dpr-manager';
 import { setupPerformanceControls } from '../rendering-controls/setup/performance-setup';
+import type { DensityGuardControl } from '../rendering-controls/types';
 import { makePopoverGui } from './popover-gui';
 
 export interface PerformancePopoverContext {
   /** Shared rendering settings (persisted by the rendering-controls panel). */
   settings: RenderingSettings;
   manager: AdaptiveDPRManager;
+  /** Runtime handle on the projected-density guard (Density Guard toggle + thinning readout). */
+  densityGuard?: DensityGuardControl;
   /** Persist the shared settings to localStorage. */
   saveSettings: () => void;
   /** Request a render so DPR changes take effect immediately. */
@@ -40,6 +43,7 @@ export function buildPerformancePopover(
     gui,
     settings: ctx.settings,
     manager: ctx.manager,
+    densityGuard: ctx.densityGuard,
     saveSettings: ctx.saveSettings,
     triggerAnimation: ctx.triggerAnimation,
   });
