@@ -6,7 +6,7 @@ import globals from 'globals';
 export default [
   js.configs.recommended,
   {
-    files: ['src/**/*.{ts,tsx,mts,cts}'],
+    files: ['src/**/*.{ts,tsx}'],
     languageOptions: {
       parser: typescriptParser,
       ecmaVersion: 2022,

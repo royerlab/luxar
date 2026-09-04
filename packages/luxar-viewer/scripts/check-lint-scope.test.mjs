@@ -134,6 +134,14 @@ describe('lint scope', () => {
       `add these to a \`files:\` block in eslint.config.js:\n${unreached.join('\n')}`
     ).toEqual([]);
   });
+
+  it('fails closed on unsupported source module extensions', async () => {
+    const eslint = new ESLint({ cwd: PKG });
+    for (const extension of ['mts', 'cts']) {
+      const config = await eslint.calculateConfigForFile(join(PKG, `src/probe.${extension}`));
+      expect(config?.rules?.['@typescript-eslint/no-unused-vars']).toBeUndefined();
+    }
+  });
 });
 
 describe('prettier scope', () => {
@@ -164,6 +172,12 @@ describe('prettier scope', () => {
     // These are the five Playwright configs, both Vite configs and both Vitest
     // configs — the files the audit found outside every tool.
     expect(FILES.some((f) => !f.includes('/') && f.endsWith('.config.ts'))).toBe(true);
-    expect(formatTargets().some((target) => /\*\.\{[^}]*ts[^}]*\}/.test(target))).toBe(true);
+    const rootGlob = formatTargets()
+      .find((target) => target.includes('*.{'))
+      ?.replaceAll('"', '');
+    expect(rootGlob).toBeDefined();
+    const rootExtensions = new Set(rootGlob.slice(3, -1).split(','));
+    const expected = CODE.filter((value) => value !== '.tsx').map((value) => value.slice(1));
+    expect(rootExtensions).toEqual(new Set(expected));
   });
 });
