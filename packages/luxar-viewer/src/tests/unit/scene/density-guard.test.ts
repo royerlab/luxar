@@ -112,6 +112,7 @@ function record(elementsPerPixel: number, onScreen = true): NodeDensity {
     onScreen,
     frame: 1,
     keep: 1,
+    blendable: true,
   };
 }
 function guard(energyComp = false): { g: DensityGuard; registered: THREE.Material[] } {

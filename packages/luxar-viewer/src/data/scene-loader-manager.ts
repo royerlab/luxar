@@ -13,6 +13,10 @@ import { LoaderConfig } from './data-loader-types';
 import { UpdateProfiler } from '../profiling/update-profiler';
 import type { SceneLoaderMonitorFactory } from './scene-loader-monitor-port';
 import type { KTX2TextureDecoder } from '../types/mesh';
+import type {
+  DensityGateCaps,
+  ProjectedDensityProvider,
+} from './scene-loader/progressive/density-gate';
 
 /**
  * Manager for SceneLoader instances.
@@ -56,6 +60,15 @@ export class SceneLoaderManager {
    * wake a loop — SceneLoader treats it as a no-op.
    */
   private requestRender: (() => void) | null = null;
+  /**
+   * Projected-density provider + caps for the refinement rung gate, forwarded
+   * to every created loader (→ `SceneLoader.setRefinementDensityProvider`).
+   * Null provider = bytes-only admission.
+   */
+  private refinementDensity: {
+    provider: ProjectedDensityProvider | null;
+    caps: DensityGateCaps;
+  } | null = null;
   private decodeKTX2: KTX2TextureDecoder | null = null;
 
   /**
@@ -92,6 +105,18 @@ export class SceneLoaderManager {
    */
   setRequestRender(callback: (() => void) | null): void {
     this.requestRender = callback;
+  }
+
+  /**
+   * Provide the projected-density source for the refinement rung gate. Called
+   * once at app boot from the init pipeline; forwarded to each subsequently
+   * created ``SceneLoader``.
+   */
+  setRefinementDensityProvider(
+    provider: ProjectedDensityProvider | null,
+    caps: DensityGateCaps
+  ): void {
+    this.refinementDensity = { provider, caps };
   }
 
   setKTX2TextureDecoder(decoder: KTX2TextureDecoder | null): void {
@@ -148,6 +173,12 @@ export class SceneLoaderManager {
       this.decodeKTX2
     );
     loader.setRequestRender(this.requestRender);
+    if (this.refinementDensity) {
+      loader.setRefinementDensityProvider(
+        this.refinementDensity.provider,
+        this.refinementDensity.caps
+      );
+    }
     this.loaders.set(id, loader);
 
     if (setAsDefault || !this.defaultLoaderId) {
@@ -192,6 +223,12 @@ export class SceneLoaderManager {
       this.decodeKTX2
     );
     loader.setRequestRender(this.requestRender);
+    if (this.refinementDensity) {
+      loader.setRefinementDensityProvider(
+        this.refinementDensity.provider,
+        this.refinementDensity.caps
+      );
+    }
     this.loaders.set(id, loader);
 
     if (setAsDefault || !this.defaultLoaderId) {

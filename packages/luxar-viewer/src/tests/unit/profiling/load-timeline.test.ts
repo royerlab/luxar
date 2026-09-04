@@ -5,6 +5,7 @@ import {
   markFirstCommit,
   markLoad,
   noteRefinementComplete,
+  noteRefinementDensityDeferral,
   noteRefinementPass,
   resetLoadTimeline,
 } from '../../../profiling/load-timeline';
@@ -24,7 +25,13 @@ describe('load-timeline', () => {
     expect(snap.marks).toEqual([]);
     expect(snap.milestones).toEqual({});
     expect(snap.firstCommit).toEqual({});
-    expect(snap.refinement).toEqual({ passes: 0, rungs: 0, rungsFromCache: 0, complete: false });
+    expect(snap.refinement).toEqual({
+      passes: 0,
+      rungs: 0,
+      rungsFromCache: 0,
+      complete: false,
+      densityDeferred: 0,
+    });
     expect(Object.values(snap.measures).every((v) => v === null)).toBe(true);
   });
 
@@ -84,11 +91,14 @@ describe('load-timeline', () => {
     noteRefinementPass(4, 1);
     noteRefinementPass(2);
     noteRefinementPass(-5); // negative counts are clamped, never subtracted
+    noteRefinementDensityDeferral();
+    noteRefinementDensityDeferral();
     expect(getLoadTimeline().refinement).toEqual({
       passes: 3,
       rungs: 6,
       rungsFromCache: 1,
       complete: false,
+      densityDeferred: 2,
     });
 
     noteRefinementComplete();

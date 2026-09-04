@@ -44,6 +44,12 @@ export interface NodeDensity {
    * thinning). Written by `scene/density-guard.ts`; 1 until it runs.
    */
   keep: number;
+  /**
+   * Whether the node's blend mode sums energy (additive / luminous /
+   * volumetric). Written by the density guard; true until it runs, since the
+   * blendable cap is the more permissive one.
+   */
+  blendable: boolean;
 }
 
 export interface ProjectedDensityDeps {
@@ -182,6 +188,7 @@ export class ProjectedDensityTracker {
         onScreen: false,
         frame: 0,
         keep: 1,
+        blendable: true,
       };
       this.byPath.set(path, rec);
     }

@@ -63,6 +63,7 @@
 
 import { computeWorkingSetBudgetBytes } from '../../../cache/heap-budget';
 import { log, Modules } from '../../../utils/log';
+import type { RefinementDensityGate } from './density-gate';
 
 /** Why a refinement step was admitted or refused. */
 export type RefinementAdmissionReason =
@@ -73,7 +74,9 @@ export type RefinementAdmissionReason =
   /** Already at or past the ceiling before this rung. */
   | 'over-budget'
   /** Fits now, but the next rung would cross the ceiling. */
-  | 'next-rung-would-exceed';
+  | 'next-rung-would-exceed'
+  /** Fits in bytes, but the node already projects denser than its screen cap (`density-gate.ts`). */
+  | 'density-cap';
 
 /** The verdict for one loader's refinement pass. */
 export interface RefinementAdmission {
@@ -234,7 +237,14 @@ export class RefinementResidencyBudget {
   constructor(
     readonly budgetBytes: number,
     initialResidencies: Iterable<readonly [string, LadderResidency]> = [],
-    private readonly reporter = new RefinementResidencyReporter()
+    private readonly reporter = new RefinementResidencyReporter(),
+    /**
+     * Optional projected-density gate. Consulted only for a rung the byte
+     * ceiling admits; its refusal shares this budget's `declined` set so the
+     * loop retires the loader for the run (non-sticky ACROSS runs — the gate
+     * is re-evaluated at every run start and re-kicked on zoom).
+     */
+    private readonly densityGate: RefinementDensityGate | null = null
   ) {
     for (const [path, residency] of initialResidencies) {
       this.perPath.set(path, ladderResidentBytes(residency));
@@ -256,12 +266,14 @@ export class RefinementResidencyBudget {
     initialResidencies: Iterable<readonly [string, LadderResidency]>,
     poolOverrideBytes?: number,
     fallbackPoolBytes?: number,
-    reporter?: RefinementResidencyReporter
+    reporter?: RefinementResidencyReporter,
+    densityGate?: RefinementDensityGate | null
   ): RefinementResidencyBudget {
     return new RefinementResidencyBudget(
       computeWorkingSetBudgetBytes(undefined, poolOverrideBytes, fallbackPoolBytes),
       initialResidencies,
-      reporter
+      reporter,
+      densityGate ?? null
     );
   }
 
@@ -301,12 +313,20 @@ export class RefinementResidencyBudget {
       this.budgetBytes > 0
         ? Math.max(nextRungBytes, Math.floor(headroomBytes / eligiblePathCount))
         : null;
-    if (verdict.admitted) {
-      this.perPath.set(path, accounted + nextRungBytes);
-    } else {
+    if (!verdict.admitted) {
       this.declined.add(path);
       this.reporter.reportOnce(path, verdict);
+      return { ...verdict, allowanceBytes };
     }
+    // Bytes fit; now the screen. A density refusal retires the loader for this
+    // run exactly like a byte refusal (same `declined` set, same closures), but
+    // it is the gate's to report and it reserves nothing.
+    const density = this.densityGate?.admit(path, residency);
+    if (density && !density.admitted) {
+      this.declined.add(path);
+      return { ...verdict, admitted: false, reason: 'density-cap', allowanceBytes };
+    }
+    this.perPath.set(path, accounted + nextRungBytes);
     return { ...verdict, allowanceBytes };
   }
 

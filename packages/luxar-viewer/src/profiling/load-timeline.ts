@@ -53,6 +53,11 @@ export interface RefinementCounters {
   rungsFromCache: number;
   /** True once the final geometry phase ran its ladders to completion. */
   complete: boolean;
+  /**
+   * Rungs deferred by the projected-density gate (a node already denser than
+   * its cap on screen; resumes when the camera moves in).
+   */
+  densityDeferred: number;
 }
 
 /** Snapshot returned by {@link getLoadTimeline}. All times are `performance.now()` ms. */
@@ -88,7 +93,7 @@ let firstCommit: Partial<Record<LoadGeometryKind, number>> = {};
 let refinement: RefinementCounters = freshCounters();
 
 function freshCounters(): RefinementCounters {
-  return { passes: 0, rungs: 0, rungsFromCache: 0, complete: false };
+  return { passes: 0, rungs: 0, rungsFromCache: 0, complete: false, densityDeferred: 0 };
 }
 
 function now(): number {
@@ -161,6 +166,11 @@ export function noteRefinementPass(rungs: number, rungsFromCache = 0): void {
 }
 
 /** The final geometry phase ran every ladder to completion (not cancelled). */
+/** Count one rung the projected-density gate deferred (`density-gate.ts`). */
+export function noteRefinementDensityDeferral(): void {
+  refinement.densityDeferred += 1;
+}
+
 export function noteRefinementComplete(): void {
   refinement.complete = true;
   markLoad('refinementComplete', { passes: refinement.passes, rungs: refinement.rungs });

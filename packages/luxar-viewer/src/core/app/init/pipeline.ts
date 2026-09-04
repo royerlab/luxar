@@ -357,12 +357,36 @@ export async function runInitPipeline(
     },
     onVisit: (mesh, record) => densityGuard.observe(mesh, record),
   });
+  // Refinement rung gate: the loaders read the same per-node records through
+  // this provider (data/ cannot import scene/) and defer a rung that would push
+  // a node past its screen cap; the per-frame hook below resumes deferred
+  // rungs once the camera moves in. Null provider (guard off) = bytes-only.
+  SceneLoaderManager.getInstance().setRefinementDensityProvider(
+    densityGuardEnabled
+      ? (path) => {
+          const rec = getProjectedDensityTracker().get(path);
+          return rec
+            ? {
+                areaPx: rec.areaPx,
+                elements: rec.elements,
+                onScreen: rec.onScreen,
+                blendable: rec.blendable,
+              }
+            : undefined;
+        }
+      : null,
+    {
+      blendable: config.densityGuard.capElementsPerPixel,
+      nonBlendable: config.densityGuard.nonBlendableCapElementsPerPixel,
+    }
+  );
   animationController.addPerFrameCallback('projected-density', () => {
-    getProjectedDensityTracker().evaluate();
+    if (!getProjectedDensityTracker().evaluate()) return;
     if (densityGuard.takeChanged()) {
       partial.adaptiveDPRManager?.notifyContentChanged();
       animationController.startAnimation();
     }
+    getSceneLoader('default')?.resumeDensityDeferredRefinement();
   });
   animationController.addPerFrameCallback('lod-group-selector', () => {
     const loader = getSceneLoader('default');

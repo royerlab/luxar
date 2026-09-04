@@ -11,6 +11,7 @@ import type { DensityGuardConfig } from './types';
 export const densityGuardConfig: DensityGuardConfig = {
   enabled: true, // URL escape hatch: ?no-density-guard
   capElementsPerPixel: 4,
+  nonBlendableCapElementsPerPixel: 1,
   minKeepFraction: 1 / 64,
   enterRatio: 1.5,
   leaveRatio: 0.75,

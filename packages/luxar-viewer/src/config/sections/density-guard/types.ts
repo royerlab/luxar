@@ -21,6 +21,14 @@ export interface DensityGuardConfig {
    */
   capElementsPerPixel: number;
   /**
+   * Density cap for the REFINEMENT rung gate on nodes whose blend mode has no
+   * linear brightness knob (`max` / `normal` / `opaque`): they cannot be
+   * thinned, so their only relief is to stop admitting rungs earlier. One
+   * element per pixel already saturates a max projection or an opaque surface.
+   * Blendable nodes use `capElementsPerPixel` for the rung gate too.
+   */
+  nonBlendableCapElementsPerPixel: number;
+  /**
    * Smallest keep fraction the shader ladder may reach (the ladder is
    * 1, 1/2, 1/4, … down to this value).
    */

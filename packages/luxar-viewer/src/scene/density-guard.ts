@@ -119,6 +119,7 @@ export class DensityGuard {
       this.changed = true;
     }
     rec.keep = next;
+    rec.blendable = blendable;
     // Idempotent re-assertion (returns true only on drift, e.g. a material
     // rebuilt with the default 0 while the node is thinned).
     if (setDensityDrop(mesh.material, 1 - next)) this.changed = true;

@@ -14,3 +14,12 @@ thins blendable nodes on the shaders with brightness compensation, and stops
 the refinement loop from admitting rungs the view cannot resolve.
 
 `?no-density-guard` clears `enabled` for a session.
+
+Two consumers read the cap. The shader keep-fraction ladder
+(`scene/density-guard.ts`) thins blendable nodes down to `capElementsPerPixel`
+with hysteresis (`enterRatio` / `leaveRatio`) and a floor (`minKeepFraction`).
+The refinement rung gate (`data/scene-loader/progressive/density-gate.ts`)
+defers the next additive rung of any node already denser than its cap on
+screen: `capElementsPerPixel` for blendable nodes, the tighter
+`nonBlendableCapElementsPerPixel` for `max` / `normal` / `opaque`, which cannot
+be thinned. Deferred rungs resume when the camera moves in.
