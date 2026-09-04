@@ -72,7 +72,7 @@ describe('browser support matrix', () => {
           projects,
           `${doc} claims "${engine}" was tested, but playwright.config.ts declares ` +
             `no such project (live projects: ${[...projects].join(', ')}). Either ` +
-            `add the project or stop claiming the engine.`
+            'add the project or stop claiming the engine.'
         ).toContain(engine);
       }
     }
@@ -92,8 +92,8 @@ describe('browser support matrix', () => {
       expect(
         hits,
         `${doc} states browser version floors ${JSON.stringify(hits)}, but the ` +
-          `build declares no browserslist and targets esnext, so no floor is ` +
-          `derivable. Say what was tested instead.`
+          'build declares no browserslist and targets esnext, so no floor is ' +
+          'derivable. Say what was tested instead.'
       ).toEqual([]);
     }
   });

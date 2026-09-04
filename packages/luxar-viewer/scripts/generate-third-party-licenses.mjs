@@ -56,7 +56,7 @@ export function productionPackages(problems) {
     });
   } catch (err) {
     const message = `pnpm list failed (${err.message.split('\n')[0]}); cannot determine which packages are redistributed`;
-    if (!problems) throw new Error(message);
+    if (!problems) throw new Error(message, { cause: err });
     problems.push(message);
     return new Map();
   }
@@ -156,8 +156,8 @@ export function rustSections(problems) {
   if (!meta) {
     problems.push(
       `cargo metadata failed (${failure.message.split('\n')[0]}). The production ` +
-        `build already requires the Rust toolchain for build:wasm, so this is ` +
-        `a broken toolchain rather than an optional step.`
+        'build already requires the Rust toolchain for build:wasm, so this is ' +
+        'a broken toolchain rather than an optional step.'
     );
     return [];
   }
@@ -222,11 +222,11 @@ export function colormapSection(problems) {
     'Baked colormap lookup tables',
     RULE,
     '',
-    `Computed by Luxar and covered by the root LICENSE (black-to-colour linear`,
+    'Computed by Luxar and covered by the root LICENSE (black-to-colour linear',
     `ramps): ${ramps.join(', ')}.`,
     `Also Luxar's own: ${computed.join(', ')}.`,
     '',
-    `Sampled from matplotlib's colormaps at build time and baked as 256x3 uint8`,
+    'Sampled from matplotlib\'s colormaps at build time and baked as 256x3 uint8',
     `LUTs: ${mpl.join(', ')}.`,
     'These originate upstream of matplotlib and matplotlib credits them as:',
     '',
@@ -261,7 +261,7 @@ export function main() {
 
   if (problems.length > 0) {
     console.error(
-      `Refusing to write an incomplete THIRD_PARTY_LICENSES.txt ` +
+      'Refusing to write an incomplete THIRD_PARTY_LICENSES.txt ' +
         `(${problems.length} problem(s)):`
     );
     for (const p of problems) console.error(`  - ${p}`);
