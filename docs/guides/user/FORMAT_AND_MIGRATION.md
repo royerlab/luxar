@@ -60,7 +60,7 @@ current v3.4 node-tree. It **auto-detects** the input shape:
 | v1.1 (additive ladder) | root `format_version` attr = `"1.1"` | v3.4 leaf + additive ladder |
 | pre-v2.0 substitutive directory | a directory whose `manifest.json` has `lod_kind: "substitutive"` | v3.4 `kind=lod` group |
 | v2.0 (matrix) | root `format_version` attr = `"2.0"` | v3.4 tree |
-| v3.0 / v3.1 with legacy LOD attrs | a current node tree whose `kind=lod` groups still carry the pre-v3.2 `pixel_size` selector attrs | v3.4 (`selector: "coverage"` + derived `coverage_fraction`) |
+| v3.0 / v3.1 with legacy LOD attrs | a current node tree whose `kind=lod` groups still carry the pre-v3.2 `pixel_size` selector attrs | v3.4 (`selector: "screen-area"` + derived per-child `coverage_fraction`) |
 
 ```bash
 luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr             # single file (AUTO encoding)
