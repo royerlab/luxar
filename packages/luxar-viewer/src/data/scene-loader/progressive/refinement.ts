@@ -26,6 +26,7 @@ import type { ViewState } from '../../data-loader-types';
 import type { ViewStateQueue } from '../view-state/view-state-queue';
 import { scheduleFrame } from '../../../utils/schedule-frame';
 import { noteRefinementPass } from '../../../profiling/load-timeline';
+import { config } from '../../../config';
 
 /**
  * Consecutive per-loader failures a refinement run tolerates before giving
@@ -153,6 +154,12 @@ export interface ProgressiveRefinementCtx<TLoader> {
    * guards). Called just before the loop breaks; typically logs.
    */
   onError?(error: unknown): void;
+  /**
+   * Main-thread work (ms) allowed between paint yields; defaults to
+   * `config.dataLoading.performance.refinementPassBudgetMs`. `0` yields a
+   * frame before every pass (the historical cadence).
+   */
+  passBudgetMs?(): number;
 }
 
 /**
@@ -165,6 +172,19 @@ export async function runProgressiveRefinement<TLoader>(
   ctx: ProgressiveRefinementCtx<TLoader>
 ): Promise<void> {
   let lockHandedOff = false;
+  // Paint-yield budget: the loop yields a frame before the FIRST pass (the
+  // committing update just painted) and thereafter whenever the passes run
+  // since the last yield have cost at least `budgetMs` of main-thread time.
+  // One yield per pass regardless of cost — the historical cadence — made a
+  // 16-node scene with 8-rung ladders pay ~8 frames of pure waiting even
+  // when every rung was already resident (measured 168 ms to the settled
+  // state on a local store, first commit at 20 ms). A budget of 0 restores
+  // the old behaviour.
+  const budgetMs = Math.max(
+    0,
+    ctx.passBudgetMs?.() ?? config.dataLoading.performance.refinementPassBudgetMs
+  );
+  let workSinceYieldMs = Number.POSITIVE_INFINITY;
   try {
     while (true) {
       // Yield: let the browser paint the current LOD level so the
@@ -175,7 +195,10 @@ export async function runProgressiveRefinement<TLoader>(
       // waitForUpdate()/awaitDimensionUpdate() callers until the tab is
       // foregrounded. scheduleFrame degrades to a timer when hidden and
       // runs synchronously in rAF-less test environments.
-      await new Promise<void>((resolve) => scheduleFrame(resolve));
+      if (workSinceYieldMs >= budgetMs) {
+        await new Promise<void>((resolve) => scheduleFrame(resolve));
+        workSinceYieldMs = 0;
+      }
 
       // Abort if the owning SceneLoader was disposed (e.g. a dataset
       // switch) while this loop was mid-flight — stop touching the dead
@@ -199,6 +222,7 @@ export async function runProgressiveRefinement<TLoader>(
       // rather than escaping as an unhandled promise rejection — the loop is
       // kicked fire-and-forget.
       try {
+        const passStartedAt = performance.now();
         const progressBefore = collectProgress(ctx);
         const successfulPaths = new Set<string>();
         for (const [path, loader] of ctx.loaders) {
@@ -206,6 +230,7 @@ export async function runProgressiveRefinement<TLoader>(
         }
 
         noteRefinementPass(successfulPaths.size);
+        workSinceYieldMs += performance.now() - passStartedAt;
 
         // Aggregate counts once per pass.
         ctx.updateVisibleCountsInMonitor();

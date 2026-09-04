@@ -29,4 +29,11 @@ export function validateDataLoadingPerformance(
       `Invalid workerInitTimeoutMs: ${initTimeout} (must be ≥ 0; 0 disables, but the guard is recommended)`
     );
   }
+  // Refinement pass budget: finite and ≥ 0 (0 = one paint yield per pass).
+  const passBudget = performance.refinementPassBudgetMs;
+  if (!Number.isFinite(passBudget) || passBudget < 0) {
+    errors.push(
+      `Invalid refinementPassBudgetMs: ${passBudget} (must be ≥ 0; 0 yields a frame before every pass)`
+    );
+  }
 }

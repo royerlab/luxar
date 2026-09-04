@@ -42,6 +42,7 @@ export const dataLoadingPerformanceConfig: DataLoadingPerformanceConfig = {
   // overallocation) or a stack of retained LOD levels can briefly hold
   // gigabytes. Overridable at runtime via `?gpuBudgetMB=`.
   gpuPoolMaxBytes: null, // auto-size from deviceMemory and/or one third of cacheBudgetMB
+  refinementPassBudgetMs: 8, // half a 60 Hz frame of refinement work between paint yields
 
   // Debugging
   enablePerformanceMonitoring: false,

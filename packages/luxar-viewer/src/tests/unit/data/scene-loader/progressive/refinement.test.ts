@@ -316,3 +316,116 @@ describe('RefinementFailureTracker', () => {
     expect(t.isExhausted('/b')).toBe(false);
   });
 });
+
+describe('runProgressiveRefinement — paint-yield budget', () => {
+  /** Count animation-frame yields; the stub fires the callback on a microtask. */
+  function countFrames(): { count: () => number } {
+    let n = 0;
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      n++;
+      queueMicrotask(() => cb(performance.now()));
+      return 0 as unknown as number;
+    });
+    return { count: () => n };
+  }
+
+  /** A loader that needs `rungs` passes to finish. */
+  function ladder(rungs: number) {
+    const loader: FakeLoader = { hasMoreLODs: true, loadedLevels: 0 };
+    return {
+      loader,
+      loaders: new Map([['/a', loader]]),
+      processLoader: async (_path: string, l: FakeLoader) => {
+        l.loadedLevels++;
+        if (l.loadedLevels >= rungs) l.hasMoreLODs = false;
+        return true;
+      },
+    };
+  }
+
+  it('budget 0 yields a frame before every pass (the historical cadence)', async () => {
+    const frames = countFrames();
+    const { loader, loaders, processLoader } = ladder(3);
+    await runProgressiveRefinement<FakeLoader>({
+      loaders,
+      viewStateQueue: makeQueue([]) as never,
+      getLoaderProgress: getFakeLoaderProgress,
+      processLoader,
+      anyHasMoreLODs: () => loader.hasMoreLODs,
+      updateVisibleCountsInMonitor: vi.fn(),
+      releaseLock: vi.fn(),
+      retriggerUpdate: vi.fn(),
+      passBudgetMs: () => 0,
+    });
+    expect(loader.loadedLevels).toBe(3);
+    expect(frames.count()).toBe(3);
+  });
+
+  it('a generous budget yields once before the first pass and then batches the rest', async () => {
+    const frames = countFrames();
+    const { loader, loaders, processLoader } = ladder(3);
+    await runProgressiveRefinement<FakeLoader>({
+      loaders,
+      viewStateQueue: makeQueue([]) as never,
+      getLoaderProgress: getFakeLoaderProgress,
+      processLoader,
+      anyHasMoreLODs: () => loader.hasMoreLODs,
+      updateVisibleCountsInMonitor: vi.fn(),
+      releaseLock: vi.fn(),
+      retriggerUpdate: vi.fn(),
+      passBudgetMs: () => 1_000_000,
+    });
+    expect(loader.loadedLevels).toBe(3);
+    expect(frames.count()).toBe(1);
+  });
+
+  it('yields again once the passes since the last yield have cost the budget', async () => {
+    const frames = countFrames();
+    // The loop reads the clock once at pass start and once at pass end, so
+    // each pass "costs" 10 ms of main-thread time; budget 15 ms → a yield
+    // every second pass: passes 1-2, yield, 3-4, yield, 5.
+    let clock = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => (clock += 10));
+    try {
+      const { loader, loaders, processLoader } = ladder(5);
+      await runProgressiveRefinement<FakeLoader>({
+        loaders,
+        viewStateQueue: makeQueue([]) as never,
+        getLoaderProgress: getFakeLoaderProgress,
+        processLoader,
+        anyHasMoreLODs: () => loader.hasMoreLODs,
+        updateVisibleCountsInMonitor: vi.fn(),
+        releaseLock: vi.fn(),
+        retriggerUpdate: vi.fn(),
+        passBudgetMs: () => 15,
+      });
+      expect(loader.loadedLevels).toBe(5);
+      expect(frames.count()).toBe(3);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('still checks for a pending view state between batched passes and hands off the lock', async () => {
+    countFrames();
+    const releaseLock = vi.fn();
+    const retrigger = vi.fn();
+    const { loader, loaders, processLoader } = ladder(3);
+    await runProgressiveRefinement<FakeLoader>({
+      loaders,
+      viewStateQueue: makeQueue([null, { slicePosition: [0, 0, 0, 1] }]) as never,
+      getLoaderProgress: getFakeLoaderProgress,
+      processLoader,
+      anyHasMoreLODs: () => loader.hasMoreLODs,
+      updateVisibleCountsInMonitor: vi.fn(),
+      releaseLock,
+      retriggerUpdate: retrigger,
+      passBudgetMs: () => 1_000_000,
+    });
+    // One pass ran; the second loop-top check saw the pending state without
+    // any frame yield in between.
+    expect(loader.loadedLevels).toBe(1);
+    expect(retrigger).toHaveBeenCalledWith({ slicePosition: [0, 0, 0, 1] });
+    expect(releaseLock).not.toHaveBeenCalled();
+  });
+});
