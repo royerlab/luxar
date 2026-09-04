@@ -213,18 +213,24 @@ describe('bootstrapStandalone', () => {
   });
 
   describe('opt-in flags', () => {
-    it('patches console before logging the build identity', async () => {
-      const customLog = vi.spyOn(log, 'custom');
+    it('captures the build identity in the patched console buffer', async () => {
+      const originalLog = console.log;
+      const bufferedMessages: unknown[][] = [];
+      mocks.patch.mockImplementationOnce(() => {
+        console.log = (...args: unknown[]) => bufferedMessages.push(args);
+      });
 
-      await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
+      try {
+        await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
+      } finally {
+        console.log = originalLog;
+      }
 
-      const buildLogIndex = customLog.mock.calls.findIndex(([, , message]) =>
-        message.startsWith('Luxar viewer ')
-      );
-      expect(buildLogIndex).toBeGreaterThanOrEqual(0);
-      expect(mocks.patch.mock.invocationCallOrder[0]).toBeLessThan(
-        customLog.mock.invocationCallOrder[buildLogIndex]
-      );
+      expect(
+        bufferedMessages.some((args) =>
+          args.some((value) => typeof value === 'string' && value.includes('Luxar viewer '))
+        )
+      ).toBe(true);
     });
 
     it('patches console, validates config, and warms codecs when defaults apply', async () => {
