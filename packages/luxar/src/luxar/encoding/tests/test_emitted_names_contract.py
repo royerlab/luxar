@@ -13,6 +13,7 @@ it and this fails — which the drift gate alone would NOT catch.
 
 from __future__ import annotations
 
+import inspect
 import re
 
 import numpy as np
@@ -20,6 +21,7 @@ import pytest
 
 from luxar._zarr_compat import memory_group
 from luxar.encoding import ArrayEncoder, EncodingMode, SemanticType
+from luxar.encoding._encoders import perchannel
 from luxar.encoding._encoders.structural import StructuralEncoderMixin
 from luxar.typing_utils._format_contract import ENCODING_NAMES
 
@@ -158,6 +160,12 @@ def _quantized_contract_names() -> set[str]:
     return {n for n in ENCODING_NAMES if re.search(r"_u(?:int)?(?:8|16)$", n)}
 
 
+def test_linear_perchannel_u8_remains_unreachable() -> None:
+    assert perchannel._COORD_BITS == 16
+    source = inspect.getsource(perchannel)
+    assert source.count("self._encode_linear_perchannel(") == 1
+
+
 def test_every_quantized_contract_name_is_reachable() -> None:
     """The reverse of the subset check: contract ⊆ (emitted ∪ dispatch ∪ known-dead).
 
@@ -178,8 +186,8 @@ def test_every_quantized_contract_name_is_reachable() -> None:
         f"reason and the file:line that enforces it."
     )
 
-    # UNREACHABLE is an exact claim, not a tolerance list: if one of these
-    # becomes emittable, the note describing why it cannot be is now false.
+    # The structural reason for the current entry is asserted separately above;
+    # this also catches the collector or CUSTOM dispatch gaining a producer.
     now_reachable = sorted(set(UNREACHABLE) & (emitted | dispatch))
     assert not now_reachable, (
         f"{now_reachable} is recorded in UNREACHABLE but a producer now emits "
