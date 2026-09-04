@@ -58,11 +58,6 @@ EXCLUDED_DIRS = frozenset({"node_modules", "target", "dist", "pkg"})
 PROSE_SUFFIXES = frozenset({".md", ".rst", ".yaml"})
 BACKTICKED = re.compile(r"``?([^`\n]+?)``?")
 
-#: `decode_<family>_u8` / `encode_...` are KERNEL FUNCTION names, which use the
-#: short form for every family by Rust convention. Matched by prefix so a new
-#: kernel needs no allowlist entry.
-KERNEL_PREFIXES = ("decode_", "encode_")
-
 #: This module must name the wrong spellings in order to explain them.
 SELF = Path(__file__).resolve()
 
@@ -121,12 +116,21 @@ def _violations_in(path: Path, siblings: dict[str, str]) -> list[tuple[int, str,
                 ):
                     for m in re.finditer(pattern, haystack):
                         token = m.group(0)
-                        if token.startswith(KERNEL_PREFIXES):
-                            continue
                         if token not in (wrong, f"{stem}{{bits}}"):
                             continue  # part of a longer identifier
                         out.append((lineno, token, real))
     return out
+
+
+def test_source_scan_only_flags_exact_backticked_tokens(tmp_path: Path) -> None:
+    source = tmp_path / "kernels.py"
+    source.write_text(
+        "`decode_geolog_scalar_u8` `encode_lut_u8` `geolog_scalar_u8`",
+        encoding="utf-8",
+    )
+    assert _violations_in(source, wrong_convention_siblings()) == [
+        (1, "geolog_scalar_u8", "geolog_scalar_uint8")
+    ]
 
 
 def test_the_scan_reached_the_documents() -> None:
@@ -165,6 +169,6 @@ def test_no_document_names_a_nonexistent_encoding() -> None:
         f"format-contract/contract.yaml:\n{lines}\n\n"
         "The two suffix conventions are NOT interchangeable: the per-channel "
         "family is `_uN`, the scalar/bounded/lut/rgb families are `_uintN`. "
-        "If you are naming a decode KERNEL rather than an on-disk encoding, "
-        "prefix it `decode_`/`encode_`."
+        "In source files, only an exact backticked token is treated as an "
+        "on-disk vocabulary claim; affixed identifiers are ignored."
     )
