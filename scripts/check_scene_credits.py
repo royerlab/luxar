@@ -189,6 +189,13 @@ def _verdict_for_nothing_inspected(
             "looks exactly like this."
         )
         if not targets:
+            if skipped:
+                aprint(
+                    f"INSPECTED NOTHING — all {len(skipped)} named store(s) "
+                    "were skipped:"
+                )
+                for line in skipped:
+                    aprint(f"  {line}")
             return 1
 
     if targets:

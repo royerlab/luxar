@@ -216,6 +216,20 @@ def test_known_explicit_archive_is_named_then_skipped(tmp_path: Path, capsys) ->
     assert "INSPECTED NOTHING" in out
 
 
+def test_unknown_path_does_not_hide_a_skipped_archive(tmp_path: Path, capsys) -> None:
+    """Every named input is reported even when none can be inspected."""
+    archive = tmp_path / "cosmicflows_laniakea_full.luxar.zarr.zip"
+    archive.write_bytes(b"not opened")
+    unknown = tmp_path / "typo.luxar.zarr"
+
+    assert main([str(unknown), str(archive)]) == 1
+
+    out = capsys.readouterr().out
+    assert "are not demo outputs" in out
+    assert "archive stores are not inspected, skipped" in out
+    assert "INSPECTED NOTHING" in out
+
+
 def test_require_scenes_escalates_an_all_skipped_run(tmp_path: Path) -> None:
     """The archive case is tolerated by default but not when scenes are required."""
     store = tmp_path / "cosmicflows_laniakea_full.luxar.zarr.zip"
