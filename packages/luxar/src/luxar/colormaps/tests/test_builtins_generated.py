@@ -88,3 +88,21 @@ def test_the_generator_reproduces_every_shipped_lut_exactly() -> None:
         f"These LUTs are baked into published scenes — confirm the change is "
         f"intended before regenerating."
     )
+
+
+@generated
+def test_generator_categories_preserve_ui_groups() -> None:
+    """Named UI groups must not silently fall into the remainder bucket."""
+    generator = _generator()
+    grouped = generator._categorise(generator.generate_all())
+
+    assert grouped["BOP (Blue-Orange-Purple)"] == [
+        "bop_blue",
+        "bop_orange",
+        "bop_purple",
+    ]
+    assert set(grouped["Microscopy linear ramps"]) == set(generator.LINEAR_RAMPS) - {
+        "bop_blue",
+        "bop_orange",
+        "bop_purple",
+    }

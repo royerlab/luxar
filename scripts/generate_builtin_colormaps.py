@@ -140,6 +140,7 @@ def generate_all() -> dict[str, np.ndarray]:
 #: headers and the order of emission -- `_categorise` guarantees that every
 #: generated colormap lands in exactly one group, so this cannot drop one.
 _CATEGORY_ORDER: dict[str, list[str]] = {
+    "BOP (Blue-Orange-Purple)": ["bop_blue", "bop_orange", "bop_purple"],
     "Perceptually uniform": ["viridis", "inferno", "plasma", "turbo"],
     "Domain-specific": ["fire", "ice", "phase"],
     "Diverging": ["RdBu", "coolwarm"],
@@ -168,6 +169,9 @@ def _categorise(colormaps: dict[str, np.ndarray]) -> dict[str, list[str]]:
     written = {n for names in grouped.values() for n in names}
     missing = set(colormaps) - written
     assert not missing, f"generated but never written: {sorted(missing)}"
+    assert set(grouped["Microscopy linear ramps"]) == set(LINEAR_RAMPS) - set(
+        _CATEGORY_ORDER["BOP (Blue-Orange-Purple)"]
+    )
     # Order the sections so the ramps come first, as they did before.
     return {
         "Microscopy linear ramps": grouped["Microscopy linear ramps"],
@@ -303,6 +307,7 @@ def write_typescript_data(colormaps: dict[str, np.ndarray], path: str) -> None:
     )
     lines.append("")
     lines.append("/** Colormap categories for UI organization */")
+    lines.append("// prettier-ignore")
     lines.append("export const COLORMAP_CATEGORIES: Record<string, string[]> = {")
     for category, names in categories.items():
         names_str = ", ".join(f"'{n}'" for n in names)

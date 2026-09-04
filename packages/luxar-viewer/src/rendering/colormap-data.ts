@@ -235,6 +235,7 @@ export const BUILTIN_COLORMAPS: Record<string, Uint8Array> = {
     240,155,0,241,156,0,242,157,0,243,157,0,244,158,0,245,159,0,246,159,0,247,160,0,248,160,0,249,161,0,
     250,162,0,251,162,0,252,163,0,253,164,0,254,164,0,255,165,0,
   ]),
+  // BOP (Blue-Orange-Purple)
   "bop_blue": new Uint8Array([
     0,0,0,0,0,1,0,0,2,0,0,3,0,1,4,0,1,5,0,1,6,0,1,7,0,1,8,0,1,9,
     0,1,10,0,2,11,0,2,12,0,2,13,0,2,14,0,2,15,0,2,16,0,3,17,0,3,18,0,3,19,
@@ -580,8 +581,10 @@ export const BUILTIN_COLORMAPS: Record<string, Uint8Array> = {
 export const BUILTIN_COLORMAP_NAMES: string[] = Object.keys(BUILTIN_COLORMAPS);
 
 /** Colormap categories for UI organization */
+// prettier-ignore
 export const COLORMAP_CATEGORIES: Record<string, string[]> = {
-  'Microscopy linear ramps': ['green', 'magenta', 'cyan', 'red', 'blue', 'yellow', 'gray', 'orange', 'bop_blue', 'bop_orange', 'bop_purple'],
+  'Microscopy linear ramps': ['green', 'magenta', 'cyan', 'red', 'blue', 'yellow', 'gray', 'orange'],
+  'BOP (Blue-Orange-Purple)': ['bop_blue', 'bop_orange', 'bop_purple'],
   'Perceptually uniform': ['viridis', 'inferno', 'plasma', 'turbo'],
   'Domain-specific': ['fire', 'ice', 'phase'],
   'Diverging': ['RdBu', 'coolwarm'],
