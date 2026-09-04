@@ -43,6 +43,7 @@ async function loadWorkerPool(
   sharedModule: WebAssembly.Module | null = null
 ) {
   vi.resetModules();
+  vi.stubGlobal('navigator', { hardwareConcurrency: 32 });
 
   // The pool resolves the shared, main-thread-compiled WASM module before each
   // worker's init guard starts. Stubbed here so the tests neither touch the
