@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 /**
  * The WorkerPool's two-gate startup contract.
  *
@@ -117,6 +119,7 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe('WorkerPool — first-usable-worker gate', () => {
   beforeEach(() => {
+    vi.unstubAllGlobals();
     vi.clearAllMocks();
   });
 
