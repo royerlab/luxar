@@ -48,6 +48,7 @@ import type { LuxarApp } from '../../app';
 import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../config/constants';
 import { computePerfSnapshot } from './perf-snapshot';
 import { getRendererInfoSnapshot, installRendererInfoSampler } from './renderer-info-sampler';
+import { snapshotProjectedDensity } from '../../../scene/projected-density';
 import type { LODGroupRegistry } from '../../../scene/lod-group-registry';
 
 /**
@@ -457,6 +458,7 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
         rendererInfo: getRendererInfoSnapshot,
         adaptiveDpr: () => ports.adaptiveDPRManager.getDiagnostics(),
         workers: () => getWorkerPool().getStats(),
+        density: snapshotProjectedDensity,
         isUpdateInProgress: () => {
           const loader = SceneLoaderManager.getInstance().getDefaultLoader() as {
             isUpdateInProgress?: () => boolean;

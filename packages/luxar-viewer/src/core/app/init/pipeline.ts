@@ -31,6 +31,10 @@ import { createKTX2TextureDecoder } from '../../../rendering/ktx2-texture-decode
 import { resolveFactories, type AppFactories } from '../factories';
 import type { LuxarAppOptions } from '../options';
 import type { EventGroup } from '../../../utils/cross-layer/event-group';
+import {
+  getProjectedDensityTracker,
+  resolveDensityGuardEnabled,
+} from '../../../scene/projected-density';
 
 /**
  * Everything `LuxarApp.init()` constructs is returned in this result.
@@ -324,6 +328,26 @@ export async function runInitPipeline(
   // per-frame order slots — documented in assignGlobalRenderOrder).
   animationController.addPerFrameCallback('depth-sort-scheduler', () => {
     evaluateDepthSortPerFrame();
+  });
+  // Projected-density guard walker (config.densityGuard; `?no-density-guard`):
+  // measures elements per drawing-buffer pixel for every committed data mesh
+  // once per frame. Consumers read it through getProjectedDensityTracker()
+  // (shader keep fraction, refinement rung cap, getPerf().density).
+  const densityGuardEnabled = resolveDensityGuardEnabled(
+    config.densityGuard.enabled,
+    ports.options.densityGuard
+  );
+  getProjectedDensityTracker().configure({
+    enabled: () => densityGuardEnabled,
+    getRoot: () => sceneManager.scene,
+    getCamera: () => sceneManager.camera,
+    getDrawingBufferSize: () => {
+      const canvas = sceneManager.renderer.domElement;
+      return { width: canvas.width, height: canvas.height };
+    },
+  });
+  animationController.addPerFrameCallback('projected-density', () => {
+    getProjectedDensityTracker().evaluate();
   });
   animationController.addPerFrameCallback('lod-group-selector', () => {
     const loader = getSceneLoader('default');

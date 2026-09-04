@@ -24,6 +24,7 @@ describe('readUrlParams', () => {
       lodEnergyComp: true, // streaming brightness compensation is ON (opt-out via ?no-lod-energy)
       blendWarmup: true, // WebGL blend-variant warm-up is ON by default (opt-out via ?no-blend-warmup)
       depthSort: true, // gsplat depth sorting is ON by default (opt-out via ?depthSort=0)
+      densityGuard: true, // projected-density guard is ON by default (opt-out via ?no-density-guard)
       lodFinest: false, // capture-quality force-finest is OFF by default (opt-in via ?lod-finest)
       noPrefetch: false,
       prefetchDebug: false,

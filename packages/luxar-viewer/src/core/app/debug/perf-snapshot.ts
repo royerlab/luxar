@@ -29,6 +29,8 @@ export interface PerfSnapshotContext {
   isAnyLoadPassInProgress?: () => boolean;
   /** Any lazy substitutive-LOD / deferred-partition level fetch in flight. */
   isAnyLodLevelLoading?: () => boolean;
+  /** Per-node projected density (`scene/projected-density.ts` snapshot). */
+  density?: () => unknown;
 }
 
 export interface PerfSnapshot {
@@ -40,6 +42,8 @@ export interface PerfSnapshot {
   rendererInfo: RendererInfoSnapshot | null;
   adaptiveDpr: AdaptiveDPRDiagnostics | null;
   workers: unknown;
+  /** Per-node projected density records, keyed by scene path (null before init). */
+  density: unknown;
   /**
    * The wide "nothing is in flight" predicate, or `null` before the runtime
    * hooks exist. See the module doc for what it covers.
@@ -93,6 +97,7 @@ export function computePerfSnapshot(ctx: PerfSnapshotContext = {}): PerfSnapshot
     rendererInfo: readOrNull(ctx.rendererInfo),
     adaptiveDpr: readOrNull(ctx.adaptiveDpr),
     workers: readOrNull(ctx.workers),
+    density: readOrNull(ctx.density),
     isSettled,
     settle: { updateInProgress, loadPassInProgress, lodLevelLoading, refinementComplete },
   };

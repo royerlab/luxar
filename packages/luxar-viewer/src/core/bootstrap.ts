@@ -314,6 +314,7 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     allowLinks: urlParams.allowLinks,
     lodEnergyComp: urlParams.lodEnergyComp,
     depthSort: urlParams.depthSort,
+    densityGuard: urlParams.densityGuard,
     // Opt-in capture-quality override (`?lod-finest` — the gallery harness).
     lodFinest: urlParams.lodFinest,
     blendWarmup: urlParams.blendWarmup,
