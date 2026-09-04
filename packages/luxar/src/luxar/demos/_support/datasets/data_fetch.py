@@ -10,25 +10,22 @@ present. It deliberately does NOT live under ``demos/data/``: that whole tree is
 excluded from the wheel and sdist (~450 MB of git-LFS payload), so a manifest
 kept there would be missing for exactly the installed users this module serves.
 
-Two checksum contracts per file, because one number cannot describe both ends.
-``sha256`` is what THIS REPO ships (for a git-LFS file, literally the pointer's
-oid); the optional ``hosted_sha256`` is what the Zenodo record serves. They were
-identical by construction until a refit replaced a hosted artifact without
-touching the in-repo copy — and collapsing them into one field is what forced
-publication onto the critical path of every demo-data PR. ``hosted_sha256`` is
-usually absent, and then the two contracts are one.
+Current ``zenodo`` entries carry one checksum contract: ``sha256`` and ``bytes``
+describe what the record serves. The optional ``hosted_sha256`` and
+``hosted_bytes`` fields remain supported for legacy manifests where an in-repo
+copy differed from the record copy; in that shape the hosted fields are
+authoritative for downloads.
 
 Resolution order for a ``zenodo`` dataset (per file). A checksum is the authority
 at every step. Bytes matching neither live contract are quarantined unless they
 match the most recent ``superseded_sha256`` and no source can replace them; the
-download leg remains strict on the hosted digest specifically:
+download leg remains strict on the record digest:
 
     1. Local cache ``~/.cache/luxar/<dataset>/<file>``, if it verifies.
-    2. In-repo git-LFS copy ``demos/data/<dir>/<file>``, where ``<dir>`` is the
-       manifest ``dir`` field (EMPTY for top-level datasets — the file then lives
-       directly under ``demos/data/``). Copied atomically into the cache and then
-       verified. This is the fallback that keeps demos working *during* the
-       migration, until a dataset's Zenodo URL is populated.
+    2. Legacy in-repo git-LFS copy ``demos/data/<dir>/<file>``, where ``<dir>``
+       is the manifest ``dir`` field. Current ``zenodo`` entries have no such
+       payload; the only retained demo payload is the ``regenerate``-bucket Dip-C
+       file, outside this fetch path.
     3. Download from the dataset's Zenodo record (checksum-verified), if the
        record has a resolvable URL.
     4. Otherwise a clear error (data neither cached, in-repo, nor hosted yet).
@@ -609,13 +606,15 @@ def _verdict_from_one_pass(
                 return kind
 
         if verbose:
-            # Keep the historical labels: "hosted:" / "in-repo:" name the
-            # CONTRACT rather than the internal verdict string, and the existing
-            # reporting test reads them.
+            local_label = (
+                "in-repo:"
+                if any(kind == "hosted" for _, kind in candidates)
+                else "record:"
+            )
             aprint("❌ SHA256 mismatch!")
             label = {
                 "hosted": "hosted:",
-                "local": "in-repo:",
+                "local": local_label,
                 "superseded": "superseded:",
             }
             for digest, kind in candidates:
@@ -683,8 +682,13 @@ def _resolve_from_cache(
         reason=(
             "unpulled git-LFS pointer"
             if is_lfs_pointer(dest)
-            else "matches neither the in-repo nor the hosted sha256 (corrupt, "
-            "or superseded by a data update)"
+            else (
+                "matches neither the in-repo nor the hosted sha256 (corrupt, "
+                "or superseded by a data update)"
+                if hosted_sha
+                else "matches neither the record nor a superseded sha256 (corrupt, "
+                "or superseded by a data update)"
+            )
         ),
         verbose=verbose,
     )
@@ -728,18 +732,10 @@ def _ensure_one(
 ) -> Path:
     """Resolve one file: cache → in-repo LFS → Zenodo, checksum-authoritative.
 
-    TWO checksum contracts, because one number can no longer describe both ends.
-    ``sha`` (manifest ``sha256``) is what the REPO ships — for a git-LFS file it
-    is literally the pointer's oid. ``hosted_sha`` (``hosted_sha256``) is what
-    the RECORD serves. They were identical by construction until a refit replaced
-    the hosted artifact without touching the in-repo copy, and collapsing them
-    into one field is what forced Zenodo publication onto the critical path of
-    every demo-data PR: truthful hosted pins made the in-repo fallback fail its
-    own checksum, so the payloads had to be deleted in the same change, so the
-    record had to be published first.
-
-    ``hosted_sha`` is optional and usually absent; when it is, the two contracts
-    are one and the behaviour is exactly as before.
+    Current manifests use one contract: ``sha`` (manifest ``sha256``) describes
+    the RECORD copy. ``hosted_sha`` (``hosted_sha256``) is optional legacy input
+    for manifests that still distinguish an in-repo copy from the record copy;
+    when present, it remains authoritative for downloads.
 
     Bytes already in hand prefer the two live contracts in order — hosted
     (canonical, silent), then local (usable, with a one-line notice that the
@@ -752,14 +748,14 @@ def _ensure_one(
     source filled it, so a cache leg stricter than the leg that wrote it would
     quarantine its own copy and re-make it on every single run.
 
-    Only the DOWNLOAD leg is strict, and strictly on the hosted digest: bytes
+    Only the DOWNLOAD leg is strict, and strictly on the record digest
+    (``hosted_sha`` for a legacy dual contract, otherwise ``sha``): bytes
     arriving from the record must be the record's bytes.
 
-    One consequence worth stating: while an in-repo payload is present it wins
-    over a newer hosted artifact, so a checkout with a stale LFS object keeps
-    serving the older generation (loudly). That is the intended trade — it is
-    what lets the pins be truthful while the payloads are still in the tree — and
-    it ends when the payloads are removed.
+    The in-repo preference remains for legacy dual-contract manifests, but no
+    current ``zenodo`` dataset has an in-repo payload; non-``zenodo`` datasets
+    raise :class:`LocalComputeDataset` before reaching this helper. Current
+    manifests therefore resolve through the checksum-verified cache or record.
 
     The checksum authority at every step:
 

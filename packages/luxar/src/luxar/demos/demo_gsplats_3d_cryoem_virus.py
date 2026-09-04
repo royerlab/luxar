@@ -55,7 +55,7 @@ DEMO_META = {
         "download_mb": 50,  # approx
         "compute": "medium",
         "gpu": "optional",
-        "local_data": "git-lfs",
+        "local_data": None,
     },
     "caches": ["gsplats_cryoem_virus"],
     "outputs": ["gsplats_3d_cryoem_virus"],

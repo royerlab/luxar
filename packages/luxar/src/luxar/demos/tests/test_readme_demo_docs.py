@@ -34,6 +34,29 @@ def _readme_text() -> str:
     return readme.read_text(encoding="utf-8")
 
 
+def _demo_catalogue_text() -> str:
+    try:
+        readme = get_project_root() / "packages/luxar/src/luxar/demos/README.md"
+    except RuntimeError:  # pragma: no cover - only in an installed wheel
+        pytest.skip("project root unavailable (installed wheel)")
+    if not readme.exists():  # pragma: no cover
+        pytest.skip("demo catalogue README.md not found at project root")
+    return readme.read_text(encoding="utf-8")
+
+
+def _demo_catalogue_sections() -> dict[str, str]:
+    text = _demo_catalogue_text()
+    demo_keys = {demo.path.stem: demo.key for demo in iter_demos()}
+    return {
+        demo_keys[match.group(1)]: match.group(0)
+        for match in re.finditer(
+            r"^#### (demo_[a-z0-9_]+)\.py\b.*?(?=^#### |^## |\Z)",
+            text,
+            re.MULTILINE | re.DOTALL,
+        )
+    }
+
+
 def _sample_block(text: str) -> list[str]:
     """The fenced sample listing, from the banner to the last footer line."""
     block = re.search(
@@ -152,6 +175,35 @@ def test_cited_demo_keys_exist() -> None:
     assert not re.search(r"luxar demo (?:run|info) \d", text), (
         "README must not hard-code a numeric demo index in a run/info example"
     )
+
+
+def test_catalogue_lfs_provisioning_matches_demo_metadata() -> None:
+    """Only demos with a local Git-LFS input may advertise LFS provisioning."""
+    sections = _demo_catalogue_sections()
+    demos = {demo.key: demo for demo in iter_demos()}
+    provisioning_claim = re.compile(
+        r"(?:ships?|uses)[^.\n]*Git LFS|Git LFS data \(default\)|"
+        r"git lfs pull|LFS asset",
+        re.IGNORECASE,
+    )
+    documented = {
+        key for key, section in sections.items() if provisioning_claim.search(section)
+    }
+    declared = {key for key, demo in demos.items() if demo.local_data == "git-lfs"}
+    assert documented == declared, (
+        "catalogue LFS provisioning claims disagree with DEMO_META.local_data: "
+        f"documented={sorted(documented)}, declared={sorted(declared)}"
+    )
+
+
+def test_catalogue_sections_use_registry_keys_and_cover_every_entry() -> None:
+    text = _demo_catalogue_text()
+    demo_keys = {demo.path.stem: demo.key for demo in iter_demos()}
+    expected = {
+        demo_keys[match.group(1)]
+        for match in re.finditer(r"^#### (demo_[a-z0-9_]+)\.py\b", text, re.MULTILINE)
+    }
+    assert set(_demo_catalogue_sections()) == expected
 
 
 def test_gallery_tiles_match_registry_credits() -> None:

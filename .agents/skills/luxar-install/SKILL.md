@@ -65,7 +65,7 @@ make build-viewer   # builds viewer dist (auto-installs Rust/wasm-pack if needed
 ```bash
 make setup-dev      # full bootstrap: Node, pnpm, hatch, pre-commit hooks
 make check-deps     # audit what's installed / missing
-git lfs install && git lfs pull    # demo data files (.npz/.zip) are Git-LFS
+git lfs install && git lfs pull    # Dip-C's .npz payload is Git-LFS
                                    # (install git-lfs first: brew/apt install git-lfs)
 hatch run test      # Python tests
 ```
@@ -176,8 +176,9 @@ see the **`luxar-hpc-batch-fit`** skill.
 
 ## Common pitfalls
 
-- **Demos fail with tiny/broken data files** → Git LFS not pulled:
-  `git lfs install && git lfs pull` (pointer files are ~130 bytes).
+- **Dip-C has a tiny/broken payload** → run `git lfs install && git lfs pull`
+  (the pointer file is ~130 bytes). Other hosted demos fetch from their records;
+  inspect the manifest/record error instead.
 - **"Viewer not available / not built"** → in a dev tree run
   `cd packages/luxar-viewer && pnpm build` (or `make build-viewer`).
 - **CUDA extension import fails after upgrading torch** → rebuild:

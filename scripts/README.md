@@ -43,8 +43,8 @@ scripts/
 | `check_hpc_setup.py` | Smoke-test the HPC/venv-fallback dev environment |
 | `calibrate_gsplat_demos.py` | Run `luxar gsplat cal` on every gsplat demo's volume(s) |
 | `update_demo_max_splats.py` | Apply calibrated K\* to each demo's `MAX_SPLATS` constant |
-| `add_additive_lod_to_demos.py` | Add an additive LOD ladder to each gsplat demo baseline |
-| `reencode_gsplat_demos.py` | Re-encode and rebuild LOD ladders for committed gsplat demo baselines without refitting |
+| `add_additive_lod_to_demos.py` | Add an additive LOD ladder to fetched gsplat demo baselines staged under `demos/data/` |
+| `reencode_gsplat_demos.py` | Re-encode and rebuild LOD ladders for fetched gsplat demo baselines staged under `demos/data/`, without refitting |
 | `benchmark_progressive_psnr.py` | Benchmark progressive gsplat fitting (PSNR/SSIM) |
 | `refit_gsplat_demos.sh` | Force-refit every gsplat demo (sequential) |
 | `run_demo_recompute.sh` | Sequential demo recompute from scratch |
@@ -418,10 +418,12 @@ can be launched from any working directory.
 
 ### `add_additive_lod_to_demos.py`
 
-Adds an additive LOD ladder to every gsplat demo's LFS baseline using the
-supp-doc additive-LOD algorithm (cumulative count breakpoints `1500, 8000,
-40000`, sized so L0 fits in a single 64 KB zarr chunk). Uses `greedy` ordering up
-to N ≈ 200K, falling back to `self_energy` above that. Defaults to writing
+Adds an additive LOD ladder to every gsplat demo baseline using the supp-doc
+additive-LOD algorithm (cumulative count breakpoints `1500, 8000, 40000`, sized
+so L0 fits in a single 64 KB zarr chunk). The baselines now live on the records;
+fetch and stage them under their former `demos/data/gsplats_*/` paths before
+running this maintenance script. It uses `greedy` ordering up to N ≈ 200K,
+falling back to `self_energy` above that. Defaults to writing
 `<file>.lod_added.gsplats.zarr.zip` sidecar files; originals are untouched unless
 `--in-place`.
 

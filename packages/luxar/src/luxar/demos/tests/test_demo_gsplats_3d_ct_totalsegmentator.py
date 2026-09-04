@@ -223,11 +223,10 @@ class TestLabelRoundtrip:
 def _legacy_pair(label_vol: np.ndarray, fit: GSplatData):
     """Write the LEGACY shape: a fit with NO label channel plus a sidecar.
 
-    This is what the in-repo Git-LFS payload is, and it is now the only shape on
-    which the ordering guard can fire at all — the hosted archive carries its
-    organ ids natively, so it has no second array to misorder. Tests of the guard
-    therefore build this shape explicitly; ``save_and_sample_labels`` no longer
-    produces it. Retires with the payloads (#2354).
+    This is the synthetic shape on which the ordering guard can fire: the record
+    archive carries its organ ids natively, so rendering never consults its
+    sidecar. Tests therefore build a label-less fit explicitly;
+    ``save_and_sample_labels`` no longer produces one.
 
     Written through the demo's own ``_save_atlas_fit`` / ``_save_labels_u8`` so
     the recipe and the quantization rule cannot drift from the real ones.
@@ -330,23 +329,6 @@ class TestLabelSidecarOrdering:
         )
         assert _demo._labels_match_fit(fit, labels, "unverifiable")
         assert "UNVERIFIED" in capsys.readouterr().out
-
-    def test_shipped_pair_is_accepted(self) -> None:
-        """The pair actually in Git LFS must pass the guard it is checked by.
-
-        A guard nobody can satisfy is a guard that always refits. Only the ACCEPT
-        verdict is asserted: the numbers themselves (agreement, splat count) are
-        properties of the artifact and must be free to change when it is
-        regenerated.
-        """
-        from luxar.demos import is_lfs_pointer
-
-        for path in (_demo.LFS_FIT, _demo.LFS_LABELS):
-            if not path.exists() or is_lfs_pointer(path):
-                pytest.skip(f"{path.name} not materialized (run `git lfs pull`)")
-        fit = GSplatData.load(_demo.LFS_FIT, include_stats=False)
-        labels = _load_labels(_demo.LFS_LABELS)
-        assert _demo._labels_match_fit(fit, labels, "shipped")
 
 
 def _same_voxel_pairs(centers: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -567,7 +549,7 @@ class TestNativeLabelsWinOverTheSidecar:
     def test_a_legacy_fit_still_falls_back_to_its_sidecar(
         self, tmp_path, monkeypatch
     ) -> None:
-        """The in-repo Git-LFS path, which must keep working until #2354."""
+        """A label-less fit still requires its matching positional sidecar."""
         label_vol, fit = self._fixture(tmp_path, monkeypatch, "legacy-")
         stored, labels = _legacy_pair(label_vol, fit)
 
@@ -632,9 +614,6 @@ class TestRejectedPairFallsThroughToRefit:
             _save_labels_u8(labels[rng.permutation(n)], _demo.LOCAL_LABELS)
 
         monkeypatch.setattr(_demo, "RECOMPUTE", False)
-        # The shipped LFS assets must not rescue (or mask) the outcome.
-        monkeypatch.setattr(_demo, "LFS_FIT", tmp_path / "absent.gsplats.zarr.zip")
-        monkeypatch.setattr(_demo, "LFS_LABELS", tmp_path / "absent.npz")
         # The manifest fetch resolves to the cached fit, as ensure_dataset would.
         monkeypatch.setattr(
             _demo,
@@ -674,81 +653,6 @@ class TestRejectedPairFallsThroughToRefit:
         np.testing.assert_array_equal(got_labels, labels)
 
 
-class TestShippedLfsPairIsGuardedToo:
-    """The SHIPPED (Git LFS) branch of ``load_or_build`` must run the guard too.
-
-    ``load_or_build`` has two accept doors — the manifest-fetched cache and the
-    packaged LFS assets — and each one calls ``_labels_match_fit`` separately.
-    The manifest-cache door is covered above; without these two the LFS call
-    could be replaced by ``if True:`` with the whole suite still green, because
-    every other test points ``LFS_*`` at absent paths so that branch never runs.
-    """
-
-    @staticmethod
-    def _lfs_setup(tmp_path, monkeypatch, *, permute: bool):
-        """Materialize an LFS-shaped pair under tmp_path and stub the refit."""
-        n = 6000
-        rng = np.random.default_rng(34)
-        label_vol = rng.integers(0, 118, (16, 16, 16)).astype(np.int32)
-        fit = _scattered_gsplat_data(n, extent=15.49, seed=7)
-
-        # Build the pair straight into the "shipped" location.
-        lfs_dir = tmp_path / "lfs"
-        lfs_dir.mkdir()
-        monkeypatch.setattr(_demo, "LOCAL_FIT", lfs_dir / _demo.FIT_FILE)
-        monkeypatch.setattr(_demo, "LOCAL_LABELS", lfs_dir / _demo.LABELS_FILE)
-        _, labels = _legacy_pair(label_vol, fit)
-        if permute:
-            _save_labels_u8(labels[rng.permutation(n)], lfs_dir / _demo.LABELS_FILE)
-        monkeypatch.setattr(_demo, "LFS_FIT", lfs_dir / _demo.FIT_FILE)
-        monkeypatch.setattr(_demo, "LFS_LABELS", lfs_dir / _demo.LABELS_FILE)
-
-        # …and make the OTHER two doors miss, so the LFS one is under test: no
-        # fetched dataset, no fetched sidecar, and no local refit either. The
-        # last of those is only true because `load_or_build` reads the local pair
-        # through these constants; while it re-derived the path from the cache
-        # root instead, this redirect was inert and the door opened onto the
-        # developer's real ~/.cache (#1618 review, A).
-        monkeypatch.setattr(
-            _demo, "CACHE_LABELS", tmp_path / "cache" / _demo.LABELS_FILE
-        )
-        monkeypatch.setattr(_demo, "LOCAL_FIT", tmp_path / "local" / _demo.FIT_FILE)
-        monkeypatch.setattr(
-            _demo, "LOCAL_LABELS", tmp_path / "local" / _demo.LABELS_FILE
-        )
-        monkeypatch.setattr(_demo, "load_dataset_gsplats", lambda *a, **k: None)
-
-        monkeypatch.setattr(_demo, "RECOMPUTE", False)
-        monkeypatch.setattr(_demo, "warn_if_no_cuda_gpu", lambda: None)
-        sentinel_fit = _scattered_gsplat_data(4, extent=1.0, seed=8)
-        sentinel_labels = np.zeros(4, dtype=np.int32)
-        monkeypatch.setattr(
-            _demo, "load_ct_and_labels", lambda: (None, None, None, None)
-        )
-        monkeypatch.setattr(
-            _demo, "fit_atlas", lambda *a, **k: (sentinel_fit, sentinel_labels)
-        )
-        return labels, sentinel_fit, sentinel_labels
-
-    def test_a_permuted_shipped_sidecar_falls_through_to_the_refit(
-        self, tmp_path, monkeypatch
-    ) -> None:
-        _, sentinel_fit, sentinel_labels = self._lfs_setup(
-            tmp_path, monkeypatch, permute=True
-        )
-        got_fit, got_labels = _demo.load_or_build()
-        assert got_fit is sentinel_fit, "a rejected SHIPPED pair was rendered anyway"
-        assert got_labels is sentinel_labels
-
-    def test_an_aligned_shipped_sidecar_is_used_instead_of_refitting(
-        self, tmp_path, monkeypatch
-    ) -> None:
-        labels, sentinel_fit, _ = self._lfs_setup(tmp_path, monkeypatch, permute=False)
-        got_fit, got_labels = _demo.load_or_build()
-        assert got_fit is not sentinel_fit, "an aligned SHIPPED pair triggered a refit"
-        np.testing.assert_array_equal(got_labels, labels)
-
-
 class TestTheLocalDoorOpensOnTheSecondLaunch:
     """The headline behaviour of #1618, for the one demo with a PAIR of artifacts.
 
@@ -780,8 +684,6 @@ class TestTheLocalDoorOpensOnTheSecondLaunch:
         monkeypatch.setattr(
             _demo, "CACHE_LABELS", tmp_path / "cache" / _demo.LABELS_FILE
         )
-        monkeypatch.setattr(_demo, "LFS_FIT", tmp_path / "absent.gsplats.zarr.zip")
-        monkeypatch.setattr(_demo, "LFS_LABELS", tmp_path / "absent.npz")
 
         def _nothing_hosted(*args, **kwargs):
             raise DatasetUnavailable("no cached copy, no in-repo copy, no record")
@@ -837,10 +739,9 @@ class TestTheLocalDoorOpensOnTheSecondLaunch:
     ) -> None:
         """Half a pair is still not a usable answer, where a pair is what exists.
 
-        A fit that carries its own ids cannot be half of anything, so the case
-        this covers is the LEGACY shape — the in-repo Git-LFS generation, which
-        has no label channel — with its sidecar gone. That branch is live until
-        those payloads retire (#2354), and it must refit rather than render.
+        A fit that carries its own ids cannot be half of anything, so this covers
+        the legacy label-less shape with its sidecar gone. It must refit rather
+        than render.
         """
         _, fits = self._setup(tmp_path, monkeypatch)
         _demo.load_or_build()

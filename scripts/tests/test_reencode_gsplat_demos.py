@@ -1,4 +1,4 @@
-"""Tests for scripts/reencode_gsplat_demos.py (the LFS baseline re-encoder).
+"""Tests for scripts/reencode_gsplat_demos.py (the demo baseline re-encoder).
 
 Only the sidecar-pairing refusal is covered: re-encoding a fit reorders its
 splats, which silently invalidates a per-splat sidecar indexed positionally

@@ -221,15 +221,14 @@ check-deps:  ## Check all development dependencies and their versions
 	else \
 		echo "❌ pnpm not found (run: npm install -g pnpm)"; \
 	fi
-	@# Git LFS: several demo datasets (.npz/.zip under demos/data) are LFS-backed.
-	@# Without it they check out as ~130-byte pointer files and the demos fail
-	@# with a baffling parse/"file not found" error rather than anything useful.
+	@# Git LFS: the Dip-C demo's dipc_genome/dipc_gm12878.npz is LFS-backed.
+	@# Without it that file checks out as a ~130-byte pointer.
 	@if command -v git-lfs >/dev/null 2>&1 || git lfs version >/dev/null 2>&1; then \
 		echo "✅ Git LFS: $$(git lfs version 2>/dev/null | head -1)"; \
 	elif [ "$(OS)" = "macos" ]; then \
-		echo "⚠️  Git LFS not found - demo data will be pointer files (run: brew install git-lfs && git lfs install)"; \
+		echo "⚠️  Git LFS not found - the Dip-C payload will be a pointer (run: brew install git-lfs && git lfs install)"; \
 	else \
-		echo "⚠️  Git LFS not found - demo data will be pointer files (run: sudo apt-get install git-lfs && git lfs install)"; \
+		echo "⚠️  Git LFS not found - the Dip-C payload will be a pointer (run: sudo apt-get install git-lfs && git lfs install)"; \
 	fi
 	@echo ""
 	@echo "=== Optional Dependencies (for WASM builds) ==="

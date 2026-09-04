@@ -469,9 +469,8 @@ def load_characteristics() -> dict[str, Any]:
 def hosted_size(spec: dict[str, Any]) -> Optional[int]:
     """The size of the copy the RECORD serves, not the one this repo ships.
 
-    ``bytes`` describes the in-repo copy and ``hosted_bytes`` the hosted one; they
-    diverge for every refitted dataset. A record's own table must quote the size
-    of the file a reader will download, so the hosted value wins where it exists.
+    Current entries use ``bytes`` for the record copy. ``hosted_bytes`` remains
+    the authoritative legacy field where a manifest still carries two contracts.
     """
     return spec.get("hosted_bytes") or spec.get("bytes")
 
@@ -479,8 +478,8 @@ def hosted_size(spec: dict[str, Any]) -> Optional[int]:
 def _pinned_digest(spec: dict[str, Any]) -> Optional[str]:
     """The digest the manifest expects for the copy a record serves.
 
-    Prefers ``hosted_sha256`` where the hosted artifact and the in-repo copy have
-    diverged; falls back to ``sha256``, which described both before they did.
+    Current entries use ``sha256`` for the record copy. ``hosted_sha256`` remains
+    the authoritative legacy field where a manifest still carries two contracts.
     """
     return spec.get("hosted_sha256") or spec.get("sha256")
 

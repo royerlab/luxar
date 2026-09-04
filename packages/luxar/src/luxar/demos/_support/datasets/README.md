@@ -19,8 +19,9 @@ from luxar.demos import ensure_dataset
 
 ## Key Functions
 
-- `ensure_dataset()` resolves cache, in-repo Git LFS, then hosted data. Existing
-  bytes prefer `hosted_sha256`, then `sha256`; the newest
+- `ensure_dataset()` resolves cache, a legacy in-repo Git LFS fallback, then
+  hosted data. Current Zenodo entries use `sha256` for the record copy; legacy
+  dual-contract entries prefer `hosted_sha256`, then `sha256`. The newest
   `superseded_sha256` is accepted only when no current copy can replace it. A
   declared `positional_pair` additionally requires every partner to resolve to
   that same generation, otherwise the whole dataset is refused. Unrecognized

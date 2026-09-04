@@ -133,7 +133,7 @@ DEMO_META = {
         "download_mb": 2,
         "compute": "medium",
         "gpu": "optional",
-        "local_data": "git-lfs",
+        "local_data": None,
     },
     "caches": ["gsplats_kidney"],
     "outputs": ["gsplats_6d_kidney_multichannel_toggles"],

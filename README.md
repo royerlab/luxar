@@ -109,16 +109,16 @@ geometry, what it needs, and whether you have already built it:
 ```
 🎬 89 Luxar demos  ·  75 built  ·  8 cached  ·  6 not generated yet
 
- ASTRONOMY ───────────────────────────────────────────────────────────── 6 demos
+ ASTRONOMY ──────────────────────────────────────────────────────────── 6 demos
  ✓  2  asteroids_solar_system                  points+lines  300 MB
  ✓ 11  cosmicflows_laniakea                    points+lines  25 MB
- • 14  desi_galaxies                           points        73 MB git-lfs
+ • 14  desi_galaxies                           points        73 MB
 
- MEDICAL ─────────────────────────────────────────────────────────────── 4 demos
+ MEDICAL ────────────────────────────────────────────────────────────── 4 demos
  ✓ 16  dmri_tractography                       lines         588 MB
- • 26  gsplats_2d_cmu1_pathology               gsplats       150 MB GPU? git-lfs
+ • 26  gsplats_2d_cmu1_pathology               gsplats       150 MB GPU?
 
- SYNTHETIC ──────────────────────────────────────────────────────────── 20 demos
+ SYNTHETIC ─────────────────────────────────────────────────────────── 20 demos
  ✓  9  cloud                                   points
    10  collision                               points
  ...

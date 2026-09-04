@@ -39,14 +39,13 @@ SELF-CONTAINED / CACHING
 ------------------------
 The hosted and locally recomputed fits carry organ ids as a native categorical
 gsplat channel, so the writer permutes them in lockstep with the centers. The
-in-repo Git-LFS fit is an older label-less generation and still uses its
-positional sidecar; that pair is verified on load, and a mismatch is refitted
-rather than rendered.
+record still includes the positional sidecar; it is only consulted for a
+label-less fit, and a mismatch is refitted rather than rendered.
 
 On a fresh machine this demo bootstraps itself with no manual steps:
   1. Fast path: the manifest resolves a checksum-verified precomputed fit from
-     the in-repo Git LFS copies or the hosted record. Hosted fits carry labels
-     natively; the older in-repo fit resolves its matching sidecar.
+     the published record. The fit carries labels natively, so its positional
+     sidecar is vestigial for rendering.
   2. If no precomputed pair is available, or ``--recompute`` is passed, it
      downloads the 3.2 GB subset to
      ``~/.cache/luxar/gsplats_ct_totalsegmentator/`` (resumable), extracts one
@@ -72,7 +71,7 @@ DEMO_META = {
         "download_mb": 7,
         "compute": "medium",
         "gpu": "optional",
-        "local_data": "git-lfs",
+        "local_data": None,
     },
     "caches": ["gsplats_ct_totalsegmentator"],
     "outputs": ["gsplats_3d_ct_totalsegmentator"],
@@ -94,7 +93,6 @@ from luxar.demos import (
     DatasetUnavailable,
     add_demo_caption,
     detect_device,
-    is_lfs_pointer,
     launch_viewer,
     load_dataset_gsplats,
     load_local_fit_gsplats_at,
@@ -139,10 +137,6 @@ CACHE_LABELS = CACHE_DIR / LABELS_FILE
 # "one-time" refit run on every single launch (#1618/#1672).
 LOCAL_FIT = local_fit_path(DEMO_NAME, FIT_FILE)
 LOCAL_LABELS = local_fit_path(DEMO_NAME, LABELS_FILE)
-
-DATA_DIR = Path(__file__).parent / "data" / DEMO_NAME
-LFS_FIT = DATA_DIR / FIT_FILE
-LFS_LABELS = DATA_DIR / LABELS_FILE
 
 # CT windowing (Hounsfield units): soft tissue + bone. Below LO → 0, above HI → 1.
 HU_LO = -150.0
@@ -548,14 +542,14 @@ def _labels_for(
 ) -> np.ndarray | None:
     """Organ ids for ``fit``: its own if it has them, else the positional sidecar.
 
-    All four doors below need the same two-source rule, so it lives in one place.
+    Both manifest and local-refit doors need the same two-source rule, so it
+    lives in one place.
     A fit carrying its own ids is self-consistent by construction, so its sidecar
     — if one is even still pinned — is never read.
 
-    The sidecar branch stays because the IN-REPO Git-LFS payload is a different
-    generation of this fit with no label channel, and is still what a checkout
-    resolves. It retires with those payloads (#2354). Returns None when neither
-    source is usable, which every caller treats as "refit".
+    The sidecar branch stays for the record's positional pair and for older
+    local label-less fits. Returns None when neither source is usable,
+    which every caller treats as "refit".
     """
     native = _native_labels(fit)
     if native is not None:
@@ -812,7 +806,7 @@ def _save_atlas_fit(fit: GSplatData) -> None:
 def local_refit_pair() -> tuple[GSplatData, np.ndarray] | None:
     """A pair THIS machine refitted earlier, or None if there is nothing usable.
 
-    Consulted after the manifest fetch and the shipped LFS assets, and BEFORE
+    Consulted after the manifest fetch and BEFORE
     refitting, which is what makes the refit one-time (#1618). It gets the same
     alignment guard as every other source: the labels are indexed positionally,
     and a half-written pair is exactly the case the guard is for.
@@ -862,27 +856,14 @@ def load_or_build() -> tuple[GSplatData, np.ndarray]:
             )
             if labels is not None:
                 return precomputed[0], labels
-        # The in-repo payload has no label channel, so both halves are still
-        # required here — unlike the doors above and below, which accept a fit
-        # that describes itself.
-        if (
-            LFS_FIT.exists()
-            and LFS_LABELS.exists()
-            and not is_lfs_pointer(LFS_FIT)
-            and not is_lfs_pointer(LFS_LABELS)
-        ):
-            fit = GSplatData.load(LFS_FIT)
-            labels = _labels_for(fit, LFS_FIT, LFS_LABELS)
-            if labels is not None:
-                return fit, labels
         # A pair this machine refitted earlier, in its own namespace — checked
         # BEFORE refitting, which is what makes the refit below one-time.
         pair = local_refit_pair()
         if pair is not None:
             return pair
         aprint(
-            "Precomputed atlas not available (Git LFS assets not pulled, or the "
-            "shipped fit and its labels sidecar disagree). Falling back to "
+            "Precomputed atlas not available (the manifest fetch failed, or a "
+            "label-less fit and its sidecar disagree). Falling back to "
             f"download + fit (one-time; cached under {LOCAL_FIT.parent})."
         )
 

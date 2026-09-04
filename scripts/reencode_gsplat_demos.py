@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Upgrade the git-LFS gsplat demo baselines to format v3.3 + modern quantization.
+"""Upgrade fetched gsplat demo baselines to format v3.3 + modern quantization.
 
-The committed `.gsplats.zarr.zip` demo datasets under
-``packages/luxar/src/luxar/demos/data/gsplats_*/`` are format **v3.0** and
-effectively all-float32 (they predate every encoding PR that landed 2026-06-30
-onward). This script re-encodes them to the current format at
+The baselines now live on the records and must be fetched and staged under their
+former ``packages/luxar/src/luxar/demos/data/gsplats_*/`` paths before running
+this maintenance script. Those `.gsplats.zarr.zip` datasets are format **v3.0**
+and effectively all-float32 (they predate every encoding PR that landed
+2026-06-30 onward). This script re-encodes them to the current format at
 ``EncodingMode.AUTO`` (certified near-lossless: uint16 per-axis centers, split
 Cholesky at certified-u8, rgb_uint8/geolog colors) and rebuilds their LOD
 ladders — no re-fit, no source volume needed. The result is ~2-3x smaller with

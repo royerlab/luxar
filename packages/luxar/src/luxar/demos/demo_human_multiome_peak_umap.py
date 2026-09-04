@@ -36,7 +36,7 @@ DEMO_META = {
         "download_mb": 34,
         "compute": "medium",
         "gpu": "none",
-        "local_data": "git-lfs",
+        "local_data": None,
     },
     "citation": {
         "short": "Domcke et al. 2020; peak-UMAP analysis Kim et al. 2024",

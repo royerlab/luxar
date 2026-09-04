@@ -49,8 +49,8 @@ On a fresh machine this demo bootstraps itself with no manual steps:
      converts (RA, Dec, z) → comoving Mpc, keeps every row, and builds the
      substitutive LOD (GPU-accelerated but slow on CPU-only machines — which is
      exactly why the built scene is hosted precomputed).
-     If the DESI host is unavailable, ``git lfs pull`` restores the no-download
-     fast path from a source checkout.
+     If the DESI host is unavailable, rerun without ``--recompute`` to resolve
+     the precomputed scene through the dataset manifest and published record.
 
 USAGE
 -----
@@ -70,7 +70,7 @@ DEMO_META = {
         "download_mb": 73,
         "compute": "heavy",
         "gpu": "none",
-        "local_data": "git-lfs",
+        "local_data": None,
     },
     "caches": ["desi_galaxies"],
     "outputs": ["desi_galaxies"],
@@ -171,9 +171,6 @@ SCENE_ZIP_FILE = "desi_dr1_cosmic_web.luxar.zarr.zip"
 
 CACHE_DIR = Path.home() / ".cache" / "luxar" / DEMO_NAME
 DERIVED_CACHE = CACHE_DIR / DERIVED_FILE
-
-DATA_DIR = Path(__file__).parent / "data" / DEMO_NAME
-SCENE_ZIP_SHIPPED = DATA_DIR / SCENE_ZIP_FILE
 
 # Redshift window: keep good extragalactic redshifts; drop the tiny z≈0 blunders
 # and the sparse very-high-z tail that just stretches the scene.
@@ -448,10 +445,11 @@ def _catalog_download_error_message(url: str, exc: BaseException) -> str:
         "The DESI data host may be temporarily unavailable or under "
         "maintenance.\n"
         "  Check host availability: https://data.desi.lbl.gov/\n\n"
-        "The shipped precomputed scene does not need the source catalogs. "
-        "Fetch it with:\n"
-        "  git lfs pull\n"
-        "Then rerun this demo without --recompute."
+        "The precomputed scene does not need the source catalogs. Rerun this "
+        "demo without --recompute to fetch it through the dataset manifest "
+        "from the published record. If that manifest fetch also fails, it is "
+        "a separate problem from the DESI host outage and is reported before "
+        "the catalog fallback starts."
     )
 
 

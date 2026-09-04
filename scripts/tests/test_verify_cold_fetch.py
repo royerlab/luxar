@@ -153,12 +153,12 @@ def _digest(data: bytes) -> str:
 def test_a_healthy_origin_passes(harness: ModuleType, origin, tmp_path: Path) -> None:
     base_url, served = origin
     (served / "thing.zarr.zip").write_bytes(PAYLOAD)
-    manifest = _manifest(base_url, sha=_digest(PAYLOAD), hosted_sha=_digest(PAYLOAD))
+    manifest = _manifest(base_url, sha=_digest(PAYLOAD))
 
     ok, detail, _ = harness.verify("thing", manifest, keep=False)
     assert ok, detail
     assert detail.startswith("OK")
-    assert "hosted" in detail
+    assert "record" in detail
 
 
 def test_a_soft_404_is_caught(harness: ModuleType, origin, tmp_path: Path) -> None:
@@ -298,15 +298,21 @@ def test_a_dormant_record_skips_rather_than_failing(harness: ModuleType) -> None
     assert detail.startswith("SKIP")
 
 
-def test_the_hosted_digest_wins_over_the_repo_digest(harness: ModuleType) -> None:
-    """Two different contracts. Only the hosted one describes the record."""
-    entry = {"name": "x", "sha256": "repo-digest", "hosted_sha256": "hosted-digest"}
-    assert harness.expected_digest(entry)[0] == "hosted-digest"
+def test_the_record_digest_is_the_primary_contract(harness: ModuleType) -> None:
+    """The collapsed sha256 pin describes what the record serves."""
+    entry = {"name": "x", "sha256": "record-digest"}
+    assert harness.expected_digest(entry) == ("record-digest", "record")
 
-    repo_only = {"name": "x", "sha256": "repo-digest"}
-    wanted, contract = harness.expected_digest(repo_only)
-    assert wanted == "repo-digest"
-    assert "no hosted_sha256" in contract, "falling back must be reported, not silent"
+    legacy = {
+        "name": "x",
+        "sha256": "repo-digest",
+        "hosted_sha256": "hosted-digest",
+    }
+    assert harness.expected_digest(legacy) == ("hosted-digest", "legacy hosted")
+    assert harness.expected_digest({"name": "x", "hosted_sha256": "hosted-digest"}) == (
+        "hosted-digest",
+        "legacy hosted",
+    )
 
     assert harness.expected_digest({"name": "x"})[0] is None
 
