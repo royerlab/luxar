@@ -102,10 +102,25 @@ def _documents() -> list[Path]:
             for p in (REPO / root).rglob("*")
             if p.is_file()
             and p.suffix in DOC_SUFFIXES
-            and not EXCLUDED_DIRS.intersection(p.parts)
+            and not EXCLUDED_DIRS.intersection(p.relative_to(REPO).parts)
             and p.resolve() != SELF
         )
     return found
+
+
+def test_document_exclusions_are_relative_to_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "dist" / "checkout"
+    document = repo / "docs" / "guide.md"
+    document.parent.mkdir(parents=True)
+    document.write_text("encoding guide", encoding="utf-8")
+    monkeypatch.setattr("luxar.encoding.tests.test_encoding_vocabulary.REPO", repo)
+    monkeypatch.setattr(
+        "luxar.encoding.tests.test_encoding_vocabulary.SEARCH_ROOTS", ("docs",)
+    )
+
+    assert _documents() == [document]
 
 
 def _violations_in(path: Path, siblings: dict[str, str]) -> list[tuple[int, str, str]]:
