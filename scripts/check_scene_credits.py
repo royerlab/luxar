@@ -27,9 +27,18 @@ Usage::
 
     hatch run check-scene-credits                     # every built demo scene
     hatch run check-scene-credits path/to.luxar.zarr  # specific stores
+    hatch run check-scene-credits --require-scenes    # where demos MUST exist
 
-Exit code is non-zero when a built store contradicts its demo. A checkout with
-no generated scenes is a read-only no-op, matching ``check-demo-ladders``.
+Exit code is non-zero when a built store contradicts its demo, and also when a
+named path is not a demo output at all — a typo or a renamed output previously
+reported "checked 0 built scene(s); problems: 0" and exited 0 (audit A9-04).
+
+A checkout with no generated scenes remains a read-only no-op, matching
+``check-demo-ladders``: the output directory is gitignored, so an empty
+inventory is the normal state of a fresh clone and of CI. It now says INSPECTED
+NOTHING rather than wording that reads like a pass, and ``--require-scenes``
+turns it into a failure for callers that know better — release prep, or a
+demo-build pipeline running this after the build.
 """
 
 from __future__ import annotations
@@ -107,8 +116,22 @@ def _store_stem(path: Path) -> str:
     return path.name
 
 
-def _explicit_targets(stores: Iterable[Path]) -> tuple[list[Target], list[str]]:
-    """Resolve named paths to registered demo outputs and skip unsupported ones."""
+def _explicit_targets(
+    stores: Iterable[Path],
+) -> tuple[list[Target], list[str], list[str]]:
+    """Resolve named paths to registered demo outputs and skip unsupported ones.
+
+    Returns ``(targets, skipped, unknown)``. ``unknown`` is reported separately
+    from ``skipped`` because the two mean different things to the caller, and
+    only one of them is their mistake:
+
+    - **unknown** — the path is not a registered demo output at all. A typo, a
+      renamed output, or a store from somewhere else. The caller asked for
+      something that cannot be checked and should hear about it.
+    - **skipped** — a genuine demo output this tool structurally cannot inspect
+      (an archive; the stores are not unpacked). The caller named the right
+      thing; the limitation is ours.
+    """
     by_stem = {
         stem: (demo.key, demo.citation)
         for demo in iter_demos()
@@ -116,17 +139,18 @@ def _explicit_targets(stores: Iterable[Path]) -> tuple[list[Target], list[str]]:
     }
     targets = []
     skipped = []
+    unknown = []
     for store in stores:
         known = by_stem.get(_store_stem(store))
         if known is None:
-            skipped.append(f"{store.name}: not a known demo output, skipped")
+            unknown.append(f"{store.name}: not a known demo output, skipped")
             continue
         if store.name.endswith(".luxar.zarr.zip"):
             skipped.append(f"{store.name}: archive stores are not inspected, skipped")
             continue
         key, declared = known
         targets.append((key, store, declared))
-    return targets, skipped
+    return targets, skipped, unknown
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -143,16 +167,72 @@ def main(argv: Optional[list[str]] = None) -> int:
         default=get_demos_output_dir(create=False),
         help="where built demo scenes live",
     )
+    parser.add_argument(
+        "--require-scenes",
+        action="store_true",
+        help=(
+            "fail instead of passing when no scene was inspected (use wherever "
+            "demos ARE expected to be built: release prep, a demo-build pipeline)"
+        ),
+    )
     args = parser.parse_args(argv)
 
+    unknown: list[str] = []
     if args.stores:
-        targets, skipped = _explicit_targets(args.stores)
+        targets, skipped, unknown = _explicit_targets(args.stores)
     else:
         targets = list(_demo_stores(args.demos_dir))
         skipped = []
 
+    # A named path that is not a demo output at all is the CALLER's error, and
+    # it must not buy a green tick (audit A9-04, `_explicit_targets`).
+    #
+    # Before: an unknown path left `targets` empty but the skip list populated,
+    # so the empty-inventory guard below did not fire, the compare loop ran zero
+    # times, and the run printed "checked 0 built scene(s); problems: 0" and
+    # exited 0. A typo, or a demo output that had been renamed since the caller
+    # wrote the command, was indistinguishable from a clean bill of health.
+    #
+    # Deliberately narrower than "nothing was inspected": a KNOWN output in
+    # archive spelling is still exit 0 (see below). There the caller named the
+    # right artifact and the limitation is ours, not theirs.
+    if unknown:
+        aprint(f"❌ {len(unknown)} named path(s) are not demo outputs:")
+        for line in unknown:
+            aprint(f"  {line}")
+        aprint(
+            "  Check the spelling against the demo registry — a renamed output "
+            "looks exactly like this."
+        )
+        return 1
+
+    if not targets and skipped:
+        # Every named store was a real demo output this tool cannot open (an
+        # archive). Not the caller's mistake, so not an error — but nothing was
+        # inspected, and the old wording ("checked 0 built scene(s)") read like
+        # a result rather than an absence.
+        aprint(f"INSPECTED NOTHING — all {len(skipped)} named store(s) were skipped:")
+        for line in skipped:
+            aprint(f"  {line}")
+        return 1 if args.require_scenes else 0
+
     if not targets and not skipped:
-        aprint("no built demo scenes found; nothing to check")
+        # No arguments and an empty inventory. This is legitimate on a checkout
+        # that has never built demos (the output directory is gitignored), which
+        # is why it is not an error by default — but it is NOT evidence that the
+        # credits are correct, and `--require-scenes` is how a caller that knows
+        # better says so.
+        if args.require_scenes:
+            aprint(
+                f"❌ --require-scenes: INSPECTED NOTHING — no built demo scene "
+                f"found under {args.demos_dir}."
+            )
+            return 1
+        aprint(
+            f"no built demo scene found under {args.demos_dir}; INSPECTED NOTHING "
+            "(this is not a pass — build demos, or pass --require-scenes where "
+            "they are expected)"
+        )
         return 0
 
     problems = []
