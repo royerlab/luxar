@@ -765,8 +765,10 @@ monitor.element; // the widget element (mounted by the control rail)
 
 ### Browser Compatibility
 
-Requires **WebGL 2.0**; WebGPU is used when available. The build targets
-`esnext` with no `browserslist`, so there is no toolchain-derived version floor.
+Requires **WebGL 2.0**, which is the default backend. WebGPU is opt-in via
+`?renderer=webgpu` and falls back to an internal WebGL2 backend when no adapter
+is available. The build targets `esnext` with no `browserslist`, so there is no
+toolchain-derived version floor.
 
 Verified 2026-09-04 on macOS arm64 by running the E2E smoke subset (13 tests)
 against Playwright's bundled engines:

@@ -988,8 +988,9 @@ If you see "GPU fitting will use slower PyTorch fallback", fitting still works â
 
 ### Browser Compatibility
 
-Luxar needs **WebGL 2.0**; WebGPU is used when available and falls back
-automatically. The viewer builds with Vite's `target: 'esnext'` and declares no
+Luxar needs **WebGL 2.0**, which is the default backend. WebGPU is opt-in via
+`?renderer=webgpu` and falls back to an internal WebGL2 backend when no adapter
+is available. The viewer builds with Vite's `target: 'esnext'` and declares no
 `browserslist`, so nothing is downlevelled and no version floor is derived from
 the toolchain.
 
