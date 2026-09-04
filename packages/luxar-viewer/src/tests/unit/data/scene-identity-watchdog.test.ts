@@ -22,11 +22,6 @@ function okResponse(body: string): Response {
   return new Response(body, { status: 200 });
 }
 
-function requestUrl(input: RequestInfo | URL): string {
-  if (typeof input === 'string') return input;
-  return input instanceof URL ? input.href : input.url;
-}
-
 interface BannerLog {
   shown: string[];
   hidden: Array<string | undefined>;
@@ -92,7 +87,7 @@ describe('SceneIdentityWatchdog', () => {
   it('probes the trailing-slash-trimmed root document with cache bypass', async () => {
     const urls: string[] = [];
     const wd = makeWatchdog(async (input, init) => {
-      urls.push(requestUrl(input));
+      urls.push(String(input));
       expect(init?.cache).toBe('no-store');
       return okResponse(ATTRS);
     });
@@ -116,7 +111,7 @@ describe('SceneIdentityWatchdog', () => {
         expectedContentHash: HASH,
         intervalMs: 5000,
         fetchImpl: (async (input: RequestInfo | URL) => {
-          urls.push(requestUrl(input));
+          urls.push(String(input));
           return okResponse(ATTRS);
         }) as typeof fetch,
       });
@@ -149,7 +144,7 @@ describe('SceneIdentityWatchdog', () => {
     // reload loop over a scene that never moved.
     const urls: string[] = [];
     const wd = makeWatchdog(async (input) => {
-      const url = requestUrl(input);
+      const url = String(input);
       urls.push(url);
       if (url.endsWith('/zarr.json')) {
         return new Response('', { status: 404 });
@@ -622,7 +617,7 @@ describe('SceneIdentityWatchdog', () => {
     const urls: string[] = [];
     let calls = 0;
     const wd = makeWatchdog(async (url) => {
-      urls.push(requestUrl(url));
+      urls.push(String(url));
       calls++;
       return calls === 1 ? okWithETag(ATTRS, '"v1"') : notModified();
     });
@@ -639,7 +634,7 @@ describe('SceneIdentityWatchdog', () => {
     const seen: Array<[string, string | null]> = [];
     let calls = 0;
     const wd = makeWatchdog(async (url, init) => {
-      seen.push([requestUrl(url), new Headers(init?.headers).get('if-none-match')]);
+      seen.push([String(url), new Headers(init?.headers).get('if-none-match')]);
       calls++;
       // Probe 1: format-3 candidate 404s, format-2 answers with its own ETag.
       if (calls === 1) return new Response('', { status: 404 });
