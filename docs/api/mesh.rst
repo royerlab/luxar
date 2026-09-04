@@ -11,9 +11,11 @@ emissive — and the only one with no per-element size, because a triangle's
 extent comes from its own vertices.
 
 .. automodule:: luxar.mesh
-   :members:
-   :undoc-members:
-   :show-inheritance:
+   :no-members:
+
+Everything in ``luxar.mesh``'s ``__all__`` is re-exported from
+:mod:`luxar.mesh.interop`, so the members are documented once, below, rather
+than twice under two names.
 
 Importing Classical Mesh Files
 ------------------------------
