@@ -18,6 +18,11 @@ const OTHER_ATTRS = JSON.stringify({ content_hash: 'zzz999' });
 
 type FetchStub = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
+function requestUrl(input: RequestInfo | URL): string {
+  if (typeof input === 'string') return input;
+  return input instanceof URL ? input.href : input.url;
+}
+
 function okResponse(body: string): Response {
   return new Response(body, { status: 200 });
 }
@@ -617,7 +622,7 @@ describe('SceneIdentityWatchdog', () => {
     const urls: string[] = [];
     let calls = 0;
     const wd = makeWatchdog(async (url) => {
-      urls.push(String(url));
+      urls.push(requestUrl(url));
       calls++;
       return calls === 1 ? okWithETag(ATTRS, '"v1"') : notModified();
     });
@@ -634,7 +639,7 @@ describe('SceneIdentityWatchdog', () => {
     const seen: Array<[string, string | null]> = [];
     let calls = 0;
     const wd = makeWatchdog(async (url, init) => {
-      seen.push([String(url), new Headers(init?.headers).get('if-none-match')]);
+      seen.push([requestUrl(url), new Headers(init?.headers).get('if-none-match')]);
       calls++;
       // Probe 1: format-3 candidate 404s, format-2 answers with its own ETag.
       if (calls === 1) return new Response('', { status: 404 });
