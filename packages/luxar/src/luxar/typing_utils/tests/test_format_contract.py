@@ -123,6 +123,76 @@ def test_gsplats_version_consumers_single_sourced() -> None:
     assert fc.GSPLATS_FORMAT_VERSION in fc.SUPPORTED_GSPLATS_VERSIONS
 
 
+#: Documentation surfaces that state the CURRENT gsplats format version, each
+#: with a regex capturing exactly that claim.
+#:
+#: The 3.3 -> 3.4 bump reached the constant, the spec and nothing else: the
+#: published `FORMAT_AND_MIGRATION.md` — a page whose entire job is a table of
+#: current on-disk versions — still said v3.3, as did the CLI reference, the
+#: API reference and two package READMEs (audit A11-02). N-1-of-N, and the kind
+#: of error that gets copied into someone else's reader.
+#:
+#: Anchored regexes rather than "does 3.3 appear anywhere", because the tree
+#: legitimately holds v3.3 HISTORY ("v3.3 added the delta filter") and section
+#: numbers ("### 3.3 Spacing tokens"). A gate that cannot tell those apart
+#: either fires constantly or is switched off.
+CURRENT_VERSION_CLAIMS: tuple[tuple[str, str], ...] = (
+    (
+        "docs/guides/user/FORMAT_AND_MIGRATION.md",
+        r'`format_type="gsplats_zarr"`\) \| \*\*v(\d+\.\d+)\*\* \|',
+    ),
+    # Anchored on the Gsplats bullet specifically. A bare `current \*\*(...)\*\*`
+    # also matches the SCENE version two lines above ("current **0.1**") — which
+    # this gate caught on its first run, red against a correctly-swept page.
+    (
+        "docs/guides/user/FORMAT_AND_MIGRATION.md",
+        r"\*\*Gsplats \(`\.gsplats\.zarr`\):\*\* current \*\*(\d+\.\d+)\*\*",
+    ),
+    ("docs/guides/user/CLI_REFERENCE.md", r"to the current v(\d+\.\d+) format"),
+    (
+        "docs/api/gsplats.rst",
+        r"the v(\d+\.\d+) ``\.gsplats\.zarr`` on-disk structure",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        r"\(\*\*format v(\d+\.\d+)\*\*",
+    ),
+    (
+        "docs/specs/GSPLATS_ZARR_FORMAT.md",
+        r"The current format is \*\*v(\d+\.\d+)\*\*",
+    ),
+)
+
+
+@pytest.mark.skipif(
+    not (REPO_ROOT / "docs").is_dir(),
+    reason="docs/ not present (packaged install without the repo tree)",
+)
+@pytest.mark.parametrize(("relpath", "pattern"), CURRENT_VERSION_CLAIMS)
+def test_docs_state_the_current_gsplats_version(relpath: str, pattern: str) -> None:
+    """Every published "current version" claim must equal the contract."""
+    import re
+
+    path = REPO_ROOT / relpath
+    assert path.exists(), f"{relpath} is gone — update CURRENT_VERSION_CLAIMS"
+
+    matches = re.findall(pattern, path.read_text())
+
+    # An anchor that stops matching is the failure mode that matters: the claim
+    # is still on the page, the gate silently stops reading it, and the next
+    # bump goes N-1-of-N again with a green tick.
+    assert matches, (
+        f"{relpath}: the anchor {pattern!r} matched nothing. The wording moved; "
+        "re-anchor it rather than deleting the entry, or this surface stops "
+        "being checked."
+    )
+    stale = [v for v in matches if v != fc.GSPLATS_FORMAT_VERSION]
+    assert not stale, (
+        f"{relpath} claims gsplats format {stale} but the contract says "
+        f"{fc.GSPLATS_FORMAT_VERSION!r}. Bump the docs, not the constant."
+    )
+
+
 def test_contract_sets_are_nonempty_and_unique() -> None:
     """A malformed contract (dupes / empties) should not slip through codegen."""
     for values in (

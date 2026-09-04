@@ -747,7 +747,7 @@ luxar gsplat export imported.gsplats.zarr back.ply --opacity amplitude
 luxar gsplat export timelapse.gsplats.zarr t42.ply --timepoint 42
 
 # Migrate legacy .gsplats.zarr layouts (v1.0 / v1.1 / pre-v2.0 substitutive dir / v2.0 matrix /
-# v3.0-v3.1 with pre-v3.2 pixel_size lod selector attrs) → v3.3
+# v3.0-v3.1 with pre-v3.2 pixel_size lod selector attrs) → v3.4
 luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr               # single file
 luxar gsplat migrate-format old_pyr/ v3.gsplats.zarr                          # substitutive directory
 

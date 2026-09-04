@@ -304,7 +304,7 @@ luxar gsplat flatten    # Collapse any tree (leaf/lod/partition/nested) into one
 luxar gsplat convert         # Convert a .gsplats.zarr into a Luxar scene for the web viewer
 luxar gsplat import          # Import a classical splat file (INRIA PLY / .splat / .spz) → .gsplats.zarr
 luxar gsplat export          # Export a .gsplats.zarr → classical INRIA PLY
-luxar gsplat migrate-format  # Upgrade a legacy .gsplats.zarr layout to the current v3.3 format
+luxar gsplat migrate-format  # Upgrade a legacy .gsplats.zarr layout to the current v3.4 format
 luxar gsplat reencode        # Re-quantize a current-format dataset's Cholesky encoding (structure-preserving)
 ```
 

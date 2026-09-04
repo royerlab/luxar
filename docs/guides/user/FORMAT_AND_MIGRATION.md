@@ -11,10 +11,10 @@ migrate legacy inputs. For the exhaustive field-level specs, see
 | Format | Extension | What it holds | Version attr | Current version |
 |---|---|---|---|---|
 | Scene container | `.luxar.zarr` | The scene graph (points / lines / gsplats / mesh nodes, groups, transforms, dimensions) | `luxar_version` | **v0.1** |
-| Standalone gsplats | `.gsplats.zarr` | A detached Gaussian-splat node-tree (leaf, additive ladder, `kind=lod`, `kind=partition`, nested) | `format_version` (with `format_type="gsplats_zarr"`) | **v3.3** |
+| Standalone gsplats | `.gsplats.zarr` | A detached Gaussian-splat node-tree (leaf, additive ladder, `kind=lod`, `kind=partition`, nested) | `format_version` (with `format_type="gsplats_zarr"`) | **v3.4** |
 
 The two version numbers are **unrelated** — the scene container being at v0.1 says
-nothing about the gsplats node-tree being at v3.3, and vice versa. A
+nothing about the gsplats node-tree being at v3.4, and vice versa. A
 `.gsplats.zarr` is structurally identical to the gsplats node a scene already
 contains; it can be **grafted into a scene** with `luxar gsplat convert` or, from
 Python, `scene.add_gsplats_from_file(...)`.
@@ -32,7 +32,7 @@ The contract declares the supported/reserved ladders:
 
 - **Scene (`.luxar.zarr`):** current **0.1**; **0.2** and **0.3** are declared in
   the supported-version set, reserved for future revisions.
-- **Gsplats (`.gsplats.zarr`):** current **3.3**; **3.0–3.3** are all readable.
+- **Gsplats (`.gsplats.zarr`):** current **3.4**; **3.0–3.4** are all readable.
 
 ### Why the scene format is still v0.1
 
@@ -52,15 +52,15 @@ stays loadable while the mismatch is surfaced in the console.
 ## Supported legacy inputs & migration
 
 `luxar gsplat migrate-format` upgrades an older `.gsplats.zarr` layout to the
-current v3.3 node-tree. It **auto-detects** the input shape:
+current v3.4 node-tree. It **auto-detects** the input shape:
 
 | Legacy layout | How it is recognized | Migrates to |
 |---|---|---|
-| v1.0 (flat single-LOD) | root `format_version` attr = `"1.0"` | v3.3 leaf |
-| v1.1 (additive ladder) | root `format_version` attr = `"1.1"` | v3.3 leaf + additive ladder |
-| pre-v2.0 substitutive directory | a directory whose `manifest.json` has `lod_kind: "substitutive"` | v3.3 `kind=lod` group |
-| v2.0 (matrix) | root `format_version` attr = `"2.0"` | v3.3 tree |
-| v3.0 / v3.1 with legacy LOD attrs | a current node tree whose `kind=lod` groups still carry the pre-v3.2 `pixel_size` selector attrs | v3.3 (`selector: "coverage"` + derived `coverage_fraction`) |
+| v1.0 (flat single-LOD) | root `format_version` attr = `"1.0"` | v3.4 leaf |
+| v1.1 (additive ladder) | root `format_version` attr = `"1.1"` | v3.4 leaf + additive ladder |
+| pre-v2.0 substitutive directory | a directory whose `manifest.json` has `lod_kind: "substitutive"` | v3.4 `kind=lod` group |
+| v2.0 (matrix) | root `format_version` attr = `"2.0"` | v3.4 tree |
+| v3.0 / v3.1 with legacy LOD attrs | a current node tree whose `kind=lod` groups still carry the pre-v3.2 `pixel_size` selector attrs | v3.4 (`selector: "coverage"` + derived `coverage_fraction`) |
 
 ```bash
 luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr             # single file (AUTO encoding)
@@ -80,7 +80,7 @@ problems:
 | | `luxar gsplat migrate-format` | `luxar gsplat reencode` |
 |---|---|---|
 | Input | **Legacy** layout (v1.0 … v3.1) | **Current-format** dataset |
-| Output | Current v3.3 layout | Same structure, re-quantized |
+| Output | Current v3.4 layout | Same structure, re-quantized |
 | Changes | Layout **and** encoding (AUTO; `--lossless` for float32) | The on-disk Cholesky encoding, **and** under `auto`/`memory` the centers too (per-axis uint16 fixed-point — on ordinary spatial data centers are bit-exact only under `precision`; a *gridded* axis such as a stacked `sigma=0` time axis keeps uint16 but has its grid snapped onto the data's own spacing, and a *non-gridded* axis whose grid would displace splats past their own σ for **more than 0.1% of the splats** falls back to float32 — so a gridded axis is exact in every mode, while a smaller degenerate population on a non-gridded axis is quantized away with no warning) |
 | Encoding choices | float32 vs AUTO (certified u8→u16 ladder) via `--lossless` | Full ladder: `-e memory` (uint8) / `precision` (float32) / `auto` |
 | Structure | May restructure legacy tree | Structure-preserving (leaf/lod/partition/nested; the `fitting`/`provenance`/`pipeline` groups carry over for directory stores) |

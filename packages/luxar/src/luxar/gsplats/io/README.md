@@ -1,6 +1,6 @@
 # luxar.gsplats.io
 
-I/O operations for persisting and loading Gaussian splat data in the `.gsplats.zarr` format (**format v3.3** — a detached scene-node subtree: leaf / kind=lod / kind=partition, nestable freely). v3.3 permits the optional `luxar_delta_v1` filter on quantized code arrays; v3.2 renamed the `kind=lod` selector attrs to `selector: "coverage"` / per-child `coverage_fraction`; v3.1 split the Cholesky factors into `cholesky_factors_diag` + `cholesky_factors_offdiag`. v3.0-v3.2 files remain readable.
+I/O operations for persisting and loading Gaussian splat data in the `.gsplats.zarr` format (**format v3.4** — a detached scene-node subtree: leaf / kind=lod / kind=partition, nestable freely). v3.4 adds the `screen-area` `kind=lod` selector, under which each `coverage_fraction` is a literal screen-area fraction; stores on the legacy `coverage` diagonal metric are read and round-tripped unchanged. v3.3 permits the optional `luxar_delta_v1` filter on quantized code arrays; v3.2 renamed the `kind=lod` selector attrs to `selector: "coverage"` / per-child `coverage_fraction`; v3.1 split the Cholesky factors into `cholesky_factors_diag` + `cholesky_factors_offdiag`. v3.0-v3.3 files remain readable.
 
 ## Purpose
 
@@ -13,7 +13,7 @@ This package provides functions to save and load fitted Gaussian splat results w
 - **Node-tree LOD layout** (leaf / kind=lod / kind=partition, freely nestable);
   the trivial single-splat-set case is a bare leaf
 - **Legacy migration** (v1.0 / v1.1 / pre-v2.0 substitutive directory / v2.0 matrix,
-  plus v3.0/v3.1 stores with pre-v3.2 `pixel_size` lod selector attrs → v3.3)
+  plus v3.0/v3.1 stores with pre-v3.2 `pixel_size` lod selector attrs → v3.4)
 
 ## Main Functions
 
@@ -287,7 +287,7 @@ fitted.gsplats.zarr/
 │                    #   blending_mode (only when explicitly set; unset ⇒
 │                    #   inherited from nearest ancestor, viewer default
 │                    #   "additive"),
-│                    #   format_version: "3.3", format_type: "gsplats_zarr",
+│                    #   format_version: "3.4", format_type: "gsplats_zarr",
 │                    #   timestamp, luxar_gsplats_version, description?
 ├── .zmetadata       # Consolidated metadata
 ├── centers                   # (N, d) float32, spatially ordered
@@ -329,7 +329,7 @@ See `docs/specs/GSPLATS_ZARR_FORMAT.md` for full ASCII trees of all five shapes.
 
 ```json
 {
-  "format_version": "3.3",
+  "format_version": "3.4",
   "format_type": "gsplats_zarr",
   "timestamp": "2026-06-09T10:00:00Z",
   "luxar_gsplats_version": "0.1.0",
@@ -481,7 +481,7 @@ if info["compression_ratio"] is not None:
     print(f"Compression: {info['compression_ratio']}x")
 ```
 
-### Migrate a Legacy Dataset to v3.3
+### Migrate a Legacy Dataset to v3.4
 
 ```python
 from luxar.gsplats.io.migrate import migrate_format, detect_legacy_format
