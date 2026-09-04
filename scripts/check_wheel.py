@@ -118,7 +118,7 @@ def glob_to_regex(pattern: str) -> re.Pattern[str]:
     Python 3.13, and this must run wherever the wheel is built.
     """
     match_any_depth = "/" not in pattern.rstrip("/")
-    directory_only = match_any_depth and pattern.endswith("/")
+    directory_only = pattern.endswith("/")
     if directory_only:
         pattern = pattern.rstrip("/")
 
@@ -145,8 +145,7 @@ def glob_to_regex(pattern: str) -> re.Pattern[str]:
         else:
             out.append(re.escape(pattern[i]))
             i += 1
-    if match_any_depth:
-        out.append("(?:/.*)" if directory_only else "(?:/.*)?")
+    out.append("(?:/.*)" if directory_only else "(?:/.*)?")
     out.append("$")
     return re.compile("".join(out))
 

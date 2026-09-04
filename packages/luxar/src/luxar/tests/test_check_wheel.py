@@ -64,6 +64,8 @@ checker = _load_checker()
         ("__pycache__", "luxar/__pycache__/a.pyc", True),
         ("cache/", "luxar/cache/a.bin", True),
         ("cache/", "luxar/cache", False),
+        ("luxar/cache/", "luxar/cache/a.bin", True),
+        ("**/demos/data", "luxar/demos/data/a.npz", True),
         ("**/gsplats/demos/**", "luxar/gsplats/demos/run.py", True),
         ("**/gsplats/demos/**", "luxar/gsplats/seeds/demos/run.py", False),
     ],
