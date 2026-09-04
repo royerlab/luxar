@@ -118,6 +118,20 @@ describe('check', () => {
     expect(run()[0]).toMatch(/no build stamp/);
   });
 
+  it('FAILS when only a separately built dist/lib bundle carries the stamp', () => {
+    mkdirSync(join(root, 'dist', 'assets'));
+    writeFileSync(join(root, 'dist', 'assets', 'index-abc.js'), 'console.log("no stamp here");');
+    mkdirSync(join(root, 'dist', 'lib'));
+    const inner = JSON.stringify(STAMP);
+    writeFileSync(
+      join(root, 'dist', 'lib', 'luxar-viewer.js'),
+      `const s=JSON.parse(${JSON.stringify(inner)});`
+    );
+    writeIndexHtml(root, STAMP);
+
+    expect(run()[0]).toMatch(/no build stamp/);
+  });
+
   it('FAILS when the stamped version has drifted from package.json', () => {
     writeBundle(root, { ...STAMP, version: '2026.1.1' });
     expect(run()[0]).toMatch(/says version 2026\.1\.1, package\.json says 2026\.9\.15/);
@@ -133,8 +147,13 @@ describe('check', () => {
 
   it('FAILS when the meta tag and bundle carry different build identities', () => {
     writeBundle(root, STAMP);
-    writeIndexHtml(root, { ...STAMP, buildTime: '2026-09-15T10:11:13Z' });
-    expect(run()[0]).toMatch(/index\.html and bundle stamps disagree/);
+    const metaStamp = { ...STAMP, buildTime: '2026-09-15T10:11:13Z' };
+    writeIndexHtml(root, metaStamp);
+
+    expect(run()).toEqual([
+      `${join(root, 'dist', 'index.html')} stamp ${JSON.stringify(metaStamp)} disagrees with ` +
+        `${join(root, 'dist', 'index-abc.js')} stamp ${JSON.stringify(STAMP)}`,
+    ]);
   });
 
   it('FAILS on an unresolved commit when the tree HAS git history', () => {

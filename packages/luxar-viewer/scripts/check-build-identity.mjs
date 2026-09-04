@@ -39,13 +39,16 @@ export function expectedVersion(root = VIEWER_ROOT) {
   return pkg.version;
 }
 
-/** Every `.js` file directly inside `dir` (the bundle output is flat per level). */
+/** Every `.js` file recursively under `dir`, excluding its separate `lib/` build. */
 export function bundleFiles(dir) {
   const out = [];
+  const libraryBuild = join(dir, 'lib');
   const walk = (d) => {
     for (const name of readdirSync(d)) {
       const full = join(d, name);
-      if (statSync(full).isDirectory()) walk(full);
+      if (statSync(full).isDirectory()) {
+        if (full !== libraryBuild) walk(full);
+      }
       else if (name.endsWith('.js')) out.push(full);
     }
   };
@@ -105,14 +108,16 @@ export function check(
     return [`${distDir} contains no .js files — nothing was scanned, so nothing was proved`];
   }
 
-  const stamped = files.map((f) => findStamp(readFileSync(f, 'utf8'))).filter(Boolean);
+  const stamped = files
+    .map((file) => ({ file, stamp: findStamp(readFileSync(file, 'utf8')) }))
+    .filter(({ stamp }) => stamp !== null);
   if (stamped.length === 0) {
     problems.push(
       `no build stamp in any of the ${files.length} .js file(s) under ${distDir} — ` +
         `is \`define: buildDefine()\` still in the Vite config that produced it?`
     );
   }
-  for (const stamp of stamped) {
+  for (const { stamp } of stamped) {
     if (stamp.version !== version) {
       problems.push(`bundle stamp says version ${stamp.version}, package.json says ${version}`);
     }
@@ -138,16 +143,19 @@ export function check(
     } else if (requireCommit && meta.commit === UNKNOWN) {
       problems.push('index.html stamp has no commit, but this tree has git history');
     }
-    if (
-      meta &&
-      stamped.some(
-        (stamp) =>
+    if (meta) {
+      for (const { file, stamp } of stamped) {
+        if (
           stamp.version !== meta.version ||
           stamp.commit !== meta.commit ||
           stamp.buildTime !== meta.buildTime
-      )
-    ) {
-      problems.push('index.html and bundle stamps disagree');
+        ) {
+          problems.push(
+            `${indexHtml} stamp ${JSON.stringify(meta)} disagrees with ` +
+              `${file} stamp ${JSON.stringify(stamp)}`
+          );
+        }
+      }
     }
   }
 
