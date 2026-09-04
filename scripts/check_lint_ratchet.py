@@ -86,10 +86,12 @@ DEFAULT_TARGETS: tuple[str, ...] = (
     "hatch_build.py",
 )
 
-# The ratcheted rule selection, passed to `ruff --select`. Recorded IN the
-# baseline and compared on every run: dropping a rule from here would otherwise
-# make every one of its findings look like paid-down debt, quietly retiring the
-# rule with a green tick and an "improved" message.
+# The ratcheted rule selection, passed to `ruff --select`. Each selector must be
+# an alphabetic prefix or a full rule code; `is_ratcheted_code` relies on that
+# distinction. Recorded IN the baseline and compared on every run: dropping a
+# rule from here would otherwise make every one of its findings look like
+# paid-down debt, quietly retiring the rule with a green tick and an "improved"
+# message.
 RATCHETED_SELECT: tuple[str, ...] = ("B", "RUF012")
 
 # Baseline path relative to the project root.
@@ -103,10 +105,6 @@ BASELINE_COMMENT = (
     "exceeds its baselined value, fails the check. 'rules' records the "
     "--select used; a mismatch fails rather than silently retiring a rule."
 )
-
-# A finding this gate is allowed to see. Anything else (notably
-# `invalid-syntax`, which ruff emits whatever is selected with a code outside
-# the selection) means the scan did not read the tree it claims to have read.
 
 # ruff's stderr line for a path it could not read at all, e.g.
 # "warning: Failed to lint stats: No such file or directory (os error 2)".
@@ -273,7 +271,9 @@ def ensure_baselined_files_were_scanned(
         suffix = f"\n  ... and {len(omitted) - 20} more" if len(omitted) > 20 else ""
         raise RuntimeError(
             "ruff omitted existing baselined files, so the scan is PARTIAL. "
-            "Check Ruff excludes and the checkout:\n"
+            "Check Ruff excludes and the checkout. If the exclusion is "
+            "deliberate, remove those files' keys from the baseline by hand; "
+            "--update-baseline is blocked by this same guard:\n"
             f"{shown}{suffix}"
         )
 
@@ -648,6 +648,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         baseline = load_baseline(baseline_path)
     except (ValueError, OSError) as exc:
+        if args.update_baseline:
+            aprint(
+                f"⚠️  {exc}\n"
+                "   Replacing the unreadable baseline because "
+                "--update-baseline was requested deliberately."
+            )
+            return _update_baseline(baseline_path, current, restricted)
         aprint(f"❌ {exc}")
         return 2
 

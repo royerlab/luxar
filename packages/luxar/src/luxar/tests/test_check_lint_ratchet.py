@@ -496,6 +496,37 @@ def test_main_update_baseline_records_the_current_counts(
     assert document["rules"] == list(checker.RATCHETED_SELECT)
 
 
+@pytest.mark.parametrize(
+    "existing",
+    [
+        pytest.param(
+            json.dumps(_baseline_payload({"sample.py::B905": 1}, rules=["B"])),
+            id="rules-mismatch",
+        ),
+        pytest.param("{truncated", id="invalid-json"),
+    ],
+)
+def test_main_update_baseline_replaces_an_unloadable_baseline(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    existing: str,
+) -> None:
+    """An explicit full-tree update repairs stale or malformed baseline metadata."""
+    _require_ruff()
+    _unrestrict(monkeypatch)
+    _write_tree(tmp_path, _ONE_VIOLATION)
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(existing)
+
+    assert _run_main(tmp_path, baseline, "--update-baseline") == 0
+
+    document = json.loads(baseline.read_text())
+    assert document["violations"] == {"sample.py::B905": 1}
+    assert document["rules"] == list(checker.RATCHETED_SELECT)
+    assert "Replacing the unreadable baseline" in _clean_output(capsys)
+
+
 def test_main_refuses_to_wipe_a_populated_baseline(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -509,6 +540,21 @@ def test_main_refuses_to_wipe_a_populated_baseline(
     assert _run_main(tmp_path, baseline, "--update-baseline") == 2
     assert "Refusing to overwrite" in _clean_output(capsys)
     assert json.loads(baseline.read_text())["violations"] == {"other.py::B905": 4}
+
+
+def test_main_refuses_to_wipe_an_unloadable_baseline(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Repair mode still refuses a zero-finding overwrite it cannot prove safe."""
+    _require_ruff()
+    _unrestrict(monkeypatch)
+    _write_tree(tmp_path, _CLEAN_MODULE)
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text("{truncated")
+
+    assert _run_main(tmp_path, baseline, "--update-baseline") == 2
+    assert "Refusing to overwrite" in _clean_output(capsys)
+    assert baseline.read_text() == "{truncated"
 
 
 def test_main_refusal_diagnoses_a_clean_restricted_update(
@@ -563,6 +609,7 @@ def test_main_rejects_a_baselined_file_excluded_from_the_full_scan(
     output = _clean_output(capsys)
     assert "PARTIAL" in output
     assert "pkg/sub/b.py" in output
+    assert "remove those files' keys from the baseline by hand" in output
 
 
 def test_main_fails_closed_when_a_full_scan_covers_nothing(
@@ -678,19 +725,77 @@ def test_typer_defaults_are_declared_immutable() -> None:
     assert immutable_calls == ["typer.Option", "typer.Argument"]
 
 
-def test_per_file_ignores_do_not_suppress_ratcheted_rules() -> None:
-    """A per-file ignore must not silently retire a rule selected by the ratchet."""
-    pyproject = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
-    per_file_ignores = pyproject["tool"]["ruff"]["lint"]["per-file-ignores"]
-    suppressed = {
-        f"{pattern}: {code}"
-        for pattern, codes in per_file_ignores.items()
-        for code in codes
-        if code in checker.RATCHETED_SELECT or checker.is_ratcheted_code(code)
+def _selector_suppresses_ratcheted_rule(selector: str) -> bool:
+    """Whether a ruff selector overlaps this ratchet in either direction."""
+    return (
+        selector == "ALL"
+        or selector in checker.RATCHETED_SELECT
+        or checker.is_ratcheted_code(selector)
+        or any(code.startswith(selector) for code in checker.RATCHETED_SELECT)
+    )
+
+
+def _ratcheted_per_file_suppressions(
+    lint_config: dict[str, object],
+) -> set[str]:
+    """Return suppressions from both additive ruff per-file-ignore tables."""
+    suppressed: set[str] = set()
+    for table_name in ("per-file-ignores", "extend-per-file-ignores"):
+        table = lint_config.get(table_name, {})
+        assert isinstance(table, dict)
+        suppressed.update(
+            f"{table_name}.{pattern}: {selector}"
+            for pattern, selectors in table.items()
+            for selector in selectors
+            if _selector_suppresses_ratcheted_rule(selector)
+        )
+    return suppressed
+
+
+@pytest.mark.parametrize(
+    "selector",
+    ["B", "B905", "RUF", "RUF0", "RUF012", "ALL"],
+)
+def test_selector_overlap_detects_every_suppression_spelling(selector: str) -> None:
+    """Ruff accepts families, prefixes, full codes, and ALL in ignore tables."""
+    assert _selector_suppresses_ratcheted_rule(selector)
+
+
+@pytest.mark.parametrize("selector", ["E", "E501", "C90", "BLE001"])
+def test_selector_overlap_allows_unrelated_rules(selector: str) -> None:
+    """Unrelated per-file ignores remain available to the normal lint config."""
+    assert not _selector_suppresses_ratcheted_rule(selector)
+
+
+@pytest.mark.parametrize("table_name", ["per-file-ignores", "extend-per-file-ignores"])
+def test_each_per_file_ignore_table_is_guarded(table_name: str) -> None:
+    """Ruff treats the two tables additively, so neither may bypass the guard."""
+    lint_config = {table_name: {"pkg/*.py": ["RUF"]}}
+    assert _ratcheted_per_file_suppressions(lint_config) == {
+        f"{table_name}.pkg/*.py: RUF"
     }
+
+
+def test_absent_per_file_ignore_tables_are_allowed() -> None:
+    """Removing either optional table must not turn the guard into a KeyError."""
+    assert not _ratcheted_per_file_suppressions({})
+
+
+def test_per_file_ignores_do_not_suppress_ratcheted_rules() -> None:
+    """Neither ruff per-file-ignore table may silently retire ratcheted debt."""
+    pyproject = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
+    lint_config = pyproject["tool"]["ruff"]["lint"]
+    suppressed = _ratcheted_per_file_suppressions(lint_config)
     assert not suppressed, "per-file ignores suppress ratcheted rules: " + ", ".join(
         sorted(suppressed)
     )
+
+
+def test_dummy_variable_regex_stays_at_ruff_default() -> None:
+    """Widening ruff's dummy-name regex must not silently retire B007 debt."""
+    pyproject = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
+    dummy_variable_rgx = pyproject["tool"]["ruff"]["lint"].get("dummy-variable-rgx")
+    assert dummy_variable_rgx == r"^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 
 
 def test_the_committed_baseline_holds_no_b008_debt() -> None:
