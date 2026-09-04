@@ -69,6 +69,27 @@ describe('browser support matrix', () => {
     }
   });
 
+  it('states no browser version floor, because none is derivable', () => {
+    // There is no `browserslist` and the build targets `esnext`, so nothing is
+    // downlevelled and no floor follows from the toolchain. "Chrome 90+",
+    // "Firefox 88+", "Safari 15+" and "Edge 90+" all came from nowhere.
+    //
+    // Scans the WHOLE document, not just the compatibility table: the first
+    // version of this gate read only that section and missed a fourth claim in
+    // the root README's Requirements callout -- exactly the N-1-of-N failure it
+    // exists to prevent.
+    const FLOOR = /\b(Chrome|Chromium|Firefox|Safari|Edge|WebKit)\s+\d+\+/g;
+    for (const doc of DOCS) {
+      const hits = [...readFileSync(doc, 'utf8').matchAll(FLOOR)].map((m) => m[0]);
+      expect(
+        hits,
+        `${doc} states browser version floors ${JSON.stringify(hits)}, but the ` +
+          `build declares no browserslist and targets esnext, so no floor is ` +
+          `derivable. Say what was tested instead.`
+      ).toEqual([]);
+    }
+  });
+
   it('keeps firefox and webkit runnable rather than commented out', () => {
     // They are opt-in behind LUXAR_E2E_BROWSERS=all so the default suite stays
     // at one engine, but they must be REAL projects: the previous state made

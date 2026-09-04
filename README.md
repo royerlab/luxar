@@ -74,7 +74,7 @@ is the slow exception).
 | **Interoperable** | Reads classical 3D-Gaussian-splatting captures (INRIA, `.splat`, `.spz`, SuperSplat, PlayCanvas SOG); writes INRIA PLY |
 | **Shareable** | `luxar export` produces a standalone offline folder, or a native bundle — a double-clickable macOS `.app`, a portable Linux folder — that opens with no Luxar install |
 
-> **Requirements:** The Luxar viewer targets **desktop browsers** with **WebGL2** support (Chrome, Firefox, Edge, Safari 15+). Touch/mobile devices are not currently supported.
+> **Requirements:** The Luxar viewer targets **desktop browsers** with **WebGL2** support. Chromium, Firefox and WebKit are all tested — see [Browser Compatibility](#browser-compatibility) for what was measured and what was not. Touch/mobile devices are not currently supported.
 
 ---
 
@@ -847,6 +847,8 @@ luxar restamp-lod STORE [--dry-run]     # Re-derive legacy LOD thresholds in pla
 luxar export SOURCE -o DIR              # Export standalone folder (Python 3 + browser)
 luxar export SOURCE -o DIR --native macos|linux-amd64|linux-arm64
                                         # Double-clickable native bundle (.app / portable folder)
+                                        # Needs `make build-launchers` FIRST — the bundler looks for the
+                                        # host-platform binary in cli/_launchers/ and errors without it
 luxar profiles                          # List network simulation profiles
 luxar gsplat <subcommand> [OPTIONS]     # Gaussian splatting tools (fit, cal, lod --recipe {flat,stream,levels,tiles,overview,adaptive}, migrate-format, convert, render, merge, ...)
 luxar gsplat flatten IN OUT             # Collapse a gsplat tree (LOD/partition) to one flat leaf
