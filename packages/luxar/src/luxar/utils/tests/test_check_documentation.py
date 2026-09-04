@@ -857,10 +857,18 @@ def test_test_directories_are_excluded_from_coverage(tmp_path: Path) -> None:
     tests_dir = pkg / "tests"
     tests_dir.mkdir()
     (tests_dir / "test_gadget.py").write_text("x = 1\n")
+    top_level_tests = root / "packages" / "luxar" / "src" / "luxar" / "tests"
+    top_level_tests.mkdir()
+    (top_level_tests / "test_bad.py").write_text("x = 1\n")
 
     keys = cd.failure_keys(_scan(root).results, root)
 
     assert not [key for key in keys if "/widgets/tests/" in key]
+    assert not [
+        key
+        for key in keys
+        if key.startswith("Module docstring::") and "/luxar/tests/" in key
+    ]
     # ...and the exclusion is narrow: the nested non-test file still fails.
     assert NESTED_KEY in keys
 
@@ -873,6 +881,7 @@ def test_docs_gate_exclusions_stay_narrow() -> None:
     subtree — so widening it must be a deliberate, reviewed edit to this list.
     """
     assert cd.UNDOCUMENTED_DIR_NAMES == frozenset({"tests", "__pycache__"})
+    assert cd.UNDOCUMENTED_TS_SUFFIXES == (".test.ts", ".spec.ts", ".d.ts")
 
 
 @pytest.mark.parametrize(

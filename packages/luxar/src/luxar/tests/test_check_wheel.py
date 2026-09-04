@@ -60,7 +60,7 @@ checker = _load_checker()
         # reason for not using fnmatch.translate, which maps `*` onto `.*`.
         ("**/.gitignore", "luxar/core/.gitignore", True),
         ("*.pyc", "a.pyc", True),
-        ("*.pyc", "luxar/a.pyc", False),
+        ("*.pyc", "luxar/a.pyc", True),
         ("**/gsplats/demos/**", "luxar/gsplats/demos/run.py", True),
         ("**/gsplats/demos/**", "luxar/gsplats/seeds/demos/run.py", False),
     ],
@@ -75,8 +75,6 @@ def test_glob_to_regex_distinguishes_star_from_doublestar(
 # ---------------------------------------------------------------------------
 # A synthetic project + wheel, so each arm can be broken in isolation
 # ---------------------------------------------------------------------------
-
-_EXCLUDES = ["**/demos/data/**", "**/.gitignore"]
 
 _PYPROJECT = """
 [tool.hatch.build.targets.wheel]

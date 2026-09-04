@@ -188,7 +188,8 @@ def _verdict_for_nothing_inspected(
             "  Check the spelling against the demo registry — a renamed output "
             "looks exactly like this."
         )
-        return 1
+        if not targets:
+            return 1
 
     if targets:
         return None
@@ -262,7 +263,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         aprint(f"  {line}")
     for line in skipped:
         aprint(f"  {line}")
-    return 1 if problems else 0
+    return 1 if problems or unknown else 0
 
 
 if __name__ == "__main__":

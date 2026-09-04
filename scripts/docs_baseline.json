@@ -150,8 +150,6 @@
     "JSDoc coverage::packages/luxar-viewer/src/rendering/post-processing/post-processing-manager/capture.ts",
     "JSDoc coverage::packages/luxar-viewer/src/scene/scene-dims-manager.ts",
     "JSDoc coverage::packages/luxar-viewer/src/scene/scene-manager/viewport/resize-orchestrator.ts",
-    "JSDoc coverage::packages/luxar-viewer/src/tests/screenshots/exposure-policy.ts",
-    "JSDoc coverage::packages/luxar-viewer/src/tests/screenshots/gallery-timelapse-settle.ts",
     "JSDoc coverage::packages/luxar-viewer/src/themes/themes/frosted-glass.theme.ts",
     "JSDoc coverage::packages/luxar-viewer/src/themes/themes/liquid-glass.theme.ts",
     "JSDoc coverage::packages/luxar-viewer/src/ui/data-loading-monitor/advisor.ts",

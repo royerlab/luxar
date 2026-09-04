@@ -117,7 +117,7 @@ def glob_to_regex(pattern: str) -> re.Pattern[str]:
     ``*.pyc`` must not). ``pathlib``'s ``full_match`` would do it, but only from
     Python 3.13, and this must run wherever the wheel is built.
     """
-    out = ["^"]
+    out = ["^(?:.*/)?" if "/" not in pattern.rstrip("/") else "^"]
     i = 0
     while i < len(pattern):
         if pattern.startswith("**/", i):
@@ -211,7 +211,6 @@ def inspect_wheel(wheel_path: Path, project_root: Path) -> WheelReport:
             for name in names
             if name.endswith("/__init__.py") and name.startswith(f"{WHEEL_ROOT}/")
         }
-        packaged.add(WHEEL_ROOT) if f"{WHEEL_ROOT}/__init__.py" in names else None
 
         excludes = read_wheel_excludes(project_root)
         expected = expected_packages(project_root, excludes)

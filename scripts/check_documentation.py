@@ -54,6 +54,7 @@ BASELINE_COMMENT = (
 # removes, so it should be impossible to widen by accident.
 # `test_docs_gate_exclusions_stay_narrow` pins this list.
 UNDOCUMENTED_DIR_NAMES: frozenset[str] = frozenset({"tests", "__pycache__"})
+UNDOCUMENTED_TS_SUFFIXES = (".test.ts", ".spec.ts", ".d.ts")
 
 
 def is_excluded_path(path: Path) -> bool:
@@ -239,7 +240,7 @@ class DocumentationChecker:
         # the near-empty baseline recorded the absence of LOOKING rather than the
         # absence of debt (audit A11-01).
         for py_file in sorted(package_dir.rglob("*.py")):
-            if is_excluded_path(py_file.relative_to(package_dir)):
+            if is_excluded_path(py_file.relative_to(package_dir.parent)):
                 continue
             if not py_file.name.startswith("_") or py_file.name == "__init__.py":
                 self._check_python_file_docstrings(py_file, package_name)
@@ -387,9 +388,9 @@ class DocumentationChecker:
         # Python side above: a one-level `glob` saw 146 of 819 files, leaving 82%
         # of the viewer unscanned (audit A11-01).
         for ts_file in sorted(package_dir.rglob("*.ts")):
-            if is_excluded_path(ts_file.relative_to(package_dir)):
+            if is_excluded_path(ts_file.relative_to(package_dir.parent)):
                 continue
-            if not ts_file.name.endswith((".test.ts", ".spec.ts", ".d.ts")):
+            if not ts_file.name.endswith(UNDOCUMENTED_TS_SUFFIXES):
                 self._check_typescript_jsdoc(ts_file, package_name)
 
     @staticmethod
