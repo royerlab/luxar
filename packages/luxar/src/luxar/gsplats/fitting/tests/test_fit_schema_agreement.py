@@ -173,26 +173,22 @@ def test_the_two_FitConfig_classes_are_not_confused() -> None:
 
 
 def test_prepare_fit_config_restates_the_config_schema_and_little_else() -> None:
-    """A2-02's structural claim, pinned — and corrected.
+    """A2-02's structural claim, pinned.
 
     The audit says "44 of prepare_fit_config's 45 params are literally FitConfig
-    field names". Measured, that holds against the UNION of the four config
-    dataclasses, not against `FitConfig` alone: `FitConfig` carries 24 of the 43
-    defaulted parameters, and the optimiser/loss/constraint knobs live in the
-    three bundles. Stated against the union so the number means what it says.
+    field names". Measured, that holds against `FitConfig` itself: every
+    defaulted parameter is a field, and the only named exception is the required
+    positional `fitter` argument.
 
-    Pinned because a parameter appearing here that is in NO config class means
-    the flat schema and the config objects have begun to diverge in SHAPE, not
+    Pinned because a parameter appearing here that is not in `FitConfig` means
+    the flat schema and the runtime config have begun to diverge in SHAPE, not
     just in defaults — a different and worse problem than drift.
     """
-    union: set[str] = set()
-    for cls in (FitConfig, OptimConfig, LossConfig, ConstraintConfig):
-        union |= _field_names(cls)
     # `fitter` and `V` are positional with no default, so `_defaults` omits them.
-    strays = sorted(set(_defaults(prepare_fit_config)) - union)
+    strays = sorted(set(_defaults(prepare_fit_config)) - _field_names(FitConfig))
     assert not strays, (
-        f"prepare_fit_config declares {len(strays)} parameters that are in none of "
-        f"the four config dataclasses: {strays}"
+        f"prepare_fit_config declares {len(strays)} parameters that are not "
+        f"FitConfig fields: {strays}"
     )
 
 
