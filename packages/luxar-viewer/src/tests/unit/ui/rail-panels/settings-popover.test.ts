@@ -151,6 +151,7 @@ function build(loader: SceneLoader | null = null): {
 
 const configSnapshot = {
   fovSensitivity: config.camera.fovSensitivity,
+  wheelZoomSensitivity: config.controls.wheelZoomSensitivity,
   idleTimeoutMs: config.animation.idleTimeoutMs,
   useWebWorkers: config.dataLoading.performance.useWebWorkers,
   workerCount: config.dataLoading.performance.workerCount,
@@ -171,6 +172,7 @@ beforeEach(() => {
 
 afterEach(() => {
   config.camera.fovSensitivity = configSnapshot.fovSensitivity;
+  config.controls.wheelZoomSensitivity = configSnapshot.wheelZoomSensitivity;
   config.animation.idleTimeoutMs = configSnapshot.idleTimeoutMs;
   config.dataLoading.performance.useWebWorkers = configSnapshot.useWebWorkers;
   config.dataLoading.performance.workerCount = configSnapshot.workerCount;
@@ -195,6 +197,15 @@ describe('buildSettingsPopover', () => {
     byProp('fovSensitivity').set(0.15);
     expect(config.camera.fovSensitivity).toBe(0.15);
     expect(loadUserSettings().input.fovSensitivity).toBe(0.15);
+  });
+
+  it('changing Zoom sensitivity applies live to config AND persists (no reload hint)', () => {
+    const { host } = build();
+    byProp('wheelZoomSensitivity').set(0.25);
+    expect(config.controls.wheelZoomSensitivity).toBe(0.25);
+    expect(loadUserSettings().input.wheelZoomSensitivity).toBe(0.25);
+    const hint = host.querySelector<HTMLElement>('.luxar-control-rail__popover-hint')!;
+    expect(hint.style.display).toBe('none');
   });
 
   it('idle timeout is edited in seconds but stored in ms', () => {

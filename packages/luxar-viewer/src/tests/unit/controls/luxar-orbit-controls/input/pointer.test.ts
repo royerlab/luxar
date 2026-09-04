@@ -89,6 +89,7 @@ function makeBaseCtx(overrides: Partial<OrbitInputCtx> = {}): {
     trackballRadius: 1.0,
     rotateSpeed: 1.0,
     zoomSpeed: 1.0,
+    wheelZoomSensitivity: 1.0,
     boundOnPointerMove: vi.fn(),
     boundOnPointerUp: vi.fn(),
     pointers,
@@ -183,6 +184,39 @@ describe('mouseAction — Shift+left "invert primary" (M4 mutation suspect)', ()
     const { ctx } = makeBaseCtx();
     ctx.enableRotate = false;
     expect(mouseAction(0, true, ctx)).toBe('none');
+  });
+});
+
+describe('handleWheel — wheelZoomSensitivity (Settings > Input > Zoom Sensitivity)', () => {
+  it('scales the per-notch zoom exactly like zoomSpeed (the two multiply)', () => {
+    const base = makeBaseCtx();
+    const scaled = makeBaseCtx();
+    scaled.ctx.wheelZoomSensitivity = 0.25;
+    const halfSpeed = makeBaseCtx();
+    halfSpeed.ctx.zoomSpeed = 0.25;
+    const evt = () => new WheelEvent('wheel', { deltaY: 100, cancelable: true });
+    handleWheel(base.ctx, evt());
+    handleWheel(scaled.ctx, evt());
+    handleWheel(halfSpeed.ctx, evt());
+    // Exponential in speed: a quarter of the exponent, not a quarter of the delta.
+    expect(scaled.state.zoomDelta).toBeCloseTo(-(Math.pow(0.95, 0.25) - 1), 10);
+    expect(scaled.state.zoomDelta).toBeCloseTo(halfSpeed.state.zoomDelta, 10);
+    expect(Math.abs(scaled.state.zoomDelta)).toBeLessThan(Math.abs(base.state.zoomDelta));
+  });
+
+  it('does not touch pointer-drag dolly (a drag delta is user-controlled pixels)', () => {
+    const { ctx, state } = makeBaseCtx();
+    ctx.wheelZoomSensitivity = 0.25;
+    state.action = 'zoom';
+    ctx.dollyStart.set(0, 0);
+    ctx.pointers.push(makePointerEvent('pointerdown', { pointerId: 0, clientX: 0, clientY: 0 }));
+    ctx.pointerPositions.set(0, new THREE.Vector2(0, 0));
+    handlePointerMove(
+      ctx,
+      makePointerEvent('pointermove', { pointerId: 0, clientX: 0, clientY: 100 })
+    );
+    // computeZoomScale(100, zoomSpeed=1) - 1, with the sensitivity NOT applied.
+    expect(state.zoomDelta).toBeCloseTo(Math.pow(0.95, 1.0) - 1, 10);
   });
 });
 

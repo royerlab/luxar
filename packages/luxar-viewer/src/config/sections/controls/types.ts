@@ -83,4 +83,14 @@ export interface ControlsConfig {
   fly: FlyControlsConfig;
   orbit: OrbitControlsConfig;
   scaleMultipliers: ScaleMultipliers;
+  /**
+   * Global multiplier on every mouse-wheel zoom step (orbit/ortho dolly and
+   * fly forward/back), on top of the per-scene orbit `zoom.speed`. A
+   * per-MACHINE preference: some mice/drivers deliver far larger wheel
+   * deltas than others and the viewer cannot normalise that away, so the
+   * user turns this down once (Settings > Input > Zoom Sensitivity) and it
+   * follows them across scenes. Read LIVE per wheel event — mutated by
+   * `config/user-settings.ts`, never by scene settings.
+   */
+  wheelZoomSensitivity: number;
 }

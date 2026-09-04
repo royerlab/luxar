@@ -55,6 +55,14 @@ export interface OrbitInputCtx {
   trackballRadius: number;
   rotateSpeed: number;
   zoomSpeed: number;
+  /**
+   * Global per-machine multiplier on WHEEL zoom only (Settings > Input >
+   * Zoom Sensitivity; `config.controls.wheelZoomSensitivity`). Pointer-drag
+   * dolly is untouched: a drag's delta is screen pixels the user controls
+   * directly, whereas a wheel notch's delta is whatever the mouse driver
+   * decided, which is the thing this knob exists to tame.
+   */
+  wheelZoomSensitivity: number;
 
   boundOnPointerMove: (e: PointerEvent) => void;
   boundOnPointerUp: (e: PointerEvent) => void;
@@ -262,7 +270,8 @@ export function handlePointerUp(ctx: OrbitInputCtx, event: PointerEvent): void {
 /**
  * Handle a scroll wheel zoom. Ctrl/Meta+scroll is ceded to the window-level
  * FOV handler for perspective cameras only (ortho has no FOV, so a pinch must
- * still zoom there). Converts `deltaY` into a zoom-scale and accumulates a
+ * still zoom there). Converts `deltaY` into a zoom-scale (at
+ * `zoomSpeed × wheelZoomSensitivity`) and accumulates a
  * signed zoom delta (scroll up = zoom in), then dispatches `change` so the
  * damped zoom is picked up in the next update. No-op while disabled or zoom
  * is off.
@@ -282,7 +291,7 @@ export function handleWheel(ctx: OrbitInputCtx, event: WheelEvent): void {
 
   event.preventDefault();
 
-  const scale = computeZoomScale(event.deltaY, ctx.zoomSpeed);
+  const scale = computeZoomScale(event.deltaY, ctx.zoomSpeed * ctx.wheelZoomSensitivity);
   if (event.deltaY < 0) {
     // Scroll up = zoom in
     ctx.addZoomDelta(scale - 1);
