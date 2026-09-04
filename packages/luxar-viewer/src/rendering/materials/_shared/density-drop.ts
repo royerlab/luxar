@@ -20,6 +20,13 @@ interface DensityDropUniforms {
   uniforms?: Record<string, { value: unknown } | undefined>;
 }
 
+/** Whether `material` carries the projected-density thinning uniform. */
+export function hasDensityDrop(material: unknown): boolean {
+  return Boolean(
+    (material as DensityDropUniforms | null | undefined)?.uniforms?.[DENSITY_DROP_UNIFORM]
+  );
+}
+
 /** Fraction dropped on `material`, or 0 when it has no such uniform. */
 export function getDensityDrop(material: unknown): number {
   const u = (material as DensityDropUniforms | null | undefined)?.uniforms?.[DENSITY_DROP_UNIFORM];

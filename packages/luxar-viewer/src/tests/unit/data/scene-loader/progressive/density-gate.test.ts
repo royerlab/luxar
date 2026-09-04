@@ -102,6 +102,13 @@ describe('RefinementDensityGate', () => {
     expect(gate.deferredCount).toBe(1);
   });
 
+  it('reuses its result buffer across per-frame resume checks', () => {
+    const gate = new RefinementDensityGate(() => undefined, CAPS);
+    const first = gate.takeResumable();
+    const second = gate.takeResumable();
+    expect(second).toBe(first);
+  });
+
   it('beginRun forgets the previous run’s deferrals', () => {
     const samples = new Map<string, ProjectedDensitySample>([['/d', sample(10, 10_000)]]);
     const gate = new RefinementDensityGate((p) => samples.get(p), CAPS);

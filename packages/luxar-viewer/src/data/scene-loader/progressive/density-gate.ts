@@ -24,7 +24,9 @@
  * (`scene/projected-density.ts` measures it per frame; `data/` cannot import
  * `scene/`). No provider, no record, an off-screen node, or a node that has
  * loaded nothing yet ⇒ no opinion: the gate never refuses on an absent
- * signal, and never refuses a first rung.
+ * signal, and never refuses a first rung. Shaded triangle meshes are excluded
+ * by the projected-density provider because surface tessellation is not stacked
+ * emissive overdraw.
  *
  * @module data/scene-loader/progressive/density-gate
  */
@@ -108,6 +110,7 @@ export function planDensityAdmission(
 export class RefinementDensityGate {
   /** Deferred path → footprint (px) at which its next rung fits again. */
   private readonly deferred = new Map<string, number>();
+  private readonly resumableScratch: string[] = [];
   private loggedThisRun = false;
 
   constructor(
@@ -148,11 +151,13 @@ export class RefinementDensityGate {
 
   /**
    * Paths whose current footprint now admits their deferred rung. Each is
-   * removed from the deferred set; the caller re-kicks refinement.
+   * removed from the deferred set; the caller re-kicks refinement. The returned
+   * scratch array is reused and remains valid only until the next call.
    */
   takeResumable(): string[] {
-    if (this.deferred.size === 0) return [];
-    const resumable: string[] = [];
+    const resumable = this.resumableScratch;
+    resumable.length = 0;
+    if (this.deferred.size === 0) return resumable;
     for (const [path, resumeAreaPx] of this.deferred) {
       const sample = this.provider(path);
       if (sample?.onScreen && sample.areaPx >= resumeAreaPx) resumable.push(path);

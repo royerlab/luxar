@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   ProjectedDensityTracker,
@@ -85,7 +85,7 @@ describe('projectSphereAreaPx', () => {
 describe('ProjectedDensityTracker', () => {
   afterEach(() => getProjectedDensityTracker().reset());
 
-  it('measures elements per drawing-buffer pixel for committed, named, visible meshes only', () => {
+  it('measures elements per drawing-buffer pixel for committed, named emissive meshes only', () => {
     const root = new THREE.Scene();
     const dense = node('/dense', 1, 1_000_000);
     root.add(dense);
@@ -108,6 +108,28 @@ describe('ProjectedDensityTracker', () => {
     expect(rec!.areaPx).toBeLessThan(270);
     expect(rec!.elementsPerPixel).toBeCloseTo(1_000_000 / rec!.areaPx, 6);
     expect(t.get('/uncommitted')).toBeUndefined();
+  });
+
+  it('excludes shaded triangle meshes from thinning and refinement density', () => {
+    const root = new THREE.Scene();
+    const surface = node('/surface', 1, 1_000_000);
+    surface.userData.nodeType = 'mesh';
+    surface.userData.visibleTriangleCount = 1_000_000;
+    root.add(surface);
+    root.updateMatrixWorld(true);
+    const onVisit = vi.fn();
+    const t = new ProjectedDensityTracker();
+    t.configure({
+      enabled: () => true,
+      getRoot: () => root,
+      getCamera: () => perspective(1600, 1000, 100),
+      getDrawingBufferSize: () => ({ width: 1600, height: 1000 }),
+      onVisit,
+    });
+
+    expect(t.evaluate()).toBe(true);
+    expect(t.get('/surface')).toBeUndefined();
+    expect(onVisit).not.toHaveBeenCalled();
   });
 
   it('a hidden node reads off-screen with zero density, and disposed nodes are pruned', () => {

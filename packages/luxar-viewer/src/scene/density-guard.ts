@@ -10,6 +10,8 @@
  * by `1/keep` so the composited brightness stays at the unthinned aggregate.
  * Non-blendable modes (`max`, `normal`, `opaque`) are never thinned — a
  * max-projection or an alpha-over surface has no linear brightness knob.
+ * Shaded triangle meshes are excluded: they tile a surface rather than stack
+ * emissive energy, and their materials do not carry `uDensityDrop`.
  *
  * Why: on element-dense views the frame cost is elements per pixel, not
  * pixels (2026-09 audit: 1.5 M points framed into ~1 600 px → 42 ms at DPR 1,
@@ -31,7 +33,11 @@
 
 import type * as THREE from 'three';
 
-import { getDensityDrop, setDensityDrop } from '../rendering/materials/_shared/density-drop';
+import {
+  getDensityDrop,
+  hasDensityDrop,
+  setDensityDrop,
+} from '../rendering/materials/_shared/density-drop';
 import { applyLodFade, isBlendableMode } from './lod-fade';
 import type { NodeDensity } from './projected-density';
 
@@ -86,6 +92,13 @@ interface GuardUserData {
   densityKeep?: number;
 }
 
+/** Whether a single material supports shader-side density thinning. */
+function supportsDensityGuard(
+  material: THREE.Material | THREE.Material[] | undefined
+): material is THREE.Material {
+  return Boolean(material && !Array.isArray(material) && hasDensityDrop(material));
+}
+
 /** Owns the per-node keep ladder; driven by the tracker's `onVisit` hook. */
 export class DensityGuard {
   private deps: DensityGuardDeps | null = null;
@@ -104,7 +117,7 @@ export class DensityGuard {
   observe(mesh: THREE.Mesh, rec: NodeDensity): void {
     const deps = this.deps;
     const material = mesh.material;
-    if (!deps || !material || Array.isArray(material)) return;
+    if (!deps || !supportsDensityGuard(material)) return;
     const ud = mesh.userData as GuardUserData;
     const current = ud.densityKeep ?? 1;
     const blendable = isBlendableMode(material.userData?.blendingMode as string | undefined);

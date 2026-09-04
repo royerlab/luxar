@@ -8,7 +8,8 @@
  * rendered at 120 fps. Nothing in the viewer measured that density, so the
  * adaptive-DPR controller stepped resolution DOWN on exactly those scenes.
  *
- * This module measures it once per frame for every committed data mesh:
+ * This module measures it once per frame for every committed emissive data mesh
+ * (points, lines, and gsplats; shaded triangle meshes are deliberately excluded):
  * the node's `geometry.boundingSphere` is projected to a screen ellipse in
  * drawing-buffer pixels (the buffer, not CSS pixels — otherwise the guard
  * would fight the DPR controller), and divided into the node's visible
@@ -69,6 +70,14 @@ export interface ProjectedDensityDeps {
 const VIEW_SCRATCH = new THREE.Matrix4();
 const CENTER_SCRATCH = new THREE.Vector3();
 const SCALE_SCRATCH = new THREE.Vector3();
+
+/** Whether the object is a committed emissive geometry node tracked by the guard. */
+function isTrackedDataMesh(obj: THREE.Object3D): obj is THREE.Mesh {
+  const mesh = obj as THREE.Mesh;
+  return Boolean(
+    mesh.isMesh && mesh.userData.nodeType !== 'mesh' && mesh.name && hasCommittedData(mesh)
+  );
+}
 
 /**
  * Project a view-space sphere to its screen ellipse area in buffer pixels.
@@ -151,8 +160,8 @@ export class ProjectedDensityTracker {
   }
 
   private visitObject(obj: THREE.Object3D): void {
-    const mesh = obj as THREE.Mesh;
-    if (!mesh.isMesh || !mesh.name || !hasCommittedData(mesh)) return;
+    if (!isTrackedDataMesh(obj)) return;
+    const mesh = obj;
     const bs = (mesh.geometry as THREE.BufferGeometry | undefined)?.boundingSphere;
     if (!bs || !this.camera) return;
     const rec = this.recordFor(mesh.name);

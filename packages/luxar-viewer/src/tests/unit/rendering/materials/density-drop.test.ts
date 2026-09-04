@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DENSITY_DROP_UNIFORM,
   getDensityDrop,
+  hasDensityDrop,
   setDensityDrop,
 } from '../../../../rendering/materials/_shared/density-drop';
 import { GLSL_SORTED_INDEX } from '../../../../rendering/materials/_shared/glsl-lib';
@@ -21,6 +22,8 @@ import { GSplatPickingMaterial } from '../../../../rendering/picking/gsplat/mate
 
 describe('density-drop helper', () => {
   it('reads 0 when the material has no uniform record or a non-numeric value', () => {
+    expect(hasDensityDrop(undefined)).toBe(false);
+    expect(hasDensityDrop({ uniforms: {} })).toBe(false);
     expect(getDensityDrop(undefined)).toBe(0);
     expect(getDensityDrop({})).toBe(0);
     expect(getDensityDrop({ uniforms: {} })).toBe(0);
@@ -30,6 +33,7 @@ describe('density-drop helper', () => {
 
   it('writes a clamped value and reports whether it changed', () => {
     const mat = { uniforms: { [DENSITY_DROP_UNIFORM]: { value: 0 } } };
+    expect(hasDensityDrop(mat)).toBe(true);
     expect(setDensityDrop(mat, 0.5)).toBe(true);
     expect(getDensityDrop(mat)).toBe(0.5);
     expect(setDensityDrop(mat, 0.5)).toBe(false);

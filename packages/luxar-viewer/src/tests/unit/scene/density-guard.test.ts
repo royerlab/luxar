@@ -205,11 +205,11 @@ describe('DensityGuard.observe', () => {
 
   it('is a no-op on a material without the uniform, an array material, or before configure', () => {
     const { g } = guard();
-    const { mesh } = leaf('additive', false);
+    const { mesh, mat } = leaf('additive', false);
     g.observe(mesh, record(539));
-    // Brightness still applied (the mesh is fadeable) but no uniform to write.
-    expect(mesh.userData.densityKeep).toBe(1 / 64);
-    expect(g.takeChanged()).toBe(true);
+    expect(mesh.userData.densityKeep).toBeUndefined();
+    expect(mat.getOpacity()).toBe(1);
+    expect(g.takeChanged()).toBe(false);
 
     const arr = new THREE.Mesh(new THREE.BufferGeometry(), [new THREE.MeshBasicMaterial()]);
     g.observe(arr, record(539));
