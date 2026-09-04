@@ -895,8 +895,8 @@ ignore = [
     "E501",   # line too long (handled by formatter)
 ]
 
-# B007 treats every name matching this regex as an intentional dummy. Pin
-# ruff's default because widening it would silently retire baselined B007 debt.
+# B007 treats every name matching this regex as an intentional dummy. Keep
+# ruff's default explicit because it is part of the ratchet's settings fingerprint.
 dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 
 # Per-file ignores

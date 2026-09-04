@@ -39,9 +39,10 @@ pre-existing violations (473 at the time of writing, 290 of them ``B905``), so
 it could not be turned on at all without a large, unrelated, and — for ``B905``
 specifically — *behaviour-changing* sweep: ``strict=True`` RAISES on mismatched
 lengths, so it is a decision per call site, not a mechanical edit. Ruff's
-suppression settings are guarded separately: per-file ignores are especially
-dangerous because they are file-granular and would blind the ratchet to
-brand-new violations inside the 200-odd files that already hold one.
+fully resolved settings are fingerprinted in the baseline: per-file ignores,
+target versions, excludes, naming conventions, extended config files, and any
+future setting that changes which findings Ruff emits must therefore be
+re-baselined deliberately rather than silently retiring debt.
 
 Note what this gate does NOT need to tolerate: ``B008`` sits at zero, because
 ``[tool.ruff.lint.flake8-bugbear] extend-immutable-calls`` in ``pyproject.toml``
@@ -64,6 +65,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -103,7 +105,8 @@ BASELINE_COMMENT = (
     "'<repo-relative-path>::<ruff code>' and maps to the NUMBER of violations "
     "of that code in that file. A key absent from here, or one whose count "
     "exceeds its baselined value, fails the check. 'rules' records the "
-    "--select used; a mismatch fails rather than silently retiring a rule."
+    "--select used. 'settings_fingerprint' records Ruff's normalized resolved "
+    "settings. Either mismatch fails rather than silently retiring debt."
 )
 
 # ruff's stderr line for a path it could not read at all, e.g.
@@ -206,6 +209,56 @@ def run_ruff(targets: tuple[str, ...] | list[str], project_root: Path) -> str:
     if stderr:
         aprint(f"⚠️  ruff wrote to stderr: {stderr}")
     return proc.stdout
+
+
+def ruff_settings_fingerprint(target: str, project_root: Path) -> str:
+    """Hash Ruff's normalized resolved settings for this ratchet.
+
+    Ruff's output includes a target-specific banner and absolute checkout paths;
+    neither describes lint behaviour, so both are removed before hashing. The
+    remaining full settings dump intentionally includes every current and future
+    option that can change which findings the ratchet sees.
+    """
+    command = [
+        sys.executable,
+        "-m",
+        "ruff",
+        "check",
+        "--show-settings",
+        "--select",
+        ",".join(RATCHETED_SELECT),
+        target,
+    ]
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:  # pragma: no cover - environment failure
+        raise RuntimeError(f"Could not run ruff ({' '.join(command)}): {exc}") from exc
+
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"ruff --show-settings failed (exit {proc.returncode}): "
+            f"{' '.join(command)}\n{proc.stderr.strip()}"
+        )
+
+    resolved_lines = [
+        line
+        for line in proc.stdout.splitlines()
+        if not line.startswith("Resolved settings for:")
+    ]
+    normalized = "\n".join(resolved_lines)
+    for root in {str(project_root), project_root.as_posix()}:
+        normalized = normalized.replace(root, "")
+    if not normalized.strip():
+        raise RuntimeError(
+            "ruff --show-settings returned no resolved settings, so the lint "
+            "configuration fingerprint cannot be trusted"
+        )
+    return hashlib.sha256(normalized.encode()).hexdigest()
 
 
 def list_ruff_files(
@@ -330,13 +383,13 @@ def parse_findings(stdout: str, project_root: Path = PROJECT_ROOT) -> dict[str, 
 # ---------------------------------------------------------------------------
 
 
-def load_baseline(path: Path) -> dict[str, int]:
+def load_baseline(path: Path, settings_fingerprint: str) -> dict[str, int]:
     """Load the baselined violation counts from ``path``.
 
     Returns ``{}`` if the file does not exist. Raises a clear ``ValueError`` if
-    it exists but is malformed, or if its recorded ``rules`` disagree with
-    ``RATCHETED_SELECT`` — a mismatch means the baseline describes a different
-    question from the one this run asked, so the two cannot be compared.
+    it exists but is malformed, or if its recorded rules or resolved-settings
+    fingerprint disagree with this run — either mismatch means the baseline
+    describes a different question, so the counts cannot be compared.
     """
     if not path.exists():
         return {}
@@ -363,6 +416,21 @@ def load_baseline(path: Path) -> dict[str, int]:
             "the selection change is intended."
         )
 
+    recorded_fingerprint = data.get("settings_fingerprint")
+    if not isinstance(recorded_fingerprint, str) or not recorded_fingerprint:
+        raise ValueError(
+            f"Baseline file {path} is malformed: 'settings_fingerprint' must "
+            "be a non-empty string."
+        )
+    if recorded_fingerprint != settings_fingerprint:
+        raise ValueError(
+            f"Baseline file {path} was recorded for Ruff settings fingerprint "
+            f"{recorded_fingerprint!r}, but this run resolves to "
+            f"{settings_fingerprint!r}. A lint setting changed which findings "
+            "the ratchet can see. Re-run --update-baseline deliberately if the "
+            "configuration change is intended."
+        )
+
     violations = data["violations"]
     if not isinstance(violations, dict):
         raise ValueError(
@@ -380,11 +448,14 @@ def load_baseline(path: Path) -> dict[str, int]:
     return dict(violations)
 
 
-def save_baseline(path: Path, entries: dict[str, int]) -> None:
+def save_baseline(
+    path: Path, entries: dict[str, int], settings_fingerprint: str
+) -> None:
     """Write ``entries`` to ``path`` as deterministic, human-diffable JSON."""
     payload = {
         "_comment": BASELINE_COMMENT,
         "rules": list(RATCHETED_SELECT),
+        "settings_fingerprint": settings_fingerprint,
         "violations": {key: entries[key] for key in sorted(entries)},
     }
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -449,8 +520,10 @@ def _baseline_is_populated(path: Path) -> bool:
     if not path.exists():
         return False
     try:
-        return bool(load_baseline(path))
-    except (ValueError, OSError):
+        data = json.loads(path.read_text())
+        violations = data.get("violations") if isinstance(data, dict) else None
+        return bool(violations) if isinstance(violations, dict) else True
+    except (json.JSONDecodeError, OSError):
         return True
 
 
@@ -488,7 +561,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _update_baseline(
-    baseline_path: Path, current: dict[str, int], restricted: bool
+    baseline_path: Path,
+    current: dict[str, int],
+    restricted: bool,
+    settings_fingerprint: str,
 ) -> int:
     """Rewrite ``baseline_path`` from ``current``; returns the exit code."""
     if restricted:
@@ -513,7 +589,7 @@ def _update_baseline(
             "hand and re-run."
         )
         return 2
-    save_baseline(baseline_path, current)
+    save_baseline(baseline_path, current, settings_fingerprint)
     total = sum(current.values())
     aprint(
         f"📝 Wrote lint baseline with {total} violations across "
@@ -635,6 +711,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         current = parse_findings(run_ruff(targets, project_root), project_root)
+        settings_fingerprint = ruff_settings_fingerprint(targets[0], project_root)
     except (RuntimeError, ValueError) as exc:
         aprint(f"❌ {exc}")
         return 2
@@ -646,7 +723,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     try:
-        baseline = load_baseline(baseline_path)
+        baseline = load_baseline(baseline_path, settings_fingerprint)
     except (ValueError, OSError) as exc:
         if args.update_baseline:
             aprint(
@@ -654,7 +731,9 @@ def main(argv: list[str] | None = None) -> int:
                 "   Replacing the unreadable baseline because "
                 "--update-baseline was requested deliberately."
             )
-            return _update_baseline(baseline_path, current, restricted)
+            return _update_baseline(
+                baseline_path, current, restricted, settings_fingerprint
+            )
         aprint(f"❌ {exc}")
         return 2
 
@@ -667,7 +746,9 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
     if args.update_baseline:
-        return _update_baseline(baseline_path, current, restricted)
+        return _update_baseline(
+            baseline_path, current, restricted, settings_fingerprint
+        )
 
     # Zero findings against a populated baseline. Over the DEFAULT targets that
     # can only mean the scan covered nothing (ruff signals a mistyped path or an

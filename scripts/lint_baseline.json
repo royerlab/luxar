@@ -1,9 +1,10 @@
 {
-  "_comment": "Defect-rule lint baseline for scripts/check_lint_ratchet.py. Regenerate with: hatch run check-lint-ratchet --update-baseline. Each key is '<repo-relative-path>::<ruff code>' and maps to the NUMBER of violations of that code in that file. A key absent from here, or one whose count exceeds its baselined value, fails the check. 'rules' records the --select used; a mismatch fails rather than silently retiring a rule.",
+  "_comment": "Defect-rule lint baseline for scripts/check_lint_ratchet.py. Regenerate with: hatch run check-lint-ratchet --update-baseline. Each key is '<repo-relative-path>::<ruff code>' and maps to the NUMBER of violations of that code in that file. A key absent from here, or one whose count exceeds its baselined value, fails the check. 'rules' records the --select used. 'settings_fingerprint' records Ruff's normalized resolved settings. Either mismatch fails rather than silently retiring debt.",
   "rules": [
     "B",
     "RUF012"
   ],
+  "settings_fingerprint": "1c9eabf398bda69d00cf0d03695fced609c0a883225b21ba9b906afb660dc05d",
   "violations": {
     "packages/luxar/src/luxar/cli/demo_render.py::B905": 2,
     "packages/luxar/src/luxar/cli/gsplat_config.py::B904": 1,

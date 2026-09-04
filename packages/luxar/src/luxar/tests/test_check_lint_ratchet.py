@@ -39,6 +39,18 @@ def _load_checker() -> ModuleType:
 
 
 checker = _load_checker()
+_REAL_RUFF_SETTINGS_FINGERPRINT = checker.ruff_settings_fingerprint
+_TEST_SETTINGS_FINGERPRINT = "test-settings-fingerprint"
+
+
+@pytest.fixture(autouse=True)
+def _stable_settings_fingerprint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep unit fixtures independent of Ruff's large resolved-settings dump."""
+    monkeypatch.setattr(
+        checker,
+        "ruff_settings_fingerprint",
+        lambda _target, _project_root: _TEST_SETTINGS_FINGERPRINT,
+    )
 
 
 def _finding(filename: str, code: str, row: int = 1) -> dict[str, object]:
@@ -77,6 +89,42 @@ def test_run_ruff_accepts_findings_and_a_clean_run(
 
     _stub_ruff(monkeypatch, 0, "[]")
     assert checker.run_ruff(("x",), PROJECT_ROOT) == "[]"
+
+
+def test_ruff_settings_fingerprint_is_target_and_checkout_independent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Only resolved settings matter, not Ruff's target banner or checkout path."""
+    first_root = tmp_path / "first-checkout"
+    second_root = tmp_path / "second-checkout"
+    outputs = iter(
+        [
+            f'Resolved settings for: "{first_root}/a.py"\n'
+            f'root = "{first_root}"\nvalue = 1\n',
+            f'Resolved settings for: "{second_root}/b.py"\n'
+            f'root = "{second_root}"\nvalue = 1\n',
+        ]
+    )
+
+    def fake_run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess([], 0, next(outputs), "")
+
+    monkeypatch.setattr(checker.subprocess, "run", fake_run)
+
+    first = _REAL_RUFF_SETTINGS_FINGERPRINT("a.py", first_root)
+    second = _REAL_RUFF_SETTINGS_FINGERPRINT("b.py", second_root)
+
+    assert first == second
+
+
+def test_ruff_settings_fingerprint_rejects_empty_resolved_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A successful Ruff process that fingerprints nothing must fail closed."""
+    _stub_ruff(monkeypatch, 0, 'Resolved settings for: "sample.py"\n')
+
+    with pytest.raises(RuntimeError, match="no resolved settings"):
+        _REAL_RUFF_SETTINGS_FINGERPRINT("sample.py", tmp_path)
 
 
 def test_run_ruff_rejects_exit_1_with_no_report(
@@ -220,13 +268,16 @@ def _baseline_payload(violations: dict[str, int], rules: list[str] | None = None
     """Build a baseline document, defaulting to the checker's own rule list."""
     return {
         "rules": list(checker.RATCHETED_SELECT) if rules is None else rules,
+        "settings_fingerprint": _TEST_SETTINGS_FINGERPRINT,
         "violations": violations,
     }
 
 
 def test_load_baseline_missing_file_is_empty(tmp_path: Path) -> None:
     """An absent baseline is empty, not an error — `main` reports it separately."""
-    assert checker.load_baseline(tmp_path / "nope.json") == {}
+    assert (
+        checker.load_baseline(tmp_path / "nope.json", _TEST_SETTINGS_FINGERPRINT) == {}
+    )
 
 
 def test_load_baseline_rejects_a_baseline_recorded_for_other_rules(
@@ -243,17 +294,37 @@ def test_load_baseline_rejects_a_baseline_recorded_for_other_rules(
     path.write_text(json.dumps(_baseline_payload({"a.py::B905": 1}, rules=["B"])))
 
     with pytest.raises(ValueError, match="retire itself"):
-        checker.load_baseline(path)
+        checker.load_baseline(path, _TEST_SETTINGS_FINGERPRINT)
+
+
+def test_load_baseline_rejects_changed_resolved_settings(tmp_path: Path) -> None:
+    """A config change cannot make baselined findings disappear as improvements."""
+    path = tmp_path / "baseline.json"
+    path.write_text(json.dumps(_baseline_payload({"a.py::B905": 1})))
+
+    with pytest.raises(ValueError, match="lint setting changed"):
+        checker.load_baseline(path, "different-settings")
 
 
 @pytest.mark.parametrize(
     "payload",
     [
         pytest.param({"rules": ["B", "RUF012"]}, id="no-violations-key"),
+        pytest.param(
+            {"rules": ["B", "RUF012"], "violations": {}},
+            id="no-settings-fingerprint",
+        ),
         pytest.param(_baseline_payload({"a.py::B905": 0}), id="zero-count"),
         pytest.param(_baseline_payload({"a.py::B905": True}), id="bool-count"),
         pytest.param(_baseline_payload({"a.py::B905": "2"}), id="string-count"),
-        pytest.param({"rules": ["B", "RUF012"], "violations": []}, id="list-not-dict"),
+        pytest.param(
+            {
+                "rules": ["B", "RUF012"],
+                "settings_fingerprint": _TEST_SETTINGS_FINGERPRINT,
+                "violations": [],
+            },
+            id="list-not-dict",
+        ),
     ],
 )
 def test_load_baseline_raises_on_a_malformed_file(
@@ -264,7 +335,7 @@ def test_load_baseline_raises_on_a_malformed_file(
     path.write_text(json.dumps(payload))
 
     with pytest.raises(ValueError, match="malformed"):
-        checker.load_baseline(path)
+        checker.load_baseline(path, _TEST_SETTINGS_FINGERPRINT)
 
 
 def test_load_baseline_raises_on_invalid_json(tmp_path: Path) -> None:
@@ -273,7 +344,7 @@ def test_load_baseline_raises_on_invalid_json(tmp_path: Path) -> None:
     path.write_text("{not json")
 
     with pytest.raises(ValueError, match="not valid JSON"):
-        checker.load_baseline(path)
+        checker.load_baseline(path, _TEST_SETTINGS_FINGERPRINT)
 
 
 def test_save_baseline_round_trips_and_is_deterministic(tmp_path: Path) -> None:
@@ -281,15 +352,16 @@ def test_save_baseline_round_trips_and_is_deterministic(tmp_path: Path) -> None:
     path = tmp_path / "baseline.json"
     entries = {"z.py::B905": 2, "a.py::B904": 1}
 
-    checker.save_baseline(path, entries)
+    checker.save_baseline(path, entries, _TEST_SETTINGS_FINGERPRINT)
     first = path.read_text()
-    assert checker.load_baseline(path) == entries
+    assert checker.load_baseline(path, _TEST_SETTINGS_FINGERPRINT) == entries
 
-    checker.save_baseline(path, entries)
+    checker.save_baseline(path, entries, _TEST_SETTINGS_FINGERPRINT)
     assert path.read_text() == first
 
     document = json.loads(first)
     assert document["rules"] == list(checker.RATCHETED_SELECT)
+    assert document["settings_fingerprint"] == _TEST_SETTINGS_FINGERPRINT
     assert list(document["violations"]) == ["a.py::B904", "z.py::B905"]
     assert first.endswith("\n")
 
@@ -494,6 +566,7 @@ def test_main_update_baseline_records_the_current_counts(
     document = json.loads(baseline.read_text())
     assert document["violations"] == {"sample.py::B905": 2}
     assert document["rules"] == list(checker.RATCHETED_SELECT)
+    assert document["settings_fingerprint"] == _TEST_SETTINGS_FINGERPRINT
 
 
 @pytest.mark.parametrize(
@@ -502,6 +575,16 @@ def test_main_update_baseline_records_the_current_counts(
         pytest.param(
             json.dumps(_baseline_payload({"sample.py::B905": 1}, rules=["B"])),
             id="rules-mismatch",
+        ),
+        pytest.param(
+            json.dumps(
+                {
+                    "rules": list(checker.RATCHETED_SELECT),
+                    "settings_fingerprint": "stale-settings",
+                    "violations": {"sample.py::B905": 1},
+                }
+            ),
+            id="settings-mismatch",
         ),
         pytest.param("{truncated", id="invalid-json"),
     ],
@@ -524,6 +607,7 @@ def test_main_update_baseline_replaces_an_unloadable_baseline(
     document = json.loads(baseline.read_text())
     assert document["violations"] == {"sample.py::B905": 1}
     assert document["rules"] == list(checker.RATCHETED_SELECT)
+    assert document["settings_fingerprint"] == _TEST_SETTINGS_FINGERPRINT
     assert "Replacing the unreadable baseline" in _clean_output(capsys)
 
 
@@ -725,88 +809,105 @@ def test_typer_defaults_are_declared_immutable() -> None:
     assert immutable_calls == ["typer.Option", "typer.Argument"]
 
 
-def _selector_suppresses_ratcheted_rule(selector: str) -> bool:
-    """Whether a ruff selector overlaps this ratchet in either direction."""
-    return (
-        selector == "ALL"
-        or selector in checker.RATCHETED_SELECT
-        or checker.is_ratcheted_code(selector)
-        or any(code.startswith(selector) for code in checker.RATCHETED_SELECT)
-    )
-
-
-def _ratcheted_per_file_suppressions(
-    lint_config: dict[str, object],
-) -> set[str]:
-    """Return suppressions from both additive ruff per-file-ignore tables."""
-    suppressed: set[str] = set()
-    for table_name in ("per-file-ignores", "extend-per-file-ignores"):
-        table = lint_config.get(table_name, {})
-        assert isinstance(table, dict)
-        suppressed.update(
-            f"{table_name}.{pattern}: {selector}"
-            for pattern, selectors in table.items()
-            for selector in selectors
-            if _selector_suppresses_ratcheted_rule(selector)
-        )
-    return suppressed
-
-
 @pytest.mark.parametrize(
-    "selector",
-    ["B", "B905", "RUF", "RUF0", "RUF012", "ALL"],
+    ("pyproject", "extra_config"),
+    [
+        ('[tool.ruff]\ntarget-version = "py39"\n', None),
+        (
+            '[tool.ruff]\ntarget-version = "py312"\n'
+            '[tool.ruff.lint]\nexclude = ["sample.py"]\n',
+            None,
+        ),
+        (
+            '[tool.ruff]\ntarget-version = "py312"\n'
+            '[tool.ruff.per-file-target-version]\n"sample.py" = "py39"\n',
+            None,
+        ),
+        (
+            '[tool.ruff]\ntarget-version = "py312"\nextend = "extra.toml"\n',
+            '[lint.per-file-ignores]\n"sample.py" = ["B905"]\n',
+        ),
+        (
+            '[tool.ruff]\ntarget-version = "py312"\n'
+            "[tool.ruff.lint]\npreview = true\n"
+            "[tool.ruff.lint.per-file-ignores]\n"
+            '"sample.py" = ["zip-without-explicit-strict"]\n',
+            None,
+        ),
+    ],
+    ids=(
+        "target-version",
+        "lint-exclude",
+        "per-file-target-version",
+        "extended-config",
+        "rule-name",
+    ),
 )
-def test_selector_overlap_detects_every_suppression_spelling(selector: str) -> None:
-    """Ruff accepts families, prefixes, full codes, and ALL in ignore tables."""
-    assert _selector_suppresses_ratcheted_rule(selector)
-
-
-@pytest.mark.parametrize("selector", ["E", "E501", "C90", "BLE001"])
-def test_selector_overlap_allows_unrelated_rules(selector: str) -> None:
-    """Unrelated per-file ignores remain available to the normal lint config."""
-    assert not _selector_suppresses_ratcheted_rule(selector)
-
-
-@pytest.mark.parametrize("table_name", ["per-file-ignores", "extend-per-file-ignores"])
-def test_each_per_file_ignore_table_is_guarded(table_name: str) -> None:
-    """Ruff treats the two tables additively, so neither may bypass the guard."""
-    lint_config = {table_name: {"pkg/*.py": ["RUF"]}}
-    assert _ratcheted_per_file_suppressions(lint_config) == {
-        f"{table_name}.pkg/*.py: RUF"
-    }
-
-
-def test_absent_per_file_ignore_tables_are_allowed() -> None:
-    """Removing either optional table must not turn the guard into a KeyError."""
-    assert not _ratcheted_per_file_suppressions({})
-
-
-def test_per_file_ignores_do_not_suppress_ratcheted_rules() -> None:
-    """Neither ruff per-file-ignore table may silently retire ratcheted debt."""
-    pyproject = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
-    lint_config = pyproject["tool"]["ruff"]["lint"]
-    suppressed = _ratcheted_per_file_suppressions(lint_config)
-    assert not suppressed, "per-file ignores suppress ratcheted rules: " + ", ".join(
-        sorted(suppressed)
+def test_resolved_settings_drift_fails_before_debt_can_disappear(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    pyproject: str,
+    extra_config: str | None,
+) -> None:
+    """Every confirmed Ruff suppression route invalidates the old baseline."""
+    _require_ruff()
+    monkeypatch.setattr(
+        checker, "ruff_settings_fingerprint", _REAL_RUFF_SETTINGS_FINGERPRINT
+    )
+    _write_tree(
+        tmp_path,
+        "list(zip([1], [2]))\n"
+        "try:\n    raise ValueError\nexcept ValueError:\n    raise RuntimeError\n",
+    )
+    (tmp_path / "pyproject.toml").write_text('[tool.ruff]\ntarget-version = "py312"\n')
+    original_fingerprint = _REAL_RUFF_SETTINGS_FINGERPRINT("sample.py", tmp_path)
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(
+        json.dumps(
+            {
+                "rules": list(checker.RATCHETED_SELECT),
+                "settings_fingerprint": original_fingerprint,
+                "violations": {"sample.py::B904": 1, "sample.py::B905": 1},
+            }
+        )
     )
 
+    (tmp_path / "pyproject.toml").write_text(pyproject)
+    if extra_config is not None:
+        (tmp_path / "extra.toml").write_text(extra_config)
 
-def test_dummy_variable_regex_stays_at_ruff_default() -> None:
-    """Widening ruff's dummy-name regex must not silently retire B007 debt."""
-    pyproject = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
-    dummy_variable_rgx = pyproject["tool"]["ruff"]["lint"].get("dummy-variable-rgx")
-    assert dummy_variable_rgx == r"^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+    assert _run_main(tmp_path, baseline) == 2
+    assert "lint setting changed" in _clean_output(capsys)
 
 
-def test_the_committed_baseline_holds_no_b008_debt() -> None:
+def test_the_committed_baseline_holds_no_b008_debt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The corollary: with the exemption in place, B008 is gated at ZERO.
 
     If a B008 entry ever appears here, the exemption stopped working and 83
     Typer false positives were baselined as real debt.
     """
-    baseline = checker.load_baseline(PROJECT_ROOT / checker.DEFAULT_BASELINE_RELPATH)
+    monkeypatch.setattr(
+        checker, "ruff_settings_fingerprint", _REAL_RUFF_SETTINGS_FINGERPRINT
+    )
+    settings_fingerprint = _REAL_RUFF_SETTINGS_FINGERPRINT(
+        checker.DEFAULT_TARGETS[0], PROJECT_ROOT
+    )
+    baseline = checker.load_baseline(
+        PROJECT_ROOT / checker.DEFAULT_BASELINE_RELPATH, settings_fingerprint
+    )
     assert baseline, "the committed baseline is missing or empty"
     assert not [key for key in baseline if key.endswith("::B008")]
+
+
+def test_repository_settings_fingerprint_is_target_independent() -> None:
+    """The representative target must not affect this repository's fingerprint."""
+    _require_ruff()
+    assert _REAL_RUFF_SETTINGS_FINGERPRINT(
+        checker.DEFAULT_TARGETS[0], PROJECT_ROOT
+    ) == _REAL_RUFF_SETTINGS_FINGERPRINT("stats", PROJECT_ROOT)
 
 
 # ---------------------------------------------------------------------------
@@ -814,7 +915,9 @@ def test_the_committed_baseline_holds_no_b008_debt() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_repository_has_no_lint_regressions() -> None:
+def test_repository_has_no_lint_regressions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The real tree must not add a violation of any ratcheted rule.
 
     Deliberately fails closed: a missing baseline is NOT skipped, it reports
@@ -822,8 +925,14 @@ def test_repository_has_no_lint_regressions() -> None:
     enforcing gate green.
     """
     _require_ruff()
+    monkeypatch.setattr(
+        checker, "ruff_settings_fingerprint", _REAL_RUFF_SETTINGS_FINGERPRINT
+    )
     baseline_path = PROJECT_ROOT / checker.DEFAULT_BASELINE_RELPATH
-    baseline = checker.load_baseline(baseline_path)
+    settings_fingerprint = _REAL_RUFF_SETTINGS_FINGERPRINT(
+        checker.DEFAULT_TARGETS[0], PROJECT_ROOT
+    )
+    baseline = checker.load_baseline(baseline_path, settings_fingerprint)
 
     current = checker.parse_findings(
         checker.run_ruff(checker.DEFAULT_TARGETS, PROJECT_ROOT), PROJECT_ROOT
