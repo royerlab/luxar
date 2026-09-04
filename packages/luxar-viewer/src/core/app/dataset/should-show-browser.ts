@@ -2,20 +2,6 @@ import { isZippedStoreUrl } from '../../../data/zip/entries';
 import { classifyBrowserUrl } from './browser-decision';
 
 /**
- * Decide whether to open the dataset browser or load `src` directly.
- *
- * Order of checks:
- *   1. Synchronous URL classification — empty / trailing-slash URLs are
- *      always must-browse, no need to probe.
- *   2. Zipped stores load directly — see below.
- *   3. A `.zarr`-suffixed URL loads directly — see below.
- *   4. HEAD-probe zarr v2 (`.zgroup`, `.zattrs`) and v3 (`zarr.json`)
- *      markers in parallel; short-circuit on the first 2xx response.
- *      Returns `false` (load directly) when any probe hits.
- *   5. If all probes fail or time out after 5s, fall through to `true`
- *      (show the browser — likely a directory listing or non-zarr URL).
- */
-/**
  * Whether the URL's PATH ends in `.zarr` — the convention every Luxar store
  * follows (`scene.luxar.zarr`, `fit.gsplats.zarr`).
  *
@@ -31,6 +17,20 @@ function isZarrStoreSuffix(src: string): boolean {
   }
 }
 
+/**
+ * Decide whether to open the dataset browser or load `src` directly.
+ *
+ * Order of checks:
+ *   1. Synchronous URL classification — empty / trailing-slash URLs are
+ *      always must-browse, no need to probe.
+ *   2. Zipped stores load directly — see below.
+ *   3. A `.zarr`-suffixed URL loads directly — see below.
+ *   4. HEAD-probe zarr v2 (`.zgroup`, `.zattrs`) and v3 (`zarr.json`)
+ *      markers in parallel; short-circuit on the first 2xx response.
+ *      Returns `false` (load directly) when any probe hits.
+ *   5. If all probes fail or time out after 5s, fall through to `true`
+ *      (show the browser — likely a directory listing or non-zarr URL).
+ */
 export async function shouldShowBrowser(src: string): Promise<boolean> {
   // Synchronous classification: empty / trailing-slash URLs always
   // need the browser, no point firing a zarr-metadata probe.
