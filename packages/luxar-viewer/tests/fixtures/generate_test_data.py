@@ -83,6 +83,7 @@ FIXTURE_NAMES: list[str] = [
     "test_extend_to_all_4d.luxar.zarr",
     "test_gsplats.luxar.zarr",
     "test_gsplats_2d.luxar.zarr",
+    "test_gsplats_centers_array_ref.luxar.zarr",
     "test_gsplats_normal_overlap.luxar.zarr",
     "test_gsplats_normal_overlap_reversed.luxar.zarr",
     "test_gsplats_volumetric.luxar.zarr",
@@ -2694,6 +2695,90 @@ def generate_blending_inherited_test() -> None:
         aprint("  surface_group(blending_mode=max) → child_points (attr omitted)")
 
 
+def generate_gsplat_centers_array_ref_test() -> None:
+    """Two gsplats layers sharing centers/amplitudes, so the second DEDUPLICATES.
+
+    The read-side counterpart of :func:`generate_array_refs_test`, which covers
+    Points ``colors``. Here the deduplicated arrays are a gsplats node's
+    ``centers`` and ``amplitudes``, which the viewer loads through
+    ``GSplatsSpatialIndexLoader.loadArrayRanges`` -> ``loadRangesResolvingRef``
+    rather than through ``ArrayDecoder.decode``, and whose ref TARGET is
+    per-channel quantized (``linear_perchannel_u16``) rather than direct.
+
+    That combination had no coverage, and issue #2490 was diagnosed against it
+    for a day: the DESI scene's coarse levels started deduplicating ``centers``
+    across its two layers, a store diff read the resulting ``(0, 3)``
+    placeholders as lost rows, and a hosted render A/B was then blamed on
+    ``centers`` refs not resolving. They do resolve — but nothing in the suite
+    said so. This fixture is what makes the claim testable.
+
+    Deliberately NOT built with ``substitutive_lod=``: that import path needs
+    torch and scipy (see ``luxar.demos._dependencies.SUBSTITUTIVE_LOD_MODULES``),
+    which are not core dependencies, so a fixture requiring them would fail on a
+    bare checkout. Two sibling leaves reproduce the same on-disk encoding — a
+    ref'd ``centers`` over a per-channel-quantized target — which is what the
+    loader path under test actually sees.
+
+    Left on the default (AUTO) encoding mode on purpose: that is what makes
+    ``centers`` land on ``linear_perchannel_u16``, and the per-channel decode is
+    half of what is being covered. Do not "fix" this to PRECISION.
+    """
+    with asection("Generating GSplat Centers Array-Ref Test"):
+        output = FIXTURES_DIR / "test_gsplats_centers_array_ref.luxar.zarr"
+
+        rng = np.random.RandomState(2490)
+        # Above the RangeLoader's 1000-element worker threshold once multiplied
+        # by ndim, so the per-channel WORKER decode path is exercised too.
+        num_splats = 500
+        shared_centers = (rng.rand(num_splats, 3).astype(np.float32) - 0.5) * 20.0
+        shared_amplitudes = rng.rand(num_splats).astype(np.float32) + 0.1
+        cholesky = np.tile(
+            np.array([0.4, 0, 0.4, 0, 0, 0.4], dtype=np.float32), (num_splats, 1)
+        )
+        # Only the colors differ, which is exactly why centers/amplitudes
+        # deduplicate while colors and cholesky do not.
+        colors_a = rng.rand(num_splats, 3).astype(np.float32)
+        colors_b = rng.rand(num_splats, 3).astype(np.float32)
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            compressor=COMPRESSOR_DISABLED,
+            float16_allowed=FLOAT16_ALLOWED,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            # Written FIRST, so this one owns the stored arrays.
+            scene.add_gsplats(
+                "materialised",
+                shared_centers,
+                shared_amplitudes,
+                cholesky,
+                colors=colors_a,
+                layer=True,
+            )
+            # Written SECOND, so its centers/amplitudes become array_refs into
+            # `materialised`. The test asserts this rather than assuming it.
+            scene.add_gsplats(
+                "deduplicated",
+                shared_centers,
+                shared_amplitudes,
+                cholesky,
+                colors=colors_b,
+                layer=True,
+            )
+
+        aprint(f"✓ Created {output}")
+        aprint(f"  {num_splats} splats x 2 layers, centers/amplitudes shared")
+        aprint("  deduplicated/centers -> array_ref into materialised/centers")
+
+
 def generate_gsplats_test() -> None:
     """Test dataset with GSplats (Gaussian Splats) geometry type.
 
@@ -4734,6 +4819,9 @@ def main() -> None:
         aprint("")
 
         generate_array_ref_broadcasting_test()
+        aprint("")
+
+        generate_gsplat_centers_array_ref_test()
         aprint("")
 
         generate_encoding_edge_cases_test()
