@@ -58,7 +58,15 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from arbol import aprint
+# Deliberately NOT `arbol`, which the rest of scripts/ uses and CLAUDE.md asks
+# for. This one inspects a BUILT WHEEL, so it has to run where the wheel is
+# built — the `wheel-viewer` CI job, which installs `hatch` and nothing else,
+# and any minimal release environment. A wheel inspector that needs the project
+# environment installed cannot check a wheel before that environment exists.
+#
+# Not theoretical: the first CI run of this gate died with
+# `ModuleNotFoundError: No module named 'arbol'`. Keep this file stdlib-only.
+aprint = print
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 

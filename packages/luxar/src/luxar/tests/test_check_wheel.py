@@ -8,6 +8,7 @@ mock would be built from the same belief as the checker.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import re
 import sys
@@ -308,6 +309,36 @@ def test_main_exits_2_on_an_unreadable_wheel(
 # ---------------------------------------------------------------------------
 # Drift guard against the REAL pyproject
 # ---------------------------------------------------------------------------
+
+
+def test_the_checker_imports_only_the_standard_library() -> None:
+    """It must run where the wheel is BUILT, not where the project is installed.
+
+    The `wheel-viewer` CI job installs `hatch` and nothing else, and a release
+    environment need not have the project's dependencies at all — a wheel
+    inspector that requires them cannot inspect a wheel before they exist.
+
+    Not theoretical: the first CI run of this gate died with
+    `ModuleNotFoundError: No module named 'arbol'`, because the rest of
+    `scripts/` uses arbol for output and this file followed suit. An import
+    added for a nicety would break the gate in exactly the same way, and only
+    in CI, so it is asserted here rather than left to convention.
+    """
+    tree = ast.parse(_SCRIPT.read_text())
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            imported.add(node.module.split(".")[0])
+
+    non_stdlib = sorted(imported - sys.stdlib_module_names)
+
+    assert not non_stdlib, (
+        f"scripts/check_wheel.py imports non-stdlib module(s): {non_stdlib}. "
+        "It runs in the wheel-viewer CI job, which installs only hatch — a "
+        "third-party import here fails the gate with ModuleNotFoundError."
+    )
 
 
 def test_the_real_excludes_are_readable_and_non_empty() -> None:
