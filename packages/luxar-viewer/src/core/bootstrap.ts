@@ -23,6 +23,7 @@ import { config } from '../config';
 import { archiveFaultFrom } from '../cache/chunk-source';
 import { validateAndLog } from '../config/validation';
 import { readUrlParams, type UrlParams } from '../config/url-params';
+import { buildInfo, buildInfoLine } from '../config/build-info';
 import { initUserSettings } from '../config/user-settings';
 import { configureGpuByteBudget } from '../rendering/gpu-byte-budget';
 import { cachePoolOverrideBytes } from '../cache/heap-budget';
@@ -110,6 +111,15 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   let app: LuxarApp | undefined;
   const shortcutForAction = (actionId: string): string | undefined =>
     app?.shortcutForAction(actionId);
+
+  // Publish the build stamp FIRST, unconditionally, and before anything that
+  // can fail. Two deliberate choices:
+  //   - not gated on `?debug`, because the bug reports that need a revision
+  //     come from users who did not know to add it;
+  //   - before init, because "the viewer renders black" is exactly the case
+  //     where init threw and every later surface is gone.
+  window.__luxarBuild = buildInfo();
+  log.custom(LogEmoji.START, Modules.LUXAR, `Luxar viewer ${buildInfoLine()}`);
 
   // Load + apply the persisted global viewer preferences (Settings popover)
   // BEFORE the first config read below: live-read values are applied by
@@ -346,7 +356,7 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     window.__luxarDebug = {
       app,
       consoleInterceptor,
-      version: '1.0.0',
+      version: buildInfo().version,
       showError: (message) =>
         showError(message, shortcutForAction, {
           datasetBrowser: KeyAction.toggleDatasetBrowser,

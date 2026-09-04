@@ -417,11 +417,15 @@ The app exposes a debug interface when in development mode:
 // bootstrap.ts debug setup
 const isDebugMode = urlParams.debug || localStorage.getItem('luxar.debug') === 'true';
 
+// The build stamp is published FIRST and unconditionally — a bug report needs
+// a revision whether or not the reporter knew to pass `?debug`.
+window.__luxarBuild = buildInfo();
+
 if (isDebugMode) {
   window.__luxarDebug = {
     app, // Access to main app instance
     consoleInterceptor, // Console message buffer
-    version: '1.0.0', // Application version
+    version: buildInfo().version, // Build stamp — see config/build-info.ts
   };
   console.log('🔧 [Luxar] Debug interface available at window.__luxarDebug');
 }

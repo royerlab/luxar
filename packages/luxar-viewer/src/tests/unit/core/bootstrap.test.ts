@@ -75,6 +75,7 @@ vi.mock('zarrita', () => ({
   withMaybeConsolidatedMetadata: undefined,
 }));
 
+import { buildInfo } from '../../../config/build-info';
 import { bootstrapStandalone } from '../../../core/bootstrap';
 import { getGpuByteBudget } from '../../../rendering/gpu-byte-budget';
 import { ArchiveFaultError } from '../../../cache/chunk-source';
@@ -363,7 +364,11 @@ describe('bootstrapStandalone', () => {
         urlParams: { ...EMPTY_PARAMS, debug: true },
       });
       expect(window.__luxarDebug).toBeDefined();
-      expect(window.__luxarDebug?.version).toBe('1.0.0');
+      // Derived, not a literal: the value is the build stamp, which is
+      // absent under vitest (no Vite `define`) and a real CalVer in a
+      // built bundle. Pinning a literal here is what let a hardcoded
+      // '1.0.0' survive in the shipped viewer for the whole project.
+      expect(window.__luxarDebug?.version).toBe(buildInfo().version);
       expect(window.__luxarDebug?.app).toBeDefined();
       expect(window.__luxarDebug?.consoleInterceptor).toBeDefined();
       // showError is exposed so visual-regression specs can drive the

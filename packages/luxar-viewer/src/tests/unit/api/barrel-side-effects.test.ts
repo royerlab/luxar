@@ -217,6 +217,8 @@ describe('Public barrel side effects', () => {
         'applyColormapTextureToMaterial',
         'applyScalarRangeToMaterial',
         'bootstrapStandalone',
+        'buildInfo',
+        'buildInfoLine',
         'getCompleteBlendingState',
         'normalizeDataSourceUrl',
         'readUrlParams',
