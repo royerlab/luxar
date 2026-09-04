@@ -860,6 +860,12 @@ def test_test_directories_are_excluded_from_coverage(tmp_path: Path) -> None:
     top_level_tests = root / "packages" / "luxar" / "src" / "luxar" / "tests"
     top_level_tests.mkdir()
     (top_level_tests / "test_bad.py").write_text("x = 1\n")
+    viewer_tests = root / "packages" / "luxar-viewer" / "src" / "tests"
+    viewer_tests.mkdir(parents=True)
+    (viewer_tests / "bad.ts").write_text(
+        "\n".join(f"export function undocumented{i}(): void {{}}" for i in range(5))
+        + "\n"
+    )
 
     keys = cd.failure_keys(_scan(root).results, root)
 
@@ -868,6 +874,11 @@ def test_test_directories_are_excluded_from_coverage(tmp_path: Path) -> None:
         key
         for key in keys
         if key.startswith("Module docstring::") and "/luxar/tests/" in key
+    ]
+    assert not [
+        key
+        for key in keys
+        if key.startswith("JSDoc coverage::") and "/src/tests/" in key
     ]
     # ...and the exclusion is narrow: the nested non-test file still fails.
     assert NESTED_KEY in keys
