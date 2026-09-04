@@ -122,31 +122,46 @@ export function requireE2EServerMetadata(metadata: Record<string, unknown>): E2E
  * also rejects unrelated catch-all servers that return index.html with 200.
  */
 export function checkoutIdentityPlugin(checkout: CheckoutIdentity): Plugin {
+  // One middleware for both the dev server and `vite preview`, so a perf run
+  // against the production bundle (LUXAR_PERF_PREVIEW=1) passes the same
+  // checkout-identity check as a dev-server run.
+  const middleware = (
+    request: { url?: string; method?: string },
+    response: {
+      setHeader(name: string, value: string): void;
+      statusCode: number;
+      end(body?: string): void;
+    },
+    next: () => void
+  ): void => {
+    const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
+    if (!pathname.startsWith(IDENTITY_PREFIX)) {
+      next();
+      return;
+    }
+
+    response.setHeader('Cache-Control', 'no-store');
+    response.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    if (pathname !== checkout.viewerPath) {
+      response.statusCode = 404;
+      response.end('Unknown Luxar E2E checkout identity\n');
+      return;
+    }
+
+    response.statusCode = 200;
+    if (request.method === 'HEAD') {
+      response.end();
+    } else {
+      response.end(checkout.markerBody);
+    }
+  };
   return {
     name: 'luxar-e2e-checkout-identity',
+    configurePreviewServer(server) {
+      server.middlewares.use(middleware);
+    },
     configureServer(server) {
-      server.middlewares.use((request, response, next) => {
-        const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
-        if (!pathname.startsWith(IDENTITY_PREFIX)) {
-          next();
-          return;
-        }
-
-        response.setHeader('Cache-Control', 'no-store');
-        response.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        if (pathname !== checkout.viewerPath) {
-          response.statusCode = 404;
-          response.end('Unknown Luxar E2E checkout identity\n');
-          return;
-        }
-
-        response.statusCode = 200;
-        if (request.method === 'HEAD') {
-          response.end();
-        } else {
-          response.end(checkout.markerBody);
-        }
-      });
+      server.middlewares.use(middleware);
     },
   };
 }

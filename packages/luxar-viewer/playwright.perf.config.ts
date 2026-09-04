@@ -117,7 +117,14 @@ export default defineConfig({
   // Reuse the standard viewer + dataset dev servers.
   webServer: [
     {
-      command: `pnpm dev --host 127.0.0.1 --port ${viewerPort} --strictPort`,
+      // LUXAR_PERF_PREVIEW=1 serves the PRODUCTION bundle (`pnpm build` first):
+      // dev-mode ESM inflates time-to-first-paint and request counts, so the
+      // viewer-audit bench must run against `vite preview`. The checkout-identity
+      // endpoint is served by both servers (tools/e2e-server-identity.ts).
+      command:
+        process.env.LUXAR_PERF_PREVIEW === '1'
+          ? `pnpm exec vite preview --host 127.0.0.1 --port ${viewerPort} --strictPort`
+          : `pnpm dev --host 127.0.0.1 --port ${viewerPort} --strictPort`,
       url: serverMetadata.viewerIdentityURL,
       reuseExistingServer: !process.env.CI,
       timeout: 120000,

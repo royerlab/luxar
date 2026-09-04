@@ -352,4 +352,21 @@ describe('buildPerfDiff — missing side handling', () => {
     // +Infinity% (division by a zero baseline).
     expectMissingDelta(deltaCell(sec, 's1/webgpu', 'kernel'));
   });
+
+  it('renders the viewer-audit section from the `audit` object with per-metric deltas', () => {
+    const base = run([
+      scn({ scenarioId: 'audit-dense-points', audit: { ttfpMs: 400, frameP50Ms_dpr1: 41.7 } }),
+    ]);
+    const next = run([
+      scn({ scenarioId: 'audit-dense-points', audit: { ttfpMs: 200, frameP50Ms_dpr1: null } }),
+    ]);
+    const md = buildPerfDiff(base, next);
+    const sec = section(md, '## Viewer audit (load + frames)');
+    expect(sec).not.toBe('');
+    // ttfp halved → a green delta; frame@1 missing on the new side → —.
+    expect(deltaCell(sec, 'audit-dense-points/webgpu', 'ttfp')).toBe('-50.0% 🟢');
+    expectMissingDelta(deltaCell(sec, 'audit-dense-points/webgpu', 'frame@1'));
+    // A metric neither side carries gets no column at all.
+    expect(sec).not.toContain('Δ opfsDrop');
+  });
 });
