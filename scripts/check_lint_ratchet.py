@@ -104,14 +104,24 @@ BASELINE_COMMENT = (
     "--select used; a mismatch fails rather than silently retiring a rule."
 )
 
-# A finding this gate is allowed to see. Anything else (notably `invalid-syntax`,
-# which ruff emits whatever is selected and reports with a null code) means the
-# scan did not read the tree it claims to have read.
-_EXPECTED_CODE_RE = re.compile(r"^(B\d{3}|RUF012)$")
+# A finding this gate is allowed to see. Anything else (notably
+# `invalid-syntax`, which ruff emits whatever is selected with a code outside
+# the selection) means the scan did not read the tree it claims to have read.
 
 # ruff's stderr line for a path it could not read at all, e.g.
 # "warning: Failed to lint stats: No such file or directory (os error 2)".
 _UNSCANNED_RE = re.compile(r"Failed to lint ")
+
+
+def is_ratcheted_code(code: str) -> bool:
+    """Return whether ``code`` is selected by ``RATCHETED_SELECT``."""
+    for selector in RATCHETED_SELECT:
+        if selector[-1].isdigit():
+            if code == selector:
+                return True
+        elif re.fullmatch(rf"{re.escape(selector)}\d+", code):
+            return True
+    return False
 
 
 @dataclass
@@ -200,6 +210,74 @@ def run_ruff(targets: tuple[str, ...] | list[str], project_root: Path) -> str:
     return proc.stdout
 
 
+def list_ruff_files(
+    targets: tuple[str, ...] | list[str], project_root: Path
+) -> set[str]:
+    """Return the repo-relative files ruff says it will scan."""
+    command = [
+        sys.executable,
+        "-m",
+        "ruff",
+        "check",
+        "--show-files",
+        "--select",
+        ",".join(RATCHETED_SELECT),
+        *targets,
+    ]
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:  # pragma: no cover - environment failure
+        raise RuntimeError(f"Could not run ruff ({' '.join(command)}): {exc}") from exc
+
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"ruff --show-files failed (exit {proc.returncode}): "
+            f"{' '.join(command)}\n{proc.stderr.strip()}"
+        )
+
+    unscanned = [
+        line for line in proc.stderr.splitlines() if _UNSCANNED_RE.search(line)
+    ]
+    if unscanned:
+        raise RuntimeError(
+            "ruff could not enumerate every target, so the scan is PARTIAL:\n"
+            + "\n".join(f"  {line}" for line in unscanned)
+        )
+
+    files: set[str] = set()
+    for line in proc.stdout.splitlines():
+        path = Path(line)
+        try:
+            files.add(path.relative_to(project_root).as_posix())
+        except ValueError:
+            files.add(path.as_posix())
+    return files
+
+
+def ensure_baselined_files_were_scanned(
+    baseline: dict[str, int], scanned_files: set[str], project_root: Path
+) -> None:
+    """Fail when an existing baselined file was silently excluded by ruff."""
+    omitted = sorted(
+        path
+        for path in {key.rpartition("::")[0] for key in baseline}
+        if (project_root / path).exists() and path not in scanned_files
+    )
+    if omitted:
+        shown = "\n".join(f"  {path}" for path in omitted[:20])
+        suffix = f"\n  ... and {len(omitted) - 20} more" if len(omitted) > 20 else ""
+        raise RuntimeError(
+            "ruff omitted existing baselined files, so the scan is PARTIAL. "
+            "Check Ruff excludes and the checkout:\n"
+            f"{shown}{suffix}"
+        )
+
+
 def parse_findings(stdout: str, project_root: Path = PROJECT_ROOT) -> dict[str, int]:
     r"""Parse ruff's JSON output into ``{"<rel-path>::<CODE>": count}``.
 
@@ -209,7 +287,7 @@ def parse_findings(stdout: str, project_root: Path = PROJECT_ROOT) -> dict[str, 
     complexity there is no per-finding magnitude to compare, so "how many of
     this rule does this file break" is the whole state.
 
-    A finding whose code is neither ``B\d{3}`` nor ``RUF012`` is a hard error.
+    A finding whose code is outside ``RATCHETED_SELECT`` is a hard error.
     ruff emits ``invalid-syntax`` diagnostics regardless of ``--select``, and a
     file it could not parse is a file it did not lint — which would otherwise
     look like that file's baselined debt had been paid off.
@@ -231,7 +309,7 @@ def parse_findings(stdout: str, project_root: Path = PROJECT_ROOT) -> dict[str, 
         except ValueError:
             relative = path.as_posix()
 
-        if code is None or not _EXPECTED_CODE_RE.match(code):
+        if code is None or not is_ratcheted_code(code):
             location = finding.get("location") or {}
             raise ValueError(
                 f"ruff reported a {code!r} diagnostic at {relative}:"
@@ -413,20 +491,20 @@ def _update_baseline(
     baseline_path: Path, current: dict[str, int], restricted: bool
 ) -> int:
     """Rewrite ``baseline_path`` from ``current``; returns the exit code."""
+    if restricted:
+        aprint(
+            f"❌ Refusing to overwrite {baseline_path} from a RESTRICTED target "
+            "set: writing a partial scan would drop every baselined key outside "
+            "those paths. Re-run --update-baseline without target arguments to "
+            "record the whole tree."
+        )
+        return 2
+
     # Refuse to replace a populated baseline with an empty one. Belt and braces
     # behind run_ruff's fail-closed checks: any future path that yields zero
     # findings over a tree known to have debt would otherwise disable the gate
     # permanently, with a success message and exit 0.
     if not current and _baseline_is_populated(baseline_path):
-        if restricted:
-            aprint(
-                f"❌ Refusing to overwrite {baseline_path} with an empty "
-                "baseline: the RESTRICTED target set produced no findings, so "
-                "writing it would drop every baselined key outside those paths. "
-                "Re-run --update-baseline over the default targets (no target "
-                "arguments) to record the whole tree."
-            )
-            return 2
         aprint(
             f"❌ Refusing to overwrite {baseline_path} with an empty baseline: "
             "ruff reported zero violations over a tree that has some baselined. "
@@ -435,13 +513,6 @@ def _update_baseline(
             "hand and re-run."
         )
         return 2
-    if restricted:
-        aprint(
-            "⚠️  Writing the baseline from a RESTRICTED target set. Debt outside "
-            "those paths will be DROPPED from the baseline and will resurface as "
-            "new findings on the next full run. Re-run without target arguments "
-            "to record the whole tree."
-        )
     save_baseline(baseline_path, current)
     total = sum(current.values())
     aprint(
@@ -568,9 +639,6 @@ def main(argv: list[str] | None = None) -> int:
         aprint(f"❌ {exc}")
         return 2
 
-    if args.update_baseline:
-        return _update_baseline(baseline_path, current, restricted)
-
     if not baseline_path.exists():
         aprint(
             f"ℹ️  No baseline found at {baseline_path}. Run with "
@@ -582,6 +650,17 @@ def main(argv: list[str] | None = None) -> int:
     except (ValueError, OSError) as exc:
         aprint(f"❌ {exc}")
         return 2
+
+    if not restricted and baseline:
+        try:
+            scanned_files = list_ruff_files(targets, project_root)
+            ensure_baselined_files_were_scanned(baseline, scanned_files, project_root)
+        except RuntimeError as exc:
+            aprint(f"❌ {exc}")
+            return 2
+
+    if args.update_baseline:
+        return _update_baseline(baseline_path, current, restricted)
 
     # Zero findings against a populated baseline. Over the DEFAULT targets that
     # can only mean the scan covered nothing (ruff signals a mistyped path or an

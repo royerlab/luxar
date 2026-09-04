@@ -13,6 +13,7 @@ import json
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 from types import ModuleType
 
@@ -190,11 +191,23 @@ def test_parse_findings_rejects_an_unparseable_file(code: str | None) -> None:
         checker.parse_findings(stdout, PROJECT_ROOT)
 
 
-def test_parse_findings_rejects_a_rule_outside_the_selection() -> None:
-    """A code the selection cannot produce means the command drifted."""
-    stdout = json.dumps([_finding("a.py", "E501")])
+def test_parse_findings_derives_accepted_codes_from_the_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The parser must follow the configured selectors rather than a stale regex."""
+    monkeypatch.setattr(checker, "RATCHETED_SELECT", ("B", "XYZ123"))
 
-    with pytest.raises(ValueError, match="E501"):
+    parsed = checker.parse_findings(json.dumps([_finding("sample.py", "XYZ123")]))
+
+    assert parsed == {"sample.py::XYZ123": 1}
+
+
+@pytest.mark.parametrize("code", ["E501", "BLE001"])
+def test_parse_findings_rejects_a_rule_outside_the_selection(code: str) -> None:
+    """A code the selection cannot produce means the command drifted."""
+    stdout = json.dumps([_finding("a.py", code)])
+
+    with pytest.raises(ValueError, match=code):
         checker.parse_findings(stdout, PROJECT_ROOT)
 
 
@@ -467,9 +480,12 @@ def test_main_passes_when_the_violation_is_baselined(
     assert "No new lint regressions" in _clean_output(capsys)
 
 
-def test_main_update_baseline_records_the_current_counts(tmp_path: Path) -> None:
+def test_main_update_baseline_records_the_current_counts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """`--update-baseline` writes exactly what the scan found, plus the rules."""
     _require_ruff()
+    _unrestrict(monkeypatch)
     _write_tree(tmp_path, _TWO_VIOLATIONS)
     baseline = tmp_path / "baseline.json"
 
@@ -508,20 +524,45 @@ def test_main_refusal_diagnoses_a_clean_restricted_update(
     assert "RESTRICTED" in _clean_output(capsys)
 
 
-def test_main_restricted_update_baseline_warns_about_dropped_debt(
+def test_main_restricted_update_baseline_refuses_to_drop_debt(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Writing from a restricted scan succeeds but says what it just dropped."""
+    """A partial baseline is never useful, so a restricted rewrite is refused."""
     _require_ruff()
     _write_tree(tmp_path, _ONE_VIOLATION)
     baseline = tmp_path / "baseline.json"
     baseline.write_text(json.dumps(_baseline_payload({"other.py::B905": 4})))
 
-    assert _run_main(tmp_path, baseline, "--update-baseline") == 0
+    assert _run_main(tmp_path, baseline, "--update-baseline") == 2
 
     output = _clean_output(capsys)
-    assert "RESTRICTED" in output and "DROPPED" in output
-    assert json.loads(baseline.read_text())["violations"] == {"sample.py::B905": 1}
+    assert "Refusing" in output and "RESTRICTED" in output
+    assert json.loads(baseline.read_text())["violations"] == {"other.py::B905": 4}
+
+
+def test_main_rejects_a_baselined_file_excluded_from_the_full_scan(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An existing baselined file omitted by ruff is a partial scan, not a fix."""
+    _require_ruff()
+    (tmp_path / "pkg" / "sub").mkdir(parents=True)
+    (tmp_path / "pkg" / "a.py").write_text(_ONE_VIOLATION)
+    (tmp_path / "pkg" / "sub" / "b.py").write_text(_ONE_VIOLATION)
+    (tmp_path / "pyproject.toml").write_text('[tool.ruff]\nexclude = ["pkg/sub"]\n')
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(
+        json.dumps(_baseline_payload({"pkg/a.py::B905": 1, "pkg/sub/b.py::B905": 1}))
+    )
+    monkeypatch.setattr(checker, "DEFAULT_TARGETS", ("pkg",))
+
+    result = checker.main(
+        ["--project-root", str(tmp_path), "--baseline", str(baseline)]
+    )
+
+    assert result == 2
+    output = _clean_output(capsys)
+    assert "PARTIAL" in output
+    assert "pkg/sub/b.py" in output
 
 
 def test_main_fails_closed_when_a_full_scan_covers_nothing(
@@ -613,7 +654,8 @@ def test_the_ratchet_is_actually_wired_into_lint() -> None:
     """A gate nobody runs is not a gate.
 
     ``check-lint-ratchet`` must appear in the ``lint`` script — that is what
-    ``hatch run lint``, ``check-static``, ``make check-all`` and CI all reach.
+    ``hatch run lint``, ``check-static`` and ``make check-all`` all reach.
+    CI gates through ``test_repository_has_no_lint_regressions`` below.
     """
     pyproject = (PROJECT_ROOT / "pyproject.toml").read_text()
     lint_block = re.search(r"^lint = \[\n(.*?)^\]", pyproject, re.MULTILINE | re.DOTALL)
@@ -629,15 +671,26 @@ def test_typer_defaults_are_declared_immutable() -> None:
     setting and they all come back as `new`; this asserts the intent so the
     failure is diagnosable rather than a surprise wall of findings.
     """
-    pyproject = (PROJECT_ROOT / "pyproject.toml").read_text()
-    section = re.search(
-        r"^\[tool\.ruff\.lint\.flake8-bugbear\]\n(.*?)(?=^\[|\Z)",
-        pyproject,
-        re.MULTILINE | re.DOTALL,
+    pyproject = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
+    immutable_calls = pyproject["tool"]["ruff"]["lint"]["flake8-bugbear"][
+        "extend-immutable-calls"
+    ]
+    assert immutable_calls == ["typer.Option", "typer.Argument"]
+
+
+def test_per_file_ignores_do_not_suppress_ratcheted_rules() -> None:
+    """A per-file ignore must not silently retire a rule selected by the ratchet."""
+    pyproject = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
+    per_file_ignores = pyproject["tool"]["ruff"]["lint"]["per-file-ignores"]
+    suppressed = {
+        f"{pattern}: {code}"
+        for pattern, codes in per_file_ignores.items()
+        for code in codes
+        if code in checker.RATCHETED_SELECT or checker.is_ratcheted_code(code)
+    }
+    assert not suppressed, "per-file ignores suppress ratcheted rules: " + ", ".join(
+        sorted(suppressed)
     )
-    assert section is not None, "flake8-bugbear settings are gone from pyproject.toml"
-    assert "typer.Option" in section.group(1)
-    assert "typer.Argument" in section.group(1)
 
 
 def test_the_committed_baseline_holds_no_b008_debt() -> None:
@@ -670,6 +723,7 @@ def test_repository_has_no_lint_regressions() -> None:
     current = checker.parse_findings(
         checker.run_ruff(checker.DEFAULT_TARGETS, PROJECT_ROOT), PROJECT_ROOT
     )
+    scanned_files = checker.list_ruff_files(checker.DEFAULT_TARGETS, PROJECT_ROOT)
     # Same fail-closed guard `main()` applies: a scan that covered nothing would
     # otherwise report every baselined key as fixed and pass this gate green.
     assert baseline, f"{baseline_path} is missing or empty — the ratchet has no floor"
@@ -678,6 +732,7 @@ def test_repository_has_no_lint_regressions() -> None:
         f"{checker.DEFAULT_TARGETS}, while {baseline_path} baselines "
         f"{len(baseline)}. The scan covered nothing."
     )
+    checker.ensure_baselined_files_were_scanned(baseline, scanned_files, PROJECT_ROOT)
 
     report = checker.evaluate_ratchet(current, baseline)
 
