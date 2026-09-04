@@ -881,6 +881,87 @@ def test_resolved_settings_drift_fails_before_debt_can_disappear(
     assert "lint setting changed" in _clean_output(capsys)
 
 
+@pytest.mark.parametrize(
+    ("config_path", "config"),
+    [
+        ("ruff.toml", '[lint]\nexclude = ["deep.py"]\n'),
+        (".ruff.toml", '[lint]\nexclude = ["deep.py"]\n'),
+        (
+            "pyproject.toml",
+            '[tool.ruff.lint]\nexclude = ["deep.py"]\n',
+        ),
+    ],
+)
+def test_nested_ruff_config_fails_before_debt_can_disappear(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    config_path: str,
+    config: str,
+) -> None:
+    """A hierarchical Ruff config must not hide debt outside the fingerprint."""
+    _require_ruff()
+    monkeypatch.setattr(
+        checker, "ruff_settings_fingerprint", _REAL_RUFF_SETTINGS_FINGERPRINT
+    )
+    monkeypatch.setattr(checker, "DEFAULT_TARGETS", ("pkg",))
+    (tmp_path / "pkg" / "sub").mkdir(parents=True)
+    (tmp_path / "pkg" / "keep.py").write_text(_ONE_VIOLATION)
+    (tmp_path / "pkg" / "sub" / "deep.py").write_text(_ONE_VIOLATION)
+    (tmp_path / "pyproject.toml").write_text('[tool.ruff]\ntarget-version = "py312"\n')
+    settings_fingerprint = _REAL_RUFF_SETTINGS_FINGERPRINT("pkg", tmp_path)
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(
+        json.dumps(
+            {
+                "rules": list(checker.RATCHETED_SELECT),
+                "settings_fingerprint": settings_fingerprint,
+                "violations": {
+                    "pkg/keep.py::B905": 1,
+                    "pkg/sub/deep.py::B905": 1,
+                },
+            }
+        )
+    )
+    (tmp_path / "pkg" / "sub" / config_path).write_text(config)
+
+    assert (
+        checker.main(["--project-root", str(tmp_path), "--baseline", str(baseline)])
+        == 2
+    )
+    output = _clean_output(capsys)
+    assert "Nested Ruff configuration" in output
+    assert f"pkg/sub/{config_path}" in output
+
+
+def test_nested_pyproject_without_ruff_settings_is_allowed(tmp_path: Path) -> None:
+    """An unrelated nested package manifest is not a Ruff configuration."""
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "pyproject.toml").write_text(
+        '[project]\nname = "fixture"\nversion = "1.0"\n'
+    )
+
+    assert checker.find_nested_ruff_configs(("pkg",), tmp_path) == []
+
+
+def test_root_ruff_config_is_allowed(tmp_path: Path) -> None:
+    """The fingerprint intentionally covers the repository-root config."""
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "ruff.toml").write_text('[lint]\nselect = ["B"]\n')
+
+    assert checker.find_nested_ruff_configs(("pkg",), tmp_path) == []
+
+
+def test_nested_ruff_config_is_found_under_every_target(tmp_path: Path) -> None:
+    """A later lint target cannot escape discovery through the first target."""
+    (tmp_path / "first").mkdir()
+    (tmp_path / "second").mkdir()
+    config = tmp_path / "second" / ".ruff.toml"
+    config.write_text('[lint]\nselect = ["B"]\n')
+
+    assert checker.find_nested_ruff_configs(("first", "second"), tmp_path) == [config]
+
+
 def test_the_committed_baseline_holds_no_b008_debt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -937,6 +1018,7 @@ def test_repository_has_no_lint_regressions(
     current = checker.parse_findings(
         checker.run_ruff(checker.DEFAULT_TARGETS, PROJECT_ROOT), PROJECT_ROOT
     )
+    checker.ensure_no_nested_ruff_configs(checker.DEFAULT_TARGETS, PROJECT_ROOT)
     scanned_files = checker.list_ruff_files(checker.DEFAULT_TARGETS, PROJECT_ROOT)
     # Same fail-closed guard `main()` applies: a scan that covered nothing would
     # otherwise report every baselined key as fixed and pass this gate green.

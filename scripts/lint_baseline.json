@@ -1,5 +1,5 @@
 {
-  "_comment": "Defect-rule lint baseline for scripts/check_lint_ratchet.py. Regenerate with: hatch run check-lint-ratchet --update-baseline. Each key is '<repo-relative-path>::<ruff code>' and maps to the NUMBER of violations of that code in that file. A key absent from here, or one whose count exceeds its baselined value, fails the check. 'rules' records the --select used. 'settings_fingerprint' records Ruff's normalized resolved settings. Either mismatch fails rather than silently retiring debt.",
+  "_comment": "Defect-rule lint baseline for scripts/check_lint_ratchet.py. Regenerate with: hatch run check-lint-ratchet --update-baseline. Each key is '<repo-relative-path>::<ruff code>' and maps to the NUMBER of violations of that code in that file. A key absent from here, or one whose count exceeds its baselined value, fails the check. 'rules' records the --select used. 'settings_fingerprint' records Ruff's normalized root resolved settings. Either mismatch fails rather than silently retiring debt.",
   "rules": [
     "B",
     "RUF012"

@@ -250,13 +250,13 @@ from Python 3.13), `raise` inside `except` losing the cause (`B904`), and
   the same three cases the complexity ratchet documents, plus a baseline whose
   recorded `rules` disagree with the selection (shrink the selection and every
   finding of the dropped rule would otherwise read as paid-down debt, retiring
-  the rule with a green tick), a resolved Ruff-settings fingerprint that differs
-  from the baseline (so excludes, target versions, per-file ignores, extended
-  configs, naming conventions, and future settings cannot silently hide debt),
-  and any diagnostic outside the selection (notably `invalid-syntax`: a file
-  ruff could not parse is a file it did not lint). A full run also compares the
-  baseline's still-existing paths with `ruff check --show-files`, so filesystem
-  omissions cannot masquerade as paid-down debt.
+  the rule with a green tick), a resolved root Ruff-settings fingerprint that
+  differs from the baseline, any nested Ruff config under the lint targets
+  (hierarchical configs resolve independently per file), and any diagnostic
+  outside the selection (notably `invalid-syntax`: a file ruff could not parse
+  is a file it did not lint). A full run also compares the baseline's
+  still-existing paths with `ruff check --show-files`, so filesystem omissions
+  cannot masquerade as paid-down debt.
 
 These rules are deliberately not in `[tool.ruff.lint] select` for the same
 reason as `C901` — ruff has no baseline mechanism, and here the sweep would also

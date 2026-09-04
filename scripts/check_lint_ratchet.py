@@ -38,11 +38,10 @@ has no baseline mechanism. A bare ``select = ["B", "RUF012"]`` would fail on all
 pre-existing violations (473 at the time of writing, 290 of them ``B905``), so
 it could not be turned on at all without a large, unrelated, and — for ``B905``
 specifically — *behaviour-changing* sweep: ``strict=True`` RAISES on mismatched
-lengths, so it is a decision per call site, not a mechanical edit. Ruff's
-fully resolved settings are fingerprinted in the baseline: per-file ignores,
-target versions, excludes, naming conventions, extended config files, and any
-future setting that changes which findings Ruff emits must therefore be
-re-baselined deliberately rather than silently retiring debt.
+lengths, so it is a decision per call site, not a mechanical edit. Ruff's root
+resolved settings are fingerprinted in the baseline, and nested Ruff configs
+are refused because they resolve independently per file. Configuration changes
+must therefore be re-baselined deliberately rather than silently retiring debt.
 
 Note what this gate does NOT need to tolerate: ``B008`` sits at zero, because
 ``[tool.ruff.lint.flake8-bugbear] extend-immutable-calls`` in ``pyproject.toml``
@@ -70,6 +69,7 @@ import json
 import re
 import subprocess
 import sys
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -105,8 +105,8 @@ BASELINE_COMMENT = (
     "'<repo-relative-path>::<ruff code>' and maps to the NUMBER of violations "
     "of that code in that file. A key absent from here, or one whose count "
     "exceeds its baselined value, fails the check. 'rules' records the "
-    "--select used. 'settings_fingerprint' records Ruff's normalized resolved "
-    "settings. Either mismatch fails rather than silently retiring debt."
+    "--select used. 'settings_fingerprint' records Ruff's normalized root "
+    "resolved settings. Either mismatch fails rather than silently retiring debt."
 )
 
 # ruff's stderr line for a path it could not read at all, e.g.
@@ -217,7 +217,8 @@ def ruff_settings_fingerprint(target: str, project_root: Path) -> str:
     Ruff's output includes a target-specific banner and absolute checkout paths;
     neither describes lint behaviour, so both are removed before hashing. The
     remaining full settings dump intentionally includes every current and future
-    option that can change which findings the ratchet sees.
+    option in that resolved root configuration that can change which findings
+    the ratchet sees. Nested configurations are rejected separately.
     """
     command = [
         sys.executable,
@@ -259,6 +260,71 @@ def ruff_settings_fingerprint(target: str, project_root: Path) -> str:
             "configuration fingerprint cannot be trusted"
         )
     return hashlib.sha256(normalized.encode()).hexdigest()
+
+
+def find_nested_ruff_configs(
+    targets: tuple[str, ...] | list[str], project_root: Path
+) -> list[Path]:
+    """Return non-root Ruff config files that can affect ``targets``."""
+    project_root = project_root.resolve()
+    candidates: set[Path] = set()
+
+    for target in targets:
+        target_path = Path(target)
+        if not target_path.is_absolute():
+            target_path = project_root / target_path
+        target_path = target_path.resolve()
+        target_dir = target_path if target_path.is_dir() else target_path.parent
+
+        if target_dir.is_dir():
+            for name in ("ruff.toml", ".ruff.toml", "pyproject.toml"):
+                candidates.update(target_dir.rglob(name))
+
+        for directory in (target_dir, *target_dir.parents):
+            if directory == project_root:
+                break
+            if project_root not in directory.parents:
+                break
+            for name in ("ruff.toml", ".ruff.toml", "pyproject.toml"):
+                config = directory / name
+                if config.is_file():
+                    candidates.add(config)
+
+    nested_configs: list[Path] = []
+    for config in sorted(candidates):
+        if config.parent == project_root:
+            continue
+        if config.name != "pyproject.toml":
+            nested_configs.append(config)
+            continue
+        try:
+            pyproject = tomllib.loads(config.read_text())
+        except (OSError, tomllib.TOMLDecodeError) as exc:
+            raise RuntimeError(f"Could not inspect nested {config}: {exc}") from exc
+        tool = pyproject.get("tool")
+        if isinstance(tool, dict) and "ruff" in tool:
+            nested_configs.append(config)
+    return nested_configs
+
+
+def ensure_no_nested_ruff_configs(
+    targets: tuple[str, ...] | list[str], project_root: Path
+) -> None:
+    """Reject hierarchical Ruff configs outside the root fingerprint."""
+    nested_configs = find_nested_ruff_configs(targets, project_root)
+    if not nested_configs:
+        return
+    displayed = []
+    for config in nested_configs:
+        try:
+            displayed.append(config.relative_to(project_root.resolve()).as_posix())
+        except ValueError:
+            displayed.append(str(config))
+    raise RuntimeError(
+        "Nested Ruff configuration cannot be checked against the root settings "
+        "fingerprint. Move these settings into the repository-root config:\n"
+        + "\n".join(f"  {config}" for config in displayed)
+    )
 
 
 def list_ruff_files(
@@ -712,6 +778,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         current = parse_findings(run_ruff(targets, project_root), project_root)
         settings_fingerprint = ruff_settings_fingerprint(targets[0], project_root)
+        ensure_no_nested_ruff_configs(targets, project_root)
     except (RuntimeError, ValueError) as exc:
         aprint(f"❌ {exc}")
         return 2
