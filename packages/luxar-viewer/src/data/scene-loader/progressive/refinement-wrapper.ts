@@ -113,7 +113,6 @@ export function admitRefinementCandidate(
  * @param error The thrown value.
  * @param loader The loader, whose pass is unwound on a real failure.
  * @param failures Per-run failure tracker.
- * @param degradedState User-visible description of the retained geometry.
  * @returns Always `false` — the loop's `processLoader` contract for "no
  *   progress made". Returned rather than voided so the call site reads
  *   `return handleRefinementError(...)`.
