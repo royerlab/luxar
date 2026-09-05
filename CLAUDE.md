@@ -1030,9 +1030,9 @@ with asection("Processing"):
 ```
 
 Library-layer narration must stay SILENCEABLE. `luxar.set_verbosity()` /
-`luxar.verbosity()` (in `luxar/utils/verbosity.py`) drive arbol's `enable_output` and
-`max_depth`, so a notebook or napari caller can quiet the tree without a
-per-call flag on every entry point:
+`luxar.verbosity()` (in `luxar/utils/verbosity.py`) drive arbol's
+`enable_output` and `max_depth`, so a notebook or napari caller can quiet the
+tree without a per-call flag on every entry point:
 
 ```python
 import luxar

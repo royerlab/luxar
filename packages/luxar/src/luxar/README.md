@@ -47,7 +47,7 @@ orphans a `luxar serve` process on its port.
   `/proc`, with a `ps` fallback on POSIX systems such as macOS; an empty result
   means the process table is unknown, not that nothing is running
 
-### `verbosity.py`
+### `utils/verbosity.py`
 
 Turns Luxar's own console output down, or off. Everything below the CLI narrates
 through arbol -- 547 `aprint` calls across `gsplats` (314), `io` (146) and
@@ -63,13 +63,13 @@ with luxar.verbosity("summary"):  # scoped, restores on exit
     scene.save()
 ```
 
-Levels: `"silent"` (nothing), `"summary"` (depth 1), `"normal"` (depth 3),
-`"full"` (everything -- the default, i.e. unchanged behaviour), or an int depth.
-`0` is *not* silence: arbol at depth 0 still prints depth-0 lines plus a
-truncation notice per suppressed section, which is why `"silent"` uses
-`Arbol.enable_output` instead. That is measured, not assumed --
-`tests/test_verbosity.py` captures stdout and asserts the documented effect of
-each level.
+Levels: `"silent"` (normal arbol narration is suppressed; warnings still
+surface), `"summary"` (depth 1), `"normal"` (depth 3), `"full"` (everything --
+the default, i.e. unchanged behaviour), or an int depth. `0` is *not* silence:
+arbol at depth 0 still prints depth-0 lines plus a truncation notice per
+suppressed section, which is why `"silent"` uses `Arbol.enable_output` instead.
+That is measured, not assumed -- `tests/test_verbosity.py` captures stdout and
+asserts the documented effect of each level.
 
 **Key Functions:**
 - `set_verbosity(level)`: Set the level process-wide

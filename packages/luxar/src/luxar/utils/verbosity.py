@@ -39,8 +39,8 @@ are **class attributes**. So:
 * It is **not thread-safe**. Two threads entering different ``verbosity()``
   blocks will interleave and the loser's restore will win. The switches and
   arbol's depth counter are shared class state.
-* It affects **all** arbol output in the process, including any from another
-  library that uses arbol. There is no Luxar-only namespace to scope it to.
+* It changes the shared settings for **all** arbol users in the process,
+  including other libraries. There is no Luxar-only namespace to scope it to.
 
 A per-call ``verbosity=`` argument on the public entry points, and routing
 library messages through ``logging`` so a handler could filter by module, are

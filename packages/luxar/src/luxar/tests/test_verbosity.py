@@ -18,6 +18,7 @@ from __future__ import annotations
 import contextlib
 import io
 import math
+import warnings
 
 import pytest
 from arbol import Arbol, aprint, asection
@@ -162,6 +163,11 @@ class TestTheDocumentedEffectsAreReal:
     def test_silent_prints_nothing_at_all(self) -> None:
         set_verbosity("silent")
         assert _emit_a_three_deep_tree() == ""
+
+    def test_silent_does_not_hide_python_warnings(self) -> None:
+        set_verbosity("silent")
+        with pytest.warns(UserWarning, match="still visible"):
+            warnings.warn("still visible", UserWarning, stacklevel=1)
 
     def test_full_prints_the_whole_tree(self) -> None:
         set_verbosity("full")
