@@ -121,7 +121,7 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
             linesVS,
             session,
             ctx.signal,
-            admission?.allowanceBytes ?? undefined
+            admission.allowanceBytes
           );
           if (data) {
             let committed = false;

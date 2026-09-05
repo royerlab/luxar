@@ -71,6 +71,10 @@ export type RefinementAdmissionDecision =
  * already failed `MAX_CONSECUTIVE_REFINEMENT_FAILURES` times this run; or the
  * shared residency ceiling refused it.
  *
+ * The first check also keeps single-level geometry out of the loop. This is
+ * especially important for meshes, where that is the overwhelmingly common
+ * case and whole-node loaders do not expose a ladder.
+ *
  * @param path Node path, used as the key for backoff and admission state.
  * @param loader The loader being offered.
  * @param failures Per-run failure tracker.
@@ -103,6 +107,7 @@ export function admitRefinementCandidate(
  * @param error The thrown value.
  * @param loader The loader, whose pass is unwound on a real failure.
  * @param failures Per-run failure tracker.
+ * @param degradedState User-visible description of the retained geometry.
  * @returns Always `false` — the loop's `processLoader` contract for "no
  *   progress made". Returned rather than voided so the call site reads
  *   `return handleRefinementError(...)`.
@@ -112,15 +117,19 @@ export function handleRefinementError(
   path: string,
   error: unknown,
   loader: RefinableLoader,
-  failures: RefinementFailureTracker
+  failures: RefinementFailureTracker,
+  degradedState = 'showing reduced detail'
 ): false {
   // Superseded, not failed: a newer view-state (or dispose) aborted the
   // in-flight read on purpose. Don't count it toward the failure backoff or log
   // an error — the loop's next-pass pending check hands off.
   if (isAbortError(error)) return false;
-  // Unwind the levels this pass appended before the throw, so the retry
-  // re-attempts the SAME prefix rather than resuming from the advanced cursor
-  // with a larger allocation. See `loaders/progressive/pass-rollback`.
+  // Unwind the levels this pass appended before the throw. `updateView`
+  // advances the ladder cursor as each level arrives, so without this the
+  // retry resumes from the advanced cursor and attempts a larger allocation;
+  // reaching the last rung can then flip `hasMoreLODs` false and strand the
+  // node at its last committed prefix without ever reaching the failure cap.
+  // See `loaders/progressive/pass-rollback`.
   const unwound = tryRollbackToPassStart(loader);
   const message = (error as Error).message;
   if (failures.recordFailure(path)) {
@@ -134,7 +143,7 @@ export function handleRefinementError(
     // console-only error leaves the user staring at a permanently coarse node
     // with no explanation. Same channel as leaf-load failures
     // (load-leaf-error-dispatch).
-    notifier.toast(`Refinement failed for ${path} — showing reduced detail`, 5000);
+    notifier.toast(`Refinement failed for ${path} — ${degradedState}`, 5000);
   } else {
     log.error(
       Modules.SCENE_LOADER,

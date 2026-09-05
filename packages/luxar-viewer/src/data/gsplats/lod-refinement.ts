@@ -45,13 +45,13 @@ import {
   type RefinableLoader,
 } from '../scene-loader/progressive/refinement-wrapper';
 
+/** Geometry name in this wrapper's log lines and toasts. */
+const LABEL = 'GSplats';
+
 /**
  * Bundle of host references the refinement loop needs. Kept narrow so
  * the loop can be tested with a stub.
  */
-/** Geometry name in this wrapper's log lines and toasts. */
-const LABEL = 'GSplats';
-
 export interface GSplatsRefinementCtx {
   rootGroup: THREE.Group | null;
   viewStateQueue: ViewStateQueue;
@@ -153,7 +153,7 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
             gsplatsViewState,
             session,
             ctx.signal,
-            admission?.allowanceBytes ?? undefined
+            admission.allowanceBytes
           );
           if (data) {
             let committed = false;

@@ -118,7 +118,7 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
             pointsVS,
             session,
             ctx.signal,
-            admission?.allowanceBytes ?? undefined
+            admission.allowanceBytes
           );
           let committed = false;
           try {

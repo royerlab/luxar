@@ -123,7 +123,7 @@ export async function runMeshRefinement(ctx: MeshRefinementCtx): Promise<void> {
             meshVS,
             session,
             ctx.signal,
-            admission?.allowanceBytes ?? undefined
+            admission.allowanceBytes
           );
           if (data) {
             const staged = await ctx.processMesh(path, data, meshVS, {
@@ -146,7 +146,14 @@ export async function runMeshRefinement(ctx: MeshRefinementCtx): Promise<void> {
         failures.recordSuccess(path);
         return true;
       } catch (error) {
-        return handleRefinementError(LABEL, path, error, progressiveLoader, failures);
+        return handleRefinementError(
+          LABEL,
+          path,
+          error,
+          progressiveLoader,
+          failures,
+          'showing a partial surface'
+        );
       } finally {
         recordRefinementResidency(path, progressiveLoader, ctx.residencyBudget);
       }
