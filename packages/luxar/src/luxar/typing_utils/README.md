@@ -82,7 +82,7 @@ Constant values used throughout Luxar.
 - **Chunks**: `TARGET_CHUNK_BYTES`, `MIN_CHUNK_BYTES`, `MAX_CHUNK_BYTES` (byte-based single source of truth). Legacy element-count constants (`CHUNK_SIZE_*`, `DEFAULT_CHUNK_SIZE`) have been removed; use the byte-based names directly.
 - **Limits**: `MIN_POINT_RADIUS`, `MAX_POINT_RADIUS`, `DEFAULT_POINT_RADIUS` (the radius a point with no `radii` array is authored, bounded and drawn at; mirrored in the viewer's `packages/luxar-viewer/src/config/constants.ts`); `MAX_SEGMENTS_PER_LINES_NODE`, `MAX_POINTS_PER_POINTS_NODE`, `MAX_SPLATS_PER_GSPLATS_NODE`, and `max_elements_per_node()` mirror the per-geometry layouts in `packages/luxar-viewer/src/rendering/element-texture-layout.ts`
 - **Categorical**: `MIN_CATEGORIES`, `MAX_CATEGORY_LABEL_LENGTH`, `CATEGORICAL_STEP`
-- **Node Types**: `NODE_TYPE_SCENE`, `NODE_TYPE_POINTS`, `NODE_TYPE_LINES`, `NODE_TYPE_GSPLATS`
+- **Node Types**: `NODE_TYPE_SCENE`, `NODE_TYPE_GROUP`, `NODE_TYPE_POINTS`, `NODE_TYPE_LINES`, `NODE_TYPE_GSPLATS`, `NODE_TYPE_MESH`
 
 **Purpose**: Centralize magic numbers and limits
 
