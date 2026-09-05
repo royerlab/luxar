@@ -49,11 +49,6 @@ export interface OpfsWriteQueueStats {
   maxBytes: number;
 }
 
-interface PendingWrite {
-  run: () => Promise<void>;
-  byteLength: number;
-}
-
 /**
  * A per-instance bounded-concurrency FIFO write queue with per-key coalescing.
  * Models the acquire/release/FIFO shape of `utils/fetch-concurrency.ts`, but is
@@ -65,7 +60,7 @@ export class OpfsWriteQueue {
    * Pending tasks keyed by cache key. `Map` insertion order IS the FIFO order;
    * re-enqueuing a key coalesces (the latest task wins and moves to newest).
    */
-  private readonly pending = new Map<string, PendingWrite>();
+  private readonly pending = new Map<string, { run: () => Promise<void>; byteLength: number }>();
   private pendingBytes = 0;
   /** Currently-running task promises (for `drain()`). */
   private readonly inFlightPromises = new Set<Promise<void>>();
