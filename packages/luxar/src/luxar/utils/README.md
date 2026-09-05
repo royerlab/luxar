@@ -1,9 +1,10 @@
 # Utils Package
 
 The `utils` package provides cross-cutting utility functions for Luxar, including
-array manipulation, atomic directory copies, LOD policy, paths, and reusable
-scene generators. Demo-owned downloads, dataset resolution, and runtime helpers
-live under `luxar.demos` and are imported through that package's public barrel.
+array manipulation, atomic directory copies, console verbosity, LOD policy,
+paths, and reusable scene generators. Demo-owned downloads, dataset resolution,
+and runtime helpers live under `luxar.demos` and are imported through that
+package's public barrel.
 
 ## Quick Start
 
@@ -47,9 +48,8 @@ This package contains helper functions that simplify common tasks and provide co
 
 ### `arbol_warnings.py`
 Route Python warning *display* through arbol console output, so warnings land
-as `⚠️ UserWarning: ...` tree lines instead of raw stderr
-`path/to/file.py:299: UserWarning: ...` text that appears out of place
-mid-tree.
+as `⚠️ UserWarning: ...` tree lines whenever arbol can show them, and fall back
+to Python's stock stderr display whenever arbol would hide them.
 
 **Key Functions:**
 - `install_arbol_warnings()`: Process-wide install for application entry points (called by the `luxar` CLI callback)
@@ -147,6 +147,17 @@ Stable fingerprints for Python sources that produce Luxar stores.
 
 Static import closures do not discover string-built imports or non-Python inputs;
 callers must include those separately in their provenance when they affect output.
+
+### `verbosity.py`
+Process-wide control over Luxar's arbol console output.
+
+**Key Functions:**
+- `set_verbosity()`: Select a named verbosity level or explicit nesting depth
+- `get_verbosity()`: Read the current named level or depth
+- `verbosity()`: Context manager that restores the exact previous arbol settings
+
+The settings are process-global and not thread-safe because they update shared
+arbol class state.
 
 ### Process lifecycle
 
