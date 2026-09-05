@@ -18,8 +18,8 @@ Everything that summary prints — kind, dimensionality, per-leaf splat counts,
 child counts, position bounds, the ``fitting/`` record — lives in ``attrs`` or in
 an array's *metadata*. Reading ``array.shape`` does not fetch chunks.
 
-This module also carries the size ESTIMATE that :func:`load_gsplat_node` warns
-with, since the estimate is derived from the same metadata walk.
+The summary includes an estimated decoded size derived from the same metadata
+walk, which ``luxar gsplat info`` reports without allocating the arrays.
 """
 
 from __future__ import annotations
@@ -32,8 +32,8 @@ import numpy as np
 if TYPE_CHECKING:  # pragma: no cover - typing only
     import zarr
 
-#: Arrays whose decoded form defaults to float32 for legacy encodings that do
-#: not stamp the original dtype. Current encodings carry ``original_dtype``.
+#: Arrays whose decoded form defaults to float32 when no decoded dtype is
+#: stamped, including non-colour broadcasts and unencoded arrays.
 _DECODES_TO_FLOAT32 = ("centers", "amplitudes", "colors")
 
 NodeKind = Literal["leaf", "lod", "partition"]
