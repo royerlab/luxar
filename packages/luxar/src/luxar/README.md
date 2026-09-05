@@ -22,7 +22,7 @@ Core Luxar Python package and public API exports.
 | `demos/` | Built-in demo datasets |
 | `validation/` | Input validation and nD transform validation |
 | `typing_utils/` | Type aliases, enums, and configuration dataclasses |
-| `utils/` | Array utilities, download helpers, path management |
+| `utils/` | Array utilities, console verbosity, LOD policy, path management, reusable scene generators |
 | `tests/` | Top-level test suite |
 
 ## Package-Root Modules
@@ -47,45 +47,6 @@ orphans a `luxar serve` process on its port.
   `/proc`, with a `ps` fallback on POSIX systems such as macOS; an empty result
   means the process table is unknown, not that nothing is running
 
-### `utils/verbosity.py`
-
-Turns Luxar's own console output down, or off. Everything below the CLI narrates
-through arbol -- 547 `aprint` calls across `gsplats` (314), `io` (146) and
-`core` (75). That is the right default for a long CLI run and the wrong one in a
-notebook cell or a napari plugin, and until this module there was no way to say
-so.
-
-```python
-import luxar
-
-luxar.set_verbosity("silent")     # process-wide, until changed again
-with luxar.verbosity("summary"):  # scoped, restores on exit
-    scene.save()
-```
-
-Levels: `"silent"` (normal arbol narration is suppressed; Python warnings use
-their standard display), `"summary"` (top-level lines plus one nested level;
-deeper sections are truncated), `"normal"` (depth 3), `"full"` (everything --
-the default, i.e. unchanged behaviour), or an int depth. `0` is *not* silence:
-arbol at depth 0 still prints depth-0 lines plus a truncation notice for each
-section it truncates at the cap, which is why `"silent"` uses
-`Arbol.enable_output` instead. That is measured, not assumed --
-`tests/test_verbosity.py` captures the output
-and asserts the documented effect of each level.
-
-**Key Functions:**
-- `set_verbosity(level)`: Set the level process-wide
-- `get_verbosity()`: Report `"silent"` whenever output is disabled; otherwise
-  report the matching level or the raw depth
-- `verbosity(level)`: Context manager; restores the exact previous switch pair,
-  not the level name it resolves to
-
-These write arbol *class attributes*, so the setting is process-global rather
-than per-call, is not thread-safe, and affects any other arbol user in the
-process. The module docstring states all three constraints; a per-call
-`verbosity=` argument and a `logging` bridge are both possible later, and
-neither is needed to make the output silenceable.
-
 ## Key Exports
 
 See `__init__.py` for the full public API. Primary classes:
@@ -99,6 +60,6 @@ See `__init__.py` for the full public API. Primary classes:
 - `transforms` -- 4x4 matrix utilities (translate, rotate, scale, compose, etc.)
 - `validate_nd_transform`, `compose_nd_transforms`, `apply_nd_transform_to_bounds` -- nD per-dimension transform helpers
 - `GSplatData`, `fit_gaussian_splats` -- Gaussian splatting (optional, requires torch)
-- `set_verbosity`, `get_verbosity`, `verbosity` -- console-output level (see `utils/verbosity.py` above)
+- `set_verbosity`, `get_verbosity`, `verbosity` -- console-output level (see `utils/README.md`)
 
 Run the CLI as a module with `python -m luxar` (`__main__.py` dispatches to `luxar.cli.app`). There are no top-level re-export modules: import from the owning subpackage (`luxar.core.transforms`, `luxar.core.dimensions`, `luxar.typing_utils.config`, `luxar.io.compiler`), or use the names `__init__.py` re-exports.
