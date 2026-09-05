@@ -75,6 +75,7 @@ vi.mock('zarrita', () => ({
   withMaybeConsolidatedMetadata: undefined,
 }));
 
+import { buildInfo, buildInfoLine } from '../../../config/build-info';
 import { bootstrapStandalone } from '../../../core/bootstrap';
 import { getGpuByteBudget } from '../../../rendering/gpu-byte-budget';
 import { ArchiveFaultError } from '../../../cache/chunk-source';
@@ -124,12 +125,14 @@ describe('bootstrapStandalone', () => {
     vi.clearAllMocks();
     mocks.init.mockResolvedValue(undefined);
     delete (window as { __luxarDebug?: unknown }).__luxarDebug;
+    delete window.__luxarBuild;
     localStorage.clear();
     resetUserSettingsForTests();
   });
 
   afterEach(() => {
     delete (window as { __luxarDebug?: unknown }).__luxarDebug;
+    delete window.__luxarBuild;
     localStorage.clear();
   });
 
@@ -212,9 +215,33 @@ describe('bootstrapStandalone', () => {
   });
 
   describe('opt-in flags', () => {
+    it('captures the build identity in the patched console buffer', async () => {
+      const originalLog = console.log;
+      const bufferedMessages: unknown[][] = [];
+      mocks.patch.mockImplementationOnce(() => {
+        console.log = (...args: unknown[]) => bufferedMessages.push(args);
+      });
+
+      try {
+        await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
+      } finally {
+        console.log = originalLog;
+      }
+
+      expect(
+        bufferedMessages.some((args) =>
+          args.some(
+            (value) =>
+              typeof value === 'string' && value.includes(`Luxar viewer ${buildInfoLine()}`)
+          )
+        )
+      ).toBe(true);
+    });
+
     it('patches console, validates config, and warms codecs when defaults apply', async () => {
       await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
 
+      expect(window.__luxarBuild).toEqual(buildInfo());
       expect(mocks.patch).toHaveBeenCalledTimes(1);
       expect(mocks.validateAndLog).toHaveBeenCalledTimes(1);
       expect(mocks.bloscThunk).toHaveBeenCalledTimes(1);
@@ -363,7 +390,11 @@ describe('bootstrapStandalone', () => {
         urlParams: { ...EMPTY_PARAMS, debug: true },
       });
       expect(window.__luxarDebug).toBeDefined();
-      expect(window.__luxarDebug?.version).toBe('1.0.0');
+      // Derived, not a literal: the value is the build stamp, which is
+      // absent under vitest (no Vite `define`) and a real CalVer in a
+      // built bundle. Pinning a literal here is what let a hardcoded
+      // '1.0.0' survive in the shipped viewer for the whole project.
+      expect(window.__luxarDebug?.version).toBe(buildInfo().version);
       expect(window.__luxarDebug?.app).toBeDefined();
       expect(window.__luxarDebug?.consoleInterceptor).toBeDefined();
       // showError is exposed so visual-regression specs can drive the
@@ -518,6 +549,7 @@ describe('bootstrapStandalone', () => {
         bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS })
       ).rejects.toThrow('WebGL unavailable');
 
+      expect(window.__luxarBuild).toEqual(buildInfo());
       expect(mocks.showError).toHaveBeenCalledTimes(1);
       expect(mocks.showError.mock.calls[0][0]).toMatch(/Failed to start the application/i);
       const [, resolveShortcut, shortcutActions] = mocks.showError.mock.calls[0];

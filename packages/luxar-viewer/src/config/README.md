@@ -37,6 +37,7 @@ config/
 ├── types.ts                       # Barrel re-exports of section types + AppConfig interface
 ├── validation.ts                  # Dispatcher; imports per-section validators
 ├── url-params.ts                  # URL ?param=value parsing (self-contained)
+├── build-info.ts                  # Runtime reader for the Vite-injected build identity
 ├── user-settings.ts               # Persisted global prefs (localStorage luxar.settings) —
 │                                  #   Settings-popover model; live values mutate config, startup
 │                                  #   values thread through bootstrap (URL params always win)
@@ -559,6 +560,11 @@ From `./url-params.ts`:
 - `readUrlParams(search?)` — typed snapshot of recognized `?param=value` pairs.
 - `normalizeDataSourceUrl(rawSrc)`, `buildDataSourceBrowserUrl(src, location)`,
   `replaceBrowserDataSourceUrl(src, target?)`.
+
+From `./build-info.ts` (re-exported from the package barrel):
+
+- `buildInfo()`, `buildInfoLine()` — structured and human-readable viewer build identity.
+- `BuildInfo` — runtime build-identity shape.
 
 From `./constants.ts`:
 

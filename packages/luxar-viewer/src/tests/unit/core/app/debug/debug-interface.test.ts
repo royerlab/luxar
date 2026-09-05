@@ -24,6 +24,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
+import { buildInfo } from '../../../../../config/build-info';
 
 // Mock the heavy imports so the helper runs without GPU / zarr.
 vi.mock('../../../../../utils/console-interceptor', () => ({
@@ -194,7 +195,9 @@ describe('installDebugInterface', () => {
       (window as { __luxarDebug?: unknown }).__luxarDebug = {
         app: { id: 'preSeededApp' },
         consoleInterceptor: { patched: true },
-        version: '1.0.0',
+        // An arbitrary sentinel — the point is that whatever bootstrap put
+        // here survives the merge, not what the value is.
+        version: 'seeded-by-bootstrap',
         showError: vi.fn(),
       };
 
@@ -202,7 +205,7 @@ describe('installDebugInterface', () => {
 
       const dbg = window.__luxarDebug!;
       // Bootstrap-seeded fields survive the merge…
-      expect(dbg.version).toBe('1.0.0');
+      expect(dbg.version).toBe('seeded-by-bootstrap');
       expect((dbg.consoleInterceptor as unknown as { patched: boolean }).patched).toBe(true);
       // …but the new app reference takes precedence (helper sets
       // ports.app last, so it overrides the pre-seeded one).
@@ -223,7 +226,9 @@ describe('installDebugInterface', () => {
       // populated even though bootstrap never ran.
       expect(dbg.app).toBeDefined();
       expect(dbg.consoleInterceptor).toBeDefined();
-      expect(dbg.version).toBe('1.0.0');
+      // The fresh base reports the real build stamp (unstamped under vitest),
+      // not a hardcoded constant.
+      expect(dbg.version).toBe(buildInfo().version);
     });
   });
 
