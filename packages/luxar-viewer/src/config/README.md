@@ -89,9 +89,11 @@ camera: {
   // Note: fov, near, far live in renderingControls.defaults as the single source of truth
   fovMin: 10,                 // Zoom limits
   fovMax: 170,                // Must be <180°
-  fovSensitivity: 0.05        // Ctrl+wheel zoom sensitivity
+  fovSensitivity: 0.05        // Ctrl+wheel FOV sensitivity
 }
 // Default FOV (47, 50mm Normal) is in renderingControls.defaults.fov
+// Plain-wheel ZOOM sensitivity is controls.wheelZoomSensitivity (1.0) — a
+// per-machine multiplier the Settings > Input slider edits live.
 ```
 
 ### Shader Configuration

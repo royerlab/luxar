@@ -2,6 +2,8 @@ import type { ControlsConfig } from './types';
 
 /** Control system configuration. */
 export const controlsConfig: ControlsConfig = {
+  // 1.0 = unscaled wheel deltas (the historical feel). Settings > Input.
+  wheelZoomSensitivity: 1.0,
   scaleMultipliers: {
     minDistanceFactor: 0.001,
     maxDistanceFactor: 10000,

@@ -53,7 +53,7 @@ export const COVERAGE_THRESHOLDS = {
   'src/utils/**': { lines: 98, functions: 99, branches: 94 }, //     99.53 /   100 / 95.92
   'src/scene/**': { lines: 93, functions: 85, branches: 89 }, //     95.59 / 87.50 / 91.15
   'src/cache/**': { lines: 93, functions: 93, branches: 82 }, //     94.99 / 95.15 / 84.88
-  'src/controls/**': { lines: 93, functions: 85, branches: 86 }, //  95.01 / 87.68 / 88.01
+  'src/controls/**': { lines: 93, functions: 88, branches: 86 }, //  95.42 / 89.66 / 88.01
 
   // The bulk of the codebase.
   // functions 87 -> 90 after the L0-cache-wiring + spatial-extend-dims

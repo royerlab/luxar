@@ -106,6 +106,24 @@ describe('validateControls', () => {
     expect(invokeValidator(validateControls).valid).toBe(true);
   });
 
+  describe('wheelZoomSensitivity (global wheel-zoom multiplier)', () => {
+    it.each([0, -1, NaN, Infinity])('errors on %s (must be finite and > 0)', (bad) => {
+      const cfg = cloneConfig();
+      cfg.controls.wheelZoomSensitivity = bad;
+      const result = invokeValidator(validateControls, cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringMatching(/controls\.wheelZoomSensitivity.*finite and > 0/)
+      );
+    });
+
+    it('accepts any positive finite value (the UI range is a UX choice, not a validity one)', () => {
+      const cfg = cloneConfig();
+      cfg.controls.wheelZoomSensitivity = 0.01;
+      expect(invokeValidator(validateControls, cfg).valid).toBe(true);
+    });
+  });
+
   // [G5] every ConfigRange × min>=max — pre-audit only fly.movement.speed was tested.
   describe.each(RANGE_REFS)('range $name', ({ name, set }) => {
     it('errors when min >= max (min set greater than max)', () => {
