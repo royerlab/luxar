@@ -65,10 +65,10 @@ has no browser local-file or drag-and-drop opening path for any scene format.
 six connections per host with no multiplexing. A scene chunked for streaming
 therefore pays one round trip per chunk file: measured at 25 Mbps / 30 ms RTT, the
 1.5 M-point example (1,548 chunks, 10.7 MB) loaded in 10.6 s from `luxar serve`
-and in 4.0 s when the same files were served over HTTP/2. `luxar info --stats`
-warns when the mean chunk is under 32 KB; re-chunk with
-`luxar optimise --profile hosting`, or put an HTTP/2 front (a CDN, nginx, Caddy)
-in front of the data server for hosting.
+and in 4.0 s when the same files were served over HTTP/2. The `luxar info`
+chunk-layout report warns when the mean chunk is under 32 KB; re-chunk with the
+`hosting` profile of `luxar optimise`, or put an HTTP/2 front (a CDN, nginx,
+Caddy) in front of the data server for hosting.
 
 `luxar export` also requires a directory store; passing an archive fails with
 `Invalid zarr store: Path is not a directory`. Its exported preview server does
