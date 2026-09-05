@@ -345,16 +345,16 @@ export class DataLoadingMonitor {
    * tick. Passing a provider marks the structure dirty so the tree re-renders
    * with the draw-order chip slot.
    */
+  public setDrawOrderProvider(provider: DrawOrderProvider | null): void {
+    this.providers.setDrawOrderProvider(provider);
+  }
+
   /**
    * Live density-guard state per node (the tree's `drawn 1/K` chip). App-scoped:
    * wired once by the init pipeline and kept across scene switches.
    */
   public setDensityProvider(provider: DensityProvider | null): void {
     this.providers.setDensityProvider(provider);
-  }
-
-  public setDrawOrderProvider(provider: DrawOrderProvider | null): void {
-    this.providers.setDrawOrderProvider(provider);
   }
 
   /**
