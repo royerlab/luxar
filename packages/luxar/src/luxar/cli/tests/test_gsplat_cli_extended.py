@@ -1434,8 +1434,9 @@ class TestInfoTreeDispatch:
         )
 
     def test_matrix_lod_keeps_full_flat_report(
-        self, runner: CliRunner, tmp_path: Path
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        from luxar.encoding import ArrayDecoder
         from luxar.gsplats.lod import RecipeParams, build_recipe
 
         out = tmp_path / "levels.gsplats.zarr"
@@ -1444,6 +1445,15 @@ class TestInfoTreeDispatch:
             "levels",
             RecipeParams(compression_factor=4, levels=2),
         ).save(out)
+
+        calls = []
+        original = ArrayDecoder.decode
+
+        def counted_decode(self, *args, **kwargs):
+            calls.append(self)
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(ArrayDecoder, "decode", counted_decode)
 
         result = runner.invoke(app, ["gsplat", "info", str(out)])
         output = _plain(result.stdout)
@@ -1454,6 +1464,7 @@ class TestInfoTreeDispatch:
         assert "AMPLITUDE ANALYSIS" in output
         assert "METADATA" in output
         assert "SUMMARY" in output
+        assert calls != []
 
     def test_nested_lod_uses_tree_report(
         self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
