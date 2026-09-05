@@ -19,8 +19,10 @@ Two entry points, one mechanism::
 Levels, and exactly what each one does:
 
 ======================  ===================================================
-``"silent"``            No output at all.
-``"summary"``           Top-level lines; nested sections truncated (depth 1).
+``"silent"``            Normal arbol narration is suppressed; warnings still
+                        surface.
+``"summary"``           Top-level lines; nested sections become truncation
+                        notices (depth 1).
 ``"normal"``            Three levels of nesting (depth 3).
 ``"full"``              Everything. **The default** — unchanged behaviour.
 an ``int``              That many levels of nesting. ``0`` is not silent (see
@@ -35,8 +37,8 @@ are **class attributes**. So:
   ``verbosity()`` block around one ``save()`` also quiets anything else running
   concurrently.
 * It is **not thread-safe**. Two threads entering different ``verbosity()``
-  blocks will interleave and the loser's restore will win. arbol keeps its
-  *depth counter* thread-local but not these switches.
+  blocks will interleave and the loser's restore will win. The switches and
+  arbol's depth counter are shared class state.
 * It affects **all** arbol output in the process, including any from another
   library that uses arbol. There is no Luxar-only namespace to scope it to.
 
@@ -144,12 +146,10 @@ def get_verbosity() -> Union[VerbosityLevel, int]:
     current = (Arbol.enable_output, Arbol.max_depth)
     for name, settings in _LEVELS.items():
         if current == settings:
-            # `_LEVELS` is ordered with "silent" first, so a silenced tree
-            # never reports as "full" merely because its depth is unlimited.
             return name  # type: ignore[return-value]
     if not Arbol.enable_output:
         return "silent"
-    return int(Arbol.max_depth) if math.isfinite(Arbol.max_depth) else "full"
+    return int(Arbol.max_depth)
 
 
 @contextmanager

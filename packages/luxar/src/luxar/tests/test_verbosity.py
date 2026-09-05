@@ -1,4 +1,4 @@
-"""Tests for the console-output seam (:mod:`luxar.verbosity`).
+"""Tests for the console-output seam (:mod:`luxar.utils.verbosity`).
 
 Two things are worth testing here and they are different in kind.
 
@@ -23,7 +23,7 @@ import pytest
 from arbol import Arbol, aprint, asection
 
 import luxar
-from luxar.verbosity import get_verbosity, set_verbosity, verbosity
+from luxar.utils.verbosity import get_verbosity, set_verbosity, verbosity
 
 
 @pytest.fixture(autouse=True)
@@ -86,6 +86,11 @@ class TestTheApiContract:
         """
         set_verbosity("silent")
         assert Arbol.max_depth == math.inf
+        assert get_verbosity() == "silent"
+
+    def test_a_hand_muted_finite_depth_is_reported_as_silent(self) -> None:
+        Arbol.enable_output = False
+        Arbol.max_depth = 2
         assert get_verbosity() == "silent"
 
     def test_a_hand_set_depth_is_reported_as_that_depth(self) -> None:
@@ -215,6 +220,13 @@ def test_the_seam_is_reachable_from_the_package_root() -> None:
     for name in ("set_verbosity", "get_verbosity", "verbosity"):
         assert hasattr(luxar, name), f"luxar.{name} is not exported"
         assert name in luxar.__all__, f"luxar.{name} is missing from __all__"
+
+
+def test_the_implementation_module_does_not_shadow_the_root_context_manager() -> None:
+    import luxar.utils.verbosity as verbosity_module
+
+    assert verbosity_module.verbosity is luxar.verbosity
+    assert callable(luxar.verbosity)
 
 
 class TestItSilencesRealLuxarWork:

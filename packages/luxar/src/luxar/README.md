@@ -97,6 +97,6 @@ See `__init__.py` for the full public API. Primary classes:
 - `transforms` -- 4x4 matrix utilities (translate, rotate, scale, compose, etc.)
 - `validate_nd_transform`, `compose_nd_transforms`, `apply_nd_transform_to_bounds` -- nD per-dimension transform helpers
 - `GSplatData`, `fit_gaussian_splats` -- Gaussian splatting (optional, requires torch)
-- `set_verbosity`, `get_verbosity`, `verbosity` -- console-output level (see `verbosity.py` above)
+- `set_verbosity`, `get_verbosity`, `verbosity` -- console-output level (see `utils/verbosity.py` above)
 
 Run the CLI as a module with `python -m luxar` (`__main__.py` dispatches to `luxar.cli.app`). There are no top-level re-export modules: import from the owning subpackage (`luxar.core.transforms`, `luxar.core.dimensions`, `luxar.typing_utils.config`, `luxar.io.compiler`), or use the names `__init__.py` re-exports.

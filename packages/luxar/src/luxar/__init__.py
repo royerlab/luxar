@@ -89,12 +89,12 @@ from .typing_utils.enums import (
     PhysicalUnit,
     RenderingLimits,
 )
+from .utils.verbosity import get_verbosity, set_verbosity, verbosity
 from .validation.nd_transforms import (
     apply_nd_transform_to_bounds,
     compose_nd_transforms,
     validate_nd_transform,
 )
-from .verbosity import get_verbosity, set_verbosity, verbosity
 
 __version__ = "2026.06.05"
 
