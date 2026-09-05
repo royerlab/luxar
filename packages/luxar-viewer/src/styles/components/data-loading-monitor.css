@@ -965,6 +965,9 @@
    empty state is a persistent slot the per-tick updater fills when a hidden
    node becomes visible — hide it so it doesn't leave a stray margin. */
 .luxar-scene-graph__draworder {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
   font-size: var(--luxar-text-xs);
   color: var(--luxar-text-muted);
   margin-left: var(--luxar-spacing-2);
@@ -973,6 +976,23 @@
 }
 
 .luxar-scene-graph__draworder:empty {
+  display: none;
+}
+
+/* Live density-guard chip (lattice icon + `1/K` while a node is thinned). Same
+   persistent-slot convention as the draw-order chip: empty = not thinned. */
+.luxar-scene-graph__density {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: var(--luxar-text-xs);
+  color: var(--luxar-text-muted);
+  margin-left: var(--luxar-spacing-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.luxar-scene-graph__density:empty {
   display: none;
 }
 

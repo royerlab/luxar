@@ -67,6 +67,7 @@ interface PointMaterialTSLNodeTable {
   radiusScale: TSLNode;
   uIsOrtho: TSLNode;
   uSortedIndexSlot: TSLNode;
+  uDensityDrop: TSLNode;
   uNearCull: TSLNode;
   uPixelRatio: TSLNode;
   uResolution: TSLNode;
@@ -144,6 +145,7 @@ export class PointTSLMaterial
       radiusScale: uniform(materialConfig.radiusScale ?? 1.0),
       uIsOrtho: uniform(0),
       uSortedIndexSlot: uniform(0),
+      uDensityDrop: uniform(0),
       uNearCull: uniform(0.1),
       uPixelRatio: uniform(1),
       uResolution: uniform(new THREE.Vector2(1920, defaultResolutionY)),
@@ -170,6 +172,7 @@ export class PointTSLMaterial
       radiusScale: proxyIUniform(this.tslNodes.radiusScale),
       uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
       uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
+      uDensityDrop: proxyIUniform(this.tslNodes.uDensityDrop),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
       uPixelRatio: proxyIUniform(this.tslNodes.uPixelRatio),
       uResolution: proxyIUniform(this.tslNodes.uResolution),

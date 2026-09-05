@@ -186,10 +186,21 @@ import { connectLoaderToMonitor as connectLoaderToMonitorHelper } from './scene-
 import type { LineWorkingSetGate, NodeBuildCtx } from './scene-loader/nodes/build-ctx';
 import { createLineWorkingSetGate } from './scene-loader/nodes/load-children-concurrently';
 import {
+  noteRefinementAborted,
+  noteRefinementComplete,
+  noteRefinementStarted,
+} from '../profiling/load-timeline';
+import { viewStatesEqual } from './loaders/progressive/view-state-equal';
+import {
   RefinementResidencyBudget,
   RefinementResidencyReporter,
   type LadderResidency,
 } from './scene-loader/progressive/residency-budget';
+import {
+  RefinementDensityGate,
+  type DensityGateCaps,
+  type ProjectedDensityProvider,
+} from './scene-loader/progressive/density-gate';
 
 /**
  * Delay before `kickRefinementIfIdle` re-checks a lock-held serialization
@@ -234,6 +245,9 @@ export class SceneLoader {
   private registry = new LoaderRegistry();
   private readonly lineWorkingSetGate: LineWorkingSetGate;
   private readonly refinementResidencyReporter = new RefinementResidencyReporter();
+  // Projected-density rung gate (density-gate.ts); null = no provider wired
+  // (guard disabled, tests, embedders) = bytes-only admission.
+  private refinementDensityGate: RefinementDensityGate | null = null;
 
   // Delegate registry-backed maps used by the loader orchestration methods.
   private get loaders() {
@@ -305,6 +319,7 @@ export class SceneLoader {
    * all" keep reading {@link isUpdateInProgress}.
    */
   private _refining = false;
+  private _lastUpdateWasFrameBudgeted = false;
   private _updateVersion = 0; // For logging/debugging
 
   /**
@@ -655,6 +670,43 @@ export class SceneLoader {
     this._requestRender = callback;
   }
 
+  /**
+   * Wire (or clear) the projected-density provider the refinement rung gate
+   * reads. Same dependency inversion as `setRequestRender`: the tracker lives
+   * in `scene/`, which `data/` cannot import. Forwarded by
+   * `SceneLoaderManager.setRefinementDensityProvider`.
+   */
+  setRefinementDensityProvider(
+    provider: ProjectedDensityProvider | null,
+    caps: DensityGateCaps
+  ): void {
+    const held = this.refinementDensityGate?.deferredCount ?? 0;
+    this.refinementDensityGate = provider ? new RefinementDensityGate(provider, caps) : null;
+    // Clearing a gate that was holding rungs back (the guard turned off at
+    // runtime) must let them load now: nothing else re-kicks the loop, and
+    // `resumeDensityDeferredRefinement` has no gate left to consult.
+    if (!provider && held > 0) this.kickRefinementIfIdle();
+  }
+
+  /**
+   * Per-frame hook from the density walk: if any rung the gate deferred now
+   * fits (the camera moved in), re-kick refinement. Cheap when nothing is
+   * deferred (the common case). Returns how many paths resumed.
+   */
+  resumeDensityDeferredRefinement(): number {
+    const gate = this.refinementDensityGate;
+    if (!gate || gate.deferredCount === 0) return 0;
+    const resumed = gate.takeResumable();
+    if (resumed.length > 0) {
+      log.info(
+        Modules.SCENE_LOADER,
+        `Resuming density-deferred refinement for ${resumed.length} node(s) (first: ${resumed[0]})`
+      );
+      this.kickRefinementIfIdle();
+    }
+    return resumed.length;
+  }
+
   constructor(
     config: LoaderConfig = {},
     id?: string,
@@ -780,7 +832,12 @@ export class SceneLoader {
    * @see {@link MultiLevelCachingStore} for caching implementation
    */
   async loadScene(url: string): Promise<THREE.Group> {
-    return loadSceneHelper(url, this.makeLoadSceneCtx());
+    try {
+      return await loadSceneHelper(url, this.makeLoadSceneCtx());
+    } catch (error) {
+      noteRefinementAborted();
+      throw error;
+    }
   }
 
   /** Build the per-call LoadSceneCtx. Never passes `this` to the helper. */
@@ -1013,6 +1070,7 @@ export class SceneLoader {
       // and leave the loaders capped after playback ends. It flows to the
       // loaders only via the per-type handler ctxs (buildUpdateCtxs).
       const { frameBudgetMs, ...incomingViewState } = viewState;
+      this._lastUpdateWasFrameBudgeted = frameBudgetMs !== undefined;
       // `prefetch` is likewise a transient directive (set only on the
       // SlicePrefetcher's shadow passes); strip it too so it can never persist
       // into `this.viewState` and pin every subsequent foreground store.
@@ -1348,11 +1406,16 @@ export class SceneLoader {
       // before their wrapper calls admit(), so seeding is what keeps their
       // resident bytes in later view-triggered runs instead of ratcheting the
       // ceiling upward. Lazy lod_group levels are not in these sweep maps.
+      // The density gate is re-evaluated from scratch each run: a deferral is
+      // camera-dependent, never sticky across runs.
+      noteRefinementStarted();
+      this.refinementDensityGate?.beginRun();
       const residencyBudget = RefinementResidencyBudget.forSession(
         this.progressiveLadderResidencies(),
         cachePoolOverrideBytes(this.config.cacheBudgetMB),
         deviceClassPoolBytes(),
-        this.refinementResidencyReporter
+        this.refinementResidencyReporter,
+        this.refinementDensityGate
       );
       // Intermediate phases shouldn't release the lock — only the last
       // phase running to completion does.
@@ -1456,9 +1519,19 @@ export class SceneLoader {
         profiler: this.profiler,
         residencyBudget,
       });
+      this.noteRefinementOutcome(cancelled);
     } finally {
       this._refining = false;
     }
+  }
+
+  /**
+   * Stamp the load timeline's `refinementComplete` milestone when the final
+   * geometry phase ran every ladder to completion — not on a cancellation
+   * hand-off (the next update re-kicks refinement) and not on a dead loader.
+   */
+  private noteRefinementOutcome(cancelled: boolean): void {
+    if (!cancelled && !this._disposed) noteRefinementComplete();
   }
 
   /**
@@ -1806,6 +1879,22 @@ export class SceneLoader {
   private initializeSceneDimensions(sceneDims: unknown): void {
     const next = initializeSceneDimensionsHelper(sceneDims);
     if (next) this.viewState = next;
+  }
+
+  /**
+   * Whether `candidate` describes the view this loader has ALREADY committed
+   * (same displayed dims, slice, tolerances and per-dim query signature, by
+   * `viewStatesEqual`). Used by `updateSceneForDimensions` to turn the
+   * post-load `updateAllNDNodes` — fired unconditionally after `loadScene`
+   * has fetched, decoded, projected and committed every node at exactly this
+   * state — into a no-op instead of a second full pass (measured: L0 hits ==
+   * misses on every 3-D scene, and ~1 s of extra main-thread work on a
+   * 29.6 M-splat slide). A real slider change compares unequal and proceeds.
+   */
+  isAtViewState(candidate: ViewState): boolean {
+    if (this._disposed) return false;
+    if (this._lastUpdateWasFrameBudgeted) return false;
+    return viewStatesEqual(candidate, this.viewState);
   }
 
   /**

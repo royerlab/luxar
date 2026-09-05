@@ -34,6 +34,7 @@ import * as zarr from '../../zarr';
 import { log, Modules, LogEmoji } from '../../../utils/log';
 import { notifier } from '../../../utils/cross-layer/notifier';
 import { getWorkerPool, warmUpDataWorkerPool } from '../../../workers/worker-pool';
+import { markLoad, noteRefinementComplete } from '../../../profiling/load-timeline';
 import { ZarrSceneAttrs, SceneDimensionAttrs } from '../../../types/zarr';
 import { SUPPORTED_GSPLATS_FORMAT_VERSIONS } from '../../../types/format-contract';
 import type { LoaderConfig, SceneNode, ViewState } from '../../data-loader-types';
@@ -233,6 +234,7 @@ function synthesizeSceneDimensionsFromNode(
  */
 export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.Group> {
   log.custom(LogEmoji.SCENE, Modules.SCENE_LOADER, `Loading scene from ${url}`);
+  markLoad('loadStart', { url });
   setSceneLineLoad(0);
 
   // Clear any existing loaders from monitor before loading new scene
@@ -306,6 +308,7 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   // v3-first: the generic `open` guesses format 2 on a store object it has not
   // seen, costing two 404s (`.zattrs`, `.zgroup`) before the first data byte.
   const rootZarrGroup = await zarr.openGroupPreferV3(rootLoc);
+  markLoad('metadataReady');
   const sceneAttrs = rootZarrGroup.attrs as ZarrSceneAttrs;
 
   // Watch the dataset's identity from here on: a demo/dev server dying and a
@@ -476,6 +479,7 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   // failed logged success over an empty viewport. Container-wide archive faults
   // rethrow before this point. Totality is graded against the registered path set
   // because a failed lazy LOD level records a failure without registering.
+  markLoad('sceneLoaded');
   reportLoadOutcome(
     ctx.getFailedLoaderPaths(),
     [...ctx.loaders.keys(), ...ctx.linesLoaders.keys(), ...ctx.gsplatLoaders.keys()],
@@ -493,7 +497,12 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   const linesNeed = [...ctx.linesLoaders.values()].some(hasMore);
   const meshNeed = [...ctx.meshLoaders.values()].some(hasMore);
 
-  if (gsplatsNeed || pointsNeed || linesNeed || meshNeed) {
+  const needsRefinement = gsplatsNeed || pointsNeed || linesNeed || meshNeed;
+  // Nothing to stream: the load timeline's "refinement complete" milestone is
+  // reached trivially (perf probes gate `isSettled` on it).
+  if (!needsRefinement) noteRefinementComplete();
+
+  if (needsRefinement) {
     log.info(
       Modules.SCENE_LOADER,
       'Scheduling post-load progressive LOD refinement ' +

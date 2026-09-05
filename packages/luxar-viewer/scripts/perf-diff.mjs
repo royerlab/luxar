@@ -253,6 +253,33 @@ export function buildPerfDiff(base, next) {
   // columns some scenario actually carries are shown (worker-stage
   // breakdown is optional; sort-latency may be null). Lower is better.
   md += metricSection(
+    'Viewer audit (load + frames)',
+    'Rows from viewer-audit-perf-bench.spec.ts: load milestones in ms from loadStart (lower is better), request/byte counts, main-thread long-task ms during the load, forced-continuous-render frame p50 (ms) at DPR 1 / 0.5 / dollied 4x, playback step ms (first commit / settled), OPFS write drops.',
+    sortedKeys,
+    baseByKey,
+    nextByKey,
+    (scn) => scn?.audit,
+    [
+      { label: 'ttfp', key: 'ttfpMs' },
+      { label: 'sceneLoaded', key: 'sceneLoadedMs' },
+      { label: 'initUpdate', key: 'initUpdateDoneMs' },
+      { label: 'refined', key: 'refinementCompleteMs' },
+      { label: 'stateReady', key: 'stateReadyMs' },
+      { label: 'warmLoaded', key: 'warmSceneLoadedMs' },
+      { label: 'requests', key: 'requests' },
+      { label: 'bytes', key: 'bytes' },
+      { label: 'longTask', key: 'longTaskMs' },
+      { label: 'frame@1', key: 'frameP50Ms_dpr1' },
+      { label: 'frame@0.5', key: 'frameP50Ms_dpr05' },
+      { label: 'frame@zoom', key: 'frameP50Ms_zoom4x' },
+      { label: 'playFirst', key: 'playbackFirstMs_warm' },
+      { label: 'playFull', key: 'playbackFullMs_warm' },
+      { label: 'opfsDrop', key: 'opfsDropped' },
+      { label: 'steadyDPR', key: 'steadyDpr' },
+    ]
+  );
+
+  md += metricSection(
     'Depth-sort stages',
     'Per-scenario depth-sort timing (ms, lower is better). Worker-stage medians are optional; sort-latency may be absent.',
     sortedKeys,

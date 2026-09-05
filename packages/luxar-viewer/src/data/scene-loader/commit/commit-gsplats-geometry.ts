@@ -23,6 +23,7 @@ import type { UpdateSession } from '../../../profiling/update-profiler';
 import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import { invalidateRenderObjectFor } from './invalidate-render-object';
 import { stampLadderComplete, stampLoadedViewVersion } from './stamp-view-version';
+import { markFirstCommit } from '../../../profiling/load-timeline';
 import {
   getCommittedData,
   hasCommittedData,
@@ -72,6 +73,7 @@ export function commitGSplatsGeometry(
     // so the registry keeps treating this node as fresh; touch no geometry.
     stampLoadedViewVersion(mesh.userData, loadedViewVersion);
     stampLadderComplete(mesh.userData);
+    markFirstCommit('gsplats');
     return;
   }
 
@@ -289,6 +291,7 @@ export function commitGSplatsGeometry(
       // Ladder-completeness stamp for the never-downgrade display gate
       // (see stamp-view-version.ts) — commit-synchronized with the count above.
       stampLadderComplete(mesh.userData);
+      markFirstCommit('gsplats');
       // Record the committed data reference — a later update returning the
       // SAME reference (memoized progressive concat) can then take the
       // stamp-only no-op path instead of re-projecting + re-uploading.

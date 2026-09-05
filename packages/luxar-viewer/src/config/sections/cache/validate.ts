@@ -69,7 +69,7 @@ export function validateCache(config: AppConfig, errors: string[], _warnings: st
   const writeQueueMax = cache.opfsWriteQueueMax;
   if (!Number.isFinite(writeQueueMax) || writeQueueMax <= 0) {
     errors.push(
-      `Invalid cache.opfsWriteQueueMax: ${writeQueueMax} (must be a finite positive number; 1024 recommended)`
+      `Invalid cache.opfsWriteQueueMax: ${writeQueueMax} (must be a finite positive number; 16384 recommended)`
     );
   }
 

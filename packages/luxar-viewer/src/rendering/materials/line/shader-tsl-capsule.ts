@@ -75,6 +75,7 @@ import {
   tslLineJointCapSuppression,
   type TSLNode,
   sortedIndexNode,
+  densityDroppedNode,
 } from '../_shared/tsl-helpers';
 import {
   applyBlendingStateToMaterial,
@@ -96,6 +97,7 @@ export function capsuleLineWebGPUFactory(
 ): NodeMaterial {
   const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
   const aSortedIndex: TSLNode = sortedIndexNode(nodes.uSortedIndexSlot);
+  const densityDropped: TSLNode = densityDroppedNode(nodes.uDensityDrop, aSortedIndex);
 
   const uLineTex = nodes.uLineTex;
   const uResolution = nodes.uResolution;
@@ -180,9 +182,12 @@ export function capsuleLineWebGPUFactory(
 
     const startDepth: TSLNode = mvStart.z.negate().toVar();
     const endDepth: TSLNode = mvEnd.z.negate().toVar();
-    const culled: TSLNode = isOrtho
-      ? float(0.0).greaterThan(1.0).toVar()
-      : startDepth.lessThan(nearCull).and(endDepth.lessThan(nearCull)).toVar();
+    // Projected-density thinning rides the both-behind cull (GLSL twin does the
+    // same), so a dropped segment takes the zero-varyings path.
+    const bothBehind: TSLNode = isOrtho
+      ? float(0.0).greaterThan(1.0)
+      : startDepth.lessThan(nearCull).and(endDepth.lessThan(nearCull));
+    const culled: TSLNode = bothBehind.or(densityDropped).toVar();
 
     // Near-plane segment clip (perspective only) — stencil AND domain.
     const mvA: TSLNode = mvStart.toVar();

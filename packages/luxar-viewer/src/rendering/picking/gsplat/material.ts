@@ -90,6 +90,7 @@ export class GSplatPickingMaterial
         // holds a whole permutation (runtime uniform: never a define — a
         // flip must not recompile the program).
         uSortedIndexSlot: { value: 0 },
+        uDensityDrop: { value: 0 },
         uNearCull: { value: 0.1 },
         uMaxExtentFactor: { value: 0.33 },
         uCov2DDilation: { value: GSPLAT_COV2D_DILATION_DEFAULT },
@@ -172,6 +173,7 @@ export class GSplatPickingMaterial
     // geometry draws from slot 1 would otherwise read the stale buffer
     // until the coordinator's next per-frame re-assert.
     cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
+    cloned.uniforms.uDensityDrop.value = this.uniforms.uDensityDrop.value;
     return cloned as this;
   }
 

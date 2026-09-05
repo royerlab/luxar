@@ -22,6 +22,7 @@
 import { config } from '../config';
 import { log, Modules } from '../utils/log';
 import { resolveWasmShimUrls } from './index';
+import { markLoad } from '../profiling/load-timeline';
 
 /** Fallback deadline when the configured worker-init timeout is disabled. */
 const DEFAULT_COMPILE_DEADLINE_MS = 10_000;
@@ -139,6 +140,7 @@ async function compileOnce(shimUrlOverride?: string): Promise<WebAssembly.Module
         );
         return null;
       }
+      markLoad('wasmReady');
       return module;
     }
     return null;

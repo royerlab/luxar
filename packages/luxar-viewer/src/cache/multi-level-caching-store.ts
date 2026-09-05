@@ -85,6 +85,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
 
   private static readonly DEFAULT_L1_SIZE = config.cache.l1MaxSizeMB * 1024 * 1024;
   private static readonly DEFAULT_L2_SIZE = config.cache.l2MaxSizeMB * 1024 * 1024;
+  private static readonly MIN_OPFS_WRITE_QUEUE_BYTES = 64 * 1024 * 1024;
   // This instance's own validation queue entry, captured synchronously when
   // validateCache() enters the shared queue. dispose() aborts THIS entry
   // directly — never "whatever is the current head" — so an older store can
@@ -187,6 +188,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
     this.l2WriteQueue = new OpfsWriteQueue({
       concurrency: options?.opfsWriteConcurrency ?? config.cache.opfsWriteConcurrency,
       maxDepth: options?.opfsWriteQueueMax ?? config.cache.opfsWriteQueueMax,
+      maxBytes: Math.max(l1Size, MultiLevelCachingStore.MIN_OPFS_WRITE_QUEUE_BYTES),
     });
   }
 
@@ -648,17 +650,21 @@ export class MultiLevelCachingStore implements AsyncReadable {
           // interleaves between enqueue and the actual write drops the stale write
           // (the enqueue→drain window that the inline await used to make atomic).
           const epoch = this.l2Epoch;
-          this.l2WriteQueue.enqueue(key, async () => {
-            if (this.disposed || this.dataAbort.signal.aborted || this.l2Epoch !== epoch) {
-              return; // superseded by dispose or a cache clear — do not persist
-            }
-            try {
-              await l2Store.set(key, data);
-            } catch (e) {
-              const msg = e instanceof Error ? e.message : String(e);
-              log.warning(Modules.CACHE, `L2 write failed for ${key}: ${msg}`);
-            }
-          });
+          this.l2WriteQueue.enqueue(
+            key,
+            async () => {
+              if (this.disposed || this.dataAbort.signal.aborted || this.l2Epoch !== epoch) {
+                return; // superseded by dispose or a cache clear — do not persist
+              }
+              try {
+                await l2Store.set(key, data);
+              } catch (e) {
+                const msg = e instanceof Error ? e.message : String(e);
+                log.warning(Modules.CACHE, `L2 write failed for ${key}: ${msg}`);
+              }
+            },
+            data.byteLength
+          );
         }
       }
 

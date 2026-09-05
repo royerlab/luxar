@@ -186,6 +186,7 @@ describe('LuxarApp', () => {
       addPerFrameCallback: vi.fn(),
       removePerFrameCallback: vi.fn(),
       setAdaptiveDPRManager: vi.fn(),
+      setDensityGuardControl: vi.fn(),
       setContextLostPredicate: vi.fn(),
       setIdleRestorePredicate: vi.fn(),
       setRenderSkipPredicate: vi.fn(),
@@ -222,6 +223,7 @@ describe('LuxarApp', () => {
     mockRenderingControls = {
       setAnimationController: vi.fn(),
       setAdaptiveDPRManager: vi.fn(),
+      setDensityGuardControl: vi.fn(),
       setSceneId: vi.fn(),
       setZarrViewerConfig: vi.fn(),
       hasStoredSettings: vi.fn().mockReturnValue(false),

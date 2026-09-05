@@ -4,6 +4,7 @@
 
 import type {
   LODProgressState,
+  NodeDensityState,
   NodeDrawOrder,
   SceneGraphNode,
   SceneGraphState,
@@ -160,15 +161,33 @@ function renderLodChip(node: SceneGraphNode, state: LODProgressState | undefined
 }
 
 /**
- * Chip text + tooltip for a node's live draw-order state: the blending
- * bucket, whether it writes depth, and the resolved `renderOrder` (drawn
- * ascending). Returns `null` when no draw-order state is known for the node
+ * A live chip's content: an optional inline SVG glyph (trusted markup from
+ * `MONITOR_ICONS`), the short text beside it, and the full explanation as a
+ * tooltip. The glyph carries what used to be a word (`transparent`, `drawn`)
+ * so a row of chips stays short; the tooltip is where the meaning lives.
+ */
+export interface ChipContent {
+  icon?: string;
+  text: string;
+  title: string;
+}
+
+/** Inner HTML for a chip: glyph markup + escaped text; `''` for no content. */
+export function chipInnerHtml(content: ChipContent | null): string {
+  if (!content) return '';
+  return `${content.icon ?? ''}${escapeHtml(content.text)}`;
+}
+
+/**
+ * Chip content for a node's live draw-order state: a bucket glyph (two
+ * overlapping outlines = `transparent`, a filled square = `opaque`), the
+ * resolved `renderOrder` (drawn ascending) with any authored layer order in
+ * front, and the full explanation — bucket, depthWrite, order — as the
+ * tooltip. Returns `null` when no draw-order state is known for the node
  * (no live mesh — a group, or before the first provider poll). Shared by the
  * initial render and the monitor's incremental patcher so both agree.
  */
-export function drawOrderChipContent(
-  state: NodeDrawOrder | undefined
-): { text: string; title: string } | null {
+export function drawOrderChipContent(state: NodeDrawOrder | undefined): ChipContent | null {
   if (!state) return null;
   const dw = state.depthWrite ? 'depthWrite on' : 'depthWrite off';
   // An authored band is prefixed (`O2 #2 transparent`) because it EXPLAINS the
@@ -196,8 +215,11 @@ export function drawOrderChipContent(
         'themselves look.';
 
   return {
-    text: `${order}#${state.renderOrder} ${state.bucket}`,
+    icon: state.bucket === 'opaque' ? MONITOR_ICONS.bucketOpaque : MONITOR_ICONS.bucketTransparent,
+    text: `${order}#${state.renderOrder}`,
     title:
+      // Bucket first: it is what the glyph stands for.
+      `${bucket} ${dw}. ` +
       (state.layerOrder === undefined
         ? 'Layer order: none authored, so the cross-layer order is INFERRED from the ' +
           'geometry each frame (mean view depth, then bounding-sphere containment). '
@@ -205,8 +227,7 @@ export function drawOrderChipContent(
           'and does not change with the camera. Higher draws nearer the viewer, like a ' +
           'CSS z-index. ') +
       `renderOrder ${state.renderOrder} — compared ascending, so lower is drawn first, ` +
-      'and only ever compared against meshes in the SAME bucket. ' +
-      `${bucket} ${dw}.`,
+      'and only ever compared against meshes in the SAME bucket.',
   };
 }
 
@@ -225,9 +246,46 @@ function renderDrawOrderChip(node: SceneGraphNode, state: NodeDrawOrder | undefi
   // substitutive-LOD level) has no provider state yet — without the empty
   // slot its chip could never appear once the node becomes visible.
   if (!content && !DRAWABLE_NODE_TYPES.has(node.type)) return '';
-  const text = content ? escapeHtml(content.text) : '';
   const title = content ? escapeHtml(content.title) : '';
-  return `<span class="luxar-scene-graph__draworder" data-draworder-path="${escapeHtml(node.path)}" title="${title}">${text}</span>`;
+  return `<span class="luxar-scene-graph__draworder" data-draworder-path="${escapeHtml(node.path)}" title="${title}">${chipInnerHtml(content)}</span>`;
+}
+
+/**
+ * Chip content for a node's live density-guard state: a thinned-lattice glyph
+ * plus `1/K` while the guard thins the node, `null` otherwise (unthinned,
+ * off-screen, no record, guard off). Deliberately silent at keep 1 so the row
+ * only gains a chip when something is actually being left out of the draw.
+ * The LOD chip to its left is unaffected by thinning — every resident element
+ * stays resident — which is exactly the misreading this chip is here to
+ * prevent, and the tooltip says so. Shared by the initial render and the
+ * incremental patcher.
+ */
+export function densityChipContent(state: NodeDensityState | undefined): ChipContent | null {
+  if (!state || !(state.keep < 1) || !state.onScreen) return null;
+  const k = Math.round(1 / state.keep);
+  const epp = state.elementsPerPixel;
+  const eppStr = epp >= 10 ? Math.round(epp).toLocaleString() : epp.toFixed(1);
+  return {
+    icon: MONITOR_ICONS.densityThinned,
+    text: `1/${k}`,
+    title:
+      `Drawn 1/${k} of the resident elements. Density guard: this node projects ` +
+      `${eppStr} resident elements per pixel, so the shader draws a hashed 1/${k} of ` +
+      `them and brightens each ×${k} — the composited brightness is unchanged and ` +
+      'nothing is unloaded (the LOD chip still counts every resident level). ' +
+      'Zooming in restores the full draw step by step; the Density Guard toggle ' +
+      'in the Performance popover turns thinning off.',
+  };
+}
+
+function renderDensityChip(node: SceneGraphNode, state: NodeDensityState | undefined): string {
+  const content = densityChipContent(state);
+  // Persistent (possibly empty) slot for every drawable node, for the same
+  // reason as the draw-order chip: the per-tick patcher only fills existing
+  // elements, and thinning comes and goes with the camera.
+  if (!content && !DRAWABLE_NODE_TYPES.has(node.type)) return '';
+  const title = content ? escapeHtml(content.title) : '';
+  return `<span class="luxar-scene-graph__density" data-density-path="${escapeHtml(node.path)}" title="${title}">${chipInnerHtml(content)}</span>`;
 }
 
 /**
@@ -323,7 +381,8 @@ function renderSceneGraphNode(
   depth: number = 0,
   lodStates?: ReadonlyMap<string, LODProgressState>,
   drawOrderStates?: ReadonlyMap<string, NodeDrawOrder>,
-  levelCtx?: LevelContext
+  levelCtx?: LevelContext,
+  densityStates?: ReadonlyMap<string, NodeDensityState>
 ): string {
   const hasChildren = node.children.length > 0;
   const isExpanded = expandedNodes.has(node.path);
@@ -355,6 +414,7 @@ function renderSceneGraphNode(
   const kindBadge = renderKindBadge(node);
   const lodChip = renderLodChip(node, lodStates?.get(node.path));
   const drawOrderChip = renderDrawOrderChip(node, drawOrderStates?.get(node.path));
+  const densityChip = renderDensityChip(node, densityStates?.get(node.path));
 
   // Expand/collapse toggle
   const toggleIcon = hasChildren ? (isExpanded ? '▼' : '▶') : '•';
@@ -410,6 +470,9 @@ function renderSceneGraphNode(
 
         <!-- Live draw-order chip (blending bucket / depthWrite / renderOrder) -->
         ${drawOrderChip}
+
+        <!-- Live density-guard chip (keep fraction while thinned) -->
+        ${densityChip}
       </div>
 
       <!-- Children (if expanded) -->
@@ -429,7 +492,8 @@ function renderSceneGraphNode(
                         index: i,
                         role: activeLevelRole(lodStates?.get(node.path), i),
                       }
-                    : undefined
+                    : undefined,
+                  densityStates
                 )
               )
               .join('')
@@ -461,7 +525,8 @@ export function renderSceneGraphTree(
   state: SceneGraphState,
   expandedNodes: ReadonlySet<string>,
   lodStates?: ReadonlyMap<string, LODProgressState>,
-  drawOrderStates?: ReadonlyMap<string, NodeDrawOrder>
+  drawOrderStates?: ReadonlyMap<string, NodeDrawOrder>,
+  densityStates?: ReadonlyMap<string, NodeDensityState>
 ): string {
   if (!state.root) {
     return `
@@ -502,7 +567,7 @@ export function renderSceneGraphTree(
       </div>
       ${lodSummary ? `<div class="luxar-scene-graph__lod-summary" data-field="lod-summary" title="${escapeHtml(lodSummaryTooltip)}">${lodSummary}</div>` : ''}
       <div class="luxar-scene-graph__container">
-        ${renderSceneGraphNode(state.root, expandedNodes, 0, lodStates, drawOrderStates)}
+        ${renderSceneGraphNode(state.root, expandedNodes, 0, lodStates, drawOrderStates, undefined, densityStates)}
       </div>
     </div>
   `;

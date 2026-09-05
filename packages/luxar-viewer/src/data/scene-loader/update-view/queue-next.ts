@@ -25,6 +25,7 @@ import type { GSplatsDataLoader } from '../../../types/gsplats';
 import type { LinesDataLoader } from '../../../types/lines';
 import type { MeshDataLoader } from '../../../types/mesh';
 import type { ViewStateQueue } from '../view-state/view-state-queue';
+import { noteRefinementComplete } from '../../../profiling/load-timeline';
 
 export interface QueueNextCtx {
   viewStateQueue: ViewStateQueue;
@@ -136,7 +137,9 @@ export function queueNext(ctx: QueueNextCtx): void {
       }
     });
   } else {
-    // No pending update, no refinement needed - release the lock now
+    // No pending update, no refinement needed - release the lock now. The
+    // load timeline's "refinement complete" milestone is reached trivially.
+    noteRefinementComplete();
     ctx.setUpdateInProgress(false);
   }
 }

@@ -511,6 +511,36 @@ describe('RenderingControls', () => {
       );
     });
 
+    it('applies the stored Density Guard flag on load and reset, unless URL-disabled', () => {
+      const controls = renderingControls as any;
+      const control = {
+        isEnabled: () => true,
+        sessionDisabled: false,
+        setEnabled: vi.fn(),
+        thinning: () => ({ nodes: 0, minKeep: 1 }),
+      };
+      controls.setDensityGuardControl(control);
+      controls.sceneId = 'test-density-guard';
+      controls.settings.densityGuardEnabled = false;
+      controls.saveSettings();
+
+      controls.loadSettings();
+      expect(control.setEnabled).toHaveBeenLastCalledWith(false);
+
+      controls.resetToDefaults();
+      expect(controls.settings.densityGuardEnabled).toBe(true);
+      expect(control.setEnabled).toHaveBeenLastCalledWith(true);
+
+      // `?no-density-guard`: the stored flag is left alone in both directions.
+      control.setEnabled.mockClear();
+      control.sessionDisabled = true;
+      controls.settings.densityGuardEnabled = false;
+      controls.saveSettings();
+      controls.loadSettings();
+      controls.resetToDefaults();
+      expect(control.setEnabled).not.toHaveBeenCalled();
+    });
+
     it('should fully reset every setting and apply them', () => {
       const controls = renderingControls as any;
 

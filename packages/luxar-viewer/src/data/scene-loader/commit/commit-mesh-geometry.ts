@@ -40,6 +40,7 @@ import {
 import { noteDepthSortCommit } from '../../../rendering/depth-sort-coordinator';
 import { computeFaceCentroids } from '../../../rendering/depth-sort-coordinator/triangle-ordering';
 import { stampLadderComplete, stampLoadedViewVersion } from './stamp-view-version';
+import { markFirstCommit } from '../../../profiling/load-timeline';
 import { setCommittedData } from '../../../types/committed-data';
 import { isMeshUserData, type MeshMetadata } from '../../../types/mesh';
 import type { StagedMeshCommit } from '../process/data-processor-mesh';
@@ -224,6 +225,7 @@ export function commitMeshGeometry(
   // exactly wrong for a partial object at full brightness (§9.1). An unladdered mesh
   // has no such getter and stamps `1`, which is true: its commit IS its content.
   stampLadderComplete(object.userData);
+  markFirstCommit('mesh');
 
   if (projected.visibleFaceCount === 0) {
     log.info(

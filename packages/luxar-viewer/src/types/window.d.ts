@@ -208,6 +208,18 @@ declare global {
       >;
       /** Clear the lazy and additive LOD-load timing accumulator (debug-only). */
       resetLodLoadStats?: () => void;
+
+      /**
+       * Performance snapshot for probes: load-timeline marks and derived
+       * durations, last-frame `renderer.info`, adaptive-DPR diagnostics,
+       * worker stats and the wide `isSettled` predicate. Seeded by
+       * bootstrap BEFORE `init()` (timeline only, `runtimeReady: false`)
+       * and enriched by `installDebugInterface`. Concrete shape:
+       * `PerfSnapshot` in `core/app/debug/perf-snapshot.ts`.
+       */
+      getPerf?: () => unknown;
+      /** True as soon as `getPerf` exists (bootstrap), before `runtimeReady`. */
+      perfReady?: boolean;
     };
   }
 }

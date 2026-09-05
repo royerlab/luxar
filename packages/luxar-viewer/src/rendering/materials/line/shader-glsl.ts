@@ -215,8 +215,11 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       float nearCull = max(uNearCull, 1e-20);
       float startDepth = -mvStart.z;
       float endDepth = -mvEnd.z;
+      // Projected-density thinning (density-guard) rides the same cull path
+      // as the both-behind case so the varyings are zeroed identically.
       bool bothBehind =
-        (uIsOrtho == 0) && (startDepth < nearCull) && (endDepth < nearCull);
+        luxarDensityDropped() ||
+        ((uIsOrtho == 0) && (startDepth < nearCull) && (endDepth < nearCull));
       if (bothBehind) {
         gl_Position = vec4(0.0, 0.0, -2.0, 1.0); // off-screen → no fragments
         // Defensive: zero the remaining varyings the fragment-stage

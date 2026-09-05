@@ -632,6 +632,30 @@ export interface DrawOrderProvider {
 }
 
 /**
+ * Live projected-density state of one drawable node, as measured by the
+ * density guard (`scene/projected-density.ts`). Distinct from the LOD chip:
+ * that one says how much of the node is RESIDENT, this one says how much of
+ * the resident data the shader actually DRAWS this frame. Pure observability.
+ */
+export interface NodeDensityState {
+  /** Fraction of the resident elements drawn (1 = all; 1/2, 1/4, … when thinned). */
+  keep: number;
+  /** Resident elements per drawing-buffer pixel of the node's projected footprint (0 off-screen). */
+  elementsPerPixel: number;
+  /** Whether the node's blend mode sums energy — only such nodes are ever thinned. */
+  blendable: boolean;
+  onScreen: boolean;
+}
+
+/**
+ * Per-path density snapshot for the scene-graph tree's lattice-glyph `1/K` density chip.
+ * App-scoped (the guard outlives any one scene); wired by the init pipeline.
+ */
+export interface DensityProvider {
+  getDensityStates(): Map<string, NodeDensityState>;
+}
+
+/**
  * Per-geometry-type counters, one entry per {@link GeometryTypeName}.
  *
  * Keyed by the contract vocabulary rather than written out as

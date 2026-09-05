@@ -66,6 +66,7 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
         // holds a whole permutation (runtime uniform: never a define — a
         // flip must not recompile the program).
         uSortedIndexSlot: { value: 0 },
+        uDensityDrop: { value: 0 },
         // 0.1 matches the visual line material ctor default (pre-first-
         // broadcast only; updateCameraParams overwrites with the scene value).
         uNearCull: { value: 0.1 },
@@ -134,6 +135,7 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
     // geometry draws from slot 1 would otherwise read the stale buffer
     // until the coordinator's next per-frame re-assert.
     cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
+    cloned.uniforms.uDensityDrop.value = this.uniforms.uDensityDrop.value;
     return cloned as this;
   }
 

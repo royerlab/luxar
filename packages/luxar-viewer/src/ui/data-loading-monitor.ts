@@ -23,6 +23,7 @@ import type {
   SceneGraphState,
   LODProgressProvider,
   DrawOrderProvider,
+  DensityProvider,
   MemoryMetrics,
 } from '../types/data-monitor-types';
 
@@ -346,6 +347,14 @@ export class DataLoadingMonitor {
    */
   public setDrawOrderProvider(provider: DrawOrderProvider | null): void {
     this.providers.setDrawOrderProvider(provider);
+  }
+
+  /**
+   * Live density-guard state per node (the tree's lattice-glyph `1/K` density chip). App-scoped:
+   * wired once by the init pipeline and kept across scene switches.
+   */
+  public setDensityProvider(provider: DensityProvider | null): void {
+    this.providers.setDensityProvider(provider);
   }
 
   /**
@@ -1120,7 +1129,8 @@ export class DataLoadingMonitor {
           this.contentContainer!,
           this.sceneGraphModel,
           this.providers.lodStates,
-          this.providers.drawOrderStates
+          this.providers.drawOrderStates,
+          this.providers.densityStates
         );
       }
     );
@@ -1299,7 +1309,8 @@ export class DataLoadingMonitor {
           sceneGraphState,
           this.sceneGraphModel.expandedNodes,
           this.providers.lodStates,
-          this.providers.drawOrderStates
+          this.providers.drawOrderStates,
+          this.providers.densityStates
         )
       );
     } else {

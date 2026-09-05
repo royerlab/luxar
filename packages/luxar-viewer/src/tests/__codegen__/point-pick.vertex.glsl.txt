@@ -54,7 +54,8 @@ layout( std140 ) uniform object {
 	float nodeUniform15;
 	float nodeUniform16;
 	float nodeUniform17;
-	vec2 nodeUniform18;
+	float nodeUniform18;
+	vec2 nodeUniform19;
 };
 
 layout( std140 ) uniform render {
@@ -117,6 +118,8 @@ float nodeVar35;
 float nodeVar36;
 float nodeVar37;
 vec4 nodeVar38;
+uint nodeVar39;
+uint nodeVar40;
 
 // codes
 
@@ -247,14 +250,16 @@ void main() {
 	nodeVarying2 = nodeVar25;
 	nodeVarying3 = nodeVar37;
 	nodeVarying4 = nodeVar33;
+	nodeVar39 = ( ( uint( nodeVar3 ) ^ ( uint( nodeVar3 ) >> 16u ) ) * 2146121005u );
+	nodeVar40 = ( ( nodeVar39 ^ ( nodeVar39 >> 15u ) ) * 2221713035u );
 
-	if ( ( nodeVar37 < 0.01 ) ) {
+	if ( ( ( nodeVar37 < 0.01 ) || ( ( nodeUniform16 > 0.0 ) && ( ( float( ( nodeVar40 ^ ( nodeVar40 >> 16u ) ) ) * 2.3283064365386963e-10 ) < nodeUniform16 ) ) ) ) {
 
 		nodeVar38 = vec4( 0.0, 0.0, -2.0, 1.0 );
 
 	} else {
 
-		nodeVar38 = ( nodeVar30 + vec4( ( ( aQuadCorner * ( vec2( clamp( nodeVar33, ( max( nodeUniform16, 1.0 ) * 1.5 ), nodeUniform17 ) ) / nodeUniform18 ) ) * vec2( nodeVar30.w ) ), 0.0, 0.0 ) );
+		nodeVar38 = ( nodeVar30 + vec4( ( ( aQuadCorner * ( vec2( clamp( nodeVar33, ( max( nodeUniform17, 1.0 ) * 1.5 ), nodeUniform18 ) ) / nodeUniform19 ) ) * vec2( nodeVar30.w ) ), 0.0, 0.0 ) );
 
 	}
 

@@ -59,6 +59,7 @@ interface LineMaterialTSLNodeTable {
   uPixelRatio: TSLNode;
   uIsOrtho: TSLNode;
   uSortedIndexSlot: TSLNode;
+  uDensityDrop: TSLNode;
   uNearCull: TSLNode;
   uMaxLinePixelWidth: TSLNode;
   uPerspectiveLineScale: TSLNode;
@@ -116,6 +117,7 @@ export class LineTSLMaterial
       uPixelRatio: uniform(1),
       uIsOrtho: uniform(0),
       uSortedIndexSlot: uniform(0),
+      uDensityDrop: uniform(0),
       // 0.1 matches the point/gsplat ctor default (pre-first-broadcast only).
       uNearCull: uniform(0.1),
       uMaxLinePixelWidth: uniform(540),
@@ -146,6 +148,7 @@ export class LineTSLMaterial
       uPixelRatio: proxyIUniform(this.tslNodes.uPixelRatio),
       uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
       uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
+      uDensityDrop: proxyIUniform(this.tslNodes.uDensityDrop),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
       uMaxLinePixelWidth: proxyIUniform(this.tslNodes.uMaxLinePixelWidth),
       uPerspectiveLineScale: proxyIUniform(this.tslNodes.uPerspectiveLineScale),

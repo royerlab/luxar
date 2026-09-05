@@ -117,15 +117,17 @@ export interface MultiLevelCacheStats {
   /**
    * Background L2 write-queue backpressure snapshot. L2 (OPFS) writes are
    * deferred off the fetch critical path and drained at a bounded concurrency;
-   * this exposes the queue's live depth / in-flight count and the cumulative
-   * count of writes dropped by the max-depth overflow policy.
+   * this exposes the queue's live depth / retained bytes / in-flight count and
+   * the cumulative count of writes dropped by either overflow policy.
    */
   l2WriteQueue: {
     depth: number;
+    pendingBytes: number;
     inFlight: number;
     dropped: number;
     concurrency: number;
     maxDepth: number;
+    maxBytes: number;
   };
   network: {
     /** Bytes fetched over the network (L3) — excludes cache-served bytes. */

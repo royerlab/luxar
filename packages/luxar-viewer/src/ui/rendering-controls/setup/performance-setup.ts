@@ -25,6 +25,7 @@ import type { AdaptiveDPRManager } from '../../../rendering/adaptive-dpr-manager
 import { getMaxPixelRatio } from '../../../rendering/pixel-ratio-cap';
 import { formatFPSReading } from '../../performance-monitor';
 import { log, Modules } from '../../../utils/log';
+import type { DensityGuardControl } from '../types';
 
 /**
  * `min`/`max`/`step` live on lil-gui's NumberController but not on the
@@ -42,6 +43,12 @@ export interface PerformanceSetupContext {
   gui: GUI;
   settings: RenderingSettings;
   manager: AdaptiveDPRManager;
+  /**
+   * Runtime handle on the projected-density guard. Optional: without it the
+   * folder has no Density Guard toggle or Thinning row (embeds without the
+   * guard wiring, and the older tests).
+   */
+  densityGuard?: DensityGuardControl;
   saveSettings: () => void;
   triggerAnimation: () => void;
 }
@@ -51,6 +58,8 @@ export interface PerformanceSetupResult {
   adaptiveDPREnabled: Controller;
   /** The Allow High DPR toggle controller. */
   allowHighDPR: Controller;
+  /** The Density Guard toggle controller (absent without `densityGuard` in the context). */
+  densityGuardEnabled?: Controller;
   /** Re-applied by `loadSettings` after a stored adaptiveDPREnabled flips. */
   updateVisibility: (adaptiveEnabled: boolean) => void;
   /** Cleanup callback for the periodic FPS/DPR display update interval. */
@@ -79,6 +88,79 @@ function createDisplayRow(label: string, tooltip: string): HTMLElement {
   return row;
 }
 
+/** `1/8` for 0.125; `1` for an unthinned node. */
+export function formatKeepFraction(keep: number): string {
+  return keep >= 1 ? '1' : `1/${Math.round(1 / keep)}`;
+}
+
+/** Text for the Thinning row: what the guard is doing to the frame right now. */
+export function formatThinning(control: DensityGuardControl): string {
+  if (!control.isEnabled()) return 'off';
+  const { nodes, minKeep } = control.thinning();
+  if (nodes === 0) return 'none';
+  return `${nodes} node${nodes === 1 ? '' : 's'} · keep ${formatKeepFraction(minKeep)}`;
+}
+
+interface DensityGuardControls {
+  toggle: Controller;
+  row: HTMLElement;
+  /** Re-read the live thinning state into the row. */
+  refresh(): void;
+}
+
+/**
+ * The Density Guard toggle + Thinning readout. The toggle is bound to the
+ * guard's LIVE state, not the stored flag: under `?no-density-guard` the
+ * stored flag may say on while the guard is off, and the box must not lie.
+ * The stored flag is only written when the session is not URL-disabled.
+ */
+function addDensityGuardControls(
+  folder: Pick<GUI, 'add'>,
+  context: PerformanceSetupContext,
+  control: DensityGuardControl
+): DensityGuardControls {
+  const { settings, saveSettings, triggerAnimation } = context;
+  const state = { enabled: control.isEnabled() };
+  const toggle = folder.add(state, 'enabled').name('Density Guard');
+  toggle.domElement.setAttribute(
+    'title',
+    'Density Guard: Thins over-dense nodes instead of drawing every element\n' +
+      '• Measures elements per pixel for each node every frame\n' +
+      '• Above a few elements per pixel, draws a hashed subset and brightens\n' +
+      '  the rest to match — the composited brightness stays the same\n' +
+      '• Also holds back detail levels the current framing cannot resolve\n' +
+      '  (they load as you zoom in)\n' +
+      '• Only for additive / luminous / volumetric blending; max, normal and\n' +
+      '  opaque nodes are never thinned\n' +
+      '• OFF: every element is drawn (the ?no-density-guard URL flag does the\n' +
+      '  same for one session)'
+  );
+  const row = createDisplayRow(
+    'Thinning',
+    'What the Density Guard is doing right now\n' +
+      '• none: every visible node is under its density cap\n' +
+      '• N nodes · keep 1/K: N nodes are drawn at a 1/K subset (the densest\n' +
+      '  one at 1/K), each brightened ×K to compensate\n' +
+      '• Zooming in restores detail step by step'
+  );
+  const value = row.querySelector('.luxar-gui__controller-widget') as HTMLElement;
+  const refresh = (): void => {
+    value.textContent = formatThinning(control);
+  };
+  toggle.onChange((enabled: boolean) => {
+    control.setEnabled(enabled);
+    if (!control.sessionDisabled) {
+      settings.densityGuardEnabled = enabled;
+      saveSettings();
+    }
+    log.info(Modules.RENDERER, `Density guard ${enabled ? 'enabled' : 'disabled'}`);
+    refresh();
+    triggerAnimation();
+  });
+  refresh();
+  return { toggle, row, refresh };
+}
+
 export function setupPerformanceControls(context: PerformanceSetupContext): PerformanceSetupResult {
   const { gui, settings, manager, saveSettings, triggerAnimation } = context;
 
@@ -91,7 +173,9 @@ export function setupPerformanceControls(context: PerformanceSetupContext): Perf
       '  density instead of CSS resolution.\n' +
       '• Adaptive Resolution: Automatically lowers pixel ratio when FPS drops,\n' +
       '  then gradually restores quality when the GPU catches up.\n' +
-      '• Manual DPR: Set a fixed pixel ratio (lower = faster but blurrier).\n\n' +
+      '• Manual DPR: Set a fixed pixel ratio (lower = faster but blurrier).\n' +
+      '• Density Guard: Thin over-dense nodes (brightness-compensated) instead\n' +
+      '  of drawing every element on top of the same pixels.\n\n' +
       'Useful for large datasets or lower-end GPUs where smooth interaction\n' +
       'matters more than pixel-perfect sharpness.'
   );
@@ -125,6 +209,12 @@ export function setupPerformanceControls(context: PerformanceSetupContext): Perf
       '• Every reduction is probe-verified (reverted if it did not help)\n' +
       '• Minimum DPR: 0.5 (50% of native resolution)'
   );
+
+  // Density Guard sits between the adaptive toggle and the manual slider:
+  // both toggles are "trade quality for speed" switches, the slider is a knob.
+  const density = context.densityGuard
+    ? addDensityGuardControls(performanceFolder, context, context.densityGuard)
+    : null;
 
   const nativeDPR = manager.getNativeDPR();
   // The slider tops out at the CEILING, not the display's DPR: while
@@ -184,6 +274,7 @@ export function setupPerformanceControls(context: PerformanceSetupContext): Perf
     if (childrenContainer) {
       childrenContainer.appendChild(dprRow);
       childrenContainer.appendChild(fpsRow);
+      if (density) childrenContainer.appendChild(density.row);
     }
   }
 
@@ -246,13 +337,15 @@ export function setupPerformanceControls(context: PerformanceSetupContext): Perf
     updateVisibility(enabled);
   });
 
-  // Periodic display refresh — only updates when adaptive is enabled.
+  // Periodic display refresh — the DPR/FPS rows only while adaptive is
+  // enabled (they are hidden otherwise); the Thinning row always.
   const updateInterval = setInterval(() => {
     if (settings.adaptiveDPREnabled) {
       const state = manager.getState();
       dprValue.textContent = state.currentDPR.toFixed(2);
       fpsValue.textContent = formatFPS(state.currentFPS);
     }
+    density?.refresh();
   }, 500);
 
   // Open by default: the Performance rail popover shows these controls directly.
@@ -261,6 +354,7 @@ export function setupPerformanceControls(context: PerformanceSetupContext): Perf
   return {
     adaptiveDPREnabled: adaptiveToggle,
     allowHighDPR: highDPRToggle,
+    densityGuardEnabled: density?.toggle,
     updateVisibility,
     cleanup: () => clearInterval(updateInterval),
   };

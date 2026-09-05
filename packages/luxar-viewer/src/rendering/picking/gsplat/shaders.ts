@@ -97,6 +97,12 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
     void main() {
         // === Splat-texture fetch prologue (visual-shader parity) ===
         // Width is a multiple of 4, so a splat's texels share one row.
+        // Projected-density thinning: a splat the visual pass dropped must not
+        // be pickable either (same hash, same uniform value).
+        if (luxarDensityDropped()) {
+            gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
+            return;
+        }
         int splatBase = int(luxarSortedIndex()) * 4;
         int splatTexW = LUXAR_SPLAT_TEX_W;
         ivec2 texel0 = ivec2(splatBase % splatTexW, splatBase / splatTexW);

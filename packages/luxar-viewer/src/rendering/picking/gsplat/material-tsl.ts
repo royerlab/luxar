@@ -50,6 +50,7 @@ export class GSplatPickingTSLMaterial
     uSurfaceDepth: TSLNode;
     uNodeId: TSLNode;
     uSortedIndexSlot: TSLNode;
+    uDensityDrop: TSLNode;
     uLabelFilterIndex: TSLNode;
   };
 
@@ -90,6 +91,7 @@ export class GSplatPickingTSLMaterial
       // coordinator's `syncSortedIndexSlot`, which finds it through
       // `uniforms` below.
       uSortedIndexSlot: uniform(0),
+      uDensityDrop: uniform(0),
       uLabelFilterIndex: uniform(0),
     };
 
@@ -110,6 +112,7 @@ export class GSplatPickingTSLMaterial
       uSurfaceDepth: proxyIUniform(this.tslNodes.uSurfaceDepth),
       uNodeId: proxyIUniform(this.tslNodes.uNodeId),
       uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
+      uDensityDrop: proxyIUniform(this.tslNodes.uDensityDrop),
       uLabelFilterIndex: proxyIUniform(this.tslNodes.uLabelFilterIndex),
     };
 
@@ -179,6 +182,7 @@ export class GSplatPickingTSLMaterial
     // geometry draws from slot 1 would otherwise read the stale buffer
     // until the coordinator's next per-frame re-assert.
     cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
+    cloned.uniforms.uDensityDrop.value = this.uniforms.uDensityDrop.value;
     return cloned as this;
   }
 

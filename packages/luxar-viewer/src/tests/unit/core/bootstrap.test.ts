@@ -106,6 +106,7 @@ const EMPTY_PARAMS: UrlParams = {
   lodEnergyComp: true,
   blendWarmup: true,
   depthSort: true,
+  densityGuard: true,
   lodFinest: false, // capture-quality force-finest is OFF by default (opt-in via ?lod-finest)
   noPrefetch: false,
   prefetchDebug: false,

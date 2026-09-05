@@ -41,6 +41,7 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     uPerspectiveLineScale: TSLNode;
     uOrthoLineScale: TSLNode;
     uSortedIndexSlot: TSLNode;
+    uDensityDrop: TSLNode;
   };
 
   constructor(config: LinePickingMaterialConfig) {
@@ -68,6 +69,7 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
       // coordinator's `syncSortedIndexSlot`, which finds it through
       // `uniforms` below.
       uSortedIndexSlot: uniform(0),
+      uDensityDrop: uniform(0),
     };
 
     // Join style — a BUILD-time graph variant (see pick.tsl.ts), so it is
@@ -96,6 +98,7 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
       uPerspectiveLineScale: proxyIUniform(this.tslNodes.uPerspectiveLineScale),
       uOrthoLineScale: proxyIUniform(this.tslNodes.uOrthoLineScale),
       uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
+      uDensityDrop: proxyIUniform(this.tslNodes.uDensityDrop),
     };
 
     this.toneMapped = false;
@@ -167,6 +170,7 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     // geometry draws from slot 1 would otherwise read the stale buffer
     // until the coordinator's next per-frame re-assert.
     cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
+    cloned.uniforms.uDensityDrop.value = this.uniforms.uDensityDrop.value;
     if (cloned._currentConfig().isOrtho) {
       cloned._rebuild();
       cloned.needsUpdate = true;

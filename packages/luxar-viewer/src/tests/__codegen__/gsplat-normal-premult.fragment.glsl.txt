@@ -69,6 +69,7 @@ layout( std140 ) uniform object {
 	float nodeUniform29;
 	float nodeUniform31;
 	float nodeUniform32;
+	float nodeUniform33;
 };
 
 

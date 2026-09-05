@@ -173,6 +173,14 @@ export interface UrlParams {
    * E2E/visual runs and reproduces pre-Phase-2 behavior for comparison.
    */
   depthSort: boolean;
+
+  /**
+   * Projected-density guard (per-node keep-fraction thinning + refinement
+   * rung cap on over-drawn nodes; `config.densityGuard`). On by default;
+   * `?no-density-guard` disables it for the session — the A/B lever for
+   * the audit bench and for reproducing an overdraw report.
+   */
+  densityGuard: boolean;
   /** Disable adjacent-chunk prefetching (`?no-prefetch`). */
   noPrefetch: boolean;
   /** Verbose prefetch logging (`?prefetch-debug`). */
@@ -305,6 +313,7 @@ export function readUrlParams(search?: string): UrlParams {
     lodFinest: params.has('lod-finest'),
     blendWarmup: !params.has('no-blend-warmup'),
     depthSort: parseEnabledFlag(params.get('depthSort')),
+    densityGuard: !params.has('no-density-guard'),
     noPrefetch: params.has('no-prefetch'),
     prefetchDebug: params.has('prefetch-debug'),
     cacheStats: params.has('cache-stats'),

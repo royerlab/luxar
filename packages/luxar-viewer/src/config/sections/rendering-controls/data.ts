@@ -89,6 +89,10 @@ export const renderingControlsConfig: RenderingControlsConfig = {
     // the cap (1.06-1.17x, vs 2.6-2.7x on a point cloud), so it is the
     // cheapest place to spend the pixels.
     allowHighDPR: false,
+    // Projected-density guard (persisted per-scene via localStorage). The
+    // construction-time master switch is config.densityGuard.enabled; this
+    // is the user's runtime choice, applied after init like adaptiveDPREnabled.
+    densityGuardEnabled: true,
     // Cinematic mode (disabled by default)
     cinematicMode: false,
   },

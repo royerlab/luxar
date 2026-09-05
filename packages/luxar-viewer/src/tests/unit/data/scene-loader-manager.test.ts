@@ -13,6 +13,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { SceneLoaderManager, dispose } from '../../../data';
 import { DataMonitorManager } from '../../../ui/data-monitor-manager';
+import { RefinementDensityGate } from '../../../data/scene-loader/progressive/density-gate';
 
 describe('SceneLoaderManager', () => {
   beforeEach(() => {
@@ -138,6 +139,29 @@ describe('SceneLoaderManager', () => {
     const loader = manager.createLoader('ktx2');
 
     expect((loader as unknown as { decodeKTX2: unknown }).decodeKTX2).toBe(decodeKTX2);
+  });
+
+  it('forwards refinement density changes to existing and future SceneLoaders', () => {
+    const manager = SceneLoaderManager.getInstance();
+    const caps = { blendable: 4, nonBlendable: 1 };
+    const gateOf = (loader: unknown) =>
+      (loader as { refinementDensityGate: unknown }).refinementDensityGate;
+
+    // No provider wired (guard off, embedders): bytes-only admission, no gate.
+    const first = manager.createLoader('density-first');
+    const second = manager.createLoader('density-second');
+    expect(gateOf(first)).toBeNull();
+    expect(gateOf(second)).toBeNull();
+
+    manager.setRefinementDensityProvider(() => undefined, caps);
+    expect(gateOf(first)).toBeInstanceOf(RefinementDensityGate);
+    expect(gateOf(second)).toBeInstanceOf(RefinementDensityGate);
+    expect(gateOf(manager.createLoader('density-future'))).toBeInstanceOf(RefinementDensityGate);
+
+    manager.setRefinementDensityProvider(null, caps);
+    expect(gateOf(first)).toBeNull();
+    expect(gateOf(second)).toBeNull();
+    expect(gateOf(manager.createLoader('density-after-off'))).toBeNull();
   });
 
   it('should handle getAllLoaders correctly', () => {

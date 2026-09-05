@@ -15,6 +15,30 @@ The Profiling package provides performance profiling for data loading and render
 - **Metadata Tracking**: Points, segments, splats, geometry-neutral elements, skip flags, plus optional chunk / cache / info fields on `TimingMetadata`
 - **UI Integration**: `DataLoadingMonitor` displays the timing panel
 
+## Load timeline (`load-timeline.ts`)
+
+Wall-clock milestones of one scene load, recorded once per load as
+`performance.mark('luxar:<name>')` entries (visible in the DevTools Performance
+panel) and mirrored into an allocation-free in-memory snapshot read by
+`__luxarDebug.getPerf()`:
+
+| Mark                 | Recorded at                                                |
+| -------------------- | ---------------------------------------------------------- |
+| `loadStart`          | `loadScene` entry (resets the timeline)                    |
+| `metadataReady`      | root group opened (consolidated metadata parsed)           |
+| `poolReady`          | data-worker pool initialized                               |
+| `wasmReady`          | shared WASM module compiled                                |
+| `firstCommit:<kind>` | first geometry commit per kind (points/lines/gsplats/mesh) |
+| `sceneLoaded`        | every eager node committed (`Scene loaded successfully`)   |
+| `initUpdateDone`     | first `updateAllNDNodes` after load resolved               |
+| `refinementComplete` | final refinement phase ran every ladder to completion      |
+
+`getLoadTimeline().measures` derives `ttfpMs` (earliest first commit),
+`sceneLoadedMs`, `initUpdateDoneMs`, `refinementCompleteMs`, … relative to
+`loadStart`; `refinement` counts passes and rungs. Everything is best-effort:
+a runtime without `performance.mark` still gets the snapshot, and nothing
+throws into the load path.
+
 ## Quick Start
 
 ```typescript

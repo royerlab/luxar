@@ -10,13 +10,13 @@ then calls into these updaters each polling tick.
 
 ## Files
 
-| File                    | Role                                                                                                                    |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `cache.ts`              | `updateCacheTab(container, cacheMetrics)` — patches L0/L1/L2 stats, status pills, totals, error row                     |
-| `memory.ts`             | `updateMemoryTab(container, metrics)` — patches GPU-pool, accumulator, and total-memory rows                            |
-| `overview.ts`           | `updateOverviewTab(container, stats, cacheMetrics, badges)` — patches headline metrics then scene-graph badges          |
-| `dom-helpers.ts`        | `patchField` + `updateColorClass` — shared selector-based patch primitives                                              |
-| `scene-graph-badges.ts` | Patches scene-graph counts, LOD/draw-order chips, active-level rows, and the header summary from live monitor snapshots |
+| File                    | Role                                                                                                                                                               |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `cache.ts`              | `updateCacheTab(container, cacheMetrics)` — patches L0/L1/L2 stats, status pills, totals, error row                                                                |
+| `memory.ts`             | `updateMemoryTab(container, metrics)` — patches GPU-pool, accumulator, and total-memory rows                                                                       |
+| `overview.ts`           | `updateOverviewTab(container, stats, cacheMetrics, badges)` — patches headline metrics then scene-graph badges                                                     |
+| `dom-helpers.ts`        | `patchField` + `updateColorClass` — shared selector-based patch primitives                                                                                         |
+| `scene-graph-badges.ts` | Patches scene-graph counts, LOD/draw-order/density chips (glyph + text via `chipInnerHtml`), active-level rows, and the header summary from live monitor snapshots |
 
 ## The `data-field` selector pattern
 

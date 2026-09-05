@@ -48,6 +48,7 @@ function makeAnimationStub() {
     setPacingSuspendPredicate: vi.fn(),
     addPerFrameCallback: vi.fn(),
     setAdaptiveDPRManager: vi.fn(),
+    setDensityGuardControl: vi.fn(),
     startAnimation: vi.fn(),
   };
 }
@@ -55,12 +56,14 @@ function makeRenderingControlsStub() {
   return {
     setAnimationController: vi.fn(),
     setAdaptiveDPRManager: vi.fn(),
+    setDensityGuardControl: vi.fn(),
   };
 }
 function makeRecordingPanelStub() {
   return {
     setPanelStateCallbacks: vi.fn(),
     setAdaptiveDPRManager: vi.fn(),
+    setDensityGuardControl: vi.fn(),
     // The offline loop's LOD-quiescence predicate (#1695) is injected here
     // too, since reaching `getSceneLoader` from the panel itself would pull
     // the whole data/cache stack into its module graph.
@@ -170,6 +173,8 @@ vi.mock('../../../../../data/scene-loader-manager', () => ({
       setLODGroupRegistryFactory: vi.fn(),
       setRequestRender: vi.fn(),
       setKTX2TextureDecoder: vi.fn(),
+      setRefinementDensityProvider: vi.fn(),
+      isAnyLoadPassInProgress: vi.fn().mockReturnValue(false),
     }),
   },
   getSceneLoader: vi.fn().mockReturnValue(null),

@@ -51,7 +51,10 @@ export const COVERAGE_THRESHOLDS = {
   'src/wasm/**': { lines: 96, functions: 98, branches: 95 }, //      98.61 /   100 / 96.88
   'src/config/**': { lines: 94, functions: 98, branches: 91 }, //    96.30 /   100 / 93.47
   'src/utils/**': { lines: 98, functions: 99, branches: 94 }, //     99.53 /   100 / 95.92
-  'src/scene/**': { lines: 93, functions: 85, branches: 89 }, //     95.59 / 87.50 / 91.15
+  // functions 85 -> 86 after the projected-density tracker / density guard
+  // tests (2026-09): the subtree went 87.50 -> 88.06 and check-coverage-slack
+  // flagged the old floor as stale — the ratchet working.
+  'src/scene/**': { lines: 93, functions: 86, branches: 89 }, //     95.77 / 88.06 / 91.15
   'src/cache/**': { lines: 93, functions: 93, branches: 82 }, //     94.99 / 95.15 / 84.88
   'src/controls/**': { lines: 93, functions: 88, branches: 86 }, //  95.42 / 89.66 / 88.01
 

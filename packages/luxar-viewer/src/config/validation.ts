@@ -19,6 +19,7 @@ import {
 import { validateDataLoading } from './sections/data-loading/validate';
 import { validateCache } from './sections/cache/validate';
 import { validateAdaptiveDPR } from './sections/adaptive-dpr/validate';
+import { validateDensityGuard } from './sections/density-guard/validate';
 import { validateDepthSort } from './sections/depth-sort/validate';
 
 /**
@@ -66,6 +67,7 @@ export function validateConfig(config: AppConfig): ValidationResult {
 
   // Validate adaptive DPR control-loop configuration
   validateAdaptiveDPR(config, errors, warnings);
+  validateDensityGuard(config, errors);
 
   // Validate depth-sort scheduling configuration
   validateDepthSort(config, errors, warnings);

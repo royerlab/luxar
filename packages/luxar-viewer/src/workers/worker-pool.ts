@@ -37,6 +37,7 @@ import {
 import { selectLeastBusy, type TrackedWorkerHandle } from './worker-pool/selection/least-busy';
 import { nextRoundRobin } from './worker-pool/selection/round-robin';
 import { computeStats, computeQueueDepth, type PoolStats } from './worker-pool/stats';
+import { markLoad } from '../profiling/load-timeline';
 
 export type { WorkerInstance };
 export {
@@ -295,6 +296,7 @@ export class WorkerPool {
 
         this.nextWorkerIndex = 0;
         log.info(Modules.WORKER_POOL, `Worker pool ready with ${this.workers.length} worker(s)`);
+        markLoad('poolReady', { workers: this.workers.length });
 
         // One-time backend summary (replaces the per-worker WASM/TS lines).
         // Workers each load WASM independently but share one build, so the
