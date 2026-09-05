@@ -1,42 +1,32 @@
-"""Protocols and generic type variables for type checking.
+"""Protocols for structural (duck) typing.
 
-This module contains:
-- Protocol definitions for type checking
-- Generic type variables
+Both protocols here have a real consumer, and that is the bar for living in this
+module — an unused ``Protocol`` type-checks nothing, so it cannot rot loudly:
 
-Validation functions, dataclasses, and type guards have moved to
-``luxar.validation.types``.
+- :class:`CompressorProtocol` is one arm of ``luxar.encoding.compression``'s
+  ``CompressorLike`` union, which annotates every compressor parameter in the
+  writing path.
+- :class:`NodeProtocol` is the element type of ``Node.walk()``'s yielded pairs
+  (``core.node.node`` casts to it), and so the type external code annotates
+  against when it walks a scene graph.
 
-For simple type aliases, see aliases.py.
-For enums and literal types, see enums.py.
-For constants, see constants.py.
+Six further names were removed in the Phase 4 cleanup because nothing anywhere
+in the repo referenced them: ``SceneProtocol``, ``PointsProtocol`` and the
+``NodeT`` / ``NumericT`` / ``ArrayT`` / ``ZarrDataT`` type variables. The two
+protocols in particular described a ``Scene``/``Points`` API that had drifted
+from the real one (no ``add_lines``, ``add_gsplats`` or ``add_mesh``), which is
+the specific hazard of an interface no implementation is checked against.
+
+Validation functions, dataclasses, and type guards live in
+``luxar.validation.types``. For simple type aliases see ``aliases.py``, for
+enums and literal types ``enums.py``, for constants ``constants.py``.
 """
 
 from __future__ import annotations
 
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    List,
-    Optional,
-    Protocol,
-    TypeVar,
-)
+from typing import Any, List, Optional, Protocol
 
-import numpy as np
-from numpy.typing import NDArray
-
-# Import type aliases from aliases module
-from .aliases import (
-    ColorArray,
-    GroupAttrs,
-    PathLike,
-    PositionArray,
-    SceneHierarchy,
-)
-
-if TYPE_CHECKING:
-    from ..encoding.compression import CompressorLike
+from .aliases import GroupAttrs, SceneHierarchy
 
 # =============================================================================
 # Protocol Definitions
@@ -74,69 +64,3 @@ class NodeProtocol(Protocol):
     def walk(self, depth: int = 0) -> SceneHierarchy:
         """Walk the node hierarchy depth-first."""
         ...
-
-
-class PointsProtocol(Protocol):
-    """Protocol for points data containers."""
-
-    def __init__(
-        self,
-        name: str,
-        positions: PositionArray,
-        colors: Optional[ColorArray] = None,
-        parent: Optional[NodeProtocol] = None,
-        *,
-        chunk_size: int = 32_768,
-        compressor: "CompressorLike" = None,
-        **attrs: Any,
-    ) -> None:
-        """Initialize points object."""
-        ...
-
-
-class SceneProtocol(Protocol):
-    """Protocol for scene containers."""
-
-    def add_group(self, name: str, **attrs: Any) -> NodeProtocol:
-        """Add a group to the scene."""
-        ...
-
-    def add_points(
-        self,
-        name: str,
-        positions: PositionArray,
-        colors: Optional[ColorArray] = None,
-        parent: Optional[NodeProtocol] = None,
-        **attrs: Any,
-    ) -> PointsProtocol:
-        """Add points to the scene."""
-        ...
-
-    def finalize(self) -> None:
-        """Finalize the scene."""
-        ...
-
-    def get_store_path(self) -> PathLike:
-        """Get the scene store path."""
-        ...
-
-
-# =============================================================================
-# Generic Type Variables and Constraints
-# =============================================================================
-
-# Generic node type
-NodeT = TypeVar("NodeT", bound=NodeProtocol)
-
-# Generic numeric array type
-NumericT = TypeVar("NumericT", bound=np.generic)
-ArrayT = TypeVar("ArrayT", bound=NDArray[Any])
-
-# Zarr-compatible data types
-ZarrDataT = TypeVar("ZarrDataT", np.float32, np.uint8, np.int32, np.int64, np.float64)
-
-# =============================================================================
-# Validation Functions - Moved to validation.types module
-# =============================================================================
-# Note: Validation functions are now in luxar.validation.types
-# Import from there directly instead of from protocols

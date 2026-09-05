@@ -26,13 +26,20 @@ See [Usage Examples](#usage-examples) for protocols, enums, and constants.
 ## Modules
 
 ### `protocols.py`
-Protocol definitions for type checking.
+Protocols for structural (duck) typing.
 
 **Key Components:**
-- **Protocols**: `CompressorProtocol`, `NodeProtocol`, `PointsProtocol`, `SceneProtocol`
-- **Generic Type Variables**: `NodeT`, `NumericT`, `ArrayT`, `ZarrDataT`
+- `CompressorProtocol` — one arm of `luxar.encoding.compression`'s `CompressorLike`
+  union, which annotates every compressor parameter in the writing path
+- `NodeProtocol` — the element type of `Node.walk()`'s yielded pairs, and so what
+  external code annotates against when it walks a scene graph
 
-**Purpose**: Define contracts for duck typing
+**Purpose**: Define contracts for duck typing. Both entries above have a real
+consumer, which is the bar for living here — an unused `Protocol` type-checks
+nothing, so it cannot rot loudly. `SceneProtocol`, `PointsProtocol` and the
+`NodeT` / `NumericT` / `ArrayT` / `ZarrDataT` type variables were removed for
+that reason: nothing referenced them, and the two protocols described a
+`Scene`/`Points` API that had already drifted from the real one.
 
 **Note**: Validation functions and type guards (e.g., `validate_positions()`, `is_position_array()`) are defined in `validation/types.py` and re-exported from the `typing_utils` package `__init__.py` for convenience
 
@@ -73,29 +80,24 @@ Constant values used throughout Luxar.
 - **Version**: `LUXAR_VERSION_CURRENT`, `DEFAULT_ZARR_VERSION`
 - **Rendering**: `OPACITY_MIN/MAX`, `ABSORPTION_MIN`/`DEFAULT_ABSORPTION`, `GAMMA_MIN/MAX`, `DEFAULT_BLENDING_MODE`, `SHARPNESS_MIN/MAX`
 - **Chunks**: `TARGET_CHUNK_BYTES`, `MIN_CHUNK_BYTES`, `MAX_CHUNK_BYTES` (byte-based single source of truth). Legacy element-count constants (`CHUNK_SIZE_*`, `DEFAULT_CHUNK_SIZE`) have been removed; use the byte-based names directly.
-- **Memory**: `KB_TO_BYTES`, `MB_TO_BYTES`, `GB_TO_BYTES`
-- **Limits**: `MAX_POINTS_RECOMMENDED`, `MAX_POINTS_WARNING`, `MIN_POINT_RADIUS`, `MAX_POINT_RADIUS`, `DEFAULT_POINT_RADIUS` (the radius a point with no `radii` array is authored, bounded and drawn at; mirrored in the viewer's `packages/luxar-viewer/src/config/constants.ts`); `MAX_SEGMENTS_PER_LINES_NODE`, `MAX_POINTS_PER_POINTS_NODE`, `MAX_SPLATS_PER_GSPLATS_NODE`, and `max_elements_per_node()` mirror the per-geometry layouts in `packages/luxar-viewer/src/rendering/element-texture-layout.ts`
+- **Limits**: `MIN_POINT_RADIUS`, `MAX_POINT_RADIUS`, `DEFAULT_POINT_RADIUS` (the radius a point with no `radii` array is authored, bounded and drawn at; mirrored in the viewer's `packages/luxar-viewer/src/config/constants.ts`); `MAX_SEGMENTS_PER_LINES_NODE`, `MAX_POINTS_PER_POINTS_NODE`, `MAX_SPLATS_PER_GSPLATS_NODE`, and `max_elements_per_node()` mirror the per-geometry layouts in `packages/luxar-viewer/src/rendering/element-texture-layout.ts`
 - **Categorical**: `MIN_CATEGORIES`, `MAX_CATEGORY_LABEL_LENGTH`, `CATEGORICAL_STEP`
-- **Node Types**: `NODE_TYPE_SCENE`, `NODE_TYPE_POINTS`, `NODE_TYPE_LINES`, `NODE_TYPE_GSPLATS`
+- **Node Types**: `NODE_TYPE_SCENE`, `NODE_TYPE_GROUP`, `NODE_TYPE_POINTS`, `NODE_TYPE_LINES`, `NODE_TYPE_GSPLATS`, `NODE_TYPE_MESH`
 
 **Purpose**: Centralize magic numbers and limits
 
-### `config.py`
-Configuration settings, defaults, and validation functions.
-
-**Key Constants:**
-- `DEFAULT_CHUNK_BYTES` - Byte-based chunk target. Bounds (`MIN_CHUNK_BYTES`, `MAX_CHUNK_BYTES`) live in `constants.py`.
-- `DEFAULT_VERSION`, `SUPPORTED_VERSIONS` - Luxar version management
-- `SUPPORTED_COMPRESSION`, `SUPPORTED_UNITS` - Supported values
-- `MAX_RECOMMENDED_POINTS`, `LARGE_DATASET_WARNING` - Performance thresholds
-
-**Key Functions:**
-- `validate_chunk_bytes()` - Validate a chunk size **in bytes** against `MIN_CHUNK_BYTES`/`MAX_CHUNK_BYTES`
-- `validate_compression_level()` - Validate compression level (1-9)
-- `estimate_memory_usage()` - Estimate memory for a points dataset
-- `check_dataset_size_warning()` - Check if dataset size warrants a warning
-
-**Purpose**: Centralize configuration management and validation
+### `config.py` (removed)
+There was a `config.py` here, described as "centralized configuration". Of its
+~30 public names, three had a production reader: `DEFAULT_VERSION` and
+`SUPPORTED_VERSIONS` were aliases of constants that already existed
+(`constants.LUXAR_VERSION_CURRENT`, `_format_contract.SUPPORTED_SCENE_VERSIONS`)
+and their two callers now import those directly; `check_dataset_size_warning()`
+carried real logic and moved next to its single caller in `utils/scenes.py`,
+where it is now the private `_dataset_size_warning()`.
+`SUPPORTED_UNITS` was a fourth hand-copy of the `PhysicalUnit` vocabulary —
+`validation.types` derives that list from the enum now. Chunk-byte targets and
+bounds live in `constants.py`; compression policy lives in
+`luxar.encoding.compression`.
 
 ### `json_safe.py`
 JSON-attr coercion for values headed into zarr `attrs`.
@@ -140,11 +142,11 @@ any one of its three callers.
    - All numeric limits in one place
    - Clear documentation of purposes
    - Easy to adjust limits
-
-5. **config.py**: Application settings
-   - User-configurable options
-   - Environment-specific settings
-   - Default behaviors
+   - A constant lands with the code that reads it. `constants.py` is not a
+     parking lot: several entries here (byte-unit multipliers, a
+     `COMPRESSION_LEVEL_*` trio disagreeing with the real codec policy, two
+     point-count limits duplicating a pair in the deleted `config.py`) had no
+     reader at all and were removed.
 
 ## Usage Examples
 
@@ -193,13 +195,13 @@ if unit in (PhysicalUnit.NANOMETER, PhysicalUnit.MICROMETER, PhysicalUnit.MILLIM
 ### Using Constants
 ```python
 from luxar.typing_utils import (
-    MAX_POINTS_WARNING,
+    MAX_CHUNK_BYTES,
     TARGET_CHUNK_BYTES,
     OPACITY_MIN, OPACITY_MAX
 )
 
-if n_points > MAX_POINTS_WARNING:
-    warnings.warn(f"Large dataset: {n_points} points")
+if chunk_bytes > MAX_CHUNK_BYTES:
+    warnings.warn(f"Chunk above the streaming ceiling: {chunk_bytes} bytes")
 
 opacity = np.clip(value, OPACITY_MIN, OPACITY_MAX)
 ```

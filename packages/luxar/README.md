@@ -246,7 +246,7 @@ class LuxarZarrCompiler:
         self,
         store_path: Optional[PathLike] = None,
         compressor: Optional[Compressor] = DEFAULT_COMP,
-        version: str = DEFAULT_VERSION,
+        version: str = LUXAR_VERSION_CURRENT,
         enable_spatial_index: bool = True,
         encoding_mode: EncodingMode = EncodingMode.AUTO,
         ordering_method: Literal["morton", "hilbert"] = "hilbert",

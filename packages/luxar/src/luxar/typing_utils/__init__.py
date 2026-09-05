@@ -2,10 +2,9 @@
 
 This package is organized as follows:
 - aliases.py: Simple type aliases for readability
-- protocols.py: Protocols, dataclasses, validation functions, and type guards
+- protocols.py: Protocols for structural typing
 - enums.py: Enumeration types
 - constants.py: Constant values
-- config.py: Configuration classes
 """
 
 # Re-export everything for backward compatibility
@@ -91,15 +90,7 @@ from .constants import (
 from .enums import BlendingMode, Defaults, NodeType, PhysicalUnit, RenderingLimits
 
 # Encoding system now in luxar.encoding package
-from .protocols import (
-    CompressorProtocol,
-    NodeProtocol,
-    NodeT,
-    NumericT,
-    PointsProtocol,
-    SceneProtocol,
-    ZarrDataT,
-)
+from .protocols import CompressorProtocol, NodeProtocol
 
 __all__ = [
     # From aliases
@@ -139,11 +130,6 @@ __all__ = [
     # From protocols
     "CompressorProtocol",
     "NodeProtocol",
-    "NodeT",
-    "NumericT",
-    "PointsProtocol",
-    "SceneProtocol",
-    "ZarrDataT",
     "is_color_array",
     "is_position_array",
     "is_transform_matrix",

@@ -40,7 +40,7 @@ from typing import Any, NoReturn, TypeAlias, cast
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 CONTRACT_NAME = "Subpackage layering"
-MAX_DEBT = 35
+MAX_DEBT = 33
 
 ModuleEdge: TypeAlias = tuple[str, str]
 LayerPair: TypeAlias = tuple[str, str]

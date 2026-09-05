@@ -17,7 +17,7 @@
 # Source of record for the values below: docs/specs/GSPLATS_ZARR_FORMAT.md.
 
 # Scene (.luxar.zarr) format version.
-#   Python source of truth today: typing_utils/constants.py, typing_utils/config.py
+#   Python source of truth today: typing_utils/constants.py
 scene_format:
   current: "0.1"
   supported: ["0.1", "0.2", "0.3"]

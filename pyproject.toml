@@ -869,7 +869,7 @@ exclude_type_checking_imports = true
 #
 # Chosen by measurement, not taste. `scripts/check_layer_order.py` scores every
 # ordering of the seven ambiguous middle packages by how many production edges
-# point UP the stack; this one is the minimum at 35. `cli`/`demos` are
+# point UP the stack; this one is the minimum at 33. `cli`/`demos` are
 # unambiguously the top (201 and 343 outgoing edges against 2 and 6 incoming)
 # and the five zero-outgoing packages the bottom, so only the middle was in
 # question. Re-run that script after any structural change; it prints the top
@@ -886,7 +886,7 @@ exclude_type_checking_imports = true
 #
 # ## The ignore list is DATED DEBT, not design
 #
-# 35 edges, measured 2026-09-04. Every one is a layering violation someone
+# 33 edges, measured 2026-09-05. Every one is a layering violation someone
 # should eventually remove, and the two large groups are one job each:
 #
 #   gsplats -> io    (17)  mostly `gsplats.io.*` reaching into `io._compiler`;
@@ -896,7 +896,7 @@ exclude_type_checking_imports = true
 #                          the validators A1-03 moved to `luxar.validation`.
 #
 # import-linter REFUSES an `ignore_imports` entry that matches nothing, while
-# `check-layer-order` pins a high-water mark of 35. Delete an edge from the code,
+# `check-layer-order` pins a high-water mark of 33. Delete an edge from the code,
 # its ignore here, and lower that constant; the list can shrink but not grow.
 # That property is why a seeded contract is worth having now rather than a
 # perfect one later.
@@ -968,10 +968,6 @@ ignore_imports = [
     "luxar.demos.demo_gsplats_3d_flylight_mcfo_63x_brain -> luxar.cli",
     # gsplats -> demos (1)
     "luxar.gsplats.demos.demo_3d_celegans_culling -> luxar.demos",
-    # typing_utils -> encoding (1)
-    "luxar.typing_utils.config -> luxar.encoding.compression",
-    # typing_utils -> io (1)
-    "luxar.typing_utils.config -> luxar.io.reader",
     # typing_utils -> validation (1)
     "luxar.typing_utils -> luxar.validation.types",
     # utils -> core (1)

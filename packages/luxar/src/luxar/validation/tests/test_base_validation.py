@@ -566,14 +566,14 @@ class TestValidateZarrAttributes:
 
     def test_unsupported_version(self) -> None:
         """Test unsupported version raises error."""
-        from luxar.typing_utils.config import SUPPORTED_VERSIONS
+        from luxar.typing_utils._format_contract import SUPPORTED_SCENE_VERSIONS
 
         attrs = {
             "type": "scene",
             "luxar_version": "999.999.999",
         }
 
-        if "999.999.999" not in SUPPORTED_VERSIONS:
+        if "999.999.999" not in SUPPORTED_SCENE_VERSIONS:
             with pytest.raises(ValidationError, match="Unsupported"):
                 validate_zarr_attributes(attrs, is_root=True)
 
