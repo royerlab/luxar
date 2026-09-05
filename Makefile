@@ -5,7 +5,7 @@
 # pre-installed tools. Run 'make setup-dev' to automatically install all dependencies.
 #
 .PHONY: help install-dev install-demo-deps format-python format-typescript format-rust format-cuda format-go format-all gen-contract gen-data-manifest sync-demo-counts \
-        lint-python lint-typescript type-check-python type-check-typescript security check-complexity check-lint-ratchet \
+        lint-python lint-typescript type-check-python type-check-typescript security check-complexity check-lint-ratchet check-native \
         test-all test-python test-cov-python test-cov-typescript test-cov-all test-fixtures ensure-viewer-fixtures test-wasm test-viewer test-viewer-fixtures \
         test-e2e test-e2e-smoke test-perf-e2e \
         clean-all clean-python clean-viewer clean-examples clean-cache clean-setup enable-pre-commit run-pre-commit \
@@ -656,6 +656,10 @@ check-complexity:  ## Ratchet cyclomatic complexity (ruff C901) against the base
 check-lint-ratchet:  ## Ratchet ruff's defect rules (bugbear + RUF012) against the baseline
 	@echo "🐛 Checking defect-bearing lint rules against the baseline..."
 	$(HATCH) run check-lint-ratchet
+
+check-native:  ## read-only: compile-check the shipped CUDA/Metal sources (no GPU needed)
+	@echo "🧩 Compile-checking native CUDA/Metal sources..."
+	$(HATCH) run check-native
 
 lint-typescript:  ## Run ESLint on TypeScript code
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \

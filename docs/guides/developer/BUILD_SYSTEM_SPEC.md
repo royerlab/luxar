@@ -582,7 +582,7 @@ HPC login nodes typically lack sudo, pipx, and GPU access. The Makefile handles 
 | No sudo / no pipx | `install-hatch` tries `pip install --user`, then venv fallback |
 | No global npm | `install-pnpm` tries global npm, then `npm install --prefix ~/.local` fallback |
 | No GPU on login node | `make build-cuda SLURM=1` submits the build to a GPU node |
-| Old system GCC (< 9) | `build_cuda_slurm.py` auto-detects a `gcc/` module >= 9 to load |
+| Old system GCC (< 10) | `build_cuda_slurm.py` auto-detects a `gcc/` module >= 10 to load |
 | CUDA modules vs PATH | `build_cuda_slurm.py` auto-selects the matching `cuda/` module |
 
 ### Step-by-step HPC first-time setup
@@ -620,7 +620,7 @@ The submission script is `scripts/build_cuda_slurm.py`. Before submitting, it:
 
 1. **Detects PyTorch CUDA version** — queries `torch.version.cuda` from the hatch env
 2. **Finds matching CUDA module** — runs `module spider cuda`, picks the highest `cuda/X.Y.z` matching the torch CUDA major.minor
-3. **Finds GCC >= 9 module** — runs `module spider gcc`, picks the highest `gcc/X.Y` with X >= 9 (required by PyTorch 2.x; system GCC on RHEL 8 is 8.5.0)
+3. **Finds GCC >= 10 module** — runs `module spider gcc`, picks the highest `gcc/X.Y` with X >= 10 (required for the shipped C++20 build; system GCC on RHEL 8 is 8.5.0)
 4. **Captures VIRTUAL_ENV** — the hatch env path must be reachable from the compute node (shared filesystem)
 5. **Generates sbatch script** at `build-cuda-logs/build_cuda_job.sh`
 6. **Submits with sbatch** and prints monitoring commands
@@ -648,7 +648,7 @@ All compiler output is in `build-cuda-logs/build_<JOB_ID>.out`. Common issues:
 
 | Error | Cause | Fix |
 |-------|-------|-----|
-| `GCC version too old` | System GCC < 9 | Ensure `module spider gcc` shows gcc >= 9 on compute nodes |
+| `GCC version too old` | System GCC < 10 | Ensure `module spider gcc` shows gcc >= 10 on compute nodes |
 | `torch.cuda.is_available() False` | CUDA/torch version mismatch | Check `torch.version.cuda` vs loaded module |
 | `.so not found after build` | Build succeeded but path wrong | Run `make test-cuda` which also searches for the .so |
 | `sbatch: Invalid job id` | Job already finished | Check the `.out` file — it may have succeeded |

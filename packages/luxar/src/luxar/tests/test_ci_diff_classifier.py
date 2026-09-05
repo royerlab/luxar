@@ -58,6 +58,29 @@ WORKFLOW = REPO / ".github/workflows/ci.yml"
 #: than the single thing keeping their gate alive. Do not read the table as a list
 #: of narrow escapes.
 GATE_INPUTS: list[tuple[str, str, str]] = [
+    # The native sources. `.cu`/`.cuh` already routed; the C++/ObjC++/shader
+    # ones did NOT, so a change to any of these three reached no gate at all
+    # until `check-native` existed to be reached (A15-03).
+    (
+        "packages/luxar/src/luxar/gsplats/models/gsplats/cuda/src/bindings.cpp",
+        "py",
+        "hatch run check-native -fsyntax-only's it against torch's headers",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/models/gsplats/metal/src/bindings.mm",
+        "py",
+        "hatch run check-native -fsyntax-only's it on a macOS runner",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/models/gsplats/metal/src/kernels.metal",
+        "py",
+        "hatch run check-native compiles it with `metal -c -Werror`",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/models/gsplats/cuda/src/cuda_splatting.cu",
+        "py",
+        "hatch run check-native runs `nvcc -cuda` over it where CUDA exists",
+    ),
     (
         ".pre-commit-config.yaml",
         "py",
