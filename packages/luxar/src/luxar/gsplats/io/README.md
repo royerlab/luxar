@@ -509,12 +509,6 @@ a 10-part partition (960K splats, 6.4 MB on disk), `info` previously issued 120
 decode calls — exactly three full reads of the tree — materialising 115 MB to print
 25 lines of metadata. It now issues **zero** (audit A14-02).
 
-Pass `warn_if_large=True` to `load_gsplat_node` to run the same estimate before
-allocating and warn when a full decode will exceed ~4 GiB. The preflight is
-opt-in because it walks the metadata of every leaf; normal loads keep their
-existing cost. This is a warning rather than a refusal: loading a very large tree
-is legitimate on a machine sized for it.
-
 ### Migrate a Legacy Dataset to v3.4
 
 ```python

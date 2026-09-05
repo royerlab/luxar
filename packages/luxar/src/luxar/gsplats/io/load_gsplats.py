@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import shutil
-import warnings
 from pathlib import Path
 from typing import AbstractSet, Any, Dict, List, Mapping, Sequence, Union
 
@@ -571,60 +570,9 @@ def read_gsplat_root_stats(root: Any, *, include_stats: bool = True) -> Dict[str
     return stats
 
 
-#: Estimated decode above which `load_gsplat_node` says so before allocating.
-#: 4 GiB is chosen to be quiet on anything a laptop handles comfortably and loud
-#: on the shape that motivated it -- the operational record has a 13 GB store
-#: reaching 116 GB RSS (audit A14-02).
-_DECODE_WARN_BYTES = 4 * 1024**3
-
-
-def _warn_if_decode_is_large(root: Any, path: "Path") -> None:
-    """Say how much a full decode will materialise, before it is allocated.
-
-    A WARNING, not a refusal. Loading a very large tree is a legitimate thing to
-    do on a machine sized for it, and a hard cap here would break working
-    pipelines to prevent a mistake the caller may not be making. What was
-    missing is that the caller got no signal at all -- the process simply grew
-    until the box gave up. This performs a full metadata walk whose cost scales
-    with the number of leaves, so callers must opt in via ``warn_if_large``.
-    No array chunk is read.
-
-    Never raises. A store this cannot measure is one the reader below will
-    report on properly; a diagnostic must not be the thing that fails the load.
-    """
-    try:
-        from luxar.gsplats.io.tree_summary import read_gsplat_tree_summary
-
-        estimate = read_gsplat_tree_summary(root).estimated_decoded_bytes
-    except Exception:  # noqa: BLE001 - diagnostics must never break the load
-        return
-    if estimate < _DECODE_WARN_BYTES:
-        return
-    # Formatted here rather than with `cli.utils.format_memory_size`: the
-    # "Domain layers must not import the CLI" contract forbids that edge, and it
-    # is right to -- a library warning must not depend on the CLI being present.
-    gib = estimate / 1024**3
-
-    try:
-        warnings.warn(
-            f"Loading {Path(path).name} will materialise about "
-            f"{gib:,.1f} GiB of splat arrays in memory. "
-            f"To inspect its structure without decoding anything, use "
-            f"`luxar.gsplats.io.tree_summary.read_gsplat_tree_summary` "
-            f"(what `luxar gsplat info` uses).",
-            UserWarning,
-            stacklevel=3,
-        )
-    except Warning:
-        # ``-W error`` turns a warning into a raise; diagnostics must not fail a load.
-        return
-
-
 def load_gsplat_node(
     path: str | Path,
     include_stats: bool = False,
-    *,
-    warn_if_large: bool = False,
 ) -> "tuple[Any, Dict[str, Any]]":
     """Load the raw v3.0 node-tree (a :class:`~luxar.gsplats.tree.GSplatNode`).
 
@@ -637,9 +585,6 @@ def load_gsplat_node(
     Args:
         path: Standalone gsplat store or supported compressed archive.
         include_stats: Whether to read the optional root-level statistics.
-        warn_if_large: Estimate the full decoded size and warn above roughly
-            4 GiB. This is opt-in because estimating requires a metadata walk
-            over every leaf before the normal read.
 
     Returns:
         ``(node, stats)`` — the tree root and the (optional) root-level stats.
@@ -659,9 +604,6 @@ def load_gsplat_node(
         root = zc_open_group(str(zarr_path), mode="r")
 
         stats = read_gsplat_root_stats(root, include_stats=include_stats)
-
-        if warn_if_large:
-            _warn_if_decode_is_large(root, path)
 
         # Read the node-tree subtree rooted at the file.
         from luxar.io._compiler.gsplat_tree import read_gsplat_node
