@@ -59,16 +59,22 @@ class TestPhysicalUnits:
         with pytest.raises(ValueError, match="Invalid"):
             PhysicalUnit.validate("invalid_unit")
 
-    def test_units_in_config_match_types(self) -> None:
-        """Every unit in SUPPORTED_UNITS validates and round-trips unchanged."""
-        from luxar.typing_utils.config import SUPPORTED_UNITS
+    def test_units_in_enum_match_types(self) -> None:
+        """Every ``PhysicalUnit`` member validates and round-trips unchanged.
+
+        Derived from the enum, which is the vocabulary. This used to iterate
+        ``typing_utils.config.SUPPORTED_UNITS`` — a hand-copy of the same list
+        in a module whose other ~25 names nothing read.
+        """
+        from luxar.typing_utils.enums import PhysicalUnit
         from luxar.validation.types import validate_physical_unit
 
-        assert SUPPORTED_UNITS, "SUPPORTED_UNITS is empty — the loop would be vacuous"
-        for unit in SUPPORTED_UNITS:
+        members = list(PhysicalUnit)
+        assert members, "PhysicalUnit is empty — the loop would be vacuous"
+        for member in members:
             # Each supported unit validates (no raise) AND is returned unchanged
             # — not merely "does not raise".
-            assert validate_physical_unit(unit) == unit
+            assert validate_physical_unit(member.value) == member.value
 
     def test_dimensions_with_mixed_units(self, tmp_path) -> None:
         """Test that different dimensions can have different units."""

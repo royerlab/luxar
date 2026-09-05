@@ -241,6 +241,39 @@ def validate_transform(transform: Any) -> TransformMatrix:
     return transform.astype(np.float32, copy=False)
 
 
+# Spelling this validator accepts on top of the enum's own member values.
+# ``PhysicalUnit`` has both METER ("m") and METRE ("metre") but no member whose
+# value is the full American word, so it is listed once, here, rather than
+# hand-copied into a vocabulary tuple.
+#
+# NB this is a NARROWER set than ``PhysicalUnit.validate`` accepts — that
+# classmethod additionally normalises "micron", "um", "nanometer" and friends.
+# The divergence predates this refactor and is left as-is; only the duplication
+# is removed.
+_UNIT_SPELLING_ALIASES: Tuple[str, ...] = ("meter",)
+
+
+def _accepted_node_types() -> Tuple[str, ...]:
+    """The node-type spellings this module accepts, derived from ``NodeType``.
+
+    Derived rather than restated: a member added to ``NodeType`` (itself pinned
+    to ``format-contract/contract.yaml`` by ``test_node_type_matches_contract``)
+    is accepted here automatically. The previous hand-copied tuple had already
+    drifted — it omitted ``mesh``, so this validator rejected a first-class,
+    shipped geometry type.
+    """
+    return tuple(member.value for member in NodeType)
+
+
+def _accepted_unit_spellings() -> Tuple[str, ...]:
+    """The unit spellings this module accepts, derived from ``PhysicalUnit``.
+
+    Same reasoning as :func:`_accepted_node_types`: the enum is the vocabulary,
+    plus :data:`_UNIT_SPELLING_ALIASES` for spellings it has no member for.
+    """
+    return tuple(member.value for member in PhysicalUnit) + _UNIT_SPELLING_ALIASES
+
+
 def validate_node_type(node_type: str) -> NodeType:
     """Validate node type string.
 
@@ -253,13 +286,7 @@ def validate_node_type(node_type: str) -> NodeType:
     Raises:
         ValueError: If node type is invalid
     """
-    valid_types = (
-        NodeType.POINTS.value,
-        NodeType.LINES.value,
-        NodeType.GROUP.value,
-        NodeType.SCENE.value,
-        NodeType.GSPLATS.value,
-    )
+    valid_types = _accepted_node_types()
     if node_type not in valid_types:
         raise ValueError(
             f"Invalid node type '{node_type}'. Must be one of {valid_types}"
@@ -279,20 +306,7 @@ def validate_physical_unit(unit: str) -> PhysicalUnit:
     Raises:
         ValueError: If unit is invalid
     """
-    valid_units = (
-        PhysicalUnit.NANOMETER.value,
-        PhysicalUnit.MICROMETER.value,
-        PhysicalUnit.MILLIMETER.value,
-        PhysicalUnit.CENTIMETER.value,
-        PhysicalUnit.METER.value,
-        PhysicalUnit.METRE.value,
-        "meter",  # Not in enum but needed for compatibility
-        PhysicalUnit.KILOMETER.value,
-        PhysicalUnit.INCH.value,
-        PhysicalUnit.FOOT.value,
-        PhysicalUnit.PIXEL.value,
-        PhysicalUnit.ASTRONOMICAL_UNIT.value,
-    )
+    valid_units = _accepted_unit_spellings()
     if unit not in valid_units:
         raise ValueError(f"Invalid unit '{unit}'. Must be one of {valid_units}")
     return cast(PhysicalUnit, unit)
