@@ -3,8 +3,8 @@
 
 Audit A15-03. ~3,900 lines of native code ride into the wheel — a second and
 third independent implementation of the same splat-rasterization maths as the
-torch reference — and until this script nothing built, linted or tested any of
-it. That is the same 1:1-sync hazard the project already gates for the Rust/TS
+torch reference — and until this script nothing compile-checked them without a
+GPU. That is the same 1:1-sync hazard the project already gates for the Rust/TS
 pair, with none of the protection, and a silent divergence there produces
 slightly wrong splats rather than a crash.
 
@@ -34,10 +34,13 @@ CI pins that the arm it thinks it is running actually ran.
 from __future__ import annotations
 
 import argparse
+import ast
+import re
 import shutil
 import subprocess
 import sys
 import sysconfig
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -56,6 +59,12 @@ DEFAULT_CXX_STD = "c++20"
 #: positive for real undefined behaviour. Suppressed HERE, narrowly, so that
 #: `-Werror` still holds for every other warning the shader might grow.
 METAL_SUPPRESSED_WARNINGS = ["-Wno-sometimes-uninitialized"]
+
+CXX_BUILD_FILES = [
+    SRC / "models/gsplats/metal/setup.py",
+    SRC / "_cuda_build.py",
+]
+METAL_BUILD_FILE = SRC / "models/gsplats/metal/setup.py"
 
 
 @dataclass
@@ -140,6 +149,42 @@ def _required_std(torch_root: Path) -> str:
     return DEFAULT_CXX_STD
 
 
+def _pinned_standards(path: Path, pattern: str) -> set[str]:
+    """Return compiler standards pinned as string literals in a build file."""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    return {
+        match.group(1)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        if (match := re.fullmatch(pattern, node.value))
+    }
+
+
+def shipped_cxx_std() -> str:
+    """Return the single C++ standard used by both shipped extension builds."""
+    standards: set[str] = set()
+    for path in CXX_BUILD_FILES:
+        pinned = _pinned_standards(path, r"-std=(c\+\+\d+)")
+        if len(pinned) != 1:
+            raise ValueError(
+                f"{path} must pin exactly one C++ standard, found {pinned}"
+            )
+        standards.update(pinned)
+    if len(standards) != 1:
+        raise ValueError(f"native build C++ standards disagree: {sorted(standards)}")
+    return standards.pop()
+
+
+def shipped_metal_std() -> str:
+    """Return the Metal language standard used by the shipped shader build."""
+    standards = _pinned_standards(METAL_BUILD_FILE, r"-std=(metal\d+\.\d+)")
+    if len(standards) != 1:
+        raise ValueError(
+            f"{METAL_BUILD_FILE} must pin exactly one Metal standard, found {standards}"
+        )
+    return standards.pop()
+
+
 def have(tool: str) -> bool:
     if tool == "metal":
         return (
@@ -160,9 +205,16 @@ def run(cmd: list[str], label: str) -> bool:
         print(f"  ✓ {label}")
         return True
     print(f"  ✗ {label}")
-    for line in (proc.stdout + proc.stderr).splitlines():
-        if "error" in line.lower() or "warning" in line.lower():
-            print(f"      {line[:200]}")
+    output = (proc.stdout + proc.stderr).splitlines()
+    diagnostics = [
+        line for line in output if "error" in line.lower() or "warning" in line.lower()
+    ]
+    for line in (
+        diagnostics
+        or output[-20:]
+        or [f"compiler exited with status {proc.returncode}"]
+    ):
+        print(f"      {line[:200]}")
     return False
 
 
@@ -214,17 +266,22 @@ def check_host_units(
     return ok, checked
 
 
-def check_metal(units: list[Unit]) -> tuple[int, int]:
+def check_metal(units: list[Unit], std: str) -> tuple[int, int]:
     ok = 0
+    checked = 0
     for unit in units:
         if not unit.path.exists():
             print(f"  ✗ {unit.label} — listed source does not exist: {unit.path}")
-            ok -= 1
+            checked += 1
             continue
+        checked += 1
         cmd = [
             "xcrun",
+            "-sdk",
+            "macosx",
             "metal",
             "-c",
+            f"-std={std}",
             "-Werror",
             *METAL_SUPPRESSED_WARNINGS,
             str(unit.path),
@@ -232,16 +289,18 @@ def check_metal(units: list[Unit]) -> tuple[int, int]:
             "/dev/null",
         ]
         ok += run(cmd, unit.label)
-    return ok, len(units)
+    return ok, checked
 
 
 def check_cuda(units: list[Unit], std: str, includes: list[str]) -> tuple[int, int]:
     ok = 0
+    checked = 0
     for unit in units:
         if not unit.path.exists():
             print(f"  ✗ {unit.label} — listed source does not exist: {unit.path}")
-            ok -= 1  # force a mismatch against the unit count
+            checked += 1
             continue
+        checked += 1
         # `-fsyntax-only` is not an nvcc flag; `-cuda` stops after the CUDA
         # front end, which is the closest no-GPU, no-link equivalent.
         cmd = [
@@ -254,7 +313,29 @@ def check_cuda(units: list[Unit], std: str, includes: list[str]) -> tuple[int, i
             str(unit.path),
         ]
         ok += run(cmd, unit.label)
-    return ok, len(units)
+    return ok, checked
+
+
+def check_arm(
+    selected: set[str],
+    name: str,
+    available: bool,
+    heading: str,
+    checker: Callable[[], tuple[int, int]],
+) -> tuple[int, int, str | None]:
+    """Run one selected toolchain arm, or report it as missing."""
+    if name not in selected:
+        return 0, 0, None
+    if not available:
+        return 0, 0, name
+    print(heading)
+    passed, total = checker()
+    return passed, total, None
+
+
+def host_units() -> list[Unit]:
+    """Host units available on this platform."""
+    return [*CXX_UNITS, *(OBJCXX_UNITS if sys.platform == "darwin" else [])]
 
 
 def main() -> int:
@@ -268,44 +349,60 @@ def main() -> int:
         "the ones its runner is supposed to have, so a silently-skipped arm "
         "cannot masquerade as a passing one.",
     )
+    parser.add_argument(
+        "--only",
+        action="append",
+        choices=["cxx", "metal", "nvcc"],
+        help="Run only the selected toolchain arm. May be repeated.",
+    )
     args = parser.parse_args()
+    selected = set(args.only or ("cxx", "metal", "nvcc")) | set(args.require)
 
     torch_info = torch_includes()
     if torch_info is None:
-        print("torch is not importable — the native sources all include its headers.")
-        if "cxx" in args.require:
+        print("torch is not importable — native compile checks need its headers.")
+        if args.require:
             return 1
         print("SKIP: nothing to check.")
         return 0
-    includes, std = torch_info
-    print(f"torch requires {std} (read from its own headers)\n")
+    includes, required_std = torch_info
+    try:
+        cxx_std = shipped_cxx_std()
+        metal_std = shipped_metal_std()
+    except (OSError, SyntaxError, ValueError) as exc:
+        print(f"FAIL: cannot determine shipped compiler standards: {exc}")
+        return 1
+    print(
+        f"torch requires {required_std}; shipped builds use {cxx_std} "
+        "(read from their sources)\n"
+    )
 
-    passed = total = 0
-    missing: list[str] = []
-
-    if have("clang++") or have("g++"):
-        print("Host C++ / ObjC++ (-fsyntax-only):")
-        units = list(CXX_UNITS)
-        if sys.platform == "darwin":
-            units += OBJCXX_UNITS
-        p, t = check_host_units(units, std, includes)
-        passed, total = passed + p, total + t
-    else:
-        missing.append("cxx")
-
-    if have("metal"):
-        print("\nMetal shader (metal -c -Werror):")
-        p, t = check_metal(METAL_UNITS)
-        passed, total = passed + p, total + t
-    else:
-        missing.append("metal")
-
-    if have("nvcc"):
-        print("\nCUDA device code (nvcc -cuda):")
-        p, t = check_cuda(CUDA_UNITS, std, includes)
-        passed, total = passed + p, total + t
-    else:
-        missing.append("nvcc")
+    results = [
+        check_arm(
+            selected,
+            "cxx",
+            have("clang++") or have("g++"),
+            "Host C++ / ObjC++ (-fsyntax-only):",
+            lambda: check_host_units(host_units(), cxx_std, includes),
+        ),
+        check_arm(
+            selected,
+            "metal",
+            have("metal"),
+            "\nMetal shader (metal -c -Werror):",
+            lambda: check_metal(METAL_UNITS, metal_std),
+        ),
+        check_arm(
+            selected,
+            "nvcc",
+            have("nvcc"),
+            "\nCUDA device code (nvcc -cuda):",
+            lambda: check_cuda(CUDA_UNITS, cxx_std, includes),
+        ),
+    ]
+    passed = sum(result[0] for result in results)
+    total = sum(result[1] for result in results)
+    missing = [result[2] for result in results if result[2] is not None]
 
     print()
     for tool in missing:
@@ -317,7 +414,7 @@ def main() -> int:
     # Fail closed: a run that checked nothing must not report success. Every
     # toolchain being absent is a SKIP above, but reaching here with a
     # toolchain present and zero units checked means the source list is stale.
-    if total == 0 and len(missing) < 3:
+    if total == 0 and len(missing) < len(selected):
         print("FAIL: a toolchain was available but no unit was checked.")
         return 1
 

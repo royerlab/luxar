@@ -19,8 +19,11 @@ Two of them exist because the first version of the gate was WRONG in that way:
 from __future__ import annotations
 
 import importlib.util
+import os
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -45,17 +48,24 @@ def gate():
     return _load()
 
 
-def _run(source: str, tmp_path: Path) -> subprocess.CompletedProcess[str]:
-    """Run a mutated copy of the gate, from the repo root so its paths resolve."""
-    mutant = tmp_path / "check_native_compiles.py"
-    mutant.write_text(source, encoding="utf-8")
-    return subprocess.run(
-        [sys.executable, str(mutant)],
-        capture_output=True,
-        text=True,
-        check=False,
-        cwd=GATE.parent.parent,
+def _run(source: str, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run a mutated gate beside the real one so its repo-relative paths resolve."""
+    file_descriptor, mutant_name = tempfile.mkstemp(
+        prefix="_check_native_compiles_mutant_", suffix=".py", dir=GATE.parent
     )
+    os.close(file_descriptor)
+    mutant = Path(mutant_name)
+    try:
+        mutant.write_text(source, encoding="utf-8")
+        return subprocess.run(
+            [sys.executable, str(mutant), *args],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=GATE.parent.parent,
+        )
+    finally:
+        mutant.unlink(missing_ok=True)
 
 
 @pytest.fixture(scope="module")
@@ -66,7 +76,7 @@ def gate_source() -> str:
 def test_the_gate_passes_on_the_real_tree() -> None:
     """The baseline. Without this the mutation tests below prove nothing."""
     result = subprocess.run(
-        [sys.executable, str(GATE)],
+        [sys.executable, str(GATE), "--only", "cxx"],
         capture_output=True,
         text=True,
         check=False,
@@ -118,44 +128,82 @@ def test_the_shipped_build_flags_agree_with_what_torch_demands(gate) -> None:
     if torch_info is None:
         pytest.skip("torch not importable")
     _, required = torch_info
-    root = GATE.parent.parent / "packages/luxar/src/luxar/gsplats"
-    for rel in ("models/gsplats/metal/setup.py", "_cuda_build.py"):
-        text = (root / rel).read_text(encoding="utf-8")
-        pinned = [
-            line
-            for line in text.splitlines()
-            if "-std=c++" in line and "#" not in line.split("-std=")[0]
-        ]
-        assert pinned, f"{rel} pins no C++ standard — did the flag move?"
-        for line in pinned:
-            assert f"-std={required}" in line, (
-                f"{rel} pins {line.strip()!r} but torch requires {required}. "
-                f"torch appends its own -std FIRST, so this one wins and the "
-                f"extension will not compile."
-            )
+    pinned = gate.shipped_cxx_std()
+    assert int(pinned.removeprefix("c++")) >= int(required.removeprefix("c++")), (
+        f"native builds pin {pinned} but torch requires at least {required}. "
+        "torch appends its own -std FIRST, so the shipped pin wins."
+    )
+    assert gate.shipped_metal_std() == "metal3.0"
 
 
-def test_a_missing_source_fails_rather_than_shrinking_the_run(
-    gate_source, tmp_path
+def test_main_compiles_at_the_shipped_standard(gate, monkeypatch) -> None:
+    used: list[str] = []
+    monkeypatch.setattr(gate, "torch_includes", lambda: ([], "c++17"))
+    monkeypatch.setattr(gate, "shipped_cxx_std", lambda: "c++20")
+    monkeypatch.setattr(gate, "shipped_metal_std", lambda: "metal3.0")
+    monkeypatch.setattr(gate, "have", lambda tool: tool == "g++")
+    monkeypatch.setattr(
+        gate,
+        "check_host_units",
+        lambda units, std, includes: (used.append(std) or 1, 1),
+    )
+    monkeypatch.setattr(sys, "argv", [str(GATE), "--only", "cxx"])
+
+    assert gate.main() == 0
+    assert used == ["c++20"]
+
+
+def test_metal_uses_the_shipped_sdk_and_language_standard(
+    gate, monkeypatch, tmp_path
 ) -> None:
+    source = tmp_path / "kernel.metal"
+    source.write_text("kernel void noop() {}", encoding="utf-8")
+    commands: list[list[str]] = []
+    monkeypatch.setattr(
+        gate, "run", lambda command, label: commands.append(command) or True
+    )
+
+    assert gate.check_metal([gate.Unit(source, "metal", "kernel")], "metal3.0") == (
+        1,
+        1,
+    )
+    assert commands == [
+        [
+            "xcrun",
+            "-sdk",
+            "macosx",
+            "metal",
+            "-c",
+            "-std=metal3.0",
+            "-Werror",
+            *gate.METAL_SUPPRESSED_WARNINGS,
+            str(source),
+            "-o",
+            "/dev/null",
+        ]
+    ]
+
+
+def test_a_missing_source_fails_rather_than_shrinking_the_run(gate_source) -> None:
     """Found by mutation: the first version PASSED when a source was renamed.
 
     It printed a note, skipped the unit, and reported `2/2`. An unchecked file
     must never read as a checked one.
     """
     mutant = gate_source.replace(
-        "preprocessing/cuda/src/bindings.cpp",
-        "preprocessing/cuda/src/RENAMED.cpp",
+        "models/gsplats/cuda/src/bindings.cpp",
+        "models/gsplats/cuda/src/RENAMED.cpp",
     )
     assert mutant != gate_source, "mutation did not apply"
-    result = _run(mutant, tmp_path)
+    result = _run(mutant, "--only", "cxx")
     assert result.returncode == 1, (
         "a listed-but-absent source did not fail the gate:\n" + result.stdout
     )
-    assert "does not exist" in result.stdout
+    assert "RENAMED.cpp" in result.stdout
+    assert "✓ nlm/bindings.cpp" in result.stdout
 
 
-def test_the_metal_suppression_is_load_bearing(gate_source, tmp_path) -> None:
+def test_the_metal_suppression_is_load_bearing(gate_source) -> None:
     """Dropping it reds the gate on CORRECT code — which is why it is narrow.
 
     `kernels.metal` writes `threadgroup uint s_total_voxels` from thread 0 and
@@ -165,9 +213,7 @@ def test_the_metal_suppression_is_load_bearing(gate_source, tmp_path) -> None:
     failing, the shader changed and the suppression may no longer be needed —
     check before widening it.
     """
-    import shutil
-
-    if not (shutil.which("xcrun") and gate_source):
+    if not shutil.which("xcrun"):
         pytest.skip("no xcrun")
     if not _load().have("metal"):
         pytest.skip("Metal toolchain not installed")
@@ -176,31 +222,62 @@ def test_the_metal_suppression_is_load_bearing(gate_source, tmp_path) -> None:
         "METAL_SUPPRESSED_WARNINGS = []",
     )
     assert mutant != gate_source, "mutation did not apply"
-    result = _run(mutant, tmp_path)
+    result = _run(mutant, "--only", "metal")
     assert result.returncode == 1, (
         "removing the suppression did not red the gate, so either the shader "
         "changed or -Werror is not in effect:\n" + result.stdout
     )
 
 
-def test_require_turns_a_missing_toolchain_into_a_failure(
-    gate_source, tmp_path
-) -> None:
+def test_require_turns_a_missing_toolchain_into_a_failure() -> None:
     """A silently-skipped arm must not be able to masquerade as a passing one.
 
     CI names the toolchains its runner is supposed to have; if one is absent the
     job fails rather than reporting green over nothing.
     """
+    if shutil.which("nvcc"):
+        pytest.skip("nvcc IS installed here, so this cannot be provoked")
     result = subprocess.run(
-        [sys.executable, str(GATE), "--require", "nvcc"],
+        [sys.executable, str(GATE), "--only", "nvcc", "--require", "nvcc"],
         capture_output=True,
         text=True,
         check=False,
         cwd=GATE.parent.parent,
     )
-    import shutil
-
-    if shutil.which("nvcc"):
-        pytest.skip("nvcc IS installed here, so this cannot be provoked")
     assert result.returncode == 1
     assert "FAIL" in result.stdout and "nvcc" in result.stdout
+
+
+@pytest.mark.parametrize("required", ["cxx", "metal", "nvcc"])
+def test_require_fails_when_torch_is_missing(gate, monkeypatch, required) -> None:
+    monkeypatch.setattr(gate, "torch_includes", lambda: None)
+    monkeypatch.setattr(sys, "argv", [str(GATE), "--require", required])
+    assert gate.main() == 1
+
+
+def test_require_also_selects_the_required_arm(gate, monkeypatch) -> None:
+    monkeypatch.setattr(gate, "torch_includes", lambda: ([], "c++20"))
+    monkeypatch.setattr(gate, "shipped_cxx_std", lambda: "c++20")
+    monkeypatch.setattr(gate, "shipped_metal_std", lambda: "metal3.0")
+    monkeypatch.setattr(gate, "have", lambda tool: tool == "g++")
+    monkeypatch.setattr(gate, "check_host_units", lambda units, std, includes: (1, 1))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [str(GATE), "--only", "cxx", "--require", "nvcc"],
+    )
+
+    assert gate.main() == 1
+
+
+def test_failed_commands_always_print_a_diagnostic(gate, monkeypatch, capsys) -> None:
+    failure = subprocess.CompletedProcess(
+        args=["nvcc"],
+        returncode=1,
+        stdout="",
+        stderr="nvcc fatal   : Unknown option '-bad-flag'\n",
+    )
+    monkeypatch.setattr(gate.subprocess, "run", lambda *args, **kwargs: failure)
+
+    assert gate.run(["nvcc", "-bad-flag"], "cuda") is False
+    assert "nvcc fatal" in capsys.readouterr().out
