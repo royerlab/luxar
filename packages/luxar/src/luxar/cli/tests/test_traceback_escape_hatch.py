@@ -138,6 +138,36 @@ def test_the_cli_source_scan_finds_files() -> None:
     assert any(p.name == "main.py" for p in files)
 
 
+def _discarding_exits(
+    tree: ast.Module,
+) -> list[tuple[ast.ExceptHandler, ast.Raise, str]]:
+    offenders: list[tuple[ast.ExceptHandler, ast.Raise, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ExceptHandler):
+            continue
+        # Only the broad handlers: a narrow `except FileNotFoundError` that
+        # exits quietly is reporting an expected condition, not swallowing
+        # a bug.
+        caught = ast.unparse(node.type) if node.type else "BaseException"
+        if caught not in {"Exception", "BaseException"}:
+            continue
+        body = "\n".join(ast.unparse(s) for s in node.body)
+        prints_traceback = "print_exc" in body or "format_exc" in body
+        for stmt in ast.walk(node):
+            if not isinstance(stmt, ast.Raise) or stmt.exc is None:
+                continue
+            if not re.search(r"\btyper\.Exit\b", ast.unparse(stmt.exc)):
+                continue
+            chained = (
+                node.name is not None
+                and stmt.cause is not None
+                and ast.unparse(stmt.cause) == node.name
+            )
+            if not chained and not prints_traceback:
+                offenders.append((node, stmt, caught))
+    return offenders
+
+
 def test_no_cli_handler_discards_a_caught_exception() -> None:
     """A broad handler that exits must not throw the cause away entirely.
 
@@ -165,34 +195,12 @@ def test_no_cli_handler_discards_a_caught_exception() -> None:
     offenders: list[str] = []
     for path in _cli_sources():
         tree = ast.parse(path.read_text())
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.ExceptHandler):
-                continue
-            # Only the broad handlers: a narrow `except FileNotFoundError` that
-            # exits quietly is reporting an expected condition, not swallowing
-            # a bug.
-            caught = ast.unparse(node.type) if node.type else "BaseException"
-            if caught not in {"Exception", "BaseException"}:
-                continue
-            body = "\n".join(ast.unparse(s) for s in node.body)
-            prints_traceback = "print_exc" in body or "format_exc" in body
-            for stmt in ast.walk(node):
-                if not isinstance(stmt, ast.Raise) or stmt.exc is None:
-                    continue
-                if not re.search(r"\btyper\.Exit\b", ast.unparse(stmt.exc)):
-                    continue
-                chained = (
-                    node.name is not None
-                    and stmt.cause is not None
-                    and ast.unparse(stmt.cause) == node.name
-                )
-                if not chained and not prints_traceback:
-                    rel = path.relative_to(CLI_ROOT.parent)
-                    binding = f" as {node.name}" if node.name is not None else ""
-                    offenders.append(
-                        f"{rel}:{stmt.lineno}: except {caught}{binding} -> "
-                        f"{ast.unparse(stmt)}"
-                    )
+        rel = path.relative_to(CLI_ROOT.parent)
+        for node, stmt, caught in _discarding_exits(tree):
+            binding = f" as {node.name}" if node.name is not None else ""
+            offenders.append(
+                f"{rel}:{stmt.lineno}: except {caught}{binding} -> {ast.unparse(stmt)}"
+            )
     assert not offenders, (
         "these handlers discard the exception they caught. Use "
         "`exit_with_error(message, err)` or `raise typer.Exit(1) from err`:\n  "
@@ -211,6 +219,7 @@ def test_the_scan_would_notice_a_discarding_handler() -> None:
     """
     source = (
         "import typer\n"
+        "import traceback\n"
         "def good():\n"
         "    try:\n"
         "        pass\n"
@@ -226,26 +235,20 @@ def test_the_scan_would_notice_a_discarding_handler() -> None:
         "        pass\n"
         "    except Exception:\n"
         "        raise typer.Exit(1)\n"
+        "def narrow_good():\n"
+        "    try:\n"
+        "        pass\n"
+        "    except ValueError as e:\n"
+        "        raise typer.Exit(1)\n"
+        "def printing_good():\n"
+        "    try:\n"
+        "        pass\n"
+        "    except BaseException:\n"
+        "        traceback.print_exc()\n"
+        "        raise typer.Exit(1)\n"
     )
-    found = []
-    for node in ast.walk(ast.parse(source)):
-        if not isinstance(node, ast.ExceptHandler):
-            continue
-        body = "\n".join(ast.unparse(s) for s in node.body)
-        prints_traceback = "print_exc" in body or "format_exc" in body
-        for stmt in ast.walk(node):
-            if not isinstance(stmt, ast.Raise) or stmt.exc is None:
-                continue
-            if not re.search(r"\btyper\.Exit\b", ast.unparse(stmt.exc)):
-                continue
-            chained = (
-                node.name is not None
-                and stmt.cause is not None
-                and ast.unparse(stmt.cause) == node.name
-            )
-            if not chained and not prints_traceback:
-                found.append(stmt.lineno)
-    assert found == [11, 16], f"expected both discarding handlers, got {found}"
+    found = [stmt.lineno for _, stmt, _ in _discarding_exits(ast.parse(source))]
+    assert found == [12, 17], f"expected both discarding handlers, got {found}"
 
 
 class TestItWorksThroughTheRealCli:
