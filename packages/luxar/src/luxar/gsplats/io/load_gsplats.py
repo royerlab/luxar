@@ -582,6 +582,10 @@ def load_gsplat_node(
     standalone ``.gsplats.zarr`` into a scene, or to inspect a partition/nested
     file. Handles ``.zip`` / ``.tar.gz`` archives transparently.
 
+    Args:
+        path: Standalone gsplat store or supported compressed archive.
+        include_stats: Whether to read the optional root-level statistics.
+
     Returns:
         ``(node, stats)`` — the tree root and the (optional) root-level stats.
     """
