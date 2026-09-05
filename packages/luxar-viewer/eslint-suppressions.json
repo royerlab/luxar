@@ -1501,17 +1501,6 @@
       "count": 1
     }
   },
-  "src/ui/recording-panel/offline-capture-strategy.ts": {
-    "complexity": {
-      "count": 1
-    },
-    "max-depth": {
-      "count": 6
-    },
-    "max-lines-per-function": {
-      "count": 1
-    }
-  },
   "src/ui/recording-panel/overlay-compositor.ts": {
     "complexity": {
       "count": 2
