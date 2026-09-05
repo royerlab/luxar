@@ -487,6 +487,15 @@ check-wheel = "python scripts/check_wheel.py {args}"
 # reason: 473 pre-existing violations mean the rules cannot go into
 # `[tool.ruff.lint] select` without a large, behaviour-changing sweep.
 check-lint-ratchet = "python scripts/check_lint_ratchet.py {args}"
+# Compile-check the shipped CUDA/Metal sources -- no GPU, no linking, just
+# `-fsyntax-only` / `metal -c` / `nvcc -cuda`. First no-GPU compile gate over
+# ~3,900 lines of native code that rides into the wheel; it immediately caught
+# both build paths pinning a C++ standard below what torch demands, which stopped
+# compiling at all. Every toolchain is optional and reported as SKIP when
+# absent (a Linux box has no `metal`, a Mac has no `nvcc`), so it is safe in
+# `check-static`; CI passes `--require` for the toolchains its runner has, so a
+# skipped arm cannot pass for a run one.
+check-native = "python scripts/check_native_compiles.py {args}"
 # Everything in `check` EXCEPT the test suite. `make check-all` runs this, so
 # that `make test-all` is the single place the Python tests execute — following
 # the documented pre-commit checklist used to run the whole suite twice (once
@@ -502,6 +511,7 @@ check-static = [
     "check-demo-counts",
     "check-demo-ladders",
     "check-scene-credits",
+    "check-native",
     "security"
 ]
 # The complete gate: static checks plus the coverage-measured suite. Kept for
