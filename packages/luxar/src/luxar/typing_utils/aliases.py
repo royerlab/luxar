@@ -17,7 +17,7 @@ from numpy.typing import NDArray
 # The three writable-attribute aliases below name what the WRITING PATH accepts,
 # not what it stores: `ArrayEncoder` picks the on-disk dtype from the semantic
 # type and the `EncodingMode`, so the input dtype is a caller convenience, not a
-# storage decision. `SUPPORTED_POSITION_DTYPES` and friends are the same list.
+# storage decision.
 #
 # They used to be narrower here (`PositionArray = Float32Array`, `ColorArray`
 # without uint16) while `io/writer.py` redefined the SAME TWO NAMES wider, in a
