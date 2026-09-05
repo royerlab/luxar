@@ -54,6 +54,7 @@ def compute_auto_resolution(coords: np.ndarray, max_resolution: int = 2**16) -> 
     Returns:
         Resolution as power of 2, capped at max_resolution
     """
+    coords = coords.astype(np.promote_types(coords.dtype, np.float32), copy=False)
     spread = coords.max(axis=0) - coords.min(axis=0)
     max_spread = spread.max()
 
