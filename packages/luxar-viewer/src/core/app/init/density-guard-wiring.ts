@@ -66,7 +66,7 @@ export interface DensityGuardWiring extends DensityGuardControl {
   provider: ProjectedDensityProvider;
   /** Register as the `'projected-density'` per-frame callback. */
   perFrame(): void;
-  /** Per-path snapshot for the data monitor's `drawn 1/K` chip (`DensityProvider`). */
+  /** Per-path snapshot for the data monitor's lattice-glyph `1/K` density chip. */
   densityStates(): Map<string, NodeDensityState>;
 }
 

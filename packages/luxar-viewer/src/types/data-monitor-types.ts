@@ -648,7 +648,7 @@ export interface NodeDensityState {
 }
 
 /**
- * Per-path density snapshot for the scene-graph tree's `drawn 1/K` chip.
+ * Per-path density snapshot for the scene-graph tree's lattice-glyph `1/K` density chip.
  * App-scoped (the guard outlives any one scene); wired by the init pipeline.
  */
 export interface DensityProvider {

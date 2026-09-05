@@ -350,7 +350,7 @@ export class DataLoadingMonitor {
   }
 
   /**
-   * Live density-guard state per node (the tree's `drawn 1/K` chip). App-scoped:
+   * Live density-guard state per node (the tree's lattice-glyph `1/K` density chip). App-scoped:
    * wired once by the init pipeline and kept across scene switches.
    */
   public setDensityProvider(provider: DensityProvider | null): void {

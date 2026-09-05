@@ -59,7 +59,7 @@ export class MonitorProviderRegistry {
   drawOrderStates = new Map<string, NodeDrawOrder>();
   // Live per-node density-guard state (keep fraction / elements per pixel).
   // APP-scoped, unlike the slots above: the guard outlives any one scene, so
-  // `resetSceneProviders` leaves it wired. Drives the tree's `drawn 1/K` chip.
+  // `resetSceneProviders` leaves it wired. Drives the tree's lattice-glyph `1/K` density chip.
   densityProvider: DensityProvider | null = null;
   densityStates = new Map<string, NodeDensityState>();
   accumulatorProviders = emptyAccumulatorSlots();
