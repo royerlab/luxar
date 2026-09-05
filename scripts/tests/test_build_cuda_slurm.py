@@ -33,9 +33,7 @@ def test_main_warns_when_only_old_gcc_modules_are_available(
     monkeypatch.setattr(sys, "argv", [str(SCRIPT), "--dry-run"])
     monkeypatch.setattr(module, "get_project_root", lambda: tmp_path)
     monkeypatch.setattr(module, "detect_pytorch_cuda_version", lambda: "12.8")
-    monkeypatch.setattr(
-        module, "list_available_cuda_modules", lambda: ["cuda/12.8.0"]
-    )
+    monkeypatch.setattr(module, "list_available_cuda_modules", lambda: ["cuda/12.8.0"])
     monkeypatch.setattr(module, "get_virtual_env", lambda: str(virtual_env))
     monkeypatch.setattr(
         module, "list_available_gcc_modules", lambda: ["gcc/9.5", "gcc/9.10"]
