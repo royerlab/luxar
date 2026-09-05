@@ -12,6 +12,9 @@ from numpy.typing import NDArray
 from ...core.dimensions import Dimensions
 from ...core.transforms import read_transform_from_zarr, transform_bounding_box
 from ...typing_utils._format_contract import GEOMETRY_TYPES
+from ...typing_utils.aliases import (
+    PositionArray,
+)
 from ...validation.nd_transforms import (
     apply_nd_transform_to_bounds,
     compose_nd_transforms,
@@ -154,7 +157,7 @@ class _WorldBoundsCollector:
 
 
 def compute_position_bounds(
-    positions: NDArray[np.float32],
+    positions: PositionArray,
 ) -> Dict[str, List[float]]:
     """Compute nD bounding box from positions array.
 

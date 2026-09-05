@@ -12,12 +12,28 @@ from typing import Any, Dict, Generator, List, MutableMapping, Optional, Tuple, 
 import numpy as np
 from numpy.typing import NDArray
 
-# Array type aliases
+# Array type aliases.
+#
+# The three writable-attribute aliases below name what the WRITING PATH accepts,
+# not what it stores: `ArrayEncoder` picks the on-disk dtype from the semantic
+# type and the `EncodingMode`, so the input dtype is a caller convenience, not a
+# storage decision. `SUPPORTED_POSITION_DTYPES` and friends are the same list.
+#
+# They used to be narrower here (`PositionArray = Float32Array`, `ColorArray`
+# without uint16) while `io/writer.py` redefined the SAME TWO NAMES wider, in a
+# module that also imports from this one. That collision is what made
+# `ZarrWriterProtocol` un-checkable against its only implementation: the
+# protocol was annotated with the wide pair and `LuxarZarrCompiler` with the
+# narrow one, so all four write methods carried `# type: ignore[override]` and
+# mypy checked nothing about them. One definition, widest-accepted, here.
 ArrayLike = Union[np.ndarray, List, Tuple]
 Float32Array = NDArray[np.float32]
+Float16Array = NDArray[np.float16]
 Uint8Array = NDArray[np.uint8]
-ColorArray = Union[Float32Array, Uint8Array]
-PositionArray = Float32Array
+Uint16Array = NDArray[np.uint16]
+ColorArray = Union[Float32Array, Uint8Array, Uint16Array]
+PositionArray = Union[Float32Array, Float16Array]
+ScalarArray = Union[Float32Array, Float16Array, Uint8Array]
 RadiusArray = Float32Array
 SharpnessArray = Float32Array
 

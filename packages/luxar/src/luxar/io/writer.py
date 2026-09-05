@@ -23,22 +23,24 @@ from numpy.typing import NDArray
 
 from ..typing_utils.aliases import (
     ChunkSpec,
+    ColorArray,
     GSplatsMetadata,
     LinesMetadata,
     MaxShape,
     MeshMetadata,
     NodePath,
     PointsMetadata,
+    PositionArray,
+    ScalarArray,
 )
 
 if TYPE_CHECKING:
     import zarr
 
-# Type aliases for arrays that can be written with different dtypes
-# Actual dtype is selected by ArrayEncoder based on semantic type and mode
-PositionArray = Union[NDArray[np.float32], NDArray[np.float16]]
-ColorArray = Union[NDArray[np.float32], NDArray[np.uint8], NDArray[np.uint16]]
-ScalarArray = Union[NDArray[np.float32], NDArray[np.float16], NDArray[np.uint8]]
+# `PositionArray` / `ColorArray` / `ScalarArray` are imported above rather than
+# defined here. This module used to redefine the first two with DIFFERENT,
+# WIDER bodies than the same names carry in `typing_utils.aliases` — see the
+# comment there for why that made this protocol unenforceable.
 RollbackState = Tuple[
     Optional[dict[str, List[float]]],
     frozenset[Tuple[str, str]],
@@ -182,6 +184,27 @@ class ZarrWriterProtocol(Protocol):
         normal_dims: Optional[Sequence[int]] = None,
         colors: Optional[Union[ColorArray, tuple, list]] = None,
         scalars: Optional[Union[ScalarArray, float]] = None,
+        # The texture block below must stay HERE, between `scalars` and
+        # `shading`, and in this order. It is where `LuxarZarrCompiler.write_mesh`
+        # puts it, and these are positional-or-keyword parameters: omitting them
+        # from the protocol (as it did until now) does not merely under-declare
+        # the interface, it renumbers every parameter after them. A caller typed
+        # against the protocol writing
+        # `writer.write_mesh(path, v, f, n, dims, colors, scalars, "flat")`
+        # would land "flat" in `uvs`, not `shading`. The same insertion mistake
+        # was made once already inside `_write_mesh_impl` — see the note at that
+        # forwarding call, which now passes keywords for exactly this reason.
+        uvs: Optional[NDArray[np.float32]] = None,
+        texture: Optional[NDArray[Any]] = None,
+        texture_encoding: str = "raw",
+        texture_width: Optional[int] = None,
+        texture_height: Optional[int] = None,
+        texture_channels: Optional[int] = None,
+        texture_color_space: str = "srgb",
+        texture_ktx2_mode: str = "uastc",
+        texture_ktx2_quality: Optional[int] = None,
+        texture_ktx2_rdo_l: Optional[float] = None,
+        texture_ktx2_zcmp: Optional[int] = None,
         shading: Optional[str] = None,
         double_sided: bool = True,
         labels: Optional[Sequence[str]] = None,
