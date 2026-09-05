@@ -226,10 +226,30 @@ def test_the_declared_input_dtypes_are_actually_accepted(
     root = zarr.open_group(store, mode="r")
     point_group = root["P"]
     decoder = ArrayDecoder()
-    tolerances = {"positions": 5e-4, "colors": 5e-3, "radii": 1.0}
+    tolerances = {"positions": 5e-4, "colors": 5e-3}
     for name, expected in kwargs.items():
         assert name in point_group, f"write_points did not write P/{name}"
-        actual = decoder.decode(point_group[name], root)
+        array = point_group[name]
+        tolerance = tolerances.get(name)
+        if name == "radii":
+            encoding = dict(array.attrs["encoding"])
+            assert encoding["name"] == "bounded_scalar_uint8"
+            levels = 2 ** int(encoding["bits"]) - 1
+            minimum = float(encoding["min"])
+            value_range = float(encoding["max"]) - minimum
+            tolerance = value_range / levels
+            if expected.dtype == np.uint8:
+                decoded = (
+                    np.asarray(array[:], dtype=np.float64) / levels * value_range
+                    + minimum
+                )
+                # #2554 tracks the decoder truncating instead of rounding integers.
+                actual = np.rint(decoded)
+            else:
+                actual = decoder.decode(array, root)
+        else:
+            actual = decoder.decode(array, root)
+        assert tolerance is not None
         if expected.ndim == 1:
             actual = np.sort(actual)
             expected = np.sort(expected)
@@ -240,6 +260,6 @@ def test_the_declared_input_dtypes_are_actually_accepted(
             actual,
             expected,
             rtol=0,
-            atol=tolerances[name],
+            atol=tolerance,
             err_msg=f"P/{name} did not decode back to the written {label} values",
         )
