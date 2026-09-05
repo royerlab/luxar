@@ -228,7 +228,7 @@ the protocol's `write_mesh` omitted the eleven texture parameters the compiler
 takes between `scalars` and `shading`.
 
 `tests/test_writer_protocol_agreement.py` keeps it honest: parameter names,
-order and defaults for all sixteen declared methods, plus a probe that writes a
+order and defaults for every declared method, plus a probe that writes a
 real store per declared input dtype (float16 positions, uint8/uint16 colors,
 float16/uint8 scalar attributes) so the aliases are pinned to what the write
 path accepts rather than to what either signature claims.

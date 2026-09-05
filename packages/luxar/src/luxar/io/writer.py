@@ -232,6 +232,17 @@ class ZarrWriterProtocol(Protocol):
                 None
             scalars: Optional - array of shape (V,), scalar float, or None. Used
                 for colormap lookup when a colormap is applied.
+            uvs: Optional texture coordinates
+            texture: Optional texture payload
+            texture_width: Texture width in pixels
+            texture_height: Texture height in pixels
+            texture_channels: Number of texture channels
+            texture_format: Texture payload format
+            texture_wrap_u: Horizontal texture wrap mode
+            texture_wrap_v: Vertical texture wrap mode
+            texture_min_filter: Texture minification filter
+            texture_mag_filter: Texture magnification filter
+            texture_color_space: Texture color space
             shading: ``"smooth"`` / ``"flat"`` / unlit ``"none"``; defaults by
                 normal presence
             double_sided: Whether back faces render (default True)

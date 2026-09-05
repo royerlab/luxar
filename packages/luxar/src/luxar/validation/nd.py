@@ -12,9 +12,8 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ..typing_utils.aliases import (
-    ColorArray,
+    Float32Array,
     PositionArray,
-    ScalarArray,
 )
 
 if TYPE_CHECKING:
@@ -131,10 +130,10 @@ def validate_dimensional_coverage(
 
 def broadcast_to_all_slices(
     positions: PositionArray,
-    colors: Optional[ColorArray],
-    radii: Optional[ScalarArray],
+    colors: Optional[Float32Array],
+    radii: Optional[Float32Array],
     scene_dimensions: Dimensions,
-) -> Tuple[PositionArray, Optional[ColorArray], Optional[ScalarArray]]:
+) -> Tuple[PositionArray, Optional[Float32Array], Optional[Float32Array]]:
     """Broadcast points to cover all non-displayed dimension values.
 
     Helper function that replicates points across all combinations of

@@ -34,8 +34,8 @@ Uint16Array = NDArray[np.uint16]
 ColorArray = Union[Float32Array, Uint8Array, Uint16Array]
 PositionArray = Union[Float32Array, Float16Array]
 ScalarArray = Union[Float32Array, Float16Array, Uint8Array]
-RadiusArray = Float32Array
-SharpnessArray = Float32Array
+RadiusArray = ScalarArray
+SharpnessArray = ScalarArray
 
 # Transform type aliases
 TransformMatrix = Float32Array  # 4x4 matrix

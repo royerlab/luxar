@@ -222,10 +222,10 @@ opacity = np.clip(value, OPACITY_MIN, OPACITY_MAX)
 data = load_data()  # type: Any
 
 # Add validation
-data = validate_positions(data)  # type: PositionArray
+data = validate_positions(data)  # type: Float32Array
 
 # Now type-safe
-process_points(data)  # Knows data is PositionArray
+process_points(data)  # Knows data is Float32Array
 ```
 
 ## Best Practices
