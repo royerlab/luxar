@@ -133,6 +133,20 @@ def _highest_gcc_module(available: list[str]) -> str | None:
     return candidates[-1][1]
 
 
+def gcc_module_status(gcc_module: str | None, available: list[str]) -> str:
+    """Describe the selected GCC module or why none can be selected."""
+    if gcc_module:
+        return f"{gcc_module}  (auto-selected; system GCC 8.5.0 is too old for C++20)"
+    if available:
+        highest_gcc = _highest_gcc_module(available)
+        found = highest_gcc or ", ".join(available)
+        return (
+            f"none suitable (highest found: {found}; "
+            "cannot compile the shipped C++20 build)"
+        )
+    return "none needed (system GCC >= 10 assumed)"
+
+
 def get_virtual_env() -> str | None:
     """Return the path to the active virtualenv, or None."""
     return os.environ.get("VIRTUAL_ENV")
@@ -542,17 +556,7 @@ def main() -> None:
     print("  Finding GCC >= 10 module...", end=" ", flush=True)
     available_gcc = list_available_gcc_modules()
     gcc_module = best_gcc_module(available_gcc)
-    if gcc_module:
-        print(f"{gcc_module}  (auto-selected; system GCC 8.5.0 is too old for C++20)")
-    elif available_gcc:
-        highest_gcc = _highest_gcc_module(available_gcc)
-        found = highest_gcc or ", ".join(available_gcc)
-        print(
-            f"none suitable (highest found: {found}; "
-            "cannot compile the shipped C++20 build)"
-        )
-    else:
-        print("none needed (system GCC >= 10 assumed)")
+    print(gcc_module_status(gcc_module, available_gcc))
 
     # ── Validate partition ─────────────────────────────────────────────────
     if not args.dry_run:
