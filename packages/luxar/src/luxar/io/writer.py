@@ -232,17 +232,33 @@ class ZarrWriterProtocol(Protocol):
                 None
             scalars: Optional - array of shape (V,), scalar float, or None. Used
                 for colormap lookup when a colormap is applied.
-            uvs: Optional texture coordinates
-            texture: Optional texture payload
-            texture_width: Texture width in pixels
-            texture_height: Texture height in pixels
-            texture_channels: Number of texture channels
-            texture_format: Texture payload format
-            texture_wrap_u: Horizontal texture wrap mode
-            texture_wrap_v: Vertical texture wrap mode
-            texture_min_filter: Texture minification filter
-            texture_mag_filter: Texture magnification filter
-            texture_color_space: Texture color space
+            uvs: Optional ``(V, 2)`` per-vertex texture coordinates. Required
+                with ``texture`` and refused without it. Values outside
+                ``[0, 1]`` are legal and tile under ``texture_wrap="repeat"``.
+            texture: Optional base-colour image. ``(H, W, C)`` array under
+                ``texture_encoding="raw"`` or ``"ktx2"``, else a 1-D ``uint8``
+                array of encoded bytes. Mutually exclusive with ``colors`` and
+                ``colormap`` — a mesh has one base-colour source.
+            texture_encoding: ``raw`` | ``png`` | ``webp`` | ``jpeg`` | ``ktx2``.
+                KTX2 accepts uint8 RGB/RGBA input and requires the Khronos
+                ``toktx`` executable, version 4.1.0 or newer. HDR requires
+                ``raw``.
+            texture_ktx2_mode: ``uastc`` (default) or ``etc1s``.
+            texture_ktx2_quality: Codec quality; defaults to 2 for UASTC and 128
+                for ETC1S.
+            texture_ktx2_rdo_l: UASTC RDO lambda in [0.001, 10.0]; defaults to
+                0.25. Lower values preserve more quality and produce larger files;
+                0 disables RDO while retaining zstd compression.
+            texture_ktx2_zcmp: UASTC zstd level in [1, 22]; defaults to 9.
+            texture_width: Declared width. Required for encoded payloads, where
+                it cannot be read without decoding; read off the array for
+                ``raw`` or ``ktx2``, and refused if it disagrees.
+            texture_height: Declared height. Same contract as ``texture_width``.
+            texture_channels: Declared channels — 1, 3 or 4. Same contract.
+            texture_color_space: ``srgb`` (default) or ``linear``. An ordinary
+                PNG/JPEG is sRGB-encoded; declaring it wrong gives a subtly
+                over-dark or washed-out surface rather than an obvious failure.
+                HDR raw textures must be declared ``linear``.
             shading: ``"smooth"`` / ``"flat"`` / unlit ``"none"``; defaults by
                 normal presence
             double_sided: Whether back faces render (default True)
