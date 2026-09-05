@@ -8,12 +8,11 @@
  * at all, so there is nothing to double-count.
  *
  * This is the *data* half of `GEOMETRY_DESCRIPTORS`, split out into a
- * module with no runtime imports so it can be read from the leaf handlers and
- * refinement loops. `geometry-descriptors.ts` pulls in every node loader and
- * loader factory, and those import the handlers back — so a handler reading the
- * descriptor table directly would close an import cycle. The descriptor still
- * exposes the flag (`GEOMETRY_DESCRIPTORS[kind].applyPartialExtendTolerance`)
- * and now sources it from here, so there remains exactly one definition;
+ * module with no runtime imports so leaf handlers and refinement loops can read
+ * one boolean without pulling in every node loader and loader factory. The
+ * descriptor still exposes the flag
+ * (`GEOMETRY_DESCRIPTORS[kind].applyPartialExtendTolerance`) and now sources it
+ * from here, so there remains exactly one definition;
  * `tests/unit/data/scene-loader/partial-extend-tolerance.test.ts` pins the two
  * together, and fails on any NEW hardcoded site.
  *

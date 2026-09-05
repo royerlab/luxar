@@ -60,11 +60,10 @@ export interface GeometryDescriptor {
    * kind. Lines opt out: their segment bounds already encode the non-displayed
    * extent, so applying it again double-counts during clipping.
    *
-   * Sourced from {@link PARTIAL_EXTEND_TOLERANCE}, never restated. This module
-   * imports every node loader and loader factory, and those import the leaf
-   * handlers back, so a handler cannot read this table without closing an
-   * import cycle — hence the separate no-import module. Twelve call sites used
-   * to hardcode the boolean instead; they all read the table now.
+   * Sourced from {@link PARTIAL_EXTEND_TOLERANCE}, never restated. The separate
+   * no-runtime-import module lets leaf handlers read one boolean without
+   * pulling in every node loader and loader factory. Twelve call sites used to
+   * hardcode the boolean instead; they all read the table now.
    */
   readonly applyPartialExtendTolerance: boolean;
 
