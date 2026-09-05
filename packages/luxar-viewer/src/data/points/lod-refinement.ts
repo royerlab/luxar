@@ -144,7 +144,7 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
         failures.recordSuccess(path);
         return true;
       } catch (error) {
-        return handleRefinementError(LABEL, path, error, progressiveLoader, failures);
+        return handleRefinementError({ label: LABEL }, path, error, progressiveLoader, failures);
       } finally {
         recordRefinementResidency(path, progressiveLoader, ctx.residencyBudget);
       }

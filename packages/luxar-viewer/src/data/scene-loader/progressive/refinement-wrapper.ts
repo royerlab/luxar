@@ -64,6 +64,12 @@ export interface RefinableLoader {
 export type RefinementAdmissionDecision =
   { readonly admitted: false } | { readonly admitted: true; readonly allowanceBytes?: number };
 
+/** Geometry-specific wording for a refinement failure. */
+export interface RefinementErrorPresentation {
+  label: string;
+  degradedState?: string;
+}
+
 /**
  * Decide whether one loader may refine this pass.
  *
@@ -102,7 +108,7 @@ export function admitRefinementCandidate(
 /**
  * Classify and report a throw from one loader's refinement step.
  *
- * @param label Geometry name for the log lines (e.g. `'Points'`).
+ * @param presentation Geometry name and optional degraded-state wording.
  * @param path Node path that failed.
  * @param error The thrown value.
  * @param loader The loader, whose pass is unwound on a real failure.
@@ -113,13 +119,13 @@ export function admitRefinementCandidate(
  *   `return handleRefinementError(...)`.
  */
 export function handleRefinementError(
-  label: string,
+  presentation: RefinementErrorPresentation,
   path: string,
   error: unknown,
   loader: RefinableLoader,
-  failures: RefinementFailureTracker,
-  degradedState = 'showing reduced detail'
+  failures: RefinementFailureTracker
 ): false {
+  const { label, degradedState = 'showing reduced detail' } = presentation;
   // Superseded, not failed: a newer view-state (or dispose) aborted the
   // in-flight read on purpose. Don't count it toward the failure backoff or log
   // an error — the loop's next-pass pending check hands off.

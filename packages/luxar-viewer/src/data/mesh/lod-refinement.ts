@@ -147,12 +147,11 @@ export async function runMeshRefinement(ctx: MeshRefinementCtx): Promise<void> {
         return true;
       } catch (error) {
         return handleRefinementError(
-          LABEL,
+          { label: LABEL, degradedState: 'showing a partial surface' },
           path,
           error,
           progressiveLoader,
-          failures,
-          'showing a partial surface'
+          failures
         );
       } finally {
         recordRefinementResidency(path, progressiveLoader, ctx.residencyBudget);
