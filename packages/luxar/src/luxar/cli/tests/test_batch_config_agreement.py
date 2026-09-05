@@ -85,21 +85,23 @@ def _calls(node: ast.AST, callee: str) -> list[dict[str, str]]:
         {kw.arg: ast.unparse(kw.value) for kw in sub.keywords if kw.arg}
         for sub in ast.walk(node)
         if isinstance(sub, ast.Call)
-        and isinstance(sub.func, ast.Name)
-        and sub.func.id == callee
+        and (
+            (isinstance(sub.func, ast.Name) and sub.func.id == callee)
+            or (isinstance(sub.func, ast.Attribute) and sub.func.attr == callee)
+        )
     ]
 
 
-def _typer_options(node: ast.FunctionDef) -> dict[str, str]:
-    """CLI parameter -> the unparsed default inside its `typer.Option(...)`."""
+def _typer_options(node: ast.FunctionDef) -> dict[str, tuple[str, ...]]:
+    """CLI parameter -> positional arguments to its `typer.Option(...)`."""
     a = node.args
     pos = a.posonlyargs + a.args
     pairs = list(zip(pos[len(pos) - len(a.defaults) :], a.defaults, strict=True))
     pairs += [(k, d) for k, d in zip(a.kwonlyargs, a.kw_defaults, strict=True) if d]
-    out: dict[str, str] = {}
+    out: dict[str, tuple[str, ...]] = {}
     for arg, default in pairs:
         if isinstance(default, ast.Call) and default.args:
-            out[arg.arg] = ast.unparse(default.args[0])
+            out[arg.arg] = tuple(ast.unparse(value) for value in default.args)
     return out
 
 
@@ -115,6 +117,24 @@ def test_the_commands_were_found_and_are_not_empty() -> None:
     assert len(_param_names(SUBMIT_CMD)) > 40
     assert len(_param_names(MAPPER)) > 40
     assert all(len(_dataclass_fields(cls)) > 3 for cls in PLAN_CONFIGS)
+
+
+def test_calls_finds_bare_and_qualified_callees() -> None:
+    tree = ast.parse('FitConfig(preset="standard")\nplanning.FitConfig(preset="draft")')
+    assert _calls(tree, "FitConfig") == [
+        {"preset": "'standard'"},
+        {"preset": "'draft'"},
+    ]
+
+
+def test_typer_options_include_explicit_cli_spellings() -> None:
+    tree = ast.parse(
+        'def command(overlap=typer.Option(32, "--tile-overlap", "-o")):\n    pass'
+    )
+    command = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
+    assert _typer_options(command) == {
+        "overlap": ("32", "'--tile-overlap'", "'-o'"),
+    }
 
 
 def _dataclass_fields(cls: type) -> list[str]:
@@ -180,8 +200,8 @@ def test_both_commands_expose_every_flag_the_mapper_consumes() -> None:
     )
 
 
-def test_the_siblings_agree_on_the_defaults_of_their_shared_flags() -> None:
-    """A shared flag name that means two things is worse than two names."""
+def test_the_siblings_agree_on_shared_flag_defaults_and_cli_spellings() -> None:
+    """A shared parameter must expose the same default and public flag names."""
     run_opts, submit_opts = _typer_options(RUN_CMD), _typer_options(SUBMIT_CMD)
     disagree = [
         (name, run_opts[name], submit_opts[name])

@@ -83,7 +83,7 @@ def build_plan_configs(
     merge_substitutive_method: Optional[str],
     merge_coarsen_dims: Optional[str],
 ) -> PlanConfigs:
-    """Map the submit CLI flags onto the ``plan_batch`` config dataclasses."""
+    """Map the CLI flags onto the ``plan_batch`` config dataclasses."""
     from luxar.cli.gsplat_ops.batch.planning import (
         ContentKnobs,
         DenoiseConfig,
