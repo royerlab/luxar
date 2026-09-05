@@ -138,6 +138,7 @@ import { SceneManager } from '../../../scene/scene-manager';
 import { AnimationController } from '../../../scene/animation/animation-controller';
 import { InputHandler } from '../../../input';
 import { RenderingControls } from '../../../ui/rendering-controls';
+import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import { DatasetBrowser } from '../../../ui/dataset-browser';
 import { cleanupUI as mockCleanupUI } from '../../../ui/ui-cleanup';
 import { clearError as mockClearError } from '../../../ui/error-overlay';
@@ -1421,6 +1422,84 @@ describe('LuxarApp', () => {
         exposure: 1.5,
         toneMapping: 'ACES',
       });
+    });
+
+    it('authored waypoints snap at load and fly when the story dimension changes', async () => {
+      // A camera restoreCamera() can write to (the snap path), on top of the
+      // readable fields the default mock already has.
+      mockSceneManager.camera = {
+        position: { x: 0, y: 0, z: 10, set: vi.fn() },
+        up: { x: 0, y: 1, z: 0, set: vi.fn() },
+        near: 0.1,
+        far: 100,
+        updateProjectionMatrix: vi.fn(),
+      };
+      mockSceneManager.getSceneViewerConfig.mockReturnValue({
+        waypoints: [
+          { when: { story: 0 }, camera: { position: [0, 0, 5] } },
+          { when: { story: 1 }, camera: { position: [5, 0, 0] }, duration_ms: 700 },
+        ],
+      });
+      // The scene's dims (the real dims manager is not mocked): three shown
+      // axes plus a hidden `story` axis at 0.
+      const dimensions = ['x', 'y', 'z', 'story'].map((name, i) => ({
+        name,
+        unit: '',
+        range: [0, 3] as [number, number],
+        step: 1,
+        display: i < 3,
+      }));
+      const fakeScene = {
+        userData: { sceneDimensions: { dimensions } },
+        children: [],
+        getObjectByName: () => undefined,
+      } as unknown as Parameters<typeof sceneDimsManager.initFromScene>[0];
+      sceneDimsManager.initFromScene(fakeScene);
+      sceneDimsManager.setDimensionValue(3, 0);
+      // init() only loads `src` directly when the probe says it exists;
+      // otherwise it opens the dataset browser instead.
+      mockFetch.mockResolvedValue({ ok: true });
+
+      try {
+        await app.init({ canvas: mockCanvas, src: SRC });
+
+        // Load-time: the matched waypoint is applied as a SNAP (restoreCamera),
+        // not a flight.
+        expect(mockSceneManager.camera.position.set).toHaveBeenCalledWith(0, 0, 5);
+        expect(mockAnimationController.addPerFrameCallback).not.toHaveBeenCalledWith(
+          'camera-flight',
+          expect.any(Function),
+          expect.anything()
+        );
+
+        // Stepping the story dimension to a different waypoint flies.
+        sceneDimsManager.setDimensionValue(3, 1);
+        expect(mockAnimationController.addPerFrameCallback).toHaveBeenCalledWith(
+          'camera-flight',
+          expect.any(Function),
+          { continuous: true }
+        );
+
+        const flightsStarted = (): number =>
+          mockAnimationController.addPerFrameCallback.mock.calls.filter(
+            (c: unknown[]) => c[0] === 'camera-flight'
+          ).length;
+
+        // A move that keeps the same waypoint matched does nothing more.
+        mockAnimationController.addPerFrameCallback.mockClear();
+        sceneDimsManager.setDimensionValue(3, 1.2);
+        expect(flightsStarted()).toBe(0);
+
+        // A scene without waypoints detaches the previous scene's binding
+        // (the switch itself registers other per-frame work; only flights count).
+        mockSceneManager.getSceneViewerConfig.mockReturnValue({});
+        await app.switchDataset('http://example.com/plain.zarr');
+        mockAnimationController.addPerFrameCallback.mockClear();
+        sceneDimsManager.setDimensionValue(3, 0);
+        expect(flightsStarted()).toBe(0);
+      } finally {
+        sceneDimsManager.reset();
+      }
     });
 
     it('getViewerState bundles dataset, camera, dims, rendering and layers', async () => {

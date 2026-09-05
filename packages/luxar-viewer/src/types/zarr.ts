@@ -83,19 +83,43 @@ export interface SceneDimensionAttrs {
  * This is also the format exported by Ctrl+Shift+S in the viewer,
  * enabling full Python → zarr → viewer → export → Python round-trips.
  */
+/** The authored camera block — the scene-level `camera` and each waypoint's `camera`. */
+export interface ZarrCameraConfig {
+  position?: [number, number, number];
+  target?: [number, number, number];
+  up?: [number, number, number];
+  fov?: number;
+  fov_preset?: string;
+  near?: number;
+  far?: number;
+  /** Named scene graph node whose bounding box center becomes the camera target */
+  target_node?: string;
+}
+
+/**
+ * A `when` clause: dimension NAME → exact value (matches within ±0.5 of the
+ * current step) or inclusive `[min, max]`. Same syntax and semantics as an
+ * overlay's `visible_range`.
+ */
+export type ZarrWaypointCondition = Record<string, number | [number, number]>;
+
+/**
+ * A camera pose bound to a hidden-dimension position (Python `Waypoint`).
+ * First match in list order wins; see `core/app/camera/waypoint-driver.ts`.
+ */
+export interface ZarrWaypoint {
+  when: ZarrWaypointCondition;
+  camera: ZarrCameraConfig;
+  /** Flight duration in ms; absent = viewer default, 0 = snap. */
+  duration_ms?: number;
+  easing?: 'linear' | 'ease-in-out';
+  /** Rendering overrides (snake_case ViewerConfig keys) applied on arrival. */
+  rendering?: Record<string, unknown>;
+}
+
 export interface ZarrViewerConfig {
   // Camera
-  camera?: {
-    position?: [number, number, number];
-    target?: [number, number, number];
-    up?: [number, number, number];
-    fov?: number;
-    fov_preset?: string;
-    near?: number;
-    far?: number;
-    /** Named scene graph node whose bounding box center becomes the camera target */
-    target_node?: string;
-  };
+  camera?: ZarrCameraConfig;
 
   // Scene identity — becomes the browser tab title (document.title); wins
   // over the `?title=` URL parameter `luxar serve --open` derives from the
@@ -206,6 +230,9 @@ export interface ZarrViewerConfig {
     /** Per-dimension step override (absent = Auto). */
     step_size?: number;
   }>;
+
+  // Story waypoints: camera poses bound to hidden-dimension positions.
+  waypoints?: ZarrWaypoint[];
 }
 
 /**

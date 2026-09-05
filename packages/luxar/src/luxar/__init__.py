@@ -69,6 +69,7 @@ from .core.viewer_config import (
     DimensionsConfig,
     UIConfig,
     ViewerConfig,
+    Waypoint,
 )
 
 # I/O classes
@@ -129,6 +130,7 @@ __all__: list[str] = [
     "UIConfig",
     "DimensionsConfig",
     "AnimationConfig",
+    "Waypoint",
     # Enumerations
     "BlendingMode",
     "NodeType",

@@ -19,7 +19,12 @@ import type {
   ViewerState,
 } from './app/embedder/events';
 import { CameraFlight, type FlyToOptions, type FlightResult } from './app/camera/camera-flight';
-import type { RenderingSettings } from '../config';
+import { WaypointDriver, resolveWaypointPose } from './app/camera/waypoint-driver';
+import { extractRenderingOverrides } from '../config/zarr-bridge/viewer-config-utils';
+import { resolveTargetNodeCenter } from '../scene/scene-manager/camera/camera-setup';
+import { config, type RenderingSettings } from '../config';
+import type * as THREE from 'three';
+import type { ZarrWaypoint } from '../types/zarr';
 import { captureScreenshot } from './app/embedder/screenshot';
 import type { AnimationController } from '../scene/animation/animation-controller';
 import type { ContextConfig, InputContextId, InputHandler, KeyBinding } from '../input';
@@ -149,6 +154,11 @@ export class LuxarApp {
   private currentDatasetSrc?: string;
   /** Smooth camera transitions for {@link flyTo}; created in {@link setupEmbedderHooks}. */
   private cameraFlight?: CameraFlight;
+  /**
+   * Dims-manager listener driving the loaded scene's authored story waypoints
+   * (`viewer_config.waypoints`); the driver itself lives in its closure.
+   */
+  private waypointListener?: () => void;
 
   /**
    * Observes the canvas box so the viewer re-fits when the host container
@@ -351,6 +361,8 @@ export class LuxarApp {
     this.datasetFaultUnsubscribe = undefined;
     this.datasetFaultLoader = undefined;
     this.currentDatasetSrc = undefined;
+    // The outgoing scene's waypoints must not fire on the incoming scene's dims.
+    this.disposeWaypoints();
     try {
       await loadDatasetImpl(src, {
         inputHandler: this.inputHandler,
@@ -428,6 +440,7 @@ export class LuxarApp {
       this.cameraFlight?.dispose();
       this.cameraFlight = undefined;
     });
+    this.events.add(() => this.disposeWaypoints());
 
     // Guard on a real Element: ResizeObserver may be absent (some test
     // environments) and observing a non-Element throws.
@@ -469,6 +482,65 @@ export class LuxarApp {
    * preserve the viewer's built-in defaults.
    */
   private applyViewerConfigState(viewerConfig: ZarrViewerConfig | undefined): void {
+    this.applyViewerConfigStateCore(viewerConfig);
+    // AFTER the core pass: `dimensions.current_step` has been applied, so the
+    // load-time match sees the authored opening position and snaps to it.
+    this.installWaypoints(viewerConfig?.waypoints);
+  }
+
+  /**
+   * Bind the scene's authored story waypoints to the dims manager: match once
+   * now (snap — the opening framing, ahead of the plain `camera` block), then
+   * fly whenever a dimension change makes a different waypoint match. Each
+   * port is a piece the app already owns; the driver only sequences them.
+   */
+  private installWaypoints(waypoints: ZarrWaypoint[] | undefined): void {
+    this.disposeWaypoints();
+    if (!Array.isArray(waypoints) || waypoints.length === 0) return;
+
+    const driver = new WaypointDriver(waypoints, {
+      getDims: () => sceneDimsManager.getDims(),
+      getLivePose: () => captureViewerSnapshot(this.sceneManager).camera,
+      resolvePose: (camera, live) =>
+        resolveWaypointPose(camera, live, {
+          resolveNodeCenter: (name) => {
+            const root = this.sceneManager.scene?.children?.find((c) => c.name === 'LuxarScene') as
+              THREE.Group | undefined;
+            return root ? resolveTargetNodeCenter(root, name) : null;
+          },
+          fovPresets: config.camera.fovPresets,
+        }),
+      snapTo: (pose) => restoreCamera(this.sceneManager, pose),
+      flyTo: (pose, opts) => {
+        // The first load's config pass runs before setupEmbedderHooks(), so the
+        // flight driver may not exist yet; a snap is the faithful fallback.
+        if (this.cameraFlight) return this.cameraFlight.flyTo(pose, opts);
+        restoreCamera(this.sceneManager, pose);
+        return Promise.resolve({ completed: true });
+      },
+      // Snake_case keys → the same validated override path authored defaults take.
+      applyRendering: (rendering) =>
+        this.renderingControls.applyOverrides(
+          extractRenderingOverrides(rendering as ZarrViewerConfig),
+          'Applied waypoint rendering overrides'
+        ),
+    });
+    const listener = (): void => {
+      driver.evaluate('fly');
+    };
+    sceneDimsManager.addListener(listener);
+    this.waypointListener = listener;
+    driver.evaluate('snap');
+  }
+
+  private disposeWaypoints(): void {
+    if (this.waypointListener) {
+      sceneDimsManager.removeListener(this.waypointListener);
+      this.waypointListener = undefined;
+    }
+  }
+
+  private applyViewerConfigStateCore(viewerConfig: ZarrViewerConfig | undefined): void {
     applyViewerConfigStateHelper(viewerConfig, {
       showHelp: () => showHelpOverlay(this.inputHandler.getRegisteredShortcutBindings()),
       renderingControls: this.renderingControls,

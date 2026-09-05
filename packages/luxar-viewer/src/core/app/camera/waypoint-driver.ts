@@ -1,0 +1,193 @@
+/**
+ * Waypoint driver — binds authored camera poses to hidden-dimension positions.
+ *
+ * A scene tells a story by giving itself a hidden discrete "story" dimension
+ * and authoring, per value, the colours (data), the captions (overlays with a
+ * `visible_range`) and — through `viewer_config.waypoints` — the camera. The
+ * first two already worked; this module adds the third with the SAME matching
+ * rule the overlay manager uses for `visible_range`, so one vocabulary
+ * describes both "show this caption here" and "look from here":
+ *
+ * - every named dimension in `when` must match (dimensions the scene does not
+ *   have are skipped, exactly as `isOverlayVisible` skips them);
+ * - an exact value matches within ±0.5 of the current step;
+ * - a `[min, max]` range matches inclusively;
+ * - the FIRST matching waypoint in list order wins.
+ *
+ * Behaviour is keyed on the MATCHED WAYPOINT changing, not on every slider
+ * tick: a move that stays inside the same waypoint's ranges does nothing, and
+ * leaving every waypoint leaves the camera where it is. At load the matched
+ * waypoint is applied as a snap (the opening framing); afterwards a change of
+ * match is a `flyTo` with the waypoint's own duration and easing, and the
+ * optional `rendering` block rides the same override path an authored
+ * `viewer_config` takes.
+ *
+ * Pure functions (`matchWaypoint`, `resolveWaypointPose`) carry the logic;
+ * the class only sequences them against injected ports, so `LuxarApp` wires
+ * it with the pieces it already owns (dims manager, camera flight, rendering
+ * controls) and tests drive it with fakes.
+ */
+
+import * as THREE from 'three';
+import type { ZarrCameraConfig, ZarrWaypoint, ZarrWaypointCondition } from '../../../types/zarr';
+import type { SimpleDims } from '../../../types/dims';
+import type { CameraSnapshot } from '../snapshot/viewer-snapshot';
+import type { FlightResult, FlyToOptions } from './camera-flight';
+import { log, Modules } from '../../../utils/log';
+
+/** Tolerance for an exact-value clause — the overlay manager's rule. */
+const EXACT_MATCH_TOLERANCE = 0.5;
+
+/** The subset of the dims manager's state the matcher reads. */
+export type WaypointDims = Pick<SimpleDims, 'currentStep' | 'metadata'>;
+
+/**
+ * Whether `when` holds for the current dimension state. Mirrors
+ * `OverlayManager.isOverlayVisible`: unknown dimension names are skipped, an
+ * exact value matches within ±0.5, a range matches inclusively.
+ */
+export function waypointMatches(when: ZarrWaypointCondition, dims: WaypointDims): boolean {
+  const metadata = dims.metadata;
+  if (!metadata) return false;
+  for (const [dimName, constraint] of Object.entries(when)) {
+    const dimIndex = metadata.findIndex((m) => m.name === dimName);
+    if (dimIndex < 0) continue;
+    const current = dims.currentStep[dimIndex];
+    if (current === undefined) continue;
+    if (typeof constraint === 'number') {
+      if (Math.abs(current - constraint) > EXACT_MATCH_TOLERANCE) return false;
+    } else if (Array.isArray(constraint) && constraint.length === 2) {
+      if (current < constraint[0] || current > constraint[1]) return false;
+    }
+  }
+  return true;
+}
+
+/** Index of the first waypoint whose `when` matches, or -1. */
+export function matchWaypoint(waypoints: readonly ZarrWaypoint[], dims: WaypointDims): number {
+  for (let i = 0; i < waypoints.length; i++) {
+    const when = waypoints[i]?.when;
+    if (when && typeof when === 'object' && waypointMatches(when, dims)) return i;
+  }
+  return -1;
+}
+
+export interface ResolvePoseDeps {
+  /** Named-node → bounding-box centre; `null` when the node is unknown or empty. */
+  resolveNodeCenter: (name: string) => THREE.Vector3 | null;
+  /** `fov_preset` name → degrees (the camera config's preset table). */
+  fovPresets: Readonly<Record<string, number>>;
+}
+
+/**
+ * Turn an authored camera block into a full `CameraSnapshot`, starting from
+ * the LIVE pose so every field the author left out keeps its current value.
+ * That is what lets a waypoint name only a `target_node` to re-aim without
+ * moving, or only a `position` to move without re-aiming. `target_node` wins
+ * over `target` (the scene-level camera block's rule); an unresolvable node
+ * warns and falls back to `target`, then to the live target.
+ */
+export function resolveWaypointPose(
+  camera: ZarrCameraConfig,
+  live: CameraSnapshot,
+  deps: ResolvePoseDeps
+): CameraSnapshot {
+  const pose: CameraSnapshot = { ...live };
+  if (camera.position) pose.position = [...camera.position] as [number, number, number];
+  if (camera.up) pose.up = [...camera.up] as [number, number, number];
+  let target: [number, number, number] | undefined = camera.target
+    ? ([...camera.target] as [number, number, number])
+    : undefined;
+  if (camera.target_node) {
+    const centre = deps.resolveNodeCenter(camera.target_node);
+    if (centre) {
+      target = [centre.x, centre.y, centre.z];
+    } else {
+      log.warning(
+        Modules.APP,
+        `waypoint target_node '${camera.target_node}' not found in scene graph; using target`
+      );
+    }
+  }
+  if (target) pose.target = target;
+  if (typeof camera.fov === 'number') {
+    pose.fov = camera.fov;
+  } else if (camera.fov_preset) {
+    const preset = deps.fovPresets[camera.fov_preset];
+    if (typeof preset === 'number' && preset > 0) pose.fov = preset;
+  }
+  if (typeof camera.near === 'number') pose.near = camera.near;
+  if (typeof camera.far === 'number') pose.far = camera.far;
+  return pose;
+}
+
+export interface WaypointPorts {
+  getDims: () => WaypointDims | null;
+  getLivePose: () => CameraSnapshot;
+  resolvePose: (camera: ZarrCameraConfig, live: CameraSnapshot) => CameraSnapshot;
+  /** Instant application (load-time framing, `duration_ms: 0`). */
+  snapTo: (pose: CameraSnapshot) => void;
+  flyTo: (pose: CameraSnapshot, opts: FlyToOptions) => Promise<FlightResult>;
+  /** Snake_case rendering overrides — the authored `viewer_config` path. */
+  applyRendering: (rendering: Record<string, unknown>) => void;
+}
+
+/** How a newly matched waypoint is reached. */
+export type WaypointArrival = 'snap' | 'fly';
+
+/**
+ * Sequences waypoint matching against dimension changes. One per loaded
+ * scene; `LuxarApp` creates it in `applyViewerConfigState` and drops it on the
+ * next load.
+ */
+export class WaypointDriver {
+  private current = -1;
+
+  constructor(
+    private readonly waypoints: readonly ZarrWaypoint[],
+    private readonly ports: WaypointPorts
+  ) {}
+
+  /** Index of the waypoint currently in effect, or -1. */
+  get currentIndex(): number {
+    return this.current;
+  }
+
+  /**
+   * Re-match against the live dims and, if the matched waypoint changed,
+   * reach it. `'snap'` is the load-time call; dimension changes use `'fly'`.
+   * Returns the new index (or -1).
+   */
+  evaluate(arrival: WaypointArrival = 'fly'): number {
+    const dims = this.ports.getDims();
+    if (!dims) return this.current;
+    const idx = matchWaypoint(this.waypoints, dims);
+    if (idx === this.current) return idx;
+    this.current = idx;
+    if (idx < 0) return idx;
+
+    const wp = this.waypoints[idx];
+    if (wp.camera && typeof wp.camera === 'object') {
+      const pose = this.ports.resolvePose(wp.camera, this.ports.getLivePose());
+      const duration = typeof wp.duration_ms === 'number' ? wp.duration_ms : undefined;
+      if (arrival === 'snap' || duration === 0) {
+        this.ports.snapTo(pose);
+      } else {
+        void this.ports.flyTo(pose, {
+          ...(duration !== undefined ? { durationMs: duration } : {}),
+          ...(wp.easing ? { easing: wp.easing } : {}),
+        });
+      }
+    }
+    if (wp.rendering && typeof wp.rendering === 'object') {
+      this.ports.applyRendering(wp.rendering);
+    }
+    log.info(Modules.APP, `Waypoint ${idx} reached (${arrival})`);
+    return idx;
+  }
+
+  /** Forget the current match so the next `evaluate` re-applies it. */
+  reset(): void {
+    this.current = -1;
+  }
+}

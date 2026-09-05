@@ -1,6 +1,7 @@
 # Remote Control Spec — driving a Luxar viewer from an external program
 
-**Status:** Phase A implemented (viewer-side API). Phases B–D are design, not code.
+**Status:** Phase A (viewer-side API) and Phase C §4.1 (authored waypoints) are
+implemented. Phase B, Phase C §4.2 (kiosk) and Phase D are design, not code.
 
 ## 1. Purpose
 
@@ -162,34 +163,60 @@ Same-host LAN kiosk by default: the hub binds the address `luxar serve` binds.
 `--control-token <t>` requires `?token=` on the WebSocket URL for controllers;
 viewers attach with the same token. No other auth is planned.
 
-## 4. Phase C — authored waypoints and kiosk mode (design)
+## 4. Phase C — authored waypoints (implemented) and kiosk mode (design)
 
 Both blocks live in `viewer_config` (Python `luxar.core.viewer_config`, viewer
-`config/zarr-bridge`), because the scene author decides what the display may
-do and where the stories are.
+`types/zarr.ts` + `config/zarr-bridge`), because the scene author decides what
+the display may do and where the stories are.
 
-### 4.1 Story dimension and waypoints
+### 4.1 Story dimension and waypoints (implemented)
 
-A hidden **story dimension** (discrete, one integer per story) already gives
-the author everything except the camera: per-story colours are authored data,
-per-story overlays use the existing dimension-aware overlay visibility. The
-one missing binding is dimension value → camera pose:
+A hidden **story dimension** (discrete, one integer per story) already gave the
+author everything except the camera: per-story colours are authored data,
+per-story overlays use the existing dimension-aware `visible_range`. The one
+missing binding was dimension position → camera pose, and it deliberately
+reuses the overlay vocabulary:
 
 ```python
-scene.viewer_config.waypoints = [
-    Waypoint(dimension=3, value=0, camera=CameraConfig(position=..., target=..., up=...),
-             duration_ms=2000, rendering={"exposure": 0.5}),
-    Waypoint(dimension=3, value=1, camera=...),
+from luxar import CameraConfig, Waypoint
+
+vc.waypoints = [
+    Waypoint(when={"story": 0}, camera=CameraConfig(position=(0, 0, 40))),
+    Waypoint(when={"story": 1, "time": (10, 20)},
+             camera=CameraConfig(target_node="cluster_7", position=(12, 3, 8)),
+             duration_ms=2500, easing="ease-in-out", rendering={"exposure": 0.5}),
+    Waypoint(when={"story": 1}, camera=CameraConfig(target_node="cluster_7")),
 ]
 ```
 
-Viewer rule: when the story dimension changes to a value that has a waypoint,
-`flyTo(waypoint.camera, {durationMs})` and apply `rendering` / `layers`
-patches. The touch table therefore only ever calls `setDimensionValue`, and the
+- `when` is the overlay rule (`waypointMatches` mirrors `isOverlayVisible`):
+  every named dimension must match, exact = within ±0.5 of the current step,
+  `(min, max)` inclusive, dimensions the scene lacks are skipped. **First match
+  in list order wins**, so a clause on two dimensions goes before a clause on
+  one.
+- `camera` is the ordinary camera block; fields left out keep the LIVE value at
+  flight time (`resolveWaypointPose` starts from `getCameraPose()`), so a
+  waypoint may re-aim (`target_node`) without moving. `target_node` beats
+  `target`; an unknown node warns and falls back.
+- `duration_ms` / `easing` are the `flyTo` options; `0` snaps. `rendering`
+  carries snake_case `ViewerConfig` keys (validated in Python against the
+  rendering field list) and rides `RenderingControls.applyOverrides` via
+  `extractRenderingOverrides` — the same path as authored defaults.
+
+Viewer rule (`core/app/camera/waypoint-driver.ts`, wired in
+`LuxarApp.applyViewerConfigState` after `dimensions.current_step` is applied):
+act on a **change of matched waypoint**, never on every slider tick. At load the
+matched waypoint is applied as a snap (the opening framing, ahead of the plain
+`camera` block). Afterwards a change of match flies; a move inside the same
+waypoint's ranges does nothing; leaving every waypoint leaves the camera where
+it is. The touch table therefore only ever calls `setDimensionValue`, and the
 keyboard (`[` / `]`) drives the same stories with no controller at all. A
 controller can still `flyTo` anywhere; waypoints are defaults, not a cage.
 
-### 4.2 Kiosk permissions
+Not carried per waypoint (deliberately): layer patches — a story that wants a
+different layer look authors it as data or asks the controller to `setLayer`.
+
+### 4.2 Kiosk permissions (design)
 
 Extend the existing `ui` block:
 

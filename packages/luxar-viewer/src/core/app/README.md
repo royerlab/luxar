@@ -57,7 +57,10 @@ app/
   slerp, log distance, up slerp), runs as a `continuous` per-frame callback paired with
   `startAnimation()`, hands every frame to the controls the way `restoreCamera` does,
   and cancels on canvas pointer/wheel/touch or document keydown. `buildFlightPath` /
-  `easeFlight` are pure and exported for tests.
+  `easeFlight` are pure and exported for tests. Also `WaypointDriver`: binds the
+  scene's authored `viewer_config.waypoints` (camera poses keyed on hidden-dimension
+  positions with the overlay `visible_range` matching rule) to the dims manager —
+  snap at load, `flyTo` on a change of matched waypoint.
 - **`snapshot/`** — `captureSnapshot` / `restoreSnapshot` + `ViewerSnapshot`
   types. JSON-serialisable view state (camera + slice position only) for
   tests, share-view links, and regression harnesses. Layer-panel and
