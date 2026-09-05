@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { MONITOR_ICONS } from '../../../../../ui/data-loading-monitor/templates/primitives';
 import {
   renderSceneGraphTree,
   summariseLodStates,
@@ -318,7 +319,7 @@ describe('renderSceneGraphTree — kind badges', () => {
     };
     const thinned = { keep: 1 / 8, elementsPerPixel: 25.2, blendable: true, onScreen: true };
 
-    it('renders drawn 1/K while the node is thinned, with the density in the tooltip', () => {
+    it('renders the lattice glyph + 1/K while the node is thinned, with the density in the tooltip', () => {
       const html = renderSceneGraphTree(
         tree(gsplatsNode),
         new Set(),
@@ -327,7 +328,9 @@ describe('renderSceneGraphTree — kind badges', () => {
         new Map([['/cloud', thinned]])
       );
       expect(html).toContain('data-density-path="/cloud"');
-      expect(html).toContain('drawn 1/8');
+      expect(html).toContain(MONITOR_ICONS.densityThinned);
+      expect(html).toContain('</svg>1/8</span>');
+      expect(html).toContain('Drawn 1/8 of the resident elements');
       expect(html).toContain('25 resident elements per pixel');
       expect(html).toContain('brightens each ×8');
     });
@@ -343,14 +346,14 @@ describe('renderSceneGraphTree — kind badges', () => {
         new Map(),
         new Map([['/cloud', state]])
       );
-      expect(html).toContain('data-density-path="/cloud"');
-      expect(html).not.toContain('drawn 1/');
+      expect(html).toContain('data-density-path="/cloud" title=""></span>');
+      expect(html).not.toContain(MONITOR_ICONS.densityThinned);
     });
 
     it('renders an empty slot for a drawable node with no state, and none for a group', () => {
       const html = renderSceneGraphTree(tree(gsplatsNode), new Set(), new Map(), new Map());
-      expect(html).toContain('data-density-path="/cloud"');
-      expect(html).not.toContain('drawn 1/');
+      expect(html).toContain('data-density-path="/cloud" title=""></span>');
+      expect(html).not.toContain(MONITOR_ICONS.densityThinned);
       const group: SceneGraphNode = { path: '/g', name: 'g', type: 'group', children: [] };
       expect(renderSceneGraphTree(tree(group), new Set(), new Map(), new Map())).not.toContain(
         'data-density-path'
@@ -371,7 +374,7 @@ describe('renderSceneGraphTree — kind badges', () => {
         new Map(),
         new Map([['/cloud', thinned]])
       );
-      expect(html).toContain('drawn 1/8');
+      expect(html).toContain('</svg>1/8</span>');
     });
   });
 
@@ -383,14 +386,27 @@ describe('renderSceneGraphTree — kind badges', () => {
       children: [],
     };
 
-    it('renders bucket + renderOrder when live state exists', () => {
+    it('renders a bucket glyph + renderOrder when live state exists, bucket named in the tooltip', () => {
       const drawOrderStates = new Map<string, NodeDrawOrder>([
         ['/cloud', { bucket: 'transparent', depthWrite: false, renderOrder: 3 }],
       ]);
       const html = renderSceneGraphTree(tree(gsplatsNode), new Set(), new Map(), drawOrderStates);
       expect(html).toContain('data-draworder-path="/cloud"');
-      expect(html).toContain('#3 transparent');
-      expect(html).not.toContain('O0 #3 transparent');
+      // The word moved into the glyph + tooltip: the chip text is just the order.
+      expect(html).toContain('</svg>#3</span>');
+      expect(html).toContain(MONITOR_ICONS.bucketTransparent);
+      expect(html).not.toContain('#3 transparent');
+      expect(html).not.toContain('O0 #3');
+      expect(html).toMatch(/title="[^"]*&#39;transparent&#39; render bucket[^"]*depthWrite off/);
+    });
+
+    it('uses the filled glyph for the opaque bucket', () => {
+      const drawOrderStates = new Map<string, NodeDrawOrder>([
+        ['/cloud', { bucket: 'opaque', depthWrite: true, renderOrder: 0 }],
+      ]);
+      const html = renderSceneGraphTree(tree(gsplatsNode), new Set(), new Map(), drawOrderStates);
+      expect(html).toContain(MONITOR_ICONS.bucketOpaque);
+      expect(html).toContain('</svg>#0</span>');
     });
 
     it('prefixes an authored layer order', () => {
@@ -398,7 +414,7 @@ describe('renderSceneGraphTree — kind badges', () => {
         ['/cloud', { bucket: 'transparent', depthWrite: false, renderOrder: 3, layerOrder: 2 }],
       ]);
       const html = renderSceneGraphTree(tree(gsplatsNode), new Set(), new Map(), drawOrderStates);
-      expect(html).toContain('O2 #3 transparent');
+      expect(html).toContain('</svg>O2 #3</span>');
     });
 
     it('renders a persistent EMPTY chip slot for a drawable node without state', () => {

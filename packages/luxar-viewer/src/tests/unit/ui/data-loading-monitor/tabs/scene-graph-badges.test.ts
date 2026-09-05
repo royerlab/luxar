@@ -55,7 +55,9 @@ describe('updateSceneGraphBadges', () => {
         ['/points', { keep: 0.125, elementsPerPixel: 27.4, blendable: true, onScreen: true }],
       ])
     );
-    expect(density.textContent).toBe('drawn 1/8');
+    expect(density.textContent).toBe('1/8'); // the glyph is an SVG, no text
+    expect(density.querySelector('svg.luxar-micon')).not.toBeNull();
+    expect(density.title).toContain('Drawn 1/8 of the resident elements');
     expect(density.title).toContain('27 resident elements per pixel');
     updateSceneGraphBadges(
       container,
@@ -64,8 +66,20 @@ describe('updateSceneGraphBadges', () => {
       new Map(),
       new Map([['/points', { keep: 1, elementsPerPixel: 2, blendable: true, onScreen: true }]])
     );
-    expect(density.textContent).toBe('');
+    expect(density.innerHTML).toBe('');
     expect(density.title).toBe('');
+
+    // The draw-order chip patches the same way: glyph + order text, bucket in the tooltip.
+    updateSceneGraphBadges(
+      container,
+      model,
+      new Map(),
+      new Map([['/points', { bucket: 'opaque', depthWrite: true, renderOrder: 2 }]])
+    );
+    const drawOrder = container.querySelector('[data-draworder-path="/points"]') as HTMLElement;
+    expect(drawOrder.textContent).toBe('#2');
+    expect(drawOrder.querySelector('svg.luxar-micon')).not.toBeNull();
+    expect(drawOrder.title).toContain("'opaque' render bucket");
 
     model.updateVisibleCountsByPath(new Map());
     model.syncVisibleCountsIntoTree();

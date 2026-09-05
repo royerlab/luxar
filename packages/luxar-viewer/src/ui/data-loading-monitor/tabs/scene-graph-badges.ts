@@ -7,6 +7,7 @@ import type {
 } from '../../../types/data-monitor-types';
 import {
   activeLevelRole,
+  chipInnerHtml,
   countAdditiveNodes,
   densityChipContent,
   drawOrderChipContent,
@@ -65,7 +66,8 @@ export function updateSceneGraphBadges(
     const path = (chip as HTMLElement).dataset.draworderPath;
     if (!path) return;
     const content = drawOrderChipContent(drawOrderStates.get(path));
-    chip.textContent = content?.text ?? '';
+    // Glyph + text: the glyph is trusted `MONITOR_ICONS` markup, the text is escaped.
+    chip.innerHTML = chipInnerHtml(content);
     (chip as HTMLElement).title = content?.title ?? '';
   });
 
@@ -75,7 +77,7 @@ export function updateSceneGraphBadges(
     const path = (chip as HTMLElement).dataset.densityPath;
     if (!path) return;
     const content = densityChipContent(densityStates.get(path));
-    chip.textContent = content?.text ?? '';
+    chip.innerHTML = chipInnerHtml(content);
     (chip as HTMLElement).title = content?.title ?? '';
   });
 
