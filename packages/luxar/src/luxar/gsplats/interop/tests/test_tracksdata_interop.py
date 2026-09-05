@@ -131,9 +131,7 @@ def test_gsplats_to_tracksdata_uses_effective_amplitude_for_rgba() -> None:
         ),
     )
     graph = gsplats_to_tracksdata_graph(gsplats, frame_shape=(128, 128), t=0)
-    amps = sorted(
-        graph.node_attrs(attr_keys=["amplitude"])["amplitude"].to_list()
-    )
+    amps = sorted(graph.node_attrs(attr_keys=["amplitude"])["amplitude"].to_list())
     # The exported amplitudes are A·α = α here (A = 1): the full alpha spread,
     # NOT a constant 1 (which the pre-fix raw-amplitude export would give).
     assert amps == pytest.approx(sorted(alpha.tolist()), abs=1e-6)

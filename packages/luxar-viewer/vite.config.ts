@@ -125,6 +125,9 @@ export default defineConfig(({ command }) => ({
         bypass(req) {
           // Dataset URLs are proxied to `luxar serve examples/`; this host page stays on Vite.
           if (req.url?.startsWith('/examples/layer/')) return req.url;
+          // Explicit: undefined tells Vite to proxy normally. Implicit here
+          // before, which reads as a forgotten branch and is what TS7030 flags.
+          return undefined;
         },
       },
     },

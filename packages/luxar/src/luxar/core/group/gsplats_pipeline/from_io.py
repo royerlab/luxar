@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 import numpy as np
 
+from luxar.validation.writing import validate_image_labels_for_writing
+
 from ..compositing import reject_mesh_only_appearance, strip_absent_attr_kwargs
 from .amplitude_norm import (
     NormalizeSpec,
@@ -625,10 +627,6 @@ def _validate_labelled_leaf_length(
             validate_labels_for_writing(keys, n_splats, context="keys", noun="Keys")
         image_labels = attrs.get("image_labels")
         if image_labels is not None:
-            from luxar.io._compiler.labels.image_labels import (
-                validate_image_labels_for_writing,
-            )
-
             validate_image_labels_for_writing(image_labels, n_splats)
     except (ValueError, TypeError) as e:
         raise ValueError(f"Could not add gsplats '{name}': {e}") from e

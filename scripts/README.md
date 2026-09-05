@@ -19,6 +19,7 @@ scripts/
 |--------|---------|
 | `check_documentation.py` | Baseline-driven ratchet over package README paths/content plus Python docstring and TypeScript JSDoc coverage (JSON output; fails only on new findings) |
 | `check_complexity.py` | Baseline-driven ratchet over ruff's `C901` cyclomatic-complexity rule (fails only on newly over-complex, or newly worse, functions) |
+| `check_wheel.py` | Inspect a built `.whl`: package completeness against the source tree, `pyproject` excludes honoured, no Git-LFS pointer stubs, nothing over PyPI's per-file limit, viewer dist bundled |
 | `check_lint_ratchet.py` | Baseline-driven ratchet over ruff's defect-bearing rules — flake8-bugbear (`B`) plus `RUF012` (fails only on newly-broken rules) |
 | `check_demo_ladders.py` | Audit built demo scenes for missing or degenerate additive streaming ladders |
 | `check_demo_links.py` | Report whether canonical demo click-through destinations still discriminate known-good and known-bad identifiers without gating on third-party availability |
@@ -310,6 +311,56 @@ on a PR is therefore the pytest one,
 closed (a missing baseline reports every violation as new), and
 `scripts/lint_baseline.json` is in the `dom_py` change filter so editing the
 baseline cannot skip the test that re-derives it.
+
+---
+
+## Built-Wheel Inspector
+
+### `check_wheel.py`
+
+Inspects a built `.whl` before anyone installs it.
+
+Nothing built, inspected or installed the Python wheel until a release tag was
+pushed — `hatch build` appeared exactly once in the repository, in
+`publish.yml` on `v*` (audit A12-01). The npm side already had the right gate
+(`release-readiness`); the Python side never mirrored it.
+
+The failure is not hypothetical: a `.gitignore` pattern once matched a package
+directory under `packages/luxar/src/luxar`, hatchling dropped it from the wheel,
+every test stayed green — they import from the source tree — and the break
+surfaced only as `luxar --version` failing on a clean install.
+
+**Checks, all derived from the repository so the gate cannot drift from what it
+guards:**
+
+- **Package completeness** — every importable subpackage on disk that the wheel
+  config does not exclude is present. Walked from `__init__.py`, not listed: a
+  hardcoded list would need updating by the same person who just added the
+  package.
+- **Excluded content is absent** — patterns read from
+  `[tool.hatch.build.targets.wheel] exclude`, so this proves the build honoured
+  its own configuration rather than restating it.
+- **No Git-LFS pointer stubs** — `publish.yml`'s checkout has no `lfs: true`, so
+  a regressed exclude ships ~130-byte text files where data should be. Present,
+  correctly named, and useless: the plausible-wrong-answer case.
+- **No member over PyPI's 100 MB per-file limit**, which otherwise rejects the
+  upload after the release has already succeeded.
+- **The viewer dist is bundled** (`luxar/_viewer_dist/`), a superset of the
+  check `publish.yml` already makes.
+
+```bash
+make build-viewer && hatch build
+hatch run check-wheel dist/luxar-*.whl
+```
+
+Exit 1 for a wheel with problems, 2 for one that cannot be read at all — an
+empty or truncated archive is an error, never a pass.
+
+CI runs it in the **`wheel-viewer`** job, which is a required context and has
+already built the viewer dist the wheel force-includes; a separate job would
+repeat the pnpm + Rust + wasm build to produce the same bytes. That job also
+installs the wheel into a clean venv and runs `luxar --version`, which is the
+half no static inspection can do.
 
 ---
 

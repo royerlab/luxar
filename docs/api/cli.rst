@@ -125,6 +125,26 @@ launcher-binary lookup all live in this module.
    :members:
    :undoc-members:
 
+Mesh Commands
+-------------
+
+Registration surface for the ``luxar mesh import`` and ``luxar mesh lod``
+commands.
+
+.. automodule:: luxar.cli.mesh_commands
+   :members:
+   :undoc-members:
+
+Mesh Operations
+~~~~~~~~~~~~~~~
+
+Implementations behind ``luxar mesh ...``. Each module registers one command
+family on the shared Typer application.
+
+.. automodule:: luxar.cli.mesh_ops
+   :members:
+   :undoc-members:
+
 GSplat Commands
 ---------------
 

@@ -74,7 +74,7 @@ is the slow exception).
 | **Interoperable** | Reads classical 3D-Gaussian-splatting captures (INRIA, `.splat`, `.spz`, SuperSplat, PlayCanvas SOG); writes INRIA PLY |
 | **Shareable** | `luxar export` produces a standalone offline folder, or a native bundle — a double-clickable macOS `.app`, a portable Linux folder — that opens with no Luxar install |
 
-> **Requirements:** The Luxar viewer targets **desktop browsers** with **WebGL2** support (Chrome, Firefox, Edge, Safari 15+). Touch/mobile devices are not currently supported.
+> **Requirements:** The Luxar viewer targets **desktop browsers** with **WebGL2** support. Chromium, Firefox and WebKit are all tested — see [Browser Compatibility](#browser-compatibility) for what was measured and what was not. Touch/mobile devices are not currently supported.
 
 ---
 
@@ -525,6 +525,17 @@ Normals are optional: omit them and the shader derives a flat per-face normal
 from screen-space derivatives. `normal_dims` is required whenever you *do* pass
 them, because in nD there is no implicit "first three dimensions".
 
+Already have a mesh **file**? Skip the Python entirely — `luxar mesh import`
+reads PLY, OBJ, STL, VTP and glTF/GLB with no extra dependencies, and a
+directory of `T<number>`-indexed files stacks into a mesh timelapse:
+
+```bash
+luxar mesh import bunny.ply bunny.luxar.zarr
+luxar mesh import frames/ frames.luxar.zarr --pattern '*.ply'
+luxar mesh lod bunny.luxar.zarr bunny_lod.luxar.zarr -L 4   # coarse levels
+luxar serve bunny_lod.luxar.zarr --viewer
+```
+
 Spatial partitioning **is** supported — `add_mesh(partition=…)` splits a large
 surface into frustum-cullable parts, though each part still loads whole.
 Substitutive LOD (`add_mesh(substitutive_lod=…)`, decimated by
@@ -847,6 +858,8 @@ luxar restamp-lod STORE [--dry-run]     # Re-derive legacy LOD thresholds in pla
 luxar export SOURCE -o DIR              # Export standalone folder (Python 3 + browser)
 luxar export SOURCE -o DIR --native macos|linux-amd64|linux-arm64
                                         # Double-clickable native bundle (.app / portable folder)
+                                        # Needs `make build-launchers` FIRST — the bundler looks for the
+                                        # host-platform binary in cli/_launchers/ and errors without it
 luxar profiles                          # List network simulation profiles
 luxar gsplat <subcommand> [OPTIONS]     # Gaussian splatting tools (fit, cal, lod --recipe {flat,stream,levels,tiles,overview,adaptive}, migrate-format, convert, render, merge, ...)
 luxar gsplat flatten IN OUT             # Collapse a gsplat tree (LOD/partition) to one flat leaf
@@ -986,12 +999,34 @@ If you see "GPU fitting will use slower PyTorch fallback", fitting still works �
 
 ### Browser Compatibility
 
-| Browser | Status |
-|---------|--------|
-| Chrome 90+ | Fully supported |
-| Firefox 88+ | Fully supported (recommended for large datasets) |
-| Safari 15+ | Supported |
-| Edge 90+ | Fully supported |
+Luxar needs **WebGL 2.0**, which is the default backend. WebGPU is opt-in via
+`?renderer=webgpu` and falls back to an internal WebGL2 backend when no adapter
+is available. The viewer builds with Vite's `target: 'esnext'` and declares no
+`browserslist`, so nothing is downlevelled and no version floor is derived from
+the toolchain.
+
+What is verified, by running the E2E smoke subset (13 tests across basic
+rendering, viewer initialisation, and geometry types including GSplats) on
+2026-09-04, macOS arm64, Playwright's bundled engines:
+
+| Engine   | Smoke subset | Notes                                                |
+| -------- | ------------ | ---------------------------------------------------- |
+| Chromium | 13/13 pass   | L2 (OPFS) disk cache initialises                      |
+| Firefox  | 13/13 pass   | L2 (OPFS) disk cache initialises                      |
+| WebKit   | 13/13 pass   | **runs without the L2 disk cache** — the OPFS store's init / write probe fails, so chunk data is not persisted between sessions |
+
+Reproduce from `packages/luxar-viewer/` after running `pnpm
+test:generate-fixtures` and `pnpm exec playwright install firefox webkit`, then
+run `pnpm test:e2e:browsers`. The checked-in visual snapshot corpus is
+Chromium-only, so this command ignores snapshot assertions and compares
+functional behavior rather than pixels.
+
+Not verified: the full E2E suite on any engine but Chromium; **Safari and Edge
+themselves** — Playwright's WebKit is a WebKit build, not Safari, and Edge is
+Chromium-based but untested; and any performance comparison between engines.
+WebKit lacks main-thread `FileSystemFileHandle.createWritable()`, so Safari and
+the native WKWebView launcher fall back to L1-only caching; see the
+[`opfs-unavailable` cache badge](packages/luxar-viewer/src/cache/README.md#cache-status-badges).
 
 ### Viewer URL Parameters
 

@@ -1509,7 +1509,9 @@ class TestWriterFuzzRegressions:
         """The scalars preflight rejects numpy scalars with the same
         one-step float(...) hint as radii/widths/sharpness (#752) — not
         the dead-end np.array(scalars) suggestion that fails again on 0D."""
-        from luxar.io._compiler.node_common import validate_scalars_preflight
+        from luxar.validation.writing import (
+            validate_scalars_preflight,
+        )
 
         with pytest.raises(ValueError) as exc_info:
             validate_scalars_preflight(np.float32(0.5), 50)
@@ -1521,7 +1523,7 @@ class TestWriterFuzzRegressions:
         """The gsplat writer unconditionally stamps position_bounds; a
         user-supplied value must be rejected up front, not silently
         stamped over (the same rule points/lines already enforce)."""
-        from luxar.io._compiler.node_common import (
+        from luxar.validation.writing import (
             GSPLATS_RESERVED_ATTRS,
             POINTS_RESERVED_ATTRS,
         )
@@ -2044,7 +2046,7 @@ class TestUnknownRenderAttrRejected:
     def test_mesh_appearance_guard_covers_every_validated_key(self) -> None:
         """Every mesh appearance validator must have a non-mesh refusal."""
         from luxar.core.group.compositing import MESH_ONLY_APPEARANCE_ATTRS
-        from luxar.io._compiler.node_common import _MESH_APPEARANCE_VALIDATORS
+        from luxar.validation.writing import _MESH_APPEARANCE_VALIDATORS
 
         assert MESH_ONLY_APPEARANCE_ATTRS == _MESH_APPEARANCE_VALIDATORS.keys()
 

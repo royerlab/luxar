@@ -58,7 +58,7 @@ pnpm lint         # Lint (includes TYPE-AWARE rules: no-floating-promises,
                   # file (the suppression is a COUNT, not a file exemption).
                   # Fixed some? `pnpm lint --prune-suppressions` tightens it.
                   # Moved/renamed a baselined file? Re-key with `pnpm exec
-                  # eslint src --ext .ts,.tsx --suppress-rule <rule>`, then
+                  # eslint . --suppress-rule <rule>`, then
                   # prune; verify the suppressions diff only moves that path.
                   # Do NOT add a `// eslint-disable` to get green: a floating
                   # promise here is a load that silently stalls, which no test
@@ -336,6 +336,47 @@ luxar export scene.luxar.zarr -o my_export/ --open      # Export and serve in br
 luxar export scene.luxar.zarr -o my_export/ --overwrite # Overwrite existing export
 luxar export scene.luxar.zarr -o out/ --native macos    # Native macOS .app bundle (requires `make build-launchers`)
 luxar export scene.luxar.zarr -o out/ --native macos,linux-amd64,linux-arm64 --name MyScene
+```
+
+### Mesh CLI (importing classical surfaces, mesh LOD)
+```bash
+# Convert a classical mesh file into a single-node scene. PLY / OBJ / STL / VTP /
+# glTF-GLB, no extra dependencies; polygons are fan-triangulated. `--center` is
+# ON by default because most mesh files sit far from the origin, which fights the
+# viewer's default framing.
+luxar mesh import bunny.ply bunny.luxar.zarr
+luxar mesh import scan.stl scan.luxar.zarr --unit mm --name Skull
+luxar mesh import surface.obj surface.luxar.zarr --scale 0.001 --unit m
+luxar mesh import model.glb model.luxar.zarr --no-center
+# `--weld` (default ON) merges vertices agreeing on position AND normals/colours.
+# STL always, index-free glTF, and any OBJ indexing normals separately arrive with
+# unshared vertices, which defeat per-vertex normals and give picking a different
+# id per corner per triangle. Hard edges survive — they differ in normal.
+luxar mesh import faceted.stl faceted.luxar.zarr --no-weld
+# Drop stored normals to force the shader's derivative flat-normal path (faceted).
+luxar mesh import smooth.ply flat.luxar.zarr --no-keep-normals
+# A DIRECTORY stacks files carrying `T<number>` and optional `Ch<number>` filename
+# coordinates into hidden discrete dimensions — a mesh timelapse is one scene.
+luxar mesh import frames/ frames.luxar.zarr --pattern '*.ply'
+luxar mesh import frames/ frames.luxar.zarr --pattern '*.ply' --index-regex 'frame_(?P<t>\d+)'
+
+# Build a mesh LOD ladder. TWO recipes, and they are not interchangeable:
+#   levels  decimated coarse levels that REPLACE one another (substitutive, default)
+#   reveal  an additive ladder of disjoint face groups the viewer concatenates
+# A surface has NO coarse prefix — dropping triangles punches holes — so a mesh
+# cannot have both, and `add_mesh` refuses them together. `levels` is what you
+# want for zooming across scales; `reveal` is a progressive reveal of a partial
+# surface, whose every prefix is ONE connected patch (that restriction is what
+# makes a partial load a growing surface rather than lace).
+luxar mesh lod bunny.luxar.zarr bunny_lod.luxar.zarr                 # levels, L=3, K=4
+luxar mesh lod cortex.luxar.zarr cortex_lod.luxar.zarr -L 4 -K 8
+# --subst-method auto resolves to `qem` (quadric error metrics) through 10,000
+# vertices and the vectorized `cluster` grid-collapse above that; cluster is
+# O(V log V) and is the only one usable at the writer's 2**27-vertex cap.
+luxar mesh lod big.luxar.zarr big_lod.luxar.zarr --subst-method cluster
+luxar mesh lod bunny.luxar.zarr bunny_reveal.luxar.zarr --recipe reveal --n-lods 4
+# --node picks the mesh when the scene holds more than one.
+luxar mesh lod multi.luxar.zarr multi_lod.luxar.zarr --node Nuclei
 ```
 
 ### GSplat CLI (fitting, converting, rendering, merging)

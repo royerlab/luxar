@@ -743,3 +743,80 @@ def test_empty_histogram_is_a_zero_not_a_pass() -> None:
     """ "0 nodes measured" and "0 violations" render identically and mean the
     opposite, so an empty survey must fail rather than fall through."""
     assert checker.sparsest_slice_elements(Counter()) == 0
+
+
+# ---------------------------------------------------------------------------
+# Empty inventory (audit A9-04) — the same "0 measured reads as 0 violations"
+# hazard as the test directly above, one level up: at the whole-run level.
+# ---------------------------------------------------------------------------
+
+
+def _empty_inventory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point the default scene inventory at an empty directory."""
+
+    def fake_output_dir(*, create: bool = True) -> Path:
+        """Stand-in for ``get_demos_output_dir`` over an empty tree."""
+        return tmp_path / "no-demos-here"
+
+    monkeypatch.setattr(luxar_paths, "get_demos_output_dir", fake_output_dir)
+
+
+def test_empty_inventory_passes_but_says_it_inspected_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Still exit 0 — but the message must not read like a result.
+
+    The output directory is gitignored, so an empty inventory is the normal
+    state of a fresh clone and of CI, and failing by default would make the gate
+    unrunnable there. What was wrong was the wording: "No scenes found. Build a
+    demo first" sat next to every other gate's pass line and was read as one.
+    """
+    _empty_inventory(tmp_path, monkeypatch)
+
+    assert checker.main([]) == 0
+
+    out = _ANSI_ESCAPE.sub("", capsys.readouterr().out)
+    assert "INSPECTED NOTHING" in out
+    assert "not a pass" in out
+
+
+def test_require_scenes_turns_an_empty_inventory_into_a_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The opt-in for callers that KNOW scenes should be there.
+
+    Release prep and a demo-build pipeline both run this AFTER building, where
+    an empty inventory means the build produced nothing — the one situation in
+    which silence is the bug rather than the normal case.
+    """
+    _empty_inventory(tmp_path, monkeypatch)
+
+    assert checker.main(["--require-scenes"]) == 1
+
+    out = _ANSI_ESCAPE.sub("", capsys.readouterr().out)
+    assert "INSPECTED NOTHING" in out
+
+
+def test_require_scenes_does_not_disturb_a_run_that_has_scenes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The flag must gate ONLY emptiness, not the verdict.
+
+    Without this, `--require-scenes` could be implemented as a blanket "fail
+    unless perfect" and every test above would still pass.
+    """
+    scene_path = tmp_path / "valid-scene.luxar.zarr"
+    _make_leaf(scene_path, [20, 20, 60])
+
+    exit_code = checker.main(
+        [
+            str(scene_path),
+            "--require-scenes",
+            "--min-elements",
+            "0",
+            "--max-level-elements",
+            "1000",
+        ]
+    )
+
+    assert exit_code == 0, _ANSI_ESCAPE.sub("", capsys.readouterr().out)

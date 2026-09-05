@@ -58,9 +58,27 @@ def test_every_geometry_type_contributes_to_world_bounds() -> None:
     store = zarr.group()
     store.attrs["scene_dimensions"] = {
         "dimensions": [
-            {"name": "x", "unit": "um", "range": [0.0, 100.0], "step": 1.0, "display": True},
-            {"name": "y", "unit": "um", "range": [0.0, 100.0], "step": 1.0, "display": True},
-            {"name": "z", "unit": "um", "range": [0.0, 100.0], "step": 1.0, "display": True},
+            {
+                "name": "x",
+                "unit": "um",
+                "range": [0.0, 100.0],
+                "step": 1.0,
+                "display": True,
+            },
+            {
+                "name": "y",
+                "unit": "um",
+                "range": [0.0, 100.0],
+                "step": 1.0,
+                "display": True,
+            },
+            {
+                "name": "z",
+                "unit": "um",
+                "range": [0.0, 100.0],
+                "step": 1.0,
+                "display": True,
+            },
         ]
     }
 

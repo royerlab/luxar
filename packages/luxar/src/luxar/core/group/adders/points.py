@@ -23,6 +23,11 @@ import numpy as np
 from arbol import aprint
 
 from ....typing_utils.constants import DEFAULT_POINT_RADIUS
+from ....typing_utils.json_safe import json_safe_value
+from ....validation.writing import (
+    POINTS_RESERVED_ATTRS,
+    validate_render_attrs,
+)
 from ...points import Points
 from ..auto_partition import resolve_auto_partition
 from ..compositing import (
@@ -196,11 +201,6 @@ def add_points_impl(
         # the SAME validator here means the split path refuses
         # byte-identically to the flat path below (which still runs it once
         # more, inside write_points — idempotent).
-        from ....io._compiler.node_common import (
-            POINTS_RESERVED_ATTRS,
-            validate_render_attrs,
-        )
-
         validate_render_attrs(attrs, reserved_attrs=POINTS_RESERVED_ATTRS)
 
         # Substitutive-LOD branch — coarse levels are synthesised gsplats (each
@@ -726,8 +726,6 @@ def add_points_multi_lod_wrapper_impl(
         # (NaN/±Inf) is dropped — the computed reference_energy then shows
         # through — instead of reaching .zattrs as a bare NaN token the viewer's
         # strict JSON.parse rejects. Finite caller keys still win.
-        from ....io._compiler.gsplat_tree import json_safe_value
-
         _, safe_caller = json_safe_value(caller_level_stats)
         attrs["level_stats"] = {
             "reference_energy": parent_level_stats["reference_energy"],

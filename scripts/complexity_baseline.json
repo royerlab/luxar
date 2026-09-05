@@ -505,20 +505,11 @@
     "packages/luxar/src/luxar/io/_compiler/geometry_writers/points.py::write_points": [
       23
     ],
-    "packages/luxar/src/luxar/io/_compiler/gsplat_assembly.py::validate_gsplat_inputs": [
-      16
-    ],
     "packages/luxar/src/luxar/io/_compiler/gsplat_assembly.py::write_gsplat_arrays": [
       11
     ],
-    "packages/luxar/src/luxar/io/_compiler/gsplat_tree.py::json_safe_value": [
-      12
-    ],
     "packages/luxar/src/luxar/io/_compiler/gsplat_tree.py::write_gsplat_node": [
       15
-    ],
-    "packages/luxar/src/luxar/io/_compiler/node_common.py::validate_render_attrs": [
-      17
     ],
     "packages/luxar/src/luxar/io/_ordering/curves/hilbert.py::_get_hilbert_numba_kernel": [
       13
@@ -547,6 +538,9 @@
     "packages/luxar/src/luxar/mesh/interop/_ply_mesh.py::read_ply_mesh": [
       12
     ],
+    "packages/luxar/src/luxar/typing_utils/json_safe.py::json_safe_value": [
+      12
+    ],
     "packages/luxar/src/luxar/validation/base.py::validate_colors_for_writing": [
       12
     ],
@@ -558,6 +552,12 @@
     ],
     "packages/luxar/src/luxar/validation/types.py::validate_colormap": [
       11
+    ],
+    "packages/luxar/src/luxar/validation/writing.py::validate_gsplat_inputs": [
+      16
+    ],
+    "packages/luxar/src/luxar/validation/writing.py::validate_render_attrs": [
+      16
     ],
     "scripts/add_additive_lod_to_demos.py::process_bundle": [
       13
