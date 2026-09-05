@@ -44,13 +44,15 @@ def _default_display_sandbox() -> Iterator[None]:
 
 class TestArbolShowwarning:
     def test_formats_via_aprint(self, capsys: pytest.CaptureFixture) -> None:
-        _arbol_showwarning("splat drifted", UserWarning, "/a/b/encoder.py", 42)
-        out = capsys.readouterr().out
-        assert "⚠️" in out
-        assert "UserWarning" in out
-        assert "splat drifted" in out
-        assert "encoder.py:42" in out
-        assert "/a/b/" not in out  # basename only, no raw stderr-style path
+        with _default_display_sandbox():
+            _arbol_showwarning("splat drifted", UserWarning, "/a/b/encoder.py", 42)
+        captured = capsys.readouterr()
+        assert "⚠️" in captured.out
+        assert "UserWarning" in captured.out
+        assert "splat drifted" in captured.out
+        assert "encoder.py:42" in captured.out
+        assert "/a/b/" not in captured.out  # basename only, no raw stderr-style path
+        assert captured.err == ""
 
     @pytest.mark.parametrize(
         ("enable_output", "depth", "max_depth"),
@@ -87,9 +89,10 @@ class TestArbolWarningsContext:
             assert _default_display_active()
             with arbol_warnings():
                 warnings.warn("engage-me", UserWarning, stacklevel=1)
-        out = capsys.readouterr().out
-        assert "⚠️" in out
-        assert "engage-me" in out
+        captured = capsys.readouterr()
+        assert "⚠️" in captured.out
+        assert "engage-me" in captured.out
+        assert captured.err == ""
 
     def test_restores_previous_handler(self) -> None:
         with _default_display_sandbox():
