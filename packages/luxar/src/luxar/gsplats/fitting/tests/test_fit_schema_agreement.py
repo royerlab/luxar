@@ -176,19 +176,24 @@ def test_prepare_fit_config_restates_the_config_schema_and_little_else() -> None
     """A2-02's structural claim, pinned.
 
     The audit says "44 of prepare_fit_config's 45 params are literally FitConfig
-    field names". Measured, that holds against `FitConfig` itself: every
-    defaulted parameter is a field, and the only named exception is the required
+    field names". Measured, that holds against `FitConfig` itself: every other
+    named parameter is a field, and the only exception is the required
     positional `fitter` argument.
 
     Pinned because a parameter appearing here that is not in `FitConfig` means
     the flat schema and the runtime config have begun to diverge in SHAPE, not
     just in defaults — a different and worse problem than drift.
     """
-    # `fitter` and `V` are positional with no default, so `_defaults` omits them.
-    strays = sorted(set(_defaults(prepare_fit_config)) - _field_names(FitConfig))
-    assert not strays, (
-        f"prepare_fit_config declares {len(strays)} parameters that are not "
-        f"FitConfig fields: {strays}"
+    named = {
+        name
+        for name, parameter in inspect.signature(prepare_fit_config).parameters.items()
+        if parameter.kind
+        not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+    }
+    exceptions = sorted(named - _field_names(FitConfig))
+    assert exceptions == ["fitter"], (
+        "prepare_fit_config parameters outside FitConfig changed: "
+        f"expected ['fitter'], got {exceptions}"
     )
 
 
