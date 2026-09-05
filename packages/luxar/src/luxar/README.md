@@ -61,4 +61,4 @@ See `__init__.py` for the full public API. Primary classes:
 - `validate_nd_transform`, `compose_nd_transforms`, `apply_nd_transform_to_bounds` -- nD per-dimension transform helpers
 - `GSplatData`, `fit_gaussian_splats` -- Gaussian splatting (optional, requires torch)
 
-Run the CLI as a module with `python -m luxar` (`__main__.py` dispatches to `luxar.cli.app`). There are no top-level re-export modules: import from the owning subpackage (`luxar.core.transforms`, `luxar.core.dimensions`, `luxar.typing_utils.config`, `luxar.io.compiler`), or use the names `__init__.py` re-exports.
+Run the CLI as a module with `python -m luxar` (`__main__.py` dispatches to `luxar.cli.app`). There are no top-level re-export modules: import from the owning subpackage (`luxar.core.transforms`, `luxar.core.dimensions`, `luxar.typing_utils.constants`, `luxar.io.compiler`), or use the names `__init__.py` re-exports.

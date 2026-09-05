@@ -9,8 +9,39 @@ from arbol import aprint
 
 from ..core.dimensions import Dimension, Dimensions
 from ..typing_utils.aliases import PathLike
-from ..typing_utils.config import check_dataset_size_warning
 from .colors import hsv_to_rgb
+
+# Point counts above which a demo scene prints a heads-up, and the per-point
+# byte cost used to size the estimate (float32 xyz + uint8 rgb). These used to
+# live in ``typing_utils.config`` alongside ~25 constants nothing read; this is
+# the only caller, so they live with it now.
+_MAX_RECOMMENDED_POINTS = 10_000_000
+_LARGE_DATASET_POINTS = 1_000_000
+_BYTES_PER_POINT = 3 * 4 + 3  # positions (3 x float32) + colors (3 x uint8)
+
+
+def _dataset_size_warning(n_points: int) -> Optional[str]:
+    """Return a performance heads-up for a large demo scene, or ``None``.
+
+    Args:
+        n_points: Number of points the demo is about to generate.
+
+    Returns:
+        A message when ``n_points`` is large enough to be worth mentioning,
+        ``None`` otherwise.
+    """
+    if n_points > _MAX_RECOMMENDED_POINTS:
+        return (
+            f"Dataset with {n_points:,} points exceeds recommended maximum "
+            f"of {_MAX_RECOMMENDED_POINTS:,} points. Performance may be degraded."
+        )
+    if n_points > _LARGE_DATASET_POINTS:
+        memory_mb = n_points * _BYTES_PER_POINT / (1024 * 1024)
+        return (
+            f"Large dataset with {n_points:,} points (~{memory_mb:.1f}MB). "
+            f"Consider using compression and chunking for better performance."
+        )
+    return None
 
 
 def create_lorenz_attractor(
@@ -36,7 +67,7 @@ def create_lorenz_attractor(
     aprint(f"Creating Lorenz attractor demo scene with {n_points:,} points.")
 
     # Check for performance warnings
-    warning = check_dataset_size_warning(n_points)
+    warning = _dataset_size_warning(n_points)
     if warning:
         aprint(f"Performance warning: {warning}")
 

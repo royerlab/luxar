@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 from luxar.typing_utils import _format_contract as fc
-from luxar.typing_utils import config, constants
+from luxar.typing_utils import constants
 from luxar.typing_utils.enums import NodeType
 
 REPO_ROOT = Path(__file__).resolve().parents[6]
@@ -104,9 +104,51 @@ def test_scene_version_consumers_single_sourced() -> None:
     """Scene-format constants must be the ones projected from the contract."""
     assert constants.LUXAR_VERSION_CURRENT == fc.SCENE_FORMAT_VERSION
     assert constants.DEFAULT_ZARR_VERSION == fc.SCENE_FORMAT_VERSION
-    assert config.DEFAULT_VERSION == fc.SCENE_FORMAT_VERSION
-    assert config.SUPPORTED_VERSIONS == fc.SUPPORTED_SCENE_VERSIONS
     assert fc.SCENE_FORMAT_VERSION in fc.SUPPORTED_SCENE_VERSIONS
+
+
+def test_the_compiler_stamps_the_contract_version_by_default() -> None:
+    """``LuxarZarrCompiler(version=...)`` must default to the contract version.
+
+    Read off the real public signature rather than off an intermediate alias.
+    This replaces two assertions about ``typing_utils.config.DEFAULT_VERSION`` /
+    ``SUPPORTED_VERSIONS``, which were aliases of the two constants checked
+    above — so the old test could only ever catch a broken alias, never a
+    compiler that stamped something else.
+    """
+    import inspect
+
+    from luxar.io.compiler import LuxarZarrCompiler
+
+    default = (
+        inspect.signature(LuxarZarrCompiler.__init__).parameters["version"].default
+    )
+    assert default == fc.SCENE_FORMAT_VERSION
+    assert default in fc.SUPPORTED_SCENE_VERSIONS
+
+
+def test_the_scene_validator_accepts_exactly_the_contract_versions() -> None:
+    """``validate_zarr_attributes`` must gate on the contract's version tuple.
+
+    The other half of the same seam: a store stamped with a supported version
+    must load, and one stamped with anything else must be refused. Derived from
+    ``SUPPORTED_SCENE_VERSIONS``, which is where the check now reads from
+    directly (it used to go through ``typing_utils.config.SUPPORTED_VERSIONS``).
+    """
+    from luxar.validation.base import ValidationError, validate_zarr_attributes
+
+    supported = fc.SUPPORTED_SCENE_VERSIONS
+    assert supported, "SUPPORTED_SCENE_VERSIONS is empty — the loop would be vacuous"
+    for version in supported:
+        validate_zarr_attributes(
+            {"type": "scene", "luxar_version": version, "scene_dimensions": {}},
+            is_root=True,
+        )
+    with pytest.raises(ValidationError, match="Unsupported Luxar version"):
+        validate_zarr_attributes(
+            {"type": "scene", "luxar_version": "0.0", "scene_dimensions": {}},
+            is_root=True,
+        )
 
 
 def test_gsplats_version_consumers_single_sourced() -> None:

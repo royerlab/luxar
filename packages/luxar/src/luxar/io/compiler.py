@@ -51,7 +51,7 @@ from ..encoding import (
 from ..io.reader import DEFAULT_COMP
 from ..io.writer import RollbackState, ZarrWriterProtocol
 from ..typing_utils.aliases import ChunkSpec, MaxShape, NodePath, PointsMetadata
-from ..typing_utils.config import DEFAULT_VERSION
+from ..typing_utils.constants import LUXAR_VERSION_CURRENT
 from ..utils.arbol_warnings import arbol_warnings
 from ..validation.writing import validate_render_attrs as _validate_render_attrs
 from ._compiler.bounds import (
@@ -154,7 +154,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self,
         store_path: Optional[Union[str, Path]] = None,
         compressor: "CompressorLike" = DEFAULT_COMP,
-        version: str = DEFAULT_VERSION,
+        version: str = LUXAR_VERSION_CURRENT,
         enable_spatial_index: bool = True,
         encoding_mode: EncodingMode = EncodingMode.AUTO,
         ordering_method: Literal["morton", "hilbert"] = "hilbert",

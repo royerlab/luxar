@@ -24,11 +24,9 @@ DEFAULT_GAMMA: Final[float] = 1.0
 
 INTENSITY_MIN: Final[float] = 0.0
 INTENSITY_MAX: Final[float] = 100.0
-DEFAULT_INTENSITY: Final[float] = 1.0
 
 OFFSET_MIN: Final[float] = -10.0
 OFFSET_MAX: Final[float] = 10.0
-DEFAULT_OFFSET: Final[float] = 0.0
 
 # Blending modes
 DEFAULT_BLENDING_MODE: Final[str] = "additive"
@@ -133,7 +131,6 @@ DEFAULT_ABSORPTION: Final[float] = 1.0
 # Gaussian), higher s -> harder/crisper edge, lower s -> peakier cusp.
 SHARPNESS_MIN: Final[float] = 0.0  # Normalised range floor
 SHARPNESS_MAX: Final[float] = 1.0  # Normalised range ceiling
-SHARPNESS_DEFAULT: Final[float] = 0.5  # -> beta = 2 (Gaussian)
 
 # HDR color constants
 COLOR_SDR_MIN: Final[float] = 0.0  # Standard dynamic range minimum
@@ -152,15 +149,6 @@ COORDINATE_U16_MAX_EXTENT: Final[float] = 65_536.0
 TARGET_CHUNK_BYTES: Final[int] = 65_536  # 64KB target chunk size
 MIN_CHUNK_BYTES: Final[int] = 16_384  # 16KB minimum to amortize HTTP overhead
 MAX_CHUNK_BYTES: Final[int] = 262_144  # 256KB maximum for responsive streaming
-
-# Memory constants
-KB_TO_BYTES: Final[int] = 1024
-MB_TO_BYTES: Final[int] = 1024 * 1024
-GB_TO_BYTES: Final[int] = 1024 * 1024 * 1024
-
-# Array size constants
-MAX_POINTS_RECOMMENDED: Final[int] = 10_000_000  # 10M points
-MAX_POINTS_WARNING: Final[int] = 100_000_000  # 100M points
 
 # Hard ceiling on a mesh node's vertex count. Unlike the advisory point limits
 # above this is a CORRECTNESS bound, not a performance hint, so it is enforced
@@ -201,17 +189,13 @@ MESH_DECODE_BUDGET_BYTES: Final[int] = 512 * 1024 * 1024  # 536,870,912
 # MIRROR: DECODED_BYTES_PER_VALUE in packages/luxar-viewer/src/data/mesh/preflight.ts
 MESH_DECODED_BYTES_PER_VALUE: Final[int] = 4
 
-# Compression constants
-COMPRESSION_LEVEL_MIN: Final[int] = 0  # No compression
-COMPRESSION_LEVEL_DEFAULT: Final[int] = 3
-COMPRESSION_LEVEL_MAX: Final[int] = 9  # Maximum compression
+# Container/codec family this project writes, for metadata and docs. The REAL
+# default is the width-aware per-dtype policy in luxar.encoding.compression
+# (zstd level 9 inside Blosc), which is where a level belongs — the
+# COMPRESSION_LEVEL_MIN/DEFAULT/MAX trio that used to sit here named 0/3/9,
+# agreeing with neither that policy nor the 1-9 band the old
+# typing_utils.config validator enforced, and had no reader either way.
 DEFAULT_COMPRESSOR: Final[str] = "blosc"  # Default compression algorithm
-
-# Transform matrix constants
-TRANSFORM_MATRIX_SIZE: Final[int] = 4  # 4x4 matrices
-
-# Dimension constants
-MAX_DISPLAYED_DIMENSIONS: Final[int] = 3  # Maximum dimensions shown in viewer
 
 # Categorical dimension constants
 MIN_CATEGORIES: Final[int] = 1  # Minimum categories for categorical dimensions

@@ -9,6 +9,10 @@ import zarr
 from luxar.demos.demo_lorenz import lorenz_trajectory
 from luxar.encoding import ArrayDecoder
 from luxar.utils.scenes import (
+    _BYTES_PER_POINT,
+    _LARGE_DATASET_POINTS,
+    _MAX_RECOMMENDED_POINTS,
+    _dataset_size_warning,
     create_lorenz_attractor,
     create_random_spheres,
     create_time_series_demo,
@@ -365,3 +369,61 @@ class TestEdgeCases:
             positions = store["time_series"]["positions"][:]
             # Should have 2 timepoints * 50 points = 100 points
             assert positions.shape[0] == 100
+
+
+class TestDatasetSizeWarning:
+    """Tests for the demo-scene point-count heads-up.
+
+    Relocated from ``typing_utils/tests/test_config.py`` along with the helper
+    itself: ``typing_utils.config`` held ~30 public names of which three had a
+    production reader, and this was the only one carrying real logic. It lives
+    beside its single caller now.
+    """
+
+    def test_small_dataset_no_warning(self) -> None:
+        """A small demo scene says nothing."""
+        assert _dataset_size_warning(1000) is None
+
+    def test_just_below_the_large_threshold_is_quiet(self) -> None:
+        """One point below the threshold is still quiet."""
+        assert _dataset_size_warning(_LARGE_DATASET_POINTS - 1) is None
+
+    def test_exactly_at_the_large_threshold_is_quiet(self) -> None:
+        """The comparison is strictly greater-than, so the boundary is quiet."""
+        assert _dataset_size_warning(_LARGE_DATASET_POINTS) is None
+
+    def test_large_dataset_warns_with_the_count(self) -> None:
+        """Above the threshold, the message names the count and a size."""
+        n_points = _LARGE_DATASET_POINTS + 100
+        result = _dataset_size_warning(n_points)
+        assert result is not None
+        assert "Large dataset" in result
+        assert f"{n_points:,}" in result
+
+    def test_very_large_dataset_says_exceeds_recommended(self) -> None:
+        """Above the recommended maximum, the wording escalates."""
+        n_points = _MAX_RECOMMENDED_POINTS + 100
+        result = _dataset_size_warning(n_points)
+        assert result is not None
+        assert "exceeds recommended maximum" in result
+        assert f"{n_points:,}" in result
+
+    def test_exactly_at_the_max_is_still_only_the_large_warning(self) -> None:
+        """The recommended-maximum boundary has not been exceeded yet."""
+        result = _dataset_size_warning(_MAX_RECOMMENDED_POINTS)
+        assert result is not None
+        assert "Large dataset" in result
+
+    def test_the_estimated_size_uses_positions_plus_colors(self) -> None:
+        """The reported megabytes must be the float32-xyz + uint8-rgb estimate.
+
+        Pinned because the constant replaced an ``estimate_memory_usage()``
+        helper that nothing else called; an off-by-one-channel edit here would
+        otherwise only show up as a slightly wrong number in demo output.
+        """
+        assert _BYTES_PER_POINT == 15
+        n_points = 2_000_000
+        result = _dataset_size_warning(n_points)
+        assert result is not None
+        expected_mb = n_points * 15 / (1024 * 1024)
+        assert f"~{expected_mb:.1f}MB" in result
