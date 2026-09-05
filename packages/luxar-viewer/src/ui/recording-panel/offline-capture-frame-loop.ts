@@ -56,7 +56,11 @@ export interface FrameLoopResult {
 }
 
 /** Advance the turntable one frame and pin the pose the capture will see. */
-async function orbitToFrame(deps: FrameLoopDeps, controls: LuxarOrbitControls, i: number) {
+async function orbitToFrame(
+  deps: FrameLoopDeps,
+  controls: LuxarOrbitControls,
+  i: number
+): Promise<void> {
   const { plan, animationController, captureCallbackId } = deps;
   animationController.addPerFrameCallback(captureCallbackId, () => {
     if (i > 0) controls.applyOrbitRotation(plan.anglePerFrame);

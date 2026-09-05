@@ -45,7 +45,7 @@ reference to Session for the shared scaffolding.
 | `capture-strategy.ts`           | `CaptureStrategy` interface + `SessionState` view + `CaptureKind` union                    |
 | `screenshot-strategy.ts`        | `ScreenshotStrategy` — single-frame capture with optional transparent BG                   |
 | `video-recording-strategy.ts`   | `VideoRecordingStrategy` — real-time MediaRecorder WebM capture                            |
-| `offline-capture-strategy.ts`   | `OfflineCaptureStrategy` — sequences the five collaborators below into one capture         |
+| `offline-capture-strategy.ts`   | `OfflineCaptureStrategy` — sequences the six collaborators below into one capture          |
 | `offline-capture-preflight.ts`  | Confirmation dialog, session ownership, capture resolution, turntable rotation/dolly plan  |
 | `offline-capture-context.ts`    | `createCaptureDriver` (mode → driver) + `buildCaptureContext` (the driver's dependencies)  |
 | `offline-capture-overlay.ts`    | The modal progress overlay: ARIA, focus trap, Escape/Cancel, live preview, frame counter   |

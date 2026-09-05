@@ -6,7 +6,7 @@
  * and the reasons are not local — a flag cleared one statement too early leaves
  * the viewer blank or the render target stuck at capture resolution until a
  * page reload. Naming the sequence makes those constraints reviewable in one
- * screen instead of at the bottom of a 672-line method.
+ * screen instead of at the bottom of a 676-line method.
  *
  * Runs from a `finally`, so it must be idempotent and must not throw: every
  * removal/restore handles the "wasn't set" case, and the driver abort is
@@ -18,6 +18,7 @@ import type { AnimationController } from '../../scene/animation/animation-contro
 import type { CaptureContext, OfflineCaptureDriver } from './drivers/offline-capture-driver';
 import type { RecordingSession } from './session';
 
+/** Dependencies and run state required to tear down an offline capture. */
 export interface CaptureTeardown {
   session: RecordingSession;
   sessionAbort: AbortController;

@@ -3,7 +3,7 @@
  * capture loop (#1695).
  *
  * Extracted from `OfflineCaptureStrategy.runOfflineCaptureLoop` (audit A2-01),
- * which had grown to 672 lines at 12 levels of nesting. This is the densest
+ * which had grown to 676 lines at 12 levels of nesting. This is the densest
  * part of it and the part with the most invariants per line, so it is also the
  * part that most benefits from being addressable on its own: the whole
  * tri-state / latch / re-arm / reporting state machine is now reachable without
@@ -156,7 +156,7 @@ export class LodSettleDrain {
       // did pre-#1695. Its boolean describes pose N−1 rather than the
       // pose being captured, which is fine for a re-arm signal — this
       // frame is captured undrained either way, and the next frame gets
-      // the full, correctly-timed drain.
+      // the full, correctly-timed drain. See the selector-order note below.
       if (this.read() === true) {
         this.disabled = false;
         this.consecutiveTimeouts = 0;
@@ -166,8 +166,8 @@ export class LodSettleDrain {
 
     // Tri-state probe, spent BEFORE the mandatory tick so a scene with
     // nothing to wait for does not pay for it. Only the NULL-ness of
-    // this read is used: its boolean answer describes pose N−1 (see
-    // the note on `read`) and is deliberately discarded.
+    // this read is used: its boolean answer describes pose N−1 (see the
+    // selector-order note below) and is deliberately discarded.
     const drainApplies = this.read() !== null;
     if (!drainApplies) return;
 
@@ -194,8 +194,12 @@ export class LodSettleDrain {
     // is also the clock the animation controller measures frames
     // with.
     const deadline = performance.now() + LOD_SETTLE_TIMEOUT_MS;
-    // The mandatory selector-catch-up tick. Counts against the frame budget
-    // like any other drain frame.
+    // `AnimationController.animate` updates controls, then invokes per-frame
+    // callbacks in insertion order. The LOD selector was registered at init,
+    // while the orbit callback is re-added each loop and therefore runs last,
+    // moving the camera synchronously after the selector evaluated pose N−1.
+    // This mandatory tick lets the selector evaluate pose N before polling.
+    // It counts against the frame budget like any other drain frame.
     await this.deps.nextFrame();
     let drainFrames = 1;
     // Re-check before polling: a Stop landing during that first frame

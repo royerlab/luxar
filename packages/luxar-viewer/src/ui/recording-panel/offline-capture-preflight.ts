@@ -23,7 +23,6 @@ export interface TurntablePlan {
   sessionAbort: AbortController;
   controls: LuxarOrbitControls;
   fps: number;
-  durationSeconds: number;
   totalFrames: number;
   /** Radians to advance per frame. Frame 0 does not rotate. */
   anglePerFrame: number;
@@ -193,7 +192,6 @@ export async function runCapturePreflight(
     sessionAbort,
     controls,
     fps,
-    durationSeconds,
     totalFrames,
     anglePerFrame,
     dollyCycles,
