@@ -14,24 +14,26 @@ import type {
   LinesViewState,
   LoadedLinesData,
 } from '../../types/lines';
-import { log, Modules } from '../../utils/log';
-import { notifier } from '../../utils/cross-layer/notifier';
-import { isAbortError } from '../loaders/abort-error';
 import { releaseLineageIfUncommitted } from '../../types/prefix-lineage';
-import { tryRollbackToPassStart } from '../loaders/progressive/pass-rollback';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 import type { ViewState } from '../data-loader-types';
 import type { ViewStateQueue } from '../scene-loader/view-state/view-state-queue';
 import type { StagedLinesCommit } from '../scene-loader/process/data-processor-lines';
-import type {
-  LadderResidency,
-  RefinementResidencyBudget,
-} from '../scene-loader/progressive/residency-budget';
+import type { RefinementResidencyBudget } from '../scene-loader/progressive/residency-budget';
 import {
-  MAX_CONSECUTIVE_REFINEMENT_FAILURES,
   RefinementFailureTracker,
   runProgressiveRefinement,
 } from '../scene-loader/progressive/refinement';
+import {
+  admitRefinementCandidate,
+  handleRefinementError,
+  makeRefinementProgressCallbacks,
+  recordRefinementResidency,
+  type RefinableLoader,
+} from '../scene-loader/progressive/refinement-wrapper';
+
+/** Geometry name in this wrapper's log lines and toasts. */
+const LABEL = 'Lines';
 
 export interface LinesRefinementCtx {
   rootGroup: THREE.Group | null;
@@ -86,26 +88,17 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
     viewStateQueue: ctx.viewStateQueue,
     isActive: ctx.isActive,
     processLoader: async (path, loader) => {
-      const progressiveLoader = loader as LinesDataLoader & {
-        hasMoreLODs?: boolean;
-        // Optional because `linesLoaders` is typed as plain `LinesDataLoader`:
-        // a non-progressive loader has no ladder to unwind, and the
-        // `hasMoreLODs` gate above has already returned for it. Every real
-        // `LinesProgressiveLoader` implements it.
-        rollbackToPassStart?: () => number;
-        ladderResidency?: () => LadderResidency;
-      };
-      if (progressiveLoader.hasMoreLODs !== true) return false;
-      if (failures.isExhausted(path)) return false;
-      // Shared sweep residency ceiling. Declining here is not enough on its own —
-      // `anyHasMoreLODs` and `getLoaderProgress` below must also exclude
-      // declined paths, or the loop re-offers this loader every frame forever
-      // while holding the update lock (the trap `isExhausted` already avoids).
-      const residency = progressiveLoader.ladderResidency?.();
-      const admission = residency ? ctx.residencyBudget?.admit(path, residency) : undefined;
-      if (admission?.admitted === false) {
-        return false;
-      }
+      // Every progressive field is optional here because `linesLoaders` is
+      // typed as plain `LinesDataLoader`: a non-progressive loader has no
+      // ladder. `admitRefinementCandidate` gates on `hasMoreLODs`.
+      const progressiveLoader = loader as LinesDataLoader & RefinableLoader;
+      const admission = admitRefinementCandidate(
+        path,
+        progressiveLoader,
+        failures,
+        ctx.residencyBudget
+      );
+      if (!admission.admitted) return false;
       try {
         const mesh = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
         const nodeAttrs = mesh?.userData?.attrs as LinesMetadata | undefined;
@@ -154,84 +147,19 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
         failures.recordSuccess(path);
         return true;
       } catch (error) {
-        // Superseded, not failed: a newer view-state (or dispose) aborted the
-        // in-flight read on purpose. Don't count it toward the failure backoff
-        // or log an error — the loop's next-pass pending check hands off.
-        if (isAbortError(error)) return false;
-        // Unwind the levels this pass appended before the throw. `updateView`
-        // advances the ladder cursor as each level arrives, so without this the
-        // retry would resume from the ADVANCED cursor and attempt a strictly
-        // larger allocation than the one that just failed — and on reaching
-        // the last rung would flip `hasMoreLODs` false, silently stranding the
-        // node at its last committed prefix with the failure cap never reached.
-        // See `../loaders/progressive/pass-rollback`.
-        const unwound = tryRollbackToPassStart(progressiveLoader);
-        if (failures.recordFailure(path)) {
-          log.error(
-            Modules.SCENE_LOADER,
-            `Lines refinement failed for ${path}: ${(error as Error).message} — ` +
-              `giving up after ${MAX_CONSECUTIVE_REFINEMENT_FAILURES} consecutive failures ` +
-              `(will retry on the next view change; unwound ${unwound} level(s))`
-          );
-          // The node silently freezes at its last valid coarse prefix — a
-          // console-only error leaves the user staring at a permanently
-          // coarse node with no explanation. Same channel as leaf-load
-          // failures (load-leaf-error-dispatch).
-          notifier.toast(`Refinement failed for ${path} — showing reduced detail`, 5000);
-        } else {
-          log.error(
-            Modules.SCENE_LOADER,
-            `Lines refinement failed for ${path}: ${(error as Error).message} ` +
-              `(unwound ${unwound} level(s))`
-          );
-        }
-        return false;
+        return handleRefinementError(LABEL, path, error, progressiveLoader, failures);
       } finally {
-        const measured = progressiveLoader.ladderResidency?.();
-        if (measured) ctx.residencyBudget?.record(path, measured);
+        recordRefinementResidency(path, progressiveLoader, ctx.residencyBudget);
       }
     },
-    getLoaderProgress: (path, loader) => {
-      const progressiveLoader = loader as LinesDataLoader & {
-        hasMoreLODs?: boolean;
-        loadedLODCount: number;
-        totalLODCount: number;
-      };
-      if (
-        failures.isExhausted(path) ||
-        ctx.residencyBudget?.isDeclined(path) === true ||
-        progressiveLoader.hasMoreLODs !== true
-      ) {
-        return null;
-      }
-      return {
-        loaded: progressiveLoader.loadedLODCount,
-        total: progressiveLoader.totalLODCount,
-      };
-    },
-    // A budget-declined loader still reports `hasMoreLODs`, so it MUST be
-    // excluded here as well or the loop never terminates.
-    anyHasMoreLODs: () =>
-      [...ctx.linesLoaders.entries()].some(([path, l]) => {
-        const ll = l as LinesDataLoader & { hasMoreLODs?: boolean };
-        return (
-          !failures.isExhausted(path) &&
-          ctx.residencyBudget?.isDeclined(path) !== true &&
-          ll.hasMoreLODs === true
-        );
-      }),
-    onNoProgress: (stalled) => {
-      for (const { path, loaded, total } of stalled) {
-        log.warning(
-          Modules.SCENE_LOADER,
-          `Lines refinement stopped for ${path}: no progress at LOD ${loaded}/${total}`
-        );
-      }
-    },
+    ...makeRefinementProgressCallbacks(
+      LABEL,
+      ctx.linesLoaders as Map<string, LinesDataLoader & RefinableLoader>,
+      failures,
+      ctx.residencyBudget
+    ),
     updateVisibleCountsInMonitor: () => ctx.updateVisibleCountsInMonitor(),
     releaseLock: () => ctx.releaseLock(),
     retriggerUpdate: (pending) => ctx.retriggerUpdate(pending),
-    onError: (error) =>
-      log.error(Modules.SCENE_LOADER, `Lines refinement loop error: ${(error as Error).message}`),
   });
 }

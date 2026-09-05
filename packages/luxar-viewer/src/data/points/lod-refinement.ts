@@ -15,23 +15,25 @@ import type {
   PointsMetadata,
   PointsViewState,
 } from '../../types/points';
-import { log, Modules } from '../../utils/log';
-import { notifier } from '../../utils/cross-layer/notifier';
-import { isAbortError } from '../loaders/abort-error';
 import { releaseLineageIfUncommitted } from '../../types/prefix-lineage';
-import { tryRollbackToPassStart } from '../loaders/progressive/pass-rollback';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 import type { ViewState } from '../data-loader-types';
 import type { ViewStateQueue } from '../scene-loader/view-state/view-state-queue';
-import type {
-  LadderResidency,
-  RefinementResidencyBudget,
-} from '../scene-loader/progressive/residency-budget';
+import type { RefinementResidencyBudget } from '../scene-loader/progressive/residency-budget';
 import {
-  MAX_CONSECUTIVE_REFINEMENT_FAILURES,
   RefinementFailureTracker,
   runProgressiveRefinement,
 } from '../scene-loader/progressive/refinement';
+import {
+  admitRefinementCandidate,
+  handleRefinementError,
+  makeRefinementProgressCallbacks,
+  recordRefinementResidency,
+  type RefinableLoader,
+} from '../scene-loader/progressive/refinement-wrapper';
+
+/** Geometry name in this wrapper's log lines and toasts. */
+const LABEL = 'Points';
 
 export interface PointsRefinementCtx {
   rootGroup: THREE.Group | null;
@@ -85,26 +87,17 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
     viewStateQueue: ctx.viewStateQueue,
     isActive: ctx.isActive,
     processLoader: async (path, loader) => {
-      // Only progressive loaders expose `hasMoreLODs`; single-shot
-      // PointsSpatialIndexLoader doesn't have it, so skip on absence.
-      const progressiveLoader = loader as PointsDataLoader & {
-        hasMoreLODs?: boolean;
-        // Optional for the same reason as `hasMoreLODs`: only a progressive
-        // loader has a ladder to unwind. Every `PointsProgressiveLoader` has it.
-        rollbackToPassStart?: () => number;
-        ladderResidency?: () => LadderResidency;
-      };
-      if (progressiveLoader.hasMoreLODs !== true) return false;
-      if (failures.isExhausted(path)) return false;
-      // Shared sweep residency ceiling. Declining here is not enough on its own —
-      // `anyHasMoreLODs` and `getLoaderProgress` below must also exclude
-      // declined paths, or the loop re-offers this loader every frame forever
-      // while holding the update lock (the trap `isExhausted` already avoids).
-      const residency = progressiveLoader.ladderResidency?.();
-      const admission = residency ? ctx.residencyBudget?.admit(path, residency) : undefined;
-      if (admission?.admitted === false) {
-        return false;
-      }
+      // Every progressive field is optional here because `pointsLoaders` is
+      // typed as plain `PointsDataLoader`: single-shot PointsSpatialIndexLoader
+      // has no ladder. `admitRefinementCandidate` gates on `hasMoreLODs`.
+      const progressiveLoader = loader as PointsDataLoader & RefinableLoader;
+      const admission = admitRefinementCandidate(
+        path,
+        progressiveLoader,
+        failures,
+        ctx.residencyBudget
+      );
+      if (!admission.admitted) return false;
       try {
         const mesh = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
         const nodeAttrs = mesh?.userData?.attrs as PointsMetadata | undefined;
@@ -151,81 +144,19 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
         failures.recordSuccess(path);
         return true;
       } catch (error) {
-        // Superseded, not failed: a newer view-state (or dispose) aborted the
-        // in-flight read on purpose. Don't count it toward the failure backoff
-        // or log an error — the loop's next-pass pending check hands off.
-        if (isAbortError(error)) return false;
-        // Unwind the levels this pass appended before the throw, so the retry
-        // re-attempts the SAME prefix rather than resuming from the advanced
-        // cursor with a larger allocation. See
-        // `../loaders/progressive/pass-rollback`.
-        const unwound = tryRollbackToPassStart(progressiveLoader);
-        if (failures.recordFailure(path)) {
-          log.error(
-            Modules.SCENE_LOADER,
-            `Points refinement failed for ${path}: ${(error as Error).message} — ` +
-              `giving up after ${MAX_CONSECUTIVE_REFINEMENT_FAILURES} consecutive failures ` +
-              `(will retry on the next view change; unwound ${unwound} level(s))`
-          );
-          // The node silently freezes at its last valid coarse prefix — a
-          // console-only error leaves the user staring at a permanently
-          // coarse node with no explanation. Same channel as leaf-load
-          // failures (load-leaf-error-dispatch).
-          notifier.toast(`Refinement failed for ${path} — showing reduced detail`, 5000);
-        } else {
-          log.error(
-            Modules.SCENE_LOADER,
-            `Points refinement failed for ${path}: ${(error as Error).message} ` +
-              `(unwound ${unwound} level(s))`
-          );
-        }
-        return false;
+        return handleRefinementError(LABEL, path, error, progressiveLoader, failures);
       } finally {
-        const measured = progressiveLoader.ladderResidency?.();
-        if (measured) ctx.residencyBudget?.record(path, measured);
+        recordRefinementResidency(path, progressiveLoader, ctx.residencyBudget);
       }
     },
-    getLoaderProgress: (path, loader) => {
-      const progressiveLoader = loader as PointsDataLoader & {
-        hasMoreLODs?: boolean;
-        loadedLODCount: number;
-        totalLODCount: number;
-      };
-      if (
-        failures.isExhausted(path) ||
-        ctx.residencyBudget?.isDeclined(path) === true ||
-        progressiveLoader.hasMoreLODs !== true
-      ) {
-        return null;
-      }
-      return {
-        loaded: progressiveLoader.loadedLODCount,
-        total: progressiveLoader.totalLODCount,
-      };
-    },
-    // A budget-declined loader still reports `hasMoreLODs`, so it MUST be
-    // excluded here as well or the loop never terminates.
-    anyHasMoreLODs: () =>
-      [...ctx.pointsLoaders.entries()].some(([path, l]) => {
-        const pl = l as PointsDataLoader & { hasMoreLODs?: boolean };
-        return (
-          !failures.isExhausted(path) &&
-          ctx.residencyBudget?.isDeclined(path) !== true &&
-          pl.hasMoreLODs === true
-        );
-      }),
-    onNoProgress: (stalled) => {
-      for (const { path, loaded, total } of stalled) {
-        log.warning(
-          Modules.SCENE_LOADER,
-          `Points refinement stopped for ${path}: no progress at LOD ${loaded}/${total}`
-        );
-      }
-    },
+    ...makeRefinementProgressCallbacks(
+      LABEL,
+      ctx.pointsLoaders as Map<string, PointsDataLoader & RefinableLoader>,
+      failures,
+      ctx.residencyBudget
+    ),
     updateVisibleCountsInMonitor: () => ctx.updateVisibleCountsInMonitor(),
     releaseLock: () => ctx.releaseLock(),
     retriggerUpdate: (pending) => ctx.retriggerUpdate(pending),
-    onError: (error) =>
-      log.error(Modules.SCENE_LOADER, `Points refinement loop error: ${(error as Error).message}`),
   });
 }
