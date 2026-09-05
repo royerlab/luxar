@@ -585,7 +585,9 @@ def _warn_if_decode_is_large(root: Any, path: "Path") -> None:
     do on a machine sized for it, and a hard cap here would break working
     pipelines to prevent a mistake the caller may not be making. What was
     missing is that the caller got no signal at all -- the process simply grew
-    until the box gave up. Costs one metadata walk: no chunk is read.
+    until the box gave up. This performs a full metadata walk whose cost scales
+    with the number of leaves, so callers must opt in via ``warn_if_large``.
+    No array chunk is read.
 
     Never raises. A store this cannot measure is one the reader below will
     report on properly; a diagnostic must not be the thing that fails the load.
@@ -621,6 +623,8 @@ def _warn_if_decode_is_large(root: Any, path: "Path") -> None:
 def load_gsplat_node(
     path: str | Path,
     include_stats: bool = False,
+    *,
+    warn_if_large: bool = False,
 ) -> "tuple[Any, Dict[str, Any]]":
     """Load the raw v3.0 node-tree (a :class:`~luxar.gsplats.tree.GSplatNode`).
 
@@ -629,6 +633,13 @@ def load_gsplat_node(
     nested trees that have no flat matrix equivalent. Use this to graft a
     standalone ``.gsplats.zarr`` into a scene, or to inspect a partition/nested
     file. Handles ``.zip`` / ``.tar.gz`` archives transparently.
+
+    Args:
+        path: Standalone gsplat store or supported compressed archive.
+        include_stats: Whether to read the optional root-level statistics.
+        warn_if_large: Estimate the full decoded size and warn above roughly
+            4 GiB. This is opt-in because estimating requires a metadata walk
+            over every leaf before the normal read.
 
     Returns:
         ``(node, stats)`` — the tree root and the (optional) root-level stats.
@@ -649,7 +660,8 @@ def load_gsplat_node(
 
         stats = read_gsplat_root_stats(root, include_stats=include_stats)
 
-        _warn_if_decode_is_large(root, path)
+        if warn_if_large:
+            _warn_if_decode_is_large(root, path)
 
         # Read the node-tree subtree rooted at the file.
         from luxar.io._compiler.gsplat_tree import read_gsplat_node

@@ -328,6 +328,23 @@ class TestRejectsWhatIsNotANode:
 
 
 class TestLargeDecodeWarning:
+    def test_preflight_is_opt_in(self, flat_store, monkeypatch):
+        import importlib
+
+        load_module = importlib.import_module("luxar.gsplats.io.load_gsplats")
+        calls = []
+        monkeypatch.setattr(
+            load_module,
+            "_warn_if_decode_is_large",
+            lambda root, path: calls.append(path),
+        )
+
+        load_gsplat_node(flat_store)
+        assert calls == []
+
+        load_gsplat_node(flat_store, warn_if_large=True)
+        assert calls == [flat_store]
+
     def test_default_filters_show_the_warning(self, flat_store, monkeypatch):
         import importlib
 
@@ -336,7 +353,7 @@ class TestLargeDecodeWarning:
         monkeypatch.setattr(load_module, "_DECODE_WARN_BYTES", 1)
         with warnings.catch_warnings(record=True) as caught:
             warnings.resetwarnings()
-            load_gsplat_node(flat_store)
+            load_gsplat_node(flat_store, warn_if_large=True)
 
         assert len(caught) == 1
         assert caught[0].category is UserWarning
@@ -350,5 +367,5 @@ class TestLargeDecodeWarning:
         monkeypatch.setattr(load_module, "_DECODE_WARN_BYTES", 1)
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            node, _ = load_gsplat_node(flat_store)
+            node, _ = load_gsplat_node(flat_store, warn_if_large=True)
         assert total_splats(node) == 400
