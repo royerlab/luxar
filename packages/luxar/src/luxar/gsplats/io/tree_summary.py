@@ -27,13 +27,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+import numpy as np
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     import zarr
 
-#: Arrays whose decoded form is float32 regardless of how they are stored.
-#: The encoders quantize to uint8/uint16 on disk and always decode to float32
-#: (see ``docs/specs/GSPLATS_ZARR_FORMAT.md``), so the stored ``itemsize`` would
-#: understate the memory a load actually needs — by 4x for a uint8 encoding.
+#: Arrays whose decoded form defaults to float32 for legacy encodings that do
+#: not stamp the original dtype. Current encodings carry ``original_dtype``.
 _DECODES_TO_FLOAT32 = ("centers", "amplitudes", "colors")
 
 NodeKind = Literal["leaf", "lod", "partition"]
@@ -82,7 +82,11 @@ def _array_bytes(group: "zarr.Group", name: str) -> int:
     count = 1
     for dim in shape:
         count *= int(dim)
-    itemsize = 4 if name in _DECODES_TO_FLOAT32 else int(array.dtype.itemsize)
+    original_dtype = encoding.get("original_dtype")
+    if original_dtype is not None:
+        itemsize = int(np.dtype(original_dtype).itemsize)
+    else:
+        itemsize = 4 if name in _DECODES_TO_FLOAT32 else int(array.dtype.itemsize)
     return count * itemsize
 
 

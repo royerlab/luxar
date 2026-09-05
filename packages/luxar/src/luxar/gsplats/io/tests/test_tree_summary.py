@@ -293,6 +293,38 @@ class TestEstimatedDecodedBytes:
         )
         assert summary.estimated_decoded_bytes == decoded_bytes
 
+    def test_counts_native_uint8_colors_at_decoded_dtype(self, tmp_path):
+        base = _flat(1_000)
+        data = GSplatData(
+            centers=base.centers,
+            amplitudes=base.amplitudes,
+            cholesky_factors=base.cholesky_factors,
+            colors=np.random.default_rng(2532).integers(
+                0, 256, (base.n_splats, 3), dtype=np.uint8
+            ),
+        )
+        out = tmp_path / "uint8-colors.gsplats.zarr"
+        data.save(out)
+
+        root = open_group(str(out), mode="r")
+        assert root["colors"].attrs["encoding"]["original_dtype"] == "uint8"
+
+        summary = read_gsplat_tree_summary(root)
+        node, _ = load_gsplat_node(out)
+        leaf = next(iter(iter_leaves(node)))
+        decoded_bytes = sum(
+            array.nbytes
+            for sublod in leaf.additive_sublods
+            for array in (
+                sublod.centers,
+                sublod.amplitudes,
+                sublod.cholesky_factors,
+                sublod.colors,
+            )
+            if array is not None
+        )
+        assert summary.estimated_decoded_bytes == decoded_bytes
+
     def test_counts_legacy_single_array_cholesky(self, tmp_path):
         data = _flat(1_000)
         out = tmp_path / "legacy-cholesky.gsplats.zarr"
