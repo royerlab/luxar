@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -117,15 +118,15 @@ def best_gcc_module(available: list[str]) -> str | None:
     return candidates[-1][1]  # highest major version
 
 
-def highest_gcc_module(available: list[str]) -> str | None:
+def _highest_gcc_module(available: list[str]) -> str | None:
     """Return the highest versioned GCC module, regardless of compiler floor."""
     candidates = []
     for module in available:
-        try:
-            major = int(module.split("/")[1].split(".")[0])
-            candidates.append((major, module))
-        except (IndexError, ValueError):
+        match = re.fullmatch(r"gcc/(\d+(?:\.\d+)*)", module)
+        if match is None:
             continue
+        version = tuple(int(part) for part in match.group(1).split("."))
+        candidates.append((version, module))
     if not candidates:
         return None
     candidates.sort(key=lambda item: item[0])
@@ -544,7 +545,7 @@ def main() -> None:
     if gcc_module:
         print(f"{gcc_module}  (auto-selected; system GCC 8.5.0 is too old for C++20)")
     elif available_gcc:
-        highest_gcc = highest_gcc_module(available_gcc)
+        highest_gcc = _highest_gcc_module(available_gcc)
         found = highest_gcc or ", ".join(available_gcc)
         print(
             f"none suitable (highest found: {found}; "

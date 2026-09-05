@@ -38,13 +38,13 @@ def test_main_warns_when_only_old_gcc_modules_are_available(
     )
     monkeypatch.setattr(module, "get_virtual_env", lambda: str(virtual_env))
     monkeypatch.setattr(
-        module, "list_available_gcc_modules", lambda: ["gcc/8.5", "gcc/9.5"]
+        module, "list_available_gcc_modules", lambda: ["gcc/9.5", "gcc/9.10"]
     )
 
     module.main()
 
     output = capsys.readouterr().out
-    assert "gcc/9.5" in output
+    assert "highest found: gcc/9.10" in output
     assert "cannot compile the shipped C++20 build" in output
     assert "none needed (system GCC >= 10 assumed)" not in output
 
