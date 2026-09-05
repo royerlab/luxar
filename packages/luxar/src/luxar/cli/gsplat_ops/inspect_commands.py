@@ -275,9 +275,12 @@ def _load_info_data(
         tmp = None
         try:
             if path.is_file():
+                from tarfile import TarError
+                from zipfile import BadZipFile
+
                 try:
                     zarr_path, tmp = resolve_store_path(path)
-                except ValueError as resolve_exc:
+                except (ValueError, OSError, BadZipFile, TarError) as resolve_exc:
                     aprint(f"❌ {resolve_exc}")
                     return None, False
 

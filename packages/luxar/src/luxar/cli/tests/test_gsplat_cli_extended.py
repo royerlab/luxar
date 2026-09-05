@@ -1507,12 +1507,15 @@ class TestInfoTreeDispatch:
         assert result.exit_code == 1, result.stdout
         assert message in result.stdout
 
-    @pytest.mark.parametrize("filename", ["not-a-store.ply", "empty.gsplats.zarr.zip"])
+    @pytest.mark.parametrize(
+        "filename",
+        ["not-a-store.ply", "empty.gsplats.zarr.zip", "broken.gsplats.zarr.zip"],
+    )
     def test_info_reports_store_resolution_errors_without_traceback(
         self, runner: CliRunner, tmp_path: Path, filename: str
     ) -> None:
         path = tmp_path / filename
-        if path.suffix == ".zip":
+        if path.name.startswith("empty"):
             import zipfile
 
             with zipfile.ZipFile(path, "w"):
