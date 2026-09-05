@@ -40,7 +40,7 @@ Protocol definitions for type checking.
 Simple type aliases for improved readability.
 
 **Key Aliases:**
-- **Arrays**: `Float32Array`, `Uint8Array`, `ColorArray`, `PositionArray`, `RadiusArray`, `SharpnessArray`, `ArrayLike`
+- **Arrays**: `Float16Array`, `Float32Array`, `Uint8Array`, `Uint16Array`, `ColorArray`, `PositionArray`, `ScalarArray`, `RadiusArray`, `SharpnessArray`, `ArrayLike`
 - **Transforms**: `TransformMatrix`, `TransformList`, `NdTransform`, `NdTransformEntry` (the latter two are defined here but not re-exported from the package `__init__.py`; import them from `luxar.typing_utils.aliases`)
 - **Paths**: `PathLike`
 - **Zarr**: `ChunkSpec`, `MaxShape`, `ZarrAttrs`
