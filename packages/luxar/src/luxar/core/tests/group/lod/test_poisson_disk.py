@@ -119,8 +119,8 @@ class TestPoissonDiskOrder:
 
         Measured on the pre-fix code: 3.1-3.4x per doubling of N, extrapolating
         to ~4.3 hours at 1M points -- for a selectable public authoring option
-        on a project whose stated target is 100K-10M elements. Post-fix: a flat
-        24 us/point from 10K to 1M, i.e. 8x the points costs 8x the time.
+        on a project whose stated target is 100K-10M elements. Post-fix: cost per
+        point is flat in N, i.e. 8x the points costs about 8x the time.
 
         A RATIO rather than a wall-clock budget, so the assertion is
         self-normalising against machine speed and CI load. 8x the input is 8x

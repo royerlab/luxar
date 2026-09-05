@@ -24,11 +24,11 @@ This package splits cleanly into two layers:
 
 The two sampler modules (`spatial_uniform.py`, `poisson_disk.py`) are NumPy
 ordering primitives shared by the Points and Lines resolvers (`poisson_disk` also
-runs an interpreted rejection loop — Bridson is sequential by construction), and `reveal.py` is a
-third such primitive — the concentric-shell scorer behind `method="radial"`, plus
-the resolvers that decide which columns may be shell dimensions. It depends on
-nothing in this package (`group.py` imports *it*), which is what let it come out
-of `group.py` cleanly.
+runs an interpreted rejection loop — Bridson is sequential by construction), and
+`reveal.py` is a third such primitive — the concentric-shell scorer behind
+`method="radial"`, plus the resolvers that decide which columns may be shell
+dimensions. It depends on nothing in this package (`group.py` imports *it*), which
+is what let it come out of `group.py` cleanly.
 
 ## File structure
 
@@ -497,7 +497,8 @@ selects that no coarser level already took. A cell grid **of accepted samples**
 sized at `r/√3` keeps the rejection test to a local 5×5×5 neighborhood, which is
 what makes it `O(N)` per level — measured flat in cost-per-point from 10K to 1M
 (25 µs/point at `n_lods=6` on an Apple M-series core, ~100 µs/point on a slower
-x86 one; the walk is interpreted, so the constant is hardware-bound).
+x86 one, or roughly 25 to 100 seconds at 1M; the walk is interpreted, so the
+constant is hardware-bound).
 Bucketing every input index there instead is quadratic and was the shipped
 behaviour until #2530 (~4.3 h at 1M points); `test_cost_grows_linearly_with_n`
 is the regression gate.

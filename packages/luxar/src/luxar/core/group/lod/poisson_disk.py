@@ -23,9 +23,9 @@ does the grid construction; the walk is interpreted. Measured: cost per
 point is **flat** from 10K to 1M points, and scales with ``n_lods`` (one
 Bridson pass per level). The absolute is hardware-bound because the walk
 is interpreted — 25 µs/point at ``n_lods=6`` on an Apple M-series core,
-~100 µs/point on a slower x86 one, so 1M points is tens of seconds either
-way rather than the hours the quadratic version took. Quote the flatness,
-not the constant.
+~100 µs/point on a slower x86 one, so 1M points takes tens of seconds to a
+couple of minutes rather than the hours the quadratic version took. Quote
+the flatness, not the constant.
 
 The linearity comes from the cell grid holding **accepted samples only**.
 Each level builds a uniform grid sized at ``r / sqrt(3)``, so a cell's
