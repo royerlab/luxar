@@ -289,7 +289,11 @@ def _load_info_data(
         tmp = None
         try:
             if path.is_file():
-                zarr_path, tmp = resolve_store_path(path)
+                try:
+                    zarr_path, tmp = resolve_store_path(path)
+                except ValueError as resolve_exc:
+                    aprint(f"❌ {resolve_exc}")
+                    return None, False
 
             # Ask the store what shape it is BEFORE loading anything. A partition
             # or nested lod tree has no flat GSplatData form, so the flat load below

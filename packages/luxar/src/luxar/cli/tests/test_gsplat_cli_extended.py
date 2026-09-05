@@ -1507,6 +1507,25 @@ class TestInfoTreeDispatch:
         assert result.exit_code == 1, result.stdout
         assert message in result.stdout
 
+    @pytest.mark.parametrize("filename", ["not-a-store.ply", "empty.gsplats.zarr.zip"])
+    def test_info_reports_store_resolution_errors_without_traceback(
+        self, runner: CliRunner, tmp_path: Path, filename: str
+    ) -> None:
+        path = tmp_path / filename
+        if path.suffix == ".zip":
+            import zipfile
+
+            with zipfile.ZipFile(path, "w"):
+                pass
+        else:
+            path.write_bytes(b"not an archive")
+
+        result = runner.invoke(app, ["gsplat", "info", str(path)])
+
+        assert result.exit_code == 1
+        assert "Traceback" not in result.output
+        assert "❌" in result.stdout
+
     def test_flat_archive_probe_does_not_extract(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
