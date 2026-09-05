@@ -2555,6 +2555,7 @@ describe('MultiLevelCachingStore', () => {
       expect(mocks.files.size).toBe(before);
       const q = store.getStats().l2WriteQueue;
       expect(q.inFlight + q.depth).toBeGreaterThanOrEqual(1);
+      expect(q.maxBytes).toBe(20 * 1024 * 1024);
       expect(store.getStats().l2.writes).toBe(0);
 
       // Release + drain → the background write lands.

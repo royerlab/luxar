@@ -49,7 +49,8 @@ export interface CacheConfig {
    * Max pending (not-yet-started) L2 writes held in the background queue.
    * Past this depth the oldest pending write is dropped (L2 is best-effort —
    * L1 still serves the session and the next session re-fetches). Bounds the
-   * queue's memory (it retains the chunk bytes until written). Default: 1024.
+   * task count; retained chunk bytes are separately capped at the resolved L1
+   * cache budget. Default: 16384.
    */
   opfsWriteQueueMax: number;
   /**

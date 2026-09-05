@@ -48,7 +48,7 @@ export interface PerfSnapshot {
   workers: unknown;
   /** Per-node projected density records, keyed by scene path (null before init). */
   density: unknown;
-  /** Cache tier stats incl. `l2WriteQueue.{pending,inFlight,dropped}` (null before init). */
+  /** Cache stats incl. `l2WriteQueue.{depth,pendingBytes,inFlight,dropped}`. */
   cache: unknown;
   /** Warm-up counters: variants queued / compiled / deduped (null before init). */
   blendWarmup: unknown;

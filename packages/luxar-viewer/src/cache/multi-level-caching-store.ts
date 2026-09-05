@@ -187,6 +187,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
     this.l2WriteQueue = new OpfsWriteQueue({
       concurrency: options?.opfsWriteConcurrency ?? config.cache.opfsWriteConcurrency,
       maxDepth: options?.opfsWriteQueueMax ?? config.cache.opfsWriteQueueMax,
+      maxBytes: l1Size,
     });
   }
 
@@ -648,17 +649,21 @@ export class MultiLevelCachingStore implements AsyncReadable {
           // interleaves between enqueue and the actual write drops the stale write
           // (the enqueue→drain window that the inline await used to make atomic).
           const epoch = this.l2Epoch;
-          this.l2WriteQueue.enqueue(key, async () => {
-            if (this.disposed || this.dataAbort.signal.aborted || this.l2Epoch !== epoch) {
-              return; // superseded by dispose or a cache clear — do not persist
-            }
-            try {
-              await l2Store.set(key, data);
-            } catch (e) {
-              const msg = e instanceof Error ? e.message : String(e);
-              log.warning(Modules.CACHE, `L2 write failed for ${key}: ${msg}`);
-            }
-          });
+          this.l2WriteQueue.enqueue(
+            key,
+            async () => {
+              if (this.disposed || this.dataAbort.signal.aborted || this.l2Epoch !== epoch) {
+                return; // superseded by dispose or a cache clear — do not persist
+              }
+              try {
+                await l2Store.set(key, data);
+              } catch (e) {
+                const msg = e instanceof Error ? e.message : String(e);
+                log.warning(Modules.CACHE, `L2 write failed for ${key}: ${msg}`);
+              }
+            },
+            data.byteLength
+          );
         }
       }
 

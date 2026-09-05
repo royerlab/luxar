@@ -12,9 +12,9 @@
  * This queue moves the write off the fetch critical path while keeping it
  * bounded: the caller `enqueue()`s and returns immediately; the queue drains
  * tasks at a fixed `concurrency`, coalesces repeat writes of the same key
- * (keeping the latest), and drops the oldest pending task past `maxDepth`
- * (L2 is a best-effort persistence tier — L1 still serves the current session
- * and the next session simply re-fetches a dropped chunk).
+ * (keeping the latest), and drops the oldest pending task past `maxDepth` or
+ * `maxBytes` (L2 is a best-effort persistence tier — L1 still serves the
+ * current session and the next session simply re-fetches a dropped chunk).
  *
  * Correctness is the caller's (MultiLevelCachingStore) responsibility: the
  * enqueued task must re-check staleness (disposed / dataAbort / epoch) at drain
@@ -28,33 +28,45 @@ export interface OpfsWriteQueueOptions {
   concurrency: number;
   /** Max pending (not-yet-started) tasks; excess drops the oldest. */
   maxDepth: number;
+  /** Max bytes retained by pending tasks; excess drops the oldest. */
+  maxBytes: number;
 }
 
 export interface OpfsWriteQueueStats {
   /** Pending (not-yet-started) tasks. */
   depth: number;
+  /** Bytes retained by pending tasks. */
+  pendingBytes: number;
   /** Tasks currently running. */
   inFlight: number;
-  /** Cumulative tasks dropped by the maxDepth overflow policy. */
+  /** Cumulative tasks dropped by either overflow policy. */
   dropped: number;
   /** Resolved concurrency cap. */
   concurrency: number;
   /** Resolved max pending depth. */
   maxDepth: number;
+  /** Resolved max pending bytes. */
+  maxBytes: number;
+}
+
+interface PendingWrite {
+  run: () => Promise<void>;
+  byteLength: number;
 }
 
 /**
  * A per-instance bounded-concurrency FIFO write queue with per-key coalescing.
  * Models the acquire/release/FIFO shape of `utils/fetch-concurrency.ts`, but is
- * per-instance, configurable, and depth-bounded (that gate is an unbounded
- * global singleton).
+ * per-instance, configurable, and bounded by both task count and retained
+ * bytes (that gate is an unbounded global singleton).
  */
 export class OpfsWriteQueue {
   /**
    * Pending tasks keyed by cache key. `Map` insertion order IS the FIFO order;
    * re-enqueuing a key coalesces (the latest task wins and moves to newest).
    */
-  private readonly pending = new Map<string, () => Promise<void>>();
+  private readonly pending = new Map<string, PendingWrite>();
+  private pendingBytes = 0;
   /** Currently-running task promises (for `drain()`). */
   private readonly inFlightPromises = new Set<Promise<void>>();
   private droppedCount = 0;
@@ -66,30 +78,38 @@ export class OpfsWriteQueue {
   private pumping = false;
   private readonly concurrency: number;
   private readonly maxDepth: number;
+  private readonly maxBytes: number;
 
   constructor(opts: OpfsWriteQueueOptions) {
     this.concurrency = Math.max(1, Math.floor(opts.concurrency));
     this.maxDepth = Math.max(1, Math.floor(opts.maxDepth));
+    this.maxBytes = Math.max(1, Math.floor(opts.maxBytes));
   }
 
   /**
    * Schedule a write. Returns synchronously; the task runs in the background
    * when a concurrency slot frees. Re-enqueuing the same key replaces its
-   * pending task (coalesce, keep-latest). Past `maxDepth`, the oldest pending
-   * task is dropped.
+   * pending task (coalesce, keep-latest). Past `maxDepth` or `maxBytes`, the
+   * oldest pending task is dropped.
    */
-  enqueue(key: string, run: () => Promise<void>): void {
+  enqueue(key: string, run: () => Promise<void>, byteLength: number): void {
     // Coalesce: delete-then-set so the re-enqueued key becomes newest in FIFO
     // order and its task is the latest.
+    const previous = this.pending.get(key);
+    if (previous) this.pendingBytes -= previous.byteLength;
     this.pending.delete(key);
-    this.pending.set(key, run);
+    const pending = { run, byteLength: Math.max(0, Math.floor(byteLength)) };
+    this.pending.set(key, pending);
+    this.pendingBytes += pending.byteLength;
 
     // Drop-oldest overflow. Best-effort tier: a dropped write just isn't
     // persisted to disk this session (L1 still holds it).
-    while (this.pending.size > this.maxDepth) {
+    while (this.pending.size > this.maxDepth || this.pendingBytes > this.maxBytes) {
       const oldest = this.pending.keys().next().value as string | undefined;
       if (oldest === undefined) break;
+      const dropped = this.pending.get(oldest);
       this.pending.delete(oldest);
+      if (dropped) this.pendingBytes -= dropped.byteLength;
       this.droppedCount++;
     }
 
@@ -105,12 +125,13 @@ export class OpfsWriteQueue {
     try {
       while (this.inFlightPromises.size < this.concurrency && this.pending.size > 0) {
         const key = this.pending.keys().next().value as string;
-        const run = this.pending.get(key)!;
+        const pending = this.pending.get(key)!;
         this.pending.delete(key);
+        this.pendingBytes -= pending.byteLength;
 
         const p = (async () => {
           try {
-            await run();
+            await pending.run();
           } catch {
             // run() owns its own error handling; swallow so one failed write
             // never breaks the pump chain.
@@ -133,6 +154,7 @@ export class OpfsWriteQueue {
    */
   clear(): void {
     this.pending.clear();
+    this.pendingBytes = 0;
   }
 
   /**
@@ -153,10 +175,12 @@ export class OpfsWriteQueue {
   stats(): OpfsWriteQueueStats {
     return {
       depth: this.pending.size,
+      pendingBytes: this.pendingBytes,
       inFlight: this.inFlightPromises.size,
       dropped: this.droppedCount,
       concurrency: this.concurrency,
       maxDepth: this.maxDepth,
+      maxBytes: this.maxBytes,
     };
   }
 }

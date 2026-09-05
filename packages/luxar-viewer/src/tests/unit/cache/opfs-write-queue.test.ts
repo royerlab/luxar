@@ -12,17 +12,21 @@ function makeGate(): { promise: Promise<void>; release: () => void } {
 
 describe('OpfsWriteQueue', () => {
   it('never runs more than `concurrency` tasks at once', async () => {
-    const q = new OpfsWriteQueue({ concurrency: 2, maxDepth: 100 });
+    const q = new OpfsWriteQueue({ concurrency: 2, maxDepth: 100, maxBytes: 100 });
     const gate = makeGate();
     let started = 0;
     let finished = 0;
 
     for (let i = 0; i < 5; i++) {
-      q.enqueue(`k${i}`, async () => {
-        started++;
-        await gate.promise;
-        finished++;
-      });
+      q.enqueue(
+        `k${i}`,
+        async () => {
+          started++;
+          await gate.promise;
+          finished++;
+        },
+        1
+      );
     }
 
     // pump() runs synchronously inside enqueue, so exactly `concurrency`
@@ -41,25 +45,38 @@ describe('OpfsWriteQueue', () => {
   });
 
   it('coalesces repeat enqueues of the same key, keeping the latest task', async () => {
-    const q = new OpfsWriteQueue({ concurrency: 1, maxDepth: 100 });
+    const q = new OpfsWriteQueue({ concurrency: 1, maxDepth: 100, maxBytes: 100 });
     const gate = makeGate();
     const order: string[] = [];
 
     // Occupy the single slot so the coalescing target stays pending.
-    q.enqueue('busy', async () => {
-      await gate.promise;
-      order.push('busy');
-    });
-    q.enqueue('k', async () => {
-      order.push('k-v1');
-    });
-    q.enqueue('k', async () => {
-      order.push('k-v2');
-    });
+    q.enqueue(
+      'busy',
+      async () => {
+        await gate.promise;
+        order.push('busy');
+      },
+      1
+    );
+    q.enqueue(
+      'k',
+      async () => {
+        order.push('k-v1');
+      },
+      3
+    );
+    q.enqueue(
+      'k',
+      async () => {
+        order.push('k-v2');
+      },
+      5
+    );
 
     // 'busy' in flight, a single coalesced 'k' entry pending (not two).
     expect(q.stats().inFlight).toBe(1);
     expect(q.stats().depth).toBe(1);
+    expect(q.stats().pendingBytes).toBe(5);
 
     gate.release();
     await q.drain();
@@ -69,24 +86,40 @@ describe('OpfsWriteQueue', () => {
   });
 
   it('drops the oldest pending task past maxDepth (best-effort overflow)', async () => {
-    const q = new OpfsWriteQueue({ concurrency: 1, maxDepth: 2 });
+    const q = new OpfsWriteQueue({ concurrency: 1, maxDepth: 2, maxBytes: 100 });
     const gate = makeGate();
     const ran: string[] = [];
 
-    q.enqueue('busy', async () => {
-      await gate.promise;
-      ran.push('busy');
-    });
-    q.enqueue('a', async () => {
-      ran.push('a');
-    });
-    q.enqueue('b', async () => {
-      ran.push('b');
-    });
+    q.enqueue(
+      'busy',
+      async () => {
+        await gate.promise;
+        ran.push('busy');
+      },
+      1
+    );
+    q.enqueue(
+      'a',
+      async () => {
+        ran.push('a');
+      },
+      1
+    );
+    q.enqueue(
+      'b',
+      async () => {
+        ran.push('b');
+      },
+      1
+    );
     // pending = [a, b] (depth 2 == maxDepth). Enqueue a third → drop oldest (a).
-    q.enqueue('c', async () => {
-      ran.push('c');
-    });
+    q.enqueue(
+      'c',
+      async () => {
+        ran.push('c');
+      },
+      1
+    );
 
     expect(q.stats().depth).toBe(2);
     expect(q.stats().dropped).toBe(1);
@@ -98,25 +131,76 @@ describe('OpfsWriteQueue', () => {
     expect(ran).toEqual(['busy', 'b', 'c']);
   });
 
-  it('clear() drops pending tasks but lets in-flight tasks finish', async () => {
-    const q = new OpfsWriteQueue({ concurrency: 1, maxDepth: 100 });
+  it('drops the oldest pending task when retained bytes exceed maxBytes', async () => {
+    const q = new OpfsWriteQueue({ concurrency: 1, maxDepth: 100, maxBytes: 5 });
     const gate = makeGate();
     const ran: string[] = [];
 
-    q.enqueue('busy', async () => {
-      await gate.promise;
-      ran.push('busy');
-    });
-    q.enqueue('a', async () => {
-      ran.push('a');
-    });
-    q.enqueue('b', async () => {
-      ran.push('b');
-    });
+    q.enqueue(
+      'busy',
+      async () => {
+        await gate.promise;
+        ran.push('busy');
+      },
+      1
+    );
+    q.enqueue(
+      'a',
+      async () => {
+        ran.push('a');
+      },
+      3
+    );
+    q.enqueue(
+      'b',
+      async () => {
+        ran.push('b');
+      },
+      3
+    );
+
+    expect(q.stats()).toMatchObject({ depth: 1, pendingBytes: 3, dropped: 1, maxBytes: 5 });
+
+    gate.release();
+    await q.drain();
+
+    expect(ran).toEqual(['busy', 'b']);
+    expect(q.stats().pendingBytes).toBe(0);
+  });
+
+  it('clear() drops pending tasks but lets in-flight tasks finish', async () => {
+    const q = new OpfsWriteQueue({ concurrency: 1, maxDepth: 100, maxBytes: 100 });
+    const gate = makeGate();
+    const ran: string[] = [];
+
+    q.enqueue(
+      'busy',
+      async () => {
+        await gate.promise;
+        ran.push('busy');
+      },
+      1
+    );
+    q.enqueue(
+      'a',
+      async () => {
+        ran.push('a');
+      },
+      2
+    );
+    q.enqueue(
+      'b',
+      async () => {
+        ran.push('b');
+      },
+      3
+    );
     expect(q.stats().depth).toBe(2);
+    expect(q.stats().pendingBytes).toBe(5);
 
     q.clear();
     expect(q.stats().depth).toBe(0);
+    expect(q.stats().pendingBytes).toBe(0);
 
     gate.release();
     await q.drain();
@@ -126,15 +210,19 @@ describe('OpfsWriteQueue', () => {
   });
 
   it('drain() resolves only after every task settles, even if some throw', async () => {
-    const q = new OpfsWriteQueue({ concurrency: 2, maxDepth: 100 });
+    const q = new OpfsWriteQueue({ concurrency: 2, maxDepth: 100, maxBytes: 100 });
     let finished = 0;
 
     for (let i = 0; i < 6; i++) {
-      q.enqueue(`k${i}`, async () => {
-        await Promise.resolve();
-        if (i === 3) throw new Error('boom'); // a throwing task must not stall the pump
-        finished++;
-      });
+      q.enqueue(
+        `k${i}`,
+        async () => {
+          await Promise.resolve();
+          if (i === 3) throw new Error('boom'); // a throwing task must not stall the pump
+          finished++;
+        },
+        1
+      );
     }
 
     await q.drain();
@@ -145,9 +233,10 @@ describe('OpfsWriteQueue', () => {
   });
 
   it('clamps non-positive config to a floor of 1', () => {
-    const q = new OpfsWriteQueue({ concurrency: 0, maxDepth: 0 });
+    const q = new OpfsWriteQueue({ concurrency: 0, maxDepth: 0, maxBytes: 0 });
     expect(q.stats().concurrency).toBe(1);
     expect(q.stats().maxDepth).toBe(1);
+    expect(q.stats().maxBytes).toBe(1);
   });
 
   it('holds the concurrency cap even if a task re-enters enqueue() during its own run', async () => {
@@ -155,22 +244,30 @@ describe('OpfsWriteQueue', () => {
     // re-entrant pump start extra tasks past the cap (the re-entrant call sees
     // the current task before it is counted in inFlightPromises).
     const concurrency = 1;
-    const q = new OpfsWriteQueue({ concurrency, maxDepth: 100 });
+    const q = new OpfsWriteQueue({ concurrency, maxDepth: 100, maxBytes: 100 });
     const gate = makeGate();
     let maxInFlight = 0;
     let reentered = false;
 
-    q.enqueue('a', async () => {
-      // Re-enter synchronously (before the first await) — the danger window.
-      if (!reentered) {
-        reentered = true;
-        q.enqueue('b', async () => {
-          await Promise.resolve();
-        });
-      }
-      maxInFlight = Math.max(maxInFlight, q.stats().inFlight);
-      await gate.promise;
-    });
+    q.enqueue(
+      'a',
+      async () => {
+        // Re-enter synchronously (before the first await) — the danger window.
+        if (!reentered) {
+          reentered = true;
+          q.enqueue(
+            'b',
+            async () => {
+              await Promise.resolve();
+            },
+            1
+          );
+        }
+        maxInFlight = Math.max(maxInFlight, q.stats().inFlight);
+        await gate.promise;
+      },
+      1
+    );
 
     // With concurrency 1, 'b' must NOT be running while 'a' is in flight.
     expect(q.stats().inFlight).toBe(1);
@@ -183,17 +280,21 @@ describe('OpfsWriteQueue', () => {
 
   it('stress: concurrency cap holds and accounting is exact under out-of-order completion', async () => {
     const concurrency = 3;
-    const q = new OpfsWriteQueue({ concurrency, maxDepth: 10_000 });
+    const q = new OpfsWriteQueue({ concurrency, maxDepth: 10_000, maxBytes: 10_000 });
     const N = 60;
     const gates: Array<() => void> = [];
     let completed = 0;
     let maxInFlight = 0;
 
     for (let i = 0; i < N; i++) {
-      q.enqueue(`k${i}`, async () => {
-        await new Promise<void>((r) => gates.push(r));
-        completed++;
-      });
+      q.enqueue(
+        `k${i}`,
+        async () => {
+          await new Promise<void>((r) => gates.push(r));
+          completed++;
+        },
+        1
+      );
     }
     // Right after the synchronous enqueue burst: exactly `concurrency` running,
     // the rest pending (distinct keys → none coalesced/dropped).
