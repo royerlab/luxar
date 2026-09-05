@@ -110,7 +110,12 @@ class TestFitConfig:
         assert config.init_L is None
         assert config.init_amps is None
         assert config.amp_max is None
-        assert config.max_eccentricity is None
+        # 10.0, matching `ConstraintConfig` and `fit_gaussian_splats`. This line
+        # asserted None and so PINNED a divergence (audit A2-02): a
+        # `FitConfig(...)` that supplied the required fields but omitted this one
+        # removed the eccentricity limit while every documented default said 10.
+        # `test_fit_schema_agreement.py` now derives this rather than restating it.
+        assert config.max_eccentricity == 10.0
         assert config.voxel_footprint_correction is False
         assert config.clip_to_bounds is False
         assert config.voxel_size is None
@@ -460,7 +465,8 @@ class TestConfigDefaultsTrackTheFitter:
     33% faster at equal PSNR, while `sigma_min_diag=None` removes the lower
     bound on splat width altogether. Unpacking a DEFAULT-constructed config
     therefore used to change behaviour while reading as "no change" — the worst
-    shape for a default.
+    shape for a default. Default agreement is enforced centrally by
+    ``test_fit_schema_agreement.py::test_no_default_disagrees_with_the_entry_point``.
     """
 
     @staticmethod
@@ -477,25 +483,6 @@ class TestConfigDefaultsTrackTheFitter:
             ).parameters.items()
             if parameter.default is not inspect.Parameter.empty
         }
-
-    @pytest.mark.parametrize("config_cls", [OptimConfig, LossConfig, ConstraintConfig])
-    def test_config_defaults_match_the_fitter_signature(self, config_cls) -> None:
-        """Every field's default equals the fitter's default of the same name."""
-        import dataclasses
-
-        fitter = self._fitter_defaults()
-        mismatched = {
-            field.name: (field.default, fitter[field.name])
-            for field in dataclasses.fields(config_cls)
-            if field.name in fitter and field.default != fitter[field.name]
-        }
-
-        assert not mismatched, (
-            f"{config_cls.__name__} defaults disagree with fit_gaussian_splats "
-            f"(field: config vs fitter): {mismatched}. The docstrings tell "
-            "callers to apply a config with `**asdict(cfg)`, so a disagreeing "
-            "default silently changes behaviour on a call that reads as a no-op."
-        )
 
     @pytest.mark.parametrize("config_cls", [OptimConfig, LossConfig, ConstraintConfig])
     def test_every_field_is_actually_a_fitter_parameter(self, config_cls) -> None:
