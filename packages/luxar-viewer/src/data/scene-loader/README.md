@@ -7,7 +7,8 @@ re-exported through `data/index.ts` — the parent orchestrator is the
 only consumer of the top-level files of each subfolder, with a small
 number of exceptions noted in each cluster's README (the
 `progressive/` loop is driven from the per-geometry `lod-refinement.ts`
-modules, and `lod-load-stats.ts` is read by the debug interface).
+modules, `lod-load-stats.ts` is read by the debug interface, and
+`partial-extend-tolerance.ts` is read by per-geometry leaf modules).
 
 The SceneLoader has three external entry points:
 
@@ -36,8 +37,13 @@ The SceneLoader has three external entry points:
 ## Layout
 
 This folder is split into eleven subpackages — thematic clusters plus the
-pre-existing per-step folders — named for their concern. One `.ts`
-file sits directly under `scene-loader/`:
+pre-existing per-step folders — named for their concern. Three `.ts`
+files sit directly under `scene-loader/`:
+
+- **`geometry-descriptors.ts`** — per-geometry dispatch and capability table
+  used by the orchestrator.
+- **`partial-extend-tolerance.ts`** — import-light per-geometry tolerance table
+  shared with leaf handlers and LOD-refinement loops.
 
 - **`lod-load-stats.ts`** — debug-only per-stage timing accumulator for
   lazy LOD level loads (fetch/decode, projection+pack, GPU commit,
