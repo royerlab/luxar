@@ -104,6 +104,24 @@ def test_story_camera_falls_back_when_the_cluster_sits_at_the_centre() -> None:
     assert cam.position is not None and cam.position[2] > 0
 
 
+@pytest.mark.parametrize("n", [0, 1, 3])
+def test_icosphere_is_a_closed_unit_manifold(n: int) -> None:
+    from luxar.demos.demo_esm3_protein_stories import icosphere
+
+    verts, faces = icosphere(n)
+    assert verts.shape == (10 * 4**n + 2, 3)
+    assert faces.shape == (20 * 4**n, 3)
+    assert verts.dtype == np.float32 and faces.dtype == np.uint32
+    # Every vertex on the unit sphere → positions double as normals.
+    assert np.allclose(np.linalg.norm(verts, axis=1), 1.0, atol=1e-6)
+    # Closed manifold: every edge is shared by exactly two faces.
+    edges = np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]])
+    edges = np.sort(edges, axis=1)
+    _, counts = np.unique(edges, axis=0, return_counts=True)
+    assert (counts == 2).all()
+    assert faces.max() < len(verts)
+
+
 def test_panels_escape_html_and_carry_the_counts() -> None:
     panel = story_panel_html(_story(), n_members=42, index=2, total=5)
     assert "Story 2 of 5" in panel

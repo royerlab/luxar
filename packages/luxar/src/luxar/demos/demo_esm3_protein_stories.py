@@ -341,6 +341,20 @@ HIGHLIGHT_INTENSITY = 0.38
 STORY_DIM = "story"
 PANEL_WIDTH = 0.32
 
+# Marker sphere around each story's cluster: a subtle translucent shell so the
+# cluster reads as a place, not just as brighter dots. Built from the existing
+# mesh model — per-vertex RGBA alpha, additive blending, the light-free
+# view-anchored shade term with the ambient floor removed so only the lit
+# limb shows — and sat in its own depth band between backdrop and highlight.
+SPHERE_RADIUS_SCALE = 1.35  # × the cluster's r95
+SPHERE_MIN_RADIUS = 0.35
+# Tuned in the browser: 0.10 read as a solid coloured disc over the cluster;
+# this is a veil the points still shine through. Additive, double-sided, so
+# the front and back shells sum to about twice this at the centre.
+SPHERE_ALPHA = 0.035
+SPHERE_SUBDIVISIONS = 3  # icosphere: 642 vertices, 1280 faces
+SPHERE_LAYER_ORDER = 5  # backdrop 0 < sphere < highlight 10
+
 
 # =============================================================================
 # Pure helpers (unit-tested)
@@ -391,6 +405,57 @@ def select_story_members(
     centre = np.median(positions[indices], axis=0)
     r95 = float(np.percentile(np.linalg.norm(positions[indices] - centre, axis=1), 95))
     return StoryCluster(indices=indices, centre=centre, r95=r95, n_named=n_named)
+
+
+def icosphere(subdivisions: int = SPHERE_SUBDIVISIONS) -> tuple[np.ndarray, np.ndarray]:
+    """Unit icosphere: ``(vertices (V, 3) float32, faces (F, 3) uint32)``.
+
+    Loop-subdivides an icosahedron ``subdivisions`` times, re-projecting each
+    midpoint onto the unit sphere, so the vertex positions double as outward
+    unit normals (what the marker's smooth shading needs). Closed manifold:
+    ``V = 10·4ⁿ + 2``, ``F = 20·4ⁿ``.
+    """
+    t = (1.0 + 5.0**0.5) / 2.0
+    verts = np.array(
+        [
+            [-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0],
+            [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t],
+            [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1],
+        ],
+        dtype=np.float64,
+    )  # fmt: skip
+    verts /= np.linalg.norm(verts, axis=1, keepdims=True)
+    faces = np.array(
+        [
+            [0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11],
+            [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
+            [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9],
+            [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1],
+        ],
+        dtype=np.int64,
+    )  # fmt: skip
+    for _ in range(subdivisions):
+        vlist = [v for v in verts]
+        midpoint: dict[tuple[int, int], int] = {}
+
+        def mid(a: int, b: int) -> int:
+            key = (a, b) if a < b else (b, a)
+            idx = midpoint.get(key)
+            if idx is None:
+                m = (vlist[a] + vlist[b]) / 2.0
+                m /= np.linalg.norm(m)
+                vlist.append(m)
+                idx = len(vlist) - 1
+                midpoint[key] = idx
+            return idx
+
+        new_faces = []
+        for a, b, c in faces:
+            ab, bc, ca = mid(a, b), mid(b, c), mid(c, a)
+            new_faces += [[a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]]
+        verts = np.array(vlist, dtype=np.float64)
+        faces = np.array(new_faces, dtype=np.int64)
+    return verts.astype(np.float32), faces.astype(np.uint32)
 
 
 def story_camera(
@@ -648,6 +713,44 @@ def build_stories_scene(
                     # the backdrop made the cluster appear. Bands are hard
                     # (LAYER_ORDER_SPEC §2): the stories always composite on top.
                     layer_order=10,
+                )
+
+            # Marker shells: one translucent sphere per cluster, pinned to its
+            # story slot. The unit icosphere's vertices are its normals.
+            unit_verts, unit_faces = icosphere()
+            for k, (s, c) in enumerate(zip(stories, clusters), start=1):
+                radius = max(SPHERE_MIN_RADIUS, SPHERE_RADIUS_SCALE * c.r95)
+                nv = len(unit_verts)
+                sphere_vertices = np.column_stack(
+                    [
+                        np.full(nv, float(k), dtype=np.float32),
+                        (unit_verts * radius + c.centre.astype(np.float32)).astype(
+                            np.float32
+                        ),
+                    ]
+                ).astype(np.float32)
+                rgba = np.empty((nv, 4), dtype=np.float32)
+                rgba[:, :3] = np.asarray(s.color, dtype=np.float32)
+                rgba[:, 3] = SPHERE_ALPHA
+                scene.add_mesh(
+                    f"Marker {k}: {s.key}",
+                    sphere_vertices,
+                    unit_faces,
+                    normals=unit_verts,
+                    normal_dims=[1, 2, 3],
+                    colors=rgba,
+                    shading="smooth",
+                    double_sided=True,
+                    blending_mode="additive",
+                    # A low ambient floor keeps the shell continuous while the
+                    # view-anchored key still gives it a soft 3D gradient; the
+                    # highlight is the one curvature cue the veil needs.
+                    ambient=0.3,
+                    shade_exponent=1.5,
+                    specular=0.3,
+                    shininess=12,
+                    layer=True,
+                    layer_order=SPHERE_LAYER_ORDER,
                 )
 
             # Title (constant)
