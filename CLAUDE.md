@@ -251,7 +251,7 @@ make test-cuda
 
 **What `make build-cuda SLURM=1` does:**
 1. Detects the PyTorch CUDA version (e.g., 12.8) and finds a matching `cuda/` module
-2. Detects and loads the highest available GCC >= 9 module (required by PyTorch 2.x)
+2. Detects and loads the highest available GCC >= 10 module (required for C++20)
 3. Captures the current hatch virtual environment path
 4. Generates a self-contained sbatch script (`build-cuda-logs/build_cuda_job.sh`)
 5. Submits it to Slurm and prints monitoring commands
