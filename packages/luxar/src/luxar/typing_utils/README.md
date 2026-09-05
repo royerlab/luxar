@@ -92,7 +92,8 @@ There was a `config.py` here, described as "centralized configuration". Of its
 `SUPPORTED_VERSIONS` were aliases of constants that already existed
 (`constants.LUXAR_VERSION_CURRENT`, `_format_contract.SUPPORTED_SCENE_VERSIONS`)
 and their two callers now import those directly; `check_dataset_size_warning()`
-carried real logic and moved next to its single caller in `utils/scenes.py`.
+carried real logic and moved next to its single caller in `utils/scenes.py`,
+where it is now the private `_dataset_size_warning()`.
 `SUPPORTED_UNITS` was a fourth hand-copy of the `PhysicalUnit` vocabulary —
 `validation.types` derives that list from the enum now. Chunk-byte targets and
 bounds live in `constants.py`; compression policy lives in

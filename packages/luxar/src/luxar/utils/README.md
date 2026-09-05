@@ -283,7 +283,7 @@ def process_optional(data, processor, default=None):
 
 Internal:
 - `io.compiler`: For demo scene creation
-- `typing_utils`: Type definitions, aliases, and dataset-size config
+- `typing_utils`: Type definitions and aliases
 - `core.dimensions`: Scene dimension definitions (demos)
 - `gsplats`: `GSplatData` loading and torch-device resolution (demos)
 
