@@ -85,6 +85,13 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "proves the baseline still matches the tree",
     ),
     (
+        "scripts/lint_baseline.json",
+        "py",
+        "the bugbear/RUF012 ratchet's only non-.py input; editing it is precisely "
+        "how real debt would be silenced, so the edit must run "
+        "test_check_lint_ratchet.py, which re-derives it from the tree",
+    ),
+    (
         "Makefile",
         "py",
         "test_python_version_declarations.py greps it for a sub-floor interpreter, "

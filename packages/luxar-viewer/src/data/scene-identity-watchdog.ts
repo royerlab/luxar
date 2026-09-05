@@ -8,9 +8,20 @@
  * "I started demo B and got demo A" trap. The load-time cache validation
  * protects fresh loads; nothing protected a tab that simply stayed open.
  *
- * This watchdog re-fetches the dataset's root `.zattrs` (cache-bypassing)
+ * This watchdog re-fetches the dataset's root attrs document (cache-bypassing)
  * on an interval and whenever the tab regains focus/visibility — the exact
  * moment a user returns to a stale tab — and compares scene identity:
+ *
+ * The poll is CONDITIONAL: once a probe has confirmed identity, its `ETag` is
+ * replayed as `If-None-Match`, so the steady state is a bodyless `304`. That
+ * matters more than it sounds. Under zarr format 2 the root attrs document was
+ * a small `.zattrs`; under format 3 it is the root `zarr.json`, which for a
+ * Luxar store carries the ENTIRE consolidated metadata index — 248 kB (38 kB
+ * brotli) for a 92-node scene. The format-3 migration silently turned a cheap
+ * poll into a ~40 kB download every 15 s, for the lifetime of every open tab.
+ * If cross-origin CORS policy rejects that header, the watchdog retries the
+ * probe unconditionally and keeps using the compatible path thereafter.
+ * See {@link REMOTE_CHECK_INTERVAL_MS} for the matching cadence change.
  *
  * - `content_hash` when the loaded scene had one (every compiler-written
  *   scene does): the same identity stamp the L2 cache validates against.
@@ -45,8 +56,29 @@ import { isZippedStoreUrl } from './zip/entries';
 import { log, Modules } from '../utils/log';
 import { notifier } from '../utils/cross-layer/notifier';
 
-/** Periodic probe cadence. Focus/visibility probes fire immediately. */
+/**
+ * Periodic probe cadence for a LOCAL dataset server. Focus/visibility probes
+ * fire immediately regardless.
+ *
+ * This is the case the watchdog was built for: dev/demo servers share ports, so
+ * server A can die and server B bind the same port within seconds. A tight
+ * cadence is worth it there.
+ */
 const CHECK_INTERVAL_MS = 15_000;
+/**
+ * Cadence for a REMOTE dataset.
+ *
+ * A hosted store is published under an immutable, usually dated, prefix and is
+ * replaced by publishing a NEW url, not by swapping bytes under the old one —
+ * so the fast cadence buys almost nothing while costing a request every 15 s,
+ * per open tab, for the lifetime of the tab. `If-None-Match` usually reduces
+ * each poll to a bodyless 304; this reduces how many probes there are even
+ * when the source's CORS policy requires unconditional requests.
+ * With the two-failure threshold below, an unfocused hosted scene can take up
+ * to roughly four minutes to show unreachable; focus/visibility probes remain
+ * immediate once the spacing guard allows them.
+ */
+const REMOTE_CHECK_INTERVAL_MS = 120_000;
 /** Minimum spacing between probes (guards focus+visibility double-fire). */
 const MIN_PROBE_SPACING_MS = 2_000;
 /** Consecutive fetch failures before the `unreachable` banner shows. */
@@ -67,12 +99,15 @@ const PROBE_TIMEOUT_MS = 10_000;
  *   supported and their credentials expire; a refused probe is NOT evidence
  *   that the scene changed, and the terminal banner's Reload cannot repair a
  *   stale credential anyway.
+ * - 304 without a conditional request: a broken server/proxy response that
+ *   carries no evidence about which scene the address serves.
  *
  * None of these may latch the terminal verdict. A 404 is different: the
  * server answered, and this scene's root attrs are simply not there.
  */
 function isInconclusiveStatus(status: number): boolean {
   return (
+    status === 304 ||
     status === 401 ||
     status === 403 ||
     status === 408 ||
@@ -120,6 +155,32 @@ function buildAttrsUrl(datasetUrl: string, doc: string): string {
     return url.toString();
   } catch {
     return `${datasetUrl.replace(/\/+$/, '')}/${doc}`;
+  }
+}
+
+/**
+ * Whether a dataset URL is served from this machine, and therefore subject to
+ * the port-reuse race {@link CHECK_INTERVAL_MS} exists for.
+ *
+ * LAN hosts (`192.168.*`, `*.local`, or a `--host 0.0.0.0` server reached from
+ * another machine) use the remote cadence because their URL does not identify
+ * this browser's loopback interface.
+ *
+ * Unparseable URLs count as remote: `isWatchable` has already required an
+ * `http(s)://` prefix, so anything `URL` still cannot parse is not a local
+ * dev server, and the slower cadence is the safe way to be wrong.
+ */
+function isLocalOrigin(datasetUrl: string): boolean {
+  try {
+    const { hostname } = new URL(datasetUrl);
+    return (
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname === '[::1]' ||
+      hostname === '0.0.0.0'
+    );
+  } catch {
+    return false;
   }
 }
 
@@ -171,6 +232,24 @@ export class SceneIdentityWatchdog {
    * request. Only the first probe of a format-2 dataset pays the extra 404.
    */
   private resolvedAttrsUrl: string | null = null;
+  /**
+   * ETag of the document at {@link resolvedAttrsUrl}, sent back as
+   * `If-None-Match` so an unchanged scene answers `304` with no body.
+   *
+   * PAIRED with `resolvedAttrsUrl` — an ETag is only meaningful against the
+   * URL it came from, so this is cleared whenever the resolved document
+   * changes, and only ever sent to that one candidate.
+   *
+   * Only set from a probe that returned an `ok` verdict (see
+   * {@link probe}). That is what makes the 304 short-circuit sound: "unchanged
+   * since the ETag" is only equivalent to "still the scene we loaded" if the
+   * document that ETag names was itself confirmed to match the baseline.
+   */
+  private resolvedETag: string | null = null;
+  /** Disabled after a conditional fetch fails but the same request succeeds bare. */
+  private conditionalRequestsEnabled = true;
+  /** ETag seen by the in-flight probe; promoted by {@link probe} on `ok`. */
+  private pendingETag: string | null = null;
   private readonly expectedHash: string | null;
   private readonly expectedAttrsJson: string | null;
   private readonly intervalMs: number;
@@ -201,7 +280,8 @@ export class SceneIdentityWatchdog {
     this.attrsUrls = ROOT_ATTR_DOCS.map((doc) => buildAttrsUrl(this.url, doc));
     this.expectedHash = opts.expectedContentHash;
     this.expectedAttrsJson = opts.expectedAttrsJson ?? null;
-    this.intervalMs = opts.intervalMs ?? CHECK_INTERVAL_MS;
+    this.intervalMs =
+      opts.intervalMs ?? (isLocalOrigin(this.url) ? CHECK_INTERVAL_MS : REMOTE_CHECK_INTERVAL_MS);
     // Bind: an unbound window.fetch reference throws "Illegal invocation".
     this.fetchImpl = opts.fetchImpl ?? fetch.bind(globalThis);
   }
@@ -265,7 +345,14 @@ export class SceneIdentityWatchdog {
     this.probeInFlight = true;
     this.lastProbeAt = now;
     try {
-      this.apply(await this.fetchVerdict());
+      const verdict = await this.fetchVerdict();
+      // Promote the ETag ONLY for a document we just confirmed still matches
+      // the baseline. A `changed` or unparseable body must never become the
+      // token a later 304 is trusted against — that would let one bad answer
+      // freeze the watchdog into agreeing with itself forever.
+      if (verdict === 'ok' && this.pendingETag !== null) this.resolvedETag = this.pendingETag;
+      this.pendingETag = null;
+      this.apply(verdict);
     } finally {
       this.probeInFlight = false;
     }
@@ -304,12 +391,49 @@ export class SceneIdentityWatchdog {
       let text: string | null = null;
       let lastStatus = 404;
       for (const candidate of candidates) {
-        const res = await this.fetchImpl(candidate, {
-          cache: 'no-store',
-          signal: abort.signal,
-        });
+        // Conditional ONLY for the document the stored ETag came from: an ETag
+        // is meaningless against any other URL, and sending it to the fallback
+        // candidate could turn its 404 into a bogus 304.
+        let conditional =
+          this.conditionalRequestsEnabled &&
+          candidate === this.resolvedAttrsUrl &&
+          this.resolvedETag !== null;
+        const request = (withETag: boolean): Promise<Response> =>
+          this.fetchImpl(candidate, {
+            cache: 'no-store',
+            signal: abort.signal,
+            ...(withETag ? { headers: { 'If-None-Match': this.resolvedETag as string } } : {}),
+          });
+        let res: Response;
+        try {
+          res = await request(conditional);
+        } catch (error) {
+          if (!conditional || abort.signal.aborted) throw error;
+          // `If-None-Match` is not CORS-safelisted. A cross-origin store whose
+          // preflight omits it rejects the conditional fetch before the GET is
+          // sent. Retry this probe bare so an optional bandwidth optimization
+          // cannot manufacture an unreachable verdict, then keep later probes
+          // bare once that fallback proves the address is reachable.
+          this.resolvedETag = null;
+          res = await request(false);
+          this.conditionalRequestsEnabled = false;
+          conditional = false;
+        }
+        // The whole point of the conditional request: the document is
+        // byte-identical to the one whose ETag we stored, and we only store an
+        // ETag after an `ok` verdict, so identity still holds and there is no
+        // body to compare.
+        //
+        // This MUST be handled before the paths below. `res.ok` is false for
+        // 304; a conditional 304 proves identity and is `ok`, while an
+        // unsolicited 304 says nothing and falls through as inconclusive.
+        if (res.status === 304 && conditional) return 'ok';
         if (res.ok) {
+          // Keep the ETag paired with its document: a fallback to the other
+          // format must not leave the previous document's token behind.
+          if (candidate !== this.resolvedAttrsUrl) this.resolvedETag = null;
           this.resolvedAttrsUrl = candidate;
+          this.pendingETag = res.headers.get('etag');
           text = await res.text();
           break;
         }

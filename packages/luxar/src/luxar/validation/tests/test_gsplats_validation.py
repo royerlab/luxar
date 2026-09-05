@@ -602,16 +602,23 @@ def test_leaf_value_scanned_exactly_once(tmp_path, monkeypatch) -> None:
     plus per-level re-validation).
     """
     from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
-    from luxar.validation import base as validation_base
+    from luxar.validation import writing as validation_writing
 
     calls = {"n": 0}
-    real = validation_base.validate_cholesky_for_writing
+    real = validation_writing.validate_cholesky_for_writing
 
     def counting(*args, **kwargs):
         calls["n"] += 1
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(validation_base, "validate_cholesky_for_writing", counting)
+    # Patch the name where `validate_gsplat_inputs` RESOLVES it, not where it is
+    # defined. That used to be the same place: the validator lived in
+    # `io._compiler.gsplat_assembly` and imported the primitive inside the
+    # function body, so the lookup went through `validation.base` on every call.
+    # It now sits in `validation.writing` beside the primitive and binds it at
+    # module import (A1-03), so patching `validation.base` would leave the bound
+    # reference untouched and count zero calls.
+    monkeypatch.setattr(validation_writing, "validate_cholesky_for_writing", counting)
 
     n = 10
     data = GSplatData(

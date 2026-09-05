@@ -168,9 +168,7 @@ class TestTheRecomputeRecipeMatchesTheShippedPartition:
     def test_the_recorded_partition_shape_is_accepted(self):
         splats_per_rung = 2
         partition = GSplatPartition(
-            children=[
-                _leaf_with_rungs(splats_per_rung=splats_per_rung)
-            ]
+            children=[_leaf_with_rungs(splats_per_rung=splats_per_rung)]
             * demo.EXPECTED_PARTS,
             meta={},
         )

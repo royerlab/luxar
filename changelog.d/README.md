@@ -35,7 +35,8 @@ make changelog                # fold fragments under ## [Unreleased] / ### <Mont
 make changelog MONTH="August 2026"   # pin the month heading explicitly
 ```
 
-Commit that in the normal version-bump PR, then tag the release (`make release`).
+Commit that in the normal version-bump PR, then follow **Cutting a release** below
+before tagging the release (`make release`).
 
 ## Notes
 
@@ -46,3 +47,35 @@ Commit that in the normal version-bump PR, then tag the release (`make release`)
   direct edit during the transition still auto-resolves on rebase.
 - Not every PR needs a fragment (pure refactors, test-only changes, trivial fixes
   often don't). Use judgement — the same bar as adding a `CHANGELOG.md` entry before.
+
+## Which month an entry lands under
+
+At release-prep, `make changelog` files each fragment under the month it was
+**written** — the date of the commit that added the file — not the month the
+fold happens to run in. Those are rarely the same: when this rule was
+introduced, 440 pending fragments spanned two months and every one of them
+would have been filed under the current one, mis-dating 408 entries into a
+single unnavigable heading.
+
+Two consequences worth knowing:
+
+- **Commit your fragment.** An uncommitted file has no date git can read, and
+  the fold refuses rather than guessing. Committing it is the fix.
+- `make changelog MONTH="August 2026"` still pins every entry to one heading,
+  which is the escape hatch for a fold that has to run outside a git checkout.
+
+## Cutting a release
+
+`make changelog-release` renames `## [Unreleased]` to `## [<version>] - <date>`
+and opens a fresh empty `## [Unreleased]` above it, so the file accumulates
+release history instead of one ever-growing section.
+
+Order matters, and it is the reverse of what you might expect:
+
+1. `make changelog` — fold the fragments.
+2. `make set-version DATE=YYYY.MM.DD` — the version **is** the release date, so
+   it is set last.
+3. `make changelog-release` — cut the section, named from `__version__`.
+
+The cut refuses while any fragment is still pending, because folding after the
+cut would ship those entries under the *next* version.

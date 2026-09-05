@@ -97,6 +97,26 @@ Configuration settings, defaults, and validation functions.
 
 **Purpose**: Centralize configuration management and validation
 
+### `json_safe.py`
+JSON-attr coercion for values headed into zarr `attrs`.
+
+**Key Function:**
+- `json_safe_value(value)` → `(ok, converted)`. Recursively coerces numpy scalars to
+  Python scalars, tuples to lists, and filters nested dicts/lists element-wise.
+  `ok` is False for values with no *strictly*-JSON form.
+
+Two subtleties it guards: numpy floats are checked **before** the Python-scalar
+branch (`np.float64` subclasses `float`, so a naive `(bool, int, float, str)`
+check would accept one un-coerced and leak a numpy scalar into the attrs), and
+non-finite floats are **rejected** — zarr writes `NaN`/`Infinity` as bare tokens
+that the TypeScript viewer's strict `JSON.parse` refuses.
+
+**Purpose**: It lives in the foundation package because all three of `core`, `io`
+and `gsplats` need it. It was in `luxar.io._compiler`, which made three
+`core.group` call sites a `core` → `io` back-edge (audit A1-03). Depends on
+nothing but numpy, which is what makes the foundation the right home rather than
+any one of its three callers.
+
 ## Design Philosophy
 
 ### Separation of Concerns

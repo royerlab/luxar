@@ -222,7 +222,16 @@ vi.mock('zarrita', async () => {
       return mockFetchStore;
     }),
     withMaybeConsolidatedMetadata: vi.fn((store) => Promise.resolve(store)),
-    open: vi.fn(() => Promise.resolve(mockOpenResult)),
+    // `open` carries pinned per-format siblings (`open.v2` / `open.v3`) on the
+    // real module; the facade's v3-first root open calls `open.v3` directly, so
+    // the stub has to expose it or every scene load throws.
+    open: Object.assign(
+      vi.fn(() => Promise.resolve(mockOpenResult)),
+      {
+        v2: vi.fn(() => Promise.resolve(mockOpenResult)),
+        v3: vi.fn(() => Promise.resolve(mockOpenResult)),
+      }
+    ),
     get: vi.fn((item) => Promise.resolve(mockGetResult(item))),
     root: vi.fn((store) => {
       const createLocation = (path: string): any => ({

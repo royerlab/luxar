@@ -4,12 +4,19 @@ This module provides validation to ensure all point groups in a scene
 have consistent coverage of non-displayed dimensions.
 """
 
-from typing import Dict, Optional, Set, Tuple
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Dict, Optional, Set, Tuple
 
 import numpy as np
 from numpy.typing import NDArray
 
-from ..core.dimensions import Dimensions
+if TYPE_CHECKING:
+    # Annotation only, in two signatures. `validation` sits BELOW `core`: core
+    # imports validation (and now imports `validation.writing` at module level,
+    # since A1-03 moved the shared pre-write gates there), so a runtime import
+    # back into core is the one edge that would reinstate a cycle.
+    from ..core.dimensions import Dimensions
 
 
 class DimensionalCoverageError(ValueError):

@@ -24,8 +24,12 @@ from luxar.core.transforms import (
     translate,
 )
 
-_coord = st.floats(min_value=-10.0, max_value=10.0, allow_nan=False, allow_infinity=False)
-_angle = st.floats(min_value=-180.0, max_value=180.0, allow_nan=False, allow_infinity=False)
+_coord = st.floats(
+    min_value=-10.0, max_value=10.0, allow_nan=False, allow_infinity=False
+)
+_angle = st.floats(
+    min_value=-180.0, max_value=180.0, allow_nan=False, allow_infinity=False
+)
 _scale = st.floats(min_value=0.2, max_value=5.0, allow_nan=False, allow_infinity=False)
 
 

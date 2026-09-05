@@ -170,9 +170,7 @@ class TestTheRecomputeCommandsAreRealCliPaths:
 
 class TestTheRebuiltArchiveShapeIsPinned:
     def test_the_recorded_leaf_and_rungs_are_accepted(self, monkeypatch):
-        leaf = SimpleNamespace(
-            n_splats=17, n_additive_sublods=demo.EXPECTED_RUNGS
-        )
+        leaf = SimpleNamespace(n_splats=17, n_additive_sublods=demo.EXPECTED_RUNGS)
         monkeypatch.setattr(demo, "iter_leaves", lambda _node: [leaf])
 
         assert demo._validate_rebuilt_archive(object()) == 17

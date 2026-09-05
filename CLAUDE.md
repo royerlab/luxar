@@ -48,7 +48,21 @@ pnpm build        # Build
 pnpm test --run   # Unit tests
 pnpm test:e2e     # E2E tests (Playwright)
 pnpm typecheck    # Type check
-pnpm lint         # Lint
+pnpm lint         # Lint (includes TYPE-AWARE rules: no-floating-promises,
+                  # no-misused-promises, await-thenable, no-base-to-string).
+                  # Also caps production functions at complexity 10, 120 code
+                  # lines, depth 4, and 5 parameters. The 721 pre-existing
+                  # findings are recorded in
+                  # eslint-suppressions.json — ESLint's own baseline, so a NEW
+                  # violation fails, including an increase inside a suppressed
+                  # file (the suppression is a COUNT, not a file exemption).
+                  # Fixed some? `pnpm lint --prune-suppressions` tightens it.
+                  # Moved/renamed a baselined file? Re-key with `pnpm exec
+                  # eslint . --suppress-rule <rule>`, then
+                  # prune; verify the suppressions diff only moves that path.
+                  # Do NOT add a `// eslint-disable` to get green: a floating
+                  # promise here is a load that silently stalls, which no test
+                  # asserts and E2E does not gate.
 pnpm format       # Format
 ```
 
@@ -83,6 +97,14 @@ make test-perf-e2e   # Opt-in Playwright performance suite
 make check-all    # All quality checks (Python, TypeScript, Rust, Go) — reformats
 make lint-python        # read-only: ruff check
 make check-complexity   # read-only: ruff C901 ratcheted against scripts/complexity_baseline.json
+make check-lint-ratchet # read-only: ruff's DEFECT rules (flake8-bugbear + RUF012)
+                  # ratcheted against scripts/lint_baseline.json. Existing debt is
+                  # tolerated; a file that newly breaks one of these rules — or
+                  # gains another violation of one it already breaks — fails.
+                  # B905 (`zip` without `strict=`) is the bulk of the baseline and
+                  # its fix CHANGES BEHAVIOUR (`strict=True` raises), so pay it
+                  # down per call site rather than sweeping. B008 is gated at zero:
+                  # the Typer `Option`/`Argument` idiom is exempted in pyproject.
 make type-check-python  # read-only: mypy
 make security           # read-only: bandit
 make check-typescript   # read-only: typecheck + lint + unit tests
@@ -262,7 +284,7 @@ See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for complete documentation.
 
 ### Luxar CLI
 ```bash
-luxar demo                       # List the 89 bundled demos (table)
+luxar demo                       # List the 90 bundled demos (table)
 luxar demo run lorenz            # Run a demo by key/index (forwards -- args)
 luxar demo stop                  # Stop running demos and free their ports (--dry-run lists)
 luxar demo cache list            # Inventory / clear demo caches (cache clear …)
@@ -314,6 +336,47 @@ luxar export scene.luxar.zarr -o my_export/ --open      # Export and serve in br
 luxar export scene.luxar.zarr -o my_export/ --overwrite # Overwrite existing export
 luxar export scene.luxar.zarr -o out/ --native macos    # Native macOS .app bundle (requires `make build-launchers`)
 luxar export scene.luxar.zarr -o out/ --native macos,linux-amd64,linux-arm64 --name MyScene
+```
+
+### Mesh CLI (importing classical surfaces, mesh LOD)
+```bash
+# Convert a classical mesh file into a single-node scene. PLY / OBJ / STL / VTP /
+# glTF-GLB, no extra dependencies; polygons are fan-triangulated. `--center` is
+# ON by default because most mesh files sit far from the origin, which fights the
+# viewer's default framing.
+luxar mesh import bunny.ply bunny.luxar.zarr
+luxar mesh import scan.stl scan.luxar.zarr --unit mm --name Skull
+luxar mesh import surface.obj surface.luxar.zarr --scale 0.001 --unit m
+luxar mesh import model.glb model.luxar.zarr --no-center
+# `--weld` (default ON) merges vertices agreeing on position AND normals/colours.
+# STL always, index-free glTF, and any OBJ indexing normals separately arrive with
+# unshared vertices, which defeat per-vertex normals and give picking a different
+# id per corner per triangle. Hard edges survive — they differ in normal.
+luxar mesh import faceted.stl faceted.luxar.zarr --no-weld
+# Drop stored normals to force the shader's derivative flat-normal path (faceted).
+luxar mesh import smooth.ply flat.luxar.zarr --no-keep-normals
+# A DIRECTORY stacks files carrying `T<number>` and optional `Ch<number>` filename
+# coordinates into hidden discrete dimensions — a mesh timelapse is one scene.
+luxar mesh import frames/ frames.luxar.zarr --pattern '*.ply'
+luxar mesh import frames/ frames.luxar.zarr --pattern '*.ply' --index-regex 'frame_(?P<t>\d+)'
+
+# Build a mesh LOD ladder. TWO recipes, and they are not interchangeable:
+#   levels  decimated coarse levels that REPLACE one another (substitutive, default)
+#   reveal  an additive ladder of disjoint face groups the viewer concatenates
+# A surface has NO coarse prefix — dropping triangles punches holes — so a mesh
+# cannot have both, and `add_mesh` refuses them together. `levels` is what you
+# want for zooming across scales; `reveal` is a progressive reveal of a partial
+# surface, whose every prefix is ONE connected patch (that restriction is what
+# makes a partial load a growing surface rather than lace).
+luxar mesh lod bunny.luxar.zarr bunny_lod.luxar.zarr                 # levels, L=3, K=4
+luxar mesh lod cortex.luxar.zarr cortex_lod.luxar.zarr -L 4 -K 8
+# --subst-method auto resolves to `qem` (quadric error metrics) through 10,000
+# vertices and the vectorized `cluster` grid-collapse above that; cluster is
+# O(V log V) and is the only one usable at the writer's 2**27-vertex cap.
+luxar mesh lod big.luxar.zarr big_lod.luxar.zarr --subst-method cluster
+luxar mesh lod bunny.luxar.zarr bunny_reveal.luxar.zarr --recipe reveal --n-lods 4
+# --node picks the mesh when the scene holds more than one.
+luxar mesh lod multi.luxar.zarr multi_lod.luxar.zarr --node Nuclei
 ```
 
 ### GSplat CLI (fitting, converting, rendering, merging)
@@ -747,7 +810,7 @@ luxar gsplat export imported.gsplats.zarr back.ply --opacity amplitude
 luxar gsplat export timelapse.gsplats.zarr t42.ply --timepoint 42
 
 # Migrate legacy .gsplats.zarr layouts (v1.0 / v1.1 / pre-v2.0 substitutive dir / v2.0 matrix /
-# v3.0-v3.1 with pre-v3.2 pixel_size lod selector attrs) → v3.3
+# v3.0-v3.1 with pre-v3.2 pixel_size lod selector attrs) → v3.4
 luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr               # single file
 luxar gsplat migrate-format old_pyr/ v3.gsplats.zarr                          # substitutive directory
 

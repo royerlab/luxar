@@ -160,7 +160,7 @@ def _merge_attr_dict(
     the writer's JSON-safety filter (NaN/Inf guarded)."""
     if dry_run:
         return
-    from luxar.io._compiler.gsplat_tree import json_safe_value
+    from luxar.typing_utils.json_safe import json_safe_value
 
     existing = group.attrs.get(key, {})
     merged = dict(existing) if isinstance(existing, dict) else {}

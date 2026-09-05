@@ -175,7 +175,8 @@ try {
   console.error('[dims]', JSON.stringify(meta.dims).slice(0, 400));
   const md = meta.dims?.metadata ?? [];
   let timeIdx = md.findIndex((d) => /^t(ime)?$/i.test(d?.name ?? ''));
-  if (timeIdx < 0) timeIdx = (meta.dims?.displayed ?? []).findIndex((v, i) => v === false && i < md.length);
+  if (timeIdx < 0)
+    timeIdx = (meta.dims?.displayed ?? []).findIndex((v, i) => v === false && i < md.length);
   if (timeIdx < 0) throw new Error('no time dimension found: ' + JSON.stringify(meta.dims));
   const r = meta.dims.ranges[timeIdx];
   const rMin = Array.isArray(r) ? r[0] : (r.min ?? r.start ?? 0);
@@ -198,31 +199,37 @@ try {
         };
 
   function summarizeDeltas(deltas) {
-  if (!deltas?.length) return null;
-  const sorted = [...deltas].sort((a, b) => a - b);
-  const q = (p) => sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))];
-  const over = (ms) => deltas.filter((d) => d > ms).length;
-  return {
-    frames: deltas.length,
-    medianMs: +q(0.5).toFixed(2),
-    p95Ms: +q(0.95).toFixed(2),
-    p99Ms: +q(0.99).toFixed(2),
-    maxMs: +sorted[sorted.length - 1].toFixed(2),
-    over33ms: over(33.4),
-    over100ms: over(100),
-  };
-}
+    if (!deltas?.length) return null;
+    const sorted = [...deltas].sort((a, b) => a - b);
+    const q = (p) => sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))];
+    const over = (ms) => deltas.filter((d) => d > ms).length;
+    return {
+      frames: deltas.length,
+      medianMs: +q(0.5).toFixed(2),
+      p95Ms: +q(0.95).toFixed(2),
+      p99Ms: +q(0.99).toFixed(2),
+      maxMs: +sorted[sorted.length - 1].toFixed(2),
+      over33ms: over(33.4),
+      over100ms: over(100),
+    };
+  }
 
-const results = {
-  label, renderer, dataset, timeIdx, tCount, scrubs, meta,
-  initialLoad: {
-    wallMs: Date.now() - loadT0,
-    poolStats: initialLoad.poolStats,
-    memory: initialLoad.memory,
-    frameStats: summarizeDeltas(initialLoad.frameDeltas),
-  },
-  runs: [],
-};
+  const results = {
+    label,
+    renderer,
+    dataset,
+    timeIdx,
+    tCount,
+    scrubs,
+    meta,
+    initialLoad: {
+      wallMs: Date.now() - loadT0,
+      poolStats: initialLoad.poolStats,
+      memory: initialLoad.memory,
+      frameStats: summarizeDeltas(initialLoad.frameDeltas),
+    },
+    runs: [],
+  };
 
   for (let s = 0; s < scrubs; s++) {
     // Per-scrub reset: lazy-load stage stats + frame recorder.
@@ -234,7 +241,8 @@ const results = {
       rec.on = true;
     });
     const poolBefore = await page.evaluate(
-      () => window.__luxarDebug.getSceneLoader().getDefaultLoader()?.gpuBufferPool?.getStats() ?? null
+      () =>
+        window.__luxarDebug.getSceneLoader().getDefaultLoader()?.gpuBufferPool?.getStats() ?? null
     );
 
     const perTp = [];
@@ -257,7 +265,9 @@ const results = {
       return {
         lodLoadStats: dbg.getLodLoadStats?.() ?? null,
         poolStats: pool ? pool.getStats() : null,
-        memory: dbg.renderer?.info?.memory ? JSON.parse(JSON.stringify(dbg.renderer.info.memory)) : null,
+        memory: dbg.renderer?.info?.memory
+          ? JSON.parse(JSON.stringify(dbg.renderer.info.memory))
+          : null,
         frameDeltas: rec.deltas,
         profilerTotals: dbg.getSceneLoader().getProfiler().getTimings(),
       };
@@ -278,10 +288,7 @@ const results = {
   // Exercises the pool's release/acquire paths (eviction grace,
   // best-fit vs first-fit, fresh-alloc sweeps) and, on webgpu, any
   // buffer stranding (info.memory monotonic growth = leak).
-  const altDataset = dataset.replace(
-    'gsplats_4d_neuromast_2ch',
-    'gsplats_4d_celegans_tracking'
-  );
+  const altDataset = dataset.replace('gsplats_4d_neuromast_2ch', 'gsplats_4d_celegans_tracking');
   const churnPool0 = await page.evaluate(
     () => window.__luxarDebug.getSceneLoader().getDefaultLoader()?.gpuBufferPool?.getStats() ?? null
   );

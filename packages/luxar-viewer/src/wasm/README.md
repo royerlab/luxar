@@ -224,8 +224,11 @@ helper (and `src/wasm/index.ts`, the production loader) both mentions `luxar_was
 wasm/
 ├── index.ts              — Loader (initWasm, isWasmSupported, getFallback,
 │                           setWasmJsUrl, isWasmFallback,
-│                           wasmShimCandidateUrls, importFirstWasmShim,
-│                           assertRequiredWasmExports)
+│                           wasmShimCandidateUrls, resolveWasmShimUrls,
+│                           importFirstWasmShim,
+│                           instantiateWasmShim, assertRequiredWasmExports)
+├── shared-module.ts      — Compiles one cloneable WebAssembly.Module for all
+│                           data workers, with bounded per-worker fallback
 ├── types.ts              — WasmModule interface (unified API)
 ├── required-exports.ts   — Kernels a stale build may lack; shared by the
 │                           loader's staleness check and the vitest global setup
