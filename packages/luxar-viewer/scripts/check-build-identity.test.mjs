@@ -79,7 +79,7 @@ describe('findStamp', () => {
 describe('findMetaStamp', () => {
   it('parses the three fields out of the meta tag', () => {
     expect(
-      findMetaStamp(`<meta name="luxar-build" content="1.2.3 abc 2026-01-01T00:00:00Z" />`)
+      findMetaStamp('<meta name="luxar-build" content="1.2.3 abc 2026-01-01T00:00:00Z" />')
     ).toEqual({ version: '1.2.3', commit: 'abc', buildTime: '2026-01-01T00:00:00Z' });
   });
 

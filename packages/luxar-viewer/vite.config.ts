@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import { resolve } from 'path';
 import { fileURLToPath } from 'url';
 // Explicit `.ts` extension: Vite's future native config loader (Node's own TS
@@ -33,7 +33,7 @@ export default defineConfig(({ command }) => ({
                 next();
               });
             },
-          },
+          } satisfies Plugin,
         ]
       : []),
   ],

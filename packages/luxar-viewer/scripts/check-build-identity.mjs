@@ -114,7 +114,7 @@ export function check(
   if (stamped.length === 0) {
     problems.push(
       `no build stamp in any of the ${files.length} .js file(s) under ${distDir} — ` +
-        `is \`define: buildDefine()\` still in the Vite config that produced it?`
+        'is `define: buildDefine()` still in the Vite config that produced it?'
     );
   }
   for (const { stamp } of stamped) {
@@ -136,7 +136,7 @@ export function check(
     if (!meta) {
       problems.push(
         `index.html carries no <meta name="${META_NAME}"> — it is the only surface that ` +
-          `survives a bundle that fails to boot`
+          'survives a bundle that fails to boot'
       );
     } else if (meta.version !== version) {
       problems.push(`index.html stamp says version ${meta.version}, package.json says ${version}`);
