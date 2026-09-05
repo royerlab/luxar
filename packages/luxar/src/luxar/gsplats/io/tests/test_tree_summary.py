@@ -19,7 +19,7 @@ import warnings
 import numpy as np
 import pytest
 
-from luxar._zarr_compat import open_group
+from luxar._zarr_compat import create_array, open_group
 from luxar.encoding import ArrayDecoder
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
@@ -290,6 +290,30 @@ class TestEstimatedDecodedBytes:
                 sublod.colors,
             )
             if array is not None
+        )
+        assert summary.estimated_decoded_bytes == decoded_bytes
+
+    def test_counts_legacy_single_array_cholesky(self, tmp_path):
+        data = _flat(1_000)
+        out = tmp_path / "legacy-cholesky.gsplats.zarr"
+        data.save(out)
+
+        root = open_group(str(out), mode="a")
+        del root["cholesky_factors_diag"]
+        del root["cholesky_factors_offdiag"]
+        create_array(root, "cholesky_factors", data=data.cholesky_factors)
+
+        summary = read_gsplat_tree_summary(root)
+        node, _ = load_gsplat_node(out)
+        leaf = next(iter(iter_leaves(node)))
+        decoded_bytes = sum(
+            array.nbytes
+            for sublod in leaf.additive_sublods
+            for array in (
+                sublod.centers,
+                sublod.amplitudes,
+                sublod.cholesky_factors,
+            )
         )
         assert summary.estimated_decoded_bytes == decoded_bytes
 

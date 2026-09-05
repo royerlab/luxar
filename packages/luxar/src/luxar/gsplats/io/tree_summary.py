@@ -103,7 +103,9 @@ def _leaf_arrays_summary(group: "zarr.Group") -> tuple[int, int, int]:
     # row for the whole set — observed `(1, 3)` for 100 splats. `_decode_cholesky`
     # broadcasts that back to `(N, tri)` float32, so summing the stored arrays
     # would under-report by a factor of N. Compute the decoded size instead.
-    if any(f"cholesky_factors_{part}" in group for part in ("diag", "offdiag")):
+    if "cholesky_factors" in group or any(
+        f"cholesky_factors_{part}" in group for part in ("diag", "offdiag")
+    ):
         tri = ndim * (ndim + 1) // 2
         total += n_splats * tri * 4
 
