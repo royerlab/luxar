@@ -435,7 +435,7 @@ lint = [
     "mypy packages/luxar/src/luxar/ scripts/ci_queue_scan.py"
 ]
 security = "bandit -r packages/luxar/src/luxar -c pyproject.toml --severity-level medium --confidence-level medium -q"
-# Enforce layer direction: the full `Subpackage layering` stack, plus the two
+# Enforce layer direction: the full `Subpackage layering` stack, plus the three
 # narrower `forbidden` contracts.
 check-imports = "lint-imports"
 # Keep that contract honest: assert the declared order is still the measured
@@ -913,7 +913,7 @@ layers = [
 # below; direct cross-layer imports remain governed by the declared order.
 ignore_imports = [
     # Colocated tests drive higher layers on purpose -- a `core` test may load
-    # the compiler. The contract targets production code, matching the two
+    # the compiler. The contract targets production code, matching the three
     # contracts below.
     "luxar.**.tests.** -> luxar.**",
     "luxar.**.tests.** -> luxar",
