@@ -1509,7 +1509,12 @@ class TestInfoTreeDispatch:
 
     @pytest.mark.parametrize(
         "filename",
-        ["not-a-store.ply", "empty.gsplats.zarr.zip", "broken.gsplats.zarr.zip"],
+        [
+            "not-a-store.ply",
+            "empty.gsplats.zarr.zip",
+            "broken.gsplats.zarr.zip",
+            "truncated.gsplats.zarr.tar.gz",
+        ],
     )
     def test_info_reports_store_resolution_errors_without_traceback(
         self, runner: CliRunner, tmp_path: Path, filename: str
@@ -1520,6 +1525,10 @@ class TestInfoTreeDispatch:
 
             with zipfile.ZipFile(path, "w"):
                 pass
+        elif path.name.startswith("truncated"):
+            self._data().save(path, compress="tar.gz")
+            archive = path.read_bytes()
+            path.write_bytes(archive[: len(archive) // 2])
         else:
             path.write_bytes(b"not an archive")
 

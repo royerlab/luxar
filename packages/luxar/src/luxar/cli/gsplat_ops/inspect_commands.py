@@ -280,7 +280,13 @@ def _load_info_data(
 
                 try:
                     zarr_path, tmp = resolve_store_path(path)
-                except (ValueError, OSError, BadZipFile, TarError) as resolve_exc:
+                except (
+                    ValueError,
+                    OSError,
+                    EOFError,
+                    BadZipFile,
+                    TarError,
+                ) as resolve_exc:
                     aprint(f"❌ {resolve_exc}")
                     return None, False
 
