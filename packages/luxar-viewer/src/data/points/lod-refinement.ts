@@ -24,6 +24,7 @@ import {
   RefinementFailureTracker,
   runProgressiveRefinement,
 } from '../scene-loader/progressive/refinement';
+import { PARTIAL_EXTEND_TOLERANCE } from '../scene-loader/partial-extend-tolerance';
 import {
   admitRefinementCandidate,
   handleRefinementError,
@@ -102,7 +103,7 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
         const mesh = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
         const nodeAttrs = mesh?.userData?.attrs as PointsMetadata | undefined;
         const refined = ctx.deriveNodeViewState(path, nodeAttrs, {
-          applyPartialExtendTolerance: true,
+          applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.points,
         });
         // A fully-extended node is a normal node with a slice-invariant query
         // (deriveNodeViewState), so it refines through this path like any other;

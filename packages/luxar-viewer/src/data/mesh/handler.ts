@@ -16,6 +16,7 @@ import {
   processMeshData,
   type StagedMeshCommit,
 } from '../scene-loader/process/data-processor-mesh';
+import { PARTIAL_EXTEND_TOLERANCE } from '../scene-loader/partial-extend-tolerance';
 
 export const kind: GeometryKind = 'mesh';
 export const label = 'Mesh' as const;
@@ -44,9 +45,9 @@ export interface MeshHandlerCtx {
 /**
  * Async load + project + stage step for one Mesh node.
  *
- * Like Points and GSplats (and unlike Lines) mesh uses
- * applyPartialExtendTolerance: true — see
- * `GEOMETRY_DESCRIPTORS.mesh.applyPartialExtendTolerance`.
+ * Like Points and GSplats (and unlike Lines), mesh widens tolerance across
+ * dimensions the node only partially extends through; see
+ * `PARTIAL_EXTEND_TOLERANCE`.
  *
  * DELIBERATE asymmetry vs the Lines/GSplats handlers: there is NO
  * handler-level `isAlreadyCommitted` no-op fast path here. The mesh loader
@@ -76,7 +77,7 @@ export async function loadAndStage(
     path,
     { extend_to_all: meshAttrs?.extend_to_all },
     {
-      applyPartialExtendTolerance: true,
+      applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.mesh,
       extendedToleranceCache: ctx.extendedToleranceCache,
     }
   );

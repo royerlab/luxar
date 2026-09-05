@@ -28,6 +28,7 @@ import {
   RefinementFailureTracker,
   runProgressiveRefinement,
 } from '../scene-loader/progressive/refinement';
+import { PARTIAL_EXTEND_TOLERANCE } from '../scene-loader/partial-extend-tolerance';
 import {
   admitRefinementCandidate,
   handleRefinementError,
@@ -110,7 +111,7 @@ export async function runMeshRefinement(ctx: MeshRefinementCtx): Promise<void> {
         // segment bounds already encode the non-displayed extent). Matches
         // `load-mesh-node.ts` and the descriptor's `retryCommit`.
         const refined = ctx.deriveNodeViewState(path, nodeAttrs, {
-          applyPartialExtendTolerance: true,
+          applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.mesh,
         });
         const meshVS: MeshViewState = refined.viewState;
 

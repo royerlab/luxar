@@ -73,9 +73,10 @@ export type GeometryTypeName = 'points' | 'lines' | 'gsplats' | 'mesh';
 
 /**
  * Viewer-drawable geometry types: the subset of `GEOMETRY_TYPES` that has a
- * loader, a `GEOMETRY_DESCRIPTORS` row and a tolerance arm. A CAPABILITY, not
- * the vocabulary — key dispatch tables on this, not on `GeometryTypeName`, so a
- * not-yet-drawable type cannot resolve to no loader. See contract.yaml::loader_types.
+ * loader, a `GEOMETRY_DESCRIPTORS` row, a `PARTIAL_EXTEND_TOLERANCE` arm and a
+ * hidden-dim tolerance arm. A CAPABILITY, not the vocabulary — key dispatch
+ * tables on this, not on `GeometryTypeName`, so a not-yet-drawable type cannot
+ * resolve to no loader. See contract.yaml::loader_types.
  */
 export const LOADER_TYPES: readonly LoaderTypeName[] = ['points', 'lines', 'gsplats', 'mesh'];
 /**

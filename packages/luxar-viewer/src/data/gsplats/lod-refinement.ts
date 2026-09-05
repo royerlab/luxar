@@ -37,6 +37,7 @@ import {
   RefinementFailureTracker,
   runProgressiveRefinement,
 } from '../scene-loader/progressive/refinement';
+import { PARTIAL_EXTEND_TOLERANCE } from '../scene-loader/partial-extend-tolerance';
 import {
   admitRefinementCandidate,
   handleRefinementError,
@@ -137,7 +138,7 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
         const mesh = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
         const nodeAttrs = mesh?.userData?.attrs as GSplatsMetadata | undefined;
         const refined = ctx.deriveNodeViewState(path, nodeAttrs, {
-          applyPartialExtendTolerance: true,
+          applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.gsplats,
         });
         // A fully-extended node is a normal node with a slice-invariant query
         // (deriveNodeViewState), so it refines through this path like any other;

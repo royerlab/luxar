@@ -176,9 +176,9 @@ export interface LoaderStats {
 // before it becomes drawable (loader + descriptor row + tolerance arm). Keying
 // dispatch on the wider `GeometryTypeName` would let a not-yet-drawable type
 // resolve to no loader at RUNTIME; keying it here makes omitting a drawable type
-// a COMPILE error at `LoaderByKind`, `GEOMETRY_DESCRIPTORS` and
-// `computeHiddenDimTolerance`. To switch a type on, widen `loader_types` in
-// `format-contract/contract.yaml` — never this alias.
+// a COMPILE error at `LoaderByKind`, `GEOMETRY_DESCRIPTORS`,
+// `PARTIAL_EXTEND_TOLERANCE` and `computeHiddenDimTolerance`. To switch a type
+// on, widen `loader_types` in `format-contract/contract.yaml` — never this alias.
 /**
  * Tag identifying which geometry kind the viewer can load and draw, and which a
  * node or handler therefore operates on. Used by the per-type registry that

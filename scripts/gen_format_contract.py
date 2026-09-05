@@ -109,10 +109,11 @@ def _loader_types(c: Dict[str, Any]) -> List[str]:
     Where ``geometry_types`` answers *"is this node a geometry leaf?"* (a
     vocabulary), this answers *"can the viewer load and draw it?"* (a
     capability). A type is writable the moment the Python side can emit it, but
-    drawable only once it has a loader, a ``GEOMETRY_DESCRIPTORS`` row and a
-    hidden-dim tolerance arm — so the two lists are allowed to differ, and each
-    consumer must pick the one matching its question. Keeping them as one list
-    forces a wrong answer to one of the two.
+    drawable only once it has a loader, a ``GEOMETRY_DESCRIPTORS`` row, a
+    ``PARTIAL_EXTEND_TOLERANCE`` row and a hidden-dim tolerance arm — so the two
+    lists are allowed to differ, and each consumer must pick the one matching
+    its question. Keeping them as one list forces a wrong answer to one of the
+    two.
 
     The rules mirror :func:`_geometry_types`, minus the container check (already
     guaranteed transitively by the subset rule):
@@ -377,9 +378,10 @@ def render_typescript(c: Dict[str, Any]) -> str:
 
     loader_doc = (
         "Viewer-drawable geometry types: the subset of `GEOMETRY_TYPES` that has a\n"
-        "loader, a `GEOMETRY_DESCRIPTORS` row and a tolerance arm. A CAPABILITY, not\n"
-        "the vocabulary — key dispatch tables on this, not on `GeometryTypeName`, so a\n"
-        "not-yet-drawable type cannot resolve to no loader. See contract.yaml::loader_types."
+        "loader, a `GEOMETRY_DESCRIPTORS` row, a `PARTIAL_EXTEND_TOLERANCE` arm and a\n"
+        "hidden-dim tolerance arm. A CAPABILITY, not the vocabulary — key dispatch\n"
+        "tables on this, not on `GeometryTypeName`, so a not-yet-drawable type cannot\n"
+        "resolve to no loader. See contract.yaml::loader_types."
     )
     blocks = [
         _ts_jsdoc(
