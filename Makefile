@@ -657,6 +657,10 @@ check-lint-ratchet:  ## Ratchet ruff's defect rules (bugbear + RUF012) against t
 	@echo "🐛 Checking defect-bearing lint rules against the baseline..."
 	$(HATCH) run check-lint-ratchet
 
+check-native:  ## read-only: compile-check the shipped CUDA/Metal sources (no GPU needed)
+	@echo "🧩 Compile-checking native CUDA/Metal sources..."
+	$(HATCH) run check-native
+
 lint-typescript:  ## Run ESLint on TypeScript code
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \

@@ -181,6 +181,29 @@ hatch run pytest packages/luxar/src/luxar/gsplats/models/gsplats/tests -q
 hatch run pytest packages/luxar/src/luxar/gsplats/fitting/tests/test_initialization.py -q
 ```
 
+### Verification status (audit A15-03)
+
+Be precise about what is and is not checked automatically, because the honest
+answer is "less than you would assume":
+
+| | status |
+|---|---|
+| **Compiles** | Gated. `make check-native` / `hatch run check-native` syntax-checks every native translation unit against torch's own required C++ standard, needs no GPU, and runs in CI's `python-tests`. |
+| **Numeric parity vs the torch reference** | Tests EXIST and are substantial — 59 test functions here, 138 on the CUDA side, including `test_metal_numerical.py` and `test_metal_conic.py`. They are skip-guarded on Metal availability, so **they never run in CI**, which has no GPU. Nothing verifies this backend on any automated basis; it is verified only when someone runs the Metal suite on an Apple-silicon box. |
+| **Formatting / static analysis** | None. No `.clang-format`, no `clang-tidy`, no CI arm. Deliberately deferred: introducing a format would rewrite ~3,900 lines of code whose only behavioural check is the GPU-gated suite above, so the reformat could not be verified. |
+
+The compile gate exists because the build was, in fact, broken: both native
+build paths pinned `-std=c++17` in the flags torch appends *last*, so the last
+`-std=` won and `torch/all.h`'s `#error C++20 or later compatible compiler is
+required` fired. The Metal extension compiles itself on FIRST USE, so that
+landed on users rather than in a build.
+
+This is a second and third independent implementation of the same
+splat-rasterization maths as the torch reference — the same 1:1-sync hazard the
+project gates for the Rust/TS pair — and a silent divergence produces slightly
+wrong splats rather than a crash. The remaining gap is a *runner*, not a test:
+giving the existing parity suites a GPU on some cadence is what would close it.
+
 ## Troubleshooting
 
 ```bash
