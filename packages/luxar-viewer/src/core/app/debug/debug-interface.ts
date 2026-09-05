@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { log, Modules } from '../../../utils/log';
 import { consoleInterceptor } from '../../../utils/console-interceptor';
+import { buildInfo } from '../../../config/build-info';
 import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import { SceneLoaderManager } from '../../../data/scene-loader-manager';
 import { getWorkerPool } from '../../../workers/worker-pool';
@@ -91,7 +92,7 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
   const existing = window.__luxarDebug ?? {
     app: ports.app,
     consoleInterceptor: consoleInterceptor,
-    version: '1.0.0',
+    version: buildInfo().version,
   };
 
   window.__luxarDebug = {

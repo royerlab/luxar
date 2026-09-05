@@ -558,7 +558,7 @@ luxar gsplat batch-fit run vol.zarr out/ --gpus auto --merge-recipe stream --mer
 luxar gsplat batch-fit run vol.zarr out/ --gpus cpu                                  # CPU fallback
 luxar gsplat batch-fit run vol.zarr out/ --tiling content --cal cal.json --dry-run   # plan only
 ```
-`--gpus`: `auto` = visible cards above a free-VRAM floor (skips small cards; override `LUXAR_GPU_VRAM_FLOOR_GB`), `all` = every card, `cpu` = CPU, or an explicit list like `0,1,3`.
+`--gpus` SELECTS devices here: `auto` = visible cards above a free-VRAM floor (skips small cards; override `LUXAR_GPU_VRAM_FLOOR_GB`), `all` = every card, `cpu` = CPU, or an explicit list like `0,1,3`. Not to be confused with `submit --gpus-per-task`, which is a COUNT.
 
 #### `luxar gsplat batch-fit submit`
 Plan and submit HPC Slurm fitting jobs for large OME-Zarr datasets. Submits by default; pass `--dry-run` to plan without submitting.
@@ -566,7 +566,9 @@ Plan and submit HPC Slurm fitting jobs for large OME-Zarr datasets. Submits by d
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu                    # Submit to Slurm
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --dry-run          # Dry-run plan (no submit)
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --preset draft     # Fast preview
+luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --gpus-per-task 2  # 2 GPUs per Slurm task
 ```
+`--gpus-per-task` is a COUNT of GPUs to request for each task, emitted verbatim as `#SBATCH --gpus-per-task`. It is deliberately not spelled `--gpus`: that means the opposite thing one command over, where `batch-fit run --gpus` SELECTS which local devices to use.
 
 #### `luxar gsplat batch-fit status`
 Check the status of a batch fitting run (local `run` or Slurm `submit`).

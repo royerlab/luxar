@@ -66,8 +66,11 @@ per-event allocation.
   impulse to `angularVelocity`; non-inertial premultiplies a quaternion
   into `orientation` and renormalises.
 - **Plain scroll** translates along the viewing axis using
-  `movementSpeed * 0.3` (inertial impulse on `velocity`) or
-  `movementSpeed * 0.3 * 0.2` (direct camera-position step otherwise).
+  `movementSpeed * wheelZoomSensitivity * 0.3` (inertial impulse on
+  `velocity`) or the same `* 0.2` (direct camera-position step otherwise).
+  `wheelZoomSensitivity` is the global Settings > Input > Zoom Sensitivity
+  multiplier (`config.controls.wheelZoomSensitivity`), read per event; the
+  Shift+scroll roll is not scaled by it.
 
 ## Public API
 

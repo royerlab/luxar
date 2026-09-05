@@ -221,7 +221,8 @@ class LuxarOrbitControls extends EventDispatcher {
   dampingFactor: number; // 0.25 default (exponential decay)
   rotateSpeed: number; // 3.0 default
   panSpeed: number; // 1.0 default
-  zoomSpeed: number; // 1.0 default
+  zoomSpeed: number; // 1.0 default (per-scene; wheel steps are further
+  // scaled by the global config.controls.wheelZoomSensitivity — Settings > Input)
   enableRotate: boolean;
   enablePan: boolean;
   enableZoom: boolean;

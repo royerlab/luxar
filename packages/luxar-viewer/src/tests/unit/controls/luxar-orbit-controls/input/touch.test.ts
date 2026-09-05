@@ -73,6 +73,7 @@ function makeCtx(
     trackballRadius: 1.0,
     rotateSpeed: 1.0,
     zoomSpeed: 1.0,
+    wheelZoomSensitivity: 1.0,
     boundOnPointerMove: vi.fn(),
     boundOnPointerUp: vi.fn(),
     pointers,

@@ -105,6 +105,7 @@ make check-lint-ratchet # read-only: ruff's DEFECT rules (flake8-bugbear + RUF01
                   # its fix CHANGES BEHAVIOUR (`strict=True` raises), so pay it
                   # down per call site rather than sweeping. B008 is gated at zero:
                   # the Typer `Option`/`Argument` idiom is exempted in pyproject.
+make check-native       # read-only: compile-check shipped CUDA/Metal sources
 make type-check-python  # read-only: mypy
 make security           # read-only: bandit
 make check-typescript   # read-only: typecheck + lint + unit tests
@@ -250,7 +251,7 @@ make test-cuda
 
 **What `make build-cuda SLURM=1` does:**
 1. Detects the PyTorch CUDA version (e.g., 12.8) and finds a matching `cuda/` module
-2. Detects and loads the highest available GCC >= 9 module (required by PyTorch 2.x)
+2. Detects and loads the highest available GCC >= 10 module (required for C++20)
 3. Captures the current hatch virtual environment path
 4. Generates a self-contained sbatch script (`build-cuda-logs/build_cuda_job.sh`)
 5. Submits it to Slurm and prints monitoring commands
@@ -516,6 +517,11 @@ luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --tiling content \
     --k-star-ref 60000 --n-features-ref 5000 --plan-samples 24   # density knobs + 24-timepoint max-proj plan
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --parallel         # Concurrent tasks per GPU
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --tasks-per-job 5  # Manual packing
+# `--gpus-per-task` is a COUNT (emitted verbatim as `#SBATCH --gpus-per-task`).
+# NOT the same flag as `batch-fit run --gpus`, which SELECTS local devices --
+# they used to share the name `--gpus`, so `--gpus 2` meant "card #2" on one
+# command and "2 GPUs per task" on the other.
+luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --gpus-per-task 2  # 2 GPUs per Slurm task
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu \
     --axes time,camera,channel,z,y,x                                    # Override axis labels
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu \

@@ -1419,6 +1419,178 @@ class TestEndToEndWorkflows:
         assert "Splats:" in r2.stdout
 
 
+class TestInfoTreeDispatch:
+    @staticmethod
+    def _data(n: int = 128) -> "GSplatData":
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        rng = np.random.default_rng(2532)
+        chol = np.zeros((n, 6), dtype=np.float32)
+        chol[:, [0, 2, 5]] = 1.0
+        return GSplatData(
+            centers=rng.random((n, 3), dtype=np.float32),
+            amplitudes=rng.random(n, dtype=np.float32),
+            cholesky_factors=chol,
+        )
+
+    def test_matrix_lod_keeps_full_flat_report(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from luxar.encoding import ArrayDecoder
+        from luxar.gsplats.lod import RecipeParams, build_recipe
+
+        out = tmp_path / "levels.gsplats.zarr"
+        build_recipe(
+            self._data(),
+            "levels",
+            RecipeParams(compression_factor=4, levels=2),
+        ).save(out)
+
+        calls = []
+        original = ArrayDecoder.decode
+
+        def counted_decode(self, *args, **kwargs):
+            calls.append(self)
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(ArrayDecoder, "decode", counted_decode)
+
+        result = runner.invoke(app, ["gsplat", "info", str(out)])
+        output = _plain(result.stdout)
+
+        assert result.exit_code == 0, result.stdout
+        assert "DATASET INFORMATION (node tree)" not in output
+        assert "BOUNDING BOX" in output
+        assert "AMPLITUDE ANALYSIS" in output
+        assert "METADATA" in output
+        assert "SUMMARY" in output
+        assert calls != []
+
+    def test_nested_lod_uses_tree_report(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from luxar.encoding import ArrayDecoder
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.tree import GSplatLodGroup, GSplatPartition
+
+        out = tmp_path / "nested.gsplats.zarr"
+        node = GSplatLodGroup(
+            children=[
+                self._data(32).tree,
+                GSplatPartition(children=[self._data(48).tree, self._data(48).tree]),
+            ]
+        )
+        write_gsplats_tree(out, node)
+
+        calls = []
+        original = ArrayDecoder.decode
+
+        def counted_decode(self, *args, **kwargs):
+            calls.append(self)
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(ArrayDecoder, "decode", counted_decode)
+
+        result = runner.invoke(app, ["gsplat", "info", str(out)])
+
+        assert result.exit_code == 0, result.stdout
+        assert "DATASET INFORMATION (node tree)" in _plain(result.stdout)
+        assert calls == []
+
+    @pytest.mark.parametrize(
+        ("attr", "value", "message"),
+        [
+            ("format_version", "2.0", "Unsupported format_version"),
+            ("format_type", None, "pass its standalone .gsplats.zarr store root"),
+        ],
+    )
+    def test_tree_report_preserves_root_validation(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        attr: str,
+        value: str | None,
+        message: str,
+    ) -> None:
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.lod import RecipeParams, build_recipe
+
+        out = tmp_path / "partition.gsplats.zarr"
+        node = build_recipe(self._data(), "tiles", RecipeParams(max_elements=40))
+        write_gsplats_tree(out, node)
+        root = zc_open_group(str(out), mode="a")
+        if value is None:
+            del root.attrs[attr]
+        else:
+            root.attrs[attr] = value
+
+        result = runner.invoke(app, ["gsplat", "info", str(out)])
+
+        assert result.exit_code == 1, result.stdout
+        assert message in result.stdout
+
+    @pytest.mark.parametrize(
+        "filename",
+        [
+            "not-a-store.ply",
+            "empty.gsplats.zarr.zip",
+            "broken.gsplats.zarr.zip",
+            "truncated.gsplats.zarr.tar.gz",
+        ],
+    )
+    def test_info_reports_store_resolution_errors_without_traceback(
+        self, runner: CliRunner, tmp_path: Path, filename: str
+    ) -> None:
+        path = tmp_path / filename
+        if path.name.startswith("empty"):
+            import zipfile
+
+            with zipfile.ZipFile(path, "w"):
+                pass
+        elif path.name.startswith("truncated"):
+            self._data().save(path, compress="tar.gz")
+            archive = path.read_bytes()
+            path.write_bytes(archive[: len(archive) // 2])
+        else:
+            path.write_bytes(b"not an archive")
+
+        result = runner.invoke(app, ["gsplat", "info", str(path)])
+
+        assert result.exit_code == 1
+        assert "Traceback" not in result.output
+        assert "❌" in result.stdout
+
+    def test_matrix_lod_archive_extracts_once(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from luxar.gsplats.io import _archive
+        from luxar.gsplats.lod import RecipeParams, build_recipe
+
+        archive = tmp_path / "levels.gsplats.zarr.zip"
+        build_recipe(
+            self._data(),
+            "levels",
+            RecipeParams(compression_factor=4, levels=3),
+        ).save(archive, compress="zip")
+
+        real_extract = _archive.extract_compressed_zarr
+        calls = []
+
+        def count_extract(*args: Any, **kwargs: Any) -> Any:
+            calls.append(1)
+            return real_extract(*args, **kwargs)
+
+        monkeypatch.setattr(_archive, "extract_compressed_zarr", count_extract)
+        result = runner.invoke(app, ["gsplat", "info", str(archive)])
+
+        assert result.exit_code == 0, result.stdout
+        assert "DATASET INFORMATION (node tree)" not in _plain(result.stdout)
+        assert calls == [1]
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # Zip compression tests
 # ═══════════════════════════════════════════════════════════════════════
