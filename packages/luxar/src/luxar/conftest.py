@@ -7,8 +7,9 @@ explicit `default_rng(seed)`) inherit determinism for free. Tests that
 already create their own seeded `default_rng` are unaffected.
 
 Also pins zarr's ambient default format to whatever Luxar writes for the whole
-session (see ``_zarr_format_follows_luxar``), and holds a few small shared test
-helpers: ``confine_temp_dirs`` isolates in-process temporary files,
+session (see ``_zarr_format_follows_luxar``), clears the CLI traceback opt-in
+before each test, and holds a few small shared test helpers:
+``confine_temp_dirs`` isolates in-process temporary files,
 ``array_compressor`` reads an array's compressor without the caller knowing
 which zarr format wrote it, and ``find_repo_relative_file`` / ``viewer_source`` /
 ``read_ts_number_const`` / ``read_ts_string_literals`` let the handful of
@@ -93,6 +94,12 @@ def _seed_numpy_global_rng() -> None:
     `np.random.randn`, etc.).
     """
     np.random.seed(0xC0FFEE)
+
+
+@pytest.fixture(autouse=True)
+def _traceback_opt_in_is_test_local(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Do not let a developer's shell preference change CLI test semantics."""
+    monkeypatch.delenv("LUXAR_TRACEBACK", raising=False)
 
 
 class CompressorView(NamedTuple):
