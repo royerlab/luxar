@@ -26,7 +26,7 @@ interface FakeControls {
   dispatchEvent: ReturnType<typeof vi.fn>;
 }
 
-function makeSceneManager(): {
+function makeSceneManager(dynamicClipping = false): {
   sm: SceneManager;
   camera: THREE.PerspectiveCamera;
   controls: FakeControls;
@@ -41,7 +41,18 @@ function makeSceneManager(): {
     reinitialize: vi.fn(),
     dispatchEvent: vi.fn(),
   };
-  return { sm: { camera, controls } as unknown as SceneManager, camera, controls };
+  const sm = {
+    camera,
+    controls,
+    // The SceneManager surface the clipping rule reads; planes as the
+    // per-frame updater would have left them for the current view.
+    getDynamicClippingState: () => ({
+      enabled: dynamicClipping,
+      near: camera.near,
+      far: camera.far,
+    }),
+  } as unknown as SceneManager;
+  return { sm, camera, controls };
 }
 
 /**
@@ -181,8 +192,8 @@ describe('CameraFlight', () => {
     document.body.appendChild(canvas);
   });
 
-  function makeFlight(inputElement: HTMLElement | null = canvas) {
-    const { sm, camera, controls } = makeSceneManager();
+  function makeFlight(inputElement: HTMLElement | null = canvas, dynamicClipping = false) {
+    const { sm, camera, controls } = makeSceneManager(dynamicClipping);
     const flight = new CameraFlight({
       sceneManager: sm,
       animationController: driver,
@@ -332,6 +343,27 @@ describe('CameraFlight', () => {
     expect(target.toArray()).toEqual([10, 0, 0]);
     // Live direction was +z (camera at (0,0,10) looking at the origin).
     expect(camera.position.toArray().map((v) => +v.toFixed(6))).toEqual([10, 0, 10]);
+  });
+
+  it('under dynamic clipping the flight never writes near/far (the per-frame updater owns them)', async () => {
+    const { flight, camera } = makeFlight(canvas, true);
+    // Planes as the per-frame updater left them for the current view.
+    camera.near = 0.02;
+    camera.far = 80;
+
+    const done = flight.flyTo(DEST, { durationMs: 1000, easing: 'linear' });
+    now = 1500;
+    driver.tick();
+    // Mid-flight: planes untouched (DEST would have pulled them to 0.5 / 500).
+    expect(camera.near).toBe(0.02);
+    expect(camera.far).toBe(80);
+    now = 2001;
+    driver.tick();
+    await expect(done).resolves.toEqual({ completed: true });
+    // Landing (restoreCamera) honours the same rule; position still lands exactly.
+    expect(camera.near).toBe(0.02);
+    expect(camera.far).toBe(80);
+    expect(camera.position.toArray()).toEqual([20, 0, 0]);
   });
 
   it('with no input element, pointer events cannot cancel', async () => {

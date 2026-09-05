@@ -96,13 +96,34 @@ export function captureSnapshot(sceneManager: SceneManager): ViewerSnapshot {
  * the camera back. Shared by {@link restoreSnapshot} and the embedder API's
  * `setCameraPose()`.
  */
+/**
+ * Whether the scene manager is recomputing `near` / `far` from the scene
+ * bounds every frame. While it is, a pose's clipping planes are stale by
+ * construction — they describe the distance the pose was CAPTURED at — and
+ * writing them would clip geometry until the per-frame update catches up.
+ * Tolerates test doubles that do not model the method.
+ */
+export function dynamicClippingActive(sceneManager: SceneManager): boolean {
+  const state = (
+    sceneManager as { getDynamicClippingState?: () => { enabled: boolean } }
+  ).getDynamicClippingState?.();
+  return state?.enabled === true;
+}
+
 export function restoreCamera(sceneManager: SceneManager, cam: CameraSnapshot): void {
   const camera = sceneManager.camera;
 
   camera.position.set(cam.position[0], cam.position[1], cam.position[2]);
   camera.up.set(cam.up[0], cam.up[1], cam.up[2]);
-  camera.near = cam.near;
-  camera.far = cam.far;
+  // Under dynamic clipping the planes belong to the per-frame updater: a
+  // pose captured at the overview carries a `near` that would slice through
+  // a close-up, and a flight interpolating it made geometry vanish mid-way
+  // and reappear on landing. The pose's planes apply only when the user owns
+  // them (dynamic clipping off).
+  if (!dynamicClippingActive(sceneManager)) {
+    camera.near = cam.near;
+    camera.far = cam.far;
+  }
   if (isPerspectiveCamera(camera) && cam.fov !== undefined) {
     camera.fov = cam.fov;
   }

@@ -136,6 +136,36 @@ describe('restoreSnapshot', () => {
     sceneDimsManager.reset();
   });
 
+  it('leaves near/far to the per-frame updater while dynamic clipping is on', () => {
+    // A pose's planes describe the distance it was captured at; under dynamic
+    // clipping writing them clipped geometry until the next frame's update.
+    const sm = makePerspectiveSceneManager() as FakeSceneManager & {
+      getDynamicClippingState: () => { enabled: boolean; near: number; far: number };
+    };
+    sm.getDynamicClippingState = () => ({ enabled: true, near: 0.1, far: 1000 });
+    const snapshot: ViewerSnapshot = {
+      version: VIEWER_SNAPSHOT_VERSION,
+      camera: {
+        position: [100, 200, 300],
+        target: [9, 8, 7],
+        up: [0, 1, 0],
+        isOrtho: false,
+        fov: 45,
+        near: 0.5,
+        far: 5000,
+      },
+    };
+
+    restoreSnapshot(sm as unknown as Parameters<typeof restoreSnapshot>[0], snapshot);
+
+    const persp = sm.camera as THREE.PerspectiveCamera;
+    expect(persp.near).toBe(0.1);
+    expect(persp.far).toBe(1000);
+    // Everything else still applies.
+    expect(sm.camera.position.toArray()).toEqual([100, 200, 300]);
+    expect(persp.fov).toBe(45);
+  });
+
   it('writes camera position, target, up, near, far back to camera', () => {
     const sm = makePerspectiveSceneManager();
     const snapshot: ViewerSnapshot = {

@@ -25,6 +25,12 @@ Part of the remote-control design — see `docs/guides/specs/REMOTE_CONTROL_SPEC
   orbit controls never snap back, the render loop wakes, and LOD / depth sort /
   picking see the pose. The final frame **is** `restoreCamera(pose)`: a completed
   flight lands bit-exactly.
+- **Clipping planes.** Under dynamic clipping the per-frame updater owns
+  `near` / `far`, and it runs BEFORE the flight callback (registered at init), so
+  the flight — and `restoreCamera` — leave the planes alone
+  (`dynamicClippingActive`). A pose's planes describe the distance it was captured
+  at; interpolating them clipped geometry away mid-flight until landing. With
+  dynamic clipping off the pose's planes apply and interpolate as authored.
 - **Driver.** Registered as a `continuous` per-frame callback (`camera-flight`)
   and paired with `startAnimation()` — registration alone never starts a stopped
   loop (see `reference_per_frame_callbacks_need_startanimation`).

@@ -67,6 +67,10 @@ flyTo(pose: CameraSnapshot, opts?: { durationMs?: number; easing?: 'linear' | 'e
   or disposal. The promise resolves `{ completed: false }`. The user's own
   volition always wins; a controller wanting the camera to return home does so
   with an idle timer of its own.
+- Under dynamic clipping (the default) the flight and `setCameraPose()` never
+  write `near` / `far`: the per-frame updater owns them and runs before the
+  flight's frame callback. A pose's planes describe the distance it was
+  captured at, so interpolating them clipped geometry mid-flight.
 - Every frame ends with the same hand-off `setCameraPose()` performs
   (`controls.setTarget` + `reinitialize` + a controls `change` event), so the
   orbit controls never snap back, LOD / depth sort / picking see each pose, and

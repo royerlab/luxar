@@ -34,7 +34,12 @@ import * as THREE from 'three';
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { AnimationController } from '../../../scene/animation/animation-controller';
 import { isPerspectiveCamera, isOrthographicCamera } from '../../../utils/camera-utils';
-import { captureSnapshot, restoreCamera, type CameraSnapshot } from '../snapshot/viewer-snapshot';
+import {
+  captureSnapshot,
+  dynamicClippingActive,
+  restoreCamera,
+  type CameraSnapshot,
+} from '../snapshot/viewer-snapshot';
 
 /** Easing curve applied to normalised flight time. */
 export type FlightEasing = 'linear' | 'ease-in-out';
@@ -317,8 +322,15 @@ export class CameraFlight {
 
     camera.position.copy(vec3(pose.position));
     camera.up.copy(vec3(pose.up));
-    camera.near = pose.near;
-    camera.far = pose.far;
+    // Same rule as restoreCamera: under dynamic clipping the per-frame
+    // updater owns near/far. It runs BEFORE this callback each frame (it was
+    // registered at init), so writing the interpolated planes here overrode
+    // it every frame — geometry clipped away during the flight and came back
+    // on landing (reported on the stories demo).
+    if (!dynamicClippingActive(sceneManager)) {
+      camera.near = pose.near;
+      camera.far = pose.far;
+    }
     if (isPerspectiveCamera(camera) && pose.fov !== undefined) camera.fov = pose.fov;
     if (isOrthographicCamera(camera) && pose.zoom !== undefined) camera.zoom = pose.zoom;
     camera.lookAt(target);
