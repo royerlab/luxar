@@ -247,7 +247,7 @@ def validate_transform(transform: Any) -> TransformMatrix:
 # hand-copied into a vocabulary tuple.
 #
 # NB this is a NARROWER set than ``PhysicalUnit.validate`` accepts — that
-# classmethod additionally normalises "micron", "um", "nanometer" and friends.
+# classmethod additionally normalises "micron", "μm", "nanometer" and friends.
 # The divergence predates this refactor and is left as-is; only the duplication
 # is removed.
 _UNIT_SPELLING_ALIASES: Tuple[str, ...] = ("meter",)

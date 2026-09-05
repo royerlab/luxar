@@ -33,6 +33,21 @@ from luxar.validation.types import (
     validate_truncation_radius,
 )
 
+_ACCEPTED_UNIT_SPELLINGS = (
+    "nm",
+    "um",
+    "mm",
+    "cm",
+    "m",
+    "metre",
+    "meter",
+    "km",
+    "inch",
+    "foot",
+    "px",
+    "au",
+)
+
 
 class TestTransformValidation:
     """Test validate_transform function."""
@@ -167,52 +182,24 @@ class TestPhysicalUnitValidation:
 
     def test_valid_units(self) -> None:
         """Test that valid physical units are accepted."""
-        # Test all valid units
-        valid_units = [
-            "nm",
-            "um",
-            "mm",
-            "cm",
-            "m",
-            "metre",
-            "meter",
-            "km",
-            "inch",
-            "foot",
-            "px",
-            "au",
-        ]
-        for unit in valid_units:
+        for unit in _ACCEPTED_UNIT_SPELLINGS:
             assert validate_physical_unit(unit) == unit
 
-    def test_the_literal_list_above_still_matches_the_enum(self) -> None:
+    def test_accepted_unit_spellings_match_the_enum(self) -> None:
         """Pin the explicit expectation to its source.
 
-        ``test_valid_units`` deliberately spells the accepted strings out — that
-        is what catches an accidental *widening* of the enum. This test is the
-        other half: it fails if the enum gains or loses a member and that list
-        was not updated, so the two can never diverge silently. Before this
-        refactor the same twelve strings existed in four places
+        ``_ACCEPTED_UNIT_SPELLINGS`` deliberately spells out the accepted
+        strings — that is what catches an accidental *widening* of the enum.
+        This test is the other half: it fails if the enum gains or loses a
+        member and the tuple was not updated, so the two can never diverge
+        silently. Before this refactor the same twelve strings existed in four places
         (``PhysicalUnit``, ``typing_utils.config.SUPPORTED_UNITS``,
-        ``validate_physical_unit``'s local tuple, and this list) with nothing
+        ``validate_physical_unit``'s local tuple, and this test tuple) with nothing
         holding them together.
         """
         derived = {member.value for member in PhysicalUnit} | {"meter"}
         assert derived, "PhysicalUnit is empty — the comparison would be vacuous"
-        assert derived == {
-            "nm",
-            "um",
-            "mm",
-            "cm",
-            "m",
-            "metre",
-            "meter",
-            "km",
-            "inch",
-            "foot",
-            "px",
-            "au",
-        }
+        assert derived == set(_ACCEPTED_UNIT_SPELLINGS)
 
     def test_invalid_unit(self) -> None:
         """Test that invalid units raise ValueError."""
