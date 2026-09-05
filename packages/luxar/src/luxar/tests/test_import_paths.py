@@ -41,6 +41,23 @@ PACKAGE_ROOT = Path(luxar.__file__).parent
 NEEDS_OPTIONAL_DEPS = frozenset({"gsplats"})
 
 
+def _submodule_import_program(targets: list[str]) -> str:
+    """Build a probe that ignores only missing third-party dependencies."""
+    lines: list[str] = []
+    for index, target in enumerate(targets):
+        lines.extend(
+            [
+                "try:",
+                f"    import {target} as _m{index}",
+                "except ModuleNotFoundError as exc:",
+                '    if (exc.name or "").startswith("luxar"):',
+                "        raise",
+            ]
+        )
+    lines.append("print('ok')")
+    return "\n".join(lines)
+
+
 def _subpackages() -> list[str]:
     """Every directory under ``luxar/`` that is an importable package."""
     return sorted(
@@ -114,9 +131,7 @@ def test_every_public_submodule_is_importable_by_its_dotted_path(pkg: str) -> No
     if not submodules:
         pytest.skip(f"{pkg} has no public top-level submodule")
     targets = [f"luxar.{pkg}.{name}" for name in submodules]
-    program = "\n".join(
-        [f"import {t} as _m{i}" for i, t in enumerate(targets)] + ["print('ok')"]
-    )
+    program = _submodule_import_program(targets)
     result = subprocess.run(
         [sys.executable, "-c", program],
         capture_output=True,
@@ -127,6 +142,37 @@ def test_every_public_submodule_is_importable_by_its_dotted_path(pkg: str) -> No
         f"importing {len(targets)} submodules of luxar.{pkg} failed "
         f"({', '.join(targets)}):\n{result.stderr}"
     )
+
+
+def test_submodule_probe_tolerates_a_missing_third_party_dependency(
+    tmp_path: Path,
+) -> None:
+    """Optional imports must not disable the dotted-path shadowing probe."""
+    (tmp_path / "optional_probe.py").write_text(
+        "raise ModuleNotFoundError(\"No module named 'pandas'\", name='pandas')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", _submodule_import_program(["optional_probe"])],
+        capture_output=True,
+        text=True,
+        timeout=600,
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "ok" in result.stdout
+
+
+def test_submodule_probe_rejects_a_missing_luxar_module() -> None:
+    """A missing Luxar target must still fail rather than look optional."""
+    missing = "luxar.module_that_does_not_exist"
+    result = subprocess.run(
+        [sys.executable, "-c", _submodule_import_program([missing])],
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    assert result.returncode != 0
+    assert missing in result.stderr
 
 
 def test_the_validation_shadow_specifically_stays_fixed() -> None:
