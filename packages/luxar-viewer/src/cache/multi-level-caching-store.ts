@@ -85,6 +85,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
 
   private static readonly DEFAULT_L1_SIZE = config.cache.l1MaxSizeMB * 1024 * 1024;
   private static readonly DEFAULT_L2_SIZE = config.cache.l2MaxSizeMB * 1024 * 1024;
+  private static readonly MIN_OPFS_WRITE_QUEUE_BYTES = 64 * 1024 * 1024;
   // This instance's own validation queue entry, captured synchronously when
   // validateCache() enters the shared queue. dispose() aborts THIS entry
   // directly — never "whatever is the current head" — so an older store can
@@ -187,7 +188,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
     this.l2WriteQueue = new OpfsWriteQueue({
       concurrency: options?.opfsWriteConcurrency ?? config.cache.opfsWriteConcurrency,
       maxDepth: options?.opfsWriteQueueMax ?? config.cache.opfsWriteQueueMax,
-      maxBytes: l1Size,
+      maxBytes: Math.max(l1Size, MultiLevelCachingStore.MIN_OPFS_WRITE_QUEUE_BYTES),
     });
   }
 
