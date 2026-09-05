@@ -50,10 +50,9 @@ export interface LinesHandlerCtx {
  * Async load + project + stage step for one Lines node. Mirrors the
  * prior inline lines-branch of `updateView`.
  *
- * Note: lines uses applyPartialExtendTolerance: false (unlike Points
- * and GSplats) — verbatim from the original behaviour. The shared
- * extendedToleranceCache parameter is therefore unused here; lines
- * read raw tolerance from the global view-state.
+ * Unlike Points and GSplats, line bounds already encode the non-displayed
+ * extent. The shared extendedToleranceCache parameter is therefore unused
+ * here; lines read raw tolerance from the global view-state.
  */
 export async function loadAndStage(
   path: string,

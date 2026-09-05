@@ -135,8 +135,8 @@ export async function loadGSplatsNodeExpensive(
   loader: GSplatsDataLoader
 ): Promise<void> {
   try {
-    // GSplats path mirrors Points: applyPartialExtendTolerance=true so
-    // tolerance overrides + nd_transform inversion both happen up front.
+    // GSplats mirrors Points so tolerance overrides + nd_transform inversion
+    // both happen up front.
     const derivedGSplats = ctx.deriveNodeViewState(node.path, node.attrs, {
       applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.gsplats,
     });

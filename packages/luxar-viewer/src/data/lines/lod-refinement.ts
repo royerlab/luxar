@@ -110,8 +110,8 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
       try {
         const mesh = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
         const nodeAttrs = mesh?.userData?.attrs as LinesMetadata | undefined;
-        // Lines: applyPartialExtendTolerance=false (segment bounds already
-        // encode the extent — matches the load-lines-node.ts convention).
+        // Lines segment bounds already encode the extent, matching the
+        // load-lines-node.ts convention.
         const refined = ctx.deriveNodeViewState(path, nodeAttrs, {
           applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.lines,
         });

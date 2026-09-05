@@ -128,7 +128,7 @@ export async function loadLinesNodeExpensive(
   const attrs = node.attrs as unknown as LinesMetadata;
   try {
     // Lines path does not apply the partial-extend tolerance override during the
-    // data fetch (only during clipping), so applyPartialExtendTolerance=false.
+    // data fetch because segment bounds already encode the extent.
     const derivedLines = ctx.deriveNodeViewState(node.path, attrs, {
       applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.lines,
     });

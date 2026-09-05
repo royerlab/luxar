@@ -54,9 +54,8 @@ export interface GSplatsHandlerCtx {
  * Async load + project + stage step for one GSplats node. Mirrors the
  * prior inline gsplats-branch of `updateView`.
  *
- * Like Points (and unlike Lines) gsplats uses
- * applyPartialExtendTolerance: true — verbatim from the original
- * behaviour.
+ * Like Points (and unlike Lines), gsplats widens tolerance across dimensions
+ * the node only partially extends through.
  */
 export async function loadAndStage(
   path: string,
