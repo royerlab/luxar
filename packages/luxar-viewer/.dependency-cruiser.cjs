@@ -111,7 +111,7 @@ function layerRule(fromLayer, forbiddenHigherLayers) {
     comment:
       `Modules in src/${fromLayer}/ must not import from higher layers ` +
       `(${forbiddenHigherLayers.join(', ')}). See src/CONVENTIONS.md ` +
-      `for the full layer order. Type-only imports are exempt.`,
+      'for the full layer order. Type-only imports are exempt.',
     from: {
       path: `^src/${fromLayer}/`,
       // Empty when KNOWN_LAYER_EXCEPTIONS is empty — depcruiser treats

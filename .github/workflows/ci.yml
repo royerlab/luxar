@@ -715,9 +715,28 @@ jobs:
       # The gates below judge the SOURCE, not the runtime (ruff target-version
       # py312, mypy python_version 3.12), so they run once — on the 3.12 leg —
       # while staying under the required `python-tests (3.12)` context.
+      # The target list is the project's own (`hatch run lint`), not just the
+      # package. It used to be `packages/luxar/src/luxar/` alone, which left
+      # `scripts/` (121 files, 35K LOC — including every gate implementation),
+      # `scripts/benchmarks/`, `stats/` and `hatch_build.py` with no E/W/F/I
+      # check in CI at all (audit A12-04). The gates that guard this repository
+      # were the least-checked code in it.
       - name: Lint (ruff)
         if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
-        run: hatch run python -m ruff check packages/luxar/src/luxar/
+        run: >-
+          hatch run python -m ruff check
+          packages/luxar/src scripts scripts/benchmarks stats hatch_build.py
+
+      # Formatting was enforced ONLY by the opt-in pre-commit hook, which sees
+      # the STAGED files and nothing else — so 10 files had drifted unformatted
+      # in the tree with no gate able to notice. Same targets as the lint above.
+      # `[tool.ruff.format] exclude = ["*.md"]` keeps this to Python; see the
+      # rationale in pyproject.toml.
+      - name: Format check (ruff)
+        if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
+        run: >-
+          hatch run python -m ruff format --check
+          packages/luxar/src scripts scripts/benchmarks stats hatch_build.py
 
       - name: Type check (mypy)
         if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
@@ -826,12 +845,33 @@ jobs:
         with:
           toolchain: 1.92.0
           targets: wasm32-unknown-unknown
+          # Explicit, even though rust-toolchain.toml also lists it: this action
+          # pins the toolchain by input and installs the minimal profile, so the
+          # clippy gate below would otherwise depend on which of the two rustup
+          # happens to consult first.
+          components: clippy
 
       - name: Cache cargo build
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: packages/luxar-viewer/src/wasm/rust
+
+      # clippy ran NOWHERE in CI (audit A12-02). `cargo check` reaches CI only
+      # as a side effect of `pnpm build` -> wasm-pack, and `make check-rust` —
+      # the one place clippy was invoked at all — could not fail: the recipe is
+      # a single backslash-joined shell command that ended `; echo "...passed!"`,
+      # making the echo's status the target's. Verified with a minimal recipe of
+      # the same shape: `false && true; echo PASSED` exits 0. The Makefile is
+      # fixed in the same commit; this is the half that gates a PR.
+      #
+      # Nearly free here: the toolchain and cargo cache are already set up above
+      # for the WASM build, and a warm clippy over this crate takes ~7s.
+      # `--all-targets` lints test and bench code too, matching the Makefile.
+      - name: Lint Rust (clippy)
+        if: needs.changes.outputs.dom_rust != 'false'
+        working-directory: packages/luxar-viewer/src/wasm/rust
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Install wasm-pack
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
@@ -1078,6 +1118,75 @@ jobs:
           find dist/assets -maxdepth 1 -type f -name 'sort-worker-*.js' -print -quit | grep -q . \
             || { echo "::error::viewer dist missing the depth-sort worker"; exit 1; }
           echo "Wheel viewer application and critical assets are present."
+
+      # ---------------------------------------------------------------------
+      # The PYTHON wheel, built from the dist just verified above.
+      #
+      # Nothing built, inspected or installed it until a release tag was pushed:
+      # `hatch build` appeared exactly once in the repo, in publish.yml on `v*`
+      # (audit A12-01). The npm side already had this gate — `release-readiness`
+      # — and the Python side never mirrored it. A `.gitignore` pattern once
+      # matched a package directory, hatchling dropped it from the wheel, every
+      # test stayed green (they import from the source tree), and the break
+      # surfaced only as `luxar --version` failing on a clean install.
+      #
+      # It lives in THIS job rather than a new one because the viewer dist it
+      # force-includes has just been built here; a separate job would repeat the
+      # pnpm + Rust + wasm build to produce the same bytes. `wheel-viewer` is
+      # already a required context, so this gates every PR without a
+      # branch-protection change.
+      # ---------------------------------------------------------------------
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: (needs.changes.outputs.dom_py != 'false' || needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
+        with:
+          # 3.12 is the floor `requires-python` declares; a wheel that installs
+          # and runs there installs and runs on 3.13/3.14 too.
+          python-version: '3.12'
+
+      - name: Build the Python wheel
+        if: (needs.changes.outputs.dom_py != 'false' || needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
+        working-directory: ${{ github.workspace }}
+        # Identical to publish.yml's build, so this gate proves the artifact the
+        # release actually produces rather than a lookalike.
+        run: |
+          python -m pip install --upgrade hatch
+          hatch build
+
+      - name: Inspect the wheel contents
+        if: (needs.changes.outputs.dom_py != 'false' || needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
+        working-directory: ${{ github.workspace }}
+        # Asserts package completeness against the source tree, that every
+        # `exclude` pattern in pyproject was honoured, that no Git-LFS pointer
+        # stub shipped in place of data, that nothing exceeds PyPI's 100 MB
+        # per-file limit, and that the viewer dist is bundled. All derived from
+        # the repository, so the gate cannot drift from what it guards.
+        run: |
+          set -euo pipefail
+          WHEEL="$(ls dist/*.whl)"
+          python scripts/check_wheel.py "$WHEEL"
+
+      - name: Install the wheel into a bare venv and run it
+        if: (needs.changes.outputs.dom_py != 'false' || needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
+        working-directory: ${{ github.workspace }}
+        # The half no static inspection can do. A wheel can hold every expected
+        # member and still fail to import — a missing runtime dependency, a
+        # broken entry point, a module importable only from the source tree.
+        # Deliberately a CLEAN venv with no dev extras and no repo on sys.path:
+        # running from the checkout is how the dropped-package bug stayed
+        # invisible for as long as it did.
+        run: |
+          set -euo pipefail
+          python -m venv /tmp/wheel-venv
+          /tmp/wheel-venv/bin/python -m pip install --quiet --upgrade pip
+          /tmp/wheel-venv/bin/python -m pip install --quiet "$(ls dist/*.whl)"
+          # An EMPTY directory, not just "not the checkout". Python puts the
+          # working directory on sys.path, so any stray `inspect.py`/`types.py`
+          # sitting in a shared scratch dir shadows the stdlib and fails the
+          # import with an error about the wheel. (Hit exactly this locally.)
+          mkdir -p /tmp/wheel-smoke && cd /tmp/wheel-smoke
+          /tmp/wheel-venv/bin/luxar --version
+          /tmp/wheel-venv/bin/luxar --help > /dev/null
+          /tmp/wheel-venv/bin/python -c "import luxar; print('import OK:', luxar.__version__)"
 
   # A scheduled run can put fresh successful checks on the same SHA as an older
   # cancelled push run, but branch protection's rollup can retain the cancelled

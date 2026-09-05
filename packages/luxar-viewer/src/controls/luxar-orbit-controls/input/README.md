@@ -44,7 +44,10 @@ input/
     `remaining` list, since `setPointers` swaps the array reference),
     releases capture, tears down move/up/cancel listeners on last
     release, and dispatches `'end'`.
-  - `handleWheel` — Sign-flipped zoom via `computeZoomScale`; wakes the
+  - `handleWheel` — Sign-flipped zoom via `computeZoomScale` at
+    `zoomSpeed × wheelZoomSensitivity` (the latter is the global
+    Settings > Input knob, read from config per event; pointer-drag
+    dolly and two-finger touch pinch deliberately ignore it); wakes the
     animation loop with `dispatch('change')` so damping applies inside
     the orchestrator's `update()`.
 - `touch.ts` — Touch-gesture bodies operating on the same

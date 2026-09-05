@@ -5880,7 +5880,7 @@ elements`, `PointSpatialIndexMetrics → SpatialIndexMetrics`
 
 #### Changed — geolog amplitude quantization (rescale-first, zero-safe) + per-dtype compressors
 
-- New `geolog_scalar_u8/u16` encoding: wide-dynamic-range positive scalars
+- New `geolog_scalar_uint8/uint16` encoding: wide-dynamic-range positive scalars
   (gsplat amplitudes; shared path with points radii / lines widths) are
   quantized AFTER rescaling to the array's own nonzero `[min, max]` on a true
   log grid — uniform ~0.013% relative error across 7 decades at u16, with
@@ -5908,7 +5908,7 @@ perchannel_{u8,u16}`) above the same threshold as the other encodings —
   boundary as Float64Array, so worker, TS-fallback, and main-thread decodes
   are bit-identical (three-way parity tests); sub-threshold ranges and worker
   failures keep the main-thread `makePerChannelDequant` path.
-- Rescale-first generalised to the sibling encodings: `bounded_scalar_u8/u16`
+- Rescale-first generalised to the sibling encodings: `bounded_scalar_uint8/uint16`
   now anchor the linear grid at the array's own `[min, max]` instead of
   `[0, max]` (encoder-only — decoders already honoured the stored min), and
   the per-channel Cholesky pair (`log_perchannel_*` /

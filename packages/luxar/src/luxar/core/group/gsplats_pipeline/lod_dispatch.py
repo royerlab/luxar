@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, cast
 import numpy as np
 from arbol import aprint
 
+from ....typing_utils.json_safe import json_safe_value
 from ...gsplats import GSplats
 from ..compositing import (
     COMPOSITING_ATTRS,
@@ -225,8 +226,6 @@ def add_gsplats_multi_lod_impl(
             # (NaN/±Inf) in ``level_stats`` would land in .zattrs as a bare
             # NaN/Infinity token the viewer's strict JSON.parse rejects. Skip
             # any key whose value is not strictly JSON-safe (do not fabricate).
-            from ....io._compiler.gsplat_tree import json_safe_value
-
             src_stats = result.substitutive_levels[0].stats
             for key in ("reference_energy", "quality", "energy_kind"):
                 if key in src_stats:

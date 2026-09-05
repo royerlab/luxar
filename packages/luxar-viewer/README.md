@@ -11,7 +11,7 @@ A GPU-accelerated WebGL renderer for arbitrarily large n-dimensional scientific 
 - **🖱️ Intuitive Navigation**: Smooth camera controls optimized for scientific data exploration
 - **📱 Responsive Design**: Seamless fullscreen support and dynamic viewport management
 - **⚡ Unlimited Performance**: GPU-accelerated pipeline designed to scale with hardware capabilities
-- **🎯 Geometry Rendering**: Extensible architecture supporting points, lines, Gaussian splats, and more
+- **🎯 Geometry Rendering**: Four first-class geometry types — points, lines, Gaussian splats, and shaded triangle meshes
 - **📊 Performance Monitoring**: Built-in FPS and timing metrics for optimization
 - **🌊 Streaming Ready**: Chunked Zarr format enables progressive loading of massive datasets
 - **🔌 Extensible Architecture**: Modular design ready for additional geometry types and rendering modes
@@ -257,11 +257,10 @@ A runnable example with a non-trivial host page lives in
 - Modern web browser with WebGL 2.0 support
 - Zarr dataset (see [Data Format](#data-format) section)
 
-**Browser Recommendations**:
-
-- **Firefox** (recommended for large datasets): 2× faster WebAssembly decompression (1 GB/s vs 500 MB/s)
-- **Chrome/Edge**: Excellent compatibility, good performance
-- **Safari**: Good support, slightly lower WASM performance
+**Browser support**: any browser with WebGL 2.0. See
+[Browser Compatibility](#browser-compatibility) for what has actually been
+tested — Chromium, Firefox and WebKit all pass the E2E smoke subset, and WebKit
+runs without the on-disk chunk cache.
 
 ### Installation
 
@@ -766,12 +765,31 @@ monitor.element; // the widget element (mounted by the control rail)
 
 ### Browser Compatibility
 
-| Browser | Version | Status             |
-| ------- | ------- | ------------------ |
-| Chrome  | 90+     | ✅ Fully supported |
-| Firefox | 88+     | ✅ Fully supported |
-| Safari  | 15+     | ✅ Supported       |
-| Edge    | 90+     | ✅ Fully supported |
+Requires **WebGL 2.0**, which is the default backend. WebGPU is opt-in via
+`?renderer=webgpu` and falls back to an internal WebGL2 backend when no adapter
+is available. The build targets `esnext` with no `browserslist`, so there is no
+toolchain-derived version floor.
+
+Verified 2026-09-04 on macOS arm64 by running the E2E smoke subset (13 tests)
+against Playwright's bundled engines:
+
+| Engine   | Smoke subset | Notes                                                |
+| -------- | ------------ | ---------------------------------------------------- |
+| Chromium | 13/13 pass   | L2 (OPFS) disk cache initialises                      |
+| Firefox  | 13/13 pass   | L2 (OPFS) disk cache initialises                      |
+| WebKit   | 13/13 pass   | **runs without the L2 disk cache** — the OPFS store's init / write probe fails, so chunk data is not persisted between sessions |
+
+Reproduce after running `pnpm test:generate-fixtures` and `pnpm exec playwright
+install firefox webkit`, then run `pnpm test:e2e:browsers`. The checked-in visual
+snapshot corpus is Chromium-only, so this command ignores snapshot assertions
+and compares functional behavior rather than pixels.
+
+Not verified: the full E2E suite on any engine but Chromium; **Safari and Edge
+themselves** — Playwright's WebKit is a WebKit build, not Safari, and Edge is
+Chromium-based but untested; and any performance comparison between engines.
+WebKit lacks main-thread `FileSystemFileHandle.createWritable()`, so Safari and
+the native WKWebView launcher fall back to L1-only caching; see the
+[`opfs-unavailable` cache badge](src/cache/README.md#cache-status-badges).
 
 ### WebGL Requirements
 

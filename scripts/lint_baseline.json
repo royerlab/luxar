@@ -4,7 +4,7 @@
     "B",
     "RUF012"
   ],
-  "settings_fingerprint": "1c9eabf398bda69d00cf0d03695fced609c0a883225b21ba9b906afb660dc05d",
+  "settings_fingerprint": "ee23fce2909b4ce5caa6be84977afedcf763d804f266cebcc0168779f98ede53",
   "violations": {
     "packages/luxar/src/luxar/cli/demo_render.py::B905": 2,
     "packages/luxar/src/luxar/cli/gsplat_config.py::B904": 1,
@@ -207,7 +207,6 @@
     "packages/luxar/src/luxar/gsplats/tiling.py::B905": 1,
     "packages/luxar/src/luxar/gsplats/tree.py::B905": 1,
     "packages/luxar/src/luxar/io/_compiler/finalize/amplitude_window.py::B905": 3,
-    "packages/luxar/src/luxar/io/_compiler/labels/image_labels.py::B904": 1,
     "packages/luxar/src/luxar/io/_compiler/labels/text_labels.py::B905": 2,
     "packages/luxar/src/luxar/io/_compiler/tests/test_amplitude_window_harmonization.py::B007": 1,
     "packages/luxar/src/luxar/io/_compiler/tests/test_amplitude_window_harmonization.py::B905": 4,
@@ -234,9 +233,9 @@
     "packages/luxar/src/luxar/validation/base.py::B028": 3,
     "packages/luxar/src/luxar/validation/nd.py::B007": 1,
     "packages/luxar/src/luxar/validation/overlays.py::B904": 1,
+    "packages/luxar/src/luxar/validation/writing.py::B904": 1,
     "scripts/benchmark_progressive_psnr.py::B905": 1,
     "scripts/benchmarks/benchmark_seeding_gpu.py::B007": 1,
-    "scripts/changelog_build.py::B904": 1,
     "scripts/run_examples.py::B905": 1,
     "scripts/zenodo_migration_audit.py::B007": 1,
     "scripts/zenodo_migration_audit.py::B905": 1,

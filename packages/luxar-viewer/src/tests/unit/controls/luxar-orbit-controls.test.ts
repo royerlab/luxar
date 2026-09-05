@@ -5,6 +5,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as THREE from 'three';
+import { config } from '../../../config';
 import { LuxarOrbitControls } from '../../../controls/luxar-orbit-controls';
 import { projectOnTrackball } from '../../../controls/luxar-orbit-controls/math/trackball';
 import {
@@ -13,6 +14,7 @@ import {
 } from '../../../controls/luxar-orbit-controls/input/pointer';
 
 describe('LuxarOrbitControls', () => {
+  const defaultWheelZoomSensitivity = config.controls.wheelZoomSensitivity;
   let camera: THREE.PerspectiveCamera;
   let domElement: HTMLElement;
   let controls: LuxarOrbitControls;
@@ -42,6 +44,7 @@ describe('LuxarOrbitControls', () => {
   });
 
   afterEach(() => {
+    config.controls.wheelZoomSensitivity = defaultWheelZoomSensitivity;
     controls?.dispose();
     document.body.removeChild(domElement);
   });
@@ -199,6 +202,31 @@ describe('LuxarOrbitControls', () => {
   });
 
   describe('zooming', () => {
+    it('reads the live wheel sensitivity from config through the public event path', () => {
+      const zoomRatio = (wheelZoomSensitivity: number, zoomSpeed: number): number => {
+        const testCamera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+        testCamera.position.set(0, 0, 5);
+        testCamera.lookAt(0, 0, 0);
+        testCamera.updateMatrixWorld();
+        const testControls = new LuxarOrbitControls(testCamera, domElement, {
+          enableDamping: false,
+          zoomSpeed,
+        });
+        testControls.update();
+
+        config.controls.wheelZoomSensitivity = wheelZoomSensitivity;
+        const distanceBefore = testCamera.position.distanceTo(testControls.target);
+        domElement.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }));
+        testControls.update();
+        const distanceAfter = testCamera.position.distanceTo(testControls.target);
+        testControls.dispose();
+
+        return distanceAfter / distanceBefore;
+      };
+
+      expect(zoomRatio(0.25, 1)).toBeCloseTo(zoomRatio(1, 0.25), 10);
+    });
+
     it('zooms in (distance decreases) on wheel scroll-up', () => {
       // controls.md C9 fix: drive the zoom via the public WheelEvent path on
       // `domElement` (the listener registered at `luxar-orbit-controls.ts:195`)

@@ -366,6 +366,8 @@ MIN_NODE_MINOR := 22
 | `make changelog-draft` | Preview the `changelog.d/` fold into `CHANGELOG.md`; changes nothing |
 | `make changelog` | Fold `changelog.d/*.md` fragments into `CHANGELOG.md` and delete them (`MONTH="August 2026"` pins the heading) |
 | `make set-version` | Set release version in code (`DATE=YYYY.MM.DD`, default today) |
+| `make changelog-release-draft` | Preview cutting `## [Unreleased]` into the current version; changes nothing |
+| `make changelog-release` | Cut `## [Unreleased]` into the current version after `make changelog` → `make set-version` |
 | `make release-check` | Dry-run release: run ALL preflight checks, tag/push nothing |
 | `make release` | Cut release: validate main + CI green, tag `v<version>`, push (triggers PyPI publish) |
 | `make publish` / `make publish-test` | Disabled — use `make release` (tag-triggered OIDC publish via CI) |

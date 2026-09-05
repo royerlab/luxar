@@ -241,9 +241,13 @@ pnpm agent:debug
 |--------|---------|-------------|
 | `pnpm test:e2e` | Run all tests | Local manual testing |
 | `pnpm test:e2e:smoke` | Non-GPU smoke subset | Local CI mirror; basis for the disabled workflow |
+| `pnpm test:e2e:browsers` | Run the functional browser smoke matrix with snapshots ignored | After generating fixtures and installing Firefox/WebKit |
 | `pnpm test:e2e:ui` | Interactive test runner | Writing new tests |
 | `pnpm test:e2e:debug` | Debug mode | Debugging failing tests |
 | `pnpm test:e2e:report` | View last test report | After test run |
+
+`LUXAR_E2E_BROWSERS=all` enables the opt-in Firefox and WebKit projects; the
+`test:e2e:browsers` script sets it automatically.
 
 ---
 

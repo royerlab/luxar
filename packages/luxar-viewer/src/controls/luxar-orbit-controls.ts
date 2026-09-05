@@ -14,6 +14,7 @@
 
 import * as THREE from 'three';
 import { isOrthographicCamera, type LuxarCamera } from '../utils/camera-utils';
+import { config } from '../config';
 import { applyPan, type PanCtx } from './luxar-orbit-controls/math/pan';
 import { applyToCamera, initializeFromCamera } from './luxar-orbit-controls/camera-application';
 import { runUpdateStep, type OrbitUpdateCtx } from './luxar-orbit-controls/update';
@@ -591,6 +592,9 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
       trackballRadius: this.trackballRadius,
       rotateSpeed: this.rotateSpeed,
       zoomSpeed: this.zoomSpeed,
+      // Read from config per event (the ctx is rebuilt per call) so the
+      // Settings slider applies to the very next wheel notch.
+      wheelZoomSensitivity: config.controls.wheelZoomSensitivity,
       boundOnPointerMove: this.boundOnPointerMove,
       boundOnPointerUp: this.boundOnPointerUp,
       pointers: this.pointers,

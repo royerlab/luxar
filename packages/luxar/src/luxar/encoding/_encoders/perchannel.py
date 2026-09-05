@@ -999,7 +999,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         chunks: Optional[tuple] = None,
         compressor: Optional[Any] = None,
     ) -> None:
-        """Write a wide-dynamic-range positive scalar as ``geolog_scalar_u{bits}``.
+        """Write a wide-dynamic-range positive scalar as ``geolog_scalar_uint{bits}``.
 
         Rescale-first log quantization: the grid is anchored to the array's OWN
         nonzero ``[min, max]`` (stored as ``min_log``/``max_log``), the same

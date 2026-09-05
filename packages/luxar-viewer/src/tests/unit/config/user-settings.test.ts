@@ -29,6 +29,7 @@ const KEY = StorageKeys.settings;
 /** Snapshot of the config fields the module mutates, restored after each test. */
 const configSnapshot = {
   fovSensitivity: config.camera.fovSensitivity,
+  wheelZoomSensitivity: config.controls.wheelZoomSensitivity,
   idleTimeoutMs: config.animation.idleTimeoutMs,
   useWebWorkers: config.dataLoading.performance.useWebWorkers,
   workerCount: config.dataLoading.performance.workerCount,
@@ -42,6 +43,7 @@ beforeEach(() => {
 
 afterEach(() => {
   config.camera.fovSensitivity = configSnapshot.fovSensitivity;
+  config.controls.wheelZoomSensitivity = configSnapshot.wheelZoomSensitivity;
   config.animation.idleTimeoutMs = configSnapshot.idleTimeoutMs;
   config.dataLoading.performance.useWebWorkers = configSnapshot.useWebWorkers;
   config.dataLoading.performance.workerCount = configSnapshot.workerCount;
@@ -54,6 +56,7 @@ describe('defaultUserSettings', () => {
     const d = defaultUserSettings();
     expect(d.version).toBe(1);
     expect(d.input.fovSensitivity).toBe(config.camera.fovSensitivity);
+    expect(d.input.wheelZoomSensitivity).toBe(config.controls.wheelZoomSensitivity);
     expect(d.performance.idleTimeoutMs).toBe(config.animation.idleTimeoutMs);
     expect(d.performance.networkMaxConcurrent).toBe(config.dataLoading.network.maxConcurrent);
     expect(d.caching).toEqual({
@@ -92,7 +95,7 @@ describe('loadUserSettings', () => {
 
   it('clamps out-of-range numbers per field and rounds integer fields', () => {
     const stored = defaultUserSettings() as unknown as Record<string, Record<string, unknown>>;
-    stored.input = { fovSensitivity: 999 };
+    stored.input = { fovSensitivity: 999, wheelZoomSensitivity: 0 };
     stored.performance = {
       idleTimeoutMs: -5,
       useWebWorkers: 'yes', // non-boolean → default
@@ -112,6 +115,7 @@ describe('loadUserSettings', () => {
     const loaded = loadUserSettings();
     const d = defaultUserSettings();
     expect(loaded.input.fovSensitivity).toBe(USER_SETTINGS_RANGES.fovSensitivity.max);
+    expect(loaded.input.wheelZoomSensitivity).toBe(USER_SETTINGS_RANGES.wheelZoomSensitivity.min);
     expect(loaded.performance.idleTimeoutMs).toBe(USER_SETTINGS_RANGES.idleTimeoutMs.min);
     expect(loaded.performance.useWebWorkers).toBe(d.performance.useWebWorkers);
     expect(loaded.performance.workerCount).toBe(4); // 3.7 rounded
@@ -139,12 +143,26 @@ describe('loadUserSettings', () => {
     });
     expect(() => saveUserSettings(defaultUserSettings())).not.toThrow();
   });
+
+  it('a document saved before the zoom-sensitivity field existed loads with the default', () => {
+    // Same schema version, field simply absent — must NOT fall back to
+    // all-defaults (that would discard the user's other preferences).
+    const stored = defaultUserSettings() as unknown as Record<string, Record<string, unknown>>;
+    stored.input = { fovSensitivity: 0.12 };
+    localStorage.setItem(KEY, JSON.stringify(stored));
+    const loaded = loadUserSettings();
+    expect(loaded.input.fovSensitivity).toBe(0.12);
+    expect(loaded.input.wheelZoomSensitivity).toBe(
+      defaultUserSettings().input.wheelZoomSensitivity
+    );
+  });
 });
 
 describe('applyLiveConfigOverrides', () => {
-  it('mutates the five live-read config paths', () => {
+  it('mutates the live-read config paths', () => {
     const s = defaultUserSettings();
     s.input.fovSensitivity = 0.15;
+    s.input.wheelZoomSensitivity = 0.25;
     s.performance.idleTimeoutMs = 4000;
     s.performance.useWebWorkers = false;
     s.performance.workerCount = 2;
@@ -153,6 +171,7 @@ describe('applyLiveConfigOverrides', () => {
     applyLiveConfigOverrides(s);
 
     expect(config.camera.fovSensitivity).toBe(0.15);
+    expect(config.controls.wheelZoomSensitivity).toBe(0.25);
     expect(config.animation.idleTimeoutMs).toBe(4000);
     expect(config.dataLoading.performance.useWebWorkers).toBe(false);
     expect(config.dataLoading.performance.workerCount).toBe(2);
