@@ -51,7 +51,7 @@ what was actually missing.
 depth-0 lines plus a "(log tree truncated here)" notice for each section it
 truncates at the cap, so a caller asking for silence and getting truncation
 notices would be worse than the status quo. Measured, not assumed — see
-``tests/test_verbosity.py::test_the_documented_level_effects_are_real``.
+``tests/test_verbosity.py::TestTheDocumentedEffectsAreReal::test_depth_zero_is_not_silence``.
 """
 
 from __future__ import annotations

@@ -229,9 +229,10 @@ class TestTheDocumentedEffectsAreReal:
         """The reason `"silent"` uses `enable_output` and not `max_depth=0`.
 
         arbol at depth 0 still prints depth-0 lines AND a "log tree truncated
-        here" notice per suppressed section — so a caller asking for quiet would
-        get truncation noise instead. If a future arbol makes depth 0 silent,
-        this fails and the module docstring's explanation should be revisited.
+        here" notice for each section it truncates at the cap — so a caller
+        asking for quiet would get truncation noise instead. If a future arbol
+        makes depth 0 silent, this fails and the module docstring's explanation
+        should be revisited.
         """
         set_verbosity(0)
         output = _emit_a_three_deep_tree()
