@@ -378,9 +378,9 @@ def render_typescript(c: Dict[str, Any]) -> str:
     loader_doc = (
         "Viewer-drawable geometry types: the subset of `GEOMETRY_TYPES` that has a\n"
         "loader, a `GEOMETRY_DESCRIPTORS` row, a `PARTIAL_EXTEND_TOLERANCE` arm and a\n"
-        "hidden-dim tolerance arm. A CAPABILITY, not\n"
-        "the vocabulary — key dispatch tables on this, not on `GeometryTypeName`, so a\n"
-        "not-yet-drawable type cannot resolve to no loader. See contract.yaml::loader_types."
+        "hidden-dim tolerance arm. A CAPABILITY, not the vocabulary — key dispatch\n"
+        "tables on this, not on `GeometryTypeName`, so a not-yet-drawable type cannot\n"
+        "resolve to no loader. See contract.yaml::loader_types."
     )
     blocks = [
         _ts_jsdoc(
