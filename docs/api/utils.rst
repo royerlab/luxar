@@ -27,3 +27,18 @@ Reusable Demo Generators
 .. automodule:: luxar.utils.scenes
    :members:
    :undoc-members:
+
+Console Output
+--------------
+
+``luxar.verbosity`` turns Luxar's own narration down, or off. The library layers
+below the CLI narrate through arbol — the right default for a long CLI run, and
+the wrong one in a notebook cell or a napari plugin. Reachable from the package
+root as ``luxar.set_verbosity()`` / ``luxar.verbosity()``.
+
+Note that this writes process-global arbol state, so it is neither per-call nor
+thread-safe; the module docstring states the constraints in full.
+
+.. automodule:: luxar.verbosity
+   :members:
+   :undoc-members:
