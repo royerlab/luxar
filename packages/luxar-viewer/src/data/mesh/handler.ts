@@ -16,6 +16,7 @@ import {
   processMeshData,
   type StagedMeshCommit,
 } from '../scene-loader/process/data-processor-mesh';
+import { PARTIAL_EXTEND_TOLERANCE } from '../scene-loader/partial-extend-tolerance';
 
 export const kind: GeometryKind = 'mesh';
 export const label = 'Mesh' as const;
@@ -76,7 +77,7 @@ export async function loadAndStage(
     path,
     { extend_to_all: meshAttrs?.extend_to_all },
     {
-      applyPartialExtendTolerance: true,
+      applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.mesh,
       extendedToleranceCache: ctx.extendedToleranceCache,
     }
   );

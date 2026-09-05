@@ -18,6 +18,7 @@ import {
   type StagedLinesCommit,
 } from '../scene-loader/process/data-processor-lines';
 import { isAlreadyCommitted } from '../scene-loader/commit/noop-commit';
+import { PARTIAL_EXTEND_TOLERANCE } from '../scene-loader/partial-extend-tolerance';
 
 export const kind: GeometryKind = 'lines';
 export const label = 'Lines' as const;
@@ -63,7 +64,7 @@ export async function loadAndStage(
   const mesh = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
   const attrs = mesh?.userData?.attrs as { extend_to_all?: string[] } | undefined;
   const derived = ctx.deriveNodeViewState(path, attrs, {
-    applyPartialExtendTolerance: false,
+    applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.lines,
   });
   /**
    * Mark this path healthy. Called at every terminal success, NOT right after

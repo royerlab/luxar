@@ -32,6 +32,7 @@ import {
   RefinementFailureTracker,
   runProgressiveRefinement,
 } from '../scene-loader/progressive/refinement';
+import { PARTIAL_EXTEND_TOLERANCE } from '../scene-loader/partial-extend-tolerance';
 
 export interface LinesRefinementCtx {
   rootGroup: THREE.Group | null;
@@ -112,7 +113,7 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
         // Lines: applyPartialExtendTolerance=false (segment bounds already
         // encode the extent — matches the load-lines-node.ts convention).
         const refined = ctx.deriveNodeViewState(path, nodeAttrs, {
-          applyPartialExtendTolerance: false,
+          applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.lines,
         });
         // A fully-extended node is a normal node with a slice-invariant query
         // (deriveNodeViewState), so it refines through this path like any other;

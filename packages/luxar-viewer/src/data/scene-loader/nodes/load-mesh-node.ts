@@ -36,6 +36,7 @@ import { createMeshLoader, createProgressiveMeshLoader } from '../loaders/loader
 import type { SceneNode } from '../../data-loader-types';
 import type { MeshDataLoader, MeshMetadata } from '../../../types/mesh';
 import type { NodeBuildCtx } from './build-ctx';
+import { PARTIAL_EXTEND_TOLERANCE } from '../partial-extend-tolerance';
 
 /** What {@link loadMeshNodeCheap} hands the caller. Mirrors `PointsCheapLoad`. */
 export interface MeshCheapLoad {
@@ -131,7 +132,7 @@ export async function loadMeshNodeExpensive(
     // partial-extend tolerance (unlike Lines, which opts out because its segment
     // bounds already encode the non-displayed extent — a mesh has no such bounds).
     const derived = ctx.deriveNodeViewState(node.path, node.attrs, {
-      applyPartialExtendTolerance: true,
+      applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.mesh,
     });
     // Captured at DERIVE time so the committed geometry is stamped for the slice it
     // actually loaded, matching the sibling loaders.

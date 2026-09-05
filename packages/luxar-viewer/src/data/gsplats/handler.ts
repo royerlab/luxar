@@ -22,6 +22,7 @@ import {
   type StagedGSplatsCommit,
 } from '../scene-loader/process/data-processor-gsplats';
 import { isAlreadyCommitted } from '../scene-loader/commit/noop-commit';
+import { PARTIAL_EXTEND_TOLERANCE } from '../scene-loader/partial-extend-tolerance';
 
 export const kind: GeometryKind = 'gsplats';
 export const label = 'GSplats' as const;
@@ -66,7 +67,7 @@ export async function loadAndStage(
   const mesh = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
   const attrs = mesh?.userData?.attrs as GSplatsMetadata | undefined;
   const derived = ctx.deriveNodeViewState(path, attrs, {
-    applyPartialExtendTolerance: true,
+    applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.gsplats,
     extendedToleranceCache: ctx.extendedToleranceCache,
   });
   /**

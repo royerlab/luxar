@@ -22,6 +22,7 @@ import {
 import type { SceneNode, DataLoader, ViewState } from '../../data-loader-types';
 import type { PointsDataLoader, PointsMetadata } from '../../../types/points';
 import type { NodeBuildCtx } from './build-ctx';
+import { PARTIAL_EXTEND_TOLERANCE } from '../partial-extend-tolerance';
 
 /**
  * Construct the points spatial-index loader and wire it to the monitor.
@@ -145,7 +146,7 @@ export async function loadPointsNodeExpensive(
     // the main update path and retry) so initial / update / retry can
     // never silently load different query regions.
     const derived = ctx.deriveNodeViewState(node.path, node.attrs, {
-      applyPartialExtendTolerance: true,
+      applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.points,
     });
     // Capture the version at DERIVE time (see loadGSplatsNodeExpensive) so a
     // deferred reload is stamped for the slice it actually loaded.

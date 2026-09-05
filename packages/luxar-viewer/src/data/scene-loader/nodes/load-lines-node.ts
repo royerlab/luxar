@@ -25,6 +25,7 @@ import {
 import type { SceneNode } from '../../data-loader-types';
 import type { LinesMetadata, LinesDataLoader, LinesViewState } from '../../../types/lines';
 import type { NodeBuildCtx } from './build-ctx';
+import { PARTIAL_EXTEND_TOLERANCE } from '../partial-extend-tolerance';
 
 /** Construct the lines spatial-index loader and wire it to the monitor. */
 function createLinesLoader(
@@ -129,7 +130,7 @@ export async function loadLinesNodeExpensive(
     // Lines path does not apply the partial-extend tolerance override during the
     // data fetch (only during clipping), so applyPartialExtendTolerance=false.
     const derivedLines = ctx.deriveNodeViewState(node.path, attrs, {
-      applyPartialExtendTolerance: false,
+      applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.lines,
     });
     // Capture the version at DERIVE time (see loadGSplatsNodeExpensive) so a
     // deferred reload is stamped for the slice it actually loaded.
