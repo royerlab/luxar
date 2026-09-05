@@ -34,7 +34,7 @@ import type { GeometryKind } from '../data-loader-types';
  * do not restate the boolean at a call site. `GEOMETRY_DESCRIPTORS` exposes the
  * same value per kind and sources it from here.
  */
-export const PARTIAL_EXTEND_TOLERANCE: Record<GeometryKind, boolean> = {
+export const PARTIAL_EXTEND_TOLERANCE: Readonly<Record<GeometryKind, boolean>> = {
   points: true,
   lines: false,
   gsplats: true,
