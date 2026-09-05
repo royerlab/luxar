@@ -8,12 +8,13 @@
  * it is a clipping result quietly too generous or too tight, on one geometry
  * type, in one code path. Nothing would have named it.
  *
- * Three checks, in order of what they can catch:
+ * Four checks, in order of what they can catch:
  *
  * 1. Every drawable kind has an entry, derived from the format contract's
  *    vocabulary rather than from a list written here.
- * 2. The descriptor's field equals the table, so the two cannot drift.
- * 3. No production source under `src/` writes the literal in a code position.
+ * 2. Lines remains the one kind that opts out.
+ * 3. The descriptor's field equals the table, so the two cannot drift.
+ * 4. No production source under `src/` writes the literal in a code position.
  *    This is the one that would have caught the original state, and the only
  *    one that keeps catching a NEW hardcoded site.
  */
