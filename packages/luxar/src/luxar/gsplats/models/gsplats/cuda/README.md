@@ -152,7 +152,7 @@ answer is "less than you would assume":
 
 | | status |
 |---|---|
-| **Compiles** | Gated. `make check-native` / `hatch run check-native` syntax-checks every native translation unit against torch's own required C++ standard, needs no GPU, and runs in CI's `python-tests`. |
+| **Compiles** | Partially gated. `make check-native` / `hatch run check-native` checks every translation unit when its toolchain is present, using the standards shipped by the build. CI's Linux `python-tests` requires the host-C++ arm, which always checks the preprocessing binding and also checks the gsplat binding when CUDA headers are available; the Metal and `nvcc` arms remain tracked in #2544. No GPU is required. |
 | **Numeric parity vs the torch reference** | Tests EXIST and are substantial — 138 test functions here, 59 on the Metal side, including `test_cuda_comparison.py` ("ensure numerical correctness of the CUDA backend against the authoritative PyTorch reference implementation") and `test_cuda_numerical.py`. They are `skipif(not torch.cuda.is_available())`, so **they never run in CI**, which has no GPU. Nothing verifies this backend on any automated basis; it is verified only when someone runs `make test-cuda` on a GPU box. |
 | **Formatting / static analysis** | None. No `.clang-format`, no `clang-tidy`, no CI arm. Deliberately deferred: introducing a format would rewrite ~3,900 lines of code whose only behavioural check is the GPU-gated suite above, so the reformat could not be verified. |
 
