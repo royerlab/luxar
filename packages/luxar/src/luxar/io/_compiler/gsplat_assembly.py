@@ -34,6 +34,11 @@ from ...encoding import (
     gridded_axis_step,
 )
 from ...encoding.compression import resolve_compressor
+from ...typing_utils.aliases import (
+    ColorArray,
+    PositionArray,
+    ScalarArray,
+)
 from ...typing_utils.constants import (
     COORDINATE_U16_MAX_EXTENT,
     DEFAULT_TRUNCATION_RADIUS,
@@ -165,7 +170,7 @@ class _CentersEncodingPlan(NamedTuple):
 
 def _axis_center_offender(
     axis: int,
-    column: NDArray[np.float32],
+    column: NDArray[np.floating[Any]],
     lo: float,
     extent: float,
     chol: NDArray[np.float32],
@@ -242,7 +247,7 @@ def _axis_center_offender(
 
 
 def _center_quantization_offender(
-    centers: NDArray[np.float32],
+    centers: PositionArray,
     cholesky_factors: NDArray[np.float32],
     n_dims: int,
 ) -> Optional[Tuple[int, float, int, float, float]]:
@@ -308,7 +313,11 @@ def _center_quantization_offender(
     if n_rows == 0:
         return None
 
-    arr = np.asarray(centers)
+    # Annotated because `PositionArray` is a union and reducing a union loses
+    # the dtype for the type checker. `np.asarray` with no `dtype=` is a view,
+    # so this costs nothing at runtime — which matters: a float64 copy of the
+    # centers is 53 MB on a 1.65M x 4 leaf, paid per leaf per ladder.
+    arr: NDArray[np.floating[Any]] = np.asarray(centers)
     if arr.ndim != 2 or arr.shape[1] != n_dims:
         # Neither this rail nor the encoder's snap reasons about a non-(N, d)
         # coordinate array — both are per-axis, and the encoder falls through to
@@ -359,7 +368,7 @@ def _center_quantization_offender(
 
 
 def _resolve_centers_encoding_mode(
-    centers: NDArray[np.float32],
+    centers: PositionArray,
     cholesky_factors: NDArray[np.float32],
     n_dims: int,
     mode: EncodingMode,
@@ -414,7 +423,7 @@ def _resolve_centers_encoding_mode(
 
 def _centers_mode_for_write(
     plan: Optional[_CentersEncodingPlan],
-    centers: NDArray[np.float32],
+    centers: PositionArray,
     cholesky_factors: NDArray[np.float32],
     n_dims: int,
     ctx: DatasetCtx,
@@ -428,10 +437,10 @@ def _centers_mode_for_write(
 
 
 def apply_gsplat_spatial_ordering(
-    centers: NDArray[np.float32],
-    amplitudes: Union[NDArray[np.float32], float],
+    centers: PositionArray,
+    amplitudes: Union[ScalarArray, float],
     cholesky_factors: NDArray[np.float32],
-    colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]],
+    colors: Optional[Union[ColorArray, tuple, list]],
     label_ids: Optional[np.ndarray],
     n_splats: int,
     n_dims: int,
@@ -442,10 +451,10 @@ def apply_gsplat_spatial_ordering(
     *,
     dataset_ctx: Optional[DatasetCtx] = None,
 ) -> Tuple[
+    PositionArray,
+    Union[ScalarArray, float],
     NDArray[np.float32],
-    Union[NDArray[np.float32], float],
-    NDArray[np.float32],
-    Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]],
+    Optional[Union[ColorArray, tuple, list]],
     Optional[np.ndarray],
     Optional[Dict[str, Any]],
     Optional[_CentersEncodingPlan],
@@ -572,7 +581,7 @@ def resolve_gsplat_chunk_size(n_splats: int, n_dims: int) -> int:
 
 
 def compute_amplitude_mass_stats(
-    amplitudes: Union[NDArray[np.float32], float],
+    amplitudes: Union[ScalarArray, float],
     chol_diag: NDArray[np.float32],
     n_splats: int,
 ) -> Tuple[float, float]:
@@ -645,7 +654,7 @@ _OPTIONAL_AMPLITUDE_ATTRS: Tuple[str, ...] = (
 
 
 def amplitude_mass_stats_attrs(
-    amplitudes: Union[NDArray[np.float32], float],
+    amplitudes: Union[ScalarArray, float],
     chol_diag: NDArray[np.float32],
     n_splats: int,
 ) -> Dict[str, float]:
@@ -727,10 +736,10 @@ def _apply_label_metadata(group: zarr.Group, metadata: Dict[str, Any]) -> None:
 
 def write_gsplat_arrays(
     group: zarr.Group,
-    centers: NDArray[np.float32],
-    amplitudes: Union[NDArray[np.float32], float],
+    centers: PositionArray,
+    amplitudes: Union[ScalarArray, float],
     cholesky_factors: NDArray[np.float32],
-    colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]],
+    colors: Optional[Union[ColorArray, tuple, list]],
     label_ids: Optional[np.ndarray],
     label_vocabulary: Optional[Dict[int, str]],
     n_splats: int,

@@ -11,6 +11,11 @@ from typing import TYPE_CHECKING, Dict, Optional, Set, Tuple
 import numpy as np
 from numpy.typing import NDArray
 
+from ..typing_utils.aliases import (
+    Float32Array,
+    PositionArray,
+)
+
 if TYPE_CHECKING:
     # Annotation only, in two signatures. `validation` sits BELOW `core`: core
     # imports validation (and now imports `validation.writing` at module level,
@@ -124,13 +129,11 @@ def validate_dimensional_coverage(
 
 
 def broadcast_to_all_slices(
-    positions: NDArray[np.float32],
-    colors: Optional[NDArray[np.float32]],
-    radii: Optional[NDArray[np.float32]],
+    positions: PositionArray,
+    colors: Optional[Float32Array],
+    radii: Optional[Float32Array],
     scene_dimensions: Dimensions,
-) -> Tuple[
-    NDArray[np.float32], Optional[NDArray[np.float32]], Optional[NDArray[np.float32]]
-]:
+) -> Tuple[PositionArray, Optional[Float32Array], Optional[Float32Array]]:
     """Broadcast points to cover all non-displayed dimension values.
 
     Helper function that replicates points across all combinations of

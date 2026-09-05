@@ -216,7 +216,22 @@ This ensures:
 
 ### Writer Protocol
 
-`ZarrWriterProtocol` defines the interface for Zarr writers, enabling different implementations while maintaining API consistency.
+`ZarrWriterProtocol` defines the interface for Zarr writers, enabling different
+implementations while maintaining API consistency.
+
+Its one implementation, `LuxarZarrCompiler`, is genuinely type-checked against
+it. That was not always so: every geometry write method carried
+`# type: ignore[override]`, hiding both an annotation split (this module used to
+redefine `PositionArray` / `ColorArray` *wider* than `typing_utils.aliases`
+spells the same names — see the comment there) and a real signature bug, where
+the protocol's `write_mesh` omitted the eleven texture parameters the compiler
+takes between `scalars` and `shading`.
+
+`tests/test_writer_protocol_agreement.py` keeps it honest: parameter names,
+order and defaults for every declared method, plus a probe that writes a
+real store per declared input dtype (float16 positions, uint8/uint16 colors,
+float16/uint8 scalar attributes) so the aliases are pinned to what the write
+path accepts rather than to what either signature claims.
 
 ### Re-chunking an existing store (`optimise.py`)
 

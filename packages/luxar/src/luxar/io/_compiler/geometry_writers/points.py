@@ -9,13 +9,18 @@ behavior-preserving move).
 
 from __future__ import annotations
 
-from typing import Any, List, Optional, Sequence, Tuple, Union
+from typing import Any, Optional, Sequence, Union
 
 import numpy as np
 from arbol import aprint
-from numpy.typing import NDArray
 
-from ....typing_utils.aliases import NodePath, PointsMetadata
+from ....typing_utils.aliases import (
+    ColorArray,
+    NodePath,
+    PointsMetadata,
+    PositionArray,
+    ScalarArray,
+)
 from ....typing_utils.constants import SHARPNESS_MAX
 from ....validation.writing import (
     POINTS_RESERVED_ATTRS,
@@ -51,11 +56,11 @@ from ..spatial_ordering.points import (
 def write_points(
     ctx: GeometryWriteCtx,
     path: NodePath,
-    positions: NDArray[np.float32],
-    colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]] = None,
-    radii: Optional[Union[NDArray[np.float32], float]] = None,
-    sharpness: Optional[Union[NDArray[np.float32], float]] = None,
-    scalars: Optional[Union[NDArray[np.float32], float]] = None,
+    positions: PositionArray,
+    colors: Optional[Union[ColorArray, tuple, list]] = None,
+    radii: Optional[Union[ScalarArray, float]] = None,
+    sharpness: Optional[Union[ScalarArray, float]] = None,
+    scalars: Optional[Union[ScalarArray, float]] = None,
     labels: Optional["Sequence[str]"] = None,
     image_labels: Optional[Any] = None,
     keys: Optional["Sequence[str]"] = None,
