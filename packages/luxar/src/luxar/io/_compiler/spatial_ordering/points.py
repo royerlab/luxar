@@ -7,11 +7,14 @@ from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 import numpy as np
 import zarr
 from arbol import aprint
-from numpy.typing import NDArray
 
 from luxar._zarr_compat import create_array
 
 from ....encoding.compression import resolve_compressor
+from ....typing_utils.aliases import (
+    PositionArray,
+    ScalarArray,
+)
 from ..context import DatasetCtx, OrderingCtx
 
 if TYPE_CHECKING:
@@ -19,10 +22,10 @@ if TYPE_CHECKING:
 
 
 def build_points_ordering(
-    positions: NDArray[np.float32],
+    positions: PositionArray,
     n_points: int,
     n_dims: int,
-    radii: Optional[Union[NDArray[np.float32], float]],
+    radii: Optional[Union[ScalarArray, float]],
     ctx: OrderingCtx,
     store: zarr.Group,
     *,

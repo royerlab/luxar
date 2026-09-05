@@ -31,11 +31,16 @@ from __future__ import annotations
 import difflib
 import operator
 from pathlib import Path
-from typing import Any, Dict, FrozenSet, List, Optional, Tuple, Union
+from typing import Any, Dict, FrozenSet, Optional, Tuple, Union
 
 import numpy as np
 from numpy.typing import NDArray
 
+from ..typing_utils.aliases import (
+    ColorArray,
+    PositionArray,
+    ScalarArray,
+)
 from .base import (
     ValidationError,
     _validate_numeric_finite_values,
@@ -622,17 +627,17 @@ def validate_line_indices(indices: Any, n_vertices: int) -> NDArray[Any]:
 
 
 def validate_gsplat_inputs(
-    centers: NDArray[np.float32],
-    amplitudes: Union[NDArray[np.float32], float],
+    centers: PositionArray,
+    amplitudes: Union[ScalarArray, float],
     cholesky_factors: NDArray[np.float32],
-    colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]] = None,
+    colors: Optional[Union[ColorArray, tuple, list]] = None,
     *,
     check_values: bool = True,
 ) -> Tuple[
+    PositionArray,
+    Union[ScalarArray, float],
     NDArray[np.float32],
-    Union[NDArray[np.float32], float],
-    NDArray[np.float32],
-    Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]],
+    Optional[Union[ColorArray, tuple, list]],
     int,
     int,
     bool,

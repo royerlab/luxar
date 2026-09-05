@@ -12,16 +12,18 @@ from typing import Any, Dict, Literal, Optional, Union
 import numpy as np
 import zarr
 from arbol import aprint
-from numpy.typing import NDArray
 
 from ....encoding import SemanticType
+from ....typing_utils.aliases import (
+    ColorArray,
+)
 from ..chunking import calculate_intelligent_chunks
 from ..context import DatasetCtx
 
 
 def write_colors(
     group: zarr.Group,
-    colors: Union[NDArray[np.float32], tuple, list],
+    colors: Union[ColorArray, tuple, list],
     spatial_index_data: Optional[Dict[str, Any]],
     n_elements: int,
     ctx: DatasetCtx,

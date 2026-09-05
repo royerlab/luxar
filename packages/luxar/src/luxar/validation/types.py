@@ -16,7 +16,7 @@ from typing import Any, List, Optional, Tuple, Union, cast
 
 import numpy as np
 
-from ..typing_utils.aliases import PositionArray, TransformMatrix
+from ..typing_utils.aliases import Float32Array, TransformMatrix
 from ..typing_utils.constants import (
     ABSORPTION_MIN,
     GAMMA_MAX,
@@ -39,7 +39,7 @@ from ..typing_utils.constants import (
 from ..typing_utils.enums import BlendingMode, NodeType, PhysicalUnit
 
 
-def validate_positions(positions: Any, ndim: Optional[int] = None) -> PositionArray:
+def validate_positions(positions: Any, ndim: Optional[int] = None) -> Float32Array:
     """Validate and convert positions array to correct type.
 
     Args:

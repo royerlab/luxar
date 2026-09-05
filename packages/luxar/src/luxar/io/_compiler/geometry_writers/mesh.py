@@ -23,14 +23,19 @@ sibling, and LUT encoding of grid-snapped indices would decode as garbage.
 
 from __future__ import annotations
 
-from typing import Any, List, Optional, Sequence, Tuple, Union
+from typing import Any, Optional, Sequence, Union
 
 import numpy as np
 from arbol import aprint
 from numpy.typing import NDArray
 
 from ....encoding import SemanticType
-from ....typing_utils.aliases import NodePath
+from ....typing_utils.aliases import (
+    ColorArray,
+    NodePath,
+    PositionArray,
+    ScalarArray,
+)
 from ....validation.writing import (
     MESH_RESERVED_ATTRS,
     validate_mesh_arrays,
@@ -177,12 +182,12 @@ def _write_mesh_texture_arrays(
 def write_mesh(
     ctx: GeometryWriteCtx,
     path: NodePath,
-    vertices: NDArray[np.float32],
+    vertices: PositionArray,
     faces: NDArray[np.uint32],
     normals: Optional[NDArray[np.float32]] = None,
     normal_dims: Optional[Sequence[int]] = None,
-    colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]] = None,
-    scalars: Optional[Union[NDArray[np.float32], float]] = None,
+    colors: Optional[Union[ColorArray, tuple, list]] = None,
+    scalars: Optional[Union[ScalarArray, float]] = None,
     uvs: Optional[NDArray[np.float32]] = None,
     texture: Optional[NDArray[Any]] = None,
     texture_encoding: str = "raw",

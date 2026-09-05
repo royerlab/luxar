@@ -12,9 +12,11 @@ from typing import Any, Dict, Optional, Tuple, Union
 import numpy as np
 import zarr
 from arbol import aprint
-from numpy.typing import NDArray
 
 from ....encoding import SemanticType
+from ....typing_utils.aliases import (
+    ScalarArray,
+)
 from ....typing_utils.constants import SHARPNESS_MAX
 from ..chunking import calculate_intelligent_chunks
 from ..context import DatasetCtx
@@ -22,7 +24,7 @@ from ..context import DatasetCtx
 
 def write_positive_scalar(
     group: zarr.Group,
-    data: Union[NDArray[np.float32], float, int],
+    data: Union[ScalarArray, float, int],
     name: str,
     spatial_index_data: Optional[Dict[str, Any]],
     n_elements: int,
@@ -115,7 +117,7 @@ def write_positive_scalar(
 
 def write_bounded_scalar(
     group: zarr.Group,
-    data: Union[NDArray[np.float32], float, int],
+    data: Union[ScalarArray, float, int],
     name: str,
     bounds: Tuple[float, float],
     spatial_index_data: Optional[Dict[str, Any]],
@@ -185,7 +187,7 @@ def write_bounded_scalar(
 
 def write_radii(
     group: zarr.Group,
-    radii: Union[NDArray[np.float32], float, int],
+    radii: Union[ScalarArray, float, int],
     spatial_index_data: Optional[Dict[str, Any]],
     n_points: int,
     ctx: DatasetCtx,
@@ -213,7 +215,7 @@ def write_radii(
 
 def write_sharpness(
     group: zarr.Group,
-    sharpness: Union[NDArray[np.float32], float, int],
+    sharpness: Union[ScalarArray, float, int],
     spatial_index_data: Optional[Dict[str, Any]],
     n_points: int,
     ctx: DatasetCtx,
@@ -239,7 +241,7 @@ def write_sharpness(
 
 def write_scalars(
     group: zarr.Group,
-    scalars: Union[NDArray[np.float32], float, int],
+    scalars: Union[ScalarArray, float, int],
     spatial_index_data: Optional[Dict[str, Any]],
     n_elements: int,
     ctx: DatasetCtx,

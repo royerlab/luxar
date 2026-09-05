@@ -17,6 +17,7 @@ import { ViewStateQueue } from '../../../../data/scene-loader/view-state/view-st
 import { RefinementResidencyBudget } from '../../../../data/scene-loader/progressive/residency-budget';
 import type { ViewState } from '../../../../data/data-loader-types';
 import { log, Modules } from '../../../../utils/log';
+import { notifier } from '../../../../utils/cross-layer/notifier';
 
 const baseViewState: ViewState = {
   displayDims: [0, 1, 2],
@@ -75,12 +76,14 @@ function makeStagedLoader(stages: Array<{ hasMoreLODs: boolean }>) {
  *
  * @param name  Display name (e.g. `'runGSplatsRefinement'`).
  * @param label Geometry label used by the no-progress warning.
+ * @param degradedState User-visible description after refinement gives up.
  * @param run   Adapter that invokes the type-specific runX with the given
  *              wiring and returns its promise.
  */
 export function defineRefinementLoopContract(
   name: string,
   label: 'Points' | 'Lines' | 'GSplats' | 'Mesh',
+  degradedState: 'showing reduced detail' | 'showing a partial surface',
   run: (wiring: RefinementRunWiring) => Promise<void>
 ): void {
   describe(`${name} — shared loop contract`, () => {
@@ -451,6 +454,7 @@ export function defineRefinementLoopContract(
         updateView: vi.fn().mockRejectedValue(new Error('persistent failure')),
       };
       const releaseLock: () => void = vi.fn();
+      const toast = vi.spyOn(notifier, 'toast').mockImplementation(() => {});
 
       await run({
         loaders: new Map([['/bad', failing]]),
@@ -465,6 +469,9 @@ export function defineRefinementLoopContract(
       // Exactly 3 attempts (the cap), then the loop exits and releases.
       expect(failing.updateView).toHaveBeenCalledTimes(3);
       expect(releaseLock).toHaveBeenCalledTimes(1);
+      expect(toast).toHaveBeenCalledOnce();
+      expect(toast).toHaveBeenCalledWith(`Refinement failed for /bad — ${degradedState}`, 5000);
+      toast.mockRestore();
     });
 
     it('a failing loader does not stop a healthy loader from finishing its ladder', async () => {

@@ -9,14 +9,19 @@ Behavior-preserving.
 
 from __future__ import annotations
 
-from typing import Any, List, Optional, Sequence, Tuple, Union
+from typing import Any, Optional, Sequence, Union
 
 import numpy as np
 from arbol import aprint
 from numpy.typing import NDArray
 
 from ....encoding import SemanticType
-from ....typing_utils.aliases import NodePath
+from ....typing_utils.aliases import (
+    ColorArray,
+    NodePath,
+    PositionArray,
+    ScalarArray,
+)
 from ....typing_utils.constants import SHARPNESS_MAX
 from ....validation.writing import (
     LINES_RESERVED_ATTRS,
@@ -51,7 +56,7 @@ _AUTHORING_LINT_MIN_VERTICES = 16
 _AUTHORING_LINT_SHARED_THRESHOLD = 0.9
 
 
-def _exploded_chain_fraction(vertices: NDArray[np.float32]) -> Optional[float]:
+def _exploded_chain_fraction(vertices: PositionArray) -> Optional[float]:
     """Return the forward-chain adjacency fraction when it strongly signals intent.
 
     Immediate ``(a, b), (b, a)`` reversals are excluded: they are common in
@@ -84,11 +89,11 @@ def _line_authoring_warning_key(ctx: GeometryWriteCtx, path: str) -> str:
 def write_lines(
     ctx: GeometryWriteCtx,
     path: NodePath,
-    vertices: NDArray[np.float32],
-    widths: Union[NDArray[np.float32], float],
-    colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]] = None,
-    sharpness: Optional[Union[NDArray[np.float32], float]] = None,
-    scalars: Optional[Union[NDArray[np.float32], float]] = None,
+    vertices: PositionArray,
+    widths: Union[ScalarArray, float],
+    colors: Optional[Union[ColorArray, tuple, list]] = None,
+    sharpness: Optional[Union[ScalarArray, float]] = None,
+    scalars: Optional[Union[ScalarArray, float]] = None,
     indices: Optional[NDArray[np.uint32]] = None,
     line_type: str = "polyline",
     labels: Optional["Sequence[str]"] = None,
