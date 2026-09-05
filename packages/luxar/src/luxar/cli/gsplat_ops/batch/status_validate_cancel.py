@@ -12,6 +12,7 @@ from pathlib import Path
 import typer
 from arbol import aprint
 
+from ..._traceback import exit_with_error
 from .validation import validate_tile as _validate_tile_impl
 
 # Per-attempt staging tokens (the part after `{tile}.tmp.`):
@@ -92,8 +93,7 @@ def run_batch_status_cmd(*, output_dir: Path) -> None:
     except typer.Exit:
         raise
     except Exception as e:
-        aprint(f"Error: {e}")
-        raise typer.Exit(1)
+        exit_with_error(f"Error: {e}", e)
 
 
 def run_batch_validate_cmd(*, output_dir: Path, fix: bool) -> None:
@@ -229,8 +229,7 @@ def run_batch_validate_cmd(*, output_dir: Path, fix: bool) -> None:
     except typer.Exit:
         raise
     except Exception as e:
-        aprint(f"Error: {e}")
-        raise typer.Exit(1) from e
+        exit_with_error(f"Error: {e}", e)
 
 
 def run_batch_cancel_cmd(*, output_dir: Path) -> None:
@@ -275,5 +274,4 @@ def run_batch_cancel_cmd(*, output_dir: Path) -> None:
     except typer.Exit:
         raise
     except Exception as e:
-        aprint(f"Error: {e}")
-        raise typer.Exit(1) from e
+        exit_with_error(f"Error: {e}", e)

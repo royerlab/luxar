@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Optional
 import typer
 from arbol import aprint, asection
 
+from .._traceback import exit_with_error
 from ..common_options import CorsOriginOption, make_port_option
 from ..utils import _DEFAULT_CORS_ORIGIN, format_memory_size
 
@@ -1290,8 +1291,7 @@ def _resolve_doctor_store_kind(path: Path) -> "StoreKind":
     except typer.Exit:
         raise
     except Exception as exc:
-        aprint(f"❌ {exc}")
-        raise typer.Exit(1) from None
+        exit_with_error(f"❌ {exc}", exc)
 
 
 def _print_doctor_info(
@@ -1417,8 +1417,7 @@ def doctor(
         except typer.Exit:
             raise
         except Exception as exc:
-            aprint(f"❌ {exc}")
-            raise typer.Exit(1) from None
+            exit_with_error(f"❌ {exc}", exc)
 
         _print_report(report)
 

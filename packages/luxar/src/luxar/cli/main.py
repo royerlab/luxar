@@ -22,6 +22,7 @@ from starlette.types import ASGIApp
 from luxar import __version__
 from luxar.utils.arbol_warnings import install_arbol_warnings
 
+from ._traceback import exit_with_error
 from .common_options import (
     AllowSensitivePathOption,
     BandwidthOption,
@@ -373,8 +374,7 @@ def serve(
     except KeyboardInterrupt:
         aprint("\n🛑 Shutting down server...")
     except Exception as e:
-        aprint(f"❌ Error serving path: {e}")
-        raise typer.Exit(1)
+        exit_with_error(f"❌ Error serving path: {e}", e)
 
 
 # ────────────────────────────── viewer ──────────────────────────────────────
@@ -494,8 +494,7 @@ def viewer(
     except KeyboardInterrupt:
         aprint("\n🛑 Shutting down viewer...")
     except Exception as e:
-        aprint(f"❌ Error: {e}")
-        raise typer.Exit(1)
+        exit_with_error(f"❌ Error: {e}", e)
 
 
 # ─────────────────────────────── export ──────────────────────────────────────
@@ -600,8 +599,7 @@ def export(
         aprint(f"❌ {e}")
         raise typer.Exit(1)
     except Exception as e:
-        aprint(f"❌ Error exporting scene: {e}")
-        raise typer.Exit(1)
+        exit_with_error(f"❌ Error exporting scene: {e}", e)
 
 
 def _run_native_export(
