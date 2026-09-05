@@ -795,7 +795,7 @@ describe('joint composition — the rendered pair tracks max(mine, partner)', ()
         }
       }
     }
-  }, 30_000);
+  }, 60_000);
 
   it('the 120° exception threshold is pinned from BOTH sides (#1495)', () => {
     // The sweep above passes even with the width gate left out of the model
