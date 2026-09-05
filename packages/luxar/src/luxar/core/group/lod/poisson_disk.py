@@ -16,10 +16,30 @@ This module exposes:
   :func:`luxar.core.group.lod.spatial_uniform.stratified_grid_order` so the
   caller code in ``make_additive_lod_*`` is symmetric across methods.
 
-Pure NumPy. O(N) expected per level thanks to the cell-grid neighbor
-lookup: each level pre-builds a uniform grid sized at ``r / sqrt(d)``,
-so the rejection test for a candidate point only needs to scan a 5·5·…
-cell neighborhood instead of all already-accepted samples.
+O(N) per level, with a Python-level rejection loop over candidates —
+Bridson is sequential (whether a candidate is accepted depends on which
+were accepted before it), so the loop cannot be vectorised away. NumPy
+does the grid construction; the walk is interpreted. Measured: cost per
+point is **flat** from 10K to 1M points, and scales with ``n_lods`` (one
+Bridson pass per level). The absolute is hardware-bound because the walk
+is interpreted — 25 µs/point at ``n_lods=6`` on an Apple M-series core,
+~100 µs/point on a slower x86 one, so 1M points takes tens of seconds to a
+couple of minutes rather than the hours the quadratic version took. Quote
+the flatness, not the constant.
+
+The linearity comes from the cell grid holding **accepted samples only**.
+Each level builds a uniform grid sized at ``r / sqrt(3)``, so a cell's
+diagonal is exactly ``r`` and no two accepted samples can share one; the
+±2 cell neighborhood scanned for each candidate therefore holds at most
+~125 samples no matter how many INPUT points fall inside it.
+
+That distinction is not a detail. Bucketing every input index and
+filtering for acceptance inside the loop reads as equivalent and is
+quadratic — at the coarsest radius the grid is only a few cells across
+(measured: ``(4, 3, 3)`` for a unit cube), so ±2 spans the whole dataset
+and every candidate scans every point. That was the shipped behaviour
+until #2530: 3.1–3.4× per doubling of N, extrapolating to ~4.3 hours at
+1M points for a selectable public authoring option.
 
 Reference: Bridson, "Fast Poisson Disk Sampling in Arbitrary
 Dimensions" (SIGGRAPH 2007).
@@ -73,6 +93,18 @@ def _select_blue_noise_subset(
     within radius ``r``. Uses a uniform cell grid sized at ``r / sqrt(3)``
     so each rejection test scans only the local 5·5·5 neighborhood.
 
+    The grid holds **accepted samples only**, which is what bounds the work:
+    a cell is ``r / sqrt(3)`` on a side, so its diagonal is exactly ``r`` and
+    no two accepted samples can share one. The 5·5·5 neighborhood therefore
+    holds at most ~125 samples however many INPUT points fall inside it, and
+    the scan is O(1) in N rather than O(N).
+
+    That distinction is the whole cost model. Bucketing every input index
+    instead — and filtering for acceptance inside the innermost loop — reads
+    as equivalent and is quadratic: at the coarsest radius the grid is only a
+    few cells across (measured: ``(4, 3, 3)`` for a unit cube), so ±2 spans
+    the entire dataset and every candidate scans every point.
+
     Args:
         pos: ``(N, 3)`` array of all original positions.
         candidate_order: int array of original indices in the order the
@@ -95,15 +127,19 @@ def _select_blue_noise_subset(
 
     cell_size = r / np.sqrt(3.0)
     cell_ids, grid_shape = _build_cell_grid(pos, mins, cell_size)
-    accepted = np.zeros(n, dtype=np.bool_)
-    # Pre-seed accepted with positions that were taken by coarser levels —
-    # they enforce radius-r exclusion at this finer level too.
-    accepted[~available_mask] = True
 
-    # cell_buckets[c] = list of original indices in cell c. Built once.
-    buckets: dict[int, list[int]] = {}
-    for i, c in enumerate(cell_ids):
-        buckets.setdefault(int(c), []).append(int(i))
+    # Occupancy grid: cell -> indices of ACCEPTED samples in it. Seeded with the
+    # positions coarser levels already took — they enforce radius-r exclusion at
+    # this finer level too — and appended to as this level accepts.
+    #
+    # A list rather than a bare index because the single-occupancy argument
+    # (cell diagonal == r) leans on a strict inequality in the distance test;
+    # two samples exactly r apart may legally share a cell. The list is length
+    # one essentially always, so this costs nothing and cannot silently drop a
+    # constraint if that edge is ever hit.
+    occupied: dict[int, list[int]] = {}
+    for taken in np.flatnonzero(~available_mask):
+        occupied.setdefault(int(cell_ids[taken]), []).append(int(taken))
 
     selected: list[int] = []
     r_sq = r * r
@@ -113,41 +149,41 @@ def _select_blue_noise_subset(
         cand = int(cand)
         if not available_mask[cand]:
             continue
-        cx = cell_ids[cand] // (gy * gz)
-        cy = (cell_ids[cand] // gz) % gy
-        cz = cell_ids[cand] % gz
+        cand_cell = int(cell_ids[cand])
+        cx = cand_cell // (gy * gz)
+        cy = (cand_cell // gz) % gy
+        cz = cand_cell % gz
         rejected = False
         for dx in range(-2, 3):
             if rejected:
                 break
-            ix = int(cx) + dx
+            ix = cx + dx
             if ix < 0 or ix >= gx:
                 continue
             for dy in range(-2, 3):
                 if rejected:
                     break
-                iy = int(cy) + dy
+                iy = cy + dy
                 if iy < 0 or iy >= gy:
                     continue
                 for dz in range(-2, 3):
-                    iz = int(cz) + dz
+                    iz = cz + dz
                     if iz < 0 or iz >= gz:
                         continue
-                    c = ix * gy * gz + iy * gz + iz
-                    bucket = buckets.get(c)
+                    bucket = occupied.get(ix * gy * gz + iy * gz + iz)
                     if not bucket:
                         continue
                     for j in bucket:
-                        if not accepted[j] or j == cand:
-                            continue
                         dx_p = pos[j, 0] - pos[cand, 0]
                         dy_p = pos[j, 1] - pos[cand, 1]
                         dz_p = pos[j, 2] - pos[cand, 2]
                         if dx_p * dx_p + dy_p * dy_p + dz_p * dz_p < r_sq:
                             rejected = True
                             break
+                    if rejected:
+                        break
         if not rejected:
-            accepted[cand] = True
+            occupied.setdefault(cand_cell, []).append(cand)
             selected.append(cand)
 
     return np.asarray(selected, dtype=np.intp)

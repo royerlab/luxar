@@ -12,6 +12,7 @@
  */
 
 import type { LuxarApp } from '../core/app';
+import type { BuildInfo } from '../config/build-info';
 import type { ConsoleInterceptor } from '../utils/console-interceptor';
 import type { LuxarCamera } from '../utils/camera-utils';
 import type { AnimationController } from '../scene/animation/animation-controller';
@@ -25,6 +26,18 @@ import type * as THREE from 'three';
 
 declare global {
   interface Window {
+    /**
+     * Build identity of this bundle — version, commit, build time. Attached
+     * unconditionally by `bootstrapStandalone()`, unlike `__luxarDebug`:
+     * a user filing "the viewer renders black" has no reason to have set
+     * `?debug`, and the revision is the first thing the report needs.
+     *
+     * `stamped: false` means no Vite `define` was applied (dev server via a
+     * foreign config, vitest, an embedder bundling `src/` themselves), not
+     * that the build is broken.
+     */
+    __luxarBuild?: BuildInfo;
+
     /**
      * Debug surface attached when `?debug` (or persisted `luxar.debug`
      * localStorage flag) is set. Undefined in production / non-debug

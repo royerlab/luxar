@@ -721,6 +721,7 @@ hatch run luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu \
 | `--tasks-per-job` | Number of tasks per Slurm job (auto-calculated from GPU capacity) |
 | `--parallel` / `--sequential` | Run packed tasks concurrently or one-by-one (default: sequential) |
 | `--preset` | Fitting preset: `draft` (2000 iter), `standard` (5000), `hifi` (10000), `ultra` (20000), `n2s` (= ultra; canonical Noise2Self protocol name) |
+| `--gpus-per-task` | GPUs to request per task, emitted as `#SBATCH --gpus-per-task` (default 1). A COUNT — unlike `batch-fit run --gpus`, which SELECTS local devices |
 | `--gpu` | GPU profile name when auto-detect unavailable (login node) |
 
 **Auto-tiling**: compares total spatial voxels against the GPU's benchmarked

@@ -516,6 +516,11 @@ luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --tiling content \
     --k-star-ref 60000 --n-features-ref 5000 --plan-samples 24   # density knobs + 24-timepoint max-proj plan
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --parallel         # Concurrent tasks per GPU
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --tasks-per-job 5  # Manual packing
+# `--gpus-per-task` is a COUNT (emitted verbatim as `#SBATCH --gpus-per-task`).
+# NOT the same flag as `batch-fit run --gpus`, which SELECTS local devices --
+# they used to share the name `--gpus`, so `--gpus 2` meant "card #2" on one
+# command and "2 GPUs per task" on the other.
+luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --gpus-per-task 2  # 2 GPUs per Slurm task
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu \
     --axes time,camera,channel,z,y,x                                    # Override axis labels
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu \
