@@ -32,6 +32,18 @@ Part of the remote-control design — see `docs/guides/specs/REMOTE_CONTROL_SPEC
   `keydown` on the document (capture phase, passive) cancel the flight where it is;
   so do a newer `flyTo()`, `cancel()`, and `dispose()`. The promise resolves
   `{ completed: false }`. `durationMs <= 0` applies the pose immediately.
+- **`keepOrientation`.** Keeps the live viewing direction and up; only target,
+  distance and projection travel (`keepOrientationPose`, applied per frame and at
+  landing). Because `controls.update()` runs before the flight callback, an active
+  turntable keeps advancing the direction and the flight carries it along — the
+  spin never pauses. The waypoint driver sets it whenever
+  `ControlsManager.isAutoRotateActive()`.
+- **Modes.** Orbit is the designed case. Ortho is the same orbit class with
+  rotation disabled; `zoom` interpolates geometrically and an authored
+  `camera.zoom` is how an ortho waypoint frames tighter. Fly has no orbit state:
+  `setTarget` there means "look at this point now", the physics integrates zero
+  velocity, so a flight moves and aims correctly; `keepOrientation` has no target
+  to keep. A flight never switches projection.
 - One flight at a time per app; `LuxarApp` creates the instance in
   `setupEmbedderHooks` and disposes it through the app's event group.
 

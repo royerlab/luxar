@@ -819,3 +819,25 @@ class TestWaypoint:
     def test_waypoints_must_be_waypoint_instances(self) -> None:
         with pytest.raises(ValueError, match="list of Waypoint"):
             ViewerConfig(waypoints=[{"when": {"story": 0}}])  # type: ignore[list-item]
+
+
+class TestCameraZoom:
+    """Ortho framing: distance changes nothing under an orthographic projection."""
+
+    def test_zoom_round_trips_and_is_omitted_when_unset(self) -> None:
+        cam = CameraConfig(target=(0, 0, 0), zoom=2.5)
+        assert cam.to_dict()["zoom"] == 2.5
+        assert CameraConfig.from_dict(cam.to_dict()).zoom == 2.5
+        assert "zoom" not in CameraConfig(target=(0, 0, 0)).to_dict()
+
+    def test_zoom_must_be_finite_and_positive(self) -> None:
+        with pytest.raises(ValueError, match="zoom"):
+            CameraConfig(zoom=0)
+        with pytest.raises(ValueError, match="zoom"):
+            CameraConfig(zoom=-1)
+        with pytest.raises(ValueError, match="zoom"):
+            CameraConfig(zoom=float("inf"))
+
+    def test_zoom_alone_is_a_valid_waypoint_camera(self) -> None:
+        wp = Waypoint(when={"story": 2}, camera=CameraConfig(zoom=4))
+        assert wp.to_dict()["camera"] == {"zoom": 4}

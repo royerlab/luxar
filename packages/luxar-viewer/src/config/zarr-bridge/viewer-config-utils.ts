@@ -286,6 +286,8 @@ export interface CameraOverrides {
   up?: { x: number; y: number; z: number };
   /** Named node whose bounding box center becomes the camera target */
   targetNode?: string;
+  /** Orthographic zoom factor (> 0); applied only to an ortho camera. */
+  zoom?: number;
 }
 
 /**
@@ -310,6 +312,9 @@ export function extractCameraOverrides(zarrConfig: ZarrViewerConfig): CameraOver
   }
   if (zarrConfig.camera?.target_node) {
     overrides.targetNode = zarrConfig.camera.target_node;
+  }
+  if (typeof zarrConfig.camera?.zoom === 'number' && zarrConfig.camera.zoom > 0) {
+    overrides.zoom = zarrConfig.camera.zoom;
   }
   return overrides;
 }

@@ -511,6 +511,7 @@ export class LuxarApp {
           fovPresets: config.camera.fovPresets,
         }),
       snapTo: (pose) => restoreCamera(this.sceneManager, pose),
+      autoRotateActive: () => this.sceneManager.controls.isAutoRotateActive(),
       flyTo: (pose, opts) => {
         // The first load's config pass runs before setupEmbedderHooks(), so the
         // flight driver may not exist yet; a snap is the faithful fallback.

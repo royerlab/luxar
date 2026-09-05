@@ -184,6 +184,7 @@ describe('LuxarApp', () => {
         setTarget: vi.fn(),
         reinitialize: vi.fn(),
         dispatchEvent: vi.fn(),
+        isAutoRotateActive: vi.fn(() => false),
       },
       postProcessing: {},
       // Embedder-API delegation targets.

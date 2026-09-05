@@ -14,6 +14,7 @@ import type { SceneDimsManager } from '../../scene/scene-dims-manager';
 import type { DimensionAnimationManager } from '../../scene/animation/dimension-animation-manager';
 import { ThemeManager } from '../../themes/theme-manager';
 import { log, Modules } from '../../utils/log';
+import { isOrthographicCamera } from '../../utils/camera-utils';
 
 /**
  * Module-local set of camelCase keys we have already warned about, so that
@@ -55,6 +56,11 @@ export function captureViewerState(
     fov: settings.fov,
     fov_preset: settings.fovPreset,
   };
+  // Ortho framing lives in zoom, not distance; capture it so a snapshot taken
+  // in ortho mode round-trips through `CameraConfig.zoom`.
+  if (isOrthographicCamera(camera)) {
+    result.camera.zoom = camera.zoom;
+  }
 
   // `near` / `far` are AUTHORED here only when the user owns them. While dynamic
   // clipping is on, `settings.near` / `settings.far` are the live camera readouts

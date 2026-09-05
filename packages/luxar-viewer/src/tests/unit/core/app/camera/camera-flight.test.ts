@@ -13,6 +13,7 @@ import {
   FLIGHT_CALLBACK_ID,
   buildFlightPath,
   easeFlight,
+  keepOrientationPose,
   type FlightFrameDriver,
 } from '../../../../../core/app/camera/camera-flight';
 import type { CameraSnapshot } from '../../../../../core/app/snapshot/viewer-snapshot';
@@ -140,6 +141,34 @@ describe('buildFlightPath', () => {
   });
 });
 
+describe('keepOrientationPose', () => {
+  it('keeps the live direction and up, takes target, distance and projection from the path', () => {
+    const pathPose: CameraSnapshot = { ...DEST, position: [20, 0, 0], target: [10, 0, 0] }; // dist 10, +x
+    const reseated = keepOrientationPose(
+      pathPose,
+      new THREE.Vector3(0, 0, 4), // live camera 4 units along +z from its target
+      new THREE.Vector3(0, 0, 0),
+      new THREE.Vector3(0, 1, 0)
+    );
+    expect(reseated.target).toEqual([10, 0, 0]);
+    expect(reseated.position.map((v) => +v.toFixed(6))).toEqual([10, 0, 10]); // +z kept, dist 10
+    expect(reseated.up).toEqual([0, 1, 0]);
+    expect(reseated.fov).toBe(DEST.fov);
+    expect(reseated.near).toBe(DEST.near);
+  });
+
+  it('falls back to the path direction when the camera sits on its target', () => {
+    const pathPose: CameraSnapshot = { ...DEST, position: [20, 0, 0], target: [10, 0, 0] };
+    const reseated = keepOrientationPose(
+      pathPose,
+      new THREE.Vector3(3, 3, 3),
+      new THREE.Vector3(3, 3, 3),
+      new THREE.Vector3(0, 1, 0)
+    );
+    expect(reseated.position).toEqual([20, 0, 0]);
+  });
+});
+
 describe('CameraFlight', () => {
   let now: number;
   let driver: ReturnType<typeof makeDriver>;
@@ -256,6 +285,53 @@ describe('CameraFlight', () => {
     flight.dispose();
     await expect(done).resolves.toEqual({ completed: false });
     expect(driver.removePerFrameCallback).toHaveBeenCalledTimes(1);
+  });
+
+  it('keepOrientation: a turntable keeps spinning through the flight and the landing', async () => {
+    const { flight, camera, controls } = makeFlight();
+    // Start 10 units along +z of the origin; DEST is 10 units along +x of (10,0,0).
+    const done = flight.flyTo(DEST, { durationMs: 1000, easing: 'linear', keepOrientation: true });
+
+    // Emulate what controls.update() does before each flight frame under
+    // auto-rotate: swing the camera about the current target by 90° per frame.
+    const spin = (): void => {
+      const target = controls.getFocusTarget();
+      const offset = camera.position.clone().sub(target);
+      offset.applyAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
+      camera.position.copy(target.add(offset));
+    };
+
+    now = 1500;
+    spin(); // +z → +x
+    driver.tick();
+    let target = controls.getFocusTarget();
+    let dir = camera.position.clone().sub(target).normalize();
+    expect(target.x).toBeCloseTo(5, 5); // target still travels
+    expect(camera.position.distanceTo(target)).toBeCloseTo(10, 5); // distance still travels
+    expect(dir.x).toBeCloseTo(1, 5); // but the direction is the turntable's, not the path's
+    expect(camera.up.toArray()).toEqual([0, 1, 0]); // and up is kept, not DEST's +z
+
+    now = 2001;
+    spin(); // +x → -z
+    driver.tick();
+    await expect(done).resolves.toEqual({ completed: true });
+    target = controls.getFocusTarget();
+    dir = camera.position.clone().sub(target).normalize();
+    expect(target.toArray()).toEqual([10, 0, 0]);
+    expect(camera.position.distanceTo(target)).toBeCloseTo(10, 5);
+    expect(dir.z).toBeCloseTo(-1, 5); // landed where the spin had got to
+    expect(camera.fov).toBe(40); // projection parameters still arrive
+  });
+
+  it('keepOrientation with a zero duration reseats the pose immediately', async () => {
+    const { flight, camera, controls } = makeFlight();
+    await expect(flight.flyTo(DEST, { durationMs: 0, keepOrientation: true })).resolves.toEqual({
+      completed: true,
+    });
+    const target = controls.getFocusTarget();
+    expect(target.toArray()).toEqual([10, 0, 0]);
+    // Live direction was +z (camera at (0,0,10) looking at the origin).
+    expect(camera.position.toArray().map((v) => +v.toFixed(6))).toEqual([10, 0, 10]);
   });
 
   it('with no input element, pointer events cannot cancel', async () => {

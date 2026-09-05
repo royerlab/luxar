@@ -118,6 +118,9 @@ export function resolveWaypointPose(
   }
   if (typeof camera.near === 'number') pose.near = camera.near;
   if (typeof camera.far === 'number') pose.far = camera.far;
+  // Orthographic framing: distance changes nothing under an ortho projection,
+  // only zoom does, so a waypoint that wants to frame tighter authors `zoom`.
+  if (typeof camera.zoom === 'number' && camera.zoom > 0) pose.zoom = camera.zoom;
   return pose;
 }
 
@@ -125,9 +128,17 @@ export interface WaypointPorts {
   getDims: () => WaypointDims | null;
   getLivePose: () => CameraSnapshot;
   resolvePose: (camera: ZarrCameraConfig, live: CameraSnapshot) => CameraSnapshot;
-  /** Instant application (load-time framing, `duration_ms: 0`). */
+  /** Instant application of the authored pose (the load-time framing). */
   snapTo: (pose: CameraSnapshot) => void;
   flyTo: (pose: CameraSnapshot, opts: FlyToOptions) => Promise<FlightResult>;
+  /**
+   * Whether the orbit turntable is currently spinning the camera. While it
+   * is, a story step must not swing the camera to the author's azimuth: the
+   * flight keeps the live direction (`keepOrientation`) and only the target
+   * and distance travel, so the spin continues uninterrupted around the new
+   * point of interest.
+   */
+  autoRotateActive: () => boolean;
   /** Snake_case rendering overrides — the authored `viewer_config` path. */
   applyRendering: (rendering: Record<string, unknown>) => void;
 }
@@ -170,12 +181,16 @@ export class WaypointDriver {
     if (wp.camera && typeof wp.camera === 'object') {
       const pose = this.ports.resolvePose(wp.camera, this.ports.getLivePose());
       const duration = typeof wp.duration_ms === 'number' ? wp.duration_ms : undefined;
-      if (arrival === 'snap' || duration === 0) {
+      if (arrival === 'snap') {
+        // Load-time framing: the authored pose verbatim.
         this.ports.snapTo(pose);
       } else {
+        // A story step. `duration_ms: 0` is still a flight of zero length so
+        // the turntable rule below applies to it too.
         void this.ports.flyTo(pose, {
           ...(duration !== undefined ? { durationMs: duration } : {}),
           ...(wp.easing ? { easing: wp.easing } : {}),
+          ...(this.ports.autoRotateActive() ? { keepOrientation: true } : {}),
         });
       }
     }

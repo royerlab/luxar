@@ -92,6 +92,8 @@ export interface ZarrCameraConfig {
   fov_preset?: string;
   near?: number;
   far?: number;
+  /** Orthographic zoom factor (> 0). Only meaningful under an ortho projection. */
+  zoom?: number;
   /** Named scene graph node whose bounding box center becomes the camera target */
   target_node?: string;
 }

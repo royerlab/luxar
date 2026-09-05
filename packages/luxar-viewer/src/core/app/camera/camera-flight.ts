@@ -44,6 +44,20 @@ export interface FlyToOptions {
   durationMs?: number;
   /** Easing curve. Default `'ease-in-out'` (smoothstep). */
   easing?: FlightEasing;
+  /**
+   * Keep the CURRENT viewing direction and up vector; only the focus target,
+   * the distance to it, and the projection parameters (fov / zoom / planes)
+   * travel to the pose. The pose's own orientation is ignored.
+   *
+   * This is how a flight composes with the orbit turntable: `controls.update()`
+   * runs before the flight's frame callback, so the auto-rotation keeps
+   * advancing the direction each frame and the flight simply carries that
+   * direction to the new target — the spin never pauses, and landing does not
+   * swing the camera to the author's azimuth. The waypoint driver sets it
+   * whenever auto-rotate is active; a controller may ask for it explicitly.
+   * Meaningless in fly mode (no orbit target) and ignored there in effect.
+   */
+  keepOrientation?: boolean;
 }
 
 export interface FlightResult {
@@ -163,12 +177,41 @@ export function buildFlightPath(from: CameraSnapshot, to: CameraSnapshot): Fligh
   };
 }
 
+/**
+ * Re-seat `pathPose` on the camera's CURRENT viewing direction and up: same
+ * target, same distance and projection as the path says, but the offset from
+ * the target points the way the live camera already points. Exported for
+ * tests. Falls back to the path's own direction when the live offset is
+ * degenerate (camera sitting on its target).
+ */
+export function keepOrientationPose(
+  pathPose: CameraSnapshot,
+  livePosition: THREE.Vector3,
+  liveTarget: THREE.Vector3,
+  liveUp: THREE.Vector3
+): CameraSnapshot {
+  const target = vec3(pathPose.target);
+  const dist = vec3(pathPose.position).sub(target).length();
+  const liveOffset = livePosition.clone().sub(liveTarget);
+  const dir =
+    liveOffset.lengthSq() > 0
+      ? liveOffset.normalize()
+      : vec3(pathPose.position).sub(target).normalize();
+  const position = target.clone().addScaledVector(dir, dist);
+  return {
+    ...pathPose,
+    position: [position.x, position.y, position.z],
+    up: [liveUp.x, liveUp.y, liveUp.z],
+  };
+}
+
 interface ActiveFlight {
   path: FlightPath;
   pose: CameraSnapshot;
   startedAt: number;
   durationMs: number;
   easing: FlightEasing;
+  keepOrientation: boolean;
   resolve: (result: FlightResult) => void;
 }
 
@@ -201,8 +244,9 @@ export class CameraFlight {
     this.cancel();
 
     const durationMs = opts?.durationMs ?? DEFAULT_FLIGHT_DURATION_MS;
+    const keepOrientation = opts?.keepOrientation === true;
     if (!(durationMs > 0)) {
-      restoreCamera(this.deps.sceneManager, pose);
+      restoreCamera(this.deps.sceneManager, keepOrientation ? this.reseat(pose) : pose);
       return Promise.resolve({ completed: true });
     }
 
@@ -214,6 +258,7 @@ export class CameraFlight {
         startedAt: this.now(),
         durationMs,
         easing: opts?.easing ?? 'ease-in-out',
+        keepOrientation,
         resolve,
       };
       this.attachCancelListeners();
@@ -242,11 +287,23 @@ export class CameraFlight {
     const t = (this.now() - flight.startedAt) / flight.durationMs;
     if (t >= 1) {
       // Land exactly: restoreCamera is the same hand-off setCameraPose uses.
-      restoreCamera(this.deps.sceneManager, flight.pose);
+      // Under keepOrientation the landing keeps whatever direction the
+      // turntable has reached by now, at the pose's target and distance.
+      restoreCamera(
+        this.deps.sceneManager,
+        flight.keepOrientation ? this.reseat(flight.pose) : flight.pose
+      );
       this.finish(true);
       return;
     }
-    this.applyIntermediate(flight.path.at(easeFlight(t, flight.easing)));
+    const pathPose = flight.path.at(easeFlight(t, flight.easing));
+    this.applyIntermediate(flight.keepOrientation ? this.reseat(pathPose) : pathPose);
+  }
+
+  /** `keepOrientationPose` against the live camera + focus target. */
+  private reseat(pathPose: CameraSnapshot): CameraSnapshot {
+    const { camera, controls } = this.deps.sceneManager;
+    return keepOrientationPose(pathPose, camera.position, controls.getFocusTarget(), camera.up);
   }
 
   /**

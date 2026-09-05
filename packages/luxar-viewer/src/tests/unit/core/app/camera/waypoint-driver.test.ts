@@ -106,10 +106,17 @@ describe('resolveWaypointPose', () => {
     expect(clipped.near).toBe(1);
     expect(clipped.far).toBe(50);
   });
+
+  it('carries an authored ortho zoom and ignores a non-positive one', () => {
+    const ortho: CameraSnapshot = { ...LIVE, isOrtho: true, fov: undefined, zoom: 1 };
+    expect(resolveWaypointPose({ zoom: 3 }, ortho, deps).zoom).toBe(3);
+    expect(resolveWaypointPose({ zoom: 0 }, ortho, deps).zoom).toBe(1);
+    expect(resolveWaypointPose({}, ortho, deps).zoom).toBe(1);
+  });
 });
 
 describe('WaypointDriver', () => {
-  function makePorts(current: { step: number[] | null }) {
+  function makePorts(current: { step: number[] | null; autoRotate?: boolean }) {
     const snapTo = vi.fn<WaypointPorts['snapTo']>();
     const flyTo = vi.fn<WaypointPorts['flyTo']>(() => Promise.resolve({ completed: true }));
     const applyRendering = vi.fn<WaypointPorts['applyRendering']>();
@@ -124,9 +131,32 @@ describe('WaypointDriver', () => {
       snapTo,
       flyTo,
       applyRendering,
+      autoRotateActive: () => current.autoRotate === true,
     } satisfies WaypointPorts;
     return ports;
   }
+
+  it('while the turntable spins, a story step keeps the orientation (target + distance travel)', () => {
+    const current = { step: [0, 0, 0, 0, 0], autoRotate: true };
+    const ports = makePorts(current);
+    const driver = new WaypointDriver(WAYPOINTS, ports);
+    driver.evaluate('snap');
+    // Load-time framing is still the authored pose, spin or no spin.
+    expect(ports.snapTo).toHaveBeenCalledTimes(1);
+
+    current.step = [0, 0, 0, 1, 15];
+    driver.evaluate('fly');
+    expect(ports.flyTo).toHaveBeenCalledWith(expect.objectContaining({ position: [5, 0, 0] }), {
+      durationMs: 800,
+      keepOrientation: true,
+    });
+
+    // Turntable off again: the author's orientation is honoured.
+    current.autoRotate = false;
+    current.step = [0, 0, 0, 2, 0];
+    driver.evaluate('fly');
+    expect(ports.flyTo).toHaveBeenLastCalledWith(expect.anything(), {});
+  });
 
   it('snaps at load and flies on a change of matched waypoint', () => {
     const current = { step: [0, 0, 0, 0, 0] };
@@ -168,7 +198,7 @@ describe('WaypointDriver', () => {
     expect(ports.flyTo).toHaveBeenCalledTimes(1);
   });
 
-  it('duration_ms 0 snaps even on a change, and rendering rides along', () => {
+  it('duration_ms 0 is a zero-length flight (so the turntable rule still applies), and rendering rides along', () => {
     const current = { step: [0, 0, 0, 0, 0] };
     const ports = makePorts(current);
     const driver = new WaypointDriver(WAYPOINTS, ports);
@@ -177,8 +207,11 @@ describe('WaypointDriver', () => {
 
     current.step = [0, 0, 0, 1, 99];
     driver.evaluate('fly');
-    expect(ports.snapTo).toHaveBeenCalledWith(expect.objectContaining({ position: [9, 9, 9] }));
-    expect(ports.flyTo).not.toHaveBeenCalled();
+    expect(ports.flyTo).toHaveBeenCalledWith(expect.objectContaining({ position: [9, 9, 9] }), {
+      durationMs: 0,
+    });
+    expect(ports.snapTo).not.toHaveBeenCalled();
+    ports.flyTo.mockClear();
 
     current.step = [0, 0, 0, 2, 0];
     driver.evaluate('fly');

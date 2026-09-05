@@ -75,6 +75,10 @@ class CameraConfig:
         target_node: Name of a scene graph node whose bounding box center
             becomes the camera target. Resolved at viewer load time.
             If both target and target_node are set, target_node takes precedence.
+        zoom: Orthographic zoom factor (> 0). Only meaningful when the viewer
+            is in ortho mode, where camera distance changes nothing and zoom
+            is what frames tighter; ignored by a perspective camera. This is
+            how an ortho waypoint frames a cluster.
     """
 
     position: Optional[Tuple[float, float, float]] = None
@@ -85,6 +89,7 @@ class CameraConfig:
     near: Optional[float] = None
     far: Optional[float] = None
     target_node: Optional[str] = None
+    zoom: Optional[float] = None
 
     def __post_init__(self) -> None:
         """Validate camera configuration values."""
@@ -117,6 +122,9 @@ class CameraConfig:
         if self.far is not None and self.far <= 0:
             raise ValueError(f"far must be > 0, got {self.far}")
 
+        if self.zoom is not None and (not math.isfinite(self.zoom) or self.zoom <= 0):
+            raise ValueError(f"zoom must be finite and > 0, got {self.zoom}")
+
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dictionary, omitting None fields."""
         result: Dict[str, Any] = {}
@@ -136,6 +144,8 @@ class CameraConfig:
             result["far"] = self.far
         if self.target_node is not None:
             result["target_node"] = self.target_node
+        if self.zoom is not None:
+            result["zoom"] = self.zoom
         return result
 
     @classmethod
@@ -150,6 +160,7 @@ class CameraConfig:
             near=data.get("near"),
             far=data.get("far"),
             target_node=data.get("target_node"),
+            zoom=data.get("zoom"),
         )
 
 

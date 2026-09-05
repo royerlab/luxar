@@ -45,6 +45,23 @@ flyTo(pose: CameraSnapshot, opts?: { durationMs?: number; easing?: 'linear' | 'e
   orbit poses cuts through the object; this one arcs around it.
 - Speed is per flight: `durationMs` (default 1500) and `easing` (default
   smoothstep). `durationMs: 0` equals `setCameraPose()`.
+- **`keepOrientation`** keeps the live viewing direction and up; only the
+  target, the distance and the projection parameters travel, and the pose's
+  own orientation is ignored. This is how a flight composes with the orbit
+  turntable: `controls.update()` runs before the flight's frame callback, so
+  the auto-rotation keeps advancing the direction and the flight carries it to
+  the new target. The spin never pauses and landing does not swing to the
+  author's azimuth. The waypoint driver sets it whenever
+  `ControlsManager.isAutoRotateActive()`; a controller may pass it explicitly.
+- **Control modes.** Orbit is the designed case (every frame hands off via
+  `setTarget` + `reinitialize`). Ortho is the same orbit class with rotation
+  disabled; a flight interpolates `zoom` geometrically, and an authored
+  `camera.zoom` is how an ortho waypoint frames tighter (distance changes
+  nothing under an orthographic projection). Fly has no orbit state:
+  `setTarget` there means "look at this point now" and the physics integrates
+  zero velocity, so a flight moves and aims correctly; `keepOrientation` has no
+  target to keep and is effectively a plain flight. A pose never switches the
+  projection: perspective/ortho stays whatever the viewer is in.
 - **Interruption.** Any pointer / wheel / touch on the canvas or a keydown
   cancels the flight where it is, as does a newer `flyTo()`, a dataset switch,
   or disposal. The promise resolves `{ completed: false }`. The user's own
@@ -207,9 +224,13 @@ Viewer rule (`core/app/camera/waypoint-driver.ts`, wired in
 `LuxarApp.applyViewerConfigState` after `dimensions.current_step` is applied):
 act on a **change of matched waypoint**, never on every slider tick. At load the
 matched waypoint is applied as a snap (the opening framing, ahead of the plain
-`camera` block). Afterwards a change of match flies; a move inside the same
-waypoint's ranges does nothing; leaving every waypoint leaves the camera where
-it is. The touch table therefore only ever calls `setDimensionValue`, and the
+`camera` block). Afterwards a change of match flies (`duration_ms: 0` is a
+zero-length flight); a move inside the same waypoint's ranges does nothing;
+leaving every waypoint leaves the camera where it is. **While auto-rotate is
+active the flight is `keepOrientation`**: the turntable keeps spinning, the
+story step only moves the point it spins around (and how far away), and the
+authored orientation is ignored. In ortho mode author `camera.zoom` to frame
+tighter; position and distance are not what frames an orthographic view. The touch table therefore only ever calls `setDimensionValue`, and the
 keyboard (`[` / `]`) drives the same stories with no controller at all. A
 controller can still `flyTo` anywhere; waypoints are defaults, not a cage.
 

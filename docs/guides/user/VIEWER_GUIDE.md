@@ -637,7 +637,7 @@ at — which is what keeps a reloaded or shared post-switch link named.
 | Category | Example fields |
 |----------|---------------|
 | Scene identity | `title` (browser tab title) |
-| Camera | `position`, `target`, `fov`, `fov_preset`, `near`, `far`, `target_node` |
+| Camera | `position`, `target`, `up`, `fov`, `fov_preset`, `near`, `far`, `target_node`, `zoom` (ortho only) |
 | Theme | `theme` (`dark`, `light`, `frosted-glass`, `liquid-glass`) |
 | Tone mapping | `tone_mapping`, `exposure`, `global_offset`, `global_gamma` |
 | Bloom | `bloom_enabled`, `bloom_strength`, `bloom_radius`, `bloom_threshold` |
@@ -724,6 +724,14 @@ ranges do nothing, and leaving every waypoint leaves the camera where it is.
 Any mouse, touch or key input during a flight cancels it where it is. The
 optional `rendering` block takes the same snake_case keys as `ViewerConfig`
 itself and is applied on arrival through the same validated path.
+
+Waypoints compose with the orbit turntable: while auto-rotate is on, a story
+step keeps the current viewing direction and only moves the point the camera
+spins around (and how far away it sits), so the spin never pauses and the
+authored orientation is ignored. In ortho mode camera distance changes nothing,
+so author `CameraConfig(zoom=...)` to frame a cluster tighter. In fly mode a
+waypoint moves and aims the camera just the same; flying with the keyboard
+during a flight cancels it.
 
 See `luxar.ViewerConfig` docstring for the full field list with types and
 valid ranges.
