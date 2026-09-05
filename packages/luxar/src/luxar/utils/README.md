@@ -285,10 +285,9 @@ Internal:
 - `io.compiler`: For demo scene creation
 - `typing_utils`: Type definitions and aliases
 - `core.dimensions`: Scene dimension definitions (demos)
-- `gsplats`: `GSplatData` loading and torch-device resolution (demos)
+- `demos.demo_lorenz`: The trajectory the Lorenz demo scene is built from
 
 External:
 - `numpy`: Array operations
-- `arbol`: Progress display in demos and downloads
-- `torch`: Device availability probing in `device.py`
-- `requests` / `urllib3`: HTTP downloads with retry (lazily imported in `download.py` and `remote_zip.py`)
+- `arbol`: Console output — warning display (`arbol_warnings`) and demo progress (`scenes`)
+- `zarr` / `numcodecs`: Version reporting in `source_fingerprints.store_writer_environment()`
