@@ -19,7 +19,6 @@ Two of them exist because the first version of the gate was WRONG in that way:
 from __future__ import annotations
 
 import importlib.util
-import os
 import shutil
 import subprocess
 import sys
@@ -49,23 +48,23 @@ def gate():
 
 
 def _run(source: str, *args: str) -> subprocess.CompletedProcess[str]:
-    """Run a mutated gate beside the real one so its repo-relative paths resolve."""
-    file_descriptor, mutant_name = tempfile.mkstemp(
-        prefix="_check_native_compiles_mutant_", suffix=".py", dir=GATE.parent
-    )
-    os.close(file_descriptor)
-    mutant = Path(mutant_name)
-    try:
+    """Run a mutated gate against the real packages tree, outside the repo."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        scripts = root / "scripts"
+        scripts.mkdir()
+        (root / "packages").symlink_to(
+            GATE.parent.parent / "packages", target_is_directory=True
+        )
+        mutant = scripts / "check_native_compiles_mutant.py"
         mutant.write_text(source, encoding="utf-8")
         return subprocess.run(
             [sys.executable, str(mutant), *args],
             capture_output=True,
             text=True,
             check=False,
-            cwd=GATE.parent.parent,
+            cwd=root,
         )
-    finally:
-        mutant.unlink(missing_ok=True)
 
 
 @pytest.fixture(scope="module")
