@@ -3,9 +3,9 @@
 Seventeen `except Exception` blocks across the CLI printed one line and raised
 `typer.Exit(1)`. That is the right default — a stack trace is noise when the
 cause is "file not found" — but there was no way to opt out, so a genuine bug
-inside the library surfaced as one line with nowhere to go next. Five did not
-chain the original via `from`, and two used `from None`, which erases
-`__context__` as well (audit finding `A9-02`).
+inside the library surfaced as one line with nowhere to go next. Six raised a
+bare exit, and two used `from None`, so eight discarded the exception chain
+(audit finding `A9-02`).
 
 Three things are tested, and the third is the one that keeps working:
 
@@ -90,7 +90,7 @@ class TestExitWithError:
     ) -> None:
         """`__cause__` survives even when the traceback is suppressed.
 
-        Five of the routed sites raised a bare `typer.Exit(1)` and two used
+        Six of the routed sites raised a bare `typer.Exit(1)` and two used
         `from None`, so the cause was gone on the default path too.
         """
         monkeypatch.delenv(TRACEBACK_ENV_VAR, raising=False)
@@ -115,7 +115,7 @@ class TestExitWithError:
     def test_it_reraises_a_bare_exception_too(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """`BaseException`, not `Exception`: a KeyboardInterrupt must pass through."""
+        """The helper does not narrow the `BaseException` object it receives."""
         monkeypatch.setenv(TRACEBACK_ENV_VAR, "1")
         cause = KeyboardInterrupt()
         with pytest.raises(KeyboardInterrupt):
@@ -154,9 +154,9 @@ def test_no_cli_handler_discards_a_caught_exception() -> None:
     with a stack trace attached. Routing those through `exit_with_error` too
     would make the traceback opt-in everywhere — a real improvement, and a
     behaviour change for two dozen commands, so it belongs in its own change
-    rather than being smuggled in behind a gate. Until then this test pins the
-    honest invariant (nothing is thrown away) rather than the one we would
-    like (everything is consistent).
+    rather than being smuggled in behind a gate. #2553 tracks that follow-up.
+    Until then this test pins the honest invariant (nothing is thrown away)
+    rather than the one we would like (everything is consistent).
 
     Parsed with `ast` rather than grepped, so a `raise typer.Exit` in a string
     or comment cannot trip it and one inside a nested function cannot hide from
@@ -166,7 +166,7 @@ def test_no_cli_handler_discards_a_caught_exception() -> None:
     for path in _cli_sources():
         tree = ast.parse(path.read_text())
         for node in ast.walk(tree):
-            if not isinstance(node, ast.ExceptHandler) or node.name is None:
+            if not isinstance(node, ast.ExceptHandler):
                 continue
             # Only the broad handlers: a narrow `except FileNotFoundError` that
             # exits quietly is reporting an expected condition, not swallowing
@@ -182,12 +182,15 @@ def test_no_cli_handler_discards_a_caught_exception() -> None:
                 if not re.search(r"\btyper\.Exit\b", ast.unparse(stmt.exc)):
                     continue
                 chained = (
-                    stmt.cause is not None and ast.unparse(stmt.cause) == node.name
+                    node.name is not None
+                    and stmt.cause is not None
+                    and ast.unparse(stmt.cause) == node.name
                 )
                 if not chained and not prints_traceback:
                     rel = path.relative_to(CLI_ROOT.parent)
+                    binding = f" as {node.name}" if node.name is not None else ""
                     offenders.append(
-                        f"{rel}:{stmt.lineno}: except Exception as {node.name} -> "
+                        f"{rel}:{stmt.lineno}: except {caught}{binding} -> "
                         f"{ast.unparse(stmt)}"
                     )
     assert not offenders, (
@@ -201,10 +204,10 @@ def test_the_scan_would_notice_a_discarding_handler() -> None:
     """The gate above passes; prove it is not passing vacuously.
 
     Runs the same AST rule over a synthetic module holding one compliant
-    handler and one discarding one, and asserts it separates them. Without
-    this, an `ast` walk that quietly stopped matching `ExceptHandler` (a
-    Python-version change, a refactor of the helper) would report a clean CLI
-    forever.
+    handler plus bound and unnamed discarding handlers, and asserts it
+    separates them. Without this, an `ast` walk that quietly stopped matching
+    `ExceptHandler` (a Python-version change, a refactor of the helper) would
+    report a clean CLI forever.
     """
     source = (
         "import typer\n"
@@ -218,10 +221,15 @@ def test_the_scan_would_notice_a_discarding_handler() -> None:
         "        pass\n"
         "    except Exception as e:\n"
         "        raise typer.Exit(1)\n"
+        "def unnamed_bad():\n"
+        "    try:\n"
+        "        pass\n"
+        "    except Exception:\n"
+        "        raise typer.Exit(1)\n"
     )
     found = []
     for node in ast.walk(ast.parse(source)):
-        if not isinstance(node, ast.ExceptHandler) or node.name is None:
+        if not isinstance(node, ast.ExceptHandler):
             continue
         body = "\n".join(ast.unparse(s) for s in node.body)
         prints_traceback = "print_exc" in body or "format_exc" in body
@@ -230,10 +238,14 @@ def test_the_scan_would_notice_a_discarding_handler() -> None:
                 continue
             if not re.search(r"\btyper\.Exit\b", ast.unparse(stmt.exc)):
                 continue
-            chained = stmt.cause is not None and ast.unparse(stmt.cause) == node.name
+            chained = (
+                node.name is not None
+                and stmt.cause is not None
+                and ast.unparse(stmt.cause) == node.name
+            )
             if not chained and not prints_traceback:
                 found.append(stmt.lineno)
-    assert found == [11], f"expected only the discarding handler, got {found}"
+    assert found == [11, 16], f"expected both discarding handlers, got {found}"
 
 
 class TestItWorksThroughTheRealCli:

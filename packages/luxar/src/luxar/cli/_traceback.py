@@ -1,11 +1,11 @@
 """One way for a CLI command to fail, with a way to get the traceback back.
 
-Fifteen `except Exception` blocks across the CLI did the same three things:
+Seventeen `except Exception` blocks across the CLI did the same three things:
 print a one-line message, then `raise typer.Exit(1)`. That is the right default
 — a stack trace is noise when the cause is "file not found" — but there was no
 way to opt out of it, so a genuine bug inside the library surfaced as one line
-with nowhere to go next. Five of the fifteen did not even chain the original via
-``from``, so the ``__cause__`` was gone too (audit finding ``A9-02``).
+with nowhere to go next. Eight of the seventeen discarded the original chain,
+so the cause was gone too (audit finding ``A9-02``).
 
 Two things change. Setting ``LUXAR_TRACEBACK=1`` re-raises the original
 exception, traceback intact, and the message itself now says so — a hint nobody
@@ -55,7 +55,9 @@ def exit_with_error(message: str, error: BaseException) -> NoReturn:
 
     Args:
         message: The one-line explanation, already formatted (including any
-            emoji prefix the surrounding command uses).
+            emoji prefix the surrounding command uses). The traceback path
+            does not print it, so the exception itself must carry any context
+            essential to diagnosing the failure.
         error: The caught exception. Chained onto the ``typer.Exit`` via
             ``from``, so ``__cause__`` survives even on the quiet path.
 
