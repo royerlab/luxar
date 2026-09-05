@@ -29,6 +29,7 @@ from luxar.io._ordering.bounds import (
     _store_outward_f32,
     _store_outward_f32_array,
 )
+from luxar.io._ordering.grid import normalize_coords_to_grid
 from luxar.io.ordering import (
     _BARRIER_BOUND_EPS,
     compute_chunk_bounds_gsplats,
@@ -39,6 +40,28 @@ from luxar.io.ordering import (
     morton_encode_nd,
     sort_splats_spatial,
 )
+
+
+def test_grid_normalization_promotes_float16_before_scaling() -> None:
+    """Float16 coordinates retain the full 21-bit ordering grid."""
+    coords = np.linspace(0, 1, 2048, dtype=np.float16).reshape(-1, 1)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        actual = normalize_coords_to_grid(
+            coords, coords.min(axis=0), coords.max(axis=0), 2**21
+        )
+
+    expected = normalize_coords_to_grid(
+        coords.astype(np.float32),
+        coords.min(axis=0).astype(np.float32),
+        coords.max(axis=0).astype(np.float32),
+        2**21,
+    )
+    np.testing.assert_array_equal(actual, expected)
+    assert len(np.unique(actual)) == len(coords)
+    assert actual[0, 0] == 0
+    assert actual[-1, 0] == 2**21 - 1
 
 
 # deadline=None on both equivariance tests: the Morton/Hilbert kernels are

@@ -30,12 +30,15 @@ from __future__ import annotations
 
 import inspect
 import re
+import warnings
 from pathlib import Path
 
 import numpy as np
 import pytest
+import zarr
 
 from luxar.core.dimensions import Dimensions
+from luxar.encoding.decoder import ArrayDecoder
 from luxar.io.compiler import LuxarZarrCompiler
 from luxar.io.writer import ZarrWriterProtocol
 
@@ -148,11 +151,7 @@ def test_the_override_ignores_are_gone() -> None:
         f"{COMPILER_SOURCE} does not look like the compiler module — the scan "
         f"would pass vacuously"
     )
-    offenders = [
-        line.strip()
-        for line in source.splitlines()
-        if re.search(r"def write_\w+\(.*#\s*type:\s*ignore\[override\]", line)
-    ]
+    offenders = re.findall(r"type:\s*ignore\[override\]", source)
     assert not offenders, (
         "these write methods have opted out of override checking:\n  "
         + "\n  ".join(offenders)
@@ -166,23 +165,40 @@ def test_the_override_ignores_are_gone() -> None:
         ("positions float16", lambda p: {"positions": p.astype(np.float16)}),
         (
             "colors float32",
-            lambda p: {"positions": p, "colors": np.zeros((len(p), 3), np.float32)},
+            lambda p: {
+                "positions": p,
+                "colors": np.linspace(0.1, 0.9, len(p) * 3, dtype=np.float32).reshape(
+                    len(p), 3
+                ),
+            },
         ),
         (
             "colors uint8",
-            lambda p: {"positions": p, "colors": np.zeros((len(p), 3), np.uint8)},
+            lambda p: {
+                "positions": p,
+                "colors": np.arange(len(p) * 3, dtype=np.uint8).reshape(len(p), 3),
+            },
         ),
         (
             "colors uint16",
-            lambda p: {"positions": p, "colors": np.zeros((len(p), 3), np.uint16)},
+            lambda p: {
+                "positions": p,
+                "colors": np.arange(len(p) * 3, dtype=np.uint16).reshape(len(p), 3),
+            },
         ),
         (
             "radii float16",
-            lambda p: {"positions": p, "radii": np.full(len(p), 2, np.float16)},
+            lambda p: {
+                "positions": p,
+                "radii": np.linspace(1, 2, len(p), dtype=np.float16),
+            },
         ),
         (
             "radii uint8",
-            lambda p: {"positions": p, "radii": np.full(len(p), 2, np.uint8)},
+            lambda p: {
+                "positions": p,
+                "radii": np.arange(1, len(p) + 1, dtype=np.uint8),
+            },
         ),
     ],
 )
@@ -199,8 +215,31 @@ def test_the_declared_input_dtypes_are_actually_accepted(
     notebook.
     """
     positions = np.linspace(0, 1, 96, dtype=np.float32).reshape(32, 3)
+    kwargs = kwargs_factory(positions)
     store = tmp_path / f"{label.replace(' ', '_')}.luxar.zarr"
-    with LuxarZarrCompiler(store) as compiler:
-        compiler.create_scene(dimensions=Dimensions.default_3d())
-        compiler.write_points("P", **kwargs_factory(positions))
-    assert store.exists()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        with LuxarZarrCompiler(store) as compiler:
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+            compiler.write_points("P", **kwargs)
+
+    root = zarr.open_group(store, mode="r")
+    point_group = root["P"]
+    decoder = ArrayDecoder()
+    tolerances = {"positions": 5e-4, "colors": 5e-3, "radii": 1.0}
+    for name, expected in kwargs.items():
+        assert name in point_group, f"write_points did not write P/{name}"
+        actual = decoder.decode(point_group[name], root)
+        if expected.ndim == 1:
+            actual = np.sort(actual)
+            expected = np.sort(expected)
+        else:
+            actual = actual[np.lexsort(actual.T[::-1])]
+            expected = expected[np.lexsort(expected.T[::-1])]
+        np.testing.assert_allclose(
+            actual,
+            expected,
+            rtol=0,
+            atol=tolerances[name],
+            err_msg=f"P/{name} did not decode back to the written {label} values",
+        )

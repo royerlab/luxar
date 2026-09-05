@@ -24,6 +24,11 @@ def normalize_coords_to_grid(
     Returns:
         Integer coordinates, shape (N, d), dtype uint32
     """
+    working_dtype = np.promote_types(coords.dtype, np.float32)
+    coords = coords.astype(working_dtype, copy=False)
+    min_coords = min_coords.astype(working_dtype, copy=False)
+    max_coords = max_coords.astype(working_dtype, copy=False)
+
     # Normalize to [0, 1]
     ranges = max_coords - min_coords
     # Handle degenerate dimensions (zero range)
