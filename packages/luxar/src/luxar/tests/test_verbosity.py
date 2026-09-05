@@ -24,6 +24,8 @@ import pytest
 from arbol import Arbol, aprint, asection
 
 import luxar
+from luxar.utils.arbol_warnings import arbol_warnings
+from luxar.utils.tests.test_arbol_warnings import _default_display_sandbox
 from luxar.utils.verbosity import get_verbosity, set_verbosity, verbosity
 
 
@@ -164,10 +166,26 @@ class TestTheDocumentedEffectsAreReal:
         set_verbosity("silent")
         assert _emit_a_three_deep_tree() == ""
 
-    def test_silent_does_not_hide_python_warnings(self) -> None:
+    def test_silent_does_not_hide_python_warnings(
+        self, capsys: pytest.CaptureFixture
+    ) -> None:
         set_verbosity("silent")
-        with pytest.warns(UserWarning, match="still visible"):
+        with _default_display_sandbox(), arbol_warnings():
             warnings.warn("still visible", UserWarning, stacklevel=1)
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "UserWarning: still visible" in captured.err
+
+    def test_summary_does_not_hide_warnings_below_its_depth_cap(
+        self, capsys: pytest.CaptureFixture
+    ) -> None:
+        set_verbosity("summary")
+        with _default_display_sandbox(), arbol_warnings(), asection("outer"):
+            with asection("inner"):
+                warnings.warn("nested warning", UserWarning, stacklevel=1)
+        captured = capsys.readouterr()
+        assert "log tree truncated here" in captured.out
+        assert "UserWarning: nested warning" in captured.err
 
     def test_full_prints_the_whole_tree(self) -> None:
         set_verbosity("full")

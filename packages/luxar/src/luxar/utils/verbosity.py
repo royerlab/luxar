@@ -19,10 +19,10 @@ Two entry points, one mechanism::
 Levels, and exactly what each one does:
 
 ======================  ===================================================
-``"silent"``            Normal arbol narration is suppressed; warnings still
-                        surface.
-``"summary"``           Top-level lines; nested sections become truncation
-                        notices (depth 1).
+``"silent"``            Normal arbol narration is suppressed; Python warnings
+                        still surface via their standard display.
+``"summary"``           Top-level lines and one level of nesting; deeper
+                        sections become truncation notices (depth 1).
 ``"normal"``            Three levels of nesting (depth 3).
 ``"full"``              Everything. **The default** — unchanged behaviour.
 an ``int``              That many levels of nesting. ``0`` is not silent (see
@@ -135,10 +135,11 @@ def set_verbosity(level: Union[VerbosityLevel, int]) -> None:
 def get_verbosity() -> Union[VerbosityLevel, int]:
     """Return the current verbosity as a level name, or an int depth.
 
-    A name is returned whenever the live arbol settings match one of the named
-    levels exactly; otherwise the raw depth is returned, which is also what
-    happens when something else in the process has set ``Arbol.max_depth``
-    directly (roughly twenty bundled demos do).
+    Output disabled reports ``"silent"`` regardless of the current depth.
+    Otherwise a name is returned when the live arbol settings match a named
+    level exactly, and the raw depth is returned when they do not. Consequently,
+    ``set_verbosity(get_verbosity())`` is lossy for a manually disabled finite
+    depth; :func:`verbosity` still restores the exact switch pair.
 
     Returns:
         One of the level names, or the current maximum depth as an int.

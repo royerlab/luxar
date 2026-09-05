@@ -63,18 +63,19 @@ with luxar.verbosity("summary"):  # scoped, restores on exit
     scene.save()
 ```
 
-Levels: `"silent"` (normal arbol narration is suppressed; warnings still
-surface), `"summary"` (depth 1), `"normal"` (depth 3), `"full"` (everything --
+Levels: `"silent"` (normal arbol narration is suppressed; Python warnings use
+their standard display), `"summary"` (top-level lines plus one nested level;
+deeper sections are truncated), `"normal"` (depth 3), `"full"` (everything --
 the default, i.e. unchanged behaviour), or an int depth. `0` is *not* silence:
 arbol at depth 0 still prints depth-0 lines plus a truncation notice per
 suppressed section, which is why `"silent"` uses `Arbol.enable_output` instead.
-That is measured, not assumed -- `tests/test_verbosity.py` captures stdout and
-asserts the documented effect of each level.
+That is measured, not assumed -- `tests/test_verbosity.py` captures the output
+and asserts the documented effect of each level.
 
 **Key Functions:**
 - `set_verbosity(level)`: Set the level process-wide
-- `get_verbosity()`: Report the current level, or the raw depth if something set
-  `Arbol.max_depth` directly (roughly twenty bundled demos do)
+- `get_verbosity()`: Report `"silent"` whenever output is disabled; otherwise
+  report the matching level or the raw depth
 - `verbosity(level)`: Context manager; restores the exact previous switch pair,
   not the level name it resolves to
 

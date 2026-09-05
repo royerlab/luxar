@@ -3,7 +3,9 @@
 Python's default ``warnings.showwarning`` writes
 ``/abs/path/module.py:299: UserWarning: ...`` straight to stderr, which lands
 mid-tree and out of place in arbol's hierarchical console output. This module
-re-routes only the *display* of warnings to :func:`arbol.aprint` — the
+re-routes only the *display* of warnings to :func:`arbol.aprint` when arbol can
+show the line. If output is disabled or the current section is below the depth
+cap, it falls back to Python's standard display so the warning is not lost. The
 ``warnings.warn`` machinery itself is untouched, so filters, ``-W error``,
 ``warnings.catch_warnings`` and ``pytest.warns`` all behave exactly as before.
 
@@ -31,7 +33,7 @@ import warnings
 from contextlib import contextmanager
 from typing import Iterator, Optional, TextIO, Type
 
-from arbol import aprint
+from arbol import Arbol, aprint
 
 __all__ = ["arbol_warnings", "install_arbol_warnings"]
 
@@ -44,7 +46,18 @@ def _arbol_showwarning(
     file: Optional[TextIO] = None,
     line: Optional[str] = None,
 ) -> None:
-    """``warnings.showwarning`` replacement that prints via arbol."""
+    """``warnings.showwarning`` replacement that prints via arbol when visible."""
+    captured = getattr(Arbol._thread_local, "captured", False)
+    arbol_will_display = (
+        Arbol.passthrough
+        or captured
+        or (Arbol.enable_output and Arbol._depth <= Arbol.max_depth)
+    )
+    if not arbol_will_display:
+        warnings._showwarning_orig(  # type: ignore[attr-defined]
+            message, category, filename, lineno, file=file, line=line
+        )
+        return
     location = f"{os.path.basename(filename)}:{lineno}"
     aprint(f"⚠️  {category.__name__}: {message} [{location}]")
 
@@ -71,7 +84,7 @@ def _default_display_active() -> bool:
 
 @contextmanager
 def arbol_warnings() -> Iterator[None]:
-    """Display warnings raised inside the block via :func:`arbol.aprint`.
+    """Display warnings via arbol, or standard display when arbol hides them.
 
     Usable as a decorator (``@arbol_warnings()``). No-op when warning display
     is already owned by someone else (see :func:`_default_display_active`).
