@@ -1045,9 +1045,9 @@ with luxar.verbosity("summary"):  # scoped, restores on exit
 Two things not to get wrong. The setting is arbol CLASS state, so it is
 process-global and not thread-safe — never reach for it to scope output inside a
 library function. And `set_verbosity(0)` is NOT silence: arbol at depth 0 still
-prints depth-0 lines plus a "(log tree truncated here)" notice per suppressed
-section, so pass `"silent"`. A bool is refused outright for that reason
-(`set_verbosity(False)` reads as quiet but would resolve to depth 0).
+prints depth-0 lines plus a "(log tree truncated here)" notice for each section
+it truncates at the cap, so pass `"silent"`. A bool is refused outright for that
+reason (`set_verbosity(False)` reads as quiet but would resolve to depth 0).
 
 ### TypeScript
 - Format with prettier
