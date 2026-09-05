@@ -9,6 +9,7 @@ import typer
 from arbol import aprint
 
 if TYPE_CHECKING:
+    from luxar.cli.gsplat_ops.batch.plan_configs import PlanConfigs
     from luxar.gsplats.batch.manifest import BatchManifest
 
 
@@ -56,63 +57,15 @@ def run_batch_local_orchestration(
     array_key: Optional[str],
     timepoints_slice: Optional[str],
     channels_slice: Optional[str],
-    preset: str,
-    config: Optional[Path],
-    floor: Optional[str],
-    seeds: Optional[str],
-    iters: Optional[int],
-    batch_progressive: bool,
-    batch_splats_per_pass: Optional[int],
-    batch_psnr_patience: Optional[float],
-    batch_max_passes: Optional[int],
-    batch_cull_retention: Optional[float],
-    batch_denoise: bool,
-    batch_denoise_h: Optional[float],
-    batch_denoise_2d: bool,
-    batch_denoise_patch_size: int,
-    batch_denoise_search_distance: int,
-    batch_denoise_backend: str,
-    cal: Optional[Path],
-    k_star_ref: Optional[int],
-    n_features_ref: Optional[int],
-    saturation_exponent: float,
-    saturation_cap: Optional[int],
-    feature_threshold: Optional[float],
-    feature_metric: Optional[str],
-    cell: int,
-    target_features: Optional[int],
-    min_leaf: int,
-    max_leaf: int,
-    plan_timepoint: Optional[int],
-    plan_samples: int,
+    cfgs: "PlanConfigs",
     gpus: str,
     jobs_per_gpu: str,
     no_resume: bool,
     dry_run: bool,
-    merge_recipe: Optional[str],
-    channel_colors: Optional[str],
-    merge_n_lods: Optional[int],
-    merge_additive_method: Optional[str],
-    merge_breakpoints: Optional[str],
-    merge_target_ms: Optional[float],
-    merge_bandwidth_mbps: Optional[float],
-    merge_bytes_per_splat: Optional[float],
-    merge_compression_factor: Optional[int],
-    merge_levels: Optional[int],
-    merge_refine: Optional[str],
-    merge_refine_iters: Optional[int],
-    merge_substitutive_method: Optional[str],
-    merge_coarsen_dims: Optional[str],
 ) -> None:
     """Build a local batch plan, print summary, and execute local workers."""
     from luxar.cli.gsplat_config import parse_hex_color
-    from luxar.cli.gsplat_ops.batch.planning import (
-        ContentKnobs,
-        DenoiseConfig,
-        FitConfig,
-        MergeConfig,
-        plan_batch,
-    )
+    from luxar.cli.gsplat_ops.batch.planning import plan_batch
     from luxar.cli.gsplat_ops.batch.recipe_args import (
         build_merge_recipe_params as _build_merge_recipe_params_impl,
     )
@@ -143,58 +96,10 @@ def run_batch_local_orchestration(
                 break
         throughput_table = get_gpu_throughput_table(gpu_name=resolved_gpu)
 
-    fit_cfg = FitConfig(
-        preset=preset,
-        seeds=seeds,
-        iters=iters,
-        config=config,
-        floor=floor,
-        progressive=batch_progressive,
-        splats_per_pass=batch_splats_per_pass,
-        psnr_patience=batch_psnr_patience,
-        max_passes=batch_max_passes,
-        cull_retention=batch_cull_retention,
-    )
-    denoise_cfg = DenoiseConfig(
-        denoise=batch_denoise,
-        denoise_h=batch_denoise_h,
-        denoise_2d=batch_denoise_2d,
-        patch_size=batch_denoise_patch_size,
-        search_distance=batch_denoise_search_distance,
-        backend=batch_denoise_backend,
-        preprocess=False,  # local runner denoises on-the-fly per tile
-    )
-    content_cfg = ContentKnobs(
-        cal=cal,
-        k_star_ref=k_star_ref,
-        n_features_ref=n_features_ref,
-        saturation_exponent=saturation_exponent,
-        saturation_cap=saturation_cap,
-        feature_threshold=feature_threshold,
-        feature_metric=feature_metric,
-        cell=cell,
-        target_features=target_features,
-        min_leaf=min_leaf,
-        max_leaf=max_leaf,
-        plan_timepoint=plan_timepoint,
-        plan_samples=plan_samples,
-    )
-    merge_cfg = MergeConfig(
-        recipe=merge_recipe,
-        channel_colors=channel_colors,
-        n_lods=merge_n_lods,
-        additive_method=merge_additive_method,
-        breakpoints=merge_breakpoints,
-        target_ms=merge_target_ms,
-        bandwidth_mbps=merge_bandwidth_mbps,
-        bytes_per_splat=merge_bytes_per_splat,
-        compression_factor=merge_compression_factor,
-        levels=merge_levels,
-        refine=merge_refine,
-        refine_iters=merge_refine_iters,
-        substitutive_method=merge_substitutive_method,
-        coarsen_dims=merge_coarsen_dims,
-    )
+    fit_cfg = cfgs.fit
+    denoise_cfg = cfgs.denoise
+    content_cfg = cfgs.content
+    merge_cfg = cfgs.merge
 
     # Merge-recipe knobs (incl. --merge-target-ms sizing) are resolved
     # INSIDE plan_batch, after shape discovery — so the ladder is sized

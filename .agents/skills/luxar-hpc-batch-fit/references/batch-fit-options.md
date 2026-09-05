@@ -106,7 +106,8 @@ likewise keeps its recorded spec, so it reproduces what it was planned with.
 
 ## Shared denoising (NLM)
 `--denoise`, `--denoise-h`, `--denoise-2d`, `--denoise-patch-size` (3),
-`--denoise-search-distance` (5), `--denoise-backend` (auto).
+`--denoise-search-distance` (5), `--denoise-backend` (auto),
+`--calibration-samples` (5 timepoints sampled for denoise-h calibration).
 
 ## Shared dataset selection
 | Flag | Meaning |
@@ -144,7 +145,7 @@ Every subcommand: `--dry-run` shows the plan without submitting/fitting.
 | `--preemptible-partition` | auto | explicit preemptible partition |
 | `--preemptible-concurrent` | =max-concurrent | concurrency on preemptible partition |
 | `--account` / `-A`, `--qos` | none | Slurm account / QoS |
-| `--gpus` | 1 | GPUs per task |
+| `--gpus-per-task` | 1 | GPU COUNT per task (distinct from local `run --gpus`, which selects devices) |
 | `--cpus` | 4 | CPUs per task |
 | `--mem` | 32 | GB per task |
 | `--time` | auto | wall time per task (HH:MM:SS); auto-estimated otherwise |
@@ -153,7 +154,6 @@ Every subcommand: `--dry-run` shows the plan without submitting/fitting.
 | `--tasks-per-job` | auto | fit tasks packed per Slurm job |
 | `--parallel` / `--sequential` | sequential | run packed tasks concurrently on one GPU |
 | `--preprocess` / `--no-preprocess` | off | write denoised volumes to zarr before fitting |
-| `--calibration-samples` | 5 | timepoints sampled for denoise-h calibration |
 
 ## `batch-fit run INPUT OUTPUT` — local-only flags
 

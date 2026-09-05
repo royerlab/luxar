@@ -40,12 +40,22 @@ importers name the owning module directly, never a re-export root.
 - `commands.py` — `batch-fit` app export (`app_batch`) + command wiring
 - `submit.py` — `batch-fit submit` implementation
 - `submit_pipeline.py` — plan/packing/preemptible pipeline behind `batch-fit submit`
+- `plan_configs.py` — `build_plan_configs`: the **single** place flat CLI flags become
+  `planning.py`'s four config dataclasses (`FitConfig` / `DenoiseConfig` /
+  `ContentKnobs` / `MergeConfig`). Shared by `run` and `submit`, so it belongs to
+  neither. `cli/tests/test_batch_config_agreement.py` fails if a second construction
+  site appears, if the mapper consumes a flag one command does not expose, or if the
+  siblings disagree on a shared default or public spelling — the two used to map the
+  flags separately, which is how `--calibration-samples` ended up on `submit` only
+  while the local path consumed it
 - `submit_slurm.py` — Slurm submission/write orchestration helper for `batch-fit submit`
 - `submit_packing.py` — scheduler-aware tasks/job packing heuristics for `batch-fit submit`
 - `submit_plan_output.py` — stable human-readable plan summary printer for `batch-fit submit`
 - `submit_preemptible.py` — preemptible-partition detection/access checks for `batch-fit submit`
 - `run.py` — `batch-fit run` implementation
-- `run_orchestration.py` — local `batch-fit run` planning/summary/execute orchestration helper
+- `run_orchestration.py` — local `batch-fit run` planning/summary/execute orchestration
+  helper. Takes the assembled `PlanConfigs` plus the execution-only flags (which GPUs,
+  resume, dry-run), *not* the flat fit/denoise/content/merge flags again
 - `merge_command.py` — `batch-fit merge` implementation
 - `status_validate_cancel.py` — `batch-fit status` / `validate` / `cancel` implementations
 - `denoise_workers.py` — hidden `batch-fit` denoise worker command implementations

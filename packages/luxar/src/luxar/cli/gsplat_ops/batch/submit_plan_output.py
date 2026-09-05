@@ -37,7 +37,7 @@ def print_batch_submit_plan(
     total_gpu_hours: float,
     slurm_time: str,
     partition: str,
-    gpus: int,
+    gpus_per_task: int,
     cpus: int,
     mem: int,
     output_dir: Path,
@@ -109,6 +109,9 @@ def print_batch_submit_plan(
 
     aprint(f"  Est. total GPU-hours: {total_gpu_hours:.0f} h")
     aprint(f"  Slurm --time: {slurm_time}")
-    aprint(f"  Partition: {partition}, GPUs: {gpus}, CPUs: {cpus}, Mem: {mem}G")
+    aprint(
+        f"  Partition: {partition}, GPUs/task: {gpus_per_task}, "
+        f"CPUs: {cpus}, Mem: {mem}G"
+    )
     aprint(f"  Output: {output_dir}")
     aprint("")
