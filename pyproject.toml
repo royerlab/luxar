@@ -851,8 +851,8 @@ root_package = "luxar"
 exclude_type_checking_imports = true
 
 [[tool.importlinter.contracts]]
-# THE layering contract. Until this landed, import-linter declared two
-# `forbidden` contracts and reported them kept over 1,015 files -- green, while
+# THE layering contract. Until this landed, import-linter declared three
+# `forbidden` contracts and reported them kept over 1,026 files -- green, while
 # the graph carried ten mutually-cyclic subpackage pairs (audit A1-01).
 #
 # ## Why this order
