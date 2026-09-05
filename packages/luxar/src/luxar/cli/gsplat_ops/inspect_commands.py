@@ -239,27 +239,16 @@ def _print_dataset_metadata(
 
 
 def _is_node_tree(path: Path) -> bool:
-    """Whether the store's root has no flat ``GSplatData`` representation.
+    """Whether an already-resolved store has no flat ``GSplatData`` representation.
 
     Partitions and nested lod groups are trees; a lod whose children are all
     leaves is matrix-shaped and must keep the normal flat info report. Returns
     False for anything unreadable so the normal load path reports its error.
     """
     from luxar._zarr_compat import open_group as zarr_open_group
-    from luxar.gsplats.io._archive import read_archive_root_attrs, resolve_store_path
 
-    tmp = None
     try:
-        if path.is_file():
-            root_attrs = read_archive_root_attrs(path)
-            if root_attrs.get("kind") == "partition":
-                return True
-            if root_attrs.get("kind") != "lod":
-                return False
-            zarr_path, tmp = resolve_store_path(path)
-        else:
-            zarr_path = path
-        root = zarr_open_group(str(zarr_path), mode="r")
+        root = zarr_open_group(str(path), mode="r")
         kind = root.attrs.get("kind")
         if kind == "partition":
             return True
@@ -272,9 +261,6 @@ def _is_node_tree(path: Path) -> bool:
         )
     except Exception:
         return False
-    finally:
-        if tmp is not None and tmp.exists():
-            shutil.rmtree(tmp, ignore_errors=True)
 
 
 def _load_info_data(

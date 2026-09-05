@@ -1526,33 +1526,6 @@ class TestInfoTreeDispatch:
         assert "Traceback" not in result.output
         assert "❌" in result.stdout
 
-    def test_flat_archive_probe_does_not_extract(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        import zipfile
-
-        from luxar.cli.gsplat_ops.inspect_commands import _is_node_tree
-        from luxar.gsplats.io import _archive
-
-        store = tmp_path / "leaf.gsplats.zarr"
-        self._data().save(store)
-        archive = tmp_path / "leaf.gsplats.zarr.zip"
-        with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zip_ref:
-            for file_path in sorted(store.rglob("*")):
-                if file_path.is_file():
-                    zip_ref.write(file_path, file_path.relative_to(store))
-
-        real_extract = _archive.extract_compressed_zarr
-        calls = []
-
-        def count_extract(*args: Any, **kwargs: Any) -> Any:
-            calls.append(1)
-            return real_extract(*args, **kwargs)
-
-        monkeypatch.setattr(_archive, "extract_compressed_zarr", count_extract)
-        assert _is_node_tree(archive) is False
-        assert calls == []
-
     def test_matrix_lod_archive_extracts_once(
         self,
         runner: CliRunner,
