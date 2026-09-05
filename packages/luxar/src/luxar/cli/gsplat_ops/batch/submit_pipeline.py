@@ -1,10 +1,10 @@
 """Pipeline helpers for ``batch-fit submit`` (extracted from ``submit``).
 
 Each helper owns one stage of the submit pipeline — tiling validation, GPU
-profile resolution, plan-config assembly, tasks-per-job packing, Slurm-field
-stamping, and sbatch script generation — so ``run_batch_submit`` reads as the
-stage sequence plus the plan/print/submit tail it keeps in its body. Sibling
-of the four existing ``submit_*`` modules.
+profile resolution, tasks-per-job packing, Slurm-field stamping, and sbatch
+script generation — so ``run_batch_submit`` reads as the stage sequence plus
+the plan/print/submit tail it keeps in its body. Sibling of the four existing
+``submit_*`` modules.
 """
 
 from __future__ import annotations

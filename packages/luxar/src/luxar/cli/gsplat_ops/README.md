@@ -45,9 +45,9 @@ importers name the owning module directly, never a re-export root.
   `ContentKnobs` / `MergeConfig`). Shared by `run` and `submit`, so it belongs to
   neither. `cli/tests/test_batch_config_agreement.py` fails if a second construction
   site appears, if the mapper consumes a flag one command does not expose, or if the
-  siblings disagree on a shared default — the two used to map the flags separately,
-  which is how `--calibration-samples` ended up on `submit` only while the local path
-  consumed it
+  siblings disagree on a shared default or public spelling — the two used to map the
+  flags separately, which is how `--calibration-samples` ended up on `submit` only
+  while the local path consumed it
 - `submit_slurm.py` — Slurm submission/write orchestration helper for `batch-fit submit`
 - `submit_packing.py` — scheduler-aware tasks/job packing heuristics for `batch-fit submit`
 - `submit_plan_output.py` — stable human-readable plan summary printer for `batch-fit submit`

@@ -15,7 +15,7 @@ calibrated on 5 timepoints with no way to ask for more.
 
 ``cli/tests/test_batch_config_agreement.py`` now fails if a second construction
 site appears, if the mapper consumes a flag one command does not expose, or if
-the two commands' shared flags disagree on a default.
+the two commands' shared flags disagree on a default or public spelling.
 """
 
 from __future__ import annotations
