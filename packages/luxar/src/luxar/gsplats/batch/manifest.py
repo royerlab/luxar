@@ -156,6 +156,14 @@ class BatchManifest:
     slurm_account: Optional[str] = None
     slurm_qos: Optional[str] = None
     slurm_gpus: int = 1
+    """GPUs per task, from ``batch-fit submit --gpus-per-task``.
+
+    Emitted verbatim as ``#SBATCH --gpus-per-task``. Keeps the ``slurm_*`` field
+    name (persisted manifests resume from it) though the flag is now spelled for
+    the directive — the short ``--gpus`` collided with ``batch-fit run --gpus``,
+    which SELECTS local devices rather than counting them.
+    """
+
     slurm_cpus: int = 4
     slurm_mem_gb: int = 32
     slurm_extra_args: List[str] = field(default_factory=list)

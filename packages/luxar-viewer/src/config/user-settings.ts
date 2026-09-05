@@ -6,8 +6,9 @@
  * (`luxar.rendering.<sceneId>`). Applied in TWO ways, matching how each
  * consumer reads its value:
  *
- *   - LIVE values (read from `config` at use time — FOV wheel sensitivity per
- *     wheel event, idle timeout at timer re-arm, worker toggles per load):
+ *   - LIVE values (read from `config` at use time — FOV and zoom wheel
+ *     sensitivity per wheel event, idle timeout at timer re-arm, worker
+ *     toggles per load):
  *     {@link applyLiveConfigOverrides} mutates the corresponding `config`
  *     fields. The config object is intentionally mutable (plain literal, not
  *     frozen); this module is the single choke point for such mutations.
@@ -37,6 +38,14 @@ export interface UserSettings {
   input: {
     /** Ctrl/⌘+wheel FOV change per wheel-delta unit (live). */
     fovSensitivity: number;
+    /**
+     * Multiplier on every plain-wheel zoom step — orbit/ortho dolly and fly
+     * forward/back (live). 1 = the unscaled feel; turn down on a mouse whose
+     * driver delivers oversized wheel deltas. Global (per machine), because
+     * that is what varies — the per-scene orbit "Zoom Speed" stays a scene
+     * choice and the two multiply.
+     */
+    wheelZoomSensitivity: number;
   };
   performance: {
     /** Power-save pause after this many ms of idle (live at timer re-arm). */
@@ -81,6 +90,9 @@ export interface UserSettings {
  */
 export const USER_SETTINGS_RANGES = Object.freeze({
   fovSensitivity: Object.freeze({ min: 0.01, max: 0.2 }),
+  // 0.05 = a twentieth of a notch per notch (tames a 20x-too-fast wheel);
+  // 2 = double, for the rare too-slow one. Log-ish spread around 1.
+  wheelZoomSensitivity: Object.freeze({ min: 0.05, max: 2 }),
   idleTimeoutMs: Object.freeze({ min: 500, max: 10_000 }),
   workerCount: Object.freeze({ min: 0, max: 16 }),
   networkMaxConcurrent: Object.freeze({ min: 1, max: 12 }),
@@ -99,6 +111,7 @@ export const USER_SETTINGS_RANGES = Object.freeze({
  */
 const BUILTIN_LIVE_DEFAULTS = Object.freeze({
   fovSensitivity: config.camera.fovSensitivity,
+  wheelZoomSensitivity: config.controls.wheelZoomSensitivity,
   idleTimeoutMs: config.animation.idleTimeoutMs,
   useWebWorkers: config.dataLoading.performance.useWebWorkers,
   workerCount: config.dataLoading.performance.workerCount,
@@ -112,6 +125,7 @@ export function defaultUserSettings(): UserSettings {
     version: SETTINGS_VERSION,
     input: {
       fovSensitivity: BUILTIN_LIVE_DEFAULTS.fovSensitivity,
+      wheelZoomSensitivity: BUILTIN_LIVE_DEFAULTS.wheelZoomSensitivity,
     },
     performance: {
       idleTimeoutMs: BUILTIN_LIVE_DEFAULTS.idleTimeoutMs,
@@ -172,6 +186,13 @@ function sanitizeUserSettings(raw: unknown): UserSettings {
         input.fovSensitivity,
         d.input.fovSensitivity,
         USER_SETTINGS_RANGES.fovSensitivity
+      ),
+      // A pre-existing document without this field sanitizes to the default
+      // (same schema version): nothing an older store could hold conflicts.
+      wheelZoomSensitivity: clampOrDefault(
+        input.wheelZoomSensitivity,
+        d.input.wheelZoomSensitivity,
+        USER_SETTINGS_RANGES.wheelZoomSensitivity
       ),
     },
     performance: {
@@ -254,6 +275,7 @@ export function saveUserSettings(settings: UserSettings): void {
  */
 export function applyLiveConfigOverrides(settings: UserSettings): void {
   config.camera.fovSensitivity = settings.input.fovSensitivity;
+  config.controls.wheelZoomSensitivity = settings.input.wheelZoomSensitivity;
   config.animation.idleTimeoutMs = settings.performance.idleTimeoutMs;
   config.dataLoading.performance.useWebWorkers = settings.performance.useWebWorkers;
   // Worker pool size is read from config at pool creation, so mutating it

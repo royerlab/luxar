@@ -269,6 +269,9 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
       inertialMode: this.inertialMode,
       movementSpeed: this.movementSpeed,
       rotationSpeed: this.rotationSpeed,
+      // Live per event, like the orbit ctx: the Settings slider applies to
+      // the next wheel notch without re-creating the controls.
+      wheelZoomSensitivity: config.controls.wheelZoomSensitivity,
       camera: this.camera,
       orientation: this.orientation,
       velocity: this.velocity,

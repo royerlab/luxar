@@ -60,7 +60,6 @@
     "LuxarDeltaConfig, defined in @luxar/viewer/src/data/codecs/luxar-delta.ts, is referenced by data/codecs/luxar-delta.LuxarDeltaCodec.fromConfig.config but not included in the documentation",
     "MeshMaterialTSLNodeTable, defined in @luxar/viewer/src/rendering/materials/mesh/material-tsl.ts, is referenced by rendering/materials/mesh/material-tsl.MeshTSLMaterial.tslNodes but not included in the documentation",
     "MipLevel, defined in @luxar/viewer/src/rendering/post-processing/bloom/chain.ts, is referenced by rendering/post-processing/bloom/chain.BloomChain.mips but not included in the documentation",
-    "OfflineMode, defined in @luxar/viewer/src/ui/recording-panel/offline-capture-strategy.ts, is referenced by ui/recording-panel/offline-capture-strategy.OfflineCaptureStrategy.runOfflineCaptureLoop.mode but not included in the documentation",
     "OpenFacade, defined in @luxar/viewer/src/data/zarr.ts, is referenced by data/zarr.open but not included in the documentation",
     "PerfMode, defined in @luxar/viewer/src/ui/performance-monitor.ts, is referenced by ui/performance-monitor.PerformanceMonitor.mode but not included in the documentation",
     "PointMaterialTSLNodeTable, defined in @luxar/viewer/src/rendering/materials/point/material-tsl.ts, is referenced by rendering/materials/point/material-tsl.PointTSLMaterial.tslNodes but not included in the documentation",

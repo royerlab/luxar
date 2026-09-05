@@ -48,7 +48,8 @@ node_types: ["scene", "group", "points", "lines", "gsplats", "mesh"]
 geometry_types: ["points", "lines", "gsplats", "mesh"]
 
 # The subset of `geometry_types` the VIEWER can load and draw — the types that
-# have a loader, a GEOMETRY_DESCRIPTORS row and a hidden-dim tolerance arm.
+# have a loader, a GEOMETRY_DESCRIPTORS row, a PARTIAL_EXTEND_TOLERANCE row and
+# a hidden-dim tolerance arm.
 #
 # This is a CAPABILITY, not a vocabulary, and the distinction is load-bearing in
 # both directions. Keying the viewer's dispatch tables on `geometry_types` would

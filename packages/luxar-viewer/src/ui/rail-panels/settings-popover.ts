@@ -6,7 +6,8 @@
  * folders: Input, Performance, Caching, Advanced.
  *
  * Application model per control (see user-settings.ts for the full story):
- *   - LIVE values (FOV wheel sensitivity, idle timeout, web-worker routing)
+ *   - LIVE values (FOV / zoom wheel sensitivity, idle timeout, web-worker
+ *     routing)
  *     take effect immediately via `applyLiveConfigOverrides`.
  *   - STARTUP values (worker pool size, prefetch concurrency, cache tier
  *     gates + pool budget, renderer backend) are threaded through bootstrap
@@ -115,6 +116,15 @@ export function buildSettingsPopover(host: HTMLElement, ctx: SettingsPopoverCont
     inputFolder
       .add(settings.input, 'fovSensitivity', fovRange.min, fovRange.max, 0.01)
       .name('FOV Sensitivity')
+      .onChange(commit);
+    // Per-machine wheel-zoom multiplier (orbit/ortho dolly + fly forward/back).
+    // Distinct from the Navigation popover's per-scene "Zoom Speed": that one
+    // is a scene choice, this one tames a mouse whose wheel is too fast
+    // everywhere. The two multiply.
+    const zoomRange = USER_SETTINGS_RANGES.wheelZoomSensitivity;
+    inputFolder
+      .add(settings.input, 'wheelZoomSensitivity', zoomRange.min, zoomRange.max, 0.05)
+      .name('Zoom Sensitivity')
       .onChange(commit);
 
     // ── Performance

@@ -22,7 +22,7 @@ const viewState: ViewState = {
   tolerance: [0, 0, 0],
 };
 
-defineRefinementLoopContract('runMeshRefinement', 'Mesh', (w) =>
+defineRefinementLoopContract('runMeshRefinement', 'Mesh', 'showing a partial surface', (w) =>
   runMeshRefinement({
     rootGroup: new THREE.Group(),
     viewStateQueue: w.viewStateQueue,

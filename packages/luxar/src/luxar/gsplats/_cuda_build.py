@@ -227,7 +227,13 @@ def build_cuda_extension(
     print()
 
     # Compiler flags
-    extra_cflags = ["-O3", "-std=c++17"]
+    # C++20, not 17. `load()` builds its host flags as
+    # `common_cflags + ['-fPIC', '-std=c++20'] + extra_cflags`, so ours land
+    # LAST and the final `-std=` wins. `torch/all.h` refuses to be included
+    # below C++20 (`#error C++20 or later compatible compiler is required`), so
+    # a `-std=c++17` here does not relax the standard, it stops `bindings.cpp`
+    # compiling at all. `make check-native` is the gate.
+    extra_cflags = ["-O3", "-std=c++20"]
     extra_cuda_cflags = [
         "-O3",
         "--use_fast_math",
