@@ -1456,8 +1456,9 @@ class TestInfoTreeDispatch:
         assert "SUMMARY" in output
 
     def test_nested_lod_uses_tree_report(
-        self, runner: CliRunner, tmp_path: Path
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        from luxar.encoding import ArrayDecoder
         from luxar.gsplats.io.save_gsplats import write_gsplats_tree
         from luxar.gsplats.tree import GSplatLodGroup, GSplatPartition
 
@@ -1470,10 +1471,20 @@ class TestInfoTreeDispatch:
         )
         write_gsplats_tree(out, node)
 
+        calls = []
+        original = ArrayDecoder.decode
+
+        def counted_decode(self, *args, **kwargs):
+            calls.append(self)
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(ArrayDecoder, "decode", counted_decode)
+
         result = runner.invoke(app, ["gsplat", "info", str(out)])
 
         assert result.exit_code == 0, result.stdout
         assert "DATASET INFORMATION (node tree)" in _plain(result.stdout)
+        assert calls == []
 
     @pytest.mark.parametrize(
         ("attr", "value", "message"),
