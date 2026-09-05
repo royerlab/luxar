@@ -57,8 +57,8 @@ geometry_types: ["points", "lines", "gsplats", "mesh"]
 # silently skipped. So the two lists are named separately and each consumer picks
 # the one that matches the question it is asking. Adding a type here is the
 # deliberate "switch it on in the viewer" step, and omitting it is a COMPILE
-# ERROR at `LoaderByKind`, `GEOMETRY_DESCRIPTORS` and `computeHiddenDimTolerance`
-# — never a silent gap.
+# ERROR at `LoaderByKind`, `GEOMETRY_DESCRIPTORS`, `PARTIAL_EXTEND_TOLERANCE`
+# and `computeHiddenDimTolerance` — never a silent gap.
 #
 #   TS: data/data-loader-types.ts::GeometryKind
 # The generator enforces that this is non-empty, a subset of `geometry_types`,
