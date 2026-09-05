@@ -733,6 +733,10 @@ so author `CameraConfig(zoom=...)` to frame a cluster tighter. In fly mode a
 waypoint moves and aims the camera just the same; flying with the keyboard
 during a flight cancels it.
 
+For a complete worked example — story dimension, dimmed backdrop, per-story
+highlight layers, fact panels and waypoints — run
+`luxar demo run esm3_protein_stories` (it reads the ESM3 landscape demo's cache).
+
 See `luxar.ViewerConfig` docstring for the full field list with types and
 valid ranges.
 

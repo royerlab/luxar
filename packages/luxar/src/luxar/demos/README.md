@@ -511,6 +511,17 @@ Visualizes 142k proteins from the CAFA5 challenge in 3D embedding space, showing
 
 ---
 
+#### demo_esm3_protein_stories.py - ESM Protein Stories (five guided tours)
+The ESM C Swiss-Prot 3D UMAP with a hidden `story` dimension: Overview, then five protein-family clusters — hemoglobin, photosystem II D1, Hsp70/DnaK, viral surface proteins, the prion protein — each with an authored camera `Waypoint`, a highlight layer and a right-hand panel of sourced facts closing on an open question. A story is a protein-name pattern plus a radius around the family's median position, so the highlight is the visible blob, not the family's stragglers. Auto-rotate is on by default, so a story step keeps the turntable spinning while it moves the point the camera spins around (the viewer's keep-orientation flight).
+
+**Run**: `luxar demo run esm3_protein_stories [-- --no-serve] [-- --no-auto-rotate]`
+
+**Requires**: the base demo's cache (`~/.cache/luxar/esm3_swissprot/`: UMAP positions + metadata). Run `luxar demo run esm3_protein_landscape` once to build it; this demo never recomputes embeddings.
+
+**Demonstrates**: story waypoints (`ViewerConfig.waypoints`, the remote-control spec §4.1), dimension-aware overlays as captions, `extend_to_all` backdrop + per-slot highlight layers, keep-orientation flights under auto-rotate.
+
+---
+
 #### demo_cellxgene_census_umap.py - CZ CELLxGENE Census single-cell 3D UMAP (LOD stress test)
 A very large 3D UMAP of human single cells from the CZ CELLxGENE Census, embedded from their **precomputed scVI latent** (50-d) with **cuML UMAP**, rendered with bounded additive Points streaming + a categorical `coloring` dimension (cell type / tissue / disease). The shipped default builds a 3M-element scene from a 1M-cell cache; larger caches are supported up to the portable 5,591,040 resident-Point node cap.
 
