@@ -16,8 +16,9 @@
  * NOTHING HERE MAY THROW. A build that dies because `git` is missing is a
  * strictly worse outcome than a bundle stamped `commit: "unknown"` — and the
  * missing-git case is the normal one for a source tarball, a Docker build with
- * no `.git`, or a shallow CI checkout of an archive. Every probe is wrapped and
- * degrades to `'unknown'`.
+ * no `.git`, or a shallow CI checkout of an archive. Every probe is wrapped;
+ * failure to resolve a SHA degrades to `'unknown'`, while a failed dirty-tree
+ * probe retains the already-verified SHA.
  */
 
 import { execFileSync } from 'child_process';
@@ -64,8 +65,11 @@ function gitCommit(root: string): string {
     if (!sha) return UNKNOWN;
     // A dev build with uncommitted work must not be reported as that commit:
     // the SHA would send a bug report to source that is not what ran.
-    const dirty = git(['status', '--porcelain']).trim().length > 0;
-    return dirty ? `${sha}-dirty` : sha;
+    try {
+      return git(['status', '--porcelain']).trim().length > 0 ? `${sha}-dirty` : sha;
+    } catch {
+      return sha;
+    }
   } catch {
     return UNKNOWN;
   }
