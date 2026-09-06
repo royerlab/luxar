@@ -292,8 +292,16 @@
   opacity: 0.45;
 }
 
-.luxar-layers-panel__control-group--inert .luxar-layers-panel__slider {
+.luxar-layers-panel__control-group--inert .luxar-layers-panel__slider,
+.luxar-layers-panel__control-group--inert .luxar-layers-panel__toggle {
   cursor: not-allowed;
+}
+
+/* A boolean control in the same row shape as a slider's label + readout (see
+   `LabeledToggle`); the checkbox sits where the readout would. */
+.luxar-layers-panel__toggle {
+  margin: 0;
+  cursor: pointer;
 }
 
 .luxar-layers-panel__slider {

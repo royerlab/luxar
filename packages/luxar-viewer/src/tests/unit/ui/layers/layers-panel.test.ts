@@ -1698,13 +1698,19 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     expect(group.style.display).not.toBe('none');
     // One live slider per numeric knob, in table order, seated on the authored value
     // or the knob default (readout: two decimals; IOR three; "∞" for no attenuation).
-    const sliders = Array.from(group.querySelectorAll('.luxar-layers-panel__control-group')).map(
-      (g) => [
+    const sliders = Array.from(group.querySelectorAll('.luxar-layers-panel__control-group'))
+      .filter((g) => g.querySelector('input[type="range"]') !== null)
+      .map((g) => [
         g.querySelector('.luxar-layers-panel__control-label span')!.textContent,
         g.querySelector('.luxar-layers-panel__control-value')!.textContent,
         (g.querySelector('input[type="range"]') as HTMLInputElement).value,
-      ]
-    );
+      ]);
+    // Plus the one boolean control, after the sliders: live (transmission is on) and off.
+    const refract = findControlGroup(group, 'Refract data')!;
+    const refractBox = refract.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    expect(refractBox.checked).toBe(false);
+    expect(refractBox.disabled).toBe(false);
+    expect(group.lastElementChild!.previousElementSibling).toBe(refract); // before the rows
     expect(sliders).toEqual([
       ['Roughness', '0.40', '0.4'],
       ['Metalness', '0.00', '0'],
@@ -1786,6 +1792,121 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     expect(material.transparent).toBe(false);
     expect(material.userData.drawBeforeEmissive).toBeUndefined();
     expect(inputOf('Roughness').value).toBe('0.4');
+  });
+
+  it('the Refract data switch is inert without transmission, flips the material live, and Reset restores it', () => {
+    const material = new PhysicalMeshMaterial({ roughness: 0.4 });
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
+    mesh.name = '/cloud';
+    mesh.userData.nodeType = 'mesh';
+    mesh.userData._layerMaterialCloned = true;
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(
+      rootGroup,
+      makeLayeredSceneGraph('mesh', { material: 'physical', roughness: 0.4 })
+    );
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    const group = findControlGroup(container, 'Physical material')!;
+    const toggleGroup = findControlGroup(group, 'Refract data')!;
+    const checkbox = toggleGroup.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    const transmission = findControlGroup(group, 'Transmission')!.querySelector(
+      'input[type="range"]'
+    ) as HTMLInputElement;
+
+    // No transmission authored: the switch is off and inert, and says why.
+    expect(checkbox.checked).toBe(false);
+    expect(checkbox.disabled).toBe(true);
+    expect(toggleGroup.title).toContain('Transmission');
+
+    // Transmission wakes it; flipping it moves the glass from draw-first to draw-after
+    // on the REAL material, with nothing else about its compositing changing.
+    transmission.value = '1';
+    transmission.dispatchEvent(new Event('input'));
+    expect(checkbox.disabled).toBe(false);
+    expect(material.userData.drawBeforeEmissive).toBe(true);
+    checkbox.checked = true;
+    checkbox.dispatchEvent(new Event('change'));
+    expect(material.userData.drawAfterEmissive).toBe(true);
+    expect(material.userData.drawBeforeEmissive).toBeUndefined();
+    expect(material.transparent).toBe(true);
+    expect(material.depthWrite).toBe(false);
+    expect(panel.layerState.getLayer('/cloud')!.physicalKnobs!.refract_data).toBe(true);
+
+    // Reset: authored = no transmission, no refraction — the switch goes back off and inert.
+    panel.resetAllLayers();
+    expect(material.transmission).toBe(0);
+    expect(material.userData.drawAfterEmissive).toBeUndefined();
+    expect(material.userData.drawBeforeEmissive).toBeUndefined();
+    const checkboxAfter = findControlGroup(
+      findControlGroup(container, 'Physical material')!,
+      'Refract data'
+    )!.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    expect(checkboxAfter.checked).toBe(false);
+    expect(checkboxAfter.disabled).toBe(true);
+  });
+
+  it('an authored refract_data seats the switch on, and the per-row reset restores knobs AND the switch', () => {
+    const material = new PhysicalMeshMaterial({
+      transmission: 1.0,
+      refractData: true,
+      roughness: 0.4,
+    });
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
+    mesh.name = '/cloud';
+    mesh.userData.nodeType = 'mesh';
+    mesh.userData._layerMaterialCloned = true;
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(
+      rootGroup,
+      makeLayeredSceneGraph('mesh', {
+        material: 'physical',
+        transmission: 1.0,
+        refract_data: true,
+        roughness: 0.4,
+      })
+    );
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    const group = findControlGroup(container, 'Physical material')!;
+    const checkbox = findControlGroup(group, 'Refract data')!.querySelector(
+      'input[type="checkbox"]'
+    ) as HTMLInputElement;
+    expect(checkbox.checked).toBe(true);
+    expect(checkbox.disabled).toBe(false);
+    expect(material.userData.drawAfterEmissive).toBe(true);
+
+    // Drag the layer away from its authored state: switch off, roughness down.
+    checkbox.checked = false;
+    checkbox.dispatchEvent(new Event('change'));
+    expect(material.userData.drawBeforeEmissive).toBe(true);
+    const roughness = findControlGroup(group, 'Roughness')!.querySelector(
+      'input[type="range"]'
+    ) as HTMLInputElement;
+    roughness.value = '0.05';
+    roughness.dispatchEvent(new Event('input'));
+    expect(material.roughness).toBeCloseTo(0.05, 6);
+
+    // The per-row reset (the real user path) restores BOTH onto the material — this
+    // path used to reset the readouts but leave the dragged knobs on the surface.
+    const row = container.querySelector<HTMLElement>('.luxar-layer-row')!;
+    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const reset = Array.from(
+      document.querySelectorAll<HTMLElement>('.luxar-context-menu__item')
+    ).find((el) => el.textContent === 'Reset this layer')!;
+    reset.click();
+    expect(material.roughness).toBe(0.4);
+    expect(material.userData.drawAfterEmissive).toBe(true);
+    expect(material.userData.drawBeforeEmissive).toBeUndefined();
+    panel.dispose();
   });
 
   it('greys out the knobs that change nothing in the current state, with the reason as hover text', () => {

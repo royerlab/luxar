@@ -724,6 +724,15 @@ export function physicalKnobInertReason(
   return rules[key] ?? null;
 }
 
+/**
+ * Why the "Refract data" toggle is inert in the current state, or `null` when live.
+ * A surface that transmits nothing has nothing to refract (spec §3.4 Phase 3) — the
+ * same dependency the glass knobs have.
+ */
+export function physicalRefractDataInertReason(values: PhysicalKnobLiveValues): string | null {
+  return physicalKnobDependencyState(values).transmitting ? null : INERT_NEEDS_TRANSMISSION;
+}
+
 /** The live knob values (material domain) plus the attenuation colour, all optional. */
 export type PhysicalKnobLiveValues = Partial<Record<PhysicalMeshKnobKey, number>> & {
   attenuation_color?: string;

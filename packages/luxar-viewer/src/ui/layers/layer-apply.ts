@@ -767,6 +767,8 @@ export class LayerApplyEngine {
       for (const key of PHYSICAL_MESH_KNOB_KEYS) {
         mat.updatePhysicalKnob(key, physicalKnobFromSlider(key, knobs[key]));
       }
+      // The `refract_data` switch rides the same record (spec §3.4 Phase 3).
+      mat.updateRefractData?.(knobs.refract_data === true);
       applied = true;
     }
     if (applied) this.deps.requestRender();
