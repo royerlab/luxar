@@ -73,7 +73,7 @@ export const COVERAGE_THRESHOLDS = {
   // branches 83 -> 85 after the #2508 capture-readiness tests reached the
   // version-skew branches nothing had exercised (a cap refusing on a partial
   // snapshot, the unreadable-figure paths, the hostile-string guard): the
-  // subtree went 85.69 -> 86.20 and check-coverage-slack.mjs flagged the old
+  // subtree went 85.69 -> 86.22 and check-coverage-slack.mjs flagged the old
   // floor as stale. The ratchet working, same as the src/data and src/workers
   // bumps above.
   'src/core/**': { lines: 86, functions: 70, branches: 85 }, //      88.48 / 72.61 / 86.22
