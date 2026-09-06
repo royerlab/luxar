@@ -1,11 +1,12 @@
-"""Security regression tests for ``robust_download`` cross-host header leakage.
+"""Security regression tests for ``robust_download`` redirect header leakage.
 
 ``requests`` strips the ``Authorization`` header on a redirect that crosses to a
 different host, but it does NOT strip arbitrary custom headers. A caller passing
 a credential-bearing ``extra_headers`` entry (an ``api-key``, an ``x-api-key``, a
 Zenodo/S3 bearer token, …) would therefore leak that credential to whatever host
 a redirect points at (finding A13-02). ``robust_download`` now routes through a
-host-scoped session that drops those headers on any cross-host redirect.
+origin-scoped session that drops those headers whenever requests would strip
+``Authorization`` (host, port, or unsafe scheme changes).
 
 The end-to-end tests use two loopback aliases (``127.0.0.1`` and ``localhost``)
 as distinct "hosts" so a redirect between them exercises the real requests
@@ -104,6 +105,42 @@ def _payload_request(server: http.server.ThreadingHTTPServer) -> dict:
 
 
 class TestRobustDownloadCrossHostHeaderLeak:
+    @pytest.mark.parametrize(
+        ("original_url", "redirect_url", "should_strip"),
+        [
+            (
+                "https://example.com/start",
+                "http://example.com/payload",
+                True,
+            ),
+            (
+                "https://example.com/start",
+                "https://example.com:8443/payload",
+                True,
+            ),
+            (
+                "http://example.com/start",
+                "https://example.com/payload",
+                False,
+            ),
+        ],
+        ids=["https-downgrade", "port-change", "default-port-http-upgrade"],
+    )
+    def test_custom_headers_follow_requests_authorization_policy(
+        self, original_url: str, redirect_url: str, should_strip: bool
+    ) -> None:
+        original = requests.Request("GET", original_url).prepare()
+        response = requests.Response()
+        response.request = original
+        redirected = requests.Request(
+            "GET", redirect_url, headers={"api-key": _SECRET}
+        ).prepare()
+
+        scoped = _make_host_scoped_session(original_url, {"api-key"})
+        scoped.rebuild_auth(redirected, response)
+
+        assert ("api-key" not in redirected.headers) is should_strip
+
     def test_cross_host_redirect_drops_custom_header(
         self, redirect_server, tmp_path: Path
     ) -> None:
@@ -193,7 +230,7 @@ class TestRobustDownloadCrossHostHeaderLeak:
             "stock requests should leak the custom header (documents the bug)"
         )
 
-        scoped = _make_host_scoped_session("example.com", {"api-key"})
+        scoped = _make_host_scoped_session("http://example.com/start", {"api-key"})
         scoped.trust_env = False
         scoped_req = requests.Request(
             "GET", "http://evil.example.net/payload", headers={"api-key": _SECRET}

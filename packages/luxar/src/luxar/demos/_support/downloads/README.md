@@ -28,7 +28,8 @@ download_with_checksum(
   Range requests. Bytes stay in `<dest>.part` until complete and size-verified;
   `If-Range` uses the ETag or Last-Modified value in
   `<dest>.part.validator`, so changed remote content is restarted rather than
-  spliced onto stale bytes.
+  spliced onto stale bytes. Caller-supplied headers are scoped to the original
+  URL across redirects.
 - `verify_file_checksum()` and `download_with_checksum()` enforce MD5/SHA256
   integrity, deleting a completed download when verification fails.
 - `find_quarantined_files()`, `format_quarantine_notice()`, and
@@ -36,7 +37,8 @@ download_with_checksum(
   potentially large replacement download starts.
 - `download_zip_member()` validates the member path, caps the central directory
   at 64 MiB and uncompressed output at 256 GiB by default, then verifies size
-  and CRC before atomically promoting the selected member.
+  and CRC before atomically promoting the selected member. Caller-supplied
+  headers are scoped to the original URL across redirects.
 
 `zip_safety.py` centralizes member-name validation for local and remote
 archives. Dataset policy, cache layout, and manifest resolution belong in the
