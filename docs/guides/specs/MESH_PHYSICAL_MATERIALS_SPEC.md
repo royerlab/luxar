@@ -73,9 +73,26 @@ refuses unknown keys: an audience is the wrong place to discover a typo.
 
 A physical mesh keeps everything else a mesh has: nD vertices and the §5
 slab cull, `layer_order`, `opacity`, labels/picking, partition and LOD groups,
-`double_sided`. It drops the house-shader-only knobs (`shading`, `ambient`,
-`shade_exponent`, `specular`, `shininess`, `blending_mode`, colormaps): those
-are refused when `material="physical"`, not silently ignored.
+`double_sided`. It drops the house-shader-only knobs (`ambient`,
+`shade_exponent`, `specular`, `shininess`, `blending_mode`, colormaps,
+textures, `shading="none"`): those are refused when `material="physical"`, not
+silently ignored. A physical knob without `material="physical"` is refused too.
+
+Phase 1 implementation notes (branch `feat/mesh-physical-materials`, 2026-09-06),
+which refine the paragraph above and are the contract from here on:
+
+- `shading="smooth"` / `"flat"` is **kept** for physical meshes and maps to
+  three's `flatShading`: flat-versus-smooth normals is a property of any lit
+  surface, not of the house key. Only the unlit `"none"` is refused.
+- `alpha_cutoff` is **mapped** to three's `alphaTest` rather than refused: on an
+  RGBA physical mesh it selects the opaque-cutout path, like the house `opaque`
+  mode, instead of translucency.
+- `sheen_color` (`"#rrggbb"`) is an **added** knob: three's default `sheenColor`
+  is black, so `sheen` alone renders nothing.
+- Phase 1 knobs: `roughness`, `metalness`, `clearcoat`, `clearcoat_roughness`,
+  `iridescence`, `sheen`, `sheen_color`; each a finite float in [0, 1] (colour
+  excepted), written only when set. The closed `material` vocabulary is
+  `{"luxar", "physical"}`; absent means the house shader.
 
 ### 3.2 Viewer: a third material family, not a variant
 

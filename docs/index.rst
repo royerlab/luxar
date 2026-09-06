@@ -125,6 +125,7 @@ Features
    guides/specs/LAYER_ORDER_SPEC
    guides/specs/REMOTE_CONTROL_SPEC
    guides/specs/MESH_PHYSICAL_MATERIALS_SPEC
+   guides/specs/SOUND_SPEC
    specs/GSPLATS_DIMENSION_MAPPING
    specs/LUXAR_LAYER_SPEC
 
