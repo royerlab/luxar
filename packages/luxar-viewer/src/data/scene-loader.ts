@@ -8,6 +8,7 @@
 import * as zarr from './zarr';
 import * as THREE from 'three';
 import { normalizeURL } from './scene-loader/lifecycle/url-normalization';
+import type { RefinementHoldReason } from '../types/data-monitor-types';
 import { applyEffectiveAttrs as applyEffectiveAttrsHelper } from './scene-loader/view-state/effective-attrs';
 import {
   getCacheStats as getCacheStatsHelper,
@@ -248,6 +249,12 @@ export class SceneLoader {
   // Projected-density rung gate (density-gate.ts); null = no provider wired
   // (guard disabled, tests, embedders) = bytes-only admission.
   private refinementDensityGate: RefinementDensityGate | null = null;
+  /**
+   * The last refinement run's residency budget, kept so the data monitor can
+   * tell a rung held at the residency ceiling from one still streaming
+   * (`refinementHoldReason`). Replaced at every run start.
+   */
+  private lastResidencyBudget: RefinementResidencyBudget | null = null;
 
   // Delegate registry-backed maps used by the loader orchestration methods.
   private get loaders() {
@@ -693,6 +700,19 @@ export class SceneLoader {
    * fits (the camera moved in), re-kick refinement. Cheap when nothing is
    * deferred (the common case). Returns how many paths resumed.
    */
+  /**
+   * Why this node's next rung is held back, if it is: `'density'` when the
+   * density gate deferred it at the current framing, `'budget'` when the last
+   * run's residency budget declined it, `null` otherwise (streaming, or nothing
+   * pending). Density first: a density refusal is also folded into the budget's
+   * declined set, and the camera-dependent reason is the actionable one.
+   */
+  refinementHoldReason(path: string): RefinementHoldReason | null {
+    if (this.refinementDensityGate?.isDeferred(path)) return 'density';
+    if (this.lastResidencyBudget?.isDeclined(path)) return 'budget';
+    return null;
+  }
+
   resumeDensityDeferredRefinement(): number {
     const gate = this.refinementDensityGate;
     if (!gate || gate.deferredCount === 0) return 0;
@@ -863,6 +883,7 @@ export class SceneLoader {
       getFailedLoaderReasons: () =>
         Array.from(this.failedLoaders.values(), (info) => info.error?.message || info.kind || ''),
       getFailedLoadsProvider: () => this.getFailedLoadsProvider(),
+      refinementHoldReason: (path) => this.refinementHoldReason(path),
       scheduleGSplatsRefinement: () => this.scheduleGSplatsRefinement(),
       drainPendingViewState: () => this.viewStateQueue.drain((state) => this.updateView(state)),
       resolvePassWaiters: () => this.resolvePassWaiters(),
@@ -1417,6 +1438,7 @@ export class SceneLoader {
         this.refinementResidencyReporter,
         this.refinementDensityGate
       );
+      this.lastResidencyBudget = residencyBudget;
       // Intermediate phases shouldn't release the lock — only the last
       // phase running to completion does.
       const noopReleaseLock = () => {

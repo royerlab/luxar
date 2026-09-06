@@ -552,6 +552,9 @@ export type LODNodeKind = NodeKind | 'additive';
  * beyond `kind` are optional — only the ones relevant to a node's kind are
  * populated.
  */
+/** Why a progressive loader's next rung is held back (see `LODProgressState.held`). */
+export type RefinementHoldReason = 'density' | 'budget';
+
 export interface LODProgressState {
   kind: LODNodeKind;
   /** substitutive: total number of levels (child count). */
@@ -569,6 +572,15 @@ export interface LODProgressState {
   total?: number;
   /** additive: more LODs pending — refinement loop still running. */
   refining?: boolean;
+  /**
+   * additive: why the next rung is HELD rather than streaming, when it is.
+   * `'density'`: the density guard's rung gate — at the current framing the
+   * node already projects more elements per pixel than its cap; loads once
+   * the camera moves in. `'budget'`: the residency ceiling — loading it would
+   * exceed the in-memory budget; nothing more loads until memory frees.
+   * Absent while a pending rung is genuinely downloading (or nothing is pending).
+   */
+  held?: RefinementHoldReason;
   /**
    * additive: whether the most recent streamed load was fully
    * cache-resident (drives a "cached" vs "streaming" indicator). Mirrors
