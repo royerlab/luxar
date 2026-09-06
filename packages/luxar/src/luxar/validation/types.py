@@ -12,7 +12,7 @@ users writing data.
 from __future__ import annotations
 
 import math
-from typing import Any, List, Optional, Tuple, Union, cast
+from typing import Any, FrozenSet, List, Optional, Tuple, Union, cast
 
 import numpy as np
 
@@ -402,6 +402,142 @@ def validate_texture_wrap(value: Any, name: str) -> str:
 def validate_texture_color_space(value: Any, name: str) -> str:
     """Validate a mesh ``texture_color_space`` declaration."""
     return _validate_texture_choice(value, name, TEXTURE_COLOR_SPACES)
+
+
+#: The mesh material families the viewer implements
+#: (``docs/guides/specs/MESH_PHYSICAL_MATERIALS_SPEC.md`` §3.1).
+#:
+#: ``luxar`` is the house shader — the light-free, view-anchored key of
+#: ``MESH_NODE_SPEC.md`` §6.2 — and what every mesh renders with when the attr is
+#: absent. ``physical`` opts a mesh into three.js's own physically based material,
+#: lit by the viewer's scene environment; it is the only family that understands
+#: :data:`PHYSICAL_MATERIAL_ATTRS`.
+MESH_MATERIALS: Tuple[str, ...] = ("luxar", "physical")
+
+#: The physical knobs that are FRACTIONS in ``[0, 1]``, in the order the viewer's
+#: Layers panel lists them. ``transmission`` (Phase 2) is a fraction too: the share
+#: of light that passes through the surface rather than reflecting off it.
+PHYSICAL_MATERIAL_FRACTION_ATTRS: Tuple[str, ...] = (
+    "roughness",
+    "metalness",
+    "clearcoat",
+    "clearcoat_roughness",
+    "iridescence",
+    "sheen",
+    "transmission",
+)
+
+#: The Phase 2 glass family (spec §3.4). Only ``transmission`` and ``ior`` mean
+#: anything on their own; three compiles ``thickness``, the two ``attenuation_*``
+#: knobs and ``dispersion`` inside its ``USE_TRANSMISSION`` block, so the mesh
+#: adder refuses them without ``transmission > 0`` (see
+#: ``PHYSICAL_TRANSMISSION_DEPENDENT_ATTRS``). ``ior`` stands alone because it
+#: also sets the specular reflectance at normal incidence of an opaque surface.
+PHYSICAL_TRANSMISSION_ATTRS: FrozenSet[str] = frozenset(
+    {
+        "transmission",
+        "ior",
+        "thickness",
+        "attenuation_color",
+        "attenuation_distance",
+        "dispersion",
+    }
+)
+
+#: The subset of :data:`PHYSICAL_TRANSMISSION_ATTRS` that renders NOTHING unless
+#: ``transmission`` is authored above zero — the pairing the adder refuses.
+PHYSICAL_TRANSMISSION_DEPENDENT_ATTRS: FrozenSet[str] = frozenset(
+    {"thickness", "attenuation_color", "attenuation_distance", "dispersion"}
+)
+
+#: Every authored knob that means something ONLY under ``material="physical"``.
+#:
+#: ``sheen_color`` rides along because three's default sheen colour is black, so
+#: ``sheen`` alone renders nothing — a knob that silently does nothing is exactly
+#: what the material validation exists to refuse. The glass family
+#: (:data:`PHYSICAL_TRANSMISSION_ATTRS`) joined in Phase 2.
+PHYSICAL_MATERIAL_ATTRS: FrozenSet[str] = (
+    frozenset(PHYSICAL_MATERIAL_FRACTION_ATTRS)
+    | {"sheen_color"}
+    | PHYSICAL_TRANSMISSION_ATTRS
+)
+
+#: The index-of-refraction range three's physical material accepts (its documented
+#: ``ior`` bounds: vacuum to diamond).
+IOR_MIN = 1.0
+IOR_MAX = 2.333
+
+#: The house-shader knobs a physical mesh REFUSES rather than ignores: each
+#: parameterises the §6.2 wrapped-diffuse / Blinn–Phong model, which a physical
+#: material does not run. ``alpha_cutoff`` is not here — it maps onto three's
+#: ``alphaTest`` — and neither is ``shading``, whose smooth/flat half is a
+#: property of any lit surface (only the unlit ``none`` is refused, by the adder).
+HOUSE_SHADER_ONLY_ATTRS: FrozenSet[str] = frozenset(
+    {"ambient", "shade_exponent", "specular", "shininess"}
+)
+
+
+def validate_mesh_material(value: Any, name: str = "Material") -> str:
+    """Validate a mesh ``material`` attr against :data:`MESH_MATERIALS`.
+
+    A typo here would be the worst kind: ``material="physcial"`` would write
+    cleanly and render with the house shader, and the author would conclude the
+    physical knobs do nothing.
+    """
+    return _validate_texture_choice(value, name, MESH_MATERIALS)
+
+
+def validate_ior(value: Any, name: str = "Ior") -> float:
+    """Validate a physical ``ior`` in three's ``[IOR_MIN, IOR_MAX]``.
+
+    Below 1 is not a refractive index of anything light enters from vacuum, and
+    three's transmission shader clamps at 2.333 (diamond), so a value outside the
+    range is a typo (``ior=15``) rather than an exotic material.
+    """
+    try:
+        result = float(value)
+    except (ValueError, TypeError) as e:
+        raise TypeError(
+            f"{name} must be convertible to float, got {type(value).__name__}"
+        ) from e
+    if not math.isfinite(result) or not IOR_MIN <= result <= IOR_MAX:
+        raise ValueError(
+            f"{name} must be finite and between {IOR_MIN} and {IOR_MAX}, got {result}"
+        )
+    return result
+
+
+def validate_non_negative_finite(value: Any, name: str) -> float:
+    """Validate a finite mesh appearance quantity that may be zero (``thickness``)."""
+    try:
+        result = float(value)
+    except (ValueError, TypeError) as e:
+        raise TypeError(
+            f"{name} must be convertible to float, got {type(value).__name__}"
+        ) from e
+    if not math.isfinite(result) or result < 0.0:
+        raise ValueError(f"{name} must be finite and at least 0, got {result}")
+    return result
+
+
+_HEX_COLOR_DIGITS = frozenset("0123456789abcdefABCDEF")
+
+
+def validate_hex_color(value: Any, name: str) -> str:
+    """Validate a ``#rrggbb`` colour string (``sheen_color``, ``attenuation_color``).
+
+    Exactly the six-digit form: three.js parses the three-digit shorthand too,
+    but accepting two spellings of one colour on disk buys nothing and costs the
+    reader a normalisation step. The value is returned as given.
+    """
+    if (
+        not isinstance(value, str)
+        or len(value) != 7
+        or value[0] != "#"
+        or any(ch not in _HEX_COLOR_DIGITS for ch in value[1:])
+    ):
+        raise ValueError(f"{name} must be a '#rrggbb' hex colour string, got {value!r}")
+    return value
 
 
 def validate_absorption(absorption: Any) -> float:

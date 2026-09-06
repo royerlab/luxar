@@ -214,7 +214,27 @@ ordering: "none"                # v1 always; reserved for a future spatial index
 
 plus the standard render attrs already handled by `apply_default_render_attrs` and
 `prepare_transform_attrs` (`opacity`, `gamma`, `intensity`, `offset`, `absorption`, `blending_mode`,
-`colormap`, `scalar_data_range`, `layer`, `transform`, `nd_transform`, `extend_to_all`).
+`colormap`, `scalar_data_range`, `layer`, `transform`, `nd_transform`, `extend_to_all`), plus the
+opt-in material family (`docs/guides/specs/MESH_PHYSICAL_MATERIALS_SPEC.md` §3.1), written only when
+authored:
+
+```
+material: "luxar" | "physical"  # absent = "luxar", the §6.2 house shader
+roughness, metalness, clearcoat, clearcoat_roughness, iridescence, sheen: float in [0, 1]
+sheen_color: "#rrggbb"
+transmission: float in [0, 1]   # the glass family (spec §3.4)
+ior: float in [1, 2.333]
+thickness: float >= 0
+attenuation_color: "#rrggbb"
+attenuation_distance: float > 0  # absent = no attenuation
+dispersion: float >= 0
+```
+
+The thirteen physical knobs are accepted only with `material: "physical"`, and a physical mesh
+refuses `ambient` / `shade_exponent` / `specular` / `shininess`, `blending_mode`, `colormap`, a
+texture and `shading: "none"` — none of them has a meaning under that material (§6.4).
+`thickness`, `attenuation_color`, `attenuation_distance` and `dispersion` are refused without a
+`transmission` above zero, because three evaluates them only inside its transmission path.
 
 `MESH_RESERVED_ATTRS` is added to `io/_compiler/node_common.py` alongside the other three frozensets:
 
@@ -1194,6 +1214,46 @@ key and no LRU.
 There are no per-type material cache maps — every material is per-node, so `getCacheStats()` reports
 only registry size and create-time, never a cache size. Mesh follows the same convention: no cache map,
 `createMeshMaterial` constructs directly.
+
+#### The physical family (`material="physical"`)
+
+Mesh is also the only type with a **second material family**. `material="physical"`
+(`docs/guides/specs/MESH_PHYSICAL_MATERIALS_SPEC.md`, Phases 1–2 shipped) hands the mesh to three's own
+physically based material — `MeshPhysicalMaterial` on WebGL, `MeshPhysicalNodeMaterial` on WebGPU —
+behind two thin wrappers in `rendering/materials/mesh-physical/` that share ONE attr→property mapping
+(`config.ts`). It is registered as its own `VISUAL_FACTORIES.meshPhysical` entry, not as a variant of
+`mesh`, because none of the house contracts in this section apply to it:
+
+- **No codegen snapshot.** The snapshot harness pins TSL Luxar writes; three's materials are three's to
+  pin. The acceptance test is instead a real-WebGPU vs WebGL A/B on the demo scene judged by structural
+  similarity (`packages/luxar-viewer/scripts/ab-webgpu-vs-webgl.mjs`), not pixel equality.
+- **Picking is unchanged.** There is deliberately no `PICKING_FACTORIES.meshPhysical`: picking renders
+  geometry, not appearance, so a physical mesh picks through the house mesh-pick material (§6.5). Its
+  pick mode follows its compositing — the cutout when opaque, every fragment when translucent.
+- **Never triangle-sorted.** The material stamps `userData.blendingMode = 'opaque'` when opaque and
+  nothing when translucent, so the depth-sort coordinator (§6.3) releases it in both cases while the
+  node state — and with it the `layer_order` band rank — is still created by the ordinary commit.
+- **No blending mode at all.** Translucency is read off the data: `opacity < 1`, `transmission > 0`
+  (glass), or per-vertex alpha without an authored `alpha_cutoff`; with a cutoff the alpha is a cutout
+  (`alphaTest`), as in the house `opaque` mode. Translucent surfaces do not write depth. An inherited
+  `blending_mode` is ignored with a one-time notice, the way an inherited `volumetric` is on a house mesh.
+- **Glass draws first in its band.** Three renders transmission by sampling a copy of what was drawn
+  before the glass; on WebGPU the glass shares the transparent render list with every emissive layer
+  and lands its fragments with alpha 1, so a cluster whose centre sorted farther than the sphere would
+  be drawn first and painted over. The material stamps `userData.drawBeforeEmissive` while
+  `transmission > 0`, and the depth-sort coordinator's cross-node pass (§6.3) orders such a mesh first
+  within its `layer_order` band (renderOrder −1 when unranked), so data in front of or behind glass
+  stays crisp and unrefracted on both backends — the spec §3.4 contract. Glass refracts the background
+  and other meshes only.
+- **Lit by the scene environment**, not by the §6.2 key: a prefiltered `RoomEnvironment` on
+  `scene.environment`, built lazily on the first physical material (`rendering/environment/`). House
+  materials never read it, so a scene without a physical mesh renders byte-identically.
+- **The shared surface stays.** `opacity`, `intensity` (a scalar base-colour gain), `offset` (emissive
+  radiance), `alpha_cutoff` (`alphaTest`), `shading` smooth/flat (`flatShading`), `double_sided`,
+  `layer_order`, nD slicing, picking, partition and LOD groups all work as on a house mesh. `gamma` is
+  recorded but has no physical term; the Layers panel hides that slider and the shading sliders for a
+  physical layer and shows one live slider per numeric physical knob instead (the two colour knobs are
+  read-only rows); Reset restores the authored values.
 
 Both backends must produce matching output; the existing codegen snapshot harness
 (`src/tests/__codegen__/`) gates the **TSL-generated** shaders (the hand-written GLSL twins are pinned

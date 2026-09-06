@@ -296,6 +296,33 @@ describe('depth-sort coordinator', () => {
     expect(mockApi.sort).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['opaque, stamped', { material: 'physical', blendingMode: 'opaque' }],
+    ['translucent, unstamped', { material: 'physical' }],
+  ])(
+    "never registers a material='physical' mesh (%s) — spec MESH_PHYSICAL_MATERIALS §3.2",
+    async (_label, userData) => {
+      // A physical mesh has no Luxar blending mode: opaque it stamps `opaque`,
+      // translucent it stamps nothing (`derivePhysicalCompositing`). Either way the
+      // coordinator must judge it commutative and hold no worker registration. The
+      // node STATE is still created (so `layer_order` band ranks apply), which is why
+      // this goes through the real commit entry rather than being skipped upstream.
+      const coord = await loadCoordinator();
+      coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+      const material = new THREE.Material();
+      Object.assign(material.userData, userData);
+      const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
+      mesh.userData.nodeType = 'mesh';
+      mesh.userData.committedData = { some: 'source' };
+      coord.noteDepthSortCommit(mesh, () => new Float32Array(9), 3, new Uint32Array(9));
+      await flush();
+
+      expect(mockApi.registerNode).not.toHaveBeenCalled();
+      expect(mockApi.sort).not.toHaveBeenCalled();
+    }
+  );
+
   it('registers + sorts a volumetric commit (the second order-dependent mode)', async () => {
     // needsDepthSort = normal ∪ volumetric: volumetric compositing is
     // non-commutative (emission–absorption attenuates what is behind),
@@ -350,6 +377,25 @@ describe('depth-sort coordinator', () => {
     // And switching back to a sorted mode forces the reprocess.
     coord.noteDepthSortBlendingModeSwitch(mesh, 'volumetric', 'additive');
     expect(requestReprocess).toHaveBeenCalledTimes(1);
+  });
+
+  it('undefined→opaque preserves commit freshness and does not reprocess', async () => {
+    const coord = await loadCoordinator();
+    const requestReprocess = vi.fn();
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      requestReprocess,
+    });
+
+    const mesh = makeGSplatsMesh(3, 'opaque');
+    mesh.userData.committedData = { position: true };
+    mesh.userData.loadedViewVersion = 7;
+    coord.noteDepthSortBlendingModeSwitch(mesh, 'opaque', undefined);
+
+    expect(mesh.userData.committedData).toEqual({ position: true });
+    expect(mesh.userData.loadedViewVersion).toBe(7);
+    expect(requestReprocess).not.toHaveBeenCalled();
   });
 
   it('generation guard: a stale ordering resolving after a newer commit is dropped', async () => {
@@ -5113,6 +5159,82 @@ describe('depth-sort coordinator — layer_order bands', () => {
 
     expect(near.renderOrder).toBe(1);
     expect(far.renderOrder).toBe(2);
+  });
+
+  /**
+   * A transmissive physical mesh, as `derivePhysicalCompositing` stamps it: no
+   * Luxar blending mode (translucent, so commutative to the coordinator) and the
+   * draw-before-emissive request (spec MESH_PHYSICAL_MATERIALS §3.4).
+   */
+  function makeGlassMesh(z: number): THREE.Mesh {
+    const material = new THREE.Material();
+    material.userData.material = 'physical';
+    material.userData.drawBeforeEmissive = true;
+    material.transparent = true;
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
+    mesh.geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, z), 1);
+    mesh.userData.nodeType = 'mesh';
+    mesh.userData.committedData = { some: 'source' };
+    return mesh;
+  }
+
+  it('unranked glass sits at renderOrder -1, ahead of the unranked emissive layers at 0', async () => {
+    // On WebGPU glass shares the transparent list with every emissive layer and
+    // three sorts that list by renderOrder first, so this is what keeps a cluster
+    // whose centre sorts farther than the sphere from being painted over.
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const glass = makeGlassMesh(-10);
+    const additive = makeGSplatsMesh(2, 'additive');
+    coord.noteDepthSortCommit(glass, () => new Float32Array(9), 3, new Uint32Array(9));
+    coord.noteDepthSortCommit(additive, new Float32Array([0, 0, -1]), 1);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(glass.renderOrder).toBe(-1);
+    expect(additive.renderOrder).toBe(0);
+    expect(mockApi.registerNode).not.toHaveBeenCalled();
+  });
+
+  it('glass with an authored band draws first WITHIN that band, not before lower bands', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const { far, near } = twoDisjointLeaves();
+    // The glass is the FARTHEST object and would sort first by depth anyway — so
+    // put it in a HIGHER band than `far`, and make it NEARER than `near` in its own
+    // band: it must land after `far` (lower band) and before `near` (same band,
+    // despite being nearer).
+    const glass = makeGlassMesh(-5);
+    setLevel(far, 0);
+    setLevel(near, 1);
+    setLevel(glass, 1);
+    coord.noteDepthSortCommit(glass, () => new Float32Array(9), 3, new Uint32Array(9));
+    for (const m of [near, far]) coord.noteDepthSortCommit(m, new Float32Array([0, 0, -1]), 1);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(far.renderOrder).toBe(-2);
+    expect(glass.renderOrder).toBe(-1);
+    expect(near.renderOrder).toBe(1);
+  });
+
+  it('glass keeps its draw-first bias when depth sorting is disabled', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const glass = makeGlassMesh(-10);
+    const additive = makeGSplatsMesh(2, 'additive');
+    coord.noteDepthSortCommit(glass, () => new Float32Array(9), 3, new Uint32Array(9));
+    coord.noteDepthSortCommit(additive, new Float32Array([0, 0, -1]), 1);
+    await flush();
+    coord.setDepthSortEnabled(false);
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(glass.renderOrder).toBe(-1);
+    expect(additive.renderOrder).toBe(0);
+    expect(mockApi.sort).not.toHaveBeenCalled();
   });
 
   it('an authored band overrides the containment hoist, and warns', async () => {

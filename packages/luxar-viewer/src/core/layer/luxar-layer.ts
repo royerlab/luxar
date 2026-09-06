@@ -41,6 +41,11 @@
  * - Draw order for its *own* geometry. Luxar stamps the configured
  *   `renderOrder` onto every Group it owns; host transparent groups should use
  *   explicit lower/higher values rather than rely on insertion order.
+ * - Scene environment sharing. If the host leaves `scene.environment` unset, the
+ *   first Luxar physical mesh installs a prefiltered `RoomEnvironment` there, which
+ *   can also affect the host's own lighting-model materials. A host-supplied
+ *   environment is preserved, and an environment owned by the layer is released
+ *   by {@link LuxarLayer.dispose}.
  * - Calling {@link LuxarLayer.handleContextLost} when WebGL context loss is
  *   reported, then {@link LuxarLayer.handleContextRestored} after rebuilding
  *   its own renderer / post-processing resources.
@@ -101,8 +106,17 @@ import { LODGroupRegistry } from '../../scene/lod-group-registry';
 import { sceneDimsManager, snapDiscreteValue } from '../../scene/scene-dims-manager';
 import type { FadeableMaterial } from '../../scene/lod-fade';
 import { materialManager } from '../../rendering/material-manager';
+import { resolveMaterialBackend } from '../../rendering/material-manager/factories';
+import {
+  createSceneEnvironment,
+  type SceneEnvironment,
+} from '../../rendering/environment/scene-environment';
 import { createKTX2TextureDecoder } from '../../rendering/ktx2-texture-decoder';
-import { createRendererCapabilities, isWebGLRenderer } from '../../rendering/renderer-capabilities';
+import {
+  createRendererCapabilities,
+  isWebGLRenderer,
+  type RendererCapabilities,
+} from '../../rendering/renderer-capabilities';
 import {
   getGpuByteBudget,
   reduceGpuByteBudgetForContextLoss,
@@ -215,6 +229,7 @@ const DEFAULT_RENDER_ORDER = 10;
  */
 export class LuxarLayer {
   private readonly options: LuxarLayerOptions;
+  private readonly capabilities: RendererCapabilities;
   private readonly bufferSize = new THREE.Vector2();
 
   private rootGroup: THREE.Group | null = null;
@@ -243,6 +258,8 @@ export class LuxarLayer {
   private inFlightDimUpdate: Promise<void> | null = null;
   private dimWaiters: Array<() => void> = [];
   private dimDirty = false;
+  private environment: SceneEnvironment | null = null;
+  private unsubscribeEnvironment: (() => void) | null = null;
 
   constructor(options: LuxarLayerOptions) {
     if (typeof window === 'undefined' || typeof document === 'undefined') {
@@ -255,7 +272,8 @@ export class LuxarLayer {
     // Materials must know the renderer's capabilities BEFORE any node is
     // built — the GLSL vs. TSL dispatch in the material factories branches on
     // them, and a node created first would get the wrong backend.
-    materialManager.setCaps(createRendererCapabilities(options.renderer));
+    this.capabilities = createRendererCapabilities(options.renderer);
+    materialManager.setCaps(this.capabilities);
     this.resize();
 
     this.installLodRegistryFactory();
@@ -311,6 +329,7 @@ export class LuxarLayer {
         'LuxarLayer.load() is already in progress; await it before loading another scene.'
       );
     }
+    this.setupEnvironment();
     const pending = this.loadInner(src);
     this.inFlightLoad = pending;
     try {
@@ -780,6 +799,11 @@ export class LuxarLayer {
   handleContextRestored(): void {
     if (this.disposed || !this.rootGroup) return;
     materialManager.rebuildAfterContextRestore();
+    try {
+      if (this.environment?.isReady()) this.environment.rebuild();
+    } catch (error) {
+      log.warning(Modules.LUXAR, 'Failed to rebuild scene environment', error);
+    }
     markSceneResourcesDirtyForContextRestore(this.rootGroup);
     this.resize();
     getSceneLoader(LOADER_ID)?.nodeFactory.rebuildAfterContextRestore(this.rootGroup);
@@ -854,6 +878,15 @@ export class LuxarLayer {
           SceneLoaderManager.disposeInstance();
         },
       ],
+      [
+        'sceneEnvironment',
+        () => {
+          this.unsubscribeEnvironment?.();
+          this.unsubscribeEnvironment = null;
+          this.environment?.dispose();
+          this.environment = null;
+        },
+      ],
       ['materialManager', () => materialManager.dispose()],
       ['workerPool', () => disposeWorkerPool()],
       ['depthSort', () => disposeDepthSort()],
@@ -865,6 +898,22 @@ export class LuxarLayer {
         log.error(Modules.LUXAR, `LuxarLayer.dispose(): ${label} threw`, error);
       }
     }
+  }
+
+  private setupEnvironment(): void {
+    if (this.environment || this.options.scene.environment !== null) return;
+    this.environment = createSceneEnvironment(
+      this.options.renderer,
+      resolveMaterialBackend(this.capabilities),
+      this.options.scene
+    );
+    this.unsubscribeEnvironment = materialManager.onPhysicalMaterialCreated(() => {
+      try {
+        this.environment?.ensure();
+      } catch (error) {
+        log.warning(Modules.LUXAR, 'Failed to build scene environment', error);
+      }
+    });
   }
 
   private installLodRegistryFactory(): void {

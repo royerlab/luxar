@@ -15,6 +15,9 @@ import type { PointTSLMaterial } from './materials/point/material-tsl';
 import type { LineTSLMaterial } from './materials/line/material-tsl';
 import type { GSplatTSLMaterial } from './materials/gsplat/material-tsl';
 import type { MeshTSLMaterial } from './materials/mesh/material-tsl';
+import type { PhysicalMeshMaterial } from './materials/mesh-physical/material-glsl';
+import type { PhysicalMeshTSLMaterial } from './materials/mesh-physical/material-tsl';
+import type { PhysicalMeshMaterialConfig } from './materials/mesh-physical/config';
 import type { PointPickingMaterial } from './picking/point/material';
 import type { LinePickingMaterial } from './picking/line/material';
 import type { GSplatPickingMaterial } from './picking/gsplat/material';
@@ -71,6 +74,7 @@ export {
   type GSplatMaterialProperties,
   type MeshMaterialProperties,
   type MaterialBackend,
+  type PhysicalMeshMaterialConfig,
 };
 
 /**
@@ -93,6 +97,13 @@ export type LuxarGSplatMaterial = GSplatMaterial | GSplatTSLMaterial;
  * joins the camera broadcast like everything else.
  */
 export type LuxarMeshMaterial = MeshMaterial | MeshTSLMaterial;
+/**
+ * The mesh's PHYSICAL family — three's own physically based material behind the Luxar
+ * leaf surface (`MESH_PHYSICAL_MATERIALS_SPEC.md` §3.2). Not part of
+ * {@link LuxarMeshMaterial}: it has no camera surface (the near fade is a house-shader
+ * feature) and none of the house texture/colormap methods, so the two unions stay separate.
+ */
+export type LuxarPhysicalMeshMaterial = PhysicalMeshMaterial | PhysicalMeshTSLMaterial;
 
 /**
  * Per-geometry-type picking material returned by
@@ -156,6 +167,13 @@ export class MaterialManager {
    */
   private totalCreateMs = 0;
   private createCount = 0;
+  /**
+   * Listeners for {@link onPhysicalMaterialCreated}. The scene environment that
+   * lights physical meshes is built lazily, and this manager is the one place a
+   * physical material is born — so this hook is how the `SceneManager` learns it
+   * is time to build it, without the node factory knowing about renderers.
+   */
+  private physicalMaterialListeners = new Set<() => void>();
   /**
    * Materials that entered through `register()` rather than a manager
    * factory (per-node point/line/gsplat/mesh materials live in
@@ -445,6 +463,45 @@ export class MaterialManager {
   }
 
   /**
+   * Create a per-node PHYSICAL mesh material — three's `MeshPhysicalMaterial` (GLSL)
+   * or `MeshPhysicalNodeMaterial` (TSL) behind the Luxar leaf surface
+   * (`MESH_PHYSICAL_MATERIALS_SPEC.md` §3.2).
+   *
+   * Deliberately NOT `getMeshMaterial` with a flag: the two families share nothing
+   * but the geometry. This one takes no camera broadcast (it has no near fade — it
+   * enters through {@link register}, which files it as static), stamps no blending
+   * mode unless opaque, and is lit by the scene environment rather than a shader
+   * constant — which is why every creation notifies
+   * {@link onPhysicalMaterialCreated}: the environment is built lazily, on the
+   * first of these, and never for a scene that has none.
+   */
+  getMeshPhysicalMaterial(config: PhysicalMeshMaterialConfig): LuxarPhysicalMeshMaterial {
+    const backend = resolveMaterialBackend(this.caps);
+    const createStart = performance.now();
+    const material = new (VISUAL_FACTORIES.meshPhysical[backend]())(config);
+    this.totalCreateMs += performance.now() - createStart;
+    this.createCount++;
+    this.register(material);
+    for (const listener of this.physicalMaterialListeners) listener();
+    log.info(Modules.RENDERER, `Created per-node physical mesh material (${backend})`);
+    return material;
+  }
+
+  /**
+   * Subscribe to physical-material creation. Fired synchronously inside
+   * {@link getMeshPhysicalMaterial}, after the material exists, on EVERY creation —
+   * the subscriber is expected to be idempotent (`SceneEnvironment.ensure` is).
+   *
+   * @returns An unsubscribe function.
+   */
+  onPhysicalMaterialCreated(listener: () => void): () => void {
+    this.physicalMaterialListeners.add(listener);
+    return () => {
+      this.physicalMaterialListeners.delete(listener);
+    };
+  }
+
+  /**
    * Create a per-mesh point picking material, dispatching on
    * `caps.apiSurface`. The returned material is NOT cached — picking
    * materials have per-mesh lifetimes; the NodeFactory disposes
@@ -569,6 +626,7 @@ export class MaterialManager {
     this.registeredMaterials.clear();
     this.ownedMaterials.clear();
     this.staticMaterials.clear();
+    this.physicalMaterialListeners.clear();
     for (const material of materials) {
       material.dispose();
     }

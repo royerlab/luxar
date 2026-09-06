@@ -59,6 +59,7 @@ import {
 } from './node-factory/create-mesh-node';
 import type { MeshDataLoader, MeshMetadata } from '../types/mesh';
 import { isMeshPickAwareMaterial } from './picking/mesh/pick-mode';
+import { isPhysicalMeshMaterial } from './materials/mesh-physical/config';
 import type { GeometryTypeName } from '../types/format-contract';
 import { lineJoinStyleFromUniform, type LineJoinStyle } from '../types/line-join';
 import type { LinePrimitive } from '../types/line-primitive';
@@ -261,17 +262,26 @@ function syncMeshPickMaterialToVisual(obj: THREE.Mesh): void {
   const single = Array.isArray(visual) ? visual[0] : visual;
   if (!single) return;
   pickMaterial.setPickSide(single.side);
-  // The RESOLVED mode the material stamped, not the authored one.
+  // Physical compositing is data-driven; house meshes stamp their resolved mode.
   pickMaterial.setPickMode(
-    (single.userData?.blendingMode as BlendingMode | undefined) ??
-      resolveRequestedMeshMode((obj.userData?.attrs ?? {}) as MeshMetadata)
+    isPhysicalMeshMaterial(single)
+      ? single.transparent
+        ? 'normal'
+        : 'opaque'
+      : ((single.userData?.blendingMode as BlendingMode | undefined) ??
+          resolveRequestedMeshMode((obj.userData?.attrs ?? {}) as MeshMetadata))
   );
   const uniforms = (single as THREE.Material & { uniforms?: Record<string, { value?: unknown }> })
     .uniforms;
   const pick = pickMaterial as LuxarMeshPickingMaterial;
-  const liveOpacity = uniforms?.uOpacity?.value;
+  // The house material keeps its live opacity in a uniform; the PHYSICAL family is
+  // three's own material and keeps it on `material.opacity` / `alphaTest` — same
+  // values, other slots. Gated on the family stamp rather than on "no uniforms", so a
+  // uniform-less stub (tests, a foreign material) keeps the attr-seeded coverage.
+  const physical = isPhysicalMeshMaterial(single);
+  const liveOpacity = physical ? single.opacity : uniforms?.uOpacity?.value;
   if (typeof liveOpacity === 'number') pick.updateOpacityUniform(liveOpacity);
-  const liveCutoff = uniforms?.uAlphaCutoff?.value;
+  const liveCutoff = physical ? single.alphaTest : uniforms?.uAlphaCutoff?.value;
   if (typeof liveCutoff === 'number') pick.updateAlphaCutoff(liveCutoff);
 }
 

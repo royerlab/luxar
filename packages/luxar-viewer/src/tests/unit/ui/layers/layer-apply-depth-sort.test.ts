@@ -38,6 +38,8 @@ vi.mock('../../../../rendering/depth-sort-coordinator', async (importOriginal) =
 
 const { LayerApplyEngine } = await import('../../../../ui/layers/layer-apply');
 const { LayerStateManager } = await import('../../../../ui/layers/layer-state');
+const { PhysicalMeshMaterial } =
+  await import('../../../../rendering/materials/mesh-physical/material-glsl');
 
 import type { SceneNode } from '../../../../data/data-loader-types';
 
@@ -153,6 +155,45 @@ function inheritedHarness(initialMode: string, ancestorMode: string) {
   return { engine, state, mat, mesh, path: '/g/surf' };
 }
 
+function physicalInheritedHarness(ancestorMode: string, invalidatePickBuffer?: () => void) {
+  const mat = new PhysicalMeshMaterial({ transmission: 0.9 });
+  const mesh = new THREE.Mesh(new THREE.BufferGeometry(), mat);
+  mesh.name = '/g/surf';
+  mesh.userData.nodeType = 'mesh';
+  mesh.userData._layerMaterialCloned = true;
+  const rootGroup = new THREE.Group();
+  rootGroup.add(mesh);
+
+  const graph = {
+    name: 'root',
+    path: '',
+    type: 'scene',
+    attrs: {},
+    children: [
+      {
+        name: 'g',
+        path: '/g',
+        type: 'group',
+        attrs: { blending_mode: ancestorMode },
+        children: [
+          { name: 'surf', path: '/g/surf', type: 'mesh', attrs: { layer: true }, children: [] },
+        ],
+      },
+    ],
+  } as unknown as SceneNode;
+
+  const state = new LayerStateManager();
+  state.initFromSceneGraph(graph);
+  const engine = new LayerApplyEngine({
+    getRootGroup: () => rootGroup,
+    getSceneGraph: () => graph,
+    state,
+    requestRender: () => {},
+    invalidatePickBuffer,
+  });
+  return { engine, state, mat, mesh, path: '/g/surf' };
+}
+
 /** Re-apply the composed attrs, as any panel edit does. */
 function apply(h: ReturnType<typeof harness>): void {
   h.engine.applyBlendingMode(h.state.getLayer('/surf')!);
@@ -194,6 +235,18 @@ describe('the depth-sort mode-switch hook is told the RESOLVED mode', () => {
     expect(newMode).toBe('normal');
   });
 
+  it('keeps a translucent physical mesh out of inherited depth sorting', () => {
+    const h = physicalInheritedHarness('normal');
+    h.engine.applyBlendingMode(h.state.getLayer(h.path)!);
+
+    expect(h.mat.transparent).toBe(true);
+    expect(h.mat.userData.blendingMode).toBeUndefined();
+    expect(noteDepthSortBlendingModeSwitch).toHaveBeenCalledTimes(1);
+    const [, newMode, prevMode] = noteDepthSortBlendingModeSwitch.mock.calls[0];
+    expect(prevMode).toBeUndefined();
+    expect(newMode).toBe('opaque');
+  });
+
   it('the panel and the node attr already resolve, one layer up', () => {
     // Documents WHY the cases above go through an ancestor. A mode authored on
     // the mesh node itself is resolved by `initFromSceneGraph`, so it never
@@ -204,5 +257,31 @@ describe('the depth-sort mode-switch hook is told the RESOLVED mode', () => {
     const [, newMode] = noteDepthSortBlendingModeSwitch.mock.calls[0];
     expect(newMode).toBe('opaque');
     expect(h.state.getLayer('/surf')!.blendingMode).toBe('opaque');
+  });
+});
+
+describe('physical knob pick-buffer invalidation', () => {
+  it('invalidates cached picking after a transmission edit', () => {
+    const invalidatePickBuffer = vi.fn();
+    const h = physicalInheritedHarness('normal', invalidatePickBuffer);
+    const layer = h.state.getLayer(h.path)!;
+    layer.physicalKnobs = {
+      roughness: 1,
+      metalness: 0,
+      clearcoat: 0,
+      clearcoat_roughness: 0,
+      iridescence: 0,
+      sheen: 0,
+      transmission: 0.6,
+      ior: 1.5,
+      thickness: 0,
+      attenuation_distance: Number.POSITIVE_INFINITY,
+      dispersion: 0,
+    };
+
+    h.engine.applyPhysicalKnobs(layer);
+
+    expect(h.mat.transparent).toBe(true);
+    expect(invalidatePickBuffer).toHaveBeenCalledTimes(1);
   });
 });

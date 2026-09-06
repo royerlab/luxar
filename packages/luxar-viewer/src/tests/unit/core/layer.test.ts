@@ -131,14 +131,31 @@ const setCaps = vi.fn();
 const updateCameraParams = vi.fn();
 const disposeMaterials = vi.fn();
 const rebuildMaterials = vi.fn();
+const onPhysicalMaterialCreated = vi.fn();
 vi.mock('../../../rendering/material-manager', () => ({
   materialManager: {
     setCaps: (...a: unknown[]) => setCaps(...a),
     updateCameraParams: (...a: unknown[]) => updateCameraParams(...a),
     register: vi.fn(),
+    onPhysicalMaterialCreated: (...a: unknown[]) => onPhysicalMaterialCreated(...a),
     dispose: () => disposeMaterials(),
     rebuildAfterContextRestore: () => rebuildMaterials(),
   },
+}));
+
+const ensureEnvironment = vi.fn();
+const isEnvironmentReady = vi.fn(() => false);
+const rebuildEnvironment = vi.fn();
+const disposeEnvironment = vi.fn();
+const createSceneEnvironment = vi.fn((_renderer: unknown, _backend: unknown, _scene: unknown) => ({
+  ensure: () => ensureEnvironment(),
+  isReady: () => isEnvironmentReady(),
+  rebuild: () => rebuildEnvironment(),
+  dispose: () => disposeEnvironment(),
+}));
+vi.mock('../../../rendering/environment/scene-environment', () => ({
+  createSceneEnvironment: (renderer: unknown, backend: unknown, scene: unknown) =>
+    createSceneEnvironment(renderer, backend, scene),
 }));
 
 vi.mock('../../../rendering/renderer-capabilities', () => ({
@@ -203,6 +220,8 @@ function makeOptions(overrides: Partial<LuxarLayerOptions> = {}): LuxarLayerOpti
 describe('LuxarLayer', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    onPhysicalMaterialCreated.mockReturnValue(() => {});
+    isEnvironmentReady.mockReturnValue(false);
     sceneLoaderStub.resetArchiveFault();
     currentSceneLoaderStub = sceneLoaderStub;
     loadSceneMock.mockImplementation(async () => new THREE.Group());
@@ -377,6 +396,61 @@ describe('LuxarLayer', () => {
   });
 
   describe('load', () => {
+    it('builds a lazy physical-material environment in the host scene', async () => {
+      let notifyPhysicalMaterial!: () => void;
+      const unsubscribe = vi.fn();
+      onPhysicalMaterialCreated.mockImplementationOnce((listener: () => void) => {
+        notifyPhysicalMaterial = listener;
+        return unsubscribe;
+      });
+      loadSceneMock.mockImplementationOnce(async () => {
+        notifyPhysicalMaterial();
+        return new THREE.Group();
+      });
+      const options = makeOptions();
+      const layer = new LuxarLayer(options);
+
+      await layer.load('http://example.test/scene.zarr');
+
+      expect(createSceneEnvironment).toHaveBeenCalledWith(options.renderer, 'glsl', options.scene);
+      expect(ensureEnvironment).toHaveBeenCalledTimes(1);
+
+      await layer.dispose();
+      expect(unsubscribe).toHaveBeenCalledTimes(1);
+      expect(disposeEnvironment).toHaveBeenCalledTimes(1);
+    });
+
+    it('preserves a host-supplied scene environment', async () => {
+      const options = makeOptions();
+      options.scene.environment = new THREE.Texture();
+      const layer = new LuxarLayer(options);
+
+      await layer.load('http://example.test/scene.zarr');
+
+      expect(createSceneEnvironment).not.toHaveBeenCalled();
+      expect(onPhysicalMaterialCreated).not.toHaveBeenCalled();
+    });
+
+    it('keeps loading when the embedded environment build fails', async () => {
+      let notifyPhysicalMaterial!: () => void;
+      onPhysicalMaterialCreated.mockImplementationOnce((listener: () => void) => {
+        notifyPhysicalMaterial = listener;
+        return () => {};
+      });
+      ensureEnvironment.mockImplementationOnce(() => {
+        throw new Error('PMREM failed');
+      });
+      loadSceneMock.mockImplementationOnce(async () => {
+        notifyPhysicalMaterial();
+        return new THREE.Group();
+      });
+      const layer = new LuxarLayer(makeOptions());
+
+      await expect(layer.load('http://example.test/scene.zarr')).resolves.toBeInstanceOf(
+        THREE.Group
+      );
+    });
+
     it('delivers terminal dataset faults and replays them to late subscribers', async () => {
       const layer = new LuxarLayer(makeOptions());
       const earlyListener = vi.fn();
@@ -932,11 +1006,13 @@ describe('LuxarLayer', () => {
       updateCameraParams.mockClear();
       configureBlendModeProgramWarmup.mockClear();
       warmSceneBlendModePrograms.mockClear();
+      isEnvironmentReady.mockReturnValue(true);
 
       const versionBefore = attribute.version;
       layer.handleContextRestored();
 
       expect(rebuildMaterials).toHaveBeenCalledTimes(1);
+      expect(rebuildEnvironment).toHaveBeenCalledTimes(1);
       expect(attribute.version).toBeGreaterThan(versionBefore);
       expect(sceneLoaderStub.nodeFactory.rebuildAfterContextRestore).toHaveBeenCalledWith(root);
       expect(rebuildMaterials.mock.invocationCallOrder[0]).toBeLessThan(

@@ -36,6 +36,7 @@ import {
   applyMeshSide,
   applyMeshShading,
   applyMeshTexture,
+  applyMeshVertexAlpha,
 } from '../../../rendering/node-factory/create-mesh-node';
 import { noteDepthSortCommit } from '../../../rendering/depth-sort-coordinator';
 import { computeFaceCentroids } from '../../../rendering/depth-sort-coordinator/triangle-ordering';
@@ -155,6 +156,11 @@ export function commitMeshGeometry(
   // lives here because a texture is DATA: the node was created before any fetch, so
   // this is the first moment it exists. Idempotent, so every later commit is free.
   if (data.texture) applyMeshTexture(object, nodeAttrs, data.texture);
+
+  // Whether the colours carry alpha, which a PHYSICAL mesh needs to decide its own
+  // translucency (it has no blending mode to be told). Data, like the texture above,
+  // and known only now; a no-op for the house material and on every later commit.
+  applyMeshVertexAlpha(object, data.colorComponents);
 
   // A first-commit vertex-attribute rebind (position grow / color install) leaves
   // three's cached WebGPU RenderObject pointing at the old vertex buffers; evict it
