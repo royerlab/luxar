@@ -118,7 +118,7 @@ geometry, what it needs, and whether you have already built it:
  ✓ 17  dmri_tractography                       lines         588 MB
  • 27  gsplats_2d_cmu1_pathology               gsplats       150 MB GPU?
 
- SYNTHETIC ─────────────────────────────────────────────────────────── 22 demos
+ SYNTHETIC ─────────────────────────────────────────────────────────── 20 demos
  ✓ 10  cloud                                   points
    11  collision                               points
  ...
