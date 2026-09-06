@@ -31,6 +31,7 @@ import {
   physicalUpdateIntensity,
   physicalUpdateOffset,
   physicalUpdateOpacity,
+  physicalUpdateRefractData,
   setPhysicalKnob,
   type PhysicalMeshKnobKey,
   type PhysicalMeshMaterialConfig,
@@ -77,6 +78,11 @@ export class PhysicalMeshMaterial extends THREE.MeshPhysicalMaterial {
   /** One live physical knob from the Layers panel (clamped; rebuilds on a zero crossing). */
   updatePhysicalKnob(key: PhysicalMeshKnobKey, value: number): void {
     setPhysicalKnob(this, key, value);
+  }
+
+  /** Luxar `refract_data`, live: glass draws after (true) or before (false) the data. */
+  updateRefractData(refractData: boolean): void {
+    physicalUpdateRefractData(this, refractData);
   }
 
   /**

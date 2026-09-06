@@ -94,12 +94,25 @@ describe('derivePhysicalCompositing — translucency is read off the data', () =
       first,
       _why
     ) => {
-      const d = derivePhysicalCompositing({ opacity, vertexAlpha, alphaCutoff, transmission });
+      const inputs = { opacity, vertexAlpha, alphaCutoff, transmission, refractData: false };
+      const d = derivePhysicalCompositing(inputs);
       expect(d.transparent).toBe(transparent);
       expect(d.depthWrite).toBe(depthWrite);
       expect(d.alphaTest).toBe(alphaTest);
       expect(d.blendingMode).toBe(stamp);
       expect(d.drawBeforeEmissive).toBe(first);
+      expect(d.drawAfterEmissive).toBe(false);
+      // Phase 3: `refract_data` moves the SAME glass from first to last in its band
+      // and changes nothing else about how it composites.
+      const r = derivePhysicalCompositing({ ...inputs, refractData: true });
+      expect(r.drawAfterEmissive).toBe(first);
+      expect(r.drawBeforeEmissive).toBe(false);
+      expect([r.transparent, r.depthWrite, r.alphaTest, r.blendingMode]).toEqual([
+        d.transparent,
+        d.depthWrite,
+        d.alphaTest,
+        d.blendingMode,
+      ]);
     }
   );
 });
@@ -257,6 +270,37 @@ describe.each(BACKENDS)('physical mesh material (%s)', (_name, ctor) => {
     expect(glass.userData.blendingMode).toBeUndefined();
     expect(glass.userData.drawBeforeEmissive).toBe(true);
     const metal = new (ctor())({ metalness: 1.0 });
+    expect(metal.userData.drawBeforeEmissive).toBeUndefined();
+    expect(metal.userData.drawAfterEmissive).toBeUndefined();
+  });
+
+  it('refract_data flips glass to draw AFTER the emissive data, and is inert without transmission', () => {
+    const lens = new (ctor())({ transmission: 1.0, refractData: true });
+    // Same compositing state as any glass — only the ordering stamp differs.
+    expect(lens.transparent).toBe(true);
+    expect(lens.depthWrite).toBe(false);
+    expect(lens.blending).toBe(THREE.NormalBlending);
+    expect(lens.userData.drawAfterEmissive).toBe(true);
+    expect(lens.userData.drawBeforeEmissive).toBeUndefined();
+    // Exactly one stamp at a time; a live toggle swaps them without a rebuild.
+    const versionBefore = (lens as unknown as { version: number }).version;
+    (lens as unknown as { updateRefractData(v: boolean): void }).updateRefractData(false);
+    expect(lens.userData.drawBeforeEmissive).toBe(true);
+    expect(lens.userData.drawAfterEmissive).toBeUndefined();
+    expect((lens as unknown as { version: number }).version).toBe(versionBefore);
+    (lens as unknown as { updateRefractData(v: boolean): void }).updateRefractData(true);
+    expect(lens.userData.drawAfterEmissive).toBe(true);
+    // The flag survives a transmission zero crossing and back (re-derived from the
+    // stored inputs), and is inert while the surface transmits nothing.
+    const knob = lens as unknown as { updatePhysicalKnob(k: PhysicalMeshKnobKey, v: number): void };
+    knob.updatePhysicalKnob('transmission', 0);
+    expect(lens.userData.drawAfterEmissive).toBeUndefined();
+    expect(lens.userData.drawBeforeEmissive).toBeUndefined();
+    knob.updatePhysicalKnob('transmission', 0.5);
+    expect(lens.userData.drawAfterEmissive).toBe(true);
+    // Without transmission the flag stamps nothing at all.
+    const metal = new (ctor())({ metalness: 1.0, refractData: true });
+    expect(metal.userData.drawAfterEmissive).toBeUndefined();
     expect(metal.userData.drawBeforeEmissive).toBeUndefined();
   });
 

@@ -256,6 +256,11 @@ export interface PhysicalMeshMaterialConfig {
   /** Chromatic dispersion strength (Abbe-number-like), `>= 0`. */
   dispersion?: number;
   /**
+   * Luxar `refract_data` (spec §3.4 Phase 3): draw the glass AFTER the emissive data
+   * so it refracts what is behind it. Default false. See {@link derivePhysicalCompositing}.
+   */
+  refractData?: boolean;
+  /**
    * Luxar `alpha_cutoff`, mapped onto three's `alphaTest`. On an RGBA mesh its
    * PRESENCE also selects the cutout path over translucency — see
    * {@link derivePhysicalCompositing}.
@@ -288,13 +293,18 @@ export interface PhysicalMeshHost extends Record<PhysicalKnobProp, number> {
   userData: Record<string, unknown>;
 }
 
-/** The four inputs the compositing decision is a pure function of. */
+/** The five inputs the compositing decision is a pure function of. */
 export interface PhysicalCompositingInputs {
   opacity: number;
   vertexAlpha: boolean;
   alphaCutoff: number | undefined;
   /** The material's `transmission`; `> 0` is glass and composites as translucent. */
   transmission: number;
+  /**
+   * Luxar `refract_data`: the glass draws AFTER the emissive data instead of before
+   * it (spec §3.4 Phase 3). Meaningless without `transmission > 0`, and inert then.
+   */
+  refractData: boolean;
 }
 
 /** The compositing decision, as three material state plus the coordinator's stamp. */
@@ -318,9 +328,20 @@ export interface PhysicalCompositing {
    * then painted over. The depth-sort coordinator reads this off
    * `userData.drawBeforeEmissive` and orders the mesh first within its
    * `layer_order` band on both backends (on WebGL it is already in the earlier
-   * transmissive list, so the rule is harmless there).
+   * transmissive list, so the rule is harmless there). Exactly one of this and
+   * {@link PhysicalCompositing.drawAfterEmissive} is set for glass; neither for
+   * anything else.
    */
   drawBeforeEmissive: boolean;
+  /**
+   * The Phase 3 inverse (spec §3.4): glass authored with `refract_data` must draw
+   * AFTER the emissive data so that what it samples already holds the data. The
+   * coordinator reads `userData.drawAfterEmissive` and ranks such a mesh LAST within
+   * its `layer_order` band (that is the whole mechanism on WebGPU); on WebGL the
+   * post-processing pipeline additionally splits the scene pass so three's
+   * transmission target sees the data.
+   */
+  drawAfterEmissive: boolean;
 }
 
 /**
@@ -334,7 +355,9 @@ export interface PhysicalCompositing {
  *   write depth, and that is the spec §3.4 contract made concrete: emissive data
  *   behind a glass surface stays visible — crisp and unrefracted — where a
  *   depth-writing shell would HIDE the cluster inside it, the worse failure for the
- *   marker case this family exists for.
+ *   marker case this family exists for. With `refractData` the glass instead draws
+ *   AFTER the data and refracts it (Phase 3); the compositing state is the same,
+ *   only the ordering stamp flips.
  * - Per-vertex alpha is translucent UNLESS an `alpha_cutoff` was authored, in
  *   which case the alpha is a CUTOUT (three `alphaTest`) and the surface stays
  *   opaque — the same meaning the house shader's `opaque` mode gives the pair.
@@ -353,7 +376,8 @@ export function derivePhysicalCompositing(inputs: PhysicalCompositingInputs): Ph
     depthWrite: !translucent,
     alphaTest: translucent ? 0 : clampAppearanceFraction(inputs.alphaCutoff, 0),
     blendingMode: translucent ? undefined : 'opaque',
-    drawBeforeEmissive: glass,
+    drawBeforeEmissive: glass && !inputs.refractData,
+    drawAfterEmissive: glass && inputs.refractData,
   };
 }
 
@@ -371,6 +395,7 @@ function readInputs(host: PhysicalMeshHost): PhysicalCompositingInputs {
       vertexAlpha: false,
       alphaCutoff: undefined,
       transmission: host.transmission,
+      refractData: false,
     }
   );
 }
@@ -396,7 +421,22 @@ export function applyPhysicalCompositing(
   else delete host.userData.blendingMode;
   if (decision.drawBeforeEmissive) host.userData.drawBeforeEmissive = true;
   else delete host.userData.drawBeforeEmissive;
+  if (decision.drawAfterEmissive) host.userData.drawAfterEmissive = true;
+  else delete host.userData.drawAfterEmissive;
   if (programChanged) host.needsUpdate = true;
+}
+
+/**
+ * Luxar `refract_data`, live (the Layers-panel toggle): re-derives the ordering stamp.
+ * Plain state on both backends — no program rebuild — so a toggle costs one frame.
+ */
+export function physicalUpdateRefractData(host: PhysicalMeshHost, refractData: boolean): void {
+  applyPhysicalCompositing(host, { ...readInputs(host), refractData: refractData === true });
+}
+
+/** The material's current `refract_data` decision input. */
+export function physicalGetRefractData(host: PhysicalMeshHost): boolean {
+  return readInputs(host).refractData;
 }
 
 /**
@@ -511,6 +551,7 @@ export function applyPhysicalMeshConfig(
     vertexAlpha: config.vertexAlpha === true,
     alphaCutoff: config.alphaCutoff,
     transmission: host.transmission,
+    refractData: config.refractData === true,
   });
 }
 

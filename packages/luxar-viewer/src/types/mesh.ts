@@ -312,7 +312,7 @@ export interface MeshMetadata {
    * Physical (glass, spec §3.4): share of light transmitted in `[0, 1]`; three's
    * default `0`. Above zero the mesh composites as translucent and refracts the
    * background and other meshes — NOT points, lines or splats, which three's
-   * transmission pass never sees.
+   * transmission pass never sees, unless {@link refract_data} opts it in.
    */
   transmission?: number;
 
@@ -333,6 +333,15 @@ export interface MeshMetadata {
 
   /** Physical: chromatic dispersion strength, `>= 0`; three's default `0`. */
   dispersion?: number;
+
+  /**
+   * Physical (glass, spec §3.4 Phase 3): draw this glass AFTER the emissive data so
+   * it refracts the points, lines and splats behind it. Absent = false (Phase 2
+   * glass-first). Authoring refuses it without `transmission > 0`. Data IN FRONT of
+   * the glass is painted over — emissive layers write no depth — which is the
+   * documented limit that keeps this opt-in.
+   */
+  refract_data?: boolean;
 
   /**
    * Half-width, IN CELLS, of the nD membership slab a CONTINUOUS hidden dimension
