@@ -36,10 +36,11 @@
  * branches drifting apart for the same config.
  *
  * `defines` is deliberately NOT threaded on the WebGPU branch. It is
- * an OPTIONAL field on three's `Material` type that `Material.js` never
- * initialises — only `ShaderMaterial` does, so a bare `NodeMaterial`
- * has `defines === undefined` — and nothing in three's node pipeline
- * reads it: `.defines` appears nowhere in the `three.webgpu` build, GLSL
+ * an OPTIONAL field on three's `Material` type that `Material` itself
+ * never initialises (`ShaderMaterial` and several built-in mesh material
+ * classes do), so a bare `NodeMaterial` has `defines === undefined` — and
+ * nothing in three's node pipeline reads it: `.defines` appears nowhere
+ * in the `three.webgpu` build, GLSL
  * fallback included, three's GLSL program builder being its only
  * consumer. Threading it would therefore be inert as far as three is
  * concerned. Luxar's `*TSLMaterial` classes do keep their own flag bag
