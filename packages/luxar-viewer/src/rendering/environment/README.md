@@ -10,9 +10,9 @@ key, believable reflections, and what three's own examples light with. Design:
 
 ## Files
 
-| File                   | Purpose                                                                                                                                                                                          |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `scene-environment.ts` | `SceneEnvironment` (`ensure()` / `isReady()` / `dispose()`) and `createSceneEnvironment(renderer, backend, scene)`, which picks the WebGL or the WebGPU PMREM generator for the active renderer. |
+| File                   | Purpose                                                                                                                                                                                                        |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scene-environment.ts` | `SceneEnvironment` (`ensure()` / `isReady()` / `rebuild()` / `dispose()`) and `createSceneEnvironment(renderer, backend, scene)`, which picks the WebGL or the WebGPU PMREM generator for the active renderer. |
 
 ## Two load-bearing properties
 
@@ -37,5 +37,7 @@ imports only `three` core and is converted to node materials by the WebGPU rende
 ## Lifetime
 
 Owned by `SceneManager`, created in `init()` next to the scene, disposed in `dispose()`
-before the renderer (the PMREM target is that renderer's GPU resource). It survives a
-dataset switch — it is scene-level and cheap to keep.
+before the renderer (the PMREM target is that renderer's GPU resource). A WebGL context
+restore rebuilds an existing target in place but preserves laziness when no physical
+material has requested one. It survives a dataset switch — it is scene-level and cheap
+to keep.

@@ -121,6 +121,30 @@ describe('SceneEnvironment', () => {
     expect(scene.environment).toBe(other);
   });
 
+  it('rebuild() replaces a ready target but preserves laziness before first use', () => {
+    const scene = new THREE.Scene();
+    const textures = [new THREE.Texture(), new THREE.Texture()];
+    const disposeTargets = [vi.fn(), vi.fn()];
+    let buildIndex = 0;
+    const factory = (): PmremGeneratorLike => ({
+      fromScene: vi.fn(() => ({
+        texture: textures[buildIndex],
+        dispose: disposeTargets[buildIndex++],
+      })),
+      dispose: vi.fn(),
+    });
+    const env = new SceneEnvironment(scene, factory);
+
+    expect(env.rebuild()).toBe(false);
+    expect(scene.environment).toBeNull();
+
+    env.ensure();
+    expect(scene.environment).toBe(textures[0]);
+    expect(env.rebuild()).toBe(true);
+    expect(disposeTargets[0]).toHaveBeenCalledTimes(1);
+    expect(scene.environment).toBe(textures[1]);
+  });
+
   it('a throwing generator leaves the environment unbuilt and still disposes the scaffolding', () => {
     const scene = new THREE.Scene();
     const disposeGenerator = vi.fn();

@@ -101,8 +101,7 @@ export type LuxarMeshMaterial = MeshMaterial | MeshTSLMaterial;
  * The mesh's PHYSICAL family — three's own physically based material behind the Luxar
  * leaf surface (`MESH_PHYSICAL_MATERIALS_SPEC.md` §3.2). Not part of
  * {@link LuxarMeshMaterial}: it has no camera surface (the near fade is a house-shader
- * feature) and none of the house update methods, so the two unions stay separate and a
- * call site that needs `updateShading` cannot be handed this by accident.
+ * feature) and none of the house texture/colormap methods, so the two unions stay separate.
  */
 export type LuxarPhysicalMeshMaterial = PhysicalMeshMaterial | PhysicalMeshTSLMaterial;
 

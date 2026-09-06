@@ -111,6 +111,27 @@ describe('VISUAL_FACTORIES / PICKING_FACTORIES / MEGA_SHADER_FACTORIES shape', (
     expect(VISUAL_FACTORIES.meshPhysical.tsl()).not.toBe(VISUAL_FACTORIES.mesh.tsl());
   });
 
+  it.each(['glsl', 'tsl'] as const)(
+    '%s physical mesh material updates its shading variant',
+    (backend) => {
+      const MaterialClass = VISUAL_FACTORIES.meshPhysical[backend]();
+      const material = new MaterialClass({ flatShading: false });
+      const initialVersion = material.version;
+
+      material.updateShading('flat');
+      expect(material.flatShading).toBe(true);
+      expect(material.version).toBeGreaterThan(initialVersion);
+
+      const flatVersion = material.version;
+      material.updateShading('flat');
+      expect(material.version).toBe(flatVersion);
+
+      material.updateShading('smooth');
+      expect(material.flatShading).toBe(false);
+      expect(material.version).toBeGreaterThan(flatVersion);
+    }
+  );
+
   it('MEGA_SHADER_FACTORIES exposes a flat {glsl, tsl} pair (no per-geometry split)', () => {
     expect(Object.keys(MEGA_SHADER_FACTORIES).sort()).toEqual(['glsl', 'tsl']);
     expect(typeof MEGA_SHADER_FACTORIES.glsl()).toBe('function');

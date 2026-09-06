@@ -95,6 +95,14 @@ export class SceneEnvironment {
     return true;
   }
 
+  /** Rebuild a previously-created target after its renderer context was restored. */
+  rebuild(): boolean {
+    if (!this.target) return false;
+    this.dispose();
+    this.ensure();
+    return true;
+  }
+
   /** Release the prefiltered target and clear `scene.environment` if it is ours. */
   dispose(): void {
     if (!this.target) return;

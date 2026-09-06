@@ -582,6 +582,7 @@ export class SceneManager extends THREE.EventDispatcher<{
         getPostProcessing: () => this.postProcessing ?? null,
         updateRendererSize: () => this.resizeToCanvas(),
         onContextRestored: () => {
+          if (this.environment?.isReady()) this.environment.rebuild();
           this.dispatchEvent({ type: 'webgl-context-restored' });
           void this.warmBlendModePrograms();
         },

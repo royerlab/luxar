@@ -26,6 +26,7 @@ import { PointPickingMaterial } from '../../../../rendering/picking/point/materi
 import { LinePickingMaterial } from '../../../../rendering/picking/line/material';
 import { GSplatPickingMaterial } from '../../../../rendering/picking/gsplat/material';
 import { MeshPickingMaterial } from '../../../../rendering/picking/mesh/material';
+import { PhysicalMeshMaterial } from '../../../../rendering/materials/mesh-physical/material-glsl';
 import { GEOMETRY_TYPES } from '../../../../types/format-contract';
 import { LINE_JOIN_UNIFORM, type LineJoinStyle } from '../../../../types/line-join';
 import { DEFAULT_LINE_PRIMITIVE } from '../../../../types/line-primitive';
@@ -273,6 +274,22 @@ describe('registerExistingSceneNodes', () => {
     expect(pick.uniforms.uAlphaCutoff.value).toBeCloseTo(0.9);
     // The RESOLVED mode, not the authored one.
     expect(pick.uniforms.uAlphaCutout.value).toBe(0);
+  });
+
+  it('seeds translucent physical mesh picking from live compositing, not inherited attrs', () => {
+    const { stub, registered } = stubPickingSystem();
+    factory.setPickingSystem(stub);
+    const root = new THREE.Group();
+    const node = makeNode('mesh', '/glass');
+    node.userData.attrs = { blending_mode: 'additive' };
+    node.material = new PhysicalMeshMaterial({ opacity: 0.5 });
+    root.add(node);
+
+    factory.registerExistingSceneNodes(root);
+
+    const pick = registered[0].pick.material as MeshPickingMaterial;
+    expect(pick.uniforms.uAlphaCutout.value).toBe(0);
+    expect(pick.uniforms.uSurfaceDepth.value).toBe(1);
   });
 
   it('preserves the live gsplat label filter on a fresh pick material', () => {
