@@ -89,5 +89,5 @@ export const COVERAGE_THRESHOLDS = {
   // NOT excluded from coverage: that spec runs in CI as the non-required
   // `tsl-parity` job, and excluding code on the strength of a non-required gate
   // is how a metric starts lying. Revisit once the job is required.
-  'src/rendering/**': { lines: 72, functions: 73, branches: 70 }, // 74.25 / 75.41 / 71.07
+  'src/rendering/**': { lines: 74, functions: 75, branches: 70 }, // 75.97 / 77.51 / 71.07
 };
