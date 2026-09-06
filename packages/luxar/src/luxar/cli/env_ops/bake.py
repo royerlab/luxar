@@ -74,6 +74,12 @@ def bake_environment(
     store_path = Path(store)
     if not store_path.exists():
         raise FileNotFoundError(f"Scene not found: {store_path}")
+    if not store_path.is_dir():
+        raise ValueError(
+            f"env bake requires an uncompressed .zarr directory; got "
+            f"{store_path} (unpack a .zip/.tar.gz store first — an attrs rewrite "
+            f"of a compressed archive cannot happen in place)"
+        )
     if resolution < 16 or resolution > 1024:
         raise ValueError(f"--resolution must be between 16 and 1024, got {resolution}")
     if not ensure_viewer_built(auto_build=build):

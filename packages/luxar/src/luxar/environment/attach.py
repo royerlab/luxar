@@ -69,6 +69,12 @@ def attach_environment(
     look like success.
     """
     store_path = Path(store)
+    if not store_path.is_dir():
+        raise ValueError(
+            f"env attach requires an uncompressed .zarr directory; got "
+            f"{store_path} (unpack a .zip/.tar.gz store first — an attrs rewrite "
+            f"of a compressed archive cannot happen in place)"
+        )
     blob = faces if isinstance(faces, bytes) else Path(faces).read_bytes()
     header, samples = unpack(blob)
 
