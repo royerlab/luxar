@@ -18,7 +18,9 @@ on:
     # TypeScript legs take considerably longer, so most push runs are cancelled by
     # the next merge before they can produce a promotable commit. Schedule events
     # have their own concurrency group, so dev merges cannot cancel them. Run one
-    # every three hours to supply deliberate green windows for promotion.
+    # every three hours to supply deliberate dev-tip coverage windows. Their
+    # contexts still attach to the scheduled event SHA on main; the repair walk
+    # below supplies the promotion value by repairing cancelled dev push runs.
     #
     # Scheduled runs still share a group with EACH OTHER, so a window still in
     # flight three hours later is cancelled by its successor -- which is itself a
@@ -47,11 +49,11 @@ on:
     #
     # DEFAULT-BRANCH DEPENDENCE. GitHub runs `schedule:` triggers only on the
     # repository DEFAULT branch, at its tip, and dispatches the event against that
-    # branch's SHA. The default is now `main`, so `github.sha` on a scheduled run
-    # points at main, not dev. To keep promotion windows testing dev, the `changes`
-    # checkout pins `refs/heads/dev` explicitly and captures its tip as `dev_sha`,
-    # which every suite checkout below reuses so the contexts attest one immutable
-    # dev tree (#2466). The repair walk resolves dev explicitly for the same reason.
+    # branch's SHA. The default is now `main`, so `github.sha` and the resulting
+    # contexts point at main. Once this workflow reaches main, `changes` instead
+    # checks out `refs/heads/dev`, captures that tip as `dev_sha`, and every suite
+    # checkout reuses it for internally consistent dev-tip coverage. The repair
+    # walk resolves dev explicitly and repairs its cancelled push contexts (#2466).
     - cron: '17 9 * * *'
     - cron: '17 0,3,6,12,15,18,21 * * *'
 
@@ -136,11 +138,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # `github.sha` FOLLOWS THE DEFAULT BRANCH on schedule/dispatch events,
-          # which is now `main`, not `dev` — so pin `refs/heads/dev` explicitly to
-          # keep promotion windows testing dev. Captured immutably as `dev_sha`
-          # below and reused by every suite checkout (#2466). Empty on push/PR ==
-          # default (there `github.sha` is the tested commit, which is correct).
+          # `github.sha` follows the default branch on schedule events, which is
+          # now `main`, not `dev`. Once this workflow reaches main, pin dev here,
+          # capture the resolved commit as `dev_sha`, and reuse that immutable SHA
+          # in every suite checkout for consistent dev-tip coverage. The contexts
+          # still attach to `github.sha`; the repair walk below restores promotion
+          # value by repairing dev push runs. Empty on push/PR == default.
           ref: ${{ github.event_name == 'schedule' && 'refs/heads/dev' || '' }}
           fetch-depth: 0
       - id: scheduled-dev
@@ -1223,21 +1226,16 @@ jobs:
           /tmp/wheel-venv/bin/luxar --help > /dev/null
           /tmp/wheel-venv/bin/python -c "import luxar; print('import OK:', luxar.__version__)"
 
-  # A scheduled run can put fresh successful checks on the same SHA as an older
-  # cancelled push run, but branch protection's rollup can retain the cancelled
-  # duplicate for each required context. Once this run has proved the five
-  # protected contexts green, walk commits still ahead of main through DEV'S TIP
-  # newest first and rerun cancelled required jobs from up to two push suites.
-  # This repairs skipped commits without an unbounded runner burst.
+  # A scheduled run tests one captured dev commit, but its contexts attach to the
+  # scheduled event SHA on main. Once the dev tree has proved the five protected
+  # contexts green, walk commits still ahead of main through DEV'S TIP newest first
+  # and rerun cancelled required jobs from up to two dev push suites. This repairs
+  # skipped commits without an unbounded runner burst.
   #
-  # The walk anchors on dev's tip resolved EXPLICITLY (git/refs/heads/dev), NOT
-  # on the scheduled run's own ref/SHA: GitHub runs schedules on the default
-  # branch, so ${GITHUB_SHA} is `dev`'s tip only while `dev` is the default. Once
-  # the default flips to `main`, ${GITHUB_SHA} is main's tip, `main...${GITHUB_SHA}`
-  # collapses to `main...main`, the walk finds nothing, and promotion stalls
-  # SILENTLY. The checkout + guard below assert the resolved SHA really is
-  # origin/dev's tip and fail LOUDLY otherwise, because this failure has no other
-  # red signal.
+  # The walk anchors on dev's tip resolved EXPLICITLY (git/refs/heads/dev), NOT on
+  # the scheduled run's own ref/SHA. The checkout + ancestry guard below assert
+  # that the suite's captured commit remains on dev's line and fail loudly for an
+  # unresolvable dev ref or an off-dev checkout.
   repair-cancelled-push-checks:
     needs:
       [changes, python-tests, typescript-tests, release-readiness, wheel-viewer, docs-quality]
@@ -1279,25 +1277,10 @@ jobs:
             fi
           done
 
-          # PRECONDITION GUARD: scheduled runs are dispatched on the repository
-          # default branch, and this workflow only serves promotion while that
-          # branch is dev. Ask that question directly rather than inferring it
-          # from commit topology, where a caught-up main tip is indistinguishable
-          # from the scheduled event SHA after the default-branch flip.
-          default_branch=$(gh api "repos/${GITHUB_REPOSITORY}" \
-            --jq '.default_branch') || default_branch=""
-          if [ -z "$default_branch" ]; then
-            echo "::error::could not resolve the repository default branch; cannot verify that this scheduled run belongs to dev -- failing loudly rather than risking a silent pass"
-            exit 1
-          fi
-          if [ "$default_branch" != "dev" ]; then
-            echo "::error::scheduled runs are dispatched on '$default_branch', not dev; this promotion window cannot attest dev after the default-branch flip -- refusing to walk"
-            exit 1
-          fi
-
           # Resolve dev's tip EXPLICITLY as the WALK ANCHOR. ${GITHUB_SHA} is the
-          # scheduled event's immutable dev commit, but dev may advance while the
-          # window runs, so the repair must walk through the current tip.
+          # scheduled event commit on main, while the checked-out HEAD is the
+          # captured dev commit. Dev may advance while the window runs, so the
+          # repair must walk through the current tip.
           dev_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/refs/heads/dev" \
             --jq '.object.sha') || dev_sha=""
           if [ -z "$dev_sha" ]; then
@@ -1305,7 +1288,7 @@ jobs:
             exit 1
           fi
 
-          # Cross-check that the immutable event commit remains on dev's line.
+          # Cross-check that the captured dev commit remains on dev's line.
           # HEAD normally equals origin/dev, but a merge landing during the window
           # leaves HEAD behind the tip. That older ancestor is healthy; any commit
           # outside dev's ancestry is an unknown checkout and fails closed.
