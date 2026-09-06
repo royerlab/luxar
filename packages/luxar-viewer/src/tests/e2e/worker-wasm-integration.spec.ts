@@ -4,7 +4,8 @@
  * These tests run in a real browser environment (Playwright) to verify:
  * - Workers can be created and communicate correctly
  * - WASM modules load and execute
- * - Spatial queries actually run in worker with WASM acceleration
+ * - The data worker pool comes up and reports itself healthy
+ * - Points still render whether queries take the worker or the main-thread path
  * - Fallback to main thread TypeScript works when workers unavailable
  *
  * Run with: pnpm test:e2e or pnpm test:e2e:ui
@@ -34,56 +35,88 @@ test.describe('Worker Integration E2E', () => {
     await waitForDataLoaded(page);
   });
 
-  test('should create worker pool successfully', async ({ page }) => {
-    // Wait for scene to be ready
-    await waitForPointsLoaded(page);
-    await waitForConsoleInterceptor(page);
-
-    // Verify worker pool creation via console logs (if workers are available)
-    // Log format: [emoji] [WorkerPool] Worker pool ready with N worker(s)
-    // Note: Workers may not initialize without WASM binary, so check informally
-    const messages = await getConsoleMessages(page);
-
-    // Worker messages are informational — the important thing is that data loaded.
-    // Without WASM binaries built, workers may not initialize at all.
-    // Only check for pool ready if we see explicit WorkerPool init messages.
-    const hasPoolInit = messages.all.some((m) => /\[WorkerPool\]/.test(m));
-    if (hasPoolInit) {
-      const hasPoolReady = messages.all.some(
-        (m) => /\[WorkerPool\].*ready/.test(m) || /\[WorkerPool\].*Worker \d/.test(m)
-      );
-      expect(hasPoolReady).toBe(true);
-    }
-
-    // Core assertion: points must have loaded regardless of worker availability
-    const state = await page.evaluate(() => {
-      return (window as any).__luxarDebug?.getState?.();
-    });
-    expect(state?.totalPoints).toBeGreaterThan(0);
-  });
-
-  test('should offload spatial queries to worker', async ({ page }) => {
+  // Named for what it actually verifies. It was called "should offload spatial
+  // queries to worker", but neither this assertion nor the one it replaced
+  // establishes that any query was OFFLOADED — `__luxarDebug.getState()` exposes
+  // no worker-served-query counter to assert against. Real offload coverage
+  // needs such a counter, which is a separate change; the sibling
+  // "should fallback to main thread if worker fails" carries the fallback story
+  // in the meantime.
+  test('should bring up the data worker pool', async ({ page }) => {
     // Wait for points to load
     await waitForPointsLoaded(page);
     await waitForConsoleInterceptor(page);
 
-    // Check if workers initialized (they handle spatial queries)
-    // Without WASM binaries, workers may not be available — that's OK
-    const messages = await getConsoleMessages(page);
-    const hasWorkers = messages.all.some((m) => /\[WorkerPool\].*Worker \d+\/\d+ ready/.test(m));
-    const hasDataWorker = messages.all.some((m) => /\[WorkerPool\].*DataWorker ready/.test(m));
+    // `Worker pool ready with N worker(s)` (worker-pool.ts) is the pool-health
+    // line the in-page console interceptor can actually see, and it is a real
+    // claim: a pool that comes up with zero workers throws
+    // WorkerUnavailableError before ever reaching that log.
+    //
+    // This test previously keyed on `DataWorker ready`, which is logged from
+    // INSIDE the data worker (src/workers/data-worker/initialize.ts). The
+    // interceptor only patches the MAIN-THREAD console, so that line can never
+    // reach this buffer — the assertion was dead, and passed only because its
+    // enclosing `if (hasWorkers)` guard was false. #2494's eager pool warm-up
+    // put `Worker N/M ready` in the buffer, flipped the guard true, and exposed
+    // it (#2548). The assertion is unconditional now on purpose: a
+    // data-dependent guard around an `expect` goes vacuous again the moment the
+    // log line it probes for moves.
+    //
+    // We deliberately do NOT key on the `Acceleration: …` summary that follows:
+    // it has three wordings and two of them are warnings (`TypeScript fallback
+    // on all N`, `mixed backend`), so pinning the WASM variant would fail on any
+    // checkout without a WASM build rather than reporting the pool healthy.
+    //
+    // Wait rather than sampling the buffer once: `warmUpDataWorkerPool()` is
+    // fire-and-forget in the scene loader and Points decode on the main thread,
+    // so pool-ready is not strictly ordered before `waitForPointsLoaded`. The
+    // window is generous because `worker-pool.ts` logs the line only after
+    // `await Promise.allSettled(workerPromises)` — one stuck worker holds it
+    // behind that worker's whole init budget (a 3 s WASM compile deadline, then
+    // `workerInitTimeoutMs`, 10 s by default) while the pool is otherwise
+    // healthy, so the wait has to clear that path, not the happy one.
+    //
+    // The wait is a single in-page predicate, not `expect.poll` over
+    // `getConsoleMessages`: that helper JSON-stringifies the entire ring buffer
+    // on the page's main thread, and polling it re-runs that during scene load —
+    // the same main-thread starvation surface that #1651/#1746/#1747/#1760 were
+    // filed about. One round trip here, one read for the verdict below.
+    await page
+      .waitForFunction(
+        () => {
+          // BufferedMessage is `{ type, timestamp, args, stack? }`
+          // (src/utils/console-interceptor.ts); every `log.*` call formats its
+          // whole line into a single string arg, so the text lives in `args`.
+          const debug = (window as any).__luxarDebug;
+          const msgs = debug?.consoleInterceptor?.getBufferedMessages?.() ?? [];
+          return msgs.some((m: { args?: unknown[] }) =>
+            (m.args ?? []).some(
+              (a) => typeof a === 'string' && a.includes('Worker pool ready with')
+            )
+          );
+        },
+        null,
+        { timeout: 30000 }
+      )
+      .catch(() => {
+        // Fall through: the assertion below reports what the pool DID log.
+      });
 
-    if (hasWorkers) {
-      // If workers initialized, DataWorker should also be ready
-      expect(hasDataWorker).toBe(true);
-    }
+    // Filtering to the `[WorkerPool]` lines is what puts the pool's actual
+    // output in the failure report instead of a bare boolean.
+    const workerPoolLines = (await getConsoleMessages(page)).all.filter((m) =>
+      m.includes('[WorkerPool]')
+    );
+    expect(workerPoolLines).toEqual(
+      expect.arrayContaining([expect.stringMatching(/Worker pool ready with \d+ worker\(s\)/)])
+    );
 
-    // Core assertion: points must have loaded regardless of worker availability
-    const initialCount = await page.evaluate(() => {
+    // Core assertion: points must have loaded.
+    const pointCount = await page.evaluate(() => {
       const state = (window as any).__luxarDebug?.getState?.();
       return state?.totalPoints || 0;
     });
-    expect(initialCount).toBeGreaterThan(0);
+    expect(pointCount).toBeGreaterThan(0);
   });
 
   test('should fallback to main thread if worker fails', async ({ page }, testInfo) => {

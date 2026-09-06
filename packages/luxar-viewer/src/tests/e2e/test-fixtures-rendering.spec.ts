@@ -8,7 +8,7 @@
  * Tests use fixtures from packages/luxar-viewer/tests/fixtures/
  */
 
-import { test, expect } from './fixtures';
+import { test, expect, ALLOW_CONSOLE_ERRORS } from './fixtures';
 import {
   waitForLuxarReady,
   waitForPointsLoaded,
@@ -583,14 +583,42 @@ test.describe('Test Fixture Rendering', () => {
 });
 
 test.describe('Console Error Detection', () => {
-  test('should detect and report console errors', async ({ page }) => {
+  test('should detect and report console errors', async ({ page }, testInfo) => {
+    // This test's whole premise is a dataset that does not exist, so the load
+    // failure it triggers is the subject under test, not a regression. Since
+    // #2494 the viewer honestly attempts that load instead of quietly opening
+    // the dataset browser, so four app-level errors now reach the fixture's
+    // console gate ("[Luxar] Failed to load scene: NotFoundError…" and its
+    // SceneManager / App / start-up echoes) and fail the teardown even though
+    // every assertion below passes (#2548).
+    //
+    // Opt out per-spec rather than adding the pattern to
+    // DEFAULT_ALLOWED_CONSOLE_ERRORS: "Failed to load scene" is the single most
+    // important error the viewer can log, and forgiving it globally would blind
+    // the ~63 specs that share this fixture to a broken scene load.
+    testInfo.annotations.push({
+      type: ALLOW_CONSOLE_ERRORS,
+      description:
+        'Deliberately loads a non-existent dataset; the resulting scene-load errors are what this test asserts on.',
+    });
+
     // Collect page-level errors as a fallback in case the console interceptor
-    // isn't ready before the errors fire
+    // isn't ready before the errors fire.
+    //
+    // Warnings go in their own bucket. This listener used to fold them in with
+    // the errors, which meant one unrelated warning could satisfy a test named
+    // "should detect and report console errors" on its own — harmless while the
+    // fixture's console gate was also watching, but this test now opts out of
+    // that gate, so its own assertion is the only thing left standing. The
+    // warning count is still reported below; it just cannot carry the verdict.
     const pageErrors: string[] = [];
+    const pageWarnings: string[] = [];
     page.on('pageerror', (err) => pageErrors.push(err.message));
     page.on('console', (msg) => {
-      if (msg.type() === 'error' || msg.type() === 'warning') {
+      if (msg.type() === 'error') {
         pageErrors.push(msg.text());
+      } else if (msg.type() === 'warning') {
+        pageWarnings.push(msg.text());
       }
     });
 
@@ -625,6 +653,7 @@ test.describe('Console Error Detection', () => {
     console.log('[Error Detection Test] Intercepted errors:', consoleMessages.errors.length);
     console.log('[Error Detection Test] Intercepted warnings:', consoleMessages.warnings.length);
     console.log('[Error Detection Test] Page-level errors:', pageErrors.length);
+    console.log('[Error Detection Test] Page-level warnings:', pageWarnings.length);
 
     // Verify we captured error messages from either source
     expect(totalErrorCount).toBeGreaterThan(0);
