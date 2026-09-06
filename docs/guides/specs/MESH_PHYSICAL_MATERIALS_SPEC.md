@@ -88,8 +88,14 @@ from the sketch above):
   three's default sheen colour is black, so `sheen` alone renders nothing, and a
   knob that can never render anything is exactly the trap this validation exists
   to refuse. The viewer defaults `sheenColor` to white when unset for the same
-  reason. Phase 2's `transmission` / `ior` / `thickness` / `attenuation_*` /
-  `dispersion` are not accepted yet.
+  reason.
+- **Phase 2 (delivered)** adds the glass family: `transmission` (`[0, 1]`), `ior`
+  (`[1, 2.333]`), `thickness` (`>= 0`), `attenuation_color` (`"#rrggbb"`),
+  `attenuation_distance` (`> 0`; absent = none) and `dispersion` (`>= 0`). One
+  more pairing rule: `thickness`, `attenuation_*` and `dispersion` are refused
+  without a `transmission` above zero, because three compiles them only inside
+  its `USE_TRANSMISSION` block — written, they would be silently ignored. `ior`
+  stands alone (it also sets an opaque surface's specular reflectance).
 - **`shading` is kept, not refused**, except for `"none"`. Flat-versus-smooth
   normals is a property of any lit surface, not of the house key; it maps onto
   three's `flatShading`. Only the unlit `"none"` is meaningless on an
@@ -142,10 +148,25 @@ meanings — `intensity` → a scalar base-colour gain, `offset` → emissive,
 no camera surface (the near fade is a house-shader feature) and stamps
 `userData.blendingMode = 'opaque'` only when opaque, so the depth-sort
 coordinator releases it in every case while the `layer_order` band rank still
-applies. Translucency is read off the data (`opacity < 1`, or per-vertex alpha
-without an `alpha_cutoff`); translucent surfaces do not write depth. Vertex
-alpha is learned at the first commit (`applyMeshVertexAlpha`), since the attrs
-record `has_colors` but not the component count.
+applies. Translucency is read off the data (`opacity < 1`, `transmission > 0`,
+or per-vertex alpha without an `alpha_cutoff`); translucent surfaces do not
+write depth. Vertex alpha is learned at the first commit
+(`applyMeshVertexAlpha`), since the attrs record `has_colors` but not the
+component count.
+
+**Phase 2 implementation notes.** The knobs are ONE table
+(`PHYSICAL_MESH_KNOBS` in `config.ts`: attr, three property, domain, default,
+slider presentation, program-affecting flag) that the construction mapping, the
+live Layers-panel sliders and the tests all read. `setPhysicalKnob` is the single
+write path and flags `needsUpdate` when a program-affecting knob crosses zero:
+three's WebGL setters version-bump on that crossing already, but
+`MeshPhysicalNodeMaterial` stores plain properties and bakes `useTransmission`
+into its lighting model at setup, so the rule lives in the shared helper for
+both twins. Glass composites as translucent — the §3.4 contract made concrete: a
+depth-writing shell would HIDE the cluster inside it, the worse failure for the
+marker case — and stamps `userData.drawBeforeEmissive`, which the depth-sort
+coordinator turns into "first within its `layer_order` band" (renderOrder −1
+when unranked); see §3.4 for why that is needed on WebGPU.
 
 ### 3.3 Lighting: a scene environment, not scene lights
 
@@ -252,6 +273,22 @@ crisply *on* the glass rather than *inside* it. Whether that reads well is a
 design question, not a bug; it is also why the additive rim shell (§2) is the
 right marker for the kiosk.
 
+**Phase 2 (delivered) — what makes that statement true on BOTH backends.** On
+WebGL it is free: the transmissive list draws before the transparent list, a
+glass fragment lands with alpha 1 (`transmissionAlpha` is 1 because the
+transmission target is cleared at alpha 1), and the glass writes no depth, so the
+emissive draws that follow land on top. On WebGPU a transmissive mesh joins the
+SAME transparent list as every point, line and splat layer, sorted back-to-front
+by object depth — so a cluster whose centre sorts farther than the sphere would be
+drawn first and then painted over by the alpha-1 glass. The physical material
+therefore stamps `userData.drawBeforeEmissive` while `transmission > 0`, and the
+depth-sort coordinator's cross-node pass orders such a mesh first within its
+`layer_order` band (renderOrder −1 when unranked, since unranked emissive layers
+sit at three's default 0). One more asymmetry worth recording: WebGL exposes
+`renderer.transmissionResolutionScale` (left at three's 1.0; the 0.5 default
+belongs to Phase 3's cost work), WebGPU has no equivalent and always mip-chains a
+full-resolution framebuffer copy, so its transmission cost is not tunable.
+
 Closing the gap is Phase 3 (§4). An earlier draft of this section proposed taking
 over three's pass wholesale (a manual render target and a `scene.overrideMaterial`
 dance inside `post-processing-manager/pipeline.ts`). Reading three's code shows
@@ -352,12 +389,26 @@ with the environment built and 7,680 triangles committed; the Fresnel rim on the
 dark shell is visible on both. The stories scene is not on `main` yet, so the
 demo carries the A/B until it is.
 
+**Phase 2 result.** The same run on the nine-sphere demo (three glass spheres in
+front of a house-shaded checkerboard, an emissive cluster inside the clear
+one; 11,808 triangles, environment built on both arms, real WebGPU verified):
+**SSIM 0.988, NCC 0.998**, lit-pixel share 15.6% (WebGL) vs 18.4% (WebGPU). Both
+arms refract the checkerboard through all three glass spheres, the amber
+sphere's volume attenuation reads on both, and the cluster inside the clear
+glass is drawn crisp and unrefracted on both — the draw-before-emissive rule
+doing its job on WebGPU. Where the arms differ most is the dispersive crystal
+(`ior=2.0`, `dispersion=0.6`): WebGPU's transmission sample comes off a coarser
+level of its framebuffer mip chain there and shows the checkerboard's tiles
+through the sphere where WebGL shows a smoother frosted refraction. That is the
+sampling difference this section predicts, not a defect in either mapping, and
+it is why the acceptance floor is structural similarity rather than pixels.
+
 ## 4. Phases
 
 | Phase | Scope | Unlocks | Cost |
 | --- | --- | --- | --- |
 | 1 — **delivered** | `material="physical"`, `roughness`, `metalness`, `clearcoat`, `clearcoat_roughness`, `iridescence`, `sheen`, `sheen_color`; default `RoomEnvironment` built lazily; Python validation; Layers-panel shows the physical knobs read-only; `demo_mesh_physical_materials`; the A/B script | Metals, lacquer, pearlescent shells; a true Fresnel rim via `clearcoat` on a dark base | Small: one factory entry, one env builder, attrs plumbing |
-| 2 | `transmission`, `ior`, `thickness`, `attenuation_*`, `dispersion` with three's stock pass | Glass and lenses that refract the background and other meshes | Small; ships with the §3.4 caveat documented in the Layers panel tooltip |
+| 2 — **delivered** | `transmission`, `ior`, `thickness`, `attenuation_*`, `dispersion` with three's stock pass; glass ordered first in its band on both backends; the physical knobs as LIVE Layers-panel sliders (§6 item 2); three glass spheres and a checkerboard backdrop in the demo | Glass and lenses that refract the background and other meshes; tuning a material without a rebuild | Small; the §3.4 caveat is in the Layers panel tooltip |
 | 3 — opt-in, deferred | Data through glass: `layer_order` ordering on WebGPU, a two-render split with an injected quad on WebGL, `transmissionResolutionScale` 0.5 (§3.4) | Glass that refracts the data behind it (data in front stays a known limit) | Small–medium, isolated in `pipeline.ts`; build when a demo needs it, measure first |
 | 4 — designed | `viewer_config.environment.source = room \| scene \| hdri` with `probe`; live exact cube capture on settle/commit; `luxar env bake` / `?bake-env` / `luxar env attach` storing `environment/faces` with a `content_hash` guard (§3.3) | Metals and glass that reflect the data they sit in; zero-cost baked environments for published scenes | Small: one more builder behind `SceneEnvironment.ensure()`, one CLI pair, one Playwright driver |
 
@@ -389,7 +440,10 @@ demo carries the A/B until it is.
    cleanly to `setLayer` patches) or read-only? Proposal: sliders in Phase 2
    once two demos exist to tune against. **Phase 1: read-only**, in place of
    the house shading sliders; Gamma and Blend hide too, since neither has a
-   meaning on this material. Opacity stays live.
+   meaning on this material. Opacity stays live. **Phase 2: live sliders**, one
+   per numeric knob from the shared knob table (ranges, steps and a log track
+   for `attenuation_distance` whose top stop means "none"); the two colour knobs
+   stay read-only rows; Reset restores the authored values.
 3. Which demo carries Phase 1? Candidate: a bubble/lens marker variant of
    `esm3_protein_stories`, which already has the story dimension to switch
    marker styles on. **Phase 1: `demo_mesh_physical_materials`**, a numpy-only
