@@ -13,8 +13,10 @@
  *
  * - **No self-reflection.** Physical meshes are hidden for the six draws (their
  *   previous `visible` is restored afterwards, so a user- or LOD-hidden mesh stays
- *   hidden). Visibility rather than a `layers` bit, because the pick camera and the main
- *   camera would both need the bit and nothing else in the viewer uses layers.
+ *   hidden). Visibility rather than a `layers` bit: a persistent bit would need the pick
+ *   camera and the main camera to agree on it. The one `layers` use in the viewer — the
+ *   WebGL refraction split (`rendering/render-layers.ts`) — is transient inside a single
+ *   render call and is restored before this capture, or anything else, can observe it.
  * - **Sprite sizes.** Point and line footprints come from the camera params the material
  *   manager broadcasts (fov, drawing-buffer size, pixel ratio). The caller pushes the
  *   cube camera's params before the six renders and restores the main camera's after —
