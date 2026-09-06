@@ -270,19 +270,13 @@ class TestResolveAdditiveAxisGsplats:
     ) -> None:
         """An authored spec is a NO-OP on a stack whose sources carry ladders.
 
-        The resolver computes only when ``recompute`` is set or the level holds
-        ``<= 1`` rung, and :meth:`~GSplatData.combine_as_new_dimension` MERGES
-        the per-source ladders instead of dropping them — so a stack of already-
-        laddered sources arrives with rungs to spare and takes the pass-through
-        branch. This is #2485's second failure: the NEXRAD supercell's
-        ``additive_lod=`` had been inert on its precomputed-bundle path all
-        along, so ``slice_dims=`` inherited that and the built store still failed
-        the first-paint floor at p05 = 194.
-
-        What survives is a per-source equal-count ladder, hence exactly
-        PROPORTIONAL per slice — ``[1, 3, 10]`` here, one quarter of each source
-        — and the sub-LOD stats carry the merge's fingerprint (``lod_level`` +
-        ``n_sources``) rather than a ladder's ``lod_method``.
+        #2485's second failure: the NEXRAD supercell's ``additive_lod=`` had been
+        inert on its precomputed-bundle path all along, so ``slice_dims=``
+        inherited that. The mechanism is documented on the resolver; what this
+        pins is the OBSERVABLE — what survives is a per-source equal-count ladder,
+        hence exactly PROPORTIONAL per slice (``[1, 3, 10]``, one quarter of each
+        source), stamped with the merge's fingerprint (``lod_level`` +
+        ``n_sources``) and no ``lod_method``.
         """
         stack = stacked_with_stored_ladders
         assert stack.n_additive_sublods == 4  # the merge, not our ladder

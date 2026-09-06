@@ -1642,12 +1642,13 @@ def test_malformed_slice_dims_raise_even_on_a_trivial_leaf(
 ) -> None:
     """Validation must not depend on how many splats the leaf happens to hold.
 
-    Both loop-callers hand the SAME spec to many leaves —
+    Both fan-out callers hand the SAME spec to many leaves —
     ``resolve_additive_axis_gsplats`` walks substitutive levels and
-    ``recipes._ladder_for_part`` walks BSP parts — so validating only where the
-    interleave actually runs means one build both rejects and accepts a typo,
-    depending on which leaf is empty. Measured before the fix: every entry below
-    passed silently at N in {0, 1} and raised at N = 3.
+    ``add_gsplats_partition_wrapper_impl`` forwards ``leaf_attrs`` to every
+    ``part_i`` — so validating only where the interleave actually runs means one
+    build both rejects and accepts a typo, depending on which leaf is empty.
+    Measured before the fix: every entry below passed silently at N in {0, 1} and
+    raised at N = 3.
     """
     data = (
         _make_empty_gsplat(ndim=4)
@@ -1685,16 +1686,7 @@ def test_a_malformed_order_is_refused(order: np.ndarray, match: str) -> None:
         interleave_order_across_slices(data, order, [3])
 
 
-def test_duplicate_order_entries_are_the_callers_problem() -> None:
-    """Documented non-guarantee: detecting them costs a second O(N log N) pass.
-
-    Pinned so the contract is deliberate rather than an oversight — no in-tree
-    producer can emit a duplicate (they are all ``argsort`` or
-    ``rng.permutation``), and the four cheap O(N) guards above catch everything
-    that has actually been hit.
-    """
-    data = _make_sliced_gsplat((3, 3, 3), seed=36)
-    duplicated = np.array([0, 0, *range(2, 9)])
-    result = interleave_order_across_slices(data, duplicated, [3])
-    assert result.size == 9
-    assert sorted(result.tolist()) != list(range(9))
+# NB: no test pins the duplicate-`order` non-guarantee. Asserting that
+# `interleave_order_across_slices` does NOT reject `[0, 0, 1, …]` would be a
+# change detector — it would go red for the correct future change of adding
+# duplicate detection. The reasoning lives in `_validate_interleave_order`.

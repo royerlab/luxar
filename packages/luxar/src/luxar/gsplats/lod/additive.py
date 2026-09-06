@@ -605,11 +605,13 @@ def _validate_slice_dims(slice_dims: Sequence[int], ndim: int) -> np.ndarray:
     There is deliberately no default, and not because the columns are
     undiscoverable: the WRITER auto-detects them, and
     ``gsplats/io/save_gsplats.py`` stamps the result as the ``slice_dims`` attr of
-    each rung (on the built NEXRAD store that attr reads ``[3]`` — the same
-    columns as the hand-written kwarg). But that detection runs at SAVE time,
-    after the ladder has been ordered and cut into rungs, so it is not available
-    to the ordering that has to consume it. Hence the caller names them, exactly
-    as the CLI does for ``--coarsen-dims``.
+    each rung. But that detection runs at SAVE time, after the ladder has been
+    ordered and cut into rungs, so it is not available to the ordering that has to
+    consume it. Note the stamped attr is also in a DIFFERENT frame: it derives
+    from barrier dims resolved POST-``dim_order``, so it and this kwarg coincide
+    only when ``dim_order`` does not permute — which is why the built NEXRAD store
+    happens to stamp the same ``[3]``. Hence the caller names them, exactly as the
+    CLI does for ``--coarsen-dims``.
     """
     validate_integral_axis_indices(slice_dims, "slice_dims")
     dims = np.asarray(slice_dims, dtype=np.intp)
@@ -708,7 +710,7 @@ def interleave_order_across_slices(
 
     That guarantee has a PRECONDITION worth stating: a rung must be at least as
     large as the slice count, or it cannot reach every slice at all. A rung
-    smaller than $S$ covers only its first $R{=}0$ pass partially, and since
+    smaller than $S$ does not even complete its first pass, and since
     within-pass ties break by position in ``order`` the coordinates left with
     NOTHING are the faintest ones — measured on 500 slices of 40 splats with
     ``breakpoints=[200]``, 300 coordinates got zero. Nowhere near a hazard for the
@@ -780,15 +782,7 @@ def interleave_order_across_slices(
     dims = _validate_slice_dims(slice_dims, data.ndim)
     order = _validate_interleave_order(order, data.n_splats)
     n = int(order.size)
-    if n <= 1:
-        return order
 
-    # Vectorized, O(N log N): the corpus builds this on 818k splats, so a Python
-    # loop over slice groups is not an option. `group` is a dense slice label per
-    # POSITION IN `order`; a stable argsort of it makes each group's positions
-    # contiguous and ascending in base order, so subtracting the group's first
-    # index gives that element's rank WITHIN its slice. Sorting by (rank,
-    # base position) is then exactly the round-robin.
     keys = np.asarray(data.centers, dtype=np.float64)[:, dims][order]
     if not bool(np.isfinite(keys).all()):
         # NaN is the one that CORRUPTS the grouping: `np.unique` compares NaN
@@ -813,6 +807,20 @@ def interleave_order_across_slices(
             f"{bad.size} of {n} splats are non-finite on columns "
             f"{[int(d) for d in dims]} (first at order position {int(bad[0])})."
         )
+    if n <= 1:
+        # Nothing to interleave, and reached only AFTER the finiteness check, so
+        # a trivial leaf gives the same verdict as a populated one. Same reason
+        # the column validation is unconditional: the fan-out callers hand ONE
+        # spec and one dataset to many leaves.
+        return order
+
+    # Vectorized, O(N log N): the corpus builds this on 818k splats, so a Python
+    # loop over slice groups is not an option. `group` is a dense slice label per
+    # POSITION IN `order`; a stable argsort of it makes each group's positions
+    # contiguous and ascending in base order, so subtracting the group's first
+    # index gives that element's rank WITHIN its slice. Sorting by (rank,
+    # base position) is then exactly the round-robin.
+    #
     # A single hidden axis is the common case (every sliced demo today), and the
     # 1-D `unique` is ~19x cheaper than the structured-row sort `axis=0` takes:
     # measured 0.854 s -> 0.045 s at 818k x 1 column. Equivalent because only the
@@ -905,11 +913,13 @@ def compute_additive_order(
     if slice_dims is not None:
         # ABOVE the N <= 1 short-circuits, deliberately: a caller with a typo'd
         # column must hear about it whatever this leaf happens to hold. Both
-        # loop-callers hand this function many leaves of the same spec —
-        # `resolve_additive_axis_gsplats` walks substitutive levels,
-        # `recipes._ladder_for_part` walks BSP parts — so validating only where
-        # the interleave RUNS means the same spec is rejected by the populated
-        # leaves and waved through by any empty or single-splat one.
+        # fan-out callers hand this function many leaves of ONE spec —
+        # `resolve_additive_axis_gsplats` walks substitutive levels, and
+        # `adders/gsplats.py::add_gsplats_partition_wrapper_impl` puts
+        # `additive_lod` in `leaf_attrs` and forwards it to every `part_i` — so
+        # validating only where the interleave RUNS means the same spec is
+        # rejected by the populated leaves and waved through by any empty or
+        # single-splat one.
         _validate_slice_dims(slice_dims, data.ndim)
 
     N = data.n_splats

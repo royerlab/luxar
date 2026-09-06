@@ -133,8 +133,10 @@ Four landed protections keep this from resting on memory: the CLI scales
 `--target-ms` by the slice count; the demo policy floors sliced first rungs at an
 aggregate share before stores are built; `additive_lod=dict(slice_dims=…)` makes
 a gsplat ladder's per-slice budget absolute rather than proportional, and the demo
-authoring gate requires it (with `recompute=True`) on any gsplats adder in a
-hidden-dimension demo; and `hatch run check-demo-ladders` fails a built store
+authoring gate requires it (with `recompute=True`) on any gsplats adder that
+*authors* an `additive_lod=` in a hidden-dimension demo — 12 of the 13 such demos
+pass none, so the gate does not reach them; and `hatch run check-demo-ladders`
+fails a built store
 whose sparsest slices fall below the floor. The gate measures the 5th percentile,
 not the maximum — a ladder starves at its sparsest slice, and one busy coordinate
 used to mask hundreds of starved ones.
