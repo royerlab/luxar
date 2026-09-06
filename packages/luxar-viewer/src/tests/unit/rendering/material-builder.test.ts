@@ -163,9 +163,17 @@ describe('buildMaterial render-state contract', () => {
    * false/false), which leaves a copy-paste transposition inside the
    * six-line assignment block invisible to the whole suite. Crossing
    * them is the only thing that pins the field-to-field mapping.
+   *
+   * `NoBlending` (0) rather than a second additive-family preset: it is
+   * distinct from the resolved default `NormalBlending` (1), from
+   * `ALL_NON_DEFAULT`'s `AdditiveBlending` (2) and from this arm's
+   * `side` (`BackSide`, 1), so a `blending ← side` half-swap still
+   * fails. `SubtractiveBlending` / `MultiplyBlending` would be poor
+   * canonical choices — WebGPU rejects both without
+   * `premultipliedAlpha`, which the config cannot express.
    */
   const PAIRS_CROSSED: FullRenderState = {
-    blending: THREE.SubtractiveBlending,
+    blending: THREE.NoBlending,
     depthTest: false,
     depthWrite: true,
     transparent: true,
@@ -210,7 +218,7 @@ describe('buildMaterial render-state contract', () => {
     // this arm catches a dropped assignment on the WebGPU branch as
     // well as a transposed one (see `PAIRS_CROSSED`).
     const source = makeFakeTslSource((m) => {
-      m.blending = THREE.NoBlending;
+      m.blending = THREE.AdditiveBlending;
       m.depthTest = true;
       m.depthWrite = false;
       m.transparent = false;

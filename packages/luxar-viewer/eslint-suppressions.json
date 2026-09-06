@@ -820,11 +820,6 @@
       "count": 1
     }
   },
-  "src/rendering/materials/_shared/material-builder.ts": {
-    "complexity": {
-      "count": 1
-    }
-  },
   "src/rendering/materials/_shared/tsl-helpers.ts": {
     "max-params": {
       "count": 1

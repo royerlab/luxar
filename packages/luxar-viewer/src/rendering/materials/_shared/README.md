@@ -80,36 +80,34 @@ const material = buildMaterial(
 
 That call shape is illustrative, not a census: the only `buildMaterial` callers
 today are the post-processing passes (`post-processing/bloom/chain.ts` ×3 and
-`post-processing/fxaa/pass.ts`). The geometry materials build their
-`ShaderMaterial` directly or extend the `*TSLMaterial` classes from
-`rendering/tsl/registry.ts`, and `POINT_SOURCE` & friends are consumed by the
-E2E parity harness.
+`post-processing/fxaa/pass.ts`). The geometry materials each extend a base
+directly — `THREE.ShaderMaterial` in `material-glsl.ts`, `NodeMaterial` in
+`material-tsl.ts` — and `POINT_SOURCE` & friends are consumed by the E2E parity
+harness.
 
 For the passes that do call it, the render state in the config is
 **authoritative on both branches**: `blending`, `depthTest`, `depthWrite`,
 `transparent`, `toneMapped` and `side` are resolved once (same defaults either
 way — note `toneMapped` defaults to `false`, the opposite of Three's own) and
 then applied to the `ShaderMaterial` _or_ the `NodeMaterial`, overriding whatever
-the TSL factory set on itself. Only `defines` is WebGL-only, because
-`NodeMaterial` has no such field — a TSL factory takes its compile-time flags
-through its own arguments. The WebGPU branch used to forward `uniforms` alone and
-drop the rest, which silently disabled the bloom upsample pass's
-`AdditiveBlending` and turned WebGPU bloom into a flat dim wash (#2563).
+the TSL factory set on itself. `defines` is WebGL-only: the field exists on every
+material, but nothing on the node path reads it, so threading it would be inert.
+The WebGPU branch used to forward `uniforms` alone and drop the rest, which
+silently disabled the bloom upsample pass's `AdditiveBlending` and turned WebGPU
+bloom into a flat dim wash (#2563).
 
-Two boundaries follow, and the example above sits on top of both. `toneMapped` is
-threaded for symmetry but is only **observed** under `THREE.WebGLRenderer` —
-three's node/WebGPU renderers never read `material.toneMapped`; tone mapping
-there is an output pass driven by `renderer.toneMapping`, which
-`post-processing-manager.ts` pins to `NoToneMapping`. And the config cannot
-express `CustomBlending`'s factors (there is no `blendEquation` / `blendSrc` /
-`blendDst`), which `getCompleteBlendingState` in `../../blending-state.ts`
-returns for the `max` and `opaque` modes. So a factory that derives its own
-**complete** blending state — `pointWebGPUFactory` ends by calling
-`applyBlendingStateToMaterial`, and re-does it on every `rebuildGraph` — must not
-be routed through `buildMaterial` with a partial config: the resolved defaults
-would clobber the `depthTest` / `depthWrite` / `transparent` the factory chose
-(`additive` wants `false / false / true`), and the next graph rebuild would put
-them back, so the state would appear and disappear rather than fail outright.
+That agreement has three limits — `toneMapped` is only observed under
+`THREE.WebGLRenderer`, and neither `CustomBlending`'s factors nor
+`premultipliedAlpha` are expressible in the config; `material-builder.ts`'s module
+docblock is the canonical statement of all three. The consequence for this
+section is a routing rule: a factory that derives its own **complete** blending
+state must not be routed through `buildMaterial` with a partial config. Several of
+Luxar's modes need those factors (`getCompleteBlendingState` in
+`../../blending-state.ts` returns `CustomBlending` for `max`, `opaque` and
+`volumetric`, plus gsplat `normal`), and `pointWebGPUFactory` ends by calling
+`applyBlendingStateToMaterial` — so routing it through the builder with the
+example's partial config would clobber the `depthTest` / `depthWrite` /
+`transparent` the factory chose (`additive` wants `false / false / true`).
 
 Both `webgl` and `webgpu` fields are optional in the type so a future shader
 can ship single-backend, but the **runtime invariant is that the active
