@@ -30,6 +30,7 @@ from pathlib import Path
 import pytest
 import typer
 
+import luxar
 from luxar.cli import _traceback
 from luxar.cli._traceback import (
     TRACEBACK_ENV_VAR,
@@ -38,6 +39,12 @@ from luxar.cli._traceback import (
 )
 
 CLI_ROOT = Path(_traceback.__file__).parent
+
+
+def test_the_package_fixture_clears_this_exact_variable() -> None:
+    """The package conftest hard-codes the key to avoid importing the CLI."""
+    conftest = Path(luxar.__file__).parent / "conftest.py"
+    assert f'delenv("{TRACEBACK_ENV_VAR}"' in conftest.read_text()
 
 
 class TestTracebackRequested:

@@ -99,6 +99,7 @@ def _seed_numpy_global_rng() -> None:
 @pytest.fixture(autouse=True)
 def _traceback_opt_in_is_test_local(monkeypatch: pytest.MonkeyPatch) -> None:
     """Do not let a developer's shell preference change CLI test semantics."""
+    # Must match luxar.cli._traceback.TRACEBACK_ENV_VAR without importing the CLI.
     monkeypatch.delenv("LUXAR_TRACEBACK", raising=False)
 
 
