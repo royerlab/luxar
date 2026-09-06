@@ -22,6 +22,7 @@ import { autoRotateAxisVector } from './luxar-orbit-controls/math/auto-rotate';
 import { dollyAmplitudeChangeScale, dollyScale } from './luxar-orbit-controls/math/auto-dolly';
 import { applyZoomScale } from './luxar-orbit-controls/math/zoom';
 import { clamp } from '../utils/clamp';
+import { normalizeWheelDelta } from '../utils/wheel-delta';
 import {
   type AutoRotateAxis,
   DEFAULT_AUTO_DOLLY_AMPLITUDE,
@@ -487,8 +488,11 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
       event.preventDefault();
       event.stopImmediatePropagation();
 
-      // Accumulate into rollDelta — damping is applied in update()
-      this.rollDelta += event.deltaY * speed;
+      // Accumulate into rollDelta — damping is applied in update().
+      // The delta is normalized to pixel-mode equivalent first so a
+      // line-mode browser (Firefox reports 3 lines where Chromium reports
+      // 100 px) rolls by the same amount per notch.
+      this.rollDelta += normalizeWheelDelta(event, this.domElement) * speed;
 
       // Wake up animation loop (rollDelta is applied in update())
       this.dispatchEvent({ type: 'change' });

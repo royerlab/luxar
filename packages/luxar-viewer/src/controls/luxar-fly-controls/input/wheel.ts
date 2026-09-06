@@ -59,7 +59,11 @@ export function handleWheel(ctx: FlyWheelCtx, event: WheelEvent): void {
 
   event.preventDefault();
 
-  // Normalize deltaY across browsers (line vs pixel vs page scrolling)
+  // Discard the magnitude entirely and keep only the direction: one notch is
+  // one fixed impulse regardless of how far the browser says the wheel
+  // turned. That makes `deltaMode` (pixel vs line vs page) irrelevant on this
+  // path — unlike the orbit zoom / roll / FOV paths, which do consume the
+  // magnitude and therefore normalize it via `utils/wheel-delta`.
   const delta = -Math.sign(event.deltaY);
 
   if (event.shiftKey) {

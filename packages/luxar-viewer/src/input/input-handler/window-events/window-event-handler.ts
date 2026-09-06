@@ -33,6 +33,7 @@ import type { RenderingControlsHandle } from '../panel-capabilities';
 import { isDocumentFullscreen } from '../../../utils/fullscreen';
 import { isPerspectiveCamera } from '../../../utils/camera-utils';
 import { getViewerContainer } from '../../../utils/viewer-container';
+import { normalizeWheelDelta } from '../../../utils/wheel-delta';
 
 export class WindowEventHandler {
   private renderingControls?: RenderingControlsHandle;
@@ -163,9 +164,12 @@ export class WindowEventHandler {
    *     ortho the orbit controls own modifier-wheel (and trackpad-pinch)
    *     zoom. `updateFOV` now persists the perspective FOV stash even in
    *     ortho for DELIBERATE reset/zarr/panel applies, so the interactive
-   *     wheel must be gated here or a pinch would corrupt that stash. When
-   *     the FOV actually changed, switch the rendering-controls preset to
-   *     "Custom" so the panel value matches the slider.
+   *     wheel must be gated here or a pinch would corrupt that stash. The
+   *     delta handed to `updateFOV` is normalized to pixel-mode equivalent
+   *     (`normalizeWheelDelta`), so one notch is the same FOV step in a
+   *     line-mode browser as in a pixel-mode one instead of ~32x smaller.
+   *     When the FOV actually changed, switch the rendering-controls preset
+   *     to "Custom" so the panel value matches the slider.
    */
   private onWheel(event: WheelEvent): void {
     const eventPath = event.composedPath();
@@ -192,7 +196,7 @@ export class WindowEventHandler {
       // updateFOV) so a pinch/ctrl-wheel zoom in ortho can't corrupt it.
       if (!isPerspectiveCamera(this.sceneManager.camera)) return;
 
-      const fovChanged = this.sceneManager.updateFOV(event.deltaY);
+      const fovChanged = this.sceneManager.updateFOV(normalizeWheelDelta(event, canvas));
 
       // Flip the preset when the FOV actually changed so the panel value
       // matches the slider.

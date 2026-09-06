@@ -238,6 +238,31 @@ describe('WindowEventHandler', () => {
       expect(updateFOV).toHaveBeenCalledWith(75);
     });
 
+    it('#2531 Ctrl+wheel: forwards a NORMALIZED delta, not the raw line count', () => {
+      // dispatchWheel leaves deltaMode at jsdom's default 0, so every test
+      // above builds a pixel-mode event and none of them could see this.
+      // Firefox reports 3 LINES per notch where Chromium reports 100 px; the
+      // raw 3 made one notch a 0.15-degree FOV step instead of ~2.4 degrees.
+      const { sceneManager, updateFOV, canvas } = makeSceneManager();
+      const { animationController } = makeAnimationController();
+      const handler = new WindowEventHandler(sceneManager, animationController);
+      handler.attach([]);
+
+      dispatchWheel(canvas, { deltaY: 3, deltaMode: 1, ctrlKey: true });
+      expect(updateFOV).toHaveBeenCalledWith(48); // 3 lines × 16 px/line
+    });
+
+    it('#2531 Ctrl+wheel: a pixel-mode delta is still forwarded verbatim', () => {
+      // Bit-identity anchor: Chromium/WebKit FOV steps must not have moved.
+      const { sceneManager, updateFOV, canvas } = makeSceneManager();
+      const { animationController } = makeAnimationController();
+      const handler = new WindowEventHandler(sceneManager, animationController);
+      handler.attach([]);
+
+      dispatchWheel(canvas, { deltaY: 100, deltaMode: 0, ctrlKey: true });
+      expect(updateFOV).toHaveBeenCalledWith(100);
+    });
+
     it('Meta+wheel: forwards delta to updateFOV', () => {
       const { sceneManager, updateFOV, canvas } = makeSceneManager();
       const { animationController } = makeAnimationController();

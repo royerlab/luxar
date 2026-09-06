@@ -33,6 +33,7 @@ Cross-cutting utility functions and helpers used throughout the Luxar viewer. Th
 - **Result<T, E>**: Discriminated-union return type for fallible operations
 - **Camera Type Helpers**: Unified `LuxarCamera` union and type guards for perspective vs orthographic
 - **Effective Visibility**: `isEffectivelyVisible` — the single parent-chain walk answering "does this node actually render?" (`visible` is a LOCAL flag, so a hidden layer or a hidden LOD level leaves its descendants' flags true). Shared by the LOD load gate, LOD eviction, the pick pass, and the depth-sort scheduler
+- **Wheel Delta Normalization**: `normalizeWheelDelta` — converts a `WheelEvent`'s line/page-mode `deltaY` to a pixel equivalent (pixel mode passes through verbatim) so one notch means the same thing in every browser
 - **Platform Detection**: Single `isMacPlatform()` helper for OS-conditional defaults
 - **HTML Escaping**: XSS prevention for safe HTML rendering
 - **Storage Keys**: Single registry of `luxar.*` localStorage keys
@@ -52,6 +53,7 @@ utils/
 ├── result.ts                # Result<T, E> + ok/err/isOk/isErr/match/mapOk/mapErr/unwrap/tryAsync
 ├── storage-keys.ts          # luxar.* localStorage key registry
 ├── viewer-container.ts      # mount-root registry (get/set/resetViewerContainer) + containing-block promotion
+├── wheel-delta.ts           # normalizeWheelDelta (deltaMode line/page → pixel equivalent)
 ├── cross-layer/             # Cross-layer plumbing (typed bus, notifier facade, listener group)
 │   ├── event-bus.ts         # Typed cross-layer pub/sub (LuxarEventMap, eventBus singleton)
 │   ├── event-group.ts       # DOM-listener group with single dispose() teardown

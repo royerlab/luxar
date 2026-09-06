@@ -554,6 +554,34 @@ describe('LuxarOrbitControls', () => {
       // Handler should be set
       expect((controls as any).viewAxisRotationHandler).not.toBeNull();
     });
+
+    it('#2531 normalizes deltaMode: a line-mode notch rolls as far as its pixel equivalent', () => {
+      // jsdom defaults deltaMode to 0, so the other wheel tests here only
+      // ever built pixel-mode events. Firefox reports 3 LINES where Chromium
+      // reports 100 px; the raw 3 used to roll ~32x less per notch.
+      const roll = (deltaY: number, deltaMode: number): number => {
+        // One fresh instance per measurement, disposed immediately: a
+        // lingering capture listener calls stopImmediatePropagation and
+        // would starve the next instance's handler.
+        controls = new LuxarOrbitControls(camera, domElement);
+        controls.enableViewAxisRotation();
+        domElement.dispatchEvent(
+          new WheelEvent('wheel', { deltaY, deltaMode, shiftKey: true, cancelable: true })
+        );
+        const delta = (controls as any).rollDelta as number;
+        controls.dispose();
+        return delta;
+      };
+
+      const lineMode = roll(3, 1);
+      const pixelEquivalent = roll(48, 0); // 3 lines × 16 px/line
+      expect(lineMode).toBeCloseTo(pixelEquivalent, 12);
+      expect(lineMode).not.toBe(0);
+      // Far more than the pre-fix value, which consumed the raw 3 as pixels.
+      expect(Math.abs(lineMode)).toBeGreaterThan(Math.abs(roll(3, 0)) * 10);
+      // Pixel mode itself is unchanged (default speed 0.0005).
+      expect(roll(100, 0)).toBeCloseTo(100 * 0.0005, 12);
+    });
   });
 
   describe('public applyOrbitRotation [controls.md G29]', () => {
