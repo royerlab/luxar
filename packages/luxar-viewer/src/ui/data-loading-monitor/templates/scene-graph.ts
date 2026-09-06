@@ -133,8 +133,7 @@ export function lodChipContent(
         : held === 'budget'
           ? `Next level HELD at the residency ceiling — loading level ${loaded + 1} would push ` +
             'resident data over the refinement working-set budget (capped at 512 MB), so it is ' +
-            'not loaded; nothing more loads until resident data shrinks (a smaller slice or ' +
-            'fewer visible layers). '
+            'not loaded; nothing more loads until resident data shrinks (a smaller slice). '
           : '';
     // Always spell out what the residency dot means — the ● typically
     // appears exactly when refinement has finished, so the explanation
