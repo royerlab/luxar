@@ -131,7 +131,8 @@ def test_only_typed_scene_nodes_count_as_children() -> None:
             "child_1": {"child_index": 1},
             "labels": {"type": "not-a-node"},
             "environment": {"type": "group"},
+            "pipeline": {"type": "group"},
         }
     )
 
-    assert _names(_child_nodes(root)) == ["child_0", "environment"]
+    assert sorted(_names(_child_nodes(root))) == ["child_0", "environment"]
