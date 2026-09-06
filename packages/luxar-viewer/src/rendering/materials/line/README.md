@@ -339,15 +339,20 @@ but not the pathological-wide discard: the capsule only clamps its radii to
 `uMaxLinePixelWidth`. The shared `perspectiveNearFade` is evaluated PER
 CORNER — at the clamped span parameter `tc` of each stencil vertex — and
 interpolated as the `fade` factor of `vFade` (which also carries
-`widthScale`), not per fragment from `vViewZ` as the quad does. Evaluating at
-the corners makes the ramp exact there, but interpolation linearizes the
-smoothstep along the span (up to ~0.10 intensity error in the mid-quarters),
-and two legs sharing a vertex disagree on the fade away from it (see the
-`fade` note in `_shared/line-capsule.ts`). Both are further #1352-licensed
-approximations alongside the three below. The clip keeps corners out of the
-behind-eye hard-zero branch; the ramp reaches zero continuously at
-`nearCull`, and the both-near cull only removes a span already in that zero
-region, so there is no pop.
+`widthScale`), not per fragment from `vViewZ` as the quad does. The fade values
+are exact at the stencil's axial extremes, not at the drawn endpoints: the
+varying spans the cap extensions too, as `_shared/line-capsule.ts` notes.
+Even without that extra stretch, interpolation replaces the smoothstep along
+the axial span with its chord. A span matching `[nearCull, 2 * nearCull]`
+deviates by at most 0.096, while a span clipped at `nearCull` and ending at
+`3 * nearCull` under-fades by 0.5 at mid-span, and the maximum error approaches
+the full ramp as the far endpoint recedes (the long-segment case called out in
+`shader-glsl.ts`). Two legs sharing a vertex also disagree on the fade away
+from it (see the `fade` note in `_shared/line-capsule.ts`). Both are further
+#1352-licensed approximations alongside the three below. The clip keeps
+corners out of the behind-eye hard-zero branch; the ramp reaches zero
+continuously at `nearCull`, and the both-near cull only removes a span already
+in that zero region, so there is no pop.
 
 Three exactness relaxations are deliberate, licensed by the #1352 relaxed
 spec ("not physics-exact; no pathological near-axial drawing; gaussian-like
