@@ -847,6 +847,18 @@ describe('PickingSystem — surface-pick depth sync', () => {
     return setSurfacePickDepth;
   }
 
+  function registerMeshPair(system: PickingSystem, material: THREE.Material) {
+    const geom = new THREE.BufferGeometry();
+    const mainNode = new THREE.Mesh(geom, material);
+    const setPickMode = vi.fn();
+    const setPickSide = vi.fn();
+    const pickMaterial = new THREE.MeshBasicMaterial();
+    Object.assign(pickMaterial, { setPickMode, setPickSide });
+    const pickNode = new THREE.Mesh(geom, pickMaterial);
+    system.registerNode(mainNode, pickNode, system.allocatePickId());
+    return setPickMode;
+  }
+
   it("main material in 'normal' mode → setSurfacePickDepth(true)", () => {
     const { system, renderPickBuffer } = buildSystem();
     const spy = registerPair(system, 'normal');
@@ -910,6 +922,17 @@ describe('PickingSystem — surface-pick depth sync', () => {
     const spy = registerPair(system); // no userData.blendingMode
     renderPickBuffer();
     expect(spy).toHaveBeenCalledExactlyOnceWith(false);
+  });
+
+  it('translucent physical mesh follows its compositing → setPickMode(normal)', () => {
+    const { system, renderPickBuffer } = buildSystem();
+    const material = new THREE.MeshBasicMaterial({ transparent: true });
+    material.userData.material = 'physical';
+    const spy = registerMeshPair(system, material);
+
+    renderPickBuffer();
+
+    expect(spy).toHaveBeenCalledExactlyOnceWith('normal');
   });
 
   it('mixed registrations sync each pick material from its own main node', () => {

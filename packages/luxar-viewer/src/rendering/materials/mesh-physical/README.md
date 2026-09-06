@@ -56,10 +56,11 @@ A physical mesh has no blending mode, so translucency is read off the **data**
 - Translucent → `transparent = true`, `depthWrite = false`, `userData.blendingMode`
   UNSET. Opaque → `depthWrite = true`, `userData.blendingMode = 'opaque'`.
 
-The `userData.blendingMode` stamp is what the rest of the viewer keys on: the depth-sort
-coordinator releases a node whose stamp is `opaque` or absent (a physical mesh is **never**
-triangle-sorted — spec §3.2 — but still earns its `layer_order` band rank), and the pick
-pass applies the cutout iff the stamp is `opaque`, matching the screen.
+The depth-sort coordinator releases a node whose `userData.blendingMode` stamp is
+`opaque` or absent (a physical mesh is **never** triangle-sorted — spec §3.2 — but
+still earns its `layer_order` band rank). The pick pass recognises the physical-family
+stamp separately and follows `transparent`: translucent surfaces use normal surface
+depth, while opaque surfaces also apply the cutout, matching the screen.
 
 Vertex alpha is known only at the first **commit** (`MeshMetadata` says `has_colors`,
 not how many components), so `commit-mesh-geometry.ts` calls `applyMeshVertexAlpha`
