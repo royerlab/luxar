@@ -35,6 +35,7 @@ import { log, Modules, LogEmoji } from '../../../utils/log';
 import { notifier } from '../../../utils/cross-layer/notifier';
 import { getWorkerPool, warmUpDataWorkerPool } from '../../../workers/worker-pool';
 import { markLoad, noteRefinementComplete } from '../../../profiling/load-timeline';
+import type { RefinementHoldReason } from '../../../types/data-monitor-types';
 import { ZarrSceneAttrs, SceneDimensionAttrs } from '../../../types/zarr';
 import { SUPPORTED_GSPLATS_FORMAT_VERSIONS } from '../../../types/format-contract';
 import type { LoaderConfig, SceneNode, ViewState } from '../../data-loader-types';
@@ -136,6 +137,13 @@ export interface LoadSceneCtx {
    * error badge read the same live failure set.
    */
   getFailedLoadsProvider(): FailedLoadsProviderPort;
+  /**
+   * Why this path's next rung is held back, if it is (`SceneLoader.
+   * refinementHoldReason`: density gate or residency ceiling); the monitor
+   * marks such rungs as held rather than streaming. Optional so headless test
+   * contexts need not supply it.
+   */
+  refinementHoldReason?(path: string): RefinementHoldReason | null;
   /** Kick the GSplats LOD refinement loop after initial load. */
   scheduleGSplatsRefinement(): Promise<void>;
   /**
@@ -470,6 +478,7 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
     sceneGraph,
     updateVisibleCounts: () => ctx.updateVisibleCountsInMonitor(),
     failedLoads: ctx.getFailedLoadsProvider(),
+    refinementHold: ctx.refinementHoldReason ? (path) => ctx.refinementHoldReason!(path) : null,
     drawOrderProvider: createDrawOrderProvider(rootGroup),
     committedLODCounts: createCommittedLODCountReader(rootGroup),
   });

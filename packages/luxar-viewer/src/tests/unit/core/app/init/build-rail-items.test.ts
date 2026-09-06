@@ -77,6 +77,7 @@ function makeDeps(
       sessionDisabled: false,
       setEnabled: () => {},
       thinning: () => ({ nodes: 0, minKeep: 1 }),
+      capElementsPerPixel: () => 4,
     },
     performanceMonitor: { visible: false },
     layersPanel: {

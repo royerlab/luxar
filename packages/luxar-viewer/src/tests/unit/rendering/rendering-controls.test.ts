@@ -518,6 +518,7 @@ describe('RenderingControls', () => {
         sessionDisabled: false,
         setEnabled: vi.fn(),
         thinning: () => ({ nodes: 0, minKeep: 1 }),
+        capElementsPerPixel: () => 4,
       };
       controls.setDensityGuardControl(control);
       controls.sceneId = 'test-density-guard';

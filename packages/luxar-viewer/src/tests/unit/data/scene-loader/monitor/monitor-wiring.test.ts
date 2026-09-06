@@ -17,7 +17,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { wireMonitorAfterLoad } from '../../../../../data/scene-loader/monitor/monitor-wiring';
 import type { SceneLoaderMonitorPort } from '../../../../../data/scene-loader-monitor-port';
 import type { WireMonitorAfterLoadParams } from '../../../../../data/scene-loader/monitor/monitor-wiring';
-import type { SceneNode } from '../../../../../data/data-loader-types';
+import type { DataLoader, SceneNode } from '../../../../../data/data-loader-types';
 import type { MultiLevelCachingStore } from '../../../../../cache/multi-level-caching-store';
 import type { DecompressedChunkCache } from '../../../../../cache/decompressed-chunk-cache';
 import type { SliceCache } from '../../../../../cache/slice-cache';
@@ -109,6 +109,30 @@ describe('wireMonitorAfterLoad — draw-order provider', () => {
       (monitor as unknown as { setDrawOrderProvider: ReturnType<typeof vi.fn> })
         .setDrawOrderProvider
     ).toHaveBeenCalledWith(params.drawOrderProvider);
+  });
+});
+
+describe('wireMonitorAfterLoad — refinement-hold provider', () => {
+  it('passes refinement holds through to the installed LOD provider', () => {
+    const monitor = makeMonitor();
+    const params = makeBaseParams(monitor);
+    params.loaders.set('/held', {
+      loadedLODCount: 1,
+      totalLODCount: 2,
+      hasMoreLODs: true,
+      lastAllResident: true,
+    } as unknown as DataLoader);
+    params.refinementHold = (path) => (path === '/held' ? 'budget' : null);
+
+    wireMonitorAfterLoad(params);
+
+    const setLODProgressProvider = (
+      monitor as unknown as { setLODProgressProvider: ReturnType<typeof vi.fn> }
+    ).setLODProgressProvider;
+    const provider = setLODProgressProvider.mock.calls[0]?.[0] as {
+      getLODStates(): Map<string, { held?: string }>;
+    };
+    expect(provider.getLODStates().get('/held')?.held).toBe('budget');
   });
 });
 

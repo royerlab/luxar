@@ -148,6 +148,43 @@ describe('wireDensityGuard', () => {
     expect(wiring.thinning()).toEqual({ nodes: 0, minKeep: 1 });
   });
 
+  it('a ?density-cap override reaches the ladder, the rung gate caps and the readout', () => {
+    const deps = makeDeps({ capOverride: 64 });
+    const wiring = wireDensityGuard(deps);
+    expect(wiring.capElementsPerPixel()).toBe(64);
+    expect(deps.spies.setProvider).toHaveBeenCalledWith(wiring.provider, {
+      blendable: 64,
+      nonBlendable: densityGuardConfig.nonBlendableCapElementsPerPixel,
+    });
+    // The ladder reads the override too: 1 M points in a ~235 px footprint sit
+    // at the 1/64 floor under the default cap (4); under a cap of 500 the same
+    // node needs only a few halvings, so its keep lands strictly above the floor.
+    const wideDeps = makeDeps({ capOverride: 500 });
+    const wide = wireDensityGuard(wideDeps);
+    wide.perFrame();
+    const mesh = wideDeps.sceneManager.scene!.children[0] as THREE.Mesh;
+    const keep = mesh.userData.densityKeep as number;
+    expect(keep).toBeGreaterThan(densityGuardConfig.minKeepFraction);
+    expect(keep).toBeLessThan(1);
+  });
+
+  it('an override below the non-blendable cap pulls that cap down too (it must stay the tighter one)', () => {
+    const deps = makeDeps({ capOverride: 0.5 });
+    const wiring = wireDensityGuard(deps);
+    expect(wiring.capElementsPerPixel()).toBe(0.5);
+    expect(deps.spies.setProvider).toHaveBeenCalledWith(wiring.provider, {
+      blendable: 0.5,
+      nonBlendable: 0.5,
+    });
+  });
+
+  it('ignores an invalid cap override and reports the configured cap', () => {
+    for (const bad of [0, -3, Number.NaN, Number.POSITIVE_INFINITY, undefined]) {
+      const wiring = wireDensityGuard(makeDeps({ capOverride: bad }));
+      expect(wiring.capElementsPerPixel()).toBe(densityGuardConfig.capElementsPerPixel);
+    }
+  });
+
   it('config off is not a session disable (the stored setting may still turn it on)', () => {
     const wiring = wireDensityGuard(makeDeps({ configEnabled: false }));
     expect(wiring.isEnabled()).toBe(false);

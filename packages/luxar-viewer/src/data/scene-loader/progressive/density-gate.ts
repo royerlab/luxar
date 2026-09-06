@@ -150,6 +150,15 @@ export class RefinementDensityGate {
   }
 
   /**
+   * Whether this path's next rung is currently held back by the cap (since the
+   * last run; cleared by `beginRun` or when `takeResumable` releases it). For
+   * the data monitor, so a held rung is not mistaken for one still streaming.
+   */
+  isDeferred(path: string): boolean {
+    return this.deferred.has(path);
+  }
+
+  /**
    * Paths whose current footprint now admits their deferred rung. Each is
    * removed from the deferred set; the caller re-kicks refinement. The returned
    * scratch array is reused and remains valid only until the next call.
