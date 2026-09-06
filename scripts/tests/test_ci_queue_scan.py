@@ -280,7 +280,68 @@ def test_scan_repository_scans_every_status_when_the_first_exhausts_its_share(
     assert result.truncated is True
     assert any("?status=in_progress" in call for call in calls)
     assert result.running == ["running"]
-    assert result.scanned_runs <= 4
+    assert result.scanned_runs == 3
+
+
+def test_scan_repository_carries_an_unspent_status_share_to_the_next_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_api(endpoint: str) -> object:
+        if "?status=queued" in endpoint:
+            return {"workflow_runs": [{"id": 70, "created_at": "2026-08-27T00:00:00Z"}]}
+        if "?status=in_progress" in endpoint:
+            return {
+                "workflow_runs": [
+                    {"id": 80 + offset, "created_at": "2026-08-27T00:00:00Z"}
+                    for offset in range(3)
+                ]
+            }
+        if "runs/82/jobs" in endpoint:
+            return {"jobs": [_job("running", "in_progress")]}
+        return {"jobs": []}
+
+    monkeypatch.setattr(ci_queue_scan, "read_api", fake_api)
+    result = ci_queue_scan.scan_repository(
+        "royerlab/luxar",
+        statuses=["queued", "in_progress"],
+        queued_before=None,
+        max_runs=4,
+        stop_after_running=1,
+    )
+
+    assert result.running == ["running"]
+    assert result.stopped is True
+    assert result.scanned_runs == 4
+
+
+def test_scan_repository_reads_every_status_when_the_budget_is_below_the_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def fake_api(endpoint: str) -> object:
+        calls.append(endpoint)
+        if "?status=queued" in endpoint:
+            return {"workflow_runs": [{"id": 60, "created_at": "2026-08-27T00:00:00Z"}]}
+        if "?status=in_progress" in endpoint:
+            return {"workflow_runs": [{"id": 61, "created_at": "2026-08-27T00:00:00Z"}]}
+        if "runs/60/jobs" in endpoint:
+            return {"jobs": [_job("running in the queued run", "in_progress")]}
+        return {"jobs": [_job("running in the in_progress run", "in_progress")]}
+
+    monkeypatch.setattr(ci_queue_scan, "read_api", fake_api)
+    result = ci_queue_scan.scan_repository(
+        "royerlab/luxar",
+        statuses=["queued", "in_progress"],
+        queued_before=None,
+        max_runs=1,
+    )
+
+    assert result.running == [
+        "running in the queued run",
+        "running in the in_progress run",
+    ]
+    assert len([call for call in calls if "/jobs?" in call]) == 2
 
 
 def test_cli_classify_emits_structured_error_for_malformed_json(
