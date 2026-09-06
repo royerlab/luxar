@@ -262,24 +262,41 @@ over seeds 0–7, `n_lods=3` cleared the floor 5 times in 8 and `n_lods=4` never
 did). It is also **idempotent**, so a caller need not track whether it has
 already been applied.
 
-Two preconditions on that guarantee. A rung must be **at least as large as the
+`slice_dims` indexes **raw, pre-`dim_order` centre columns** — the columns of the
+array you handed in, not the scene's post-`dim_order` dimension positions. The
+ladder is built in `core/group/gsplats_pipeline/from_data.py` above the
+`apply_dim_order_*` pass `lod_dispatch` runs, so the two frames of reference
+differ whenever `dim_order` permutes; they coincide for NEXRAD only because its
+`dim_order` leaves time last in both. Reading the index off the scene's
+`Dimensions` list is the likeliest way to get this wrong, and per the next
+paragraph it fails *quietly*.
+
+Two preconditions on the guarantee. A rung must be **at least as large as the
 slice count**, or it cannot reach every slice at all — measured, 500 slices of 40
 splats with `breakpoints=[200]` leaves 300 coordinates on zero, and since
 within-pass ties break by position in `order` the ones left out are the faintest.
-And `slice_dims` must name **genuinely discrete** columns: pointed at a continuous
-one every key is distinct, so every rank is 0 and the `lexsort` reproduces `order`
-bit-identically — a silent no-op. That is reachable by composition, not only by
-typo: `lod_group=dict(coarsen_dims=[0, 1, 2, 3])` coarsens *over* the stacked axis
-and turned 3 exact time coordinates into 35 fractional ones on the coarse level,
-while `resolve_additive_axis_gsplats` applies one `slice_dims` to every level — a
-slice-even finest level and silently uneven coarse ones. The default `Auto`
-coarsening (hidden axis as a hard barrier) is safe.
+And the columns must be **genuinely discrete**: pointed at a continuous one,
+nearly every key is distinct, nearly every rank is 0, and the `lexsort` reproduces
+`order` — functionally a no-op, but **not** a bit-identical one, so do not use it
+as an equality assertion. Real centres collide, and each collision demotes one
+element by a pass, shifting the whole tail behind it: on 8 cached NEXRAD frames
+(5,937 splats, 5,907 distinct values in column 0) `slice_dims=[0]` left the first
+20 positions untouched yet moved 5,901 of 5,937 overall, and one deliberate
+collision among 2,000 float32 samples moved 48. That mis-aim is reachable by
+composition too, not only by typo: `lod_group=dict(coarsen_dims=[0, 1, 2, 3])`
+coarsens *over* the stacked axis and turned 3 exact time coordinates into 35
+fractional ones on the coarse level, while `resolve_additive_axis_gsplats` applies
+one `slice_dims` to every level — a slice-even finest level and silently uneven
+coarse ones. The default `Auto` coarsening (hidden axis as a hard barrier) is safe.
 
 Two things it does *not* change. The within-slice order stays whatever the base
 method produced, so with `method="auto"` each coordinate still paints
 bright-core-first rather than evenly thin. And there is **no default column set**
-— a standalone `GSplatData` carries no display information, so the caller names
-the columns, exactly as the CLI does for `--coarsen-dims`. Authoring spelling:
+— not because the columns are undiscoverable (the writer auto-detects them and
+`save_gsplats.py` stamps the result as each rung's `slice_dims` attr, which reads
+`[3]` on the built NEXRAD store) but because that detection runs at *save* time,
+after the ladder has been ordered and cut. So the caller names them, exactly as
+the CLI does for `--coarsen-dims`. Authoring spelling:
 
 ```python
 scene.add_gsplats_from_data(

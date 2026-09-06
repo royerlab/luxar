@@ -1536,12 +1536,31 @@ def create_luxar_scene(
                 # The interleave instead emits the ordering round-robin across
                 # the 82 time coordinates, so every rung carries an equal
                 # ABSOLUTE per-slice budget and a scan smaller than that budget
-                # is carried WHOLE: rung 0 of this `n_lods=4` ladder budgets
-                # ~2,494 splats per scan, so the p05 scan arrives complete at
-                # 774 — 3x the floor. Deterministic, hence no `seed=` (which
-                # only `method="random"` ever read). Within a scan the order is
-                # still `auto`'s self_energy, so each frame paints hail core
-                # first rather than evenly thin.
+                # is carried WHOLE. Rung 0's nominal share is 204,497/82 = 2,494
+                # splats per scan, but the ACHIEVED budget measures 2,744 (median
+                # 2,743, max 2,744): the 12 scans that fit inside the budget are
+                # carried whole and hand their unused capacity back to the rest.
+                # So the p05 scan arrives complete at 774 — 3x the floor.
+                # Deterministic, hence no `seed=` (which only `method="random"`
+                # ever read).
+                #
+                # `slice_dims=[3]` names a RAW, PRE-`dim_order` centre column —
+                # the ladder is built above the `apply_dim_order` pass — which is
+                # why it can be read off `dim_order` above and NOT off the scene
+                # `Dimensions` list. They agree here only because time is last in
+                # both.
+                #
+                # Within a scan the order is `auto`'s self_energy. Note that is a
+                # CHANGE, not a continuation: the shadowed merged ladder was
+                # per-frame `greedy` (every frame's rung 0 stamps
+                # `lod_method: greedy`), and this replaces 82 local greedy
+                # orderings with one global self_energy one. It did not cost
+                # per-scan quality — measured as each scan's share of its own
+                # self-energy captured by its rung-0 splats, mean 0.9099 ->
+                # 0.9247, min 0.8188 -> 0.8290, p05 0.8545 -> 0.8590 — even
+                # though 39 of the 82 scans receive FEWER rung-0 splats than
+                # before. Each frame still paints hail core first rather than
+                # evenly thin.
                 additive_lod=dict(n_lods=4, slice_dims=[3], recompute=True),
                 colormap=SCENE_COLORMAP,
                 blending_mode="volumetric",

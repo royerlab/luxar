@@ -598,9 +598,18 @@ def _validate_slice_dims(slice_dims: Sequence[int], ndim: int) -> np.ndarray:
     silent no-op interleave, and a fractional index truncates to a different
     column than the one named.
 
-    There is deliberately no default: a standalone :class:`GSplatData` carries no
-    display information, so nothing here can know which columns the viewer
-    slices. The caller names them, exactly as the CLI does for ``--coarsen-dims``.
+    The indices are RAW, PRE-``dim_order`` centre columns — see
+    :func:`interleave_order_across_slices` for why that distinction is the
+    likeliest way to get this wrong.
+
+    There is deliberately no default, and not because the columns are
+    undiscoverable: the WRITER auto-detects them, and
+    ``gsplats/io/save_gsplats.py`` stamps the result as the ``slice_dims`` attr of
+    each rung (on the built NEXRAD store that attr reads ``[3]`` — the same
+    columns as the hand-written kwarg). But that detection runs at SAVE time,
+    after the ladder has been ordered and cut into rungs, so it is not available
+    to the ordering that has to consume it. Hence the caller names them, exactly
+    as the CLI does for ``--coarsen-dims``.
     """
     validate_integral_axis_indices(slice_dims, "slice_dims")
     dims = np.asarray(slice_dims, dtype=np.intp)
@@ -723,11 +732,26 @@ def interleave_order_across_slices(
     the default ``method="auto"`` each coordinate keeps painting bright-core-
     first rather than evenly thin.
 
-    ``slice_dims`` must name columns that are genuinely DISCRETE — a stacked
-    time/channel axis, where the coordinates repeat. Pointed at a continuous one
-    every key is distinct, so every rank is 0 and the ``lexsort`` reproduces
-    ``order`` bit-identically: a silent no-op. That is reachable by composition
-    and not only by typo, so it is worth knowing. Measured, a
+    ``slice_dims`` indexes RAW, PRE-``dim_order`` centre columns, and that is the
+    likeliest way to get this wrong. The ladder is built in
+    ``core/group/gsplats_pipeline/from_data.py`` ABOVE the ``apply_dim_order_*``
+    pass that ``lod_dispatch`` runs, so these are the columns of the array the
+    caller handed in — NOT the scene's post-``dim_order`` dimension positions.
+    They coincide for the NEXRAD supercell only because its ``dim_order`` leaves
+    time last in both frames. An author who reads off the scene's ``Dimensions``
+    list instead gets a different column, and per the next paragraph that is a
+    near-no-op nothing complains about.
+
+    The columns must also be genuinely DISCRETE — a stacked time/channel axis,
+    where coordinates repeat. Pointed at a continuous one, nearly every key is
+    distinct, nearly every rank is 0, and the ``lexsort`` reproduces ``order``:
+    functionally a no-op. NOT a bit-identical one, though, so this must not be
+    used as an equality assertion — real centres do collide, and each collision
+    demotes one element a pass later, which shifts the whole tail behind it.
+    Measured on 8 cached NEXRAD frames (5,937 splats, 5,907 distinct values in
+    column 0), ``slice_dims=[0]`` left the first 20 positions untouched and moved
+    5,901 of 5,937 overall; one deliberate collision among 2,000 float32 samples
+    moved 48. Reachable by composition and not only by typo: a
     ``lod_group=dict(coarsen_dims=[0, 1, 2, 3])`` — coarsening OVER the stacked
     axis — turned 3 exact time coordinates into 35 fractional ones on the coarse
     level, and :func:`~luxar.core.group.lod.gsplats.resolve_additive_axis_gsplats`
@@ -745,8 +769,8 @@ def interleave_order_across_slices(
         duplicate entries are the caller's responsibility (see
         :func:`_validate_interleave_order`).
     slice_dims : sequence of int
-        Centre columns whose distinct combinations define a slice. No default —
-        see :func:`_validate_slice_dims`.
+        RAW, pre-``dim_order`` centre columns whose distinct combinations define
+        a slice. No default — see :func:`_validate_slice_dims`.
 
     Returns
     -------
@@ -789,7 +813,20 @@ def interleave_order_across_slices(
             f"{bad.size} of {n} splats are non-finite on columns "
             f"{[int(d) for d in dims]} (first at order position {int(bad[0])})."
         )
-    group = np.asarray(np.unique(keys, axis=0, return_inverse=True)[1]).ravel()
+    # A single hidden axis is the common case (every sliced demo today), and the
+    # 1-D `unique` is ~19x cheaper than the structured-row sort `axis=0` takes:
+    # measured 0.854 s -> 0.045 s at 818k x 1 column. Equivalent because only the
+    # PARTITION matters here, never the group LABELS — ranks are computed within a
+    # group off a stable argsort, so relabelling cannot move an element. Both
+    # forms partition by exact float equality and both collapse ±0.0; NaN/±inf
+    # are refused above. Verified identical on 400 adversarial random cases and
+    # on the real 818k stack for slice_dims=[3] and [0].
+    flat = keys[:, 0] if dims.size == 1 else keys
+    group = np.asarray(
+        np.unique(flat, return_inverse=True)[1]
+        if dims.size == 1
+        else np.unique(flat, axis=0, return_inverse=True)[1]
+    ).ravel()
     sorter = np.argsort(group, kind="stable")
     grouped = group[sorter]
     rank = np.empty(n, dtype=np.int64)
@@ -843,8 +880,10 @@ def compute_additive_order(
         non-degenerate (real-extent) axes, which excludes a stacked time or
         channel axis. Ignored by every other method.
     slice_dims : sequence of int, optional
-        Centre columns whose distinct combinations the viewer SLICES (a hidden
-        time / channel axis). When given, the ordering chosen by ``method`` is
+        RAW, pre-``dim_order`` centre columns whose distinct combinations the
+        viewer SLICES (a hidden time / channel axis) — NOT the scene's
+        post-``dim_order`` dimension positions, which are a different frame of
+        reference. When given, the ordering chosen by ``method`` is
         re-emitted round-robin across those slices by
         :func:`interleave_order_across_slices`, so every prefix carries an equal
         ABSOLUTE budget per slice instead of a global contribution-ordered
@@ -1314,8 +1353,9 @@ def make_additive_lod(
         measured over. Defaults to the non-degenerate axes, so a stacked
         time/channel axis cannot become a shell dimension.
     slice_dims : sequence of int, optional
-        Centre columns the viewer SLICES (a hidden time / channel axis). When
-        given, the ordering is re-emitted round-robin across those slices (see
+        RAW, pre-``dim_order`` centre columns the viewer SLICES (a hidden time /
+        channel axis) — NOT the scene's post-``dim_order`` dimension positions.
+        When given, the ordering is re-emitted round-robin across those slices (see
         :func:`interleave_order_across_slices`), so every rung carries an equal
         ABSOLUTE budget per slice rather than a global prefix that starves the
         sparse ones (#2485). A modifier: it composes with every ``method``, and
@@ -1326,9 +1366,15 @@ def make_additive_lod(
         compensation is applied uniformly across hidden coordinates, so a small
         slice that slice-evenness has already loaded COMPLETELY is still
         brightened (measured, rung 0 stamps e = 0.408 interleaved against 0.684
-        plain — a 2.45x boost on an already-complete slice). Inert on a bare
-        multi-additive leaf, where the compensation never runs; live for
-        ``--recipe levels|adaptive|overview`` plus ``slice_dims``. Note also
+        plain — a 2.45x boost on an already-complete slice). This is NOT confined
+        to a ``kind=lod`` group: ``applyLodFade`` has a second caller in the
+        viewer's ``scene/density-guard.ts``, driven by the projected-density
+        tracker over the whole scene graph for any blendable data mesh, and both
+        the guard and the compensation default ON — so a BARE multi-additive leaf
+        is in scope too once the guard steps it. Small in practice; on the NEXRAD
+        node it is a 1.108x brightening (that store stamps e(0) = 0.9024),
+        applied to the 12 of 82 scans this already loads whole as much as to the
+        rest. Note also
         that interleaving FLATTENS the cumulative-energy curve, so
         energy-fraction ``breakpoints`` resolve to materially larger first rungs
         — measured on 1,580 splats over 4 slices, ``[0.5, 0.9, 0.99, 1.0]`` cuts
