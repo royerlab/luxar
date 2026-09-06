@@ -652,11 +652,11 @@ export class SceneLoader {
   readonly lodGroupRegistry: LODGroupRegistry | null;
 
   /**
-   * The GPU buffer pool, or null when pooling is disabled or before
-   * `setup()` constructs it. Exposed so the LOD-group registry's
+   * The GPU buffer pool, or null when pooling is disabled. Exposed so the
+   * LOD-group registry's
    * resident-byte query (`getResidentBytes`) can read the single VRAM
-   * truth; tolerant of the pre-construction null (callers treat null as
-   * 0 bytes ⇒ never over budget ⇒ no eviction).
+   * truth; callers treat a disabled pool as 0 resident bytes, so it is never
+   * over budget and never evicts.
    */
   get gpuBufferPool(): GPUBufferPool | null {
     return this._gpuBufferPool;

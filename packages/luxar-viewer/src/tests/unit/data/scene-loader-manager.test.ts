@@ -403,9 +403,9 @@ describe('SceneLoaderManager', () => {
     });
 
     it('is undefined when the default loader has no pool', () => {
-      // Pooling disabled, or `setup()` has not built the pool yet. Absent must
-      // read as "unknown", never as a zero-eviction record — `debug-state.ts`
-      // omits the whole `gpuPool` field in that case.
+      // Pooling disabled. Absent must read as "unknown", never as a
+      // zero-eviction record — `debug-state.ts` omits the whole `gpuPool` field
+      // in that case.
       const manager = SceneLoaderManager.getInstance();
       setPool(manager.createLoader('poolless'), null);
       expect(manager.gpuPoolStats()).toBeUndefined();
