@@ -228,13 +228,15 @@ thickness: float >= 0
 attenuation_color: "#rrggbb"
 attenuation_distance: float > 0  # absent = no attenuation
 dispersion: float >= 0
+refract_data: bool               # Phase 3: draw after, and refract, the emissive data
 ```
 
-The thirteen physical knobs are accepted only with `material: "physical"`, and a physical mesh
+The fourteen physical knobs are accepted only with `material: "physical"`, and a physical mesh
 refuses `ambient` / `shade_exponent` / `specular` / `shininess`, `blending_mode`, `colormap`, a
 texture and `shading: "none"` — none of them has a meaning under that material (§6.4).
-`thickness`, `attenuation_color`, `attenuation_distance` and `dispersion` are refused without a
-`transmission` above zero, because three evaluates them only inside its transmission path.
+`thickness`, `attenuation_color`, `attenuation_distance`, `dispersion` and `refract_data` are refused
+without a `transmission` above zero, because three evaluates the knobs only inside its transmission
+path and a surface that transmits nothing has nothing to refract.
 
 `MESH_RESERVED_ATTRS` is added to `io/_compiler/node_common.py` alongside the other three frozensets:
 
@@ -1218,7 +1220,7 @@ only registry size and create-time, never a cache size. Mesh follows the same co
 #### The physical family (`material="physical"`)
 
 Mesh is also the only type with a **second material family**. `material="physical"`
-(`docs/guides/specs/MESH_PHYSICAL_MATERIALS_SPEC.md`, Phases 1–2 shipped) hands the mesh to three's own
+(`docs/guides/specs/MESH_PHYSICAL_MATERIALS_SPEC.md`, Phases 1–4 shipped) hands the mesh to three's own
 physically based material — `MeshPhysicalMaterial` on WebGL, `MeshPhysicalNodeMaterial` on WebGPU —
 behind two thin wrappers in `rendering/materials/mesh-physical/` that share ONE attr→property mapping
 (`config.ts`). It is registered as its own `VISUAL_FACTORIES.meshPhysical` entry, not as a variant of
@@ -1237,14 +1239,21 @@ behind two thin wrappers in `rendering/materials/mesh-physical/` that share ONE 
   (glass), or per-vertex alpha without an authored `alpha_cutoff`; with a cutoff the alpha is a cutout
   (`alphaTest`), as in the house `opaque` mode. Translucent surfaces do not write depth. An inherited
   `blending_mode` is ignored with a one-time notice, the way an inherited `volumetric` is on a house mesh.
-- **Glass draws first in its band.** Three renders transmission by sampling a copy of what was drawn
-  before the glass; on WebGPU the glass shares the transparent render list with every emissive layer
-  and lands its fragments with alpha 1, so a cluster whose centre sorted farther than the sphere would
-  be drawn first and painted over. The material stamps `userData.drawBeforeEmissive` while
-  `transmission > 0`, and the depth-sort coordinator's cross-node pass (§6.3) orders such a mesh first
-  within its `layer_order` band (renderOrder −1 when unranked), so data in front of or behind glass
-  stays crisp and unrefracted on both backends — the spec §3.4 contract. Glass refracts the background
-  and other meshes only.
+- **Glass draws first in its band — unless `refract_data`, then last.** Three renders transmission by
+  sampling a copy of what was drawn before the glass; on WebGPU the glass shares the transparent render
+  list with every emissive layer and lands its fragments with alpha 1, so a cluster whose centre sorted
+  farther than the sphere would be drawn first and painted over. The material stamps
+  `userData.drawBeforeEmissive` while `transmission > 0`, and the depth-sort coordinator's cross-node
+  pass (§6.3) orders such a mesh first within its `layer_order` band (renderOrder −1 when unranked), so
+  data in front of or behind glass stays crisp and unrefracted on both backends — the spec §3.4
+  default. With `refract_data` the stamp is `userData.drawAfterEmissive` instead: the coordinator gives
+  the mesh a rank even when nothing else would and a `last` flag that puts it after every other group
+  in its band (the containment hoist skips such groups), which on WebGPU is the whole mechanism; on
+  WebGL the post-processing pipeline's `DataRefractionSplit` additionally renders the scene in two
+  passes with a screen-space quad so three's transmission target holds the data. Both wrappers pin the
+  transmitted alpha to 1, because the HDR framebuffer's alpha is an overdraw count, not coverage
+  (spec §3.4, the alpha finding). Data in front of a refracting glass is painted over — the documented
+  limit that keeps the flag opt-in.
 - **Lit by the scene environment**, not by the §6.2 key: a prefiltered `RoomEnvironment` on
   `scene.environment`, built lazily on the first physical material (`rendering/environment/`). House
   materials never read it, so a scene without a physical mesh renders byte-identically.
@@ -1252,8 +1261,9 @@ behind two thin wrappers in `rendering/materials/mesh-physical/` that share ONE 
   radiance), `alpha_cutoff` (`alphaTest`), `shading` smooth/flat (`flatShading`), `double_sided`,
   `layer_order`, nD slicing, picking, partition and LOD groups all work as on a house mesh. `gamma` is
   recorded but has no physical term; the Layers panel hides that slider and the shading sliders for a
-  physical layer and shows one live slider per numeric physical knob instead (the two colour knobs are
-  read-only rows); Reset restores the authored values.
+  physical layer and shows one live slider per numeric physical knob instead, plus the "Refract data"
+  switch (the two colour knobs are read-only rows); Reset — whole panel or one row — restores the
+  authored values.
 
 Both backends must produce matching output; the existing codegen snapshot harness
 (`src/tests/__codegen__/`) gates the **TSL-generated** shaders (the hand-written GLSL twins are pinned

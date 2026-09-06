@@ -96,6 +96,11 @@ from the sketch above):
   without a `transmission` above zero, because three compiles them only inside
   its `USE_TRANSMISSION` block — written, they would be silently ignored. `ior`
   stands alone (it also sets an opaque surface's specular reflectance).
+- **Phase 3 (delivered)** adds one boolean, `refract_data`: the glass draws AFTER
+  the emissive data and refracts it (§3.4). Absent = false, so every Phase 2 scene
+  keeps its glass-first behaviour. It joins the pairing rule — refused without a
+  `transmission` above zero, since a surface that transmits nothing has nothing to
+  refract — and is refused as a number (`refract_data=1` reads like a slider value).
 - **`shading` is kept, not refused**, except for `"none"`. Flat-versus-smooth
   normals is a property of any lit surface, not of the house key; it maps onto
   three's `flatShading`. Only the unlit `"none"` is meaningless on an
@@ -260,9 +265,10 @@ above):
   assign the target's texture", and a baked map is "build a half-float
   `CubeTexture`, assign it". The room still goes through `fromScene` once.
 - **Visibility, not a `layers` bit, hides physical meshes during the capture.**
-  The pick camera and the main camera would both have needed the bit and nothing
-  else in the viewer uses layers; each mesh's PREVIOUS `visible` is restored, so
-  a user- or LOD-hidden mesh stays hidden.
+  A persistent bit would need the pick camera and the main camera to agree on it;
+  each mesh's PREVIOUS `visible` is restored, so a user- or LOD-hidden mesh stays
+  hidden. (The one `layers` use in the viewer, Phase 3's refraction split, is
+  transient inside a single render call and restored before this capture can run.)
 - **Camera settle is NOT a trigger.** A cube map from a fixed probe is
   view-independent; the only camera-driven change — LOD residency — arrives as a
   geometry commit. Triggers are: geometry commit (`eventBus 'geometry-committed'`),
@@ -314,7 +320,10 @@ luminous, normal, max). Therefore:
 
 > A physical mesh with `transmission > 0` refracts the background, opaque
 > meshes and other physical meshes. It does **not** refract points, lines or
-> splats. They are drawn afterwards, on top, unrefracted.
+> splats — they are drawn afterwards, on top, unrefracted — **unless it is
+> authored with `refract_data=True`** (Phase 3, below), in which case it draws
+> after them and refracts what is behind it; what is in front of it is then
+> painted over.
 
 For the stories demo's "glass around a cluster", the cluster's points would sit
 crisply *on* the glass rather than *inside* it. Whether that reads well is a
@@ -337,41 +346,89 @@ sit at three's default 0). One more asymmetry worth recording: WebGL exposes
 belongs to Phase 3's cost work), WebGPU has no equivalent and always mip-chains a
 full-resolution framebuffer copy, so its transmission cost is not tunable.
 
-Closing the gap is Phase 3 (§4). An earlier draft of this section proposed taking
-over three's pass wholesale (a manual render target and a `scene.overrideMaterial`
-dance inside `post-processing-manager/pipeline.ts`). Reading three's code shows
-that is not needed; the two backends want two small, different moves:
+**Phase 3 (delivered) — data through glass, opt-in.** `refract_data=True` flips
+the ordering stamp to `userData.drawAfterEmissive`, and the two backends want two
+small, different moves — the spike (`spike/glass-refracts-data`) measured both
+before this was built:
 
-- **WebGPU is almost free.** There, anything with `transmission > 0` lives in
-  the *transparent* list and samples `viewportSharedTexture`, a copy of the
-  framebuffer taken at the moment the glass is drawn. Whatever drew before it is
-  visible through it. Give the glass a higher `layer_order` band than the data it
-  wraps and three's own ordering refracts the data — a renderOrder rule the
-  depth-sort coordinator already applies.
-- **WebGL needs one trick, not a takeover.** Its `renderTransmissionPass` draws
-  only the *opaque* list into a mip-mapped half-float target (sized by
-  `renderer.transmissionResolutionScale`, tone mapping off). So split the scene
-  pass: render everything except transmissive meshes into the HDR target as
-  today, then render only the transmissive meshes on top, into the same target
-  without clearing, with one screen-space quad textured with pass one's result
-  added to that second scene. Three's pass draws the quad as its "opaque" content,
-  so the glass refracts the data; the quad's own draw paints back pixels that are
-  already there. A `layers` mask and a quad, isolated in `pipeline.ts`; no shader
-  edits. SSAA jitter is unaffected (both renders share the jittered camera and
-  the quad is screen-space) and so is adaptive DPR (the targets already follow
-  it).
+- **WebGPU is almost free.** There, anything with `transmission > 0` lives in the
+  *transparent* list and samples the framebuffer as it stands when the glass is
+  drawn, so whatever drew before it is visible through it. The depth-sort
+  coordinator gives a refracting glass a rank even when nothing else would (the
+  unranked emissive layers sit at renderOrder 0) and a `last` flag that mirrors
+  Phase 2's `first`: after everything else in its `layer_order` band, before any
+  higher band. The containment hoist (§6.3 of the mesh spec) skips edges that touch
+  a glass-last group — a lens enclosing a cluster is exactly "container contains
+  content", and hoisting the lens first would paint the cluster crisp on top instead
+  of refracting it.
+- **WebGL needs one trick, not a takeover.** Its `renderTransmissionPass` draws only
+  the *opaque* list into a mip-mapped half-float target, so
+  `PostProcessingManager` owns a `DataRefractionSplit`: when a visible glass asks to
+  refract (`collectRefractingGlass`, read off the coordinator's node registry, not a
+  scene traversal), pass A renders everything but the glass into the HDR target as
+  before, the colour is blitted into a copy target, and pass B renders only the
+  glass plus one screen-space quad textured with that copy into the same target
+  without clearing. The quad is OPAQUE, so three draws it into the transmission
+  texture and the glass refracts the data; in the main pass it repaints pixels that
+  are already there. Pass A's depth survives, so an opaque mesh in front still
+  occludes the glass. The glass is moved to `Object3D.layers` bit 1
+  (`rendering/render-layers.ts`) for pass A and back in a `finally`, along with the
+  camera mask, `autoClear`, the transmission scale and the quad's scene membership —
+  nothing outside that one render call can observe any of it, which is what keeps
+  picking, the environment capture, the blend warm-up and scene disposal untouched.
+  The raw-HDR capture path shares the same stage, so an EXR refracts too.
+- **The copy is load-bearing under MSAA, not an optimisation.** Three resolves a
+  multisampled target's colour to its texture at the end of every `render()` and
+  then INVALIDATES the multisampled colour attachment (depth is resolved and kept),
+  so pass B draws onto undefined colour until the full-screen quad has repainted it
+  from the copy. That is why the quad's `depthTest:false`, `depthWrite:false`,
+  `transparent:false` and `frustumCulled:false` are pinned by test.
+- **`transmissionResolutionScale` 0.5, pass B only** (config
+  `renderingControls.refraction`, validated in `(0, 1]`). Three reads it per
+  transmission pass, so Phase 2 glass in pass A keeps three's default and its
+  pixels are untouched; WebGPU has no equivalent knob. SSAA is plain supersampling
+  here (there is no camera jitter), so both passes render at the same size.
 
-**Cost.** Paid only in frames where a transmissive mesh is visible; every other
-scene keeps today's single pass. When paid: three's mip generation on the
-transmission target plus the glass drawn twice — on the order of a millisecond at
-1080p at `transmissionResolutionScale = 0.5` (the right default; roughness blur
-hides it), several at 4K with SSAA at full scale. The adaptive DPR manager
-regulates frame time, so a heavy case degrades resolution rather than stuttering.
-Measure on the perf harness before trusting these numbers.
+**The alpha finding — the one thing the spike changed about this design.** Luxar's
+`additive`, `luminous` and `normal` point and line shaders are alpha-weighted (RGB
+unweighted, alpha = intensity·opacity, blended SrcAlpha/One with One/One on the
+alpha channel), so the HDR framebuffer alpha behind a point cloud is an overdraw
+count — 8 to 18 was measured, `Infinity` on dense scenes. The house already treats
+that channel as undefined: the mega shader reads RGB only and the EXR capture forces
+alpha to 1 before export. Three's transmission, meant for transparent canvases,
+copies the sampled alpha into the glass fragment alpha (`transmission_fragment`'s
+`transmissionAlpha` on WebGL, `PhysicalLightingModel.start`'s `diffuseColor.a`
+multiply on WebGPU), an UNCLAMPED blend factor on a half-float target: a glass drawn
+after the data came out thousands of times too bright, or negative, on both
+backends. **Decision: the physical family refuses that channel too.** The WebGL
+wrapper's `onBeforeCompile` expands the `transmission_fragment` include with the one
+mix line pinned to `1.0` (a unit test on three's real chunk turns a future drift
+into a red build; a fixed `customProgramCacheKey` keeps the warm-up fingerprint
+stable); the WebGPU wrapper's lighting model saves `diffuseColor.a` into a property
+node before three's `start` and restores it after (a `toVar` would be declared
+after the multiply). Always on, and a pixel no-op for the glass-first path, whose
+transmission target only ever holds the alpha-1 clear and opaque meshes; an
+`opaque`-mode house layer or a cutout mesh seen through glass now follows the same
+rule. Redefining HDR alpha as coverage was considered and rejected: it needs
+premultiplied output plus separate alpha blend factors on every emissive mode on
+both backends (the gsplat code records that separate alpha-channel blend state trips
+the WebGPU renderer's WebGL2 bridge), and with the clear alpha at 1 it would yield
+the same pixels.
 
-**The limits are about correctness, not cost**, and they are what keeps Phase 3
-deferred. Which emissive layers write depth decides what a glass surface drawn
-after them can be occluded by (`rendering/blending-state.ts`):
+**Cost.** Paid only in frames where a refracting glass is visible; every other
+scene keeps today's single pass. Measured on the spike at 1280×720, dpr 1, Apple
+M4 Max, median of 7 trials × 20 renders behind a GPU barrier (a one-pixel
+`readPixels` on WebGL — `gl.finish()` returns in 0 ms on ANGLE/Metal and is not a
+barrier — and `queue.onSubmittedWorkDone()` on WebGPU): WebGL 0.75 ms → 0.68 ms at
+scale 0.5 (0.88 at 1.0), WebGPU 0.76 → 0.75 ms; on a pose where the lens fills
+the frame, WebGL 1.03 → 0.91 ms. The split costs nothing measurable: three's stock
+path already renders a full-resolution transmission target for any glass in view,
+and pass B's half-resolution one is cheaper. The adaptive DPR manager regulates
+frame time in any case.
+
+**The limit is about correctness, not cost**, and it is what keeps `refract_data`
+opt-in. Which emissive layers write depth decides what a glass surface drawn after
+them can be occluded by (`rendering/blending-state.ts`):
 
 | Mode | depthTest | depthWrite |
 | --- | --- | --- |
@@ -382,16 +439,18 @@ after them can be occluded by (`rendering/blending-state.ts`):
 | `normal` | on | only at opacity ≥ 0.99 (points, gsplats; lines never) |
 | `opaque` | on | on |
 
-So data *in front of* a glass shell is painted over by the glass — it appears
+So data *in front of* a refracting glass is painted over by it — it appears
 refracted instead of crisp — for `additive`, `luminous`, `max` and `volumetric`
 layers, which is the default for clouds and splats; it is depth-tested correctly
-against `opaque` layers and against `normal` at (near) full opacity. No pass
-design fixes that without depth for points. And depth-sorted layers are ordered
-for the main camera, so through a clear lens their order is slightly off
-(invisible under roughness). Phase 2 already gives glass that refracts the
-background and other meshes, and the additive rim shell already does the marker
-job; refracting the data *inside* matters for a lens or bubble showpiece. Hence:
-opt-in, built when a demo wants it, prototyped first to measure the two costs.
+against `opaque` layers and against `normal` at (near) full opacity. No pass design
+fixes that without depth for points, and it is visible on the spike's screenshots
+(the point band crossing the sphere disappears behind the lens). Depth-sorted
+layers are ordered for the main camera, so through a clear lens their order is
+slightly off (invisible under roughness). Hence: opt-in, per mesh, with the
+`mesh_glass_lens_example` explainer card and the Layers-panel tooltip both naming
+the limit. Note also that a lens of saturated data is a white disk — additive data
+above 1.0 clips under tone mapping — so a showcase needs faint, non-overlapping
+points.
 
 ### 3.5 Colour pipeline
 
@@ -430,7 +489,7 @@ script: `packages/luxar-viewer/scripts/ab-webgpu-vs-webgl.mjs` launches the
 system Chrome (the only headless browser with a WebGPU adapter), captures the
 same scene on WebGL and on real WebGPU — verifying the WebGPU arm actually got a
 WebGPU backend — and reports SSIM, normalised cross-correlation and lit-pixel
-counts on a 256² greyscale downscale. On `demo_mesh_physical_materials` (six
+counts on a 256² greyscale downscale. On `mesh_physical_materials_example` (then six
 spheres: house shader, dark clearcoat shell around an emissive cluster, gold,
 steel, pearl, velvet) the two backends score **SSIM 0.986, NCC 0.998**, both
 with the environment built and 7,680 triangles committed; the Fresnel rim on the
@@ -451,7 +510,7 @@ through the sphere where WebGL shows a smoother frosted refraction. That is the
 sampling difference this section predicts, not a defect in either mapping, and
 it is why the acceptance floor is structural similarity rather than pixels.
 
-**Phase 4 result** (`demo_mesh_reflections`: a 60k-point emissive swirl with a
+**Phase 4 result** (`mesh_reflections_example`: a 60k-point emissive swirl with a
 chrome and a glass sphere, `environment.source = "scene"`, 1280×720, dpr 1,
 bloom off). Live capture: **SSIM 0.986, NCC 0.9995** WebGL vs real WebGPU, the
 environment built on both arms — the chrome reflects the swirl on both. Then a
@@ -465,14 +524,24 @@ backends render identically (**SSIM 1.000**), since neither captures anything.
 `LuxarScene.nodes` and `luxar info` list no `environment` node, the root
 `content_hash` is unchanged by the attach, and a second attach is a no-op.
 
+**Phase 3 result** (spike, `spike/glass-refracts-data`, on a faint point lattice
+with a refracting glass sphere, 1280×720, dpr 1). With the flag off the two
+backends agree at **SSIM 0.999** inside the glass; with it on, **0.888–0.917**
+(the lens is a magnified, inverted image of soft point sprites, and the two
+transmission samplers blur it differently). On the saturated reflections swirl
+the lens is a white disk on both and they agree at 0.994–0.998. Before the alpha
+pin the same crops scored 0.25–0.58 and the HDR pixels inside the glass read
+`[-15504, -21808, -22336, 65504]`. The verification run of the delivered code on
+`mesh_glass_lens_example` is recorded in the Phase 3 PR.
+
 ## 4. Phases
 
 | Phase | Scope | Unlocks | Cost |
 | --- | --- | --- | --- |
-| 1 — **delivered** | `material="physical"`, `roughness`, `metalness`, `clearcoat`, `clearcoat_roughness`, `iridescence`, `sheen`, `sheen_color`; default `RoomEnvironment` built lazily; Python validation; Layers-panel shows the physical knobs read-only; `demo_mesh_physical_materials`; the A/B script | Metals, lacquer, pearlescent shells; a true Fresnel rim via `clearcoat` on a dark base | Small: one factory entry, one env builder, attrs plumbing |
+| 1 — **delivered** | `material="physical"`, `roughness`, `metalness`, `clearcoat`, `clearcoat_roughness`, `iridescence`, `sheen`, `sheen_color`; default `RoomEnvironment` built lazily; Python validation; Layers-panel shows the physical knobs read-only; `mesh_physical_materials_example`; the A/B script | Metals, lacquer, pearlescent shells; a true Fresnel rim via `clearcoat` on a dark base | Small: one factory entry, one env builder, attrs plumbing |
 | 2 — **delivered** | `transmission`, `ior`, `thickness`, `attenuation_*`, `dispersion` with three's stock pass; glass ordered first in its band on both backends; the physical knobs as LIVE Layers-panel sliders (§6 item 2); three glass spheres and a checkerboard backdrop in the demo | Glass and lenses that refract the background and other meshes; tuning a material without a rebuild | Small; the §3.4 caveat is in the Layers panel tooltip |
-| 3 — opt-in, deferred | Data through glass: `layer_order` ordering on WebGPU, a two-render split with an injected quad on WebGL, `transmissionResolutionScale` 0.5 (§3.4) | Glass that refracts the data behind it (data in front stays a known limit) | Small–medium, isolated in `pipeline.ts`; build when a demo needs it, measure first |
-| 4 — **delivered** | `viewer_config.environment.source = room \| scene \| hdri` with `probe`, `resolution`, `intensity`, `url`; live exact cube capture on commit / slice / appearance change once settled; `luxar env bake` / `?bake-env` / `luxar env attach` storing `environment/faces-<digest>` (uint16 half bits) with an exact `scene_content_hash` guard, the group excluded from the scene digest (§3.3 Phase 4 notes); `demo_mesh_reflections` | Metals and glass that reflect the data they sit in; zero-cost baked environments for published scenes | Small: one more builder behind `SceneEnvironment.ensure()`, one CLI pair, one Playwright driver |
+| 3 — **delivered** (opt-in) | `refract_data`: glass ranked LAST in its band (WebGPU's whole mechanism), the `DataRefractionSplit` two-pass render with a screen quad on WebGL, `transmissionResolutionScale` 0.5 in pass B only, the transmitted alpha pinned to 1 on both backends (§3.4); a live Layers-panel switch; `mesh_glass_lens_example` | Glass that refracts the data behind it (data in front stays a known limit) | Small–medium: one split module owned by `PostProcessingManager`, one `last` flag in the coordinator, two shader hooks |
+| 4 — **delivered** | `viewer_config.environment.source = room \| scene \| hdri` with `probe`, `resolution`, `intensity`, `url`; live exact cube capture on commit / slice / appearance change once settled; `luxar env bake` / `?bake-env` / `luxar env attach` storing `environment/faces-<digest>` (uint16 half bits) with an exact `scene_content_hash` guard, the group excluded from the scene digest (§3.3 Phase 4 notes); `mesh_reflections_example` | Metals and glass that reflect the data they sit in; zero-cost baked environments for published scenes | Small: one more builder behind `SceneEnvironment.ensure()`, one CLI pair, one Playwright driver |
 
 ## 5. Explicitly out of scope
 
@@ -505,10 +574,14 @@ backends render identically (**SSIM 1.000**), since neither captures anything.
    meaning on this material. Opacity stays live. **Phase 2: live sliders**, one
    per numeric knob from the shared knob table (ranges, steps and a log track
    for `attenuation_distance` whose top stop means "none"); the two colour knobs
-   stay read-only rows; Reset restores the authored values.
+   stay read-only rows; Reset restores the authored values. **Phase 3: a live
+   "Refract data" switch** after the sliders, inert (with the reason) until
+   Transmission is above 0; the per-row Reset restores the physical knobs and the
+   switch (it had only ever reset the readouts).
 3. Which demo carries Phase 1? Candidate: a bubble/lens marker variant of
    `esm3_protein_stories`, which already has the story dimension to switch
-   marker styles on. **Phase 1: `demo_mesh_physical_materials`**, a numpy-only
+   marker styles on. **Phase 1: `mesh_physical_materials_example`** (a demo until
+   Phase 3 moved the physical scenes to `packages/luxar/examples/`), a numpy-only
    row of icospheres (house shader, dark clearcoat shell around an emissive
    point cluster, gold, steel, pearl, velvet), because the stories demo was not
    on `main`. Switching one stories shell to `material="physical"` is a
@@ -526,7 +599,7 @@ backends render identically (**SSIM 1.000**), since neither captures anything.
    case and the marker-shell case; a per-node probe is a second capture, not a
    second mechanism. Whether several probes can be active at once (one physical
    mesh per probe) is left to Phase 4's first demo. **Phase 4: one probe per
-   scene.** `demo_mesh_reflections` puts the chrome sphere AT the probe (the
+   scene.** `mesh_reflections_example` puts the chrome sphere AT the probe (the
    scene centre) and the glass sphere beside it, which is exact where it matters
    and a small parallax error where it does not; a per-mesh probe stays a
    possible follow-up, not a need any demo has shown.
@@ -535,4 +608,12 @@ backends render identically (**SSIM 1.000**), since neither captures anything.
    WebGL, isolated in `pipeline.ts`), and its cost is paid only when a
    transmissive mesh is visible. What defers it is the correctness limit that
    emissive layers do not write depth, so data in front of a glass surface is
-   painted over. It stays opt-in and waits for a demo that wants a lens.
+   painted over. **Phase 3: built, opt-in per mesh (`refract_data`)**, after a
+   spike measured the cost (none) and the limit (real, visible) and found the
+   alpha defect below. `mesh_glass_lens_example` is the lens.
+7. What does the HDR framebuffer's alpha channel MEAN? **Decided: nothing — it is
+   an overdraw count, and consumers must not read it.** The mega shader and the
+   EXR capture already followed that rule; Phase 3 makes the physical glass follow
+   it too (§3.4, the alpha finding). Redefining it as coverage is a possible future
+   refactor of every emissive blend mode, not a Phase 3 prerequisite: with the
+   clear alpha at 1 it would change no pixel the glass produces.

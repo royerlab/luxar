@@ -11,9 +11,9 @@ alternative to: `../mesh/README.md` and `docs/specs/MESH_NODE_SPEC.md` §6.2.
 
 | File               | Purpose                                                                                                                                                                                                    |
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `config.ts`        | The ONE mapping from Luxar attrs onto three's properties, the defaults, the compositing rule (`derivePhysicalCompositing`) and the `LuxarMaterial` surface as shared functions. Imports no `three/webgpu`. |
-| `material-glsl.ts` | `PhysicalMeshMaterial extends THREE.MeshPhysicalMaterial` — the WebGL wrapper. Thin: every method delegates to `config.ts`.                                                                                |
-| `material-tsl.ts`  | `PhysicalMeshTSLMaterial extends MeshPhysicalNodeMaterial` — the WebGPU twin, in the lazy `three/webgpu` cone, reached only through `rendering/tsl/registry.ts`.                                           |
+| `config.ts`        | The ONE mapping from Luxar attrs onto three's properties, the defaults, the compositing rule (`derivePhysicalCompositing`), the transmitted-alpha pin (`pinTransmittedAlphaGlsl`) and the `LuxarMaterial` surface as shared functions. Imports no `three/webgpu`. |
+| `material-glsl.ts` | `PhysicalMeshMaterial extends THREE.MeshPhysicalMaterial` — the WebGL wrapper. Thin: every method delegates to `config.ts`; its `onBeforeCompile` applies the alpha pin.                                  |
+| `material-tsl.ts`  | `PhysicalMeshTSLMaterial extends MeshPhysicalNodeMaterial` — the WebGPU twin, in the lazy `three/webgpu` cone, reached only through `rendering/tsl/registry.ts`; its lighting-model subclass applies the alpha pin. |
 
 Registered as `VISUAL_FACTORIES.meshPhysical` in `rendering/material-manager/factories.ts`
 and constructed by `MaterialManager.getMeshPhysicalMaterial`. There is deliberately **no**
@@ -38,6 +38,7 @@ method with a physical meaning, and nothing else:
 | `updateGamma`       | `userData.gamma` only                               | Recorded, never applied — a PBR material has no gamma term. The panel hides the slider for a physical layer.                                                   |
 | `applyBlendingMode` | nothing                                             | Deliberate no-op: a physical mesh has no Luxar blending mode (refused at authoring; an inherited one is ignored with a notice).                                |
 | `getOpacity`        | —                                                   | The LOD cross-fade's fade base.                                                                                                                                |
+| `updateRefractData` | `userData.drawAfterEmissive` / `drawBeforeEmissive` | Luxar `refract_data`, live: the glass draws after (true) or before (false) the emissive data. Plain state, no rebuild.                                         |
 
 Absent on purpose: `updateCameraParams` (the near fade is a house-shader feature, so
 `register()` files the material as static), `updateShading` / `updateBaseColorTexture` /
@@ -78,7 +79,9 @@ clamped with the same NaN-to-default policy as the house knobs. The two colours,
 `sheen_color` and `attenuation_color` (`#rrggbb`), default to **white** — three's own for
 attenuation, and deliberately NOT three's black for sheen, because a black sheen is a
 no-op and `sheen=1` alone would render nothing. `alpha_cutoff` maps to `alphaTest`;
-`shading` maps its flat/smooth half to `flatShading` (`none` is refused at authoring).
+`shading` maps its flat/smooth half to `flatShading` (`none` is refused at authoring). The
+one boolean, `refract_data` (Phase 3), is not a knob-table entry: it is an input to the
+compositing decision and the Layers panel's "Refract data" switch.
 
 `setPhysicalKnob` is the one write path for construction AND the live sliders: it clamps,
 assigns, re-derives compositing for `transmission`, and flags `needsUpdate` when a
@@ -93,12 +96,37 @@ lives here for both twins.
 `userData.drawBeforeEmissive`, which the depth-sort coordinator turns into "first in its
 `layer_order` band" (renderOrder −1 when unranked). Three renders transmission by sampling
 a copy of what was drawn before the glass — the opaque list on WebGL, the framebuffer just
-before the first transmissive draw on WebGPU — so glass refracts the background and other
-meshes, never Luxar's transparent point, line and splat materials: those draw on top,
-crisp and unrefracted, on both backends. On WebGPU the glass shares the transparent list
-with the emissive layers and lands its fragments with alpha 1, which is why it must draw
-first. WebGL exposes `renderer.transmissionResolutionScale` as a cost knob (left at 1.0);
-WebGPU has no equivalent and always mip-chains a full-resolution copy.
+before the first transmissive draw on WebGPU — so by default glass refracts the background
+and other meshes, never Luxar's transparent point, line and splat materials: those draw on
+top, crisp and unrefracted, on both backends. On WebGPU the glass shares the transparent
+list with the emissive layers and lands its fragments with alpha 1, which is why it must
+draw first.
+
+**`refract_data` (Phase 3)** flips the stamp to `userData.drawAfterEmissive`. The
+coordinator then ranks the glass LAST in its band (a rank even when nothing else would
+earn one — the unranked emissive layers sit at 0), which on WebGPU is the whole
+mechanism; on WebGL `PostProcessingManager`'s `DataRefractionSplit`
+(`post-processing/post-processing-manager/refraction-split.ts`) renders the scene twice
+with a screen-space quad so three's transmission target holds the data. Data in front of
+a refracting glass is painted over — emissive layers write no depth — which is why the
+flag is opt-in. Compositing is otherwise identical: translucent, no depth write,
+`NormalBlending`. `transmissionResolutionScale` (config `renderingControls.refraction`,
+0.5) applies to the split's second pass only; WebGPU has no equivalent knob.
+
+**The transmitted alpha is pinned to 1 on both backends, always.** Luxar's HDR
+framebuffer alpha is an overdraw count, not coverage (the additive, luminous and normal
+point and line shaders are alpha-weighted; 8–18 was measured behind a point cloud), and
+the house already treats it as undefined: the mega shader reads RGB only and the EXR
+capture forces alpha to 1. Three copies the sampled alpha into the glass fragment alpha,
+an unclamped blend factor on the half-float target — a glass drawn after the data came out
+thousands of times too bright or negative. So the WebGL wrapper's `onBeforeCompile`
+expands the `transmission_fragment` include with `TRANSMISSION_ALPHA_MIX_LINE` pinned
+(`pinTransmittedAlphaGlsl`; a unit test on three's real chunk turns a future drift into a
+red build; a fixed `customProgramCacheKey` keeps the warm-up fingerprint stable), and the
+WebGPU wrapper's `LuxarPhysicalLightingModel` saves `diffuseColor.a` into a property node
+before three's `start` and restores it after. A pixel no-op for the glass-first path,
+whose transmission target only ever holds alpha-1 content; an `opaque`-mode house layer
+or a cutout mesh seen THROUGH glass now follows the same rule.
 
 ## Colour pipeline
 
@@ -118,9 +146,13 @@ linear working space — the human reading of a hex tint.
   glass pass-through, the house pick material, the placeholder bookkeeping, the
   inherited-mode notice.
 - `tests/unit/rendering/depth-sort-coordinator.test.ts` — glass ordered first in its band,
-  and at renderOrder −1 when unranked.
-- `tests/unit/ui/layers/layers-panel.test.ts` — the live sliders on a REAL wrapper, and
-  Reset restoring the authored values.
+  and at renderOrder −1 when unranked; refracting glass ranked last, the containment-hoist
+  skip, and `collectRefractingGlass`.
+- `tests/unit/rendering/post-processing/post-processing-manager/pipeline.test.ts` — the
+  refraction split's pass order, borrowed-state restoration (including on a throw) and the
+  quad's MSAA-critical flags.
+- `tests/unit/ui/layers/layers-panel.test.ts` — the live sliders and the Refract data switch
+  on a REAL wrapper, and both Resets restoring the authored values.
 - `tests/unit/rendering/environment/` — the environment is lazy, cached, invisible to house
   materials, and disposed.
 - No codegen snapshot: the snapshot harness pins TSL Luxar writes; three's materials are
