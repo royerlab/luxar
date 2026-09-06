@@ -546,15 +546,15 @@ export interface SceneGraphNode {
  */
 export type LODNodeKind = NodeKind | 'additive';
 
+/** Why a progressive loader's next rung is held back (see `LODProgressState.held`). */
+export type RefinementHoldReason = 'density' | 'budget';
+
 /**
  * Live, per-node LOD / progressive-refinement / cache-residency state,
  * polled by the monitor each tick. Keyed by scene-graph path. All fields
  * beyond `kind` are optional — only the ones relevant to a node's kind are
  * populated.
  */
-/** Why a progressive loader's next rung is held back (see `LODProgressState.held`). */
-export type RefinementHoldReason = 'density' | 'budget';
-
 export interface LODProgressState {
   kind: LODNodeKind;
   /** substitutive: total number of levels (child count). */

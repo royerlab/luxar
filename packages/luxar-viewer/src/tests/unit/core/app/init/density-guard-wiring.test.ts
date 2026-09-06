@@ -168,6 +168,16 @@ describe('wireDensityGuard', () => {
     expect(keep).toBeLessThan(1);
   });
 
+  it('an override below the non-blendable cap pulls that cap down too (it must stay the tighter one)', () => {
+    const deps = makeDeps({ capOverride: 0.5 });
+    const wiring = wireDensityGuard(deps);
+    expect(wiring.capElementsPerPixel()).toBe(0.5);
+    expect(deps.spies.setProvider).toHaveBeenCalledWith(wiring.provider, {
+      blendable: 0.5,
+      nonBlendable: 0.5,
+    });
+  });
+
   it('ignores an invalid cap override and reports the configured cap', () => {
     for (const bad of [0, -3, Number.NaN, Number.POSITIVE_INFINITY, undefined]) {
       const wiring = wireDensityGuard(makeDeps({ capOverride: bad }));

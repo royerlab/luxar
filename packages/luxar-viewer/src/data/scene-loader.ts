@@ -696,11 +696,6 @@ export class SceneLoader {
   }
 
   /**
-   * Per-frame hook from the density walk: if any rung the gate deferred now
-   * fits (the camera moved in), re-kick refinement. Cheap when nothing is
-   * deferred (the common case). Returns how many paths resumed.
-   */
-  /**
    * Why this node's next rung is held back, if it is: `'density'` when the
    * density gate deferred it at the current framing, `'budget'` when the last
    * run's residency budget declined it, `null` otherwise (streaming, or nothing
@@ -713,6 +708,11 @@ export class SceneLoader {
     return null;
   }
 
+  /**
+   * Per-frame hook from the density walk: if any rung the gate deferred now
+   * fits (the camera moved in), re-kick refinement. Cheap when nothing is
+   * deferred (the common case). Returns how many paths resumed.
+   */
   resumeDensityDeferredRefinement(): number {
     const gate = this.refinementDensityGate;
     if (!gate || gate.deferredCount === 0) return 0;

@@ -139,8 +139,13 @@ describe('formatKeepFraction / formatThinning', () => {
     expect(formatThinning(makeControl({ thinning: () => ({ nodes: 3, minKeep: 1 / 8 }) }))).toBe(
       '3 nodes · keep 1/8 · cap 4'
     );
-    // A `?density-cap=2.5` sweep shows the value as typed.
+    // A `?density-cap=` sweep shows the value as typed — halving down from 4
+    // reaches 0.25, which must not round to 0.3.
     expect(formatThinning(makeControl({ capElementsPerPixel: () => 2.5 }))).toBe('none · cap 2.5');
+    expect(formatThinning(makeControl({ capElementsPerPixel: () => 0.25 }))).toBe(
+      'none · cap 0.25'
+    );
+    expect(formatThinning(makeControl({ capElementsPerPixel: () => 4.0 }))).toBe('none · cap 4');
   });
 });
 

@@ -129,7 +129,10 @@ describe('lodChipContent — density-held rung', () => {
     expect(c.icon).toBe(MONITOR_ICONS.lodHeld);
     expect(c.text).not.toContain('⏳');
     expect(c.title.startsWith('Next level HELD at the residency ceiling')).toBe(true);
-    expect(c.title).toContain('?cacheBudgetMB');
+    expect(c.title).toContain('refinement working-set budget (capped at 512 MB)');
+    // No "raise ?cacheBudgetMB" remedy: on desktop Chrome the working-set cap
+    // already binds, so that knob cannot lift the ceiling (and a low value lowers it).
+    expect(c.title).not.toContain('cacheBudgetMB');
   });
 
   it('shows the pause glyph after the text instead of ⏳, and explains the hold first', () => {

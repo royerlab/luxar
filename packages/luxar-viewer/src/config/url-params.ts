@@ -187,7 +187,9 @@ export interface UrlParams {
    * `config.densityGuard.capElementsPerPixel` is 4). Both consumers follow
    * it — the shader keep-fraction ladder and the refinement rung gate — so
    * a threshold sweep is one URL edit per arm, no rebuild and nothing
-   * persisted. Null/invalid ⇒ the configured cap.
+   * persisted. The non-blendable cap (1) only moves when the override is
+   * below it, so it stays the tighter of the two. Null/invalid ⇒ the
+   * configured cap.
    */
   densityCap: number | null;
   /** Disable adjacent-chunk prefetching (`?no-prefetch`). */

@@ -10,7 +10,10 @@ claim was read. Items marked *[inferred]* were not directly verified.
 
 > **Status.** This is the dated record that drove the September 2026 viewer
 > performance work (PR #2528, follow-ups in #2527). Every finding below is now
-> either landed, or dismissed with a measurement in that PR's description.
+> either landed, or dismissed with a measurement in that PR's description —
+> except finding 8 (OPFS write-queue drops): its fix landed, then a review-time
+> byte cap on the queue brought the cmu1 drops back (0 → 3 966); that is open
+> as #2561.
 > The ad-hoc probe kit it describes was replaced by a repeatable harness:
 > `pnpm test:perf:e2e -g "viewer audit"` (see §8). Numbers in §3 are the
 > BEFORE state; the PR carries the same-browser before/after table.

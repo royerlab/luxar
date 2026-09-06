@@ -76,20 +76,6 @@ export interface DensityGuardWiring extends DensityGuardControl {
   densityStates(): Map<string, NodeDensityState>;
 }
 
-/**
- * The config the guard actually runs with: the configured slice, or a copy
- * with the blendable cap replaced by a valid `?density-cap=N` override.
- */
-export function resolveDensityGuardConfig(
-  base: DensityGuardConfig,
-  capOverride: number | undefined
-): DensityGuardConfig {
-  if (capOverride === undefined || !(capOverride > 0) || !Number.isFinite(capOverride)) {
-    return base;
-  }
-  return { ...base, capElementsPerPixel: capOverride };
-}
-
 /** Build the rung-gate provider over the tracker's records. */
 export function buildDensityProvider(tracker: ProjectedDensityTracker): ProjectedDensityProvider {
   return (path) => {
@@ -136,11 +122,32 @@ export function collectDensityStates(
   return out;
 }
 
+/**
+ * The config the guard actually runs with: the configured slice, or a copy
+ * with the blendable cap replaced by a valid `?density-cap=N` override. The
+ * non-blendable cap is documented as the TIGHTER of the two ("one element per
+ * pixel already saturates a max projection"), so an override below it pulls it
+ * down too; an override above it leaves it alone.
+ */
+export function resolveDensityGuardConfig(
+  base: DensityGuardConfig,
+  capOverride: number | undefined
+): DensityGuardConfig {
+  if (capOverride === undefined || !(capOverride > 0) || !Number.isFinite(capOverride)) {
+    return base;
+  }
+  return {
+    ...base,
+    capElementsPerPixel: capOverride,
+    nonBlendableCapElementsPerPixel: Math.min(base.nonBlendableCapElementsPerPixel, capOverride),
+  };
+}
+
 export function wireDensityGuard(deps: DensityGuardWiringDeps): DensityGuardWiring {
   const sessionDisabled = deps.option === false;
   let enabled = resolveDensityGuardEnabled(deps.configEnabled, deps.option);
   const cfg = resolveDensityGuardConfig(deps.config, deps.capOverride);
-  if (cfg !== deps.config) {
+  if (cfg.capElementsPerPixel !== deps.config.capElementsPerPixel) {
     log.info(
       Modules.RENDERER,
       `Density guard cap overridden for this session: ${cfg.capElementsPerPixel} el/px ` +

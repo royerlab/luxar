@@ -93,9 +93,9 @@ export function formatKeepFraction(keep: number): string {
   return keep >= 1 ? '1' : `1/${Math.round(1 / keep)}`;
 }
 
-/** `4` or `2.5`: the cap as typed in `?density-cap=`, never `4.00`. */
+/** `4`, `2.5`, `0.25`: the cap as typed in `?density-cap=` (to 3 decimals), never `4.00`. */
 export function formatCap(cap: number): string {
-  return Number.isInteger(cap) ? String(cap) : cap.toFixed(1);
+  return String(Number(cap.toFixed(3)));
 }
 
 /**
