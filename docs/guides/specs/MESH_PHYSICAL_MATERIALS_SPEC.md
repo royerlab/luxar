@@ -157,10 +157,74 @@ one scene-level input: `scene.environment`.
   built lazily the first time a physical mesh is created and cached on the
   `SceneManager`. It needs no asset, gives believable reflections and a neutral
   key, and is what three's own examples use.
-- **Authored:** `viewer_config.environment = {"preset": "room" | "neutral" |
-  "studio"}` first; an HDRI URL later if a demo needs one (the loader already
-  fetches opaque files from the store for overlays and textures).
+- **Authored (Phase 4):** `viewer_config.environment = {"source": "room" |
+  "scene" | "hdri", "probe": "auto" | [x, y, z] | "node:<path>", "resolution":
+  128, "intensity": 1.0, "url": ...}`. `"room"` is today's default. `"hdri"`
+  loads an equirectangular image from the store (the loader already fetches
+  opaque files for overlays and textures). `"scene"` is the interesting one and
+  is described next.
 - `environmentIntensity` rides `viewer_config.environment.intensity`.
+
+**Scene-derived environments (`"source": "scene"`).** Luxar's data is emissive,
+so a capture of the scene *is* a radiance map of the data: a chrome sphere or a
+glass shell reflects the cloud it sits in, and the light-free principle holds —
+the data is the light, nothing is added to the graph. The capture is EXACT and
+reuses the real shaders: a `CubeCamera` renders the scene from the probe point
+into a cube render target, `PMREMGenerator.fromCubemap` prefilters it, and the
+result goes onto `scene.environment` through the same lazy
+`SceneEnvironment.ensure()` seam the room uses. An approximate alternative
+(projecting the resident emitters into a small equirect on the CPU, no render)
+was considered and **rejected**: it would re-implement the appearance pipeline
+(colormaps, intensity, opacity, gamma, textures, LOD energy compensation) a
+second time and keep it in step with the shaders forever — the two-copies drift
+this codebase is organised to make impossible — for a saving that is only real
+per frame, and the capture is never per frame.
+
+Four details make the exact capture cheap and correct:
+
+- **Trigger, not cadence.** Capture on camera settle and on data commit (and on
+  slice change), at 64–128 pixel faces. Six low-resolution draws a few times a
+  minute; never per frame unless the probe moves.
+- **Sprite sizes.** Point and line footprints come from the camera params the
+  material manager broadcasts (fov, resolution). The capture pushes the cube
+  camera's params before the six renders and restores them after.
+- **No self-reflection.** Physical meshes are masked out of their own capture
+  with the cube camera's `layers` bit (a mesh that reflects a stale copy of
+  itself is the failure mode). Blending the room in is just the room's boxes
+  added to the capture scene.
+- **Parallax.** A cube map is exact only at its probe. `"auto"` is the scene
+  centre (the showcase case); `"node:<path>"` captures from a node's bounding-box
+  centre, which is what a marker shell around a cluster wants. Depth-sorted
+  `normal` / `volumetric` layers are ordered for the main camera, so their
+  reflection is slightly mis-ordered — invisible under any real roughness.
+
+**Baking at compile time: `luxar env bake`.** The same capture, driven headlessly,
+moves the cost off the viewer entirely for a published scene:
+
+```bash
+luxar env bake scene.luxar.zarr                       # probe auto, 128 px faces
+luxar env bake scene.luxar.zarr --probe node:clusters/shell_3
+```
+
+It drives the viewer through Playwright the way the gallery capture does (so it
+runs unattended on a GPU box), using a `?bake-env&probe=...` URL parameter that
+makes the viewer capture on load settle, read the six faces back as FLOATS
+(`readRenderTargetPixels` — a PNG would clip everything above 1.0 and destroy the
+highlights that make metals read) and download one binary blob with a JSON header
+(probe, resolution, scene `content_hash`, appearance state). `luxar env attach
+scene.luxar.zarr faces.bin` is the manual half of the same loop: it writes the
+faces as an `environment/faces` zarr array of shape `(6, H, W, 3)` (float16) with
+the header as attrs. At load the viewer builds a `CubeTexture` from it and runs
+`PMREMGenerator.fromCubemap` — milliseconds — so what is stored is the raw
+capture and the prefilter math stays three's. Idempotent (an unchanged scene
+rewrites nothing) and honest about staleness: the viewer ignores a baked map
+whose `content_hash` does not match the scene, says so in the console, and falls
+back to the live capture or the room. What baking freezes: one appearance (a
+Layers-panel colormap change does not reach the reflections until re-baked) and
+one slice — a scene sliced on a hidden dimension gets one map for the slice it
+was baked at, or one per slice under `environment/<slice>/`. Fine for a published
+demo, which is where baking pays; for authoring sessions the live capture is the
+default.
 
 House-shaded meshes, points, lines and splats ignore `scene.environment`
 entirely (their shaders never read it), so enabling it changes nothing about
@@ -188,12 +252,61 @@ crisply *on* the glass rather than *inside* it. Whether that reads well is a
 design question, not a bug; it is also why the additive rim shell (§2) is the
 right marker for the kiosk.
 
-Closing the gap is Phase 3 (§4): a Luxar-owned transmission pass that renders
-the point layers into the transmission target before three samples it. It means
-taking over three's pass (`renderer.transmissionResolutionScale`, a manual
-`renderTarget` and `scene.overrideMaterial` dance) inside
-`post-processing-manager/pipeline.ts`, and it interacts with the SSAA jitter and
-the adaptive DPR ceiling. It is deliberately not Phase 1.
+Closing the gap is Phase 3 (§4). An earlier draft of this section proposed taking
+over three's pass wholesale (a manual render target and a `scene.overrideMaterial`
+dance inside `post-processing-manager/pipeline.ts`). Reading three's code shows
+that is not needed; the two backends want two small, different moves:
+
+- **WebGPU is almost free.** There, anything with `transmission > 0` lives in
+  the *transparent* list and samples `viewportSharedTexture`, a copy of the
+  framebuffer taken at the moment the glass is drawn. Whatever drew before it is
+  visible through it. Give the glass a higher `layer_order` band than the data it
+  wraps and three's own ordering refracts the data — a renderOrder rule the
+  depth-sort coordinator already applies.
+- **WebGL needs one trick, not a takeover.** Its `renderTransmissionPass` draws
+  only the *opaque* list into a mip-mapped half-float target (sized by
+  `renderer.transmissionResolutionScale`, tone mapping off). So split the scene
+  pass: render everything except transmissive meshes into the HDR target as
+  today, then render only the transmissive meshes on top, into the same target
+  without clearing, with one screen-space quad textured with pass one's result
+  added to that second scene. Three's pass draws the quad as its "opaque" content,
+  so the glass refracts the data; the quad's own draw paints back pixels that are
+  already there. A `layers` mask and a quad, isolated in `pipeline.ts`; no shader
+  edits. SSAA jitter is unaffected (both renders share the jittered camera and
+  the quad is screen-space) and so is adaptive DPR (the targets already follow
+  it).
+
+**Cost.** Paid only in frames where a transmissive mesh is visible; every other
+scene keeps today's single pass. When paid: three's mip generation on the
+transmission target plus the glass drawn twice — on the order of a millisecond at
+1080p at `transmissionResolutionScale = 0.5` (the right default; roughness blur
+hides it), several at 4K with SSAA at full scale. The adaptive DPR manager
+regulates frame time, so a heavy case degrades resolution rather than stuttering.
+Measure on the perf harness before trusting these numbers.
+
+**The limits are about correctness, not cost**, and they are what keeps Phase 3
+deferred. Which emissive layers write depth decides what a glass surface drawn
+after them can be occluded by (`rendering/blending-state.ts`):
+
+| Mode | depthTest | depthWrite |
+| --- | --- | --- |
+| `additive` | off | off |
+| `luminous` | on | off |
+| `max` | on | off |
+| `volumetric` | on | off |
+| `normal` | on | only at opacity ≥ 0.99 (points, gsplats; lines never) |
+| `opaque` | on | on |
+
+So data *in front of* a glass shell is painted over by the glass — it appears
+refracted instead of crisp — for `additive`, `luminous`, `max` and `volumetric`
+layers, which is the default for clouds and splats; it is depth-tested correctly
+against `opaque` layers and against `normal` at (near) full opacity. No pass
+design fixes that without depth for points. And depth-sorted layers are ordered
+for the main camera, so through a clear lens their order is slightly off
+(invisible under roughness). Phase 2 already gives glass that refracts the
+background and other meshes, and the additive rim shell already does the marker
+job; refracting the data *inside* matters for a lens or bubble showpiece. Hence:
+opt-in, built when a demo wants it, prototyped first to measure the two costs.
 
 ### 3.5 Colour pipeline
 
@@ -245,8 +358,8 @@ demo carries the A/B until it is.
 | --- | --- | --- | --- |
 | 1 — **delivered** | `material="physical"`, `roughness`, `metalness`, `clearcoat`, `clearcoat_roughness`, `iridescence`, `sheen`, `sheen_color`; default `RoomEnvironment` built lazily; Python validation; Layers-panel shows the physical knobs read-only; `demo_mesh_physical_materials`; the A/B script | Metals, lacquer, pearlescent shells; a true Fresnel rim via `clearcoat` on a dark base | Small: one factory entry, one env builder, attrs plumbing |
 | 2 | `transmission`, `ior`, `thickness`, `attenuation_*`, `dispersion` with three's stock pass | Glass and lenses that refract the background and other meshes | Small; ships with the §3.4 caveat documented in the Layers panel tooltip |
-| 3 | Luxar-owned transmission pass including the point/line/splat layers | Glass that refracts the data inside it | Medium–large; touches the post pipeline, SSAA, DPR |
-| 4 | Authored HDRI environments (`viewer_config.environment.url`) | Scene-specific reflections | Small once Phase 1 exists |
+| 3 — opt-in, deferred | Data through glass: `layer_order` ordering on WebGPU, a two-render split with an injected quad on WebGL, `transmissionResolutionScale` 0.5 (§3.4) | Glass that refracts the data behind it (data in front stays a known limit) | Small–medium, isolated in `pipeline.ts`; build when a demo needs it, measure first |
+| 4 — designed | `viewer_config.environment.source = room \| scene \| hdri` with `probe`; live exact cube capture on settle/commit; `luxar env bake` / `?bake-env` / `luxar env attach` storing `environment/faces` with a `content_hash` guard (§3.3) | Metals and glass that reflect the data they sit in; zero-cost baked environments for published scenes | Small: one more builder behind `SceneEnvironment.ensure()`, one CLI pair, one Playwright driver |
 
 ## 5. Explicitly out of scope
 
@@ -256,6 +369,13 @@ demo carries the A/B until it is.
 - Shadows.
 - Replacing the house mesh shader. It stays the default: it is faster, has no
   environment dependency, and is what every existing scene renders with.
+- Approximate environments computed from the resident arrays instead of rendered
+  (emitter projection to an equirect, spherical harmonics from the data).
+  Rejected in §3.3: they duplicate the appearance pipeline for a saving the
+  exact capture does not need, since it is triggered rather than per frame.
+- Depth writes for emissive point, line and splat layers so that glass can be
+  occluded by data in front of it. It would break the additive sum those modes
+  are (§3.4); the limit is documented instead.
 
 ## 6. Open questions
 
@@ -278,3 +398,21 @@ demo carries the A/B until it is.
    on `main`. Switching one stories shell to `material="physical"` is a
    one-line change once it lands; the shared `luxar.mesh.primitives.icosphere`
    exists for it.
+4. Should a scene-derived environment be computed from the arrays (compile time,
+   approximate) or rendered (exact)? **Decided: rendered, exact**, on both the
+   live path and the baked one (§3.3). An approximation buys nothing once the
+   exact capture is triggered rather than per frame, and costs a second copy of
+   the appearance pipeline. Compile-time baking exists only as
+   `luxar env bake`, which drives the same exact capture headlessly.
+5. Where do probes live — on the scene manager or on the node? **Decided: the
+   probe is a knob of the environment config** (`"auto"` = scene centre,
+   `[x, y, z]`, or `"node:<path>"`), so one implementation serves the showcase
+   case and the marker-shell case; a per-node probe is a second capture, not a
+   second mechanism. Whether several probes can be active at once (one physical
+   mesh per probe) is left to Phase 4's first demo.
+6. Is Phase 3 worth its intrusion? **Decided: as re-formulated in §3.4 it is not
+   intrusive** (a renderOrder rule on WebGPU, a two-render split with a quad on
+   WebGL, isolated in `pipeline.ts`), and its cost is paid only when a
+   transmissive mesh is visible. What defers it is the correctness limit that
+   emissive layers do not write depth, so data in front of a glass surface is
+   painted over. It stays opt-in and waits for a demo that wants a lens.
