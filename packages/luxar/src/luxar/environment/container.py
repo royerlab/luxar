@@ -121,6 +121,7 @@ def unpack(data: bytes) -> Tuple[Dict[str, Any], np.ndarray]:
 
 
 def _validate_header(header: Dict[str, Any]) -> None:
+    """Refuse a header missing a required key or carrying a format this codec cannot read."""
     missing = [key for key in REQUIRED_HEADER_KEYS if key not in header]
     if missing:
         raise ValueError(f"Environment header is missing {missing}.")
@@ -160,6 +161,7 @@ def _validate_header(header: Dict[str, Any]) -> None:
 
 
 def _validate_faces(faces: np.ndarray, resolution: int) -> None:
+    """Refuse faces that are not ``(6, res, res, 4)`` uint16 half-float bits."""
     if faces.dtype != np.uint16:
         raise ValueError(
             f"Environment faces must be uint16 half-float bits, got {faces.dtype}."

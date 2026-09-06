@@ -10,7 +10,7 @@ published scene: `luxar env bake` drives the viewer headlessly, and
 root-level `environment/` sidecar group the viewer prefilters at load in
 milliseconds.
 
-## Quick start
+## Quick Start
 
 ```bash
 luxar env bake scene.luxar.zarr                      # capture at the scene centre, 128 px faces
