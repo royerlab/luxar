@@ -20,6 +20,7 @@ import {
   derivePhysicalCompositing,
   isPhysicalMeshMaterial,
   physicalKnobFromSlider,
+  physicalKnobInertReason,
   physicalKnobToSlider,
   physicalSetVertexAlpha,
   type PhysicalMeshHost,
@@ -142,6 +143,30 @@ describe('the knob table and its slider mapping', () => {
     ['dispersion', 3, 3],
   ] as const)('clampPhysicalKnob(%s, %s) → %s', (key, value, expected) => {
     expect(clampPhysicalKnob(key, value)).toBe(expected);
+  });
+
+  it.each([
+    // key, live values → reason (null = live). Measured on the reflections demo.
+    ['clearcoat_roughness', { clearcoat: 0 }, /Clearcoat/],
+    ['clearcoat_roughness', { clearcoat: 0.3 }, null],
+    ['transmission', { metalness: 1 }, /metal/],
+    ['transmission', { metalness: 0.5 }, null],
+    ['ior', { metalness: 1 }, /metal/],
+    ['ior', { metalness: 0 }, null],
+    ['thickness', { transmission: 0 }, /Transmission/],
+    ['thickness', { transmission: 1, metalness: 1 }, /Transmission/],
+    ['thickness', { transmission: 1, metalness: 0 }, null],
+    ['dispersion', { transmission: 0.2 }, null],
+    ['attenuation_distance', { transmission: 1 }, /white/],
+    ['attenuation_distance', { transmission: 1, attenuation_color: '#FFFFFF' }, /white/],
+    ['attenuation_distance', { transmission: 1, attenuation_color: '#f6d148' }, null],
+    ['attenuation_distance', { transmission: 0, attenuation_color: '#f6d148' }, /Transmission/],
+    ['roughness', { metalness: 1, transmission: 0 }, null],
+    ['sheen', {}, null],
+  ] as const)('physicalKnobInertReason(%s, %j)', (key, values, expected) => {
+    const reason = physicalKnobInertReason(key, values);
+    if (expected === null) expect(reason).toBeNull();
+    else expect(reason).toMatch(expected);
   });
 
   it('maps an infinite attenuation distance onto the slider top stop and back', () => {

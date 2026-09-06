@@ -285,6 +285,17 @@
 
 /* ========== Gamma Slider ========== */
 
+/* A knob that changes nothing in the current state of its siblings (see
+   `LabeledSlider.setInert`): dimmed, not hidden, with the reason as hover text —
+   the author should see the knob exists and learn what would make it live. */
+.luxar-layers-panel__control-group--inert {
+  opacity: 0.45;
+}
+
+.luxar-layers-panel__control-group--inert .luxar-layers-panel__slider {
+  cursor: not-allowed;
+}
+
 .luxar-layers-panel__slider {
   -webkit-appearance: none;
   appearance: none;

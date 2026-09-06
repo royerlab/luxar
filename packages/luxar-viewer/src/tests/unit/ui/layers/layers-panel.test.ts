@@ -1788,6 +1788,72 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     expect(inputOf('Roughness').value).toBe('0.4');
   });
 
+  it('greys out the knobs that change nothing in the current state, with the reason as hover text', () => {
+    // A metal (metalness 1, the authored value): the whole glass family is inert
+    // and clearcoat roughness waits for a clearcoat. Measured on the reflections
+    // demo — a live slider that does nothing reads as broken.
+    const material = new PhysicalMeshMaterial({ metalness: 1.0 });
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
+    mesh.name = '/cloud';
+    mesh.userData.nodeType = 'mesh';
+    mesh.userData._layerMaterialCloned = true;
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(
+      rootGroup,
+      makeLayeredSceneGraph('mesh', { material: 'physical', metalness: 1 })
+    );
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    const group = findControlGroup(container, 'Physical material')!;
+    const knob = (label: string): HTMLElement => findControlGroup(group, label)!;
+    const inputOf = (label: string): HTMLInputElement =>
+      knob(label).querySelector('input[type="range"]') as HTMLInputElement;
+    for (const label of [
+      'Transmission',
+      'IOR',
+      'Thickness',
+      'Attenuation distance',
+      'Dispersion',
+      'Clearcoat roughness',
+    ]) {
+      expect(inputOf(label).disabled, label).toBe(true);
+      expect(knob(label).title.length, label).toBeGreaterThan(0);
+      expect(
+        knob(label).classList.contains('luxar-layers-panel__control-group--inert'),
+        label
+      ).toBe(true);
+    }
+    expect(knob('Transmission').title).toMatch(/metal/);
+    for (const label of ['Roughness', 'Metalness', 'Clearcoat', 'Iridescence', 'Sheen']) {
+      expect(inputOf(label).disabled, label).toBe(false);
+    }
+
+    // Lowering metalness wakes the glass family (transmission still 0, so the
+    // transmission-dependent knobs stay inert with THAT reason) …
+    const metalness = inputOf('Metalness');
+    metalness.value = '0';
+    metalness.dispatchEvent(new Event('input'));
+    expect(inputOf('Transmission').disabled).toBe(false);
+    expect(inputOf('IOR').disabled).toBe(false);
+    expect(knob('Thickness').title).toMatch(/Transmission/);
+    // … and turning transmission up wakes thickness and dispersion, while the
+    // attenuation distance still waits for a non-white attenuation colour.
+    const transmission = inputOf('Transmission');
+    transmission.value = '1';
+    transmission.dispatchEvent(new Event('input'));
+    expect(inputOf('Thickness').disabled).toBe(false);
+    expect(inputOf('Dispersion').disabled).toBe(false);
+    expect(knob('Attenuation distance').title).toMatch(/white/);
+    // Clearcoat wakes clearcoat roughness.
+    const clearcoat = inputOf('Clearcoat');
+    clearcoat.value = '0.5';
+    clearcoat.dispatchEvent(new Event('input'));
+    expect(inputOf('Clearcoat roughness').disabled).toBe(false);
+  });
+
   it('resetAllLayers leaves a REAL physical material exactly where the author put it', () => {
     // The reset path calls `applyBlendingMode` and `applyMeshAppearance` on every
     // layer. On a material WITHOUT `applyBlendingMode`, `layer-apply.ts` falls back to

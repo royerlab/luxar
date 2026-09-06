@@ -577,6 +577,64 @@ export function physicalUpdateGamma(host: PhysicalMeshHost, gamma: number): void
 }
 
 /**
+ * Why a knob currently changes NOTHING on screen, or `null` when it is live — the
+ * dependencies three's physical shader imposes between knobs, stated once so the
+ * Layers panel can grey a slider out with the reason instead of offering a dead
+ * control (measured on the reflections demo: at `metalness = 1` the whole glass
+ * family is inert because three scales transmission by `1 − metalness` and takes a
+ * metal's reflectance from its base colour, not its IOR).
+ *
+ * `values` are the LIVE knob values (material domain, not slider space) plus the
+ * attenuation colour, all optional so a partial record still answers.
+ */
+export function physicalKnobInertReason(
+  key: PhysicalMeshKnobKey,
+  values: PhysicalKnobLiveValues
+): string | null {
+  const state = physicalKnobDependencyState(values);
+  const needsTransmission = state.transmitting ? null : INERT_NEEDS_TRANSMISSION;
+  const rules: Partial<Record<PhysicalMeshKnobKey, string | null>> = {
+    clearcoat_roughness: state.coated ? null : 'No effect until Clearcoat is above 0.',
+    transmission: state.metal
+      ? 'A metal transmits nothing: three scales transmission by 1 − Metalness.'
+      : null,
+    ior: state.metal
+      ? 'No effect on a metal: its reflectance comes from the base colour, not the IOR.'
+      : null,
+    thickness: needsTransmission,
+    dispersion: needsTransmission,
+    attenuation_distance: needsTransmission ?? (state.whiteAttenuation ? INERT_WHITE : null),
+  };
+  return rules[key] ?? null;
+}
+
+/** The live knob values (material domain) plus the attenuation colour, all optional. */
+export type PhysicalKnobLiveValues = Partial<Record<PhysicalMeshKnobKey, number>> & {
+  attenuation_color?: string;
+};
+
+const INERT_NEEDS_TRANSMISSION = 'No effect until Transmission is above 0 (and Metalness below 1).';
+const INERT_WHITE =
+  'No effect while the attenuation colour is white: author attenuation_color to tint the glass.';
+
+/** The four facts the inert rules are stated in terms of. */
+function physicalKnobDependencyState(values: PhysicalKnobLiveValues): {
+  metal: boolean;
+  coated: boolean;
+  transmitting: boolean;
+  whiteAttenuation: boolean;
+} {
+  const metal = (values.metalness ?? PHYSICAL_MESH_DEFAULTS.metalness) >= 1;
+  const colour = values.attenuation_color ?? PHYSICAL_MESH_DEFAULTS.attenuationColor;
+  return {
+    metal,
+    coated: (values.clearcoat ?? PHYSICAL_MESH_DEFAULTS.clearcoat) > 0,
+    transmitting: (values.transmission ?? PHYSICAL_MESH_DEFAULTS.transmission) > 0 && !metal,
+    whiteAttenuation: colour.toLowerCase() === '#ffffff',
+  };
+}
+
+/**
  * Whether a material is one of the two physical wrappers, by the stamp the config
  * writes. Structural on purpose: the TSL twin lives behind the lazy `three/webgpu`
  * boundary, so an `instanceof` here would drag that chunk onto the eager path.

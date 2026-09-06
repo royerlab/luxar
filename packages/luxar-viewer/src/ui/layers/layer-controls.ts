@@ -15,7 +15,12 @@
  */
 
 import type { BlendingMode } from '../../rendering';
-import { resolveLayerBlendingMode, type LayerInfo, type LayerStateManager } from './layer-state';
+import {
+  resolveLayerBlendingMode,
+  type LayerInfo,
+  type LayerStateManager,
+  type PhysicalKnobValues,
+} from './layer-state';
 import { RangeSlider } from './range-slider';
 import { LabeledSlider } from './labeled-slider';
 import {
@@ -35,6 +40,8 @@ import { MESH_DEFAULTS } from '../../rendering/materials/mesh/appearance';
 import {
   PHYSICAL_MESH_KNOB_KEYS,
   PHYSICAL_MESH_KNOBS,
+  physicalKnobFromSlider,
+  physicalKnobInertReason,
   physicalKnobToSlider,
   type PhysicalKnobSpec,
   type PhysicalMeshKnobKey,
@@ -72,7 +79,9 @@ export interface LayerControlsDeps {
 export const PHYSICAL_MATERIAL_TOOLTIP =
   "three.js physically based material (material='physical'), lit by the scene " +
   'environment. The sliders drive the material live; Reset restores what add_mesh(...) ' +
-  'authored. Transmission (glass, lenses) refracts the background and other meshes ' +
+  'authored. A greyed slider changes nothing in the current state (hover it for why: a ' +
+  'metal transmits nothing, clearcoat roughness needs a clearcoat, attenuation needs a ' +
+  'colour). Transmission (glass, lenses) refracts the background and other meshes ' +
   "only — three's transmission pass does not see Luxar's transparent point, line and " +
   'splat materials, so data in front of or behind glass stays unrefracted.';
 
@@ -976,10 +985,30 @@ export class LayerControls {
         for (const sel of this.deps.state.getSelected()) {
           this.deps.apply.applyPhysicalKnobs(sel);
         }
+        // A knob can wake or silence its dependants (Clearcoat → Clearcoat
+        // roughness; Metalness / Transmission → the glass family).
+        const primary = this.deps.state.getPrimarySelected();
+        if (primary?.physicalKnobs) this.syncPhysicalInertStates(primary.physicalKnobs);
         this.controlsInteracting = false;
       },
     });
     this.physicalSliders.set(key, slider);
+  }
+
+  /**
+   * Grey out the knobs that change nothing in the current state of their siblings,
+   * with the reason as hover text (`physicalKnobInertReason`). Measured, not
+   * guessed: on a metal the whole glass family is inert, and a clearcoat roughness
+   * without clearcoat is too — a live slider that does nothing reads as broken.
+   */
+  private syncPhysicalInertStates(knobs: PhysicalKnobValues): void {
+    const live: Partial<Record<PhysicalMeshKnobKey, number>> & { attenuation_color?: string } = {
+      attenuation_color: knobs.attenuation_color,
+    };
+    for (const key of PHYSICAL_MESH_KNOB_KEYS) live[key] = physicalKnobFromSlider(key, knobs[key]);
+    for (const [key, slider] of this.physicalSliders) {
+      slider.setInert(physicalKnobInertReason(key, live));
+    }
   }
 
   /**
@@ -995,6 +1024,7 @@ export class LayerControls {
     const knobs = primary.physicalKnobs;
     if (primary.material !== 'physical' || !knobs) return;
     for (const [key, slider] of this.physicalSliders) slider.setValue(knobs[key]);
+    this.syncPhysicalInertStates(knobs);
     const addRow = (label: string, value: string): void => {
       const row = document.createElement('div');
       row.className = 'luxar-layers-panel__physical-row';
