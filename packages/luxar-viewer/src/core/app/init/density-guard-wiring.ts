@@ -76,6 +76,22 @@ export interface DensityGuardWiring extends DensityGuardControl {
   densityStates(): Map<string, NodeDensityState>;
 }
 
+/** Project the live records onto the monitor's per-node density state. */
+export function collectDensityStates(
+  tracker: ProjectedDensityTracker
+): Map<string, NodeDensityState> {
+  const out = new Map<string, NodeDensityState>();
+  for (const rec of tracker.records()) {
+    out.set(rec.path, {
+      keep: rec.keep,
+      elementsPerPixel: rec.elementsPerPixel,
+      blendable: rec.blendable,
+      onScreen: rec.onScreen,
+    });
+  }
+  return out;
+}
+
 /** Build the rung-gate provider over the tracker's records. */
 export function buildDensityProvider(tracker: ProjectedDensityTracker): ProjectedDensityProvider {
   return (path) => {
@@ -104,22 +120,6 @@ export function summarizeThinning(tracker: ProjectedDensityTracker): {
     if (rec.keep < minKeep) minKeep = rec.keep;
   }
   return { nodes, minKeep };
-}
-
-/** Project the live records onto the monitor's per-node density state. */
-export function collectDensityStates(
-  tracker: ProjectedDensityTracker
-): Map<string, NodeDensityState> {
-  const out = new Map<string, NodeDensityState>();
-  for (const rec of tracker.records()) {
-    out.set(rec.path, {
-      keep: rec.keep,
-      elementsPerPixel: rec.elementsPerPixel,
-      blendable: rec.blendable,
-      onScreen: rec.onScreen,
-    });
-  }
-  return out;
 }
 
 /**
