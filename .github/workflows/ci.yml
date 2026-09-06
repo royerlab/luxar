@@ -46,12 +46,12 @@ on:
     # capacity recovers.
     #
     # DEFAULT-BRANCH DEPENDENCE. GitHub runs `schedule:` triggers only on the
-    # repository DEFAULT branch, at its tip. While `dev` is the default the event
-    # SHA is dev's tip at dispatch, and every suite checkout is pinned to that exact
-    # event SHA so the contexts attest the tree they test. The repair walk also
-    # resolves dev explicitly. After the default flips to main, however, the event
-    # SHA and scheduled checkouts both point at main; #2466 tracks replacing this
-    # cron trigger before that flip so promotion windows still run against dev.
+    # repository DEFAULT branch, at its tip, and dispatches the event against that
+    # branch's SHA. The default is now `main`, so `github.sha` on a scheduled run
+    # points at main, not dev. To keep promotion windows testing dev, the `changes`
+    # checkout pins `refs/heads/dev` explicitly and captures its tip as `dev_sha`,
+    # which every suite checkout below reuses so the contexts attest one immutable
+    # dev tree (#2466). The repair walk resolves dev explicitly for the same reason.
     - cron: '17 9 * * *'
     - cron: '17 0,3,6,12,15,18,21 * * *'
 
@@ -136,9 +136,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # While dev is the default, the scheduled event SHA is dev's immutable
-          # tip at dispatch. Empty on push/PR == default.
-          ref: ${{ github.event_name == 'schedule' && github.sha || '' }}
+          # `github.sha` FOLLOWS THE DEFAULT BRANCH on schedule/dispatch events,
+          # which is now `main`, not `dev` — so pin `refs/heads/dev` explicitly to
+          # keep promotion windows testing dev. Captured immutably as `dev_sha`
+          # below and reused by every suite checkout (#2466). Empty on push/PR ==
+          # default (there `github.sha` is the tested commit, which is correct).
+          ref: ${{ github.event_name == 'schedule' && 'refs/heads/dev' || '' }}
           fetch-depth: 0
       - id: scheduled-dev
         if: github.event_name == 'schedule'
