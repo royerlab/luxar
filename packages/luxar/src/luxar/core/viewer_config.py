@@ -323,7 +323,7 @@ def _validate_environment_url(raw: str) -> str:
         raise ValueError(
             f"environment.url must contain 1-{MAX_ENVIRONMENT_URL_CHARS} characters"
         )
-    if any(ord(char) <= 0x1F or ord(char) == 0x7F or char in "<>" for char in url):
+    if any(ord(char) <= 0x1F or ord(char) == 0x7F or char in "<>\\" for char in url):
         raise ValueError("environment.url contains an unsafe character")
     if url.startswith("//"):
         raise ValueError("environment.url must not be protocol-relative")

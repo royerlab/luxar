@@ -439,7 +439,7 @@ function isAllowedEnvironmentUrl(url: string): boolean {
 function hasUnsafeEnvironmentUrlCharacter(url: string): boolean {
   for (const char of url) {
     const code = char.charCodeAt(0);
-    if (code <= 0x1f || code === 0x7f || char === '<' || char === '>') return true;
+    if (code <= 0x1f || code === 0x7f || char === '<' || char === '>' || char === '\\') return true;
   }
   return false;
 }

@@ -77,6 +77,7 @@ class TestEnvironmentConfig:
             "javascript:alert(1)",
             "data:image/png,abc",
             "//example.com/env.hdr",
+            "\\\\evil.com/env.hdr",
             "https:example.com/env.hdr",
             "https://u:p@example.com/env.hdr",
         ],

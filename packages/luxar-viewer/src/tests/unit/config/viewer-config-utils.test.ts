@@ -489,6 +489,7 @@ describe('extractEnvironmentConfig', () => {
       'javascript:alert(1)',
       'data:image/png,abc',
       '//example.com/env.hdr',
+      '\\\\evil.com/env.hdr',
       'https:example.com/env.hdr',
       'https://user:pass@example.com/env.hdr',
     ]) {
