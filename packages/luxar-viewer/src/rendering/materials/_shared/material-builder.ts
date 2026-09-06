@@ -35,16 +35,18 @@
  * dim wash (#2563). Resolving in one place is what stops the two
  * branches drifting apart for the same config.
  *
- * `defines` is deliberately NOT threaded on the WebGPU branch, and
- * that is a RUNTIME claim rather than a type one: `defines` is declared
- * on three's base `Material`, so a `NodeMaterial` does have the field
- * (Luxar's own `*TSLMaterial` classes even use it as a private flag
- * bag), but nothing on the node path READS it — three's GLSL program
- * builder is its only consumer, and `.defines` appears nowhere in the
- * `three.webgpu` build. Threading it would be inert; a TSL factory
- * takes its compile-time flags through its own config instead.
+ * `defines` is deliberately NOT threaded on the WebGPU branch. It is
+ * an OPTIONAL field on three's `Material` type that `Material.js` never
+ * initialises — only `ShaderMaterial` does, so a bare `NodeMaterial`
+ * has `defines === undefined` — and nothing in three's node pipeline
+ * reads it: `.defines` appears nowhere in the `three.webgpu` build, GLSL
+ * fallback included, three's GLSL program builder being its only
+ * consumer. Threading it would therefore be inert as far as three is
+ * concerned. Luxar's `*TSLMaterial` classes do keep their own flag bag
+ * there (hence their `if (!this.defines) this.defines = {}` guards), but
+ * they fill it from their factory config, not from this helper.
  *
- * Three limits on how far the cross-backend agreement reaches:
+ * Two limits on how far the cross-backend agreement reaches:
  *
  * - `toneMapped` is threaded for symmetry but is only OBSERVED on the
  *   WebGL path — `material.toneMapped` appears nowhere in the
@@ -55,20 +57,26 @@
  * - `CustomBlending` is expressible but its FACTORS are not: there is
  *   no `blendEquation` / `blendSrc` / `blendDst` here, so such a
  *   request lands on `Material`'s default factors on both backends.
- *   Luxar's `max`, `opaque` and `volumetric` states all carry factors
- *   (as does gsplat `normal`, which shares the volumetric helper) and
- *   reach materials through `applyBlendingStateToMaterial`
- *   (`rendering/blending-state.ts`), not through here.
- * - `premultipliedAlpha` is not expressible either, and WebGPU
- *   REQUIRES it for `SubtractiveBlending` and `MultiplyBlending`:
- *   without it `WebGPUPipelineUtils._getBlending` errors and produces
- *   no blend descriptor at all, where `WebGLRenderer` honours both. So
- *   those two presets are unusable through this helper under WebGPU.
+ *   Luxar's `max`, `opaque` and gsplat `normal` states all carry
+ *   factors (`volumetric` delegates to the gsplat-`normal` helper for
+ *   exactly that state) and reach materials through
+ *   `applyBlendingStateToMaterial` (`rendering/blending-state.ts`),
+ *   not through here.
  *
  * A factory that derives its own COMPLETE blending state therefore
  * must not be routed through `buildMaterial` unless the caller passes
  * that whole state — the resolved defaults overwrite whatever the
  * config omits.
+ *
+ * One limit that is NOT backend-specific, since it is easy to assume
+ * otherwise: `premultipliedAlpha` is not expressible in the config
+ * either, and `SubtractiveBlending` / `MultiplyBlending` require it on
+ * EVERY path — `WebGPUPipelineUtils._getBlending`, `WebGLState` and the
+ * WebGL fallback's `WebGLState` all refuse those two identically,
+ * logging an error and issuing no blend state (on the WebGL path the
+ * cached blending is still marked as applied, so the draw silently
+ * keeps the previous material's blend factors). Both presets are
+ * unusable through this helper on either backend.
  *
  * @module rendering/materials/_shared/material-builder
  */
@@ -101,10 +109,14 @@ export interface BuildMaterialConfig {
  * default already applied.
  *
  * DERIVED from the config type rather than spelled out, so adding a
- * seventh render-state key there is a compile error here instead of a
- * key that `resolveRenderState` quietly ignores and the WebGPU branch
- * quietly drops — which is precisely the shape of #2563. The inherited
- * `readonly` modifiers are harmless: both branches only read.
+ * seventh render-state key to {@link BuildMaterialConfig} is a compile
+ * error in `resolveRenderState` instead of a key it quietly ignores.
+ * That is the whole benefit and the whole extent of it: once the
+ * resolver returns the new key, the per-field assignments in the WebGPU
+ * branch still compile without it, so remember to add the line there —
+ * a dropped assignment is exactly the shape of #2563 and no type
+ * catches it. The inherited `readonly` modifiers are harmless: both
+ * branches only read.
  */
 type ResolvedRenderState = Required<Omit<BuildMaterialConfig, 'uniforms' | 'defines'>>;
 
@@ -143,7 +155,8 @@ function resolveRenderState(config: BuildMaterialConfig): ResolvedRenderState {
  * `transparent`, `toneMapped`, `side`) is applied on BOTH branches and
  * wins over anything a TSL factory set on itself; omitted fields take
  * the same resolved defaults either way. `defines` is WebGL-only. See
- * the module docblock for the three limits on that agreement.
+ * the module docblock for the limits on that agreement, and for the
+ * blending states this helper cannot express at all.
  */
 export function buildMaterial(
   source: ShaderSource,

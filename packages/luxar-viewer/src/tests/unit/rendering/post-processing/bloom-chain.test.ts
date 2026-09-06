@@ -108,7 +108,10 @@ describe('BloomChain pass blending — WebGL2 / WebGPU parity', () => {
   //
   // The WebGPU arm builds real TSL NodeMaterials, so the lazily-loaded
   // registry has to be installed first — `requireTslMaterials()` in
-  // `bloom/shaders.ts` throws otherwise.
+  // `bloom/shaders.ts` throws otherwise. That is also why this block
+  // must stay ABOVE the `bloom TSL factories` one below: that block
+  // calls `vi.resetModules()` and mocks `three/tsl`, and this one needs
+  // the real module through `loadTslMaterials()`. Do not reorder them.
   beforeAll(async () => {
     await loadTslMaterials();
   });

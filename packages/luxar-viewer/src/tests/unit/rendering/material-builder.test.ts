@@ -169,8 +169,9 @@ describe('buildMaterial render-state contract', () => {
    * `ALL_NON_DEFAULT`'s `AdditiveBlending` (2) and from this arm's
    * `side` (`BackSide`, 1), so a `blending ← side` half-swap still
    * fails. `SubtractiveBlending` / `MultiplyBlending` would be poor
-   * canonical choices — WebGPU rejects both without
-   * `premultipliedAlpha`, which the config cannot express.
+   * canonical choices for a config test: three refuses both on EVERY
+   * backend without `material.premultipliedAlpha`, which
+   * `BuildMaterialConfig` cannot express.
    */
   const PAIRS_CROSSED: FullRenderState = {
     blending: THREE.NoBlending,
@@ -196,10 +197,13 @@ describe('buildMaterial render-state contract', () => {
   });
 
   it('resolves the SAME defaults on both backends when the config omits them', () => {
-    // The stand-in factory returns Three's raw defaults, which are NOT
-    // the builder's — `MeshBasicMaterial.toneMapped` is `true` — so an
-    // equal-and-documented assertion proves the builder wrote them
-    // rather than inheriting them.
+    // `toneMapped` is the one discriminating field here: it is the
+    // only one of the six where the stand-in factory's raw default
+    // (`MeshBasicMaterial.toneMapped === true`) differs from the
+    // builder's resolved default, so this arm alone would still pass
+    // with the other five WebGPU assignments deleted. The third arm
+    // below is what pins those, via a factory that pre-sets every
+    // field contrary to the config.
     const source = makeFakeTslSource();
     const glMat = buildMaterial(source, {}, makeCaps('webgl2'));
     const gpuMat = buildMaterial(source, {}, makeCaps('webgpu'));

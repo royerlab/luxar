@@ -90,21 +90,23 @@ For the passes that do call it, the render state in the config is
 `transparent`, `toneMapped` and `side` are resolved once (same defaults either
 way — note `toneMapped` defaults to `false`, the opposite of Three's own) and
 then applied to the `ShaderMaterial` _or_ the `NodeMaterial`, overriding whatever
-the TSL factory set on itself. `defines` is WebGL-only: the field exists on every
-material, but nothing on the node path reads it, so threading it would be inert.
+the TSL factory set on itself. `defines` is WebGL-only: nothing in three's node
+pipeline reads a material's `defines`, so threading it would be inert there.
 The WebGPU branch used to forward `uniforms` alone and drop the rest, which
 silently disabled the bloom upsample pass's `AdditiveBlending` and turned WebGPU
 bloom into a flat dim wash (#2563).
 
-That agreement has three limits — `toneMapped` is only observed under
-`THREE.WebGLRenderer`, and neither `CustomBlending`'s factors nor
-`premultipliedAlpha` are expressible in the config; `material-builder.ts`'s module
-docblock is the canonical statement of all three. The consequence for this
-section is a routing rule: a factory that derives its own **complete** blending
-state must not be routed through `buildMaterial` with a partial config. Several of
-Luxar's modes need those factors (`getCompleteBlendingState` in
-`../../blending-state.ts` returns `CustomBlending` for `max`, `opaque` and
-`volumetric`, plus gsplat `normal`), and `pointWebGPUFactory` ends by calling
+That agreement has two limits — `toneMapped` is only observed under
+`THREE.WebGLRenderer`, and `CustomBlending`'s factors are not expressible in the
+config — plus one gap that is not backend-specific: `premultipliedAlpha` is not
+expressible either, and every backend refuses `SubtractiveBlending` /
+`MultiplyBlending` without it. `material-builder.ts`'s module docblock is the
+canonical statement of all three. The consequence for this section is a routing
+rule: a factory that derives its own **complete** blending state must not be
+routed through `buildMaterial` with a partial config. Several of Luxar's modes
+need those factors (`getCompleteBlendingState` in `../../blending-state.ts`
+returns `CustomBlending` for `max` and `opaque`, and for gsplat `normal` — whose
+helper `volumetric` also delegates to), and `pointWebGPUFactory` ends by calling
 `applyBlendingStateToMaterial` — so routing it through the builder with the
 example's partial config would clobber the `depthTest` / `depthWrite` /
 `transparent` the factory chose (`additive` wants `false / false / true`).
