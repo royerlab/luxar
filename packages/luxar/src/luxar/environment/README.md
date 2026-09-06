@@ -62,17 +62,18 @@ faces.view("float16")                     # (6, H, W, 4) radiance, px nx py ny p
 
 ## Modules
 
-| Module | What it is |
-| --- | --- |
+| Module         | What it is                                                                                                                                                                                                                |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `container.py` | The blob the viewer hands back: `LXENV001` magic, u32 header length, JSON header, raw `uint16` faces. `pack` / `unpack` are the single definition, mirrored by `packages/luxar-viewer/src/rendering/environment/bake.ts`. |
-| `attach.py` | `attach_environment(store, faces, force=False) -> AttachReport`: validation, the digest-named array, the hash guard, stale-sibling removal, consolidation. |
+| `attach.py`    | `attach_environment(store, faces, force=False) -> AttachReport`: validation, the digest-named array, the hash guard, stale-sibling removal, consolidation.                                                                |
+
 The CLI orchestration lives in `luxar.cli.env_ops.bake`: it serves the store and
 the built viewer, drives `packages/luxar-viewer/scripts/bake-env.mjs` (Node
 Playwright), then attaches through this package.
 
 ## Testing
 
-`env/tests/test_attach.py` pins the container round-trip and refusals, the
+`environment/tests/test_attach.py` pins the container round-trip and refusals, the
 digest-named array, the unchanged scene digest under BOTH hashing walks,
 idempotency and replacement, the stale-bake refusal and `--force`, and that the
 group is invisible to `LuxarScene.nodes`, `luxar info` and refused as a node name

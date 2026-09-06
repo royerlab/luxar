@@ -2,9 +2,9 @@
  * The scene environment's authored configuration and baked-map contract
  * (`docs/guides/specs/MESH_PHYSICAL_MATERIALS_SPEC.md` §3.3).
  *
- * Types only — this is the vocabulary the zarr bridge (`config/zarr-bridge`), the
- * loader (`data/loaders/environment`) and the renderer (`rendering/environment`) share,
- * and `types/` is the one layer all three may import.
+ * Shared types and probe parsing for the zarr bridge (`config/zarr-bridge`), loader
+ * (`data/loaders/environment`) and renderer (`rendering/environment`). `types/` is the
+ * one layer all three may import; runtime policy remains in the renderer.
  *
  * @module types/environment
  */

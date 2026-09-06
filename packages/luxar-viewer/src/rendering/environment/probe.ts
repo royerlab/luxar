@@ -18,11 +18,6 @@ import { log, Modules } from '../../utils/log';
 
 const _box = new THREE.Box3();
 
-/**
- * Parse a probe spelled as text — the `?probe=` URL parameter and the CLI flag:
- * `auto`, `node:<path>`, or `x,y,z` (a bracketed `[x,y,z]` is tolerated). Returns
- * `null` for anything else.
- */
 /** The canonical text form of a probe (what the bake header records). */
 export function formatProbeSpec(probe: EnvironmentProbe): string {
   if (probe === 'auto') return 'auto';
