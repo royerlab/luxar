@@ -247,20 +247,17 @@ export class SceneLoader {
   private readonly lineWorkingSetGate: LineWorkingSetGate;
   /**
    * Scene-wide byte-ceiling record for progressive refinement, surfaced on the
-   * debug snapshot (#2508).
+   * debug snapshot (#2508); lifetime contract on {@link RefinementResidencyStop}.
    *
-   * DELIBERATELY NOT CLEARED BY `dispose()`. Production always reaches a new
-   * scene through `SceneLoaderManager.createLoaderAsync`, which disposes this
-   * loader and constructs a fresh one — a fresh reporter with it — so a reset in
-   * `dispose()` would be code no path executes, and a dead reset is its own
-   * liability. The one caller that would notice is
-   * `scene-loader/lifecycle/load-scene.ts`, which calls `dispose()` on THIS
-   * loader when it already holds loaders: that path nulls `_gpuBufferPool` (so
-   * the pool's `byteBudgetEvictions` restarts at 0) while this `readonly`
-   * reporter survives, which is the only way the two capture-readiness signals
-   * can end up with different lifetimes. Latent, because reusing one
-   * `SceneLoader` across two `loadScene()` calls is already unsupported — see
-   * the class docstring.
+   * DELIBERATELY NOT CLEARED BY `dispose()`, because production reaches a new
+   * scene only through `SceneLoaderManager.createLoaderAsync`, which builds a
+   * fresh loader and reporter — a reset here would be code no path executes.
+   * Only the in-place `dispose()` in `scene-loader/lifecycle/load-scene.ts`
+   * would notice: it nulls `_gpuBufferPool` for good (the pool is constructed
+   * only in this class's constructor, so `SceneLoaderManager.gpuPoolStats()`
+   * then returns `undefined` and `gpuPool` is ABSENT from every later snapshot)
+   * while this `readonly` reporter survives. Latent regardless — reusing one
+   * `SceneLoader` across two `loadScene()` calls is unsupported (class docstring).
    */
   private readonly refinementResidencyReporter = new RefinementResidencyReporter();
   // Projected-density rung gate (density-gate.ts); null = no provider wired

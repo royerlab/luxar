@@ -17,20 +17,12 @@
  * "grep the console before comparing two builds" a convention instead of a gate.
  *
  * BOTH NEW SIGNALS ARE LOADER-SCOPED AND CUMULATIVE WITHIN THAT LIFE, AND THAT
- * IS DELIBERATE. Neither `refinementResidency` nor
- * `gpuPool.byteBudgetEvictions` is reset while a scene loader lives: the
- * reporter accumulates across refinement runs and the pool counter across
- * evictions, so each says "this happened at some point while this scene was
- * loaded", NOT "this is true right now". A scene that stopped at the ceiling and
- * then refined fully after a view change is still refused. That is the intended
- * verdict, not an oversight — refinement order is path-dependent, so a run that
- * hit the ceiling once settled on a composition the next run would not
- * reproduce, which is the whole thesis of #2508. The scope is the LOADER, not
- * the page: an in-page dataset switch goes through
- * `SceneLoaderManager.createLoaderAsync`, which disposes the outgoing
- * `SceneLoader` and constructs a fresh one — new reporter, new GPU pool — so the
- * next scene starts from a clean verdict with no reload. Do not add a reset
- * inside a loader's life.
+ * IS DELIBERATE: each says "this happened at some point while this scene was
+ * loaded", NOT "this is true right now", so a scene that stopped at the ceiling
+ * and then refined fully after a view change is still refused. The contract in
+ * full — why that is the verdict a capture tool wants, and why an in-page
+ * dataset switch clears it without a reload — lives on `RefinementResidencyStop`
+ * in `data/scene-loader/progressive/residency-budget.ts`.
  *
  * WHAT IT DOES **NOT** MEASURE: whether the framebuffer will contain pixels.
  * The {@link DebugState} totals deliberately include HIDDEN nodes (see the
@@ -105,7 +97,8 @@ export interface CaptureReadinessSummary {
    * snapshot did not carry it at all). Concurrent causes are reported together,
    * `; `-joined, rather than the first one shadowing the rest. No clause can
    * contain that sequence — the residency clause separates its own parenthetical
-   * fields with commas, and every snapshot-supplied string it echoes has its
+   * fields with commas, the unreadable-totals caveat separates its two halves
+   * the same way, and every snapshot-supplied string this module echoes has its
    * semicolons flattened first (see `echoable`) — so splitting on `'; '`
    * recovers exactly the causes and nothing else. Absent when the scene is ready
    * and every total read cleanly.
@@ -217,7 +210,8 @@ function wholeCount(value: unknown): number {
  */
 function describeDeclinedPaths(count: unknown): string {
   const declined = wholeCount(count);
-  return declined > 0 ? `${declined} node paths declined` : 'declined-path count unreadable';
+  if (declined <= 0) return 'declined-path count unreadable';
+  return `${declined} node path${declined === 1 ? '' : 's'} declined`;
 }
 
 /**
@@ -346,6 +340,14 @@ function residencyStopReason(stop: unknown): string | undefined {
  * them, which is how committed detail actually does get thrown away. Either way
  * the run's residency is a property of the machine rather than of the store, and
  * the capture is not comparable.
+ *
+ * THE REFUSAL IS DELIBERATELY CONSERVATIVE, AND STAYS SO EVEN OVER THE KNOWN
+ * BENIGN TRIGGER `PoolStats.byteBudgetEvictions` records (a node growing through
+ * a capacity tier, whose superseded smaller buffer the byte pass then reclaims).
+ * The asymmetry is the point: a false refusal costs one warning line in
+ * `tools/capture-hires.ts`, which takes the screenshot regardless, whereas a
+ * false pass is exactly the #2508 defect — a truncated capture believed by every
+ * A/B downstream. So the conservative direction is the right one.
  */
 function poolEvictionReason(gpuPool: unknown): string | undefined {
   if (typeof gpuPool !== 'object' || gpuPool === null) return undefined;
@@ -540,10 +542,17 @@ export function summarizeCaptureReadiness(
 
   /**
    * The counts this call had to give up on, named: `<fields> present but not
-   * finite (Infinity/NaN); <fields> absent from the snapshot`, or `undefined`
+   * finite (Infinity/NaN), <fields> absent from the snapshot`, or `undefined`
    * when every total read cleanly. Each caller appends its own consequence
    * clause, since "counted as zero" means something different either side of
    * the readiness verdict.
+   *
+   * The two halves are COMMA-joined for the same reason `residencyStopReason`
+   * comma-separates its parenthetical: this is ONE caveat clause, and `'; '` is
+   * what joins concurrent causes. Spelling the separator here split a snapshot
+   * carrying both a non-finite and an absent total into two fragments for any
+   * caller reading `reason` by splitting, which is the guarantee documented on
+   * {@link CaptureReadinessSummary.reason}.
    */
   const unreadable = (nonFinite: readonly string[]): string | undefined => {
     const parts: string[] = [];
@@ -553,7 +562,7 @@ export function summarizeCaptureReadiness(
     if (absentFields.length > 0) {
       parts.push(`${absentFields.join(', ')} absent from the snapshot`);
     }
-    return parts.length > 0 ? parts.join('; ') : undefined;
+    return parts.length > 0 ? parts.join(', ') : undefined;
   };
 
   if (totalElements > 0) {

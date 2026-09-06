@@ -85,9 +85,9 @@ machine?". `core/app/debug/capture-readiness.ts` refuses a capture on either
 **cumulative for the life of the scene loader and never reset within it**: they
 report that something happened at some point while this scene was loaded, not
 that it is true right now. The scope is the LOADER, not the page — an in-page
-dataset switch goes through `SceneLoaderManager.createLoaderAsync`, which builds
-a fresh `SceneLoader` (fresh reporter, fresh GPU pool), so the next scene starts
-clean with no reload. The rest of `gpuPool` is *not* cumulative: `activeBytes`,
+dataset switch builds a fresh `SceneLoader` (fresh reporter, fresh GPU pool), so
+the next scene starts clean with no reload. The rest of `gpuPool` is *not*
+cumulative: `activeBytes`,
 `pooledBytes`, `totalBytes`, `largestPooledBytes`, `activeBuffers` and
 `pooledBuffers` are instantaneous readings, and `evictions` is a lifetime
 counter dominated by routine recycling.

@@ -178,8 +178,9 @@ export interface DebugState {
   gpuPool?: GPUPoolDebugStats;
   /**
    * The progressive-refinement BYTE-ceiling stop, when refinement declined at
-   * least one rung while this scene was loaded; ABSENT when it never did. (The
-   * scope is the SceneLoader's life — a dataset switch builds a fresh one.)
+   * least one rung while this scene was loaded; ABSENT when it never did.
+   * Loader-scoped and cumulative within that life — see
+   * {@link RefinementResidencyStop} for the contract.
    *
    * Absence is "no stop", NOT "no information": an older viewer build simply
    * does not carry the field, and a consumer must not read that as a scene in

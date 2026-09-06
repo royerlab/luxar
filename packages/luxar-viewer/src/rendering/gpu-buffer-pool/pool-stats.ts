@@ -94,6 +94,18 @@ export interface PoolStats {
    * nothing to dispose, and the pass reports no evictions — so this is not a
    * "the pool could not hold the scene" detector. Compare `activeBytes` against
    * the budget for that question.
+   *
+   * KNOWN BENIGN TRIGGER: a node growing through a capacity tier under a binding
+   * budget. The growth releases the superseded SMALLER buffer to the pool and the
+   * byte pass immediately reclaims it, so the counter moves while nothing
+   * rendered was lost. Measured with `new GPUBufferPool(20, 300, 5, () =>
+   * 480_000)`, `acquirePointsGeometry('n1', 100)` then
+   * `acquirePointsGeometry('n1', 5000)`: `byteBudgetEvictions: 1`,
+   * `activeBuffers: 1`, `pooledBuffers: 0`. It only arises once `active + pooled`
+   * is ALREADY over budget (453 KB + 67 KB against 480 KB there; the same pair
+   * under a 10 MB budget evicts nothing), i.e. on a scene at the ceiling — which
+   * is the population this signal exists for. `capture-readiness.ts` refuses on
+   * it anyway, and argues that asymmetry at `poolEvictionReason`.
    */
   byteBudgetEvictions: number;
   /**

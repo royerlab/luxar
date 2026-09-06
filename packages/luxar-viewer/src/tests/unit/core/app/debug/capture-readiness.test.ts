@@ -267,6 +267,42 @@ describe('summarizeCaptureReadiness', () => {
     expectNoNaN(both);
   });
 
+  it('keeps BOTH unreadable halves inside ONE `; `-split clause', () => {
+    // `reason` documents that splitting on `'; '` recovers exactly the causes.
+    // The unreadable-totals caveat is ONE cause, but it has two halves — the
+    // non-finite totals and the absent ones — and joining them with the cause
+    // separator broke that guarantee for any snapshot carrying both, which is
+    // reachable on any version-skewed build. They are comma-joined instead.
+    const summary = summarizeCaptureReadiness({
+      totalPoints: Infinity,
+      totalLines: 100,
+      totalDroppedElements: 0,
+    } as Partial<DebugState>);
+
+    expect(summary.ok).toBe(true);
+    // One caveat in, ONE fragment out — not two.
+    expect(summary.reason!.split('; ')).toHaveLength(1);
+    expect(summary.reason).toBe(
+      'totalPoints present but not finite (Infinity/NaN), totalGSplats, totalTriangles ' +
+        'absent from the snapshot — counted as zero, so the reported counts under-state the scene'
+    );
+    expectNoNaN(summary);
+
+    // And beside a real cause it is still exactly one extra fragment, so a
+    // split-based caller counts two causes rather than three.
+    const withCap = summarizeCaptureReadiness({
+      totalPoints: Infinity,
+      totalLines: 100,
+      totalDroppedElements: 20,
+    } as Partial<DebugState>);
+    expect(withCap.ok).toBe(false);
+    const clauses = withCap.reason!.split('; ');
+    expect(clauses).toHaveLength(2);
+    expect(clauses[0]).toBe('20 elements were dropped by renderer capacity limits');
+    expect(clauses[1]).toMatch(/^totalPoints present but not finite/);
+    expectNoNaN(withCap);
+  });
+
   it('does not let a STALE totalElements contradict the per-type totals', () => {
     // A snapshot that carries `totalElements` but disagrees with its own
     // per-type totals must not resurrect the #1579 symptom: trusting the
@@ -985,6 +1021,39 @@ describe('summarizeCaptureReadiness', () => {
       expect(noBytes.reason).toContain('resident and budget bytes unreadable');
       expect(noBytes.reason).not.toMatch(/NaN|undefined/);
       expectNoNaN(noBytes);
+    });
+
+    it('says "1 node path declined", singular', () => {
+      // A single-node scene that hits the ceiling is the ordinary small case,
+      // and "1 node paths declined" reads as a formatting bug in the verdict —
+      // which is the one thing a message about unreadable counts cannot afford.
+      const one = summarizeCaptureReadiness(
+        makeState({
+          totalPoints: 100,
+          totalElements: 100,
+          refinementResidency: residencyStop({
+            declinedPathCount: 1,
+            declinedPaths: ['/galaxies/bright'],
+          }),
+        })
+      );
+
+      expect(one.ok).toBe(false);
+      expect(one.refinementDeclinedPathCount).toBe(1);
+      expect(one.reason).toContain('1 node path declined');
+      expect(one.reason).not.toContain('1 node paths declined');
+      expectNoNaN(one);
+
+      // Two is still plural — the singular case must not have been made the rule.
+      const two = summarizeCaptureReadiness(
+        makeState({
+          totalPoints: 100,
+          totalElements: 100,
+          refinementResidency: residencyStop({ declinedPathCount: 2 }),
+        })
+      );
+      expect(two.reason).toContain('2 node paths declined');
+      expectNoNaN(two);
     });
 
     it('REGRESSION: a dropped-elements-only reason is byte-identical to before', () => {

@@ -239,16 +239,22 @@ export const RESIDENCY_DECLINED_PATH_SAMPLE = 8;
  * node deferred on density is still going to refine when the user zooms in; a
  * node declined on bytes is not.
  *
- * CUMULATIVE FOR THE LIFE OF THE LOADER, WITH NO RESET, ON PURPOSE. Once present
- * this record stays present until its `SceneLoader` goes away, so it says
+ * CUMULATIVE FOR THE LIFE OF THE LOADER, WITH NO RESET, ON PURPOSE. THIS IS THE
+ * CANONICAL STATEMENT of that contract; the other places it matters (the debug
+ * snapshot field, `core/app/debug/capture-readiness.ts`, the two READMEs) say it
+ * in one sentence and point here. The snapshot's OTHER memory-ceiling signal,
+ * `gpuPool.byteBudgetEvictions`, is governed by the same contract, because the
+ * GPU buffer pool is built and thrown away with the same `SceneLoader`.
+ *
+ * Once present this record stays present until that loader goes away, so it says
  * "refinement hit the ceiling at some point while this scene was loaded", not
  * "the scene is truncated right now" — a scene that stopped and then refined
  * fully after a view change still carries it. That is the answer a capture tool
  * wants: refinement order is path-dependent, so the run that hit the ceiling
  * settled on a composition the next run would not reproduce. A dataset switch
  * builds a fresh loader (`SceneLoaderManager.createLoaderAsync`) and therefore a
- * fresh reporter, so the next scene starts from a clean record with no page
- * reload; do not clear this one within a loader's life.
+ * fresh reporter and a fresh pool, so the next scene starts from a clean record
+ * with no page reload; do not clear either within a loader's life.
  */
 export interface RefinementResidencyStop {
   /**
