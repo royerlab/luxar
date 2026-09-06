@@ -82,8 +82,8 @@ export interface LayerApplyEngineDeps {
   requestRender: () => void;
   /**
    * Marks the cached GPU pick buffer dirty so it re-renders after a panel edit
-   * changed a mesh's pick coverage (opacity/cutoff/blending). No-op when picking
-   * is inactive.
+   * changed a mesh's pick coverage (opacity/cutoff/blending/physical knobs).
+   * No-op when picking is inactive.
    */
   invalidatePickBuffer?: () => void;
 }
@@ -773,7 +773,10 @@ export class LayerApplyEngine {
       }
       applied = true;
     }
-    if (applied) this.deps.requestRender();
+    if (applied) {
+      this.deps.invalidatePickBuffer?.();
+      this.deps.requestRender();
+    }
   }
 
   applyBlendingMode(layer: LayerInfo): void {

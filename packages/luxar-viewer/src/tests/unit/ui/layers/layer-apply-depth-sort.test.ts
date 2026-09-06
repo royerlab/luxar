@@ -155,7 +155,7 @@ function inheritedHarness(initialMode: string, ancestorMode: string) {
   return { engine, state, mat, mesh, path: '/g/surf' };
 }
 
-function physicalInheritedHarness(ancestorMode: string) {
+function physicalInheritedHarness(ancestorMode: string, invalidatePickBuffer?: () => void) {
   const mat = new PhysicalMeshMaterial({ transmission: 0.9 });
   const mesh = new THREE.Mesh(new THREE.BufferGeometry(), mat);
   mesh.name = '/g/surf';
@@ -189,6 +189,7 @@ function physicalInheritedHarness(ancestorMode: string) {
     getSceneGraph: () => graph,
     state,
     requestRender: () => {},
+    invalidatePickBuffer,
   });
   return { engine, state, mat, mesh, path: '/g/surf' };
 }
@@ -256,5 +257,31 @@ describe('the depth-sort mode-switch hook is told the RESOLVED mode', () => {
     const [, newMode] = noteDepthSortBlendingModeSwitch.mock.calls[0];
     expect(newMode).toBe('opaque');
     expect(h.state.getLayer('/surf')!.blendingMode).toBe('opaque');
+  });
+});
+
+describe('physical knob pick-buffer invalidation', () => {
+  it('invalidates cached picking after a transmission edit', () => {
+    const invalidatePickBuffer = vi.fn();
+    const h = physicalInheritedHarness('normal', invalidatePickBuffer);
+    const layer = h.state.getLayer(h.path)!;
+    layer.physicalKnobs = {
+      roughness: 1,
+      metalness: 0,
+      clearcoat: 0,
+      clearcoat_roughness: 0,
+      iridescence: 0,
+      sheen: 0,
+      transmission: 0.6,
+      ior: 1.5,
+      thickness: 0,
+      attenuation_distance: Number.POSITIVE_INFINITY,
+      dispersion: 0,
+    };
+
+    h.engine.applyPhysicalKnobs(layer);
+
+    expect(h.mat.transparent).toBe(true);
+    expect(invalidatePickBuffer).toHaveBeenCalledTimes(1);
   });
 });
