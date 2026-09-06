@@ -362,6 +362,24 @@ class ZarrWriterProtocol(Protocol):
         """
         ...
 
+    def write_sound(
+        self,
+        path: NodePath,
+        payload: bytes,
+        fmt: str,
+        positions: Optional[PositionArray],
+        *,
+        sound_attrs: dict,
+        **attrs: Any,
+    ) -> dict:
+        """Write a sound node: an opaque MP3/AAC clip + optional positions.
+
+        ``fmt`` is ``"mp3"`` or ``"aac"`` (already sniffed by the adder);
+        ``sound_attrs`` carries the validated playback / spatial / licence knobs
+        and ``**attrs`` the compositing pass-throughs. Returns the node metadata.
+        """
+        ...
+
     def write_mesh_multi_lod(
         self,
         path: NodePath,

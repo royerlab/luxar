@@ -17,6 +17,7 @@ import zarr
 from arbol import aprint
 
 from .._zarr_compat import open_group as zarr_open_group
+from .._zarr_compat import suppress_payload_member_warning
 from ..typing_utils._format_contract import GEOMETRY_TYPES
 from ..typing_utils.constants import RESERVED_ROOT_GROUPS
 from ._traceback import exit_with_error
@@ -232,7 +233,9 @@ def _print_tree(
         node_type = "scene"
     # Contract vocabulary, not a literal tuple: a geometry type added to
     # ``geometry_types`` but missed here would be reported as a plain "group".
-    elif stored_type in GEOMETRY_TYPES:
+    elif stored_type in GEOMETRY_TYPES or stored_type == "sound":
+        # `sound` is a node type but not a geometry type (heard, not drawn), so
+        # it is named here rather than reached through the geometry vocabulary.
         node_type = stored_type
     else:
         node_type = "group"
@@ -269,6 +272,15 @@ def _print_tree(
             attrs["shape"] = vertices.shape
             attrs["dtype"] = str(vertices.dtype)
 
+    elif node_type == "sound":
+        attrs["format"] = group.attrs.get("format", "?")
+        attrs["trigger"] = group.attrs.get("trigger", "?")
+        attrs["bus"] = group.attrs.get("bus", "?")
+        if group.attrs.get("has_positions"):
+            attrs["n_positions"] = group.attrs.get("n_positions", 0)
+        if "duration_ms" in group.attrs:
+            attrs["duration_s"] = round(float(group.attrs["duration_ms"]) / 1000.0, 1)
+
     # Print node
     if depth == 0:
         aprint(format_tree_node("/", depth, is_last, prefix, node_type, attrs))
@@ -287,12 +299,14 @@ def _print_tree(
 
     # Get children. A reserved root group (a baked `environment` map, a
     # `.gsplats.zarr` bookkeeping bucket) is metadata, not a node, and the tree
-    # is a tree of NODES.
-    subgroups = [
-        name
-        for name in group.group_keys()
-        if not (depth == 0 and name in RESERVED_ROOT_GROUPS)
-    ]
+    # is a tree of NODES. Payload members (an overlay's image, a sound clip)
+    # are not zarr nodes either; zarr 3 warns when it enumerates past them.
+    with suppress_payload_member_warning():
+        subgroups = [
+            name
+            for name in group.group_keys()
+            if not (depth == 0 and name in RESERVED_ROOT_GROUPS)
+        ]
 
     # Print children
     for i, subgroup_name in enumerate(subgroups):

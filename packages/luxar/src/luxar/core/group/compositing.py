@@ -87,7 +87,7 @@ from ...validation.writing import (
 #: '<x>': …`` prefix ahead of a wrapper-creation failure, and that prefix must
 #: never be mistaken for (or stripped as) a geometry adder's — see
 #: :func:`funnel_add_error`.
-_GEOMETRY_WORDS = ("points", "lines", "mesh", "gsplats")
+_GEOMETRY_WORDS = ("points", "lines", "mesh", "gsplats", "sound")
 
 #: The mesh-only authored keys refused on every non-mesh node by the
 #: adder/group and write-through guards.

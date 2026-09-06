@@ -667,3 +667,37 @@ describe('ControlRail', () => {
     raf.mockRestore();
   });
 });
+
+describe('ControlRail — hidden items', () => {
+  it('does not render a button whose hidden predicate is true, and shows it once the predicate flips', () => {
+    let hasSound = false;
+    rail = new ControlRail(
+      items([
+        {},
+        { id: 'audio', title: 'Sound', icon: RAIL_ICONS.audio, hidden: () => !hasSound },
+        {},
+      ])
+    );
+    const btn = document.querySelector('[data-rail-id="audio"]') as HTMLButtonElement;
+    expect(btn.hidden).toBe(true);
+
+    hasSound = true;
+    window.dispatchEvent(new Event('luxar-audio-changed'));
+    vi.runOnlyPendingTimers();
+    expect(btn.hidden).toBe(false);
+  });
+
+  it('a throwing hidden predicate leaves the button shown', () => {
+    rail = new ControlRail(
+      items([
+        {
+          hidden: () => {
+            throw new Error('boom');
+          },
+        },
+      ])
+    );
+    const btn = document.querySelector('[data-rail-id="help"]') as HTMLButtonElement;
+    expect(btn.hidden).toBe(false);
+  });
+});

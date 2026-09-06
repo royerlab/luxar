@@ -624,6 +624,104 @@ class EnvironmentConfig:
         )
 
 
+#: The mixer buses a scene's audio config may set a gain for. Mirrors
+#: ``luxar.validation.sound.VALID_SOUND_BUSES``; repeated here so this module
+#: stays free of the writer-side validators.
+AUDIO_BUSES: Tuple[str, ...] = ("ambient", "voice", "effects")
+VALID_PANNING_MODELS: Tuple[str, ...] = ("equalpower", "HRTF")
+
+
+@dataclass
+class AudioConfig:
+    """Scene-wide audio defaults for the viewer's sound layer.
+
+    All fields are optional — unset fields use the viewer's built-in defaults
+    (``enabled=True`` when the scene has sound nodes, ``master_gain=0.8``,
+    equal-power panning for room speakers, buses ``ambient 0.6 / voice 1.0 /
+    effects 0.8``, ``duck_db=-9``). Unknown bus names are refused loudly, like
+    unknown ``rendering`` keys on a :class:`Waypoint`: a typo here would
+    silently leave a bus at its default. See ``SOUND_SPEC.md`` §3.3.
+    """
+
+    enabled: Optional[bool] = None
+    master_gain: Optional[float] = None
+    panning_model: Optional[str] = None
+    buses: Optional[Dict[str, float]] = None
+    duck_db: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        """Validate every field that is set."""
+        if self.enabled is not None and not isinstance(self.enabled, bool):
+            raise ValueError(f"audio.enabled must be a bool, got {self.enabled!r}")
+        if self.master_gain is not None:
+            if isinstance(self.master_gain, bool) or not isinstance(
+                self.master_gain, (int, float)
+            ):
+                raise ValueError(
+                    f"audio.master_gain must be a number, got {self.master_gain!r}"
+                )
+            if not math.isfinite(self.master_gain):
+                raise ValueError("audio.master_gain must be finite")
+            _validate_range(self.master_gain, "audio.master_gain", 0.0, 2.0)
+        if self.panning_model is not None and self.panning_model not in (
+            VALID_PANNING_MODELS
+        ):
+            raise ValueError(
+                f"audio.panning_model must be one of {VALID_PANNING_MODELS}, "
+                f"got {self.panning_model!r}"
+            )
+        if self.buses is not None:
+            if not isinstance(self.buses, dict):
+                raise ValueError("audio.buses must be a dict of bus name -> gain")
+            unknown = sorted(k for k in self.buses if k not in AUDIO_BUSES)
+            if unknown:
+                raise ValueError(
+                    f"audio.buses has unknown bus(es) {unknown}; valid buses are "
+                    f"{list(AUDIO_BUSES)}"
+                )
+            for bus, gain in self.buses.items():
+                if isinstance(gain, bool) or not isinstance(gain, (int, float)):
+                    raise ValueError(
+                        f"audio.buses[{bus!r}] must be a number, got {gain!r}"
+                    )
+                if not math.isfinite(gain):
+                    raise ValueError(f"audio.buses[{bus!r}] must be finite")
+                _validate_range(gain, f"audio.buses[{bus!r}]", 0.0, 2.0)
+        if self.duck_db is not None:
+            if isinstance(self.duck_db, bool) or not isinstance(
+                self.duck_db, (int, float)
+            ):
+                raise ValueError(
+                    f"audio.duck_db must be a number, got {self.duck_db!r}"
+                )
+            if not math.isfinite(self.duck_db):
+                raise ValueError("audio.duck_db must be finite")
+            _validate_range(self.duck_db, "audio.duck_db", -60.0, 0.0)
+
+    _FIELDS = ("enabled", "master_gain", "panning_model", "buses", "duck_db")
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary, omitting None fields."""
+        result: Dict[str, Any] = {}
+        for field_name in self._FIELDS:
+            value = getattr(self, field_name)
+            if value is not None:
+                result[field_name] = dict(value) if isinstance(value, dict) else value
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> AudioConfig:
+        """Create from dictionary. Unknown keys are ignored (forward compatibility)."""
+        buses = data.get("buses")
+        return cls(
+            enabled=data.get("enabled"),
+            master_gain=data.get("master_gain"),
+            panning_model=data.get("panning_model"),
+            buses=dict(buses) if isinstance(buses, dict) else None,
+            duck_db=data.get("duck_db"),
+        )
+
+
 def _validate_hex_color(color: str) -> None:
     """Validate a hex color string like '#rrggbb'."""
     if not re.match(r"^#[0-9a-fA-F]{6}$", color):
@@ -866,6 +964,9 @@ class ViewerConfig:
     # `Waypoint`. First match in list order wins.
     waypoints: Optional[List[Waypoint]] = None
 
+    # Sound layer defaults (master gain, buses, ducking, panning). See `AudioConfig`.
+    audio: Optional[AudioConfig] = None
+
     def __post_init__(self) -> None:
         """Validate all configuration values."""
         self.validate()
@@ -875,6 +976,9 @@ class ViewerConfig:
         # Camera validation is handled by CameraConfig.__post_init__
 
         self._validate_waypoints()
+
+        if self.audio is not None and not isinstance(self.audio, AudioConfig):
+            raise ValueError("audio must be an AudioConfig")
 
         if self.title is not None:
             if not isinstance(self.title, str) or not self.title.strip():
@@ -1050,6 +1154,11 @@ class ViewerConfig:
 
         result.update(self._waypoints_to_dict())
 
+        if self.audio is not None:
+            audio_dict = self.audio.to_dict()
+            if audio_dict:
+                result["audio"] = audio_dict
+
         return result
 
     def _waypoints_to_dict(self) -> Dict[str, Any]:
@@ -1093,6 +1202,10 @@ class ViewerConfig:
                 Waypoint.from_dict(w) for w in data["waypoints"] if isinstance(w, dict)
             ]
 
+        audio = None
+        if "audio" in data and isinstance(data["audio"], dict):
+            audio = AudioConfig.from_dict(data["audio"])
+
         kwargs: Dict[str, Any] = {
             "camera": camera,
             "environment": environment,
@@ -1100,6 +1213,7 @@ class ViewerConfig:
             "dimensions": dimensions,
             "animation": animation,
             "waypoints": waypoints,
+            "audio": audio,
         }
 
         # Populate simple fields from data

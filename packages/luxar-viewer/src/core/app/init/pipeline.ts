@@ -11,6 +11,8 @@ import { RecordingPanel } from '../../../ui/recording-panel';
 import { LayersPanel } from '../../../ui/layers';
 import { ControlRail } from '../../../ui/control-rail';
 import { buildRailItems } from './build-rail-items';
+import { AudioEngine } from '../../../audio/audio-engine';
+import { getViewerContainer } from '../../../utils/viewer-container';
 import { DataMonitorManager } from '../../../ui/data-monitor-manager';
 import { SceneLoaderManager, getSceneLoader } from '../../../data/scene-loader-manager';
 import { LODGroupRegistry } from '../../../scene/lod-group-registry';
@@ -52,6 +54,8 @@ export interface InitPipelineResult {
   recordingPanel: RecordingPanel;
   layersPanel: LayersPanel;
   controlRail: ControlRail;
+  /** The sound layer (nodes attach per scene in `LuxarApp.installAudio`). */
+  audioEngine: AudioEngine;
   /** Resolved dataset URL — orchestrator routes to browser or load. */
   sceneSrc: string;
 }
@@ -75,6 +79,8 @@ export interface InitPipelinePorts {
   events: EventGroup;
   getPanelVisibilityStates: () => Map<string, boolean>;
   restorePanelVisibilityStates: (states: Map<string, boolean>) => void;
+  /** Emit a public embedder event (the audio engine's `sound-started` / `sound-ended`). */
+  emitEmbedderEvent: (event: 'sound-started' | 'sound-ended', payload: { name: string }) => void;
 }
 
 /**
@@ -635,6 +641,36 @@ export async function runInitPipeline(
   // Left activity rail — the always-visible, discoverable entry point to the
   // otherwise keyboard-only panels. Each button fires the SAME command as its
   // shortcut (via inputHandler.getUiActions()), so behaviour never drifts.
+  // The sound layer. Constructs no AudioContext until a scene with sound nodes
+  // attaches; every viewer piece it needs arrives as a port so `audio/` stays
+  // below `scene/` in the layer order (see src/audio/README.md).
+  const audioEngine = new AudioEngine({
+    getCamera: () => sceneManager.camera,
+    onCameraReplaced: (cb) => {
+      const handler = (): void => cb();
+      sceneManager.addEventListener('camera-changed', handler);
+      return () => sceneManager.removeEventListener('camera-changed', handler);
+    },
+    getDims: () => sceneDimsManager.getDims(),
+    onDimsChanged: (cb) => {
+      const listener = (): void => cb();
+      sceneDimsManager.addListener(listener);
+      return () => sceneDimsManager.removeListener(listener);
+    },
+    getSceneGraph: () => getSceneLoader('default')?.sceneGraph ?? null,
+    getSceneScale: () => sceneManager.getSceneScale(),
+    container: getViewerContainer,
+    emit: (event, payload) => ports.emitEmbedderEvent(event, payload),
+    notifyUiChanged: () => {
+      // The rail refreshes on this. Guarded like a unit test's bare window stub
+      // expects: no dispatcher, no event (the layers panel's own event is the model).
+      if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+        window.dispatchEvent(new CustomEvent('luxar-audio-changed'));
+      }
+    },
+  });
+  partial.audioEngine = audioEngine;
+
   const ui = inputHandler.getUiActions();
   const railItems = buildRailItems({
     ui,
@@ -649,6 +685,7 @@ export async function runInitPipeline(
     layersPanel,
     debugConsole,
     recordingPanel,
+    audioEngine,
   });
   // Dock the perf readout as the rail's footer; the gauge above toggles it.
   const controlRail = new ControlRail(railItems, performanceMonitor.element);

@@ -463,6 +463,8 @@ def format_tree_node(
         line += " 💠"
     elif node_type == "mesh":
         line += " 🔺"
+    elif node_type == "sound":
+        line += " 🔈"
 
     # Add selected attributes
     if attrs:

@@ -220,6 +220,7 @@ function makePorts(): InitPipelinePorts {
     events: new EventGroup(),
     getPanelVisibilityStates: vi.fn().mockReturnValue(new Map()),
     restorePanelVisibilityStates: vi.fn(),
+    emitEmbedderEvent: vi.fn(),
   };
 }
 
@@ -407,6 +408,7 @@ describe('runInitPipeline', () => {
         events: new EventGroup(),
         getPanelVisibilityStates: vi.fn().mockReturnValue(new Map()),
         restorePanelVisibilityStates: vi.fn(),
+        emitEmbedderEvent: vi.fn(),
       };
 
       await runInitPipeline(ports, {});

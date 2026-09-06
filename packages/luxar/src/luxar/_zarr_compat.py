@@ -79,8 +79,10 @@ from __future__ import annotations
 import json
 import os
 import warnings
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from typing import Iterator as _Iterator
 
 import numpy as np
 import zarr
@@ -932,6 +934,51 @@ def consolidate(target: zarr.Group | Any) -> None:
             message=".*[Cc]onsolidated metadata is currently not part.*",
         )
         zarr.consolidate_metadata(store)
+
+
+#: The zarr 3 warning raised while ENUMERATING a group that holds a plain payload
+#: key (an overlay's ``image.png``, a sound node's ``audio.mp3``). Luxar stores
+#: carry such keys by design (``finalize/hashing.py::PAYLOAD_FILE_ATTRS``), so the
+#: advice is noise here — and under ``-W error`` it turned every finalize of a
+#: scene with an overlay image into ``Could not finalize Zarr store``.
+_PAYLOAD_MEMBER_WARNING = (
+    r"Object at .* is not recognized as a component of a Zarr hierarchy"
+)
+
+
+@contextmanager
+def suppress_payload_member_warning() -> "_Iterator[None]":
+    """Scope out zarr's plain-payload member warning for a whole store walk.
+
+    For code that enumerates MANY groups through zarr's own API (the compiler's
+    finalize pass, ``luxar info``): one boundary instead of a helper call at
+    every ``group_keys()`` site. Same process-global caveat as :func:`consolidate`.
+    """
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=_PAYLOAD_MEMBER_WARNING)
+        yield
+
+
+def array_keys(group: zarr.Group) -> list[str]:
+    """``group.array_keys()`` without zarr's plain-payload member warning.
+
+    zarr's member enumeration opens every key under the group's prefix and warns
+    about each one that is not a node. A Luxar group may legitimately hold one —
+    the raw payload file :func:`write_raw_bytes` stores — so callers that walk a
+    whole store (the content hasher, the reader) enumerate through here. Same
+    scoping caveat as :func:`consolidate`: ``catch_warnings`` is process-global,
+    which holds because Luxar's parallel writers are subprocesses.
+    """
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=_PAYLOAD_MEMBER_WARNING)
+        return list(group.array_keys())
+
+
+def group_keys(group: zarr.Group) -> list[str]:
+    """``group.group_keys()`` without zarr's plain-payload member warning (see :func:`array_keys`)."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=_PAYLOAD_MEMBER_WARNING)
+        return list(group.group_keys())
 
 
 def close(group: zarr.Group) -> None:

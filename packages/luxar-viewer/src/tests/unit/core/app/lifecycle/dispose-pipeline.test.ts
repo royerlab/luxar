@@ -136,6 +136,7 @@ function makePorts(s: Stubs): DisposePipelinePorts {
   return {
     events: s.events,
     pickingEvents: s.pickingEvents,
+    audioEngine: undefined,
     sceneManager: s.sceneManager as unknown as DisposePipelinePorts['sceneManager'],
     animationController:
       s.animationController as unknown as DisposePipelinePorts['animationController'],
@@ -413,6 +414,7 @@ describe('runDisposePipeline', () => {
       const ports: DisposePipelinePorts = {
         events: new EventGroup(),
         pickingEvents: new EventGroup(),
+        audioEngine: undefined,
         sceneManager: undefined,
         animationController: undefined,
         performanceMonitor: undefined,

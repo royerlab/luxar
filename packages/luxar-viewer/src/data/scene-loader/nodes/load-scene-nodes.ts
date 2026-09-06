@@ -1,7 +1,8 @@
 /**
  * Recursive scene-graph walk: for each leaf node dispatch to the
  * per-type initial-load helper (`loadPointsNode` / `loadLinesNode` /
- * `loadGSplatsNode`); for each group node create a `THREE.Group`,
+ * `loadGSplatsNode` / `loadMeshNode`, plus `loadSoundNode` for the heard-not-drawn
+ * `sound` type); for each group node create a `THREE.Group`,
  * apply its transform if present, and recurse into its children.
  *
  * Each leaf call is wrapped in `loadLeafNode` so a single failing node doesn't
@@ -19,6 +20,7 @@ import { loadLeafNode } from './load-leaf-error-dispatch';
 import { geometryDescriptorFor } from '../geometry-descriptors';
 import { loadLodGroupNode } from './load-lod-group-node';
 import { loadPartitionGroupNode } from './load-partition-group-node';
+import { loadSoundNode } from './load-sound-node';
 import type { NodeBuildCtx } from './build-ctx';
 import { loadChildrenConcurrently } from './load-children-concurrently';
 
@@ -40,6 +42,11 @@ export async function loadSceneNodes(
     // fetching data; no caller-side `if (node) add(node)` is needed. The
     // placeholder stays in the scene even on failure so retry can populate it.
     await loadLeafNode(() => descriptor.loadNode(node, parentThree, parentLoc, ctx), node.path);
+  } else if (node.type === 'sound') {
+    // A sound node is heard, not drawn: it is in the contract's `node_types`
+    // but not in `geometry_types`, so it has no descriptor. Its placeholder
+    // carries the descriptor the audio engine consumes after the scene attaches.
+    await loadLeafNode(() => loadSoundNode(node, parentThree, parentLoc, ctx), node.path);
   } else if (node.type === 'group' && node.attrs.kind === 'lod') {
     // A kind=lod Group is a specialized container that recurses into
     // children itself (it needs to capture each child's THREE node +

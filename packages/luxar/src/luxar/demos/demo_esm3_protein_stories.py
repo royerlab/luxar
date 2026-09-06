@@ -33,6 +33,14 @@ Usage:
     python -m luxar.demos.demo_esm3_protein_stories
     python -m luxar.demos.demo_esm3_protein_stories --no-serve
     python -m luxar.demos.demo_esm3_protein_stories --no-auto-rotate
+    python -m luxar.demos.demo_esm3_protein_stories --no-audio
+
+Sound (``docs/guides/specs/SOUND_SPEC.md``): a CC0 ambient bed plays under the
+whole tour and each story is narrated on arrival. Narration is synthesised when
+the scene is BUILT — OpenAI TTS when ``OPENAI_API_KEY`` is set, the macOS
+system voice otherwise, silence (with a warning) on a box with neither — and
+cached under ``~/.cache/luxar/esm3_protein_stories/narration``. ``--no-audio``
+skips the whole layer (no download, no synthesis).
 
 Requires the base demo's cache (``~/.cache/luxar/esm3_swissprot``: the UMAP
 positions and the metadata). Run ``luxar demo run esm3_protein_landscape``
@@ -52,13 +60,16 @@ DEMO_META = {
     "category": "embeddings",
     "geometry": "points",
     "requirements": {
-        "download_mb": 0,
+        # The CC0 ambient bed (OpenGameArt "Calm Ambient 1", ~6 MiB); narration
+        # is synthesised locally, never downloaded.
+        "download_mb": 7,
         "compute": "light",
         "gpu": "none",
         "local_data": None,
     },
-    # Reads the base demo's cache; adds its own for the PDB turntables.
-    "caches": ["esm3_swissprot", "pdb_turntables"],
+    # Reads the base demo's cache; adds its own for the PDB turntables and
+    # for the sound layer (the cached ambient bed + synthesised narration).
+    "caches": ["esm3_swissprot", "pdb_turntables", "esm3_protein_stories"],
     "outputs": ["esm3_protein_stories"],
     "citation": {
         "short": "UniProt/Swiss-Prot; embeddings by EvolutionaryScale ESM C, 2024",
@@ -79,10 +90,11 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.core.viewer_config import CameraConfig, ViewerConfig, Waypoint
-from luxar.demos import add_demo_caption, launch_viewer
+from luxar.core.viewer_config import AudioConfig, CameraConfig, ViewerConfig, Waypoint
+from luxar.demos import add_demo_caption, cached_download, launch_viewer
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG, pull_in
 from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
+from luxar.demos._narration import resolve_engine, synthesise
 from luxar.demos._pdb_turntable import TurntableAssets, render_turntables
 from luxar.demos.demo_esm3_protein_landscape import (
     TAXON_COLORS,
@@ -630,6 +642,39 @@ STORY_DIM = "story"
 UNIPROT_LINK = "https://www.uniprot.org/uniprotkb?query={hover_key}"
 PANEL_WIDTH = 0.32
 
+# =============================================================================
+# Sound layer (SOUND_SPEC.md §5): an ambient bed plus one narration per story
+# =============================================================================
+
+# A CC0 ambient pad — "Calm Ambient 1 (Synthwave 4k)" by The Cynic Project
+# (cynicmusic.com), published on OpenGameArt: soft evolving pads and slow
+# chords, no percussion, ~2.6 min. Chosen over a Freesound field-recording
+# drone the owner found too industrial. The file is a stable direct download
+# (no login), pinned by checksum so a silent swap upstream is caught.
+AMBIENT_BED_URL = "https://opengameart.org/sites/default/files/001_Synthwave_4k_0.mp3"
+AMBIENT_BED_FILENAME = "calm_ambient_1_cynicmusic.mp3"
+AMBIENT_BED_SHA256 = "56b31f997020da1abd4092f5e82457592323717a23e4d560c5f8135d26c3b8be"
+AMBIENT_BED_SOURCE_URL = "https://opengameart.org/content/calm-ambient-1-synthwave-4k"
+AMBIENT_BED_ATTRIBUTION = (
+    "The Cynic Project / cynicmusic.com — 'Calm Ambient 1 (Synthwave 4k)' "
+    "(OpenGameArt, CC0)"
+)
+AMBIENT_BED_GAIN = 0.35
+
+# Narration is synthesised at BUILD time (OpenAI TTS when a key is present, the
+# macOS system voice otherwise; a Linux box without a key builds silently) and
+# cached under this demo's own cache dir, keyed by (engine, voice, text).
+NARRATION_CACHE_DIR = (
+    Path.home() / ".cache" / "luxar" / "esm3_protein_stories" / "narration"
+)
+NARRATION_VOICES = {"openai": "alloy", "say": "Samantha"}
+NARRATION_SOURCE_URL = "https://github.com/royerlab/luxar"
+# `on_arrive` (play when the flight lands) is Phase 2 of the sound layer; until
+# then the narration fires on the story's rising edge after the flight duration
+# plus a beat, which lands it where the flight ends.
+NARRATION_AFTER_FLIGHT_MS = 600
+OVERVIEW_FLIGHT_MS = 3000
+
 # Marker sphere around each story's cluster: a subtle translucent shell so the
 # cluster reads as a place, not just as brighter dots. Built from the existing
 # mesh model — per-vertex RGBA alpha, additive blending, the light-free
@@ -900,6 +945,95 @@ def overview_panel_html(n_proteins: int) -> str:
 # =============================================================================
 
 
+def narration_text(story: Story, index: int, total: int) -> str:
+    """The spoken form of a story panel: title, subtitle, facts, open question."""
+    facts = " ".join(f.rstrip(".") + "." for f in story.facts)
+    return (
+        f"Story {index} of {total}: {story.title}. {story.subtitle.rstrip('.')}. "
+        f"{facts} Open question: {story.mystery.rstrip('.')}."
+    )
+
+
+def overview_narration_text(n_proteins: int) -> str:
+    """The spoken overview: the panel text with its markup stripped."""
+    body = re.sub(r"<br\s*/?>", " ", OVERVIEW_HTML.format(n=n_proteins))
+    body = re.sub(r"<[^>]+>", "", body)
+    return f"{OVERVIEW_TITLE}. {' '.join(body.split())}"
+
+
+def add_story_sounds(
+    scene: object,
+    stories: tuple[Story, ...],
+    n_proteins: int,
+    *,
+    narration_dir: Path = NARRATION_CACHE_DIR,
+    engine: str | None = None,
+) -> int:
+    """Add the ambient bed and one narration per story slot. Returns the node count.
+
+    The bed is a cached CC0 download; a network failure skips it with a warning
+    rather than failing the build. Narration is synthesised through
+    :func:`luxar.demos._narration.synthesise`; when no engine is available the
+    stories stay silent (the helper has already warned).
+    """
+    added = 0
+    try:
+        bed = cached_download(
+            AMBIENT_BED_URL,
+            "esm3_protein_stories",
+            AMBIENT_BED_FILENAME,
+            sha256=AMBIENT_BED_SHA256,
+        )
+    except Exception as e:  # noqa: BLE001 - offline build must still produce the scene
+        aprint(f"⚠️ Ambient bed unavailable ({e}); building without it")
+        bed = None
+    if bed is not None:
+        scene.add_sound(  # type: ignore[attr-defined]
+            "bed_ambient",
+            bed,
+            trigger="continuous",
+            gain=AMBIENT_BED_GAIN,
+            fade_in_ms=1500,
+            fade_out_ms=1500,
+            bus="ambient",
+            license="CC0",
+            attribution=AMBIENT_BED_ATTRIBUTION,
+            source_url=AMBIENT_BED_SOURCE_URL,
+        )
+        added += 1
+
+    chosen = resolve_engine(engine)
+    voice = NARRATION_VOICES.get(chosen or "", "")
+    total = len(stories)
+    slots: list[tuple[int, str, str, int]] = [
+        (0, "Overview", overview_narration_text(n_proteins), OVERVIEW_FLIGHT_MS)
+    ]
+    slots += [
+        (k, s.key, narration_text(s, k, total), s.flight_ms)
+        for k, s in enumerate(stories, start=1)
+    ]
+    for k, key, text, flight_ms in slots:
+        clip = synthesise(text, voice, narration_dir, engine=chosen or "none")
+        if clip is None:
+            break
+        scene.add_sound(  # type: ignore[attr-defined]
+            f"narration_{key}",
+            clip,
+            hidden={STORY_DIM: k},
+            trigger="once",
+            delay_ms=flight_ms + NARRATION_AFTER_FLIGHT_MS,
+            bus="voice",
+            license="CC0",
+            attribution=f"Narration synthesised at build time ({chosen}, voice {voice})",
+            source_url=NARRATION_SOURCE_URL,
+        )
+        added += 1
+    aprint(
+        f"🔈 {added} sound node(s): bed {'yes' if bed else 'no'}, narration engine {chosen}"
+    )
+    return added
+
+
 def load_landscape_cache(cache_dir: Path) -> tuple[np.ndarray, dict[str, np.ndarray]]:
     """Load the base demo's cached UMAP positions and metadata, or explain."""
     umap_cache = cache_dir / "umap3d_esmc_300m_all.npz"
@@ -937,8 +1071,13 @@ def build_stories_scene(
     auto_rotate: bool = True,
     turntables: bool = True,
     turntable_cache: Path | None = None,
+    audio: bool = True,
 ) -> int:
-    """Write the stories scene. Returns the number of proteins in the backdrop."""
+    """Write the stories scene. Returns the number of proteins in the backdrop.
+
+    ``audio=False`` skips the sound layer (no bed download, no narration
+    synthesis) — the ``--no-audio`` flag, for an offline or headless build.
+    """
     n = len(positions)
     names = meta["names"]
     organisms = meta["organisms"]
@@ -1034,6 +1173,17 @@ def build_stories_scene(
             # device resolution (the viewer's default caps DPR for laptops).
             allow_high_dpr=True,
             waypoints=waypoints,
+            # Sound layer defaults: room speakers (equal-power), the bed under the
+            # voice by 9 dB while a narration plays.
+            audio=AudioConfig(
+                enabled=True,
+                master_gain=0.8,
+                panning_model="equalpower",
+                buses={"ambient": 0.6, "voice": 1.0, "effects": 0.8},
+                duck_db=-9.0,
+            )
+            if audio
+            else None,
         )
 
     dims = Dimensions(
@@ -1243,6 +1393,10 @@ def build_stories_scene(
                 DEMO_META.get("citation"),
             )
 
+            if audio:
+                with asection("Sound layer"):
+                    add_story_sounds(scene, stories, n)
+
     aprint(f"✓ Wrote {n:,} proteins and {len(stories)} stories to {output_path}")
     return n
 
@@ -1260,6 +1414,7 @@ def main() -> None:
 
     auto_rotate = "--no-auto-rotate" not in sys.argv
     turntables = "--no-turntables" not in sys.argv
+    audio = "--no-audio" not in sys.argv
     cache_dir = Path.home() / ".cache" / "luxar" / "esm3_swissprot"
     try:
         positions, meta = load_landscape_cache(cache_dir)
@@ -1271,7 +1426,12 @@ def main() -> None:
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "esm3_protein_stories.luxar.zarr"
         n = build_stories_scene(
-            output_path, positions, meta, auto_rotate=auto_rotate, turntables=turntables
+            output_path,
+            positions,
+            meta,
+            auto_rotate=auto_rotate,
+            turntables=turntables,
+            audio=audio,
         )
         aprint(f"Dataset generated at {output_path} ({n:,} proteins)")
         return
@@ -1279,7 +1439,12 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="luxar_esm3_stories_") as tmpdir:
         output_path = Path(tmpdir) / "esm3_protein_stories.luxar.zarr"
         n = build_stories_scene(
-            output_path, positions, meta, auto_rotate=auto_rotate, turntables=turntables
+            output_path,
+            positions,
+            meta,
+            auto_rotate=auto_rotate,
+            turntables=turntables,
+            audio=audio,
         )
 
         aprint("")

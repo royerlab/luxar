@@ -1,0 +1,457 @@
+/**
+ * The viewer's audio engine: owns the `AudioContext` (through three's
+ * `AudioListener`, which is the master gain), the three buses and the ducker,
+ * the autoplay gate, and one {@link SoundNode} per `sound` node in the loaded
+ * scene (`SOUND_SPEC.md` §4.1).
+ *
+ * Everything the engine needs from the rest of the viewer arrives as PORTS —
+ * the camera, the dims manager, the scene graph, the container, the embedder
+ * emitter — so `audio/` sits between `data` and `scene` in the layer order and
+ * the engine runs in a node test with a fake `AudioContext` injected through
+ * `THREE.AudioContext.setContext`.
+ *
+ * Nothing is constructed until a scene with at least one sound node attaches:
+ * a viewer showing a plain points scene never creates an `AudioContext`.
+ *
+ * @module audio/audio-engine
+ */
+
+import * as THREE from 'three';
+import type { SceneNode } from '../data/data-loader-types';
+import type { SimpleDims } from '../types/dims';
+import {
+  AUDIO_BUS_NAMES,
+  type AudioBusName,
+  type AudioConfigOverrides,
+  type AudioContextState,
+  type AudioPatch,
+  type AudioState,
+  type PanningModel,
+  type SoundSourceDescriptor,
+} from '../types/audio';
+import { log, Modules } from '../utils/log';
+import { buildSoundBaseViewState } from './audibility';
+import { loadAudioPrefs, saveAudioPrefs } from './audio-prefs';
+import { AutoplayGate } from './autoplay-gate';
+import { dbToGain, rampGain } from './fades';
+import { parseSoundNodeAttrs } from './sound-attrs';
+import { SoundNode } from './sound-node';
+
+/** Disposer returned by the engine's subscription ports. */
+export type Unsubscribe = () => void;
+
+/** The pieces of the viewer the engine reads, as ports (see module docs). */
+export interface AudioEngineDeps {
+  getCamera(): THREE.Object3D;
+  /** Fires after the camera OBJECT is replaced (perspective ⇄ ortho); the listener re-parents. */
+  onCameraReplaced(cb: () => void): Unsubscribe;
+  getDims(): SimpleDims | null;
+  /** Fires synchronously on every dimension change. */
+  onDimsChanged(cb: () => void): Unsubscribe;
+  getSceneGraph(): SceneNode | null;
+  /** Scene characteristic size — the distance defaults derive from it. */
+  getSceneScale(): number;
+  /** Where the autoplay gate mounts. */
+  container(): HTMLElement;
+  emit(event: 'sound-started' | 'sound-ended', payload: { name: string }): void;
+  /** Tell the UI (the rail) the engine's state changed. */
+  notifyUiChanged(): void;
+}
+
+const DEFAULT_BUSES: Record<AudioBusName, number> = { ambient: 0.6, voice: 1.0, effects: 0.8 };
+const DEFAULT_MASTER_GAIN = 0.8;
+const DEFAULT_DUCK_DB = -9;
+const DUCK_RAMP_MS = 150;
+
+/**
+ * The sound layer's engine: one per `LuxarApp`, nodes attached per scene.
+ * See the module docs for the graph it builds and the ports it takes.
+ */
+export class AudioEngine {
+  private listener: THREE.AudioListener | null = null;
+  private busNodes: Record<AudioBusName, GainNode> | null = null;
+  private duck: GainNode | null = null;
+  private readonly nodes = new Map<string, SoundNode>();
+  private readonly gate: AutoplayGate;
+  private unsubscribeDims: Unsubscribe | null = null;
+  private unsubscribeCamera: Unsubscribe | null = null;
+
+  private masterGain = DEFAULT_MASTER_GAIN;
+  private muted = false;
+  private sceneEnabled = true;
+  private panningModel: PanningModel = 'equalpower';
+  private busGains: Record<AudioBusName, number> = { ...DEFAULT_BUSES };
+  private duckDb = DEFAULT_DUCK_DB;
+  private activeVoiceClips = 0;
+  private readonly playing = new Set<string>();
+  private disposed = false;
+
+  constructor(private readonly deps: AudioEngineDeps) {
+    const prefs = loadAudioPrefs();
+    if (prefs.muted !== undefined) this.muted = prefs.muted;
+    if (prefs.masterGain !== undefined) this.masterGain = prefs.masterGain;
+    this.gate = new AutoplayGate(deps.container, () => this.onGateTapped());
+  }
+
+  // ── Graph ────────────────────────────────────────────────────────────
+
+  private get context(): AudioContext | null {
+    return this.listener?.context ?? null;
+  }
+
+  /** Build the listener, buses and ducker on first use. */
+  private ensureGraph(): THREE.AudioListener {
+    if (this.listener && this.busNodes && this.duck) return this.listener;
+    const listener = new THREE.AudioListener();
+    const ctx = listener.context;
+    const input = listener.getInput();
+    const duck = ctx.createGain();
+    duck.gain.value = 1;
+    duck.connect(input);
+    const buses = {} as Record<AudioBusName, GainNode>;
+    for (const name of AUDIO_BUS_NAMES) {
+      const g = ctx.createGain();
+      g.gain.value = this.busGains[name];
+      g.connect(name === 'ambient' ? duck : input);
+      buses[name] = g;
+    }
+    listener.setMasterVolume(this.effectiveMaster());
+    this.listener = listener;
+    this.busNodes = buses;
+    this.duck = duck;
+    ctx.onstatechange = () => this.deps.notifyUiChanged();
+    this.attachListener();
+    this.unsubscribeCamera?.();
+    this.unsubscribeCamera = this.deps.onCameraReplaced(() => this.attachListener());
+    return listener;
+  }
+
+  private attachListener(): void {
+    if (!this.listener) return;
+    const camera = this.deps.getCamera();
+    if (this.listener.parent !== camera) camera.add(this.listener);
+  }
+
+  private effectiveMaster(): number {
+    return this.muted || !this.sceneEnabled ? 0 : this.masterGain;
+  }
+
+  // ── Scene lifecycle ──────────────────────────────────────────────────
+
+  /**
+   * Find every sound node under `root` (their placeholders carry
+   * `userData.sound`), build the graph if needed, evaluate the slab once,
+   * and start decoding clips. Idempotent per scene: call `detachScene` first
+   * when a new dataset loads.
+   */
+  attachScene(root: THREE.Object3D): void {
+    if (this.disposed) return;
+    const found: Array<{ desc: SoundSourceDescriptor; parent: THREE.Object3D }> = [];
+    root.traverse((obj) => {
+      const desc = obj.userData?.sound as SoundSourceDescriptor | undefined;
+      if (obj.userData?.nodeType === 'sound' && desc) found.push({ desc, parent: obj });
+    });
+    if (found.length === 0) {
+      this.deps.notifyUiChanged();
+      return;
+    }
+    const listener = this.ensureGraph();
+    const buses = this.busNodes!;
+    const scale = this.deps.getSceneScale();
+    for (const { desc, parent } of found) {
+      if (this.nodes.has(desc.path)) continue;
+      const attrs = parseSoundNodeAttrs(desc.path, desc.rawAttrs, scale);
+      const node = new SoundNode(desc, attrs, {
+        listener,
+        bus: buses[attrs.bus],
+        panningModel: this.panningModel,
+        parent,
+        onStarted: (name) => this.onNodeStarted(name, attrs.bus),
+        onEnded: (name) => this.onNodeEnded(name, attrs.bus),
+      });
+      node.setMuted(this.muted || !this.sceneEnabled);
+      this.nodes.set(desc.path, node);
+    }
+    log.custom('🔈', Modules.AUDIO, `${this.nodes.size} sound node(s) attached`);
+
+    this.unsubscribeDims?.();
+    this.unsubscribeDims = this.deps.onDimsChanged(() => this.evaluate());
+    this.evaluate();
+    this.checkGate();
+    void this.decodeAll();
+    this.deps.notifyUiChanged();
+  }
+
+  /** Stop and drop every node; keep the context and buses for the next scene. */
+  detachScene(): void {
+    this.unsubscribeDims?.();
+    this.unsubscribeDims = null;
+    for (const node of this.nodes.values()) node.dispose();
+    this.nodes.clear();
+    this.playing.clear();
+    this.activeVoiceClips = 0;
+    this.setDuck(1);
+    this.gate.hide();
+    this.deps.notifyUiChanged();
+  }
+
+  private evaluate(): void {
+    const dims = this.deps.getDims();
+    if (!dims || this.nodes.size === 0) return;
+    const base = buildSoundBaseViewState(dims);
+    const sceneGraph = this.deps.getSceneGraph();
+    for (const node of this.nodes.values()) node.setViewState(base, sceneGraph);
+  }
+
+  private async decodeAll(): Promise<void> {
+    const ctx = this.context;
+    if (!ctx) return;
+    // Sequential on purpose: decoding is CPU-heavy and a scene with a dozen
+    // clips would otherwise stall the main thread in one burst. Audible-first,
+    // so the opening slice's bed and narration land before the silent clips.
+    const ordered = Array.from(this.nodes.values()).sort(
+      (a, b) => Number(b.isAudibleNow) - Number(a.isAudibleNow)
+    );
+    for (const node of ordered) {
+      if (this.disposed || !this.nodes.has(node.path)) return;
+      try {
+        const bytes = await node.desc.readClip();
+        if (!bytes) {
+          log.warning(Modules.AUDIO, `${node.path}: clip ${node.attrs.audio_file} not found`);
+          continue;
+        }
+        const copy = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+        const buffer = await ctx.decodeAudioData(copy as ArrayBuffer);
+        if (this.disposed || !this.nodes.has(node.path)) return;
+        node.setBuffer(buffer);
+      } catch (error) {
+        log.warning(Modules.AUDIO, `${node.path}: could not decode clip`, error);
+      }
+    }
+  }
+
+  // ── Autoplay gate ────────────────────────────────────────────────────
+
+  private checkGate(): void {
+    const ctx = this.context;
+    if (!ctx || this.nodes.size === 0) return;
+    if (this.muted || !this.sceneEnabled) {
+      this.gate.hide();
+      return;
+    }
+    if (ctx.state === 'running') {
+      this.openGate();
+      return;
+    }
+    if (ctx.state === 'suspended') {
+      // A kiosk with the autoplay flag resumes here; a browser without a
+      // gesture rejects or stays suspended, and the gate takes over.
+      void ctx
+        .resume()
+        .then(() => {
+          if (ctx.state === 'running') this.openGate();
+          else this.gate.show();
+        })
+        .catch(() => this.gate.show());
+    }
+  }
+
+  private onGateTapped(): void {
+    const ctx = this.context;
+    if (!ctx) return;
+    void ctx
+      .resume()
+      .then(() => this.openGate())
+      .catch((error) => log.warning(Modules.AUDIO, 'AudioContext.resume() failed', error));
+  }
+
+  private openGate(): void {
+    this.gate.hide();
+    for (const node of this.nodes.values()) node.setGateOpen(true);
+    this.deps.notifyUiChanged();
+  }
+
+  // ── Ducking + events ─────────────────────────────────────────────────
+
+  private onNodeStarted(name: string, bus: AudioBusName): void {
+    this.playing.add(name);
+    if (bus === 'voice') {
+      this.activeVoiceClips++;
+      if (this.activeVoiceClips === 1) this.setDuck(dbToGain(this.duckDb));
+    }
+    this.deps.emit('sound-started', { name });
+    this.deps.notifyUiChanged();
+  }
+
+  private onNodeEnded(name: string, bus: AudioBusName): void {
+    this.playing.delete(name);
+    if (bus === 'voice') {
+      this.activeVoiceClips = Math.max(0, this.activeVoiceClips - 1);
+      if (this.activeVoiceClips === 0) this.setDuck(1);
+    }
+    this.deps.emit('sound-ended', { name });
+    this.deps.notifyUiChanged();
+  }
+
+  private setDuck(target: number): void {
+    const ctx = this.context;
+    if (!ctx || !this.duck) return;
+    rampGain(this.duck.gain, ctx.currentTime, ctx.currentTime, target, DUCK_RAMP_MS);
+  }
+
+  // ── Configuration ────────────────────────────────────────────────────
+
+  /**
+   * Apply a scene's authored `viewer_config.audio`. The listener's own
+   * persisted preferences (mute, master gain) win over the scene's defaults.
+   */
+  applySceneConfig(overrides: AudioConfigOverrides): void {
+    const prefs = loadAudioPrefs();
+    this.sceneEnabled = overrides.enabled !== false;
+    if (overrides.masterGain !== undefined && prefs.masterGain === undefined) {
+      this.masterGain = overrides.masterGain;
+    }
+    if (overrides.panningModel) this.setPanningModel(overrides.panningModel);
+    if (overrides.buses) {
+      for (const name of AUDIO_BUS_NAMES) {
+        const v = overrides.buses[name];
+        if (v !== undefined) this.setBusGain(name, v);
+      }
+    }
+    if (overrides.duckDb !== undefined) this.duckDb = overrides.duckDb;
+    this.listener?.setMasterVolume(this.effectiveMaster());
+    for (const node of this.nodes.values()) node.setMuted(this.muted || !this.sceneEnabled);
+    this.deps.notifyUiChanged();
+  }
+
+  /** Live patch from the embedder API or the rail popover. */
+  setAudio(patch: AudioPatch): void {
+    if (patch.masterGain !== undefined) this.setMasterGain(patch.masterGain);
+    if (patch.muted !== undefined) this.setMuted(patch.muted);
+    if (patch.panningModel) this.setPanningModel(patch.panningModel);
+    if (patch.buses) {
+      for (const name of AUDIO_BUS_NAMES) {
+        const v = patch.buses[name];
+        if (v !== undefined) this.setBusGain(name, v);
+      }
+    }
+  }
+
+  setMasterGain(value: number): void {
+    if (!Number.isFinite(value)) return;
+    this.masterGain = Math.min(2, Math.max(0, value));
+    this.listener?.setMasterVolume(this.effectiveMaster());
+    saveAudioPrefs({ muted: this.muted, masterGain: this.masterGain });
+    this.deps.notifyUiChanged();
+  }
+
+  /**
+   * Mute everything (with each node's fade-out) or unmute. Unmuting also
+   * re-enables a scene that authored `enabled: false` for this session, since
+   * the listener asked for sound explicitly. A muted scene never shows the gate.
+   */
+  setMuted(muted: boolean): void {
+    this.muted = muted;
+    if (!muted) this.sceneEnabled = true;
+    this.listener?.setMasterVolume(this.effectiveMaster());
+    for (const node of this.nodes.values()) node.setMuted(muted);
+    saveAudioPrefs({ muted: this.muted, masterGain: this.masterGain });
+    if (muted) this.gate.hide();
+    else this.checkGate();
+    this.deps.notifyUiChanged();
+  }
+
+  setPanningModel(model: PanningModel): void {
+    if (model !== 'equalpower' && model !== 'HRTF') return;
+    this.panningModel = model;
+    for (const node of this.nodes.values()) node.setPanningModel(model);
+  }
+
+  setBusGain(bus: AudioBusName, value: number): void {
+    if (!Number.isFinite(value)) return;
+    const v = Math.min(2, Math.max(0, value));
+    this.busGains[bus] = v;
+    const ctx = this.context;
+    if (ctx && this.busNodes) {
+      rampGain(this.busNodes[bus].gain, ctx.currentTime, ctx.currentTime, v, DUCK_RAMP_MS);
+    }
+    this.deps.notifyUiChanged();
+  }
+
+  // ── Queries + manual control ─────────────────────────────────────────
+
+  private findNode(name: string): SoundNode | undefined {
+    const direct = this.nodes.get(name);
+    if (direct) return direct;
+    for (const node of this.nodes.values()) if (node.name === name) return node;
+    return undefined;
+  }
+
+  /** Start `name` (basename or full path) regardless of the slab. */
+  play(name: string): boolean {
+    const node = this.findNode(name);
+    return node ? node.play() : false;
+  }
+
+  /** Stop `name` with its fade-out. */
+  stop(name: string): boolean {
+    const node = this.findNode(name);
+    return node ? node.stop() : false;
+  }
+
+  hasSoundNodes(): boolean {
+    return this.nodes.size > 0;
+  }
+
+  isMuted(): boolean {
+    return this.muted || !this.sceneEnabled;
+  }
+
+  getMasterGain(): number {
+    return this.masterGain;
+  }
+
+  getBusGains(): Record<AudioBusName, number> {
+    return { ...this.busGains };
+  }
+
+  getState(): AudioState {
+    const ctx = this.context;
+    const state: AudioContextState = ctx ? (ctx.state as AudioContextState) : 'unavailable';
+    return {
+      state,
+      muted: this.isMuted(),
+      masterGain: this.masterGain,
+      panningModel: this.panningModel,
+      buses: { ...this.busGains },
+      // Live voice state, not the event log: a node fading out is already gone here
+      // while its `sound-ended` fires when the fade completes.
+      playing: Array.from(this.nodes.values())
+        .filter((n) => n.isPlaying)
+        .map((n) => n.name)
+        .sort(),
+      hasSoundNodes: this.nodes.size > 0,
+    };
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.detachScene();
+    this.disposed = true;
+    this.unsubscribeCamera?.();
+    this.unsubscribeCamera = null;
+    this.gate.dispose();
+    const ctx = this.context;
+    this.listener?.removeFromParent();
+    this.listener = null;
+    this.busNodes = null;
+    this.duck = null;
+    if (ctx) {
+      ctx.onstatechange = null;
+      void ctx.close().catch(() => undefined);
+      // Three caches the context in a module singleton; a re-init must not
+      // inherit a closed one.
+      THREE.AudioContext.setContext(undefined as unknown as AudioContext);
+    }
+  }
+}

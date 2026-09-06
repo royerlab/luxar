@@ -18,6 +18,9 @@ import type { CameraSnapshot } from '../snapshot/viewer-snapshot';
 import type { RenderingSettings } from '../../../config';
 import type { BlendingMode } from '../../../types/blending';
 import type { LayerType } from '../../../ui/layers/layer-state';
+import type { AudioState } from '../../../types/audio';
+
+export type { AudioState, AudioPatch, AudioBusName, PanningModel } from '../../../types/audio';
 export type { CameraSnapshot } from '../snapshot/viewer-snapshot';
 export type { RenderingSettings } from '../../../config';
 export type { BlendingMode } from '../../../types/blending';
@@ -206,6 +209,8 @@ export interface ViewerState {
   dimensions: EmbedderDimensions;
   rendering: RenderingSettings;
   layers: LayerSummary[];
+  /** The sound layer: context state, mute, gains, what is playing. */
+  audio: AudioState;
 }
 
 /**
@@ -250,4 +255,8 @@ export interface LuxarEmbedderEventMap {
   selection: SelectionPayload | null;
   'element-click': ElementPointerPayload;
   'element-contextmenu': ElementPointerPayload;
+  /** A sound node started playing (after its `delay_ms`). `name` is the node name. */
+  'sound-started': { name: string };
+  /** A sound node stopped — its `once` clip ran out, or it faded out on the slab edge. */
+  'sound-ended': { name: string };
 }

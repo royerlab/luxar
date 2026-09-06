@@ -32,7 +32,7 @@ SUPPORTED_GSPLATS_VERSIONS: Final[tuple[GSplatsFormatVersion, ...]] = (
 FORMAT_TYPE_GSPLATS: Final[str] = "gsplats_zarr"
 
 # --- scene-graph node types ---
-NodeTypeName = Literal["scene", "group", "points", "lines", "gsplats", "mesh"]
+NodeTypeName = Literal["scene", "group", "points", "lines", "gsplats", "mesh", "sound"]
 NODE_TYPES: Final[tuple[NodeTypeName, ...]] = (
     "scene",
     "group",
@@ -40,6 +40,7 @@ NODE_TYPES: Final[tuple[NodeTypeName, ...]] = (
     "lines",
     "gsplats",
     "mesh",
+    "sound",
 )
 
 # --- leaf geometry types (the element-bearing subset of NODE_TYPES) ---

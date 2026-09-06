@@ -743,6 +743,30 @@ For a complete worked example — story dimension, dimmed backdrop, per-story
 highlight layers, fact panels and waypoints — run
 `luxar demo run esm3_protein_stories` (it reads the ESM3 landscape demo's cache).
 
+### Sound
+
+A scene may carry `sound` nodes (`scene.add_sound`, see
+`docs/guides/specs/SOUND_SPEC.md`): an ambient bed, a narration bound to a
+story step, or a spatial source that gets louder as the camera approaches. Their
+audibility is the same hidden-dimension slab rule that decides which points are
+visible, so scrubbing a story dimension starts and stops the clips that belong
+to each step. When a loaded scene has sound nodes a **Sound** button appears in
+the rail: click mutes everything (persisted across scenes), right-click opens
+the mixer (master gain, the `ambient` / `voice` / `effects` buses, equal-power
+vs HRTF panning). The voice bus ducks the ambient bed while a narration plays.
+Scene defaults live in `ViewerConfig(audio=AudioConfig(...))`, and a controller
+drives the same knobs through `setAudio()`, `playSound()`, `stopSound()` and
+`getViewerState().audio`.
+
+Browsers refuse to start audio without a gesture on the page. In a regular tab
+the viewer shows a one-time **Tap to enable sound** overlay that the first click
+or key dismisses. For an unattended kiosk launch Chrome with the autoplay policy
+relaxed so the context starts on load and the gate never appears:
+
+```
+google-chrome --kiosk --autoplay-policy=no-user-gesture-required "http://host:5173/?src=…"
+```
+
 See `luxar.ViewerConfig` docstring for the full field list with types and
 valid ranges.
 

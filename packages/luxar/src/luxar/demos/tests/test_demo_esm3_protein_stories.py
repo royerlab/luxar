@@ -11,10 +11,16 @@ import numpy as np
 import pytest
 
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
+from luxar.demos import demo_esm3_protein_stories as demo
 from luxar.demos.demo_esm3_protein_stories import (
+    NARRATION_AFTER_FLIGHT_MS,
+    OVERVIEW_FLIGHT_MS,
     STORIES,
     STORY_DIM,
     Story,
+    add_story_sounds,
+    narration_text,
+    overview_narration_text,
     overview_panel_html,
     select_story_members,
     story_camera,
@@ -202,3 +208,117 @@ def test_shipped_stories_are_well_formed_and_author_valid_waypoints() -> None:
         ]
     )
     assert len(vc.to_dict()["waypoints"]) == 11
+
+
+# =============================================================================
+# Sound layer: narration text + node assembly
+# =============================================================================
+
+
+def test_narration_text_reads_the_panel_in_order() -> None:
+    text = narration_text(_story(facts=("fact one", "fact two.")), index=3, total=10)
+    assert text.startswith("Story 3 of 10: Test story. sub. ")
+    assert (
+        text.index("fact one.")
+        < text.index("fact two.")
+        < text.index("Open question: why?")
+    )
+    assert "<" not in text and ">" not in text
+    overview = overview_narration_text(1234)
+    assert overview.startswith("Ten stories in the protein universe. ")
+    assert "1,234 Swiss-Prot proteins" in overview
+    assert "<b>" not in overview and "<br>" not in overview
+
+
+def test_add_story_sounds_authors_a_bed_and_one_narration_per_slot(
+    tmp_path, monkeypatch
+) -> None:
+    """The bed download and the TTS are swapped for fakes; the SOUND NODES that land
+    in the store are real (through ``scene.add_sound``)."""
+    from luxar import Dimension, Dimensions, LuxarZarrCompiler
+    from luxar._zarr_compat import open_group
+
+    mp3 = bytes.fromhex("fffb9000") + b"\x00" * 64
+    bed = tmp_path / "bed.mp3"
+    bed.write_bytes(mp3)
+    monkeypatch.setattr(demo, "cached_download", lambda *a, **k: bed)
+    spoken: list[str] = []
+
+    def fake_synthesise(text, voice, cache_dir, *, engine=None, engines=None):
+        spoken.append(text)
+        clip = cache_dir / f"{len(spoken)}.mp3"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        clip.write_bytes(mp3)
+        return clip
+
+    monkeypatch.setattr(demo, "synthesise", fake_synthesise)
+    stories = (
+        _story(key="A", flight_ms=2000),
+        _story(key="B", pattern="^x", flight_ms=4000),
+    )
+    store = tmp_path / "s.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(
+            dimensions=Dimensions(
+                [
+                    Dimension(
+                        STORY_DIM,
+                        unit="",
+                        categories=["Overview", "A", "B"],
+                        display=False,
+                    ),
+                    Dimension("x", unit="UMAP"),
+                    Dimension("y", unit="UMAP"),
+                    Dimension("z", unit="UMAP"),
+                ]
+            )
+        )
+        added = add_story_sounds(
+            scene, stories, 42, narration_dir=tmp_path / "narration", engine="openai"
+        )
+    assert added == 4  # bed + overview + two stories
+    assert spoken[0].startswith("Ten stories")
+    assert spoken[1].startswith("Story 1 of 2")
+    root = open_group(store, mode="r")
+    bed_attrs = dict(root["bed_ambient"].attrs)
+    assert bed_attrs["trigger"] == "continuous" and bed_attrs["bus"] == "ambient"
+    assert bed_attrs["has_positions"] is False
+    assert bed_attrs["license"] == "CC0"
+    narr = dict(root["narration_B"].attrs)
+    assert narr["trigger"] == "once" and narr["bus"] == "voice"
+    assert narr["delay_ms"] == 4000 + NARRATION_AFTER_FLIGHT_MS
+    assert narr["has_positions"] is True and narr["n_positions"] == 1
+    overview = dict(root["narration_Overview"].attrs)
+    assert overview["delay_ms"] == OVERVIEW_FLIGHT_MS + NARRATION_AFTER_FLIGHT_MS
+
+
+def test_add_story_sounds_stays_silent_without_an_engine_and_survives_no_bed(
+    tmp_path, monkeypatch
+) -> None:
+    from luxar import Dimension, Dimensions, LuxarZarrCompiler
+
+    def offline(*_a, **_k):
+        raise OSError("no network")
+
+    monkeypatch.setattr(demo, "cached_download", offline)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr("luxar.demos._narration.shutil.which", lambda _n: None)
+    store = tmp_path / "s.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(
+            dimensions=Dimensions(
+                [
+                    Dimension(
+                        STORY_DIM, unit="", categories=["Overview", "A"], display=False
+                    ),
+                    Dimension("x", unit="UMAP"),
+                    Dimension("y", unit="UMAP"),
+                    Dimension("z", unit="UMAP"),
+                ]
+            )
+        )
+        with pytest.warns(UserWarning, match="No narration engine"):
+            added = add_story_sounds(
+                scene, (_story(key="A"),), 1, narration_dir=tmp_path / "n", engine=None
+            )
+    assert added == 0

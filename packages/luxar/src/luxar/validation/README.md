@@ -249,6 +249,18 @@ These are the *composite* gates; the per-array primitives they call live in
 - `validate_broadcast_color()` / `validate_scalars_preflight()`: broadcast-scalar forms the array primitives do not cover
 - `validate_image_labels_for_writing()` / `check_image_label_type()`: dense-length and sparse-index checks, run before the CSR writer starts
 
+### `sound.py`
+Pure validators for the `sound` node type (`scene.add_sound`). Not re-exported at
+the package level — import directly from `luxar.validation.sound`.
+
+**Key Functions:**
+- `sniff_audio_format()`: `mp3` / `aac` from the magic bytes; refuses Ogg (Safari), WAV, FLAC, Matroska by name
+- `validate_audio_input()`: bytes or path → `(payload, format)`; a path's suffix must agree with its payload
+- `validate_sound_trigger()` / `validate_sound_bus()` / `validate_distance_model()`: vocabulary checks (`on_depart` / `on_arrive` are refused as Phase 2)
+- `validate_sound_licence()`: `license` / `attribution` / `source_url` are required for every clip
+- `validate_spatial_params()`: `PannerNode` knob ranges; returns only what was given
+- `validate_sound_passthrough_attrs()`: refuses writer-stamped keys and every appearance attr (a sound is heard, not drawn)
+
 ## Categorical Dimension Validation
 
 ### Overview

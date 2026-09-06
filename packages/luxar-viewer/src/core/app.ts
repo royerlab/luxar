@@ -21,6 +21,9 @@ import type {
 import { CameraFlight, type FlyToOptions, type FlightResult } from './app/camera/camera-flight';
 import { WaypointDriver, resolveWaypointPose } from './app/camera/waypoint-driver';
 import { extractRenderingOverrides } from '../config/zarr-bridge/viewer-config-utils';
+import { extractAudioConfig } from '../config/zarr-bridge/audio-config';
+import type { AudioEngine } from '../audio/audio-engine';
+import type { AudioPatch, AudioState } from '../types/audio';
 import { resolveTargetNodeCenter } from '../scene/scene-manager/camera/camera-setup';
 import { config, type RenderingSettings } from '../config';
 import type * as THREE from 'three';
@@ -97,6 +100,8 @@ export class LuxarApp {
   private recordingPanel?: RecordingPanel;
   private layersPanel?: LayersPanel;
   private controlRail?: ControlRail;
+  /** The sound layer; created by the init pipeline, nodes attach per scene. */
+  private audioEngine?: AudioEngine;
   private overlayManager?: OverlayManager;
   private pickingSystem?: PickingSystem;
   private labelLoader?: LabelLoader;
@@ -249,6 +254,7 @@ export class LuxarApp {
       if (partial.recordingPanel) this.recordingPanel = partial.recordingPanel;
       if (partial.layersPanel) this.layersPanel = partial.layersPanel;
       if (partial.controlRail) this.controlRail = partial.controlRail;
+      if (partial.audioEngine) this.audioEngine = partial.audioEngine;
     };
 
     this.isInitializing = true;
@@ -259,6 +265,7 @@ export class LuxarApp {
           events: this.events,
           getPanelVisibilityStates: () => this.getPanelVisibilityStates(),
           restorePanelVisibilityStates: (states) => this.restorePanelVisibilityStates(states),
+          emitEmbedderEvent: (event, payload) => this.embedderEvents.emit(event, payload),
         },
         partial
       );
@@ -363,6 +370,8 @@ export class LuxarApp {
     this.currentDatasetSrc = undefined;
     // The outgoing scene's waypoints must not fire on the incoming scene's dims.
     this.disposeWaypoints();
+    // ...and its sounds must stop before the new store loads.
+    this.audioEngine?.detachScene();
     try {
       await loadDatasetImpl(src, {
         inputHandler: this.inputHandler,
@@ -486,6 +495,23 @@ export class LuxarApp {
     // AFTER the core pass: `dimensions.current_step` has been applied, so the
     // load-time match sees the authored opening position and snaps to it.
     this.installWaypoints(viewerConfig?.waypoints);
+    // AFTER the waypoints: the opening slice is final, so the first slab
+    // evaluation starts exactly the sounds the opening story owns.
+    this.installAudio(viewerConfig?.audio);
+  }
+
+  /**
+   * Bind the sound layer to the loaded scene: apply the authored
+   * `viewer_config.audio` defaults (the listener's persisted mute / master gain
+   * win), then hand the engine the scene root so it finds the sound-node
+   * placeholders `loadSoundNode` attached and starts decoding their clips.
+   */
+  private installAudio(audio: unknown): void {
+    if (!this.audioEngine) return;
+    this.audioEngine.detachScene();
+    this.audioEngine.applySceneConfig(extractAudioConfig(audio));
+    const root = this.sceneManager.scene?.children?.find((c) => c.name === 'LuxarScene');
+    if (root) this.audioEngine.attachScene(root);
   }
 
   /**
@@ -1142,7 +1168,62 @@ export class LuxarApp {
       dimensions: this.getDimensions(),
       rendering: this.getRenderingSettings(),
       layers: this.getLayers(),
+      audio: this.getAudioState(),
     };
+  }
+
+  /**
+   * The sound layer's state: `AudioContext` state (`suspended` = the display
+   * still needs its tap), mute, master gain, panning model, bus gains, the
+   * names of the nodes playing, and whether the scene has sound nodes at all.
+   *
+   * @throws if the app has not been initialised yet.
+   */
+  getAudioState(): AudioState {
+    if (!this.isInitialized || !this.audioEngine) {
+      throw new Error('LuxarApp.getAudioState called before init()');
+    }
+    return this.audioEngine.getState();
+  }
+
+  /**
+   * Live mixer patch: master gain and mute (both persisted like the rail's own
+   * controls), per-bus gains, panning model. Fields left out are untouched.
+   *
+   * @throws if the app has not been initialised yet.
+   */
+  setAudio(patch: AudioPatch): void {
+    if (!this.isInitialized || !this.audioEngine) {
+      throw new Error('LuxarApp.setAudio called before init()');
+    }
+    this.audioEngine.setAudio(patch);
+  }
+
+  /**
+   * Start one sound node by name (its last path segment, or the full path)
+   * regardless of its slab audibility. Returns `false` for an unknown name or
+   * a clip that has not decoded yet.
+   *
+   * @throws if the app has not been initialised yet.
+   */
+  playSound(name: string): boolean {
+    if (!this.isInitialized || !this.audioEngine) {
+      throw new Error('LuxarApp.playSound called before init()');
+    }
+    return this.audioEngine.play(name);
+  }
+
+  /**
+   * Stop one sound node by name with its own fade-out. Returns `false` when
+   * nothing by that name was playing.
+   *
+   * @throws if the app has not been initialised yet.
+   */
+  stopSound(name: string): boolean {
+    if (!this.isInitialized || !this.audioEngine) {
+      throw new Error('LuxarApp.stopSound called before init()');
+    }
+    return this.audioEngine.stop(name);
   }
 
   /**
@@ -1214,6 +1295,7 @@ export class LuxarApp {
       pickingEvents: this.pickingEvents,
       sceneManager: this.sceneManager,
       animationController: this.animationController,
+      audioEngine: this.audioEngine,
       performanceMonitor: this.performanceMonitor,
       adaptiveDPRManager: this.adaptiveDPRManager,
       resolutionIndicator: this.resolutionIndicator,

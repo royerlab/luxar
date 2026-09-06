@@ -16,6 +16,7 @@ import { buildSettingsPopover } from '../../../ui/rail-panels/settings-popover';
 import { buildNavigationPopover } from '../../../ui/rail-panels/navigation-popover';
 import { buildPerformancePopover } from '../../../ui/rail-panels/performance-popover';
 import { buildHomePopover } from '../../../ui/rail-panels/home-popover';
+import { buildAudioPopover } from '../../../ui/rail-panels/audio-popover';
 import { getSceneLoader } from '../../../data/scene-loader-manager';
 import type { InputHandler } from '../../../input';
 import { nextControlType } from '../../../controls/types';
@@ -29,6 +30,7 @@ import type { PerformanceMonitor } from '../../../ui/performance-monitor';
 import type { LayersPanel } from '../../../ui/layers';
 import type { DebugConsole } from '../../../ui/debug-console';
 import type { RecordingPanel } from '../../../ui/recording-panel';
+import type { AudioEngine } from '../../../audio/audio-engine';
 import { KeyAction, type KeyActionId } from '../../../input';
 
 /** Everything the rail item closures reference (all constructed by the pipeline). */
@@ -48,6 +50,8 @@ export interface RailItemsDeps {
   layersPanel: LayersPanel;
   debugConsole: DebugConsole;
   recordingPanel: RecordingPanel;
+  /** The sound layer; the Sound button exists only while it has nodes. */
+  audioEngine: AudioEngine;
 }
 
 /**
@@ -68,6 +72,7 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
     layersPanel,
     debugConsole,
     recordingPanel,
+    audioEngine,
   } = deps;
   const controlModeShortcut = shortcutForAction(KeyAction.toggleControlMode);
 
@@ -233,6 +238,44 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
       icon: RAIL_ICONS.data,
       activate: () => ui.commands.toggleDatasetBrowser(),
       openSelector: '.luxar-dataset-browser',
+    },
+    {
+      // Sound: left-click toggles the mute, right-click opens the mixer. Hidden
+      // (not grayed) on a scene without sound nodes — the layer is invisible
+      // where it has nothing to say. Refreshed on 'luxar-audio-changed'.
+      id: 'audio',
+      title: 'Sound',
+      icon: RAIL_ICONS.audio,
+      hidden: () => !audioEngine.hasSoundNodes(),
+      activate: () => audioEngine.setMuted(!audioEngine.isMuted()),
+      isActive: () => audioEngine.isMuted(),
+      render: (btn) => {
+        const muted = audioEngine.isMuted();
+        const key = muted ? 'muted' : 'on';
+        if (btn.dataset.audioState === key) return;
+        btn.dataset.audioState = key;
+        const svg = btn.querySelector('svg');
+        if (svg) svg.outerHTML = muted ? RAIL_ICONS.audioMuted : RAIL_ICONS.audio;
+        btn.setAttribute(
+          'aria-label',
+          muted
+            ? 'Sound: muted — click to unmute, right-click for the mixer'
+            : 'Sound: on — click to mute, right-click for the mixer'
+        );
+        const tip = btn.querySelector('.luxar-control-rail__tip');
+        if (tip) tip.textContent = muted ? 'Sound · Muted' : 'Sound · On';
+      },
+      popover: {
+        trigger: 'context',
+        title: 'Sound',
+        build: (host) => {
+          closeOtherLeftPanels();
+          return buildAudioPopover(host, {
+            getState: () => audioEngine.getState(),
+            setAudio: (patch) => audioEngine.setAudio(patch),
+          });
+        },
+      },
     },
     {
       id: 'recording',

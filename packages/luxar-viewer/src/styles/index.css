@@ -31,6 +31,7 @@
 @import './components/toast.css';
 @import './components/select-menu.css';
 @import './components/overlay-layer.css';
+@import './components/audio-gate.css';
 /* Add additional component styles here as needed. */
 @import './components/performance-monitor.css';
 
