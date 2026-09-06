@@ -217,7 +217,7 @@ under bloom is a `bloom_threshold` matter for the scene author. Separately, the
 bloom pass itself diverges between backends (WebGL blooms noticeably more than
 WebGPU on the SAME scene, including a house-only one: SSIM 0.87–0.91 with
 bloom on vs 0.99–1.00 with it off); that is a pre-existing post-pipeline
-difference, not a physical-material one, and is noted rather than fixed here.
+difference, not a physical-material one, and is tracked as #2563 rather than fixed here.
 
 ### 3.6 Dual-backend parity
 
