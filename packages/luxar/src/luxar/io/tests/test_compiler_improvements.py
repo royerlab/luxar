@@ -2017,6 +2017,7 @@ class TestUnknownRenderAttrRejected:
             ("transmission", 1.0),
             ("ior", 1.5),
             ("attenuation_color", "#f6d148"),
+            ("refract_data", True),
         ],
     )
     @pytest.mark.parametrize("node_type", ["points", "lines", "gsplats", "group"])
@@ -2067,6 +2068,7 @@ class TestUnknownRenderAttrRejected:
             ("material", "physical"),
             ("clearcoat", 1.0),
             ("thickness", 0.4),
+            ("refract_data", True),
         ],
     )
     @pytest.mark.parametrize("node_type", ["points", "lines", "gsplats", "group"])
