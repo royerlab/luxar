@@ -68,6 +68,7 @@ DEMO_META = {
 }
 
 import html
+import math
 import re
 import sys
 import tempfile
@@ -86,7 +87,6 @@ from luxar.demos._pdb_turntable import TurntableAssets, render_turntables
 from luxar.demos.demo_esm3_protein_landscape import (
     TAXON_COLORS,
     _linkable_accessions,
-    _uniprot_link_attrs,
 )
 from luxar.utils.paths import get_demos_output_dir
 
@@ -119,15 +119,20 @@ class Story:
     radius: float = 0.8
     #: Optional taxon filter (a value of the base demo's kingdom column).
     kingdom: str | None = None
-    #: Framing: camera distance = max(min_distance, distance_per_radius * r95).
-    #: A blob of radius r95 then spans roughly a third of the frame height at
-    #: the 63° cinematic lens, with the rest of the landscape for context.
-    distance_per_radius: float = 9.0
+    #: Framing: the blob (diameter 2·r95) spans this fraction of the frame
+    #: height under the 63° cinematic lens, the rest of the landscape giving
+    #: context; the camera distance follows from the lens (see
+    #: ``_story_camera``) but never drops below ``min_distance``.
+    frame_fraction: float = 0.36
     min_distance: float = 5.0
     flight_ms: int = 2500
     tags: tuple[str, ...] = field(default_factory=tuple)
     #: Representative PDB entry rendered as the left-hand turntable ("" = none).
     pdb_id: str = ""
+    #: What the narrator SAYS on arrival: a short spoken script, not the panel
+    #: read aloud — the good facts, punchier, no "Story N of 10", ending on the
+    #: open question. Consumed by the sound layer's narration builder.
+    narration: str = ""
 
 
 STORIES: tuple[Story, ...] = (
@@ -167,6 +172,15 @@ STORIES: tuple[Story, ...] = (
         ),
         tags=("blood", "medicine", "structure"),
         pdb_id="2HHB",
+        narration=(
+            "Hemoglobin, the molecule of breath. Each red blood cell carries "
+            "some two hundred and eighty million of these, and each one holds "
+            "four oxygens. In 1949 Linus Pauling showed that sickle-cell "
+            "anaemia comes from a single swapped amino acid: the first "
+            "molecular disease. Max Perutz needed twenty-two years to see its "
+            "shape. And yet hemoglobin also turns up inside dopamine neurons, "
+            "nowhere near blood. What it does there, nobody quite knows."
+        ),
     ),
     Story(
         key="Photosystem II",
@@ -208,6 +222,16 @@ STORIES: tuple[Story, ...] = (
         ),
         tags=("photosynthesis", "deep time"),
         pdb_id="3WU2",
+        narration=(
+            "Photosystem II, the protein that made the sky breathable. Its D1 "
+            "subunit sits at the heart of the only enzyme known that splits "
+            "water. Cyanobacteria running this machine filled Earth's air with "
+            "oxygen, two and a half billion years ago. The chemistry is so "
+            "violent that D1 wrecks itself every couple of hours; a leaf "
+            "rebuilds it all day long. Molecular clocks say water-splitting is "
+            "far older than the rise of oxygen. So why did the planet wait so "
+            "long to change?"
+        ),
     ),
     Story(
         key="Hsp70",
@@ -243,6 +267,16 @@ STORIES: tuple[Story, ...] = (
         ),
         tags=("chaperone", "evolution"),
         pdb_id="2KHO",
+        narration=(
+            "Hsp70, the oldest job in the cell. It holds unfolded proteins, "
+            "refolds the damaged ones, and hands the hopeless ones to the "
+            "shredder. After three billion years apart, the human and E. coli "
+            "versions are still nearly half identical, letter for letter. That "
+            "is why this cluster mixes bacteria, plants and animals. Cancer "
+            "cells over-produce it to survive their own chaos, and drugs against "
+            "it have been tried for decades. None has reached the clinic. Why "
+            "is such a universal protein so hard to target?"
+        ),
     ),
     Story(
         key="Viral surface proteins",
@@ -257,7 +291,7 @@ STORIES: tuple[Story, ...] = (
         color=(0.98, 0.35, 0.9),
         radius=1.2,
         kingdom="Viruses",
-        distance_per_radius=4.5,
+        frame_fraction=0.72,
         flight_ms=3000,
         facts=(
             # Class I fusion proteins share the six-helix-bundle mechanism
@@ -285,6 +319,16 @@ STORIES: tuple[Story, ...] = (
         ),
         tags=("virology", "pandemics", "convergence"),
         pdb_id="1RUZ",
+        narration=(
+            "The intruders' continent. Influenza's haemagglutinin, the "
+            "coronavirus spike, HIV's envelope: unrelated viruses, one trick. "
+            "Each snaps into a bundle that drags virus and cell together. The "
+            "1918 flu killed fifty million people with a protein like this one. "
+            "They gather here although they share no ancestor; the model groups "
+            "them by how they are built and what they do. Most viral proteins "
+            "have no known relatives at all. Where would that dark matter land "
+            "on this map?"
+        ),
     ),
     Story(
         key="Prion protein",
@@ -321,6 +365,16 @@ STORIES: tuple[Story, ...] = (
         ),
         tags=("neuroscience", "mystery"),
         pdb_id="1QLX",
+        narration=(
+            "A protein that is its own pathogen. Kuru, scrapie, "
+            "Creutzfeldt-Jakob disease: brain diseases that spread like "
+            "infections, yet no virus was ever found. In 1982 Stanley Prusiner "
+            "proposed the heresy that the agent is a misfolded protein, one "
+            "that converts healthy copies into itself. Mad cow disease later "
+            "proved it could cross species through food. Every mammal carries "
+            "the healthy form on its neurons. Forty years on, we still do not "
+            "know what it is for."
+        ),
     ),
     Story(
         key="ATP synthase",
@@ -354,6 +408,15 @@ STORIES: tuple[Story, ...] = (
         ),
         tags=("energy", "structure"),
         pdb_id="1BMF",
+        narration=(
+            "ATP synthase, the turbine in every cell. Protons flowing through "
+            "it turn an axle, and each turn presses out three molecules of "
+            "ATP. In 1997 a single motor was filmed spinning under a "
+            "microscope. You make and spend roughly your own body weight in "
+            "ATP every day. It is one of the most efficient motors known, "
+            "wasting almost nothing as heat. How a protein manages that is "
+            "still debated."
+        ),
     ),
     Story(
         key="RuBisCO",
@@ -388,6 +451,15 @@ STORIES: tuple[Story, ...] = (
         ),
         tags=("photosynthesis", "enzyme"),
         pdb_id="8RUC",
+        narration=(
+            "RuBisCO, the most abundant enzyme on Earth, and one of the "
+            "slowest. Nearly every carbon atom in every living thing has passed "
+            "through it. It fixes about one CO2 every thirty seconds and keeps "
+            "confusing oxygen with carbon dioxide, so plants make it by the "
+            "tonne. Three billion years of evolution never produced a fast, "
+            "accurate RuBisCO. Is that a wall that cannot be climbed, or has "
+            "nobody found the path?"
+        ),
     ),
     Story(
         # No '/' — the key doubles as a node name.
@@ -424,6 +496,15 @@ STORIES: tuple[Story, ...] = (
         ),
         tags=("DNA repair", "cancer"),
         pdb_id="3CMW",
+        narration=(
+            "RecA and Rad51, the machine that mends broken DNA. It coats a "
+            "broken strand and searches the entire genome for the matching "
+            "sequence. Our version, RAD51, is loaded by BRCA2, the protein "
+            "whose mutations cause much of hereditary breast cancer. Bacteria "
+            "and humans share this cluster; the shape has barely moved in "
+            "billions of years. It finds one match among millions of base "
+            "pairs in minutes. How it searches that fast is still argued over."
+        ),
     ),
     Story(
         key="Insulin",
@@ -460,6 +541,15 @@ STORIES: tuple[Story, ...] = (
         ),
         tags=("medicine", "history"),
         pdb_id="4INS",
+        narration=(
+            "Insulin, a century of firsts. In January 1922 a fourteen-year-old "
+            "boy received the first injection, and diabetes stopped being a "
+            "death sentence. It was the first protein ever sequenced, by "
+            "Frederick Sanger, and in 1982 the first drug ever made by "
+            "engineered bacteria. In worms, weakening its receptor doubles "
+            "lifespan. Why does a hormone for blood sugar hold a dial for "
+            "ageing, and is the dial in us too?"
+        ),
     ),
     Story(
         key="Cone-snail toxins",
@@ -497,6 +587,15 @@ STORIES: tuple[Story, ...] = (
         ),
         tags=("venom", "neuroscience", "medicine"),
         pdb_id="1OMG",
+        narration=(
+            "Conotoxins, venom that became medicine. Cone snails hunt with a "
+            "harpoon and a cocktail of hundreds of peptides, each a precise key "
+            "for one ion channel. One of them is now a drug for severe pain, "
+            "the first medicine ever taken from the sea. This knot is a single "
+            "superfamily; the rest are scattered across the whole map, because "
+            "venom evolves faster than almost anything else. Why so fast is "
+            "still being worked out."
+        ),
     ),
 )
 
@@ -525,6 +624,10 @@ HIGHLIGHT_RADIUS = 0.028
 HIGHLIGHT_INTENSITY = 0.38
 
 STORY_DIM = "story"
+# One link template for every highlight (the demo link guard wants a single
+# module-level constant): a UniProt search by accession lands on the entry, a
+# search by protein name on the family — whichever the cached metadata offers.
+UNIPROT_LINK = "https://www.uniprot.org/uniprotkb?query={hover_key}"
 PANEL_WIDTH = 0.32
 
 # Marker sphere around each story's cluster: a subtle translucent shell so the
@@ -548,7 +651,10 @@ TURNTABLE_POSITION = (0.06, 0.5)
 TURNTABLE_WIDTH = 0.26  # viewport-width fraction; height follows the square video
 # Just under the square clip: on a 16:9 display a 26 vw square is ~46 vh tall,
 # so its lower edge sits near y = 0.73 when centred at 0.5.
-TURNTABLE_CAPTION_POSITION = (0.06, 0.75)
+# Centred under the clip: the clip is anchored centre-left at x = 0.06 and is
+# TURNTABLE_WIDTH wide, so its centre (and the structure's, which the renderer
+# fits to the frame's bounding sphere) sits at x = 0.06 + TURNTABLE_WIDTH / 2.
+TURNTABLE_CAPTION_POSITION = (0.06 + 0.26 / 2, 0.75)
 TURNTABLE_CACHE = "pdb_turntables"
 
 
@@ -704,14 +810,38 @@ def story_camera(
         outward = outward / norm
         outward = outward + np.array([0.0, 0.35, 0.0])
         outward = outward / np.linalg.norm(outward)
-    distance = max(story.min_distance, story.distance_per_radius * cluster.r95)
+    # Compose for the cinematic lens (cinematic mode sets it; the pose leaves
+    # fov unset): the distance at which a blob of radius r95 spans
+    # `frame_fraction` of the frame height under a 63° vertical field of view.
+    half_height_per_unit = math.tan(math.radians(CINEMATIC_FOV_DEG) / 2)
+    distance = max(
+        story.min_distance,
+        cluster.r95 / (0.5 * story.frame_fraction * half_height_per_unit),
+    )
     position = cluster.centre + outward * distance
     return CameraConfig(
         position=tuple(float(v) for v in position),
         target=tuple(float(v) for v in cluster.centre),
         up=(0.0, 1.0, 0.0),
-        fov=CINEMATIC_FOV_DEG,
     )
+
+
+#: Spoken introduction at the Overview slot (the sound layer's narration).
+OVERVIEW_NARRATION = (
+    "Every point here is a protein: five hundred and seventy-five thousand of "
+    "them, placed by a language model that reads their sequences, so that "
+    "similar proteins sit close together. Ten of these clusters hide a story. "
+    "Step through them."
+)
+
+
+def story_narration(story: Story) -> str:
+    """The spoken script for a story: its authored ``narration``, or — for a
+    story without one — the title and the open question, never the whole panel.
+    """
+    if story.narration.strip():
+        return story.narration.strip()
+    return f"{story.title}. {story.mystery}"
 
 
 def story_panel_html(story: Story, n_members: int, index: int, total: int) -> str:
@@ -845,7 +975,6 @@ def build_stories_scene(
         accessions = [str(a) for a in meta["accessions"]]
         linkable = _linkable_accessions(accessions, n) if accessions else None
         keys = linkable if linkable is not None else [str(s) for s in names]
-        link_attrs = _uniprot_link_attrs(keys, exact_accessions=linkable is not None)
 
         # Backdrop: every protein once, story coordinate 0, extend_to_all.
         backdrop_positions = np.column_stack(
@@ -893,6 +1022,9 @@ def build_stories_scene(
             # turntable without it; the display is a single large screen with a
             # GPU to spare, so the cost is acceptable.
             ssaa_enabled=True,
+            # The kiosk display is high-DPI and dedicated: render at its full
+            # device resolution (the viewer's default caps DPR for laptops).
+            allow_high_dpr=True,
             waypoints=waypoints,
         )
 
@@ -928,7 +1060,9 @@ def build_stories_scene(
                 opacity=BACKDROP_OPACITY,
                 intensity=BACKDROP_INTENSITY,
                 labels=labels,
-                **link_attrs,
+                keys=keys,
+                link=UNIPROT_LINK,
+                copy="{hover_key}",
                 extend_to_all=[STORY_DIM],
                 layer=True,
                 additive_lod=stream_ladder(
@@ -954,7 +1088,7 @@ def build_stories_scene(
                     intensity=HIGHLIGHT_INTENSITY,
                     labels=[labels[i] for i in idx],
                     keys=[keys[i] for i in idx],
-                    link=link_attrs.get("link"),
+                    link=UNIPROT_LINK,
                     layer=True,
                     # A highlight shares every position with its backdrop twin,
                     # so in one depth band the two z-fight and the backdrop
@@ -1072,7 +1206,8 @@ def build_stories_scene(
                 scene.add_text(
                     f"PDB {a.pdb_id} · {title}",
                     position=TURNTABLE_CAPTION_POSITION,
-                    anchor="top-left",
+                    anchor="top-center",
+                    text_align="center",
                     font_size=0.013,
                     width=TURNTABLE_WIDTH,
                     color="rgba(255,255,255,0.7)",

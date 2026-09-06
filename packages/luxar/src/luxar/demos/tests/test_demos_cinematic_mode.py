@@ -132,6 +132,10 @@ HIGH_DPR_DEMOS = frozenset(
         "demo_cosmicflows_laniakea.py",
         "demo_dipc_3d_genome.py",
         "demo_dmri_tractography.py",
+        # Not line-dominant: a points scene, but authored for ONE dedicated
+        # high-DPI kiosk display with a GPU to spare, where the owner asked for
+        # full device resolution (a laptop's DPR cap is the wrong default there).
+        "demo_esm3_protein_stories.py",
         "demo_flywire_connectome.py",
         "demo_global_rivers_earth.py",
         "demo_hilbert_curve_3d.py",

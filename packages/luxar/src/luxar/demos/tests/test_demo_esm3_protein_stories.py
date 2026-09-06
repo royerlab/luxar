@@ -102,16 +102,31 @@ def test_story_camera_looks_at_the_centre_from_outside_the_cloud() -> None:
     cluster = StoryCluster(
         indices=np.arange(3), centre=np.array([4.0, 0.0, 0.0]), r95=0.5, n_named=3
     )
+    import math
+
+    from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
+
     cam = story_camera(
-        cluster, _story(distance_per_radius=5.0, min_distance=2.5), np.zeros(3)
+        cluster, _story(frame_fraction=0.36, min_distance=2.5), np.zeros(3)
     )
     assert cam.target == (4.0, 0.0, 0.0)
     assert cam.position is not None
     offset = np.array(cam.position) - np.array(cam.target)
-    # Distance = max(2.5, 5 * 0.5) = 2.5, along +x lifted in +y, never through the cloud.
-    assert np.isclose(np.linalg.norm(offset), 2.5)
+    # The blob (diameter 1.0) spans 36% of the frame height under the cinematic
+    # lens: distance = r95 / (0.5 * 0.36 * tan(fov/2)); along +x lifted in +y,
+    # never through the cloud. The pose leaves fov to cinematic mode.
+    expected = 0.5 / (0.5 * 0.36 * math.tan(math.radians(CINEMATIC_FOV_DEG) / 2))
+    assert np.isclose(np.linalg.norm(offset), expected)
     assert offset[0] > 0 and offset[1] > 0
-    assert cam.fov is not None and cam.fov > 0
+    assert cam.fov is None
+    # min_distance is a floor, not a scale.
+    far = story_camera(
+        cluster, _story(frame_fraction=0.36, min_distance=20.0), np.zeros(3)
+    )
+    assert far.position is not None
+    assert np.isclose(
+        np.linalg.norm(np.array(far.position) - np.array(far.target)), 20.0
+    )
 
 
 def test_story_camera_falls_back_when_the_cluster_sits_at_the_centre() -> None:
@@ -149,6 +164,25 @@ def test_panels_escape_html_and_carry_the_counts() -> None:
     assert "1,234 Swiss-Prot proteins" in overview_panel_html(1234)
 
 
+def test_story_narration_is_the_short_spoken_script_not_the_panel() -> None:
+    from luxar.demos.demo_esm3_protein_stories import (
+        OVERVIEW_NARRATION,
+        story_narration,
+    )
+
+    for s in STORIES:
+        spoken = story_narration(s)
+        panel_words = sum(len(f.split()) for f in s.facts) + len(s.mystery.split())
+        assert 40 <= len(spoken.split()) <= 110, (s.key, len(spoken.split()))
+        assert len(spoken.split()) < 0.7 * panel_words, s.key  # punchier than the panel
+        assert not spoken.startswith("Story "), s.key  # no "Story N of 10" prefix
+        assert "<" not in spoken and "&" not in spoken, s.key  # plain speech, no markup
+        assert spoken.rstrip().endswith((".", "?")), s.key
+    assert 20 <= len(OVERVIEW_NARRATION.split()) <= 80
+    # A story without an authored script still gets something short to say.
+    assert story_narration(_story()) == "Test story. why?"
+
+
 def test_shipped_stories_are_well_formed_and_author_valid_waypoints() -> None:
     keys = [s.key for s in STORIES]
     assert len(keys) == len(set(keys)) == 10
@@ -156,6 +190,7 @@ def test_shipped_stories_are_well_formed_and_author_valid_waypoints() -> None:
         assert "/" not in s.key, f"{s.key!r} doubles as a node name; '/' is refused"
         assert 3 <= len(s.facts) <= 5, s.key
         assert s.mystery.strip(), s.key
+        assert s.narration.strip(), s.key  # every shipped story is narrated
         assert all(0.0 <= c <= 1.0 for c in s.color), s.key
     # The waypoint schema accepts what the demo authors (story index → pose).
     from luxar.core.viewer_config import Waypoint
