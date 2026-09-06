@@ -19,6 +19,7 @@ import * as THREE from 'three';
 import type { SimpleDims } from '../../../types/dims';
 import { LOADER_TYPES, type LoaderTypeName } from '../../../types/format-contract';
 import { readVisibleElementCount } from '../../../data/scene-loader/monitor/visible-counts';
+import type { RefinementResidencyStop } from '../../../data/scene-loader/progressive/residency-budget';
 
 /** Additive reveal-ladder state shared by every drawable leaf type. */
 export interface AdditiveLadderDebugInfo {
@@ -112,6 +113,16 @@ export interface GPUPoolDebugStats {
   totalBytes: number;
   largestPooledBytes: number;
   evictions: number;
+  /**
+   * The subset of `evictions` forced by the byte budget (`PoolStats
+   * .byteBudgetEvictions`). Kept distinct because only this one means the pool
+   * went over its VRAM budget and shed pooled geometry — including levels the
+   * LOD registry had demoted from active — to get back under it, which makes
+   * what stayed resident a property of the machine; ordinary LRU recycling of
+   * released buffers says nothing at all. See the `PoolStats` field doc for
+   * what it does NOT prove.
+   */
+  byteBudgetEvictions: number;
 }
 
 /**
@@ -165,6 +176,17 @@ export interface DebugState {
   partitions: PartitionDebugInfo[];
   /** GPU buffer pool byte stats (undefined when the pool is disabled). */
   gpuPool?: GPUPoolDebugStats;
+  /**
+   * The progressive-refinement BYTE-ceiling stop, when refinement declined at
+   * least one rung this session; ABSENT when it never did.
+   *
+   * Absence is "no stop", NOT "no information": an older viewer build simply
+   * does not carry the field, and a consumer must not read that as a scene in
+   * trouble. Presence is the whole signal — the counts in this snapshot then
+   * describe a PARTIAL scene whose composition is nondeterministic, which is
+   * why `capture-readiness.ts` refuses on it (#2508).
+   */
+  refinementResidency?: RefinementResidencyStop;
   dimensions: { ndim: number; displayed: number[]; currentStep: number[] } | null;
   camera: {
     position: { x: number; y: number; z: number };
@@ -259,6 +281,15 @@ export interface DebugStateContext {
   dims: SimpleDims | null;
   /** Optional pool-stats provider so the debug state can surface byte usage. */
   gpuPoolStats?: () => GPUPoolDebugStats | undefined;
+  /**
+   * Optional refinement-stop provider, supplied the same way and for the same
+   * reason as `gpuPoolStats`: the production caller passes
+   * `SceneLoaderManager.getInstance().refinementResidencyStop()` per snapshot so
+   * this helper stays pure. Omitted (tests, embeds) means "unknown", which
+   * surfaces as an absent {@link DebugState.refinementResidency} — never as a
+   * synthesised "no stop".
+   */
+  refinementResidency?: () => RefinementResidencyStop | undefined;
 }
 
 function readAdditiveLadderDebugInfo(userData: Record<string, unknown>): AdditiveLadderDebugInfo {
@@ -509,6 +540,7 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
 
   // Surface GPU pool byte stats when a provider is wired in.
   const gpuPool = ctx.gpuPoolStats ? ctx.gpuPoolStats() : undefined;
+  const refinementResidency = ctx.refinementResidency ? ctx.refinementResidency() : undefined;
 
   return {
     totalPoints,
@@ -527,6 +559,7 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
     lodGroups,
     partitions,
     gpuPool,
+    refinementResidency,
     dimensions: dimensionsInfo,
     camera: {
       position: cameraPosition,

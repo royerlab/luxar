@@ -73,9 +73,21 @@ object is never created, so there is zero overhead in production.
 
 | Method | Return type | Description |
 |---|---|---|
-| `getState()` | `object` | JSON-serializable snapshot of current state (point counts per cloud, camera position/FOV, dimension info, animation status, initialization status, and `isLoading` — true while a load pass, i.e. an `updateView` fetch/decode/upload sweep up to its geometry commit, is in flight on any registered scene loader, or a view-state is queued behind one; see the scope notes below). |
+| `getState()` | `object` | JSON-serializable snapshot of current state (point counts per cloud, camera position/FOV, dimension info, animation status, initialization status, the two memory-ceiling fields tabled below, and `isLoading` — true while a load pass, i.e. an `updateView` fetch/decode/upload sweep up to its geometry commit, is in flight on any registered scene loader, or a view-state is queued behind one; see the scope notes below). |
 | `renderOnce()` | `void` | Kicks the animation loop to force a single render frame. Useful for stable screenshots. |
 | `getSceneLoader()` | `SceneLoaderManager` | Returns the singleton scene loader manager for inspecting loaded data. |
+
+#### Memory-ceiling fields on `getState()`
+
+Two fields answer "were these element counts decided by the store, or by this
+machine?". `core/app/debug/capture-readiness.ts` refuses a capture on either
+(#2508). Both are **session-cumulative and never reset**: they report that
+something happened at some point on this page, not that it is true right now.
+
+| Field | Type | Description |
+|---|---|---|
+| `gpuPool` | `GPUPoolDebugStats` (absent when unavailable) | GPU buffer-pool byte usage — `activeBytes` / `pooledBytes` / `totalBytes` / `largestPooledBytes`, plus `evictions` and `byteBudgetEvictions`. The last is the subset charged by the VRAM byte-budget pass: `evictions` alone is dominated by routine LRU recycling and means nothing on its own. Not new to the snapshot TYPE, but only **populated in production** as of #2508 (a `gpuPoolStats` provider had been declared and never passed), so an older build reports `undefined` here. Absent when no loader is registered or pooling is disabled. |
+| `refinementResidency` | `RefinementResidencyStop` (absent when nothing was declined) | Present once progressive refinement declined at least one rung at the residency byte ceiling; carries the first refusal's `reason` / `residentBytes` / `budgetBytes` / `firstPath`, the distinct `declinedPathCount`, and a bounded `declinedPaths` sample. **Presence is the signal** — absence means "never stopped" (or an older build), never "in trouble". |
 
 ### Cache helpers (`__luxarDebug.cache`)
 

@@ -195,6 +195,7 @@ import {
   RefinementResidencyBudget,
   RefinementResidencyReporter,
   type LadderResidency,
+  type RefinementResidencyStop,
 } from './scene-loader/progressive/residency-budget';
 import {
   RefinementDensityGate,
@@ -638,6 +639,19 @@ export class SceneLoader {
    */
   get gpuBufferPool(): GPUBufferPool | null {
     return this._gpuBufferPool;
+  }
+
+  /**
+   * This scene's progressive-refinement BYTE-ceiling stop, or `undefined` when
+   * refinement never declined a rung.
+   *
+   * The reporter is scene-scoped (one per loader) while the residency budget is
+   * rebuilt per refinement run, so this accumulates across runs — which is what
+   * makes it answerable at capture time, long after the run that stopped. Read
+   * by the debug snapshot through `SceneLoaderManager.refinementResidencyStop()`.
+   */
+  get refinementResidencyStop(): RefinementResidencyStop | undefined {
+    return this.refinementResidencyReporter.snapshot();
   }
 
   /**

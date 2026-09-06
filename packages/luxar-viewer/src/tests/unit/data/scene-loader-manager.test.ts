@@ -14,6 +14,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { SceneLoaderManager, dispose } from '../../../data';
 import { DataMonitorManager } from '../../../ui/data-monitor-manager';
 import { RefinementDensityGate } from '../../../data/scene-loader/progressive/density-gate';
+import {
+  RESIDENCY_DECLINED_PATH_SAMPLE,
+  type RefinementResidencyReporter,
+} from '../../../data/scene-loader/progressive/residency-budget';
+import type { PoolStats } from '../../../rendering/gpu-buffer-pool/pool-stats';
 
 describe('SceneLoaderManager', () => {
   beforeEach(() => {
@@ -270,6 +275,166 @@ describe('SceneLoaderManager', () => {
       // …and it drops back to false once that sweep finishes.
       setLoadPassInProgress(second, false);
       expect(manager.isAnyLoadPassInProgress()).toBe(false);
+    });
+  });
+
+  // #2508 — the debug snapshot's two memory-ceiling signals come from these two
+  // aggregates, and `capture-readiness.ts` refuses a capture on either. Same
+  // lesson as `isAnyLoadPassInProgress` above: the manager's contract admits
+  // several loaders even though production registers one, so what it does with
+  // more than one is the part worth pinning. The two answer that question
+  // DIFFERENTLY on purpose, which is exactly why neither may go untested.
+  describe('refinementResidencyStop', () => {
+    let warn: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(async () => {
+      // The reporter logs its first refusal; silence it so a merge test does
+      // not print a wall of warnings.
+      const { log } = await import('../../../utils/log');
+      warn = vi.spyOn(log, 'warning').mockImplementation(() => undefined);
+    });
+    afterEach(() => warn.mockRestore());
+
+    /**
+     * Decline `paths` on a loader's REAL reporter rather than stubbing the
+     * record: the merge rule is only interesting over records the reporter can
+     * actually produce.
+     */
+    function decline(
+      loader: unknown,
+      paths: readonly string[],
+      verdict: { reason: 'over-budget' | 'next-rung-would-exceed'; budgetBytes: number }
+    ): void {
+      const reporter = (loader as { refinementResidencyReporter: RefinementResidencyReporter })
+        .refinementResidencyReporter;
+      for (const path of paths) {
+        reporter.reportOnce(path, {
+          admitted: false,
+          reason: verdict.reason,
+          residentBytes: verdict.budgetBytes + 1,
+          budgetBytes: verdict.budgetBytes,
+        });
+      }
+    }
+
+    it('is undefined when no loader is registered', () => {
+      const manager = SceneLoaderManager.getInstance();
+      expect(manager.getLoaderCount()).toBe(0);
+      expect(manager.refinementResidencyStop()).toBeUndefined();
+    });
+
+    it('is undefined when no registered loader ever declined a rung', () => {
+      // Freshly-created loaders have declined nothing — read them as-is so the
+      // "never stopped" case exercises the real reporter. Absence is the whole
+      // signal downstream: a synthesised zero record would refuse every capture.
+      const manager = SceneLoaderManager.getInstance();
+      manager.createLoader('quiet-a');
+      manager.createLoader('quiet-b', undefined, false);
+      expect(manager.refinementResidencyStop()).toBeUndefined();
+    });
+
+    it('takes the FIRST loader’s verdict but SUMS the declined count', () => {
+      const manager = SceneLoaderManager.getInstance();
+      const first = manager.createLoader('stop-first');
+      const second = manager.createLoader('stop-second', undefined, false);
+
+      // The second loader deliberately holds the LARGER count and a different
+      // verdict: the four verdict fields describe one decision at one instant,
+      // so "whichever loader stopped hardest" is not an answer — averaging or
+      // last-write-wins would describe a moment that never happened.
+      decline(first, ['/a', '/b'], { reason: 'over-budget', budgetBytes: 10 });
+      decline(second, ['/c', '/d', '/e', '/f', '/g'], {
+        reason: 'next-rung-would-exceed',
+        budgetBytes: 999,
+      });
+
+      expect(manager.refinementResidencyStop()).toMatchObject({
+        reason: 'over-budget',
+        residentBytes: 11,
+        budgetBytes: 10,
+        firstPath: '/a',
+        // Additive, because "how much of the scene stopped short" genuinely is.
+        declinedPathCount: 7,
+      });
+    });
+
+    it('re-truncates the merged path sample so it cannot grow with the loader count', () => {
+      const manager = SceneLoaderManager.getInstance();
+      const first = manager.createLoader('sample-first');
+      const second = manager.createLoader('sample-second', undefined, false);
+
+      decline(first, ['/a', '/b'], { reason: 'over-budget', budgetBytes: 10 });
+      decline(
+        second,
+        Array.from({ length: 20 }, (_, i) => `/part_${i}`),
+        { reason: 'over-budget', budgetBytes: 10 }
+      );
+
+      const merged = manager.refinementResidencyStop();
+      // Each loader's own sample is already capped, so concatenating N of them
+      // would ship N x the bound across the `page.evaluate` boundary.
+      expect(merged?.declinedPaths).toHaveLength(RESIDENCY_DECLINED_PATH_SAMPLE);
+      // First-seen order survives the merge: the first loader's paths lead.
+      expect(merged?.declinedPaths[0]).toBe('/a');
+      // …and the COUNT is untouched by the truncation — it is the measurement.
+      expect(merged?.declinedPathCount).toBe(22);
+    });
+  });
+
+  describe('gpuPoolStats', () => {
+    /**
+     * Swap a loader's pool for a stand-in reporting `byteBudgetEvictions`, or
+     * `null` for "pooling disabled / not built yet". A real loader builds a real
+     * pool in its constructor, so the disabled case has to be arranged.
+     */
+    function setPool(loader: unknown, byteBudgetEvictions: number | null): void {
+      (loader as { _gpuBufferPool: unknown })._gpuBufferPool =
+        byteBudgetEvictions === null
+          ? null
+          : {
+              getStats: () => ({ byteBudgetEvictions }) as unknown as PoolStats,
+              dispose: () => undefined,
+            };
+    }
+
+    it('is undefined when no loader is registered', () => {
+      const manager = SceneLoaderManager.getInstance();
+      expect(manager.gpuPoolStats()).toBeUndefined();
+    });
+
+    it('is undefined when the default loader has no pool', () => {
+      // Pooling disabled, or `setup()` has not built the pool yet. Absent must
+      // read as "unknown", never as a zero-eviction record — `debug-state.ts`
+      // omits the whole `gpuPool` field in that case.
+      const manager = SceneLoaderManager.getInstance();
+      setPool(manager.createLoader('poolless'), null);
+      expect(manager.gpuPoolStats()).toBeUndefined();
+    });
+
+    it('reads the default loader’s real pool when there is one', () => {
+      const manager = SceneLoaderManager.getInstance();
+      manager.createLoader('pooled');
+      // A freshly-built pool has evicted nothing, which is the reading that
+      // must NOT refuse a capture.
+      expect(manager.gpuPoolStats()?.byteBudgetEvictions).toBe(0);
+    });
+
+    it('is scoped to the DEFAULT loader only, unlike refinementResidencyStop', () => {
+      // The deliberate asymmetry: `PoolStats` carries a per-type breakdown and
+      // a `largestPooledBytes` that do not sum, so a second loader's pool is
+      // NOT represented. Assert the scope rather than leaving it to the
+      // docstring — a future "helpful" aggregate would silently invent numbers.
+      const manager = SceneLoaderManager.getInstance();
+      const first = manager.createLoader('pool-default');
+      const second = manager.createLoader('pool-other', undefined, false);
+
+      setPool(first, null);
+      setPool(second, 12);
+      expect(manager.getDefaultLoader()).toBe(first);
+      expect(manager.gpuPoolStats()).toBeUndefined();
+
+      setPool(first, 3);
+      expect(manager.gpuPoolStats()?.byteBudgetEvictions).toBe(3);
     });
   });
 

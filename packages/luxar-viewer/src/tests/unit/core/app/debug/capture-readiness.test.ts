@@ -13,7 +13,8 @@ import {
   summarizeCaptureReadiness,
   type CaptureReadinessSummary,
 } from '../../../../../core/app/debug/capture-readiness';
-import type { DebugState } from '../../../../../core/app/debug/debug-state';
+import type { DebugState, GPUPoolDebugStats } from '../../../../../core/app/debug/debug-state';
+import type { RefinementResidencyStop } from '../../../../../data/scene-loader/progressive/residency-budget';
 
 /**
  * Build a FLAT `DebugState`-shaped snapshot (the real `getState()` shape) with
@@ -57,6 +58,8 @@ function expectNoNaN(summary: CaptureReadinessSummary): void {
     'totalTriangles',
     'totalElements',
     'totalDroppedElements',
+    'refinementDeclinedPathCount',
+    'gpuByteBudgetEvictions',
     'pointCloudCount',
     'gsplatCount',
     'lineCount',
@@ -460,6 +463,447 @@ describe('summarizeCaptureReadiness', () => {
     expect(summary.totalTriangles).toBe(900);
     expect(summary.meshNodeCount).toBe(1);
     expectNoNaN(summary);
+  });
+
+  /**
+   * #2508: the counts must be a property of the STORE, not of the run. Two
+   * caps can break that without dropping a single element — refinement stopping
+   * scene-wide at the residency byte ceiling, and the GPU pool reclaiming
+   * committed geometry to stay under its VRAM budget. `desi_galaxies` authors
+   * 9.75M points, of which one layer's finest level alone is 446 MiB of the
+   * 512 MiB ceiling, and the scene settles at ~348k elements with `ok: true`
+   * under the pre-fix verdict.
+   */
+  describe('run-dependent caps', () => {
+    const MIB = 1024 * 1024;
+
+    /** A stop record shaped exactly as `RefinementResidencyReporter.snapshot()` emits it. */
+    function residencyStop(
+      overrides: Partial<RefinementResidencyStop> = {}
+    ): RefinementResidencyStop {
+      return {
+        reason: 'over-budget',
+        residentBytes: 517 * MIB,
+        budgetBytes: 512 * MIB,
+        firstPath: '/galaxies/bright',
+        declinedPathCount: 6,
+        declinedPaths: ['/galaxies/bright', '/galaxies/faint'],
+        ...overrides,
+      };
+    }
+
+    /** Pool stats with NO byte-budget pressure — the baseline the guards below vary. */
+    function pool(overrides: Partial<GPUPoolDebugStats> = {}): GPUPoolDebugStats {
+      return {
+        activeBuffers: 4,
+        pooledBuffers: 2,
+        activeBytes: 40 * MIB,
+        pooledBytes: 8 * MIB,
+        totalBytes: 48 * MIB,
+        largestPooledBytes: 6 * MIB,
+        evictions: 0,
+        byteBudgetEvictions: 0,
+        ...overrides,
+      };
+    }
+
+    it('refuses a scene that stopped at the residency ceiling, naming the figures', () => {
+      const summary = summarizeCaptureReadiness(
+        makeState({
+          totalPoints: 348_000,
+          totalElements: 348_000,
+          refinementResidency: residencyStop(),
+        })
+      );
+
+      expect(summary.ok).toBe(false);
+      expect(summary.refinementDeclinedPathCount).toBe(6);
+      expect(summary.reason).toContain('6 node paths declined');
+      expect(summary.reason).toContain('/galaxies/bright');
+      expect(summary.reason).toContain('resident 517.0 MiB of a 512.0 MiB budget');
+      expect(summary.reason).toContain('PARTIAL');
+      // The counts themselves are still reported — the verdict is "these numbers
+      // are not comparable", not "there is nothing here".
+      expect(summary.totalElements).toBe(348_000);
+      expectNoNaN(summary);
+    });
+
+    it('refuses a scene whose pool evicted on the BYTE budget', () => {
+      const summary = summarizeCaptureReadiness(
+        makeState({
+          totalPoints: 100,
+          totalElements: 100,
+          gpuPool: pool({ evictions: 12, byteBudgetEvictions: 12 }),
+        })
+      );
+
+      expect(summary.ok).toBe(false);
+      expect(summary.gpuByteBudgetEvictions).toBe(12);
+      expect(summary.reason).toContain('12 GPU buffer-pool evictions on the VRAM byte budget');
+      expect(summary.reason).toContain('shed pooled geometry');
+      // HONESTY CHECK. The byte pass only ever disposes POOLED (already
+      // released) buffers, so the message must not claim geometry left the
+      // screen — it claims the pool's residency was decided by the machine.
+      expect(summary.reason).toContain('does not on its own prove rendered geometry was lost');
+      expectNoNaN(summary);
+    });
+
+    it('THE FALSE-POSITIVE GUARD: ordinary LRU evictions are not a refusal', () => {
+      // `evictions` counts routine recycling of RELEASED pooled buffers, which
+      // happens constantly on any nD scene as slices change and says nothing
+      // about capacity. Refusing on it would fail every normal nD capture — so
+      // the verdict must key on `byteBudgetEvictions` alone. This is the
+      // assertion that makes the eviction refusal usable rather than a blanket
+      // "no nD captures", and it is the one to keep if any test here is cut.
+      const summary = summarizeCaptureReadiness(
+        makeState({
+          totalPoints: 5_000,
+          totalElements: 5_000,
+          gpuPool: pool({ evictions: 900, byteBudgetEvictions: 0 }),
+        })
+      );
+
+      expect(summary.ok).toBe(true);
+      expect(summary.reason).toBeUndefined();
+      expect(summary.gpuByteBudgetEvictions).toBe(0);
+      expectNoNaN(summary);
+    });
+
+    it('reports both caps at once rather than letting the first shadow the second', () => {
+      const summary = summarizeCaptureReadiness(
+        makeState({
+          totalPoints: 348_000,
+          totalElements: 348_000,
+          refinementResidency: residencyStop(),
+          gpuPool: pool({ evictions: 40, byteBudgetEvictions: 3 }),
+        })
+      );
+
+      expect(summary.ok).toBe(false);
+      expect(summary.reason).toContain('residency ceiling');
+      expect(summary.reason).toContain('GPU buffer-pool evictions');
+      expect(summary.refinementDeclinedPathCount).toBe(6);
+      expect(summary.gpuByteBudgetEvictions).toBe(3);
+      expectNoNaN(summary);
+    });
+
+    it('reports a residency stop alongside dropped elements, dropped clause FIRST', () => {
+      const summary = summarizeCaptureReadiness(
+        makeState({
+          totalPoints: 348_000,
+          totalElements: 348_000,
+          totalDroppedElements: 20,
+          refinementResidency: residencyStop(),
+        })
+      );
+
+      expect(summary.ok).toBe(false);
+      // ORDER IS A CONTRACT, not an accident of the array literal: a snapshot
+      // whose only problem is dropped elements must still produce the exact
+      // message every existing capture tool and E2E spec matches (asserted
+      // whole further down), and that only holds while the dropped clause leads.
+      // `toContain` on each clause separately cannot see a reordering, so pin
+      // the sequence.
+      const clauses = summary.reason!.split('; ');
+      expect(clauses[0]).toBe('20 elements were dropped by renderer capacity limits');
+      expect(clauses[1]).toContain('progressive refinement stopped at the residency ceiling');
+      expectNoNaN(summary);
+    });
+
+    it('names the FIRST refusal verdict, so "already past" reads differently from "one more rung"', () => {
+      // `reason` is the one stop field that says what to DO about it: past the
+      // ceiling on arrival means the ladder is too heavy for this budget,
+      // whereas a next-rung refusal means it very nearly fitted. Recording it
+      // and never printing it would make it dead weight on the wire.
+      const past = summarizeCaptureReadiness(
+        makeState({
+          totalPoints: 100,
+          totalElements: 100,
+          refinementResidency: residencyStop({ reason: 'over-budget' }),
+        })
+      );
+      expect(past.reason).toContain('already past the ceiling');
+
+      const nextRung = summarizeCaptureReadiness(
+        makeState({
+          totalPoints: 100,
+          totalElements: 100,
+          refinementResidency: residencyStop({ reason: 'next-rung-would-exceed' }),
+        })
+      );
+      expect(nextRung.reason).toContain('the next rung would have crossed it');
+
+      // A code this build does not know (a newer viewer) is quoted rather than
+      // guessed at; a non-string is named unreadable, like every other field.
+      const unknownCode = summarizeCaptureReadiness(
+        makeState({
+          totalPoints: 100,
+          totalElements: 100,
+          refinementResidency: residencyStop({
+            reason: 'some-future-code' as RefinementResidencyStop['reason'],
+          }),
+        })
+      );
+      expect(unknownCode.reason).toContain('reason "some-future-code"');
+
+      const garbled = summarizeCaptureReadiness(
+        makeState({
+          totalPoints: 100,
+          totalElements: 100,
+          refinementResidency: residencyStop({
+            reason: 7 as unknown as RefinementResidencyStop['reason'],
+          }),
+        })
+      );
+      expect(garbled.reason).toContain('stop reason unreadable');
+      expect(garbled.reason).not.toMatch(/NaN|undefined/);
+      expectNoNaN(garbled);
+    });
+
+    it('never prints a figure it also calls unreadable', () => {
+      // The message and the reported number come from ONE coercion, so a
+      // fractional field cannot make them contradict each other. Both halves
+      // were wrong before: `declinedPathCount: 0.5` said "unreadable" beside a
+      // reported 0.5, and `byteBudgetEvictions: 0.5` refused the capture while
+      // announcing "0 GPU buffer-pool evictions".
+      const fractionalPaths = summarizeCaptureReadiness(
+        makeState({
+          totalPoints: 100,
+          totalElements: 100,
+          refinementResidency: residencyStop({ declinedPathCount: 0.5 }),
+        })
+      );
+      expect(fractionalPaths.reason).toContain('declined-path count unreadable');
+      expect(fractionalPaths.refinementDeclinedPathCount).toBe(0);
+
+      const fractionalEvictions = summarizeCaptureReadiness(
+        makeState({
+          totalPoints: 100,
+          totalElements: 100,
+          gpuPool: pool({ byteBudgetEvictions: 0.5 }),
+        })
+      );
+      // Below one whole eviction there is nothing to report, so the capture
+      // passes rather than refusing while claiming zero evictions.
+      expect(fractionalEvictions.ok).toBe(true);
+      expect(fractionalEvictions.reason).toBeUndefined();
+      expect(fractionalEvictions.gpuByteBudgetEvictions).toBe(0);
+
+      const fractionalAboveOne = summarizeCaptureReadiness(
+        makeState({
+          totalPoints: 100,
+          totalElements: 100,
+          gpuPool: pool({ byteBudgetEvictions: 3.7 }),
+        })
+      );
+      expect(fractionalAboveOne.ok).toBe(false);
+      expect(fractionalAboveOne.reason).toContain('3 GPU buffer-pool evictions');
+      expect(fractionalAboveOne.gpuByteBudgetEvictions).toBe(3);
+      expectNoNaN(fractionalAboveOne);
+    });
+
+    it('calls NEGATIVE byte figures unreadable rather than printing "-0.0 MiB"', () => {
+      // A byte count cannot be negative, and `resident -0.0 MiB of a -0.0 MiB
+      // budget` states a measurement nobody took — the same silent-nonsense
+      // class the summary's zero clamp exists to prevent.
+      const summary = summarizeCaptureReadiness(
+        makeState({
+          totalPoints: 100,
+          totalElements: 100,
+          refinementResidency: residencyStop({ residentBytes: -1, budgetBytes: -1 }),
+        })
+      );
+
+      expect(summary.ok).toBe(false);
+      expect(summary.reason).toContain('resident and budget bytes unreadable');
+      expect(summary.reason).not.toContain('MiB');
+      expectNoNaN(summary);
+    });
+
+    it('carries the cap clauses onto the SHAPE-MISMATCH verdict too', () => {
+      // A snapshot too version-skewed to carry any total is precisely the one
+      // whose caps a caller cannot find out about another way. Reporting
+      // `refinementDeclinedPathCount` while dropping the sentence that explains
+      // it was a half-measure.
+      const summary = summarizeCaptureReadiness({
+        pointClouds: [],
+        refinementResidency: residencyStop(),
+      } as Partial<DebugState>);
+
+      expect(summary.ok).toBe(false);
+      expect(summary.reason).toContain('debug state carries no element totals');
+      expect(summary.reason).toContain('progressive refinement stopped at the residency ceiling');
+      expect(summary.refinementDeclinedPathCount).toBe(6);
+      expectNoNaN(summary);
+    });
+
+    /**
+     * THE #2508 FALSE PASS ITSELF. The version-skew branches return
+     * `ok: !blockingReason`, and every earlier test in this block reaches them
+     * through `makeState`, which always supplies all five totals — so nothing
+     * covered them and reverting either to `ok: !droppedReason` stayed green.
+     * A partial snapshot carrying a residency stop then reported `ok: true`
+     * with a `reason` that itself said refinement had stopped.
+     */
+    describe('a cap still refuses on a version-skewed snapshot', () => {
+      it('when per-type totals are ABSENT (the understated branch)', () => {
+        const summary = summarizeCaptureReadiness({
+          totalPoints: 348_000,
+          totalElements: 348_000,
+          pointClouds: [],
+          refinementResidency: residencyStop(),
+        } as Partial<DebugState>);
+
+        expect(summary.ok).toBe(false);
+        // BOTH clauses: the cap explains the verdict, the caveat explains the
+        // numbers printed next to it, and neither substitutes for the other.
+        expect(summary.reason).toContain('progressive refinement stopped at the residency ceiling');
+        expect(summary.reason).toContain(
+          'totalGSplats, totalLines, totalTriangles absent from the snapshot'
+        );
+        expect(summary.reason).toContain('under-state the scene');
+        expectNoNaN(summary);
+      });
+
+      it('when totalElements is NON-FINITE (the re-derived branch)', () => {
+        const summary = summarizeCaptureReadiness(
+          makeState({
+            totalPoints: 348_000,
+            totalElements: Number.NaN,
+            gpuPool: pool({ evictions: 40, byteBudgetEvictions: 3 }),
+          })
+        );
+
+        expect(summary.ok).toBe(false);
+        expect(summary.reason).toContain('GPU buffer-pool evictions on the VRAM byte budget');
+        expect(summary.reason).toContain(
+          'totalElements present but not finite (Infinity/NaN) — re-derived'
+        );
+        expect(summary.totalElements).toBe(348_000);
+        expectNoNaN(summary);
+      });
+
+      it('and a skewed snapshot with NO cap is still ready, caveat and all', () => {
+        // The guard above must not turn every version-skewed snapshot into a
+        // refusal — the caveat channel exists exactly so a partial snapshot can
+        // be `ok: true` and still say what it could not read.
+        const summary = summarizeCaptureReadiness({
+          totalPoints: 348_000,
+          totalElements: 348_000,
+          pointClouds: [],
+        } as Partial<DebugState>);
+
+        expect(summary.ok).toBe(true);
+        expect(summary.reason).toContain('absent from the snapshot');
+        expectNoNaN(summary);
+      });
+    });
+
+    it('treats an ABSENT refinementResidency as "never stopped", not as trouble', () => {
+      // An older viewer build simply does not carry the field. Reading absence
+      // as a stop would refuse every capture taken against one.
+      const summary = summarizeCaptureReadiness(
+        makeState({ totalPoints: 100, totalElements: 100 })
+      );
+
+      expect(summary.ok).toBe(true);
+      expect(summary.reason).toBeUndefined();
+      expect(summary.refinementDeclinedPathCount).toBe(0);
+      expect(summary.gpuByteBudgetEvictions).toBe(0);
+      expectNoNaN(summary);
+    });
+
+    it('survives malformed cap fields without throwing, refusing, or printing NaN', () => {
+      // `null`, a primitive and an array are not stop records — an unrecognised
+      // shape is not evidence of anything, so it must not refuse.
+      for (const bogus of [null, 'stopped', 42, []] as unknown as RefinementResidencyStop[]) {
+        const summary = summarizeCaptureReadiness(
+          makeState({ totalPoints: 100, totalElements: 100, refinementResidency: bogus })
+        );
+        expect(summary.ok, `refinementResidency: ${JSON.stringify(bogus)}`).toBe(true);
+        expect(summary.reason).toBeUndefined();
+        expect(summary.refinementDeclinedPathCount).toBe(0);
+        expectNoNaN(summary);
+      }
+
+      // A non-object `gpuPool` likewise carries no eviction signal.
+      const bogusPool = summarizeCaptureReadiness(
+        makeState({
+          totalPoints: 100,
+          totalElements: 100,
+          gpuPool: 'lots' as unknown as GPUPoolDebugStats,
+        })
+      );
+      expect(bogusPool.ok).toBe(true);
+      expect(bogusPool.gpuByteBudgetEvictions).toBe(0);
+      expectNoNaN(bogusPool);
+
+      // ...and a non-finite eviction count must not refuse either, or a single
+      // garbled field blocks every capture.
+      const nanEvictions = summarizeCaptureReadiness(
+        makeState({
+          totalPoints: 100,
+          totalElements: 100,
+          gpuPool: pool({ byteBudgetEvictions: Number.NaN }),
+        })
+      );
+      expect(nanEvictions.ok).toBe(true);
+      expect(nanEvictions.gpuByteBudgetEvictions).toBe(0);
+      expectNoNaN(nanEvictions);
+    });
+
+    it('refuses on a stop OBJECT whose count is unreadable, and says so', () => {
+      // Presence of the record is itself the stop signal — the viewer only sets
+      // it once a rung has been declined — so an unusable `declinedPathCount`
+      // must not downgrade the refusal to a silent `0`, which would read as
+      // "stopped, but nothing declined" and let the capture through.
+      for (const count of [Number.NaN, undefined, 'six', -3] as unknown as number[]) {
+        const summary = summarizeCaptureReadiness(
+          makeState({
+            totalPoints: 100,
+            totalElements: 100,
+            refinementResidency: residencyStop({ declinedPathCount: count }),
+          })
+        );
+
+        expect(summary.ok, `declinedPathCount: ${String(count)}`).toBe(false);
+        expect(summary.reason).toContain('declined-path count unreadable');
+        expect(summary.reason).not.toMatch(/NaN|undefined/);
+        expect(summary.refinementDeclinedPathCount).toBe(0);
+        expectNoNaN(summary);
+      }
+
+      // Same for the byte figures and the first path: named as unreadable, never
+      // printed as `NaN MiB` or as an empty `first: `.
+      const noBytes = summarizeCaptureReadiness(
+        makeState({
+          totalPoints: 100,
+          totalElements: 100,
+          refinementResidency: {
+            declinedPathCount: 2,
+          } as unknown as RefinementResidencyStop,
+        })
+      );
+      expect(noBytes.ok).toBe(false);
+      expect(noBytes.reason).toContain('2 node paths declined');
+      expect(noBytes.reason).toContain('first: unknown');
+      expect(noBytes.reason).toContain('resident and budget bytes unreadable');
+      expect(noBytes.reason).not.toMatch(/NaN|undefined/);
+      expectNoNaN(noBytes);
+    });
+
+    it('REGRESSION: a dropped-elements-only reason is byte-identical to before', () => {
+      // Every capture tool and E2E spec that matched this string predates the
+      // two new clauses; combining the reasons must not have reworded the one
+      // that was already there.
+      const summary = summarizeCaptureReadiness(
+        makeState({ totalPoints: 80, totalElements: 80, totalDroppedElements: 20 })
+      );
+
+      expect(summary.reason).toBe('20 elements were dropped by renderer capacity limits');
+      expect(summary.ok).toBe(false);
+      expectNoNaN(summary);
+    });
   });
 
   describe('REGRESSION #1579: totals are read from the FLAT DebugState', () => {

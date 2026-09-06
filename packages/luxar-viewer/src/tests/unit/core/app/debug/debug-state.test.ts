@@ -15,6 +15,7 @@ import {
   type DebugStateContext,
 } from '../../../../../core/app/debug/debug-state';
 import type { SimpleDims } from '../../../../../types/dims';
+import type { RefinementResidencyStop } from '../../../../../data/scene-loader/progressive/residency-budget';
 
 function makePointCloud(
   count: number,
@@ -800,6 +801,66 @@ describe('computeDebugState', () => {
       const state = computeDebugState(makeContext(new THREE.Scene()));
       expect(state.lodGroups).toEqual([]);
       expect(state.partitions).toEqual([]);
+    });
+  });
+
+  /**
+   * The two run-dependent signals a capture tool branches on (#2508). Both are
+   * INJECTED providers rather than fields this helper can compute, so the only
+   * thing to pin is that the snapshot carries them when they are supplied and
+   * omits them — rather than synthesising a zero — when they are not.
+   */
+  describe('injected loader-side providers', () => {
+    const stop: RefinementResidencyStop = {
+      reason: 'next-rung-would-exceed',
+      residentBytes: 512 * 1024 * 1024,
+      budgetBytes: 512 * 1024 * 1024,
+      firstPath: '/galaxies/bright',
+      declinedPathCount: 6,
+      declinedPaths: ['/galaxies/bright'],
+    };
+
+    const poolStats = {
+      activeBuffers: 4,
+      pooledBuffers: 1,
+      activeBytes: 2048,
+      pooledBytes: 512,
+      totalBytes: 2560,
+      largestPooledBytes: 512,
+      evictions: 7,
+      byteBudgetEvictions: 2,
+    };
+
+    it('surfaces the refinement stop and the pool stats when providers are wired', () => {
+      const state = computeDebugState(
+        makeContext(new THREE.Scene(), {
+          refinementResidency: () => stop,
+          gpuPoolStats: () => poolStats,
+        })
+      );
+
+      expect(state.refinementResidency).toEqual(stop);
+      expect(state.gpuPool).toEqual(poolStats);
+      // The eviction split is the whole point of the pool read: a consumer that
+      // saw only `evictions` could not tell VRAM pressure from LRU recycling.
+      expect(state.gpuPool?.byteBudgetEvictions).toBe(2);
+    });
+
+    it('omits both when no provider is supplied', () => {
+      // Absence must read as "unknown / never happened", not as a zero-valued
+      // record — `capture-readiness.ts` treats a PRESENT residency record as
+      // the stop signal regardless of its contents.
+      const state = computeDebugState(makeContext(new THREE.Scene()));
+      expect(state.refinementResidency).toBeUndefined();
+      expect(state.gpuPool).toBeUndefined();
+      expect(JSON.parse(JSON.stringify(state))).not.toHaveProperty('refinementResidency');
+    });
+
+    it('omits the stop when the provider reports no stop', () => {
+      const state = computeDebugState(
+        makeContext(new THREE.Scene(), { refinementResidency: () => undefined })
+      );
+      expect(state.refinementResidency).toBeUndefined();
     });
   });
 });

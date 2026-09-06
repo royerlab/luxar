@@ -68,6 +68,35 @@ export interface PoolStats {
    */
   deferredEvictions: number;
   /**
+   * Of `evictions`, how many were forced by the BYTE budget rather than by LRU
+   * recycling — the subset that means the pool went over its VRAM budget and
+   * had to shed pooled geometry to get back under it.
+   *
+   * Split out because `evictions` conflates two unrelated events. Routine LRU
+   * recycling of released pooled buffers happens constantly on any nD scene as
+   * slices change and says nothing about capacity; a byte-budget eviction says
+   * the pool could not hold what it was holding, so what stayed resident is a
+   * property of this machine and this run rather than of the store, and a
+   * capture taken against it is not comparable (#2508). A consumer that refused
+   * on `evictions` would refuse every normal nD capture. That distinction is
+   * the whole reason this counter exists.
+   *
+   * WHAT IT DOES AND DOES NOT PROVE. The byte pass disposes POOLED
+   * (already-released) buffers only — active in-use buffers are never
+   * candidates (`byte-budget-evictor.ts`) — so a nonzero count is not by itself
+   * evidence that anything left the screen. It does cover the case where
+   * committed detail is thrown away, because the LOD registry demotes cold
+   * ACTIVE levels to pooled and this pass then reclaims them; a demoted level
+   * that would otherwise have been re-adopted is gone.
+   *
+   * KNOWN BLIND SPOT: it stays 0 when ACTIVE bytes alone exceed the budget with
+   * nothing pooled to shed. The pooled-disposal target floors at 0, there is
+   * nothing to dispose, and the pass reports no evictions — so this is not a
+   * "the pool could not hold the scene" detector. Compare `activeBytes` against
+   * the budget for that question.
+   */
+  byteBudgetEvictions: number;
+  /**
    * Per-pooled-type breakdown. `Record<PooledGeometryType, …>` for the same reason as
    * `type` above, and matching its already-keyed sibling
    * `GPUPoolStats.byType` in `types/data-monitor-types.ts` — the two were a keyed
