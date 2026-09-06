@@ -1311,8 +1311,9 @@ re-bake is a new path a caching viewer cannot serve stale. `uint16` rather than
 `float16` because the viewer's zarr reader needs a `Float16Array` for `<f2`
 while the GPU readback and three's half-float cube texture already speak half
 bits. `luxar optimise` copies the array verbatim and restamps its
-`scene_content_hash` to the output scene's new digest (`luxar info` does not list
-the group).
+`scene_content_hash` to the output scene's new digest; `luxar restamp-lod`
+likewise updates the stamp after changing the scene digest (`luxar info` does
+not list the group).
 
 ## Layers (Viewer Panel)
 
