@@ -11,9 +11,13 @@ import hashlib
 import os
 import time
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
+from urllib.parse import urlparse
 
 from arbol import aprint, asection
+
+if TYPE_CHECKING:
+    import requests
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Quarantined-cache detection
@@ -172,6 +176,44 @@ def quarantine_file(
     return target
 
 
+def _make_host_scoped_session(
+    original_host: Optional[str], sensitive_headers: Any
+) -> requests.Session:
+    """Build a ``requests.Session`` that scopes caller credential headers to one host.
+
+    ``requests`` strips only the ``Authorization`` header when a redirect crosses
+    to a different host; it leaves arbitrary custom headers (an ``api-key``, an
+    ``x-api-key``, a Zenodo/S3 bearer token, …) in place, so a credential-bearing
+    ``extra_headers`` entry would leak to whatever host a redirect points at. The
+    returned session drops every *sensitive_headers* entry on any redirect to a
+    host other than *original_host*, closing that leak while preserving requests'
+    own ``Authorization`` handling.
+
+    Args:
+        original_host: Hostname of the original request URL. Headers are kept only
+            for requests whose target host equals this (``None`` never matches, so
+            an unparseable original URL drops the headers on every redirect).
+        sensitive_headers: Header names to scope to the original host (typically
+            the caller's ``extra_headers`` keys); compared case-insensitively.
+    """
+    import requests
+
+    sensitive = {str(name).lower() for name in sensitive_headers}
+
+    class _HostScopedSession(requests.Session):
+        def rebuild_auth(self, prepared_request: Any, response: Any) -> None:  # noqa: ANN401 - matches requests' signature
+            # Preserve requests' own cross-host Authorization stripping first.
+            super().rebuild_auth(prepared_request, response)
+            if not sensitive:
+                return
+            if urlparse(prepared_request.url).hostname != original_host:
+                headers = prepared_request.headers
+                for name in [k for k in headers if k.lower() in sensitive]:
+                    del headers[name]
+
+    return _HostScopedSession()
+
+
 def robust_download(
     url: str,
     output_path: Path,
@@ -291,8 +333,13 @@ def robust_download(
         ),
     )
 
-    # Set up session with retry logic
-    session = requests.Session()
+    # Set up session with retry logic. Scope caller-supplied credential headers
+    # (extra_headers) to the original host so a cross-host redirect cannot leak
+    # them — requests strips Authorization on such a redirect but NOT arbitrary
+    # custom headers (an api-key, an x-api-key, a Zenodo/S3 token, …).
+    session = _make_host_scoped_session(
+        urlparse(url).hostname, (extra_headers or {}).keys()
+    )
     retry_strategy = Retry(
         total=max_retries,
         backoff_factor=2,  # Exponential backoff: 2s, 4s, 8s...
