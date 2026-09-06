@@ -223,3 +223,17 @@ def test_env_bake_cli_funnels_errors(tmp_path) -> None:
     result = runner.invoke(app, ["env", "bake", str(tmp_path / "missing.luxar.zarr")])
     assert result.exit_code == 1
     assert "Scene not found" in normalized_cli_output(result)
+
+
+def test_env_attach_cli_funnels_a_missing_store(tmp_path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "env",
+            "attach",
+            str(tmp_path / "missing.luxar.zarr"),
+            str(tmp_path / "missing.env.bin"),
+        ],
+    )
+    assert result.exit_code == 1
+    assert "Scene not found" in normalized_cli_output(result)

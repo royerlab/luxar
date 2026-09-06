@@ -69,6 +69,8 @@ def attach_environment(
     look like success.
     """
     store_path = Path(store)
+    if not store_path.exists():
+        raise FileNotFoundError(f"Scene not found: {store_path}")
     if not store_path.is_dir():
         raise ValueError(
             f"env attach requires an uncompressed .zarr directory; got "
