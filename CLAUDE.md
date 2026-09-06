@@ -1035,6 +1035,26 @@ with asection("Processing"):
     aprint("Step 2...")
 ```
 
+Library-layer narration must stay SILENCEABLE. `luxar.set_verbosity()` /
+`luxar.verbosity()` (in `luxar/utils/verbosity.py`) drive arbol's
+`enable_output` and `max_depth`, so a notebook or napari caller can quiet the
+tree without a per-call flag on every entry point:
+
+```python
+import luxar
+
+luxar.set_verbosity("silent")     # process-wide: silent | summary | normal | full
+with luxar.verbosity("summary"):  # scoped, restores on exit
+    scene.save()
+```
+
+Two things not to get wrong. The setting is arbol CLASS state, so it is
+process-global and not thread-safe — never reach for it to scope output inside a
+library function. And `set_verbosity(0)` is NOT silence: arbol at depth 0 still
+prints depth-0 lines plus a "(log tree truncated here)" notice for each section
+it truncates at the cap, so pass `"silent"`. A bool is refused outright for that
+reason (`set_verbosity(False)` reads as quiet but would resolve to depth 0).
+
 ### TypeScript
 - Format with prettier
 - Use JSDoc comments

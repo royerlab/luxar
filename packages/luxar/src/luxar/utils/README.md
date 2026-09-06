@@ -1,9 +1,10 @@
 # Utils Package
 
 The `utils` package provides cross-cutting utility functions for Luxar, including
-array manipulation, atomic directory copies, LOD policy, paths, and reusable
-scene generators. Demo-owned downloads, dataset resolution, and runtime helpers
-live under `luxar.demos` and are imported through that package's public barrel.
+array manipulation, atomic directory copies, console verbosity, LOD policy,
+paths, and reusable scene generators. Demo-owned downloads, dataset resolution,
+and runtime helpers live under `luxar.demos` and are imported through that
+package's public barrel.
 
 ## Quick Start
 
@@ -47,9 +48,8 @@ This package contains helper functions that simplify common tasks and provide co
 
 ### `arbol_warnings.py`
 Route Python warning *display* through arbol console output, so warnings land
-as `⚠️ UserWarning: ...` tree lines instead of raw stderr
-`path/to/file.py:299: UserWarning: ...` text that appears out of place
-mid-tree.
+as `⚠️ UserWarning: ...` tree lines whenever arbol can show them, and fall back
+to Python's stock stderr display whenever arbol would hide them.
 
 **Key Functions:**
 - `install_arbol_warnings()`: Process-wide install for application entry points (called by the `luxar` CLI callback)
@@ -147,6 +147,45 @@ Stable fingerprints for Python sources that produce Luxar stores.
 
 Static import closures do not discover string-built imports or non-Python inputs;
 callers must include those separately in their provenance when they affect output.
+
+### `verbosity.py`
+
+Turns Luxar's own console output down, or off. Everything below the CLI narrates
+through arbol -- 547 `aprint` calls across `gsplats` (314), `io` (146) and
+`core` (75). That is the right default for a long CLI run and the wrong one in a
+notebook cell or a napari plugin, and until this module there was no way to say
+so.
+
+```python
+import luxar
+
+luxar.set_verbosity("silent")     # process-wide, until changed again
+with luxar.verbosity("summary"):  # scoped, restores on exit
+    scene.save()
+```
+
+Levels: `"silent"` (normal arbol narration is suppressed; Python warnings use
+their standard display), `"summary"` (top-level lines plus one nested level;
+deeper sections are truncated), `"normal"` (depth 3), `"full"` (everything --
+the default, i.e. unchanged behaviour), or an int depth. `0` is *not* silence:
+arbol at depth 0 still prints depth-0 lines plus a truncation notice for each
+section it truncates at the cap, which is why `"silent"` uses
+`Arbol.enable_output` instead. That is measured, not assumed --
+`tests/test_verbosity.py` captures the output and asserts the documented effect
+of each level.
+
+**Key Functions:**
+- `set_verbosity(level)`: Set the level process-wide
+- `get_verbosity()`: Report `"silent"` whenever output is disabled; otherwise
+  report the matching level or the raw depth
+- `verbosity(level)`: Context manager; restores the exact previous switch pair,
+  not the level name it resolves to
+
+These write arbol *class attributes*, so the setting is process-global rather
+than per-call, is not thread-safe, and affects any other arbol user in the
+process. The module docstring states all three constraints; a per-call
+`verbosity=` argument and a `logging` bridge are both possible later, and
+neither is needed to make the output silenceable.
 
 ### Process lifecycle
 
