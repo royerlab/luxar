@@ -1,69 +1,81 @@
-"""Render a rotating PDB structure to a transparent WebM turntable with PyMOL.
+"""Render a slowly turning PDB structure to a transparent WebM turntable.
 
 Used by ``demo_esm3_protein_stories`` to show a representative structure next to
-each story's panel. This is a deliberate SPECIAL CASE in the demos' dependency
-policy: PyMOL open-source is not pip-installable (conda-forge or Homebrew only),
-so it is not in :data:`luxar.demos.INSTALL_SPECS`. The gate here therefore
-prints an install hint naming both routes and lets the demo continue WITHOUT
-turntables rather than raising — the stories scene is complete without them.
+each story's panel. Two tools take part:
+
+* **PyMOL open-source** computes the molecular surface. This is a deliberate
+  SPECIAL CASE in the demos' dependency policy: PyMOL is not pip-installable
+  (conda-forge or Homebrew only), so it is not in
+  :data:`luxar.demos.INSTALL_SPECS`. The gate prints an install hint naming both
+  routes and lets the demo continue WITHOUT turntables rather than raising — the
+  stories scene is complete without them.
+* **moderngl** (pip, in the ``demos`` extra) shades it on the GPU, offscreen —
+  see :mod:`luxar.demos._clay_renderer`. PyMOL's own ray tracer was the first
+  implementation and took five and a half hours for the ten structures (2-6 s a
+  frame on a laptop, no GPU path); the GPU renders a frame in about a
+  millisecond and the whole set in the time ffmpeg takes to encode it.
 
 Pipeline (all cached under ``~/.cache/luxar/pdb_turntables``):
 
 1. Fetch ``<ID>.pdb`` and the entry title from RCSB (``files.rcsb.org`` and
    ``data.rcsb.org``).
-2. Drive PyMOL headless (``pymol -cq <script>``) to ray-trace ``frames`` PNG
-   frames with a transparent background, the structure standing on its longest
-   principal axis and turning 360°/frames per frame about it, in the same sense
-   as the scene's auto-rotation — at the
-   default 900 frames that is 0.4° per frame, a slow 30 s turn at 30 fps (the
-   owner found one turn in 6 s far too fast; 0.4° per displayed frame is well
-   below the step that reads as judder at overlay size). The
-   style is a minimalist matte "clay" molecular surface in pastel shades of the
-   story's own colour (see :func:`pymol_script`).
-3. Encode with ffmpeg to VP9 WebM **with an alpha channel** (``yuva420p``) and
-   keep frame 0 as a PNG poster (the Safari fallback: it cannot decode alpha
-   WebM).
+2. PyMOL headless (``pymol -cq <script>``) exports the molecular surface of the
+   polymer, one Wavefront OBJ per chain, into ``<ID>_mesh_v<MESH_VERSION>_q<Q>/``
+   (cached: a style change re-renders without recomputing surfaces).
+3. The GPU renderer stands the assembly on its longest principal axis and
+   draws ``frames`` frames of one turn — matte clay in pastel shades of the
+   story colour, soft lights, screen-space ambient occlusion, transparent
+   background — streaming them into ffmpeg.
+4. ffmpeg encodes VP9 WebM **with an alpha channel** (``yuva420p``); frame 0 is
+   kept as a PNG poster (the Safari fallback: it cannot decode alpha WebM).
 
-Renders are keyed by ``(pdb_id, STYLE_VERSION, frames, size, colour)``; bump
-``STYLE_VERSION`` when the PyMOL style changes so cached turntables re-render.
+At the default 900 frames that is 0.4° per frame, a slow 30 s turn at 30 fps
+(the owner found one turn in 6 s far too fast). Renders are keyed by
+``(pdb_id, STYLE_VERSION, frames, size, colour)``; bump ``STYLE_VERSION`` when
+the look changes and ``MESH_VERSION`` when the surface export changes.
 """
 
 from __future__ import annotations
 
 import colorsys
 import hashlib
+import importlib.util
 import json
-import os
 import shutil
 import subprocess
 import sys
 import tempfile
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Optional, Sequence
 
 from arbol import aprint
 
-#: Bump when :func:`pymol_script` changes so cached turntables re-render.
-STYLE_VERSION = 5
+from luxar.demos._clay_renderer import (
+    MODERNGL_INSTALL_HINT,
+    ClayRenderer,
+    meshes_from_objs,
+    render_turntable_video,
+)
+
+#: Bump when the LOOK changes (shading, palette, frame count semantics) so
+#: cached turntables re-render.
+STYLE_VERSION = 6
+#: Bump when the PyMOL surface export changes so cached meshes are recomputed.
+MESH_VERSION = 1
 DEFAULT_FRAMES = 900
 DEFAULT_FPS = 30
 # 768 px covers the overlay's ~26% of a 4K kiosk width (~1000 px) at a 1.3x
-# upscale; ray-tracing cost scales with pixels, and 1024 px cost 1.5x more.
+# upscale.
 DEFAULT_SIZE = 768
-# Parallel PyMOL processes; each gets cpu_count // DEFAULT_JOBS ray threads.
-# PyMOL's tracer scales sub-linearly with threads (12 threads = 5.8x, 4 = 3.4x
-# on an M-series Mac), so three 4-thread jobs out-render one 12-thread job 1.7x.
-DEFAULT_JOBS = 3
-# Structures above this many atoms take the coarser molecular surface: the
-# surface dominates ray-tracing time (about 1.8x per quality step) and a
-# 50k-atom complex reads the same at overlay size. Below it, surface_quality 0
-# was measured indistinguishable from quality 1 at one seventh of the cost.
-# Antialiasing stays at 1 everywhere (2 cost 1.4x): the clip is shown smaller
-# than it is rendered, and that downscale smooths the edges.
+# Structures above this many atoms take PyMOL surface_quality 0 instead of 1:
+# the GPU does not care about triangle counts, but PyMOL's surface computation
+# does, and a 50k-atom complex reads the same at overlay size.
 LARGE_STRUCTURE_ATOMS = 15_000
+#: +1 spins so the front of the structure moves to the right — the same sense
+#: as the scene's world-y auto-rotation beside it, as the owner sees it.
+TURN_DIRECTION = 1.0
 #: Colour used when a structure has no story colour (a soft grey-violet).
 DEFAULT_COLOR: tuple[float, float, float] = (0.69, 0.42, 0.85)
 RGB = tuple[float, float, float]
@@ -129,6 +141,11 @@ def find_ffmpeg() -> Optional[str]:
         return None
 
 
+def has_moderngl() -> bool:
+    """Whether the GPU renderer's one pip dependency is importable."""
+    return importlib.util.find_spec("moderngl") is not None
+
+
 # ----------------------------------------------------------------------------
 # Pure pieces (unit-tested)
 # ----------------------------------------------------------------------------
@@ -153,6 +170,11 @@ def cache_key(
     return f"{pdb_id.upper()}_v{style_version}_{frames}f_{size}px_{digest[:8]}"
 
 
+def mesh_dir_name(pdb_id: str, quality: int, mesh_version: int = MESH_VERSION) -> str:
+    """Cache directory stem for one structure's exported surface meshes."""
+    return f"{pdb_id.upper()}_mesh_v{mesh_version}_q{quality}"
+
+
 def chain_palette(base: RGB, n: int) -> list[RGB]:
     """``n`` pastel clay shades around the story hue, one per chain.
 
@@ -172,120 +194,37 @@ def chain_palette(base: RGB, n: int) -> list[RGB]:
     return shades
 
 
-def pymol_script(
-    pdb_path: Path,
-    frames_dir: Path,
-    *,
-    frames: int,
-    size: int,
-    threads: int = 4,
-    color: RGB = DEFAULT_COLOR,
-) -> str:
-    """The PyMOL Python script for one turntable.
+def surface_quality_for(n_atoms: int) -> int:
+    """PyMOL ``surface_quality`` by structure size (1 fine, 0 default)."""
+    return 0 if n_atoms > LARGE_STRUCTURE_ATOMS else 1
 
-    Style — a minimalist "clay" render: the smooth, opaque molecular surface of
-    the polymer alone (no cartoon, ligands or ions), each chain in a pastel shade
-    of the story colour (:func:`chain_palette`), soft three-light studio
-    lighting with low specular, ray-traced shadows and ambient occlusion, and a
-    transparent background. The structure stands on its longest principal axis
-    (``orient`` lays that axis along x; a quarter turn about the view axis makes
-    it vertical) and spins about it, one ``turn y`` per frame, in the NEGATIVE
-    sense so the spin reads in the same direction as the scene's world-y
-    auto-rotation beside it (the owner saw the positive sense as opposite).
-    ``zoom(complete=1)`` plus an open clipping slab keep a long complex inside
-    the square frame at every angle (a plain zoom fits the default 4:3 viewport
-    and clipped photosystem II's ends).
 
-    Cost is ray-tracing the surface, so quality follows structure size
-    (``LARGE_STRUCTURE_ATOMS``): ``surface_quality 0`` below it (measured
-    indistinguishable from quality 1 at one seventh of the cost), ``-1`` above;
-    ``antialias 1`` throughout. Ambient occlusion and shadows are nearly free on
-    an opaque surface. Hydrogens (NMR entries) are removed.
+def pymol_surface_script(pdb_path: Path, mesh_dir: Path, *, quality: int) -> str:
+    """The PyMOL Python script that exports the molecular surface, per chain.
+
+    Solvent and hydrogens are removed, then for every chain of the polymer the
+    surface of THAT chain alone is shown and saved as ``chain_<i>.obj`` (PyMOL's
+    OBJ export writes whatever is drawn, with no colours, so per-chain colouring
+    means per-chain files). ``chains.json`` lists the chain ids in file order.
     """
-    step = 360.0 / frames
-    shades = chain_palette(color, 8)
     return "\n".join(
         [
+            "import json",
             "from pymol import cmd",
-            f"cmd.set('max_threads', {int(threads)})",
             f"cmd.load({str(pdb_path)!r}, 'mol')",
             "cmd.remove('solvent')",
             "cmd.remove('hydro')",
             "cmd.hide('everything')",
-            f"shades = {[tuple(round(c, 4) for c in s) for s in shades]!r}",
+            f"cmd.set('surface_quality', {int(quality)})",
             "chains = cmd.get_chains('mol and polymer') or ['']",
             "for i, chain in enumerate(chains):",
-            "    # Spread the shades over the chains present (few chains -> the",
-            "    # middle shades; many -> the whole ramp), repeating past eight.",
-            "    k = round(i * (len(shades) - 1) / max(len(chains) - 1, 1))",
-            "    cmd.set_color('story_%d' % i, list(shades[k % len(shades)]))",
-            "    cmd.color('story_%d' % i, \"polymer and chain '%s'\" % chain)",
-            "n_atoms = cmd.count_atoms('mol and polymer')",
-            f"large = n_atoms > {LARGE_STRUCTURE_ATOMS}",
-            "cmd.show('surface', 'polymer')",
-            "cmd.set('surface_color', -1)",
-            "cmd.set('transparency', 0.0)",
-            "cmd.set('surface_quality', -1 if large else 0)",
-            "cmd.set('antialias', 1)",
-            "cmd.set('light_count', 3)",
-            "cmd.set('light', [-0.4, -0.6, -1.0])",
-            "cmd.set('light2', [0.8, 0.3, -1.0])",
-            "cmd.set('ambient', 0.35)",
-            "cmd.set('direct', 0.55)",
-            "cmd.set('reflect', 0.25)",
-            "cmd.set('spec_reflect', 0.12)",
-            "cmd.set('spec_power', 30)",
-            "cmd.set('shininess', 12)",
-            "cmd.set('ray_shadows', 1)",
-            "cmd.set('ambient_occlusion_mode', 1)",
-            "cmd.set('ambient_occlusion_scale', 22)",
-            "cmd.set('ambient_occlusion_smooth', 12)",
-            "cmd.set('depth_cue', 0)",
-            "cmd.set('ray_opaque_background', 0)",
-            "cmd.set('ray_trace_mode', 0)",
-            "cmd.set('field_of_view', 22)",
-            "cmd.orient('mol and polymer')",
-            "cmd.zoom('mol and polymer', buffer=2.0, complete=1)",
-            "cmd.clip('slab', 10000)",
-            # orient lays the longest principal axis along the screen's x; a
-            # quarter turn about the view axis stands the structure up so the
-            # spin axis below IS its long axis (the bounding sphere still fits).
-            "cmd.turn('z', 90)",
-            f"for i in range({frames}):",
-            f"    cmd.png({str(frames_dir)!r} + '/frame_%04d.png' % i, width={size}, height={size}, dpi=-1, ray=1)",
-            f"    cmd.turn('y', {-step!r})",
+            "    cmd.hide('everything')",
+            "    cmd.show('surface', \"polymer and chain '%s'\" % chain)",
+            f"    cmd.save({str(mesh_dir)!r} + '/chain_%d.obj' % i)",
+            f"with open({str(mesh_dir)!r} + '/chains.json', 'w') as f:",
+            "    json.dump(chains, f)",
         ]
     )
-
-
-def ffmpeg_command(
-    ffmpeg: str, frames_dir: Path, out_webm: Path, *, fps: int
-) -> list[str]:
-    """VP9 WebM with alpha from ``frame_%04d.png``. ``-auto-alt-ref 0`` is required for alpha."""
-    return [
-        ffmpeg,
-        "-y",
-        "-loglevel",
-        "error",
-        "-framerate",
-        str(fps),
-        "-i",
-        str(frames_dir / "frame_%04d.png"),
-        "-c:v",
-        "libvpx-vp9",
-        "-pix_fmt",
-        "yuva420p",
-        "-auto-alt-ref",
-        "0",
-        "-b:v",
-        "0",
-        "-crf",
-        "32",
-        "-row-mt",
-        "1",
-        "-an",
-        str(out_webm),
-    ]
 
 
 # ----------------------------------------------------------------------------
@@ -318,6 +257,52 @@ def fetch_pdb(pdb_id: str, cache_dir: Path) -> tuple[Path, str]:
     return pdb_path, title
 
 
+def structure_atoms(pdb_id: str, cache_dir: Path) -> int:
+    """ATOM + HETATM record count of a (cached, fetched on demand) PDB entry."""
+    pdb_path, _ = fetch_pdb(pdb_id, cache_dir)
+    with pdb_path.open("rb") as f:
+        return sum(1 for line in f if line.startswith((b"ATOM", b"HETATM")))
+
+
+def export_surface_meshes(
+    pdb_id: str,
+    cache_dir: Path,
+    *,
+    quality: int,
+    pymol: Sequence[str],
+) -> list[Path]:
+    """PyMOL surface export into the mesh cache (reused when complete).
+
+    Returns the per-chain OBJ paths in chain order. Raises on a PyMOL failure
+    or an incomplete export.
+    """
+    pdb_id = pdb_id.upper()
+    pdb_path, _ = fetch_pdb(pdb_id, cache_dir)
+    mesh_dir = cache_dir / mesh_dir_name(pdb_id, quality)
+    chains_file = mesh_dir / "chains.json"
+    if chains_file.exists():
+        chains = json.loads(chains_file.read_text())
+        paths = [mesh_dir / f"chain_{i}.obj" for i in range(len(chains))]
+        if all(p.exists() for p in paths):
+            return paths
+    if mesh_dir.exists():
+        shutil.rmtree(mesh_dir)
+    mesh_dir.mkdir(parents=True)
+    with tempfile.TemporaryDirectory(prefix=f"luxar_surface_{pdb_id}_") as tmp:
+        script = Path(tmp) / "surface.py"
+        script.write_text(pymol_surface_script(pdb_path, mesh_dir, quality=quality))
+        aprint(f"PyMOL: computing the surface of {pdb_id} (quality {quality}) …")
+        subprocess.run([*pymol, str(script)], check=True, capture_output=True)  # noqa: S603
+    if not chains_file.exists():
+        raise RuntimeError(f"PyMOL wrote no chain list for {pdb_id}")
+    chains = json.loads(chains_file.read_text())
+    paths = [mesh_dir / f"chain_{i}.obj" for i in range(len(chains))]
+    missing = [p.name for p in paths if not p.exists()]
+    if missing:
+        raise RuntimeError(f"PyMOL exported no surface for {pdb_id}: {missing}")
+    return paths
+
+
 def render_turntable(
     pdb_id: str,
     cache_dir: Path,
@@ -325,12 +310,16 @@ def render_turntable(
     frames: int = DEFAULT_FRAMES,
     fps: int = DEFAULT_FPS,
     size: int = DEFAULT_SIZE,
-    threads: int = 4,
     color: RGB = DEFAULT_COLOR,
     pymol: Optional[Sequence[str]] = None,
     ffmpeg: Optional[str] = None,
+    renderer: Optional[ClayRenderer] = None,
 ) -> TurntableAssets:
-    """Render (or reuse) one structure's turntable. Raises on tool failure."""
+    """Render (or reuse) one structure's turntable. Raises on tool failure.
+
+    A ``renderer`` may be shared across structures (one GL context); without
+    one a renderer is created for this call.
+    """
     pdb_id = pdb_id.upper()
     pymol_cmd = list(pymol) if pymol is not None else find_pymol()
     ffmpeg_exe = ffmpeg if ffmpeg is not None else find_ffmpeg()
@@ -338,6 +327,8 @@ def render_turntable(
         raise RuntimeError(PYMOL_INSTALL_HINT)
     if ffmpeg_exe is None:
         raise RuntimeError(FFMPEG_INSTALL_HINT)
+    if not has_moderngl():
+        raise RuntimeError(MODERNGL_INSTALL_HINT)
 
     pdb_path, title = fetch_pdb(pdb_id, cache_dir)
     stem = cache_key(pdb_id, frames, size, color=color)
@@ -346,35 +337,25 @@ def render_turntable(
     if webm.exists() and poster.exists():
         return TurntableAssets(pdb_id, webm, poster, title, frames, fps)
 
-    with tempfile.TemporaryDirectory(prefix=f"luxar_turntable_{pdb_id}_") as tmp:
-        frames_dir = Path(tmp) / "frames"
-        frames_dir.mkdir()
-        script = Path(tmp) / "render.py"
-        script.write_text(
-            pymol_script(
-                pdb_path,
-                frames_dir,
-                frames=frames,
-                size=size,
-                threads=threads,
-                color=color,
-            )
-        )
-        aprint(
-            f"PyMOL: ray-tracing {frames} frames of {pdb_id} at {size}px "
-            f"({threads} threads) …"
-        )
-        subprocess.run([*pymol_cmd, str(script)], check=True, capture_output=True)  # noqa: S603
-        rendered = sorted(frames_dir.glob("frame_*.png"))
-        if len(rendered) != frames:
-            raise RuntimeError(
-                f"PyMOL produced {len(rendered)} of {frames} frames for {pdb_id}"
-            )
-        aprint(f"ffmpeg: encoding {pdb_id} → VP9 alpha WebM at {fps} fps …")
-        subprocess.run(
-            ffmpeg_command(ffmpeg_exe, frames_dir, webm, fps=fps), check=True
-        )  # noqa: S603
-        shutil.copyfile(rendered[0], poster)
+    quality = surface_quality_for(structure_atoms(pdb_id, cache_dir))
+    objs = export_surface_meshes(pdb_id, cache_dir, quality=quality, pymol=pymol_cmd)
+    meshes = meshes_from_objs(objs, chain_palette(color, len(objs)))
+    aprint(
+        f"GPU: rendering {frames} frames of {pdb_id} at {size}px "
+        f"({len(objs)} chains, {sum(len(m.positions) for m in meshes) // 3:,} "
+        f"triangles) → VP9 alpha WebM at {fps} fps …"
+    )
+    render_turntable_video(
+        meshes,
+        frames=frames,
+        fps=fps,
+        size=size,
+        webm=webm,
+        poster=poster,
+        ffmpeg=ffmpeg_exe,
+        renderer=renderer,
+        turn_direction=TURN_DIRECTION,
+    )
     return TurntableAssets(pdb_id, webm, poster, title, frames, fps)
 
 
@@ -385,102 +366,68 @@ def render_turntables(
     frames: int = DEFAULT_FRAMES,
     fps: int = DEFAULT_FPS,
     size: int = DEFAULT_SIZE,
-    jobs: int = DEFAULT_JOBS,
     colors: Optional[Mapping[str, RGB]] = None,
 ) -> dict[str, TurntableAssets]:
-    """Render several structures in parallel PyMOL processes.
+    """Render several structures with one shared GPU renderer.
 
     ``colors`` maps a PDB id to the RGB triple (in [0, 1]) whose hue the
     structure is rendered in — the demo passes each story's highlight colour so
     the turntable matches its cluster; ids without one get ``DEFAULT_COLOR``.
 
-    Returns the assets that rendered, keyed by PDB id. When PyMOL or ffmpeg is
-    missing, prints the install hint ONCE and returns an empty dict — the caller
-    builds its scene without turntables. A structure that fails to render is
-    reported and skipped; the others still return. The machine's cores are
-    split evenly across the ``jobs`` PyMOL processes.
+    Returns the assets that rendered, keyed by PDB id. When PyMOL, ffmpeg or
+    moderngl is missing (or no GL context can be created), prints the hint ONCE
+    and returns an empty dict — the caller builds its scene without turntables.
+    A structure that fails to render is reported and skipped; the others still
+    return.
     """
     pymol_cmd = find_pymol()
     ffmpeg_exe = find_ffmpeg()
-    jobs = max(1, jobs)
-    cores = render_threads()
-    if pymol_cmd is None or ffmpeg_exe is None:
+    hint = None
+    if pymol_cmd is None:
+        hint = PYMOL_INSTALL_HINT
+    elif ffmpeg_exe is None:
+        hint = FFMPEG_INSTALL_HINT
+    elif not has_moderngl():
+        hint = MODERNGL_INSTALL_HINT
+    if hint is not None:
         aprint("⚠️  Turntable videos skipped:")
-        for line in (
-            PYMOL_INSTALL_HINT if pymol_cmd is None else FFMPEG_INSTALL_HINT
-        ).splitlines():
+        for line in hint.splitlines():
             aprint(f"   {line}")
+        return {}
+    try:
+        renderer = ClayRenderer(size)
+    except Exception as e:  # noqa: BLE001 — no GL context on this machine
+        aprint(f"⚠️  Turntable videos skipped: no GPU context ({e})")
         return {}
 
     palette = {k.upper(): v for k, v in (colors or {}).items()}
-
-    def one(pdb_id: str, threads: int) -> Optional[TurntableAssets]:
-        try:
-            return render_turntable(
-                pdb_id,
-                cache_dir,
-                frames=frames,
-                fps=fps,
-                size=size,
-                threads=threads,
-                color=palette.get(pdb_id.upper(), DEFAULT_COLOR),
-                pymol=pymol_cmd,
-                ffmpeg=ffmpeg_exe,
-            )
-        except (subprocess.CalledProcessError, RuntimeError, OSError) as e:
-            detail = ""
-            if isinstance(e, subprocess.CalledProcessError) and e.stderr:
-                detail = (
-                    ": " + e.stderr.decode(errors="replace").strip().splitlines()[-1]
+    results: dict[str, TurntableAssets] = {}
+    try:
+        for pdb_id in pdb_ids:
+            try:
+                a = render_turntable(
+                    pdb_id,
+                    cache_dir,
+                    frames=frames,
+                    fps=fps,
+                    size=size,
+                    color=palette.get(pdb_id.upper(), DEFAULT_COLOR),
+                    pymol=pymol_cmd,
+                    ffmpeg=ffmpeg_exe,
+                    renderer=renderer,
                 )
-            aprint(f"⚠️  Turntable for {pdb_id} failed{detail or f': {e}'} — skipped")
-            return None
-
-    # Small structures parallelise well; large ones are memory-bound and slow
-    # each other down (three side by side rendered a frame of photosystem II 4x
-    # slower than one alone with every core), so they run one at a time, last.
-    small: list[str] = []
-    large: list[str] = []
-    for pdb_id in pdb_ids:
-        try:
-            n_atoms = structure_atoms(pdb_id, cache_dir)
-        except (OSError, ValueError) as e:
-            aprint(f"⚠️  Turntable for {pdb_id} failed: {e} — skipped")
-            continue
-        (large if n_atoms > LARGE_STRUCTURE_ATOMS else small).append(pdb_id)
-
-    results: list[Optional[TurntableAssets]] = []
-    with ThreadPoolExecutor(max_workers=jobs) as pool:
-        results.extend(pool.map(lambda i: one(i, max(1, cores // jobs)), small))
-    results.extend(one(pdb_id, cores) for pdb_id in large)
-    return {a.pdb_id: a for a in results if a is not None}
-
-
-def structure_atoms(pdb_id: str, cache_dir: Path) -> int:
-    """ATOM + HETATM record count of a (cached, fetched on demand) PDB entry."""
-    pdb_path, _ = fetch_pdb(pdb_id, cache_dir)
-    with pdb_path.open("rb") as f:
-        return sum(1 for line in f if line.startswith((b"ATOM", b"HETATM")))
-
-
-def render_threads() -> int:
-    """Ray-tracing threads for a render that owns the machine.
-
-    PyMOL splits each frame into per-thread strips and waits for the slowest,
-    so on Apple silicon a strip scheduled onto an efficiency core stalls the
-    frame: use the performance-core count there, every logical CPU elsewhere.
-    """
-    if sys.platform == "darwin":
-        try:
-            out = subprocess.run(  # noqa: S603
-                ["/usr/sbin/sysctl", "-n", "hw.perflevel0.logicalcpu"],
-                capture_output=True,
-                text=True,
-                check=True,
-                timeout=5,
-            ).stdout.strip()
-        except (OSError, subprocess.SubprocessError):
-            out = ""
-        if out.isdigit() and int(out) > 0:
-            return int(out)
-    return os.cpu_count() or 4
+            except (subprocess.CalledProcessError, RuntimeError, OSError) as e:
+                detail = ""
+                if isinstance(e, subprocess.CalledProcessError) and e.stderr:
+                    detail = (
+                        ": "
+                        + (e.stderr.decode(errors="replace").strip().splitlines()[-1])
+                    )
+                aprint(
+                    f"⚠️  Turntable for {pdb_id} failed{detail or f': {e}'} — skipped"
+                )
+                continue
+            results[a.pdb_id] = a
+    finally:
+        renderer.release()
+    return results

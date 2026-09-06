@@ -1,10 +1,10 @@
-"""Unit tests for the PyMOL turntable helper's pure pieces.
+"""Unit tests for the PDB turntable helper's pure pieces.
 
-PyMOL is a special-case (conda/Homebrew-only) dependency, so nothing here runs
-it. The tests pin what the demo relies on: the render script's style
-invariants (transparent background, one full turn, ray tracing), the alpha
-WebM encode flags, cache keying, and the soft gate that lets the demo build
-without turntables when the tools are absent.
+PyMOL is a special-case (conda/Homebrew-only) dependency and the renderer needs
+a GPU context, so nothing here runs either. The tests pin what the demo relies
+on: the surface-export script, cache keying (colour included), the pastel
+palette, the soft gate that lets the demo build without turntables when a tool
+is absent, and the per-structure skip.
 """
 
 from __future__ import annotations
@@ -15,61 +15,48 @@ from luxar.demos import _pdb_turntable as tt
 
 
 def test_cache_key_changes_with_every_render_parameter() -> None:
-    base = tt.cache_key("1omg", 360, 1024)
+    base = tt.cache_key("1omg", 900, 768)
     assert base.startswith("1OMG_v")  # id is upper-cased into the stem
-    assert tt.cache_key("1OMG", 360, 1024) == base  # case-insensitive
-    assert tt.cache_key("1OMG", 720, 1024) != base
-    assert tt.cache_key("1OMG", 360, 512) != base
-    assert tt.cache_key("1OMG", 360, 1024, style_version=tt.STYLE_VERSION + 1) != base
-
-
-def test_pymol_script_turns_exactly_once_with_a_transparent_ray_traced_background() -> (
-    None
-):
-    script = tt.pymol_script(
-        Path("/x/1OMG.pdb"), Path("/y/frames"), frames=360, size=1024
+    assert tt.cache_key("1OMG", 900, 768) == base  # case-insensitive
+    assert tt.cache_key("1OMG", 720, 768) != base
+    assert tt.cache_key("1OMG", 900, 512) != base
+    assert tt.cache_key("1OMG", 900, 768, style_version=tt.STYLE_VERSION + 1) != base
+    # The colour is part of the key: two stories sharing a PDB id rendered in
+    # different colours never collide.
+    assert tt.cache_key("1OMG", 900, 768, color=(1, 0, 0)) != tt.cache_key(
+        "1OMG", 900, 768, color=(0, 0, 1)
     )
-    assert "cmd.load('/x/1OMG.pdb', 'mol')" in script
-    assert "cmd.set('ray_opaque_background', 0)" in script  # alpha channel
-    assert "for i in range(360):" in script
-    assert "cmd.turn('y', -1.0)" in script  # 360 frames → exactly 1° per frame, spun
-    # in the negative sense to match the scene's auto-rotation; standing on the
-    # longest axis (orient lays it along x, the quarter turn makes it vertical).
-    assert "cmd.turn('z', 90)" in script
-    assert "ray=1" in script and "width=1024, height=1024" in script
-    # The look the demo promises: an opaque clay surface of the polymer alone,
-    # per-chain shades of the story colour, soft shadows + ambient occlusion.
-    for needle in (
-        "cmd.show('surface', 'polymer')",
-        "cmd.set('transparency', 0.0)",
-        "cmd.set('ambient_occlusion_mode', 1)",
-        "cmd.set('ray_shadows', 1)",
-        "cmd.set_color('story_%d' % i",
-        "cmd.color('story_%d' % i",
-    ):
-        assert needle in script, needle
-    for absent in ("cartoon", "spheres", "hetatm", "util."):
-        assert absent not in script, absent
-    # A long complex must stay inside the square frame at every angle.
-    assert "complete=1" in script and "cmd.clip('slab', 10000)" in script
-    # Quality follows structure size; the ray-thread budget is explicit so
-    # parallel jobs share the cores.
-    assert f"large = n_atoms > {tt.LARGE_STRUCTURE_ATOMS}" in script
-    assert "cmd.set('surface_quality', -1 if large else 0)" in script
-    assert "cmd.set('antialias', 1)" in script
-    # The defaults give a slow 30 s turn: 900 frames of 0.4 deg at 30 fps.
+    assert tt.color_hex((1.0, 0.5, 0.0)) == "#ff8000"
+    # Meshes are keyed separately so a style change reuses the surfaces.
+    assert tt.mesh_dir_name("1omg", 1) == f"1OMG_mesh_v{tt.MESH_VERSION}_q1"
+    assert tt.mesh_dir_name("1OMG", 0) != tt.mesh_dir_name("1OMG", 1)
+
+
+def test_defaults_give_a_slow_30_second_turn() -> None:
     assert tt.DEFAULT_FRAMES / tt.DEFAULT_FPS == 30
-    assert "cmd.turn('y', -0.4)" in tt.pymol_script(
-        Path("a.pdb"), Path("f"), frames=tt.DEFAULT_FRAMES, size=768
-    )
-    assert "cmd.set('max_threads', 4)" in script
-    assert "cmd.set('max_threads', 6)" in tt.pymol_script(
-        Path("a.pdb"), Path("f"), frames=360, size=768, threads=6
-    )
-    # Non-integer steps still sum to one turn.
-    assert "cmd.turn('y', -2.5)" in tt.pymol_script(
-        Path("a.pdb"), Path("f"), frames=144, size=256
-    )
+    assert tt.DEFAULT_FRAMES == 900  # 0.4 deg per frame
+    assert tt.TURN_DIRECTION in (1.0, -1.0)
+
+
+def test_surface_quality_follows_structure_size() -> None:
+    assert tt.surface_quality_for(4_779) == 1  # hemoglobin
+    assert tt.surface_quality_for(tt.LARGE_STRUCTURE_ATOMS) == 1
+    assert tt.surface_quality_for(54_036) == 0  # photosystem II
+
+
+def test_pymol_surface_script_exports_one_obj_per_chain() -> None:
+    script = tt.pymol_surface_script(Path("/x/1OMG.pdb"), Path("/y/mesh"), quality=1)
+    assert "cmd.load('/x/1OMG.pdb', 'mol')" in script
+    assert "cmd.remove('solvent')" in script and "cmd.remove('hydro')" in script
+    assert "cmd.set('surface_quality', 1)" in script
+    assert "cmd.get_chains('mol and polymer')" in script
+    # Per-chain surfaces: hide everything, show this chain, save its OBJ.
+    assert "cmd.show('surface', \"polymer and chain '%s'\" % chain)" in script
+    assert "cmd.save('/y/mesh' + '/chain_%d.obj' % i)" in script
+    assert "'/y/mesh' + '/chains.json'" in script
+    # Nothing else is drawn — the surface is what gets exported.
+    for absent in ("cartoon", "spheres", "png(", "ray"):
+        assert absent not in script, absent
 
 
 def test_chain_palette_keeps_the_story_hue_but_pins_lightness_and_saturation() -> None:
@@ -84,27 +71,6 @@ def test_chain_palette_keeps_the_story_hue_but_pins_lightness_and_saturation() -
         assert abs(((h - h0 + 0.5) % 1.0) - 0.5) < 0.04  # within ~15 deg of hue
         assert 0.5 <= lightness <= 0.7 and 0.4 <= sat <= 0.6
     assert tt.chain_palette(neon_green, 1) == [tt.chain_palette(neon_green, 1)[0]]
-    # The colour is part of the cache key, so two stories sharing a PDB id
-    # rendered in different colours never collide.
-    assert tt.cache_key("1OMG", 360, 768, color=(1, 0, 0)) != tt.cache_key(
-        "1OMG", 360, 768, color=(0, 0, 1)
-    )
-    assert tt.color_hex((1.0, 0.5, 0.0)) == "#ff8000"
-    assert "shades = [" in tt.pymol_script(
-        Path("a.pdb"), Path("f"), frames=360, size=768, color=neon_green
-    )
-
-
-def test_ffmpeg_command_encodes_vp9_with_alpha_at_the_requested_rate() -> None:
-    cmd = tt.ffmpeg_command("/usr/bin/ffmpeg", Path("/f"), Path("/out.webm"), fps=60)
-    assert cmd[0] == "/usr/bin/ffmpeg"
-    assert cmd[cmd.index("-framerate") + 1] == "60"
-    assert cmd[cmd.index("-c:v") + 1] == "libvpx-vp9"
-    assert cmd[cmd.index("-pix_fmt") + 1] == "yuva420p"  # the alpha plane
-    # VP9 alpha is silently dropped when alt-ref frames are on.
-    assert cmd[cmd.index("-auto-alt-ref") + 1] == "0"
-    assert cmd[-1] == "/out.webm"
-    assert "-an" in cmd
 
 
 def test_render_turntables_soft_gates_on_missing_tools(
@@ -121,39 +87,65 @@ def test_render_turntables_soft_gates_on_missing_tools(
     assert tt.render_turntables(["1OMG"], tmp_path) == {}
     assert "ffmpeg" in capsys.readouterr().out
 
+    monkeypatch.setattr(tt, "find_ffmpeg", lambda: "/usr/bin/ffmpeg")
+    monkeypatch.setattr(tt, "has_moderngl", lambda: False)
+    assert tt.render_turntables(["1OMG"], tmp_path) == {}
+    assert "luxar[demos]" in capsys.readouterr().out  # bounded, per INSTALL_SPECS
+
+
+def test_render_turntables_skips_when_no_gpu_context(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    monkeypatch.setattr(tt, "find_pymol", lambda: ["/usr/bin/pymol", "-cq"])
+    monkeypatch.setattr(tt, "find_ffmpeg", lambda: "/usr/bin/ffmpeg")
+    monkeypatch.setattr(tt, "has_moderngl", lambda: True)
+
+    def no_context(*_a: object, **_k: object) -> None:
+        raise RuntimeError("cannot create an OpenGL context")
+
+    monkeypatch.setattr(tt, "ClayRenderer", no_context)
+    assert tt.render_turntables(["1OMG"], tmp_path) == {}
+    assert "no GPU context" in capsys.readouterr().out
+
 
 def test_render_turntables_reports_and_skips_a_failing_structure(
     monkeypatch, tmp_path, capsys
 ) -> None:
     monkeypatch.setattr(tt, "find_pymol", lambda: ["/usr/bin/pymol", "-cq"])
     monkeypatch.setattr(tt, "find_ffmpeg", lambda: "/usr/bin/ffmpeg")
-    monkeypatch.setattr(tt, "render_threads", lambda: 12)
-    sizes = {"1OMG": 300, "BAD1": 500, "3WU2": tt.LARGE_STRUCTURE_ATOMS + 1}
-    monkeypatch.setattr(tt, "structure_atoms", lambda pdb_id, cache_dir: sizes[pdb_id])
-    calls: list[tuple[str, object]] = []
-    colors: dict[str, object] = {}
+    monkeypatch.setattr(tt, "has_moderngl", lambda: True)
+    released: list[bool] = []
+
+    class FakeRenderer:
+        def __init__(self, size: int) -> None:
+            self.size = size
+
+        def release(self) -> None:
+            released.append(True)
+
+    monkeypatch.setattr(tt, "ClayRenderer", FakeRenderer)
+    calls: list[tuple[str, object, object]] = []
 
     def fake_render(
         pdb_id: str, cache_dir: Path, **kwargs: object
     ) -> tt.TurntableAssets:
-        calls.append((pdb_id, kwargs["threads"]))
-        colors[pdb_id] = kwargs["color"]
+        calls.append((pdb_id, kwargs["color"], kwargs["renderer"]))
         if pdb_id == "BAD1":
-            raise RuntimeError("PyMOL produced 0 of 360 frames for BAD1")
+            raise RuntimeError("PyMOL exported no surface for BAD1")
         return tt.TurntableAssets(
-            pdb_id, cache_dir / "a.webm", cache_dir / "a.png", "t", 360, 60
+            pdb_id, cache_dir / "a.webm", cache_dir / "a.png", "t", 900, 30
         )
 
     monkeypatch.setattr(tt, "render_turntable", fake_render)
     assets = tt.render_turntables(
-        ["3WU2", "1OMG", "BAD1"], tmp_path, jobs=2, colors={"3wu2": (0.4, 0.98, 0.4)}
+        ["3WU2", "1OMG", "BAD1"], tmp_path, colors={"3wu2": (0.4, 0.98, 0.4)}
     )
     assert set(assets) == {"1OMG", "3WU2"}
-    # Story colours reach the renderer (case-insensitively); others default.
-    assert colors["3WU2"] == (0.4, 0.98, 0.4)
-    assert colors["1OMG"] == tt.DEFAULT_COLOR
     assert "BAD1 failed" in capsys.readouterr().out
-    # Small structures share the cores across the pool; the large one runs
-    # LAST, alone, with every core.
-    assert sorted(calls[:2]) == [("1OMG", 6), ("BAD1", 6)]
-    assert calls[2] == ("3WU2", 12)
+    # Story colours reach the renderer (case-insensitively); others default;
+    # ONE renderer (GL context) is shared by every structure and released once.
+    by_id = {c[0]: c for c in calls}
+    assert by_id["3WU2"][1] == (0.4, 0.98, 0.4)
+    assert by_id["1OMG"][1] == tt.DEFAULT_COLOR
+    assert len({id(c[2]) for c in calls}) == 1 and isinstance(calls[0][2], FakeRenderer)
+    assert released == [True]

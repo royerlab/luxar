@@ -176,6 +176,7 @@ Compressed Gaussian splat datasets containing centers, amplitudes, Cholesky fact
 
 ```python
 from luxar.gsplats.gsplat_data import GSplatData
+
 data = GSplatData.load("file.gsplats.zarr.zip")
 ```
 
