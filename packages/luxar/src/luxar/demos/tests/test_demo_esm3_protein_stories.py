@@ -323,6 +323,10 @@ def test_add_story_sounds_authors_a_bed_and_one_narration_per_slot(
     # The bed became a first-order ambisonic field (the fake encoder "succeeded").
     assert bed_attrs["ambisonic"] == "foa" and bed_attrs["format"] == "aac"
     assert bed_attrs["spatial"] is False
+    # Bed and hums are Layers-panel rows (mute / gain); narrations are not.
+    assert bed_attrs["layer"] is True
+    assert dict(root["hum_B"].attrs)["layer"] is True
+    assert "layer" not in dict(root["narration_B"].attrs)
     narr = dict(root["narration_B"].attrs)
     # Narration starts when the flight lands (waypoint arrival), a beat later.
     assert narr["trigger"] == "on_arrive" and narr["bus"] == "voice"

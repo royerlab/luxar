@@ -67,6 +67,20 @@ export interface AudioEngineDeps {
 }
 
 const DEFAULT_BUSES: Record<AudioBusName, number> = { ambient: 0.6, voice: 1.0, effects: 0.8 };
+/** Rendered frames between re-placements of `attach_to` sources (~0.5 s at 60 Hz). */
+const ATTACH_REFRESH_FRAMES = 30;
+
+/** Depth-first lookup of a scene-graph node by name (last path segment) or full path. */
+function findSceneNode(root: SceneNode, name: string): SceneNode | null {
+  const stack: SceneNode[] = [root];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    const last = node.path.split('/').pop();
+    if (node.path === name || last === name) return node;
+    if (node.children) for (const child of node.children) stack.push(child);
+  }
+  return null;
+}
 const DEFAULT_MASTER_GAIN = 0.8;
 const DEFAULT_DUCK_DB = -9;
 const DUCK_RAMP_MS = 150;
@@ -131,9 +145,13 @@ export class AudioEngine {
     // it renders; the ambisonic fields ride the same update (no per-frame
     // callback of our own, and nothing runs while the camera is still).
     const updateMatrixWorld = listener.updateMatrixWorld.bind(listener);
+    let frame = 0;
     listener.updateMatrixWorld = (force?: boolean): void => {
       updateMatrixWorld(force);
       if (this.foaDecoders.size > 0) this.rotateFoaFields(listener);
+      // Attached sources follow a target that may load or move later; a
+      // bounding-box read every ~half second of rendering is cheap enough.
+      if (++frame % ATTACH_REFRESH_FRAMES === 0) this.refreshAttachments();
     };
     this.listener = listener;
     this.busNodes = buses;
@@ -189,7 +207,7 @@ export class AudioEngine {
         onEnded: (name) => this.onNodeEnded(name, attrs.bus),
         resolveAttachCenter:
           attrs.attach_to !== undefined
-            ? () => this.deps.resolveNodeCenter?.(attrs.attach_to as string) ?? null
+            ? () => this.resolveAttachCenter(attrs.attach_to as string)
             : undefined,
         registerFoaDecoder: (decoder) => {
           this.foaDecoders.add(decoder);
@@ -221,6 +239,40 @@ export class AudioEngine {
     this.setDuck(1);
     this.gate.hide();
     this.deps.notifyUiChanged();
+  }
+
+  /**
+   * Where an `attach_to` source sits: the target's live bounding-box centre
+   * when its geometry is loaded, else the centre of the `position_bounds` its
+   * scene-graph node carries (a story-bound cluster has no geometry until the
+   * slice reaches its story, but its authored bounds are on disk from the
+   * start). The fallback reads the displayed dimensions and assumes an identity
+   * target transform; the live box takes over once the node loads.
+   */
+  private resolveAttachCenter(name: string): THREE.Vector3 | null {
+    const live = this.deps.resolveNodeCenter?.(name) ?? null;
+    if (live) return live;
+    const graph = this.deps.getSceneGraph();
+    const dims = this.deps.getDims();
+    if (!graph || !dims) return null;
+    const node = findSceneNode(graph, name);
+    const bounds = node?.attrs?.position_bounds as { min?: unknown; max?: unknown } | undefined;
+    const min = Array.isArray(bounds?.min) ? (bounds!.min as number[]) : null;
+    const max = Array.isArray(bounds?.max) ? (bounds!.max as number[]) : null;
+    if (!min || !max) return null;
+    const pick = (i: number): number => {
+      const d = dims.displayed[i];
+      if (d === undefined || !Number.isFinite(min[d]) || !Number.isFinite(max[d])) return 0;
+      return (min[d] + max[d]) / 2;
+    };
+    return new THREE.Vector3(pick(0), pick(1), pick(2));
+  }
+
+  /** Re-place every `attach_to` source (its target may have loaded since). */
+  private refreshAttachments(): void {
+    for (const node of this.nodes.values()) {
+      if (node.attrs.attach_to !== undefined) node.refreshPlacement();
+    }
   }
 
   /** Point every ambisonic field at the camera the listener sits on. */

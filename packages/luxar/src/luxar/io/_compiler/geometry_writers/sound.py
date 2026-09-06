@@ -137,6 +137,11 @@ def write_sound(
             chunks=(n_positions, n_dims),
             compressor=None,
             overwrite=True,
+            # The overview's hidden row is all zeros == the fill value, and zarr 3
+            # skips a chunk equal to its fill value by default; the viewer then
+            # 404s on `positions/c/0/0` (harmless, but an ERROR line on every
+            # load). Write the chunk unconditionally.
+            config={"write_empty_chunks": True},
         )
 
     write_raw_bytes(group, audio_file, payload)

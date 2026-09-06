@@ -1044,6 +1044,8 @@ def add_story_sounds(
             license="CC0",
             attribution=AMBIENT_BED_ATTRIBUTION,
             source_url=AMBIENT_BED_SOURCE_URL,
+            # A Layers-panel row: eye = mute the bed, slider = its gain.
+            layer=True,
         )
         added += 1
 
@@ -1096,6 +1098,7 @@ def add_story_sounds(
                 license="CC0",
                 attribution="Hum synthesised at build time (luxar demo)",
                 source_url=NARRATION_SOURCE_URL,
+                layer=True,
             )
             added += 1
             hums += 1

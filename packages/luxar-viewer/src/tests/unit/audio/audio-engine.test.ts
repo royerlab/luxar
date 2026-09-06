@@ -10,6 +10,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as THREE from 'three';
 import { AudioEngine, type AudioEngineDeps } from '../../../audio/audio-engine';
 import type { SoundSourceDescriptor } from '../../../types/audio';
+import type { SceneNode } from '../../../data/data-loader-types';
 import type { SimpleDims } from '../../../types/dims';
 import { StorageKeys } from '../../../utils/storage-keys';
 import {
@@ -278,6 +279,38 @@ describe('AudioEngine — slab, ducking and buses', () => {
     expect(voiceGain.gain.lastRampTarget()).toBeCloseTo(1.1);
     expect(h.engine.getNodeGain('/bed')).toBeCloseTo(1.1);
     expect(h.engine.getNodeGain('/nope')).toBeUndefined();
+  });
+
+  it('an attach_to target without geometry yet falls back to its scene-graph position_bounds centre, then refreshes', async () => {
+    const h = makeHarness();
+    // No live centre for this name (the port only knows 'blob'), but the scene
+    // graph carries the node's authored bounds: story dim 0, then x/y/z.
+    const graph = {
+      path: '',
+      type: 'scene',
+      attrs: {},
+      children: [
+        {
+          path: '/Story 1: Hb',
+          type: 'points',
+          attrs: { position_bounds: { min: [1, 2, -8, 4], max: [1, 6, -6, 10] } },
+          children: [],
+        },
+      ],
+    } as unknown as SceneNode;
+    (h.engine as unknown as { deps: AudioEngineDeps }).deps.getSceneGraph = () => graph;
+    h.root.add(soundPlaceholder('/hum', { trigger: 'continuous', attach_to: 'Story 1: Hb' }));
+    h.engine.attachScene(h.root);
+    await flush();
+    const voice = h.root.children[0].children.find(
+      (c) => c instanceof THREE.PositionalAudio
+    ) as THREE.PositionalAudio;
+    expect(voice.position.toArray()).toEqual([4, -7, 7]);
+    // Once the target has a live box, the per-frame refresh moves the voice there.
+    (h.engine as unknown as { deps: AudioEngineDeps }).deps.resolveNodeCenter = () =>
+      new THREE.Vector3(9, 9, 9);
+    for (let i = 0; i < 30; i++) h.camera.updateMatrixWorld(true);
+    expect(voice.position.toArray()).toEqual([9, 9, 9]);
   });
 
   it('an attach_to source sits at the named node centre', async () => {

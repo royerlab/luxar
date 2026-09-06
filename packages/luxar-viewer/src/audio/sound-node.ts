@@ -257,6 +257,12 @@ export class SoundNode {
     }
   }
 
+  /** Re-place the voices (an `attach_to` target may have loaded or moved). */
+  refreshPlacement(): void {
+    if (this.disposed || this.voices.length === 0) return;
+    this.repositionVoices();
+  }
+
   /**
    * Re-evaluate audibility for the current slice and apply the edges.
    * Called by the engine on every dimension change (and once at attach).

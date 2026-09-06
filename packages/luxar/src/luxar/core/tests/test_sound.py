@@ -180,6 +180,22 @@ def test_on_arrive_narration_and_attached_hum(tmp_path) -> None:
     assert nodes["narr"].attach_to is None
 
 
+def test_all_zero_hidden_row_still_writes_its_positions_chunk(tmp_path) -> None:
+    """``hidden={"story": 0}`` is a row of zeros == the fill value; the chunk must exist."""
+    store, _ = _build(tmp_path, narr=dict(hidden={"story": 0}, trigger="once"))
+    positions_dir = store / "narr" / "positions"
+    chunk_files = [
+        p
+        for p in positions_dir.rglob("*")
+        if p.is_file() and "zarr.json" not in p.name and not p.name.startswith(".")
+    ]
+    assert chunk_files, "the all-zero positions chunk was not written"
+    positions = LuxarScene(open_group(store, mode="r"), store)._decode_array(
+        open_group(store, mode="r")["narr"], "positions"
+    )
+    assert positions.shape == (1, 5) and not positions.any()
+
+
 def test_ambisonic_field_is_stamped_non_spatial_and_checks_channels(
     tmp_path, monkeypatch
 ) -> None:
