@@ -239,6 +239,11 @@ def _is_literal_true(node: ast.expr | None) -> bool:
     return isinstance(node, ast.Constant) and node.value is True
 
 
+def _is_literal_none(node: ast.expr | None) -> bool:
+    """Whether *node* is the literal ``None``."""
+    return isinstance(node, ast.Constant) and node.value is None
+
+
 def _declares_a_hidden_dimension(src: str) -> bool:
     """Whether *src* declares a ``Dimension(..., display=False)``."""
     return any(
@@ -1197,7 +1202,9 @@ class TestASlicedNodeGetsAShareOfItsFrame:
                         "be read from the source"
                     )
                     continue
-                if "slice_dims" not in items:
+                if "slice_dims" not in items or _is_literal_none(
+                    items.get("slice_dims")
+                ):
                     not_slice_aware.append(f"{spelled}{ast.unparse(additive_lod)}")
                 if not _is_literal_true(items.get("recompute")):
                     shadowable.append(f"{spelled}{ast.unparse(additive_lod)}")
@@ -1223,6 +1230,23 @@ class TestASlicedNodeGetsAShareOfItsFrame:
             "never reaches make_additive_lod at all. A spec routed through a ** "
             f"spread is gated the same way: {shadowable}"
         )
+
+    def test_a_literal_none_slice_dims_does_not_satisfy_the_gate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "demo_none_slice_dims.py").write_text(
+            """
+Dimension("Time", values=[0], display=False)
+scene.add_gsplats_from_data(
+    data,
+    additive_lod=dict(slice_dims=None, recompute=True),
+)
+"""
+        )
+        monkeypatch.setattr(registry, "_DEMOS_DIR", tmp_path)
+
+        with pytest.raises(AssertionError, match="slice_dims"):
+            self.test_every_sliced_gsplats_additive_ladder_is_slice_even()
 
     def test_a_small_sliced_node_keeps_its_budget_ladder(self) -> None:
         # The floor is a max(), so a node whose budget rung already exceeds
