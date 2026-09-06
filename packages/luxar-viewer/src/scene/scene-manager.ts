@@ -674,7 +674,11 @@ export class SceneManager extends THREE.EventDispatcher<{
       this.scene
     );
     this.unsubscribeEnvironment = materialManager.onPhysicalMaterialCreated(() => {
-      this.environment?.ensure();
+      try {
+        this.environment?.ensure();
+      } catch (error) {
+        log.warning(Modules.SCENE_MANAGER, 'Failed to build scene environment', error);
+      }
     });
   }
 

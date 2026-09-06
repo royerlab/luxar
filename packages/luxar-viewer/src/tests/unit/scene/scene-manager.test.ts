@@ -412,6 +412,7 @@ vi.mock('../../../scene/scene-manager/render-pipeline/renderer-setup', async () 
 // Import after mocks are set up
 import { SceneManager } from '../../../scene/scene-manager';
 import { loadScene as mockLoadScene } from '../../../data';
+import { materialManager } from '../../../rendering/material-manager';
 import { createWebGPURenderer as mockedCreateWebGPURenderer } from '../../../scene/scene-manager/render-pipeline/renderer-setup';
 import {
   sceneDimsManager,
@@ -1482,6 +1483,17 @@ describe('SceneManager', () => {
       await restoredHandler?.(new Event('webglcontextrestored'));
       expect(rebuildSpy).toHaveBeenCalledTimes(1);
       expect(readySpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps loading physical materials when the first environment build fails', () => {
+      const environment = sceneManager.environment;
+      expect(environment).not.toBeNull();
+      const ensureSpy = vi.spyOn(environment!, 'ensure').mockImplementation(() => {
+        throw new Error('PMREM failed');
+      });
+
+      expect(() => materialManager.getMeshPhysicalMaterial({})).not.toThrow();
+      expect(ensureSpy).toHaveBeenCalledTimes(1);
     });
 
     it('finishes context recovery when rebuilding the environment fails', async () => {
