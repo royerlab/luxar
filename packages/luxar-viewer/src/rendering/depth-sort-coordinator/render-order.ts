@@ -822,7 +822,10 @@ export function authoredLayerOrder(mesh: THREE.Mesh): number | undefined {
  *    the single-wrapper special case); otherwise the whole group falls
  *    back to member view-z (a partition with no stored tree, or one whose
  *    tree does not name every part).
- * 6. Sequential global integers 1..M are written to mesh.renderOrder.
+ * 6. Sequential global integers are written to mesh.renderOrder. When a glass
+ *    group exists, the prefix through the last glass group occupies negative
+ *    ranks so every draw-first surface stays ahead of unranked emissive objects
+ *    at three's default 0; later groups resume at 1.
  *
  * Transparent objects OUTSIDE the coordinator's sorted set (commutative
  * modes, plus empty parts that have never committed) keep renderOrder 0
@@ -876,9 +879,18 @@ export function assignGlobalRenderOrder(): void {
   const ordered = orderGroupsWithContainment(byDepth);
   warnBucketOrderConflict(ordered);
 
-  // Reserve THREE's default 0 for meshes the coordinator does not track yet,
-  // so an empty never-committed partition placeholder cannot alias a live rank.
-  let nextRank = 1;
+  assignRenderOrderRanks(ordered);
+}
+
+/** Write the already ordered groups onto one renderOrder scale, reserving 0. */
+function assignRenderOrderRanks(ordered: OrderGroup[]): void {
+  let prefixSize = 0;
+  let negativePrefixSize = 0;
+  for (const group of ordered) {
+    prefixSize += group.slots.length;
+    if (group.first) negativePrefixSize = prefixSize;
+  }
+  let nextRank = negativePrefixSize > 0 ? -negativePrefixSize : 1;
   for (const group of ordered) {
     // BSP ranks when EVERY member has one; view-z otherwise (a rank-less legacy
     // wrapper, or a partition with no stored tree).
@@ -898,6 +910,7 @@ export function assignGlobalRenderOrder(): void {
       everyMemberRanked ? (a, b) => a.partRank - b.partRank : (a, b) => a.viewZ - b.viewZ
     );
     for (const slot of group.slots) {
+      if (nextRank === 0) nextRank = 1;
       slot.mesh.renderOrder = nextRank++;
     }
   }

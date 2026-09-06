@@ -5196,9 +5196,26 @@ describe('depth-sort coordinator — layer_order bands', () => {
 
     coord.evaluateDepthSortPerFrame();
 
-    expect(far.renderOrder).toBe(1);
-    expect(glass.renderOrder).toBe(2);
-    expect(near.renderOrder).toBe(3);
+    expect(far.renderOrder).toBe(-2);
+    expect(glass.renderOrder).toBe(-1);
+    expect(near.renderOrder).toBe(1);
+  });
+
+  it('glass keeps its draw-first bias when depth sorting is disabled', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const glass = makeGlassMesh(-10);
+    const additive = makeGSplatsMesh(2, 'additive');
+    coord.noteDepthSortCommit(glass, () => new Float32Array(9), 3, new Uint32Array(9));
+    coord.noteDepthSortCommit(additive, new Float32Array([0, 0, -1]), 1);
+    await flush();
+    coord.setDepthSortEnabled(false);
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(glass.renderOrder).toBe(-1);
+    expect(additive.renderOrder).toBe(0);
+    expect(mockApi.sort).not.toHaveBeenCalled();
   });
 
   it('an authored band overrides the containment hoist, and warns', async () => {
