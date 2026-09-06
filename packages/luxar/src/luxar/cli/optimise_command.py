@@ -22,6 +22,7 @@ from ..io.optimise import (
     plan_optimisation,
     resolve_target_bytes,
 )
+from ._traceback import exit_with_error
 
 
 def _report_dry_run(plan: OptimisePlan, path: Path) -> None:
@@ -73,8 +74,7 @@ def _plan_and_report(
     try:
         root = open_group(source, mode="r")
     except Exception as e:
-        aprint(f"❌ Error reading {source}: {e}")
-        raise typer.Exit(1) from e
+        exit_with_error(f"❌ Error reading {source}: {e}", e)
     try:
         ensure_luxar_store(source, root, generic=generic)
         plan = plan_optimisation(root, target_bytes=budget, profile=profile)
@@ -82,8 +82,7 @@ def _plan_and_report(
         aprint(f"❌ {e}")
         raise typer.Exit(1) from e
     except Exception as e:
-        aprint(f"❌ Error reading {source}: {e}")
-        raise typer.Exit(1) from e
+        exit_with_error(f"❌ Error reading {source}: {e}", e)
     finally:
         close(root)
     _report_dry_run(plan, source)
@@ -175,5 +174,4 @@ def register_optimise_command(app: typer.Typer) -> None:
         except typer.Exit:
             raise
         except Exception as e:
-            aprint(f"❌ Error optimising {source}: {e}")
-            raise typer.Exit(1)
+            exit_with_error(f"❌ Error optimising {source}: {e}", e)

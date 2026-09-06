@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Optional
 import typer
 from arbol import aprint, asection
 
+from ..._traceback import exit_with_error
 from ...utils import format_memory_size
 
 if TYPE_CHECKING:
@@ -161,8 +162,7 @@ def run_denoise_volume_cmd(
     except typer.Exit:
         raise
     except Exception as e:
-        aprint(f"Error: {e}")
-        raise typer.Exit(1) from e
+        exit_with_error(f"Error: {e}", e)
 
 
 def run_render_to_file(
