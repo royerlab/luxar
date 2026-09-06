@@ -605,12 +605,13 @@ test.describe('Console Error Detection', () => {
     // Collect page-level errors as a fallback in case the console interceptor
     // isn't ready before the errors fire.
     //
-    // Warnings go in their own bucket. This listener used to fold them in with
-    // the errors, which meant one unrelated warning could satisfy a test named
-    // "should detect and report console errors" on its own — harmless while the
-    // fixture's console gate was also watching, but this test now opts out of
-    // that gate, so its own assertion is the only thing left standing. The
-    // warning count is still reported below; it just cannot carry the verdict.
+    // Warnings go in their own bucket, and the verdict below counts errors from
+    // both sides only. Both the listener and the assertion used to fold warnings
+    // in, which meant one unrelated warning could satisfy a test named "should
+    // detect and report console errors" on its own — harmless while the fixture's
+    // console gate was also watching, but this test now opts out of that gate, so
+    // its own assertion is the only thing left standing. Warning counts are still
+    // reported below; they just cannot carry the verdict.
     const pageErrors: string[] = [];
     const pageWarnings: string[] = [];
     page.on('pageerror', (err) => pageErrors.push(err.message));
@@ -635,7 +636,10 @@ test.describe('Console Error Detection', () => {
           const debug = (window as any).__luxarDebug;
           if (!debug?.consoleInterceptor?.getBufferedMessages) return false;
           const msgs = debug.consoleInterceptor.getBufferedMessages();
-          return msgs.some((m: { type?: string }) => m.type === 'error' || m.type === 'warning');
+          // 'warn', not 'warning': BufferedMessage['type'] is
+          // 'log' | 'warn' | 'error' | 'info' | 'debug'
+          // (src/utils/console-interceptor.ts), so 'warning' never matches.
+          return msgs.some((m: { type?: string }) => m.type === 'error' || m.type === 'warn');
         },
         null,
         { timeout: 8000 }
@@ -645,10 +649,10 @@ test.describe('Console Error Detection', () => {
         // been captured by the captureConsoleMessages listener below.
       });
 
-    // Check both the in-app console interceptor and the Playwright-captured errors
+    // Check both the in-app console interceptor and the Playwright-captured
+    // errors. Errors only on both sides — see the listener note above.
     const consoleMessages = await getConsoleMessages(page);
-    const interceptedCount = consoleMessages.errors.length + consoleMessages.warnings.length;
-    const totalErrorCount = interceptedCount + pageErrors.length;
+    const totalErrorCount = consoleMessages.errors.length + pageErrors.length;
 
     console.log('[Error Detection Test] Intercepted errors:', consoleMessages.errors.length);
     console.log('[Error Detection Test] Intercepted warnings:', consoleMessages.warnings.length);

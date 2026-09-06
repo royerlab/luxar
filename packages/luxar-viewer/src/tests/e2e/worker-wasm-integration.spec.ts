@@ -69,12 +69,20 @@ test.describe('Worker Integration E2E', () => {
     //
     // Wait rather than sampling the buffer once: `warmUpDataWorkerPool()` is
     // fire-and-forget in the scene loader and Points decode on the main thread,
-    // so pool-ready is not strictly ordered before `waitForPointsLoaded`. The
-    // window is generous because `worker-pool.ts` logs the line only after
-    // `await Promise.allSettled(workerPromises)` — one stuck worker holds it
-    // behind that worker's whole init budget (a 3 s WASM compile deadline, then
-    // `workerInitTimeoutMs`, 10 s by default) while the pool is otherwise
-    // healthy, so the wait has to clear that path, not the happy one.
+    // so pool-ready is not strictly ordered before `waitForPointsLoaded`.
+    //
+    // Both waits below are explicitly bounded, and the two budgets are chosen
+    // together against this file's 60 s per-test timeout (it raises no timeout of
+    // its own, and Playwright charges `beforeEach` to the same slot). 20 s clears
+    // the worst justified delay: `worker-pool.ts` logs the line only after
+    // `await Promise.allSettled(workerPromises)`, so one stuck worker holds it
+    // behind that worker's whole init budget — a 3 s shared-WASM compile deadline
+    // plus `workerInitTimeoutMs` (10 s by default), ~13 s — and that clock starts
+    // at warm-up, well before `waitForPointsLoaded` returns. The read that follows
+    // is capped at 10 s instead of the helper's 45 s default for the same reason:
+    // on the failing path the budget has to survive long enough to PRINT what the
+    // pool logged, and a bare "Test timeout of 60000ms exceeded" would throw away
+    // the diff that is the entire point of the assertion's shape.
     //
     // The wait is a single in-page predicate, not `expect.poll` over
     // `getConsoleMessages`: that helper JSON-stringifies the entire ring buffer
@@ -96,7 +104,7 @@ test.describe('Worker Integration E2E', () => {
           );
         },
         null,
-        { timeout: 30000 }
+        { timeout: 20000 }
       )
       .catch(() => {
         // Fall through: the assertion below reports what the pool DID log.
@@ -104,7 +112,7 @@ test.describe('Worker Integration E2E', () => {
 
     // Filtering to the `[WorkerPool]` lines is what puts the pool's actual
     // output in the failure report instead of a bare boolean.
-    const workerPoolLines = (await getConsoleMessages(page)).all.filter((m) =>
+    const workerPoolLines = (await getConsoleMessages(page, 10000)).all.filter((m) =>
       m.includes('[WorkerPool]')
     );
     expect(workerPoolLines).toEqual(
