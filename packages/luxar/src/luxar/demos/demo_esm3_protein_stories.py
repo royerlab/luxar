@@ -542,7 +542,7 @@ SPHERE_SUBDIVISIONS = 3  # icosphere: 642 vertices, 1280 faces
 SPHERE_LAYER_ORDER = 5  # backdrop 0 < sphere < highlight 10
 
 # Left-hand turntable: a representative PDB structure per story, ray-traced by
-# PyMOL into a transparent 60 fps WebM (see `_pdb_turntable`). Sits at panel
+# PyMOL into a transparent WebM turning once in 30 s (see `_pdb_turntable`). Sits at panel
 # height, clear of the activity rail; the caption goes just above it.
 TURNTABLE_POSITION = (0.06, 0.5)
 TURNTABLE_WIDTH = 0.26  # viewport-width fraction; height follows the square video
@@ -1045,7 +1045,7 @@ def build_stories_scene(
                     transition_duration=0.35,
                 )
 
-            # Left: the representative structure turning at 60 fps, transparent
+            # Left: the representative structure turning slowly (30 s per turn), transparent
             # over the map, with its PDB caption below. Hidden turntables are
             # paused by the viewer, so ten videos cost one decode at a time.
             for k, s in enumerate(stories, start=1):

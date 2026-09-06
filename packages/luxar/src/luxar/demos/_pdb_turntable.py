@@ -13,7 +13,9 @@ Pipeline (all cached under ``~/.cache/luxar/pdb_turntables``):
    ``data.rcsb.org``).
 2. Drive PyMOL headless (``pymol -cq <script>``) to ray-trace ``frames`` PNG
    frames with a transparent background, turning 360°/frames per frame — at the
-   default 360 frames that is exactly 1° per frame, a 6 s loop at 60 fps. The
+   default 900 frames that is 0.4° per frame, a slow 30 s turn at 30 fps (the
+   owner found one turn in 6 s far too fast; 0.4° per displayed frame is well
+   below the step that reads as judder at overlay size). The
    style is a minimalist matte "clay" molecular surface in pastel shades of the
    story's own colour (see :func:`pymol_script`).
 3. Encode with ffmpeg to VP9 WebM **with an alpha channel** (``yuva420p``) and
@@ -43,9 +45,9 @@ from typing import Mapping, Optional, Sequence
 from arbol import aprint
 
 #: Bump when :func:`pymol_script` changes so cached turntables re-render.
-STYLE_VERSION = 3
-DEFAULT_FRAMES = 360
-DEFAULT_FPS = 60
+STYLE_VERSION = 4
+DEFAULT_FRAMES = 900
+DEFAULT_FPS = 30
 # 768 px covers the overlay's ~26% of a 4K kiosk width (~1000 px) at a 1.3x
 # upscale; ray-tracing cost scales with pixels, and 1024 px cost 1.5x more.
 DEFAULT_SIZE = 768
@@ -53,11 +55,12 @@ DEFAULT_SIZE = 768
 # PyMOL's tracer scales sub-linearly with threads (12 threads = 5.8x, 4 = 3.4x
 # on an M-series Mac), so three 4-thread jobs out-render one 12-thread job 1.7x.
 DEFAULT_JOBS = 3
-# Structures above this many atoms take the coarser molecular surface and
-# single antialiasing: the surface dominates ray-tracing time (about 1.8x per
-# quality step, 1.4x for antialias 2) and a 50k-atom complex reads the same at
-# overlay size. Below it, surface_quality 0 + antialias 2 was measured
-# indistinguishable from quality 1 at one seventh of the cost.
+# Structures above this many atoms take the coarser molecular surface: the
+# surface dominates ray-tracing time (about 1.8x per quality step) and a
+# 50k-atom complex reads the same at overlay size. Below it, surface_quality 0
+# was measured indistinguishable from quality 1 at one seventh of the cost.
+# Antialiasing stays at 1 everywhere (2 cost 1.4x): the clip is shown smaller
+# than it is rendered, and that downscale smooths the edges.
 LARGE_STRUCTURE_ATOMS = 15_000
 #: Colour used when a structure has no story colour (a soft grey-violet).
 DEFAULT_COLOR: tuple[float, float, float] = (0.69, 0.42, 0.85)
@@ -188,10 +191,10 @@ def pymol_script(
     and clipped photosystem II's ends).
 
     Cost is ray-tracing the surface, so quality follows structure size
-    (``LARGE_STRUCTURE_ATOMS``): ``surface_quality 0`` + ``antialias 2`` below
-    it (measured indistinguishable from quality 1 at one seventh of the cost),
-    ``-1`` + ``antialias 1`` above. Ambient occlusion and shadows are nearly
-    free on an opaque surface. Hydrogens (NMR entries) are removed.
+    (``LARGE_STRUCTURE_ATOMS``): ``surface_quality 0`` below it (measured
+    indistinguishable from quality 1 at one seventh of the cost), ``-1`` above;
+    ``antialias 1`` throughout. Ambient occlusion and shadows are nearly free on
+    an opaque surface. Hydrogens (NMR entries) are removed.
     """
     step = 360.0 / frames
     shades = chain_palette(color, 8)
@@ -217,7 +220,7 @@ def pymol_script(
             "cmd.set('surface_color', -1)",
             "cmd.set('transparency', 0.0)",
             "cmd.set('surface_quality', -1 if large else 0)",
-            "cmd.set('antialias', 1 if large else 2)",
+            "cmd.set('antialias', 1)",
             "cmd.set('light_count', 3)",
             "cmd.set('light', [-0.4, -0.6, -1.0])",
             "cmd.set('light2', [0.8, 0.3, -1.0])",

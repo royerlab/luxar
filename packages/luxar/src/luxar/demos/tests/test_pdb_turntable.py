@@ -53,7 +53,12 @@ def test_pymol_script_turns_exactly_once_with_a_transparent_ray_traced_backgroun
     # parallel jobs share the cores.
     assert f"large = n_atoms > {tt.LARGE_STRUCTURE_ATOMS}" in script
     assert "cmd.set('surface_quality', -1 if large else 0)" in script
-    assert "cmd.set('antialias', 1 if large else 2)" in script
+    assert "cmd.set('antialias', 1)" in script
+    # The defaults give a slow 30 s turn: 900 frames of 0.4 deg at 30 fps.
+    assert tt.DEFAULT_FRAMES / tt.DEFAULT_FPS == 30
+    assert "cmd.turn('y', 0.4)" in tt.pymol_script(
+        Path("a.pdb"), Path("f"), frames=tt.DEFAULT_FRAMES, size=768
+    )
     assert "cmd.set('max_threads', 4)" in script
     assert "cmd.set('max_threads', 6)" in tt.pymol_script(
         Path("a.pdb"), Path("f"), frames=360, size=768, threads=6
