@@ -273,8 +273,9 @@ above):
   through the ordinary path, because the shared helper reads the canvas size.
 - **The store contract.** `environment/` is a root-level group with no `type` and
   no `kind` (the viewer skips such groups as sidecars; `RESERVED_ROOT_GROUPS` makes
-  every Python walker do the same, and the compiler refuses a user node by that
-  name). The faces array is `environment/faces-<xxh64[:8]>`, shape `(6, H, W, 4)`,
+  every general Python walker that enumerates root children as nodes do the same,
+  and the compiler refuses a user node by that name). The faces array is
+  `environment/faces-<xxh64[:8]>`, shape `(6, H, W, 4)`,
   zarr dtype **`uint16` holding IEEE half-float bits** rather than `float16`:
   zarrita throws on `<f2` without a `Float16Array`, while the GPU readback and
   three's `HalfFloatType` cube texture already speak half bits, so `uint16` needs

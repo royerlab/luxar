@@ -2,10 +2,10 @@
 
 The map lands in a root-level ``environment/`` group that is NOT a scene node —
 it carries neither a ``type`` nor a ``kind`` attr, which is exactly the shape
-the viewer's node discovery skips as a metadata sidecar, and every Python
-walker consults :data:`~luxar.typing_utils.constants.RESERVED_ROOT_GROUPS` for
-the same reason. Three rules make the operation safe to repeat and cheap to
-serve:
+the viewer's node discovery skips as a metadata sidecar, and every general
+Python walker that enumerates root children as nodes consults
+:data:`~luxar.typing_utils.constants.RESERVED_ROOT_GROUPS` for the same reason.
+Three rules make the operation safe to repeat and cheap to serve:
 
 - **The scene digest does not move.** ``environment/`` is excluded from the
   root ``content_hash`` by the hashing walk, so attaching a map never
