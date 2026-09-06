@@ -333,6 +333,15 @@ the joint-composition model the unit tests pin — the latter mirrors the
 vertex stage's STENCIL as well as the fragment math, so a reach shortfall
 chops the model exactly as it would chop the rasterized image, #1488).
 
+Near-plane handling is the quad's (segment cull when both endpoints are
+inside `uNearCull`, clip onto the `nearCull` plane when only one is), but the
+shared `perspectiveNearFade` is evaluated PER CORNER — at the clamped span
+parameter `tc` of each stencil vertex — and interpolated as `vFade`, not per
+fragment from `vViewZ` as the quad does. Every corner sits at depth
+≥ `nearCull` after the clip, so the ramp is exact at the corners and there is
+no pop; the cost is that two legs sharing a vertex disagree on the fade away
+from it (see the `fade` note in `_shared/line-capsule.ts`).
+
 Three exactness relaxations are deliberate, licensed by the #1352 relaxed
 spec ("not physics-exact; no pathological near-axial drawing; gaussian-like
 profile; approximate math fine"):
