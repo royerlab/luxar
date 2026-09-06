@@ -18,6 +18,19 @@ Algorithms (additive_lod §3-4)
   at every prefix simultaneously (Nemhauser--Wolsey--Fisher 1978); empirically
   $\\geq 99.9\\%$ of the exhaustive optimum on dense-overlap instances.
 
+Modifiers (compose with EVERY method above)
+--------------------------------------------
+
+- ``slice_dims`` — :func:`interleave_order_across_slices` re-emits the chosen
+  ordering round-robin across the distinct coordinates of the named centre
+  columns, so every PREFIX is slice-even. On a node the viewer SLICES (a hidden
+  time/channel dimension) a rung is sized against the whole node but only one
+  coordinate is ever on screen, so a global contribution-ordered prefix starves
+  the sparse coordinates; this gives each of them an equal ABSOLUTE budget
+  instead. Deterministic (no seed) and idempotent. Not an ordering method — it
+  is applied *after* one, and the within-coordinate order stays whatever the
+  method produced.
+
 The greedy path uses a sparse Gram matrix built via Mahalanobis truncation at
 the dataset's own ``truncation_radius`` (the support it was fitted and is
 rendered at) + k-d-tree pruning (Algorithm 4.4 in the supp doc), keeping
@@ -30,6 +43,7 @@ from __future__ import annotations
 
 import heapq
 import math
+import warnings
 from collections.abc import Sequence
 from typing import Any
 
@@ -572,6 +586,276 @@ def _radial_score(
     return np.asarray(np.linalg.norm(pts - origin, axis=1), dtype=np.float64)
 
 
+def _validate_slice_dims(slice_dims: Sequence[int], ndim: int) -> np.ndarray:
+    """Validate ``slice_dims`` and return it as a ``(k,)`` index array.
+
+    Modelled on the ``spatial_dims`` block in :func:`_radial_score`, and rejects
+    the same family for the same reason — each malformed case would produce a
+    WRONG grouping rather than an error. A negative index ALIASES to another
+    column (grouping by, say, the last spatial axis instead of time), a repeat
+    contributes the same column twice to the key tuple (harmless to the grouping
+    but a sign the caller miscounted, so it is refused rather than silently
+    tolerated), an empty selection puts every splat in ONE group, which is a
+    silent no-op interleave, and a fractional index truncates to a different
+    column than the one named.
+
+    The indices are RAW, PRE-``dim_order`` centre columns — see
+    :func:`interleave_order_across_slices` for why that distinction is the
+    likeliest way to get this wrong.
+
+    There is deliberately no default, and not because the columns are
+    undiscoverable: the WRITER auto-detects them, and
+    ``gsplats/io/save_gsplats.py`` stamps the result as the ``slice_dims`` attr of
+    each rung. But that detection runs at SAVE time, after the ladder has been
+    ordered and cut into rungs, so it is not available to the ordering that has to
+    consume it. Note the stamped attr is also in a DIFFERENT frame: it derives
+    from barrier dims resolved POST-``dim_order``, so it and this kwarg coincide
+    only when ``dim_order`` does not permute — which is why the built NEXRAD store
+    happens to stamp the same ``[3]``. Hence the caller names them, exactly as the
+    CLI does for ``--coarsen-dims``.
+    """
+    validate_integral_axis_indices(slice_dims, "slice_dims")
+    dims = np.asarray(slice_dims, dtype=np.intp)
+    if dims.ndim != 1 or dims.size == 0:
+        raise ValueError(
+            "slice_dims must be a non-empty 1-D sequence of centre-column "
+            "indices (an empty selection groups every splat together, which "
+            f"is a silent no-op interleave); got {slice_dims!r}"
+        )
+    if int(dims.min()) < 0:
+        raise ValueError(
+            "slice_dims must be non-negative (a negative index would alias to "
+            f"another column); got {list(slice_dims)}"
+        )
+    if np.unique(dims).size != dims.size:
+        raise ValueError(
+            "slice_dims must not repeat an axis (a repeat would contribute the "
+            f"same column twice to the slice key); got {list(slice_dims)}"
+        )
+    if int(dims.max()) >= ndim:
+        raise ValueError(
+            f"slice_dims {list(slice_dims)} out of range for centers with "
+            f"{ndim} columns"
+        )
+    return dims
+
+
+def _validate_interleave_order(order: Any, n_splats: int) -> np.ndarray:
+    """Validate a caller-supplied ``order`` and return it as ``int64``.
+
+    :func:`interleave_order_across_slices` is public, so ``order`` is untrusted
+    input and every malformed shape of it was measured to produce a plausible
+    wrong ANSWER rather than an error: a float array is silently truncated by the
+    ``int64`` cast (``[2.9, 0.1, 1.5]`` orders as ``[2, 0, 1]``), a negative entry
+    ALIASES to another element under numpy indexing, and a SHORT array returns a
+    partial ordering that a caller would write out as a complete ladder. Only an
+    out-of-range positive index raised anything, and only by accident (the
+    ``centers`` gather).
+
+    DUPLICATE entries stay the caller's responsibility: ``[0, 0, 1]`` passes here
+    and comes back a non-permutation. Detecting it needs a sort or a bincount over
+    the whole array — a second O(N log N) pass on the hot path, to catch something
+    no in-tree caller can produce (every producer is an ``argsort`` or an
+    ``rng.permutation``). The four guards below are all O(N) with no allocation of
+    consequence.
+    """
+    arr = np.asarray(order)
+    if arr.shape != (n_splats,):
+        raise ValueError(
+            f"order must have shape ({n_splats},), one entry per splat (a SHORT "
+            "array silently yields a partial ordering a caller would write out "
+            f"as a complete ladder); got shape {arr.shape}"
+        )
+    if not np.issubdtype(arr.dtype, np.integer):
+        raise ValueError(
+            "order must be an integer array (a float order is truncated by the "
+            "int64 cast, so [2.9, 0.1, 1.5] silently orders as [2, 0, 1]); got "
+            f"dtype {arr.dtype}"
+        )
+    if arr.size and int(arr.min()) < 0:
+        raise ValueError(
+            "order must be non-negative (a negative index would alias to another "
+            f"element); got minimum {int(arr.min())}"
+        )
+    if arr.size and int(arr.max()) >= n_splats:
+        raise ValueError(
+            f"order index {int(arr.max())} out of range for {n_splats} splats"
+        )
+    return arr.astype(np.int64, copy=False)
+
+
+def interleave_order_across_slices(
+    data: GSplatData,
+    order: np.ndarray,
+    slice_dims: Sequence[int],
+) -> np.ndarray:
+    """Re-emit ``order`` round-robin across slices, so every prefix is slice-even.
+
+    A node the viewer SLICES (any non-displayed dimension) shows one hidden
+    coordinate at a time, but an additive rung is sized against the WHOLE node.
+    A contribution-ordered prefix therefore concentrates wherever the signal is
+    and the sparse coordinates get almost nothing: the NEXRAD supercell's
+    82-scan stack (817,989 splats; per-scan min 562, p05 774, median 10,499, max
+    19,237) shipped an absolute ``breakpoints="stream:20000"`` first rung whose
+    5th-percentile scan held **4 splats** — an empty screen during playback, and
+    two failures in ``scripts/check_demo_ladders.py`` (#2485).
+
+    Grouping the elements of ``order`` by their distinct combination of the
+    ``slice_dims`` centre columns and emitting one per group per pass turns that
+    global budget into an EQUAL ABSOLUTE per-slice budget. Precisely: after $R$
+    completed passes the prefix holds $\\min(n_i, R)$ elements of every slice
+    $i$, so a slice SMALLER than the budget is carried WHOLE and a large one is
+    capped — which is exactly the shape ``check_demo_ladders.py``'s absolute
+    first-paint arm asks for. Ties inside a pass are broken by position in
+    ``order``, so the pass order is stable.
+
+    That guarantee has a PRECONDITION worth stating: a rung must be at least as
+    large as the slice count, or it cannot reach every slice at all. A rung
+    smaller than $S$ does not even complete its first pass, and since
+    within-pass ties break by position in ``order`` the coordinates left with
+    NOTHING are the faintest ones — measured on 500 slices of 40 splats with
+    ``breakpoints=[200]``, 300 coordinates got zero. Nowhere near a hazard for the
+    demo this was built for (204,497 against 82 slices), but a ladder whose first
+    rung is smaller than its hidden-axis cardinality is not made even by this.
+
+    Two properties worth relying on:
+
+    * **Deterministic** — no seed, and no distributional argument. Sizing the
+      ladder by hand cannot get here: on the stack above the 250-element floor
+      needs ~32% of the sparsest scan, and a uniform ``method="random"``
+      permutation only makes the per-slice share proportional IN EXPECTATION —
+      measured over seeds 0-7, ``n_lods=3`` cleared the floor 5 times in 8
+      (p05 243-277 against a floor of 250) and ``n_lods=4`` never did (186-205).
+    * **Idempotent** — re-interleaving an already-interleaved order returns it
+      unchanged, because the within-group order (and hence every within-group
+      rank) is untouched. Both the authoring door and
+      :func:`make_additive_lod`'s Gram branch could in principle apply it.
+
+    The within-slice order is still whatever the base method produced, so under
+    the default ``method="auto"`` each coordinate keeps painting bright-core-
+    first rather than evenly thin.
+
+    ``slice_dims`` indexes RAW, PRE-``dim_order`` centre columns, and that is the
+    likeliest way to get this wrong. The ladder is built in
+    ``core/group/gsplats_pipeline/from_data.py`` ABOVE the ``apply_dim_order_*``
+    pass that ``lod_dispatch`` runs, so these are the columns of the array the
+    caller handed in — NOT the scene's post-``dim_order`` dimension positions.
+    They coincide for the NEXRAD supercell only because its ``dim_order`` leaves
+    time last in both frames. An author who reads off the scene's ``Dimensions``
+    list instead gets a different column, and per the next paragraph that is a
+    near-no-op. A high-cardinality diagnostic below warns about this likely
+    pre-/post-``dim_order`` mixup without rejecting legitimate small slices.
+
+    The columns must also be genuinely DISCRETE — a stacked time/channel axis,
+    where coordinates repeat. Pointed at a continuous one, nearly every key is
+    distinct, nearly every rank is 0, and the ``lexsort`` reproduces ``order``:
+    functionally a no-op. NOT a bit-identical one, though, so this must not be
+    used as an equality assertion — real centres do collide, and each collision
+    demotes one element a pass later, which shifts the whole tail behind it.
+    Measured on 8 cached NEXRAD frames (5,937 splats, 5,907 distinct values in
+    column 0), ``slice_dims=[0]`` left the first 20 positions untouched and moved
+    5,901 of 5,937 overall; one deliberate collision among 2,000 float32 samples
+    moved 48. Reachable by composition and not only by typo: a
+    ``lod_group=dict(coarsen_dims=[0, 1, 2, 3])`` — coarsening OVER the stacked
+    axis — turned 3 exact time coordinates into 35 fractional ones on the coarse
+    level, and :func:`~luxar.core.group.lod.gsplats.resolve_additive_axis_gsplats`
+    applies one ``slice_dims`` to every substitutive level, giving a slice-even
+    finest level and silently uneven coarse ones. The default ``Auto``
+    coarsening (hidden axis as a hard barrier) is safe.
+
+    Parameters
+    ----------
+    data : GSplatData
+        The dataset ``order`` indexes; only its ``centers`` are read.
+    order : np.ndarray
+        A length-N integer permutation, as returned by
+        :func:`compute_additive_order`. Validated for shape, dtype and range;
+        duplicate entries are the caller's responsibility (see
+        :func:`_validate_interleave_order`).
+    slice_dims : sequence of int
+        RAW, pre-``dim_order`` centre columns whose distinct combinations define
+        a slice. No default — see :func:`_validate_slice_dims`.
+
+    Returns
+    -------
+    np.ndarray of shape (N,), dtype int64
+        A permutation of the same elements, slice-even at every prefix.
+    """
+    dims = _validate_slice_dims(slice_dims, data.ndim)
+    order = _validate_interleave_order(order, data.n_splats)
+    n = int(order.size)
+
+    keys = np.asarray(data.centers, dtype=np.float64)[:, dims][order]
+    if not bool(np.isfinite(keys).all()):
+        # NaN is the one that CORRUPTS the grouping: `np.unique` compares NaN
+        # unequal to itself, so every NaN-keyed splat becomes its own singleton
+        # slice — and a singleton is smaller than any budget, i.e. "carried
+        # whole", i.e. inside pass 0. Measured on 3 real slices of 10 splats plus
+        # 6 NaN-keyed ones, ALL SIX landed in pass 0 and diluted every real
+        # slice's budget, with nothing to say why. (±0.0 and ±inf group correctly
+        # — checked — but a non-finite slice coordinate is not a coordinate the
+        # viewer can slice AT, so both go out together, which also matches the
+        # `spatial_dims` guard in `_radial_score`. That one routes through the
+        # shared `validate_finite_reveal_coords`; this cannot, because that
+        # validator's message describes a radial reveal degrading to input order,
+        # which is a different failure from the one here.)
+        bad = np.flatnonzero(~np.isfinite(keys).all(axis=1))
+        raise ValueError(
+            "the slice_dims columns of centers must be finite: a NaN key "
+            "compares unequal to itself, so each NaN-keyed splat becomes its "
+            "own singleton slice and is carried WHOLE in the first pass, "
+            "silently diluting every real slice's budget; an infinite key does "
+            "group correctly but is not a coordinate the viewer can slice AT. "
+            f"{bad.size} of {n} splats are non-finite on columns "
+            f"{[int(d) for d in dims]} (first at order position {int(bad[0])})."
+        )
+    if n <= 1:
+        # Nothing to interleave, and reached only AFTER the finiteness check, so
+        # a trivial leaf gives the same verdict as a populated one. Same reason
+        # the column validation is unconditional: the fan-out callers hand ONE
+        # spec and one dataset to many leaves.
+        return order
+
+    # Vectorized, O(N log N): the corpus builds this on 818k splats, so a Python
+    # loop over slice groups is not an option. `group` is a dense slice label per
+    # POSITION IN `order`; a stable argsort of it makes each group's positions
+    # contiguous and ascending in base order, so subtracting the group's first
+    # index gives that element's rank WITHIN its slice. Sorting by (rank,
+    # base position) is then exactly the round-robin.
+    #
+    # A single hidden axis is the common case (every sliced demo today), and the
+    # 1-D `unique` is ~19x cheaper than the structured-row sort `axis=0` takes:
+    # measured 0.854 s -> 0.045 s at 818k x 1 column. Equivalent because only the
+    # PARTITION matters here, never the group LABELS — ranks are computed within a
+    # group off a stable argsort, so relabelling cannot move an element. Both
+    # forms partition by exact float equality and both collapse ±0.0; NaN/±inf
+    # are refused above. Verified identical on 400 adversarial random cases and
+    # on the real 818k stack for slice_dims=[3] and [0].
+    flat = keys[:, 0] if dims.size == 1 else keys
+    group = np.asarray(
+        np.unique(flat, return_inverse=True)[1]
+        if dims.size == 1
+        else np.unique(flat, axis=0, return_inverse=True)[1]
+    ).ravel()
+    n_groups = int(group.max()) + 1
+    if n >= 32 and 2 * n_groups >= n:
+        warnings.warn(
+            f"slice_dims {[int(d) for d in dims]} produced {n_groups} distinct "
+            f"slice keys for {n} splats; this usually means a continuous center "
+            "column was selected. slice_dims indexes raw pre-`dim_order` center "
+            "columns, not post-`dim_order` scene positions.",
+            UserWarning,
+            stacklevel=2,
+        )
+    sorter = np.argsort(group, kind="stable")
+    grouped = group[sorter]
+    rank = np.empty(n, dtype=np.int64)
+    rank[sorter] = np.arange(n, dtype=np.int64) - np.searchsorted(
+        grouped, grouped, side="left"
+    )
+    return order[np.lexsort((np.arange(n), rank))].astype(np.int64)
+
+
 def compute_additive_order(
     data: GSplatData,
     method: AutoOrMethod = "auto",
@@ -581,6 +865,7 @@ def compute_additive_order(
     seed: int | None = None,
     reveal_centre: Sequence[float] | None = None,
     spatial_dims: Sequence[int] | None = None,
+    slice_dims: Sequence[int] | None = None,
 ) -> np.ndarray:
     """Compute an additive ordering permutation for the splats in ``data``.
 
@@ -614,6 +899,18 @@ def compute_additive_order(
         Centre columns the radial distance is measured over. Defaults to the
         non-degenerate (real-extent) axes, which excludes a stacked time or
         channel axis. Ignored by every other method.
+    slice_dims : sequence of int, optional
+        RAW, pre-``dim_order`` centre columns whose distinct combinations the
+        viewer SLICES (a hidden time / channel axis) — NOT the scene's
+        post-``dim_order`` dimension positions, which are a different frame of
+        reference. When given, the ordering chosen by ``method`` is
+        re-emitted round-robin across those slices by
+        :func:`interleave_order_across_slices`, so every prefix carries an equal
+        ABSOLUTE budget per slice instead of a global contribution-ordered
+        prefix that starves the sparse ones. Composes with EVERY method — it is
+        a modifier, not a method. ``None`` (the default) leaves the order
+        untouched; there is no default column set, since a standalone
+        ``GSplatData`` has no display information to derive one from.
 
     Returns
     -------
@@ -625,45 +922,60 @@ def compute_additive_order(
 
     sigmas = resolve_truncation_sigmas(truncation_sigmas, data)
 
+    if slice_dims is not None:
+        # ABOVE the N <= 1 short-circuits, deliberately: a caller with a typo'd
+        # column must hear about it whatever this leaf happens to hold. Both
+        # fan-out callers hand this function many leaves of ONE spec —
+        # `resolve_additive_axis_gsplats` walks substitutive levels, and
+        # `adders/gsplats.py::add_gsplats_partition_wrapper_impl` puts
+        # `additive_lod` in `leaf_attrs` and forwards it to every `part_i` — so
+        # validating only where the interleave RUNS means the same spec is
+        # rejected by the populated leaves and waved through by any empty or
+        # single-splat one.
+        _validate_slice_dims(slice_dims, data.ndim)
+
     N = data.n_splats
-    if N == 0:
-        return np.empty(0, dtype=np.int64)
-    if N == 1:
-        return np.array([0], dtype=np.int64)
+    if N <= 1:
+        # Nothing to rank, and `arange` spells both trivial answers at once: the
+        # empty permutation and the single-element one.
+        return np.arange(N, dtype=np.int64)
 
     # Resolve the size-adaptive sentinel ONCE, before any (expensive) Gram
     # build, so every downstream branch sees a concrete method.
     method = resolve_additive_method(method, N)
 
+    # One assignment per branch and a SINGLE return, so the `slice_dims`
+    # modifier below is applied to whichever ordering was chosen and cannot be
+    # skipped by a method that returns early.
     if method == "radial":
         # ASCENDING, unlike every other method here: the score is a DISTANCE, so
         # the smallest is revealed first and the prefixes grow outward as
         # concentric shells. Every other branch sorts `-score` because its score
         # is a contribution to maximize.
-        return np.argsort(
+        order = np.argsort(
             _radial_score(data, centre=reveal_centre, spatial_dims=spatial_dims),
             kind="stable",
         ).astype(np.int64)
-
-    if method == "random":
+    elif method == "random":
         rng = np.random.default_rng(seed)
-        return rng.permutation(N).astype(np.int64)
-
-    if method == "amplitude":
+        order = rng.permutation(N).astype(np.int64)
+    elif method == "amplitude":
         score = np.asarray(effective_amplitudes(data), dtype=np.float64)
-        return np.argsort(-score, kind="stable").astype(np.int64)
-
-    if method == "mass":
+        order = np.argsort(-score, kind="stable").astype(np.int64)
+    elif method == "mass":
         score = _mass_score(data)
-        return np.argsort(-score, kind="stable").astype(np.int64)
-
-    if method == "self_energy":
+        order = np.argsort(-score, kind="stable").astype(np.int64)
+    elif method == "self_energy":
         score = _self_energy_score(data)
-        return np.argsort(-score, kind="stable").astype(np.int64)
+        order = np.argsort(-score, kind="stable").astype(np.int64)
+    else:
+        # Spectral and greedy need the Gram matrix.
+        gram_csr = _build_sparse_gram(data, sigmas=sigmas)
+        order = _order_from_gram(gram_csr, method, max_n_dense)
 
-    # Spectral and greedy need the Gram matrix.
-    gram_csr = _build_sparse_gram(data, sigmas=sigmas)
-    return _order_from_gram(gram_csr, method, max_n_dense)
+    if slice_dims is None:
+        return order
+    return interleave_order_across_slices(data, order, slice_dims)
 
 
 def _order_from_gram(
@@ -950,6 +1262,47 @@ def _sublod_stats(
     return stats
 
 
+def _ladder_order(
+    target_view: GSplatData,
+    *,
+    method: MethodName,
+    gram_csr: sparse.csr_matrix | None,
+    sigmas: float,
+    max_n_dense: int,
+    seed: int | None,
+    reveal_centre: Sequence[float] | None,
+    spatial_dims: Sequence[int] | None,
+    slice_dims: Sequence[int] | None,
+) -> np.ndarray:
+    """The ladder's ordering permutation, from either of the TWO order paths.
+
+    Extracted from :func:`make_additive_lod`'s build (which the ``slice_dims``
+    modifier pushed past the C901 ratchet — same reason as :func:`_sublod_stats`)
+    and worth a name of its own, because the two-path split is the trap here:
+    when ``gram_csr`` is already built (greedy / spectral) this NEVER calls
+    :func:`compute_additive_order` — it reuses that matrix rather than paying the
+    O(nnz) build twice — so every modifier that function applies has to be
+    applied on this branch as well. Both branches converge here, so a caller of
+    :func:`make_additive_lod` cannot get a slice-even ladder out of
+    ``self_energy`` and a starved one out of ``greedy``.
+    """
+    if gram_csr is not None:
+        order = _order_from_gram(gram_csr, method, max_n_dense)
+        if slice_dims is not None:
+            order = interleave_order_across_slices(target_view, order, slice_dims)
+        return order
+    return compute_additive_order(
+        target_view,
+        method=method,
+        truncation_sigmas=sigmas,
+        max_n_dense=max_n_dense,
+        seed=seed,
+        reveal_centre=reveal_centre,
+        spatial_dims=spatial_dims,
+        slice_dims=slice_dims,
+    )
+
+
 def make_additive_lod(
     data: GSplatData,
     n_lods: int = 4,
@@ -962,6 +1315,7 @@ def make_additive_lod(
     substitutive_level: int | None = None,
     reveal_centre: Sequence[float] | None = None,
     spatial_dims: Sequence[int] | None = None,
+    slice_dims: Sequence[int] | None = None,
 ) -> GSplatData:
     """Permute and split a fitted gsplat dataset into a multi-LOD ladder.
 
@@ -1020,6 +1374,36 @@ def make_additive_lod(
         ``method='radial'`` only — the centre columns the shell distance is
         measured over. Defaults to the non-degenerate axes, so a stacked
         time/channel axis cannot become a shell dimension.
+    slice_dims : sequence of int, optional
+        RAW, pre-``dim_order`` centre columns the viewer SLICES (a hidden time /
+        channel axis) — NOT the scene's post-``dim_order`` dimension positions.
+        When given, the ordering is re-emitted round-robin across those slices (see
+        :func:`interleave_order_across_slices`), so every rung carries an equal
+        ABSOLUTE budget per slice rather than a global prefix that starves the
+        sparse ones (#2485). A modifier: it composes with every ``method``, and
+        the ``energy_fraction_cum`` stamps are computed from the interleaved
+        order, so the viewer's committed e(k) describes the prefix actually
+        written — NODE-GLOBALLY, which is the only granularity that stamp has:
+        e(k) is one number per rung and the viewer's ``1/max(e, 0.1)``
+        compensation is applied uniformly across hidden coordinates, so a small
+        slice that slice-evenness has already loaded COMPLETELY is still
+        brightened (measured, rung 0 stamps e = 0.408 interleaved against 0.684
+        plain — a 2.45x boost on an already-complete slice). This is NOT confined
+        to a ``kind=lod`` group: ``applyLodFade`` has a second caller in the
+        viewer's ``scene/density-guard.ts``, driven by the projected-density
+        tracker over the whole scene graph for any blendable data mesh, and both
+        the guard and the compensation default ON — so a BARE multi-additive leaf
+        is in scope too once the guard steps it. Small in practice; on the NEXRAD
+        node it is a 1.108x brightening (that store stamps e(0) = 0.9024),
+        applied to the 12 of 82 scans this already loads whole as much as to the
+        rest. Note also
+        that interleaving FLATTENS the cumulative-energy curve, so
+        energy-fraction ``breakpoints`` resolve to materially larger first rungs
+        — measured on 1,580 splats over 4 slices, ``[0.5, 0.9, 0.99, 1.0]`` cuts
+        at ``[222, 749, 1116, 1580]`` plain and ``[521, 1128, 1492, 1580]``
+        interleaved. The requested fractions are still delivered and the rungs
+        are still slice-even; it is the first-paint COST that moves.
+        ``None`` (the default) leaves the order untouched.
 
     Returns
     -------
@@ -1053,6 +1437,13 @@ def make_additive_lod(
     # see the concrete method. (compute_additive_order resolves it again
     # harmlessly for the score-method path — it is idempotent.)
     method = resolve_additive_method(method, n)
+
+    if slice_dims is not None:
+        # ABOVE the empty-leaf branch, for the same reason as in
+        # `compute_additive_order`: a per-part / per-level loop must not accept a
+        # typo'd column on the leaves that happen to be empty and reject it on
+        # the rest.
+        _validate_slice_dims(slice_dims, target_view.ndim)
 
     if n == 0:
         new_sublods: list[AdditiveSubLOD] = [
@@ -1096,18 +1487,17 @@ def make_additive_lod(
         gram_csr = (
             _build_sparse_gram(target_view, sigmas=sigmas) if needs_gram else None
         )
-        if gram_csr is not None:
-            order = _order_from_gram(gram_csr, method, max_n_dense)
-        else:
-            order = compute_additive_order(
-                target_view,
-                method=method,
-                truncation_sigmas=sigmas,
-                max_n_dense=max_n_dense,
-                seed=seed,
-                reveal_centre=reveal_centre,
-                spatial_dims=spatial_dims,
-            )
+        order = _ladder_order(
+            target_view,
+            method=method,
+            gram_csr=gram_csr,
+            sigmas=sigmas,
+            max_n_dense=max_n_dense,
+            seed=seed,
+            reveal_centre=reveal_centre,
+            spatial_dims=spatial_dims,
+            slice_dims=slice_dims,
+        )
 
         # Cumulative self-energy over the ladder ordering — the e(k) of the
         # viewer's committed quality Q·e(k). Fractions, so the shared π^{D/2}

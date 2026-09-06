@@ -513,10 +513,18 @@ GRID_Z_M = parse_int_arg("grid-z-m", 1500)
 #: adaptive, so there is nothing for them to rewrite. Its budget was instead
 #: validated by measuring reconstruction PSNR directly against the gridded
 #: volume (table under VOXELS_PER_SEED), which is a more direct check than a
-#: blind-spot K* estimate. Nor is it in scripts/add_additive_lod_to_demos.py:
-#: that adds ladders to the per-frame LFS baselines, and
-#: `combine_as_new_dimension` discards a per-frame ladder when it stacks the 4D
-#: dataset, so the ladder has to be (and is) applied at scene-write time.
+#: blind-spot K* estimate. Nor is it in scripts/add_additive_lod_to_demos.py —
+#: though NOT for the reason this note used to give. It claimed
+#: `combine_as_new_dimension` DISCARDS a per-frame ladder when it stacks the 4D
+#: dataset; it does the opposite, merging rung i of every frame into rung i of the
+#: stack (`_concat_additive_levels`, gsplats/_data/base.py), which is precisely
+#: why the scene-write ladder needs `recompute=True` to win. The exclusion still
+#: holds for two other reasons: measured on the cached frames, all 82 of the
+#: current extent ALREADY carry a 4-rung equal-count ladder (frame 0: 562 splats
+#: as [140, 141, 141, 140]), so that script has nothing to add; and a per-frame
+#: ladder is the wrong SHAPE for this node regardless — per-frame equal-count is
+#: exactly proportional per scan, where a node the viewer slices needs an equal
+#: ABSOLUTE budget per scan. See the ladder comment on add_gsplats_from_data.
 SPLATS_OVERRIDE = parse_int_arg("splats", 0)
 #: Occupied (non-transparent) voxels per SEED under the adaptive budget.
 #:
@@ -1476,13 +1484,44 @@ def create_luxar_scene(
                 # renders yellow-green instead of red, and the storm turns into
                 # a blur. Measured in the viewer on a single-timepoint build.
                 #
-                # A streaming ladder IS kept — it is required, not cosmetic: a
-                # single leaf this size trips scripts/check_demo_ladders.py, and
-                # a ladder baked into the cached per-frame files does not
-                # survive the 4D stack. Note the gsplats spelling is
-                # `breakpoints=`; the `counts=` form the Points/Lines demos use
-                # is rejected here.
-                additive_lod=dict(breakpoints="stream:20000", seed=0),
+                # A ladder's EXISTENCE is not at stake: each per-frame cache is
+                # written by `save_with_lod(recipe="stream")` above and the 4D
+                # merge preserves those rungs, so dropping this kwarg still yields
+                # 4 rungs that pass the gate's level arm. Slice-EVENNESS is — the
+                # viewer slices this node on time, so a rung sized against the
+                # whole 817,989-splat stack arrives divided 82 ways (#2485). Note
+                # the gsplats spelling is `breakpoints=`/`n_lods=`; the `counts=`
+                # form the Points/Lines demos use is rejected here.
+                #
+                # `slice_dims=[3]` is column 3 of `combined.centers`, whose
+                # columns are (z, y, x, time) — see
+                # `interleave_order_across_slices` for the raw vs post-
+                # `dim_order` distinction and for what the interleave guarantees.
+                # It buys an equal ABSOLUTE
+                # per-scan budget: nominally 204,497/82 = 2,494 splats, measured
+                # 2,744 once the 12 scans small enough to be carried WHOLE hand
+                # their unused capacity back. So the p05 scan arrives complete at
+                # 774 — 3x the gate's 250 floor. Measured p05 at rung 0 for every
+                # alternative, all recomputed:
+                #   stream:20000, auto        4    (share  2.45%)  fails both arms
+                #   n_lods=4, auto          122    (share 25.00%)  fails absolute
+                #   n_lods=4, random        199    (share 25.00%)  fails absolute
+                #   n_lods=3, random        257    (share 33.33%)  passes by 3%
+                # — and that last one only clears the floor for 5 of 8 seeds, so
+                # sizing or shuffling cannot get here.
+                #
+                # `recompute=True` is LOAD-BEARING: the merged per-frame rungs
+                # make `resolve_additive_axis_gsplats` take its pass-through
+                # branch, so without it this whole spec is INERT and the
+                # proportional merged ladder ships (p05 = 774/4 = 194, under the
+                # floor). See that resolver, and the SPLATS_OVERRIDE note above.
+                #
+                # This does replace 82 per-frame `greedy` orderings with one global
+                # `self_energy` one, leaving 39 of the 82 scans with FEWER rung-0
+                # splats — but not less of their own energy: per-scan share
+                # captured at rung 0 went mean 0.9099 -> 0.9247, min 0.8188 ->
+                # 0.8290, p05 0.8545 -> 0.8590.
+                additive_lod=dict(n_lods=4, slice_dims=[3], recompute=True),
                 colormap=SCENE_COLORMAP,
                 blending_mode="volumetric",
                 absorption=SCENE_ABSORPTION,

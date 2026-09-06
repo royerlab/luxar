@@ -398,6 +398,13 @@ resolvers:
   applied independently per substitutive level. `dict(...)` computes a ladder on
   any level missing one via `gsplats.lod.additive.make_additive_lod` (default
   `n_lods=4`); `False` flattens each level to a single additive sub-LOD.
+  **Trap:** "missing one" means `n_additive_lods <= 1`, and
+  `GSplatData.combine_as_new_dimension` MERGES its sources' ladders (rung *i* of
+  every source becomes rung *i* of the stack) rather than dropping them — so on a
+  stacked dataset built from already-laddered per-timepoint fits the spec is
+  silently a NO-OP and the merged per-source ladder is what ships. Pass
+  `recompute=True`. The store's tell for the shadowed case is an
+  `additive_0/lod_stats` carrying `n_sources` and no `lod_method` (#2485).
 - `resolve_additive_rungs(spec, *, stored_rungs, n_splats)` — the same vocabulary
   stated a second time, ordering-free: it answers only "how many rungs would this
   leave on one leaf?", without building anything (#1632). `None` means UNKNOWN
