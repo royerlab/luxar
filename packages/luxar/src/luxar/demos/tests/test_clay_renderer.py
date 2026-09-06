@@ -41,6 +41,28 @@ def test_load_obj_without_normals_computes_flat_ones(tmp_path: Path) -> None:
     np.testing.assert_allclose(nrm, [[0, 0, 1]] * 3)
 
 
+def test_mesh_npz_round_trips_and_is_far_smaller_than_the_obj(tmp_path: Path) -> None:
+    rng = np.random.default_rng(1)
+    pos = rng.normal(size=(3000, 3)).astype(np.float32)
+    nrm = rng.normal(size=(3000, 3)).astype(np.float32)
+    obj = tmp_path / "m.obj"
+    obj.write_text(
+        "".join(f"v {x} {y} {z}\n" for x, y, z in pos)
+        + "".join(f"vn {x} {y} {z}\n" for x, y, z in nrm)
+        + "".join(
+            f"f {i}//{i} {i + 1}//{i + 1} {i + 2}//{i + 2}\n" for i in range(1, 3001, 3)
+        )
+    )
+    p_obj, n_obj = cr.load_mesh_file(obj)
+    npz = tmp_path / "m.npz"
+    cr.save_mesh_npz(npz, p_obj, n_obj)
+    p_npz, n_npz = cr.load_mesh_file(npz)
+    np.testing.assert_array_equal(p_npz, p_obj)
+    np.testing.assert_array_equal(n_npz, n_obj)
+    assert p_npz.dtype == np.float32 and p_npz.flags.c_contiguous
+    assert npz.stat().st_size < obj.stat().st_size / 2
+
+
 def test_load_obj_rejects_empty_and_non_triangle_files(tmp_path: Path) -> None:
     empty = tmp_path / "e.obj"
     empty.write_text("# nothing\n")

@@ -20,7 +20,8 @@ Pipeline (all cached under ``~/.cache/luxar/pdb_turntables``):
 1. Fetch ``<ID>.pdb`` and the entry title from RCSB (``files.rcsb.org`` and
    ``data.rcsb.org``).
 2. PyMOL headless (``pymol -cq <script>``) exports the molecular surface of the
-   polymer, one Wavefront OBJ per chain, into ``<ID>_mesh_v<MESH_VERSION>_q<Q>/``
+   polymer, one mesh per chain (OBJ, re-saved as compressed float32 ``.npz``),
+   into ``<ID>_mesh_v<MESH_VERSION>_q<Q>/``
    (cached: a style change re-renders without recomputing surfaces).
 3. The GPU renderer stands the assembly on its longest principal axis and
    draws ``frames`` frames of one turn — matte clay in pastel shades of the
@@ -55,15 +56,17 @@ from arbol import aprint
 from luxar.demos._clay_renderer import (
     MODERNGL_INSTALL_HINT,
     ClayRenderer,
-    meshes_from_objs,
+    load_obj,
+    meshes_from_files,
     render_turntable_video,
+    save_mesh_npz,
 )
 
 #: Bump when the LOOK changes (shading, palette, frame count semantics) so
 #: cached turntables re-render.
 STYLE_VERSION = 6
 #: Bump when the PyMOL surface export changes so cached meshes are recomputed.
-MESH_VERSION = 1
+MESH_VERSION = 2
 DEFAULT_FRAMES = 900
 DEFAULT_FPS = 30
 # 768 px covers the overlay's ~26% of a 4K kiosk width (~1000 px) at a 1.3x
@@ -282,7 +285,7 @@ def export_surface_meshes(
     chains_file = mesh_dir / "chains.json"
     if chains_file.exists():
         chains = json.loads(chains_file.read_text())
-        paths = [mesh_dir / f"chain_{i}.obj" for i in range(len(chains))]
+        paths = [mesh_dir / f"chain_{i}.npz" for i in range(len(chains))]
         if all(p.exists() for p in paths):
             return paths
     if mesh_dir.exists():
@@ -296,10 +299,19 @@ def export_surface_meshes(
     if not chains_file.exists():
         raise RuntimeError(f"PyMOL wrote no chain list for {pdb_id}")
     chains = json.loads(chains_file.read_text())
-    paths = [mesh_dir / f"chain_{i}.obj" for i in range(len(chains))]
-    missing = [p.name for p in paths if not p.exists()]
+    objs = [mesh_dir / f"chain_{i}.obj" for i in range(len(chains))]
+    missing = [p.name for p in objs if not p.exists()]
     if missing:
         raise RuntimeError(f"PyMOL exported no surface for {pdb_id}: {missing}")
+    # PyMOL can only write OBJ text (tens of MB per chain); keep the meshes as
+    # compressed float32 arrays instead, a tenth of the size and quicker to load.
+    paths = []
+    for obj in objs:
+        pos, nrm = load_obj(obj)
+        npz = obj.with_suffix(".npz")
+        save_mesh_npz(npz, pos, nrm)
+        obj.unlink()
+        paths.append(npz)
     return paths
 
 
@@ -338,11 +350,11 @@ def render_turntable(
         return TurntableAssets(pdb_id, webm, poster, title, frames, fps)
 
     quality = surface_quality_for(structure_atoms(pdb_id, cache_dir))
-    objs = export_surface_meshes(pdb_id, cache_dir, quality=quality, pymol=pymol_cmd)
-    meshes = meshes_from_objs(objs, chain_palette(color, len(objs)))
+    files = export_surface_meshes(pdb_id, cache_dir, quality=quality, pymol=pymol_cmd)
+    meshes = meshes_from_files(files, chain_palette(color, len(files)))
     aprint(
         f"GPU: rendering {frames} frames of {pdb_id} at {size}px "
-        f"({len(objs)} chains, {sum(len(m.positions) for m in meshes) // 3:,} "
+        f"({len(files)} chains, {sum(len(m.positions) for m in meshes) // 3:,} "
         f"triangles) → VP9 alpha WebM at {fps} fps …"
     )
     render_turntable_video(

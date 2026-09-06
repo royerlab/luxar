@@ -103,6 +103,26 @@ def load_obj(path: Path) -> tuple[np.ndarray, np.ndarray]:
     return pos.astype(np.float32), nrm.astype(np.float32)
 
 
+def save_mesh_npz(path: Path, positions: np.ndarray, normals: np.ndarray) -> None:
+    """Store a flat triangle list compactly (float32, compressed): PyMOL's OBJ
+    text for one chain runs to tens of megabytes, the same data here is a tenth."""
+    np.savez_compressed(
+        path, positions=positions.astype(np.float32), normals=normals.astype(np.float32)
+    )
+
+
+def load_mesh_file(path: Path) -> tuple[np.ndarray, np.ndarray]:
+    """Positions and normals from a ``.npz`` written by :func:`save_mesh_npz`
+    or a Wavefront ``.obj``."""
+    if path.suffix == ".npz":
+        with np.load(path) as data:
+            return (
+                np.ascontiguousarray(data["positions"], dtype=np.float32),
+                np.ascontiguousarray(data["normals"], dtype=np.float32),
+            )
+    return load_obj(path)
+
+
 def principal_frame(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Centre and rotation that stand a point cloud on its longest axis.
 
@@ -507,9 +527,10 @@ def _unit(x: float, y: float, z: float) -> tuple[float, float, float]:
 # ----------------------------------------------------------------------------
 
 
-def meshes_from_objs(paths: Sequence[Path], colors: Sequence[RGB]) -> list[Mesh]:
-    """Load one OBJ per chain, stand the whole assembly on its longest axis."""
-    loaded = [load_obj(p) for p in paths]
+def meshes_from_files(paths: Sequence[Path], colors: Sequence[RGB]) -> list[Mesh]:
+    """Load one mesh file per chain (``.npz`` or ``.obj``), stand the whole
+    assembly on its longest axis."""
+    loaded = [load_mesh_file(p) for p in paths]
     allpos = np.concatenate([p for p, _ in loaded])
     centre, rot = principal_frame(allpos)
     meshes = []
