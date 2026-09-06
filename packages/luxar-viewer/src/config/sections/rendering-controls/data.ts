@@ -96,4 +96,12 @@ export const renderingControlsConfig: RenderingControlsConfig = {
     // Cinematic mode (disabled by default)
     cinematicMode: false,
   },
+  refraction: {
+    // Transmission target scale for the WebGL refraction pass only (refract_data
+    // glass). Half resolution is the spec's default: roughness blur hides it, and the
+    // pass then costs LESS than three's stock full-resolution target (measured 0.68 vs
+    // 0.75 ms at 720p). Three's own default (1.0) stays in force for Phase 2 glass;
+    // WebGPU has no equivalent.
+    transmissionResolutionScale: 0.5,
+  },
 };

@@ -106,4 +106,17 @@ export interface RenderingSettings {
  */
 export interface RenderingControlsConfig {
   defaults: RenderingSettings;
+  /**
+   * The WebGL refraction pass that draws `refract_data` glass over the emissive data
+   * (spec MESH_PHYSICAL_MATERIALS §3.4 Phase 3). Construction-time, not a persisted
+   * user setting: the panel has no control for it.
+   */
+  refraction: {
+    /**
+     * Resolution of three's transmission target relative to the frame, in `(0, 1]`,
+     * applied ONLY during that pass. Phase 2 glass keeps three's default 1.0; WebGPU
+     * has no equivalent knob.
+     */
+    transmissionResolutionScale: number;
+  };
 }
