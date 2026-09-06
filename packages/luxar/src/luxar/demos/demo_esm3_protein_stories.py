@@ -1077,13 +1077,17 @@ def build_stories_scene(
                     transition_duration=0.35,
                 )
 
-            scene.add_text(
-                "← [  •  ] →   step through the stories  (press 1 "
-                "first to select the story slider)",
+            # A discreet signature in the lower-left corner: dim, letter-spaced,
+            # light weight — meant to be found, not read. (The navigation hint
+            # that used to sit here is redundant on a kiosk driven from outside.)
+            scene.add_html(
+                '<div style="font-size:1.05vh;letter-spacing:0.22em;'
+                "font-weight:300;color:rgba(255,255,255,0.22);"
+                'text-transform:uppercase;white-space:nowrap">'
+                "Designed by Loic A. Royer</div>",
                 position=(0.02, 0.97),
-                font_size=0.014,
                 anchor="bottom-left",
-                color="#ffcc44",
+                interactive=False,
             )
 
             add_demo_caption(
