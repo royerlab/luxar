@@ -625,7 +625,8 @@ def served_store(
         deadline = time.monotonic() + ready_timeout
         while True:
             try:
-                with urllib.request.urlopen(  # noqa: S310 — loopback URL we built
+                # The URL's scheme is fixed here; only host and selected port vary.
+                with urllib.request.urlopen(  # nosec B310
                     f"http://{host}:{chosen}/health", timeout=1
                 ) as response:
                     if response.status == 200:
