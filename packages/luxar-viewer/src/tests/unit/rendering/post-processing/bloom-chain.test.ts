@@ -131,6 +131,12 @@ describe('BloomChain pass blending — WebGL2 / WebGPU parity', () => {
       expect(mat.depthTest).toBe(false);
       expect(mat.depthWrite).toBe(false);
       expect(mat.toneMapped).toBe(false);
+      // `transparent` is the other half of three's predicate: a
+      // NormalBlending pass only gets overwrite semantics while it is
+      // false, so flipping it would start alpha-blending the threshold
+      // and downsample passes against their previous mip contents.
+      expect(mat.transparent).toBe(false);
+      expect(mat.side).toBe(THREE.FrontSide);
     }
 
     chain.dispose();

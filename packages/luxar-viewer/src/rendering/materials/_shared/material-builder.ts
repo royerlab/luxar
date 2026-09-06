@@ -2,8 +2,9 @@
  * `buildMaterial` — central branching helper for the dual-stack
  * renderer (`THREE.WebGLRenderer` + `WebGPURenderer`).
  *
- * Each material wrapper (FxaaPass, BloomChain, PointMaterial, …)
- * delegates inner construction here. The helper branches on
+ * A caller delegates inner construction here — today that is the
+ * post-processing passes only (`FxaaPass`, `BloomChain`), the geometry
+ * materials having their own wrappers. The helper branches on
  * `RendererCapabilities.apiSurface`:
  *
  * - WebGL2 path returns a configured `THREE.ShaderMaterial` from
@@ -31,8 +32,28 @@
  * and drop the rest, which silently disabled the bloom upsample pass's
  * `AdditiveBlending`: each upsample overwrote its destination mip
  * instead of accumulating into it, so WebGPU bloom rendered as a flat
- * dim wash (#2563). Resolving in one place is what makes the two
- * backends provably agree for the same config.
+ * dim wash (#2563). Resolving in one place is what stops the two
+ * branches drifting apart for the same config.
+ *
+ * Two limits on how far that agreement reaches:
+ *
+ * - `toneMapped` is threaded for symmetry but is only OBSERVED on the
+ *   WebGL path. Nothing under three's `renderers/webgpu`,
+ *   `renderers/common`, `nodes` or `materials/nodes` reads
+ *   `material.toneMapped` — that backend tone-maps in an output pass
+ *   driven by `renderer.toneMapping` (`RenderOutputNode` reads
+ *   `context.toneMapping`), which `PostProcessingManager` pins to
+ *   `NoToneMapping` (`post-processing-manager.ts:148`) because the
+ *   mega-shader grades instead.
+ * - `CustomBlending` is expressible but its FACTORS are not: there is
+ *   no `blendEquation` / `blendSrc` / `blendDst` here, so such a
+ *   request lands on `Material`'s default factors on both backends.
+ *   Luxar's own `max` and `opaque` states do carry factors and reach
+ *   materials through `applyBlendingStateToMaterial`
+ *   (`rendering/blending-state.ts`), not through here. A TSL factory
+ *   that derives its own COMPLETE blending state must therefore not be
+ *   routed through `buildMaterial` unless the caller passes that whole
+ *   state — the resolved defaults overwrite whatever the config omits.
  *
  * `defines` is deliberately NOT threaded on the WebGPU branch:
  * `NodeMaterial` has no `defines` field at all — a TSL factory takes
@@ -86,10 +107,11 @@ interface ResolvedRenderState {
  * These are the WebGL branch's historical defaults verbatim, so
  * sharing them changes nothing there. The one worth flagging is
  * `toneMapped: false`, the OPPOSITE of Three's own material default
- * (`true`): a caller here is a pass whose pixels either have not been
- * tone-mapped yet (the bloom mips, which the mega-shader grades) or
- * already have been (FXAA's LDR input), so injecting the renderer's
- * tone-mapping would be wrong in both directions.
+ * (`true`): under `THREE.WebGLRenderer` it suppresses the tone-mapping
+ * chunk the renderer injects, which a pass whose pixels are not yet
+ * display-ready (the bloom mips, graded later by the mega-shader) or
+ * already tone-mapped (FXAA's LDR input) must not have. On the WebGPU
+ * path the field is inert — see the module docblock.
  */
 function resolveRenderState(config: BuildMaterialConfig): ResolvedRenderState {
   return {
@@ -115,7 +137,9 @@ function resolveRenderState(config: BuildMaterialConfig): ResolvedRenderState {
  * `transparent`, `toneMapped`, `side`) is applied on BOTH branches and
  * wins over anything a TSL factory set on itself; omitted fields take
  * the same resolved defaults either way. `defines` is WebGL-only —
- * `NodeMaterial` has no such field (see the module docblock).
+ * `NodeMaterial` has no such field. Two caveats live in the module
+ * docblock: `toneMapped` has no effect on the WebGPU path, and
+ * `CustomBlending`'s factors cannot be expressed in the config.
  */
 export function buildMaterial(
   source: ShaderSource,
@@ -178,9 +202,13 @@ export function buildMaterial(
     vertexShader: source.webgl.vertex,
     fragmentShader: source.webgl.fragment,
     glslVersion: THREE.GLSL3,
-    uniforms: config.uniforms,
-    // Avoid passing `defines: undefined` through to Three's material
-    // parameter validation while preserving numeric/boolean define values.
+    // `?? {}` on both optional keys: `Material.setValues` warns for any
+    // parameter whose value is `undefined`. Behaviour-identical either
+    // way for `uniforms` — `ShaderMaterial`'s constructor initialises
+    // `this.uniforms = {}` before `setValues`, so an omitted table and
+    // an empty one both end at `{}` — and for `defines` it also
+    // preserves numeric/boolean define values.
+    uniforms: config.uniforms ?? {},
     defines: (config.defines ?? {}) as Record<string, unknown>,
     ...state,
   });
