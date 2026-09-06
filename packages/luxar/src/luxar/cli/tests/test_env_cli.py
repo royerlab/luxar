@@ -9,6 +9,7 @@ the container, attach it — without a browser or a GPU.
 from __future__ import annotations
 
 import json
+import os
 import urllib.request
 from pathlib import Path
 
@@ -19,9 +20,10 @@ from typer.testing import CliRunner
 
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar._zarr_compat import open_group
+from luxar.cli.env_ops import bake as bake_module
+from luxar.cli.env_ops.bake import bake_environment
 from luxar.cli.main import app
-from luxar.environment import ENVIRONMENT_FORMAT, FACE_ORDER, bake_environment, pack
-from luxar.environment import bake as bake_module
+from luxar.environment import ENVIRONMENT_FORMAT, FACE_ORDER, pack
 from luxar.typing_utils.constants import ENVIRONMENT_GROUP
 
 from ._testing import normalized_cli_output
@@ -92,7 +94,7 @@ def built_viewer(monkeypatch, tmp_path) -> Path:
     (dist / "index.html").write_text("<html><body>viewer</body></html>")
     monkeypatch.setattr("luxar.cli.serving.get_viewer_dist_path", lambda: dist)
     monkeypatch.setattr(
-        "luxar.environment.bake.ensure_viewer_built", lambda auto_build=True: True
+        "luxar.cli.env_ops.bake.ensure_viewer_built", lambda auto_build=True: True
     )
     return dist
 
@@ -147,6 +149,46 @@ def test_bake_environment_keeps_the_container_and_can_skip_attach(
     assert report.attach is None
     assert out.exists() and report.container == out
     assert ENVIRONMENT_GROUP not in zarr.open_group(str(store), mode="r")
+
+
+def test_bake_environment_preserves_a_temporary_container_without_attach(
+    tmp_path, built_viewer, monkeypatch
+) -> None:
+    store = tmp_path / "scene.luxar.zarr"
+    scene_hash = _scene(store)
+    temporary = tmp_path / "temporary.env.bin"
+
+    def fake_mkstemp(**_kwargs) -> tuple[int, str]:
+        temporary.touch()
+        return os.open(temporary, os.O_WRONLY), str(temporary)
+
+    def fake_driver(_url: str, out_path: Path, _timeout_s: float) -> None:
+        out_path.write_bytes(_container(scene_hash))
+
+    monkeypatch.setattr("luxar.cli.env_ops.bake.tempfile.mkstemp", fake_mkstemp)
+    report = bake_environment(store, attach=False, driver=fake_driver)
+    assert report.container == temporary
+    assert temporary.exists()
+
+
+def test_bake_environment_removes_a_temporary_container_after_driver_failure(
+    tmp_path, built_viewer, monkeypatch
+) -> None:
+    store = tmp_path / "scene.luxar.zarr"
+    _scene(store)
+    temporary = tmp_path / "temporary.env.bin"
+
+    def fake_mkstemp(**_kwargs) -> tuple[int, str]:
+        temporary.touch()
+        return os.open(temporary, os.O_WRONLY), str(temporary)
+
+    def failing_driver(_url: str, _out_path: Path, _timeout_s: float) -> None:
+        raise RuntimeError("driver failed")
+
+    monkeypatch.setattr("luxar.cli.env_ops.bake.tempfile.mkstemp", fake_mkstemp)
+    with pytest.raises(RuntimeError, match="driver failed"):
+        bake_environment(store, driver=failing_driver)
+    assert not temporary.exists()
 
 
 def test_bake_environment_refuses_a_missing_viewer_or_bad_resolution(

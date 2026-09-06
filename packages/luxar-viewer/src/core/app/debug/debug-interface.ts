@@ -123,7 +123,7 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
     controls: ports.sceneManager.controls,
     postProcessing: ports.sceneManager.postProcessing,
     // The scene environment's state, and the `?bake-env` hand-off slot the
-    // `luxar env bake` driver polls (`lastBake` is filled by `run-bake.ts`).
+    // `luxar env bake` driver polls (`lastBake` is filled by `environment-wiring.ts`).
     environment: {
       ...(existing.environment ?? {}),
       kind: () => ports.sceneManager.environment?.activeKind() ?? 'none',

@@ -13,11 +13,12 @@ import {
   ENVIRONMENT_RESOLUTION_MAX,
   ENVIRONMENT_RESOLUTION_MIN,
   ENVIRONMENT_SOURCES,
+  MAX_ENVIRONMENT_URL_CHARS,
+  parseProbeSpec,
   type EnvironmentConfig,
   type EnvironmentProbe,
   type EnvironmentSource,
 } from '../../types/environment';
-import { parseProbeSpec } from '../../rendering/environment/probe';
 import {
   buildCinematicValues,
   CINEMATIC_SNAPSHOT_KEYS,
@@ -411,9 +412,50 @@ function environmentSourceFields(
     return { source };
   }
   const url = typeof rawUrl === 'string' ? rawUrl.trim() : '';
-  if (url) return { source, url };
+  if (url && isAllowedEnvironmentUrl(url)) return { source, url };
+  if (url) {
+    warn(
+      'url must be HTTP(S) or store-relative, without credentials or unsafe characters; using room'
+    );
+    return { source: 'room' };
+  }
   warn("source 'hdri' without a url; using 'room'");
   return { source: 'room' };
+}
+
+function isAllowedEnvironmentUrl(url: string): boolean {
+  if (
+    url.length > MAX_ENVIRONMENT_URL_CHARS ||
+    url.startsWith('//') ||
+    hasUnsafeEnvironmentUrlCharacter(url)
+  ) {
+    return false;
+  }
+  if (!/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(url)) return true;
+  if (!/^https?:\/\//i.test(url)) return false;
+  return isCredentialFreeHttpUrl(url);
+}
+
+function hasUnsafeEnvironmentUrlCharacter(url: string): boolean {
+  for (const char of url) {
+    const code = char.charCodeAt(0);
+    if (code <= 0x1f || code === 0x7f || char === '<' || char === '>' || char === '\\') return true;
+  }
+  return false;
+}
+
+function isCredentialFreeHttpUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return (
+      (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+      parsed.hostname.length > 0 &&
+      parsed.username.length === 0 &&
+      parsed.password.length === 0
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** The zarr spelling of an environment config, for the Ctrl+Shift+S export. */

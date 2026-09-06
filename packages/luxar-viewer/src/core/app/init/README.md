@@ -10,12 +10,15 @@ sibling `lifecycle/`, `dataset/`, `debug/`, `overlays/` folders).
 
 ## Files
 
-| File                    | Role                                                                                                                                                                                                                                                                                                                                                                                                       |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `environment-guards.ts` | Two upfront fail-fast checks: `assertBrowserEnvironment()` (rejects SSR / non-browser callers when `window` / `document` is missing) and `assertThreeRevision(min=185)` (parses `THREE.REVISION`, rejects hosts whose `three` peer is below what the viewer's Timer / post-processing APIs require). Both throw with a remediation message instead of letting a cryptic `ReferenceError` surface mid-init. |
-| `module-overrides.ts`   | `applyModuleOverrides({ wasmPath, workerPath })` — forwards optional asset-URL overrides into the `wasm/` and `workers/worker-pool` module singletons via `setWasmJsUrl` / `setDataWorkerUrl`. Each call is skipped when the option is undefined so default `import.meta.url` resolution still kicks in. Overrides are module-level and persist across `init()` calls (one `LuxarApp` per page in v1).     |
-| `pipeline.ts`           | `runInitPipeline(ports, partial)` — builds the full subsystem graph in order, populating a `Partial<InitPipelineResult>` accumulator the orchestrator pre-allocates so a thrown step still leaves disposable references behind. Returns the same object cast to the full `InitPipelineResult` once every field is set.                                                                                     |
-| `build-rail-items.ts`   | `buildRailItems(deps)` — assembles the left control-rail's `ControlRailItem` descriptors. Extracted from the pipeline so the rail's wiring lives in one focused, independently-testable place. Each button fires the SAME command as its keyboard shortcut (via `inputHandler.getUiActions()`), so on-screen and keyboard behaviour never drift; rich controls open rail popovers (see `ui/rail-panels/`). |
+| File                      | Role                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `build-rail-items.ts`     | `buildRailItems(deps)` — assembles the left control-rail's `ControlRailItem` descriptors. Extracted from the pipeline so the rail's wiring lives in one focused, independently-testable place. Each button fires the SAME command as its keyboard shortcut (via `inputHandler.getUiActions()`), so on-screen and keyboard behaviour never drift; rich controls open rail popovers (see `ui/rail-panels/`). |
+| `density-guard-wiring.ts` | Wires projected-density tracking into materials, refinement caps, and the per-frame scheduler without making the pipeline restate that policy.                                                                                                                                                                                                                                                             |
+| `environment-guards.ts`   | Two upfront fail-fast checks: `assertBrowserEnvironment()` (rejects SSR / non-browser callers when `window` / `document` is missing) and `assertThreeRevision(min=185)` (parses `THREE.REVISION`, rejects hosts whose `three` peer is below what the viewer's Timer / post-processing APIs require). Both throw with a remediation message instead of letting a cryptic `ReferenceError` surface mid-init. |
+| `environment-wiring.ts`   | Wires scene-environment capture, settled-state refresh triggers, and the one-shot `?bake-env` path.                                                                                                                                                                                                                                                                                                        |
+| `load-activity.ts`        | Builds the shared predicate for active loader passes and refinement work used by adaptive DPR and scene-environment capture.                                                                                                                                                                                                                                                                               |
+| `module-overrides.ts`     | `applyModuleOverrides({ wasmPath, workerPath })` — forwards optional asset-URL overrides into the `wasm/` and `workers/worker-pool` module singletons via `setWasmJsUrl` / `setDataWorkerUrl`. Each call is skipped when the option is undefined so default `import.meta.url` resolution still kicks in. Overrides are module-level and persist across `init()` calls (one `LuxarApp` per page in v1).     |
+| `pipeline.ts`             | `runInitPipeline(ports, partial)` — builds the full subsystem graph in order, populating a `Partial<InitPipelineResult>` accumulator the orchestrator pre-allocates so a thrown step still leaves disposable references behind. Returns the same object cast to the full `InitPipelineResult` once every field is set.                                                                                     |
 
 ## Pipeline order
 
@@ -39,33 +42,39 @@ runInitPipeline(ports, partial)
 ├── 6. PerformanceMonitor     subscribes to controller's per-frame bus
 ├── 7. DebugConsole
 ├── 8. Per-frame callback     'dynamic-clipping' → updateDynamicClippingPlanes
-├── 9. LOD-group wiring        SceneLoaderManager.setLODGroupRegistryFactory
+├── 9. LOD registry factory   SceneLoaderManager.setLODGroupRegistryFactory
 │                              (→ new LODGroupRegistry closing over live
 │                              sceneManager: camera, viewport, displayDims via
 │                              sceneDimsManager, byte budget via
-│                              getGpuByteBudget, resident bytes via
-│                              getSceneLoader('default').gpuBufferPool); then a
-│                              'lod-group-selector' per-frame callback that
+│                              getGpuByteBudget, resident bytes via the default
+│                              loader's gpuBufferPool)
+├── 10. Density-guard wiring  wireDensityGuard; register projected-density
+│                              material/refinement hooks and per-frame callback
+├── 11. LOD-group selector    'lod-group-selector' per-frame callback that
 │                              calls evaluatePerFrame() on the current default
 │                              loader and refreshVisibleCounts() on a swap
-├── 10. AdaptiveDPRManager    wired to sceneManager + controller
-├── 11. ResolutionIndicator   targetFPS = ceil(maxFPS/5)*5; show/reset
+├── 12. AdaptiveDPRManager    wired to sceneManager + controller
+├── 13. Load-activity         buildLoadActivityPredicate; suppress adaptive-DPR
+│                              learning while loaders/refinement are active
+├── 14. Scene environment     wireSceneEnvironment with the inverse settled
+│                              predicate for capture/refresh/bake scheduling
+├── 15. ResolutionIndicator   targetFPS = ceil(maxFPS/5)*5; show/reset
 │                              on DPR change callback (shown value is
 │                              dpr/nativeDPR — percent of native)
-├── 12. WebGL/WebGPU loss     webgl-context-restored → NodeFactory
+├── 16. WebGL/WebGPU loss     webgl-context-restored → NodeFactory
 │      listeners              .rebuildAfterContextRestore on loaded scene;
 │                              webgpu-device-lost → notifier.error
 │                              ("reload to continue"). Both tracked via
 │                              ports.events for dispose.
-├── 13. SceneLoaderManager    setMonitorFactory(monitorId → DataMonitor
+├── 17. SceneLoaderManager    setMonitorFactory(monitorId → DataMonitor
 │      monitor injection      Manager.getInstance() lookup/create) so
 │                              data/ never imports ui/
-├── 14. InputHandler          new + init(); DimensionSliders factory
+├── 18. InputHandler          new + init(); DimensionSliders factory
 │                              injected so input/ never imports ui/
-├── 15. RenderingControls     factories.renderingControls; cross-link
+├── 19. RenderingControls     factories.renderingControls; cross-link
 │                              ↔ AnimationController, AdaptiveDPRManager,
 │                              InputHandler
-├── 16. RecordingPanel        factories.recordingPanel; setPanelState
+├── 20. RecordingPanel        factories.recordingPanel; setPanelState
 │                              Callbacks(ports.get/restorePanelVisibility);
 │                              setAdaptiveDPRManager; setRecordingPanel
 │                              on input handler; then the controller's
@@ -76,12 +85,12 @@ runInitPipeline(ports, partial)
 │                              while panel.isLoopRenderSuppressed()) and
 │                              setPacingSuspendPredicate (frame pacing off
 │                              while panel.isCurrentlyRecording())
-├── 17. LayersPanel           factories.layersPanel(document.body, ctrl);
+├── 21. LayersPanel           factories.layersPanel(document.body, ctrl);
 │                              setLayersPanel on input handler
-├── 18. ControlRail           buildRailItems(deps) → new ControlRail(items,
+├── 22. ControlRail           buildRailItems(deps) → new ControlRail(items,
 │                              performanceMonitor.element); each button fires
 │                              the same command as its keyboard shortcut
-└── 19. animationController.startAnimation()   render background first,
+└── 23. animationController.startAnimation()   render background first,
                                                before any dataset load
 ```
 

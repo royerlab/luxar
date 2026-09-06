@@ -165,6 +165,17 @@ def test_attach_refuses_a_stale_bake_unless_forced(tmp_path) -> None:
     # guard passes for this scene as it is now.
     assert dict(env.attrs)["scene_content_hash"] == scene_hash
 
+    root = open_group(store, mode="r+")
+    root.attrs["test_scene_change"] = True
+    moved_hash = _restamp_content_hash(root)
+    assert moved_hash is not None and moved_hash != scene_hash
+    repaired = attach_environment(store, blob, force=True)
+    assert repaired.status == "replaced"
+    assert (
+        dict(open_group(store, mode="r")[ENVIRONMENT_GROUP].attrs)["scene_content_hash"]
+        == moved_hash
+    )
+
 
 def test_attach_refuses_a_non_scene_store(tmp_path) -> None:
     store = tmp_path / "plain.zarr"
@@ -181,12 +192,16 @@ def test_attach_refuses_a_non_scene_store(tmp_path) -> None:
 
 def test_environment_group_is_invisible_to_every_python_node_walker(tmp_path) -> None:
     store = tmp_path / "scene.luxar.zarr"
-    scene_hash = _scene(store)
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_points("cloud", np.zeros((1, 3), dtype=np.float32))
+        scene.add_text("hello", (0.1, 0.1), name="caption")
+    scene_hash = str(open_group(store, mode="r").attrs["content_hash"])
     attach_environment(store, pack(_header(scene_hash), _faces()))
 
     assert ENVIRONMENT_GROUP in RESERVED_ROOT_GROUPS
     names = [n["name"] for n in LuxarScene.load(store).nodes]
-    assert names == ["cloud"]
+    assert set(names) == {"overlays", "overlays/caption", "cloud"}
     walked = [g.basename for _, g in _dfs(open_group(store, mode="r"))]
     assert ENVIRONMENT_GROUP not in walked
     assert "cloud" in walked
@@ -212,3 +227,7 @@ def test_optimise_copies_the_environment_verbatim(tmp_path) -> None:
     assert copied[report.array_name].chunks == (1, RES, RES, 4)
     assert np.array_equal(copied[report.array_name][:], _faces())
     assert dict(copied.attrs)["faces"] == report.array_name
+    assert (
+        dict(copied.attrs)["scene_content_hash"]
+        == dict(zarr.open_group(str(out), mode="r").attrs)["content_hash"]
+    )

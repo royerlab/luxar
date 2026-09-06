@@ -54,6 +54,8 @@ describe('readUrlParams', () => {
     expect(readUrlParams('?probe=%201,2,3%20').probe).toBe('1,2,3');
     expect(readUrlParams('?probe=').probe).toBeNull();
     expect(readUrlParams('?env-resolution=abc').envResolution).toBeNull();
+    expect(readUrlParams('?env-resolution=0').envResolution).toBe(16);
+    expect(readUrlParams('?env-resolution=8192').envResolution).toBe(1024);
   });
 
   it('parses ?density-cap= as a positive float, anything else → null', () => {

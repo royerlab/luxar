@@ -298,14 +298,14 @@ export class NodeFactory {
    * does NOT need to invalidate boxes and reaches `markDirty()` via
    * the controls 'change' event, not this method.)
    */
-  markPickingDirty(path?: string): void {
+  markPickingDirty(): void {
     this.pickingSystem?.markDirty();
     this.pickingSystem?.invalidateBoxes();
     // The same moment is "what is resident changed" for anything derived from
     // the committed scene — today the scene-derived environment capture
     // (`rendering/environment/`), which marks itself stale here and rebuilds
     // once the loader settles.
-    eventBus.emit('geometry-committed', { path: path ?? '' });
+    eventBus.emit('geometry-committed', {});
   }
 
   /**

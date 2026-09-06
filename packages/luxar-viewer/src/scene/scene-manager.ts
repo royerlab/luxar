@@ -894,12 +894,12 @@ export class SceneManager extends THREE.EventDispatcher<{
       this.scene.children.find((c) => c.name === 'LuxarScene') ?? null;
     this.environment?.attachRuntime({
       sceneRoot: root,
-      pushCaptureCameraParams: (resolution, nearCull) => {
+      pushCaptureCameraParams: (resolution) => {
         materialManager.updateCameraParams(
           Math.PI / 2,
           new THREE.Vector2(resolution, resolution),
           false,
-          nearCull,
+          undefined,
           1
         );
       },

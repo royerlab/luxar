@@ -61,7 +61,7 @@ export interface LuxarEventMap {
    * `rendering/environment/`) mark themselves stale on it and rebuild once the
    * loader settles, rather than polling the scene graph.
    */
-  'geometry-committed': { path: string };
+  'geometry-committed': Record<string, never>;
 
   // ── Command events (input → UI panel toggles) ───────────────
   /**

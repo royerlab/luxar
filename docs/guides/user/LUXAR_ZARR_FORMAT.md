@@ -1261,7 +1261,7 @@ things describe it:
   "probe": "auto",             // "auto" | "node:<path>" | [x, y, z]
   "resolution": 128,           // cube face size for a "scene" capture, 16-1024
   "intensity": 1.0,            // scene.environmentIntensity, >= 0
-  "url": "env/studio.hdr"      // "hdri" only; store-relative or absolute
+  "url": "env/studio.hdr"      // "hdri" only; store-relative or absolute HTTP(S)
 }
 ```
 
@@ -1269,6 +1269,9 @@ things describe it:
 exact `CubeCamera` render from the probe), so metals and glass reflect the data
 they sit in. House-shaded meshes, points, lines and splats never read the
 environment, so the block changes nothing about them.
+An HDRI URL is limited to 2048 characters; absolute URLs must use HTTP(S) and
+must not contain embedded credentials. Protocol-relative and active-content
+schemes such as `data:` or `javascript:` are refused.
 
 **`environment/` group** (optional; written by `luxar env bake` / `luxar env
 attach`, never by the compiler): the six captured cube faces, prefiltered by the

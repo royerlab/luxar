@@ -21,7 +21,6 @@ import zarr
 
 from luxar.io._compiler.finalize.amplitude_window import (
     _NODE_TYPES,
-    _RESERVED_GROUPS,
     _child_nodes,
     _lod_children,
 )
@@ -124,17 +123,16 @@ def test_every_node_type_counts_as_a_child_node() -> None:
     assert sorted(_NODE_TYPES) == expected
 
 
-def test_an_untyped_child_and_a_reserved_bucket_are_both_dropped() -> None:
-    """The two exclusions, together: no ``type`` attr, and a reserved NAME even
-    when a ``type`` is present (``pipeline_info`` is an open passthrough of
-    caller keys, so a stray ``type`` landing in it must not make it a level)."""
+def test_only_typed_scene_nodes_count_as_children() -> None:
+    """Untyped and unknown-type children are metadata; a nested node name is authored."""
     root = _group(
         {
             "child_0": {"type": "points", "child_index": 0},
             "child_1": {"child_index": 1},
             "labels": {"type": "not-a-node"},
-            **{name: {"type": "group"} for name in sorted(_RESERVED_GROUPS)},
+            "environment": {"type": "group"},
+            "pipeline": {"type": "group"},
         }
     )
 
-    assert _names(_child_nodes(root)) == ["child_0"]
+    assert sorted(_names(_child_nodes(root))) == ["child_0", "environment"]

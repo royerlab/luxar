@@ -13,29 +13,10 @@
 
 import * as THREE from 'three';
 import type { EnvironmentProbe } from '../../types/environment';
+export { parseProbeSpec } from '../../types/environment';
 import { log, Modules } from '../../utils/log';
 
 const _box = new THREE.Box3();
-
-/**
- * Parse a probe spelled as text — the `?probe=` URL parameter and the CLI flag:
- * `auto`, `node:<path>`, or `x,y,z` (a bracketed `[x,y,z]` is tolerated). Returns
- * `null` for anything else.
- */
-export function parseProbeSpec(spec: string | null | undefined): EnvironmentProbe | null {
-  if (spec == null) return null;
-  const text = spec.trim();
-  if (text === 'auto') return 'auto';
-  if (text.startsWith('node:')) {
-    const node = text.slice('node:'.length).trim();
-    return node ? { node } : null;
-  }
-  const parts = text.replace(/^\[|\]$/g, '').split(',');
-  if (parts.length !== 3) return null;
-  const xyz = parts.map((p) => Number(p.trim()));
-  if (!xyz.every(Number.isFinite)) return null;
-  return { position: [xyz[0], xyz[1], xyz[2]] };
-}
 
 /** The canonical text form of a probe (what the bake header records). */
 export function formatProbeSpec(probe: EnvironmentProbe): string {

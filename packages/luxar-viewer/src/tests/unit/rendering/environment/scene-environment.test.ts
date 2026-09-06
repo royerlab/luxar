@@ -276,6 +276,54 @@ describe('SceneEnvironment — sources and precedence (Phase 4)', () => {
     expect(targets[0].texture.pmremVersion).toBeGreaterThan(0);
   });
 
+  it('ensure is idempotent for an unchanged live scene capture', () => {
+    const { env, targets, renders } = makeEnv();
+    env.configure({ ...DEFAULT_ENVIRONMENT_CONFIG, source: 'scene', resolution: 32 });
+    env.attachRuntime(makeRuntime(new THREE.Group()).runtime);
+
+    expect(env.ensure()).toBe(true);
+    expect(env.ensure()).toBe(false);
+    expect(env.ensure()).toBe(false);
+    expect(env.captureCount).toBe(1);
+    expect(targets).toHaveLength(1);
+    expect(renders).toHaveLength(6);
+
+    env.configure({ ...DEFAULT_ENVIRONMENT_CONFIG, source: 'scene', resolution: 64 });
+    expect(env.captureCount).toBe(2);
+    expect(targets).toHaveLength(2);
+    expect(targets[0].disposed).toBe(true);
+  });
+
+  it('resetForDataset clears demand and releases dataset-owned textures', () => {
+    const { env, scene, targets } = makeEnv();
+    env.configure({ ...DEFAULT_ENVIRONMENT_CONFIG, source: 'scene' });
+    env.attachRuntime(makeRuntime(new THREE.Group()).runtime);
+    env.ensure();
+    env.resetForDataset();
+
+    expect(targets[0].disposed).toBe(true);
+    expect(scene.environment).toBeNull();
+    expect(env.activeKind()).toBe('none');
+    env.configure({ ...DEFAULT_ENVIRONMENT_CONFIG, source: 'scene' });
+    expect(env.captureCount).toBe(1);
+
+    const room = makeEnv();
+    room.env.ensure();
+    room.env.resetForDataset();
+    expect(room.scene.environment).toBeNull();
+    expect(room.env.activeKind()).toBe('none');
+  });
+
+  it('switching away from a live capture disposes its cube target', () => {
+    const { env, targets } = makeEnv();
+    env.configure({ ...DEFAULT_ENVIRONMENT_CONFIG, source: 'scene' });
+    env.attachRuntime(makeRuntime(new THREE.Group()).runtime);
+    env.ensure();
+    env.configure(DEFAULT_ENVIRONMENT_CONFIG);
+    expect(targets[0].disposed).toBe(true);
+    expect(env.activeKind()).toBe('room');
+  });
+
   it('a capture hides physical meshes for the six draws and restores their previous visibility', () => {
     const { env, scene, renders } = makeEnv();
     const root = new THREE.Group();

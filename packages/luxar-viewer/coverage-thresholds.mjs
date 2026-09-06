@@ -42,7 +42,7 @@ export const MAX_SLACK_POINTS = 3;
 export const COVERAGE_THRESHOLDS = {
   // Global — every file in the report, the subtrees below included.
   lines: 86, //       measured 88.57
-  statements: 85, //  measured 87.69
+  statements: 87, //  measured 88.01
   functions: 84, //   measured 85.67
   branches: 80, //    measured 82.12
 
@@ -54,7 +54,7 @@ export const COVERAGE_THRESHOLDS = {
   // functions 85 -> 86 after the projected-density tracker / density guard
   // tests (2026-09): the subtree went 87.50 -> 88.06 and check-coverage-slack
   // flagged the old floor as stale — the ratchet working.
-  'src/scene/**': { lines: 93, functions: 86, branches: 89 }, //     95.77 / 88.06 / 91.15
+  'src/scene/**': { lines: 93, functions: 86, branches: 89 }, //     95.45 / 86.10 / 91.04
   'src/cache/**': { lines: 93, functions: 93, branches: 82 }, //     94.99 / 95.15 / 84.88
   'src/controls/**': { lines: 93, functions: 88, branches: 86 }, //  95.42 / 89.66 / 88.01
 
@@ -76,7 +76,7 @@ export const COVERAGE_THRESHOLDS = {
   // subtree went 85.69 -> 86.22 and check-coverage-slack.mjs flagged the old
   // floor as stale. The ratchet working, same as the src/data and src/workers
   // bumps above.
-  'src/core/**': { lines: 86, functions: 70, branches: 85 }, //      88.48 / 72.61 / 86.22
+  'src/core/**': { lines: 86, functions: 70, branches: 85 }, //      88.65 / 72.31 / 85.11
   // input jumped when ui-actions-surface.test.ts began invoking the command
   // table InputHandler builds in registerAllKeyBindings (27 thunks no test
   // had ever called): functions 76.0 -> 90.39.
@@ -89,5 +89,5 @@ export const COVERAGE_THRESHOLDS = {
   // NOT excluded from coverage: that spec runs in CI as the non-required
   // `tsl-parity` job, and excluding code on the strength of a non-required gate
   // is how a metric starts lying. Revisit once the job is required.
-  'src/rendering/**': { lines: 74, functions: 75, branches: 70 }, // 75.97 / 77.51 / 71.07
+  'src/rendering/**': { lines: 74, functions: 76, branches: 70 }, // 75.61 / 77.26 / 72.19
 };

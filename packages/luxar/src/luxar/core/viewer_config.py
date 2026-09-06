@@ -18,6 +18,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
+from urllib.parse import urlsplit
 
 # Valid enum values (must match TypeScript RenderingSettings union types)
 VALID_TONE_MAPPINGS = ("None", "Linear", "Reinhard", "Cineon", "ACES", "AgX", "Neutral")
@@ -59,6 +60,7 @@ VALID_DIRECTIONS = ("forward", "backward")
 # itself from the probe (the data IS the light); "hdri" is an equirectangular
 # image the viewer loads from `url`.
 VALID_ENVIRONMENT_SOURCES = ("room", "scene", "hdri")
+MAX_ENVIRONMENT_URL_CHARS = 2048
 ENVIRONMENT_RESOLUTION_MIN = 16
 ENVIRONMENT_RESOLUTION_MAX = 1024
 ENVIRONMENT_NODE_PROBE_PREFIX = "node:"
@@ -314,6 +316,53 @@ class AnimationConfig:
         )
 
 
+def _validate_environment_url(raw: str) -> str:
+    """Return an HTTP(S) or store-relative environment URL, or raise."""
+    url = raw.strip()
+    if not url or len(url) > MAX_ENVIRONMENT_URL_CHARS:
+        raise ValueError(
+            f"environment.url must contain 1-{MAX_ENVIRONMENT_URL_CHARS} characters"
+        )
+    if any(ord(char) <= 0x1F or ord(char) == 0x7F or char in "<>\\" for char in url):
+        raise ValueError("environment.url contains an unsafe character")
+    if url.startswith("//"):
+        raise ValueError("environment.url must not be protocol-relative")
+    parsed = urlsplit(url)
+    if not parsed.scheme:
+        return url
+    if parsed.scheme.lower() not in {"http", "https"}:
+        raise ValueError("environment.url scheme must be http or https")
+    if not parsed.hostname:
+        raise ValueError("environment.url must be an absolute HTTP(S) URL")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("environment.url must not contain embedded credentials")
+    return url
+
+
+def _normalize_environment_probe(
+    probe: Union[str, Tuple[float, float, float]],
+) -> Union[str, Tuple[float, float, float]]:
+    """Validate and normalize a scene-environment capture probe."""
+    if isinstance(probe, str):
+        is_node = probe.startswith(ENVIRONMENT_NODE_PROBE_PREFIX) and len(probe) > len(
+            ENVIRONMENT_NODE_PROBE_PREFIX
+        )
+        if probe != "auto" and not is_node:
+            raise ValueError(
+                "environment.probe must be 'auto', 'node:<path>' or an "
+                f"(x, y, z) position, got '{probe}'"
+            )
+        return probe
+    position = tuple(probe)
+    if len(position) != 3 or not all(
+        isinstance(value, (int, float)) and math.isfinite(value) for value in position
+    ):
+        raise ValueError(
+            f"environment.probe position must be 3 finite numbers, got {probe!r}"
+        )
+    return (float(position[0]), float(position[1]), float(position[2]))
+
+
 @dataclass
 class EnvironmentConfig:
     """Where the scene environment that lights physical meshes comes from.
@@ -355,25 +404,7 @@ class EnvironmentConfig:
                 f"got '{self.source}'"
             )
         if self.probe is not None:
-            if isinstance(self.probe, str):
-                is_node = self.probe.startswith(ENVIRONMENT_NODE_PROBE_PREFIX) and (
-                    len(self.probe) > len(ENVIRONMENT_NODE_PROBE_PREFIX)
-                )
-                if self.probe != "auto" and not is_node:
-                    raise ValueError(
-                        "environment.probe must be 'auto', 'node:<path>' or an "
-                        f"(x, y, z) position, got '{self.probe}'"
-                    )
-            else:
-                probe = tuple(self.probe)
-                if len(probe) != 3 or not all(
-                    isinstance(v, (int, float)) and math.isfinite(v) for v in probe
-                ):
-                    raise ValueError(
-                        "environment.probe position must be 3 finite numbers, "
-                        f"got {self.probe!r}"
-                    )
-                self.probe = (float(probe[0]), float(probe[1]), float(probe[2]))
+            self.probe = _normalize_environment_probe(self.probe)
         if self.resolution is not None:
             if (
                 isinstance(self.resolution, bool)
@@ -397,6 +428,8 @@ class EnvironmentConfig:
                 "environment.url is only meaningful with environment.source='hdri', "
                 f"got source={self.source!r}"
             )
+        if self.url is not None:
+            self.url = _validate_environment_url(self.url)
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dictionary, omitting None fields."""
@@ -450,6 +483,17 @@ def _validate_min(value: Optional[float], name: str, min_val: float) -> None:
     """Validate that value >= min_val if set."""
     if value is not None and value < min_val:
         raise ValueError(f"{name} must be >= {min_val}, got {value}")
+
+
+def _put_nonempty_config(
+    result: Dict[str, Any], key: str, config: Optional[Any]
+) -> None:
+    """Serialize a nested config when it contains at least one field."""
+    if config is None:
+        return
+    serialized = config.to_dict()
+    if serialized:
+        result[key] = serialized
 
 
 @dataclass
@@ -798,15 +842,8 @@ class ViewerConfig:
         """
         result: Dict[str, Any] = {}
 
-        if self.camera is not None:
-            cam = self.camera.to_dict()
-            if cam:  # only include if camera has any fields set
-                result["camera"] = cam
-
-        if self.environment is not None:
-            env = self.environment.to_dict()
-            if env:
-                result["environment"] = env
+        _put_nonempty_config(result, "camera", self.camera)
+        _put_nonempty_config(result, "environment", self.environment)
 
         # Simple fields — emit only if not None
         for field_name in self._SIMPLE_FIELDS:
@@ -815,15 +852,8 @@ class ViewerConfig:
                 result[field_name] = value
 
         # Nested configs
-        if self.ui is not None:
-            ui_dict = self.ui.to_dict()
-            if ui_dict:
-                result["ui"] = ui_dict
-
-        if self.dimensions is not None:
-            dims_dict = self.dimensions.to_dict()
-            if dims_dict:
-                result["dimensions"] = dims_dict
+        _put_nonempty_config(result, "ui", self.ui)
+        _put_nonempty_config(result, "dimensions", self.dimensions)
 
         if self.animation is not None:
             anim_list = [a.to_dict() for a in self.animation]

@@ -22,10 +22,10 @@ DEFAULT_ZARR_VERSION: Final[str] = SCENE_FORMAT_VERSION  # Alias for default ver
 # the map is derived FROM the scene, and recording the digest it was baked
 # against only works if attaching the map leaves that digest alone. ``fitting`` /
 # ``provenance`` / ``pipeline`` are the bookkeeping buckets a standalone
-# ``.gsplats.zarr`` root carries. Every Python walker that enumerates children
-# as nodes consults this set (``io/reader.py``, ``cli/info_command.py``,
-# ``io/_compiler/finalize/amplitude_window.py``, ``io/lod_restamp.py`` through
-# the latter); the compiler refuses a USER node under any of these names.
+# ``.gsplats.zarr`` root carries. Every general Python walker that enumerates
+# root children as nodes consults this set (``io/reader.py``,
+# ``cli/info_command.py``); the compiler refuses a USER node under any of these
+# names.
 ENVIRONMENT_GROUP: Final[str] = "environment"
 RESERVED_ROOT_GROUPS: Final[frozenset[str]] = frozenset(
     {ENVIRONMENT_GROUP, "fitting", "provenance", "pipeline"}

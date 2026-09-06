@@ -1448,7 +1448,9 @@ def _write_store(
             "chunks_before": plan.source_n_chunks,
             "chunks_after": plan.target_n_chunks,
         }
-        _restamp_content_hash(dest)
+        scene_hash = _restamp_content_hash(dest)
+        if scene_hash is not None and ENVIRONMENT_GROUP in dest:
+            dest[ENVIRONMENT_GROUP].attrs["scene_content_hash"] = scene_hash
         consolidate(dest)
     finally:
         close(dest)

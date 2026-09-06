@@ -13,11 +13,20 @@
 
 import * as THREE from 'three';
 
-/** Resolve a store-relative `url` against the scene's base URL; absolute URLs pass through. */
+/** Resolve a store-relative `url` against the scene base; absolute HTTP(S) URLs pass through. */
 export function resolveEnvironmentUrl(url: string, baseUrl: string | undefined): string {
-  if (/^(https?:|blob:|data:)/i.test(url) || !baseUrl) return url;
+  if (/^https?:/i.test(url)) return url;
+  if (/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(url)) {
+    throw new Error('Environment URL scheme must be HTTP(S)');
+  }
+  if (!baseUrl) return url;
   const base = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
-  return new URL(url.replace(/^\//, ''), base).toString();
+  const baseParsed = new URL(base);
+  const resolved = new URL(url.replace(/^\//, ''), baseParsed);
+  if (resolved.origin !== baseParsed.origin) {
+    throw new Error('Store-relative environment URL resolved outside the store origin');
+  }
+  return resolved.toString();
 }
 
 /** Load an equirectangular environment texture; rejects on a network or decode error. */
