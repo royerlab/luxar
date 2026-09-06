@@ -19,7 +19,14 @@
  * This is a REFUSAL gate, never an evictor. It declines to load MORE; it never
  * discards what is already committed. A node that hits the ceiling simply stops
  * at the rung it reached and stays there — a legible partial scene rather than
- * a dead tab. Only loaders registered in the four refinement sweep maps are
+ * a dead tab. Legible to a HUMAN, that is: which nodes won the remaining
+ * headroom is not deterministic, so the element counts of a stopped scene are
+ * not a property of the store and nothing downstream may compare them across
+ * builds. That is why {@link RefinementResidencyReporter} also RECORDS every
+ * refusal for {@link RefinementResidencyStop}, which the debug snapshot carries
+ * and `core/app/debug/capture-readiness.ts` refuses on (#2508) — a console
+ * warning is not something a harness can read. Only loaders registered in the
+ * four refinement sweep maps are
  * covered; lazy `lod_group` levels are outside those maps and outside this
  * accounting. The budget uses the eager gate's working-set calculation, including
  * its `EAGER_WORKING_SET_CAP_BYTES` ceiling: sufficiently large desktop heaps all
@@ -205,13 +212,116 @@ export function estimateNextRungBytes(residentBytes: number, loadedRungs: number
   return residentBytes / loadedRungs;
 }
 
-/** Report the residency ceiling once for a scene, across refinement runs. */
+/**
+ * How many declined paths {@link RefinementResidencyStop.declinedPaths} carries.
+ *
+ * The snapshot crosses the `page.evaluate` serialisation boundary on its way to
+ * a capture tool, and a partitioned scene can decline thousands of paths — one
+ * per part — so shipping the whole set would put a multi-megabyte string array
+ * in every `getState()` call. `declinedPathCount` is the MEASUREMENT; the sample
+ * exists only so a human reading the summary can tell WHICH subtree stopped
+ * without re-running the scene with the console open.
+ */
+export const RESIDENCY_DECLINED_PATH_SAMPLE = 8;
+
+/**
+ * A durable record of the scene hitting the refinement BYTE ceiling.
+ *
+ * Surfaced on `__luxarDebug.getState().refinementResidency` so a capture tool
+ * can refuse a scene that stopped short (#2508): the ladder's terminal state is
+ * 100% of every node, so a scene that declined is showing a partial one, and
+ * WHICH nodes won the remaining headroom is not deterministic. Before this, the
+ * only signal was a single console warning, which nothing downstream reads.
+ *
+ * BYTE CEILING ONLY. A `density-cap` refusal never reaches the reporter — it is
+ * camera-dependent, non-sticky across runs, and the density gate's own to report
+ * (see `RefinementResidencyBudget.admit`) — so it is absent here by design. A
+ * node deferred on density is still going to refine when the user zooms in; a
+ * node declined on bytes is not.
+ *
+ * CUMULATIVE FOR THE LIFE OF THE LOADER, WITH NO RESET, ON PURPOSE. THIS IS THE
+ * CANONICAL STATEMENT of that contract; the other places it matters (the debug
+ * snapshot field, `core/app/debug/capture-readiness.ts`, the two READMEs) say it
+ * in one sentence and point here. The snapshot's OTHER memory-ceiling signal,
+ * `gpuPool.byteBudgetEvictions`, is governed by the same contract, because the
+ * GPU buffer pool is built and thrown away with the same `SceneLoader`.
+ *
+ * Once present this record stays present until that loader goes away, so it says
+ * "refinement hit the ceiling at some point while this scene was loaded", not
+ * "the scene is truncated right now" — a scene that stopped and then refined
+ * fully after a view change still carries it. That is the answer a capture tool
+ * wants: refinement order is path-dependent, so the run that hit the ceiling
+ * settled on a composition the next run would not reproduce. A dataset switch
+ * builds a fresh loader (`SceneLoaderManager.createLoaderAsync`) and therefore a
+ * fresh reporter and a fresh pool, so the next scene starts from a clean record
+ * with no page reload; do not clear either within a loader's life.
+ */
+export interface RefinementResidencyStop {
+  /**
+   * The FIRST refusal's reason — `over-budget` or `next-rung-would-exceed`.
+   * Named in the capture-readiness message because the two are the difference
+   * between "already past the ceiling" and "it fitted, but one more rung would
+   * not have", which is the difference between re-authoring the ladder and
+   * nudging the budget.
+   */
+  reason: RefinementAdmissionReason;
+  /** Tracked sweep-loader bytes at the moment of that first refusal. */
+  residentBytes: number;
+  /** The ceiling that first refusal was measured against. */
+  budgetBytes: number;
+  /** The path that hit the ceiling first. */
+  firstPath: string;
+  /**
+   * DISTINCT paths refused since the scene loaded — never the truncated length
+   * of {@link declinedPaths}. The budget is rebuilt per refinement run while the
+   * reporter lives for the scene, so a parked path re-declines on every run and
+   * must not be counted twice either.
+   */
+  declinedPathCount: number;
+  /**
+   * First-seen-order sample of the declined paths, capped at
+   * {@link RESIDENCY_DECLINED_PATH_SAMPLE}. Diagnostic only — read
+   * `declinedPathCount` for the magnitude.
+   */
+  declinedPaths: string[];
+}
+
+/**
+ * Report the residency ceiling once for a scene, across refinement runs, and
+ * RECORD every refusal for {@link snapshot}.
+ *
+ * The two halves are deliberately asymmetric. Logging is once-per-scene because
+ * a scene parked at the ceiling starts a fresh run after every view change and
+ * would otherwise flood the console during slice playback. Recording is every
+ * time, because "how much of the scene declined" is the number a capture tool
+ * has to branch on and one console line cannot carry it.
+ */
 export class RefinementResidencyReporter {
   private reported = false;
+  private first: RefinementAdmission & { path: string } = {
+    admitted: true,
+    reason: 'ok',
+    residentBytes: 0,
+    budgetBytes: 0,
+    path: '',
+  };
+  /**
+   * Distinct declined paths, in first-seen order. A `Set` because the budget is
+   * per-run and the reporter is per-scene: the same path re-declines on every
+   * subsequent run, and an array would report one stuck node as thousands.
+   */
+  private readonly declinedPaths = new Set<string>();
 
+  /**
+   * Record a byte-ceiling refusal; log the first one. Named for the LOGGING
+   * side because `RefinementResidencyBudget.admit` calls it as its
+   * report-the-ceiling step, and renaming would be churn across that call site.
+   */
   reportOnce(path: string, verdict: RefinementAdmission): void {
+    this.declinedPaths.add(path);
     if (this.reported) return;
     this.reported = true;
+    this.first = { ...verdict, path };
     const mib = (value: number): string => `${(value / (1024 * 1024)).toFixed(1)} MiB`;
     log.warning(
       Modules.SCENE_LOADER,
@@ -220,6 +330,38 @@ export class RefinementResidencyReporter {
         `budget ${mib(verdict.budgetBytes)}. Nodes stay at the detail they reached; ` +
         'author a coarser ladder or split the scene to go further.'
     );
+  }
+
+  /**
+   * The scene's byte-ceiling stop, or `undefined` when nothing was ever
+   * declined.
+   *
+   * `undefined` rather than a zero-valued object on purpose: the snapshot is
+   * read across a serialisation boundary by tools that must be able to tell
+   * "refinement never hit the ceiling" from "it hit it and declined nothing",
+   * and a `{declinedPathCount: 0}` object is indistinguishable from the field
+   * simply being present-but-empty on an older build.
+   *
+   * Called on every `getState()`, so the sample is taken with a BOUNDED loop
+   * rather than `Array.from(set).slice(…)`: the array form materialises all
+   * thousands of paths just to keep eight, which is the exact allocation
+   * {@link RESIDENCY_DECLINED_PATH_SAMPLE} exists to avoid.
+   */
+  snapshot(): RefinementResidencyStop | undefined {
+    if (this.declinedPaths.size === 0) return undefined;
+    const sample: string[] = [];
+    for (const path of this.declinedPaths) {
+      if (sample.length >= RESIDENCY_DECLINED_PATH_SAMPLE) break;
+      sample.push(path);
+    }
+    return {
+      reason: this.first.reason,
+      residentBytes: this.first.residentBytes,
+      budgetBytes: this.first.budgetBytes,
+      firstPath: this.first.path,
+      declinedPathCount: this.declinedPaths.size,
+      declinedPaths: sample,
+    };
   }
 }
 

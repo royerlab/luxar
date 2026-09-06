@@ -121,6 +121,12 @@ export class GPUBufferPool {
     capacityGrowths: 0,
     /** Pooled buffers skipped this `evictUnused` call due to batch cap. */
     deferredEvictions: 0,
+    /**
+     * Evictions attributable to the BYTE-budget pass alone (a subset of
+     * `evictions`) — see {@link PoolStats.byteBudgetEvictions} for why the two
+     * must not be conflated.
+     */
+    byteBudgetEvictions: 0,
   };
 
   /**
@@ -432,6 +438,9 @@ export class GPUBufferPool {
       const byteEvicted = this._evictUntilUnderByteBudget(budget, fromAcquire);
       evicted += byteEvicted;
       this.stats.evictions += byteEvicted;
+      // Also counted separately: only THIS pass means the pool shed geometry it
+      // could not afford, which is the signal a capture tool has to refuse on.
+      this.stats.byteBudgetEvictions += byteEvicted;
     }
 
     if (evicted > 0) {

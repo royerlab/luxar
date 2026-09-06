@@ -149,10 +149,18 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
     // Implementation lives in `./debug-state.ts` so the
     // scene-walking logic can be unit-tested directly.
     //
-    // `isLoading` is read from the loader manager INSIDE the getter, per
-    // snapshot — capturing it once here would freeze it at install time (when
-    // nothing is loading yet) and hand every polling E2E helper a permanent
-    // "idle".
+    // `isLoading`, the pool stats and the refinement stop are all read from the
+    // loader manager INSIDE the getter, per snapshot — capturing any of them
+    // once here would freeze it at install time (when nothing is loading, the
+    // pool is empty and refinement has not run) and hand every polling E2E
+    // helper a permanent "idle".
+    //
+    // `gpuPoolStats` has been declared and documented on the context since the
+    // field was added but production never passed it, so `state.gpuPool` was
+    // always undefined; wiring it here is what makes the pool side legible at
+    // all. Projected down to the debug subset rather than forwarded whole:
+    // `PoolStats` also carries a per-type breakdown that no snapshot consumer
+    // reads.
     getState: () =>
       computeDebugState({
         scene: ports.sceneManager.scene,
@@ -162,6 +170,21 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
         initialized: ports.isInitialized(),
         isLoading: SceneLoaderManager.getInstance().isAnyLoadPassInProgress(),
         dims: sceneDimsManager.getDims(),
+        gpuPoolStats: () => {
+          const stats = SceneLoaderManager.getInstance().gpuPoolStats();
+          if (!stats) return undefined;
+          return {
+            activeBuffers: stats.activeBuffers,
+            pooledBuffers: stats.pooledBuffers,
+            activeBytes: stats.activeBytes,
+            pooledBytes: stats.pooledBytes,
+            totalBytes: stats.totalBytes,
+            largestPooledBytes: stats.largestPooledBytes,
+            evictions: stats.evictions,
+            byteBudgetEvictions: stats.byteBudgetEvictions,
+          };
+        },
+        refinementResidency: () => SceneLoaderManager.getInstance().refinementResidencyStop(),
       }),
 
     // Helper to trigger a single frame render (for stable screenshots)

@@ -196,6 +196,7 @@ import {
   RefinementResidencyBudget,
   RefinementResidencyReporter,
   type LadderResidency,
+  type RefinementResidencyStop,
 } from './scene-loader/progressive/residency-budget';
 import {
   RefinementDensityGate,
@@ -245,6 +246,20 @@ export class SceneLoader {
   private cacheBudgets: CacheBudgets | null = null;
   private registry = new LoaderRegistry();
   private readonly lineWorkingSetGate: LineWorkingSetGate;
+  /**
+   * Scene-wide byte-ceiling record for progressive refinement, surfaced on the
+   * debug snapshot (#2508); lifetime contract on {@link RefinementResidencyStop}.
+   *
+   * DELIBERATELY NOT CLEARED BY `dispose()`, because production reaches a new
+   * scene only through `SceneLoaderManager.createLoaderAsync`, which builds a
+   * fresh loader and reporter — a reset here would be code no path executes.
+   * Only the in-place `dispose()` in `scene-loader/lifecycle/load-scene.ts`
+   * would notice: it nulls `_gpuBufferPool` for good (the pool is constructed
+   * only in this class's constructor, so `SceneLoaderManager.gpuPoolStats()`
+   * then returns `undefined` and `gpuPool` is ABSENT from every later snapshot)
+   * while this `readonly` reporter survives. Latent regardless — reusing one
+   * `SceneLoader` across two `loadScene()` calls is unsupported (class docstring).
+   */
   private readonly refinementResidencyReporter = new RefinementResidencyReporter();
   // Projected-density rung gate (density-gate.ts); null = no provider wired
   // (guard disabled, tests, embedders) = bytes-only admission.
@@ -637,14 +652,27 @@ export class SceneLoader {
   readonly lodGroupRegistry: LODGroupRegistry | null;
 
   /**
-   * The GPU buffer pool, or null when pooling is disabled or before
-   * `setup()` constructs it. Exposed so the LOD-group registry's
+   * The GPU buffer pool, or null when pooling is disabled. Exposed so the
+   * LOD-group registry's
    * resident-byte query (`getResidentBytes`) can read the single VRAM
-   * truth; tolerant of the pre-construction null (callers treat null as
-   * 0 bytes ⇒ never over budget ⇒ no eviction).
+   * truth; callers treat a disabled pool as 0 resident bytes, so it is never
+   * over budget and never evicts.
    */
   get gpuBufferPool(): GPUBufferPool | null {
     return this._gpuBufferPool;
+  }
+
+  /**
+   * This scene's progressive-refinement BYTE-ceiling stop, or `undefined` when
+   * refinement never declined a rung.
+   *
+   * The reporter is scene-scoped (one per loader) while the residency budget is
+   * rebuilt per refinement run, so this accumulates across runs — which is what
+   * makes it answerable at capture time, long after the run that stopped. Read
+   * by the debug snapshot through `SceneLoaderManager.refinementResidencyStop()`.
+   */
+  get refinementResidencyStop(): RefinementResidencyStop | undefined {
+    return this.refinementResidencyReporter.snapshot();
   }
 
   /**

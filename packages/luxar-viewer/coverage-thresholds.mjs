@@ -70,7 +70,13 @@ export const COVERAGE_THRESHOLDS = {
   // the old floor as stale. The ratchet working, same as the src/data bump above.
   'src/workers/**': { lines: 89, functions: 90, branches: 85 }, //   91.38 / 91.41 / 86.74
   'src/ui/**': { lines: 89, functions: 84, branches: 77 }, //        91.53 / 86.32 / 79.11
-  'src/core/**': { lines: 86, functions: 70, branches: 83 }, //      88.41 / 72.03 / 85.69
+  // branches 83 -> 85 after the #2508 capture-readiness tests reached the
+  // version-skew branches nothing had exercised (a cap refusing on a partial
+  // snapshot, the unreadable-figure paths, the hostile-string guard): the
+  // subtree went 85.69 -> 86.22 and check-coverage-slack.mjs flagged the old
+  // floor as stale. The ratchet working, same as the src/data and src/workers
+  // bumps above.
+  'src/core/**': { lines: 86, functions: 70, branches: 85 }, //      88.48 / 72.61 / 86.22
   // input jumped when ui-actions-surface.test.ts began invoking the command
   // table InputHandler builds in registerAllKeyBindings (27 thunks no test
   // had ever called): functions 76.0 -> 90.39.
