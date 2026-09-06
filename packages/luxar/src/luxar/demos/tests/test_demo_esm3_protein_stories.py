@@ -57,6 +57,24 @@ def test_select_members_keeps_the_blob_and_drops_stragglers() -> None:
     assert 0 < cluster.r95 < 0.5
 
 
+def test_select_members_centres_on_the_densest_blob_of_a_split_family() -> None:
+    # A family the model splits in two: 20 members at +8 and 6 members at -8.
+    # The MEDIAN of such a family lands between the blobs, on nothing;
+    # centring on the densest member picks the big blob.
+    rng = np.random.default_rng(1)
+    big = rng.normal(scale=0.1, size=(20, 3)) + [8, 8, 8]
+    small = rng.normal(scale=0.1, size=(6, 3)) + [-8, -8, -8]
+    pos = np.vstack([big, small]).astype(np.float32)
+    names = np.array(["Hemoglobin subunit alpha"] * 26, dtype=object)
+    kingdoms = np.array(["Other Eukaryotes"] * 26, dtype=object)
+
+    cluster = select_story_members(_story(radius=0.6), names, kingdoms, pos)
+
+    assert sorted(cluster.indices.tolist()) == list(range(20))
+    assert np.allclose(cluster.centre, [8, 8, 8], atol=0.2)
+    assert cluster.n_named == 26
+
+
 def test_select_members_honours_the_kingdom_filter() -> None:
     names = np.array(["Hemagglutinin"] * 4, dtype=object)
     kingdoms = np.array(
@@ -133,8 +151,9 @@ def test_panels_escape_html_and_carry_the_counts() -> None:
 
 def test_shipped_stories_are_well_formed_and_author_valid_waypoints() -> None:
     keys = [s.key for s in STORIES]
-    assert len(keys) == len(set(keys)) == 5
+    assert len(keys) == len(set(keys)) == 10
     for s in STORIES:
+        assert "/" not in s.key, f"{s.key!r} doubles as a node name; '/' is refused"
         assert 3 <= len(s.facts) <= 5, s.key
         assert s.mystery.strip(), s.key
         assert all(0.0 <= c <= 1.0 for c in s.color), s.key
@@ -147,4 +166,4 @@ def test_shipped_stories_are_well_formed_and_author_valid_waypoints() -> None:
             for k in range(len(STORIES) + 1)
         ]
     )
-    assert len(vc.to_dict()["waypoints"]) == 6
+    assert len(vc.to_dict()["waypoints"]) == 11

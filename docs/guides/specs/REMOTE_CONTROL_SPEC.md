@@ -242,7 +242,7 @@ Not carried per waypoint (deliberately): layer patches — a story that wants a
 different layer look authors it as data or asks the controller to `setLayer`.
 
 **Reference scene:** `luxar demo run esm3_protein_stories` — the ESM C Swiss-Prot
-UMAP with a hidden `story` dimension (Overview + five protein-family clusters),
+UMAP with a hidden `story` dimension (Overview + ten protein-family clusters),
 a dimmed `extend_to_all` backdrop, one highlight layer per story in a higher
 `layer_order` band (a highlight shares every position with its backdrop twin, so
 in one band the two z-fight and the backdrop hides it), a fact panel per story as

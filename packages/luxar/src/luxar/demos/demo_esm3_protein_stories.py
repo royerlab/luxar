@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""ESM Protein Stories — five guided tours of the Swiss-Prot landscape.
+"""ESM Protein Stories — ten guided tours of the Swiss-Prot landscape.
 
 A story-telling variant of ``demo_esm3_protein_landscape``: the same ~575K
 Swiss-Prot proteins embedded with ESM C and laid out by 3D UMAP, plus a hidden
-``story`` dimension that walks through five protein families whose clusters in
+``story`` dimension that walks through ten protein families whose clusters in
 the map each carry a genuinely interesting piece of biology. Stepping the
 dimension flies the camera to the cluster, lights it up, and shows a panel of
 facts and one open question.
@@ -43,10 +43,10 @@ from __future__ import annotations
 
 DEMO_META = {
     "key": "esm3_protein_stories",
-    "title": "ESM Protein Stories — five guided tours of the Swiss-Prot landscape",
+    "title": "ESM Protein Stories — ten guided tours of the Swiss-Prot landscape",
     "description": (
         "The ESM C Swiss-Prot 3D UMAP with a hidden story dimension: step through "
-        "five protein-family clusters, each with a fly-to camera waypoint, a "
+        "ten protein-family clusters, each with a fly-to camera waypoint, a "
         "highlight and a panel of researched facts."
     ),
     "category": "embeddings",
@@ -314,16 +314,189 @@ STORIES: tuple[Story, ...] = (
         ),
         tags=("neuroscience", "mystery"),
     ),
+    Story(
+        key="ATP synthase",
+        title="ATP synthase — the turbine in every cell",
+        subtitle="The rotary motor that makes the currency of life, in bacteria and in us",
+        pattern=r"ATP synthase subunit beta\b",
+        color=(1.0, 0.5, 0.12),
+        radius=0.6,
+        facts=(
+            # Boyer & Walker, Nobel Prize in Chemistry 1997 (NobelPrize.org).
+            "ATP synthase is a machine with a rotating axle: a flow of protons "
+            "turns it, and each turn presses out three ATP molecules. Paul "
+            "Boyer proposed the mechanism, John Walker solved the structure — "
+            "Nobel Prize 1997.",
+            # Noji, Yasuda, Yoshida & Kinosita, Nature 386:299 (1997).
+            "In 1997 the rotation was watched directly: a single F₁ motor, "
+            "with a fluorescent actin filament glued to its axle, spun under "
+            "the microscope at several revolutions per second.",
+            # ~100–150 mol ATP/day ≈ 50–75 kg (BNID 105606; NIGMS Biobeat).
+            "You make and spend roughly your own body weight in ATP every day "
+            "— some 50 to 75 kilograms — recycling each molecule hundreds of "
+            "times.",
+            "This blob holds the beta subunit from bacteria, plant chloroplasts "
+            "and animal mitochondria side by side: the same motor, inherited "
+            "from the bacteria that became our mitochondria.",
+        ),
+        mystery=(
+            "F₁ is one of the most efficient motors known: almost all of the "
+            "energy that goes in comes out as rotation, with next to nothing "
+            "lost as heat. How a protein manages that is still debated."
+        ),
+        tags=("energy", "structure"),
+    ),
+    Story(
+        key="RuBisCO",
+        title="RuBisCO — the most abundant enzyme, and one of the slowest",
+        subtitle="The protein that pulls carbon out of the air for almost all life",
+        pattern=r"^Ribulose bisphosphate carboxylase large chain",
+        color=(0.72, 1.0, 0.3),
+        radius=0.6,
+        facts=(
+            # Bar-On & Milo, PNAS 116:4738 (2019): ~0.7 Gt; Raven 2013.
+            "Nearly every carbon atom in every living thing passed through "
+            "this enzyme. Earth carries about 0.7 billion tonnes of it — very "
+            "likely the most abundant protein on the planet.",
+            # Time-averaged ~0.03 s⁻¹ on land (Bar-On & Milo 2019); in vitro
+            # only a few per second.
+            "It is also remarkably slow: a few reactions per second at best, "
+            "and averaged over a growing season a land plant's RuBisCO fixes "
+            "about one CO₂ every thirty seconds. Plants compensate by making "
+            "enormous amounts of it.",
+            "It makes mistakes, too: it cannot tell O₂ from CO₂ well, and every "
+            "time it grabs oxygen the plant pays in lost carbon and energy "
+            "(photorespiration). Cyanobacteria and algae pack the enzyme into "
+            "compartments — carboxysomes, pyrenoids — to feed it concentrated "
+            "CO₂.",
+            "Here the large chain forms one tight knot; its distant relatives "
+            "in other microbes sit elsewhere in the map.",
+        ),
+        mystery=(
+            "Three billion years of evolution have not produced a fast, "
+            "accurate RuBisCO. Is speed against specificity a wall that cannot "
+            "be climbed, or has nobody — nature or engineer — found the path?"
+        ),
+        tags=("photosynthesis", "enzyme"),
+    ),
+    Story(
+        # No '/' — the key doubles as a node name.
+        key="RecA and Rad51",
+        title="RecA and Rad51 — the machine that mends broken DNA",
+        subtitle="One recombinase, from E. coli to the BRCA2 pathway in our cells",
+        pattern=r"^Protein RecA|DNA repair protein RAD51",
+        color=(0.62, 0.48, 1.0),
+        radius=0.6,
+        facts=(
+            # Clark & Margulies 1965 (PNAS); reviewed Bell & Kowalczykowski,
+            # Trends Biochem. Sci. 2016.
+            "Found in 1965 by screening E. coli mutants that could no longer "
+            "swap genes, RecA turned out to be the heart of homologous "
+            "recombination: it coats a broken DNA strand into a filament that "
+            "searches the whole genome for the matching sequence and pairs "
+            "them up.",
+            # SOS response: RecA–ssDNA filament triggers LexA self-cleavage.
+            "In bacteria the same filament is an alarm: it triggers the SOS "
+            "response, switching on dozens of repair genes when DNA is "
+            "damaged.",
+            # Human RAD51 is loaded onto resected ends by BRCA2's BRC repeats.
+            "Our version is RAD51. It is loaded onto broken DNA by BRCA2 — the "
+            "protein whose inherited mutations cause a large share of "
+            "hereditary breast and ovarian cancer. Repair fails, and errors "
+            "accumulate.",
+            "This blob mixes bacteria and eukaryotes: the recombinase predates "
+            "their split, and its shape has barely moved since.",
+        ),
+        mystery=(
+            "A RecA filament finds one matching stretch among millions of base "
+            "pairs in minutes. How the search is that fast — sliding, hopping, "
+            "or testing many sites at once — is still argued over."
+        ),
+        tags=("DNA repair", "cancer"),
+    ),
+    Story(
+        key="Insulin",
+        title="Insulin — a century of firsts",
+        subtitle="The hormone that keeps being the first protein to do something",
+        pattern=r"^Insulin$|^Insulin-\d|^Insulin A|^Insulin B",
+        color=(1.0, 0.55, 0.65),
+        radius=0.6,
+        facts=(
+            # Banting & Best isolate insulin 27 July 1921; Leonard Thompson,
+            # 14, first injection 11 Jan 1922 (U. Toronto Fisher Library;
+            # UMass Chan). Nobel 1923 to Banting and Macleod.
+            "Isolated by Frederick Banting and Charles Best in the summer of "
+            "1921; on 11 January 1922 a 14-year-old, Leonard Thompson, became "
+            "the first patient injected. Diabetes stopped being a death "
+            "sentence. Nobel Prize 1923.",
+            # Sanger 1955; Nobel 1958.
+            "In 1955 Frederick Sanger read its amino-acid sequence — the first "
+            "protein ever sequenced, proof that proteins have a defined "
+            "sequence at all. Nobel Prize 1958.",
+            # Hodgkin 1969, 34 years after her first insulin crystals.
+            "Dorothy Hodgkin solved its three-dimensional structure in 1969, "
+            "thirty-four years after she first photographed its crystals.",
+            # Humulin, FDA 1982: first recombinant-DNA drug.
+            "In 1982 human insulin made by engineered bacteria (Humulin) "
+            "became the first drug ever produced with recombinant DNA.",
+        ),
+        # daf-2 (the worm's insulin/IGF-1 receptor): loss doubles lifespan
+        # (Kenyon et al. 1993; Kimura et al. 1997).
+        mystery=(
+            "In the worm C. elegans, weakening the insulin receptor (daf-2) "
+            "doubles lifespan. Why does a hormone for blood sugar hold a dial "
+            "for ageing — and does the dial exist in us?"
+        ),
+        tags=("medicine", "history"),
+    ),
+    Story(
+        key="Cone-snail toxins",
+        title="Conotoxins — venom that became medicine",
+        subtitle="One superfamily of cone-snail peptides; the rest are scattered across the map",
+        pattern=r"onotoxin",
+        color=(0.3, 1.0, 0.75),
+        radius=0.6,
+        facts=(
+            # ~800 Conus species, 100–1,000+ peptides each, >80,000 estimated
+            # (Toxins 2019; Frontiers Mar. Sci. 2022).
+            "Cone snails hunt fish, worms and other snails with a harpoon and a "
+            "venom cocktail. There are around 800 species and each makes "
+            "hundreds to a thousand different peptides — tens of thousands of "
+            "toxins in all, each a precise key for one ion channel or "
+            "receptor.",
+            # Olivera (U. Utah), cone snails from the Philippines.
+            "Much of what is known began with Baldomero Olivera collecting "
+            "snails on Philippine reefs; his lab turned their toxins into "
+            "tools that mapped the ion channels of the nervous system.",
+            # Ziconotide = ω-conotoxin MVIIA (Conus magus), 25 aa; FDA 28 Dec
+            # 2004 as Prialt — first marine natural product approved.
+            "One of them, a 25-amino-acid peptide from Conus magus, is now a "
+            "drug: ziconotide (Prialt), approved in 2004 for severe chronic "
+            "pain. It blocks the calcium channels that carry pain signals in "
+            "the spinal cord — the first medicine ever taken from the sea.",
+            "Swiss-Prot holds over 1,200 conotoxins. This knot is one "
+            "superfamily of them; the others are strewn across the whole map, "
+            "because venom evolves faster than almost anything else.",
+        ),
+        mystery=(
+            "Why do venom genes mutate and diversify so much faster than the "
+            "rest of the genome? An arms race with prey is the usual answer, "
+            "but the molecular engine of that speed is still being worked out."
+        ),
+        tags=("venom", "neuroscience", "medicine"),
+    ),
 )
 
-OVERVIEW_TITLE = "Five stories in the protein universe"
+OVERVIEW_TITLE = "Ten stories in the protein universe"
 OVERVIEW_HTML = (
     "Every point is one of {n:,} Swiss-Prot proteins, placed by a protein "
     "language model (ESM C) so that proteins with similar sequences sit close "
     "together, then projected to 3D with UMAP. Colours are taxonomic groups."
-    "<br><br>Step the <b>story</b> dimension to fly to five clusters that each "
+    "<br><br>Step the <b>story</b> dimension to fly to ten clusters that each "
     "tell a piece of biology: blood, sunlight, the oldest chaperone, the coats "
-    "of viruses, and a protein that infects without genes."
+    "of viruses, a protein that infects without genes, the cell's turbine, "
+    "the slowest important enzyme, the machine that mends DNA, a century of "
+    "insulin, and venom that became medicine."
 )
 
 # Backdrop / highlight appearance. The backdrop keeps the base demo's taxon
@@ -373,6 +546,27 @@ class StoryCluster:
     n_named: int
 
 
+def _densest_member(family_pos: np.ndarray, radius: float) -> np.ndarray:
+    """The member with the most family neighbours within ``radius``.
+
+    Exact for families up to a few thousand members (one pairwise distance
+    matrix); larger families are subsampled to 2,000 candidates, which is far
+    denser than any blob the demo cares about.
+    """
+    n = len(family_pos)
+    if n == 1:
+        return family_pos[0]
+    cand = family_pos if n <= 2000 else family_pos[:: max(1, n // 2000)]
+    # (candidates × members) distances, chunked so memory stays modest.
+    counts = np.empty(len(cand), dtype=np.int64)
+    step = 512
+    for start in range(0, len(cand), step):
+        block = cand[start : start + step]
+        d = np.linalg.norm(block[:, None, :] - family_pos[None, :, :], axis=2)
+        counts[start : start + step] = (d <= radius).sum(axis=1)
+    return cand[int(np.argmax(counts))]
+
+
 def select_story_members(
     story: Story,
     names: np.ndarray,
@@ -383,7 +577,7 @@ def select_story_members(
 
     Members are the proteins whose name matches ``story.pattern`` (and whose
     taxon matches ``story.kingdom`` when set) AND that lie within
-    ``story.radius`` of the family's median position. The radius cut is what
+    ``story.radius`` of the family's densest member. The radius cut is what
     makes the highlight a cluster: a family's stragglers scattered across the
     map would otherwise light up in the wrong places.
     """
@@ -394,8 +588,15 @@ def select_story_members(
     n_named = int(named.sum())
     if n_named == 0:
         raise ValueError(f"story {story.key!r}: pattern matched no protein names")
-    centre = np.median(positions[named], axis=0)
-    dist = np.linalg.norm(positions - centre, axis=1)
+    # Centre on the family's DENSEST member, not its median: a family that the
+    # model splits into several blobs (RuBisCO, the histones, ATP synthase all
+    # do) has a median that lands between them, on nothing. The densest member
+    # is the one with the most family neighbours within two thirds of the story
+    # radius (tight enough to tell blobs apart, wide enough to weigh a whole
+    # blob rather than its densest speck).
+    family_pos = positions[named].astype(np.float64)
+    seed = _densest_member(family_pos, story.radius * 2.0 / 3.0)
+    dist = np.linalg.norm(positions - seed, axis=1)
     members = named & (dist <= story.radius)
     indices = np.flatnonzero(members)
     if len(indices) == 0:
@@ -827,7 +1028,7 @@ def build_stories_scene(
 def main() -> None:
     """Load the landscape cache, build the stories scene, optionally serve it."""
     aprint("=" * 70)
-    aprint("ESM PROTEIN STORIES — five guided tours of the Swiss-Prot landscape")
+    aprint("ESM PROTEIN STORIES — ten guided tours of the Swiss-Prot landscape")
     aprint("=" * 70)
 
     auto_rotate = "--no-auto-rotate" not in sys.argv
