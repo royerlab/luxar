@@ -17,9 +17,9 @@ key, believable reflections, and what three's own examples light with. Design:
 ## Two load-bearing properties
 
 - **Lazy.** Nothing is built until `ensure()` is called, and the only caller is the
-  material manager's `onPhysicalMaterialCreated` hook, wired by `SceneManager`. A scene
-  with no physical mesh keeps `scene.environment === null` and renders byte-identically to
-  before this module existed.
+  material manager's `onPhysicalMaterialCreated` hook, wired by the active viewer host
+  (`SceneManager` or `LuxarLayer`). A scene with no physical mesh keeps
+  `scene.environment === null` and renders byte-identically to before this module existed.
 - **Invisible to house materials.** `scene.environment` is read only by three's
   lighting-model materials. Every Luxar material is a `ShaderMaterial` / `NodeMaterial`
   with its own fragment code that never samples an environment, so setting it changes
@@ -36,8 +36,9 @@ imports only `three` core and is converted to node materials by the WebGPU rende
 
 ## Lifetime
 
-Owned by `SceneManager`, created in `init()` next to the scene, disposed in `dispose()`
-before the renderer (the PMREM target is that renderer's GPU resource). A WebGL context
-restore rebuilds an existing target in place but preserves laziness when no physical
-material has requested one. It survives a dataset switch — it is scene-level and cheap
-to keep.
+Owned by the active viewer host. `SceneManager` creates it in `init()` next to the scene;
+`LuxarLayer` creates it in `load()` only when the host left `scene.environment` unset.
+Each host disposes its target during teardown before releasing the material manager (the
+PMREM target is the renderer's GPU resource), and rebuilds an existing target after a
+WebGL context restore while preserving laziness when no physical material requested one.
+It survives a dataset switch — it is scene-level and cheap to keep.

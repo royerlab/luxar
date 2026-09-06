@@ -41,6 +41,11 @@
  * - Draw order for its *own* geometry. Luxar stamps the configured
  *   `renderOrder` onto every Group it owns; host transparent groups should use
  *   explicit lower/higher values rather than rely on insertion order.
+ * - Scene environment sharing. If the host leaves `scene.environment` unset, the
+ *   first Luxar physical mesh installs a prefiltered `RoomEnvironment` there, which
+ *   can also affect the host's own lighting-model materials. A host-supplied
+ *   environment is preserved, and an environment owned by the layer is released
+ *   by {@link LuxarLayer.dispose}.
  * - Calling {@link LuxarLayer.handleContextLost} when WebGL context loss is
  *   reported, then {@link LuxarLayer.handleContextRestored} after rebuilding
  *   its own renderer / post-processing resources.
