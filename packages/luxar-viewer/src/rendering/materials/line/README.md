@@ -333,14 +333,21 @@ the joint-composition model the unit tests pin — the latter mirrors the
 vertex stage's STENCIL as well as the fragment math, so a reach shortfall
 chops the model exactly as it would chop the rasterized image, #1488).
 
-Near-plane handling is the quad's (segment cull when both endpoints are
-inside `uNearCull`, clip onto the `nearCull` plane when only one is), but the
-shared `perspectiveNearFade` is evaluated PER CORNER — at the clamped span
-parameter `tc` of each stencil vertex — and interpolated as `vFade`, not per
-fragment from `vViewZ` as the quad does. Every corner sits at depth
-≥ `nearCull` after the clip, so the ramp is exact at the corners and there is
-no pop; the cost is that two legs sharing a vertex disagree on the fade away
-from it (see the `fade` note in `_shared/line-capsule.ts`).
+Near-plane handling shares the quad's segment cull when both endpoints are
+inside `uNearCull` and its clip onto the `nearCull` plane when only one is,
+but not the pathological-wide discard: the capsule only clamps its radii to
+`uMaxLinePixelWidth`. The shared `perspectiveNearFade` is evaluated PER
+CORNER — at the clamped span parameter `tc` of each stencil vertex — and
+interpolated as the `fade` factor of `vFade` (which also carries
+`widthScale`), not per fragment from `vViewZ` as the quad does. Evaluating at
+the corners makes the ramp exact there, but interpolation linearizes the
+smoothstep along the span (up to ~0.10 intensity error in the mid-quarters),
+and two legs sharing a vertex disagree on the fade away from it (see the
+`fade` note in `_shared/line-capsule.ts`). Both are further #1352-licensed
+approximations alongside the three below. The clip keeps corners out of the
+behind-eye hard-zero branch; the ramp reaches zero continuously at
+`nearCull`, and the both-near cull only removes a span already in that zero
+region, so there is no pop.
 
 Three exactness relaxations are deliberate, licensed by the #1352 relaxed
 spec ("not physics-exact; no pathological near-axial drawing; gaussian-like
