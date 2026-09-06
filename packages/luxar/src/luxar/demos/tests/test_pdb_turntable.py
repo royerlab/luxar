@@ -34,19 +34,26 @@ def test_pymol_script_turns_exactly_once_with_a_transparent_ray_traced_backgroun
     assert "for i in range(360):" in script
     assert "cmd.turn('y', 1.0)" in script  # 360 frames → exactly 1° per frame
     assert "ray=1" in script and "width=1024, height=1024" in script
-    # The look the demo promises: cartoon by chain, translucent surface, ligand spheres.
+    # The look the demo promises: an opaque clay surface of the polymer alone,
+    # per-chain shades of the story colour, soft shadows + ambient occlusion.
     for needle in (
-        "show('cartoon'",
-        "util.cbc(",
-        "show('surface'",
-        "set('transparency'",
-        "show('spheres'",
+        "cmd.show('surface', 'polymer')",
+        "cmd.set('transparency', 0.0)",
+        "cmd.set('ambient_occlusion_mode', 1)",
+        "cmd.set('ray_shadows', 1)",
+        "cmd.set_color('story_%d' % i",
+        "cmd.color('story_%d' % i",
     ):
         assert needle in script, needle
-    # Cofactor-crowded complexes (photosystem II) fall back to metal spheres only,
-    # and the ray-thread budget is set explicitly so parallel jobs share cores.
-    assert f"if n_het <= {tt.HETATM_SPHERE_LIMIT}:" in script
-    assert "cmd.show('spheres', 'hetatm and metals')" in script
+    for absent in ("cartoon", "spheres", "hetatm", "util."):
+        assert absent not in script, absent
+    # A long complex must stay inside the square frame at every angle.
+    assert "complete=1" in script and "cmd.clip('slab', 10000)" in script
+    # Quality follows structure size; the ray-thread budget is explicit so
+    # parallel jobs share the cores.
+    assert f"large = n_atoms > {tt.LARGE_STRUCTURE_ATOMS}" in script
+    assert "cmd.set('surface_quality', -1 if large else 0)" in script
+    assert "cmd.set('antialias', 1 if large else 2)" in script
     assert "cmd.set('max_threads', 4)" in script
     assert "cmd.set('max_threads', 6)" in tt.pymol_script(
         Path("a.pdb"), Path("f"), frames=360, size=768, threads=6
@@ -54,6 +61,29 @@ def test_pymol_script_turns_exactly_once_with_a_transparent_ray_traced_backgroun
     # Non-integer steps still sum to one turn.
     assert "cmd.turn('y', 2.5)" in tt.pymol_script(
         Path("a.pdb"), Path("f"), frames=144, size=256
+    )
+
+
+def test_chain_palette_keeps_the_story_hue_but_pins_lightness_and_saturation() -> None:
+    import colorsys
+
+    neon_green = (0.4, 0.98, 0.4)  # the PSII story highlight, far too hot for clay
+    shades = tt.chain_palette(neon_green, 4)
+    assert len(shades) == 4 and len(set(shades)) == 4  # distinct per chain
+    h0 = colorsys.rgb_to_hls(*neon_green)[0]
+    for r, g, b in shades:
+        h, lightness, sat = colorsys.rgb_to_hls(r, g, b)
+        assert abs(((h - h0 + 0.5) % 1.0) - 0.5) < 0.04  # within ~15 deg of hue
+        assert 0.5 <= lightness <= 0.7 and 0.4 <= sat <= 0.6
+    assert tt.chain_palette(neon_green, 1) == [tt.chain_palette(neon_green, 1)[0]]
+    # The colour is part of the cache key, so two stories sharing a PDB id
+    # rendered in different colours never collide.
+    assert tt.cache_key("1OMG", 360, 768, color=(1, 0, 0)) != tt.cache_key(
+        "1OMG", 360, 768, color=(0, 0, 1)
+    )
+    assert tt.color_hex((1.0, 0.5, 0.0)) == "#ff8000"
+    assert "shades = [" in tt.pymol_script(
+        Path("a.pdb"), Path("f"), frames=360, size=768, color=neon_green
     )
 
 
@@ -93,11 +123,13 @@ def test_render_turntables_reports_and_skips_a_failing_structure(
     sizes = {"1OMG": 300, "BAD1": 500, "3WU2": tt.LARGE_STRUCTURE_ATOMS + 1}
     monkeypatch.setattr(tt, "structure_atoms", lambda pdb_id, cache_dir: sizes[pdb_id])
     calls: list[tuple[str, object]] = []
+    colors: dict[str, object] = {}
 
     def fake_render(
         pdb_id: str, cache_dir: Path, **kwargs: object
     ) -> tt.TurntableAssets:
         calls.append((pdb_id, kwargs["threads"]))
+        colors[pdb_id] = kwargs["color"]
         if pdb_id == "BAD1":
             raise RuntimeError("PyMOL produced 0 of 360 frames for BAD1")
         return tt.TurntableAssets(
@@ -105,8 +137,13 @@ def test_render_turntables_reports_and_skips_a_failing_structure(
         )
 
     monkeypatch.setattr(tt, "render_turntable", fake_render)
-    assets = tt.render_turntables(["3WU2", "1OMG", "BAD1"], tmp_path, jobs=2)
+    assets = tt.render_turntables(
+        ["3WU2", "1OMG", "BAD1"], tmp_path, jobs=2, colors={"3wu2": (0.4, 0.98, 0.4)}
+    )
     assert set(assets) == {"1OMG", "3WU2"}
+    # Story colours reach the renderer (case-insensitively); others default.
+    assert colors["3WU2"] == (0.4, 0.98, 0.4)
+    assert colors["1OMG"] == tt.DEFAULT_COLOR
     assert "BAD1 failed" in capsys.readouterr().out
     # Small structures share the cores across the pool; the large one runs
     # LAST, alone, with every core.

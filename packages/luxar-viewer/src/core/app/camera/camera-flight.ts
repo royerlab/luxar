@@ -210,7 +210,7 @@ export function keepOrientationPose(
   };
 }
 
-interface ActiveFlight {
+export interface ActiveFlight {
   path: FlightPath;
   pose: CameraSnapshot;
   startedAt: number;

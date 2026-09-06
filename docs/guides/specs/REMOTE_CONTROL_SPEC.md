@@ -145,7 +145,7 @@ the viewer is the source of truth (`getViewerState()` on connect).
 JSON text frames, JSON-RPC 2.0 shape. The method set is **literally the
 `LuxarApp` embedder API**; no second vocabulary.
 
-```jsonc
+```javascript
 // controller → viewer
 { "jsonrpc": "2.0", "id": 7, "method": "flyTo",
   "params": { "pose": { ... }, "opts": { "durationMs": 2000 } } }

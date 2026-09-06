@@ -13,17 +13,20 @@ Pipeline (all cached under ``~/.cache/luxar/pdb_turntables``):
    ``data.rcsb.org``).
 2. Drive PyMOL headless (``pymol -cq <script>``) to ray-trace ``frames`` PNG
    frames with a transparent background, turning 360°/frames per frame — at the
-   default 360 frames that is exactly 1° per frame, a 6 s loop at 60 fps.
+   default 360 frames that is exactly 1° per frame, a 6 s loop at 60 fps. The
+   style is a minimalist matte "clay" molecular surface in pastel shades of the
+   story's own colour (see :func:`pymol_script`).
 3. Encode with ffmpeg to VP9 WebM **with an alpha channel** (``yuva420p``) and
    keep frame 0 as a PNG poster (the Safari fallback: it cannot decode alpha
    WebM).
 
-Renders are keyed by ``(pdb_id, STYLE_VERSION, frames, size)``; bump
+Renders are keyed by ``(pdb_id, STYLE_VERSION, frames, size, colour)``; bump
 ``STYLE_VERSION`` when the PyMOL style changes so cached turntables re-render.
 """
 
 from __future__ import annotations
 
+import colorsys
 import hashlib
 import json
 import os
@@ -35,12 +38,12 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Mapping, Optional, Sequence
 
 from arbol import aprint
 
 #: Bump when :func:`pymol_script` changes so cached turntables re-render.
-STYLE_VERSION = 2
+STYLE_VERSION = 3
 DEFAULT_FRAMES = 360
 DEFAULT_FPS = 60
 # 768 px covers the overlay's ~26% of a 4K kiosk width (~1000 px) at a 1.3x
@@ -50,16 +53,15 @@ DEFAULT_SIZE = 768
 # PyMOL's tracer scales sub-linearly with threads (12 threads = 5.8x, 4 = 3.4x
 # on an M-series Mac), so three 4-thread jobs out-render one 12-thread job 1.7x.
 DEFAULT_JOBS = 3
-# Above this many non-solvent, non-metal hetero atoms the cofactors are hidden
-# and only metals are drawn as spheres: photosystem II's ~17k chlorophyll atoms
-# otherwise bury the protein under green spheres. Hemes, nucleotides and sugars
-# on ordinary complexes stay well under it.
-HETATM_SPHERE_LIMIT = 1500
-# Structures above this many atoms take the coarser molecular surface
-# (surface_quality -2 instead of -1): the surface dominates ray-tracing time
-# (about 1.8x per quality step) and the translucent shell reads the same at
-# overlay size.
+# Structures above this many atoms take the coarser molecular surface and
+# single antialiasing: the surface dominates ray-tracing time (about 1.8x per
+# quality step, 1.4x for antialias 2) and a 50k-atom complex reads the same at
+# overlay size. Below it, surface_quality 0 + antialias 2 was measured
+# indistinguishable from quality 1 at one seventh of the cost.
 LARGE_STRUCTURE_ATOMS = 15_000
+#: Colour used when a structure has no story colour (a soft grey-violet).
+DEFAULT_COLOR: tuple[float, float, float] = (0.69, 0.42, 0.85)
+RGB = tuple[float, float, float]
 
 RCSB_FILE_URL = "https://files.rcsb.org/download/{pdb_id}.pdb"
 RCSB_ENTRY_URL = "https://data.rcsb.org/rest/v1/core/entry/{pdb_id}"
@@ -127,70 +129,115 @@ def find_ffmpeg() -> Optional[str]:
 # ----------------------------------------------------------------------------
 
 
+def color_hex(color: RGB) -> str:
+    """``#rrggbb`` for an RGB triple in [0, 1] (clamped)."""
+    return "#" + "".join(f"{round(min(1.0, max(0.0, c)) * 255):02x}" for c in color)
+
+
 def cache_key(
-    pdb_id: str, frames: int, size: int, style_version: int = STYLE_VERSION
+    pdb_id: str,
+    frames: int,
+    size: int,
+    style_version: int = STYLE_VERSION,
+    color: RGB = DEFAULT_COLOR,
 ) -> str:
-    """Stable file stem for one render configuration."""
+    """Stable file stem for one render configuration (colour included)."""
     digest = hashlib.sha1(
-        f"{pdb_id.upper()}|{style_version}|{frames}|{size}".encode()
+        f"{pdb_id.upper()}|{style_version}|{frames}|{size}|{color_hex(color)}".encode()
     ).hexdigest()
     return f"{pdb_id.upper()}_v{style_version}_{frames}f_{size}px_{digest[:8]}"
 
 
+def chain_palette(base: RGB, n: int) -> list[RGB]:
+    """``n`` pastel clay shades around the story hue, one per chain.
+
+    Only the HUE is taken from the story colour: lightness is pinned to
+    0.53-0.67 and saturation to 0.45-0.55 so a neon highlight colour (the
+    scene's clusters are lit additively) becomes a matte clay, and neighbouring
+    chains differ by a few degrees of hue and a step of lightness.
+    """
+    h, _l, _s = colorsys.rgb_to_hls(*(min(1.0, max(0.0, c)) for c in base))
+    shades: list[RGB] = []
+    for i in range(max(n, 1)):
+        t = 0.0 if n <= 1 else i / (n - 1) - 0.5
+        r, g, b = colorsys.hls_to_rgb(
+            (h + 0.06 * t) % 1.0, 0.60 + 0.14 * t, 0.55 - 0.1 * abs(t)
+        )
+        shades.append((r, g, b))
+    return shades
+
+
 def pymol_script(
-    pdb_path: Path, frames_dir: Path, *, frames: int, size: int, threads: int = 4
+    pdb_path: Path,
+    frames_dir: Path,
+    *,
+    frames: int,
+    size: int,
+    threads: int = 4,
+    color: RGB = DEFAULT_COLOR,
 ) -> str:
     """The PyMOL Python script for one turntable.
 
-    Style: cartoon coloured by chain over a translucent grey molecular surface,
-    ligands and cofactors (hemes, nucleotides, sugars) as element-coloured
-    spheres — metals only on a cofactor-crowded complex (``HETATM_SPHERE_LIMIT``)
-    — nucleic acids as cartoon, no shadows or fog, and a transparent background.
-    One ``turn y`` per frame around the oriented view.
+    Style — a minimalist "clay" render: the smooth, opaque molecular surface of
+    the polymer alone (no cartoon, ligands or ions), each chain in a pastel shade
+    of the story colour (:func:`chain_palette`), soft three-light studio
+    lighting with low specular, ray-traced shadows and ambient occlusion, and a
+    transparent background. One ``turn y`` per frame around the oriented view;
+    ``zoom(complete=1)`` plus an open clipping slab keep a long complex inside
+    the square frame at every angle (a plain zoom fits the default 4:3 viewport
+    and clipped photosystem II's ends).
 
-    Cost is ray-tracing, so the knobs that were measured to matter are set
-    cheap: ``antialias 1`` (2 cost 1.9x), ``ray_trace_mode 0`` (the outline mode
-    cost 1.5x and looked busier), and a surface quality picked by structure size
-    (``LARGE_STRUCTURE_ATOMS``). Hydrogens (NMR entries) are removed.
+    Cost is ray-tracing the surface, so quality follows structure size
+    (``LARGE_STRUCTURE_ATOMS``): ``surface_quality 0`` + ``antialias 2`` below
+    it (measured indistinguishable from quality 1 at one seventh of the cost),
+    ``-1`` + ``antialias 1`` above. Ambient occlusion and shadows are nearly
+    free on an opaque surface. Hydrogens (NMR entries) are removed.
     """
     step = 360.0 / frames
+    shades = chain_palette(color, 8)
     return "\n".join(
         [
-            "from pymol import cmd, util",
+            "from pymol import cmd",
             f"cmd.set('max_threads', {int(threads)})",
             f"cmd.load({str(pdb_path)!r}, 'mol')",
             "cmd.remove('solvent')",
             "cmd.remove('hydro')",
             "cmd.hide('everything')",
-            "cmd.dss('mol')",
-            "cmd.show('cartoon', 'polymer')",
-            "cmd.set('cartoon_ring_mode', 3)",
-            "cmd.set('cartoon_transparency', 0.0)",
-            "util.cbc('polymer', first_color=2)",
-            "n_het = cmd.count_atoms('hetatm and not solvent and not metals')",
-            f"if n_het <= {HETATM_SPHERE_LIMIT}:",
-            "    cmd.show('spheres', 'hetatm and not solvent')",
-            "else:",
-            "    cmd.show('spheres', 'hetatm and metals')",
-            "util.cbag('hetatm')",
+            f"shades = {[tuple(round(c, 4) for c in s) for s in shades]!r}",
+            "chains = cmd.get_chains('mol and polymer') or ['']",
+            "for i, chain in enumerate(chains):",
+            "    # Spread the shades over the chains present (few chains -> the",
+            "    # middle shades; many -> the whole ramp), repeating past eight.",
+            "    k = round(i * (len(shades) - 1) / max(len(chains) - 1, 1))",
+            "    cmd.set_color('story_%d' % i, list(shades[k % len(shades)]))",
+            "    cmd.color('story_%d' % i, \"polymer and chain '%s'\" % chain)",
+            "n_atoms = cmd.count_atoms('mol and polymer')",
+            f"large = n_atoms > {LARGE_STRUCTURE_ATOMS}",
             "cmd.show('surface', 'polymer')",
-            "cmd.set('surface_color', 'grey85')",
-            "cmd.set('transparency', 0.72)",
-            "n_atoms = cmd.count_atoms('mol')",
-            f"cmd.set('surface_quality', -2 if n_atoms > {LARGE_STRUCTURE_ATOMS} else -1)",
-            "cmd.set('ambient', 0.28)",
-            "cmd.set('direct', 0.45)",
-            "cmd.set('reflect', 0.35)",
-            "cmd.set('spec_reflect', 0.6)",
-            "cmd.set('spec_power', 80)",
-            "cmd.set('ray_shadows', 0)",
+            "cmd.set('surface_color', -1)",
+            "cmd.set('transparency', 0.0)",
+            "cmd.set('surface_quality', -1 if large else 0)",
+            "cmd.set('antialias', 1 if large else 2)",
+            "cmd.set('light_count', 3)",
+            "cmd.set('light', [-0.4, -0.6, -1.0])",
+            "cmd.set('light2', [0.8, 0.3, -1.0])",
+            "cmd.set('ambient', 0.35)",
+            "cmd.set('direct', 0.55)",
+            "cmd.set('reflect', 0.25)",
+            "cmd.set('spec_reflect', 0.12)",
+            "cmd.set('spec_power', 30)",
+            "cmd.set('shininess', 12)",
+            "cmd.set('ray_shadows', 1)",
+            "cmd.set('ambient_occlusion_mode', 1)",
+            "cmd.set('ambient_occlusion_scale', 22)",
+            "cmd.set('ambient_occlusion_smooth', 12)",
             "cmd.set('depth_cue', 0)",
             "cmd.set('ray_opaque_background', 0)",
             "cmd.set('ray_trace_mode', 0)",
-            "cmd.set('antialias', 1)",
             "cmd.set('field_of_view', 22)",
-            "cmd.orient('mol')",
-            "cmd.zoom('mol', buffer=1.5)",
+            "cmd.orient('mol and polymer')",
+            "cmd.zoom('mol and polymer', buffer=2.0, complete=1)",
+            "cmd.clip('slab', 10000)",
             f"for i in range({frames}):",
             f"    cmd.png({str(frames_dir)!r} + '/frame_%04d.png' % i, width={size}, height={size}, dpi=-1, ray=1)",
             f"    cmd.turn('y', {step!r})",
@@ -266,6 +313,7 @@ def render_turntable(
     fps: int = DEFAULT_FPS,
     size: int = DEFAULT_SIZE,
     threads: int = 4,
+    color: RGB = DEFAULT_COLOR,
     pymol: Optional[Sequence[str]] = None,
     ffmpeg: Optional[str] = None,
 ) -> TurntableAssets:
@@ -279,7 +327,7 @@ def render_turntable(
         raise RuntimeError(FFMPEG_INSTALL_HINT)
 
     pdb_path, title = fetch_pdb(pdb_id, cache_dir)
-    stem = cache_key(pdb_id, frames, size)
+    stem = cache_key(pdb_id, frames, size, color=color)
     webm = cache_dir / f"{stem}.webm"
     poster = cache_dir / f"{stem}.png"
     if webm.exists() and poster.exists():
@@ -291,7 +339,12 @@ def render_turntable(
         script = Path(tmp) / "render.py"
         script.write_text(
             pymol_script(
-                pdb_path, frames_dir, frames=frames, size=size, threads=threads
+                pdb_path,
+                frames_dir,
+                frames=frames,
+                size=size,
+                threads=threads,
+                color=color,
             )
         )
         aprint(
@@ -320,8 +373,13 @@ def render_turntables(
     fps: int = DEFAULT_FPS,
     size: int = DEFAULT_SIZE,
     jobs: int = DEFAULT_JOBS,
+    colors: Optional[Mapping[str, RGB]] = None,
 ) -> dict[str, TurntableAssets]:
     """Render several structures in parallel PyMOL processes.
+
+    ``colors`` maps a PDB id to the RGB triple (in [0, 1]) whose hue the
+    structure is rendered in — the demo passes each story's highlight colour so
+    the turntable matches its cluster; ids without one get ``DEFAULT_COLOR``.
 
     Returns the assets that rendered, keyed by PDB id. When PyMOL or ffmpeg is
     missing, prints the install hint ONCE and returns an empty dict — the caller
@@ -341,6 +399,8 @@ def render_turntables(
             aprint(f"   {line}")
         return {}
 
+    palette = {k.upper(): v for k, v in (colors or {}).items()}
+
     def one(pdb_id: str, threads: int) -> Optional[TurntableAssets]:
         try:
             return render_turntable(
@@ -350,6 +410,7 @@ def render_turntables(
                 fps=fps,
                 size=size,
                 threads=threads,
+                color=palette.get(pdb_id.upper(), DEFAULT_COLOR),
                 pymol=pymol_cmd,
                 ffmpeg=ffmpeg_exe,
             )

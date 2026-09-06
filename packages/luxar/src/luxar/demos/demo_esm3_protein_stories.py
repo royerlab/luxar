@@ -814,7 +814,11 @@ def build_stories_scene(
             cache = turntable_cache or (
                 Path.home() / ".cache" / "luxar" / TURNTABLE_CACHE
             )
-            assets = render_turntables([s.pdb_id for s in stories if s.pdb_id], cache)
+            assets = render_turntables(
+                [s.pdb_id for s in stories if s.pdb_id],
+                cache,
+                colors={s.pdb_id: s.color for s in stories if s.pdb_id},
+            )
             aprint(
                 f"{len(assets)} of {sum(1 for s in stories if s.pdb_id)} turntables ready"
             )

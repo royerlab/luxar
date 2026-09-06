@@ -1,8 +1,9 @@
 # Sound Spec — ambient and spatial audio as scene-graph nodes
 
-**Status:** Design, agreed with the project owner on 2026-09-06. Nothing is
-implemented. Implementation lands on a new branch stacked on PR #2536 (it needs
-the story waypoints for its triggers).
+**Status:** Design agreed with the project owner on 2026-09-06; Phase 1 is
+implemented in draft PR #2566 (`feat/sound-layer`, stacked on PR #2536, which it
+needs for the story waypoints its triggers use). Phase 1 decisions and
+deviations are marked inline below.
 
 ## 1. Motivation
 
@@ -122,7 +123,9 @@ scene.add_sound(
 ```
 /sounds/hum_hsp70/            # a group under any group, like other nodes
   zarr.json                   # type: "sound", attrs below
-  positions                   # (K, ndim) float32, absent for non-spatial
+  positions                   # (K, ndim) PLAIN float32 (not the quantizing
+                              # encoder: a one-row array collapses to code 0
+                              # under per-channel uint16), absent for non-spatial
   audio.mp3                   # opaque
 attrs: type, spatial, trigger, delay_ms, gain, bus, loop (derived), fade_in_ms,
        fade_out_ms, distance_model, ref_distance, max_distance, rolloff, cone_*,
@@ -192,7 +195,8 @@ Browsers refuse to start an `AudioContext` without a user gesture on the page.
 - **Fallback**: if the context is `suspended` after load, the engine shows a
   minimal "Tap to enable sound" gate (an overlay, dismissed by the first
   pointer or key event anywhere), resumes the context, and only then starts
-  `continuous` nodes. The remote API reports `audio.state` so a controller can
+  `continuous` nodes — and re-runs the rising edges from a silent baseline, so
+  an opening `once` narration is not lost to the tap (Phase 1 clarification). The remote API reports `audio.state` so a controller can
   tell the display needs its tap.
 
 ### 4.5 Remote API (extends `REMOTE_CONTROL_SPEC.md`)
@@ -211,8 +215,15 @@ waypoint events above.
   so a rebuild with unchanged text costs nothing. Each story's narration is its
   panel text (title, facts, open question) read in order, `trigger="on_arrive"`,
   `delay_ms=600`, bus `voice`.
-- **Ambient bed**: CC0 clips per story (or one bed with per-story filters later),
-  `trigger="continuous"`, `fade 1500 ms`, bus `ambient`.
+- **Ambient bed**: one CC0 clip, `trigger="continuous"`, `fade 1500 ms`, bus
+  `ambient` (per-story beds or filters later). Phase 1 ships "Calm Ambient 1
+  (Synthwave 4k)" by The Cynic Project (cynicmusic.com), CC0, from OpenGameArt
+  (<https://opengameart.org/content/calm-ambient-1-synthwave-4k>), fetched
+  checksum-pinned through `cached_download` into the `esm3_protein_stories`
+  cache: soft evolving pads, no percussion, ~2.6 min loop. It replaced a
+  Freesound clip the owner found "too industrial and harsh" — the bed must be
+  warm and unobtrusive under the narration, and a clip is judged by listening
+  to the WHOLE loop, since many start gently and turn harsh.
 - **Cluster sounds** (Phase 2): one spatial source per story at the cluster
   centre, `ref_distance` from the blob radius, live only at that story.
 
