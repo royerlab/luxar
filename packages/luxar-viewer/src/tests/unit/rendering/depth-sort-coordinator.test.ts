@@ -5310,6 +5310,39 @@ describe('depth-sort coordinator — layer_order bands', () => {
     expect(lens.renderOrder).toBe(1);
   });
 
+  it('collectRefractingGlass lists the VISIBLE refracting glass and nothing else, reusing the array', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const lens = makeGlassMesh(-10, { after: true });
+    const hiddenLens = makeGlassMesh(-11, { after: true });
+    const hiddenLevel = new THREE.Group();
+    hiddenLevel.add(hiddenLens);
+    hiddenLevel.visible = false; // a demoted LOD level hides the GROUP, not the mesh
+    const shell = makeGlassMesh(-12); // glass-first: not refracting
+    const additive = makeGSplatsMesh(2, 'additive');
+    for (const g of [lens, hiddenLens, shell]) commitGlass(coord, g);
+    coord.noteDepthSortCommit(additive, new Float32Array([0, 0, -1]), 1);
+    await flush();
+
+    const out: THREE.Mesh[] = [];
+    expect(coord.collectRefractingGlass(out)).toBe(out);
+    expect(out).toEqual([lens]);
+    // A stale entry from the previous frame is cleared, not appended to.
+    coord.collectRefractingGlass(out);
+    expect(out).toEqual([lens]);
+    // The live toggle flips membership without re-registration…
+    (lens.material as THREE.Material).userData.drawAfterEmissive = undefined;
+    expect(coord.collectRefractingGlass(out)).toEqual([]);
+    (lens.material as THREE.Material).userData.drawAfterEmissive = true;
+    hiddenLevel.visible = true;
+    expect(coord.collectRefractingGlass(out)).toEqual([lens, hiddenLens]);
+    // …and disposal removes the mesh for good.
+    coord.releaseDepthSortNode(lens);
+    expect(coord.collectRefractingGlass(out)).toEqual([hiddenLens]);
+    coord.releaseAllDepthSortNodes();
+    expect(coord.collectRefractingGlass()).toEqual([]);
+  });
+
   it('an authored band overrides the containment hoist, and warns', async () => {
     const coord = await loadCoordinator();
     const { log } = await import('../../../utils/log');

@@ -2151,6 +2151,27 @@ export function releaseAllDepthSortNodes(): void {
 }
 
 /**
+ * The visible meshes that ask to draw AFTER the emissive data — physical glass
+ * authored with `refract_data` (spec MESH_PHYSICAL_MATERIALS §3.4, Phase 3).
+ *
+ * The WebGL post-processing pipeline splits its scene pass around exactly these
+ * meshes, so it asks here rather than traversing the scene: every data mesh of every
+ * geometry type registers with this coordinator on commit and is released on disposal
+ * (`releaseDepthSortNode` runs from the disposal walk and every LOD demotion path),
+ * so `nodeStates` already IS the registry, with the visibility walk the pick pass
+ * uses. A hidden LOD level or a hidden layer is excluded the same way it is excluded
+ * from ranking. The caller passes a reusable array so a frame allocates nothing.
+ */
+export function collectRefractingGlass(out: THREE.Mesh[] = []): THREE.Mesh[] {
+  out.length = 0;
+  for (const state of nodeStates.values()) {
+    const mesh = state.mesh;
+    if (drawsAfterEmissive(mesh) && isEffectivelyVisible(mesh)) out.push(mesh);
+  }
+  return out;
+}
+
+/**
  * Terminate the worker and reset all module state (app teardown; also
  * the test reset). Safe to call when never spawned.
  */
