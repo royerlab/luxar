@@ -22,8 +22,6 @@ from luxar.demos.demo_esm3_protein_stories import (
     StoryCluster,
     add_story_sounds,
     hum_frequency_hz,
-    narration_text,
-    overview_narration_text,
     overview_panel_html,
     select_story_members,
     story_camera,
@@ -219,21 +217,6 @@ def test_shipped_stories_are_well_formed_and_author_valid_waypoints() -> None:
 # =============================================================================
 
 
-def test_narration_text_reads_the_panel_in_order() -> None:
-    text = narration_text(_story(facts=("fact one", "fact two.")), index=3, total=10)
-    assert text.startswith("Story 3 of 10: Test story. sub. ")
-    assert (
-        text.index("fact one.")
-        < text.index("fact two.")
-        < text.index("Open question: why?")
-    )
-    assert "<" not in text and ">" not in text
-    overview = overview_narration_text(1234)
-    assert overview.startswith("Ten stories in the protein universe. ")
-    assert "1,234 Swiss-Prot proteins" in overview
-    assert "<b>" not in overview and "<br>" not in overview
-
-
 def test_add_story_sounds_authors_a_bed_and_one_narration_per_slot(
     tmp_path, monkeypatch
 ) -> None:
@@ -304,7 +287,6 @@ def test_add_story_sounds_authors_a_bed_and_one_narration_per_slot(
         added = add_story_sounds(
             scene,
             stories,
-            42,
             narration_dir=tmp_path / "narration",
             engine="openai",
             clusters=clusters,
@@ -313,8 +295,11 @@ def test_add_story_sounds_authors_a_bed_and_one_narration_per_slot(
         )
     assert added == 6  # bed + overview + two narrations + two hums
     assert foa_sources == [bed]
-    assert spoken[0].startswith("Ten stories")
-    assert spoken[1].startswith("Story 1 of 2")
+    # The authored scripts, not the panel: the overview script, then each
+    # story's `narration` (or its title + open question when none is authored).
+    assert spoken[0] == demo.OVERVIEW_NARRATION
+    assert spoken[1] == demo.story_narration(stories[0])
+    assert not spoken[1].startswith("Story ")
     root = open_group(store, mode="r")
     bed_attrs = dict(root["bed_ambient"].attrs)
     assert bed_attrs["trigger"] == "continuous" and bed_attrs["bus"] == "ambient"
@@ -378,7 +363,7 @@ def test_add_story_sounds_stays_silent_without_an_engine_and_survives_no_bed(
         )
         with pytest.warns(UserWarning, match="No narration engine"):
             added = add_story_sounds(
-                scene, (_story(key="A"),), 1, narration_dir=tmp_path / "n", engine=None
+                scene, (_story(key="A"),), narration_dir=tmp_path / "n", engine=None
             )
     assert added == 0
 
@@ -407,9 +392,7 @@ def test_add_story_sounds_keeps_the_stereo_bed_without_an_encoder(
                 ]
             )
         )
-        added = add_story_sounds(
-            scene, (), 1, narration_dir=tmp_path / "n", engine="none"
-        )
+        added = add_story_sounds(scene, (), narration_dir=tmp_path / "n", engine="none")
     assert added == 1
     attrs = dict(open_group(store, mode="r")["bed_ambient"].attrs)
     assert "ambisonic" not in attrs and attrs["format"] == "mp3"

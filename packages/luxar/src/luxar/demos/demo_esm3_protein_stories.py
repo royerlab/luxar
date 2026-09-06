@@ -970,22 +970,6 @@ def overview_panel_html(n_proteins: int) -> str:
 # =============================================================================
 
 
-def narration_text(story: Story, index: int, total: int) -> str:
-    """The spoken form of a story panel: title, subtitle, facts, open question."""
-    facts = " ".join(f.rstrip(".") + "." for f in story.facts)
-    return (
-        f"Story {index} of {total}: {story.title}. {story.subtitle.rstrip('.')}. "
-        f"{facts} Open question: {story.mystery.rstrip('.')}."
-    )
-
-
-def overview_narration_text(n_proteins: int) -> str:
-    """The spoken overview: the panel text with its markup stripped."""
-    body = re.sub(r"<br\s*/?>", " ", OVERVIEW_HTML.format(n=n_proteins))
-    body = re.sub(r"<[^>]+>", "", body)
-    return f"{OVERVIEW_TITLE}. {' '.join(body.split())}"
-
-
 def hum_frequency_hz(story_index: int) -> float:
     """Pitch of story ``story_index`` (1-based) on the pentatonic ladder."""
     semitone = HUM_SEMITONES[(story_index - 1) % len(HUM_SEMITONES)]
@@ -995,7 +979,6 @@ def hum_frequency_hz(story_index: int) -> float:
 def add_story_sounds(
     scene: object,
     stories: tuple[Story, ...],
-    n_proteins: int,
     *,
     narration_dir: Path = NARRATION_CACHE_DIR,
     engine: str | None = None,
@@ -1051,13 +1034,10 @@ def add_story_sounds(
 
     chosen = resolve_engine(engine)
     voice = NARRATION_VOICES.get(chosen or "", "")
-    total = len(stories)
-    slots: list[tuple[int, str, str]] = [
-        (0, "Overview", overview_narration_text(n_proteins))
-    ]
-    slots += [
-        (k, s.key, narration_text(s, k, total)) for k, s in enumerate(stories, start=1)
-    ]
+    # The spoken scripts are authored with the stories (`Story.narration`,
+    # `OVERVIEW_NARRATION`): short and punchy, not the panel read aloud.
+    slots: list[tuple[int, str, str]] = [(0, "Overview", OVERVIEW_NARRATION)]
+    slots += [(k, s.key, story_narration(s)) for k, s in enumerate(stories, start=1)]
     for k, key, text in slots:
         clip = synthesise(text, voice, narration_dir, engine=chosen or "none")
         if clip is None:
@@ -1476,7 +1456,7 @@ def build_stories_scene(
 
             if audio:
                 with asection("Sound layer"):
-                    add_story_sounds(scene, stories, n, clusters=clusters)
+                    add_story_sounds(scene, stories, clusters=clusters)
 
     aprint(f"✓ Wrote {n:,} proteins and {len(stories)} stories to {output_path}")
     return n
