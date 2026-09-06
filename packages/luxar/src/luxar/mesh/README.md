@@ -14,6 +14,7 @@ from `luxar.core.gsplats`.
 | [`qem.py`](qem.py) | Topology-preserving Garland-Heckbert edge-collapse decimation with a link-condition veto. |
 | [`interop/`](interop/README.md) | Import classical mesh files — PLY, OBJ, STL, VTK XML PolyData (`.vtp`), glTF/GLB — or indexed file directories into a `TriangleMesh`, the intermediate the CLI writes into a scene. NumPy + stdlib only, no new dependencies. |
 | `split.py` | Split a mesh into spatially disjoint, independently drawable parts by face. The bookkeeping behind `add_mesh(partition=…)` and behind the per-level re-indexing of `add_mesh(additive_lod=…)`. |
+| [`primitives.py`](primitives.py) | Analytic primitives — today the welded, closed `icosphere()` with outward unit normals — for demos, tests and marker geometry that want to *show* a material rather than reconstruct a dataset. |
 
 ## Why this is not `luxar.core.mesh`
 

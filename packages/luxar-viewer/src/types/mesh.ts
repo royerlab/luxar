@@ -95,6 +95,13 @@ export type MeshTextureWrap = 'repeat' | 'clamp';
  * Field-for-field what `io/_compiler/geometry_writers/mesh.py` stamps, plus the
  * render attrs every geometry node shares.
  */
+/**
+ * The two mesh material families. `'luxar'` is the house shader (spec §6.2) and
+ * what an absent attr means; `'physical'` opts into three's physically based
+ * material (`MESH_PHYSICAL_MATERIALS_SPEC.md`).
+ */
+export type MeshMaterialKind = 'luxar' | 'physical';
+
 export interface MeshMetadata {
   /** Node type identifier */
   type: 'mesh';
@@ -264,6 +271,42 @@ export interface MeshMetadata {
 
   /** `opaque`-mode alpha cutout threshold in `[0, 1]` (§6.2). */
   alpha_cutoff?: number;
+
+  /**
+   * Which material family renders this mesh
+   * (`docs/guides/specs/MESH_PHYSICAL_MATERIALS_SPEC.md` §3.1).
+   *
+   * Absent or `'luxar'`: the house shader (§6.2). `'physical'`: three's own
+   * physically based material, lit by the scene environment the viewer builds
+   * lazily on the first such mesh. Written only when authored, so every
+   * pre-existing store reads as the house shader.
+   */
+  material?: MeshMaterialKind;
+
+  /** Physical: microfacet roughness in `[0, 1]`; three's default `1`. */
+  roughness?: number;
+
+  /** Physical: metalness in `[0, 1]`; three's default `0`. */
+  metalness?: number;
+
+  /** Physical: clearcoat layer strength in `[0, 1]`; three's default `0`. */
+  clearcoat?: number;
+
+  /** Physical: clearcoat roughness in `[0, 1]`; three's default `0`. */
+  clearcoat_roughness?: number;
+
+  /** Physical: thin-film iridescence strength in `[0, 1]`; three's default `0`. */
+  iridescence?: number;
+
+  /** Physical: sheen strength in `[0, 1]`; three's default `0`. */
+  sheen?: number;
+
+  /**
+   * Physical: sheen tint as `#rrggbb`. Viewer-defaulted to WHITE rather than
+   * three's black, because a black sheen is a no-op and `sheen` alone would then
+   * render nothing.
+   */
+  sheen_color?: string;
 
   /**
    * Half-width, IN CELLS, of the nD membership slab a CONTINUOUS hidden dimension

@@ -172,6 +172,17 @@ NaN/Inf route to the documented default rather than to a range boundary, matchin
 sibling shaders' sanitizer policy: corruption resolves loudly, not to a value that
 looks deliberate.
 
+## The other family: `material="physical"`
+
+This shader is the mesh's DEFAULT material, not its only one. `material="physical"` on
+`add_mesh` hands a mesh to three's own physically based material instead, lit by a lazily
+built scene environment — metals, lacquer, a pearlescent shell, a true view-relative
+Fresnel rim, none of which the fixed key above can express. It lives in
+[`../mesh-physical/`](../mesh-physical/README.md) as its own `VISUAL_FACTORIES.meshPhysical`
+entry; nothing in this directory branches on it. The five knobs above, `blending_mode`,
+colormaps and textures are refused at authoring under that material, because none of
+them means anything there. Design: `docs/guides/specs/MESH_PHYSICAL_MATERIALS_SPEC.md`.
+
 ## What `opaque` does to `opacity`
 
 Node opacity folds into the coverage that is compared against `uAlphaCutoff`, so

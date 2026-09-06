@@ -1013,13 +1013,27 @@ Two structural differences from the other three types:
   //     absorption, blending_mode, colormap, layer, transform, nd_transform,
   //     extend_to_all) and mesh-only appearance attrs (ambient, shade_exponent,
   //     specular, shininess, alpha_cutoff, texture_filter, texture_wrap),
-  //     plus slab_tolerance
+  //     plus slab_tolerance, plus the opt-in material family:
+  "material": "physical",            // "luxar" (default when absent) | "physical"
+  "roughness": 0.4,                  // physical knobs, each in [0, 1], written
+  "metalness": 1.0,                  //   only when authored; absent = three's
+  "clearcoat": 1.0,                  //   own default
+  "clearcoat_roughness": 0.1,
+  "iridescence": 0.0,
+  "sheen": 0.0,
+  "sheen_color": "#ffffff"           // "#rrggbb"
 }
 ```
 
-The seven mesh-only appearance attrs control shading and texture sampling;
-`slab_tolerance` controls nD membership loading. All eight mesh-only authored
-attrs are rejected on points, lines, Gaussian splats, and groups.
+The seven house-shader appearance attrs control shading and texture sampling;
+`slab_tolerance` controls nD membership loading; `material` selects the material
+family and unlocks the seven physically based knobs
+(`docs/guides/specs/MESH_PHYSICAL_MATERIALS_SPEC.md`). All sixteen mesh-only
+authored attrs are rejected on points, lines, Gaussian splats, and groups. A
+physical knob without `material: "physical"` is refused at authoring, and a
+physical mesh refuses `ambient` / `shade_exponent` / `specular` / `shininess`,
+`blending_mode`, `colormap`, a texture and `shading: "none"`, none of which has a
+meaning under that material.
 
 #### vertices/ (Required)
 - **Shape:** `(V, D)` — nD vertex positions, exactly like `Lines.vertices`.
@@ -1230,9 +1244,11 @@ Any scene-graph node — `points`, `lines`, `gsplats`, `mesh`, or a container
 `layer: true` in its zarr attrs. The panel (toggled with **L**) provides
 per-layer visibility, display-range, gamma, opacity, absorption (volumetric
 mode's κ), blending mode, and colormap controls, plus mesh shading controls
-(ambient, shade falloff, specular, shininess, alpha cutoff). Seven mesh-only
-appearance attrs also include `texture_filter` and `texture_wrap`; they are valid
-only on mesh leaves and do not inherit through groups.
+(ambient, shade falloff, specular, shininess, alpha cutoff) — or, for a
+`material: "physical"` mesh, a read-only listing of its physical knobs in place
+of those sliders. The mesh-only appearance attrs also include `texture_filter`
+and `texture_wrap`; all of them are valid only on mesh leaves and do not inherit
+through groups.
 
 ```javascript
 {

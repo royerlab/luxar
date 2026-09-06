@@ -32,6 +32,11 @@ import { SceneLoaderManager } from '../../data/scene-loader-manager';
 import type { LODGroupRegistry } from '../../scene/lod-group-registry';
 import { displayedQualityFraction } from '../../scene/lod-display-gate';
 import { MESH_DEFAULTS } from '../../rendering/materials/mesh/appearance';
+import {
+  PHYSICAL_MESH_DEFAULTS,
+  PHYSICAL_MESH_KNOB_KEYS,
+  type PhysicalMeshKnobKey,
+} from '../../rendering/materials/mesh-physical/config';
 import { clampGamma } from './attrs-utils';
 import { clamp } from '../gui/format/value-formatting';
 import type { LayerApplyEngine } from './layer-apply';
@@ -56,6 +61,39 @@ export interface LayerControlsDeps {
   isPanelVisible: () => boolean;
 }
 
+/** Panel labels for the read-only physical listing, keyed by attr name. */
+const PHYSICAL_KNOB_LABELS: Record<PhysicalMeshKnobKey, string> = {
+  roughness: 'Roughness',
+  metalness: 'Metalness',
+  clearcoat: 'Clearcoat',
+  clearcoat_roughness: 'Clearcoat roughness',
+  iridescence: 'Iridescence',
+  sheen: 'Sheen',
+};
+
+/** What an absent knob renders as, keyed like the attrs (the config keeps camelCase). */
+const PHYSICAL_KNOB_DEFAULTS: Record<PhysicalMeshKnobKey, number> = {
+  roughness: PHYSICAL_MESH_DEFAULTS.roughness,
+  metalness: PHYSICAL_MESH_DEFAULTS.metalness,
+  clearcoat: PHYSICAL_MESH_DEFAULTS.clearcoat,
+  clearcoat_roughness: PHYSICAL_MESH_DEFAULTS.clearcoatRoughness,
+  iridescence: PHYSICAL_MESH_DEFAULTS.iridescence,
+  sheen: PHYSICAL_MESH_DEFAULTS.sheen,
+};
+
+/**
+ * Hover text for the physical listing. States the Phase 1 scope and the one caveat an
+ * author is most likely to run into next (spec §3.4): glass is a later phase, and even
+ * then three's transmission pass does not see Luxar's transparent point, line and splat
+ * materials, so a glass shell would not refract the data inside it.
+ */
+export const PHYSICAL_MATERIAL_TOOLTIP =
+  "three.js physically based material (material='physical'), lit by the scene " +
+  'environment. Read-only in this phase: set the knobs in add_mesh(...). Transmission ' +
+  "(glass, lenses) is a later phase — three's transmission pass does not see Luxar's " +
+  'transparent point, line and splat materials, so glass would not refract the data ' +
+  'inside it.';
+
 export class LayerControls {
   private controlsEl: HTMLElement | null = null;
   private rangeSlider: RangeSlider | null = null;
@@ -73,6 +111,13 @@ export class LayerControls {
   private specularSlider: LabeledSlider | null = null;
   private shininessSlider: LabeledSlider | null = null;
   private alphaCutoffSlider: LabeledSlider | null = null;
+  /**
+   * The read-only listing a `material="physical"` mesh layer shows IN PLACE of the
+   * five sliders above (spec `MESH_PHYSICAL_MATERIALS_SPEC.md` §4, Phase 1). Its rows
+   * are rebuilt per render from the layer's authored knobs.
+   */
+  private physicalGroupEl: HTMLElement | null = null;
+  private physicalRowsEl: HTMLElement | null = null;
   private blendSelect: HTMLSelectElement | null = null;
   private layerOrderInput: HTMLInputElement | null = null;
   private colormapSelect: HTMLSelectElement | null = null;
@@ -151,6 +196,8 @@ export class LayerControls {
     this.shininessSlider = null;
     this.alphaCutoffSlider?.dispose();
     this.alphaCutoffSlider = null;
+    this.physicalGroupEl = null;
+    this.physicalRowsEl = null;
     this.blendSelect = null;
     this.layerOrderInput = null;
     this.colormapSelect = null;
@@ -385,6 +432,26 @@ export class LayerControls {
       },
     });
     this.alphaCutoffSlider.setVisible(false);
+
+    // Physical material — READ-ONLY in Phase 1 (spec §6 open question 2: sliders come
+    // once two demos exist to tune against). Takes the place of the five sliders above
+    // for a `material="physical"` layer; hidden for everything else. Rows are filled
+    // in render(), from the layer's AUTHORED knobs.
+    this.physicalGroupEl = document.createElement('div');
+    this.physicalGroupEl.className = 'luxar-layers-panel__control-group';
+    this.physicalGroupEl.style.display = 'none';
+    const physicalLabel = document.createElement('div');
+    physicalLabel.className = 'luxar-layers-panel__control-label';
+    // Same label DOM shape as `LabeledSlider` (text in a span), so the panel tests'
+    // control-group lookup finds this group by its label like every other.
+    const physicalLabelText = document.createElement('span');
+    physicalLabelText.textContent = 'Physical material';
+    physicalLabel.appendChild(physicalLabelText);
+    physicalLabel.title = PHYSICAL_MATERIAL_TOOLTIP;
+    this.physicalRowsEl = document.createElement('div');
+    this.physicalRowsEl.className = 'luxar-layers-panel__physical-rows';
+    this.physicalGroupEl.append(physicalLabel, this.physicalRowsEl);
+    this.controlsEl.appendChild(this.physicalGroupEl);
 
     // Blending mode
     const blendGroup = document.createElement('div');
@@ -739,6 +806,7 @@ export class LayerControls {
     this.specularSlider?.setValue(primary.specular);
     this.shininessSlider?.setValue(primary.shininess);
     this.alphaCutoffSlider?.setValue(primary.alphaCutoff);
+    this.renderPhysicalKnobs(primary);
 
     if (this.blendSelect) {
       this.blendSelect.value = primary.blendingMode;
@@ -845,14 +913,76 @@ export class LayerControls {
   private syncMeshAppearanceVisibility(): void {
     const primary = this.deps.state.getPrimarySelected();
     const isMesh = primary?.type === 'mesh';
-    const hasLighting = isMesh && primary.shading !== 'none';
-    this.ambientSlider?.setVisible(hasLighting);
-    this.shadeExponentSlider?.setVisible(hasLighting);
-    this.specularSlider?.setVisible(hasLighting);
-    this.shininessSlider?.setVisible(hasLighting);
-    this.alphaCutoffSlider?.setVisible(
-      isMesh && resolveLayerBlendingMode(primary.type, primary.blendingMode) === 'opaque'
-    );
+    // A `material="physical"` mesh runs none of the house shader: the four lighting
+    // sliders have no uniform to write, the cutoff is an authored attr the material
+    // maps itself, the Blend dropdown names modes it does not implement, and Gamma has
+    // no term. All of them hide, and the read-only physical listing takes their place.
+    const physical = isMesh && primary.material === 'physical';
+    const house = isMesh && !physical;
+    const cutout =
+      house && resolveLayerBlendingMode(primary.type, primary.blendingMode) === 'opaque';
+    this.setHouseShadingVisible(house && primary.shading !== 'none', cutout);
+    this.setPhysicalFamilyVisible(physical);
+  }
+
+  /** The four lighting sliders, and the cutoff on its own narrower gate. */
+  private setHouseShadingVisible(lighting: boolean, cutout: boolean): void {
+    this.ambientSlider?.setVisible(lighting);
+    this.shadeExponentSlider?.setVisible(lighting);
+    this.specularSlider?.setVisible(lighting);
+    this.shininessSlider?.setVisible(lighting);
+    this.alphaCutoffSlider?.setVisible(cutout);
+  }
+
+  /**
+   * Swap the house-only generic controls (Gamma, Blend) for the read-only physical
+   * listing, and back.
+   */
+  private setPhysicalFamilyVisible(physical: boolean): void {
+    this.gammaSlider?.setVisible(!physical);
+    const blendGroup = this.blendSelect?.parentElement;
+    if (blendGroup) blendGroup.style.display = physical ? 'none' : '';
+    if (this.physicalGroupEl) this.physicalGroupEl.style.display = physical ? '' : 'none';
+  }
+
+  /**
+   * Rebuild the read-only physical-knob rows for `primary`.
+   *
+   * One row per Phase 1 knob, in the order `PHYSICAL_MESH_KNOB_KEYS` fixes. An
+   * AUTHORED knob prints its value; an absent one prints three's default with a
+   * "(default)" suffix, so the listing says what renders without claiming the author
+   * wrote it. `sheen_color` and `alpha_cutoff` appear only when authored — their
+   * defaults are the material's own business.
+   */
+  private renderPhysicalKnobs(primary: LayerInfo): void {
+    const rows = this.physicalRowsEl;
+    if (!rows) return;
+    rows.textContent = '';
+    if (primary.material !== 'physical') return;
+    const knobs = primary.physicalKnobs ?? {};
+    const addRow = (label: string, value: string): void => {
+      const row = document.createElement('div');
+      row.className = 'luxar-layers-panel__physical-row';
+      const name = document.createElement('span');
+      name.className = 'luxar-layers-panel__physical-name';
+      name.textContent = label;
+      const val = document.createElement('span');
+      val.className = 'luxar-layers-panel__control-value';
+      val.textContent = value;
+      row.append(name, val);
+      rows.appendChild(row);
+    };
+    for (const key of PHYSICAL_MESH_KNOB_KEYS) {
+      const authored = knobs[key];
+      addRow(
+        PHYSICAL_KNOB_LABELS[key],
+        authored !== undefined
+          ? authored.toFixed(2)
+          : `${PHYSICAL_KNOB_DEFAULTS[key].toFixed(2)} (default)`
+      );
+    }
+    if (knobs.sheen_color !== undefined) addRow('Sheen colour', knobs.sheen_color);
+    if (knobs.alpha_cutoff !== undefined) addRow('Alpha cutoff', knobs.alpha_cutoff.toFixed(2));
   }
 
   /**

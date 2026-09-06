@@ -296,6 +296,33 @@ describe('depth-sort coordinator', () => {
     expect(mockApi.sort).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['opaque, stamped', { material: 'physical', blendingMode: 'opaque' }],
+    ['translucent, unstamped', { material: 'physical' }],
+  ])(
+    "never registers a material='physical' mesh (%s) — spec MESH_PHYSICAL_MATERIALS §3.2",
+    async (_label, userData) => {
+      // A physical mesh has no Luxar blending mode: opaque it stamps `opaque`,
+      // translucent it stamps nothing (`derivePhysicalCompositing`). Either way the
+      // coordinator must judge it commutative and hold no worker registration. The
+      // node STATE is still created (so `layer_order` band ranks apply), which is why
+      // this goes through the real commit entry rather than being skipped upstream.
+      const coord = await loadCoordinator();
+      coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+      const material = new THREE.Material();
+      Object.assign(material.userData, userData);
+      const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
+      mesh.userData.nodeType = 'mesh';
+      mesh.userData.committedData = { some: 'source' };
+      coord.noteDepthSortCommit(mesh, () => new Float32Array(9), 3, new Uint32Array(9));
+      await flush();
+
+      expect(mockApi.registerNode).not.toHaveBeenCalled();
+      expect(mockApi.sort).not.toHaveBeenCalled();
+    }
+  );
+
   it('registers + sorts a volumetric commit (the second order-dependent mode)', async () => {
     // needsDepthSort = normal ∪ volumetric: volumetric compositing is
     // non-commutative (emission–absorption attenuates what is behind),

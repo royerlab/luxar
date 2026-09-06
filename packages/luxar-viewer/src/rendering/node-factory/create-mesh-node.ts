@@ -31,7 +31,13 @@ import {
   type BlendingMode,
   type LuxarMeshMaterial,
   type LuxarMeshPickingMaterial,
+  type LuxarPhysicalMeshMaterial,
 } from '../material-manager';
+import {
+  isPhysicalMeshMaterial,
+  physicalSetVertexAlpha,
+  type PhysicalMeshHost,
+} from '../materials/mesh-physical/config';
 import { isMeshPickAwareMaterial } from '../picking/mesh/pick-mode';
 import type { PickingSystem } from '../picking/picking-system';
 import { getColormapTexture } from '../colormap-textures';
@@ -333,6 +339,79 @@ export function createMeshMaterial(
 }
 
 /**
+ * Build the PHYSICAL material for a `material="physical"` mesh
+ * (`MESH_PHYSICAL_MATERIALS_SPEC.md` §3.2).
+ *
+ * The third material family, and deliberately not a branch inside
+ * {@link createMeshMaterial}: nothing that function does — the volumetric warning, the
+ * shade knobs, the colormap window, the texture placeholder — applies here. The
+ * authoring side refuses every one of those knobs under this material, so what is
+ * mapped is exactly what can arrive: the six physical fractions and `sheen_color`,
+ * the compositing attrs `opacity` / `intensity` / `offset` / `gamma` (each with the
+ * meaning `materials/mesh-physical/config.ts` documents), `alpha_cutoff` as
+ * `alphaTest`, and the flat/smooth half of `shading` as `flatShading`.
+ *
+ * An INHERITED `blending_mode` can still reach a physical mesh from an ancestor group
+ * that the mesh knows nothing about at write time. It is ignored — a physical mesh
+ * composites by its own data-driven rule — with a one-time notice naming the node, the
+ * same policy the house shader applies to an inherited `volumetric`.
+ */
+export function createPhysicalMeshMaterial(
+  attrs: MeshMetadata,
+  shading: MeshShadingMode,
+  path?: string
+): LuxarPhysicalMeshMaterial {
+  if (attrs.blending_mode !== undefined) {
+    log.warning(
+      Modules.SCENE_LOADER,
+      `[${path ?? '<mesh>'}] blending_mode='${attrs.blending_mode}' reached a ` +
+        "material='physical' mesh (inherited from an ancestor group) and is ignored: a " +
+        'physical mesh composites by its own rule — opaque unless its opacity or vertex ' +
+        'alpha is below 1 — and has no additive/luminous/max emission to select.'
+    );
+  }
+  return materialManager.getMeshPhysicalMaterial({
+    opacity: attrs.opacity ?? 1.0,
+    intensity: attrs.intensity ?? 1.0,
+    offset: attrs.offset ?? 0.0,
+    gamma: attrs.gamma ?? 1.0,
+    roughness: attrs.roughness,
+    metalness: attrs.metalness,
+    clearcoat: attrs.clearcoat,
+    clearcoatRoughness: attrs.clearcoat_roughness,
+    iridescence: attrs.iridescence,
+    sheen: attrs.sheen,
+    sheenColor: attrs.sheen_color,
+    alphaCutoff: attrs.alpha_cutoff,
+    // `'none'` is refused at authoring; `'flat'` is either authored or the fallback
+    // for a mesh with no stored normals — in both cases three derives per-triangle
+    // normals, which is exactly what the house shader's flat variant does.
+    flatShading: shading !== 'smooth',
+    // Unknown until the first commit decodes the colour buffer — see
+    // {@link applyMeshVertexAlpha}. Starting opaque is the conservative guess: a
+    // translucent placeholder would flicker for one frame on an RGB mesh.
+    vertexAlpha: false,
+  });
+}
+
+/**
+ * Tell a physical mesh whether its committed colours carry alpha.
+ *
+ * `MeshMetadata` records `has_colors` but not the component count, and the node is
+ * created before any fetch, so translucency-by-vertex-alpha can only be decided on
+ * the commit that carries the buffer. A no-op for a house material (which reads
+ * per-vertex alpha in its shader regardless) and when nothing changed.
+ */
+export function applyMeshVertexAlpha(
+  object: THREE.Mesh,
+  colorComponents: number | undefined
+): void {
+  const material = object.material;
+  if (Array.isArray(material) || !isPhysicalMeshMaterial(material)) return;
+  physicalSetVertexAlpha(material as unknown as PhysicalMeshHost, colorComponents === 4);
+}
+
+/**
  * Create an empty mesh node — a `THREE.Mesh` with a one-vertex degenerate geometry,
  * attached before any data is fetched.
  *
@@ -383,7 +462,13 @@ export function createEmptyMeshNode(
   // common case (`normal_dims` authored for the axes the scene opens on), and let
   // the first commit's `applyMeshShading` correct it if not.
   const shading = resolveMeshShading(attrs, attrs.has_normals);
-  const material = createMeshMaterial(attrs, shading, geometry, path, leafAttrs);
+  // The material FAMILY branches here and only here (spec §3.2): everything below —
+  // geometry, picking with the house mesh-pick material, side, transform,
+  // `layer_order`, userData — is shared by both families.
+  const physical = attrs.material === 'physical';
+  const material: LuxarMeshMaterial | LuxarPhysicalMeshMaterial = physical
+    ? createPhysicalMeshMaterial(attrs, shading, path)
+    : createMeshMaterial(attrs, shading, geometry, path, leafAttrs);
   material.side = attrs.double_sided ? THREE.DoubleSide : THREE.FrontSide;
 
   const mesh = new THREE.Mesh(geometry, material);
@@ -411,7 +496,11 @@ export function createEmptyMeshNode(
   mesh.userData.layerOrder = (attrs as unknown as Record<string, unknown>).layer_order;
 
   const texturePlaceholders: THREE.Texture[] = [];
-  const visualPlaceholder = material.uniforms.uBaseColorTex?.value;
+  // Optional-chained because the physical family has no `uniforms` — it is three's
+  // own material — and cannot carry a texture placeholder (textures are refused at
+  // authoring under `material="physical"`).
+  const visualPlaceholder = (material as { uniforms?: Record<string, { value?: unknown }> })
+    .uniforms?.uBaseColorTex?.value;
   if (visualPlaceholder instanceof THREE.Texture) texturePlaceholders.push(visualPlaceholder);
 
   if (attrs.transform) applyTransform(mesh, attrs.transform);
@@ -445,7 +534,13 @@ export function createEmptyMeshNode(
     // registerNode stamps `mesh.userData.pickNode`, which is how applyMeshSide and
     // the appearance sync below find their way back here.
     pickMaterial.setPickSide(material.side);
-    pickMaterial.setPickMode(resolveRequestedMeshMode(attrs));
+    // A physical mesh has no Luxar blending mode; its pick mode follows the same
+    // data-driven rule its compositing does (`derivePhysicalCompositing`): the cutout
+    // when opaque, every fragment when translucent. The per-render resync in
+    // `PickingSystem.renderPickBuffer` reads the same `userData.blendingMode` stamp.
+    pickMaterial.setPickMode(
+      physical ? (material.transparent ? 'normal' : 'opaque') : resolveRequestedMeshMode(attrs)
+    );
   }
 
   if (texturePlaceholders.length > 0) {

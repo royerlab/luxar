@@ -20,6 +20,11 @@ import {
 import type { ZarrViewerConfig } from '../types/zarr';
 import type { PostProcessingManager } from '../rendering/post-processing/post-processing-manager';
 import { materialManager } from '../rendering';
+import { resolveMaterialBackend } from '../rendering/material-manager/factories';
+import {
+  createSceneEnvironment,
+  type SceneEnvironment,
+} from '../rendering/environment/scene-environment';
 import { loadTslMaterials } from '../rendering/tsl/load';
 import { disposeColormapTextures } from '../rendering/colormap-textures';
 import {
@@ -163,6 +168,14 @@ export class SceneManager extends THREE.EventDispatcher<{
    * `RendererCapabilities`).
    */
   public renderer!: Renderer;
+
+  /**
+   * The lazily built scene environment that lights `material="physical"` meshes;
+   * `null` until {@link init}. Public so a debug surface or test can ask
+   * `isReady()`; nothing else should need to touch it.
+   */
+  public environment: SceneEnvironment | null = null;
+  private unsubscribeEnvironment: (() => void) | null = null;
 
   /**
    * Capabilities snapshot for the active renderer. Hides raw-GL queries
@@ -422,6 +435,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     await this.setupRenderer();
     this.setupContextLossHandling(); // Setup context loss recovery
     this.setupScene();
+    this.setupEnvironment();
     this.setupCamera();
     this.configureBlendWarmup();
     this.setupControls();
@@ -635,6 +649,28 @@ export class SceneManager extends THREE.EventDispatcher<{
   private setupScene(): void {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(config.scene.backgroundColor);
+  }
+
+  /**
+   * Wire the LAZY scene environment (`rendering/environment/scene-environment.ts`).
+   *
+   * Nothing is built here. The environment — a prefiltered `RoomEnvironment` on
+   * `scene.environment`, the one lighting input a physically based mesh material
+   * needs — is constructed the first time the material manager creates a physical
+   * mesh material and never otherwise, so a scene without one keeps
+   * `scene.environment === null` and renders exactly as it did before the
+   * environment existed. House materials never read it either way (spec
+   * `MESH_PHYSICAL_MATERIALS_SPEC.md` §3.3).
+   */
+  private setupEnvironment(): void {
+    this.environment = createSceneEnvironment(
+      this.renderer,
+      resolveMaterialBackend(this.capabilities),
+      this.scene
+    );
+    this.unsubscribeEnvironment = materialManager.onPhysicalMaterialCreated(() => {
+      this.environment?.ensure();
+    });
   }
 
   /**
@@ -1328,6 +1364,13 @@ export class SceneManager extends THREE.EventDispatcher<{
 
     // Dispose material manager - cleans up all cached materials
     materialManager.dispose();
+
+    // The prefiltered environment, if a physical mesh ever caused it to be built.
+    // Before the renderer goes: the PMREM target is a GPU resource of that renderer.
+    this.unsubscribeEnvironment?.();
+    this.unsubscribeEnvironment = null;
+    this.environment?.dispose();
+    this.environment = null;
 
     // dispose shared colormap textures (built-in cache + custom-LUT
     // cache) AFTER materials are released — material disposal doesn't

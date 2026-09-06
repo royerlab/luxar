@@ -10,6 +10,8 @@ perf-bench JSON captures into a Markdown table.
 
 ```
 scripts/
+├── ab-webgpu-vs-webgl.mjs         # Real-WebGPU vs WebGL screenshot A/B (SSIM/NCC), the
+│                                  #   MESH_PHYSICAL_MATERIALS_SPEC §3.6 acceptance test
 ├── build-wasm.sh             # Rust → WASM build via wasm-pack (pnpm build:wasm[:dev])
 ├── check-build-identity.mjs       # Asserts a built bundle carries its build stamp
 ├── check-build-identity.test.mjs  # unit coverage for the stamp gate

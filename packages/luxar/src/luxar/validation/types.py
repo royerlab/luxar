@@ -12,7 +12,7 @@ users writing data.
 from __future__ import annotations
 
 import math
-from typing import Any, List, Optional, Tuple, Union, cast
+from typing import Any, FrozenSet, List, Optional, Tuple, Union, cast
 
 import numpy as np
 
@@ -402,6 +402,78 @@ def validate_texture_wrap(value: Any, name: str) -> str:
 def validate_texture_color_space(value: Any, name: str) -> str:
     """Validate a mesh ``texture_color_space`` declaration."""
     return _validate_texture_choice(value, name, TEXTURE_COLOR_SPACES)
+
+
+#: The mesh material families the viewer implements
+#: (``docs/guides/specs/MESH_PHYSICAL_MATERIALS_SPEC.md`` §3.1).
+#:
+#: ``luxar`` is the house shader — the light-free, view-anchored key of
+#: ``MESH_NODE_SPEC.md`` §6.2 — and what every mesh renders with when the attr is
+#: absent. ``physical`` opts a mesh into three.js's own physically based material,
+#: lit by the viewer's scene environment; it is the only family that understands
+#: :data:`PHYSICAL_MATERIAL_ATTRS`.
+MESH_MATERIALS: Tuple[str, ...] = ("luxar", "physical")
+
+#: The Phase 1 physical knobs that are FRACTIONS in ``[0, 1]``, in the order the
+#: viewer's Layers panel lists them. ``sheen_color`` is the one non-fraction
+#: companion and lives only in :data:`PHYSICAL_MATERIAL_ATTRS`.
+PHYSICAL_MATERIAL_FRACTION_ATTRS: Tuple[str, ...] = (
+    "roughness",
+    "metalness",
+    "clearcoat",
+    "clearcoat_roughness",
+    "iridescence",
+    "sheen",
+)
+
+#: Every authored knob that means something ONLY under ``material="physical"``.
+#:
+#: ``sheen_color`` rides along because three's default sheen colour is black, so
+#: ``sheen`` alone renders nothing — a knob that silently does nothing is exactly
+#: what the material validation exists to refuse. Transmission, ior, thickness,
+#: attenuation and dispersion are deliberately absent (spec §3.4 / Phase 2).
+PHYSICAL_MATERIAL_ATTRS: FrozenSet[str] = frozenset(
+    PHYSICAL_MATERIAL_FRACTION_ATTRS
+) | {"sheen_color"}
+
+#: The house-shader knobs a physical mesh REFUSES rather than ignores: each
+#: parameterises the §6.2 wrapped-diffuse / Blinn–Phong model, which a physical
+#: material does not run. ``alpha_cutoff`` is not here — it maps onto three's
+#: ``alphaTest`` — and neither is ``shading``, whose smooth/flat half is a
+#: property of any lit surface (only the unlit ``none`` is refused, by the adder).
+HOUSE_SHADER_ONLY_ATTRS: FrozenSet[str] = frozenset(
+    {"ambient", "shade_exponent", "specular", "shininess"}
+)
+
+
+def validate_mesh_material(value: Any, name: str = "Material") -> str:
+    """Validate a mesh ``material`` attr against :data:`MESH_MATERIALS`.
+
+    A typo here would be the worst kind: ``material="physcial"`` would write
+    cleanly and render with the house shader, and the author would conclude the
+    physical knobs do nothing.
+    """
+    return _validate_texture_choice(value, name, MESH_MATERIALS)
+
+
+_HEX_COLOR_DIGITS = frozenset("0123456789abcdefABCDEF")
+
+
+def validate_hex_color(value: Any, name: str) -> str:
+    """Validate a ``#rrggbb`` colour string (``sheen_color``).
+
+    Exactly the six-digit form: three.js parses the three-digit shorthand too,
+    but accepting two spellings of one colour on disk buys nothing and costs the
+    reader a normalisation step. The value is returned as given.
+    """
+    if (
+        not isinstance(value, str)
+        or len(value) != 7
+        or value[0] != "#"
+        or any(ch not in _HEX_COLOR_DIGITS for ch in value[1:])
+    ):
+        raise ValueError(f"{name} must be a '#rrggbb' hex colour string, got {value!r}")
+    return value
 
 
 def validate_absorption(absorption: Any) -> float:

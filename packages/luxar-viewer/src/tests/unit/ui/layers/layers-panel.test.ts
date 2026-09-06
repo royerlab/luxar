@@ -30,6 +30,7 @@ import type { SceneNode } from '../../../../data/data-loader-types';
 import type { AnimationController } from '../../../../scene/animation/animation-controller';
 import type { FailedLoadsProviderPort } from '../../../../data/scene-loader-monitor-port';
 import { MESH_DEFAULTS } from '../../../../rendering/materials/mesh/appearance';
+import { PhysicalMeshMaterial } from '../../../../rendering/materials/mesh-physical/material-glsl';
 
 // `showToast` lives in src/ui/toast; mock so the empty-scene branch
 // is observable.
@@ -1661,6 +1662,122 @@ describe('LayersPanel — blend select drives the leaf material', () => {
       );
     }
     expect(findControlGroup(container, 'Alpha cutoff')!.style.display).not.toBe('none');
+  });
+
+  it("a material='physical' mesh swaps the house sliders for a read-only knob listing", () => {
+    // The physical family runs none of the house shader: the four lighting sliders
+    // have no uniform to write, the cutoff and blend mode are the material's own
+    // business, and gamma has no term. So all of them hide, and the read-only
+    // listing shows what was AUTHORED — and, for what was not, three's default.
+    mountMeshLayer(container, animationController, 'opaque', {
+      material: 'physical',
+      roughness: 0.4,
+      clearcoat: 1,
+      sheen: 0.5,
+      sheen_color: '#ff4d6d',
+    });
+    for (const label of [
+      'Ambient',
+      'Shade falloff',
+      'Specular',
+      'Shininess',
+      'Alpha cutoff',
+      'Gamma',
+    ]) {
+      expect(findControlGroup(container, label)!.style.display, `${label} on physical`).toBe(
+        'none'
+      );
+    }
+    expect(findBlendSelect(container)!.parentElement!.style.display).toBe('none');
+
+    const group = findControlGroup(container, 'Physical material')!;
+    expect(group).not.toBeNull();
+    expect(group.style.display).not.toBe('none');
+    const rows = Array.from(group.querySelectorAll('.luxar-layers-panel__physical-row')).map(
+      (row) => row.textContent
+    );
+    expect(rows).toEqual([
+      'Roughness0.40',
+      'Metalness0.00 (default)',
+      'Clearcoat1.00',
+      'Clearcoat roughness0.00 (default)',
+      'Iridescence0.00 (default)',
+      'Sheen0.50',
+      'Sheen colour#ff4d6d',
+    ]);
+    // No slider in the group: read-only in Phase 1.
+    expect(group.querySelector('input')).toBeNull();
+    expect(
+      group.querySelector('.luxar-layers-panel__control-label')!.getAttribute('title')
+    ).toContain('transmission');
+
+    // Opacity is still live — it is the one generic control the family honours.
+    expect(findControlGroup(container, 'Opacity')!.style.display).not.toBe('none');
+  });
+
+  it('resetAllLayers leaves a REAL physical material exactly where the author put it', () => {
+    // The reset path calls `applyBlendingMode` and `applyMeshAppearance` on every
+    // layer. On a material WITHOUT `applyBlendingMode`, `layer-apply.ts` falls back to
+    // writing the HOUSE shader's blend state for the mesh default `opaque` — which
+    // would turn a translucent physical shell opaque and depth-writing on a reset.
+    // The wrapper's no-op `applyBlendingMode` and the optional-chained shade setters
+    // are what make this a no-op; pinned against the real class, not a stub.
+    const material = new PhysicalMeshMaterial({
+      roughness: 0.4,
+      clearcoat: 1.0,
+      clearcoatRoughness: 0.05,
+      opacity: 0.3,
+    });
+    const before = {
+      roughness: material.roughness,
+      clearcoat: material.clearcoat,
+      clearcoatRoughness: material.clearcoatRoughness,
+      transparent: material.transparent,
+      depthWrite: material.depthWrite,
+      blending: material.blending,
+      stamp: material.userData.blendingMode,
+    };
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
+    mesh.name = '/cloud';
+    mesh.userData.nodeType = 'mesh';
+    mesh.userData._layerMaterialCloned = true;
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(
+      rootGroup,
+      makeLayeredSceneGraph('mesh', {
+        material: 'physical',
+        roughness: 0.4,
+        clearcoat: 1,
+        clearcoat_roughness: 0.05,
+        opacity: 0.3,
+      })
+    );
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    expect(() => panel.resetAllLayers()).not.toThrow();
+
+    expect(material.roughness).toBe(before.roughness);
+    expect(material.clearcoat).toBe(before.clearcoat);
+    expect(material.clearcoatRoughness).toBe(before.clearcoatRoughness);
+    expect(material.transparent).toBe(before.transparent);
+    expect(material.depthWrite).toBe(before.depthWrite);
+    expect(material.blending).toBe(before.blending);
+    expect(material.userData.blendingMode).toBe(before.stamp);
+    // Opacity is the one generic control the family honours, and reset restores the
+    // AUTHORED value, which is what the material already had.
+    expect(material.getOpacity()).toBeCloseTo(0.3, 6);
+  });
+
+  it('a HOUSE mesh layer shows no physical listing and keeps every slider', () => {
+    mountMeshLayer(container, animationController);
+    expect(findControlGroup(container, 'Physical material')!.style.display).toBe('none');
+    expect(findControlGroup(container, 'Gamma')!.style.display).not.toBe('none');
+    expect(findBlendSelect(container)!.parentElement!.style.display).not.toBe('none');
+    expect(findControlGroup(container, 'Ambient')!.style.display).not.toBe('none');
   });
 
   it('partitioned unlit mesh derives shading from its leaves', () => {

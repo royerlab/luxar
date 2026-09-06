@@ -92,18 +92,29 @@ _GEOMETRY_WORDS = ("points", "lines", "mesh", "gsplats")
 #: The mesh-only authored keys refused on every non-mesh node by the
 #: adder/group and write-through guards.
 #:
-#: Seven are appearance (five shading controls plus the two texture-sampling
-#: ones), which is what the name records. ``slab_tolerance`` is the exception
-#: and is deliberately here anyway: it is a LOADING knob — the half-width of
-#: the nD membership slab a continuous hidden dimension is culled against
-#: (spec §5.2.1) — but it is mesh-only for exactly the same reason and must be
-#: refused on the other three types by exactly the same guard. A second
-#: frozenset would be a second thing to forget.
+#: Fifteen are appearance: the five house-shader controls, the two
+#: texture-sampling ones, the ``material`` family selector and the seven
+#: physically based knobs it unlocks (``MESH_PHYSICAL_MATERIALS_SPEC.md`` §3.1),
+#: which is what the name records. ``slab_tolerance`` is the exception and is
+#: deliberately here anyway: it is a LOADING knob — the half-width of the nD
+#: membership slab a continuous hidden dimension is culled against (spec §5.2.1)
+#: — but it is mesh-only for exactly the same reason and must be refused on the
+#: other three types by exactly the same guard. A second frozenset would be a
+#: second thing to forget. Pinned equal to the validator table's keys by
+#: ``io/tests/test_compiler_improvements.py``.
 MESH_ONLY_APPEARANCE_ATTRS = frozenset(
     {
         "alpha_cutoff",
         "ambient",
+        "clearcoat",
+        "clearcoat_roughness",
+        "iridescence",
+        "material",
+        "metalness",
+        "roughness",
         "shade_exponent",
+        "sheen",
+        "sheen_color",
         "shininess",
         "slab_tolerance",
         "specular",

@@ -45,6 +45,11 @@ from typing import (
 import numpy as np
 from arbol import aprint, asection
 
+from ....validation.types import (
+    HOUSE_SHADER_ONLY_ATTRS,
+    PHYSICAL_MATERIAL_ATTRS,
+    validate_mesh_material,
+)
 from ....validation.writing import (
     MESH_RESERVED_ATTRS,
     validate_broadcast_color,
@@ -172,6 +177,92 @@ def _reject_volumetric_blending(name: str, attrs: Dict[str, Any]) -> None:
             "path length through the medium is zero, so there is nothing for "
             "'absorption' to attenuate. Use 'normal' for an opaque surface, or "
             "'additive' for a translucent one."
+        )
+
+
+def _reject_physical_material_conflicts(
+    name: str,
+    attrs: Dict[str, Any],
+    shading: Optional[str],
+    texture: Any,
+) -> None:
+    """Cross-check ``material`` against the knobs that only one family understands.
+
+    The value validators in ``validate_render_attrs`` judge each key alone. The
+    rules here are about PAIRS, and they are refusals rather than warnings for the
+    same reason ``blending_mode='volumetric'`` is (spec
+    ``MESH_PHYSICAL_MATERIALS_SPEC.md`` §3.1): every case below is an authoring
+    mistake with no valid interpretation, and letting it through would write a
+    store in which a knob the author typed does nothing — which reads, in the
+    viewer, exactly like a working setting.
+
+    - A physical knob (``roughness`` …, :data:`PHYSICAL_MATERIAL_ATTRS`) without
+      ``material="physical"`` is dead metadata: the house shader has no such term.
+    - Under ``material="physical"`` the house-shader knobs
+      (:data:`HOUSE_SHADER_ONLY_ATTRS`) parameterise a lighting model that is not
+      running; ``blending_mode`` names a compositing family three's material does
+      not implement (it blends by its own ``transparent`` rule); ``colormap`` and
+      ``texture`` are base-colour sources the Phase 1 material does not read (it
+      takes vertex colours only); and ``shading="none"`` asks an environment-lit
+      surface to be unlit. ``shading="flat"`` / ``"smooth"`` are NOT refused —
+      flat-versus-smooth normals is a property of any lit surface and maps onto
+      three's ``flatShading`` — and neither is ``alpha_cutoff``, which maps onto
+      ``alphaTest``.
+
+    Runs BEFORE the shared attrs gate so the reason a caller sees is the pairing,
+    not a downstream symptom, and validates the family value first so a typo in
+    ``material`` itself is reported as such rather than as a missing opt-in.
+    """
+    material = attrs.get("material")
+    if material is not None:
+        validate_mesh_material(material)
+    physical_knobs = sorted(PHYSICAL_MATERIAL_ATTRS & attrs.keys())
+
+    if material != "physical":
+        if physical_knobs:
+            raise ValueError(
+                f"Cannot add mesh '{name}' with {physical_knobs}: these are "
+                "physically based material knobs and the house shader has no such "
+                "term, so they would be written and silently ignored. Pass "
+                "material='physical' to opt this mesh into three's physical "
+                "material (see MESH_PHYSICAL_MATERIALS_SPEC.md §3.1), or drop them."
+            )
+        return
+
+    house_knobs = sorted(HOUSE_SHADER_ONLY_ATTRS & attrs.keys())
+    if house_knobs:
+        raise ValueError(
+            f"Cannot add mesh '{name}' with material='physical' and {house_knobs}: "
+            "those parameterise the house shader's view-anchored key "
+            "(MESH_NODE_SPEC.md §6.2), which a physical material does not run. Use "
+            "roughness/metalness/clearcoat/clearcoat_roughness/iridescence/sheen/"
+            "sheen_color instead, or drop material='physical'."
+        )
+    if "blending_mode" in attrs:
+        raise ValueError(
+            f"Cannot add mesh '{name}' with material='physical' and blending_mode="
+            f"{attrs['blending_mode']!r}: a physical mesh composites by three's own "
+            "rule — opaque unless its opacity or vertex alpha is below 1 — and has "
+            "no additive/luminous/max emission to select. Drop blending_mode (an "
+            "inherited group mode is ignored for physical meshes with a notice)."
+        )
+    if attrs.get("colormap") is not None:
+        raise ValueError(
+            f"Cannot add mesh '{name}' with material='physical' and a colormap: the "
+            "Phase 1 physical material takes its base colour from per-vertex "
+            "colours only. Bake the colormap into `colors` instead."
+        )
+    if texture is not None:
+        raise ValueError(
+            f"Cannot add mesh '{name}' with material='physical' and a texture: the "
+            "Phase 1 physical material takes its base colour from per-vertex "
+            "colours only (a textured physical surface is a later phase)."
+        )
+    if shading == "none":
+        raise ValueError(
+            f"Cannot add mesh '{name}' with material='physical' and shading='none': "
+            "'none' means unlit, and a physical material is lit by the scene "
+            "environment by definition. Use 'smooth' (stored normals) or 'flat'."
         )
 
 
@@ -1032,6 +1123,7 @@ def add_mesh_impl(
         )
         _reject_structure_params(name, attrs)
         _reject_volumetric_blending(name, attrs)
+        _reject_physical_material_conflicts(name, attrs, shading, texture)
         _reject_energy_stamps(name, attrs)
         reject_lines_only_join("mesh", name, attrs)
 

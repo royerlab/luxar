@@ -53,7 +53,10 @@ from .base import (
     validate_widths_for_writing,
 )
 from .types import (
+    PHYSICAL_MATERIAL_FRACTION_ATTRS,
     validate_appearance_fraction,
+    validate_hex_color,
+    validate_mesh_material,
     validate_positive_finite,
     validate_texture_filter,
     validate_texture_wrap,
@@ -768,6 +771,20 @@ KNOWN_RENDER_ATTRS: FrozenSet[str] = frozenset(
         # in the "known render attributes" hint a typo prints.
         "join",
         "layer",
+        # Mesh-only material family (``luxar`` | ``physical``) and the Phase 1
+        # physically based knobs it unlocks. Advertised for the same reason as
+        # the shading controls below: real knobs an author types, so a typo must
+        # see them in the hint. The adder cross-checks them against each other
+        # (a physical knob needs ``material="physical"``; a physical mesh
+        # refuses the house-shader knobs) — see ``adders/mesh.py``.
+        "material",
+        "roughness",
+        "metalness",
+        "clearcoat",
+        "clearcoat_roughness",
+        "iridescence",
+        "sheen",
+        "sheen_color",
         "offset",
         "opacity",
         # Mesh-only shading controls. Advertised for the same reason as
@@ -922,7 +939,13 @@ def _validate_interaction_attrs(attrs: Dict[str, Any]) -> None:
 
 
 def _validate_mesh_appearance_attrs(attrs: Dict[str, Any]) -> None:
-    """Validate seven appearance controls plus slab tolerance in the shared gate."""
+    """Validate the mesh appearance controls plus slab tolerance in the shared gate.
+
+    Value validation only. The CROSS-key rules — a physical knob without
+    ``material="physical"``, or a house-shader knob with it — live in the mesh
+    adder, which is the only caller that also sees the named ``shading`` and
+    ``texture`` parameters those rules must judge.
+    """
     for key, (validator, label) in _MESH_APPEARANCE_VALIDATORS.items():
         if key in attrs:
             validator(attrs[key], label)
@@ -991,6 +1014,16 @@ _MESH_APPEARANCE_VALIDATORS = {
     # membership test to exact float equality with the slice plane, and the node
     # renders nothing (spec §5.2.1 — it is why mesh cannot reuse the Lines arm).
     "slab_tolerance": (validate_positive_finite, "Slab tolerance"),
+    # The material family and its physically based knobs (spec
+    # MESH_PHYSICAL_MATERIALS_SPEC §3.1). Fractions in ``[0, 1]`` exactly like
+    # ``ambient``: three clamps them anyway, but a clamp is silent and an
+    # author who wrote ``roughness=5`` meant something.
+    "material": (validate_mesh_material, "Material"),
+    **{
+        key: (validate_appearance_fraction, key.replace("_", " ").capitalize())
+        for key in PHYSICAL_MATERIAL_FRACTION_ATTRS
+    },
+    "sheen_color": (validate_hex_color, "Sheen color"),
 }
 
 

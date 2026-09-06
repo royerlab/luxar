@@ -558,7 +558,17 @@ class Group(Node):
                 ``transform``, ``nd_transform``, ``blending_mode``, and the
                 mesh-only appearance controls ``ambient``, ``specular``,
                 ``alpha_cutoff`` (each in ``[0, 1]``), ``shade_exponent``, and
-                ``shininess`` (both strictly positive and finite). Also mesh-only,
+                ``shininess`` (both strictly positive and finite). Also mesh-only:
+                ``material`` (``"luxar"``, the default house shader, or
+                ``"physical"`` for three's physically based material lit by the
+                viewer's scene environment — ``MESH_PHYSICAL_MATERIALS_SPEC.md``)
+                and the knobs it unlocks, ``roughness``, ``metalness``,
+                ``clearcoat``, ``clearcoat_roughness``, ``iridescence``, ``sheen``
+                (each in ``[0, 1]``) and ``sheen_color`` (``"#rrggbb"``). A
+                physical knob without ``material="physical"`` is refused, and a
+                physical mesh refuses the house-shader knobs, ``blending_mode``,
+                ``colormap``, ``texture`` and ``shading="none"`` — none of them
+                means anything under that material. Also mesh-only,
                 and a LOADING knob rather than an appearance one:
                 ``slab_tolerance`` (strictly positive and finite, default ``1.0``)
                 — the half-width, IN CELLS, of the nD membership slab a

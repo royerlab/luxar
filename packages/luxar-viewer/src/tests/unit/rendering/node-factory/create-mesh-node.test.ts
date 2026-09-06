@@ -17,8 +17,13 @@ import {
   applyMeshShading,
   applyMeshSide,
   applyMeshTexture,
+  applyMeshVertexAlpha,
 } from '../../../../rendering/node-factory/create-mesh-node';
 import { MeshMaterial } from '../../../../rendering/materials/mesh/material-glsl';
+import { PhysicalMeshMaterial } from '../../../../rendering/materials/mesh-physical/material-glsl';
+import { isPhysicalMeshMaterial } from '../../../../rendering/materials/mesh-physical/config';
+import { MeshPickingMaterial } from '../../../../rendering/picking/mesh/material';
+import { materialManager } from '../../../../rendering/material-manager';
 import { MESH_DEFAULTS } from '../../../../rendering/materials/mesh/appearance';
 import type { MeshDataLoader, MeshMetadata } from '../../../../types/mesh';
 import { applyEffectiveAttrs } from '../../../../data/scene-loader/view-state/effective-attrs';
@@ -456,5 +461,133 @@ describe('createMeshMaterial — authored shade knobs (§6.2)', () => {
     );
     expect(m.uniforms.uAmbient.value).toBe(MESH_DEFAULTS.ambient);
     expect(m.uniforms.uAlphaCutoff.value).toBe(MESH_DEFAULTS.alphaCutoff);
+  });
+});
+
+describe("createEmptyMeshNode — the material='physical' family (MESH_PHYSICAL_MATERIALS_SPEC §3.2)", () => {
+  const PHYSICAL: MeshMetadata = {
+    ...ATTRS,
+    material: 'physical',
+    roughness: 0.4,
+    metalness: 1.0,
+    clearcoat: 1.0,
+    clearcoat_roughness: 0.05,
+    sheen: 0.5,
+    sheen_color: '#ff4d6d',
+  };
+
+  it('builds three’s physical material, not the house shader, and maps the knobs', () => {
+    const node = createEmptyMeshNode('/shell', PHYSICAL, loader, null);
+    const m = node.material as PhysicalMeshMaterial;
+    expect(m).toBeInstanceOf(PhysicalMeshMaterial);
+    expect(m).not.toBeInstanceOf(MeshMaterial);
+    expect(isPhysicalMeshMaterial(m)).toBe(true);
+    expect(m.roughness).toBe(0.4);
+    expect(m.metalness).toBe(1.0);
+    expect(m.clearcoat).toBe(1.0);
+    expect(m.clearcoatRoughness).toBe(0.05);
+    expect(m.sheen).toBe(0.5);
+    expect(m.vertexColors).toBe(true);
+    // Everything shared with the house family still happens.
+    expect(node.userData.nodeType).toBe('mesh');
+    expect(node.userData._layerMaterialCloned).toBe(true);
+    expect(node.geometry.getAttribute('color')).toBeDefined();
+  });
+
+  it('honours the authored side and maps flat/smooth onto flatShading', () => {
+    const flat = createEmptyMeshNode('/s', { ...PHYSICAL, double_sided: false }, loader, null);
+    expect((flat.material as THREE.Material).side).toBe(THREE.FrontSide);
+    expect((flat.material as PhysicalMeshMaterial).flatShading).toBe(true);
+    const smooth = createEmptyMeshNode(
+      '/s',
+      { ...PHYSICAL, shading: 'smooth', has_normals: true, normal_dims: [0, 1, 2] },
+      loader,
+      null
+    );
+    expect((smooth.material as PhysicalMeshMaterial).flatShading).toBe(false);
+    expect((smooth.material as THREE.Material).side).toBe(THREE.DoubleSide);
+  });
+
+  it('does not throw on the texture-placeholder bookkeeping (no `uniforms` on this family)', () => {
+    expect(() => createEmptyMeshNode('/shell', PHYSICAL, loader, null)).not.toThrow();
+    expect(
+      (createEmptyMeshNode('/shell', PHYSICAL, loader, null).userData as Record<string, unknown>)
+        .meshTexturePlaceholders
+    ).toBeUndefined();
+  });
+
+  it('picks through the HOUSE mesh pick material, seeded from the data-driven compositing', () => {
+    const registerNode = vi.fn();
+    const pickingSystem = {
+      allocatePickId: vi.fn(() => 42),
+      registerNode,
+    } as unknown as PickingSystem;
+    const opaque = createEmptyMeshNode('/shell', PHYSICAL, loader, pickingSystem);
+    expect(opaque.userData.pickId).toBe(42);
+    const [, opaquePickNode] = registerNode.mock.calls[0] as [THREE.Mesh, THREE.Mesh, number];
+    const opaquePick = opaquePickNode.material as MeshPickingMaterial;
+    expect(opaquePick).toBeInstanceOf(MeshPickingMaterial);
+    // `opaque` pick mode = the alpha cutout is applied in the pick pass (§6.5).
+    expect(opaquePick.uniforms.uAlphaCutout.value).toBe(1);
+
+    const translucent = createEmptyMeshNode(
+      '/shell',
+      { ...PHYSICAL, opacity: 0.3 },
+      loader,
+      pickingSystem
+    );
+    expect((translucent.material as THREE.Material).transparent).toBe(true);
+    const [, translucentPickNode] = registerNode.mock.calls[1] as [THREE.Mesh, THREE.Mesh, number];
+    const translucentPick = translucentPickNode.material as MeshPickingMaterial;
+    // Translucent: every fragment is pickable, matching what is drawn.
+    expect(translucentPick.uniforms.uAlphaCutout.value).toBe(0);
+  });
+
+  it('applyMeshShading / applyMeshTexture are no-ops on a physical mesh', () => {
+    const node = createEmptyMeshNode('/shell', PHYSICAL, loader, null);
+    const before = (node.material as PhysicalMeshMaterial).flatShading;
+    expect(() => applyMeshShading(node, PHYSICAL, true)).not.toThrow();
+    expect((node.material as PhysicalMeshMaterial).flatShading).toBe(before);
+  });
+
+  it('learns vertex alpha at commit time through applyMeshVertexAlpha', () => {
+    const node = createEmptyMeshNode('/shell', PHYSICAL, loader, null);
+    expect((node.material as THREE.Material).transparent).toBe(false);
+    applyMeshVertexAlpha(node, 4);
+    expect((node.material as THREE.Material).transparent).toBe(true);
+    expect((node.material as THREE.Material).depthWrite).toBe(false);
+    // A house mesh is untouched by the same call.
+    const house = createEmptyMeshNode('/house', ATTRS, loader, null);
+    const houseTransparent = (house.material as THREE.Material).transparent;
+    applyMeshVertexAlpha(house, 4);
+    expect((house.material as THREE.Material).transparent).toBe(houseTransparent);
+  });
+
+  it('ignores an INHERITED blending_mode with a one-time notice naming the node', () => {
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const node = createEmptyMeshNode(
+      '/shell',
+      { ...PHYSICAL, blending_mode: 'additive' },
+      loader,
+      null
+    );
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][1])).toContain('/shell');
+    expect(String(warn.mock.calls[0][1])).toContain("blending_mode='additive'");
+    // The material composites by its own rule: still opaque, and stamped so.
+    expect((node.material as THREE.Material).transparent).toBe(false);
+    expect((node.material as THREE.Material).userData.blendingMode).toBe('opaque');
+    warn.mockRestore();
+  });
+
+  it('house meshes never create a physical material (so the environment is never built for them)', () => {
+    const listener = vi.fn();
+    const off = materialManager.onPhysicalMaterialCreated(listener);
+    createEmptyMeshNode('/house', ATTRS, loader, null);
+    createEmptyMeshNode('/house2', { ...ATTRS, material: 'luxar' }, loader, null);
+    expect(listener).not.toHaveBeenCalled();
+    createEmptyMeshNode('/shell', PHYSICAL, loader, null);
+    expect(listener).toHaveBeenCalledTimes(1);
+    off();
   });
 });

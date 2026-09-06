@@ -158,6 +158,9 @@ vi.mock('three', () => ({
   Float32BufferAttribute: vi.fn(),
   Uint8BufferAttribute: vi.fn(),
   Uint16BufferAttribute: vi.fn(),
+  // The physical mesh wrapper `extends THREE.MeshPhysicalMaterial` at module load,
+  // so the class must exist on the mock even though nothing here constructs it.
+  MeshPhysicalMaterial: class {},
   ShaderMaterial: vi.fn().mockImplementation(() => ({
     uniforms: {},
   })),

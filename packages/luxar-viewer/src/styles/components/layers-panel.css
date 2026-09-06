@@ -242,6 +242,23 @@
   color: var(--luxar-text-primary);
 }
 
+/* Read-only physical-material listing (material="physical" mesh layers). */
+.luxar-layers-panel__physical-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.luxar-layers-panel__physical-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.luxar-layers-panel__physical-name {
+  color: var(--luxar-text-secondary);
+}
+
 /* ========== Gamma Slider ========== */
 
 .luxar-layers-panel__slider {
