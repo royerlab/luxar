@@ -564,11 +564,18 @@ class Group(Node):
                 viewer's scene environment — ``MESH_PHYSICAL_MATERIALS_SPEC.md``)
                 and the knobs it unlocks, ``roughness``, ``metalness``,
                 ``clearcoat``, ``clearcoat_roughness``, ``iridescence``, ``sheen``
-                (each in ``[0, 1]``) and ``sheen_color`` (``"#rrggbb"``). A
-                physical knob without ``material="physical"`` is refused, and a
-                physical mesh refuses the house-shader knobs, ``blending_mode``,
-                ``colormap``, ``texture`` and ``shading="none"`` — none of them
-                means anything under that material. Also mesh-only,
+                (each in ``[0, 1]``) and ``sheen_color`` (``"#rrggbb"``), plus
+                the glass family: ``transmission`` (``[0, 1]``), ``ior``
+                (``[1, 2.333]``), ``thickness`` (``>= 0``), ``attenuation_color``
+                (``"#rrggbb"``), ``attenuation_distance`` (``> 0``) and
+                ``dispersion`` (``>= 0``). A physical knob without
+                ``material="physical"`` is refused; a physical mesh refuses the
+                house-shader knobs, ``blending_mode``, ``colormap``, ``texture``
+                and ``shading="none"``; and ``thickness`` / ``attenuation_*`` /
+                ``dispersion`` are refused without a ``transmission`` above zero
+                — none of them means anything in those pairings. Glass refracts
+                the background and other meshes, not points, lines or splats
+                (spec §3.4). Also mesh-only,
                 and a LOADING knob rather than an appearance one:
                 ``slab_tolerance`` (strictly positive and finite, default ``1.0``)
                 — the half-width, IN CELLS, of the nD membership slab a

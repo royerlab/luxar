@@ -1,10 +1,11 @@
-"""Authoring tests for ``material="physical"`` on a mesh (Phase 1).
+"""Authoring tests for ``material="physical"`` on a mesh (Phases 1 and 2).
 
 The contract under test is ``docs/guides/specs/MESH_PHYSICAL_MATERIALS_SPEC.md``
-§3.1: an opt-in family selector, a closed set of ``[0, 1]`` knobs written only
-when set, and — the load-bearing half — refusal of every pairing that has no
-valid meaning, because a knob that writes cleanly and does nothing reads in the
-viewer exactly like a working setting.
+§3.1 and §3.4: an opt-in family selector, a closed set of knobs written only when
+set (the ``[0, 1]`` surface knobs, then the glass family with its own ranges), and
+— the load-bearing half — refusal of every pairing that has no valid meaning,
+because a knob that writes cleanly and does nothing reads in the viewer exactly
+like a working setting.
 
 Every refusal is parametrized as a ``(kwargs, error_pattern, test_id)`` triple in
 the style of ``test_mesh_validation.py``; each was verified to fail before the
@@ -21,11 +22,17 @@ from luxar import Dimensions, LuxarZarrCompiler
 from luxar.core.group.compositing import MESH_ONLY_APPEARANCE_ATTRS
 from luxar.validation.types import (
     HOUSE_SHADER_ONLY_ATTRS,
+    IOR_MAX,
+    IOR_MIN,
     MESH_MATERIALS,
     PHYSICAL_MATERIAL_ATTRS,
     PHYSICAL_MATERIAL_FRACTION_ATTRS,
+    PHYSICAL_TRANSMISSION_ATTRS,
+    PHYSICAL_TRANSMISSION_DEPENDENT_ATTRS,
     validate_hex_color,
+    validate_ior,
     validate_mesh_material,
+    validate_non_negative_finite,
 )
 
 # A welded tetrahedron: the smallest closed surface, 4 vertices / 4 faces.
@@ -48,8 +55,15 @@ _N = np.array(
 def test_vocabulary_is_closed_and_registered_everywhere() -> None:
     """The knob set is one frozenset, and every key is refused on non-mesh nodes."""
     assert MESH_MATERIALS == ("luxar", "physical")
-    assert set(PHYSICAL_MATERIAL_FRACTION_ATTRS) | {"sheen_color"} == set(
-        PHYSICAL_MATERIAL_ATTRS
+    assert (
+        set(PHYSICAL_MATERIAL_FRACTION_ATTRS)
+        | {"sheen_color"}
+        | PHYSICAL_TRANSMISSION_ATTRS
+    ) == set(PHYSICAL_MATERIAL_ATTRS)
+    assert "transmission" in PHYSICAL_MATERIAL_FRACTION_ATTRS
+    assert PHYSICAL_TRANSMISSION_DEPENDENT_ATTRS < PHYSICAL_TRANSMISSION_ATTRS
+    assert {"transmission", "ior"} == (
+        PHYSICAL_TRANSMISSION_ATTRS - PHYSICAL_TRANSMISSION_DEPENDENT_ATTRS
     )
     assert HOUSE_SHADER_ONLY_ATTRS == {
         "ambient",
@@ -58,15 +72,8 @@ def test_vocabulary_is_closed_and_registered_everywhere() -> None:
         "shininess",
     }
     assert PHYSICAL_MATERIAL_ATTRS | {"material"} <= MESH_ONLY_APPEARANCE_ATTRS
-    # Phase 2+ knobs are deliberately not here (spec §3.4).
-    for later in (
-        "transmission",
-        "ior",
-        "thickness",
-        "attenuation_color",
-        "dispersion",
-    ):
-        assert later not in MESH_ONLY_APPEARANCE_ATTRS
+    # The Phase 2 glass family is in (spec §3.4); Phase 3 adds no authored knob.
+    assert PHYSICAL_TRANSMISSION_ATTRS <= MESH_ONLY_APPEARANCE_ATTRS
 
 
 @pytest.mark.parametrize("value", ["luxar", "physical"])
@@ -83,6 +90,30 @@ def test_validate_mesh_material_refuses_anything_else(value) -> None:
 @pytest.mark.parametrize("value", ["#ff4d6d", "#FFFFFF", "#000000", "#AbCdEf"])
 def test_validate_hex_color_accepts_six_digit_forms(value: str) -> None:
     assert validate_hex_color(value, "Sheen color") == value
+
+
+@pytest.mark.parametrize("value", [IOR_MIN, 1.5, 2.0, IOR_MAX, "1.33"])
+def test_validate_ior_accepts_three_s_range(value) -> None:
+    """Vacuum to diamond, inclusive; strings that parse are fine like every knob."""
+    assert validate_ior(value) == float(value)
+
+
+@pytest.mark.parametrize("value", [0.99, 2.34, 15, float("inf"), float("nan")])
+def test_validate_ior_refuses_outside_the_range(value) -> None:
+    with pytest.raises(ValueError, match=f"between {IOR_MIN} and {IOR_MAX}"):
+        validate_ior(value)
+
+
+def test_validate_non_negative_finite_admits_zero_but_not_below() -> None:
+    """``thickness=0`` is a thin-walled bubble and legal; negative and NaN are not."""
+    assert validate_non_negative_finite(0, "Thickness") == 0.0
+    assert validate_non_negative_finite(0.4, "Thickness") == 0.4
+    with pytest.raises(ValueError, match="at least 0"):
+        validate_non_negative_finite(-0.1, "Thickness")
+    with pytest.raises(ValueError, match="finite"):
+        validate_non_negative_finite(float("nan"), "Thickness")
+    with pytest.raises(TypeError, match="convertible to float"):
+        validate_non_negative_finite("thick", "Thickness")
 
 
 @pytest.mark.parametrize(
@@ -143,6 +174,47 @@ def test_physical_attrs_are_written_only_when_set(tmp_path) -> None:
     assert attrs["shading"] == "flat"
     assert "iridescence" not in attrs
     assert "material" not in root["plain"].attrs
+
+
+def test_glass_family_round_trips_and_is_written_only_when_set(tmp_path) -> None:
+    """Phase 2: the six glass knobs reach zarr as authored; absent ones stay absent."""
+    store = tmp_path / "glass.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        amber = scene.add_mesh(
+            "amber",
+            _V,
+            _F,
+            normals=_N,
+            normal_dims=[0, 1, 2],
+            material="physical",
+            roughness=0.05,
+            transmission=1.0,
+            ior=1.5,
+            thickness=0.4,
+            attenuation_color="#f6d148",
+            attenuation_distance=0.3,
+            dispersion=0.5,
+        )
+        assert amber.attrs["transmission"] == 1.0
+        assert amber.attrs["attenuation_color"] == "#f6d148"
+        # `ior` alone is meaningful (it sets an opaque surface's reflectance) …
+        metal = scene.add_mesh("metal", _V, _F, material="physical", ior=2.0)
+        assert metal.attrs["ior"] == 2.0
+        assert "transmission" not in metal.attrs
+        # … and `thickness=0` is a legal thin wall once transmission is on.
+        bubble = scene.add_mesh(
+            "bubble", _V, _F, material="physical", transmission=0.9, thickness=0
+        )
+        assert bubble.attrs["thickness"] == 0.0
+
+    root = zarr.open_group(str(store), mode="r")
+    attrs = dict(root["amber"].attrs)
+    for key in PHYSICAL_TRANSMISSION_ATTRS:
+        assert key in attrs, key
+    assert attrs["ior"] == 1.5
+    assert attrs["dispersion"] == 0.5
+    assert "thickness" not in root["metal"].attrs
 
 
 def test_physical_keeps_smooth_and_flat_shading(tmp_path) -> None:
@@ -265,6 +337,56 @@ def test_physical_knob_survives_post_hoc_write_through_on_a_mesh(tmp_path) -> No
             dict(material="physical", shading="smoooth"),
             "shading must be one of",
             "a shading typo is still the writer's diagnostic",
+        ),
+        (
+            dict(material="physical", transmission=1.2),
+            "Transmission must be finite and between 0.0 and 1.0",
+            "transmission is a fraction",
+        ),
+        (
+            dict(material="physical", ior=3.0),
+            f"Ior must be finite and between {IOR_MIN} and {IOR_MAX}",
+            "ior outside three's range",
+        ),
+        (
+            dict(material="physical", transmission=1.0, attenuation_distance=0),
+            "Attenuation distance must be finite and greater than 0",
+            "attenuation distance divides, so zero is refused",
+        ),
+        (
+            dict(material="physical", transmission=1.0, thickness=-1),
+            "Thickness must be finite and at least 0",
+            "negative thickness",
+        ),
+        (
+            dict(material="physical", transmission=1.0, attenuation_color="amber"),
+            "Attenuation color must be a '#rrggbb' hex colour string",
+            "attenuation colour spelling",
+        ),
+        (
+            dict(material="physical", thickness=0.4),
+            r"\['thickness'\] but no transmission above zero",
+            "glass knob without transmission",
+        ),
+        (
+            dict(material="physical", transmission=0.0, dispersion=0.5),
+            r"\['dispersion'\] but no transmission above zero",
+            "glass knob with transmission explicitly zero",
+        ),
+        (
+            dict(
+                material="physical",
+                attenuation_color="#f6d148",
+                attenuation_distance=0.3,
+                dispersion=0.2,
+            ),
+            r"\['attenuation_color', 'attenuation_distance', 'dispersion'\]",
+            "every dead glass knob is named",
+        ),
+        (
+            dict(transmission=1.0),
+            r"\['transmission'\].*material='physical'",
+            "transmission without the opt-in",
         ),
     ],
 )

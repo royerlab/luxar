@@ -56,7 +56,9 @@ from .types import (
     PHYSICAL_MATERIAL_FRACTION_ATTRS,
     validate_appearance_fraction,
     validate_hex_color,
+    validate_ior,
     validate_mesh_material,
+    validate_non_negative_finite,
     validate_positive_finite,
     validate_texture_filter,
     validate_texture_wrap,
@@ -771,12 +773,13 @@ KNOWN_RENDER_ATTRS: FrozenSet[str] = frozenset(
         # in the "known render attributes" hint a typo prints.
         "join",
         "layer",
-        # Mesh-only material family (``luxar`` | ``physical``) and the Phase 1
-        # physically based knobs it unlocks. Advertised for the same reason as
-        # the shading controls below: real knobs an author types, so a typo must
-        # see them in the hint. The adder cross-checks them against each other
-        # (a physical knob needs ``material="physical"``; a physical mesh
-        # refuses the house-shader knobs) — see ``adders/mesh.py``.
+        # Mesh-only material family (``luxar`` | ``physical``) and the physically
+        # based knobs it unlocks (Phase 1 surface knobs, Phase 2 glass family).
+        # Advertised for the same reason as the shading controls below: real
+        # knobs an author types, so a typo must see them in the hint. The adder
+        # cross-checks them against each other (a physical knob needs
+        # ``material="physical"``; a physical mesh refuses the house-shader
+        # knobs; the glass knobs need ``transmission > 0``) — see ``adders/mesh.py``.
         "material",
         "roughness",
         "metalness",
@@ -785,6 +788,12 @@ KNOWN_RENDER_ATTRS: FrozenSet[str] = frozenset(
         "iridescence",
         "sheen",
         "sheen_color",
+        "transmission",
+        "ior",
+        "thickness",
+        "attenuation_color",
+        "attenuation_distance",
+        "dispersion",
         "offset",
         "opacity",
         # Mesh-only shading controls. Advertised for the same reason as
@@ -1024,6 +1033,17 @@ _MESH_APPEARANCE_VALIDATORS = {
         for key in PHYSICAL_MATERIAL_FRACTION_ATTRS
     },
     "sheen_color": (validate_hex_color, "Sheen color"),
+    # The Phase 2 glass family (spec §3.4). ``ior`` has three's own bounds;
+    # ``thickness`` is a length that may be zero (a thin-walled bubble);
+    # ``attenuation_distance`` is a length that may NOT be zero (it divides);
+    # ``dispersion`` is unbounded above in three but a value past 1 is a typo
+    # for anything that is not a demonstration — still, it is a positive
+    # quantity rather than a fraction, so it is only required to be >= 0.
+    "ior": (validate_ior, "Ior"),
+    "thickness": (validate_non_negative_finite, "Thickness"),
+    "attenuation_color": (validate_hex_color, "Attenuation color"),
+    "attenuation_distance": (validate_positive_finite, "Attenuation distance"),
+    "dispersion": (validate_non_negative_finite, "Dispersion"),
 }
 
 

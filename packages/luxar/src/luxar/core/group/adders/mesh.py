@@ -48,6 +48,7 @@ from arbol import aprint, asection
 from ....validation.types import (
     HOUSE_SHADER_ONLY_ATTRS,
     PHYSICAL_MATERIAL_ATTRS,
+    PHYSICAL_TRANSMISSION_DEPENDENT_ATTRS,
     validate_mesh_material,
 )
 from ....validation.writing import (
@@ -208,6 +209,12 @@ def _reject_physical_material_conflicts(
       flat-versus-smooth normals is a property of any lit surface and maps onto
       three's ``flatShading`` — and neither is ``alpha_cutoff``, which maps onto
       ``alphaTest``.
+    - The glass knobs that only act inside three's transmission block
+      (:data:`PHYSICAL_TRANSMISSION_DEPENDENT_ATTRS`: ``thickness``,
+      ``attenuation_color``, ``attenuation_distance``, ``dispersion``) without a
+      ``transmission`` above zero are dead metadata too — three compiles them
+      under ``USE_TRANSMISSION`` — so ``thickness=0.4`` on an opaque metal is
+      refused. ``ior`` is exempt: it also sets an opaque surface's reflectance.
 
     Runs BEFORE the shared attrs gate so the reason a caller sees is the pairing,
     not a downstream symptom, and validates the family value first so a typo in
@@ -236,8 +243,22 @@ def _reject_physical_material_conflicts(
             "those parameterise the house shader's view-anchored key "
             "(MESH_NODE_SPEC.md §6.2), which a physical material does not run. Use "
             "roughness/metalness/clearcoat/clearcoat_roughness/iridescence/sheen/"
-            "sheen_color instead, or drop material='physical'."
+            "sheen_color (and the transmission family) instead, or drop "
+            "material='physical'."
         )
+    glass_only = sorted(PHYSICAL_TRANSMISSION_DEPENDENT_ATTRS & attrs.keys())
+    if glass_only:
+        transmission = attrs.get("transmission")
+        # A non-numeric transmission is the writer's diagnostic, not this one's.
+        transmitting = isinstance(transmission, (int, float)) and transmission > 0
+        if not transmitting:
+            raise ValueError(
+                f"Cannot add mesh '{name}' with material='physical' and {glass_only} "
+                "but no transmission above zero: three evaluates thickness, "
+                "attenuation and dispersion only inside its transmission path, so "
+                "they would be written and silently ignored. Pass transmission=... "
+                "(a fraction in (0, 1]) alongside them, or drop them."
+            )
     if "blending_mode" in attrs:
         raise ValueError(
             f"Cannot add mesh '{name}' with material='physical' and blending_mode="

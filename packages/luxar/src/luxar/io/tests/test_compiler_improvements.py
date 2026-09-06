@@ -2014,6 +2014,9 @@ class TestUnknownRenderAttrRejected:
             ("material", "physical"),
             ("roughness", 0.4),
             ("sheen_color", "#ff0000"),
+            ("transmission", 1.0),
+            ("ior", 1.5),
+            ("attenuation_color", "#f6d148"),
         ],
     )
     @pytest.mark.parametrize("node_type", ["points", "lines", "gsplats", "group"])
@@ -2063,6 +2066,7 @@ class TestUnknownRenderAttrRejected:
             ("alpha_cutoff", 0.2),
             ("material", "physical"),
             ("clearcoat", 1.0),
+            ("thickness", 0.4),
         ],
     )
     @pytest.mark.parametrize("node_type", ["points", "lines", "gsplats", "group"])
