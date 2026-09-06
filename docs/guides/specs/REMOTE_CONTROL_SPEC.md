@@ -267,6 +267,24 @@ scene.viewer_config.ui.kiosk = KioskConfig(
 block. Kiosk mode reuses `setInputEnabled(false)` and the existing panel
 visibility flags; only the watchdog is new.
 
+**Launching the display.** The big screen runs Chrome in kiosk mode; these flags
+are the operator's side of the contract (the scene-side block above cannot set
+them):
+
+```bash
+google-chrome --kiosk --noerrdialogs --disable-infobars \
+  --disable-features=TranslateUI \
+  --autoplay-policy=no-user-gesture-required \
+  --disable-session-crashed-bubble \
+  "http://<host>:5173/?src=http://<host>:8005&kiosk"
+```
+
+`--autoplay-policy=no-user-gesture-required` matters twice: it lets the
+`overlay_video` clips start without a tap, and it lets the sound layer
+(`SOUND_SPEC.md` §4.4) start its `AudioContext` on load instead of showing its
+"Tap to enable sound" gate. Muted video autoplays under the default policy too,
+so a display without the flag still shows the turntables; only sound needs it.
+
 ## 5. Phase D — conversational agent (design)
 
 Out of Luxar's scope except for the tool surface. The agent (OpenAI Realtime

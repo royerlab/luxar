@@ -302,7 +302,12 @@ export function compositeImageOverlay(
     // `size` is [vw, vh] fractions — the units the manager writes onto
     // the <img> style.
     drawW = config.size[0] * metrics.vw;
-    drawH = config.size[1] * metrics.vh;
+    // A null height means "keep the media's aspect": derive it from the
+    // element's natural dimensions, falling back to square.
+    drawH =
+      config.size[1] == null
+        ? drawW * (img.naturalWidth > 0 ? img.naturalHeight / img.naturalWidth : 1)
+        : config.size[1] * metrics.vh;
   } else {
     // No configured size: the <img> lays out at its natural size in CSS
     // pixels, so the capture has to scale those into capture pixels.

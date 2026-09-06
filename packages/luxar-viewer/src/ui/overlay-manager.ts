@@ -190,6 +190,8 @@ export class OverlayManager {
   private overlayElements = new Map<string, HTMLDivElement>();
   private configs = new Map<string, OverlayConfig>();
   private objectUrls = new Set<string>();
+  /** Video overlays by name, so visibility can start/stop playback. */
+  private videoElements = new Map<string, HTMLVideoElement>();
   private baseUrl = '';
   private readFile?: OverlayFileReader;
   private boundDimChangeHandler: () => void;
@@ -305,6 +307,7 @@ export class OverlayManager {
 
       const visible = !this.globallyHidden && this.isOverlayVisible(config);
       const isFade = config.transition === 'fade';
+      if (config.type === 'overlay_video') this.syncVideoPlayback(name, visible);
 
       if (isFade) {
         // Fade overlays use CSS opacity transition — never display:none
@@ -457,6 +460,13 @@ export class OverlayManager {
   dispose(): void {
     sceneDimsManager.removeListener(this.boundDimChangeHandler);
 
+    for (const video of this.videoElements.values()) {
+      // Stop decoding and release the media resource before the element goes.
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+    }
+    this.videoElements.clear();
     for (const el of this.overlayElements.values()) {
       el.remove();
     }
@@ -472,16 +482,21 @@ export class OverlayManager {
 
   // ---------------------------------------------------------------- private
 
+  /**
+   * For a zipped store, read the overlay's media payload (image or video) so
+   * it can be served from a blob URL; the poster of a video is not read (the
+   * video itself is what plays there). Plain HTTP stores stream by URL instead.
+   */
   private async readArchivedImage(config: OverlayConfig): Promise<Uint8Array | undefined> {
-    if (
-      !isZippedStoreUrl(this.baseUrl) ||
-      config.type !== 'overlay_image' ||
-      !config.image_file ||
-      !this.readFile
-    ) {
-      return undefined;
-    }
-    return this.readFile(`/overlays/${config.name}/${config.image_file}`);
+    if (!isZippedStoreUrl(this.baseUrl) || !this.readFile) return undefined;
+    const file =
+      config.type === 'overlay_image'
+        ? config.image_file
+        : config.type === 'overlay_video'
+          ? config.video_file
+          : undefined;
+    if (!file) return undefined;
+    return this.readFile(`/overlays/${config.name}/${file}`);
   }
 
   /** Create a DOM element for a single overlay. */
@@ -526,12 +541,92 @@ export class OverlayManager {
       case 'overlay_image':
         this.createImageContent(el, config, archivedImage);
         break;
+      case 'overlay_video':
+        this.createVideoContent(el, config, archivedImage);
+        break;
       case 'overlay_html':
         this.createHtmlContent(el, config);
         break;
     }
 
     return el;
+  }
+
+  /**
+   * Create video overlay content: a muted, looping `<video>` (the only autoplay
+   * a browser permits without a gesture), served from a blob URL for zipped
+   * stores or by URL otherwise. Playback is tied to visibility in
+   * `updateVisibility` so a hidden turntable does not keep decoding.
+   */
+  private createVideoContent(
+    el: HTMLDivElement,
+    config: OverlayConfig,
+    archivedVideo?: Uint8Array
+  ): void {
+    el.classList.add('luxar-overlay--video');
+    if (!config.video_file) return;
+
+    const video = document.createElement('video');
+    video.muted = config.muted !== false;
+    video.loop = config.loop !== false;
+    video.autoplay = config.autoplay !== false;
+    video.playsInline = true;
+    video.preload = 'auto';
+    video.disablePictureInPicture = true;
+    if (typeof config.playback_rate === 'number' && config.playback_rate > 0) {
+      video.playbackRate = config.playback_rate;
+    }
+    const base = `${this.baseUrl}overlays/${config.name}/`;
+
+    if (isZippedStoreUrl(this.baseUrl)) {
+      if (!archivedVideo) {
+        log.warning(
+          Modules.UI,
+          `Video overlay "${config.name}" is missing /overlays/${config.name}/${config.video_file} — skipping`
+        );
+        return;
+      }
+      const blobBytes = Uint8Array.from(archivedVideo);
+      const objectUrl = URL.createObjectURL(
+        new Blob([blobBytes], { type: detectMimeType(blobBytes) })
+      );
+      this.objectUrls.add(objectUrl);
+      video.src = objectUrl;
+    } else {
+      video.src = `${base}${config.video_file}`;
+      if (config.poster_file) video.poster = `${base}${config.poster_file}`;
+      video.onerror = () => {
+        log.warning(
+          Modules.UI,
+          `Video overlay "${config.name}" failed to load ${video.src} — showing poster only`
+        );
+      };
+    }
+
+    if (config.size) {
+      video.style.width = `${config.size[0] * 100}vw`;
+      // A null height keeps the media's own aspect ratio.
+      video.style.height = config.size[1] == null ? 'auto' : `${config.size[1] * 100}vh`;
+    }
+    video.style.display = 'block';
+    el.appendChild(video);
+    this.videoElements.set(config.name, video);
+  }
+
+  /** Start or stop a video overlay with its visibility (muted play needs no gesture). */
+  private syncVideoPlayback(name: string, visible: boolean): void {
+    const video = this.videoElements.get(name);
+    if (!video) return;
+    if (visible) {
+      if (video.paused && video.autoplay) {
+        const p = video.play();
+        // jsdom and gesture-gated browsers reject; a rejected promise must not
+        // surface as an unhandled rejection from a visibility update.
+        if (p && typeof p.catch === 'function') p.catch(() => {});
+      }
+    } else if (!video.paused) {
+      video.pause();
+    }
   }
 
   /** Apply common positioning, transitions, and interaction styles. */
@@ -705,10 +800,10 @@ export class OverlayManager {
       }
     }
 
-    // Size
+    // Size (a null height keeps the image's own aspect ratio)
     if (config.size) {
       img.style.width = `${config.size[0] * 100}vw`;
-      img.style.height = `${config.size[1] * 100}vh`;
+      img.style.height = config.size[1] == null ? 'auto' : `${config.size[1] * 100}vh`;
     }
 
     img.style.display = 'block';

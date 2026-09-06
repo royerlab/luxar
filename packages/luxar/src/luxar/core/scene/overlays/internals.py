@@ -39,11 +39,14 @@ def write_overlay(
     attrs: Dict[str, Any],
     image_data: Optional[bytes] = None,
     image_filename: Optional[str] = None,
+    files: Optional[Dict[str, bytes]] = None,
 ) -> Overlay:
-    """Write overlay metadata (and optional image) to the zarr store.
+    """Write overlay metadata (and optional opaque files) to the zarr store.
 
     Creates an ``overlays/{name}`` group with metadata in ``.zattrs``.
-    For image overlays, writes the image file directly to the zarr directory.
+    Image overlays pass their payload as ``image_data``/``image_filename``;
+    ``files`` carries any further opaque payloads by filename (a video and its
+    poster). Both land as plain files beside the group's metadata.
     """
     overlay_path = f"overlays/{name}"
 
@@ -51,13 +54,15 @@ def write_overlay(
     if scene._writer is not None:
         scene._writer.write_group(overlay_path, **attrs)
 
-        # Write raw image file if provided
+        payloads: Dict[str, bytes] = dict(files or {})
         if image_data is not None and image_filename is not None:
+            payloads[image_filename] = image_data
+        if payloads:
             store_path = Path(scene._writer.store_path)
-            image_dir = store_path / "overlays" / name
-            image_dir.mkdir(parents=True, exist_ok=True)
-            image_path = image_dir / image_filename
-            image_path.write_bytes(image_data)
+            overlay_dir = store_path / "overlays" / name
+            overlay_dir.mkdir(parents=True, exist_ok=True)
+            for filename, data in payloads.items():
+                (overlay_dir / filename).write_bytes(data)
 
     overlay = Overlay(
         name=name,

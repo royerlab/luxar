@@ -28,8 +28,8 @@ export const MAX_OVERLAY_HTML_CHARS = 64 * 1024;
 export interface OverlayConfig {
   /** Overlay name (zarr group name) */
   name: string;
-  /** Overlay type: 'overlay_text', 'overlay_image', 'overlay_html' */
-  type: 'overlay_text' | 'overlay_image' | 'overlay_html';
+  /** Overlay type: 'overlay_text', 'overlay_image', 'overlay_video', 'overlay_html' */
+  type: 'overlay_text' | 'overlay_image' | 'overlay_video' | 'overlay_html';
   /** Position in normalized screen coords [0, 1], top-left origin */
   position: [number, number];
   /** Opacity 0-1 */
@@ -70,7 +70,18 @@ export interface OverlayConfig {
 
   // --- Image-specific ---
   image_file?: string;
-  size?: [number, number];
+  /** [width, height] as viewport fractions; a null height keeps the media's own aspect. */
+  size?: [number, number | null];
+
+  // --- Video-specific ---
+  /** Opaque file beside the group: `video.webm` (VP9, optionally with alpha) or `video.mp4`. */
+  video_file?: string;
+  /** Optional still (PNG/JPEG/WebP) shown before play and where the video cannot decode. */
+  poster_file?: string;
+  loop?: boolean;
+  autoplay?: boolean;
+  muted?: boolean;
+  playback_rate?: number;
 
   // --- HTML-specific ---
   html?: string;

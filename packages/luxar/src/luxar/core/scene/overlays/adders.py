@@ -166,6 +166,94 @@ def add_image_impl(
     return overlay
 
 
+def add_video_impl(
+    scene: "Scene",
+    video: Any,
+    position: Tuple[float, float],
+    *,
+    name: Optional[str] = None,
+    size: Optional[Tuple[float, Optional[float]]] = None,
+    opacity: float = 1.0,
+    anchor: str = "top-left",
+    blend_mode: str = "normal",
+    loop: bool = True,
+    autoplay: bool = True,
+    muted: bool = True,
+    playback_rate: float = 1.0,
+    poster: Any = None,
+    visible_range: Optional[Dict[str, Union[float, Tuple[float, float]]]] = None,
+    transition: str = "none",
+    transition_duration: float = 0.3,
+    interactive: bool = False,
+) -> Overlay:
+    from ....validation.overlays import (
+        validate_anchor,
+        validate_image_input,
+        validate_position,
+        validate_transition,
+        validate_video_input,
+        validate_visible_range,
+    )
+    from ....validation.overlays import (
+        validate_blend_mode as validate_overlay_blend_mode,
+    )
+
+    name = next_overlay_name(scene, name)
+    position = validate_position(position)
+    validate_anchor(anchor)
+    validate_overlay_blend_mode(blend_mode)
+    validate_transition(transition)
+    validated_range = validate_visible_range(visible_range, scene._dimensions.names)
+    if not (0.0 < float(playback_rate) <= 16.0):
+        raise ValueError(f"playback_rate must be in (0, 16], got {playback_rate}")
+    if not muted and autoplay:
+        # Browsers refuse un-muted autoplay without a user gesture; a video that
+        # never starts is worse than one that starts silent.
+        raise ValueError("autoplay=True requires muted=True (browser autoplay policy)")
+    if size is not None:
+        if len(size) != 2 or size[0] is None or size[0] <= 0:
+            raise ValueError(
+                f"size must be (width, height-or-None) with width > 0, got {size}"
+            )
+        if size[1] is not None and size[1] <= 0:
+            raise ValueError(f"size height must be > 0 or None, got {size[1]}")
+
+    video_bytes, fmt = validate_video_input(video)
+    video_filename = f"video.{fmt}"
+    files: Dict[str, bytes] = {video_filename: video_bytes}
+
+    attrs: Dict[str, Any] = {
+        "type": "overlay_video",
+        "position": list(position),
+        "video_file": video_filename,
+        "loop": bool(loop),
+        "autoplay": bool(autoplay),
+        "muted": bool(muted),
+        "playback_rate": float(playback_rate),
+        "opacity": float(opacity),
+        "anchor": anchor,
+        "blend_mode": blend_mode,
+        "transition": transition,
+        "transition_duration": float(transition_duration),
+        "interactive": bool(interactive),
+        "z_index": len(scene._overlays),
+    }
+    if poster is not None:
+        poster_bytes, poster_fmt = validate_image_input(poster)
+        poster_filename = f"poster.{poster_fmt}"
+        files[poster_filename] = poster_bytes
+        attrs["poster_file"] = poster_filename
+    if size is not None:
+        # A None height keeps the video's own aspect ratio (CSS height:auto).
+        attrs["size"] = [float(size[0]), None if size[1] is None else float(size[1])]
+    if validated_range is not None:
+        attrs["visible_range"] = validated_range
+
+    overlay = write_overlay(scene, name, "overlay_video", position, attrs, files=files)
+    aprint(f"✓ Video overlay '{name}' added at ({position[0]:.2f}, {position[1]:.2f})")
+    return overlay
+
+
 def add_html_impl(
     scene: "Scene",
     html: str,

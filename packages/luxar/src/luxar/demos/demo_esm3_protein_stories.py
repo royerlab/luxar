@@ -57,8 +57,8 @@ DEMO_META = {
         "gpu": "none",
         "local_data": None,
     },
-    # Reads the base demo's cache; never writes one of its own.
-    "caches": ["esm3_swissprot"],
+    # Reads the base demo's cache; adds its own for the PDB turntables.
+    "caches": ["esm3_swissprot", "pdb_turntables"],
     "outputs": ["esm3_protein_stories"],
     "citation": {
         "short": "UniProt/Swiss-Prot; embeddings by EvolutionaryScale ESM C, 2024",
@@ -82,6 +82,7 @@ from luxar.core.viewer_config import CameraConfig, ViewerConfig, Waypoint
 from luxar.demos import add_demo_caption, launch_viewer
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG, pull_in
 from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
+from luxar.demos._pdb_turntable import TurntableAssets, render_turntables
 from luxar.demos.demo_esm3_protein_landscape import (
     TAXON_COLORS,
     _linkable_accessions,
@@ -125,6 +126,8 @@ class Story:
     min_distance: float = 5.0
     flight_ms: int = 2500
     tags: tuple[str, ...] = field(default_factory=tuple)
+    #: Representative PDB entry rendered as the left-hand turntable ("" = none).
+    pdb_id: str = ""
 
 
 STORIES: tuple[Story, ...] = (
@@ -163,6 +166,7 @@ STORIES: tuple[Story, ...] = (
             "in Parkinson's disease — is still debated."
         ),
         tags=("blood", "medicine", "structure"),
+        pdb_id="2HHB",
     ),
     Story(
         key="Photosystem II",
@@ -203,6 +207,7 @@ STORIES: tuple[Story, ...] = (
             "planet wait so long to change?"
         ),
         tags=("photosynthesis", "deep time"),
+        pdb_id="3WU2",
     ),
     Story(
         key="Hsp70",
@@ -237,6 +242,7 @@ STORIES: tuple[Story, ...] = (
             "so hard to target?"
         ),
         tags=("chaperone", "evolution"),
+        pdb_id="2KHO",
     ),
     Story(
         key="Viral surface proteins",
@@ -278,6 +284,7 @@ STORIES: tuple[Story, ...] = (
             "on this map, and would they form continents of their own?"
         ),
         tags=("virology", "pandemics", "convergence"),
+        pdb_id="1RUZ",
     ),
     Story(
         key="Prion protein",
@@ -313,6 +320,7 @@ STORIES: tuple[Story, ...] = (
             "mice without it live almost normal lives. What is it really for?"
         ),
         tags=("neuroscience", "mystery"),
+        pdb_id="1QLX",
     ),
     Story(
         key="ATP synthase",
@@ -345,6 +353,7 @@ STORIES: tuple[Story, ...] = (
             "lost as heat. How a protein manages that is still debated."
         ),
         tags=("energy", "structure"),
+        pdb_id="1BMF",
     ),
     Story(
         key="RuBisCO",
@@ -378,6 +387,7 @@ STORIES: tuple[Story, ...] = (
             "be climbed, or has nobody — nature or engineer — found the path?"
         ),
         tags=("photosynthesis", "enzyme"),
+        pdb_id="8RUC",
     ),
     Story(
         # No '/' — the key doubles as a node name.
@@ -413,6 +423,7 @@ STORIES: tuple[Story, ...] = (
             "or testing many sites at once — is still argued over."
         ),
         tags=("DNA repair", "cancer"),
+        pdb_id="3CMW",
     ),
     Story(
         key="Insulin",
@@ -448,6 +459,7 @@ STORIES: tuple[Story, ...] = (
             "for ageing — and does the dial exist in us?"
         ),
         tags=("medicine", "history"),
+        pdb_id="4INS",
     ),
     Story(
         key="Cone-snail toxins",
@@ -484,6 +496,7 @@ STORIES: tuple[Story, ...] = (
             "but the molecular engine of that speed is still being worked out."
         ),
         tags=("venom", "neuroscience", "medicine"),
+        pdb_id="1OMG",
     ),
 )
 
@@ -527,6 +540,14 @@ SPHERE_MIN_RADIUS = 0.35
 SPHERE_ALPHA = 0.035
 SPHERE_SUBDIVISIONS = 3  # icosphere: 642 vertices, 1280 faces
 SPHERE_LAYER_ORDER = 5  # backdrop 0 < sphere < highlight 10
+
+# Left-hand turntable: a representative PDB structure per story, ray-traced by
+# PyMOL into a transparent 60 fps WebM (see `_pdb_turntable`). Sits at panel
+# height, clear of the activity rail; the caption goes just above it.
+TURNTABLE_POSITION = (0.06, 0.5)
+TURNTABLE_WIDTH = 0.26  # viewport-width fraction; height follows the square video
+TURNTABLE_CAPTION_POSITION = (0.06, 0.26)
+TURNTABLE_CACHE = "pdb_turntables"
 
 
 # =============================================================================
@@ -774,12 +795,29 @@ def build_stories_scene(
     *,
     stories: tuple[Story, ...] = STORIES,
     auto_rotate: bool = True,
+    turntables: bool = True,
+    turntable_cache: Path | None = None,
 ) -> int:
     """Write the stories scene. Returns the number of proteins in the backdrop."""
     n = len(positions)
     names = meta["names"]
     organisms = meta["organisms"]
     kingdoms = meta["kingdoms"]
+
+    # Representative structures, ray-traced once and cached. PyMOL is a
+    # special-case dependency (not pip-installable): when it or ffmpeg is
+    # missing this prints the install hint and the scene simply has no
+    # turntables. `--no-turntables` skips the step outright.
+    assets: dict[str, TurntableAssets] = {}
+    if turntables:
+        with asection("Rendering PDB turntables"):
+            cache = turntable_cache or (
+                Path.home() / ".cache" / "luxar" / TURNTABLE_CACHE
+            )
+            assets = render_turntables([s.pdb_id for s in stories if s.pdb_id], cache)
+            aprint(
+                f"{len(assets)} of {sum(1 for s in stories if s.pdb_id)} turntables ready"
+            )
 
     with asection("Resolving stories against the map"):
         clusters = [
@@ -1001,6 +1039,35 @@ def build_stories_scene(
                     transition_duration=0.35,
                 )
 
+            # Left: the representative structure turning at 60 fps, transparent
+            # over the map, with its PDB caption above. Hidden turntables are
+            # paused by the viewer, so ten videos cost one decode at a time.
+            for k, s in enumerate(stories, start=1):
+                a = assets.get(s.pdb_id.upper()) if s.pdb_id else None
+                if a is None:
+                    continue
+                scene.add_video(
+                    a.webm,
+                    position=TURNTABLE_POSITION,
+                    anchor="center-left",
+                    size=(TURNTABLE_WIDTH, None),
+                    poster=a.poster,
+                    visible_range={STORY_DIM: k},
+                    transition="fade",
+                    transition_duration=0.35,
+                )
+                scene.add_text(
+                    f"PDB {a.pdb_id} · {a.title}",
+                    position=TURNTABLE_CAPTION_POSITION,
+                    anchor="bottom-left",
+                    font_size=0.013,
+                    width=TURNTABLE_WIDTH,
+                    color="rgba(255,255,255,0.7)",
+                    visible_range={STORY_DIM: k},
+                    transition="fade",
+                    transition_duration=0.35,
+                )
+
             scene.add_text(
                 "← [  •  ] →   step through the stories  (press 1 "
                 "first to select the story slider)",
@@ -1032,6 +1099,7 @@ def main() -> None:
     aprint("=" * 70)
 
     auto_rotate = "--no-auto-rotate" not in sys.argv
+    turntables = "--no-turntables" not in sys.argv
     cache_dir = Path.home() / ".cache" / "luxar" / "esm3_swissprot"
     try:
         positions, meta = load_landscape_cache(cache_dir)
@@ -1042,13 +1110,17 @@ def main() -> None:
 
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "esm3_protein_stories.luxar.zarr"
-        n = build_stories_scene(output_path, positions, meta, auto_rotate=auto_rotate)
+        n = build_stories_scene(
+            output_path, positions, meta, auto_rotate=auto_rotate, turntables=turntables
+        )
         aprint(f"Dataset generated at {output_path} ({n:,} proteins)")
         return
 
     with tempfile.TemporaryDirectory(prefix="luxar_esm3_stories_") as tmpdir:
         output_path = Path(tmpdir) / "esm3_protein_stories.luxar.zarr"
-        n = build_stories_scene(output_path, positions, meta, auto_rotate=auto_rotate)
+        n = build_stories_scene(
+            output_path, positions, meta, auto_rotate=auto_rotate, turntables=turntables
+        )
 
         aprint("")
         aprint("=" * 70)

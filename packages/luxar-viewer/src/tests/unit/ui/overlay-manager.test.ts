@@ -246,6 +246,98 @@ describe('OverlayManager.loadOverlays', () => {
     expect(revokeObjectURLSpy).toHaveBeenCalledExactlyOnceWith('blob:overlay-image');
   });
 
+  it('renders a video overlay as a muted looping <video> tied to visibility', async () => {
+    // jsdom does not implement media playback; observe the calls instead.
+    const playSpy = vi
+      .spyOn(HTMLMediaElement.prototype, 'play')
+      .mockImplementation(() => Promise.resolve());
+    const pauseSpy = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    const pausedSpy = vi.spyOn(HTMLMediaElement.prototype, 'paused', 'get');
+    pausedSpy.mockReturnValue(true);
+
+    // The dims manager is mocked in this file: drive its state directly and
+    // re-run the visibility pass the real listener would trigger.
+    const setStory = (value: number): void => {
+      mockDimsState.current = {
+        ndim: 2,
+        currentStep: [0, value],
+        displayed: [0],
+        metadata: [
+          { name: 'x', unit: '', scale: 1 },
+          { name: 'story', unit: '', scale: 1 },
+        ],
+      };
+      manager.updateVisibility();
+    };
+    setStory(0);
+
+    await manager.loadOverlays(
+      [
+        makeTextOverlay({
+          name: 'turntable',
+          type: 'overlay_video',
+          video_file: 'video.webm',
+          poster_file: 'poster.png',
+          size: [0.26, null],
+          playback_rate: 1.5,
+          visible_range: { story: 2 },
+        }),
+      ],
+      'https://example.com/scene.luxar.zarr/'
+    );
+
+    const video = document.querySelector('.luxar-overlay--video video') as HTMLVideoElement;
+    expect(video).not.toBeNull();
+    expect(video.muted).toBe(true);
+    expect(video.loop).toBe(true);
+    expect(video.autoplay).toBe(true);
+    expect(video.playbackRate).toBe(1.5);
+    expect(video.src).toBe('https://example.com/scene.luxar.zarr/overlays/turntable/video.webm');
+    expect(video.poster).toBe('https://example.com/scene.luxar.zarr/overlays/turntable/poster.png');
+    expect(video.style.width).toBe('26vw');
+    expect(video.style.height).toBe('auto');
+
+    // Hidden at story 0: never asked to play.
+    expect(playSpy).not.toHaveBeenCalled();
+
+    // Story 2 shows it → play(); leaving → pause().
+    setStory(2);
+    expect(playSpy).toHaveBeenCalledTimes(1);
+    pausedSpy.mockReturnValue(false);
+    setStory(0);
+    expect(pauseSpy).toHaveBeenCalledTimes(1);
+
+    manager.dispose();
+    mockDimsState.current = null;
+    playSpy.mockRestore();
+    pauseSpy.mockRestore();
+    pausedSpy.mockRestore();
+  });
+
+  it('serves a zipped-store video from a blob URL with the sniffed video MIME type', async () => {
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(() => Promise.resolve());
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    const webm = new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 0, 0, 0, 0]);
+    const readFile = vi.fn().mockResolvedValue(webm);
+    const createObjectURLSpy = vi
+      .spyOn(URL, 'createObjectURL')
+      .mockReturnValue('blob:overlay-video');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+
+    await manager.loadOverlays(
+      [makeTextOverlay({ name: 'clip', type: 'overlay_video', video_file: 'video.webm' })],
+      'https://example.com/scene.luxar.zarr.zip',
+      readFile
+    );
+
+    expect(readFile).toHaveBeenCalledExactlyOnceWith('/overlays/clip/video.webm');
+    const blob = createObjectURLSpy.mock.calls[0][0] as Blob;
+    expect(blob.type).toBe('video/webm');
+    const video = document.querySelector('.luxar-overlay--video video') as HTMLVideoElement;
+    expect(video.src).toBe('blob:overlay-video');
+    manager.dispose();
+  });
+
   it('warns and omits zipped image content when the archive member is missing', async () => {
     const warningSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
     const readFile = vi.fn().mockResolvedValue(undefined);

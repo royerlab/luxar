@@ -21,7 +21,8 @@ class Overlay:
 
     Attributes:
         name: Unique name of the overlay (auto-generated or user-specified)
-        overlay_type: One of 'overlay_text', 'overlay_image', 'overlay_html'
+        overlay_type: One of 'overlay_text', 'overlay_image', 'overlay_video',
+            'overlay_html'
         position: (x, y) in normalized screen coordinates [0, 1], top-left origin
         attrs: All overlay attributes as written to zarr .zattrs
     """

@@ -399,10 +399,16 @@ and opacity control.
 
 ### Overlays (U)
 
-Screen-space annotations (text, images, HTML) positioned over the 3D canvas.
-Overlays are defined in the zarr scene by the Python API and rendered as HTML
-elements. Some overlays are dimension-aware: they appear or disappear as you
-navigate through dimensions. Press **U** to toggle all overlays on/off.
+Screen-space annotations (text, images, videos, HTML) positioned over the 3D
+canvas. Overlays are defined in the zarr scene by the Python API and rendered as
+HTML elements. Some overlays are dimension-aware: they appear or disappear as
+you navigate through dimensions. Press **U** to toggle all overlays on/off.
+
+Video overlays (`Scene.add_video`) are muted, looping clips stored inside the
+scene; a clip plays only while its dimension filter matches, so a story scene
+with one turntable per slot decodes one video at a time. A VP9 WebM with an
+alpha channel is drawn transparent over the data in Chrome and Firefox; Safari
+cannot decode it and shows the clip's poster image instead.
 
 ---
 

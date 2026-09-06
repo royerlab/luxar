@@ -70,7 +70,11 @@ scene.add_sound(
 )
 ```
 
-- **`sound` is a node type** alongside points / lines / gsplats / mesh. It has an
+- **`sound` is a node type** alongside points / lines / gsplats / mesh — in the
+  contract's `node_types` only, **not** in `geometry_types` / `loader_types`: it
+  is heard, not drawn, so it has no blending mode, element cap, LOD, picking or
+  bounds, none of the geometry tables get a row, and the viewer dispatches on
+  `type === 'sound'` alone (Phase 1 decision). It has an
   optional `positions` array `(K, ndim)` exactly like a points node: one row per
   place the source exists. The **slab rule** on hidden dimensions decides
   audibility — a source whose story coordinate matches the slice is live, others
@@ -82,8 +86,11 @@ scene.add_sound(
   toggling.
 - **`attach_to="<node name>"`** (Phase 2): the source follows the bounding-box
   centre of another node — "the cluster hums" without authoring coordinates.
-- **Clips** are opaque files inside the node group (`audio.mp3`), read with the
-  loader's opaque-file reader like overlay images. Formats: MP3 or AAC (`.m4a`);
+- **Clips** are opaque files inside the node group (`audio.mp3` / `audio.m4a`,
+  named by `attrs.audio_file`, written through the store-agnostic
+  `_zarr_compat.write_raw_bytes` rather than a filesystem path) and read with the
+  loader's opaque-file reader like overlay images. The clip bytes are part of
+  `content_hash` (`PAYLOAD_FILE_ATTRS` gains `audio_file`). Formats: MP3 or AAC (`.m4a`);
   Ogg/Opus is refused because Safari does not decode it. `duration_ms`, `format`
   and `sample_rate` are stamped by the writer (via `mutagen`/`soundfile` when
   available, else left absent).
