@@ -957,10 +957,10 @@ the checked-out dev commit. The window therefore supplies internally consistent
 dev-tip coverage; `repair-cancelled-push-checks` supplies the promotion value by
 repairing cancelled push contexts that are attached to dev commits.
 
-Scheduled runs sit in their own `concurrency` group. While `dev` is the default,
-they share `refs/heads/dev` with merge-triggered runs; after the default flips,
-their event ref becomes `refs/heads/main`, but `github.event_name` still keeps the
-groups separate. Under one shared group `cancel-in-progress` let whichever started
+Scheduled runs sit in their own `concurrency` group. While `dev` was the default,
+their event ref was `refs/heads/dev`, the same ref as merge-triggered runs. Their
+event ref is now `refs/heads/main`, but `github.event_name` still keeps the groups
+separate. Under one shared group `cancel-in-progress` let whichever started
 second cancel the other. A merge landing mid-schedule killed the scheduled run; a
 cron firing over an in-flight merge killed that merge's push run, which is the only
 place the new `dev` commit gets the full matrix at all. Scheduled runs still share a
@@ -1014,8 +1014,8 @@ obsidian-routed legs alongside the next push run, so the two-candidate cap permi
 to eight per window. Do not widen that cap without re-measuring queue pressure.
 Reruns execute the workflow definition from their original SHA, so commits predating
 the run-id key retain the older attempt-only collision behavior; the scheduled SHA
-itself carries the new policy and provides the forward promotion candidate that clears
-that rollout backlog.
+itself carries the new repair policy, and the dev push runs it repairs provide the
+forward promotion candidates that clear that rollout backlog.
 
 ## Architecture Notes
 
