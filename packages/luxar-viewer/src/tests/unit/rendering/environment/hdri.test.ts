@@ -14,4 +14,11 @@ describe('resolveEnvironmentUrl', () => {
       resolveEnvironmentUrl('\\\\evil.com/env.hdr', 'https://example.com/data/scene.zarr')
     ).toThrow('outside the store origin');
   });
+
+  it.each(['blob:https://example.com/id', 'data:image/png,abc'])(
+    'rejects unsupported absolute URL %s',
+    (url) => {
+      expect(() => resolveEnvironmentUrl(url, undefined)).toThrow('scheme must be HTTP(S)');
+    }
+  );
 });

@@ -13,9 +13,13 @@
 
 import * as THREE from 'three';
 
-/** Resolve a store-relative `url` against the scene's base URL; absolute URLs pass through. */
+/** Resolve a store-relative `url` against the scene base; absolute HTTP(S) URLs pass through. */
 export function resolveEnvironmentUrl(url: string, baseUrl: string | undefined): string {
-  if (/^https?:/i.test(url) || !baseUrl) return url;
+  if (/^https?:/i.test(url)) return url;
+  if (/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(url)) {
+    throw new Error('Environment URL scheme must be HTTP(S)');
+  }
+  if (!baseUrl) return url;
   const base = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
   const baseParsed = new URL(base);
   const resolved = new URL(url.replace(/^\//, ''), baseParsed);
