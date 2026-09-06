@@ -169,11 +169,15 @@ def scan_repository(
     """Fan out from workflow runs to jobs and aggregate obsidian classifications."""
     result = ScanResult()
     for index, status in enumerate(statuses):
-        # Which run-level status hosts the live job is unknowable in advance, so
-        # no pass may spend more than its share of what the budget has left —
-        # and a share left unspent carries over to the passes still to come.
+        # Reserve one run for each pass still to come. Every status then gets at
+        # least a look — which run-level status hosts the live job is unknowable
+        # in advance — and no pass is capped while budget remains, so a scan
+        # never gives up with runs left unscanned. Residual: a first pass that
+        # fills the budget leaves the later ones only their reserved run, so
+        # evidence deep in a later list can still be missed. That is the limit of
+        # a single un-paginated page.
         status_budget = max(
-            1, (max_runs - result.scanned_runs) // (len(statuses) - index)
+            1, max_runs - result.scanned_runs - (len(statuses) - index - 1)
         )
         endpoint = f"repos/{repository}/actions/runs?status={status}&per_page=100"
         try:
