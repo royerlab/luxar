@@ -201,6 +201,11 @@ def resolve_additive_axis_gsplats(
     | ``dict(..., recompute=    | Force recompute on every level.         |
     | True)``                   |                                         |
     +---------------------------+-----------------------------------------+
+
+    A stack built by ``GSplatData.combine_as_new_dimension`` can already carry
+    merged source ladders, so use ``recompute=True`` when the authored spec must
+    replace them. The shadowed case is stamped with ``n_sources`` and no
+    ``lod_method`` in the rung's ``lod_stats``.
     """
     from ....gsplats.gsplat_data import GSplatData, SubstitutiveLevel
 
