@@ -1495,8 +1495,9 @@ def create_luxar_scene(
                 #
                 # `slice_dims=[3]` is column 3 of `combined.centers`, whose
                 # columns are (z, y, x, time) — see
-                # `interleave_order_across_slices` for that distinction and for
-                # what the interleave guarantees). It buys an equal ABSOLUTE
+                # `interleave_order_across_slices` for the raw vs post-
+                # `dim_order` distinction and for what the interleave guarantees.
+                # It buys an equal ABSOLUTE
                 # per-scan budget: nominally 204,497/82 = 2,494 splats, measured
                 # 2,744 once the 12 scans small enough to be carried WHOLE hand
                 # their unused capacity back. So the p05 scan arrives complete at
