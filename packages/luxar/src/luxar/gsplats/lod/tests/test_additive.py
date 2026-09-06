@@ -6,6 +6,8 @@ Covers ``compute_additive_order`` and ``make_additive_lod`` from
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -1582,10 +1584,12 @@ def test_interleave_on_degenerate_inputs() -> None:
     )
 
     all_distinct = _make_sliced_gsplat((1,) * 16, seed=31)
-    assert np.array_equal(
-        compute_additive_order(all_distinct, method="self_energy"),
-        compute_additive_order(all_distinct, method="self_energy", slice_dims=[3]),
-    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        assert np.array_equal(
+            compute_additive_order(all_distinct, method="self_energy"),
+            compute_additive_order(all_distinct, method="self_energy", slice_dims=[3]),
+        )
 
 
 def test_nearly_unique_slice_keys_warn_about_the_column_frame() -> None:
