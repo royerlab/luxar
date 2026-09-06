@@ -1484,6 +1484,30 @@ describe('SceneManager', () => {
       expect(readySpy).toHaveBeenCalledTimes(2);
     });
 
+    it('finishes context recovery when rebuilding the environment fails', async () => {
+      const environment = sceneManager.environment;
+      expect(environment).not.toBeNull();
+      vi.spyOn(environment!, 'isReady').mockReturnValue(true);
+      vi.spyOn(environment!, 'rebuild').mockImplementation(() => {
+        throw new Error('PMREM failed');
+      });
+      const restoredSpy = vi.fn();
+      const changeSpy = vi.fn();
+      sceneManager.addEventListener('webgl-context-restored', restoredSpy);
+      sceneManager.addEventListener('change', changeSpy);
+      const warmupSpy = vi.spyOn(sceneManager, 'warmBlendModePrograms').mockResolvedValue();
+      const restoredHandler = mockCanvas.addEventListener.mock.calls.find(
+        (call) => call[0] === 'webglcontextrestored'
+      )?.[1] as ((event: Event) => Promise<void>) | undefined;
+
+      expect(restoredHandler).toBeDefined();
+      await restoredHandler?.(new Event('webglcontextrestored'));
+
+      expect(restoredSpy).toHaveBeenCalledTimes(1);
+      expect(warmupSpy).toHaveBeenCalledTimes(1);
+      expect(changeSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('preserves PostProcessingManager identity across context restore (CR-1)', async () => {
       // Cached references in PickingSystem / AnimationController /
       // RenderingControls must remain valid after context restore. The
