@@ -21,6 +21,24 @@
  * blank quads. Throwing surfaces the gap at construction time
  * instead.
  *
+ * **The config's render state is authoritative on both backends.**
+ * `blending` / `depthTest` / `depthWrite` / `transparent` /
+ * `toneMapped` / `side` are resolved ONCE by `resolveRenderState` and
+ * then applied to whichever material the branch produced, so a TSL
+ * factory's internally-set values are overridden by whatever the host
+ * passed — and by the same resolved defaults when the host passed
+ * nothing. The WebGPU branch used to thread `config.uniforms` alone
+ * and drop the rest, which silently disabled the bloom upsample pass's
+ * `AdditiveBlending`: each upsample overwrote its destination mip
+ * instead of accumulating into it, so WebGPU bloom rendered as a flat
+ * dim wash (#2563). Resolving in one place is what makes the two
+ * backends provably agree for the same config.
+ *
+ * `defines` is deliberately NOT threaded on the WebGPU branch:
+ * `NodeMaterial` has no `defines` field at all — a TSL factory takes
+ * its compile-time flags through its own arguments/config instead — so
+ * the key is WebGL-only by construction, not by oversight.
+ *
  * @module rendering/materials/_shared/material-builder
  */
 
@@ -48,6 +66,43 @@ export interface BuildMaterialConfig {
 }
 
 /**
+ * The six render-state properties, with every default already
+ * applied. Non-optional on purpose: the branches consume this object
+ * rather than re-deriving `config.x ?? default` each, so a default
+ * cannot drift between WebGL2 and WebGPU.
+ */
+interface ResolvedRenderState {
+  blending: THREE.Blending;
+  depthTest: boolean;
+  depthWrite: boolean;
+  transparent: boolean;
+  toneMapped: boolean;
+  side: THREE.Side;
+}
+
+/**
+ * Resolve the config's render state against the builder's defaults.
+ *
+ * These are the WebGL branch's historical defaults verbatim, so
+ * sharing them changes nothing there. The one worth flagging is
+ * `toneMapped: false`, the OPPOSITE of Three's own material default
+ * (`true`): a caller here is a pass whose pixels either have not been
+ * tone-mapped yet (the bloom mips, which the mega-shader grades) or
+ * already have been (FXAA's LDR input), so injecting the renderer's
+ * tone-mapping would be wrong in both directions.
+ */
+function resolveRenderState(config: BuildMaterialConfig): ResolvedRenderState {
+  return {
+    blending: config.blending ?? THREE.NormalBlending,
+    depthTest: config.depthTest ?? true,
+    depthWrite: config.depthWrite ?? true,
+    transparent: config.transparent ?? false,
+    toneMapped: config.toneMapped ?? false,
+    side: config.side ?? THREE.FrontSide,
+  };
+}
+
+/**
  * Build a `THREE.Material` for the active backend.
  *
  * Returns a `THREE.ShaderMaterial` under WebGL2 and a
@@ -55,12 +110,20 @@ export interface BuildMaterialConfig {
  * source is missing — does **not** silently fall through to the
  * other backend (under WebGPU, `ShaderMaterial` would not render at
  * all; under WebGL2, a TSL `NodeMaterial` wouldn't dispatch).
+ *
+ * The config's render state (`blending`, `depthTest`, `depthWrite`,
+ * `transparent`, `toneMapped`, `side`) is applied on BOTH branches and
+ * wins over anything a TSL factory set on itself; omitted fields take
+ * the same resolved defaults either way. `defines` is WebGL-only —
+ * `NodeMaterial` has no such field (see the module docblock).
  */
 export function buildMaterial(
   source: ShaderSource,
   config: BuildMaterialConfig,
   caps: RendererCapabilities
 ): THREE.Material {
+  const state = resolveRenderState(config);
+
   if (caps.apiSurface === 'webgpu') {
     if (!source.webgpu) {
       // The active renderer is WebGPURenderer (or WebGPURenderer
@@ -82,7 +145,18 @@ export function buildMaterial(
     // return type is intentionally erased on `ShaderSource.webgpu`
     // (see shader-source.ts) so the type module doesn't depend on
     // three/webgpu's NodeMaterial type at compile time.
-    return source.webgpu(config.uniforms ?? {}) as THREE.Material;
+    const material = source.webgpu(config.uniforms ?? {}) as THREE.Material;
+    // Apply the SAME resolved state the WebGL branch passes to its
+    // ShaderMaterial constructor. Assigned field by field (rather than
+    // `Object.assign`) so each write is type-checked against
+    // `THREE.Material`, which declares all six.
+    material.blending = state.blending;
+    material.depthTest = state.depthTest;
+    material.depthWrite = state.depthWrite;
+    material.transparent = state.transparent;
+    material.toneMapped = state.toneMapped;
+    material.side = state.side;
+    return material;
   }
 
   // WebGL2 path.
@@ -108,11 +182,6 @@ export function buildMaterial(
     // Avoid passing `defines: undefined` through to Three's material
     // parameter validation while preserving numeric/boolean define values.
     defines: (config.defines ?? {}) as Record<string, unknown>,
-    blending: config.blending ?? THREE.NormalBlending,
-    depthTest: config.depthTest ?? true,
-    depthWrite: config.depthWrite ?? true,
-    transparent: config.transparent ?? false,
-    toneMapped: config.toneMapped ?? false,
-    side: config.side ?? THREE.FrontSide,
+    ...state,
   });
 }

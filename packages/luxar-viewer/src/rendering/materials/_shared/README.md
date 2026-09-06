@@ -78,6 +78,17 @@ const material = buildMaterial(
 );
 ```
 
+The render state in that config is **authoritative on both branches**:
+`blending`, `depthTest`, `depthWrite`, `transparent`, `toneMapped` and `side`
+are resolved once (same defaults either way — note `toneMapped` defaults to
+`false`, the opposite of Three's own) and then applied to the `ShaderMaterial`
+_or_ the `NodeMaterial`, overriding whatever the TSL factory set on itself. Only
+`defines` is WebGL-only, because `NodeMaterial` has no such field — a TSL factory
+takes its compile-time flags through its own arguments. The WebGPU branch used to
+forward `uniforms` alone and drop the rest, which silently disabled the bloom
+upsample pass's `AdditiveBlending` and turned WebGPU bloom into a flat dim wash
+(#2563).
+
 Both `webgl` and `webgpu` fields are optional in the type so a future shader
 can ship single-backend, but the **runtime invariant is that the active
 backend's source must be present**. `buildMaterial` throws a fix-it-here
