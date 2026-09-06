@@ -26,10 +26,10 @@ from urllib.parse import quote
 
 from arbol import aprint, asection
 
-from ..cli.serving import served_store
-from ..cli.utils import _find_dev_repo_root, ensure_viewer_built
-from .attach import AttachReport, attach_environment
-from .container import DEFAULT_RESOLUTION, unpack
+from ...environment.attach import AttachReport, attach_environment
+from ...environment.container import DEFAULT_RESOLUTION, unpack
+from ..serving import served_store
+from ..utils import _find_dev_repo_root, ensure_viewer_built
 
 #: The Playwright driver, relative to the repository root.
 DRIVER_SCRIPT = Path("packages") / "luxar-viewer" / "scripts" / "bake-env.mjs"
@@ -90,35 +90,40 @@ def bake_environment(
         os.close(handle)
         out_path = Path(tmp_name)
 
-    with asection(f"Baking environment for {store_path.name}"):
-        with served_store(store_path) as served:
-            url = (
-                f"{served.viewer_url}?src={quote(served.data_url, safe=':/')}"
-                f"&debug&bake-env&probe={quote(probe, safe=':,/')}"
-                f"&env-resolution={int(resolution)}"
-            )
-            aprint(f"driving {url}")
-            run_driver(url, out_path, timeout)
+    preserve_temporary = False
+    try:
+        with asection(f"Baking environment for {store_path.name}"):
+            with served_store(store_path) as served:
+                url = (
+                    f"{served.viewer_url}?src={quote(served.data_url, safe=':/')}"
+                    f"&debug&bake-env&probe={quote(probe, safe=':,/')}"
+                    f"&env-resolution={int(resolution)}"
+                )
+                aprint(f"driving {url}")
+                run_driver(url, out_path, timeout)
 
-        header, _faces = unpack(out_path.read_bytes())
-        aprint(
-            f"container: {out_path} ({out_path.stat().st_size} bytes, "
-            f"{header['resolution']}px, probe {header['probe']})"
-        )
-        report: Optional[AttachReport] = None
-        if attach:
-            report = attach_environment(store_path, out_path, force=force)
-            if not keep:
-                out_path.unlink(missing_ok=True)
-        return BakeReport(
-            store=store_path,
-            container=out_path,
-            resolution=int(header["resolution"]),
-            probe=str(header["probe"].get("spec", probe))
-            if isinstance(header["probe"], dict)
-            else str(header["probe"]),
-            attach=report,
-        )
+            header, _faces = unpack(out_path.read_bytes())
+            aprint(
+                f"container: {out_path} ({out_path.stat().st_size} bytes, "
+                f"{header['resolution']}px, probe {header['probe']})"
+            )
+            report: Optional[AttachReport] = None
+            if attach:
+                report = attach_environment(store_path, out_path, force=force)
+            if not attach:
+                preserve_temporary = True
+            return BakeReport(
+                store=store_path,
+                container=out_path,
+                resolution=int(header["resolution"]),
+                probe=str(header["probe"].get("spec", probe))
+                if isinstance(header["probe"], dict)
+                else str(header["probe"]),
+                attach=report,
+            )
+    finally:
+        if not keep and not preserve_temporary:
+            out_path.unlink(missing_ok=True)
 
 
 def _node_driver() -> Driver:

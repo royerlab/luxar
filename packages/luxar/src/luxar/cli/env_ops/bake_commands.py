@@ -8,10 +8,8 @@ from typing import Optional
 import typer
 from arbol import aprint
 
-# Only the constant at import time: `luxar.environment.bake` imports `luxar.cli.serving`,
-# and the CLI package imports this module, so the bake function is imported in
-# the command body to keep the cycle open.
 from ...environment.container import DEFAULT_RESOLUTION
+from .bake import bake_environment
 
 
 def bake_command(
@@ -50,8 +48,6 @@ def bake_command(
     them with `luxar env attach`. Needs a development checkout: the driver is the
     viewer's Playwright (packages/luxar-viewer/scripts/bake-env.mjs).
     """
-    from ...environment.bake import bake_environment
-
     try:
         report = bake_environment(
             store,

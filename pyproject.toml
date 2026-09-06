@@ -904,6 +904,7 @@ name = "Subpackage layering"
 type = "layers"
 layers = [
     "luxar.cli",
+    "luxar.environment",
     "luxar.demos",
     "luxar.io",
     "luxar.core",
