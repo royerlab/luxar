@@ -15,6 +15,9 @@ import {
   PHYSICAL_MESH_DEFAULTS,
   PHYSICAL_MESH_KNOB_KEYS,
   PHYSICAL_MESH_KNOBS,
+  PHYSICAL_PROGRAM_CACHE_KEY,
+  TRANSMISSION_ALPHA_MIX_LINE,
+  TRANSMISSION_ALPHA_PIN_LINE,
   applyPhysicalMeshConfig,
   clampPhysicalKnob,
   derivePhysicalCompositing,
@@ -23,6 +26,7 @@ import {
   physicalKnobInertReason,
   physicalKnobToSlider,
   physicalSetVertexAlpha,
+  pinTransmittedAlphaGlsl,
   type PhysicalMeshHost,
   type PhysicalMeshKnobKey,
   type PhysicalMeshMaterialConfig,
@@ -115,6 +119,83 @@ describe('derivePhysicalCompositing — translucency is read off the data', () =
       ]);
     }
   );
+});
+
+describe('the transmitted-alpha pin (spec §3.4 Phase 3)', () => {
+  const INCLUDE = '#include <transmission_fragment>';
+
+  it("three's transmission chunk still carries the exact line the pin replaces", () => {
+    // A three upgrade that moves this line silently un-pins the alpha on WebGL and
+    // refract_data glass composites wrongly again — hence a hard failure, not a warning.
+    expect(THREE.ShaderChunk.transmission_fragment).toContain(TRANSMISSION_ALPHA_MIX_LINE);
+    expect(THREE.ShaderChunk.transmission_fragment.split(TRANSMISSION_ALPHA_MIX_LINE)).toHaveLength(
+      2
+    );
+    // And three's physical fragment shader reaches it through the include the hook expands.
+    expect(THREE.ShaderLib.physical.fragmentShader).toContain(INCLUDE);
+  });
+
+  it('expands the include with the line pinned, after the volume refraction sample', () => {
+    const source = `void main() {\n${INCLUDE}\n#include <opaque_fragment>\n}`;
+    const chunk = THREE.ShaderChunk.transmission_fragment;
+    const patched = pinTransmittedAlphaGlsl(source, chunk);
+    expect(patched).not.toContain(INCLUDE);
+    expect(patched).not.toContain(TRANSMISSION_ALPHA_MIX_LINE);
+    // The chunk opens with the same `= 1.0;` as its initialiser, so the pin adds exactly
+    // one more occurrence — and that one sits AFTER the volume refraction sample.
+    const pinsBefore = chunk.split(TRANSMISSION_ALPHA_PIN_LINE).length - 1;
+    expect(patched.split(TRANSMISSION_ALPHA_PIN_LINE).length - 1).toBe(pinsBefore + 1);
+    expect(patched.indexOf('getIBLVolumeRefraction')).toBeLessThan(
+      patched.lastIndexOf(TRANSMISSION_ALPHA_PIN_LINE)
+    );
+    // The rest of the shader is untouched.
+    expect(patched).toContain('#include <opaque_fragment>');
+  });
+
+  it('leaves a shader without the include alone, and a drifted chunk to three', () => {
+    const plain = 'void main() { gl_FragColor = vec4(1.0); }';
+    expect(pinTransmittedAlphaGlsl(plain, THREE.ShaderChunk.transmission_fragment)).toBe(plain);
+    const withInclude = `a\n${INCLUDE}\nb`;
+    expect(pinTransmittedAlphaGlsl(withInclude, '// a chunk with no mix line')).toBe(withInclude);
+  });
+
+  it('the WebGL wrapper applies it from a prototype method, so clones carry it and the cache key is fixed', () => {
+    const m = new PhysicalMeshMaterial({ transmission: 1.0 });
+    const clone = m.clone();
+    const params = {
+      fragmentShader: `x\n${INCLUDE}\ny`,
+    } as unknown as THREE.WebGLProgramParametersWithUniforms;
+    clone.onBeforeCompile(params);
+    expect(params.fragmentShader).toContain(TRANSMISSION_ALPHA_PIN_LINE);
+    expect(params.fragmentShader).not.toContain(INCLUDE);
+    expect(m.customProgramCacheKey()).toBe(PHYSICAL_PROGRAM_CACHE_KEY);
+    expect(clone.customProgramCacheKey()).toBe(m.customProgramCacheKey());
+    // Three's default key is the hook's source text; ours must not be.
+    expect(new THREE.MeshPhysicalMaterial().customProgramCacheKey()).not.toBe(
+      PHYSICAL_PROGRAM_CACHE_KEY
+    );
+  });
+
+  it('the WebGPU wrapper installs the alpha-pinning lighting model with the same feature flags', () => {
+    const Ctor = requireTslMaterials().materials.meshPhysical;
+    const glass = new Ctor({ transmission: 1.0, clearcoat: 0.5 });
+    const model = glass.setupLightingModel() as unknown as {
+      constructor: { name: string };
+      transmission: boolean;
+      clearcoat: boolean;
+      sheen: boolean;
+      start: unknown;
+    };
+    expect(model.constructor.name).toBe('LuxarPhysicalLightingModel');
+    expect(model.transmission).toBe(true);
+    expect(model.clearcoat).toBe(true);
+    expect(model.sheen).toBe(false);
+    expect(typeof model.start).toBe('function');
+    const metal = new Ctor({ metalness: 1.0 });
+    expect((metal.setupLightingModel() as unknown as { transmission: boolean }).transmission).toBe(
+      false
+    );
+  });
 });
 
 describe('the knob table and its slider mapping', () => {

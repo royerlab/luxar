@@ -32,6 +32,8 @@ import {
   physicalUpdateOffset,
   physicalUpdateOpacity,
   physicalUpdateRefractData,
+  pinTransmittedAlphaGlsl,
+  PHYSICAL_PROGRAM_CACHE_KEY,
   setPhysicalKnob,
   type PhysicalMeshKnobKey,
   type PhysicalMeshMaterialConfig,
@@ -48,6 +50,23 @@ export class PhysicalMeshMaterial extends THREE.MeshPhysicalMaterial {
   constructor(config: PhysicalMeshMaterialConfig = {}) {
     super();
     applyPhysicalMeshConfig(this, config);
+  }
+
+  /**
+   * Pin the transmitted alpha to 1 (see `TRANSMISSION_ALPHA_MIX_LINE` in `./config.ts`).
+   * A prototype method rather than an instance property so `clone()` — which the WebGL
+   * blend warm-up uses for its keeper materials — carries it too.
+   */
+  onBeforeCompile(parameters: THREE.WebGLProgramParametersWithUniforms): void {
+    parameters.fragmentShader = pinTransmittedAlphaGlsl(
+      parameters.fragmentShader,
+      THREE.ShaderChunk.transmission_fragment
+    );
+  }
+
+  /** A fixed key: three's default is `onBeforeCompile.toString()`, which would re-key per build. */
+  customProgramCacheKey(): string {
+    return PHYSICAL_PROGRAM_CACHE_KEY;
   }
 
   /** Luxar `opacity`; re-derives translucency, depth write and the cutout. */

@@ -23,6 +23,7 @@
 
 import type * as THREE from 'three';
 import type { BlendingMode } from '../../../types/blending';
+import { log, Modules } from '../../../utils/log';
 import { clampAppearanceFraction } from '../mesh/appearance';
 
 /** The three property a knob writes — the same name on both three classes. */
@@ -424,6 +425,80 @@ export function applyPhysicalCompositing(
   if (decision.drawAfterEmissive) host.userData.drawAfterEmissive = true;
   else delete host.userData.drawAfterEmissive;
   if (programChanged) host.needsUpdate = true;
+}
+
+// ---------------------------------------------------------------------------
+// The transmitted-alpha pin (spec §3.4, Phase 3).
+// ---------------------------------------------------------------------------
+
+/**
+ * The one line of three's `transmission_fragment` chunk that copies the alpha of the
+ * SAMPLED framebuffer into the glass fragment's alpha (`opaque_fragment` then multiplies
+ * `diffuseColor.a` by it). Three means it as coverage, for transparent canvases where a
+ * glass over an empty background should itself be see-through.
+ *
+ * Luxar's HDR framebuffer alpha is not coverage. The additive, luminous and normal
+ * point and line shaders are alpha-weighted (RGB unweighted, alpha = intensity·opacity,
+ * blended SrcAlpha/One with One/One on the alpha channel), so behind a point cloud the
+ * alpha is an overdraw count — 8 to 18 was measured, `Infinity` on dense scenes. The
+ * house already treats it as undefined: the mega shader reads RGB only, and the EXR
+ * capture forces alpha to 1 before export. A glass that reads it composites with an
+ * UNCLAMPED blend factor on the half-float target and comes out thousands of times too
+ * bright, or negative (measured on both backends). So the physical family refuses that
+ * channel too: the line below is replaced by {@link TRANSMISSION_ALPHA_PIN_LINE}.
+ *
+ * A pixel no-op for the glass-first path, whose transmission target only ever holds the
+ * alpha-1 clear and opaque meshes. It changes what an `opaque`-mode house layer
+ * (alpha = intensity·opacity) or a cutout mesh looks like THROUGH glass — they follow the
+ * house rule now — and it is what makes `refract_data` glass composite correctly.
+ */
+export const TRANSMISSION_ALPHA_MIX_LINE =
+  'material.transmissionAlpha = mix( material.transmissionAlpha, transmitted.a, material.transmission );';
+
+/** What replaces {@link TRANSMISSION_ALPHA_MIX_LINE}: the glass keeps its own alpha. */
+export const TRANSMISSION_ALPHA_PIN_LINE = 'material.transmissionAlpha = 1.0;';
+
+/** The include three resolves AFTER `onBeforeCompile`, so the hook must expand it itself. */
+const TRANSMISSION_INCLUDE = '#include <transmission_fragment>';
+
+/** Fixed program-cache key for the WebGL wrapper (three's default is `onBeforeCompile.toString()`). */
+export const PHYSICAL_PROGRAM_CACHE_KEY = 'luxar-physical:transmitted-alpha-pinned';
+
+let warnedChunkDrift = false;
+
+/**
+ * Patch a WebGL fragment shader so its transmission pass ignores the sampled alpha.
+ *
+ * Pure over its inputs so the substitution is unit-testable against three's real chunk:
+ * `#include <transmission_fragment>` (still unresolved when `onBeforeCompile` runs) is
+ * replaced by the chunk body with {@link TRANSMISSION_ALPHA_MIX_LINE} pinned. A shader
+ * without the include (no transmission) is returned untouched. If a three upgrade moves
+ * the line, the shader is left to three's own include resolution and one warning names
+ * the consequence; the unit test on the real chunk turns that drift into a red build.
+ *
+ * @param fragmentShader - `shader.fragmentShader` as handed to `onBeforeCompile`
+ * @param transmissionChunk - `THREE.ShaderChunk.transmission_fragment` (passed in so this
+ *   module keeps its type-only `three` import)
+ */
+export function pinTransmittedAlphaGlsl(fragmentShader: string, transmissionChunk: string): string {
+  if (!fragmentShader.includes(TRANSMISSION_INCLUDE)) return fragmentShader;
+  if (!transmissionChunk.includes(TRANSMISSION_ALPHA_MIX_LINE)) {
+    if (!warnedChunkDrift) {
+      warnedChunkDrift = true;
+      log.warning(
+        Modules.RENDERER,
+        "three's transmission_fragment chunk no longer contains the transmissionAlpha mix " +
+          'line; the physical glass will read the framebuffer alpha again, and refract_data ' +
+          'glass will composite wrongly over emissive layers. Update TRANSMISSION_ALPHA_MIX_LINE.'
+      );
+    }
+    return fragmentShader;
+  }
+  const pinned = transmissionChunk.replace(
+    TRANSMISSION_ALPHA_MIX_LINE,
+    TRANSMISSION_ALPHA_PIN_LINE
+  );
+  return fragmentShader.replace(TRANSMISSION_INCLUDE, pinned);
 }
 
 /**
