@@ -36,11 +36,12 @@ method with a physical meaning, and nothing else:
 | `updateIntensity`   | `color` (scalar)                                    | With `vertexColors` on, base colour is `color × vertexColor`, so a scalar `color` is a gain on the authored colour — what `uIntensity` is on the house shader. |
 | `updateOffset`      | `emissive` (scalar)                                 | An additive brightness shift IS an emitted radiance. Negative (black-level subtraction) has no physical counterpart and clamps to 0.                           |
 | `updateGamma`       | `userData.gamma` only                               | Recorded, never applied — a PBR material has no gamma term. The panel hides the slider for a physical layer.                                                   |
+| `updateShading`     | `flatShading`                                       | Switches between stored and derivative normals per committed display frame.                                                                                    |
 | `applyBlendingMode` | nothing                                             | Deliberate no-op: a physical mesh has no Luxar blending mode (refused at authoring; an inherited one is ignored with a notice).                                |
 | `getOpacity`        | —                                                   | The LOD cross-fade's fade base.                                                                                                                                |
 
 Absent on purpose: `updateCameraParams` (the near fade is a house-shader feature, so
-`register()` files the material as static), `updateShading` / `updateBaseColorTexture` /
+`register()` files the material as static), `updateBaseColorTexture` /
 `updateColormapTexture` / the four shade knobs (house-shader features; the commit path
 and the panel already no-op when the methods are missing).
 
