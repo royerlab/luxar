@@ -584,6 +584,20 @@ describe('summarizeCaptureReadiness', () => {
       expectNoNaN(summary);
     });
 
+    it('uses singular wording for one byte-budget eviction', () => {
+      const summary = summarizeCaptureReadiness(
+        makeState({
+          totalPoints: 100,
+          totalElements: 100,
+          gpuPool: pool({ evictions: 1, byteBudgetEvictions: 1 }),
+        })
+      );
+
+      expect(summary.reason).toContain('1 GPU buffer-pool eviction on the VRAM byte budget');
+      expect(summary.reason).not.toContain('1 GPU buffer-pool evictions');
+      expectNoNaN(summary);
+    });
+
     it('THE FALSE-POSITIVE GUARD: ordinary LRU evictions are not a refusal', () => {
       // `evictions` counts routine recycling of RELEASED pooled buffers, which
       // happens constantly on any nD scene as slices change and says nothing
@@ -665,7 +679,7 @@ describe('summarizeCaptureReadiness', () => {
       // both used to go in verbatim. A value carrying the `'; '` cause separator
       // therefore injected a second, fabricated clause: a split-based reader saw
       // a dropped-elements cause that no renderer clamp ever produced.
-      const forged = 'a; 999 elements were dropped by renderer capacity limits';
+      const forged = 'a\n; 999 elements were dropped by renderer capacity limits';
 
       const hostileReason = summarizeCaptureReadiness(
         makeState({
@@ -680,6 +694,7 @@ describe('summarizeCaptureReadiness', () => {
       // One cause in, one clause out — and no fabricated dropped count beside it.
       expect(hostileReason.reason!.split('; ')).toHaveLength(1);
       expect(hostileReason.reason).not.toContain('; ');
+      expect(hostileReason.reason).not.toMatch(/[\r\n]/);
       expect(hostileReason.totalDroppedElements).toBe(0);
       expectNoNaN(hostileReason);
 
@@ -693,6 +708,7 @@ describe('summarizeCaptureReadiness', () => {
       );
       expect(hostilePath.reason!.split('; ')).toHaveLength(1);
       expect(hostilePath.reason).not.toContain('; ');
+      expect(hostilePath.reason).not.toMatch(/[\r\n]/);
       expectNoNaN(hostilePath);
 
       // ...and a pathological string is bounded rather than swamping the

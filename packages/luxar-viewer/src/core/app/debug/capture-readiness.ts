@@ -252,12 +252,13 @@ const MAX_ECHOED_PATH_CHARS = 120;
  * splitting on that sequence. A value carrying it could therefore FORGE a
  * clause: `reason: 'a; 999 elements were dropped by renderer capacity limits'`
  * echoed verbatim reads to a split-based caller as a real dropped-elements
- * cause that no renderer clamp ever produced. Every `;` becomes a `,` so no
- * echoed value can spell the separator, and the result is truncated so a
- * pathological string cannot swamp the message it is embedded in.
+ * cause that no renderer clamp ever produced. Semicolons and whitespace runs
+ * collapse to one space so no echoed value can spell the separator or break a
+ * single-line log record, and the result is truncated so a pathological string
+ * cannot swamp the message it is embedded in.
  */
 function echoable(value: string, maxChars: number): string {
-  const flattened = value.replace(/;/g, ',');
+  const flattened = value.replace(/[\s;]+/g, ' ');
   return flattened.length > maxChars ? `${flattened.slice(0, maxChars)}…` : flattened;
 }
 
@@ -353,8 +354,9 @@ function poolEvictionReason(gpuPool: unknown): string | undefined {
   if (typeof gpuPool !== 'object' || gpuPool === null) return undefined;
   const evictions = wholeCount((gpuPool as Record<string, unknown>).byteBudgetEvictions);
   if (evictions <= 0) return undefined;
+  const event = evictions === 1 ? 'eviction' : 'evictions';
   return (
-    `${evictions} GPU buffer-pool evictions on the VRAM byte budget — the pool went over ` +
+    `${evictions} GPU buffer-pool ${event} on the VRAM byte budget — the pool went over ` +
     'its budget and shed pooled geometry to get back under it, including any levels the LOD ' +
     'registry had demoted from active, so what stayed resident depends on this machine and ' +
     'this run (it does not on its own prove rendered geometry was lost)'
