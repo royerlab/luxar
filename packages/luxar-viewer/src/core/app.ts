@@ -164,6 +164,7 @@ export class LuxarApp {
    * (`viewer_config.waypoints`); the driver itself lives in its closure.
    */
   private waypointListener?: () => void;
+  private waypointDriver?: WaypointDriver;
 
   /**
    * Observes the canvas box so the viewer re-fits when the host container
@@ -512,6 +513,12 @@ export class LuxarApp {
     this.audioEngine.applySceneConfig(extractAudioConfig(audio));
     const root = this.sceneManager.scene?.children?.find((c) => c.name === 'LuxarScene');
     if (root) this.audioEngine.attachScene(root);
+    // The waypoints install first and snap to the opening waypoint before any
+    // sound node exists, so the load-time arrival is replayed here — otherwise
+    // the opening story's `on_arrive` narration would never fire.
+    const driver = this.waypointDriver;
+    const opening = driver ? driver.getWaypoint(driver.currentIndex) : undefined;
+    if (opening?.when) this.audioEngine.notifyWaypoint('arrive', opening.when);
   }
 
   /**
@@ -551,12 +558,32 @@ export class LuxarApp {
           extractRenderingOverrides(rendering as ZarrViewerConfig),
           'Applied waypoint rendering overrides'
         ),
+      // The two story events: onto the embedder bus for controllers, and to the
+      // sound layer for its `on_depart` / `on_arrive` nodes.
+      emit: (event, payload) => {
+        if (event === 'waypoint-departed') {
+          this.embedderEvents.emit(event, { index: payload.index });
+        } else {
+          this.embedderEvents.emit(event, {
+            index: payload.index,
+            completed: 'completed' in payload ? payload.completed : true,
+          });
+        }
+        const when = waypoints[payload.index]?.when;
+        if (when && this.audioEngine) {
+          this.audioEngine.notifyWaypoint(
+            event === 'waypoint-departed' ? 'depart' : 'arrive',
+            when
+          );
+        }
+      },
     });
     const listener = (): void => {
       driver.evaluate('fly');
     };
     sceneDimsManager.addListener(listener);
     this.waypointListener = listener;
+    this.waypointDriver = driver;
     driver.evaluate('snap');
   }
 
@@ -565,6 +592,7 @@ export class LuxarApp {
       sceneDimsManager.removeListener(this.waypointListener);
       this.waypointListener = undefined;
     }
+    this.waypointDriver = undefined;
   }
 
   private applyViewerConfigStateCore(viewerConfig: ZarrViewerConfig | undefined): void {

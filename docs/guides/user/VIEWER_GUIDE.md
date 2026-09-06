@@ -758,6 +758,17 @@ Scene defaults live in `ViewerConfig(audio=AudioConfig(...))`, and a controller
 drives the same knobs through `setAudio()`, `playSound()`, `stopSound()` and
 `getViewerState().audio`.
 
+Sound nodes authored with `layer=True` appear in the **Layers** panel with a
+`sound` badge: the eye mutes that node (a parent group's eye silences every
+sound under it), an inline slider sets its gain, and the name's tooltip shows the
+clip's licence, author and source. Narration authored with `trigger="on_arrive"`
+starts when a story flight lands (a flight you cut short still counts as
+arrived; one superseded by the next story does not). A node with `attach_to`
+follows another node's centre, and an `ambisonic="foa"` bed is a sound field
+that stays fixed to the world as you turn the camera. The **Recording** panel's
+"Include Audio" option (Advanced) records what you hear into real-time videos;
+frame-by-frame captures stay silent.
+
 Browsers refuse to start audio without a gesture on the page. In a regular tab
 the viewer shows a one-time **Tap to enable sound** overlay that the first click
 or key dismisses. For an unattended kiosk launch Chrome with the autoplay policy

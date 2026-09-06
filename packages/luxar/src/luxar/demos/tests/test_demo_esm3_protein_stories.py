@@ -7,6 +7,8 @@ gets highlighted and WHERE the camera goes, on synthetic data.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -14,16 +16,18 @@ from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import demo_esm3_protein_stories as demo
 from luxar.demos.demo_esm3_protein_stories import (
     NARRATION_AFTER_FLIGHT_MS,
-    OVERVIEW_FLIGHT_MS,
     STORIES,
     STORY_DIM,
     Story,
+    StoryCluster,
     add_story_sounds,
+    hum_frequency_hz,
     narration_text,
     overview_narration_text,
     overview_panel_html,
     select_story_members,
     story_camera,
+    story_node_name,
     story_panel_html,
 )
 
@@ -252,10 +256,34 @@ def test_add_story_sounds_authors_a_bed_and_one_narration_per_slot(
         return clip
 
     monkeypatch.setattr(demo, "synthesise", fake_synthesise)
+    hums: list[float] = []
+
+    def fake_hum(frequency_hz, seconds, cache_dir, **_k):
+        hums.append(frequency_hz)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        clip = cache_dir / f"hum{len(hums)}.m4a"
+        clip.write_bytes(b"\x00\x00\x00\x18ftypM4A " + b"\x00" * 64)
+        return clip
+
+    monkeypatch.setattr(demo, "synthesise_hum", fake_hum)
+    foa_sources: list[Path] = []
+
+    def fake_foa(src, cache_dir, *, spread_deg):
+        foa_sources.append(src)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        clip = cache_dir / "foa.m4a"
+        clip.write_bytes(b"\x00\x00\x00\x18ftypM4A " + b"\x00" * 64)
+        return clip
+
+    monkeypatch.setattr(demo, "synthesise_foa_from_clip", fake_foa)
     stories = (
         _story(key="A", flight_ms=2000),
         _story(key="B", pattern="^x", flight_ms=4000),
     )
+    clusters = [
+        StoryCluster(indices=np.array([0]), centre=np.zeros(3), r95=0.5, n_named=1),
+        StoryCluster(indices=np.array([1]), centre=np.ones(3), r95=2.0, n_named=1),
+    ]
     store = tmp_path / "s.luxar.zarr"
     with LuxarZarrCompiler(store) as compiler:
         scene = compiler.create_scene(
@@ -274,9 +302,17 @@ def test_add_story_sounds_authors_a_bed_and_one_narration_per_slot(
             )
         )
         added = add_story_sounds(
-            scene, stories, 42, narration_dir=tmp_path / "narration", engine="openai"
+            scene,
+            stories,
+            42,
+            narration_dir=tmp_path / "narration",
+            engine="openai",
+            clusters=clusters,
+            hum_dir=tmp_path / "hums",
+            ambisonic_dir=tmp_path / "foa",
         )
-    assert added == 4  # bed + overview + two stories
+    assert added == 6  # bed + overview + two narrations + two hums
+    assert foa_sources == [bed]
     assert spoken[0].startswith("Ten stories")
     assert spoken[1].startswith("Story 1 of 2")
     root = open_group(store, mode="r")
@@ -284,12 +320,31 @@ def test_add_story_sounds_authors_a_bed_and_one_narration_per_slot(
     assert bed_attrs["trigger"] == "continuous" and bed_attrs["bus"] == "ambient"
     assert bed_attrs["has_positions"] is False
     assert bed_attrs["license"] == "CC0"
+    # The bed became a first-order ambisonic field (the fake encoder "succeeded").
+    assert bed_attrs["ambisonic"] == "foa" and bed_attrs["format"] == "aac"
+    assert bed_attrs["spatial"] is False
     narr = dict(root["narration_B"].attrs)
-    assert narr["trigger"] == "once" and narr["bus"] == "voice"
-    assert narr["delay_ms"] == 4000 + NARRATION_AFTER_FLIGHT_MS
+    # Narration starts when the flight lands (waypoint arrival), a beat later.
+    assert narr["trigger"] == "on_arrive" and narr["bus"] == "voice"
+    assert narr["delay_ms"] == NARRATION_AFTER_FLIGHT_MS
     assert narr["has_positions"] is True and narr["n_positions"] == 1
     overview = dict(root["narration_Overview"].attrs)
-    assert overview["delay_ms"] == OVERVIEW_FLIGHT_MS + NARRATION_AFTER_FLIGHT_MS
+    assert overview["trigger"] == "on_arrive"
+
+    # One hum per cluster, attached to the story's highlight node, scaled by r95.
+    assert hums == [hum_frequency_hz(1), hum_frequency_hz(2)]
+    assert hum_frequency_hz(2) > hum_frequency_hz(1)
+    hum_b = dict(root["hum_B"].attrs)
+    assert hum_b["attach_to"] == story_node_name(2, stories[1]) == "Story 2: B"
+    assert hum_b["spatial"] is True and hum_b["bus"] == "effects"
+    assert hum_b["trigger"] == "continuous" and hum_b["loop"] is True
+    assert hum_b["ref_distance"] == pytest.approx(2.0 * demo.HUM_REF_DISTANCE_PER_R95)
+    assert hum_b["max_distance"] == pytest.approx(2.0 * demo.HUM_MAX_DISTANCE_PER_R95)
+    assert hum_b["has_positions"] is True and hum_b["n_positions"] == 1
+    hum_a = dict(root["hum_A"].attrs)
+    assert hum_a["ref_distance"] == pytest.approx(
+        max(0.5, 0.5 * demo.HUM_REF_DISTANCE_PER_R95)
+    )
 
 
 def test_add_story_sounds_stays_silent_without_an_engine_and_survives_no_bed(
@@ -322,3 +377,35 @@ def test_add_story_sounds_stays_silent_without_an_engine_and_survives_no_bed(
                 scene, (_story(key="A"),), 1, narration_dir=tmp_path / "n", engine=None
             )
     assert added == 0
+
+
+def test_add_story_sounds_keeps_the_stereo_bed_without_an_encoder(
+    tmp_path, monkeypatch
+) -> None:
+    from luxar import Dimension, Dimensions, LuxarZarrCompiler
+    from luxar._zarr_compat import open_group
+
+    bed = tmp_path / "bed.mp3"
+    bed.write_bytes(bytes.fromhex("fffb9000") + b"\x00" * 64)
+    monkeypatch.setattr(demo, "cached_download", lambda *a, **k: bed)
+    monkeypatch.setattr(demo, "synthesise_foa_from_clip", lambda *a, **k: None)
+    store = tmp_path / "s.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(
+            dimensions=Dimensions(
+                [
+                    Dimension(
+                        STORY_DIM, unit="", categories=["Overview"], display=False
+                    ),
+                    Dimension("x", unit="UMAP"),
+                    Dimension("y", unit="UMAP"),
+                    Dimension("z", unit="UMAP"),
+                ]
+            )
+        )
+        added = add_story_sounds(
+            scene, (), 1, narration_dir=tmp_path / "n", engine="none"
+        )
+    assert added == 1
+    attrs = dict(open_group(store, mode="r")["bed_ambient"].attrs)
+    assert "ambisonic" not in attrs and attrs["format"] == "mp3"

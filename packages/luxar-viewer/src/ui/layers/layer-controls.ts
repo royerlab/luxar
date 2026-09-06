@@ -761,6 +761,12 @@ export class LayerControls {
     const primary = this.deps.state.getPrimarySelected();
     if (!primary) return;
 
+    // A sound layer has no appearance: its one control (gain) lives in its
+    // row, so the whole section steps aside rather than showing sliders that
+    // reach no material.
+    if (this.controlsEl) this.controlsEl.style.display = primary.type === 'sound' ? 'none' : '';
+    if (primary.type === 'sound') return;
+
     if (this.rangeSlider) {
       this.rangeSlider.setLabel(
         primary.scalarWindow ? SCALAR_RANGE_LABEL : COLOUR_RANGE_LABEL,

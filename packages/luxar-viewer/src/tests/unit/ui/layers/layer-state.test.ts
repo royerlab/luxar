@@ -136,6 +136,51 @@ describe('LayerStateManager', () => {
     expect(mgr.getLayers().map((l) => l.name)).toEqual(['a']);
   });
 
+  it('lists a sound node as a `sound` layer with its gain and provenance, no appearance', () => {
+    const graph = {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        {
+          name: 'bed',
+          path: '/bed',
+          type: 'sound',
+          attrs: {
+            layer: true,
+            gain: 0.35,
+            bus: 'ambient',
+            trigger: 'continuous',
+            license: 'CC0',
+            attribution: 'cynicmusic',
+            source_url: 'https://opengameart.org/x',
+          },
+          children: [],
+        },
+        { name: 'silent', path: '/silent', type: 'sound', attrs: {}, children: [] },
+      ],
+    } as unknown as SceneNode;
+    mgr.initFromSceneGraph(graph);
+    const layers = mgr.getLayers();
+    expect(layers.map((l) => l.path)).toEqual(['/bed']);
+    const bed = layers[0];
+    expect(bed.type).toBe('sound');
+    expect(bed.supportsColormap).toBe(false);
+    expect(bed.sound).toEqual({
+      gain: 0.35,
+      bus: 'ambient',
+      trigger: 'continuous',
+      license: 'CC0',
+      attribution: 'cynicmusic',
+      sourceUrl: 'https://opengameart.org/x',
+    });
+    mgr.setSoundGain('/bed', 3.5);
+    expect(mgr.getLayer('/bed')!.sound!.gain).toBe(2);
+    mgr.setSoundGain('/bed', Number.NaN);
+    expect(mgr.getLayer('/bed')!.sound!.gain).toBe(2);
+  });
+
   it('collects nodes with layer=true (including groups as composite layers)', () => {
     const graph: SceneNode = {
       path: '',

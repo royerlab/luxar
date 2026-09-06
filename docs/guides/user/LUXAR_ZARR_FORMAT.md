@@ -1208,7 +1208,7 @@ to its audio engine by `type` alone.
 {
   "type": "sound",
   "spatial": false,                  // true → K PositionalAudio voices at `positions`
-  "trigger": "once",                 // "continuous" (looped while audible) | "once"
+  "trigger": "once",                 // "continuous" | "once" | "on_depart" | "on_arrive"
   "delay_ms": 800.0,                 // after the trigger fires
   "gain": 1.0,                       // per-node linear gain
   "bus": "voice",                    // "ambient" | "voice" | "effects"
@@ -1220,6 +1220,9 @@ to its audio engine by `type` alone.
   "format": "mp3",                   // sniffed from the bytes: "mp3" | "aac"
   "audio_file": "audio.mp3",         // the plain key holding the clip
   "duration_ms": 31240.0,            // optional, stamped when a tag reader is available
+  "channels": 2,                     // optional, same source; checked (== 4) for an ambisonic clip
+  "attach_to": "Story 3: hsp70",     // optional: follow that node's bounding-box centre
+  "ambisonic": "foa",                // optional: a 4-channel AmbiX FIELD (AAC only, never spatial)
   "has_positions": true, "n_positions": 1, "ndim": 4,
   "extend_to_all": ["time"],         // as for points
   "ordering": "none",                // never a spatial index
@@ -1239,6 +1242,25 @@ hidden coordinates fall inside the slab is live, others are silent, and
 `positions` is live everywhere. The Python `hidden={"story": 3}` sugar writes
 one row at `story=3` (other columns 0) and `extend_to_all` over every other
 hidden dimension.
+
+**Triggers.** `continuous` and `once` follow the slab's edges. `on_depart` /
+`on_arrive` follow the waypoint driver's events (`viewer_config.waypoints`): the
+node fires when a story flight leaves / lands on the waypoint whose `when`
+clause its row satisfies (a node without rows belongs to every waypoint). An
+`on_arrive` clip still fades out when its story is left; an `on_depart` clip
+plays out.
+
+**`attach_to`.** The NAME of another node: the source follows that node's
+bounding-box centre in the viewer ("the cluster hums" without authoring
+coordinates). Spatial by default; combine with `hidden=` to bind it to a value.
+Mutually exclusive with `positions`.
+
+**`ambisonic: "foa"`.** The clip is a first-order ambisonic FIELD — four AmbiX
+channels (ACN order `W, Y, Z, X`, SN3D) — that the viewer decodes to stereo and
+rotates against the camera so the field stays fixed to the world. AAC only (MP3
+holds two channels); never spatial and never positioned (`hidden=` still decides
+when it is live). The writer refuses the node when a tag reader reports a
+channel count other than 4.
 
 **Formats.** MP3 and AAC (`.m4a` / ADTS) are accepted and sniffed from the
 payload, never from the filename. Ogg/Opus is refused because Safari cannot

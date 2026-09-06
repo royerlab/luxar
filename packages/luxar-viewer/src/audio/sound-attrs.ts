@@ -45,13 +45,13 @@ export function parseSoundNodeAttrs(
 
   let trigger = raw.trigger as SoundTrigger;
   if (!TRIGGERS.includes(trigger)) {
+    if (raw.trigger !== undefined) {
+      log.warning(
+        Modules.AUDIO,
+        `${path}: unknown trigger "${String(raw.trigger)}", using "continuous".`
+      );
+    }
     trigger = 'continuous';
-  } else if (trigger === 'on_depart' || trigger === 'on_arrive') {
-    log.warning(
-      Modules.AUDIO,
-      `${path}: trigger "${trigger}" needs the waypoint events (sound layer Phase 2); playing it as "once".`
-    );
-    trigger = 'once';
   }
 
   let bus = raw.bus as AudioBusName;
@@ -84,9 +84,22 @@ export function parseSoundNodeAttrs(
   const extendToAll = Array.isArray(raw.extend_to_all)
     ? (raw.extend_to_all.filter((d) => typeof d === 'string') as string[])
     : undefined;
+  const attachTo =
+    typeof raw.attach_to === 'string' && raw.attach_to.trim() ? raw.attach_to.trim() : undefined;
+  let ambisonic: 'foa' | undefined;
+  if (raw.ambisonic === 'foa') {
+    ambisonic = 'foa';
+  } else if (raw.ambisonic !== undefined && raw.ambisonic !== null) {
+    log.warning(
+      Modules.AUDIO,
+      `${path}: unknown ambisonic layout "${String(raw.ambisonic)}"; playing the clip as plain audio.`
+    );
+  }
 
   return {
-    spatial: raw.spatial === true,
+    spatial:
+      ambisonic === undefined &&
+      (raw.spatial === true || (raw.spatial === undefined && attachTo !== undefined)),
     trigger,
     delay_ms: num(raw.delay_ms, 0),
     gain: num(raw.gain, 1),
@@ -109,5 +122,7 @@ export function parseSoundNodeAttrs(
     source_url: typeof raw.source_url === 'string' ? raw.source_url : undefined,
     audio_file: audioFile,
     extend_to_all: extendToAll,
+    attach_to: attachTo,
+    ambisonic,
   };
 }

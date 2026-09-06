@@ -28,12 +28,15 @@ import {
   type AudioState,
   type PanningModel,
   type SoundSourceDescriptor,
+  type SoundWaypointCondition,
+  type WaypointEventKind,
 } from '../types/audio';
 import { log, Modules } from '../utils/log';
-import { buildSoundBaseViewState } from './audibility';
+import { buildSoundBaseViewState, computeWaypointMembership } from './audibility';
 import { loadAudioPrefs, saveAudioPrefs } from './audio-prefs';
 import { AutoplayGate } from './autoplay-gate';
 import { dbToGain, rampGain } from './fades';
+import type { FoaDecoder } from './foa-decoder';
 import { parseSoundNodeAttrs } from './sound-attrs';
 import { SoundNode } from './sound-node';
 
@@ -56,6 +59,11 @@ export interface AudioEngineDeps {
   emit(event: 'sound-started' | 'sound-ended', payload: { name: string }): void;
   /** Tell the UI (the rail) the engine's state changed. */
   notifyUiChanged(): void;
+  /**
+   * World-space bounding-box centre of the scene node called `name`, or null
+   * when it is unknown or not loaded yet — what `attach_to` sources follow.
+   */
+  resolveNodeCenter?(name: string): THREE.Vector3 | null;
 }
 
 const DEFAULT_BUSES: Record<AudioBusName, number> = { ambient: 0.6, voice: 1.0, effects: 0.8 };
@@ -85,6 +93,9 @@ export class AudioEngine {
   private activeVoiceClips = 0;
   private readonly playing = new Set<string>();
   private disposed = false;
+  /** Ambisonic decoders to rotate against the camera (see `ensureGraph`). */
+  private readonly foaDecoders = new Set<FoaDecoder>();
+  private readonly listenerQuaternion = new THREE.Quaternion();
 
   constructor(private readonly deps: AudioEngineDeps) {
     const prefs = loadAudioPrefs();
@@ -116,6 +127,14 @@ export class AudioEngine {
       buses[name] = g;
     }
     listener.setMasterVolume(this.effectiveMaster());
+    // Three refreshes the listener from the camera's world matrix every frame
+    // it renders; the ambisonic fields ride the same update (no per-frame
+    // callback of our own, and nothing runs while the camera is still).
+    const updateMatrixWorld = listener.updateMatrixWorld.bind(listener);
+    listener.updateMatrixWorld = (force?: boolean): void => {
+      updateMatrixWorld(force);
+      if (this.foaDecoders.size > 0) this.rotateFoaFields(listener);
+    };
     this.listener = listener;
     this.busNodes = buses;
     this.duck = duck;
@@ -168,6 +187,15 @@ export class AudioEngine {
         parent,
         onStarted: (name) => this.onNodeStarted(name, attrs.bus),
         onEnded: (name) => this.onNodeEnded(name, attrs.bus),
+        resolveAttachCenter:
+          attrs.attach_to !== undefined
+            ? () => this.deps.resolveNodeCenter?.(attrs.attach_to as string) ?? null
+            : undefined,
+        registerFoaDecoder: (decoder) => {
+          this.foaDecoders.add(decoder);
+          if (this.listener) this.rotateFoaFields(this.listener);
+        },
+        unregisterFoaDecoder: (decoder) => this.foaDecoders.delete(decoder),
       });
       node.setMuted(this.muted || !this.sceneEnabled);
       this.nodes.set(desc.path, node);
@@ -195,12 +223,53 @@ export class AudioEngine {
     this.deps.notifyUiChanged();
   }
 
+  /** Point every ambisonic field at the camera the listener sits on. */
+  private rotateFoaFields(listener: THREE.AudioListener): void {
+    // The listener has no rotation of its own, so its world rotation is the camera's.
+    this.listenerQuaternion.setFromRotationMatrix(listener.matrixWorld);
+    for (const decoder of this.foaDecoders) decoder.setCameraQuaternion(this.listenerQuaternion);
+  }
+
   private evaluate(): void {
     const dims = this.deps.getDims();
     if (!dims || this.nodes.size === 0) return;
     const base = buildSoundBaseViewState(dims);
     const sceneGraph = this.deps.getSceneGraph();
     for (const node of this.nodes.values()) node.setViewState(base, sceneGraph);
+  }
+
+  /**
+   * The waypoint driver left (`depart`) or reached (`arrive`) the waypoint whose
+   * `when` clause this is. Every `on_depart` / `on_arrive` node whose rows belong
+   * to that waypoint fires (`SOUND_SPEC.md` §4.3); a node without rows belongs
+   * to every waypoint. Called by the app from the driver's event port.
+   */
+  notifyWaypoint(kind: WaypointEventKind, when: SoundWaypointCondition): void {
+    if (this.disposed || this.nodes.size === 0) return;
+    const dims = this.deps.getDims();
+    const sceneGraph = this.deps.getSceneGraph();
+    let fired = 0;
+    for (const node of this.nodes.values()) {
+      if (node.attrs.trigger !== `on_${kind}`) continue;
+      let rows: Uint8Array | null = null;
+      if (node.desc.positions && node.desc.nPositions > 0) {
+        if (!dims) continue;
+        rows = new Uint8Array(node.desc.nPositions);
+        const count = computeWaypointMembership(
+          node.desc,
+          node.attrs.extend_to_all,
+          when,
+          dims,
+          sceneGraph,
+          rows
+        );
+        if (count === 0) continue;
+      }
+      if (node.triggerFromWaypoint(kind, rows)) fired++;
+    }
+    if (fired > 0) {
+      log.custom('🔈', Modules.AUDIO, `waypoint ${kind}: ${fired} sound node(s) triggered`);
+    }
   }
 
   private async decodeAll(): Promise<void> {
@@ -378,6 +447,67 @@ export class AudioEngine {
     this.deps.notifyUiChanged();
   }
 
+  // ── Capture (the Recording panel) ───────────────────────────────────
+
+  private readonly captureDestinations = new Map<MediaStream, MediaStreamAudioDestinationNode>();
+
+  /**
+   * A `MediaStream` carrying the mix the listener hears (post master gain, so a
+   * muted viewer records silence), for the Recording panel to add to its
+   * canvas capture (`SOUND_SPEC.md` §6, Phase 3). Null before the graph exists
+   * — a scene without sound nodes records a silent video as before. Release
+   * with {@link releaseCaptureStream} when the recording ends.
+   */
+  acquireCaptureStream(): MediaStream | null {
+    const ctx = this.context;
+    if (!ctx || !this.listener || this.disposed) return null;
+    const destination = ctx.createMediaStreamDestination();
+    // The listener's gain is three's master: its only output is the context
+    // destination, so tapping it here captures exactly what the speakers get.
+    this.listener.gain.connect(destination);
+    this.captureDestinations.set(destination.stream, destination);
+    return destination.stream;
+  }
+
+  /** Detach a capture stream from the master gain and stop its tracks. */
+  releaseCaptureStream(stream: MediaStream): void {
+    const destination = this.captureDestinations.get(stream);
+    if (!destination) return;
+    this.captureDestinations.delete(stream);
+    try {
+      this.listener?.gain.disconnect(destination);
+    } catch {
+      /* already disconnected (context closed) */
+    }
+    for (const track of stream.getTracks()) track.stop();
+  }
+
+  // ── Per-node control (the Layers panel's rows) ──────────────────────
+
+  /**
+   * Mute one node (`path` names it) or every node under a group (`path` is an
+   * ancestor). The node's own eye and an ancestor's eye are tracked separately,
+   * as a hidden group hides its children whatever their own flag says.
+   */
+  setNodeMuted(path: string, muted: boolean): void {
+    const prefix = path.endsWith('/') ? path : `${path}/`;
+    for (const node of this.nodes.values()) {
+      if (node.path === path) node.setNodeMuted(muted);
+      else if (node.path.startsWith(prefix)) node.setAncestorMuted(muted);
+    }
+    this.deps.notifyUiChanged();
+  }
+
+  /** Live per-node linear gain (`[0, 2]`); ramps a playing node. */
+  setNodeGain(path: string, gain: number): void {
+    this.nodes.get(path)?.setGain(gain);
+  }
+
+  /** The live per-node gain, or undefined for an unknown path. */
+  getNodeGain(path: string): number | undefined {
+    return this.nodes.get(path)?.gain;
+  }
+
   // ── Queries + manual control ─────────────────────────────────────────
 
   private findNode(name: string): SoundNode | undefined {
@@ -437,6 +567,9 @@ export class AudioEngine {
   dispose(): void {
     if (this.disposed) return;
     this.detachScene();
+    for (const stream of Array.from(this.captureDestinations.keys())) {
+      this.releaseCaptureStream(stream);
+    }
     this.disposed = true;
     this.unsubscribeCamera?.();
     this.unsubscribeCamera = null;

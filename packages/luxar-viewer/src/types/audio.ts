@@ -18,11 +18,22 @@ export const AUDIO_BUS_NAMES = ['ambient', 'voice', 'effects'] as const;
 export type AudioBusName = (typeof AUDIO_BUS_NAMES)[number];
 
 /**
- * Playback triggers. `on_depart` / `on_arrive` are spec vocabulary (waypoint
- * events, Phase 2); the Python writer refuses them today and the viewer parses
- * them only to warn and treat the node as `once`.
+ * Playback triggers. `continuous` and `once` follow the slab rule's edges;
+ * `on_depart` / `on_arrive` follow the waypoint driver's events instead
+ * (`SOUND_SPEC.md` §3.1, §4.3) and fire for the nodes whose rows belong to the
+ * waypoint that was left or reached.
  */
 export type SoundTrigger = 'continuous' | 'once' | 'on_depart' | 'on_arrive';
+
+/** The two waypoint events a sound node can be triggered by. */
+export type WaypointEventKind = 'depart' | 'arrive';
+
+/**
+ * A waypoint's `when` clause (`viewer_config.waypoints[i].when`): dimension
+ * name → exact value or inclusive `[min, max]` range. Same shape as the zarr
+ * type; re-declared here so the audio layer does not reach into `types/zarr`.
+ */
+export type SoundWaypointCondition = Record<string, number | [number, number]>;
 
 /** `PannerNode.panningModel`: equal-power for room speakers, HRTF for headphones. */
 export type PanningModel = 'equalpower' | 'HRTF';
@@ -62,6 +73,19 @@ export interface SoundNodeAttrs {
   /** The plain store key holding the clip, e.g. `audio.mp3`. */
   audio_file: string;
   extend_to_all?: string[];
+  /**
+   * `'foa'` marks a first-order ambisonic FIELD (a 4-channel AmbiX clip): it
+   * plays through the FOA decoder, rotated against the camera, and is never
+   * spatialised as a point source. Absent for ordinary mono/stereo clips.
+   */
+  ambisonic?: 'foa';
+  /**
+   * Name of another scene node whose bounding-box centre the source follows
+   * ("the cluster hums" without authoring coordinates). Resolved by the engine
+   * through a port; a node not yet loaded leaves the source at its own origin
+   * until the next evaluation.
+   */
+  attach_to?: string;
 }
 
 /**

@@ -256,7 +256,9 @@ the package level — import directly from `luxar.validation.sound`.
 **Key Functions:**
 - `sniff_audio_format()`: `mp3` / `aac` from the magic bytes; refuses Ogg (Safari), WAV, FLAC, Matroska by name
 - `validate_audio_input()`: bytes or path → `(payload, format)`; a path's suffix must agree with its payload
-- `validate_sound_trigger()` / `validate_sound_bus()` / `validate_distance_model()`: vocabulary checks (`on_depart` / `on_arrive` are refused as Phase 2)
+- `validate_sound_trigger()` / `validate_sound_bus()` / `validate_distance_model()`: vocabulary checks (`continuous` / `once` / `on_depart` / `on_arrive`)
+- `validate_attach_to()`: a node NAME (not a path) whose centre the source follows
+- `validate_ambisonic()`: `"foa"` only, AAC only (MP3 cannot hold four channels), never `spatial=True`
 - `validate_sound_licence()`: `license` / `attribution` / `source_url` are required for every clip
 - `validate_spatial_params()`: `PannerNode` knob ranges; returns only what was given
 - `validate_sound_passthrough_attrs()`: refuses writer-stamped keys and every appearance attr (a sound is heard, not drawn)

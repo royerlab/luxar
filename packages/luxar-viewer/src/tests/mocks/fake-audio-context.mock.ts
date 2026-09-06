@@ -55,12 +55,23 @@ export class FakeAudioParam {
 /** Common connect/disconnect bookkeeping. */
 export class FakeAudioNode {
   readonly outputs = new Set<FakeAudioNode | AudioDestinationNode>();
+  /** Every connect call with its output/input indices (channel routing tests). */
+  readonly connections: Array<{
+    target: FakeAudioNode | AudioDestinationNode;
+    output: number;
+    input: number;
+  }> = [];
   readonly context: FakeAudioContext;
   constructor(context: FakeAudioContext) {
     this.context = context;
   }
-  connect(target: FakeAudioNode | AudioDestinationNode): FakeAudioNode | AudioDestinationNode {
+  connect(
+    target: FakeAudioNode | AudioDestinationNode,
+    output = 0,
+    input = 0
+  ): FakeAudioNode | AudioDestinationNode {
     this.outputs.add(target);
+    this.connections.push({ target, output, input });
     return target;
   }
   disconnect(target?: FakeAudioNode | AudioDestinationNode): void {
@@ -116,6 +127,43 @@ export class FakeBufferSource extends FakeAudioNode {
   }
 }
 
+/** `ChannelSplitterNode` / `ChannelMergerNode` stand-in recording per-channel wiring. */
+export class FakeChannelNode extends FakeAudioNode {
+  /** `(output index, target, input index)` triples for every connect call. */
+  readonly channelLinks: Array<{ output: number; target: FakeAudioNode; input: number }> = [];
+  constructor(
+    context: FakeAudioContext,
+    readonly channels: number
+  ) {
+    super(context);
+  }
+  connect(
+    target: FakeAudioNode | AudioDestinationNode,
+    output = 0,
+    input = 0
+  ): FakeAudioNode | AudioDestinationNode {
+    this.channelLinks.push({ output, target: target as FakeAudioNode, input });
+    return super.connect(target);
+  }
+}
+
+/** `MediaStreamAudioDestinationNode` stand-in: one fake audio track. */
+export class FakeMediaStreamDestination extends FakeAudioNode {
+  readonly track = { kind: 'audio', stopped: false, stop: (): void => undefined };
+  readonly stream: MediaStream;
+  constructor(context: FakeAudioContext) {
+    super(context);
+    const track = this.track;
+    track.stop = () => {
+      track.stopped = true;
+    };
+    this.stream = {
+      getAudioTracks: () => [track],
+      getTracks: () => [track],
+    } as unknown as MediaStream;
+  }
+}
+
 /** `AudioBuffer` stand-in (duration only). */
 export class FakeAudioBuffer {
   constructor(
@@ -150,6 +198,7 @@ export class FakeAudioContext {
   readonly sources: FakeBufferSource[] = [];
   readonly gains: FakeGainNode[] = [];
   readonly panners: FakePannerNode[] = [];
+  readonly streamDestinations: FakeMediaStreamDestination[] = [];
   onstatechange: (() => void) | null = null;
   resumeCalls = 0;
   /** What `resume()` does: flip to running (default) or stay suspended. */
@@ -171,6 +220,17 @@ export class FakeAudioContext {
   }
   createBufferSource(): FakeBufferSource {
     return new FakeBufferSource(this);
+  }
+  createChannelSplitter(channels = 6): FakeChannelNode {
+    return new FakeChannelNode(this, channels);
+  }
+  createChannelMerger(channels = 6): FakeChannelNode {
+    return new FakeChannelNode(this, channels);
+  }
+  createMediaStreamDestination(): FakeMediaStreamDestination {
+    const d = new FakeMediaStreamDestination(this);
+    this.streamDestinations.push(d);
+    return d;
   }
   async decodeAudioData(_data: ArrayBuffer): Promise<FakeAudioBuffer> {
     this.decodeCalls++;

@@ -17,7 +17,7 @@
 
 import type { SimpleDims } from '../types/dims';
 import type { SceneNode, ViewState } from '../data/data-loader-types';
-import type { SoundSourceDescriptor } from '../types/audio';
+import type { SoundSourceDescriptor, SoundWaypointCondition } from '../types/audio';
 import {
   computeTolerance,
   type DimensionInfo,
@@ -98,4 +98,64 @@ export function displayedXYZ(
     return d === undefined ? 0 : positions[base + d];
   };
   return [pick(0), pick(1), pick(2)];
+}
+
+/** The overlay manager's exact-value rule: an authored value matches within ±0.5 of the step. */
+const WAYPOINT_EXACT_TOLERANCE = 0.5;
+/** "Any value" on a hidden dimension the waypoint does not name (the loader's extend sentinel). */
+const ANY_VALUE_TOLERANCE = 1e10;
+
+/**
+ * The query that says which rows "belong to" a waypoint (`SOUND_SPEC.md` §3.1,
+ * §4.3): the waypoint's `when` clause rewritten as a slab. A named dimension
+ * becomes the clause's centre and half-width (an exact value admits ±0.5 like
+ * the overlay rule; a `[min, max]` range its midpoint and half-range); every
+ * other hidden dimension admits anything. Displayed dimensions are ignored by
+ * the kernel, as always. Running the SAME kernel as {@link computeRowAudibility}
+ * keeps `extend_to_all` and the inverse `nd_transform` in force for triggers
+ * too, so the third use of the `when` vocabulary agrees with the first two.
+ */
+export function buildWaypointViewState(when: SoundWaypointCondition, dims: SimpleDims): ViewState {
+  const metadata = dims.metadata ?? [];
+  const slicePosition = [...dims.currentStep];
+  const tolerance = new Array<number>(dims.ndim).fill(ANY_VALUE_TOLERANCE);
+  for (const [dimName, constraint] of Object.entries(when)) {
+    const dimIndex = metadata.findIndex((m) => m.name === dimName);
+    if (dimIndex < 0) continue;
+    if (typeof constraint === 'number') {
+      slicePosition[dimIndex] = constraint;
+      tolerance[dimIndex] = WAYPOINT_EXACT_TOLERANCE;
+    } else if (Array.isArray(constraint) && constraint.length === 2) {
+      slicePosition[dimIndex] = (constraint[0] + constraint[1]) / 2;
+      tolerance[dimIndex] = Math.abs(constraint[1] - constraint[0]) / 2;
+    }
+  }
+  return {
+    displayDims: [...dims.displayed],
+    slicePosition,
+    tolerance,
+    dimensions: dims.metadata,
+  } as ViewState;
+}
+
+/**
+ * Fill `out` with the rows of `desc` that belong to the waypoint `when`
+ * describes (1 = belongs) and return their count. A descriptor without
+ * positions belongs to every waypoint; callers handle that case themselves.
+ */
+export function computeWaypointMembership(
+  desc: Pick<SoundSourceDescriptor, 'path' | 'positions' | 'nPositions' | 'ndim'>,
+  extendToAll: string[] | undefined,
+  when: SoundWaypointCondition,
+  dims: SimpleDims,
+  sceneGraph: SceneNode | null,
+  out: Uint8Array
+): number {
+  return computeRowAudibility(
+    desc,
+    extendToAll,
+    buildWaypointViewState(when, dims),
+    sceneGraph,
+    out
+  );
 }

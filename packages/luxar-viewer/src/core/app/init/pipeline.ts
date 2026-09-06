@@ -1,3 +1,4 @@
+import type * as THREE from 'three';
 import { SceneManager } from '../../../scene/scene-manager';
 import { AnimationController } from '../../../scene/animation/animation-controller';
 import { PerformanceMonitor } from '../../../ui/performance-monitor';
@@ -12,6 +13,7 @@ import { LayersPanel } from '../../../ui/layers';
 import { ControlRail } from '../../../ui/control-rail';
 import { buildRailItems } from './build-rail-items';
 import { AudioEngine } from '../../../audio/audio-engine';
+import { resolveTargetNodeCenter } from '../../../scene/scene-manager/camera/camera-setup';
 import { getViewerContainer } from '../../../utils/viewer-container';
 import { DataMonitorManager } from '../../../ui/data-monitor-manager';
 import { SceneLoaderManager, getSceneLoader } from '../../../data/scene-loader-manager';
@@ -661,6 +663,10 @@ export async function runInitPipeline(
     getSceneScale: () => sceneManager.getSceneScale(),
     container: getViewerContainer,
     emit: (event, payload) => ports.emitEmbedderEvent(event, payload),
+    resolveNodeCenter: (name) => {
+      const root = sceneManager.scene?.children?.find((c) => c.name === 'LuxarScene');
+      return root ? resolveTargetNodeCenter(root as THREE.Group, name) : null;
+    },
     notifyUiChanged: () => {
       // The rail refreshes on this. Guarded like a unit test's bare window stub
       // expects: no dispatcher, no event (the layers panel's own event is the model).
@@ -670,6 +676,16 @@ export async function runInitPipeline(
     },
   });
   partial.audioEngine = audioEngine;
+  // Real-time recordings carry the mix the listener hears (SOUND_SPEC §6, Phase 3).
+  recordingPanel.setAudioCapture({
+    acquire: () => audioEngine.acquireCaptureStream(),
+    release: (stream) => audioEngine.releaseCaptureStream(stream),
+  });
+  // Sound rows in the Layers panel: eye = mute, slider = gain (SOUND_SPEC §4.2).
+  layersPanel.setAudioPort({
+    setNodeMuted: (path, muted) => audioEngine.setNodeMuted(path, muted),
+    setNodeGain: (path, gain) => audioEngine.setNodeGain(path, gain),
+  });
 
   const ui = inputHandler.getUiActions();
   const railItems = buildRailItems({

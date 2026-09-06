@@ -7,7 +7,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildSoundBaseViewState,
+  buildWaypointViewState,
   computeRowAudibility,
+  computeWaypointMembership,
   displayedXYZ,
 } from '../../../audio/audibility';
 import type { SimpleDims } from '../../../types/dims';
@@ -98,5 +100,40 @@ describe('displayedXYZ', () => {
   it('picks the displayed columns of a row and pads missing axes with 0', () => {
     expect(displayedXYZ(rows, 1, 4, [1, 2, 3])).toEqual([4, 5, 6]);
     expect(displayedXYZ(rows, 2, 4, [3, 1])).toEqual([9, 7, 0]);
+  });
+});
+
+describe('waypoint membership (the `when` clause as a slab)', () => {
+  it('an exact value admits ±0.5 like the overlay rule; unnamed hidden dims admit anything', () => {
+    const vs = buildWaypointViewState({ story: 1 }, storyDims(2));
+    expect(vs.slicePosition[0]).toBe(1);
+    expect(vs.tolerance[0]).toBe(0.5);
+    const out = new Uint8Array(3);
+    expect(computeWaypointMembership(desc, undefined, { story: 1 }, storyDims(2), null, out)).toBe(
+      1
+    );
+    expect(Array.from(out)).toEqual([0, 1, 0]);
+  });
+
+  it('a range takes its midpoint and half-width', () => {
+    const out = new Uint8Array(3);
+    expect(
+      computeWaypointMembership(desc, undefined, { story: [1, 2] }, storyDims(0), null, out)
+    ).toBe(2);
+    expect(Array.from(out)).toEqual([0, 1, 1]);
+  });
+
+  it('a dimension the scene does not have is skipped, so every row belongs', () => {
+    const out = new Uint8Array(3);
+    expect(computeWaypointMembership(desc, undefined, { nope: 7 }, storyDims(0), null, out)).toBe(
+      3
+    );
+  });
+
+  it('extend_to_all on the named dimension makes every row belong', () => {
+    const out = new Uint8Array(3);
+    expect(computeWaypointMembership(desc, ['story'], { story: 1 }, storyDims(0), null, out)).toBe(
+      3
+    );
   });
 });

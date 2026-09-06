@@ -20,17 +20,26 @@ import math
 from pathlib import Path
 from typing import Any, Dict, FrozenSet, Optional, Sequence, Tuple, Union
 
-#: Triggers Phase 1 plays. ``on_depart`` / ``on_arrive`` are spec §3.1 vocabulary
-#: but need the waypoint driver's events (Phase 2), so they are named here only to
-#: give the caller a precise refusal instead of a typo diagnostic.
-VALID_SOUND_TRIGGERS: Tuple[str, ...] = ("continuous", "once")
-PHASE2_SOUND_TRIGGERS: Tuple[str, ...] = ("on_depart", "on_arrive")
+#: Playback triggers (spec §3.1). ``continuous`` / ``once`` follow the slab
+#: rule's edges; ``on_depart`` / ``on_arrive`` follow the waypoint driver's
+#: events for the waypoint the node's row belongs to (``viewer_config.waypoints``
+#: must exist for them to ever fire).
+VALID_SOUND_TRIGGERS: Tuple[str, ...] = ("continuous", "once", "on_depart", "on_arrive")
+#: The triggers the waypoint driver fires (subset of the above).
+WAYPOINT_SOUND_TRIGGERS: Tuple[str, ...] = ("on_depart", "on_arrive")
 
 #: The three buses ``viewer_config.audio.buses`` carries a gain for.
 VALID_SOUND_BUSES: Tuple[str, ...] = ("ambient", "voice", "effects")
 
 #: ``PannerNode.distanceModel`` values, verbatim.
 VALID_DISTANCE_MODELS: Tuple[str, ...] = ("inverse", "linear", "exponential")
+
+#: Ambisonic layouts the viewer decodes: first order only (4 AmbiX channels,
+#: ACN order W Y Z X, SN3D). A field is rotated against the camera, never
+#: spatialised as a point source.
+VALID_AMBISONIC_LAYOUTS: Tuple[str, ...] = ("foa",)
+#: Channel count of a first-order ambisonic clip.
+FOA_CHANNELS = 4
 
 #: Accepted container/codec → the filename the clip is stored under inside the
 #: node group. The viewer reads ``attrs["audio_file"]`` and never guesses.
@@ -68,6 +77,8 @@ SOUND_RESERVED_ATTRS: FrozenSet[str] = frozenset(
         "cone_outer_gain",
         "orientation",
         "attach_to",
+        "ambisonic",
+        "channels",
         "format",
         "duration_ms",
         "sample_rate",
@@ -182,18 +193,57 @@ def validate_audio_input(clip: Union[bytes, bytearray, str, Path]) -> Tuple[byte
 
 
 def validate_sound_trigger(trigger: str) -> str:
-    """Validate the ``trigger`` knob (Phase 1 accepts ``continuous`` / ``once``)."""
-    if trigger in PHASE2_SOUND_TRIGGERS:
-        raise ValueError(
-            f"trigger={trigger!r} needs the waypoint driver's arrival/departure "
-            "events, which land in Phase 2 of the sound layer. Use "
-            "'continuous' or 'once' (fires when the node becomes audible)."
-        )
+    """Validate the ``trigger`` knob."""
     if trigger not in VALID_SOUND_TRIGGERS:
         raise ValueError(
             f"Invalid trigger {trigger!r}. Must be one of {VALID_SOUND_TRIGGERS}"
         )
     return trigger
+
+
+def validate_attach_to(attach_to: Any) -> str:
+    """Validate ``attach_to``: the NAME of the node whose bbox centre the source follows.
+
+    Only the shape is checked here — the target may be added after the sound,
+    and the viewer resolves the name at playback time (an unknown name leaves
+    the source at the node's own origin with a console warning).
+    """
+    if not isinstance(attach_to, str) or not attach_to.strip():
+        raise ValueError(f"attach_to must be a non-empty node name, got {attach_to!r}")
+    value = attach_to.strip()
+    if "/" in value:
+        raise ValueError(
+            f"attach_to takes a node NAME, not a path (got {attach_to!r}); the "
+            "viewer matches the name anywhere in the scene graph"
+        )
+    return value
+
+
+def validate_ambisonic(ambisonic: Any, fmt: str, spatial: Optional[bool]) -> str:
+    """Validate ``ambisonic`` (``"foa"``) against the clip format and ``spatial``.
+
+    MP3 holds two channels at most, so a four-channel field must be AAC; and a
+    field has an orientation rather than a position, so ``spatial=True`` is a
+    contradiction (``hidden=`` still decides WHEN it is live).
+    """
+    if ambisonic not in VALID_AMBISONIC_LAYOUTS:
+        raise ValueError(
+            f"Invalid ambisonic layout {ambisonic!r}. Must be one of "
+            f"{VALID_AMBISONIC_LAYOUTS} (first-order AmbiX: 4 channels W, Y, Z, X)"
+        )
+    if fmt != "aac":
+        raise ValueError(
+            f"ambisonic={ambisonic!r} needs a {FOA_CHANNELS}-channel clip, which "
+            f"MP3 cannot hold (the clip is {fmt}); encode it as AAC (.m4a), e.g. "
+            "`ffmpeg -i field.wav -c:a aac field.m4a`."
+        )
+    if spatial:
+        raise ValueError(
+            "an ambisonic field is a sound FIELD, not a point source: it is "
+            "rotated against the camera, never panned. Drop spatial=True "
+            "(use hidden= to bind it to a hidden-dimension value)."
+        )
+    return str(ambisonic)
 
 
 def validate_sound_bus(bus: str) -> str:

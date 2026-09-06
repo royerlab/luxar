@@ -83,6 +83,8 @@ import math
 import re
 import sys
 import tempfile
+import warnings
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -92,6 +94,7 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import AudioConfig, CameraConfig, ViewerConfig, Waypoint
 from luxar.demos import add_demo_caption, cached_download, launch_viewer
+from luxar.demos._audio_synth import synthesise_foa_from_clip, synthesise_hum
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG, pull_in
 from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
 from luxar.demos._narration import resolve_engine, synthesise
@@ -660,6 +663,14 @@ AMBIENT_BED_ATTRIBUTION = (
     "(OpenGameArt, CC0)"
 )
 AMBIENT_BED_GAIN = 0.35
+# Sound layer Phase 4: when a decoder + AAC encoder are on the build box, the
+# stereo bed is re-encoded as a first-order ambisonic FIELD (left channel at
+# +50°, right at -50°) the viewer rotates against the camera, so the music stays
+# fixed to the world as the turntable spins. Otherwise the stereo MP3 plays as is.
+AMBISONIC_BED_CACHE_DIR = (
+    Path.home() / ".cache" / "luxar" / "esm3_protein_stories" / "ambisonic"
+)
+AMBISONIC_BED_SPREAD_DEG = 50.0
 
 # Narration is synthesised at BUILD time (OpenAI TTS when a key is present, the
 # macOS system voice otherwise; a Linux box without a key builds silently) and
@@ -669,11 +680,25 @@ NARRATION_CACHE_DIR = (
 )
 NARRATION_VOICES = {"openai": "alloy", "say": "Samantha"}
 NARRATION_SOURCE_URL = "https://github.com/royerlab/luxar"
-# `on_arrive` (play when the flight lands) is Phase 2 of the sound layer; until
-# then the narration fires on the story's rising edge after the flight duration
-# plus a beat, which lands it where the flight ends.
+# Narration is `on_arrive`: it starts when the story's flight lands (the waypoint
+# driver's arrival event), plus a beat so the picture settles first.
 NARRATION_AFTER_FLIGHT_MS = 600
-OVERVIEW_FLIGHT_MS = 3000
+
+# Cluster hums (sound layer Phase 2): one spatial source per story, attached to
+# the story's highlight node so it follows the cluster's centre, live only at
+# that story, louder as the camera approaches. Synthesised at build time (needs
+# afconvert or ffmpeg; otherwise the scene has no hums) and cached here.
+HUM_CACHE_DIR = Path.home() / ".cache" / "luxar" / "esm3_protein_stories" / "hums"
+HUM_SECONDS = 8.0
+HUM_GAIN = 0.5
+#: E2 as the ladder's root; each story a step up a major pentatonic scale, so
+#: stepping through the tour also walks a melody.
+HUM_BASE_HZ = 82.41
+HUM_SEMITONES = (0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24, 26)
+#: PannerNode distances relative to the cluster's framing radius: at the story
+#: camera (about nine radii out, inverse model) the hum sits near -13 dB.
+HUM_REF_DISTANCE_PER_R95 = 2.0
+HUM_MAX_DISTANCE_PER_R95 = 40.0
 
 # Marker sphere around each story's cluster: a subtle translucent shell so the
 # cluster reads as a place, not just as brighter dots. Built from the existing
@@ -961,6 +986,12 @@ def overview_narration_text(n_proteins: int) -> str:
     return f"{OVERVIEW_TITLE}. {' '.join(body.split())}"
 
 
+def hum_frequency_hz(story_index: int) -> float:
+    """Pitch of story ``story_index`` (1-based) on the pentatonic ladder."""
+    semitone = HUM_SEMITONES[(story_index - 1) % len(HUM_SEMITONES)]
+    return HUM_BASE_HZ * 2.0 ** (semitone / 12.0)
+
+
 def add_story_sounds(
     scene: object,
     stories: tuple[Story, ...],
@@ -968,13 +999,18 @@ def add_story_sounds(
     *,
     narration_dir: Path = NARRATION_CACHE_DIR,
     engine: str | None = None,
+    clusters: Sequence[StoryCluster] | None = None,
+    hum_dir: Path = HUM_CACHE_DIR,
+    ambisonic_dir: Path = AMBISONIC_BED_CACHE_DIR,
 ) -> int:
-    """Add the ambient bed and one narration per story slot. Returns the node count.
+    """Add the ambient bed, one narration per story slot and one hum per cluster.
 
-    The bed is a cached CC0 download; a network failure skips it with a warning
-    rather than failing the build. Narration is synthesised through
-    :func:`luxar.demos._narration.synthesise`; when no engine is available the
-    stories stay silent (the helper has already warned).
+    Returns the node count. The bed is a cached CC0 download; a network failure
+    skips it with a warning rather than failing the build. Narration is
+    synthesised through :func:`luxar.demos._narration.synthesise`; when no
+    engine is available the stories stay silent (the helper has already warned).
+    Hums need ``clusters`` (for the centre and framing radius) and an AAC encoder
+    (:mod:`luxar.demos._audio_synth`); without one there are simply no hums.
     """
     added = 0
     try:
@@ -988,9 +1024,18 @@ def add_story_sounds(
         aprint(f"⚠️ Ambient bed unavailable ({e}); building without it")
         bed = None
     if bed is not None:
+        # The field version when the box can make one; the stereo clip otherwise.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            field = synthesise_foa_from_clip(
+                bed, ambisonic_dir, spread_deg=AMBISONIC_BED_SPREAD_DEG
+            )
+        if field is None:
+            aprint("🔈 No audio decoder/encoder: the bed stays stereo")
         scene.add_sound(  # type: ignore[attr-defined]
             "bed_ambient",
-            bed,
+            field if field is not None else bed,
+            ambisonic="foa" if field is not None else None,
             trigger="continuous",
             gain=AMBIENT_BED_GAIN,
             fade_in_ms=1500,
@@ -1005,14 +1050,13 @@ def add_story_sounds(
     chosen = resolve_engine(engine)
     voice = NARRATION_VOICES.get(chosen or "", "")
     total = len(stories)
-    slots: list[tuple[int, str, str, int]] = [
-        (0, "Overview", overview_narration_text(n_proteins), OVERVIEW_FLIGHT_MS)
+    slots: list[tuple[int, str, str]] = [
+        (0, "Overview", overview_narration_text(n_proteins))
     ]
     slots += [
-        (k, s.key, narration_text(s, k, total), s.flight_ms)
-        for k, s in enumerate(stories, start=1)
+        (k, s.key, narration_text(s, k, total)) for k, s in enumerate(stories, start=1)
     ]
-    for k, key, text, flight_ms in slots:
+    for k, key, text in slots:
         clip = synthesise(text, voice, narration_dir, engine=chosen or "none")
         if clip is None:
             break
@@ -1020,18 +1064,52 @@ def add_story_sounds(
             f"narration_{key}",
             clip,
             hidden={STORY_DIM: k},
-            trigger="once",
-            delay_ms=flight_ms + NARRATION_AFTER_FLIGHT_MS,
+            # Starts when the story's flight lands (waypoint arrival), a beat later.
+            trigger="on_arrive",
+            delay_ms=NARRATION_AFTER_FLIGHT_MS,
             bus="voice",
             license="CC0",
             attribution=f"Narration synthesised at build time ({chosen}, voice {voice})",
             source_url=NARRATION_SOURCE_URL,
         )
         added += 1
+
+    hums = 0
+    if clusters is not None:
+        for k, (s, c) in enumerate(zip(stories, clusters), start=1):
+            clip = synthesise_hum(hum_frequency_hz(k), HUM_SECONDS, hum_dir)
+            if clip is None:
+                break
+            scene.add_sound(  # type: ignore[attr-defined]
+                f"hum_{s.key}",
+                clip,
+                hidden={STORY_DIM: k},
+                attach_to=story_node_name(k, s),
+                trigger="continuous",
+                gain=HUM_GAIN,
+                fade_in_ms=1200,
+                fade_out_ms=1200,
+                bus="effects",
+                ref_distance=max(0.5, HUM_REF_DISTANCE_PER_R95 * c.r95),
+                max_distance=max(20.0, HUM_MAX_DISTANCE_PER_R95 * c.r95),
+                rolloff=1.0,
+                license="CC0",
+                attribution="Hum synthesised at build time (luxar demo)",
+                source_url=NARRATION_SOURCE_URL,
+            )
+            added += 1
+            hums += 1
+    bed_kind = "no" if bed is None else ("ambisonic" if field is not None else "stereo")
     aprint(
-        f"🔈 {added} sound node(s): bed {'yes' if bed else 'no'}, narration engine {chosen}"
+        f"🔈 {added} sound node(s): bed {bed_kind}, narration engine "
+        f"{chosen}, {hums} cluster hum(s)"
     )
     return added
+
+
+def story_node_name(story_index: int, story: Story) -> str:
+    """Name of a story's highlight points node (what its hum attaches to)."""
+    return f"Story {story_index}: {story.key}"
 
 
 def load_landscape_cache(cache_dir: Path) -> tuple[np.ndarray, dict[str, np.ndarray]]:
@@ -1235,7 +1313,7 @@ def build_stories_scene(
                     [np.full(m, float(k), dtype=np.float32), positions[idx]]
                 ).astype(np.float32)
                 scene.add_points(
-                    f"Story {k}: {s.key}",
+                    story_node_name(k, s),
                     highlight_positions,
                     colors=np.broadcast_to(
                         np.asarray(s.color, dtype=np.float32), (m, 3)
@@ -1395,7 +1473,7 @@ def build_stories_scene(
 
             if audio:
                 with asection("Sound layer"):
-                    add_story_sounds(scene, stories, n)
+                    add_story_sounds(scene, stories, n, clusters=clusters)
 
     aprint(f"✓ Wrote {n:,} proteins and {len(stories)} stories to {output_path}")
     return n

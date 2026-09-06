@@ -72,6 +72,8 @@ function makeRecordingPanelStub() {
     // too, since reaching `getSceneLoader` from the panel itself would pull
     // the whole data/cache stack into its module graph.
     setLODSettledProvider: vi.fn(),
+    // The sound layer's capture tap ("Include Audio").
+    setAudioCapture: vi.fn(),
     // The two capture flags the pipeline's injected predicates read.
     // `isCurrentlyRecording()` covers BOTH capture kinds; only the
     // narrower `isLoopRenderSuppressed()` may gate the render skip.
@@ -80,7 +82,8 @@ function makeRecordingPanelStub() {
   };
 }
 function makeLayersPanelStub() {
-  return { kind: 'layers' };
+  // `setAudioPort` is the sound layer's late-bound port for the sound rows.
+  return { kind: 'layers', setAudioPort: vi.fn() };
 }
 function makeInputHandlerStub() {
   return {

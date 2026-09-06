@@ -48,12 +48,14 @@ import {
 import type { CaptureStrategy, SessionState } from './capture-strategy';
 import { createLiveOverlayCompositor, type LiveOverlayCompositor } from './live-overlay-compositor';
 import type { RecordingSession } from './session';
-import type { RecordingMode, RecordingOptions } from './types';
+import type { AudioCapturePort, RecordingMode, RecordingOptions } from './types';
 
 export interface VideoRecordingStrategyHooks {
   hideAllPanels(): void;
   downloadBlob(blob: Blob, filename: string): void;
   generateFilename(ext: string): string;
+  /** The sound layer's capture surface, or null when none is wired. */
+  audioCapture?(): AudioCapturePort | null;
 }
 
 export class VideoRecordingStrategy implements CaptureStrategy {
@@ -71,6 +73,9 @@ export class VideoRecordingStrategy implements CaptureStrategy {
   // Non-null only while recording a scene that HAS visible overlays: the
   // mirror canvas the stream is captured from instead of the WebGL canvas.
   liveOverlayCompositor: LiveOverlayCompositor | null = null;
+  // The sound layer's stream whose tracks ride in `captureStream`, held so
+  // cleanupCaptureStream() can hand it back (disconnecting the tap).
+  audioCaptureStream: MediaStream | null = null;
 
   // ── Per-frame callback IDs ─────────────────────────────────────
   readonly keepAliveCallbackId = 'recording-keepalive';
@@ -89,7 +94,10 @@ export class VideoRecordingStrategy implements CaptureStrategy {
   async run(opts: RecordingOptions, mode: RecordingMode, session: RecordingSession): Promise<void> {
     if (session.isRecording) return;
 
-    const mimeType = getSupportedMimeTypePure();
+    // Audio rides only when asked for AND the sound layer has something to
+    // give (a scene without sound nodes has no graph — a silent video, as before).
+    const audioPort = opts.includeAudio ? (this.hooks.audioCapture?.() ?? null) : null;
+    const mimeType = getSupportedMimeTypePure(undefined, audioPort !== null);
     if (!mimeType) {
       showToast('Video recording not supported in this browser');
       return;
@@ -153,6 +161,14 @@ export class VideoRecordingStrategy implements CaptureStrategy {
       const captureSource = this.liveOverlayCompositor?.canvas ?? canvas;
 
       this.captureStream = captureSource.captureStream(opts.videoFPS);
+      if (audioPort) {
+        const audio = audioPort.acquire();
+        if (audio) {
+          for (const track of audio.getAudioTracks()) this.captureStream.addTrack(track);
+          this.audioCaptureStream = audio;
+          log.info(Modules.RECORDING, 'Recording the sound layer into the video');
+        }
+      }
       this.mediaRecorder = new MediaRecorder(this.captureStream, {
         mimeType,
         videoBitsPerSecond,
@@ -398,6 +414,12 @@ export class VideoRecordingStrategy implements CaptureStrategy {
     this.captureStream = null;
     this.liveOverlayCompositor?.detach();
     this.liveOverlayCompositor = null;
+    if (this.audioCaptureStream) {
+      // Hands the tap back to the sound layer (disconnects the destination
+      // node); its lifetime is the captureStream's, like the compositor's.
+      this.hooks.audioCapture?.()?.release(this.audioCaptureStream);
+      this.audioCaptureStream = null;
+    }
   }
 
   // ── Test/orchestrator-visible: same reason — Panel proxies.

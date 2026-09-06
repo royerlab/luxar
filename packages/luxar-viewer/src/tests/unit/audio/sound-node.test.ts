@@ -6,6 +6,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import * as THREE from 'three';
 import { SoundNode, type SoundNodeDeps } from '../../../audio/sound-node';
+import { FoaAudio, type FoaDecoder } from '../../../audio/foa-decoder';
 import { buildSoundBaseViewState } from '../../../audio/audibility';
 import { parseSoundNodeAttrs } from '../../../audio/sound-attrs';
 import type { SoundSourceDescriptor } from '../../../types/audio';
@@ -113,6 +114,128 @@ describe('SoundNode — routing and voices', () => {
     expect(v0.panner.panningModel).toBe('equalpower');
     expect(v0.panner.refDistance).toBe(3);
     expect(v0.panner.maxDistance).toBe(40);
+  });
+});
+
+describe('SoundNode — waypoint triggers and attach_to', () => {
+  it('on_arrive ignores the rising slab edge, fires on the trigger, and fades out when its story is left', () => {
+    const desc = descriptor({ rows: [[1, 0, 0, 0]] });
+    const node = makeNode({ trigger: 'on_arrive', fade_out_ms: 400 }, desc);
+    node.setGateOpen(true);
+    node.setBuffer(new FakeAudioBuffer() as unknown as AudioBuffer);
+    node.setViewState(buildSoundBaseViewState(storyDims(1)), null);
+    // Audible by the slab, but nothing starts: the driver owns the start.
+    expect(ctx.sources).toHaveLength(0);
+    expect(node.isWaypointTriggered).toBe(true);
+
+    expect(node.triggerFromWaypoint('depart', null)).toBe(false);
+    expect(node.triggerFromWaypoint('arrive', null)).toBe(true);
+    expect(ctx.sources).toHaveLength(1);
+    expect(ctx.sources[0].loop).toBe(false);
+
+    // Moving on cuts the narration with its fade.
+    node.setViewState(buildSoundBaseViewState(storyDims(2)), null);
+    expect(ctx.sources[0].stops[0]).toBeCloseTo(0.4);
+    expect(node.isPlaying).toBe(false);
+  });
+
+  it('on_depart plays out although its own row has just left the slab', () => {
+    const desc = descriptor({ rows: [[1, 0, 0, 0]] });
+    const node = makeNode({ trigger: 'on_depart' }, desc);
+    node.setGateOpen(true);
+    node.setBuffer(new FakeAudioBuffer() as unknown as AudioBuffer);
+    node.setViewState(buildSoundBaseViewState(storyDims(1)), null);
+    // The story is left: the slab falls and the departure fires.
+    node.setViewState(buildSoundBaseViewState(storyDims(2)), null);
+    node.triggerFromWaypoint('depart', null);
+    expect(ctx.sources).toHaveLength(1);
+    expect(node.isPlaying).toBe(true);
+    // Further slab changes do not stop it.
+    node.setViewState(buildSoundBaseViewState(storyDims(0)), null);
+    expect(node.isPlaying).toBe(true);
+  });
+
+  it('a trigger before the gate opens, or before the clip decodes, is kept pending', () => {
+    const early = makeNode({ trigger: 'on_arrive' });
+    early.triggerFromWaypoint('arrive', null); // no buffer, no voices yet
+    early.setGateOpen(true);
+    expect(ctx.sources).toHaveLength(0);
+    early.setBuffer(new FakeAudioBuffer() as unknown as AudioBuffer);
+    expect(ctx.sources).toHaveLength(1);
+
+    const gated = makeNode({ trigger: 'on_arrive' });
+    gated.setBuffer(new FakeAudioBuffer() as unknown as AudioBuffer);
+    gated.triggerFromWaypoint('arrive', null); // gate closed
+    expect(ctx.sources).toHaveLength(1);
+    gated.setGateOpen(true);
+    expect(ctx.sources).toHaveLength(2);
+  });
+
+  it('a spatial trigger starts only the rows that belong to the waypoint', () => {
+    const desc = descriptor({
+      rows: [
+        [1, 0, 0, 0],
+        [2, 5, 5, 5],
+      ],
+    });
+    const node = makeNode({ trigger: 'on_arrive', spatial: true }, desc);
+    node.setGateOpen(true);
+    node.setBuffer(new FakeAudioBuffer() as unknown as AudioBuffer);
+    node.triggerFromWaypoint('arrive', Uint8Array.from([0, 1]));
+    expect(ctx.sources).toHaveLength(1);
+    expect((parent.children[1] as THREE.PositionalAudio).isPlaying).toBe(true);
+  });
+
+  it('attach_to places every voice at the target centre in the placeholder frame, re-resolved on evaluate', () => {
+    const desc = descriptor({ rows: [[1, 0, 0, 0]] });
+    parent.position.set(10, 0, 0);
+    let centre: THREE.Vector3 | null = null;
+    const attrs = parseSoundNodeAttrs(
+      desc.path,
+      { audio_file: 'audio.mp3', attach_to: 'blob', trigger: 'continuous' },
+      100
+    );
+    expect(attrs.spatial).toBe(true);
+    const node = new SoundNode(desc, attrs, { ...makeDeps(), resolveAttachCenter: () => centre });
+    node.setGateOpen(true);
+    node.setBuffer(new FakeAudioBuffer() as unknown as AudioBuffer);
+    const voice = parent.children[0] as THREE.PositionalAudio;
+    expect(voice).toBeInstanceOf(THREE.PositionalAudio);
+    // Unknown target: stays at the row's own displayed xyz.
+    expect(voice.position.toArray()).toEqual([0, 0, 0]);
+    centre = new THREE.Vector3(13, 2, 1);
+    node.setViewState(buildSoundBaseViewState(storyDims(1)), null);
+    expect(voice.position.toArray()).toEqual([3, 2, 1]);
+  });
+});
+
+describe('SoundNode — ambisonic field', () => {
+  it('an ambisonic node gets one FoaAudio voice, registers its decoder, and is never spatial', () => {
+    const registered: unknown[] = [];
+    const desc = descriptor({ rows: [[1, 0, 0, 0]] });
+    const attrs = parseSoundNodeAttrs(
+      desc.path,
+      { audio_file: 'audio.m4a', ambisonic: 'foa', spatial: true, trigger: 'continuous' },
+      100
+    );
+    expect(attrs.ambisonic).toBe('foa');
+    expect(attrs.spatial).toBe(false);
+    const node = new SoundNode(desc, attrs, {
+      ...makeDeps(),
+      registerFoaDecoder: (d) => registered.push(d),
+      unregisterFoaDecoder: (d) => registered.splice(registered.indexOf(d), 1),
+    });
+    node.setGateOpen(true);
+    node.setBuffer(new FakeAudioBuffer(1, 48000, 4) as unknown as AudioBuffer);
+    expect(parent.children).toHaveLength(1);
+    expect(parent.children[0]).toBeInstanceOf(FoaAudio);
+    expect(registered).toHaveLength(1);
+    node.setViewState(buildSoundBaseViewState(storyDims(1)), null);
+    expect(node.isPlaying).toBe(true);
+    // The source feeds the decoder, not the gain directly.
+    expect(ctx.sources[0].outputs.has((registered[0] as FoaDecoder).input as never)).toBe(true);
+    node.dispose();
+    expect(registered).toHaveLength(0);
   });
 });
 

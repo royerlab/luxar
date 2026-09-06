@@ -19,7 +19,10 @@ from luxar.validation.sound import (
     SOUND_RESERVED_ATTRS,
     VALID_SOUND_BUSES,
     VALID_SOUND_TRIGGERS,
+    WAYPOINT_SOUND_TRIGGERS,
     sniff_audio_format,
+    validate_ambisonic,
+    validate_attach_to,
     validate_audio_input,
     validate_non_negative_finite,
     validate_sound_bus,
@@ -139,8 +142,14 @@ def _write(path, payload: bytes):
 # =============================================================================
 
 
+def test_ambisonic_foa_is_accepted_on_aac() -> None:
+    assert validate_ambisonic("foa", "aac", None) == "foa"
+    assert validate_ambisonic("foa", "aac", False) == "foa"
+
+
 def test_trigger_bus_vocabulary() -> None:
-    assert VALID_SOUND_TRIGGERS == ("continuous", "once")
+    assert VALID_SOUND_TRIGGERS == ("continuous", "once", "on_depart", "on_arrive")
+    assert set(WAYPOINT_SOUND_TRIGGERS) < set(VALID_SOUND_TRIGGERS)
     assert VALID_SOUND_BUSES == ("ambient", "voice", "effects")
     for t in VALID_SOUND_TRIGGERS:
         assert validate_sound_trigger(t) == t
@@ -151,16 +160,23 @@ def test_trigger_bus_vocabulary() -> None:
 @pytest.mark.parametrize(
     "factory,error_pattern,test_id",
     [
+        (lambda: validate_attach_to(""), r"non-empty node name", "attach-to-empty"),
         (
-            lambda: validate_sound_trigger("on_arrive"),
-            r"Phase 2",
-            "on-arrive-is-phase-2",
+            lambda: validate_ambisonic("hoa2", "aac", None),
+            r"Invalid ambisonic",
+            "ambisonic-order",
         ),
         (
-            lambda: validate_sound_trigger("on_depart"),
-            r"Phase 2",
-            "on-depart-is-phase-2",
+            lambda: validate_ambisonic("foa", "mp3", None),
+            r"MP3 cannot hold",
+            "ambisonic-mp3",
         ),
+        (
+            lambda: validate_ambisonic("foa", "aac", True),
+            r"sound FIELD",
+            "ambisonic-spatial",
+        ),
+        (lambda: validate_attach_to("a/b"), r"NAME, not a path", "attach-to-path"),
         (lambda: validate_sound_trigger("loop"), r"Invalid trigger", "unknown-trigger"),
         (lambda: validate_sound_bus("music"), r"Invalid bus", "unknown-bus"),
         (

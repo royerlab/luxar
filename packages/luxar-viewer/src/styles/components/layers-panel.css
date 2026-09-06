@@ -178,6 +178,16 @@
   font-size: var(--luxar-text-base);
 }
 
+/* ========== Sound Gain (sound rows only) ========== */
+
+.luxar-layer-row__gain {
+  width: 64px;
+  flex-shrink: 0;
+  margin: 0;
+  accent-color: var(--luxar-info);
+  cursor: pointer;
+}
+
 /* ========== Type Badge ========== */
 
 .luxar-layer-row__badge {

@@ -45,7 +45,23 @@ import {
  * The specialized-group nature is surfaced via the ``kind`` field on
  * ``LayerInfo``, which drives the per-layer badge / LOD dropdown.
  */
-export type LayerType = GeometryTypeName | 'group';
+export type LayerType = GeometryTypeName | 'group' | 'sound';
+
+/**
+ * The sound-specific half of a `sound` layer (`SOUND_SPEC.md` §4.2): the live
+ * per-node gain the row's slider edits, and the provenance the tooltip shows.
+ * A sound layer is HEARD, not drawn, so every appearance field on its
+ * {@link LayerInfo} is a neutral placeholder the controls section hides.
+ */
+export interface SoundLayerInfo {
+  /** Live linear gain (authored `gain` at load). */
+  gain: number;
+  bus: string;
+  trigger: string;
+  license?: string;
+  attribution?: string;
+  sourceUrl?: string;
+}
 
 /**
  * Coerce a node's raw `layer` attr into "exposed in the Layers panel".
@@ -493,6 +509,8 @@ export interface LayerInfo {
   layerOrderExplicit: boolean;
   /** Whether this layer is selected in the list */
   selected: boolean;
+  /** Present on `type === 'sound'` layers only. */
+  sound?: SoundLayerInfo;
   /** Active colormap name (undefined = direct RGB colors) */
   colormap?: string;
   /** Whether this node supports colormap (has scalars or amplitudes) */
@@ -642,7 +660,9 @@ export class LayerStateManager {
       // Vocabulary question, not a capability one: any geometry leaf the
       // format can carry must be listable in the panel (see `LayerType`).
       const isLayerType = isGeometryType(node.type) || node.type === 'group';
-      if (isLayerType) {
+      if (node.type === 'sound') {
+        this.pushSoundLayer(node, effectiveLayerOrder);
+      } else if (isLayerType) {
         const name = node.path.split('/').pop() || node.path;
 
         const ampRange = node.attrs.amplitude_data_range as [number, number] | undefined;
@@ -886,6 +906,64 @@ export class LayerStateManager {
         this.walkSceneGraph(child, root, effectiveLayerOrder);
       }
     }
+  }
+
+  /**
+   * A `sound` node exposed as a layer: eye = mute, slider = gain, tooltip =
+   * licence. Every appearance field is a neutral placeholder — nothing here
+   * reaches a material — so the row can sit in the same list as the geometry.
+   */
+  private pushSoundLayer(node: SceneNode, effectiveLayerOrder: number | undefined): void {
+    const name = node.path.split('/').pop() || node.path;
+    const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
+    const gain = typeof node.attrs.gain === 'number' && node.attrs.gain >= 0 ? node.attrs.gain : 1;
+    this.layerOrder.push(node.path);
+    this.layers.set(node.path, {
+      path: node.path,
+      name,
+      type: 'sound',
+      kind: undefined,
+      visible: node.attrs.visible !== false,
+      opacity: 1,
+      absorption: 1,
+      ambient: MESH_DEFAULTS.ambient,
+      shadeExponent: MESH_DEFAULTS.shadeExponent,
+      specular: MESH_DEFAULTS.specular,
+      shininess: MESH_DEFAULTS.shininess,
+      shading: 'none',
+      alphaCutoff: MESH_DEFAULTS.alphaCutoff,
+      displayMin: 0,
+      displayMax: 1,
+      dataMin: 0,
+      dataMax: 1,
+      gamma: 1,
+      blendingMode: defaultBlendingMode('points'),
+      blendingModeExplicit: false,
+      layerOrder: effectiveLayerOrder,
+      inheritedLayerOrder: effectiveLayerOrder,
+      layerOrderExplicit: false,
+      selected: false,
+      sound: {
+        gain,
+        bus: str(node.attrs.bus) ?? 'ambient',
+        trigger: str(node.attrs.trigger) ?? 'continuous',
+        license: str(node.attrs.license),
+        attribution: str(node.attrs.attribution),
+        sourceUrl: str(node.attrs.source_url),
+      },
+      supportsColormap: false,
+      colorByLabel: false,
+      labelFilterId: undefined,
+      scalarWindow: false,
+    });
+  }
+
+  /** Set a sound layer's live gain (clamped to `[0, 2]`); a no-op on other layers. */
+  setSoundGain(path: string, gain: number): void {
+    const layer = this.layers.get(path);
+    if (!layer?.sound || !Number.isFinite(gain)) return;
+    layer.sound.gain = Math.min(2, Math.max(0, gain));
+    this.notify();
   }
 
   /** Get all layers in display order */

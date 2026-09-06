@@ -593,10 +593,17 @@ LOD and no picking, so none of the geometry tables have a row for it.
 - **Slab audibility.** The same hidden-dimension slab rule that decides which
   points are visible decides when a sound is live; `extend_to_all` works as for
   points.
-- **Triggers** `"continuous"` (looped while audible, fades on the edge) and
-  `"once"` (each time the node becomes audible), plus `delay_ms`, `gain`,
-  `fade_in_ms` / `fade_out_ms`. `on_depart` / `on_arrive` (waypoint events) are
-  Phase 2 and are refused by name.
+- **Attached** — `attach_to="Story 3: hsp70"`: the source follows the named
+  node's bounding-box centre in the viewer (spatial by default; combine with
+  `hidden=` to bind it to a value). Mutually exclusive with `positions`.
+- **Ambisonic field** — `ambisonic="foa"`: a 4-channel AmbiX AAC clip the
+  viewer decodes to stereo and rotates against the camera. Never spatial, never
+  positioned; `hidden=` still decides when it is live.
+- **Triggers** `"continuous"` (looped while audible, fades on the edge),
+  `"once"` (each time the node becomes audible), `"on_depart"` / `"on_arrive"`
+  (when a story flight leaves / lands on the `viewer_config.waypoints` entry
+  whose `when` clause the node's row satisfies), plus `delay_ms`, `gain`,
+  `fade_in_ms` / `fade_out_ms`.
 - **Buses** `ambient` (default) / `voice` / `effects`; the voice bus ducks
   ambient while it plays (`ViewerConfig.audio.duck_db`).
 - **Spatial knobs** map one to one onto `PannerNode`: `distance_model`,

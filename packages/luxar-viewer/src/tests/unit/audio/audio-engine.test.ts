@@ -90,6 +90,7 @@ function makeHarness(state: 'running' | 'suspended' = 'running'): Harness {
     },
     getSceneGraph: () => null,
     getSceneScale: () => 100,
+    resolveNodeCenter: (name) => (name === 'blob' ? new THREE.Vector3(4, 5, 6) : null),
     container: () => document.body,
     emit: (event, payload) => h.events.push({ event, name: payload.name }),
     notifyUiChanged: () => {
@@ -218,6 +219,79 @@ describe('AudioEngine — slab, ducking and buses', () => {
     ]);
   });
 
+  it('notifyWaypoint fires the on_arrive / on_depart nodes whose rows belong to the waypoint', async () => {
+    const h = makeHarness();
+    h.root.add(soundPlaceholder('/n1', { trigger: 'on_arrive', bus: 'voice' }, [[1, 0, 0, 0]]));
+    h.root.add(soundPlaceholder('/n2', { trigger: 'on_arrive', bus: 'voice' }, [[2, 0, 0, 0]]));
+    h.root.add(soundPlaceholder('/bye', { trigger: 'on_depart', bus: 'effects' }));
+    h.root.add(soundPlaceholder('/bed', { trigger: 'continuous' }));
+    h.engine.attachScene(h.root);
+    await flush();
+    vi.advanceTimersByTime(1);
+    expect(h.engine.getState().playing).toEqual(['bed']);
+
+    h.setStep(1);
+    h.engine.notifyWaypoint('arrive', { story: 1 });
+    vi.advanceTimersByTime(1);
+    expect(h.engine.getState().playing).toEqual(['bed', 'n1']);
+
+    // Departure: the row-less on_depart node belongs to every waypoint.
+    h.engine.notifyWaypoint('depart', { story: 1 });
+    vi.advanceTimersByTime(1);
+    expect(h.engine.getState().playing).toContain('bye');
+    expect(h.engine.getState().playing).not.toContain('n2');
+  });
+
+  it('setNodeMuted mutes one node by path or a whole subtree by ancestor, independently of the rail', async () => {
+    const h = makeHarness();
+    h.root.add(soundPlaceholder('/story/bed', { trigger: 'continuous' }));
+    h.root.add(soundPlaceholder('/story/hum', { trigger: 'continuous' }));
+    h.root.add(soundPlaceholder('/other', { trigger: 'continuous' }));
+    h.engine.attachScene(h.root);
+    await flush();
+    vi.advanceTimersByTime(1);
+    expect(h.engine.getState().playing).toEqual(['bed', 'hum', 'other']);
+
+    h.engine.setNodeMuted('/story/hum', true);
+    expect(h.engine.getState().playing).toEqual(['bed', 'other']);
+    h.engine.setNodeMuted('/story', true);
+    expect(h.engine.getState().playing).toEqual(['other']);
+    // Un-hiding the group does not unmute the node's own eye.
+    h.engine.setNodeMuted('/story', false);
+    vi.advanceTimersByTime(1);
+    expect(h.engine.getState().playing).toEqual(['bed', 'other']);
+    h.engine.setNodeMuted('/story/hum', false);
+    vi.advanceTimersByTime(1);
+    expect(h.engine.getState().playing).toEqual(['bed', 'hum', 'other']);
+    expect(h.engine.isMuted()).toBe(false);
+  });
+
+  it('setNodeGain ramps a playing node and is the value later starts use', async () => {
+    const h = makeHarness();
+    h.root.add(soundPlaceholder('/bed', { trigger: 'continuous', gain: 0.4 }));
+    h.engine.attachScene(h.root);
+    await flush();
+    expect(h.engine.getNodeGain('/bed')).toBe(0.4);
+    const voiceGain = h.ctx.gains.find((g) => g.gain.lastRampTarget() === 0.4)!;
+    expect(voiceGain).toBeDefined();
+    h.engine.setNodeGain('/bed', 1.1);
+    expect(voiceGain.gain.lastRampTarget()).toBeCloseTo(1.1);
+    expect(h.engine.getNodeGain('/bed')).toBeCloseTo(1.1);
+    expect(h.engine.getNodeGain('/nope')).toBeUndefined();
+  });
+
+  it('an attach_to source sits at the named node centre', async () => {
+    const h = makeHarness();
+    h.root.add(soundPlaceholder('/hum', { trigger: 'continuous', attach_to: 'blob' }));
+    h.engine.attachScene(h.root);
+    await flush();
+    const voice = h.root.children[0].children.find(
+      (c) => c instanceof THREE.PositionalAudio
+    ) as THREE.PositionalAudio;
+    expect(voice).toBeDefined();
+    expect(voice.position.toArray()).toEqual([4, 5, 6]);
+  });
+
   it('bus gains from the scene config land on the bus nodes and setAudio patches them live', async () => {
     const h = makeHarness();
     h.root.add(soundPlaceholder('/bed', { trigger: 'continuous' }));
@@ -308,6 +382,44 @@ describe('AudioEngine — mute, prefs and the autoplay gate', () => {
     h.engine.attachScene(h.root);
     await flush();
     expect(document.querySelector('.luxar-audio-gate')).toBeNull();
+  });
+
+  it("rotates ambisonic fields against the camera on the listener's per-frame update", async () => {
+    const h = makeHarness();
+    h.root.add(soundPlaceholder('/field', { trigger: 'continuous', ambisonic: 'foa' }));
+    h.engine.attachScene(h.root);
+    await flush();
+    const before = h.ctx.gains.reduce((n, g) => n + g.gain.calls.length, 0);
+    // Camera turns 90° left; three refreshes the listener from the camera each frame.
+    h.camera.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
+    h.camera.updateMatrixWorld(true);
+    const after = h.ctx.gains.reduce((n, g) => n + g.gain.calls.length, 0);
+    expect(after - before).toBe(9);
+    // Still: no further automation.
+    h.camera.updateMatrixWorld(true);
+    expect(h.ctx.gains.reduce((n, g) => n + g.gain.calls.length, 0)).toBe(after);
+  });
+
+  it('acquireCaptureStream taps the master gain; release disconnects and stops the tracks', async () => {
+    const h = makeHarness();
+    expect(h.engine.acquireCaptureStream()).toBeNull(); // no graph yet
+    h.root.add(soundPlaceholder('/bed', { trigger: 'continuous' }));
+    h.engine.attachScene(h.root);
+    await flush();
+    const stream = h.engine.acquireCaptureStream()!;
+    expect(stream).not.toBeNull();
+    const destination = h.ctx.streamDestinations[0];
+    const master = h.ctx.gains[0];
+    expect(master.outputs.has(destination)).toBe(true);
+    expect(master.outputs.has(h.ctx.destination)).toBe(true);
+    h.engine.releaseCaptureStream(stream);
+    expect(master.outputs.has(destination)).toBe(false);
+    expect(destination.track.stopped).toBe(true);
+    // Unknown streams are ignored; dispose releases anything still held.
+    h.engine.releaseCaptureStream(stream);
+    h.engine.acquireCaptureStream();
+    h.engine.dispose();
+    expect(h.ctx.streamDestinations[1].track.stopped).toBe(true);
   });
 
   it('dispose closes the context', async () => {

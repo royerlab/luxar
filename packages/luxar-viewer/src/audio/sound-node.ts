@@ -11,6 +11,19 @@
  * - falling (either) → ramp to 0 over `fade_out_ms`, then stop;
  * - a rising edge during a fade-out restarts the voice.
  *
+ * `on_depart` / `on_arrive` nodes ignore the slab's RISING edge: the engine
+ * calls {@link SoundNode.triggerFromWaypoint} when the waypoint driver reports
+ * the event, for the rows that belong to that waypoint (§4.3). An `on_arrive`
+ * clip still fades out on the slab's falling edge (the visitor moved on, the
+ * next story's narration must not overlap); an `on_depart` clip plays out —
+ * by definition it starts when its own row has just stopped being audible.
+ * A trigger that lands while the gate is closed, or before the clip decoded,
+ * is kept pending and fires when either arrives.
+ *
+ * `attach_to` moves every voice to the named node's bounding-box centre (in
+ * this node's local frame) instead of its rows' displayed x/y/z; the centre is
+ * re-resolved on every evaluation, so a node that loads later is picked up.
+ *
  * While the autoplay gate is closed, edges are still tracked but nothing starts;
  * opening the gate re-runs the rising edges — `once` nodes included, so the
  * opening story's narration is not lost to the tap (a deliberate reading of
@@ -30,6 +43,9 @@ import type { SceneNode, ViewState } from '../data/data-loader-types';
 import type { PanningModel, SoundNodeAttrs, SoundSourceDescriptor } from '../types/audio';
 import { computeRowAudibility, displayedXYZ } from './audibility';
 import { rampGain } from './fades';
+import { FOA_CHANNELS, FoaAudio, FoaDecoder } from './foa-decoder';
+import { MIN_FADE_MS } from '../types/audio';
+import { log, Modules } from '../utils/log';
 
 /** Everything a node needs from the engine, as ports. */
 export interface SoundNodeDeps {
@@ -41,6 +57,11 @@ export interface SoundNodeDeps {
   parent: THREE.Object3D;
   onStarted(name: string): void;
   onEnded(name: string): void;
+  /** World-space centre of the `attach_to` node, or null while it is unknown. */
+  resolveAttachCenter?(): THREE.Vector3 | null;
+  /** An ambisonic node's decoder, for the engine to rotate against the camera each frame. */
+  registerFoaDecoder?(decoder: FoaDecoder): void;
+  unregisterFoaDecoder?(decoder: FoaDecoder): void;
 }
 
 /** One playing source: a three `Audio` (non-spatial) or `PositionalAudio` (one per row). */
@@ -50,11 +71,14 @@ export interface Voice {
   audible: boolean;
   /** True from a start until the voice ended or a stop was scheduled. */
   playing: boolean;
+  /** A waypoint trigger recorded while nothing could start (gate closed / no buffer). */
+  pending: boolean;
   startTimer?: ReturnType<typeof setTimeout>;
   stopTimer?: ReturnType<typeof setTimeout>;
 }
 
 const _forward = new THREE.Vector3(0, 0, 1);
+const _center = new THREE.Vector3();
 
 /** One `sound` scene node's voices, edges and fades (see the module docs). */
 export class SoundNode {
@@ -64,8 +88,17 @@ export class SoundNode {
   private readonly voices: Voice[] = [];
   private readonly mask: Uint8Array;
   private gateOpen = false;
-  private muted = false;
+  /** Engine-wide mute (the rail). */
+  private globalMuted = false;
+  /** This node's own Layers-panel eye. */
+  private nodeMuted = false;
+  /** A Layers-panel eye on an ancestor group. */
+  private ancestorMuted = false;
   private disposed = false;
+  /** Live per-node linear gain (the Layers-panel slider); starts at the authored value. */
+  gain: number;
+  /** The FOA rotate-and-decode graph of an ambisonic node (one voice). */
+  private foaDecoder: FoaDecoder | null = null;
   /** Last derived per-row audibility, kept so a deferred start can replay it. */
   private lastBase: ViewState | null = null;
   private lastSceneGraph: SceneNode | null = null;
@@ -77,7 +110,12 @@ export class SoundNode {
   ) {
     this.name = desc.name;
     this.path = desc.path;
+    this.gain = attrs.gain;
     this.mask = new Uint8Array(Math.max(1, desc.nPositions));
+  }
+
+  private get muted(): boolean {
+    return this.globalMuted || this.nodeMuted || this.ancestorMuted;
   }
 
   /** Number of currently playing voices. */
@@ -101,6 +139,11 @@ export class SoundNode {
     return this.deps.listener.context;
   }
 
+  /** True for the two triggers the waypoint driver drives (not the slab). */
+  get isWaypointTriggered(): boolean {
+    return this.attrs.trigger === 'on_depart' || this.attrs.trigger === 'on_arrive';
+  }
+
   /**
    * Hand the decoded clip over. Voices are created here (lazily, once) so a node
    * whose clip never arrives costs nothing but a placeholder. Pending rising
@@ -109,18 +152,30 @@ export class SoundNode {
   setBuffer(buffer: AudioBuffer): void {
     if (this.disposed) return;
     this.buffer = buffer;
-    if (this.voices.length === 0) this.createVoices();
+    if (this.attrs.ambisonic === 'foa' && buffer.numberOfChannels !== FOA_CHANNELS) {
+      log.warning(
+        Modules.AUDIO,
+        `${this.path}: ambisonic "foa" needs a ${FOA_CHANNELS}-channel clip, got ` +
+          `${buffer.numberOfChannels}; the missing channels play silent.`
+      );
+    }
+    if (this.voices.length === 0) {
+      this.createVoices();
+      if (this.pendingBeforeVoices) {
+        this.pendingBeforeVoices = false;
+        for (const v of this.voices) v.pending = true;
+      }
+    }
     for (const v of this.voices) v.audio.setBuffer(buffer);
     this.applyEdges(true);
   }
 
   private createVoices(): void {
-    const spatial = this.attrs.spatial && this.desc.positions !== null && this.desc.nPositions > 0;
-    const count = spatial ? this.desc.nPositions : 1;
+    const hasRows = this.desc.positions !== null && this.desc.nPositions > 0;
+    const spatial = this.attrs.spatial && (hasRows || this.attrs.attach_to !== undefined);
+    const count = spatial && hasRows ? this.desc.nPositions : 1;
     for (let row = 0; row < count; row++) {
-      const audio = spatial
-        ? new THREE.PositionalAudio(this.deps.listener)
-        : new THREE.Audio(this.deps.listener);
+      const audio = this.createVoiceAudio(spatial);
       // Route past the listener input into the bus (see module docs).
       audio.gain.disconnect();
       audio.gain.connect(this.deps.bus);
@@ -129,7 +184,7 @@ export class SoundNode {
       if (audio instanceof THREE.PositionalAudio) this.configurePanner(audio);
       audio.name = `${this.path}#${row}`;
       this.deps.parent.add(audio);
-      const voice: Voice = { audio, row, audible: false, playing: false };
+      const voice: Voice = { audio, row, audible: false, playing: false, pending: false };
       // Three binds `source.onended` to `this.onEnded` at play() time, so an
       // instance override is what runs when a `once` clip runs out.
       audio.onEnded = () => {
@@ -142,6 +197,19 @@ export class SoundNode {
       this.voices.push(voice);
     }
     this.repositionVoices();
+  }
+
+  /** One voice's three `Audio`: a FOA field, a positional source, or a plain clip. */
+  private createVoiceAudio(spatial: boolean): THREE.Audio<GainNode> | THREE.PositionalAudio {
+    if (this.attrs.ambisonic === 'foa') {
+      // A field, not a point: one voice through the rotate-and-decode graph.
+      const decoder = new FoaDecoder(this.context);
+      this.foaDecoder = decoder;
+      this.deps.registerFoaDecoder?.(decoder);
+      return new FoaAudio(this.deps.listener, decoder);
+    }
+    if (spatial) return new THREE.PositionalAudio(this.deps.listener);
+    return new THREE.Audio<GainNode>(this.deps.listener);
   }
 
   private configurePanner(audio: THREE.PositionalAudio): void {
@@ -160,8 +228,24 @@ export class SoundNode {
     }
   }
 
-  /** Place each spatial voice at its row's displayed x/y/z. */
+  /**
+   * Place each spatial voice: at the `attach_to` node's centre when it resolves,
+   * else at its row's displayed x/y/z.
+   */
   private repositionVoices(): void {
+    if (this.attrs.attach_to !== undefined && this.deps.resolveAttachCenter) {
+      const world = this.deps.resolveAttachCenter();
+      if (world) {
+        // Voices are children of the placeholder, which carries the node's own
+        // transform; the centre arrives in world space.
+        this.deps.parent.updateWorldMatrix(true, false);
+        this.deps.parent.worldToLocal(_center.copy(world));
+        for (const v of this.voices) {
+          if (v.audio instanceof THREE.PositionalAudio) v.audio.position.copy(_center);
+        }
+        return;
+      }
+    }
     const positions = this.desc.positions;
     const displayDims =
       this.lastBase?.displayDims ?? [1, 2, 3].slice(0, Math.min(3, this.desc.ndim));
@@ -220,6 +304,16 @@ export class SoundNode {
       const audible = spatialVoices && rows ? rows[v.row] === 1 : anyAudible;
       const was = v.audible;
       v.audible = audible;
+      if (this.isWaypointTriggered) {
+        // The waypoint driver owns the start; the slab only ends an `on_arrive`
+        // clip once its story is left (see the module docs).
+        if (replayRising && v.pending) {
+          this.startVoice(v);
+        } else if (this.attrs.trigger === 'on_arrive' && !audible && was && !v.pending) {
+          this.stopVoice(v, this.attrs.fade_out_ms);
+        }
+        continue;
+      }
       if (audible && (!was || (replayRising && !v.playing))) {
         this.startVoice(v);
       } else if (!audible && was) {
@@ -228,8 +322,30 @@ export class SoundNode {
     }
   }
 
+  /**
+   * The waypoint driver's event for a waypoint this node belongs to. `rows`
+   * marks the belonging rows (null = every voice). Returns true when the node
+   * takes the event — its trigger is the matching `on_*` kind.
+   */
+  triggerFromWaypoint(kind: 'depart' | 'arrive', rows: Uint8Array | null): boolean {
+    if (this.disposed || this.attrs.trigger !== `on_${kind}`) return false;
+    for (const v of this.voices) {
+      if (rows && this.voices.length > 1 && rows[v.row] !== 1) continue;
+      this.startVoice(v);
+    }
+    if (this.voices.length === 0) this.pendingBeforeVoices = true;
+    return true;
+  }
+
+  /** A waypoint trigger that arrived before the clip decoded (no voices yet). */
+  private pendingBeforeVoices = false;
+
   private startVoice(v: Voice): void {
-    if (!this.buffer || !this.gateOpen || this.muted) return;
+    if (!this.buffer || !this.gateOpen || this.muted) {
+      if (this.isWaypointTriggered) v.pending = true;
+      return;
+    }
+    v.pending = false;
     if (v.stopTimer) {
       clearTimeout(v.stopTimer);
       v.stopTimer = undefined;
@@ -244,7 +360,7 @@ export class SoundNode {
     const delaySec = this.attrs.delay_ms / 1000;
     const startAt = now + delaySec;
     v.audio.setLoop(this.attrs.loop);
-    rampGain(v.audio.gain.gain, now, startAt, this.attrs.gain, this.attrs.fade_in_ms, 0);
+    rampGain(v.audio.gain.gain, now, startAt, this.gain, this.attrs.fade_in_ms, 0);
     v.audio.play(delaySec);
     v.playing = true;
     if (v.startTimer) clearTimeout(v.startTimer);
@@ -283,14 +399,46 @@ export class SoundNode {
     if (open) this.applyEdges(true);
   }
 
-  /** Mute stops the voices with a fade; unmute replays the audible ones. */
+  /** Engine-wide mute: stops the voices with a fade; unmute replays the audible ones. */
   setMuted(muted: boolean): void {
-    if (this.muted === muted) return;
-    this.muted = muted;
-    if (muted) {
+    this.applyMuteChange(() => {
+      this.globalMuted = muted;
+    });
+  }
+
+  /** The node's own Layers-panel eye. */
+  setNodeMuted(muted: boolean): void {
+    this.applyMuteChange(() => {
+      this.nodeMuted = muted;
+    });
+  }
+
+  /** An ancestor group's Layers-panel eye. */
+  setAncestorMuted(muted: boolean): void {
+    this.applyMuteChange(() => {
+      this.ancestorMuted = muted;
+    });
+  }
+
+  private applyMuteChange(mutate: () => void): void {
+    const was = this.muted;
+    mutate();
+    const now = this.muted;
+    if (was === now) return;
+    if (now) {
       for (const v of this.voices) this.stopVoice(v, this.attrs.fade_out_ms);
     } else {
       this.applyEdges(true);
+    }
+  }
+
+  /** Live per-node gain: playing voices ramp to it (anti-click), later starts use it. */
+  setGain(gain: number): void {
+    if (!Number.isFinite(gain)) return;
+    this.gain = Math.min(2, Math.max(0, gain));
+    const now = this.context.currentTime;
+    for (const v of this.voices) {
+      if (v.playing) rampGain(v.audio.gain.gain, now, now, this.gain, MIN_FADE_MS);
     }
   }
 
@@ -336,5 +484,10 @@ export class SoundNode {
     }
     this.voices.length = 0;
     this.buffer = null;
+    if (this.foaDecoder) {
+      this.deps.unregisterFoaDecoder?.(this.foaDecoder);
+      this.foaDecoder.dispose();
+      this.foaDecoder = null;
+    }
   }
 }

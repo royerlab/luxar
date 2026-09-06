@@ -433,6 +433,8 @@ class Group(Node):
         cone_outer_deg: Optional[float] = None,
         cone_outer_gain: Optional[float] = None,
         orientation: Optional[Sequence[float]] = None,
+        attach_to: Optional[str] = None,
+        ambisonic: Optional[str] = None,
         license: str = "",
         attribution: str = "",
         source_url: str = "",
@@ -454,6 +456,10 @@ class Group(Node):
         * **Spatial** — ``positions=[[3, 7.3, -7.4, -0.3]]``: one nD row per
           place the source exists; the clip plays through a panner there and
           gets louder as the camera approaches. ``spatial`` defaults to True.
+        * **Attached** — ``attach_to="cluster_hsp70"``: the source follows the
+          bounding-box centre of the named node ("the cluster hums" without
+          authoring coordinates). Spatial by default; combine with ``hidden=``
+          to make it live at one hidden-dimension value only.
 
         Args:
             name: Node name (no ``/``).
@@ -463,11 +469,22 @@ class Group(Node):
             positions: ``(K, ndim)`` source positions, or ``None``.
             hidden: ``{dimension_name: value}`` binding for a non-spatial clip.
                 Mutually exclusive with ``positions``.
-            spatial: Route through a panner (needs ``positions``). Defaults to
-                ``positions is not None``.
+            spatial: Route through a panner (needs ``positions`` or
+                ``attach_to``). Defaults to ``positions is not None or
+                attach_to is not None``.
             trigger: ``"continuous"`` (looped while audible, fades on the slab
-                edge) or ``"once"`` (plays once each time the node becomes
-                audible). ``on_depart`` / ``on_arrive`` arrive in Phase 2.
+                edge), ``"once"`` (plays once each time the node becomes
+                audible), ``"on_depart"`` / ``"on_arrive"`` (plays once when a
+                story flight leaves / lands on the ``viewer_config.waypoints``
+                entry whose ``when`` clause this node's row satisfies — a node
+                without rows belongs to every waypoint).
+            attach_to: Name of the node whose bounding-box centre the source
+                follows. Mutually exclusive with ``positions``.
+            ambisonic: ``"foa"`` for a first-order ambisonic FIELD — a
+                4-channel AmbiX clip (AAC only) the viewer rotates against the
+                camera so the field stays fixed to the world. Non-spatial and
+                position-free by nature; ``hidden=`` still decides when it is
+                live.
             delay_ms: Delay after the trigger fires, ``>= 0``.
             gain: Per-node linear gain, ``>= 0``.
             bus: ``"ambient"`` (default) / ``"voice"`` / ``"effects"``. The
@@ -514,6 +531,8 @@ class Group(Node):
                 cone_outer_deg=cone_outer_deg,
                 cone_outer_gain=cone_outer_gain,
                 orientation=orientation,
+                attach_to=attach_to,
+                ambisonic=ambisonic,
                 license=license,
                 attribution=attribution,
                 source_url=source_url,

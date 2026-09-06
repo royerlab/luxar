@@ -143,6 +143,68 @@ def test_hidden_sugar_builds_one_row_and_extends_the_other_hidden_dims(
     assert np.all(positions[0, 1:] == 0)
 
 
+def test_on_arrive_narration_and_attached_hum(tmp_path) -> None:
+    """Phase 2 vocabulary: waypoint triggers and ``attach_to`` land on disk."""
+    store, nodes = _build(
+        tmp_path,
+        narr=dict(hidden={"story": 2}, trigger="on_arrive", delay_ms=600, bus="voice"),
+        hum=dict(
+            hidden={"story": 2}, attach_to="pts", ref_distance=2.0, max_distance=30.0
+        ),
+        bye=dict(trigger="on_depart", bus="effects"),
+        follow=dict(attach_to="pts", spatial=False),
+    )
+    root = open_group(store, mode="r")
+    narr = dict(root["narr"].attrs)
+    assert narr["trigger"] == "on_arrive"
+    assert narr["loop"] is False
+    assert narr["spatial"] is False
+    assert "attach_to" not in narr
+
+    hum = dict(root["hum"].attrs)
+    # attach_to + hidden: the row decides WHEN, the target WHERE → spatial.
+    assert hum["attach_to"] == "pts"
+    assert hum["spatial"] is True
+    assert hum["has_positions"] is True and hum["n_positions"] == 1
+    assert hum["ref_distance"] == 2.0 and hum["distance_model"] == "inverse"
+    assert nodes["hum"].attach_to == "pts"
+    assert nodes["hum"].spatial is True
+
+    bye = dict(root["bye"].attrs)
+    assert bye["trigger"] == "on_depart" and bye["has_positions"] is False
+
+    follow = dict(root["follow"].attrs)
+    # An explicit spatial=False keeps the attachment but skips the panner.
+    assert follow["attach_to"] == "pts" and follow["spatial"] is False
+    assert follow["has_positions"] is False
+    assert nodes["narr"].attach_to is None
+
+
+def test_ambisonic_field_is_stamped_non_spatial_and_checks_channels(
+    tmp_path, monkeypatch
+) -> None:
+    store, nodes = _build(
+        tmp_path,
+        field=dict(clip=M4A, ambisonic="foa", hidden={"story": 1}, gain=0.4),
+    )
+    attrs = dict(open_group(store, mode="r")["field"].attrs)
+    assert attrs["ambisonic"] == "foa"
+    assert attrs["spatial"] is False and attrs["format"] == "aac"
+    assert attrs["has_positions"] is True  # the hidden= row still decides WHEN
+    assert "distance_model" not in attrs
+
+    # With a tag reader that reports a stereo clip the writer refuses the field.
+    from luxar.io._compiler.geometry_writers import sound as writer
+
+    monkeypatch.setattr(writer, "probe_audio_info", lambda _p, _f: (1000.0, 2))
+    with pytest.raises(ValueError, match=r"needs a 4-channel"):
+        _build(tmp_path, name="bad", field=dict(clip=M4A, ambisonic="foa"))
+    monkeypatch.setattr(writer, "probe_audio_info", lambda _p, _f: (1000.0, 4))
+    store4, _ = _build(tmp_path, name="ok", field=dict(clip=M4A, ambisonic="foa"))
+    ok = dict(open_group(store4, mode="r")["field"].attrs)
+    assert ok["channels"] == 4 and ok["duration_ms"] == 1000.0
+
+
 def test_spatial_source_stores_positions_and_panner_knobs(tmp_path) -> None:
     store, nodes = _build(
         tmp_path,
@@ -261,7 +323,29 @@ def test_luxar_info_reports_the_sound_node(tmp_path) -> None:
         (dict(clip=b"OggS" + b"\x00" * 64), r"Ogg.*Safari", "ogg-refused"),
         (dict(license=""), r"license is required", "missing-licence"),
         (dict(attribution=""), r"attribution is required", "missing-attribution"),
-        (dict(trigger="on_arrive"), r"Phase 2", "phase-2-trigger"),
+        (dict(trigger="on_land"), r"Invalid trigger", "unknown-trigger"),
+        (
+            dict(positions=[[1, 5, 0, 0, 0]], attach_to="blob"),
+            r"positions= and attach_to= are mutually exclusive",
+            "positions-and-attach-to",
+        ),
+        (dict(attach_to="a/b"), r"NAME, not a path", "attach-to-path"),
+        (dict(ambisonic="foa"), r"MP3 cannot hold", "ambisonic-needs-aac"),
+        (
+            dict(ambisonic="foa", clip=M4A, positions=[[1, 5, 0, 0, 0]]),
+            r"ambisonic field has no position",
+            "ambisonic-with-positions",
+        ),
+        (
+            dict(ambisonic="foa", clip=M4A, attach_to="pts"),
+            r"ambisonic field has no position",
+            "ambisonic-with-attach-to",
+        ),
+        (
+            dict(hidden={"story": 1}, spatial=True),
+            r"needs positions= or attach_to=",
+            "hidden-spatial-without-target",
+        ),
         (dict(bus="music"), r"Invalid bus", "bad-bus"),
         (dict(gain=-1), r"gain must be finite", "negative-gain"),
         (dict(opacity=0.5), r"heard, not drawn", "appearance-attr"),

@@ -99,6 +99,12 @@ class Sound(DataNode):
         return str(self._metadata.get("bus", "ambient"))
 
     @property
+    def attach_to(self) -> Optional[str]:
+        """Name of the node whose bounding-box centre the source follows, if any."""
+        value = self._metadata.get("attach_to")
+        return str(value) if isinstance(value, str) else None
+
+    @property
     def format(self) -> str:
         """Clip codec as sniffed by the writer (``mp3`` or ``aac``)."""
         return str(self._metadata.get("format", ""))

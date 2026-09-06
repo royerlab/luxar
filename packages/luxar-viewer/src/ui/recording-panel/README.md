@@ -58,6 +58,7 @@ reference to Session for the shared scaffolding.
 | `ffmpeg-script.ts`              | `generateFfmpegScript` — the bundled `encode_video.sh`, incl. the EXR display transform    |
 | `overlay-compositor.ts`         | `compositeOverlays` + text / image / HTML overlay rasterization                            |
 | `live-overlay-compositor.ts`    | `LiveOverlayCompositor` — mirror canvas that puts overlays into REAL-TIME WebM capture     |
+| (`types.ts` `AudioCapturePort`) | The sound layer's tap ("Include Audio"): the real-time strategy adds its tracks to the canvas capture and asks for an Opus-capable WebM; released with the capture stream. Offline captures stay silent. |
 | `animation-sync.ts`             | `SliderSyncCoordinator` + `getTurntableInfo` / `getNavigableDimensionOptions`              |
 | `gui-builder.ts`                | Pure mode→format and format→predicate visibility rules (`computeControlVisibility`)        |
 | `zip-sequence-capture.ts`       | `ZipSequenceCapture` — streaming ZIP writer for image / EXR sequences                      |

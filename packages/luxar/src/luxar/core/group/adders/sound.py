@@ -34,6 +34,8 @@ import numpy as np
 from arbol import aprint
 
 from ....validation.sound import (
+    validate_ambisonic,
+    validate_attach_to,
     validate_audio_input,
     validate_distance_model,
     validate_non_negative_finite,
@@ -122,6 +124,8 @@ def add_sound_impl(
     cone_outer_deg: Optional[float],
     cone_outer_gain: Optional[float],
     orientation: Optional[Sequence[float]],
+    attach_to: Optional[str],
+    ambisonic: Optional[str],
     license: str,
     attribution: str,
     source_url: str,
@@ -153,6 +157,17 @@ def add_sound_impl(
         license, attribution, source_url = validate_sound_licence(
             license, attribution, source_url
         )
+        attach_name = validate_attach_to(attach_to) if attach_to is not None else None
+        layout = (
+            validate_ambisonic(ambisonic, fmt, spatial)
+            if ambisonic is not None
+            else None
+        )
+        if layout is not None and (positions is not None or attach_name is not None):
+            raise ValueError(
+                "an ambisonic field has no position: drop positions= / attach_to= "
+                "(hidden= still binds it to a hidden-dimension value)"
+            )
         spatial_params = validate_spatial_params(
             ref_distance=ref_distance,
             max_distance=max_distance,
@@ -172,16 +187,24 @@ def add_sound_impl(
                 "positions= and hidden= are mutually exclusive: hidden= builds "
                 "the one row a non-spatial clip needs, positions= places a source"
             )
+        if positions is not None and attach_name is not None:
+            raise ValueError(
+                "positions= and attach_to= are mutually exclusive: attach_to "
+                "places the source at another node's centre, positions= places "
+                "it explicitly. Combine attach_to with hidden= to bind it to a "
+                "hidden-dimension value."
+            )
         if hidden is not None:
-            if spatial:
+            if spatial and attach_name is None:
                 raise ValueError(
-                    "spatial=True needs positions=; hidden= binds a NON-spatial "
-                    "clip to a hidden-dimension value"
+                    "spatial=True needs positions= or attach_to=; hidden= alone "
+                    "binds a NON-spatial clip to a hidden-dimension value"
                 )
             pos_arr, hidden_extend = _hidden_row(scene, hidden, name)
             if extend_to_all is None:
                 extend_to_all = hidden_extend
-            spatial = False
+            # attach_to + hidden: the row decides WHEN, the target node WHERE.
+            spatial = attach_name is not None if spatial is None else bool(spatial)
         elif positions is not None:
             pos_arr = np.asarray(positions, dtype=np.float32)
             if pos_arr.ndim != 2 or pos_arr.shape[0] == 0:
@@ -191,11 +214,13 @@ def add_sound_impl(
                 )
             if spatial is None:
                 spatial = True
+        elif attach_name is not None:
+            # Follows the target's centre, live everywhere.
+            spatial = True if spatial is None else bool(spatial)
         else:
             if spatial:
                 raise ValueError(
-                    "spatial=True needs positions= (one nD row per place the "
-                    "source exists)"
+                    "spatial=True needs positions= or attach_to= (where the source is)"
                 )
             spatial = False
             if extend_to_all not in (None, [], "all"):
@@ -234,6 +259,10 @@ def add_sound_impl(
         if spatial:
             sound_attrs["distance_model"] = distance_model
             sound_attrs.update(spatial_params)
+        if attach_name is not None:
+            sound_attrs["attach_to"] = attach_name
+        if layout is not None:
+            sound_attrs["ambisonic"] = layout
         if final_extend:
             sound_attrs["extend_to_all"] = final_extend
 

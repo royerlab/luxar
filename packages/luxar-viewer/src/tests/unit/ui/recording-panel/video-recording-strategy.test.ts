@@ -357,6 +357,65 @@ describe('VideoRecordingStrategy', () => {
       return { done };
     }
 
+    it("adds the sound layer's tracks, asks for an Opus-capable mime, and releases the tap at the end", async () => {
+      panel.setOverlayManager(overlayManagerWith(0));
+      const audioTrack = { kind: 'audio', stop: vi.fn() };
+      const audioStream = { getAudioTracks: () => [audioTrack], getTracks: () => [audioTrack] };
+      const port = {
+        acquire: vi.fn(() => audioStream as unknown as MediaStream),
+        release: vi.fn(),
+      };
+      panel.setAudioCapture(port);
+      const addTrack = vi.fn();
+      const stopVideo = vi.fn();
+      const record = function () {
+        return { getTracks: () => [{ stop: stopVideo }], addTrack };
+      };
+      (mockSceneManager.renderer.domElement as any).captureStream = vi.fn(record);
+      const asked: string[] = [];
+      (MediaRecorder as any).isTypeSupported = vi.fn((type: string) => {
+        asked.push(type);
+        return true;
+      });
+
+      const { done } = await startRecording();
+      expect(asked[0]).toBe('video/webm;codecs=vp9,opus');
+      expect(port.acquire).toHaveBeenCalledTimes(1);
+      expect(addTrack).toHaveBeenCalledWith(audioTrack);
+      expect((panel as any).videoRecordingStrategy.audioCaptureStream).toBe(audioStream);
+
+      mockMediaRecorder.onstop();
+      await done;
+      expect(port.release).toHaveBeenCalledWith(audioStream);
+      expect((panel as any).videoRecordingStrategy.audioCaptureStream).toBeNull();
+    });
+
+    it('records silently when Include Audio is off or the sound layer has nothing to give', async () => {
+      panel.setOverlayManager(overlayManagerWith(0));
+      const port = { acquire: vi.fn(() => null), release: vi.fn() };
+      panel.setAudioCapture(port);
+      const asked: string[] = [];
+      (MediaRecorder as any).isTypeSupported = vi.fn((type: string) => {
+        asked.push(type);
+        return true;
+      });
+
+      (panel as any).options.includeAudio = false;
+      let { done } = await startRecording();
+      expect(port.acquire).not.toHaveBeenCalled();
+      expect(asked[0]).toBe('video/webm;codecs=vp9');
+      mockMediaRecorder.onstop();
+      await done;
+
+      (panel as any).options.includeAudio = true;
+      ({ done } = await startRecording());
+      expect(port.acquire).toHaveBeenCalledTimes(1);
+      expect((panel as any).videoRecordingStrategy.audioCaptureStream).toBeNull();
+      mockMediaRecorder.onstop();
+      await done;
+      expect(port.release).not.toHaveBeenCalled();
+    });
+
     it('captures a mirror canvas — not the WebGL canvas — when overlays are visible', async () => {
       panel.setOverlayManager(overlayManagerWith(3));
       (panel as any).options.includeOverlays = true;

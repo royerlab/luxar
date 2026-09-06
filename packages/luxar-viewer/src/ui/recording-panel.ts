@@ -46,8 +46,10 @@ export type {
   VideoQuality,
   PanelStates,
   RecordingOptions,
+  AudioCapturePort,
 } from './recording-panel/types';
 import type {
+  AudioCapturePort,
   RecordingMode,
   OutputFormat,
   PanelStates,
@@ -83,7 +85,11 @@ export class RecordingPanel {
     frameByFrame: true,
     showPanels: false,
     includeOverlays: true,
+    includeAudio: true,
   };
+
+  /** The sound layer's capture surface; null until the app wires it (or in tests). */
+  private audioCapture: AudioCapturePort | null = null;
 
   // Collaborators — non-private so tests can probe internal state via
   // `(panel as any).session.X`, `(panel as any).videoRecordingStrategy.Y`, etc.
@@ -147,6 +153,8 @@ export class RecordingPanel {
       hideAllPanels,
       downloadBlob,
       generateFilename,
+      // Read at record time: the engine is wired after the panel is built.
+      audioCapture: () => this.audioCapture,
     });
 
     this.offlineCaptureStrategy = new OfflineCaptureStrategy(sceneManager, animationController, {
@@ -248,6 +256,15 @@ export class RecordingPanel {
 
   setAdaptiveDPRManager(manager: AdaptiveDPRManager): void {
     this.session.adaptiveDPRManager = manager;
+  }
+
+  /**
+   * Inject the sound layer's capture surface so real-time recordings carry the
+   * mix the listener hears ("Include Audio"). Late-bound like the overlay
+   * manager; null leaves videos silent.
+   */
+  setAudioCapture(port: AudioCapturePort | null): void {
+    this.audioCapture = port;
   }
 
   setOverlayManager(manager: OverlayManager | null): void {

@@ -178,6 +178,8 @@ export interface LayerSummary {
   absorption: number;
   /** Explicit compositing order, or `null` when inherited/automatic. */
   layerOrder: number | null;
+  /** Live linear gain — present on `type === 'sound'` layers only. */
+  gain?: number;
 }
 
 /**
@@ -195,6 +197,8 @@ export interface LayerPatch {
   blendingMode?: BlendingMode;
   absorption?: number;
   layerOrder?: number | null;
+  /** Sound layers only: live linear gain, clamped to `[0, 2]`. Ignored elsewhere. */
+  gain?: number;
 }
 
 /**
@@ -259,4 +263,12 @@ export interface LuxarEmbedderEventMap {
   'sound-started': { name: string };
   /** A sound node stopped — its `once` clip ran out, or it faded out on the slab edge. */
   'sound-ended': { name: string };
+  /** The matched story waypoint changed away from `index` (`viewer_config.waypoints` order). */
+  'waypoint-departed': { index: number };
+  /**
+   * The flight to waypoint `index` resolved (or it was snapped to at load).
+   * `completed: false` = the visitor cancelled the flight; it still counts as
+   * an arrival from wherever the camera stopped.
+   */
+  'waypoint-arrived': { index: number; completed: boolean };
 }

@@ -32,18 +32,20 @@ from numpy.typing import NDArray
 
 from ...._zarr_compat import create_array, write_raw_bytes
 from ....typing_utils.aliases import NodePath
-from ....validation.sound import AUDIO_FORMAT_FILENAMES
+from ....validation.sound import AUDIO_FORMAT_FILENAMES, FOA_CHANNELS
 from ..bounds import compute_position_bounds
 from ..context import GeometryWriteCtx
 from ..node_common import prepare_transform_attrs, validate_node_path
 
 
-def probe_audio_duration_ms(payload: bytes, fmt: str) -> Optional[float]:
-    """Best-effort clip duration in ms via ``mutagen`` when it is importable.
+def probe_audio_info(payload: bytes, fmt: str) -> tuple[Optional[float], Optional[int]]:
+    """Best-effort ``(duration_ms, channels)`` via ``mutagen`` when it is importable.
 
-    Returns ``None`` (the attr is left absent) when the optional tag reader is
-    not installed or cannot parse the payload. The viewer measures the decoded
-    buffer anyway, so this is informational — what ``luxar info`` shows.
+    Either value is ``None`` (the attr is left absent) when the optional tag
+    reader is not installed or cannot parse the payload. The viewer measures the
+    decoded buffer anyway, so this is informational — what ``luxar info`` shows —
+    except for an ambisonic clip, whose channel count the writer checks when it
+    is known.
     """
     try:
         import io
@@ -51,15 +53,23 @@ def probe_audio_duration_ms(payload: bytes, fmt: str) -> Optional[float]:
         from mutagen.mp3 import MP3  # type: ignore[import-not-found]
         from mutagen.mp4 import MP4  # type: ignore[import-not-found]
     except ImportError:
-        return None
+        return None, None
     try:
         tag = MP3(io.BytesIO(payload)) if fmt == "mp3" else MP4(io.BytesIO(payload))
         length = getattr(tag.info, "length", None)
+        channels = getattr(tag.info, "channels", None)
     except Exception:  # noqa: BLE001 - a tag reader failing must never fail a write
-        return None
-    if length is None or not np.isfinite(length) or length <= 0:
-        return None
-    return float(length) * 1000.0
+        return None, None
+    duration_ms: Optional[float] = None
+    if length is not None and np.isfinite(length) and length > 0:
+        duration_ms = float(length) * 1000.0
+    n_channels = int(channels) if isinstance(channels, int) and channels > 0 else None
+    return duration_ms, n_channels
+
+
+def probe_audio_duration_ms(payload: bytes, fmt: str) -> Optional[float]:
+    """Best-effort clip duration in ms (see :func:`probe_audio_info`)."""
+    return probe_audio_info(payload, fmt)[0]
 
 
 def write_sound(
@@ -138,9 +148,16 @@ def write_sound(
     metadata["has_positions"] = pos is not None
     metadata["n_positions"] = n_positions
     metadata["ndim"] = n_dims
-    duration_ms = probe_audio_duration_ms(payload, fmt)
+    duration_ms, channels = probe_audio_info(payload, fmt)
     if duration_ms is not None:
         metadata["duration_ms"] = duration_ms
+    if channels is not None:
+        metadata["channels"] = channels
+        if sound_attrs.get("ambisonic") == "foa" and channels != FOA_CHANNELS:
+            raise ValueError(
+                f"ambisonic='foa' needs a {FOA_CHANNELS}-channel AmbiX clip; this "
+                f"clip has {channels} channel(s)"
+            )
     # No spatial index; stamped so a reader never has to distinguish "no
     # ordering" from "attr missing" (mesh does the same).
     metadata["ordering"] = "none"
