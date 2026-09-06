@@ -113,6 +113,7 @@ from .._zarr_compat import (
 )
 from ..typing_utils._format_contract import FORMAT_TYPE_GSPLATS, NODE_TYPES
 from ..typing_utils.constants import (
+    ENVIRONMENT_GROUP,
     MAX_CHUNK_BYTES,
     MIN_CHUNK_BYTES,
     TARGET_CHUNK_BYTES,
@@ -501,6 +502,12 @@ def _plan_array(
             source_file_grid=file_grid,
             skip_reason=reason,
         )
+
+    # A baked environment map (`environment/faces-<digest>`) is one chunk per
+    # cube face by construction and the viewer reads it whole; it is not spatial
+    # data and nothing about streaming applies. Copied verbatim.
+    if path.split("/", 1)[0] == ENVIRONMENT_GROUP:
+        return keep("baked environment map")
 
     structural = _structural_skip(name, array, shape, chunks)
     if structural:
@@ -921,7 +928,7 @@ def _compute_content_hashes_streaming(root: zarr.Group) -> str:
     caller.
     """
 
-    def hash_group(group: zarr.Group) -> str:
+    def hash_group(group: zarr.Group, *, is_root: bool) -> str:
         hasher = xxhash.xxh64()
         for name in sorted(group.array_keys()):
             dataset = group[name]
@@ -933,12 +940,17 @@ def _compute_content_hashes_streaming(root: zarr.Group) -> str:
         for term in _payload_terms(group, attrs):
             hasher.update(term)
         for name in sorted(group.group_keys()):
-            hasher.update(f"{name}:{hash_group(group[name])}".encode())
+            child_hash = hash_group(group[name], is_root=False)
+            # The root's baked-environment group is stamped but not folded in —
+            # the same exception the reference walk makes, for the same reason.
+            if is_root and name == ENVIRONMENT_GROUP:
+                continue
+            hasher.update(f"{name}:{child_hash}".encode())
         content_hash = hasher.hexdigest()
         group.attrs["content_hash"] = content_hash
         return content_hash
 
-    root_hash = hash_group(root)
+    root_hash = hash_group(root, is_root=True)
     aprint(f"Scene content hash: {root_hash[:16]}...")
     return root_hash
 

@@ -89,6 +89,8 @@ from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple
 import zarr
 from arbol import aprint
 
+from luxar.typing_utils.constants import RESERVED_ROOT_GROUPS
+
 #: The reference window carried down a structure: ``(lo, hi)``.
 _Window = Tuple[float, float]
 
@@ -99,13 +101,14 @@ _Window = Tuple[float, float]
 #: whole structure's reference window off something that is not content.
 _NODE_TYPES = frozenset({"group", "gsplats", "points", "lines", "mesh"})
 
-#: Reserved bookkeeping groups on a standalone ``.gsplats.zarr`` root, excluded
-#: by NAME as well as by :data:`_NODE_TYPES`. None of them carries a ``type``
-#: attr today, so the type filter alone suffices — but ``pipeline_info`` is an
-#: OPEN passthrough of arbitrary caller keys, and a stray ``type`` landing in it
-#: would make :func:`_lod_children`'s sorted-name fallback rank ``provenance`` /
-#: ``pipeline`` LAST, i.e. "finest", and donate the reference window.
-_RESERVED_GROUPS = frozenset({"fitting", "provenance", "pipeline"})
+#: Reserved root groups (the ``.gsplats.zarr`` bookkeeping buckets and a scene's
+#: baked ``environment``), excluded by NAME as well as by :data:`_NODE_TYPES`.
+#: None of them carries a ``type`` attr today, so the type filter alone suffices
+#: — but ``pipeline_info`` is an OPEN passthrough of arbitrary caller keys, and a
+#: stray ``type`` landing in it would make :func:`_lod_children`'s sorted-name
+#: fallback rank ``provenance`` / ``pipeline`` LAST, i.e. "finest", and donate
+#: the reference window. One set for every walker: ``typing_utils.constants``.
+_RESERVED_GROUPS = RESERVED_ROOT_GROUPS
 
 #: Bound on the per-level window rescale, mirroring
 #: ``gsplats.lod.substitutive._MASS_SCALE_BOUND``. The measured LOD ratios this

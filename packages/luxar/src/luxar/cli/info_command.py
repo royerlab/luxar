@@ -18,6 +18,7 @@ from arbol import aprint
 
 from .._zarr_compat import open_group as zarr_open_group
 from ..typing_utils._format_contract import GEOMETRY_TYPES
+from ..typing_utils.constants import RESERVED_ROOT_GROUPS
 from .utils import (
     format_memory_size,
     format_tree_node,
@@ -284,8 +285,14 @@ def _print_tree(
     else:
         new_prefix = ""
 
-    # Get children
-    subgroups = list(group.group_keys())
+    # Get children. A reserved root group (a baked `environment` map, a
+    # `.gsplats.zarr` bookkeeping bucket) is metadata, not a node, and the tree
+    # is a tree of NODES.
+    subgroups = [
+        name
+        for name in group.group_keys()
+        if not (depth == 0 and name in RESERVED_ROOT_GROUPS)
+    ]
 
     # Print children
     for i, subgroup_name in enumerate(subgroups):
@@ -313,6 +320,8 @@ def _dfs(
     try:
         yield depth, group
         for name in group.group_keys():
+            if depth == 0 and name in RESERVED_ROOT_GROUPS:
+                continue
             yield from _dfs(group[name], depth + 1)
     except Exception as e:
         aprint(f"Error traversing Zarr group hierarchy: {e}")

@@ -59,7 +59,7 @@ from ..typing_utils.aliases import (
     PositionArray,
     ScalarArray,
 )
-from ..typing_utils.constants import LUXAR_VERSION_CURRENT
+from ..typing_utils.constants import LUXAR_VERSION_CURRENT, RESERVED_ROOT_GROUPS
 from ..utils.arbol_warnings import arbol_warnings
 from ..validation.writing import validate_render_attrs as _validate_render_attrs
 from ._compiler.bounds import (
@@ -519,6 +519,19 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                     "Top-level node path 'overlays' is reserved for screen-space "
                     "overlay metadata. Write internal overlays below 'overlays/<name>' "
                     "or choose a different user node name."
+                )
+            if normalized_path.split("/", 1)[0] in RESERVED_ROOT_GROUPS:
+                # `environment/` is a baked environment map written by
+                # `luxar env attach` and skipped by every node walker; a user
+                # node there would be invisible to the viewer and would break the
+                # scene digest's exclusion rule. The other names are the
+                # `.gsplats.zarr` bookkeeping buckets, reserved for the same
+                # "not a node" reason.
+                raise ValueError(
+                    f"Top-level node path '{normalized_path.split('/', 1)[0]}' is "
+                    "reserved for non-node metadata (a baked environment map or a "
+                    "fitting/provenance/pipeline bucket) and is skipped by every "
+                    "node walker. Choose a different user node name."
                 )
             is_internal_namespace = path in ("/", "") or normalized_path.startswith(
                 "overlays/"

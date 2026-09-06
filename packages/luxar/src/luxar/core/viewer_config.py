@@ -53,6 +53,15 @@ VALID_FOV_PRESETS = (
 VALID_THEMES = ("dark", "light", "frosted-glass", "liquid-glass")
 VALID_LOOP_MODES = ("once", "loop", "bounce")
 VALID_DIRECTIONS = ("forward", "backward")
+# Where the scene environment that lights `material="physical"` meshes comes
+# from (MESH_PHYSICAL_MATERIALS_SPEC.md §3.3). "room" is three's procedural
+# RoomEnvironment (the default); "scene" is an exact cube capture of the scene
+# itself from the probe (the data IS the light); "hdri" is an equirectangular
+# image the viewer loads from `url`.
+VALID_ENVIRONMENT_SOURCES = ("room", "scene", "hdri")
+ENVIRONMENT_RESOLUTION_MIN = 16
+ENVIRONMENT_RESOLUTION_MAX = 1024
+ENVIRONMENT_NODE_PROBE_PREFIX = "node:"
 
 
 @dataclass
@@ -305,6 +314,122 @@ class AnimationConfig:
         )
 
 
+@dataclass
+class EnvironmentConfig:
+    """Where the scene environment that lights physical meshes comes from.
+
+    Only meaningful once a mesh opts into ``material="physical"``; house-shaded
+    meshes, points, lines and splats never read the environment, so this block
+    changes nothing about how they render (``MESH_PHYSICAL_MATERIALS_SPEC.md``
+    §3.3). All fields are optional and written only when set; a baked map
+    attached with ``luxar env attach`` takes precedence over ``source`` at load.
+
+    Attributes:
+        source: ``"room"`` (three's procedural RoomEnvironment, the default),
+            ``"scene"`` (an exact cube capture of the scene from ``probe`` —
+            metals and glass reflect the data they sit in) or ``"hdri"`` (an
+            equirectangular image at ``url``).
+        probe: Where a ``"scene"`` capture looks out from: ``"auto"`` (the
+            scene bounds centre), an ``(x, y, z)`` world position, or
+            ``"node:<path>"`` (that node's bounding-box centre — what a marker
+            shell around a cluster wants).
+        resolution: Cube face size in pixels for a ``"scene"`` capture,
+            ``16``–``1024`` (default 128; the map is prefiltered, so more buys
+            little).
+        intensity: ``scene.environmentIntensity``, ``>= 0`` (default 1).
+        url: The equirectangular image for ``"hdri"``; required with that
+            source and refused with any other.
+    """
+
+    source: Optional[str] = None
+    probe: Optional[Union[str, Tuple[float, float, float]]] = None
+    resolution: Optional[int] = None
+    intensity: Optional[float] = None
+    url: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        """Validate the environment block."""
+        if self.source is not None and self.source not in VALID_ENVIRONMENT_SOURCES:
+            raise ValueError(
+                f"environment.source must be one of {VALID_ENVIRONMENT_SOURCES}, "
+                f"got '{self.source}'"
+            )
+        if self.probe is not None:
+            if isinstance(self.probe, str):
+                is_node = self.probe.startswith(ENVIRONMENT_NODE_PROBE_PREFIX) and (
+                    len(self.probe) > len(ENVIRONMENT_NODE_PROBE_PREFIX)
+                )
+                if self.probe != "auto" and not is_node:
+                    raise ValueError(
+                        "environment.probe must be 'auto', 'node:<path>' or an "
+                        f"(x, y, z) position, got '{self.probe}'"
+                    )
+            else:
+                probe = tuple(self.probe)
+                if len(probe) != 3 or not all(
+                    isinstance(v, (int, float)) and math.isfinite(v) for v in probe
+                ):
+                    raise ValueError(
+                        "environment.probe position must be 3 finite numbers, "
+                        f"got {self.probe!r}"
+                    )
+                self.probe = (float(probe[0]), float(probe[1]), float(probe[2]))
+        if self.resolution is not None:
+            if (
+                isinstance(self.resolution, bool)
+                or not isinstance(self.resolution, int)
+                or not (
+                    ENVIRONMENT_RESOLUTION_MIN
+                    <= self.resolution
+                    <= ENVIRONMENT_RESOLUTION_MAX
+                )
+            ):
+                raise ValueError(
+                    "environment.resolution must be an int between "
+                    f"{ENVIRONMENT_RESOLUTION_MIN} and {ENVIRONMENT_RESOLUTION_MAX}, "
+                    f"got {self.resolution!r}"
+                )
+        _validate_min(self.intensity, "environment.intensity", 0.0)
+        if self.source == "hdri" and not self.url:
+            raise ValueError("environment.source='hdri' requires environment.url")
+        if self.url is not None and self.source != "hdri":
+            raise ValueError(
+                "environment.url is only meaningful with environment.source='hdri', "
+                f"got source={self.source!r}"
+            )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary, omitting None fields."""
+        result: Dict[str, Any] = {}
+        if self.source is not None:
+            result["source"] = self.source
+        if self.probe is not None:
+            result["probe"] = (
+                self.probe if isinstance(self.probe, str) else list(self.probe)
+            )
+        if self.resolution is not None:
+            result["resolution"] = self.resolution
+        if self.intensity is not None:
+            result["intensity"] = self.intensity
+        if self.url is not None:
+            result["url"] = self.url
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> EnvironmentConfig:
+        """Create from dictionary (a list probe becomes a tuple)."""
+        probe = data.get("probe")
+        if isinstance(probe, list):
+            probe = tuple(probe)
+        return cls(
+            source=data.get("source"),
+            probe=probe,
+            resolution=data.get("resolution"),
+            intensity=data.get("intensity"),
+            url=data.get("url"),
+        )
+
+
 def _validate_hex_color(color: str) -> None:
     """Validate a hex color string like '#rrggbb'."""
     if not re.match(r"^#[0-9a-fA-F]{6}$", color):
@@ -359,6 +484,10 @@ class ViewerConfig:
 
     # Camera
     camera: Optional[CameraConfig] = None
+
+    # Scene environment for `material="physical"` meshes (spec §3.3); ignored
+    # by everything else, so a scene without a physical mesh never sees it.
+    environment: Optional[EnvironmentConfig] = None
 
     # Scene identity — shown as the browser tab title (document.title) so
     # several open viewer tabs are tellable apart. Falls back to the ?title=
@@ -674,6 +803,11 @@ class ViewerConfig:
             if cam:  # only include if camera has any fields set
                 result["camera"] = cam
 
+        if self.environment is not None:
+            env = self.environment.to_dict()
+            if env:
+                result["environment"] = env
+
         # Simple fields — emit only if not None
         for field_name in self._SIMPLE_FIELDS:
             value = getattr(self, field_name)
@@ -713,6 +847,10 @@ class ViewerConfig:
         if "camera" in data and isinstance(data["camera"], dict):
             camera = CameraConfig.from_dict(data["camera"])
 
+        environment = None
+        if "environment" in data and isinstance(data["environment"], dict):
+            environment = EnvironmentConfig.from_dict(data["environment"])
+
         ui = None
         if "ui" in data and isinstance(data["ui"], dict):
             ui = UIConfig.from_dict(data["ui"])
@@ -727,6 +865,7 @@ class ViewerConfig:
 
         kwargs: Dict[str, Any] = {
             "camera": camera,
+            "environment": environment,
             "ui": ui,
             "dimensions": dimensions,
             "animation": animation,
