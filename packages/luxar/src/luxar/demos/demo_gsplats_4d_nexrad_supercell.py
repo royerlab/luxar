@@ -1477,12 +1477,64 @@ def create_luxar_scene(
                 # a blur. Measured in the viewer on a single-timepoint build.
                 #
                 # A streaming ladder IS kept — it is required, not cosmetic: a
-                # single leaf this size trips scripts/check_demo_ladders.py, and
-                # a ladder baked into the cached per-frame files does not
-                # survive the 4D stack. Note the gsplats spelling is
-                # `breakpoints=`; the `counts=` form the Points/Lines demos use
-                # is rejected here.
-                additive_lod=dict(breakpoints="stream:20000", seed=0),
+                # single leaf this size trips scripts/check_demo_ladders.py.
+                # Note the gsplats spelling is `breakpoints=`/`n_lods=`; the
+                # `counts=` form the Points/Lines demos use is rejected here.
+                #
+                # `recompute=True` is LOAD-BEARING, and its absence is why this
+                # spec sat INERT. Each per-frame archive in the precomputed
+                # bundle carries its own 4-rung ladder, and those ladders DO
+                # survive the 4D stack (this comment used to claim they do not):
+                # `combine_as_new_dimension` MERGES them, concatenating rung i of
+                # every frame into rung i of the result — see
+                # `_merge_additive_ladders` in gsplats/_data/base.py. So the stack
+                # arrives with 4 stored rungs, `resolve_additive_axis_gsplats`
+                # takes its pass-through branch (it computes only when
+                # `recompute` or the level has <= 1 rung), and everything else
+                # authored here is ignored. The store's tell is an
+                # `additive_0/lod_stats` of `{"lod_level": 0, "n_sources": 82}` —
+                # the merge's fingerprint, with no `lod_method`. What survives is
+                # per-frame equal-count, hence exactly PROPORTIONAL per scan:
+                # measured on the shipped bundle, the p05 scan then holds
+                # 774/4 = 194, still under the 250 floor.
+                #
+                # `slice_dims=[3]` — the TIME column of `dim_order` above — is
+                # what makes the recomputed ladder usable, and an ABSOLUTE first
+                # rung is what it replaces (#2485). The viewer SLICES this node
+                # on time, so a rung sized against the whole 817,989-splat stack
+                # arrives divided 82 ways; and because rung 0 is a global
+                # energy-ORDERED prefix it does not divide evenly — it piles onto
+                # the tornadic scans. RECOMPUTED, the former
+                # `breakpoints="stream:20000"` left the p05 scan holding 4 splats
+                # (2.45% of the node), failing both arms of the gate. That is the
+                # ladder the published store carries: it came from a path whose
+                # per-frame fits were single-rung, so nothing shadowed the spec
+                # there and the authored ladder did compute.
+                #
+                # Sizing alone cannot fix that. Per-scan counts here are min
+                # 562, p05 774, median 10,499, max 19,237, so the gate's
+                # 250-element absolute floor needs ~32% of the sparsest scan —
+                # and a uniform `method="random"` permutation is only
+                # proportional IN EXPECTATION. Measured p05 at rung 0, every arm
+                # recomputed:
+                #   stream:20000, auto        4    (share  2.45%)  fails both
+                #   n_lods=4, auto          122    (share 25.00%)  fails absolute
+                #   n_lods=4, random        199    (share 25.00%)  fails absolute
+                #   n_lods=3, random        257    (share 33.33%)  passes by 3%
+                # Over seeds 0-7 the n_lods=3 arm scored 257/268/252/252/248/
+                # 277/243/248 — below the floor 3 times in 8 — so it would be
+                # shipping a gate verdict a re-fit or a seed change flips.
+                #
+                # The interleave instead emits the ordering round-robin across
+                # the 82 time coordinates, so every rung carries an equal
+                # ABSOLUTE per-slice budget and a scan smaller than that budget
+                # is carried WHOLE: rung 0 of this `n_lods=4` ladder budgets
+                # ~2,494 splats per scan, so the p05 scan arrives complete at
+                # 774 — 3x the floor. Deterministic, hence no `seed=` (which
+                # only `method="random"` ever read). Within a scan the order is
+                # still `auto`'s self_energy, so each frame paints hail core
+                # first rather than evenly thin.
+                additive_lod=dict(n_lods=4, slice_dims=[3], recompute=True),
                 colormap=SCENE_COLORMAP,
                 blending_mode="volumetric",
                 absorption=SCENE_ABSORPTION,

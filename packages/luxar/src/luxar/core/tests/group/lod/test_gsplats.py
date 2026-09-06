@@ -146,6 +146,46 @@ class TestResolveSubstitutiveAxisGsplats:
             resolve_substitutive_axis_gsplats(flat, 1.5)  # type: ignore[arg-type]
 
 
+#: Source sizes for :func:`stacked_with_stored_ladders`. Deliberately UNEQUAL
+#: and small-first: an equal-count ladder over equal sources is proportional AND
+#: slice-even at once, so it cannot tell a merged per-source ladder apart from a
+#: recomputed slice-even one — which is precisely the confusion that let #2485's
+#: authored spec go unnoticed.
+_STACK_SOURCE_SIZES = (4, 12, 40)
+
+
+@pytest.fixture(scope="module")
+def stacked_with_stored_ladders() -> GSplatData:
+    """A stacked dataset whose SOURCES each already carry an additive ladder.
+
+    The shape ``combine_timepoints_to_4d`` produces in
+    ``demo_gsplats_4d_nexrad_supercell`` off its precomputed bundle: every
+    per-frame archive was written with its own ladder, and
+    :meth:`GSplatData.combine_as_new_dimension` merges them rather than dropping
+    them (``_merge_additive_ladders`` concatenates rung *i* of every source into
+    rung *i* of the stack). Amplitudes are scaled ``100 ** source_index`` so the
+    small source is also the faintest, as a sparse early radar scan is.
+    """
+    sources = []
+    for index, n in enumerate(_STACK_SOURCE_SIZES):
+        source = _make_random_gsplat(n=n, ndim=3, seed=100 + index)
+        source = GSplatData(
+            centers=source.centers,
+            amplitudes=(source.amplitudes * 100.0**index).astype(np.float32),
+            cholesky_factors=source.cholesky_factors,
+        )
+        sources.append(make_additive_lod(source, n_lods=4, method="greedy"))
+    return GSplatData.combine_as_new_dimension(sources, sigma=0.0)
+
+
+def _rung_slice_histogram(data: GSplatData, rung: int) -> list[int]:
+    """How many splats of ``rung`` sit at each stacked (time) coordinate."""
+    coords = np.asarray(data.substitutive_levels[0].additive_sublods[rung].centers)[
+        :, 3
+    ]
+    return [int((coords == float(i)).sum()) for i in range(len(_STACK_SOURCE_SIZES))]
+
+
 # ────────────────────────────────────────────────────────────────────────
 # resolve_additive_axis_gsplats — the ``additive_lod=`` kwarg
 # ────────────────────────────────────────────────────────────────────────
@@ -224,6 +264,68 @@ class TestResolveAdditiveAxisGsplats:
     def test_invalid_spec_type_raises(self, flat) -> None:
         with pytest.raises(TypeError, match="None, bool, or dict"):
             resolve_additive_axis_gsplats(flat, 1.5)  # type: ignore[arg-type]
+
+    def test_a_stored_merged_ladder_shadows_the_authored_spec(
+        self, stacked_with_stored_ladders
+    ) -> None:
+        """An authored spec is a NO-OP on a stack whose sources carry ladders.
+
+        The resolver computes only when ``recompute`` is set or the level holds
+        ``<= 1`` rung, and :meth:`~GSplatData.combine_as_new_dimension` MERGES
+        the per-source ladders instead of dropping them — so a stack of already-
+        laddered sources arrives with rungs to spare and takes the pass-through
+        branch. This is #2485's second failure: the NEXRAD supercell's
+        ``additive_lod=`` had been inert on its precomputed-bundle path all
+        along, so ``slice_dims=`` inherited that and the built store still failed
+        the first-paint floor at p05 = 194.
+
+        What survives is a per-source equal-count ladder, hence exactly
+        PROPORTIONAL per slice — ``[1, 3, 10]`` here, one quarter of each source
+        — and the sub-LOD stats carry the merge's fingerprint (``lod_level`` +
+        ``n_sources``) rather than a ladder's ``lod_method``.
+        """
+        stack = stacked_with_stored_ladders
+        assert stack.n_additive_sublods == 4  # the merge, not our ladder
+
+        result = resolve_additive_axis_gsplats(stack, {"n_lods": 4, "slice_dims": [3]})
+        assert (
+            _rung_slice_histogram(result, 0)
+            == [n // 4 for n in _STACK_SOURCE_SIZES]
+            == [1, 3, 10]
+        )
+        stats = result.substitutive_levels[0].additive_sublods[0].stats
+        assert "lod_method" not in stats, (
+            "the ordering ran after all; the pass-through branch was not taken"
+        )
+        assert stats["n_sources"] == len(_STACK_SOURCE_SIZES)
+
+    def test_recompute_lets_the_slice_even_ordering_run(
+        self, stacked_with_stored_ladders
+    ) -> None:
+        """``recompute=True`` is what makes ``slice_dims=`` reach the builder.
+
+        Same stack, same spec plus the flag: rung 0 becomes slice-EVEN rather
+        than proportional. The 4-splat source is carried WHOLE (it is smaller
+        than the equal per-slice budget) and the 40-splat one is capped at the
+        same budget, so ``[1, 3, 10]`` becomes ``[4, 5, 5]`` — a rung of the same
+        14 splats, redistributed. Under the shadowed spec that smallest source
+        got 1.
+        """
+        result = resolve_additive_axis_gsplats(
+            stacked_with_stored_ladders,
+            {"n_lods": 4, "slice_dims": [3], "recompute": True},
+        )
+        assert _rung_slice_histogram(result, 0) == [4, 5, 5]
+        assert sum(_rung_slice_histogram(result, 0)) == 14
+        stats = result.substitutive_levels[0].additive_sublods[0].stats
+        assert stats["lod_method"] == "greedy"
+        # Every splat still accounted for, once, across the rebuilt ladder.
+        assert [
+            sum(counts)
+            for counts in zip(
+                *(_rung_slice_histogram(result, r) for r in range(4)), strict=True
+            )
+        ] == list(_STACK_SOURCE_SIZES)
 
     def test_spatial_method_rejected(self, flat) -> None:
         """B8-G3/[P8]: documents the deliberate cross-geometry asymmetry —

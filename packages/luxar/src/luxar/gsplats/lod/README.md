@@ -109,6 +109,7 @@ make_additive_lod(
     truncation_sigmas: float | None = None,   # None = data.truncation_radius
     max_n_dense: int = 2_000,
     seed: int | None = None,
+    slice_dims: Sequence[int] | None = None,   # see "slice_dims" below
 ) -> GSplatData
 ```
 
@@ -126,6 +127,7 @@ compute_additive_order(
     truncation_sigmas: float | None = None,   # None = data.truncation_radius
     max_n_dense: int = 2_000,
     seed: int | None = None,
+    slice_dims: Sequence[int] | None = None,   # see "slice_dims" below
 ) -> np.ndarray   # length-N permutation
 ```
 
@@ -231,6 +233,55 @@ dense fits (the lazy-greedy heap pass itself is cheap). Empirically (`additive_l
 Experiment C) `self_energy` trails greedy by only 2–10% AUC on real Luxar datasets
 and is the right `O(N log N)` choice above the threshold. Pass an explicit method
 to override `auto`; `greedy` remains the quality reference at small `N`.
+
+### `slice_dims` — the slice-even interleave
+
+A **modifier**, not a method: it composes with every row of the table above, and
+is deliberately absent from `luxar.utils.lod_methods.GSPLAT_ADDITIVE_METHODS` for
+that reason. `interleave_order_across_slices(data, order, slice_dims)` groups the
+elements of an already-computed `order` by their distinct combination of the named
+centre columns and re-emits them round-robin, one per group per pass, ties inside
+a pass broken by position in `order`.
+
+Why it exists: on a node the viewer **slices** (any hidden time/channel
+dimension) a rung is sized against the whole node, but only one coordinate is on
+screen — so a global contribution-ordered prefix piles onto the busy coordinates
+and starves the sparse ones. The NEXRAD supercell (82 scans, 817,989 splats;
+per-scan min 562, p05 774, median 10,499, max 19,237) shipped an absolute
+`breakpoints="stream:20000"` first rung whose 5th-percentile scan held **4
+splats**, failing both arms of `scripts/check_demo_ladders.py` (#2485).
+
+What it guarantees: after `R` completed passes a prefix holds `min(n_i, R)`
+elements of every slice `i` — an equal **absolute** budget per slice, with any
+slice smaller than the budget carried WHOLE. That is exactly the shape
+`check_demo_ladders.py`'s absolute first-paint arm asks for, and it is
+**deterministic** — no seed. Sizing alone cannot get there: the gate's
+250-element floor needs ~32% of that stack's sparsest scan, and a uniform
+`method="random"` permutation is only proportional *in expectation* (measured p05
+over seeds 0–7, `n_lods=3` cleared the floor 5 times in 8 and `n_lods=4` never
+did). It is also **idempotent**, so a caller need not track whether it has
+already been applied.
+
+Two things it does *not* change. The within-slice order stays whatever the base
+method produced, so with `method="auto"` each coordinate still paints
+bright-core-first rather than evenly thin. And there is **no default column set**
+— a standalone `GSplatData` carries no display information, so the caller names
+the columns, exactly as the CLI does for `--coarsen-dims`. Authoring spelling:
+
+```python
+scene.add_gsplats_from_data(
+    ..., additive_lod=dict(n_lods=4, slice_dims=[3], recompute=True)
+)
+```
+
+`recompute=True` is not optional boilerplate on a **stacked** dataset:
+`combine_as_new_dimension` merges its sources' ladders instead of dropping them,
+so a stack of already-laddered per-timepoint fits arrives with rungs to spare and
+`resolve_additive_axis_gsplats` passes the whole spec through untouched. See the
+trap note in `core/group/lod/README.md`.
+
+Not exposed on the CLI: `gsplat lod` has no scene to tell it which columns the
+viewer hides, and the demo authoring path is what #2485 is about.
 
 ## Breakpoints
 

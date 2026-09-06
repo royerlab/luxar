@@ -85,6 +85,18 @@ _SLICED_ADDITIVE_LOD_EXEMPTIONS = {
     ),
 }
 
+#: Sliced GSplats calls whose additive ladder does not paint first, and why.
+#:
+#: The gsplats peer of :data:`_SLICED_ADDITIVE_LOD_EXEMPTIONS`, and empty on
+#: purpose: swept over the whole corpus, ``add_gsplats``/``_from_data``/
+#: ``_from_file`` pass ``additive_lod=`` exactly once (the NEXRAD supercell), and
+#: it names ``slice_dims=``. The empty dict is the tripwire — a new sliced gsplat
+#: ladder must be slice-aware or land here with a reason. An entry must, like its
+#: Points/Lines counterpart, also carry ``lod_group=`` (the gsplats spelling of
+#: ``substitutive_lod=``): the only reason a sliced ladder may skip the
+#: slice-even ordering is that an eager coarse substitutive level paints first.
+_SLICED_GSPLATS_ADDITIVE_LOD_EXEMPTIONS: dict[tuple[str, int], str] = {}
+
 #: No fitting demo may be parked here instead of choosing a topology.
 #:
 #: This empty set is a tripwire: new fitting demos must route through the policy
@@ -115,6 +127,58 @@ def _additive_lod_calls(src: str) -> list[tuple[ast.Call, ast.expr]]:
             if keyword.arg == "additive_lod"
         )
     return out
+
+
+def _gsplats_additive_lod_calls(src: str) -> list[tuple[ast.Call, ast.expr]]:
+    """The gsplats adder calls with ``additive_lod=`` in *src*.
+
+    The peer of :func:`_additive_lod_calls`, split out rather than folded into
+    it because the two families do not share a spelling: Points/Lines route
+    through :func:`stream_ladder`, whose ``slices=`` term is a POLICY resolved at
+    authoring time, while gsplats pass ``make_additive_lod`` kwargs straight
+    through and get slice-evenness from ``slice_dims=`` instead. A gsplats call
+    was simply invisible to the older gate — which is the hole #2485 fell into.
+    """
+    out = []
+    for node in ast.walk(ast.parse(src)):
+        if (
+            not isinstance(node, ast.Call)
+            or not isinstance(node.func, ast.Attribute)
+            or node.func.attr
+            not in ("add_gsplats", "add_gsplats_from_data", "add_gsplats_from_file")
+        ):
+            continue
+        out.extend(
+            (node, keyword.value)
+            for keyword in node.keywords
+            if keyword.arg == "additive_lod"
+        )
+    return out
+
+
+def _dict_literal_keys(node: ast.expr) -> set[str] | None:
+    """The keyword names of a readable ``dict(...)`` / ``{...}`` literal.
+
+    ``None`` means "not readable here" — a variable, a helper call, a ``**spread``
+    — and the caller must FAIL on that rather than wave it through: a spec whose
+    keys cannot be read off the source is a spec no reviewer can check either.
+    """
+    if isinstance(node, ast.Dict):
+        if not all(
+            isinstance(key, ast.Constant) and isinstance(key.value, str)
+            for key in node.keys
+        ):
+            return None
+        return {key.value for key in node.keys}  # type: ignore[union-attr]
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "dict"
+        and not node.args
+        and all(keyword.arg is not None for keyword in node.keywords)
+    ):
+        return {str(keyword.arg) for keyword in node.keywords}
+    return None
 
 
 def _declares_a_hidden_dimension(src: str) -> bool:
@@ -1004,6 +1068,57 @@ class TestASlicedNodeGetsAShareOfItsFrame:
         assert not missing, (
             "Points/Lines additive ladders in demos with hidden dimensions must use "
             f"stream_ladder(..., slices=...) or an explicit exemption: {missing}"
+        )
+
+    def test_every_sliced_gsplats_additive_ladder_is_slice_even(self) -> None:
+        # #2485, and the concrete testable half of #2482. The sibling gate above
+        # walks Points/Lines only, so `add_gsplats_from_data(...,
+        # additive_lod=dict(breakpoints="stream:20000"))` was invisible to it —
+        # an ABSOLUTE first rung on a node the viewer slices 82 ways, whose
+        # sparsest scan came out holding 4 splats. On the gsplats side the fix is
+        # not a sizing policy but an ORDERING one: `slice_dims=` interleaves the
+        # ladder round-robin across the hidden coordinates, so every rung carries
+        # an equal absolute per-slice budget. Require that spelling by name.
+        missing = []
+        seen_exemptions = set()
+        for name, src in _demo_sources().items():
+            if not _declares_a_hidden_dimension(src):
+                continue
+            for call, additive_lod in _gsplats_additive_lod_calls(src):
+                location = (name, call.lineno)
+                if location in _SLICED_GSPLATS_ADDITIVE_LOD_EXEMPTIONS:
+                    seen_exemptions.add(location)
+                    if not any(keyword.arg == "lod_group" for keyword in call.keywords):
+                        missing.append(
+                            f"{name}:{call.lineno} is exempt but has no lod_group="
+                        )
+                    continue
+                if isinstance(additive_lod, ast.Constant) and additive_lod.value in (
+                    False,
+                    None,
+                ):
+                    continue  # deliberately no ladder at all
+                keys = _dict_literal_keys(additive_lod)
+                if keys is None:
+                    missing.append(
+                        f"{name}:{call.lineno} uses additive_lod="
+                        f"{ast.unparse(additive_lod)}, whose keys cannot be read "
+                        "from the source"
+                    )
+                elif "slice_dims" not in keys:
+                    missing.append(
+                        f"{name}:{call.lineno} uses additive_lod="
+                        f"{ast.unparse(additive_lod)}"
+                    )
+        stale_exemptions = (
+            set(_SLICED_GSPLATS_ADDITIVE_LOD_EXEMPTIONS) - seen_exemptions
+        )
+        missing.extend(f"stale exemption {location}" for location in stale_exemptions)
+        assert not missing, (
+            "GSplats additive ladders in demos with hidden dimensions must pass "
+            "additive_lod=dict(..., slice_dims=[<hidden centre columns>]) — an "
+            "absolute first rung (breakpoints='stream:<c>' or explicit counts) is "
+            f"divided across the slices and starves the sparsest: {missing}"
         )
 
     def test_a_small_sliced_node_keeps_its_budget_ladder(self) -> None:
