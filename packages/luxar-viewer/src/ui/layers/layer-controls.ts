@@ -918,7 +918,7 @@ export class LayerControls {
     // A `material="physical"` mesh runs none of the house shader: the four lighting
     // sliders have no uniform to write, the cutoff is an authored attr the material
     // maps itself, the Blend dropdown names modes it does not implement, and Gamma has
-    // no term. All of them hide, and the read-only physical listing takes their place.
+    // no term. All of them hide, and the physical controls take their place.
     const physical = isMesh && primary.material === 'physical';
     const house = isMesh && !physical;
     const cutout =
@@ -937,8 +937,8 @@ export class LayerControls {
   }
 
   /**
-   * Swap the house-only generic controls (Gamma, Blend) for the read-only physical
-   * listing, and back.
+   * Swap the house-only generic controls (Gamma, Blend) for the physical controls,
+   * and back.
    */
   private setPhysicalFamilyVisible(physical: boolean): void {
     this.gammaSlider?.setVisible(!physical);

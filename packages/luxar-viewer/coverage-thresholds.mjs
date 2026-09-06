@@ -42,7 +42,7 @@ export const MAX_SLACK_POINTS = 3;
 export const COVERAGE_THRESHOLDS = {
   // Global — every file in the report, the subtrees below included.
   lines: 86, //       measured 88.57
-  statements: 85, //  measured 87.69
+  statements: 87, //  measured 87.93
   functions: 84, //   measured 85.67
   branches: 80, //    measured 82.12
 
@@ -83,5 +83,5 @@ export const COVERAGE_THRESHOLDS = {
   // NOT excluded from coverage: that spec runs in CI as the non-required
   // `tsl-parity` job, and excluding code on the strength of a non-required gate
   // is how a metric starts lying. Revisit once the job is required.
-  'src/rendering/**': { lines: 74, functions: 75, branches: 70 }, // 74.25 / 75.41 / 71.07
+  'src/rendering/**': { lines: 74, functions: 75, branches: 70 }, // 75.12 / 76.55 / 71.98
 };
