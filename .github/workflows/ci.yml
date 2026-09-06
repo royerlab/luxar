@@ -297,8 +297,12 @@ jobs:
   # started. If it was dispatched before its slot recycled, the timeout can run
   # with no steps or runner name recorded and eventually cancel the required leg.
   # This job covers the first 10 minutes from the hosted side: while any
-  # obsidian-routed job is still queued, it checks in-progress obsidian jobs across
-  # repository runs. If none are visible it cancels the run.
+  # obsidian-routed job is still queued, it checks active obsidian jobs across
+  # repository runs listed under BOTH run-level statuses. `queued` must be covered
+  # too: GitHub reports a run as `queued` while any one of its jobs is queued, so
+  # live obsidian legs hide inside runs that read `queued`, and scanning only
+  # `in_progress` runs sees a dead box (#2480). If none are visible it cancels the
+  # run.
   # The workflow token cannot read repository-variable updates, so the publisher
   # is unavailable here; a stale GitHub `in_progress` state can therefore keep a
   # dead runner covered. A box that dies after this window can still leave an
@@ -418,8 +422,12 @@ jobs:
               echo "waiting for the next repository liveness scan; still queued: $queued"
               sleep 30; continue
             fi
+            # `--max-runs` is a budget SHARED across the status passes, and
+            # hitting it returns early, so the queued pass — the one carrying the
+            # evidence this scan exists for — goes first.
             liveness=$(python3 scripts/ci_queue_scan.py scan \
               --repository "$GITHUB_REPOSITORY" \
+              --status queued \
               --status in_progress \
               --max-runs 100 \
               --exclude-run "$GITHUB_RUN_ID" \

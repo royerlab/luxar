@@ -1632,6 +1632,7 @@ def _run_queue_watchdog(
     date_step: int = 0,
     other_run_active: bool = False,
     other_run_active_snapshots: list[bool] | None = None,
+    other_run_status: str = "in_progress",
     run_api_error: bool = False,
     run_api_error_once: bool = False,
     job_api_error: bool = False,
@@ -1662,6 +1663,7 @@ def _run_queue_watchdog(
     snapshots_path = tmp_path / "snapshots.json"
     counter_path = tmp_path / "jobs-api-calls"
     run_counter_path = tmp_path / "runs-api-calls"
+    run_first_status_path = tmp_path / "runs-api-first-status"
     other_job_counter_path = tmp_path / "other-jobs-api-calls"
     date_counter_path = tmp_path / "date-calls"
     cancel_path = tmp_path / "cancelled"
@@ -1681,15 +1683,27 @@ from pathlib import Path
 
 endpoint = next((arg for arg in sys.argv if "/actions/" in arg), "")
 if "/actions/runs?" in endpoint:
+    query = dict(part.partition("=")[::2] for part in endpoint.partition("?")[2].split("&"))
+    status = query.get("status", "")
     counter = Path(os.environ["WATCHDOG_RUN_COUNTER"])
-    call = int(counter.read_text() or "0") if counter.exists() else 0
-    counter.write_text(str(call + 1))
+    first_status = Path(os.environ["WATCHDOG_RUN_FIRST_STATUS"])
+    if not first_status.exists():
+        first_status.write_text(status)
+    # Index by SCAN, not by call: one scan asks for every requested run-level
+    # status in turn, and only the first of them opens a new scan.
+    if status == first_status.read_text():
+        call = int(counter.read_text() or "0") if counter.exists() else 0
+        counter.write_text(str(call + 1))
+    else:
+        call = max(int(counter.read_text() or "0") - 1, 0)
     error_mode = os.environ["WATCHDOG_RUN_API_ERROR"]
     if error_mode == "1" or (error_mode == "once" and call == 1):
         raise SystemExit(1)
     active_snapshots = json.loads(Path(os.environ["WATCHDOG_OTHER_ACTIVE"]).read_text())
     active = active_snapshots[min(call, len(active_snapshots) - 1)]
-    run_ids = [2038, 9999] if active else [2038]
+    # The cross-run 9999 appears under exactly one run-level status.
+    active_here = active and status == os.environ["WATCHDOG_OTHER_RUN_STATUS"]
+    run_ids = [2038, 9999] if active_here else [2038]
     print(json.dumps({"workflow_runs": [{"id": run_id} for run_id in run_ids]}))
 elif "/runs/9999/jobs?" in endpoint:
     counter = Path(os.environ["WATCHDOG_OTHER_JOB_COUNTER"])
@@ -1758,8 +1772,10 @@ exec "$REAL_PYTHON" "$@"
         "WATCHDOG_SNAPSHOTS": str(snapshots_path),
         "WATCHDOG_COUNTER": str(counter_path),
         "WATCHDOG_RUN_COUNTER": str(run_counter_path),
+        "WATCHDOG_RUN_FIRST_STATUS": str(run_first_status_path),
         "WATCHDOG_OTHER_JOB_COUNTER": str(other_job_counter_path),
         "WATCHDOG_OTHER_ACTIVE": str(other_active_path),
+        "WATCHDOG_OTHER_RUN_STATUS": other_run_status,
         "WATCHDOG_RUN_API_ERROR": (
             "once" if run_api_error_once else "1" if run_api_error else "0"
         ),
@@ -2015,6 +2031,29 @@ def test_queue_watchdog_accepts_cross_run_activity_when_every_job_is_queued(
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert calls == 4
+    assert "other runs have active obsidian jobs" in result.stdout
+    assert not cancelled
+
+
+def test_queue_watchdog_sees_obsidian_work_inside_a_queued_run(
+    workflow: str, tmp_path: Path
+) -> None:
+    """A run reads `queued` while its obsidian jobs run; that is live capacity."""
+    queued = [_obsidian_job("python-tests (3.12)", "queued")]
+    snapshots: list[list[dict[str, object]] | str] = [
+        *[queued] * 6,
+        [_obsidian_job("python-tests (3.12)", "in_progress")],
+    ]
+    result, calls, cancelled = _run_queue_watchdog(
+        workflow,
+        tmp_path,
+        snapshots,
+        other_run_active=True,
+        other_run_status="queued",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == 7
     assert "other runs have active obsidian jobs" in result.stdout
     assert not cancelled
 
