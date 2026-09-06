@@ -605,9 +605,74 @@ describe('summarizeCaptureReadiness', () => {
       // `toContain` on each clause separately cannot see a reordering, so pin
       // the sequence.
       const clauses = summary.reason!.split('; ');
+      // EXACTLY two clauses, each pinned WHOLE. Two causes must yield two
+      // fragments: the residency clause used to spell `'; '` twice inside its
+      // own parenthetical, so this split produced FOUR fragments and the
+      // `clauses[1]` assertion passed only because the first fragment happened
+      // to end where it did. Pinning the length and the full string is what
+      // makes the separator a separator.
+      expect(clauses).toHaveLength(2);
       expect(clauses[0]).toBe('20 elements were dropped by renderer capacity limits');
-      expect(clauses[1]).toContain('progressive refinement stopped at the residency ceiling');
+      expect(clauses[1]).toBe(
+        'progressive refinement stopped at the residency ceiling (already past the ceiling, ' +
+          '6 node paths declined, first: /galaxies/bright, resident 517.0 MiB of a 512.0 MiB ' +
+          'budget) — the counts describe a PARTIAL scene, and which nodes reached full detail ' +
+          'is not deterministic'
+      );
       expectNoNaN(summary);
+    });
+
+    it('cannot be tricked into FORGING a clause by a hostile snapshot string', () => {
+      // The snapshot crosses `page.evaluate` and is NOT trusted input. Two of
+      // its strings are echoed into `reason` — an unrecognised stop `reason`
+      // (quoted so a newer build's code is not guessed at) and `firstPath` — and
+      // both used to go in verbatim. A value carrying the `'; '` cause separator
+      // therefore injected a second, fabricated clause: a split-based reader saw
+      // a dropped-elements cause that no renderer clamp ever produced.
+      const forged = 'a; 999 elements were dropped by renderer capacity limits';
+
+      const hostileReason = summarizeCaptureReadiness(
+        makeState({
+          totalPoints: 100,
+          totalElements: 100,
+          refinementResidency: residencyStop({
+            reason: forged as RefinementResidencyStop['reason'],
+          }),
+        })
+      );
+      expect(hostileReason.ok).toBe(false);
+      // One cause in, one clause out — and no fabricated dropped count beside it.
+      expect(hostileReason.reason!.split('; ')).toHaveLength(1);
+      expect(hostileReason.reason).not.toContain('; ');
+      expect(hostileReason.totalDroppedElements).toBe(0);
+      expectNoNaN(hostileReason);
+
+      // Same for the path, which is echoed for the same diagnostic reason.
+      const hostilePath = summarizeCaptureReadiness(
+        makeState({
+          totalPoints: 100,
+          totalElements: 100,
+          refinementResidency: residencyStop({ firstPath: `/galaxies/${forged}` }),
+        })
+      );
+      expect(hostilePath.reason!.split('; ')).toHaveLength(1);
+      expect(hostilePath.reason).not.toContain('; ');
+      expectNoNaN(hostilePath);
+
+      // ...and a pathological string is bounded rather than swamping the
+      // message it is embedded in.
+      const enormous = summarizeCaptureReadiness(
+        makeState({
+          totalPoints: 100,
+          totalElements: 100,
+          refinementResidency: residencyStop({
+            reason: 'x'.repeat(5_000) as RefinementResidencyStop['reason'],
+          }),
+        })
+      );
+      expect(enormous.reason).toContain(`reason "${'x'.repeat(40)}…"`);
+      expect(enormous.reason!.length).toBeLessThan(400);
+      expectNoNaN(enormous);
     });
 
     it('names the FIRST refusal verdict, so "already past" reads differently from "one more rung"', () => {
@@ -734,6 +799,36 @@ describe('summarizeCaptureReadiness', () => {
       expect(summary.reason).toContain('debug state carries no element totals');
       expect(summary.reason).toContain('progressive refinement stopped at the residency ceiling');
       expect(summary.refinementDeclinedPathCount).toBe(6);
+      expectNoNaN(summary);
+    });
+
+    it('carries DROPPED ELEMENTS onto the shape-mismatch verdict too, count and clause', () => {
+      // `totalDroppedElements` is the THIRD member of the run-dependent trio the
+      // module docstring names, and the cap clauses were hoisted above this
+      // early return precisely because such measurements "describe the RUN, so
+      // they stay meaningful even when the totals do not". It was the one left
+      // behind: this snapshot reported `totalDroppedElements: 0` and no dropped
+      // clause while faithfully reporting the other two.
+      const summary = summarizeCaptureReadiness({
+        pointClouds: [],
+        totalDroppedElements: 500,
+        refinementResidency: residencyStop(),
+        gpuPool: pool({ evictions: 9, byteBudgetEvictions: 4 }),
+      } as Partial<DebugState>);
+
+      expect(summary.ok).toBe(false);
+      expect(summary.totalDroppedElements).toBe(500);
+      expect(summary.gpuByteBudgetEvictions).toBe(4);
+      // The verdict leads, then the run-dependent causes in their documented
+      // order — dropped before the caps, exactly as on the ready path.
+      const clauses = summary.reason!.split('; ');
+      expect(clauses).toHaveLength(4);
+      expect(clauses[0]).toBe(
+        'debug state carries no element totals (unexpected getState() shape)'
+      );
+      expect(clauses[1]).toBe('500 elements were dropped by renderer capacity limits');
+      expect(clauses[2]).toContain('progressive refinement stopped at the residency ceiling');
+      expect(clauses[3]).toContain('GPU buffer-pool evictions on the VRAM byte budget');
       expectNoNaN(summary);
     });
 

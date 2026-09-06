@@ -16,15 +16,21 @@
  * to surface as one console warning that nothing downstream read, which made
  * "grep the console before comparing two builds" a convention instead of a gate.
  *
- * BOTH NEW SIGNALS ARE SESSION-CUMULATIVE, AND THAT IS DELIBERATE. Neither
- * `refinementResidency` nor `gpuPool.byteBudgetEvictions` ever resets: the
- * reporter lives for the scene and the pool counter for the pool, so each says
- * "this happened at some point on this page", NOT "this is true right now". A
- * scene that stopped at the ceiling and then refined fully after a view change
- * is still refused. That is the intended verdict, not an oversight — refinement
- * order is path-dependent, so a run that hit the ceiling once settled on a
- * composition the next run would not reproduce, which is the whole thesis of
- * #2508. Reload the page for a clean verdict; do not add a reset here.
+ * BOTH NEW SIGNALS ARE LOADER-SCOPED AND CUMULATIVE WITHIN THAT LIFE, AND THAT
+ * IS DELIBERATE. Neither `refinementResidency` nor
+ * `gpuPool.byteBudgetEvictions` is reset while a scene loader lives: the
+ * reporter accumulates across refinement runs and the pool counter across
+ * evictions, so each says "this happened at some point while this scene was
+ * loaded", NOT "this is true right now". A scene that stopped at the ceiling and
+ * then refined fully after a view change is still refused. That is the intended
+ * verdict, not an oversight — refinement order is path-dependent, so a run that
+ * hit the ceiling once settled on a composition the next run would not
+ * reproduce, which is the whole thesis of #2508. The scope is the LOADER, not
+ * the page: an in-page dataset switch goes through
+ * `SceneLoaderManager.createLoaderAsync`, which disposes the outgoing
+ * `SceneLoader` and constructs a fresh one — new reporter, new GPU pool — so the
+ * next scene starts from a clean verdict with no reload. Do not add a reset
+ * inside a loader's life.
  *
  * WHAT IT DOES **NOT** MEASURE: whether the framebuffer will contain pixels.
  * The {@link DebugState} totals deliberately include HIDDEN nodes (see the
@@ -97,8 +103,12 @@ export interface CaptureReadinessSummary {
    * on an otherwise-ready verdict, a caveat about the reported numbers (a total
    * that had to be counted as 0 because it was non-finite, or because the
    * snapshot did not carry it at all). Concurrent causes are reported together,
-   * `; `-joined, rather than the first one shadowing the rest. Absent when the
-   * scene is ready and every total read cleanly.
+   * `; `-joined, rather than the first one shadowing the rest. No clause can
+   * contain that sequence — the residency clause separates its own parenthetical
+   * fields with commas, and every snapshot-supplied string it echoes has its
+   * semicolons flattened first (see `echoable`) — so splitting on `'; '`
+   * recovers exactly the causes and nothing else. Absent when the scene is ready
+   * and every total read cleanly.
    */
   reason?: string;
   /** Drawn points summed over all point-cloud nodes. */
@@ -231,6 +241,33 @@ function describeResidencyBytes(residentBytes: unknown, budgetBytes: unknown): s
 }
 
 /**
+ * How much of a snapshot-supplied string this module will echo. The stop
+ * `reason` is an enum-shaped token — the longest the viewer emits is
+ * `next-rung-would-exceed`, 22 characters — so 40 leaves room for a newer
+ * build's code while bounding what an arbitrary string can add. A node path gets
+ * more, because printing it is only useful while it still identifies a subtree.
+ */
+const MAX_ECHOED_REASON_CHARS = 40;
+const MAX_ECHOED_PATH_CHARS = 120;
+
+/**
+ * A snapshot-supplied string, made safe to quote inside a `reason`.
+ *
+ * The snapshot crosses a `page.evaluate` boundary and is NOT trusted input,
+ * while `reason`'s concurrent causes are `'; '`-joined and read back by
+ * splitting on that sequence. A value carrying it could therefore FORGE a
+ * clause: `reason: 'a; 999 elements were dropped by renderer capacity limits'`
+ * echoed verbatim reads to a split-based caller as a real dropped-elements
+ * cause that no renderer clamp ever produced. Every `;` becomes a `,` so no
+ * echoed value can spell the separator, and the result is truncated so a
+ * pathological string cannot swamp the message it is embedded in.
+ */
+function echoable(value: string, maxChars: number): string {
+  const flattened = value.replace(/;/g, ',');
+  return flattened.length > maxChars ? `${flattened.slice(0, maxChars)}…` : flattened;
+}
+
+/**
  * The FIRST refusal's admission verdict, in words.
  *
  * The two codes the reporter can record say genuinely different things —
@@ -238,13 +275,16 @@ function describeResidencyBytes(residentBytes: unknown, budgetBytes: unknown): s
  * offered, `next-rung-would-exceed` that it fitted but one more step would not —
  * and that is the difference between "author a coarser ladder" and "it very
  * nearly fitted". An unrecognised code (a newer viewer build) is quoted rather
- * than guessed at, and a non-string is named unreadable, same as every other
- * field here.
+ * than guessed at — through {@link echoable}, since quoting an untrusted string
+ * verbatim is what lets it forge a clause — and a non-string is named
+ * unreadable, same as every other field here.
  */
 function describeStopReason(reason: unknown): string {
   if (reason === 'over-budget') return 'already past the ceiling';
   if (reason === 'next-rung-would-exceed') return 'the next rung would have crossed it';
-  if (typeof reason === 'string' && reason.length > 0) return `reason "${reason}"`;
+  if (typeof reason === 'string' && reason.length > 0) {
+    return `reason "${echoable(reason, MAX_ECHOED_REASON_CHARS)}"`;
+  }
   return 'stop reason unreadable';
 }
 
@@ -259,6 +299,11 @@ function describeStopReason(reason: unknown): string {
  * printing zeros or dropping the refusal. A field that is absent, `null`, a
  * primitive, or an array is not a stop at all and yields `undefined` — an older
  * viewer build simply does not carry it, and that must never read as trouble.
+ *
+ * The parenthetical's own fields are COMMA-separated on purpose. `'; '` is what
+ * joins concurrent causes, so spelling it in here would split this one cause
+ * into four fragments for any caller that reads `reason` by splitting — which
+ * is exactly what it did until #2508's second review round.
  */
 function residencyStopReason(stop: unknown): string | undefined {
   if (typeof stop !== 'object' || stop === null || Array.isArray(stop)) return undefined;
@@ -266,11 +311,14 @@ function residencyStopReason(stop: unknown): string | undefined {
     string,
     unknown
   >;
-  const first = typeof firstPath === 'string' && firstPath.length > 0 ? firstPath : 'unknown';
+  const first =
+    typeof firstPath === 'string' && firstPath.length > 0
+      ? echoable(firstPath, MAX_ECHOED_PATH_CHARS)
+      : 'unknown';
   return (
     'progressive refinement stopped at the residency ceiling ' +
-    `(${describeStopReason(reason)}; ${describeDeclinedPaths(declinedPathCount)}, ` +
-    `first: ${first}; ${describeResidencyBytes(residentBytes, budgetBytes)}) — the counts ` +
+    `(${describeStopReason(reason)}, ${describeDeclinedPaths(declinedPathCount)}, ` +
+    `first: ${first}, ${describeResidencyBytes(residentBytes, budgetBytes)}) — the counts ` +
     'describe a PARTIAL scene, and which nodes reached full detail is not deterministic'
   );
 }
@@ -282,9 +330,11 @@ function residencyStopReason(stop: unknown): string | undefined {
  * The opposite rule to {@link residencyStopReason}: a pooled build attaches
  * `gpuPool` to every snapshot, so its presence carries no information and only a
  * POSITIVE, readable count refuses. An unreadable count therefore passes rather
- * than blocking every capture on a shape the viewer has never emitted. The
- * `Array.isArray` arm is there only to keep the two guards symmetric — an array
- * has no `byteBudgetEvictions`, so it would fall out at the count check anyway.
+ * than blocking every capture on a shape the viewer has never emitted. The two
+ * guards legitimately differ on arrays for that same reason: a residency stop
+ * refuses on PRESENCE, so it must exclude an array explicitly, whereas here an
+ * array's missing `byteBudgetEvictions` already reads as 0 and falls out at the
+ * count check.
  *
  * WHAT THE MESSAGE MAY AND MAY NOT CLAIM. The byte pass disposes POOLED
  * (already-released) buffers only; active in-use buffers are never candidates
@@ -298,7 +348,7 @@ function residencyStopReason(stop: unknown): string | undefined {
  * the capture is not comparable.
  */
 function poolEvictionReason(gpuPool: unknown): string | undefined {
-  if (typeof gpuPool !== 'object' || gpuPool === null || Array.isArray(gpuPool)) return undefined;
+  if (typeof gpuPool !== 'object' || gpuPool === null) return undefined;
   const evictions = wholeCount((gpuPool as Record<string, unknown>).byteBudgetEvictions);
   if (evictions <= 0) return undefined;
   return (
@@ -408,17 +458,23 @@ export function summarizeCaptureReadiness(
     meshNodeCount: lengthOrZero(state.meshNodes),
   };
 
-  // Reported on every verdict, including the shape-mismatch one below: they
-  // describe the RUN, so they stay meaningful even when the totals do not. Both
-  // the numbers AND their reason clauses — a snapshot too skewed to carry totals
-  // is exactly the one whose caps a caller cannot otherwise find out about, and
-  // reporting the count while dropping the sentence that explains it was the
-  // half-measure this comment used to describe.
+  // Reported on every verdict, including the shape-mismatch one below: all
+  // THREE run-dependent measurements — dropped elements, the residency stop, the
+  // byte-budget eviction — describe the RUN, so they stay meaningful even when
+  // the totals do not. Both the numbers AND their reason clauses: a snapshot too
+  // skewed to carry totals is exactly the one whose caps a caller cannot
+  // otherwise find out about, and reporting the count while dropping the
+  // sentence that explains it was the half-measure this comment used to
+  // describe. `totalDroppedElements` was the last one left behind on that path.
   const caps = capCounts(state);
   const capReason = joinReasons([
     residencyStopReason(state.refinementResidency),
     poolEvictionReason(state.gpuPool),
   ]);
+  const droppedReason =
+    totalDroppedElements > 0
+      ? `${totalDroppedElements} elements were dropped by renderer capacity limits`
+      : undefined;
 
   // A snapshot carrying none of the five count fields is a SHAPE mismatch, not
   // an empty scene — the exact failure #1579 hid behind a silent `undefined > 0`.
@@ -452,10 +508,16 @@ export function summarizeCaptureReadiness(
   if (!hasAnyTotal) {
     return {
       ok: false,
-      reason: ['debug state carries no element totals (unexpected getState() shape)', capReason]
-        .filter(Boolean)
-        .join('; '),
+      // The shape mismatch is the VERDICT and leads; the run-dependent causes
+      // follow in their documented order (dropped, then the caps), the same
+      // order `blockingReason` uses below.
+      reason: joinReasons([
+        'debug state carries no element totals (unexpected getState() shape)',
+        droppedReason,
+        capReason,
+      ]),
       ...empty,
+      totalDroppedElements,
       ...caps,
       ...counts,
     };
@@ -469,11 +531,6 @@ export function summarizeCaptureReadiness(
     totalElements,
     totalDroppedElements,
   };
-
-  const droppedReason =
-    totalDroppedElements > 0
-      ? `${totalDroppedElements} elements were dropped by renderer capacity limits`
-      : undefined;
 
   // Every way the counts can be a property of the run rather than of the store,
   // as ONE string. Dropped elements stay first so a snapshot carrying only that

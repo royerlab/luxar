@@ -187,11 +187,19 @@ geometry was lost, and it stays 0 when active bytes alone exceed the budget).
 The last two are also reported numerically as
 `refinementDeclinedPathCount` and `gpuByteBudgetEvictions`, and concurrent
 causes are `; `-joined into one `reason` — dropped elements first, then the
-caps, an order the tests pin — rather than the first shadowing the rest. Both
-new signals are SESSION-CUMULATIVE and have no reset: they say "this happened
-at some point on this page", not "this is true now", so a scene that stopped
-once and later refined fully is still refused. That is deliberate — refinement
-order is path-dependent — and reloading is the way to get a clean verdict.
+caps, an order the tests pin — rather than the first shadowing the rest. No
+clause may contain `; ` itself, or a caller splitting on it would read one cause
+as several: the residency clause comma-separates its own parenthetical, and any
+snapshot-supplied string it echoes (the stop `reason`, `firstPath`) has its
+semicolons flattened and its length bounded first, since a `page.evaluate`
+payload could otherwise forge a clause. Both new signals are LOADER-SCOPED and
+cumulative within that life, with no reset: they say "this happened at some
+point while this scene was loaded", not "this is true now", so a scene that
+stopped once and later refined fully is still refused. That is deliberate —
+refinement order is path-dependent. The scope is the loader, not the page: an
+in-page dataset switch builds a fresh `SceneLoader` (and so a fresh reporter and
+GPU pool) through `SceneLoaderManager.createLoaderAsync`, so the next scene gets
+a clean verdict without a reload.
 Note the deliberate asymmetry between them: a residency record is only
 written once a rung has actually been declined, so its PRESENCE refuses even
 when its fields are unreadable, whereas `gpuPool` rides on every snapshot from

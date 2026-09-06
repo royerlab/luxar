@@ -245,6 +245,23 @@ export class SceneLoader {
   private cacheBudgets: CacheBudgets | null = null;
   private registry = new LoaderRegistry();
   private readonly lineWorkingSetGate: LineWorkingSetGate;
+  /**
+   * Scene-wide byte-ceiling record for progressive refinement, surfaced on the
+   * debug snapshot (#2508).
+   *
+   * DELIBERATELY NOT CLEARED BY `dispose()`. Production always reaches a new
+   * scene through `SceneLoaderManager.createLoaderAsync`, which disposes this
+   * loader and constructs a fresh one — a fresh reporter with it — so a reset in
+   * `dispose()` would be code no path executes, and a dead reset is its own
+   * liability. The one caller that would notice is
+   * `scene-loader/lifecycle/load-scene.ts`, which calls `dispose()` on THIS
+   * loader when it already holds loaders: that path nulls `_gpuBufferPool` (so
+   * the pool's `byteBudgetEvictions` restarts at 0) while this `readonly`
+   * reporter survives, which is the only way the two capture-readiness signals
+   * can end up with different lifetimes. Latent, because reusing one
+   * `SceneLoader` across two `loadScene()` calls is already unsupported — see
+   * the class docstring.
+   */
   private readonly refinementResidencyReporter = new RefinementResidencyReporter();
   // Projected-density rung gate (density-gate.ts); null = no provider wired
   // (guard disabled, tests, embedders) = bytes-only admission.

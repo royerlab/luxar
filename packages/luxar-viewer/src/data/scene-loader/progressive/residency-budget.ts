@@ -239,13 +239,16 @@ export const RESIDENCY_DECLINED_PATH_SAMPLE = 8;
  * node deferred on density is still going to refine when the user zooms in; a
  * node declined on bytes is not.
  *
- * SESSION-CUMULATIVE, WITH NO RESET, ON PURPOSE. Once present this record stays
- * present for the life of the loader, so it says "refinement hit the ceiling at
- * some point on this page", not "the scene is truncated right now" — a scene
- * that stopped and then refined fully after a view change still carries it. That
- * is the answer a capture tool wants: refinement order is path-dependent, so the
- * run that hit the ceiling settled on a composition the next run would not
- * reproduce. Reload for a clean record rather than clearing this one.
+ * CUMULATIVE FOR THE LIFE OF THE LOADER, WITH NO RESET, ON PURPOSE. Once present
+ * this record stays present until its `SceneLoader` goes away, so it says
+ * "refinement hit the ceiling at some point while this scene was loaded", not
+ * "the scene is truncated right now" — a scene that stopped and then refined
+ * fully after a view change still carries it. That is the answer a capture tool
+ * wants: refinement order is path-dependent, so the run that hit the ceiling
+ * settled on a composition the next run would not reproduce. A dataset switch
+ * builds a fresh loader (`SceneLoaderManager.createLoaderAsync`) and therefore a
+ * fresh reporter, so the next scene starts from a clean record with no page
+ * reload; do not clear this one within a loader's life.
  */
 export interface RefinementResidencyStop {
   /**
