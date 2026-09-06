@@ -168,6 +168,9 @@ def scan_repository(
 ) -> ScanResult:
     """Fan out from workflow runs to jobs and aggregate obsidian classifications."""
     result = ScanResult()
+    # Split the total budget per status: which run-level status hosts the live
+    # job is unknowable in advance, so no pass may consume another's share.
+    status_budget = max(1, max_runs // (len(statuses) or 1))
     for status in statuses:
         endpoint = f"repos/{repository}/actions/runs?status={status}&per_page=100"
         try:
@@ -177,6 +180,7 @@ def scan_repository(
         except (ApiError, ValueError) as error:
             result.error = {"scope": "runs", "detail": str(error)}
             return result
+        scanned_for_status = 0
         for run in runs:
             try:
                 run_id = _eligible_run_id(
@@ -190,10 +194,11 @@ def scan_repository(
                 return result
             if run_id is None:
                 continue
-            if result.scanned_runs >= max_runs:
+            if scanned_for_status >= status_budget:
                 result.truncated = True
-                return result
+                break
             result.scanned_runs += 1
+            scanned_for_status += 1
             try:
                 jobs_payload = read_api(
                     f"repos/{repository}/actions/runs/{run_id}/jobs?per_page=100"

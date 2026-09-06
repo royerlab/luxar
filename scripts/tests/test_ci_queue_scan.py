@@ -213,6 +213,76 @@ def test_scan_repository_marks_full_api_page_as_truncated(
     assert result.truncated is True
 
 
+def test_scan_repository_short_circuits_on_the_first_running_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def fake_api(endpoint: str) -> object:
+        calls.append(endpoint)
+        if "?status=queued" in endpoint:
+            return {
+                "workflow_runs": [
+                    {"id": run_id, "created_at": "2026-08-27T00:00:00Z"}
+                    for run_id in (30, 31)
+                ]
+            }
+        if "?status=in_progress" in endpoint:
+            return {"workflow_runs": []}
+        if "runs/30/jobs" in endpoint:
+            return {"jobs": [_job("running", "in_progress")]}
+        return {"jobs": []}
+
+    monkeypatch.setattr(ci_queue_scan, "read_api", fake_api)
+    result = ci_queue_scan.scan_repository(
+        "royerlab/luxar",
+        statuses=["queued", "in_progress"],
+        queued_before=None,
+        max_runs=100,
+        stop_after_running=1,
+    )
+
+    assert result.running == ["running"]
+    assert result.stopped is True
+    assert not any("?status=in_progress" in call for call in calls)
+    assert len([call for call in calls if "/jobs?" in call]) == 1
+
+
+def test_scan_repository_scans_every_status_when_the_first_exhausts_its_share(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def fake_api(endpoint: str) -> object:
+        calls.append(endpoint)
+        if "?status=queued" in endpoint:
+            return {
+                "workflow_runs": [
+                    {"id": 40 + offset, "created_at": "2026-08-27T00:00:00Z"}
+                    for offset in range(5)
+                ]
+            }
+        if "?status=in_progress" in endpoint:
+            return {"workflow_runs": [{"id": 50, "created_at": "2026-08-27T00:00:00Z"}]}
+        if "runs/50/jobs" in endpoint:
+            return {"jobs": [_job("running", "in_progress")]}
+        return {"jobs": []}
+
+    monkeypatch.setattr(ci_queue_scan, "read_api", fake_api)
+    result = ci_queue_scan.scan_repository(
+        "royerlab/luxar",
+        statuses=["queued", "in_progress"],
+        queued_before=None,
+        max_runs=4,
+        stop_after_running=1,
+    )
+
+    assert result.truncated is True
+    assert any("?status=in_progress" in call for call in calls)
+    assert result.running == ["running"]
+    assert result.scanned_runs <= 4
+
+
 def test_cli_classify_emits_structured_error_for_malformed_json(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

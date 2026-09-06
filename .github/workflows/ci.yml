@@ -307,10 +307,12 @@ jobs:
   # is unavailable here; a stale GitHub `in_progress` state can therefore keep a
   # dead runner covered. A box that dies after this window can still leave an
   # undispatched leg queued until the 24-hour ceiling, or a dispatch-lost leg
-  # running down its timeout. To recover, create/set the Actions repository
-  # variable LUXAR_CI_FORCE_HOSTED to 1 and re-run all jobs; "Re-run failed"
-  # reuses the previous router output. Clear the override after obsidian capacity
-  # recovers.
+  # running down its timeout. Covering queued runs widens that concession: such a
+  # leg's own run reads `queued` at run level, so its stale liveness now covers
+  # every run in the repository for that leg's timeout, not just its own run.
+  # To recover, create/set the Actions repository variable LUXAR_CI_FORCE_HOSTED
+  # to 1 and re-run all jobs; "Re-run failed" reuses the previous router output.
+  # Clear the override after obsidian capacity recovers.
   #
   # On a push or the daily full-matrix schedule, max-parallel deliberately holds
   # one Python leg queued while two Python legs and TypeScript occupy the three
@@ -422,9 +424,10 @@ jobs:
               echo "waiting for the next repository liveness scan; still queued: $queued"
               sleep 30; continue
             fi
-            # `--max-runs` is a budget SHARED across the status passes, and
-            # hitting it returns early, so the queued pass — the one carrying the
-            # evidence this scan exists for — goes first.
+            # Each status gets its own share of `--max-runs`, so neither pass can
+            # hide the other. `queued` goes first only because that is usually
+            # where the evidence is, so `--stop-after-running 1` short-circuits
+            # soonest.
             liveness=$(python3 scripts/ci_queue_scan.py scan \
               --repository "$GITHUB_REPOSITORY" \
               --status queued \

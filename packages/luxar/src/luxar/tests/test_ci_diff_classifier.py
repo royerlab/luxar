@@ -2054,7 +2054,7 @@ def test_queue_watchdog_sees_obsidian_work_inside_a_queued_run(
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert calls == 7
-    assert "other runs have active obsidian jobs" in result.stdout
+    assert "other runs have active obsidian jobs (other-python)" in result.stdout
     assert not cancelled
 
 
