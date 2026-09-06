@@ -34,7 +34,7 @@ faces.view("float16")                     # (6, H, W, 4) radiance, px nx py ny p
 
 - **Group `environment/` at the store root, with NO `type` and NO `kind` attr.**
   The viewer's node discovery skips exactly such groups as metadata sidecars,
-  and every Python walker consults `RESERVED_ROOT_GROUPS`
+  and general Python root-node walkers consult `RESERVED_ROOT_GROUPS`
   (`luxar.typing_utils.constants`), so the group never shows up as a node. The
   compiler refuses a user node under that name.
 - **Excluded from the scene `content_hash`.** The map is derived from the scene
