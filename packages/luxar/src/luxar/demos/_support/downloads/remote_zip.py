@@ -9,6 +9,8 @@ from typing import Any, BinaryIO, Optional
 
 from arbol import aprint, asection
 
+from .download import _make_host_scoped_session
+
 _EOCD_SIGNATURE = b"PK\x05\x06"
 _EOCD64_LOCATOR_SIGNATURE = b"PK\x06\x07"
 _EOCD64_SIGNATURE = b"PK\x06\x06"
@@ -323,7 +325,7 @@ def download_zip_member(
         max_retries: Retry attempts for the member body download.
         timeout: Per-request timeout (seconds).
         chunk_size: Streaming chunk size (bytes).
-        extra_headers: Extra HTTP headers for every request.
+        extra_headers: Extra HTTP headers scoped to the original URL.
         max_uncompressed_size: Absolute ceiling (bytes) on the member's
             uncompressed size, independent of the archive's own
             (attacker-controlled) metadata. Defaults to 256 GiB
@@ -358,7 +360,7 @@ def download_zip_member(
             aprint(f"✓ Member already extracted: {output_path}")
             return output_path
 
-    session = requests.Session()
+    session = _make_host_scoped_session(url, (extra_headers or {}).keys())
     retry_strategy = Retry(
         total=max_retries,
         backoff_factor=2,
