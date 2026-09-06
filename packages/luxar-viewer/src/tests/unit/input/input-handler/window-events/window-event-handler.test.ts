@@ -248,8 +248,33 @@ describe('WindowEventHandler', () => {
       const handler = new WindowEventHandler(sceneManager, animationController);
       handler.attach([]);
 
+      // 48 is hard-coded rather than imported from `utils/wheel-delta`: the
+      // point is that the raw 3 does NOT arrive, and deriving the expectation
+      // from PIXELS_PER_LINE would move with it.
       dispatchWheel(canvas, { deltaY: 3, deltaMode: 1, ctrlKey: true });
       expect(updateFOV).toHaveBeenCalledWith(48); // 3 lines × 16 px/line
+    });
+
+    it('#2531 Ctrl+wheel: page mode uses the CANVAS height and is capped', () => {
+      // The only call-site test that pins the `element` argument and the
+      // clamp: dropping the element (or the clamp) at the call site is
+      // invisible to every pixel/line-mode test above.
+      const { sceneManager, updateFOV, canvas } = makeSceneManager();
+      Object.defineProperty(canvas, 'clientHeight', { configurable: true, get: () => 600 });
+      const { animationController } = makeAnimationController();
+      const handler = new WindowEventHandler(sceneManager, animationController);
+      handler.attach([]);
+
+      // A fractional page scales by the canvas's own 600 px — this is what
+      // proves the element reached the helper (the 800 px nominal fallback
+      // would give 80).
+      dispatchWheel(canvas, { deltaY: 0.1, deltaMode: 2, ctrlKey: true });
+      expect(updateFOV).toHaveBeenLastCalledWith(60);
+
+      // A whole page (what "scroll one screen at a time" emits) saturates the
+      // 200 px cap instead of handing the FOV a 600 px, 30-degree step.
+      dispatchWheel(canvas, { deltaY: 1, deltaMode: 2, ctrlKey: true });
+      expect(updateFOV).toHaveBeenLastCalledWith(200);
     });
 
     it('#2531 Ctrl+wheel: a pixel-mode delta is still forwarded verbatim', () => {

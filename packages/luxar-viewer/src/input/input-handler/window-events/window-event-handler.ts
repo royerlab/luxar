@@ -166,10 +166,11 @@ export class WindowEventHandler {
    *     ortho for DELIBERATE reset/zarr/panel applies, so the interactive
    *     wheel must be gated here or a pinch would corrupt that stash. The
    *     delta handed to `updateFOV` is normalized to pixel-mode equivalent
-   *     (`normalizeWheelDelta`), so one notch is the same FOV step in a
-   *     line-mode browser as in a pixel-mode one instead of ~32x smaller.
-   *     When the FOV actually changed, switch the rendering-controls preset
-   *     to "Custom" so the panel value matches the slider.
+   *     (`normalizeWheelDelta`), which puts a line-mode browser's notch in the
+   *     same ballpark as a pixel-mode one — 2.4 vs 5.0 degrees, instead of
+   *     0.15 vs 5.0 before. When the FOV actually changed, switch the
+   *     rendering-controls preset to "Custom" so the panel value matches the
+   *     slider.
    */
   private onWheel(event: WheelEvent): void {
     const eventPath = event.composedPath();

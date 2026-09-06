@@ -45,7 +45,26 @@ function elementWithHeight(clientHeight: number): HTMLElement {
   return el;
 }
 
-describe('normalizeWheelDelta — pixel mode (DOM_DELTA_PIXEL) is bit-identical', () => {
+describe('normalizeWheelDelta — the constants themselves', () => {
+  // Every other assertion here derives its expectation FROM these exports, so
+  // without a literal they could be retuned to almost anything and the suite
+  // would stay green. Each value is a decision the module's JSDoc escalates:
+  // 200 px is 9.75% of distance per zoom notch / 10 degrees of FOV, and the
+  // 800 px nominal page is the fallback a not-yet-laid-out canvas gets. They
+  // should not move silently.
+  it('pins MAX_NORMALIZED_DELTA_PX at 200', () => {
+    expect(MAX_NORMALIZED_DELTA_PX).toBe(200);
+  });
+
+  it('pins NOMINAL_PAGE_HEIGHT_PX at 800', () => {
+    expect(NOMINAL_PAGE_HEIGHT_PX).toBe(800);
+  });
+
+  // PIXELS_PER_LINE is pinned by the hard-coded 48 in the line-mode test
+  // below (the one assertion in the repo that would catch an off-by-one).
+});
+
+describe('normalizeWheelDelta — pixel mode (DOM_DELTA_PIXEL) passes through', () => {
   it('passes a Chromium notch through verbatim', () => {
     expect(normalizeWheelDelta(wheel(100, 0))).toBe(100);
     expect(normalizeWheelDelta(wheel(-100, 0))).toBe(-100);
@@ -68,8 +87,10 @@ describe('normalizeWheelDelta — pixel mode (DOM_DELTA_PIXEL) is bit-identical'
 describe('normalizeWheelDelta — line mode (DOM_DELTA_LINE)', () => {
   it("converts Firefox's 3-line notch to pixels", () => {
     expect(normalizeWheelDelta(wheel(3, 1))).toBe(3 * PIXELS_PER_LINE);
-    // Concretely: 48 px, the same order as Chromium's 100 px notch and ~16x
-    // the raw 3 the call sites used to consume.
+    // Concretely: 48 px — same ballpark as Chromium's 100 px notch, and ~16x
+    // the raw 3 the call sites used to consume. This literal is deliberately
+    // NOT derived from PIXELS_PER_LINE: it is the only assertion in the repo
+    // that catches the constant itself being retuned.
     expect(normalizeWheelDelta(wheel(3, 1))).toBe(48);
   });
 
@@ -129,11 +150,17 @@ describe('normalizeWheelDelta — unknown deltaMode', () => {
 });
 
 describe('normalizeWheelDelta — degenerate deltas', () => {
-  it.each([0, 1, 2, 3])('deltaY 0 in mode %i yields exactly 0', (mode) => {
-    const out = normalizeWheelDelta(wheel(0, mode), elementWithHeight(600));
-    expect(out).toBe(0);
-    // Not -0: the call sites branch on `< 0` / `> 0`, so keep it clean.
-    expect(Object.is(out, -0)).toBe(false);
+  it.each([0, 1, 2, 3])('deltaY +0 in mode %i yields 0', (mode) => {
+    expect(normalizeWheelDelta(wheel(0, mode), elementWithHeight(600))).toBe(0);
+  });
+
+  it.each([0, 1, 2, 3])('deltaY -0 in mode %i is normalized to +0', (mode) => {
+    // `-0` really does survive the WheelEvent constructor, and every mode
+    // would otherwise carry it straight through (`-0 * 16` is `-0`, and
+    // `clamp` passes it too) — the `deltaY === 0` guard is what normalizes it.
+    // `toBe` uses `Object.is` semantics, so this fails on `-0`. The call sites
+    // branch on `< 0` / `> 0`, so keep the sign clean.
+    expect(normalizeWheelDelta(wheel(-0, mode), elementWithHeight(600))).toBe(0);
   });
 
   it.each([0, 1, 2, 3])('NaN in mode %i yields 0', (mode) => {

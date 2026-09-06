@@ -225,6 +225,10 @@ describe('handleWheel — deltaMode normalization (#2531)', () => {
   // constructs a pixel-mode event and was blind to the bug by construction.
   // These set it explicitly. A line-mode notch (Firefox: deltaY 3) used to
   // reach computeZoomScale as a raw 3, ~32x smaller than Chromium's 100.
+  //
+  // Deliberately a LOCAL copy, not the export from `utils/wheel-delta`:
+  // importing it would move both sides of the line-vs-pixel comparison
+  // together and make the test tautological. Do not "fix" this.
   const PIXELS_PER_LINE = 16;
 
   it('a line-mode notch produces the same zoom step as its pixel equivalent', () => {

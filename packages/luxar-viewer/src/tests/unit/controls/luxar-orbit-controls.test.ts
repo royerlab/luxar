@@ -574,7 +574,10 @@ describe('LuxarOrbitControls', () => {
       };
 
       const lineMode = roll(3, 1);
-      const pixelEquivalent = roll(48, 0); // 3 lines × 16 px/line
+      // 48 is hard-coded (3 lines × 16 px/line) on purpose: importing
+      // PIXELS_PER_LINE would move both sides together and the comparison
+      // would stop proving anything.
+      const pixelEquivalent = roll(48, 0);
       expect(lineMode).toBeCloseTo(pixelEquivalent, 12);
       expect(lineMode).not.toBe(0);
       // Far more than the pre-fix value, which consumed the raw 3 as pixels.

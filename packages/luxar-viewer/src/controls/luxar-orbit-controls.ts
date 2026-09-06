@@ -489,9 +489,10 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
       event.stopImmediatePropagation();
 
       // Accumulate into rollDelta — damping is applied in update().
-      // The delta is normalized to pixel-mode equivalent first so a
+      // The delta is normalized to pixel-mode equivalent first, which puts a
       // line-mode browser (Firefox reports 3 lines where Chromium reports
-      // 100 px) rolls by the same amount per notch.
+      // 100 px) in the same ballpark per notch: 0.024 rad against 0.050,
+      // instead of 0.0015 against 0.050.
       this.rollDelta += normalizeWheelDelta(event, this.domElement) * speed;
 
       // Wake up animation loop (rollDelta is applied in update())
