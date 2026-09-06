@@ -33,6 +33,7 @@ Cross-cutting utility functions and helpers used throughout the Luxar viewer. Th
 - **Result<T, E>**: Discriminated-union return type for fallible operations
 - **Camera Type Helpers**: Unified `LuxarCamera` union and type guards for perspective vs orthographic
 - **Effective Visibility**: `isEffectivelyVisible` — the single parent-chain walk answering "does this node actually render?" (`visible` is a LOCAL flag, so a hidden layer or a hidden LOD level leaves its descendants' flags true). Shared by the LOD load gate, LOD eviction, the pick pass, and the depth-sort scheduler
+- **Wheel Delta Normalization**: `normalizeWheelDelta` — converts a `WheelEvent`'s line/page-mode `deltaY` to a pixel equivalent (pixel mode passes through verbatim) so a notch lands in the same ballpark in every browser instead of ~32x apart
 - **Platform Detection**: Single `isMacPlatform()` helper for OS-conditional defaults
 - **HTML Escaping**: XSS prevention for safe HTML rendering
 - **Storage Keys**: Single registry of `luxar.*` localStorage keys
@@ -52,6 +53,7 @@ utils/
 ├── result.ts                # Result<T, E> + ok/err/isOk/isErr/match/mapOk/mapErr/unwrap/tryAsync
 ├── storage-keys.ts          # luxar.* localStorage key registry
 ├── viewer-container.ts      # mount-root registry (get/set/resetViewerContainer) + containing-block promotion
+├── wheel-delta.ts           # normalizeWheelDelta (deltaMode line/page → pixel equivalent)
 ├── cross-layer/             # Cross-layer plumbing (typed bus, notifier facade, listener group)
 │   ├── event-bus.ts         # Typed cross-layer pub/sub (LuxarEventMap, eventBus singleton)
 │   ├── event-group.ts       # DOM-listener group with single dispose() teardown
@@ -65,7 +67,7 @@ utils/
 
 Geometry-byte accounting (`estimateGeometryBytes` / `invalidateCachedByteSize`) used to live here as `geometry-utils.ts`; it has moved to its only consumer at `rendering/gpu-buffer-pool/geometry-bytes.ts` (re-exported by `rendering/gpu-buffer-pool.ts` for the existing test import path).
 
-Each module is focused on a specific domain with minimal dependencies. The only intra-`utils/` imports are `cross-layer/event-group.ts`, `cross-layer/notifier.ts`, and `hdr/hdr-detection.ts` → `log.ts`, and `hdr/hdr-color-conversion.ts` → `clamp.ts`.
+Each module is focused on a specific domain with minimal dependencies. The only intra-`utils/` imports are `cross-layer/event-group.ts`, `cross-layer/notifier.ts`, and `hdr/hdr-detection.ts` → `log.ts`, and `hdr/hdr-color-conversion.ts` and `wheel-delta.ts` → `clamp.ts`.
 
 ## Modules
 

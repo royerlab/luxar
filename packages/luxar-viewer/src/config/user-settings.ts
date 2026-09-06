@@ -36,7 +36,10 @@ const SETTINGS_VERSION = 1 as const;
 export interface UserSettings {
   version: typeof SETTINGS_VERSION;
   input: {
-    /** Ctrl/⌘+wheel FOV change per wheel-delta unit (live). */
+    /**
+     * Ctrl/⌘+wheel FOV change per wheel-delta unit (live) — the unit is the
+     * pixel-equivalent delta from `utils/wheel-delta`, not the raw event value.
+     */
     fovSensitivity: number;
     /**
      * Multiplier on every plain-wheel zoom step — orbit/ortho dolly and fly

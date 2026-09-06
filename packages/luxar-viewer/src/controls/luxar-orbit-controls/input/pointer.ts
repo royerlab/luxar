@@ -15,6 +15,7 @@
 import * as THREE from 'three';
 import { computeArcballRotation } from '../math/trackball';
 import { computeZoomScale } from '../math/zoom';
+import { normalizeWheelDelta } from '../../../utils/wheel-delta';
 
 /** The gesture the orbit controls are currently performing. */
 export type ControlAction = 'rotate' | 'pan' | 'zoom' | 'none';
@@ -270,11 +271,13 @@ export function handlePointerUp(ctx: OrbitInputCtx, event: PointerEvent): void {
 /**
  * Handle a scroll wheel zoom. Ctrl/Meta+scroll is ceded to the window-level
  * FOV handler for perspective cameras only (ortho has no FOV, so a pinch must
- * still zoom there). Converts `deltaY` into a zoom-scale (at
- * `zoomSpeed × wheelZoomSensitivity`) and accumulates a
- * signed zoom delta (scroll up = zoom in), then dispatches `change` so the
- * damped zoom is picked up in the next update. No-op while disabled or zoom
- * is off.
+ * still zoom there). Normalizes `deltaY` to pixel-mode equivalent first
+ * (`normalizeWheelDelta`, so a Firefox line-mode notch is not ~32x smaller
+ * than a Chromium pixel-mode one), converts that into a zoom-scale (at
+ * `zoomSpeed × wheelZoomSensitivity`, which therefore multiplies a
+ * browser-independent delta) and accumulates a signed zoom delta (scroll up =
+ * zoom in), then dispatches `change` so the damped zoom is picked up in the
+ * next update. No-op while disabled or zoom is off.
  */
 export function handleWheel(ctx: OrbitInputCtx, event: WheelEvent): void {
   if (!ctx.enabled || !ctx.enableZoom) return;
@@ -291,11 +294,12 @@ export function handleWheel(ctx: OrbitInputCtx, event: WheelEvent): void {
 
   event.preventDefault();
 
-  const scale = computeZoomScale(event.deltaY, ctx.zoomSpeed * ctx.wheelZoomSensitivity);
-  if (event.deltaY < 0) {
+  const deltaY = normalizeWheelDelta(event, ctx.domElement);
+  const scale = computeZoomScale(deltaY, ctx.zoomSpeed * ctx.wheelZoomSensitivity);
+  if (deltaY < 0) {
     // Scroll up = zoom in
     ctx.addZoomDelta(scale - 1);
-  } else if (event.deltaY > 0) {
+  } else if (deltaY > 0) {
     // Scroll down = zoom out
     ctx.addZoomDelta(-(scale - 1));
   }

@@ -554,6 +554,56 @@ describe('LuxarOrbitControls', () => {
       // Handler should be set
       expect((controls as any).viewAxisRotationHandler).not.toBeNull();
     });
+
+    /**
+     * Accumulated `rollDelta` for one Shift+wheel event. One fresh instance
+     * per measurement, disposed immediately: a lingering capture listener
+     * calls stopImmediatePropagation and would starve the next instance's
+     * handler.
+     */
+    const roll = (deltaY: number, deltaMode: number): number => {
+      controls = new LuxarOrbitControls(camera, domElement);
+      controls.enableViewAxisRotation();
+      domElement.dispatchEvent(
+        new WheelEvent('wheel', { deltaY, deltaMode, shiftKey: true, cancelable: true })
+      );
+      const delta = (controls as any).rollDelta as number;
+      controls.dispose();
+      return delta;
+    };
+
+    it('#2531 normalizes deltaMode: a line-mode notch rolls as far as its pixel equivalent', () => {
+      // jsdom defaults deltaMode to 0, so the other wheel tests here only
+      // ever built pixel-mode events. Firefox reports 3 LINES where Chromium
+      // reports 100 px; the raw 3 used to roll ~32x less per notch.
+      const lineMode = roll(3, 1);
+      // 48 is hard-coded (3 lines × 16 px/line) on purpose: importing
+      // PIXELS_PER_LINE would move both sides together and the comparison
+      // would stop proving anything.
+      const pixelEquivalent = roll(48, 0);
+      expect(lineMode).toBeCloseTo(pixelEquivalent, 12);
+      expect(lineMode).not.toBe(0);
+      // Far more than the pre-fix value, which consumed the raw 3 as pixels.
+      expect(Math.abs(lineMode)).toBeGreaterThan(Math.abs(roll(3, 0)) * 10);
+      // Pixel mode itself is unchanged (default speed 0.0005).
+      expect(roll(100, 0)).toBeCloseTo(100 * 0.0005, 12);
+    });
+
+    it('#2531 page mode scales by domElement.clientHeight (pins the element argument)', () => {
+      // The ONLY test in this file that pins `this.domElement` being passed
+      // to normalizeWheelDelta — dropping that argument is invisible to every
+      // pixel/line-mode test here, and it is a per-site requirement, not a
+      // duplicate of the helper's own tests. Do not delete as redundant.
+      //
+      // jsdom computes no layout, so clientHeight must be stubbed. At 600 px,
+      // 0.2 pages → 120 px; the nominal 800 px fallback would give 160 px.
+      // Both are under the 200 px cap, so the outcomes are distinct AND
+      // neither is the clamp.
+      Object.defineProperty(domElement, 'clientHeight', { configurable: true, get: () => 600 });
+
+      expect(roll(0.2, 2)).toBeCloseTo(120 * 0.0005, 12);
+      expect(roll(0.2, 2)).not.toBeCloseTo(160 * 0.0005, 6);
+    });
   });
 
   describe('public applyOrbitRotation [controls.md G29]', () => {
