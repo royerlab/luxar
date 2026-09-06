@@ -860,7 +860,7 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
 
 
 def test_live_ci_checkouts_share_one_scheduled_dev_sha(workflow: str) -> None:
-    """A scheduled run must test one immutable tree across every suite job."""
+    """A scheduled run captures one dev SHA and reuses it across every suite job."""
     parsed = yaml.safe_load(workflow)
     jobs = parsed["jobs"]
     expected_ref = "${{ needs.changes.outputs.dev_sha || '' }}"
@@ -896,7 +896,7 @@ def test_live_ci_checkouts_share_one_scheduled_dev_sha(workflow: str) -> None:
     assert set(checkout_jobs) == scheduled_suite_jobs
 
     assert checkout_jobs["changes"]["with"]["ref"] == (
-        "${{ github.event_name == 'schedule' && github.sha || '' }}"
+        "${{ github.event_name == 'schedule' && 'refs/heads/dev' || '' }}"
     )
     changes = jobs["changes"]
     assert changes["outputs"]["dev_sha"] == (
@@ -1055,11 +1055,11 @@ def test_green_schedule_repairs_cancelled_push_contexts(workflow: str) -> None:
     assert "git/refs/heads/dev" in script
     assert "compare/main...${dev_sha}" in script
     assert "compare/main...${GITHUB_SHA}" not in script
-    # Scheduled runs belong to dev only while dev is the repository default.
-    # The guard must assert that contract directly, then verify that the immutable
-    # event checkout remains on dev's ancestry even if dev advances mid-window.
-    assert 'default_branch=$(gh api "repos/${GITHUB_REPOSITORY}"' in script
-    assert "'.default_branch'" in script
+    # The scheduled event SHA belongs to main after the default-branch flip, so
+    # the guard must verify the captured checkout remains on dev's ancestry even
+    # if dev advances mid-window. It must not reject main as the default branch.
+    assert 'gh api "repos/${GITHUB_REPOSITORY}"' not in script
+    assert "'.default_branch'" not in script
     assert "rev-parse HEAD" in script
     assert "rev-parse origin/dev" in script
     assert "git/refs/heads/main" not in script
@@ -1097,7 +1097,7 @@ def _run_cancelled_push_repair(
     dev_ref_sha: str = "deadbeef",
     git_origin_dev: str = "deadbeef",
     git_head_sha: str = "deadbeef",
-    default_branch: str = "dev",
+    github_sha: str = "deadbeef",
     git_is_ancestor: str = "1",
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     """Execute the repair shell against deterministic workflow/job snapshots."""
@@ -1119,10 +1119,6 @@ if "--method" in sys.argv:
         raise SystemExit(1)
 elif endpoint == os.environ["FAILED_GET_ENDPOINT"]:
     raise SystemExit(1)
-elif endpoint == f"repos/{os.environ['GITHUB_REPOSITORY']}":
-    if not os.environ["DEFAULT_BRANCH"]:
-        raise SystemExit(1)
-    print(os.environ["DEFAULT_BRANCH"])
 elif endpoint.endswith("/git/refs/heads/dev"):
     # `gh --jq .object.sha` is applied by real gh; the fake prints the value the
     # jq filter would yield. This is the walk anchor (dev's tip).
@@ -1216,7 +1212,7 @@ elif len(sys.argv) > 2 and sys.argv[1] == "merge-base" and sys.argv[2] == "--is-
             "CALLS_PATH": str(calls_path),
             "GITHUB_REPOSITORY": "royerlab/luxar",
             "GITHUB_RUN_ID": "800",
-            "GITHUB_SHA": "deadbeef",
+            "GITHUB_SHA": github_sha,
             "SCHEDULED_PYTHON": scheduled_python,
             "PUSH_PYTHON_LATEST": push_python_latest,
             "PUSH_TYPESCRIPT": push_typescript,
@@ -1227,11 +1223,10 @@ elif len(sys.argv) > 2 and sys.argv[1] == "merge-base" and sys.argv[2] == "--is-
             # DEV_REF_SHA = the gh-resolved walk anchor. GIT_HEAD_SHA = the
             # commit the run actually checked out. GIT_ORIGIN_DEV = dev's tip.
             # HEAD == origin/dev is the common healthy path; an older ancestor
-            # models a merge landing after the immutable checkout.
+            # models a merge landing after the captured checkout.
             "DEV_REF_SHA": dev_ref_sha,
             "GIT_ORIGIN_DEV": git_origin_dev,
             "GIT_HEAD_SHA": git_head_sha,
-            "DEFAULT_BRANCH": default_branch,
             "GIT_IS_ANCESTOR": git_is_ancestor,
         },
     )
@@ -1385,12 +1380,11 @@ def test_non_green_schedule_does_not_repair_push_jobs(
     assert "python-tests (3.12)=failure" in result.stdout
 
 
-# --- Precondition guard: the scheduled walk must operate on dev, loudly. -------
-# GitHub runs `schedule:` on the default branch; after the dev->main flip the
-# run's own ref/SHA is main's tip, so a walk anchored there silently finds
-# nothing to promote and NOTHING goes red. The guard asserts the resolved walk
-# SHA is genuinely origin/dev's tip. Its three arms are tested explicitly, the
-# broken (negative) arm most of all, because this failure has no other signal.
+# --- Precondition guard: the scheduled checkout must remain on dev, loudly. ----
+# GitHub runs `schedule:` on the default branch, so after the dev->main flip the
+# run's own ref/SHA is main's tip even though the suite checks out captured dev.
+# The guard asserts that checkout remains on origin/dev's line before walking the
+# explicit dev tip. Its failure arms are tested because they have no other signal.
 
 
 def test_promotion_guard_green_when_dev_is_ahead_of_main(
@@ -1435,24 +1429,23 @@ def test_promotion_guard_green_when_dev_equals_main(
     assert "dev is level with main" in result.stdout
 
 
-def test_promotion_guard_reds_when_run_operates_on_main_not_dev(
+def test_promotion_guard_green_when_schedule_is_dispatched_on_main(
     workflow: str, tmp_path: Path
 ) -> None:
-    """A scheduled run dispatched on main fails before attempting the dev walk."""
+    """A main event SHA does not block repair of the captured dev checkout."""
     result, calls = _run_cancelled_push_repair(
         workflow,
         tmp_path,
         dev_ref_sha="devtip",
         git_origin_dev="devtip",
-        git_head_sha="maintip",
-        default_branch="main",
-        candidate_shas=("devtip",),
+        git_head_sha="devtip",
+        github_sha="maintip",
+        candidate_shas=(),
     )
 
-    assert result.returncode != 0
-    output = result.stdout + result.stderr
-    assert "scheduled runs are dispatched on 'main', not dev" in output
-    assert "refusing to walk" in output
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "scheduled run SHA maintip" in result.stdout
+    assert "dev is level with main" in result.stdout
     assert calls == []
 
 
@@ -1514,28 +1507,6 @@ def test_promotion_guard_reds_on_unknown_branch(workflow: str, tmp_path: Path) -
     output = result.stdout + result.stderr
     assert "unknown branch" in output
     assert "checked out rogue is not an ancestor of origin/dev" in output
-    assert calls == []
-
-
-def test_promotion_guard_reds_when_default_branch_is_unresolvable(
-    workflow: str, tmp_path: Path
-) -> None:
-    """An unreadable default branch fails closed before topology checks."""
-    result, calls = _run_cancelled_push_repair(
-        workflow,
-        tmp_path,
-        dev_ref_sha="devtip",
-        git_origin_dev="devtip",
-        git_head_sha="maintip",
-        default_branch="",
-        git_is_ancestor="1",
-        candidate_shas=("devtip",),
-    )
-
-    assert result.returncode != 0
-    assert "could not resolve the repository default branch" in (
-        result.stdout + result.stderr
-    )
     assert calls == []
 
 
