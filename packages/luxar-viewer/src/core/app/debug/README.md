@@ -156,11 +156,16 @@ do `tests/e2e/real-dataset-loading.spec.ts` and the two capture specs under
 "not loading" (`!undefined` is `true`) and gates on nothing.
 
 Dependencies arrive as parameters (`scene`, `camera`, `currentFov`,
-`isAnimating`, `initialized`, `isLoading`, `dims`, optional `gpuPoolStats`), so
-the helper is callable from unit tests against real `THREE.Points` / `THREE.Mesh`
-fixtures without bringing up the WebGL renderer. (`gpuPoolStats` is not wired
-in the production `installDebugInterface` call, so `gpuPool` is `undefined`
-there; tests pass it explicitly.)
+`isAnimating`, `initialized`, `isLoading`, `dims`, optional `gpuPoolStats` and
+`refinementResidency`), so the helper is callable from unit tests against real
+`THREE.Points` / `THREE.Mesh` fixtures without bringing up the WebGL renderer.
+The two optional providers are supplied in production from
+`SceneLoaderManager` — `gpuPoolStats()` (projected onto the `GPUPoolDebugStats`
+subset) and `refinementResidencyStop()` — and read INSIDE the getter, per
+snapshot, for the same reason `isLoading` is. Omitting either leaves its field
+absent, which must read as "unknown / never happened" and never as a
+synthesised zero: `capture-readiness.ts` treats a PRESENT
+`refinementResidency` record as the stop signal regardless of its contents.
 
 ### `capture-readiness.ts`
 
@@ -171,21 +176,49 @@ screenshot/capture driver asks — "does this scene graph carry drawable
 elements?" — as `ok` plus all four per-type totals (`totalPoints`,
 `totalGSplats`, `totalLines`, `totalTriangles`), a `totalElements`, and the four
 per-node counts (`pointCloudCount`, `gsplatCount`, `lineCount`,
-`meshNodeCount`). `ok` is true iff `totalElements > 0` and
-`totalDroppedElements === 0`, where `totalElements` is
-`max(the snapshot's own totalElements field, sum of the four per-type totals)`.
+`meshNodeCount`). `ok` is true iff `totalElements > 0` and nothing made those
+counts a property of the RUN rather than of the store: `totalDroppedElements
+=== 0` (per-node renderer clamps), no `refinementResidency` stop (progressive
+refinement declining scene-wide at the residency byte ceiling, #2508) and no
+`gpuPool.byteBudgetEvictions` (the pool going over its VRAM byte budget and
+shedding pooled geometry to get back under it — including levels the LOD
+registry had demoted from active, though on its own it does not prove rendered
+geometry was lost, and it stays 0 when active bytes alone exceed the budget).
+The last two are also reported numerically as
+`refinementDeclinedPathCount` and `gpuByteBudgetEvictions`, and concurrent
+causes are `; `-joined into one `reason` — dropped elements first, then the
+caps, an order the tests pin — rather than the first shadowing the rest. No
+clause may contain `; ` itself, or a caller splitting on it would read one cause
+as several: the residency clause comma-separates its own parenthetical, and any
+snapshot-supplied string it echoes (the stop `reason`, `firstPath`) has its
+semicolons flattened and its length bounded first, since a `page.evaluate`
+payload could otherwise forge a clause. Both new signals are LOADER-SCOPED and
+cumulative within that life: they say "this happened at some point while this
+scene was loaded", not "this is true now", so a scene that stopped once and
+later refined fully is still refused. The contract in full — and why an in-page
+dataset switch clears it without a reload — is on `RefinementResidencyStop` in
+`data/scene-loader/progressive/residency-budget.ts`.
+Note the deliberate asymmetry between them: a residency record is only
+written once a rung has actually been declined, so its PRESENCE refuses even
+when its fields are unreadable, whereas `gpuPool` rides on every snapshot from
+a pooled build and only a positive, readable `byteBudgetEvictions` refuses
+(refusing on the pool's total `evictions` would fail every normal nD capture,
+since that counter is dominated by routine LRU recycling). Here `totalElements`
+is `max(the snapshot's own totalElements field, sum of the four per-type totals)`.
 That max is a version-skew hedge, not arithmetic: the capture tool talks to
 whatever viewer build is served at `APP_URL`, so a missing total is re-derived
 from the per-type ones and a stale or partial snapshot's own field can only
 under-claim relative to itself — never under-claim against the per-type totals it
 is carrying. The current viewer sets the field to exactly that sum
 (`debug-state.ts`), so on a live snapshot the max is inert and it is simply the
-sum. A false verdict therefore covers both retryable "nothing loaded yet" and
-permanent "loaded but renderer-truncated" states; callers distinguish them from
-the human-readable `reason`.
+sum. A false verdict therefore covers retryable "nothing loaded yet",
+permanent "loaded but renderer-truncated", and "loaded but capped by a
+memory ceiling" states; callers distinguish them from the human-readable
+`reason`.
 
 Every not-ready path (no state, an unexpected snapshot shape,
-present-but-non-finite totals, an empty scene) carries a human-readable `reason`
+present-but-non-finite totals, an empty scene, a residency stop, a byte-budget
+pool eviction) carries a human-readable `reason`
 instead of leaking `NaN`/`undefined`. `reason` is not exclusive to `ok: false`:
 it doubles as a CAVEAT channel, so an otherwise-ready verdict that had to count a
 total as 0 — because it was non-finite, or because a partial (version-skewed)

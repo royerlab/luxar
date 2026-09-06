@@ -339,6 +339,7 @@ export async function runInitPipeline(
     configEnabled: config.densityGuard.enabled,
     option: ports.options.densityGuard,
     config: config.densityGuard,
+    capOverride: ports.options.densityCap,
     energyComp: lodEnergyCompEnabled,
     sceneManager,
     registerMaterial: (material) => materialManager.register(material),

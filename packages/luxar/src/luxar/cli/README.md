@@ -47,6 +47,7 @@ print(result.stdout)
 
 - `__init__.py` - Package initialization, exports the main app
 - `main.py` - Main CLI application with the top-level commands
+- `_traceback.py` - Shared quiet-error reporting with the `LUXAR_TRACEBACK` opt-in escape hatch
 - `serving.py` - HTTP serving internals (`create_server_app`, data/viewer servers; re-exported by `main.py`)
 - `info_command.py` - The `luxar info` command implementation
 - `optimise_command.py` - The `luxar optimise` command (a thin Typer layer over `luxar.io.optimise`)

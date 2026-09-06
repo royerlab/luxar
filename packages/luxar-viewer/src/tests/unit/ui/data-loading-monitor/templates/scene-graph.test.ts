@@ -109,7 +109,92 @@ describe('lodChipContent', () => {
   });
 });
 
+describe('lodChipContent — density-held rung', () => {
+  const node: SceneGraphNode = {
+    path: '/held',
+    name: 'held',
+    type: 'gsplats',
+    additiveSublods: 4,
+    children: [],
+  };
+
+  it('names the residency ceiling when that is what holds the rung', () => {
+    const c = lodChipContent(node, {
+      kind: 'additive',
+      loaded: 2,
+      total: 4,
+      refining: true,
+      held: 'budget',
+    })!;
+    expect(c.icon).toBe(MONITOR_ICONS.lodHeld);
+    expect(c.text).not.toContain('⏳');
+    expect(c.title.startsWith('Next level HELD at the residency ceiling')).toBe(true);
+    expect(c.title).toContain('refinement working-set budget (capped at 512 MB)');
+    // No "raise ?cacheBudgetMB" remedy: on desktop Chrome the working-set cap
+    // already binds, so that knob cannot lift the ceiling (and a low value lowers it).
+    expect(c.title).not.toContain('cacheBudgetMB');
+  });
+
+  it('shows the pause glyph after the text instead of ⏳, and explains the hold first', () => {
+    const c = lodChipContent(node, {
+      kind: 'additive',
+      loaded: 2,
+      total: 4,
+      refining: true,
+      held: 'density',
+      lastAllResident: false,
+    })!;
+    expect(c.text).toBe('LOD 2/4 ◌ ');
+    expect(c.text).not.toContain('⏳');
+    expect(c.icon).toBe(MONITOR_ICONS.lodHeld);
+    expect(c.iconPosition).toBe('after');
+    expect(c.title.startsWith('Next level HELD by the density guard')).toBe(true);
+    expect(c.title).toContain('level 3 is not loaded');
+    expect(c.title).toContain('Additive LOD held — 2/4 levels loaded');
+    // The tree renders glyph markup after the escaped text.
+    const state: SceneGraphState = {
+      root: node,
+      totalNodes: 1,
+      nodesByType: { points: 0, lines: 0, gsplats: 1, mesh: 0 },
+      totalByType: { points: 0, lines: 0, gsplats: 0, mesh: 0 },
+      visibleByType: { points: 0, lines: 0, gsplats: 0, mesh: 0 },
+      droppedElements: 0,
+    };
+    const html = renderSceneGraphTree(
+      state,
+      new Set(),
+      new Map([
+        ['/held', { kind: 'additive', loaded: 2, total: 4, refining: true, held: 'density' }],
+      ])
+    );
+    expect(html).toContain(`LOD 2/4 ${MONITOR_ICONS.lodHeld}</span>`);
+  });
+
+  it('a held flag without refining is ignored (nothing is pending)', () => {
+    const c = lodChipContent(node, {
+      kind: 'additive',
+      loaded: 4,
+      total: 4,
+      refining: false,
+      held: 'density',
+    })!;
+    expect(c.icon).toBeUndefined();
+    expect(c.text).toBe('LOD 4/4');
+    expect(c.title).not.toContain('HELD');
+  });
+});
+
 describe('summariseLodStates', () => {
+  it('counts held rungs (density or budget) apart from streaming ones', () => {
+    const states = new Map<string, LODProgressState>([
+      ['/a', { kind: 'additive', loaded: 1, total: 4, refining: true, held: 'density' }],
+      ['/b', { kind: 'additive', loaded: 1, total: 4, refining: true }],
+      ['/c', { kind: 'additive', loaded: 4, total: 4, refining: false }],
+      ['/d', { kind: 'additive', loaded: 2, total: 4, refining: true, held: 'budget' }],
+    ]);
+    expect(summariseLodStates(states)).toBe('4 additive · refining 1 · held 2');
+  });
+
   it('summarises substitutive groups, additive nodes, and refinement', () => {
     const states = new Map<string, LODProgressState>([
       ['/a', { kind: 'lod', levelCount: 3, activeLevel: 0 }],

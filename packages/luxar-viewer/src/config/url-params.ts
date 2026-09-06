@@ -181,6 +181,17 @@ export interface UrlParams {
    * the audit bench and for reproducing an overdraw report.
    */
   densityGuard: boolean;
+  /**
+   * Session-only override of the density guard's blendable cap
+   * (`?density-cap=8`, elements per drawing-buffer pixel;
+   * `config.densityGuard.capElementsPerPixel` is 4). Both consumers follow
+   * it — the shader keep-fraction ladder and the refinement rung gate — so
+   * a threshold sweep is one URL edit per arm, no rebuild and nothing
+   * persisted. The non-blendable cap (1) only moves when the override is
+   * below it, so it stays the tighter of the two. Null/invalid ⇒ the
+   * configured cap.
+   */
+  densityCap: number | null;
   /** Disable adjacent-chunk prefetching (`?no-prefetch`). */
   noPrefetch: boolean;
   /** Verbose prefetch logging (`?prefetch-debug`). */
@@ -326,6 +337,7 @@ export function readUrlParams(search?: string): UrlParams {
     blendWarmup: !params.has('no-blend-warmup'),
     depthSort: parseEnabledFlag(params.get('depthSort')),
     densityGuard: !params.has('no-density-guard'),
+    densityCap: parsePositiveFloat(params.get('density-cap')),
     noPrefetch: params.has('no-prefetch'),
     prefetchDebug: params.has('prefetch-debug'),
     cacheStats: params.has('cache-stats'),

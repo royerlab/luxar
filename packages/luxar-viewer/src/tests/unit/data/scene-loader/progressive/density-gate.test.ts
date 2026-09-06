@@ -109,6 +109,26 @@ describe('RefinementDensityGate', () => {
     expect(second).toBe(first);
   });
 
+  it('isDeferred reports a held path until it resumes or the next run begins', () => {
+    const dense = { areaPx: 100, elements: 1_000_000, onScreen: true, blendable: true };
+    const gate = new RefinementDensityGate(() => dense, { blendable: 4, nonBlendable: 1 });
+    gate.beginRun();
+    expect(gate.isDeferred('/dense')).toBe(false);
+    gate.admit('/dense', residency(1_000_000, 4));
+    expect(gate.isDeferred('/dense')).toBe(true);
+    expect(gate.isDeferred('/other')).toBe(false);
+    // Zoomed in far enough: released by the resume check.
+    dense.areaPx = 1e9;
+    expect(gate.takeResumable()).toEqual(['/dense']);
+    expect(gate.isDeferred('/dense')).toBe(false);
+    // Held again, then forgotten by the next run start.
+    dense.areaPx = 100;
+    gate.admit('/dense', residency(1_000_000, 4));
+    expect(gate.isDeferred('/dense')).toBe(true);
+    gate.beginRun();
+    expect(gate.isDeferred('/dense')).toBe(false);
+  });
+
   it('beginRun forgets the previous run’s deferrals', () => {
     const samples = new Map<string, ProjectedDensitySample>([['/d', sample(10, 10_000)]]);
     const gate = new RefinementDensityGate((p) => samples.get(p), CAPS);

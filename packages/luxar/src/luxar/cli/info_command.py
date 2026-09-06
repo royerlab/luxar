@@ -19,6 +19,7 @@ from arbol import aprint
 from .._zarr_compat import open_group as zarr_open_group
 from ..typing_utils._format_contract import GEOMETRY_TYPES
 from ..typing_utils.constants import RESERVED_ROOT_GROUPS
+from ._traceback import exit_with_error
 from .utils import (
     format_memory_size,
     format_tree_node,
@@ -147,8 +148,7 @@ def register_info_command(app: typer.Typer) -> None:
         except typer.Exit:
             raise
         except Exception as e:
-            aprint(f"❌ Error reading info for {path}: {e}")
-            raise typer.Exit(1)
+            exit_with_error(f"❌ Error reading info for {path}: {e}", e)
 
 
 #: Mean chunk payload below which a full load is dominated by per-request

@@ -14,6 +14,7 @@ import typer
 from arbol import aprint
 
 from ..io.lod_restamp import restamp_lod_store
+from ._traceback import exit_with_error
 
 
 def register_restamp_lod_command(app: typer.Typer) -> None:
@@ -96,8 +97,7 @@ def register_restamp_lod_command(app: typer.Typer) -> None:
             aprint(f"❌ {e}")
             raise typer.Exit(1) from e
         except Exception as e:
-            aprint(f"❌ Error restamping {store}: {e}")
-            raise typer.Exit(1) from e
+            exit_with_error(f"❌ Error restamping {store}: {e}", e)
 
         if not report.clean:
             raise typer.Exit(1)

@@ -5,15 +5,16 @@
  * no-context contracts that can regress in ordinary TypeScript changes.
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { BloomChain } from '../../../../rendering/post-processing/bloom/chain';
+import { loadTslMaterials } from '../../../../rendering/tsl/load';
 import type { RendererCapabilities } from '../../../../rendering/renderer-capabilities';
 
-function mockCaps(): RendererCapabilities {
+function mockCaps(apiSurface: 'webgl2' | 'webgpu' = 'webgl2'): RendererCapabilities {
   return {
-    apiSurface: 'webgl2',
-    framebufferYDown: false,
+    apiSurface,
+    framebufferYDown: apiSurface === 'webgpu',
     hdr: {
       p3Gamut: false,
       rec2020Gamut: false,
@@ -92,6 +93,64 @@ describe('BloomChain', () => {
     expect(chain.outputTexture).not.toBe(before);
 
     chain.dispose();
+  });
+});
+
+describe('BloomChain pass blending — WebGL2 / WebGPU parity', () => {
+  // The upsample pass accumulates mip[i+1] into mip[i]; the additive
+  // blend IS the accumulation, so a NormalBlending upsample overwrites
+  // its destination and the pyramid collapses to a flat dim wash.
+  // `buildMaterial` used to drop `config.blending` on the WebGPU
+  // branch, leaving the TSL material on NormalBlending / transparent =
+  // false — which three's `WebGPUPipelineUtils` reads as "no blend
+  // state at all" (#2563). The threshold and downsample passes must
+  // stay NormalBlending: they write a fresh mip each time.
+  //
+  // The WebGPU arm builds real TSL NodeMaterials, so the lazily-loaded
+  // registry has to be installed first — `requireTslMaterials()` in
+  // `bloom/shaders.ts` throws otherwise. That is also why this block
+  // must stay ABOVE the `bloom TSL factories` one below: that block
+  // calls `vi.resetModules()` and mocks `three/tsl`, and this one needs
+  // the real module through `loadTslMaterials()`. Do not reorder them.
+  beforeAll(async () => {
+    await loadTslMaterials();
+  });
+
+  interface BloomMaterials {
+    thresholdMat: THREE.Material;
+    downsampleMat: THREE.Material;
+    upsampleMat: THREE.Material;
+  }
+
+  function expectBloomBlending(caps: RendererCapabilities): void {
+    const chain = new BloomChain({ width: 64, height: 64, levels: 3, caps });
+    const mats = chain as unknown as BloomMaterials;
+
+    expect(mats.upsampleMat.blending).toBe(THREE.AdditiveBlending);
+    expect(mats.thresholdMat.blending).toBe(THREE.NormalBlending);
+    expect(mats.downsampleMat.blending).toBe(THREE.NormalBlending);
+
+    for (const mat of [mats.thresholdMat, mats.downsampleMat, mats.upsampleMat]) {
+      expect(mat.depthTest).toBe(false);
+      expect(mat.depthWrite).toBe(false);
+      expect(mat.toneMapped).toBe(false);
+      // `transparent` is the other half of three's predicate: a
+      // NormalBlending pass only gets overwrite semantics while it is
+      // false, so flipping it would start alpha-blending the threshold
+      // and downsample passes against their previous mip contents.
+      expect(mat.transparent).toBe(false);
+      expect(mat.side).toBe(THREE.FrontSide);
+    }
+
+    chain.dispose();
+  }
+
+  it('gives the upsample pass AdditiveBlending under WebGL2', () => {
+    expectBloomBlending(mockCaps('webgl2'));
+  });
+
+  it('gives the upsample pass AdditiveBlending under WebGPU', () => {
+    expectBloomBlending(mockCaps('webgpu'));
   });
 });
 

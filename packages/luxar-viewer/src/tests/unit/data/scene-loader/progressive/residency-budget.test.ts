@@ -13,7 +13,9 @@ import {
   planRefinementAdmission,
   RefinementResidencyBudget,
   RefinementResidencyReporter,
+  RESIDENCY_DECLINED_PATH_SAMPLE,
 } from '../../../../../data/scene-loader/progressive/residency-budget';
+import { RefinementDensityGate } from '../../../../../data/scene-loader/progressive/density-gate';
 
 const MB = 1024 * 1024;
 
@@ -377,6 +379,151 @@ describe('RefinementResidencyBudget', () => {
     const budget = new RefinementResidencyBudget(0);
     expect(budget.admit('/n', residency(500 * MB, 5)).admitted).toBe(true);
     expect(budget.isDeclined('/n')).toBe(false);
+    expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The reporter's SECOND job (#2508): a durable stop record for the debug
+ * snapshot. The console warning it has always emitted is once-per-scene by
+ * design, so it cannot answer "how much of this scene stopped short" — and
+ * nothing downstream (capture tools, A/B harnesses) can read a console line at
+ * all. Every assertion here is about what the recording keeps that the log
+ * throws away.
+ */
+describe('RefinementResidencyReporter.snapshot', () => {
+  let warn: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    const { log } = await import('../../../../../utils/log');
+    warn = vi.spyOn(log, 'warning').mockImplementation(() => undefined);
+  });
+  afterEach(() => warn.mockRestore());
+
+  const residency = (residentBytes: number, loadedRungs = 1) => ({
+    residentBytes,
+    loadedRungs,
+    elementCount: 0,
+    bytesPerElement: 0,
+  });
+
+  it('is undefined until something is actually declined', () => {
+    // `undefined`, never a zero-valued object: the snapshot crosses a
+    // serialisation boundary, and a consumer must be able to tell "refinement
+    // never hit the ceiling" from "it hit it and declined nothing".
+    const reporter = new RefinementResidencyReporter();
+    expect(reporter.snapshot()).toBeUndefined();
+
+    const budget = new RefinementResidencyBudget(100 * MB, [], reporter);
+    expect(budget.admit('/fits', residency(1 * MB, 4)).admitted).toBe(true);
+    expect(reporter.snapshot()).toBeUndefined();
+  });
+
+  it('records EVERY decline while still logging exactly once', () => {
+    // The regression this exists to prevent: an early `if (this.reported)
+    // return` that skips the recording too, so the snapshot reports one
+    // declined path for a scene where fifty stopped.
+    const reporter = new RefinementResidencyReporter();
+    const budget = new RefinementResidencyBudget(10 * MB, [], reporter);
+    for (let i = 0; i < 5; i++) budget.admit(`/node${i}`, residency(50 * MB, 5));
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(reporter.snapshot()).toMatchObject({
+      declinedPathCount: 5,
+      declinedPaths: ['/node0', '/node1', '/node2', '/node3', '/node4'],
+    });
+  });
+
+  it('counts DISTINCT paths, not re-declines across runs', () => {
+    // The budget is rebuilt per refinement run while the reporter lives for the
+    // scene, so a scene parked at the ceiling re-declines the same paths after
+    // every view change. Counting occurrences would report three stuck nodes as
+    // nine after three slice steps.
+    const reporter = new RefinementResidencyReporter();
+    for (let run = 0; run < 3; run++) {
+      const budget = new RefinementResidencyBudget(10 * MB, [], reporter);
+      for (const path of ['/a', '/b', '/c']) budget.admit(path, residency(50 * MB, 5));
+    }
+
+    expect(reporter.snapshot()?.declinedPathCount).toBe(3);
+    expect(reporter.snapshot()?.declinedPaths).toEqual(['/a', '/b', '/c']);
+  });
+
+  it('bounds the sample at a SMALL literal, not merely at itself', () => {
+    // Every other assertion here is written against the constant, so raising it
+    // to 1024 — defeating the only reason it exists, since the whole point is
+    // that a partitioned scene's thousands of declined paths must not ride
+    // along on every `getState()` — leaves the suite green. Pin the magnitude
+    // with a literal. A deliberate change should have to edit this line and
+    // re-justify the serialisation cost.
+    expect(RESIDENCY_DECLINED_PATH_SAMPLE).toBe(8);
+  });
+
+  it('keeps the TRUE count when the path sample is truncated', () => {
+    // A partitioned scene declines one path per part, so the sample is bounded
+    // for the serialisation boundary's sake — but the count is the measurement
+    // and must never collapse to the sample length.
+    const reporter = new RefinementResidencyReporter();
+    const budget = new RefinementResidencyBudget(10 * MB, [], reporter);
+    const declined = 3 * RESIDENCY_DECLINED_PATH_SAMPLE;
+    for (let i = 0; i < declined; i++) budget.admit(`/part_${i}`, residency(50 * MB, 5));
+
+    const stop = reporter.snapshot();
+    expect(stop?.declinedPathCount).toBe(declined);
+    expect(stop?.declinedPaths).toHaveLength(RESIDENCY_DECLINED_PATH_SAMPLE);
+    // First-seen order, so the sample names the subtree that stopped FIRST —
+    // the one worth looking at — rather than an arbitrary tail.
+    expect(stop?.declinedPaths[0]).toBe('/part_0');
+    expect(stop?.declinedPaths.at(-1)).toBe(`/part_${RESIDENCY_DECLINED_PATH_SAMPLE - 1}`);
+  });
+
+  it('pins the FIRST verdict, not the latest, across runs', () => {
+    // The four verdict fields describe one decision at one instant. Overwriting
+    // them per refusal would report the last node to give up, at the last
+    // measured residency — which is not where the scene stopped, and moves on
+    // every view change.
+    const reporter = new RefinementResidencyReporter();
+    const firstRun = new RefinementResidencyBudget(10 * MB, [], reporter);
+    expect(firstRun.admit('/first', residency(50 * MB, 5))).toMatchObject({
+      reason: 'over-budget',
+    });
+
+    const secondRun = new RefinementResidencyBudget(100 * MB, [], reporter);
+    expect(secondRun.admit('/later', residency(90 * MB, 3))).toMatchObject({
+      reason: 'next-rung-would-exceed',
+    });
+
+    expect(reporter.snapshot()).toMatchObject({
+      reason: 'over-budget',
+      residentBytes: 50 * MB,
+      budgetBytes: 10 * MB,
+      firstPath: '/first',
+      declinedPathCount: 2,
+    });
+  });
+
+  it('leaves a DENSITY-cap refusal out: this snapshot is the byte ceiling only', () => {
+    // A density deferral is camera-dependent and non-sticky — the node refines
+    // again as soon as the user zooms in — so it is not a partial scene in the
+    // sense a capture tool must refuse on. The budget routes it around the
+    // reporter deliberately; assert that, or the two ceilings quietly merge.
+    const reporter = new RefinementResidencyReporter();
+    const gate = new RefinementDensityGate(
+      () => ({ areaPx: 10, elements: 10_000, onScreen: true, blendable: true }),
+      { blendable: 1, nonBlendable: 1 }
+    );
+    const budget = new RefinementResidencyBudget(1000 * MB, [], reporter, gate);
+
+    expect(
+      budget.admit('/dense', {
+        residentBytes: 1 * MB,
+        loadedRungs: 2,
+        elementCount: 10_000,
+        bytesPerElement: 48,
+      })
+    ).toMatchObject({ admitted: false, reason: 'density-cap' });
+    expect(budget.isDeclined('/dense')).toBe(true);
+    expect(reporter.snapshot()).toBeUndefined();
     expect(warn).not.toHaveBeenCalled();
   });
 });

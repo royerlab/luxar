@@ -168,7 +168,17 @@ def scan_repository(
 ) -> ScanResult:
     """Fan out from workflow runs to jobs and aggregate obsidian classifications."""
     result = ScanResult()
-    for status in statuses:
+    for index, status in enumerate(statuses):
+        # Reserve one run for each pass still to come. Every status then gets at
+        # least a look — which run-level status hosts the live job is unknowable
+        # in advance — and no pass is capped while budget remains, so a scan
+        # never gives up with runs left unscanned. Residual: a first pass that
+        # fills the budget leaves the later ones only their reserved run, so
+        # evidence deep in a later list can still be missed. That is the limit of
+        # a single un-paginated page.
+        status_budget = max(
+            1, max_runs - result.scanned_runs - (len(statuses) - index - 1)
+        )
         endpoint = f"repos/{repository}/actions/runs?status={status}&per_page=100"
         try:
             runs_payload = read_api(endpoint)
@@ -177,6 +187,7 @@ def scan_repository(
         except (ApiError, ValueError) as error:
             result.error = {"scope": "runs", "detail": str(error)}
             return result
+        scanned_for_status = 0
         for run in runs:
             try:
                 run_id = _eligible_run_id(
@@ -190,10 +201,11 @@ def scan_repository(
                 return result
             if run_id is None:
                 continue
-            if result.scanned_runs >= max_runs:
+            if scanned_for_status >= status_budget:
                 result.truncated = True
-                return result
+                break
             result.scanned_runs += 1
+            scanned_for_status += 1
             try:
                 jobs_payload = read_api(
                     f"repos/{repository}/actions/runs/{run_id}/jobs?per_page=100"

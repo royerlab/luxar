@@ -25,6 +25,7 @@ describe('readUrlParams', () => {
       blendWarmup: true, // WebGL blend-variant warm-up is ON by default (opt-out via ?no-blend-warmup)
       depthSort: true, // gsplat depth sorting is ON by default (opt-out via ?depthSort=0)
       densityGuard: true, // projected-density guard is ON by default (opt-out via ?no-density-guard)
+      densityCap: null, // configured cap unless ?density-cap=N
       lodFinest: false, // capture-quality force-finest is OFF by default (opt-in via ?lod-finest)
       noPrefetch: false,
       prefetchDebug: false,
@@ -53,6 +54,15 @@ describe('readUrlParams', () => {
     expect(readUrlParams('?probe=%201,2,3%20').probe).toBe('1,2,3');
     expect(readUrlParams('?probe=').probe).toBeNull();
     expect(readUrlParams('?env-resolution=abc').envResolution).toBeNull();
+  });
+
+  it('parses ?density-cap= as a positive float, anything else → null', () => {
+    expect(readUrlParams('?density-cap=8').densityCap).toBe(8);
+    expect(readUrlParams('?density-cap=2.5').densityCap).toBe(2.5);
+    expect(readUrlParams('?density-cap=0').densityCap).toBeNull();
+    expect(readUrlParams('?density-cap=-4').densityCap).toBeNull();
+    expect(readUrlParams('?density-cap=lots').densityCap).toBeNull();
+    expect(readUrlParams('?density-cap=').densityCap).toBeNull();
   });
 
   it('parses ?title=, decoding and trimming; blank collapses to null', () => {

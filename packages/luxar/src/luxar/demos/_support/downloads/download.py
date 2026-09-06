@@ -10,10 +10,14 @@ import contextlib
 import hashlib
 import os
 import time
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 from arbol import aprint, asection
+
+if TYPE_CHECKING:
+    import requests
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Quarantined-cache detection
@@ -172,6 +176,42 @@ def quarantine_file(
     return target
 
 
+def _make_host_scoped_session(
+    original_url: str, sensitive_headers: Iterable[str]
+) -> requests.Session:
+    """Build a session that scopes caller credentials to the original URL.
+
+    ``requests`` strips only the ``Authorization`` header when a redirect crosses
+    to a different host; it leaves arbitrary custom headers (an ``api-key``, an
+    ``x-api-key``, a Zenodo/S3 bearer token, …) in place, so a credential-bearing
+    ``extra_headers`` entry would leak to whatever host a redirect points at. The
+    returned session drops every *sensitive_headers* entry whenever requests
+    would strip ``Authorization`` from a redirect (host, port, or unsafe scheme
+    change), closing that leak while preserving requests' upgrade carve-out.
+
+    Args:
+        original_url: Original request URL used as the redirect-policy anchor.
+        sensitive_headers: Header names to scope to the original URL (typically
+            the caller's ``extra_headers`` keys); compared case-insensitively.
+    """
+    import requests
+
+    sensitive = {str(name).lower() for name in sensitive_headers}
+
+    class _HostScopedSession(requests.Session):
+        def rebuild_auth(self, prepared_request: Any, response: Any) -> None:  # noqa: ANN401 - matches requests' signature
+            # Preserve requests' own cross-host Authorization stripping first.
+            super().rebuild_auth(prepared_request, response)
+            if not sensitive:
+                return
+            if self.should_strip_auth(original_url, prepared_request.url):
+                headers = prepared_request.headers
+                for name in [k for k in headers if k.lower() in sensitive]:
+                    del headers[name]
+
+    return _HostScopedSession()
+
+
 def robust_download(
     url: str,
     output_path: Path,
@@ -214,7 +254,7 @@ def robust_download(
         chunk_size: Size of download chunks in bytes (default: 1MB)
         verify_size: Whether to verify final file size matches Content-Length
         expected_size: Expected file size in bytes (optional, for validation)
-        extra_headers: Extra HTTP headers to send on every request (e.g. an
+        extra_headers: Extra HTTP headers scoped to the original URL (e.g. an
             API key: ``{"api-key": "..."}``). Merged with the Range header.
             Unless it already contains an ``Accept-Encoding`` (any casing),
             requests default to ``Accept-Encoding: identity`` so size
@@ -291,8 +331,11 @@ def robust_download(
         ),
     )
 
-    # Set up session with retry logic
-    session = requests.Session()
+    # Set up session with retry logic. Scope caller-supplied credential headers
+    # (extra_headers) with requests' own Authorization redirect policy so a
+    # host, port, or unsafe scheme change cannot leak arbitrary custom headers
+    # (an api-key, an x-api-key, a Zenodo/S3 token, …).
+    session = _make_host_scoped_session(url, (extra_headers or {}).keys())
     retry_strategy = Retry(
         total=max_retries,
         backoff_factor=2,  # Exponential backoff: 2s, 4s, 8s...

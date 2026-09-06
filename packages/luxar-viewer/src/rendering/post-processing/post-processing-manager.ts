@@ -141,9 +141,13 @@ export class PostProcessingManager {
     // bypass is not available on the WebGPU path.
     //
     // `material.toneMapped = false` (set on the mega-shader and FXAA)
-    // disables only the tone-mapping branch of `RenderOutputNode`;
-    // the color-space branch is independent and still fires when
-    // outputColorSpace differs from workingColorSpace.
+    // plays no part in that on the node path: the property appears
+    // nowhere in three's `three.webgpu` build. Tone mapping there is
+    // an output-pass concern keyed on `renderer.toneMapping`, which the
+    // line below pins to `NoToneMapping`; the color-space branch is
+    // independent of it and would fire on its own. With both lines
+    // below in force `needsFrameBufferTarget` is false, so the output
+    // pass — `RenderOutputNode` included — is never built at all.
     this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
     this.renderer.toneMapping = THREE.NoToneMapping; // We tone-map in mega-shader.
 

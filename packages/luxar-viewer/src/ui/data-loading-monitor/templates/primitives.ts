@@ -75,6 +75,8 @@ export const MONITOR_ICONS = {
   bucketTransparent: `${MICON}<rect x="1.8" y="4.2" width="7.2" height="7.2" rx="1"/><rect x="5" y="2.6" width="7.2" height="7.2" rx="1"/></svg>`,
   /** Draw-order chip: `opaque` render bucket — one filled square (depth-first, covers). */
   bucketOpaque: `${MICON}<rect x="3" y="3" width="8" height="8" rx="1" fill="currentColor"/></svg>`,
+  /** LOD chip: next additive rung HELD (density guard or residency ceiling), not ⏳ streaming. */
+  lodHeld: `${MICON}<path d="M5 3.4v7.2M9 3.4v7.2"/></svg>`,
   /** Density chip: a dot lattice with every other dot missing — a hashed subset is drawn. */
   densityThinned: `${MICON}<circle cx="3" cy="3" r="1.1" fill="currentColor" stroke="none"/><circle cx="11" cy="3" r="1.1" fill="currentColor" stroke="none"/><circle cx="7" cy="7" r="1.1" fill="currentColor" stroke="none"/><circle cx="3" cy="11" r="1.1" fill="currentColor" stroke="none"/><circle cx="11" cy="11" r="1.1" fill="currentColor" stroke="none"/><circle cx="7" cy="3" r="1.1" stroke-width="0.8"/><circle cx="3" cy="7" r="1.1" stroke-width="0.8"/><circle cx="11" cy="7" r="1.1" stroke-width="0.8"/><circle cx="7" cy="11" r="1.1" stroke-width="0.8"/></svg>`,
 } as const;

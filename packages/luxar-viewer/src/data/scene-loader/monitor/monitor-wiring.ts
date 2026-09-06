@@ -20,6 +20,7 @@ import type {
   SceneGraphNode,
   CacheTelemetryState,
   DrawOrderProvider,
+  RefinementHoldReason,
 } from '../../../types/data-monitor-types';
 import type {
   FailedLoadsProviderPort,
@@ -103,6 +104,12 @@ export interface WireMonitorAfterLoadParams {
    * loader-cursor behaviour.
    */
   committedLODCounts?: (() => ReadonlyMap<string, number>) | null;
+  /**
+   * Caller-supplied "why is this path's next rung held back?" (`SceneLoader.
+   * refinementHoldReason`: density gate / residency ceiling / null), so the
+   * Scene-Graph tab can mark a held rung instead of showing it as streaming.
+   */
+  refinementHold?: ((path: string) => RefinementHoldReason | null) | null;
   /**
    * Failed-load records + retry-all from the SceneLoader — powers the
    * Overview tab's failure banner and its Retry action. Null when the
@@ -191,6 +198,7 @@ export function wireMonitorAfterLoad(params: WireMonitorAfterLoadParams): void {
       lodGroupRegistry,
       partitionGroups: collectPartitionGroups(sceneGraph),
       committedLODCounts: params.committedLODCounts ?? undefined,
+      refinementHold: params.refinementHold ?? undefined,
     })
   );
 

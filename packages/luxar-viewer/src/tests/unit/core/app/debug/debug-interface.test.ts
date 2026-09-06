@@ -30,14 +30,20 @@ import { buildInfo } from '../../../../../config/build-info';
 vi.mock('../../../../../utils/console-interceptor', () => ({
   consoleInterceptor: { patch: vi.fn() },
 }));
-// Mutable stand-in for the manager's live loading answer, so a test can flip
-// it BETWEEN two getState() calls and prove the field is read per snapshot.
-const managerState = vi.hoisted(() => ({ loadPassInProgress: false }));
+// Mutable stand-in for the manager's live answers, so a test can flip one
+// BETWEEN two getState() calls and prove the field is read per snapshot.
+const managerState = vi.hoisted(() => ({
+  loadPassInProgress: false,
+  poolStats: undefined as Record<string, number> | undefined,
+  residencyStop: undefined as Record<string, unknown> | undefined,
+}));
 vi.mock('../../../../../data/scene-loader-manager', () => ({
   SceneLoaderManager: {
     getInstance: vi.fn(() => ({
       getDefaultLoader: vi.fn(() => null),
       isAnyLoadPassInProgress: vi.fn(() => managerState.loadPassInProgress),
+      gpuPoolStats: vi.fn(() => managerState.poolStats),
+      refinementResidencyStop: vi.fn(() => managerState.residencyStop),
     })),
   },
 }));
@@ -108,14 +114,20 @@ function makePorts(overrides: Partial<Parameters<typeof installDebugInterface>[0
 }
 
 describe('installDebugInterface', () => {
+  const resetManagerState = (): void => {
+    managerState.loadPassInProgress = false;
+    managerState.poolStats = undefined;
+    managerState.residencyStop = undefined;
+  };
+
   beforeEach(() => {
     delete (window as { __luxarDebug?: unknown }).__luxarDebug;
-    managerState.loadPassInProgress = false;
+    resetManagerState();
   });
 
   afterEach(() => {
     delete (window as { __luxarDebug?: unknown }).__luxarDebug;
-    managerState.loadPassInProgress = false;
+    resetManagerState();
   });
 
   describe('debug=false short-circuit', () => {
@@ -302,6 +314,73 @@ describe('installDebugInterface', () => {
 
       managerState.loadPassInProgress = false;
       expect((dbg.getState!() as { isLoading?: boolean }).isLoading).toBe(false);
+    });
+
+    // #2508 — the same wiring lesson as `isLoading`, for the two signals a
+    // capture tool refuses on. `gpuPoolStats` had been declared on the context
+    // and documented for as long as the field existed while production never
+    // passed it, so `state.gpuPool` was permanently undefined; the residency
+    // stop had no snapshot representation at all and lived only in a console
+    // warning. Both must be read from the manager on EVERY snapshot.
+    it('sources gpuPool and refinementResidency from SceneLoaderManager per snapshot', () => {
+      installDebugInterface(makePorts());
+      const dbg = window.__luxarDebug!;
+      type CapState = { gpuPool?: Record<string, number>; refinementResidency?: unknown };
+
+      // Before anything has happened: absent, NOT a synthesised zero record —
+      // `capture-readiness.ts` treats a present residency record as the stop.
+      const idle = dbg.getState!() as CapState;
+      expect(idle.gpuPool).toBeUndefined();
+      expect(idle.refinementResidency).toBeUndefined();
+
+      // A FULL `PoolStats`, not just the eight projected fields: the manager
+      // really does return the whole record, and a mock that pre-projects it
+      // makes the projection assertion below unfalsifiable — replacing the
+      // whole projection with `return stats` would pass.
+      managerState.poolStats = {
+        activeBuffers: 2,
+        pooledBuffers: 1,
+        activeBytes: 2048,
+        pooledBytes: 512,
+        totalBytes: 2560,
+        largestPooledBytes: 512,
+        evictions: 9,
+        byteBudgetEvictions: 4,
+        allocations: 11,
+        reuses: 5,
+        capacityGrowths: 1,
+        deferredEvictions: 2,
+        byType: {
+          points: { allocations: 1, reuses: 0, evictions: 0 },
+          lines: { allocations: 0, reuses: 0, evictions: 0 },
+          gsplats: { allocations: 0, reuses: 0, evictions: 0 },
+        },
+      } as unknown as Record<string, number>;
+      managerState.residencyStop = { declinedPathCount: 6, firstPath: '/galaxies/bright' };
+
+      const stopped = dbg.getState!() as CapState;
+      expect(stopped.gpuPool?.byteBudgetEvictions).toBe(4);
+      expect(stopped.gpuPool?.evictions).toBe(9);
+      expect(stopped.refinementResidency).toEqual({
+        declinedPathCount: 6,
+        firstPath: '/galaxies/bright',
+      });
+      // The pool read is a PROJECTION onto the debug subset: the EXACT key set,
+      // so neither a dropped field nor a forwarded extra can slip through. The
+      // snapshot crosses a `page.evaluate` boundary, and `byType` alone would
+      // multiply what every `getState()` poll serialises.
+      expect(Object.keys(stopped.gpuPool ?? {}).sort()).toEqual(
+        [
+          'activeBuffers',
+          'pooledBuffers',
+          'activeBytes',
+          'pooledBytes',
+          'totalBytes',
+          'largestPooledBytes',
+          'evictions',
+          'byteBudgetEvictions',
+        ].sort()
+      );
     });
 
     it('forwards isAnimating from animationController.isActive', () => {

@@ -10,6 +10,8 @@ from arbol import aprint, asection
 from luxar._zarr_compat import create_array, open_group
 from luxar.encoding.compression import WIDTH_AWARE_DEFAULT, resolve_compressor
 
+from ..._traceback import exit_with_error
+
 
 def resolve_deferred_batch_floor(output_dir: Path) -> None:
     """Resolve a denoise-dependent global floor and persist it for fit workers."""
@@ -103,8 +105,7 @@ def run_batch_resolve_floor_cmd(
     except typer.Exit:
         raise
     except Exception as exc:
-        aprint(f"Error: {exc}")
-        raise typer.Exit(1) from exc
+        exit_with_error(f"Error: {exc}", exc)
 
 
 def run_batch_denoise_calibrate_cmd(
@@ -161,8 +162,7 @@ def run_batch_denoise_calibrate_cmd(
     except typer.Exit:
         raise
     except Exception as e:
-        aprint(f"Error: {e}")
-        raise typer.Exit(1) from e
+        exit_with_error(f"Error: {e}", e)
 
 
 def run_batch_denoise_preprocess_cmd(
@@ -268,5 +268,4 @@ def run_batch_denoise_preprocess_cmd(
     except typer.Exit:
         raise
     except Exception as e:
-        aprint(f"Error: {e}")
-        raise typer.Exit(1) from e
+        exit_with_error(f"Error: {e}", e)
