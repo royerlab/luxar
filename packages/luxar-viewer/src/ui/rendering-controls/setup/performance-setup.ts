@@ -93,12 +93,22 @@ export function formatKeepFraction(keep: number): string {
   return keep >= 1 ? '1' : `1/${Math.round(1 / keep)}`;
 }
 
-/** Text for the Thinning row: what the guard is doing to the frame right now. */
+/** `4` or `2.5`: the cap as typed in `?density-cap=`, never `4.00`. */
+export function formatCap(cap: number): string {
+  return Number.isInteger(cap) ? String(cap) : cap.toFixed(1);
+}
+
+/**
+ * Text for the Thinning row: what the guard is doing to the frame right now,
+ * and the cap it is doing it against (so a `?density-cap=N` sweep is readable
+ * without the console).
+ */
 export function formatThinning(control: DensityGuardControl): string {
   if (!control.isEnabled()) return 'off';
+  const cap = ` · cap ${formatCap(control.capElementsPerPixel())}`;
   const { nodes, minKeep } = control.thinning();
-  if (nodes === 0) return 'none';
-  return `${nodes} node${nodes === 1 ? '' : 's'} · keep ${formatKeepFraction(minKeep)}`;
+  if (nodes === 0) return `none${cap}`;
+  return `${nodes} node${nodes === 1 ? '' : 's'} · keep ${formatKeepFraction(minKeep)}${cap}`;
 }
 
 interface DensityGuardControls {
@@ -141,6 +151,8 @@ function addDensityGuardControls(
       '• none: every visible node is under its density cap\n' +
       '• N nodes · keep 1/K: N nodes are drawn at a 1/K subset (the densest\n' +
       '  one at 1/K), each brightened ×K to compensate\n' +
+      '• cap C: the elements-per-pixel threshold in force (?density-cap=N\n' +
+      '  overrides it for one session, for threshold sweeps)\n' +
       '• Zooming in restores detail step by step'
   );
   const value = row.querySelector('.luxar-gui__controller-widget') as HTMLElement;

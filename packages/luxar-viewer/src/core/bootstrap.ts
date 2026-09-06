@@ -325,6 +325,8 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     lodEnergyComp: urlParams.lodEnergyComp,
     depthSort: urlParams.depthSort,
     densityGuard: urlParams.densityGuard,
+    // `?density-cap=<N>` sweeps the guard's threshold for one session.
+    densityCap: urlParams.densityCap ?? undefined,
     // Opt-in capture-quality override (`?lod-finest` — the gallery harness).
     lodFinest: urlParams.lodFinest,
     blendWarmup: urlParams.blendWarmup,

@@ -70,6 +70,8 @@ export interface DensityGuardControl {
   setEnabled(enabled: boolean): void;
   /** Nodes currently thinned and the smallest keep fraction among them (1 when none). */
   thinning(): { nodes: number; minKeep: number };
+  /** The effective blendable cap (elements per pixel), `?density-cap=N` included. */
+  capElementsPerPixel(): number;
 }
 
 /**
