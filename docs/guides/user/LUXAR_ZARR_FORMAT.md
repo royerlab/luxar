@@ -1244,6 +1244,72 @@ upload boundary (A.2 of the same hardening pass).
 endpoints at clipped boundaries so the LUT lookup at a slice edge
 uses the correct value.
 
+## Environment (baked scene lighting)
+
+A `material: "physical"` mesh is lit by the viewer's scene environment
+(`docs/guides/specs/MESH_PHYSICAL_MATERIALS_SPEC.md` §3.3). Two root-level
+things describe it:
+
+**`viewer_config.environment`** (optional; Python `EnvironmentConfig`):
+
+```json
+"environment": {
+  "source": "scene",           // "room" (default) | "scene" | "hdri"
+  "probe": "auto",             // "auto" | "node:<path>" | [x, y, z]
+  "resolution": 128,           // cube face size for a "scene" capture, 16-1024
+  "intensity": 1.0,            // scene.environmentIntensity, >= 0
+  "url": "env/studio.hdr"      // "hdri" only; store-relative or absolute
+}
+```
+
+`"scene"` makes the viewer capture the environment from the scene itself (an
+exact `CubeCamera` render from the probe), so metals and glass reflect the data
+they sit in. House-shaded meshes, points, lines and splats never read the
+environment, so the block changes nothing about them.
+
+**`environment/` group** (optional; written by `luxar env bake` / `luxar env
+attach`, never by the compiler): the six captured cube faces, prefiltered by the
+viewer at load in milliseconds so a published scene pays no live capture.
+
+```
+environment/                        # a SIDECAR: no `type`, no `kind` attr
+├── zarr.json                       # attrs, below
+└── faces-3f9a1c02/                 # (6, H, W, 4) uint16 — IEEE half-float bits, RGBA
+```
+
+```json
+{
+  "format": "cube-faces-half",
+  "faces": "faces-3f9a1c02",        // the LIVE array; a re-bake is a NEW name
+  "sample_format": "half-float-bits",
+  "shape": [6, 128, 128, 4],
+  "face_order": ["px", "nx", "py", "ny", "pz", "nz"],   // three's CubeTexture order
+  "coordinate_system": "webgl",     // the backend that captured it
+  "probe": {"spec": "auto", "position": [0.0, 0.0, 0.0]},
+  "resolution": 128,
+  "scene_content_hash": "…",        // the root content_hash it was baked against
+  "appearance": {"viewer_config": {}},
+  "baked_at": "2026-09-06T00:00:00Z",
+  "viewer_version": "…",
+  "content_hash": "…"               // the GROUP's own digest (tooling only)
+}
+```
+
+Three rules make it safe. The group carries neither `type` nor `kind`, so the
+viewer's node discovery skips it as a metadata sidecar and every Python walker
+(`LuxarScene.nodes`, `luxar info`, `luxar optimise`, the finalize passes)
+consults `RESERVED_ROOT_GROUPS` to do the same — the compiler refuses a user node
+named `environment`. The group is **excluded from the scene `content_hash`**, so
+attaching a map never changes the root digest: the `scene_content_hash` guard is
+exact (the viewer ignores a map whose digest is not the root's, saying so in the
+console), a visitor's warm cache survives a bake, and attaching the same map
+twice writes nothing. And the faces array is named by its own digest, so a
+re-bake is a new path a caching viewer cannot serve stale. `uint16` rather than
+`float16` because the viewer's zarr reader needs a `Float16Array` for `<f2`
+while the GPU readback and three's half-float cube texture already speak half
+bits. `luxar optimise` copies the array verbatim (`luxar info` does not list the
+group).
+
 ## Layers (Viewer Panel)
 
 Any scene-graph node — `points`, `lines`, `gsplats`, `mesh`, or a container

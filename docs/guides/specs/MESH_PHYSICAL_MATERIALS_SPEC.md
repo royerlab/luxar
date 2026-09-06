@@ -251,6 +251,54 @@ House-shaded meshes, points, lines and splats ignore `scene.environment`
 entirely (their shaders never read it), so enabling it changes nothing about
 existing scenes.
 
+**Phase 4 implementation notes** (what shipped; where it differs from the text
+above):
+
+- **No explicit `PMREMGenerator.fromCubemap` call.** Both backends re-prefilter a
+  cube texture assigned to `scene.environment` whenever its `pmremVersion` moves,
+  and `CubeCamera.update` bumps it — so the live capture is "render six faces,
+  assign the target's texture", and a baked map is "build a half-float
+  `CubeTexture`, assign it". The room still goes through `fromScene` once.
+- **Visibility, not a `layers` bit, hides physical meshes during the capture.**
+  The pick camera and the main camera would both have needed the bit and nothing
+  else in the viewer uses layers; each mesh's PREVIOUS `visible` is restored, so
+  a user- or LOD-hidden mesh stays hidden.
+- **Camera settle is NOT a trigger.** A cube map from a fixed probe is
+  view-independent; the only camera-driven change — LOD residency — arrives as a
+  geometry commit. Triggers are: geometry commit (`eventBus 'geometry-committed'`),
+  slice change, appearance change; a 250 ms debounce; and the loader's settled
+  predicate. The first light is an immediate capture of whatever is resident.
+- **The capture pushes its own camera params** to the material manager directly
+  (90° fov, a square drawing buffer, pixel ratio 1) and restores the main camera's
+  through the ordinary path, because the shared helper reads the canvas size.
+- **The store contract.** `environment/` is a root-level group with no `type` and
+  no `kind` (the viewer skips such groups as sidecars; `RESERVED_ROOT_GROUPS` makes
+  every Python walker do the same, and the compiler refuses a user node by that
+  name). The faces array is `environment/faces-<xxh64[:8]>`, shape `(6, H, W, 4)`,
+  zarr dtype **`uint16` holding IEEE half-float bits** rather than `float16`:
+  zarrita throws on `<f2` without a `Float16Array`, while the GPU readback and
+  three's `HalfFloatType` cube texture already speak half bits, so `uint16` needs
+  no conversion at either end. RGBA rather than RGB because the readback is RGBA.
+  The digest suffix makes a re-bake a NEW path (a caching viewer cannot serve stale
+  faces); the group's `faces` attr names the live array.
+- **The environment group is EXCLUDED from the scene `content_hash`** (both
+  hashing walks). That is what makes the header's `scene_content_hash` an exact
+  guard the viewer can evaluate, keeps `luxar env attach` from invalidating every
+  visitor's warm cache, and makes attaching idempotent. The group carries its own
+  digest for tooling.
+- **`luxar env bake`** serves the store and the built viewer from one process
+  (a stoppable `served_store`), drives a headless browser to
+  `?bake-env&probe=…&env-resolution=…` through the viewer's Playwright
+  (`scripts/bake-env.mjs`, Node — Playwright is a devDependency of the viewer, not
+  a Python dependency, so the command needs a development checkout), pulls the
+  `LXENV001` container back through `page.evaluate` as base64 rather than a
+  download event, and attaches it. `luxar env attach` is the manual half. A
+  bake ignores any previously attached map (it captures the SCENE), and a
+  stale bake is refused unless `--force`.
+- Precedence at load: a valid baked map > `viewer_config.environment.source` > the
+  room. `viewer_config.environment` round-trips through the Python
+  `EnvironmentConfig` dataclass and the Ctrl+Shift+S export.
+
 ### 3.4 Transmission and what it can see
 
 This is the load-bearing limitation and must be stated before anyone authors a
@@ -403,6 +451,20 @@ through the sphere where WebGL shows a smoother frosted refraction. That is the
 sampling difference this section predicts, not a defect in either mapping, and
 it is why the acceptance floor is structural similarity rather than pixels.
 
+**Phase 4 result** (`demo_mesh_reflections`: a 60k-point emissive swirl with a
+chrome and a glass sphere, `environment.source = "scene"`, 1280×720, dpr 1,
+bloom off). Live capture: **SSIM 0.986, NCC 0.9995** WebGL vs real WebGPU, the
+environment built on both arms — the chrome reflects the swirl on both. Then a
+real headless bake through `scripts/bake-env.mjs` against the dev viewer (a 64 px
+cube, 197 KB container), attached with `luxar env attach`, and the same frames
+captured again with the viewer reporting `kind = baked`: baked-vs-live agreement
+is **SSIM 0.9985 (WebGL) / 0.9989 (WebGPU)** on the same backend (an
+unrelated-scene control scores 0.23), so the stored faces rebuild the texture the
+capture produced — orientation included — and with the baked map the two
+backends render identically (**SSIM 1.000**), since neither captures anything.
+`LuxarScene.nodes` and `luxar info` list no `environment` node, the root
+`content_hash` is unchanged by the attach, and a second attach is a no-op.
+
 ## 4. Phases
 
 | Phase | Scope | Unlocks | Cost |
@@ -410,7 +472,7 @@ it is why the acceptance floor is structural similarity rather than pixels.
 | 1 — **delivered** | `material="physical"`, `roughness`, `metalness`, `clearcoat`, `clearcoat_roughness`, `iridescence`, `sheen`, `sheen_color`; default `RoomEnvironment` built lazily; Python validation; Layers-panel shows the physical knobs read-only; `demo_mesh_physical_materials`; the A/B script | Metals, lacquer, pearlescent shells; a true Fresnel rim via `clearcoat` on a dark base | Small: one factory entry, one env builder, attrs plumbing |
 | 2 — **delivered** | `transmission`, `ior`, `thickness`, `attenuation_*`, `dispersion` with three's stock pass; glass ordered first in its band on both backends; the physical knobs as LIVE Layers-panel sliders (§6 item 2); three glass spheres and a checkerboard backdrop in the demo | Glass and lenses that refract the background and other meshes; tuning a material without a rebuild | Small; the §3.4 caveat is in the Layers panel tooltip |
 | 3 — opt-in, deferred | Data through glass: `layer_order` ordering on WebGPU, a two-render split with an injected quad on WebGL, `transmissionResolutionScale` 0.5 (§3.4) | Glass that refracts the data behind it (data in front stays a known limit) | Small–medium, isolated in `pipeline.ts`; build when a demo needs it, measure first |
-| 4 — designed | `viewer_config.environment.source = room \| scene \| hdri` with `probe`; live exact cube capture on settle/commit; `luxar env bake` / `?bake-env` / `luxar env attach` storing `environment/faces` with a `content_hash` guard (§3.3) | Metals and glass that reflect the data they sit in; zero-cost baked environments for published scenes | Small: one more builder behind `SceneEnvironment.ensure()`, one CLI pair, one Playwright driver |
+| 4 — **delivered** | `viewer_config.environment.source = room \| scene \| hdri` with `probe`, `resolution`, `intensity`, `url`; live exact cube capture on commit / slice / appearance change once settled; `luxar env bake` / `?bake-env` / `luxar env attach` storing `environment/faces-<digest>` (uint16 half bits) with an exact `scene_content_hash` guard, the group excluded from the scene digest (§3.3 Phase 4 notes); `demo_mesh_reflections` | Metals and glass that reflect the data they sit in; zero-cost baked environments for published scenes | Small: one more builder behind `SceneEnvironment.ensure()`, one CLI pair, one Playwright driver |
 
 ## 5. Explicitly out of scope
 
@@ -463,7 +525,11 @@ it is why the acceptance floor is structural similarity rather than pixels.
    `[x, y, z]`, or `"node:<path>"`), so one implementation serves the showcase
    case and the marker-shell case; a per-node probe is a second capture, not a
    second mechanism. Whether several probes can be active at once (one physical
-   mesh per probe) is left to Phase 4's first demo.
+   mesh per probe) is left to Phase 4's first demo. **Phase 4: one probe per
+   scene.** `demo_mesh_reflections` puts the chrome sphere AT the probe (the
+   scene centre) and the glass sphere beside it, which is exact where it matters
+   and a small parallax error where it does not; a per-mesh probe stays a
+   possible follow-up, not a need any demo has shown.
 6. Is Phase 3 worth its intrusion? **Decided: as re-formulated in §3.4 it is not
    intrusive** (a renderOrder rule on WebGPU, a two-render split with a quad on
    WebGL, isolated in `pipeline.ts`), and its cost is paid only when a
