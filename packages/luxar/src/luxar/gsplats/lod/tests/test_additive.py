@@ -1602,8 +1602,11 @@ def test_nearly_unique_slice_keys_warn_about_the_column_frame() -> None:
     assert sorted(order.tolist()) == list(range(data.n_splats))
 
 
-def test_nan_slice_keys_are_refused_not_silently_split() -> None:
-    """A NaN slice coordinate would become its own singleton slice.
+@pytest.mark.parametrize("non_finite", [np.nan, np.inf, -np.inf])
+def test_non_finite_slice_keys_are_refused_not_silently_split(
+    non_finite: float,
+) -> None:
+    """A non-finite slice coordinate is not a viewer-addressable slice.
 
     ``np.unique`` compares NaN unequal to itself, so every NaN-keyed splat gets
     its own group — and a singleton is smaller than any budget, i.e. "carried
@@ -1614,7 +1617,7 @@ def test_nan_slice_keys_are_refused_not_silently_split() -> None:
     """
     data = _make_sliced_gsplat(_UNBALANCED_SIZES, seed=32)
     centers = np.asarray(data.centers).copy()
-    centers[:6, 3] = np.nan
+    centers[:6, 3] = non_finite
     poisoned = GSplatData(
         centers=centers,
         amplitudes=data.amplitudes,
