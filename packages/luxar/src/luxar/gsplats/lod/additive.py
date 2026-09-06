@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import heapq
 import math
+import warnings
 from collections.abc import Sequence
 from typing import Any
 
@@ -742,7 +743,8 @@ def interleave_order_across_slices(
     They coincide for the NEXRAD supercell only because its ``dim_order`` leaves
     time last in both frames. An author who reads off the scene's ``Dimensions``
     list instead gets a different column, and per the next paragraph that is a
-    near-no-op nothing complains about.
+    near-no-op. A high-cardinality diagnostic below warns about this likely
+    pre-/post-``dim_order`` mixup without rejecting legitimate small slices.
 
     The columns must also be genuinely DISCRETE — a stacked time/channel axis,
     where coordinates repeat. Pointed at a continuous one, nearly every key is
@@ -835,6 +837,16 @@ def interleave_order_across_slices(
         if dims.size == 1
         else np.unique(flat, axis=0, return_inverse=True)[1]
     ).ravel()
+    n_groups = int(group.max()) + 1
+    if n >= 32 and 2 * n_groups >= n:
+        warnings.warn(
+            f"slice_dims {[int(d) for d in dims]} produced {n_groups} distinct "
+            f"slice keys for {n} splats; this usually means a continuous center "
+            "column was selected. slice_dims indexes raw pre-`dim_order` center "
+            "columns, not post-`dim_order` scene positions.",
+            UserWarning,
+            stacklevel=2,
+        )
     sorter = np.argsort(group, kind="stable")
     grouped = group[sorter]
     rank = np.empty(n, dtype=np.int64)

@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 import zarr
 
-from luxar.core.dimensions import Dimensions
+from luxar.core.dimensions import Dimension, Dimensions
 from luxar.core.group.lod.group import (
     PARTITION_FINEST_AREA,
     WHOLE_OBJECT_FINEST_ANCHOR,
@@ -320,6 +320,43 @@ class TestResolveAdditiveAxisGsplats:
                 *(_rung_slice_histogram(result, r) for r in range(4)), strict=True
             )
         ] == list(_STACK_SOURCE_SIZES)
+
+    def test_raw_slice_dim_maps_to_the_stored_scene_dim(self, tmp_path) -> None:
+        """The authored raw column and compiled scene-column stamp must agree."""
+        data = _make_random_gsplat(n=64, ndim=4, seed=104)
+        centers = np.asarray(data.centers).copy()
+        centers[:, 0] = np.repeat(np.arange(4, dtype=np.float32), 16)
+        data = GSplatData(
+            centers=centers,
+            amplitudes=data.amplitudes,
+            cholesky_factors=data.cholesky_factors,
+        )
+
+        out = tmp_path / "slice-dim-frame.luxar.zarr"
+        dimensions = Dimensions(
+            [
+                Dimension("x"),
+                Dimension("y"),
+                Dimension("z"),
+                Dimension("time", display=False, discrete=True),
+            ]
+        )
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=dimensions)
+            scene.add_gsplats_from_data(
+                "g",
+                data,
+                dim_order=["time", "x", "y", "z"],
+                additive_lod={"n_lods": 4, "slice_dims": [0]},
+            )
+
+        node = zarr.open_group(out, mode="r")["g"]
+        assert [list(node[f"additive_{i}"].attrs["slice_dims"]) for i in range(4)] == [
+            [3],
+            [3],
+            [3],
+            [3],
+        ]
 
     def test_spatial_method_rejected(self, flat) -> None:
         """B8-G3/[P8]: documents the deliberate cross-geometry asymmetry —

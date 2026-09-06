@@ -1588,6 +1588,16 @@ def test_interleave_on_degenerate_inputs() -> None:
     )
 
 
+def test_nearly_unique_slice_keys_warn_about_the_column_frame() -> None:
+    """A continuous column usually means raw and scene indices were confused."""
+    data = _make_sliced_gsplat((16, 16), seed=36)
+
+    with pytest.warns(UserWarning, match="raw pre-.*dim_order.*post-.*dim_order"):
+        order = compute_additive_order(data, method="self_energy", slice_dims=[0])
+
+    assert sorted(order.tolist()) == list(range(data.n_splats))
+
+
 def test_nan_slice_keys_are_refused_not_silently_split() -> None:
     """A NaN slice coordinate would become its own singleton slice.
 
