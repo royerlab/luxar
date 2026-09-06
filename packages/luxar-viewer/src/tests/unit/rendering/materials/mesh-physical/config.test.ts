@@ -14,11 +14,16 @@ import { PhysicalMeshMaterial } from '../../../../../rendering/materials/mesh-ph
 import {
   PHYSICAL_MESH_DEFAULTS,
   PHYSICAL_MESH_KNOB_KEYS,
+  PHYSICAL_MESH_KNOBS,
   applyPhysicalMeshConfig,
+  clampPhysicalKnob,
   derivePhysicalCompositing,
   isPhysicalMeshMaterial,
+  physicalKnobFromSlider,
+  physicalKnobToSlider,
   physicalSetVertexAlpha,
   type PhysicalMeshHost,
+  type PhysicalMeshKnobKey,
   type PhysicalMeshMaterialConfig,
 } from '../../../../../rendering/materials/mesh-physical/config';
 import { loadTslMaterials } from '../../../../../rendering/tsl/load';
@@ -41,27 +46,121 @@ const BACKENDS: Array<[string, () => PhysicalCtor]> = [
 
 describe('derivePhysicalCompositing — translucency is read off the data', () => {
   it.each([
-    // opacity, vertexAlpha, alphaCutoff → transparent, depthWrite, alphaTest, stamp
-    [1.0, false, undefined, false, true, 0, 'opaque', 'plain RGB mesh at full opacity'],
-    [0.3, false, undefined, true, false, 0, undefined, 'opacity below 1'],
-    [1.0, true, undefined, true, false, 0, undefined, 'vertex alpha with no cutoff'],
-    [1.0, true, 0.4, false, true, 0.4, 'opaque', 'vertex alpha WITH a cutoff is a cutout'],
-    [0.5, true, 0.4, true, false, 0, undefined, 'opacity wins over the cutoff'],
-    [1.0, false, 0.4, false, true, 0.4, 'opaque', 'a cutoff on RGB is inert but harmless'],
+    // opacity, vertexAlpha, alphaCutoff, transmission → transparent, depthWrite, alphaTest, stamp, first
+    [1.0, false, undefined, 0, false, true, 0, 'opaque', false, 'plain RGB mesh at full opacity'],
+    [0.3, false, undefined, 0, true, false, 0, undefined, false, 'opacity below 1'],
+    [1.0, true, undefined, 0, true, false, 0, undefined, false, 'vertex alpha with no cutoff'],
+    [
+      1.0,
+      true,
+      0.4,
+      0,
+      false,
+      true,
+      0.4,
+      'opaque',
+      false,
+      'vertex alpha WITH a cutoff is a cutout',
+    ],
+    [0.5, true, 0.4, 0, true, false, 0, undefined, false, 'opacity wins over the cutoff'],
+    [
+      1.0,
+      false,
+      0.4,
+      0,
+      false,
+      true,
+      0.4,
+      'opaque',
+      false,
+      'a cutoff on RGB is inert but harmless',
+    ],
+    // Glass (spec §3.4): translucent, never writes depth, and draws before the
+    // emissive data it shares a band with — the cutoff is moot on a see-through surface.
+    [1.0, false, undefined, 1.0, true, false, 0, undefined, true, 'full transmission'],
+    [1.0, true, 0.4, 0.2, true, false, 0, undefined, true, 'any transmission beats the cutout'],
   ] as const)(
-    'opacity=%s vertexAlpha=%s cutoff=%s → transparent=%s depthWrite=%s alphaTest=%s stamp=%s (%s)',
-    (opacity, vertexAlpha, alphaCutoff, transparent, depthWrite, alphaTest, stamp, _why) => {
-      const d = derivePhysicalCompositing({ opacity, vertexAlpha, alphaCutoff });
+    'opacity=%s vertexAlpha=%s cutoff=%s transmission=%s → transparent=%s depthWrite=%s alphaTest=%s stamp=%s first=%s (%s)',
+    (
+      opacity,
+      vertexAlpha,
+      alphaCutoff,
+      transmission,
+      transparent,
+      depthWrite,
+      alphaTest,
+      stamp,
+      first,
+      _why
+    ) => {
+      const d = derivePhysicalCompositing({ opacity, vertexAlpha, alphaCutoff, transmission });
       expect(d.transparent).toBe(transparent);
       expect(d.depthWrite).toBe(depthWrite);
       expect(d.alphaTest).toBe(alphaTest);
       expect(d.blendingMode).toBe(stamp);
+      expect(d.drawBeforeEmissive).toBe(first);
     }
   );
 });
 
+describe('the knob table and its slider mapping', () => {
+  it('lists the Phase 1 surface knobs then the Phase 2 glass family, in panel order', () => {
+    expect(PHYSICAL_MESH_KNOB_KEYS).toEqual([
+      'roughness',
+      'metalness',
+      'clearcoat',
+      'clearcoat_roughness',
+      'iridescence',
+      'sheen',
+      'transmission',
+      'ior',
+      'thickness',
+      'attenuation_distance',
+      'dispersion',
+    ]);
+    // Three's defaults, read off a bare three material so the table cannot drift.
+    const three = new THREE.MeshPhysicalMaterial();
+    for (const key of PHYSICAL_MESH_KNOB_KEYS) {
+      const spec = PHYSICAL_MESH_KNOBS[key];
+      expect(three[spec.prop], key).toBe(spec.default);
+    }
+  });
+
+  it.each([
+    ['roughness', 5, 1],
+    ['roughness', -1, 0],
+    ['roughness', Number.NaN, PHYSICAL_MESH_KNOBS.roughness.default],
+    ['roughness', 'shiny', PHYSICAL_MESH_KNOBS.roughness.default],
+    ['ior', 0.5, 1],
+    ['ior', 10, 2.333],
+    ['thickness', -2, 0],
+    ['thickness', 42, 42], // unbounded above: past the slider is still a legal thickness
+    ['thickness', Number.POSITIVE_INFINITY, 0], // …but an infinite one is corrupt, not chosen
+    ['attenuation_distance', 0, 1e-3],
+    ['attenuation_distance', Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY],
+    ['attenuation_distance', undefined, Number.POSITIVE_INFINITY],
+    ['dispersion', 3, 3],
+  ] as const)('clampPhysicalKnob(%s, %s) → %s', (key, value, expected) => {
+    expect(clampPhysicalKnob(key, value)).toBe(expected);
+  });
+
+  it('maps an infinite attenuation distance onto the slider top stop and back', () => {
+    const top = PHYSICAL_MESH_KNOBS.attenuation_distance.sliderMax;
+    expect(physicalKnobToSlider('attenuation_distance', Number.POSITIVE_INFINITY)).toBe(top);
+    expect(physicalKnobFromSlider('attenuation_distance', top)).toBe(Number.POSITIVE_INFINITY);
+    expect(physicalKnobFromSlider('attenuation_distance', 0.3)).toBe(0.3);
+    // A log track's position 0 is an exact 0, which a strictly positive length is not.
+    expect(physicalKnobToSlider('attenuation_distance', 0)).toBe(1e-3);
+    // Bounded knobs round-trip unchanged; a thickness past the track sits on its top.
+    expect(physicalKnobToSlider('roughness', 0.4)).toBe(0.4);
+    expect(physicalKnobFromSlider('roughness', 0.4)).toBe(0.4);
+    expect(physicalKnobToSlider('thickness', 42)).toBe(PHYSICAL_MESH_KNOBS.thickness.sliderMax);
+    expect(physicalKnobFromSlider('thickness', 10)).toBe(10);
+  });
+});
+
 describe.each(BACKENDS)('physical mesh material (%s)', (_name, ctor) => {
-  it('maps every Phase 1 knob one-to-one and clamps like the house knobs', () => {
+  it('maps every knob one-to-one and clamps like the house knobs', () => {
     const m = new (ctor())({
       roughness: 0.4,
       metalness: 1.0,
@@ -70,6 +169,12 @@ describe.each(BACKENDS)('physical mesh material (%s)', (_name, ctor) => {
       iridescence: 0.7,
       sheen: 0.5,
       sheenColor: '#ff0000',
+      transmission: 1.0,
+      ior: 1.33,
+      thickness: 0.4,
+      attenuationDistance: 0.3,
+      attenuationColor: '#00ff00',
+      dispersion: 0.5,
     });
     expect(m.roughness).toBe(0.4);
     expect(m.metalness).toBe(1.0);
@@ -77,31 +182,100 @@ describe.each(BACKENDS)('physical mesh material (%s)', (_name, ctor) => {
     expect(m.clearcoatRoughness).toBe(0.1);
     expect(m.iridescence).toBe(0.7);
     expect(m.sheen).toBe(0.5);
-    // Hex is read as sRGB → linear working space: pure red survives exactly.
+    expect(m.transmission).toBe(1.0);
+    expect(m.ior).toBe(1.33);
+    expect(m.thickness).toBe(0.4);
+    expect(m.attenuationDistance).toBe(0.3);
+    expect(m.dispersion).toBe(0.5);
+    // Hex is read as sRGB → linear working space: pure red / green survive exactly.
     expect(m.sheenColor.r).toBeCloseTo(1, 6);
     expect(m.sheenColor.g).toBe(0);
+    expect(m.attenuationColor.g).toBeCloseTo(1, 6);
+    expect(m.attenuationColor.r).toBe(0);
     expect(m.vertexColors).toBe(true);
     expect(m.toneMapped).toBe(false);
 
-    const clamped = new (ctor())({ roughness: 5, metalness: -1, clearcoat: Number.NaN });
+    const clamped = new (ctor())({
+      roughness: 5,
+      metalness: -1,
+      clearcoat: Number.NaN,
+      ior: 9,
+      thickness: -1,
+    });
     expect(clamped.roughness).toBe(1);
     expect(clamped.metalness).toBe(0);
     // NaN routes to the DEFAULT, not a boundary — the sibling sanitizer policy.
     expect(clamped.clearcoat).toBe(PHYSICAL_MESH_DEFAULTS.clearcoat);
+    expect(clamped.ior).toBe(2.333);
+    expect(clamped.thickness).toBe(0);
   });
 
-  it("an absent knob is three's default — except sheen colour, which is WHITE", () => {
+  it("an absent knob is three's default — except the two colours, which are WHITE", () => {
     const m = new (ctor())({ sheen: 1.0 });
     for (const key of PHYSICAL_MESH_KNOB_KEYS) {
       if (key === 'sheen') continue;
-      const prop = key === 'clearcoat_roughness' ? 'clearcoatRoughness' : key;
-      expect(m[prop as keyof PhysicalMeshHost]).toBe(
-        PHYSICAL_MESH_DEFAULTS[prop as keyof typeof PHYSICAL_MESH_DEFAULTS]
-      );
+      const spec = PHYSICAL_MESH_KNOBS[key];
+      expect(m[spec.prop], key).toBe(spec.default);
     }
-    // Three's own default is black, under which `sheen=1` renders nothing.
+    expect(m.attenuationDistance).toBe(Number.POSITIVE_INFINITY);
+    // Three's own sheen default is black, under which `sheen=1` renders nothing.
     expect(m.sheenColor.getHex()).toBe(0xffffff);
     expect(new THREE.MeshPhysicalMaterial().sheenColor.getHex()).toBe(0x000000);
+    // Three's attenuation default IS white already; ours agrees.
+    expect(m.attenuationColor.getHex()).toBe(0xffffff);
+  });
+
+  it('glass is translucent, never writes depth, and asks to draw before the emissive data', () => {
+    const glass = new (ctor())({ transmission: 1.0 });
+    expect(glass.transparent).toBe(true);
+    expect(glass.depthWrite).toBe(false);
+    expect(glass.userData.blendingMode).toBeUndefined();
+    expect(glass.userData.drawBeforeEmissive).toBe(true);
+    const metal = new (ctor())({ metalness: 1.0 });
+    expect(metal.userData.drawBeforeEmissive).toBeUndefined();
+  });
+
+  it('a live knob write clamps, re-derives compositing for transmission, and rebuilds on a zero crossing', () => {
+    const m = new (ctor())({}) as THREE.Material &
+      PhysicalMeshHost & { updatePhysicalKnob(key: PhysicalMeshKnobKey, v: number): void };
+    const versionOf = (): number => (m as unknown as { version: number }).version;
+
+    // A plain-state knob: no rebuild, whatever it crosses.
+    let v = versionOf();
+    m.updatePhysicalKnob('roughness', 0.2);
+    m.updatePhysicalKnob('roughness', 7);
+    expect(m.roughness).toBe(1);
+    expect(versionOf()).toBe(v);
+
+    // A program-affecting knob crossing zero: exactly one rebuild each way (the
+    // compositing flip adds its own on transmission; either way the count is > 0).
+    v = versionOf();
+    m.updatePhysicalKnob('clearcoat', 0.5);
+    expect(versionOf()).toBeGreaterThan(v);
+    v = versionOf();
+    m.updatePhysicalKnob('clearcoat', 0.9); // still > 0: no rebuild
+    expect(versionOf()).toBe(v);
+    m.updatePhysicalKnob('clearcoat', 0);
+    expect(versionOf()).toBeGreaterThan(v);
+
+    // Transmission also flips the compositing decision, both ways.
+    expect(m.transparent).toBe(false);
+    m.updatePhysicalKnob('transmission', 0.6);
+    expect(m.transmission).toBe(0.6);
+    expect(m.transparent).toBe(true);
+    expect(m.depthWrite).toBe(false);
+    expect(m.userData.drawBeforeEmissive).toBe(true);
+    m.updatePhysicalKnob('transmission', 0);
+    expect(m.transparent).toBe(false);
+    expect(m.userData.drawBeforeEmissive).toBeUndefined();
+    expect(m.userData.blendingMode).toBe('opaque');
+
+    // The slider top stop reaches three's "no attenuation".
+    m.updatePhysicalKnob(
+      'attenuation_distance',
+      physicalKnobFromSlider('attenuation_distance', 100)
+    );
+    expect(m.attenuationDistance).toBe(Number.POSITIVE_INFINITY);
   });
 
   it('stamps the family marker and no blending mode when translucent', () => {
@@ -206,12 +380,18 @@ describe('applyPhysicalMeshConfig on a bare host (no three class involved)', () 
       color: new THREE.Color(),
       emissive: new THREE.Color(),
       sheenColor: new THREE.Color(),
+      attenuationColor: new THREE.Color(),
       roughness: 1,
       metalness: 0,
       clearcoat: 0,
       clearcoatRoughness: 0,
       iridescence: 0,
       sheen: 0,
+      transmission: 0,
+      ior: 1.5,
+      thickness: 0,
+      attenuationDistance: Number.POSITIVE_INFINITY,
+      dispersion: 0,
       vertexColors: false,
       flatShading: false,
       toneMapped: true,

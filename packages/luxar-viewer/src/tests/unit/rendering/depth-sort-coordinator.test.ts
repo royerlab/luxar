@@ -5142,6 +5142,65 @@ describe('depth-sort coordinator — layer_order bands', () => {
     expect(far.renderOrder).toBe(2);
   });
 
+  /**
+   * A transmissive physical mesh, as `derivePhysicalCompositing` stamps it: no
+   * Luxar blending mode (translucent, so commutative to the coordinator) and the
+   * draw-before-emissive request (spec MESH_PHYSICAL_MATERIALS §3.4).
+   */
+  function makeGlassMesh(z: number): THREE.Mesh {
+    const material = new THREE.Material();
+    material.userData.material = 'physical';
+    material.userData.drawBeforeEmissive = true;
+    material.transparent = true;
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
+    mesh.geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, z), 1);
+    mesh.userData.nodeType = 'mesh';
+    mesh.userData.committedData = { some: 'source' };
+    return mesh;
+  }
+
+  it('unranked glass sits at renderOrder -1, ahead of the unranked emissive layers at 0', async () => {
+    // On WebGPU glass shares the transparent list with every emissive layer and
+    // three sorts that list by renderOrder first, so this is what keeps a cluster
+    // whose centre sorts farther than the sphere from being painted over.
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const glass = makeGlassMesh(-10);
+    const additive = makeGSplatsMesh(2, 'additive');
+    coord.noteDepthSortCommit(glass, () => new Float32Array(9), 3, new Uint32Array(9));
+    coord.noteDepthSortCommit(additive, new Float32Array([0, 0, -1]), 1);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(glass.renderOrder).toBe(-1);
+    expect(additive.renderOrder).toBe(0);
+    expect(mockApi.registerNode).not.toHaveBeenCalled();
+  });
+
+  it('glass with an authored band draws first WITHIN that band, not before lower bands', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const { far, near } = twoDisjointLeaves();
+    // The glass is the FARTHEST object and would sort first by depth anyway — so
+    // put it in a HIGHER band than `far`, and make it NEARER than `near` in its own
+    // band: it must land after `far` (lower band) and before `near` (same band,
+    // despite being nearer).
+    const glass = makeGlassMesh(-5);
+    setLevel(far, 0);
+    setLevel(near, 1);
+    setLevel(glass, 1);
+    coord.noteDepthSortCommit(glass, () => new Float32Array(9), 3, new Uint32Array(9));
+    for (const m of [near, far]) coord.noteDepthSortCommit(m, new Float32Array([0, 0, -1]), 1);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(far.renderOrder).toBe(1);
+    expect(glass.renderOrder).toBe(2);
+    expect(near.renderOrder).toBe(3);
+  });
+
   it('an authored band overrides the containment hoist, and warns', async () => {
     const coord = await loadCoordinator();
     const { log } = await import('../../../utils/log');

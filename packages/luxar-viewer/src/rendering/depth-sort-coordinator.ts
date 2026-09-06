@@ -97,6 +97,7 @@ import {
   authoredLayerOrder,
   clearRenderOrderFrameState,
   collectRenderOrderSlot,
+  drawsBeforeEmissive,
   setRenderOrderDisplayDimsAccessor,
 } from './depth-sort-coordinator/render-order';
 import {
@@ -1829,8 +1830,13 @@ export function evaluateDepthSortPerFrame(): void {
     const wantsRank = orderDependent || authoredLayerOrder(mesh) !== undefined;
     if (!wantsRank) {
       // Neither order-dependent nor authored — clear any cross-part renderOrder
-      // bias so it doesn't strand a stale ordering.
-      if (mesh.renderOrder !== 0) mesh.renderOrder = 0;
+      // bias so it doesn't strand a stale ordering. The one exception is glass
+      // (`drawsBeforeEmissive`): unranked meshes all sit at three's default 0 and
+      // sort by depth among themselves, so -1 is what puts a transmissive mesh
+      // ahead of the unranked emissive layers it shares band 0 with (and ahead of
+      // every ranked group, which is what band 0 means).
+      const target = drawsBeforeEmissive(mesh) ? -1 : 0;
+      if (mesh.renderOrder !== target) mesh.renderOrder = target;
       continue;
     }
 

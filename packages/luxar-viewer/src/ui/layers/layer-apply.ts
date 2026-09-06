@@ -28,6 +28,10 @@ import { getColormapTexture } from '../../rendering/colormap-textures';
 import { supportsScalarColormap } from '../../rendering/material-colormap-helpers';
 import { noteDepthSortBlendingModeSwitch } from '../../rendering/depth-sort-coordinator';
 import { syncMeshPickAppearance } from '../../rendering/node-factory/create-mesh-node';
+import {
+  PHYSICAL_MESH_KNOB_KEYS,
+  physicalKnobFromSlider,
+} from '../../rendering/materials/mesh-physical/config';
 import type { GeometryTypeName } from '../../types/format-contract';
 import {
   defaultBlendingMode,
@@ -742,6 +746,29 @@ export class LayerApplyEngine {
       scheduleBlendModeProgramWarmupForObject(obj);
     }
     if (pickDirty) this.deps.invalidatePickBuffer?.();
+    if (applied) this.deps.requestRender();
+  }
+
+  /**
+   * Push a physical layer's live knobs (`LayerInfo.physicalKnobs`, in slider space)
+   * onto every `material="physical"` leaf beneath it. The optional-chained
+   * `updatePhysicalKnob` is the type gate, as for the house knobs above: a house or
+   * emissive leaf simply lacks it. A no-op for a layer with no knob record.
+   */
+  applyPhysicalKnobs(layer: LayerInfo): void {
+    const knobs = layer.physicalKnobs;
+    if (!knobs) return;
+    let applied = false;
+    for (const leaf of this.getAffectedDataLeaves(layer.path)) {
+      const obj = this.getMesh(leaf.path);
+      if (!obj) continue;
+      const mat = this.getLeafMaterial(obj);
+      if (!mat?.updatePhysicalKnob) continue;
+      for (const key of PHYSICAL_MESH_KNOB_KEYS) {
+        mat.updatePhysicalKnob(key, physicalKnobFromSlider(key, knobs[key]));
+      }
+      applied = true;
+    }
     if (applied) this.deps.requestRender();
   }
 

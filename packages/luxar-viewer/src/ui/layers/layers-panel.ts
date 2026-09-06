@@ -259,6 +259,9 @@ export class LayersPanel {
       // this call the surface keeps the dragged uniforms while the readouts
       // show the reset defaults. Safe no-op on a non-mesh leaf.
       this.applyEngine.applyMeshAppearance(layer);
+      // Same story for a physical layer's knobs: live sliders write the material
+      // directly, so the authored values come back only if pushed again.
+      this.applyEngine.applyPhysicalKnobs(layer);
     }
 
     // Rebuild the row list + controls so the panel reflects the fresh state

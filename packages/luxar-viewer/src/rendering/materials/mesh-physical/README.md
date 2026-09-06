@@ -67,15 +67,38 @@ next to `applyMeshTexture`; a no-op for the house material and on every later co
 
 ## Knobs and defaults
 
-`roughness`, `metalness`, `clearcoat`, `clearcoat_roughness`, `iridescence`, `sheen`
-(each `[0, 1]`, clamped with the same NaN-to-default policy as the house knobs) and
-`sheen_color` (`#rrggbb`). An absent knob is three's default — with one deliberate
-exception: `sheenColor` defaults to **white**, not three's black, because a black sheen
-is a no-op and `sheen=1` alone would render nothing. `alpha_cutoff` maps to `alphaTest`;
+One table, `PHYSICAL_MESH_KNOBS` in `config.ts`, describes every numeric knob — attr name,
+three property, domain, default, slider presentation and whether crossing zero selects a
+shader variant — and the construction mapping, the live Layers-panel sliders and the tests
+all read it. In panel order: `roughness`, `metalness`, `clearcoat`, `clearcoat_roughness`,
+`iridescence`, `sheen` (each `[0, 1]`), then the glass family `transmission` (`[0, 1]`),
+`ior` (`[1, 2.333]`), `thickness` (`>= 0`), `attenuation_distance` (`> 0`, default
+`Infinity` = none; the slider's top stop means ∞) and `dispersion` (`>= 0`). Values are
+clamped with the same NaN-to-default policy as the house knobs. The two colours,
+`sheen_color` and `attenuation_color` (`#rrggbb`), default to **white** — three's own for
+attenuation, and deliberately NOT three's black for sheen, because a black sheen is a
+no-op and `sheen=1` alone would render nothing. `alpha_cutoff` maps to `alphaTest`;
 `shading` maps its flat/smooth half to `flatShading` (`none` is refused at authoring).
-Transmission, ior, thickness, attenuation and dispersion are Phase 2 (spec §3.4: three's
-transmission pass sees only opaque and transmissive objects, and every Luxar point, line
-and splat material is transparent, so glass would not refract the data inside it).
+
+`setPhysicalKnob` is the one write path for construction AND the live sliders: it clamps,
+assigns, re-derives compositing for `transmission`, and flags `needsUpdate` when a
+`programAffecting` knob (`clearcoat`, `iridescence`, `sheen`, `transmission`, `dispersion`)
+crosses zero — three's WebGL setters version-bump on that crossing already, but
+`MeshPhysicalNodeMaterial` bakes the flags into its lighting model at setup, so the rule
+lives here for both twins.
+
+## Glass (transmission, spec §3.4)
+
+`transmission > 0` composites as translucent (no depth write) and stamps
+`userData.drawBeforeEmissive`, which the depth-sort coordinator turns into "first in its
+`layer_order` band" (renderOrder −1 when unranked). Three renders transmission by sampling
+a copy of what was drawn before the glass — the opaque list on WebGL, the framebuffer just
+before the first transmissive draw on WebGPU — so glass refracts the background and other
+meshes, never Luxar's transparent point, line and splat materials: those draw on top,
+crisp and unrefracted, on both backends. On WebGPU the glass shares the transparent list
+with the emissive layers and lands its fragments with alpha 1, which is why it must draw
+first. WebGL exposes `renderer.transmissionResolutionScale` as a cost knob (left at 1.0);
+WebGPU has no equivalent and always mip-chains a full-resolution copy.
 
 ## Colour pipeline
 
@@ -88,9 +111,16 @@ linear working space — the human reading of a hex tint.
 ## Testing
 
 - `tests/unit/rendering/materials/mesh-physical/` — the config mapping on both twins from
-  one table, the compositing rule, the `LuxarMaterial` surface, the stamp rule.
+  one table, the compositing rule (glass included), the knob table against three's own
+  defaults, the slider mapping, the zero-crossing rebuild rule, the `LuxarMaterial` surface,
+  the stamp rule.
 - `tests/unit/rendering/node-factory/create-mesh-node.test.ts` — the family branch, the
-  house pick material, the placeholder bookkeeping, the inherited-mode notice.
+  glass pass-through, the house pick material, the placeholder bookkeeping, the
+  inherited-mode notice.
+- `tests/unit/rendering/depth-sort-coordinator.test.ts` — glass ordered first in its band,
+  and at renderOrder −1 when unranked.
+- `tests/unit/ui/layers/layers-panel.test.ts` — the live sliders on a REAL wrapper, and
+  Reset restoring the authored values.
 - `tests/unit/rendering/environment/` — the environment is lazy, cached, invisible to house
   materials, and disposed.
 - No codegen snapshot: the snapshot harness pins TSL Luxar writes; three's materials are

@@ -494,6 +494,41 @@ describe("createEmptyMeshNode — the material='physical' family (MESH_PHYSICAL_
     expect(node.geometry.getAttribute('color')).toBeDefined();
   });
 
+  it('passes the Phase 2 glass family through and stamps the draw-before-emissive request', () => {
+    const glass = createEmptyMeshNode(
+      '/lens',
+      {
+        ...PHYSICAL,
+        transmission: 1.0,
+        ior: 1.33,
+        thickness: 0.4,
+        attenuation_color: '#f6d148',
+        attenuation_distance: 0.3,
+        dispersion: 0.5,
+      },
+      loader,
+      null
+    );
+    const m = glass.material as PhysicalMeshMaterial;
+    expect(m.transmission).toBe(1.0);
+    expect(m.ior).toBe(1.33);
+    expect(m.thickness).toBe(0.4);
+    expect(m.attenuationDistance).toBe(0.3);
+    expect(m.attenuationColor.getHexString()).toBe('f6d148');
+    expect(m.dispersion).toBe(0.5);
+    // Glass composites as translucent and must draw before the emissive data it
+    // shares a band with (spec §3.4; the coordinator reads this stamp).
+    expect(m.transparent).toBe(true);
+    expect(m.depthWrite).toBe(false);
+    expect(m.userData.drawBeforeEmissive).toBe(true);
+    // Absent glass knobs stay at three's defaults on a non-glass physical mesh.
+    const metal = createEmptyMeshNode('/shell', PHYSICAL, loader, null)
+      .material as PhysicalMeshMaterial;
+    expect(metal.transmission).toBe(0);
+    expect(metal.attenuationDistance).toBe(Number.POSITIVE_INFINITY);
+    expect(metal.userData.drawBeforeEmissive).toBeUndefined();
+  });
+
   it('honours the authored side and maps flat/smooth onto flatShading', () => {
     const flat = createEmptyMeshNode('/s', { ...PHYSICAL, double_sided: false }, loader, null);
     expect((flat.material as THREE.Material).side).toBe(THREE.FrontSide);

@@ -21,6 +21,8 @@ import {
   physicalUpdateIntensity,
   physicalUpdateOffset,
   physicalUpdateOpacity,
+  setPhysicalKnob,
+  type PhysicalMeshKnobKey,
   type PhysicalMeshMaterialConfig,
 } from './config';
 
@@ -60,6 +62,11 @@ export class PhysicalMeshTSLMaterial extends MeshPhysicalNodeMaterial {
   /** Luxar `gamma` — recorded only; a physical material has no gamma term. */
   updateGamma(gamma: number): void {
     physicalUpdateGamma(this, gamma);
+  }
+
+  /** One live physical knob from the Layers panel (clamped; rebuilds on a zero crossing). */
+  updatePhysicalKnob(key: PhysicalMeshKnobKey, value: number): void {
+    setPhysicalKnob(this, key, value);
   }
 
   /** Deliberate no-op — see the GLSL twin. */

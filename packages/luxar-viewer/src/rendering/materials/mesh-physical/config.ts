@@ -9,6 +9,12 @@
  * backends cannot disagree about what `roughness=0.4` or `opacity=0.3` does; two
  * copies would be a divergence waiting for the next knob.
  *
+ * The knobs themselves are ONE table, {@link PHYSICAL_MESH_KNOBS}: the attr name, the
+ * three property it lands on, its domain and default, how a slider should present it,
+ * and whether crossing zero selects a shader variant. The construction mapping, the
+ * live Layers-panel sliders and the unit tests all read that table, so a knob added
+ * there exists everywhere at once.
+ *
  * Nothing here imports `three/webgpu`: the TSL twin lives in the lazy cone and reaches
  * these helpers, never the other way round.
  *
@@ -19,38 +25,205 @@ import type * as THREE from 'three';
 import type { BlendingMode } from '../../../types/blending';
 import { clampAppearanceFraction } from '../mesh/appearance';
 
+/** The three property a knob writes — the same name on both three classes. */
+export type PhysicalKnobProp =
+  | 'roughness'
+  | 'metalness'
+  | 'clearcoat'
+  | 'clearcoatRoughness'
+  | 'iridescence'
+  | 'sheen'
+  | 'transmission'
+  | 'ior'
+  | 'thickness'
+  | 'attenuationDistance'
+  | 'dispersion';
+
+/** Everything the viewer knows about one numeric physical knob. */
+export interface PhysicalKnobSpec {
+  /** Three property name (camelCase); the attr name is the table key (snake_case). */
+  readonly prop: PhysicalKnobProp;
+  /** Layers-panel label. */
+  readonly label: string;
+  /** Smallest value the material accepts; lower values clamp here. */
+  readonly min: number;
+  /** Largest value the material accepts (`Infinity` = unbounded); higher values clamp. */
+  readonly max: number;
+  /** What an ABSENT knob renders as — three's own default unless documented otherwise. */
+  readonly default: number;
+  /** Slider step (ignored on a log track). */
+  readonly step: number;
+  /**
+   * Top of the slider track when the domain is unbounded. With
+   * {@link PhysicalKnobSpec.maxIsInfinite} the top stop MEANS "no limit"
+   * (`Infinity`), which is how `attenuation_distance`'s default is reachable from a
+   * finite slider.
+   */
+  readonly sliderMax?: number;
+  /** The slider's top stop maps to `Infinity` (see `sliderMax`). */
+  readonly maxIsInfinite?: boolean;
+  /** Present on a geometric track (a length whose useful range spans decades). */
+  readonly logScale?: boolean;
+  /**
+   * Whether `0 → >0` (and back) selects a shader variant. Three's WebGL setters
+   * bump the material version on that crossing already; `MeshPhysicalNodeMaterial`
+   * stores plain properties and bakes the flags into its lighting model at setup,
+   * so {@link setPhysicalKnob} flags `needsUpdate` itself — one rule for both twins.
+   */
+  readonly programAffecting: boolean;
+}
+
 /**
- * The Phase 1 knobs that are `[0, 1]` fractions, in Layers-panel order. Snake_case
- * because these are the ATTR names — `createMeshNode` reads them off the node attrs
- * and the panel lists them by the same names an author typed.
+ * The knob table, in Layers-panel order: the Phase 1 surface knobs, then the Phase 2
+ * glass family (spec §3.4). Keys are the ATTR names an author typed — `createMeshNode`
+ * reads them off the node attrs and the panel lists them by the same names.
+ *
+ * Defaults are three's, with one exception documented on {@link PHYSICAL_MESH_DEFAULTS}
+ * (the sheen colour). `attenuation_distance` defaults to `Infinity` = no volume
+ * attenuation, exactly three's; the slider reaches it through its top stop.
  */
-export const PHYSICAL_MESH_KNOB_KEYS = [
-  'roughness',
-  'metalness',
-  'clearcoat',
-  'clearcoat_roughness',
-  'iridescence',
-  'sheen',
-] as const;
+export const PHYSICAL_MESH_KNOBS = {
+  roughness: {
+    prop: 'roughness',
+    label: 'Roughness',
+    min: 0,
+    max: 1,
+    default: 1,
+    step: 0.01,
+    programAffecting: false,
+  },
+  metalness: {
+    prop: 'metalness',
+    label: 'Metalness',
+    min: 0,
+    max: 1,
+    default: 0,
+    step: 0.01,
+    programAffecting: false,
+  },
+  clearcoat: {
+    prop: 'clearcoat',
+    label: 'Clearcoat',
+    min: 0,
+    max: 1,
+    default: 0,
+    step: 0.01,
+    programAffecting: true,
+  },
+  clearcoat_roughness: {
+    prop: 'clearcoatRoughness',
+    label: 'Clearcoat roughness',
+    min: 0,
+    max: 1,
+    default: 0,
+    step: 0.01,
+    programAffecting: false,
+  },
+  iridescence: {
+    prop: 'iridescence',
+    label: 'Iridescence',
+    min: 0,
+    max: 1,
+    default: 0,
+    step: 0.01,
+    programAffecting: true,
+  },
+  sheen: {
+    prop: 'sheen',
+    label: 'Sheen',
+    min: 0,
+    max: 1,
+    default: 0,
+    step: 0.01,
+    programAffecting: true,
+  },
+  transmission: {
+    prop: 'transmission',
+    label: 'Transmission',
+    min: 0,
+    max: 1,
+    default: 0,
+    step: 0.01,
+    programAffecting: true,
+  },
+  ior: {
+    prop: 'ior',
+    label: 'IOR',
+    min: 1,
+    max: 2.333,
+    default: 1.5,
+    step: 0.001,
+    programAffecting: false,
+  },
+  thickness: {
+    prop: 'thickness',
+    label: 'Thickness',
+    min: 0,
+    max: Number.POSITIVE_INFINITY,
+    default: 0,
+    step: 0.01,
+    sliderMax: 10,
+    programAffecting: false,
+  },
+  attenuation_distance: {
+    prop: 'attenuationDistance',
+    label: 'Attenuation distance',
+    min: 1e-3,
+    max: Number.POSITIVE_INFINITY,
+    default: Number.POSITIVE_INFINITY,
+    step: 0.01,
+    sliderMax: 100,
+    maxIsInfinite: true,
+    logScale: true,
+    programAffecting: false,
+  },
+  dispersion: {
+    prop: 'dispersion',
+    label: 'Dispersion',
+    min: 0,
+    max: Number.POSITIVE_INFINITY,
+    default: 0,
+    step: 0.01,
+    sliderMax: 1,
+    programAffecting: true,
+  },
+} as const satisfies Record<string, PhysicalKnobSpec>;
 
-export type PhysicalMeshKnobKey = (typeof PHYSICAL_MESH_KNOB_KEYS)[number];
+/** An attr name from the knob table. */
+export type PhysicalMeshKnobKey = keyof typeof PHYSICAL_MESH_KNOBS;
+
+/** The knob keys in panel order (object key order is insertion order). */
+export const PHYSICAL_MESH_KNOB_KEYS = Object.keys(
+  PHYSICAL_MESH_KNOBS
+) as readonly PhysicalMeshKnobKey[];
 
 /**
- * What an ABSENT knob renders as. Three's own defaults, with one deliberate
- * exception: `sheenColor` is white where three's is black, because a black sheen is
- * a no-op and an authored `sheen=1` with no colour would then render nothing — the
- * silent failure the whole material contract exists to refuse. The Python writer
- * never stamps these, so an absent attr on disk IS the default.
+ * What an ABSENT knob renders as, keyed by three PROPERTY name (the construction
+ * config's spelling). Three's own defaults, with one deliberate exception:
+ * `sheenColor` is white where three's is black, because a black sheen is a no-op and
+ * an authored `sheen=1` with no colour would then render nothing — the silent failure
+ * the whole material contract exists to refuse. The Python writer never stamps these,
+ * so an absent attr on disk IS the default.
  */
 export const PHYSICAL_MESH_DEFAULTS = {
-  roughness: 1.0,
-  metalness: 0.0,
-  clearcoat: 0.0,
-  clearcoatRoughness: 0.0,
-  iridescence: 0.0,
-  sheen: 0.0,
+  roughness: PHYSICAL_MESH_KNOBS.roughness.default,
+  metalness: PHYSICAL_MESH_KNOBS.metalness.default,
+  clearcoat: PHYSICAL_MESH_KNOBS.clearcoat.default,
+  clearcoatRoughness: PHYSICAL_MESH_KNOBS.clearcoat_roughness.default,
+  iridescence: PHYSICAL_MESH_KNOBS.iridescence.default,
+  sheen: PHYSICAL_MESH_KNOBS.sheen.default,
   sheenColor: '#ffffff',
+  transmission: PHYSICAL_MESH_KNOBS.transmission.default,
+  ior: PHYSICAL_MESH_KNOBS.ior.default,
+  thickness: PHYSICAL_MESH_KNOBS.thickness.default,
+  attenuationDistance: PHYSICAL_MESH_KNOBS.attenuation_distance.default,
+  /** Three's own default; white = no tint, so an absent colour changes nothing. */
+  attenuationColor: '#ffffff',
+  dispersion: PHYSICAL_MESH_KNOBS.dispersion.default,
 } as const;
+
+/** The two `#rrggbb` colour knobs, by three property name. */
+export type PhysicalColorProp = 'sheenColor' | 'attenuationColor';
 
 /** Construction-time config for either physical wrapper. */
 export interface PhysicalMeshMaterialConfig {
@@ -70,6 +243,18 @@ export interface PhysicalMeshMaterialConfig {
   sheen?: number;
   /** `#rrggbb`; default {@link PHYSICAL_MESH_DEFAULTS}.sheenColor. */
   sheenColor?: string;
+  /** Share of light transmitted through the surface (glass); `> 0` is translucent. */
+  transmission?: number;
+  /** Index of refraction in `[1, 2.333]`. */
+  ior?: number;
+  /** Volume thickness for the refraction, in scene units. */
+  thickness?: number;
+  /** Beer–Lambert distance at which `attenuationColor` is reached; `Infinity` = none. */
+  attenuationDistance?: number;
+  /** `#rrggbb`; default {@link PHYSICAL_MESH_DEFAULTS}.attenuationColor. */
+  attenuationColor?: string;
+  /** Chromatic dispersion strength (Abbe-number-like), `>= 0`. */
+  dispersion?: number;
   /**
    * Luxar `alpha_cutoff`, mapped onto three's `alphaTest`. On an RGBA mesh its
    * PRESENCE also selects the cutout path over translucency — see
@@ -87,7 +272,7 @@ export interface PhysicalMeshMaterialConfig {
  * and `MeshPhysicalNodeMaterial` it relies on. Typed structurally so the helpers accept
  * either class (and a plain stub in a unit test) without importing `three/webgpu`.
  */
-export interface PhysicalMeshHost {
+export interface PhysicalMeshHost extends Record<PhysicalKnobProp, number> {
   opacity: number;
   transparent: boolean;
   depthWrite: boolean;
@@ -95,12 +280,7 @@ export interface PhysicalMeshHost {
   color: THREE.Color;
   emissive: THREE.Color;
   sheenColor: THREE.Color;
-  roughness: number;
-  metalness: number;
-  clearcoat: number;
-  clearcoatRoughness: number;
-  iridescence: number;
-  sheen: number;
+  attenuationColor: THREE.Color;
   vertexColors: boolean;
   flatShading: boolean;
   toneMapped: boolean;
@@ -108,11 +288,13 @@ export interface PhysicalMeshHost {
   userData: Record<string, unknown>;
 }
 
-/** The three inputs the compositing decision is a pure function of. */
+/** The four inputs the compositing decision is a pure function of. */
 export interface PhysicalCompositingInputs {
   opacity: number;
   vertexAlpha: boolean;
   alphaCutoff: number | undefined;
+  /** The material's `transmission`; `> 0` is glass and composites as translucent. */
+  transmission: number;
 }
 
 /** The compositing decision, as three material state plus the coordinator's stamp. */
@@ -128,15 +310,31 @@ export interface PhysicalCompositing {
    * every fragment, matching what is drawn.
    */
   blendingMode: Extract<BlendingMode, 'opaque'> | undefined;
+  /**
+   * Whether the mesh must be drawn BEFORE the emissive data around it. True for
+   * glass: on WebGPU a transmissive mesh shares the transparent render list with
+   * every point, line and splat layer, and a glass fragment lands with alpha 1, so
+   * a cluster whose centre sorts farther than the sphere would be drawn first and
+   * then painted over. The depth-sort coordinator reads this off
+   * `userData.drawBeforeEmissive` and orders the mesh first within its
+   * `layer_order` band on both backends (on WebGL it is already in the earlier
+   * transmissive list, so the rule is harmless there).
+   */
+  drawBeforeEmissive: boolean;
 }
 
 /**
- * Decide how a physical mesh composites, from its three inputs.
+ * Decide how a physical mesh composites, from its inputs.
  *
  * A physical mesh has no Luxar blending mode — that knob is refused at authoring
  * — so translucency is read off the data instead:
  *
  * - `opacity < 1` is translucent, always.
+ * - `transmission > 0` (glass) is translucent, always. Glass therefore does NOT
+ *   write depth, and that is the spec §3.4 contract made concrete: emissive data
+ *   behind a glass surface stays visible — crisp and unrefracted — where a
+ *   depth-writing shell would HIDE the cluster inside it, the worse failure for the
+ *   marker case this family exists for.
  * - Per-vertex alpha is translucent UNLESS an `alpha_cutoff` was authored, in
  *   which case the alpha is a CUTOUT (three `alphaTest`) and the surface stays
  *   opaque — the same meaning the house shader's `opaque` mode gives the pair.
@@ -144,28 +342,37 @@ export interface PhysicalCompositing {
  * Translucent surfaces do not write depth. With no per-triangle sort (spec §3.2)
  * that is the one choice that never drops a back face behind a front one; the
  * remaining order dependence is the ordinary alpha-over kind and is invisible on
- * a shell of uniform alpha, which is the marker case this phase exists for.
+ * a shell of uniform alpha.
  */
 export function derivePhysicalCompositing(inputs: PhysicalCompositingInputs): PhysicalCompositing {
   const cutout = inputs.vertexAlpha && inputs.alphaCutoff !== undefined;
-  const translucent = inputs.opacity < 1 || (inputs.vertexAlpha && !cutout);
+  const glass = inputs.transmission > 0;
+  const translucent = inputs.opacity < 1 || glass || (inputs.vertexAlpha && !cutout);
   return {
     transparent: translucent,
     depthWrite: !translucent,
     alphaTest: translucent ? 0 : clampAppearanceFraction(inputs.alphaCutoff, 0),
     blendingMode: translucent ? undefined : 'opaque',
+    drawBeforeEmissive: glass,
   };
 }
 
 /**
  * Where the compositing inputs live on the material, so `updateOpacity` can re-derive
- * the decision without being told the other two again.
+ * the decision without being told the others again.
  */
 const INPUTS_KEY = 'physicalCompositing';
 
 function readInputs(host: PhysicalMeshHost): PhysicalCompositingInputs {
   const stored = host.userData[INPUTS_KEY] as PhysicalCompositingInputs | undefined;
-  return stored ?? { opacity: host.opacity, vertexAlpha: false, alphaCutoff: undefined };
+  return (
+    stored ?? {
+      opacity: host.opacity,
+      vertexAlpha: false,
+      alphaCutoff: undefined,
+      transmission: host.transmission,
+    }
+  );
 }
 
 /**
@@ -187,16 +394,89 @@ export function applyPhysicalCompositing(
   host.alphaTest = decision.alphaTest;
   if (decision.blendingMode) host.userData.blendingMode = decision.blendingMode;
   else delete host.userData.blendingMode;
+  if (decision.drawBeforeEmissive) host.userData.drawBeforeEmissive = true;
+  else delete host.userData.drawBeforeEmissive;
   if (programChanged) host.needsUpdate = true;
+}
+
+/**
+ * Sanitize a knob value against its spec: a non-number or NaN resolves to the
+ * documented DEFAULT (the sibling sanitizer policy — a corrupt value should not
+ * land on a boundary that looks chosen), `+Infinity` is kept only where the spec
+ * says the top is infinite, and everything else clamps into `[min, max]`.
+ */
+export function clampPhysicalKnob(key: PhysicalMeshKnobKey, value: unknown): number {
+  const spec: PhysicalKnobSpec = PHYSICAL_MESH_KNOBS[key];
+  if (typeof value !== 'number' || Number.isNaN(value)) return spec.default;
+  if (!Number.isFinite(value)) {
+    return value > 0 && spec.maxIsInfinite ? Number.POSITIVE_INFINITY : spec.default;
+  }
+  return Math.min(spec.max, Math.max(spec.min, value));
+}
+
+/**
+ * Value → slider position domain: `Infinity` (and anything past the track) lands on
+ * the top stop. What the Layers panel STORES for a knob, so its state stays
+ * JSON-safe (a literal `Infinity` serialises as `null`).
+ */
+export function physicalKnobToSlider(key: PhysicalMeshKnobKey, value: number): number {
+  const spec: PhysicalKnobSpec = PHYSICAL_MESH_KNOBS[key];
+  const top = spec.sliderMax ?? spec.max;
+  return Math.min(top, Math.max(spec.min, Number.isFinite(value) ? value : top));
+}
+
+/** Slider position → material value: the top stop means `Infinity` where the spec says so. */
+export function physicalKnobFromSlider(key: PhysicalMeshKnobKey, value: number): number {
+  const spec: PhysicalKnobSpec = PHYSICAL_MESH_KNOBS[key];
+  const top = spec.sliderMax ?? spec.max;
+  if (spec.maxIsInfinite && value >= top) return Number.POSITIVE_INFINITY;
+  return clampPhysicalKnob(key, value);
+}
+
+/**
+ * Write ONE knob onto the material — the shared path for construction AND the live
+ * Layers-panel sliders. Clamps by the table, assigns the three property, and
+ * requests a program rebuild when a `programAffecting` knob crosses zero (see
+ * {@link PhysicalKnobSpec.programAffecting} for why both twins need this here).
+ * `transmission` additionally re-derives the compositing decision, since glass is
+ * translucent by definition. Returns the value actually written.
+ */
+export function setPhysicalKnob(
+  host: PhysicalMeshHost,
+  key: PhysicalMeshKnobKey,
+  value: unknown
+): number {
+  const spec: PhysicalKnobSpec = PHYSICAL_MESH_KNOBS[key];
+  const next = clampPhysicalKnob(key, value);
+  const prev = host[spec.prop];
+  if (prev === next) return next;
+  host[spec.prop] = next;
+  if (spec.programAffecting && prev > 0 !== next > 0) host.needsUpdate = true;
+  if (key === 'transmission') {
+    applyPhysicalCompositing(host, { ...readInputs(host), transmission: next });
+  }
+  return next;
+}
+
+/**
+ * Write one of the two `#rrggbb` colour knobs. `Color.set('#rrggbb')` reads the hex
+ * as sRGB and converts to the working (linear) space under three's colour
+ * management — the human reading of a hex tint, and what the Python validators
+ * promise. An absent or non-string value is the documented default.
+ */
+export function setPhysicalColor(
+  host: PhysicalMeshHost,
+  prop: PhysicalColorProp,
+  hex: unknown
+): void {
+  host[prop].set(typeof hex === 'string' ? hex : PHYSICAL_MESH_DEFAULTS[prop]);
 }
 
 /**
  * Configure a freshly constructed physical material from Luxar attrs.
  *
- * Knobs are clamped to `[0, 1]` with the same `clampAppearanceFraction` policy the
- * house knobs use (NaN/Inf → the documented default), because they arrive from
- * authored metadata rather than code: three clamps them too, but silently, and a
- * corrupt value should resolve to a default rather than a boundary that looks chosen.
+ * Every numeric knob goes through {@link setPhysicalKnob}, so construction and the
+ * live sliders cannot disagree about clamping or rebuild rules.
  */
 export function applyPhysicalMeshConfig(
   host: PhysicalMeshHost,
@@ -211,22 +491,15 @@ export function applyPhysicalMeshConfig(
   host.toneMapped = false;
   host.flatShading = config.flatShading === true;
 
-  host.roughness = clampAppearanceFraction(config.roughness, PHYSICAL_MESH_DEFAULTS.roughness);
-  host.metalness = clampAppearanceFraction(config.metalness, PHYSICAL_MESH_DEFAULTS.metalness);
-  host.clearcoat = clampAppearanceFraction(config.clearcoat, PHYSICAL_MESH_DEFAULTS.clearcoat);
-  host.clearcoatRoughness = clampAppearanceFraction(
-    config.clearcoatRoughness,
-    PHYSICAL_MESH_DEFAULTS.clearcoatRoughness
-  );
-  host.iridescence = clampAppearanceFraction(
-    config.iridescence,
-    PHYSICAL_MESH_DEFAULTS.iridescence
-  );
-  host.sheen = clampAppearanceFraction(config.sheen, PHYSICAL_MESH_DEFAULTS.sheen);
-  // `Color.set('#rrggbb')` reads the hex as sRGB and converts to the working
-  // (linear) space under three's colour management — the human reading of a hex
-  // tint, and what the Python `sheen_color` validator promises.
-  host.sheenColor.set(config.sheenColor ?? PHYSICAL_MESH_DEFAULTS.sheenColor);
+  for (const key of PHYSICAL_MESH_KNOB_KEYS) {
+    const spec: PhysicalKnobSpec = PHYSICAL_MESH_KNOBS[key];
+    // A knob three constructs at a non-default value (none today, but the table is
+    // the contract) still lands on OUR default when the attr is absent.
+    const requested = config[spec.prop];
+    host[spec.prop] = requested === undefined ? spec.default : clampPhysicalKnob(key, requested);
+  }
+  setPhysicalColor(host, 'sheenColor', config.sheenColor);
+  setPhysicalColor(host, 'attenuationColor', config.attenuationColor);
 
   physicalUpdateIntensity(host, config.intensity ?? 1.0);
   physicalUpdateOffset(host, config.offset ?? 0.0);
@@ -237,6 +510,7 @@ export function applyPhysicalMeshConfig(
     opacity: clampAppearanceFraction(config.opacity, 1.0),
     vertexAlpha: config.vertexAlpha === true,
     alphaCutoff: config.alphaCutoff,
+    transmission: host.transmission,
   });
 }
 

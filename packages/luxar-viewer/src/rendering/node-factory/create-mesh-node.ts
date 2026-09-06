@@ -346,7 +346,8 @@ export function createMeshMaterial(
  * {@link createMeshMaterial}: nothing that function does — the volumetric warning, the
  * shade knobs, the colormap window, the texture placeholder — applies here. The
  * authoring side refuses every one of those knobs under this material, so what is
- * mapped is exactly what can arrive: the six physical fractions and `sheen_color`,
+ * mapped is exactly what can arrive: the numeric knobs of `PHYSICAL_MESH_KNOBS` (the
+ * six surface fractions and the glass family), the two `#rrggbb` colours,
  * the compositing attrs `opacity` / `intensity` / `offset` / `gamma` (each with the
  * meaning `materials/mesh-physical/config.ts` documents), `alpha_cutoff` as
  * `alphaTest`, and the flat/smooth half of `shading` as `flatShading`.
@@ -382,6 +383,12 @@ export function createPhysicalMeshMaterial(
     iridescence: attrs.iridescence,
     sheen: attrs.sheen,
     sheenColor: attrs.sheen_color,
+    transmission: attrs.transmission,
+    ior: attrs.ior,
+    thickness: attrs.thickness,
+    attenuationDistance: attrs.attenuation_distance,
+    attenuationColor: attrs.attenuation_color,
+    dispersion: attrs.dispersion,
     alphaCutoff: attrs.alpha_cutoff,
     // `'none'` is refused at authoring; `'flat'` is either authored or the fallback
     // for a mesh with no stored normals — in both cases three derives per-triangle

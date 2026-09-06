@@ -309,6 +309,32 @@ export interface MeshMetadata {
   sheen_color?: string;
 
   /**
+   * Physical (glass, spec §3.4): share of light transmitted in `[0, 1]`; three's
+   * default `0`. Above zero the mesh composites as translucent and refracts the
+   * background and other meshes — NOT points, lines or splats, which three's
+   * transmission pass never sees.
+   */
+  transmission?: number;
+
+  /** Physical: index of refraction in `[1, 2.333]`; three's default `1.5`. */
+  ior?: number;
+
+  /** Physical: refraction volume thickness in scene units, `>= 0`; three's default `0`. */
+  thickness?: number;
+
+  /**
+   * Physical: `#rrggbb` tint reached after `attenuation_distance` through the volume
+   * (Beer–Lambert); three's default white = no tint.
+   */
+  attenuation_color?: string;
+
+  /** Physical: attenuation length in scene units, `> 0`; absent = `Infinity` (none). */
+  attenuation_distance?: number;
+
+  /** Physical: chromatic dispersion strength, `>= 0`; three's default `0`. */
+  dispersion?: number;
+
+  /**
    * Half-width, IN CELLS, of the nD membership slab a CONTINUOUS hidden dimension
    * is culled against (§5.2.1): a vertex is inside when it is within
    * `slab_tolerance` cells of the slice. Strictly positive; defaults to one cell.
