@@ -379,6 +379,25 @@ describe('depth-sort coordinator', () => {
     expect(requestReprocess).toHaveBeenCalledTimes(1);
   });
 
+  it('undefined→opaque preserves commit freshness and does not reprocess', async () => {
+    const coord = await loadCoordinator();
+    const requestReprocess = vi.fn();
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      requestReprocess,
+    });
+
+    const mesh = makeGSplatsMesh(3, 'opaque');
+    mesh.userData.committedData = { position: true };
+    mesh.userData.loadedViewVersion = 7;
+    coord.noteDepthSortBlendingModeSwitch(mesh, 'opaque', undefined);
+
+    expect(mesh.userData.committedData).toEqual({ position: true });
+    expect(mesh.userData.loadedViewVersion).toBe(7);
+    expect(requestReprocess).not.toHaveBeenCalled();
+  });
+
   it('generation guard: a stale ordering resolving after a newer commit is dropped', async () => {
     const coord = await loadCoordinator();
     const requestRender = vi.fn();

@@ -28,7 +28,10 @@ import { getColormapTexture } from '../../rendering/colormap-textures';
 import { supportsScalarColormap } from '../../rendering/material-colormap-helpers';
 import { noteDepthSortBlendingModeSwitch } from '../../rendering/depth-sort-coordinator';
 import { syncMeshPickAppearance } from '../../rendering/node-factory/create-mesh-node';
-import { PHYSICAL_MESH_KNOB_KEYS } from '../../rendering/materials/mesh-physical/config';
+import {
+  PHYSICAL_MESH_KNOB_KEYS,
+  isPhysicalMeshMaterial,
+} from '../../rendering/materials/mesh-physical/config';
 import type { GeometryTypeName } from '../../types/format-contract';
 import {
   defaultBlendingMode,
@@ -604,14 +607,18 @@ export class LayerApplyEngine {
       //     triggered a full clear + O(N) reprocess for nothing.
       // The coordinator's own `liveBlendingMode` reads the resolved mode, so
       // this is also what makes the hook and the per-frame scheduler agree.
-      // The `?? blendingMode` covers the generic fallback arm of
+      // A physical mesh deliberately leaves the stamp unset while translucent,
+      // but is never triangle-sorted; resolve it to opaque for this hook rather
+      // than falling back to an ignored inherited mode. The `?? blendingMode`
+      // covers the generic fallback arm of
       // `applyBlendingStateToMaterial` (a material without `applyBlendingMode`,
       // kept for external/future materials): that arm never stamps
       // `userData.blendingMode`, so reading the material alone would leave the
       // value unchanged and silently make this hook a no-op for such a node.
       if (isDepthSortable(obj.userData?.nodeType)) {
-        const resolvedMode =
-          (mat.userData?.blendingMode as BlendingMode | undefined) ?? blendingMode;
+        const resolvedMode = isPhysicalMeshMaterial(mat)
+          ? 'opaque'
+          : ((mat.userData?.blendingMode as BlendingMode | undefined) ?? blendingMode);
         noteDepthSortBlendingModeSwitch(obj as THREE.Mesh, resolvedMode, prevBlendingMode);
       }
       scheduleBlendModeProgramWarmupForObject(obj);
