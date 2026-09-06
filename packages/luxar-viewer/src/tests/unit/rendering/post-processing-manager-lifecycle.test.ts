@@ -539,3 +539,39 @@ describe('PostProcessingManager → size accessors', () => {
     mgr.dispose();
   });
 });
+
+describe('PostProcessingManager → the refraction split (spec §3.4 Phase 3)', () => {
+  type WithSplit = {
+    refractionSplit: { setSize(w: number, h: number): void; dispose(): void } | null;
+  };
+  const split = (mgr: PostProcessingManager) => (mgr as unknown as WithSplit).refractionSplit;
+
+  beforeEach(() => {
+    materialManager.setCaps(mockCaps('webgl2'));
+  });
+
+  it('owns one on a WebGL renderer, resizes it with the targets, and disposes it with them', () => {
+    const mgr = makeManager({ width: 64, height: 64 });
+    const s = split(mgr);
+    expect(s).not.toBeNull();
+    const setSize = vi.spyOn(s!, 'setSize');
+    const dispose = vi.spyOn(s!, 'dispose');
+
+    mgr.resize(80, 40);
+    expect(setSize).toHaveBeenCalledWith(80, 40);
+
+    mgr.dispose();
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(split(mgr)).toBeNull();
+  });
+
+  it('comes back after a context restore', () => {
+    const mgr = makeManager();
+    const before = split(mgr);
+    mgr.rebuildAfterContextRestore();
+    const after = split(mgr);
+    expect(after).not.toBeNull();
+    expect(after).not.toBe(before);
+    mgr.dispose();
+  });
+});

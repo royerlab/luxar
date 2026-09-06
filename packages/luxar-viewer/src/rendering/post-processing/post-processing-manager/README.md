@@ -14,12 +14,13 @@ orchestrator file small.
 
 ## Module map
 
-| File                    | Role                                                                                                                                                                                                            |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `resource-lifecycle.ts` | Sizing math (`computeEffectiveSize`, `getPhysicalSize`) + transient-resource construction and disposal (`buildTransientResources`, `buildBloomChain`, `disposeTransientResources`) + detector-noise DPR scaling |
-| `settings.ts`           | User-toggle setter logic — bloom strength/radius/threshold/levels, MSAA validation, vignette, chromatic lens distortion (full + partial update + picking-system getter)                                         |
-| `pipeline.ts`           | `runPipeline(ctx, opts)` — scene → HDR target → optional bloom pyramid → mega-shader → optional FXAA → final target (or canvas). Save/restore of renderer target + autoClear                                    |
-| `capture.ts`            | `captureHDRPixels`, `captureHDRAsEXR`, `renderToImageData` — the three capture modes plus EXR encode and ImageData snapshot                                                                                     |
+| File                    | Role                                                                                                                                                                                                                                      |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `resource-lifecycle.ts` | Sizing math (`computeEffectiveSize`, `getPhysicalSize`) + transient-resource construction and disposal (`buildTransientResources`, `buildBloomChain`, `disposeTransientResources`) + detector-noise DPR scaling                           |
+| `settings.ts`           | User-toggle setter logic — bloom strength/radius/threshold/levels, MSAA validation, vignette, chromatic lens distortion (full + partial update + picking-system getter)                                                                   |
+| `pipeline.ts`           | `runPipeline(ctx, opts)` — scene → HDR target (`renderSceneToHdr`, one pass or the refraction split's two) → optional bloom pyramid → mega-shader → optional FXAA → final target (or canvas). Save/restore of renderer target + autoClear |
+| `capture.ts`            | `captureHDRPixels`, `captureHDRAsEXR`, `renderToImageData` — the three capture modes plus EXR encode and ImageData snapshot                                                                                                               |
+| `refraction-split.ts`   | `DataRefractionSplit` — the WebGL two-pass scene render that lets `refract_data` glass refract the emissive data (spec MESH_PHYSICAL_MATERIALS §3.4 Phase 3); owns the pass-A copy target and the screen quad. WebGL only                 |
 
 ## How the orchestrator composes them
 
@@ -90,3 +91,22 @@ PostProcessingManager (class)
   helpers serve.
 - `../bloom/chain.ts`, `../fxaa/pass.ts`, `../fullscreen/pass.ts` —
   the GPU passes the helpers construct and run.
+
+## The refraction split (WebGL, `refract_data` glass)
+
+Three's WebGL transmission pass draws only the OPAQUE render list into the texture a
+glass samples, and every Luxar data material is transparent, so a `refract_data` glass
+cannot see the data in one pass. `renderSceneToHdr` therefore asks the
+`DataRefractionSplit` first: when some visible glass asks to refract (the depth-sort
+coordinator's `collectRefractingGlass`, injected), it renders everything but the glass
+(pass A), blits the colour into its copy target, and renders only the glass plus a
+screen-space quad textured with that copy into the same HDR target without clearing
+(pass B). The quad is opaque, so the transmission pass sees the data; pass A's depth
+survives, so opaque meshes still occlude the glass. Under MSAA the copy is load-bearing
+(three invalidates the multisampled colour after every render), which is why the quad's
+`depthTest/depthWrite/transparent/frustumCulled` flags are pinned by test. Glass layer
+masks, the camera mask, `autoClear`, `transmissionResolutionScale` (config
+`renderingControls.refraction`, pass B only) and the quad's scene membership are all
+restored in a `finally`. The raw-HDR capture path shares `renderSceneToHdr`, so an EXR
+refracts the data too. WebGPU has no split: there the glass samples the live
+framebuffer and ranking it last in its band is the whole mechanism.

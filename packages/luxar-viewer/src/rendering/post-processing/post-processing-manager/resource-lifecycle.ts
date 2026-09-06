@@ -19,6 +19,7 @@ import { resolveToneMappingDefault } from '../tone-mapping';
 import { materialManager, type LuxarMegaShaderMaterial } from '../../material-manager';
 import { config } from '../../../config';
 import type { Renderer, RendererCapabilities } from '../../renderer-capabilities';
+import { DataRefractionSplit } from './refraction-split';
 
 /** Inputs to the size-derivation pair. */
 export interface SizingInputs {
@@ -90,6 +91,11 @@ export interface PipelineResources {
   megaPass: FullscreenPass;
   bloomChain: BloomChain | null;
   fxaaPass: FxaaPass | null;
+  /**
+   * The scene-pass split that lets `refract_data` glass refract the data. WebGL only
+   * (`apiSurface === 'webgl2'`); null on WebGPU, where render order alone does it.
+   */
+  refractionSplit: DataRefractionSplit | null;
 }
 
 /** Configuration handed in by the orchestrator for resource construction. */
@@ -110,6 +116,12 @@ export interface BuildResourcesConfig {
    * allocation so we don't override a previously-disabled choice.
    */
   readonly allocateBloomFromDefaults: boolean;
+  /**
+   * Source of the visible refracting glass for the refraction split (the depth-sort
+   * coordinator's `collectRefractingGlass`). Injected so this module owns no scene
+   * knowledge.
+   */
+  readonly collectRefractingGlass: (out: THREE.Mesh[]) => THREE.Mesh[];
 }
 
 /**
@@ -155,7 +167,21 @@ export function buildTransientResources(c: BuildResourcesConfig): PipelineResour
   // FXAA pass (built only when enabled).
   const fxaaPass = c.fxaaEnabled ? new FxaaPass(c.physW, c.physH, c.capabilities) : null;
 
-  return { hdrTarget, ldrTarget, megaShader, megaPass, bloomChain, fxaaPass };
+  // The refraction split exists only for three's WebGLRenderer: its transmission
+  // pass sees the opaque list alone. WebGPURenderer (even on its WebGL2 fallback)
+  // samples the live framebuffer, so render order does the job there.
+  const refractionSplit =
+    c.capabilities.apiSurface === 'webgl2'
+      ? new DataRefractionSplit({
+          width: c.physW,
+          height: c.physH,
+          transmissionResolutionScale:
+            config.renderingControls.refraction.transmissionResolutionScale,
+          collectRefractingGlass: c.collectRefractingGlass,
+        })
+      : null;
+
+  return { hdrTarget, ldrTarget, megaShader, megaPass, bloomChain, fxaaPass, refractionSplit };
 }
 
 /** Allocate a fresh bloom chain and bind it to the mega-shader. */
@@ -193,6 +219,7 @@ export function disposeTransientResources(r: PipelineResources): void {
   r.fxaaPass?.dispose();
   r.megaShader?.dispose();
   r.megaPass?.dispose();
+  r.refractionSplit?.dispose();
 }
 
 /** Inputs for the noise re-scaling helper. */
