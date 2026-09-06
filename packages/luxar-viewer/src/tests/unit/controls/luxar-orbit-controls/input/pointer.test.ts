@@ -270,6 +270,34 @@ describe('handleWheel — deltaMode normalization (#2531)', () => {
     expect(state.zoomDelta).toBeCloseTo(pixel.state.zoomDelta, 10);
   });
 
+  it('page mode scales by ctx.domElement.clientHeight (pins the element argument)', () => {
+    // The ONLY test in this file that pins `ctx.domElement` being passed to
+    // normalizeWheelDelta — dropping that argument is invisible to every
+    // pixel/line-mode test here, and it is a per-site requirement, not a
+    // duplicate of the helper's own tests. Do not delete as redundant.
+    //
+    // makeBaseCtx stubs clientHeight = 600, so 0.2 pages → 120 px. The
+    // nominal 800 px fallback would give 160 px. Both are under the 200 px
+    // cap, so the two outcomes are distinct AND neither is the clamp.
+    const page = makeBaseCtx();
+    handleWheel(page.ctx, new WheelEvent('wheel', { deltaY: 0.2, deltaMode: 2, cancelable: true }));
+
+    const pixel120 = makeBaseCtx();
+    handleWheel(
+      pixel120.ctx,
+      new WheelEvent('wheel', { deltaY: 120, deltaMode: 0, cancelable: true })
+    );
+    expect(page.state.zoomDelta).toBeCloseTo(pixel120.state.zoomDelta, 10);
+
+    // And NOT what the nominal-height fallback would have produced.
+    const pixel160 = makeBaseCtx();
+    handleWheel(
+      pixel160.ctx,
+      new WheelEvent('wheel', { deltaY: 160, deltaMode: 0, cancelable: true })
+    );
+    expect(page.state.zoomDelta).not.toBeCloseTo(pixel160.state.zoomDelta, 5);
+  });
+
   it('wheelZoomSensitivity still multiplies on top of a normalized delta', () => {
     const base = makeBaseCtx();
     const scaled = makeBaseCtx();

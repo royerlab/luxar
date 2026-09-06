@@ -47,11 +47,7 @@ function elementWithHeight(clientHeight: number): HTMLElement {
 
 describe('normalizeWheelDelta — the constants themselves', () => {
   // Every other assertion here derives its expectation FROM these exports, so
-  // without a literal they could be retuned to almost anything and the suite
-  // would stay green. Each value is a decision the module's JSDoc escalates:
-  // 200 px is 9.75% of distance per zoom notch / 10 degrees of FOV, and the
-  // 800 px nominal page is the fallback a not-yet-laid-out canvas gets. They
-  // should not move silently.
+  // without a literal they could be retuned silently and the suite stay green.
   it('pins MAX_NORMALIZED_DELTA_PX at 200', () => {
     expect(MAX_NORMALIZED_DELTA_PX).toBe(200);
   });
@@ -158,8 +154,9 @@ describe('normalizeWheelDelta — degenerate deltas', () => {
     // `-0` really does survive the WheelEvent constructor, and every mode
     // would otherwise carry it straight through (`-0 * 16` is `-0`, and
     // `clamp` passes it too) — the `deltaY === 0` guard is what normalizes it.
-    // `toBe` uses `Object.is` semantics, so this fails on `-0`. The call sites
-    // branch on `< 0` / `> 0`, so keep the sign clean.
+    // `toBe` uses `Object.is` semantics, so this fails on `-0`. Contract
+    // hygiene rather than a consumer requirement: no call site can currently
+    // tell `+0` from `-0`.
     expect(normalizeWheelDelta(wheel(-0, mode), elementWithHeight(600))).toBe(0);
   });
 

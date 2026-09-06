@@ -29,7 +29,9 @@ import { clamp } from './clamp';
  * (`LINE_HEIGHT = 40`, `PAGE_HEIGHT = 800` — the source of our nominal page
  * height). Consequence, deliberately accepted: Firefox's 3-line notch becomes
  * 48 px against Chromium's 100 px, closing the gap from ~32x to ~2x rather
- * than reaching exact parity — 40 would overshoot Chromium's notch instead.
+ * than reaching parity. 40 would in fact land closer in absolute terms
+ * (3 × 40 = 120 px, 1.2x over, against 48 px at 2.08x under); we keep 16 so
+ * the zoom math and the delta feeding it come from the same vendored source.
  */
 export const PIXELS_PER_LINE = 16;
 
@@ -73,8 +75,11 @@ export const MAX_NORMALIZED_DELTA_PX = 200;
  * A non-finite `deltaY` (a driver or synthetic-event outlier) yields `0` in
  * every mode, pixel included: pre-fix, a `+Infinity` delta made
  * `computeZoomScale` return `Math.pow(0.95, Infinity) === 0` and so jumped the
- * camera 100% of its distance in one event. `deltaY === 0` (either sign)
- * yields `+0`.
+ * camera 100% of its distance in one event.
+ *
+ * A zero delta of either sign returns `+0`. That is contract hygiene, not a
+ * consumer requirement — all three call sites either branch on `< 0` / `> 0`
+ * or accumulate, and none can tell `+0` from `-0`.
  *
  * @param event - The wheel event to read `deltaY` / `deltaMode` from.
  * @param element - Element the wheel is over, used as the page height in
