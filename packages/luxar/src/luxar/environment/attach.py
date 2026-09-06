@@ -68,15 +68,7 @@ def attach_environment(
     viewer would ignore such a map as stale anyway, so writing it would only
     look like success.
     """
-    store_path = Path(store)
-    if not store_path.exists():
-        raise FileNotFoundError(f"Scene not found: {store_path}")
-    if not store_path.is_dir():
-        raise ValueError(
-            f"env attach requires an uncompressed .zarr directory; got "
-            f"{store_path} (unpack a .zip/.tar.gz store first — an attrs rewrite "
-            f"of a compressed archive cannot happen in place)"
-        )
+    store_path = _require_directory_store(store)
     blob = faces if isinstance(faces, bytes) else Path(faces).read_bytes()
     header, samples = unpack(blob)
 
@@ -172,6 +164,19 @@ def attach_environment(
             resolution=resolution,
             removed=removed,
         )
+
+
+def _require_directory_store(store: Union[str, Path]) -> Path:
+    store_path = Path(store)
+    if not store_path.exists():
+        raise FileNotFoundError(f"Scene not found: {store_path}")
+    if not store_path.is_dir():
+        raise ValueError(
+            f"env attach requires an uncompressed .zarr directory; got "
+            f"{store_path} (unpack a .zip/.tar.gz store first — an attrs rewrite "
+            f"of a compressed archive cannot happen in place)"
+        )
+    return store_path
 
 
 def _digest(header: Dict[str, Any], samples: np.ndarray) -> str:
