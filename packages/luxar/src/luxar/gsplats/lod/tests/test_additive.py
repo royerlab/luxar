@@ -1586,3 +1586,115 @@ def test_interleave_on_degenerate_inputs() -> None:
         compute_additive_order(all_distinct, method="self_energy"),
         compute_additive_order(all_distinct, method="self_energy", slice_dims=[3]),
     )
+
+
+def test_nan_slice_keys_are_refused_not_silently_split() -> None:
+    """A NaN slice coordinate would become its own singleton slice.
+
+    ``np.unique`` compares NaN unequal to itself, so every NaN-keyed splat gets
+    its own group — and a singleton is smaller than any budget, i.e. "carried
+    whole", i.e. inside pass 0. Measured before the guard, 6 NaN-keyed splats
+    beside 3 real slices of 10 ALL landed in the first pass and diluted every
+    real slice's budget silently. ``_radial_score`` guards the same class on
+    ``spatial_dims``; this is the ``slice_dims`` peer.
+    """
+    data = _make_sliced_gsplat(_UNBALANCED_SIZES, seed=32)
+    centers = np.asarray(data.centers).copy()
+    centers[:6, 3] = np.nan
+    poisoned = GSplatData(
+        centers=centers,
+        amplitudes=data.amplitudes,
+        cholesky_factors=data.cholesky_factors,
+    )
+    with pytest.raises(ValueError, match="slice_dims columns of centers must be"):
+        compute_additive_order(poisoned, method="self_energy", slice_dims=[3])
+
+
+def test_negative_zero_slice_keys_group_together() -> None:
+    """``-0.0`` and ``0.0`` are ONE slice — the grouping is value-based.
+
+    Worth pinning because the guard above rejects non-finite keys and could
+    plausibly have been written to reject signed-zero pathologies too. It must
+    not: a stacked axis written through float32 can legitimately carry ``-0.0``,
+    and splitting that coordinate in two would halve its budget.
+    """
+    data = _make_sliced_gsplat((5, 5, 5), seed=33)
+    centers = np.asarray(data.centers).copy()
+    centers[:2, 3] = -0.0
+    signed = GSplatData(
+        centers=centers,
+        amplitudes=data.amplitudes,
+        cholesky_factors=data.cholesky_factors,
+    )
+    order = compute_additive_order(signed, method="self_energy", slice_dims=[3])
+    coords = centers[:, 3]
+    assert [int((coords[order[:3]] == value).sum()) for value in np.unique(coords)] == [
+        1,
+        1,
+        1,
+    ]
+
+
+@pytest.mark.parametrize("n_splats", [0, 1])
+@pytest.mark.parametrize("slice_dims", [[], [-5], [1.5], [999]])
+def test_malformed_slice_dims_raise_even_on_a_trivial_leaf(
+    n_splats: int, slice_dims: list[object]
+) -> None:
+    """Validation must not depend on how many splats the leaf happens to hold.
+
+    Both loop-callers hand the SAME spec to many leaves —
+    ``resolve_additive_axis_gsplats`` walks substitutive levels and
+    ``recipes._ladder_for_part`` walks BSP parts — so validating only where the
+    interleave actually runs means one build both rejects and accepts a typo,
+    depending on which leaf is empty. Measured before the fix: every entry below
+    passed silently at N in {0, 1} and raised at N = 3.
+    """
+    data = (
+        _make_empty_gsplat(ndim=4)
+        if n_splats == 0
+        else _make_sliced_gsplat((1,), seed=34)
+    )
+    assert data.n_splats == n_splats
+    with pytest.raises(ValueError):
+        compute_additive_order(data, method="self_energy", slice_dims=slice_dims)  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        make_additive_lod(data, 4, method="self_energy", slice_dims=slice_dims)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "order,match",
+    [
+        (np.arange(9, dtype=np.float64), "must be an integer array"),
+        (np.array([-1, *range(1, 9)]), "must be non-negative"),
+        (np.arange(7), "must have shape"),
+        (np.arange(10), "must have shape"),
+        (np.array([*range(8), 9]), "out of range"),
+    ],
+)
+def test_a_malformed_order_is_refused(order: np.ndarray, match: str) -> None:
+    """``interleave_order_across_slices`` is public, so ``order`` is untrusted.
+
+    Every case below was measured to give a plausible WRONG answer rather than an
+    error: the float array is truncated by the int64 cast, the negative entry
+    aliases to another element, and a short/long array silently yields a partial
+    ordering. Only the out-of-range index raised, and only via the gather.
+    """
+    data = _make_sliced_gsplat((3, 3, 3), seed=35)
+    assert data.n_splats == 9
+    with pytest.raises(ValueError, match=match):
+        interleave_order_across_slices(data, order, [3])
+
+
+def test_duplicate_order_entries_are_the_callers_problem() -> None:
+    """Documented non-guarantee: detecting them costs a second O(N log N) pass.
+
+    Pinned so the contract is deliberate rather than an oversight — no in-tree
+    producer can emit a duplicate (they are all ``argsort`` or
+    ``rng.permutation``), and the four cheap O(N) guards above catch everything
+    that has actually been hit.
+    """
+    data = _make_sliced_gsplat((3, 3, 3), seed=36)
+    duplicated = np.array([0, 0, *range(2, 9)])
+    result = interleave_order_across_slices(data, duplicated, [3])
+    assert result.size == 9
+    assert sorted(result.tolist()) != list(range(9))

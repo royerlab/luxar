@@ -262,6 +262,19 @@ over seeds 0–7, `n_lods=3` cleared the floor 5 times in 8 and `n_lods=4` never
 did). It is also **idempotent**, so a caller need not track whether it has
 already been applied.
 
+Two preconditions on that guarantee. A rung must be **at least as large as the
+slice count**, or it cannot reach every slice at all — measured, 500 slices of 40
+splats with `breakpoints=[200]` leaves 300 coordinates on zero, and since
+within-pass ties break by position in `order` the ones left out are the faintest.
+And `slice_dims` must name **genuinely discrete** columns: pointed at a continuous
+one every key is distinct, so every rank is 0 and the `lexsort` reproduces `order`
+bit-identically — a silent no-op. That is reachable by composition, not only by
+typo: `lod_group=dict(coarsen_dims=[0, 1, 2, 3])` coarsens *over* the stacked axis
+and turned 3 exact time coordinates into 35 fractional ones on the coarse level,
+while `resolve_additive_axis_gsplats` applies one `slice_dims` to every level — a
+slice-even finest level and silently uneven coarse ones. The default `Auto`
+coarsening (hidden axis as a hard barrier) is safe.
+
 Two things it does *not* change. The within-slice order stays whatever the base
 method produced, so with `method="auto"` each coordinate still paints
 bright-core-first rather than evenly thin. And there is **no default column set**

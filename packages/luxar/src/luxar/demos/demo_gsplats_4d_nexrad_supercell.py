@@ -513,10 +513,18 @@ GRID_Z_M = parse_int_arg("grid-z-m", 1500)
 #: adaptive, so there is nothing for them to rewrite. Its budget was instead
 #: validated by measuring reconstruction PSNR directly against the gridded
 #: volume (table under VOXELS_PER_SEED), which is a more direct check than a
-#: blind-spot K* estimate. Nor is it in scripts/add_additive_lod_to_demos.py:
-#: that adds ladders to the per-frame LFS baselines, and
-#: `combine_as_new_dimension` discards a per-frame ladder when it stacks the 4D
-#: dataset, so the ladder has to be (and is) applied at scene-write time.
+#: blind-spot K* estimate. Nor is it in scripts/add_additive_lod_to_demos.py —
+#: though NOT for the reason this note used to give. It claimed
+#: `combine_as_new_dimension` DISCARDS a per-frame ladder when it stacks the 4D
+#: dataset; it does the opposite, merging rung i of every frame into rung i of the
+#: stack (`_concat_additive_levels`, gsplats/_data/base.py), which is precisely
+#: why the scene-write ladder needs `recompute=True` to win. The exclusion still
+#: holds for two other reasons: measured on the cached frames, all 82 of the
+#: current extent ALREADY carry a 4-rung equal-count ladder (frame 0: 562 splats
+#: as [140, 141, 141, 140]), so that script has nothing to add; and a per-frame
+#: ladder is the wrong SHAPE for this node regardless — per-frame equal-count is
+#: exactly proportional per scan, where a node the viewer slices needs an equal
+#: ABSOLUTE budget per scan. See the ladder comment on add_gsplats_from_data.
 SPLATS_OVERRIDE = parse_int_arg("splats", 0)
 #: Occupied (non-transparent) voxels per SEED under the adaptive budget.
 #:
@@ -1487,7 +1495,7 @@ def create_luxar_scene(
                 # survive the 4D stack (this comment used to claim they do not):
                 # `combine_as_new_dimension` MERGES them, concatenating rung i of
                 # every frame into rung i of the result — see
-                # `_merge_additive_ladders` in gsplats/_data/base.py. So the stack
+                # `_concat_additive_levels` in gsplats/_data/base.py. So the stack
                 # arrives with 4 stored rungs, `resolve_additive_axis_gsplats`
                 # takes its pass-through branch (it computes only when
                 # `recompute` or the level has <= 1 rung), and everything else

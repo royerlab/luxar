@@ -162,7 +162,7 @@ def stacked_with_stored_ladders() -> GSplatData:
     ``demo_gsplats_4d_nexrad_supercell`` off its precomputed bundle: every
     per-frame archive was written with its own ladder, and
     :meth:`GSplatData.combine_as_new_dimension` merges them rather than dropping
-    them (``_merge_additive_ladders`` concatenates rung *i* of every source into
+    them (``_concat_additive_levels`` concatenates rung *i* of every source into
     rung *i* of the stack). Amplitudes are scaled ``100 ** source_index`` so the
     small source is also the faintest, as a sparse early radar scan is.
     """
