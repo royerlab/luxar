@@ -546,7 +546,9 @@ SPHERE_LAYER_ORDER = 5  # backdrop 0 < sphere < highlight 10
 # height, clear of the activity rail; the caption goes just above it.
 TURNTABLE_POSITION = (0.06, 0.5)
 TURNTABLE_WIDTH = 0.26  # viewport-width fraction; height follows the square video
-TURNTABLE_CAPTION_POSITION = (0.06, 0.26)
+# Just under the square clip: on a 16:9 display a 26 vw square is ~46 vh tall,
+# so its lower edge sits near y = 0.73 when centred at 0.5.
+TURNTABLE_CAPTION_POSITION = (0.06, 0.75)
 TURNTABLE_CACHE = "pdb_turntables"
 
 
@@ -1044,12 +1046,14 @@ def build_stories_scene(
                 )
 
             # Left: the representative structure turning at 60 fps, transparent
-            # over the map, with its PDB caption above. Hidden turntables are
+            # over the map, with its PDB caption below. Hidden turntables are
             # paused by the viewer, so ten videos cost one decode at a time.
             for k, s in enumerate(stories, start=1):
                 a = assets.get(s.pdb_id.upper()) if s.pdb_id else None
                 if a is None:
                     continue
+                # Older RCSB entries shout their title in capitals.
+                title = a.title.capitalize() if a.title.isupper() else a.title
                 scene.add_video(
                     a.webm,
                     position=TURNTABLE_POSITION,
@@ -1061,9 +1065,9 @@ def build_stories_scene(
                     transition_duration=0.35,
                 )
                 scene.add_text(
-                    f"PDB {a.pdb_id} · {a.title}",
+                    f"PDB {a.pdb_id} · {title}",
                     position=TURNTABLE_CAPTION_POSITION,
-                    anchor="bottom-left",
+                    anchor="top-left",
                     font_size=0.013,
                     width=TURNTABLE_WIDTH,
                     color="rgba(255,255,255,0.7)",
