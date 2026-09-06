@@ -100,25 +100,27 @@ def icosphere(
         [9, 8, 1],
     ]
 
+    def midpoint(i: int, j: int, cache: Dict[Tuple[int, int], int]) -> int:
+        """Index of the midpoint of edge ``(i, j)``, created once per edge."""
+        key = (min(i, j), max(i, j))
+        index = cache.get(key)
+        if index is None:
+            vi, vj = verts[i], verts[j]
+            verts.append(
+                [(vi[0] + vj[0]) / 2, (vi[1] + vj[1]) / 2, (vi[2] + vj[2]) / 2]
+            )
+            index = len(verts) - 1
+            cache[key] = index
+        return index
+
     for _ in range(subdivisions):
         cache: Dict[Tuple[int, int], int] = {}
         out: List[List[int]] = []
 
-        def midpoint(i: int, j: int) -> int:
-            """Index of the midpoint of edge ``(i, j)``, created once per edge."""
-            key = (min(i, j), max(i, j))
-            index = cache.get(key)
-            if index is None:
-                vi, vj = verts[i], verts[j]
-                verts.append(
-                    [(vi[0] + vj[0]) / 2, (vi[1] + vj[1]) / 2, (vi[2] + vj[2]) / 2]
-                )
-                index = len(verts) - 1
-                cache[key] = index
-            return index
-
         for a, b, c in faces:
-            ab, bc, ca = midpoint(a, b), midpoint(b, c), midpoint(c, a)
+            ab = midpoint(a, b, cache)
+            bc = midpoint(b, c, cache)
+            ca = midpoint(c, a, cache)
             out += [[a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]]
         faces = out
 

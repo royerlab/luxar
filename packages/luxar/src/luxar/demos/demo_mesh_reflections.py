@@ -65,6 +65,7 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, EnvironmentConfig, ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer, parse_demo_flags
+from luxar.demos._cinematic_camera import pull_in
 from luxar.encoding import EncodingMode
 from luxar.mesh.primitives import icosphere
 from luxar.utils.paths import get_demos_output_dir
@@ -141,15 +142,18 @@ def create_scene(output_path) -> None:
             scene = compiler.create_scene(
                 dimensions=Dimensions.default_3d(),
                 viewer_config=ViewerConfig(
+                    cinematic_mode=True,
                     tone_mapping="ACES",
                     # The whole point of the demo: light the physical spheres with an
                     # exact capture of THIS scene from its centre.
                     environment=EnvironmentConfig(source="scene", probe="auto"),
                     camera=CameraConfig(
-                        position=(
-                            SWIRL_RADIUS * 0.9,
-                            SWIRL_RADIUS * 0.55,
-                            SWIRL_RADIUS * 1.6,
+                        position=pull_in(
+                            (
+                                SWIRL_RADIUS * 0.9,
+                                SWIRL_RADIUS * 0.55,
+                                SWIRL_RADIUS * 1.6,
+                            )
                         ),
                         target=(0.0, 0.0, 0.0),
                         up=(0.0, 1.0, 0.0),

@@ -181,6 +181,23 @@ def _reject_volumetric_blending(name: str, attrs: Dict[str, Any]) -> None:
         )
 
 
+def _reject_inactive_transmission_attrs(name: str, attrs: Dict[str, Any]) -> None:
+    glass_only = sorted(PHYSICAL_TRANSMISSION_DEPENDENT_ATTRS & attrs.keys())
+    if not glass_only:
+        return
+    transmission = attrs.get("transmission")
+    # A non-numeric transmission is the writer's diagnostic, not this one's.
+    transmitting = isinstance(transmission, (int, float)) and transmission > 0
+    if not transmitting:
+        raise ValueError(
+            f"Cannot add mesh '{name}' with material='physical' and {glass_only} "
+            "but no transmission above zero: three evaluates thickness, "
+            "attenuation and dispersion only inside its transmission path, so "
+            "they would be written and silently ignored. Pass transmission=... "
+            "(a fraction in (0, 1]) alongside them, or drop them."
+        )
+
+
 def _reject_physical_material_conflicts(
     name: str,
     attrs: Dict[str, Any],
@@ -246,19 +263,7 @@ def _reject_physical_material_conflicts(
             "sheen_color (and the transmission family) instead, or drop "
             "material='physical'."
         )
-    glass_only = sorted(PHYSICAL_TRANSMISSION_DEPENDENT_ATTRS & attrs.keys())
-    if glass_only:
-        transmission = attrs.get("transmission")
-        # A non-numeric transmission is the writer's diagnostic, not this one's.
-        transmitting = isinstance(transmission, (int, float)) and transmission > 0
-        if not transmitting:
-            raise ValueError(
-                f"Cannot add mesh '{name}' with material='physical' and {glass_only} "
-                "but no transmission above zero: three evaluates thickness, "
-                "attenuation and dispersion only inside its transmission path, so "
-                "they would be written and silently ignored. Pass transmission=... "
-                "(a fraction in (0, 1]) alongside them, or drop them."
-            )
+    _reject_inactive_transmission_attrs(name, attrs)
     if "blending_mode" in attrs:
         raise ValueError(
             f"Cannot add mesh '{name}' with material='physical' and blending_mode="
