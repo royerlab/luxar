@@ -626,28 +626,9 @@ test.describe('Console Error Detection', () => {
     // Test that our error detection actually works by loading a non-existent dataset
     await page.goto('/?src=http://localhost:9000/nonexistent.zarr&debug');
 
-    // Poll for the first error/warning to be intercepted instead of
-    // waiting a fixed 5 s. Caps at 8 s so we still fail loudly if the
-    // interceptor is broken; in practice the first network error
-    // usually propagates within ~1 s.
-    await page
-      .waitForFunction(
-        () => {
-          const debug = (window as any).__luxarDebug;
-          if (!debug?.consoleInterceptor?.getBufferedMessages) return false;
-          const msgs = debug.consoleInterceptor.getBufferedMessages();
-          // 'warn', not 'warning': BufferedMessage['type'] is
-          // 'log' | 'warn' | 'error' | 'info' | 'debug'
-          // (src/utils/console-interceptor.ts), so 'warning' never matches.
-          return msgs.some((m: { type?: string }) => m.type === 'error' || m.type === 'warn');
-        },
-        null,
-        { timeout: 8000 }
-      )
-      .catch(() => {
-        // Interceptor never reported — page-level errors may still have
-        // been captured by the captureConsoleMessages listener below.
-      });
+    // Return as soon as the Playwright-side capture sees the first error.
+    // This path aborts before the in-page console interceptor installs.
+    await expect.poll(() => pageErrors.length, { timeout: 8000 }).toBeGreaterThan(0);
 
     // Check both the in-app console interceptor and the Playwright-captured
     // errors. Errors only on both sides — see the listener note above.
