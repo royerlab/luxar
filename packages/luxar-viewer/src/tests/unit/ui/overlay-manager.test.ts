@@ -290,7 +290,10 @@ describe('OverlayManager.loadOverlays', () => {
     expect(video).not.toBeNull();
     expect(video.muted).toBe(true);
     expect(video.loop).toBe(true);
-    expect(video.autoplay).toBe(true);
+    // The DOM autoplay attribute stays OFF (it would start every hidden clip once
+    // its media loads); the wish is kept on the element for the visibility sync.
+    expect(video.autoplay).toBe(false);
+    expect(video.dataset.autoplay).toBe('1');
     expect(video.playbackRate).toBe(1.5);
     expect(video.src).toBe('https://example.com/scene.luxar.zarr/overlays/turntable/video.webm');
     expect(video.poster).toBe('https://example.com/scene.luxar.zarr/overlays/turntable/poster.png');

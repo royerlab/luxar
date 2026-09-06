@@ -1052,8 +1052,9 @@ def build_stories_scene(
                 a = assets.get(s.pdb_id.upper()) if s.pdb_id else None
                 if a is None:
                     continue
-                # Older RCSB entries shout their title in capitals.
-                title = a.title.capitalize() if a.title.isupper() else a.title
+                # Older RCSB entries shout their title in capitals; it stays as
+                # deposited — sentence-casing mangles the acronyms (NMR, MVIIA).
+                title = a.title
                 scene.add_video(
                     a.webm,
                     position=TURNTABLE_POSITION,

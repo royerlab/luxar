@@ -569,7 +569,11 @@ export class OverlayManager {
     const video = document.createElement('video');
     video.muted = config.muted !== false;
     video.loop = config.loop !== false;
-    video.autoplay = config.autoplay !== false;
+    // Deliberately NOT the DOM `autoplay` attribute: the browser honours that
+    // once the media has loaded, which is after the initial visibility pass, so
+    // every hidden clip would start decoding at load (all ten did). Autoplay is
+    // a wish that `syncVideoPlayback` grants only while the overlay is visible.
+    video.dataset.autoplay = config.autoplay !== false ? '1' : '0';
     video.playsInline = true;
     video.preload = 'auto';
     video.disablePictureInPicture = true;
@@ -618,7 +622,7 @@ export class OverlayManager {
     const video = this.videoElements.get(name);
     if (!video) return;
     if (visible) {
-      if (video.paused && video.autoplay) {
+      if (video.paused && video.dataset.autoplay === '1') {
         const p = video.play();
         // jsdom and gesture-gated browsers reject; a rejected promise must not
         // surface as an unhandled rejection from a visibility update.
