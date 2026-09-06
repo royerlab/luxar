@@ -149,9 +149,15 @@ export async function loadOverlayConfigs(
           stroke_color: attrs.stroke_color as string | undefined,
           stroke_width: attrs.stroke_width as number | undefined,
           image_file: attrs.image_file as string | undefined,
-          size: attrs.size as [number, number] | undefined,
+          size: attrs.size as [number, number | null] | undefined,
           blend_mode: attrs.blend_mode as string | undefined,
           html: attrs.html as string | undefined,
+          video_file: attrs.video_file as string | undefined,
+          poster_file: attrs.poster_file as string | undefined,
+          loop: attrs.loop as boolean | undefined,
+          autoplay: attrs.autoplay as boolean | undefined,
+          muted: attrs.muted as boolean | undefined,
+          playback_rate: attrs.playback_rate as number | undefined,
         };
 
         // `.zattrs` is untrusted JSON and the assignments above are only type
