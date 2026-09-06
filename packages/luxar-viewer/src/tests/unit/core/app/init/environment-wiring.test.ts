@@ -92,7 +92,7 @@ describe('wireSceneEnvironment', () => {
     h.callbacks.get('environment-capture')!();
     expect(h.environment.tick).toHaveBeenCalledTimes(1);
 
-    eventBus.emit('geometry-committed', { path: '/cloud' });
+    eventBus.emit('geometry-committed', {});
     expect(h.environment.markStale).toHaveBeenCalledTimes(1);
     window.dispatchEvent(new CustomEvent('luxar-layers-changed'));
     expect(h.environment.markStale).toHaveBeenCalledTimes(2);
@@ -102,7 +102,7 @@ describe('wireSceneEnvironment', () => {
 
     // Disposing the event group unhooks everything.
     h.events.dispose();
-    eventBus.emit('geometry-committed', { path: '/cloud' });
+    eventBus.emit('geometry-committed', {});
     window.dispatchEvent(new CustomEvent('luxar-layers-changed'));
     (sceneDimsManager as unknown as { notifyListeners: () => void }).notifyListeners();
     expect(h.environment.markStale).toHaveBeenCalledTimes(3);

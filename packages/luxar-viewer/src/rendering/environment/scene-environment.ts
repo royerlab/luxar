@@ -99,7 +99,7 @@ export interface CaptureRuntime {
   /** The scene root (`LuxarScene`), for probe resolution and physical-mesh hiding. */
   sceneRoot: () => THREE.Object3D | null;
   /** Push the cube camera's params to the material manager (fov 90°, square buffer). */
-  pushCaptureCameraParams: (resolution: number, nearCull: number | undefined) => void;
+  pushCaptureCameraParams: (resolution: number) => void;
   /** Restore the main camera's params (the ordinary camera-materials push). */
   restoreCameraParams: () => void;
   /** Whether the loader has settled (no update sweep, load pass or LOD load in flight). */
@@ -127,6 +127,7 @@ export class SceneEnvironment {
   private config: EnvironmentConfig = DEFAULT_ENVIRONMENT_CONFIG;
   private baked: BakedEnvironment | null = null;
   private runtime: CaptureRuntime | null = null;
+  private captureProbeSpec: string | null = null;
   /** Set by the first `ensure()` — a physical material exists, so the scene needs light. */
   private wanted = false;
   private active: EnvironmentKind = 'none';
@@ -165,6 +166,29 @@ export class SceneEnvironment {
     this.config = config ?? DEFAULT_ENVIRONMENT_CONFIG;
     this.deps.scene.environmentIntensity = this.config.intensity;
     if (this.wanted) this.apply();
+  }
+
+  /** Clear dataset-owned state while preserving runtime wiring and the reusable room PMREM. */
+  resetForDataset(): void {
+    if (this.roomTarget && this.deps.scene.environment === this.roomTarget.texture) {
+      this.deps.scene.environment = null;
+    }
+    this.wanted = false;
+    this.baked = null;
+    this.staleSince = null;
+    this.hdriLoading = null;
+    this.releaseCaptureTarget();
+    if (this.bakedTexture) {
+      if (this.deps.scene.environment === this.bakedTexture) this.deps.scene.environment = null;
+      this.bakedTexture.dispose();
+      this.bakedTexture = null;
+    }
+    if (this.hdriTexture) {
+      if (this.deps.scene.environment === this.hdriTexture) this.deps.scene.environment = null;
+      this.hdriTexture.dispose();
+      this.hdriTexture = null;
+    }
+    this.active = 'none';
   }
 
   /** Attach (or clear) a baked map. A valid map takes precedence over any source. */
@@ -257,6 +281,7 @@ export class SceneEnvironment {
     );
     this.deps.scene.environment = this.captureTarget.texture;
     this.active = 'scene';
+    this.captureProbeSpec = formatProbeSpec(probe);
     this.captureCount += 1;
     log.info(
       Modules.RENDERER,
@@ -292,6 +317,7 @@ export class SceneEnvironment {
     this.hdriTexture?.dispose();
     this.roomTarget = null;
     this.captureTarget = null;
+    this.captureProbeSpec = null;
     this.bakedTexture = null;
     this.hdriTexture = null;
     this.runtime = null;
@@ -308,6 +334,7 @@ export class SceneEnvironment {
     switch (this.config.source) {
       case 'scene':
         if (this.runtime) {
+          if (this.captureMatchesConfig()) return false;
           // First light is an immediate capture — of whatever is resident now — and
           // every later commit re-captures through `markStale` / `tick`.
           return this.captureScene() !== null;
@@ -320,6 +347,15 @@ export class SceneEnvironment {
       default:
         return this.applyRoom();
     }
+  }
+
+  private captureMatchesConfig(): boolean {
+    return (
+      this.active === 'scene' &&
+      this.captureTarget?.width === this.config.resolution &&
+      this.captureProbeSpec === formatProbeSpec(this.config.probe) &&
+      this.deps.scene.environment === this.captureTarget.texture
+    );
   }
 
   private applyRoom(): boolean {
@@ -342,6 +378,7 @@ export class SceneEnvironment {
     if (this.active === 'room' && this.deps.scene.environment === this.roomTarget.texture) {
       return false;
     }
+    this.releaseCaptureTarget();
     this.deps.scene.environment = this.roomTarget.texture;
     this.active = 'room';
     this.staleSince = null;
@@ -350,6 +387,7 @@ export class SceneEnvironment {
 
   private applyBaked(map: BakedEnvironment): boolean {
     if (this.active === 'baked' && this.bakedTexture) return false;
+    this.releaseCaptureTarget();
     this.bakedTexture ??= buildBakedCubeTexture(map);
     this.deps.scene.environment = this.bakedTexture;
     this.active = 'baked';
@@ -389,17 +427,28 @@ export class SceneEnvironment {
   private applyHdri(): boolean {
     if (!this.hdriTexture) return false;
     if (this.active === 'hdri') return false;
+    this.releaseCaptureTarget();
     this.deps.scene.environment = this.hdriTexture;
     this.active = 'hdri';
     this.staleSince = null;
     log.info(Modules.RENDERER, `Scene environment: HDRI '${this.config.url}' applied`);
     return true;
   }
+
+  private releaseCaptureTarget(): void {
+    if (!this.captureTarget) return;
+    if (this.deps.scene.environment === this.captureTarget.texture) {
+      this.deps.scene.environment = null;
+    }
+    this.captureTarget.dispose();
+    this.captureTarget = null;
+    this.captureProbeSpec = null;
+  }
 }
 
 /** Run `draw` with the cube camera's params pushed to the materials, restoring the main camera's after. */
 function withCaptureCameraParams<T>(runtime: CaptureRuntime, resolution: number, draw: () => T): T {
-  runtime.pushCaptureCameraParams(resolution, undefined);
+  runtime.pushCaptureCameraParams(resolution);
   try {
     return draw();
   } finally {

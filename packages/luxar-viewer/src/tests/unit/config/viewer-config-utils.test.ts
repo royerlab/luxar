@@ -484,6 +484,28 @@ describe('extractEnvironmentConfig', () => {
     warn.mockRestore();
   });
 
+  it('refuses unsafe environment fetch URLs', () => {
+    for (const url of [
+      'javascript:alert(1)',
+      'data:image/png,abc',
+      '//example.com/env.hdr',
+      'https:example.com/env.hdr',
+      'https://user:pass@example.com/env.hdr',
+    ]) {
+      expect(extractEnvironmentConfig({ environment: { source: 'hdri', url } })!.source).toBe(
+        'room'
+      );
+    }
+    expect(
+      extractEnvironmentConfig({ environment: { source: 'hdri', url: 'env/studio.hdr' } })
+    ).toMatchObject({ source: 'hdri', url: 'env/studio.hdr' });
+    expect(
+      extractEnvironmentConfig({
+        environment: { source: 'hdri', url: 'https://example.com/env.hdr' },
+      })
+    ).toMatchObject({ source: 'hdri', url: 'https://example.com/env.hdr' });
+  });
+
   it('round-trips through the zarr spelling', () => {
     const config = extractEnvironmentConfig({
       environment: { source: 'scene', probe: [0.5, 1, 2], resolution: 256, intensity: 0.8 },

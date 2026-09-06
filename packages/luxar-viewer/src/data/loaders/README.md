@@ -385,7 +385,7 @@ narrowly-scoped helpers each spatial-index loader composes:
   labels on first hover; concurrent requests for the same node share one
   in-flight promise.
 - **`environment/environment-loader.ts`** — `loadBakedEnvironment(rootLoc,
-  rootContentHash)`: reads the root-level `environment/` sidecar group a
+rootContentHash)`: reads the root-level `environment/` sidecar group a
   `luxar env bake` left (six half-float cube faces as `uint16` bits, named by
   digest) and hands it to the scene environment; a missing group is silent, a
   stale one (its `scene_content_hash` is not the root's) or a malformed one is

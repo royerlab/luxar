@@ -24,10 +24,29 @@ export const ENVIRONMENT_SOURCES: readonly EnvironmentSource[] = ['room', 'scene
  */
 export type EnvironmentProbe = 'auto' | { node: string } | { position: [number, number, number] };
 
+/** Parse `auto`, `node:<path>`, or `x,y,z` into a validated probe. */
+export function parseProbeSpec(spec: string | null | undefined): EnvironmentProbe | null {
+  if (spec == null) return null;
+  const text = spec.trim();
+  if (text === 'auto') return 'auto';
+  if (text.startsWith('node:')) {
+    const node = text.slice('node:'.length).trim();
+    return node ? { node } : null;
+  }
+  const values = text
+    .replace(/^\[/, '')
+    .replace(/\]$/, '')
+    .split(',')
+    .map((value) => Number(value.trim()));
+  if (values.length !== 3 || values.some((value) => !Number.isFinite(value))) return null;
+  return { position: [values[0], values[1], values[2]] };
+}
+
 /** Cube face size bounds for a `scene` capture (the map is prefiltered; more buys little). */
 export const ENVIRONMENT_RESOLUTION_MIN = 16;
 export const ENVIRONMENT_RESOLUTION_MAX = 1024;
 export const ENVIRONMENT_RESOLUTION_DEFAULT = 128;
+export const MAX_ENVIRONMENT_URL_CHARS = 2048;
 
 /** The validated, narrowed form of `viewer_config.environment`. */
 export interface EnvironmentConfig {

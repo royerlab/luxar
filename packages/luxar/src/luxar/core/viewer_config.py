@@ -18,6 +18,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
+from urllib.parse import urlsplit
 
 # Valid enum values (must match TypeScript RenderingSettings union types)
 VALID_TONE_MAPPINGS = ("None", "Linear", "Reinhard", "Cineon", "ACES", "AgX", "Neutral")
@@ -59,6 +60,7 @@ VALID_DIRECTIONS = ("forward", "backward")
 # itself from the probe (the data IS the light); "hdri" is an equirectangular
 # image the viewer loads from `url`.
 VALID_ENVIRONMENT_SOURCES = ("room", "scene", "hdri")
+MAX_ENVIRONMENT_URL_CHARS = 2048
 ENVIRONMENT_RESOLUTION_MIN = 16
 ENVIRONMENT_RESOLUTION_MAX = 1024
 ENVIRONMENT_NODE_PROBE_PREFIX = "node:"
@@ -314,6 +316,29 @@ class AnimationConfig:
         )
 
 
+def _validate_environment_url(raw: str) -> str:
+    """Return an HTTP(S) or store-relative environment URL, or raise."""
+    url = raw.strip()
+    if not url or len(url) > MAX_ENVIRONMENT_URL_CHARS:
+        raise ValueError(
+            f"environment.url must contain 1-{MAX_ENVIRONMENT_URL_CHARS} characters"
+        )
+    if any(ord(char) <= 0x1F or ord(char) == 0x7F or char in "<>" for char in url):
+        raise ValueError("environment.url contains an unsafe character")
+    if url.startswith("//"):
+        raise ValueError("environment.url must not be protocol-relative")
+    parsed = urlsplit(url)
+    if not parsed.scheme:
+        return url
+    if parsed.scheme.lower() not in {"http", "https"}:
+        raise ValueError("environment.url scheme must be http or https")
+    if not parsed.hostname:
+        raise ValueError("environment.url must be an absolute HTTP(S) URL")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("environment.url must not contain embedded credentials")
+    return url
+
+
 @dataclass
 class EnvironmentConfig:
     """Where the scene environment that lights physical meshes comes from.
@@ -397,6 +422,8 @@ class EnvironmentConfig:
                 "environment.url is only meaningful with environment.source='hdri', "
                 f"got source={self.source!r}"
             )
+        if self.url is not None:
+            self.url = _validate_environment_url(self.url)
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dictionary, omitting None fields."""

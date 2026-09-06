@@ -21,6 +21,7 @@
  */
 import { parseLineJoinStyle, type LineJoinStyle } from '../types/line-join';
 import { parseLinePrimitive, type LinePrimitive } from '../types/line-primitive';
+import { ENVIRONMENT_RESOLUTION_MAX, ENVIRONMENT_RESOLUTION_MIN } from '../types/environment';
 
 const MAX_SRC_LENGTH = 4096;
 const URL_SCHEME_PATTERN = /^[a-zA-Z][a-zA-Z\d+.-]*:/;
@@ -351,8 +352,13 @@ export function readUrlParams(search?: string): UrlParams {
     linePrimitive: parseLinePrimitive(params.get('linePrimitive')),
     bakeEnv: params.has('bake-env'),
     probe: params.get('probe')?.trim() || null,
-    envResolution: parseNonNegativeInt(params.get('env-resolution')),
+    envResolution: clampEnvironmentResolution(parseNonNegativeInt(params.get('env-resolution'))),
   };
+}
+
+function clampEnvironmentResolution(value: number | null): number | null {
+  if (value === null) return null;
+  return Math.min(ENVIRONMENT_RESOLUTION_MAX, Math.max(ENVIRONMENT_RESOLUTION_MIN, value));
 }
 
 /**

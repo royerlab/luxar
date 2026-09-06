@@ -71,6 +71,29 @@ class TestEnvironmentConfig:
         with pytest.raises(ValueError, match="only meaningful with"):
             EnvironmentConfig(source="scene", url="env/studio.hdr")
 
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "javascript:alert(1)",
+            "data:image/png,abc",
+            "//example.com/env.hdr",
+            "https:example.com/env.hdr",
+            "https://u:p@example.com/env.hdr",
+        ],
+    )
+    def test_url_refuses_unsafe_fetch_targets(self, url: str) -> None:
+        with pytest.raises(ValueError, match="environment.url"):
+            EnvironmentConfig(source="hdri", url=url)
+
+    def test_url_accepts_store_relative_and_http_urls(self) -> None:
+        assert (
+            EnvironmentConfig(source="hdri", url=" env/studio.hdr ").url
+            == "env/studio.hdr"
+        )
+        assert EnvironmentConfig(
+            source="hdri", url="https://example.com/env.hdr"
+        ).url == ("https://example.com/env.hdr")
+
     def test_round_trips_through_viewer_config(self) -> None:
         vc = ViewerConfig(
             environment=EnvironmentConfig(

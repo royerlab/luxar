@@ -39,6 +39,8 @@ export interface LoadDatasetPorts {
 }
 
 export async function loadDataset(src: string, ports: LoadDatasetPorts): Promise<void> {
+  ports.sceneManager.environment?.resetForDataset();
+
   // Clear any existing dimension UI
   ports.inputHandler.clearDimensionUI();
 
