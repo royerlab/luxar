@@ -94,6 +94,7 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer, parse_demo_flags
+from luxar.demos._cinematic_camera import pull_in
 from luxar.encoding import EncodingMode
 from luxar.mesh.primitives import icosphere
 from luxar.utils.paths import get_demos_output_dir
@@ -299,14 +300,11 @@ def backdrop_panel(
 
 
 def create_scene(output_path) -> None:
-    """Write the six-sphere scene to ``output_path``."""
+    """Write the nine-sphere scene to ``output_path``."""
     vertices, faces, normals = icosphere(SUBDIVISIONS, radius=RADIUS)
     aprint(f"icosphere: {len(vertices)} vertices, {len(faces)} faces")
 
     row_half_width = (len(SPHERES) - 1) / 2.0 * SPACING + RADIUS
-    # Nine spheres make a wide row: frame it from a little further out and higher
-    # than the six-sphere Phase 1 layout so the whole row and the backdrop fit.
-
     with asection("Writing scene"):
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.MEMORY
@@ -314,16 +312,19 @@ def create_scene(output_path) -> None:
             scene = compiler.create_scene(
                 dimensions=Dimensions.default_3d(),
                 viewer_config=ViewerConfig(
+                    cinematic_mode=True,
                     # ACES set explicitly — the house default, and stating it keeps
                     # the compiler's "nothing was chosen" LUT notice quiet.
                     tone_mapping="ACES",
                     # Slightly above the row and off to one side, so every sphere
                     # shows a lit face, a rim and a highlight at once.
                     camera=CameraConfig(
-                        position=(
-                            row_half_width * 0.25,
-                            row_half_width * 0.45,
-                            row_half_width * 1.9,
+                        position=pull_in(
+                            (
+                                row_half_width * 0.25,
+                                row_half_width * 0.45,
+                                row_half_width * 1.9,
+                            )
                         ),
                         target=(0.0, 0.0, 0.0),
                         up=(0.0, 1.0, 0.0),

@@ -90,18 +90,18 @@ export type MeshTextureFilter = 'linear' | 'nearest';
 export type MeshTextureWrap = 'repeat' | 'clamp';
 
 /**
- * Mesh node metadata from zarr `.zattrs`.
- *
- * Field-for-field what `io/_compiler/geometry_writers/mesh.py` stamps, plus the
- * render attrs every geometry node shares.
- */
-/**
  * The two mesh material families. `'luxar'` is the house shader (spec §6.2) and
  * what an absent attr means; `'physical'` opts into three's physically based
  * material (`MESH_PHYSICAL_MATERIALS_SPEC.md`).
  */
 export type MeshMaterialKind = 'luxar' | 'physical';
 
+/**
+ * Mesh node metadata from zarr `.zattrs`.
+ *
+ * Field-for-field what `io/_compiler/geometry_writers/mesh.py` stamps, plus the
+ * render attrs every geometry node shares.
+ */
 export interface MeshMetadata {
   /** Node type identifier */
   type: 'mesh';

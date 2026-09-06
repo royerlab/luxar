@@ -1,11 +1,11 @@
 # Mesh Physical Materials Spec — glass, metal and iridescence on Luxar meshes
 
-**Status:** Phase 1 (§4) is **implemented**; Phases 2–4 are design. Written after
+**Status:** Phases 1–2 are **implemented**; Phases 3–4 are design. Written after
 the `esm3_protein_stories` demo wanted translucent marker shells around clusters
 and got them from the existing light-free mesh model (see §2); this document is
-the plan for the materials that model cannot express, and — for Phase 1 — the
-record of what shipped and where it deviates from the sketch (the "Phase 1
-implementation notes" in §3.1, §3.2, §3.5 and §3.6).
+the plan for the materials that model cannot express, and — for Phases 1–2 — the
+record of what shipped and where it deviates from the sketch (the implementation
+notes in §3.1, §3.2, §3.5 and §3.6).
 
 ## 1. Motivation
 

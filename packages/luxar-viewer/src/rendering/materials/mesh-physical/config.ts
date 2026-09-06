@@ -475,8 +475,8 @@ export function setPhysicalColor(
 /**
  * Configure a freshly constructed physical material from Luxar attrs.
  *
- * Every numeric knob goes through {@link setPhysicalKnob}, so construction and the
- * live sliders cannot disagree about clamping or rebuild rules.
+ * Every numeric knob uses the same table and clamp as {@link setPhysicalKnob}, so
+ * construction and the live sliders cannot disagree about accepted values.
  */
 export function applyPhysicalMeshConfig(
   host: PhysicalMeshHost,
