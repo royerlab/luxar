@@ -5147,17 +5147,27 @@ describe('depth-sort coordinator — layer_order bands', () => {
    * Luxar blending mode (translucent, so commutative to the coordinator) and the
    * draw-before-emissive request (spec MESH_PHYSICAL_MATERIALS §3.4).
    */
-  function makeGlassMesh(z: number): THREE.Mesh {
+  function makeGlassMesh(z: number, opts: { after?: boolean; radius?: number } = {}): THREE.Mesh {
     const material = new THREE.Material();
     material.userData.material = 'physical';
-    material.userData.drawBeforeEmissive = true;
+    // `refract_data` flips the stamp to draw-AFTER (Phase 3); exactly one is set.
+    if (opts.after) material.userData.drawAfterEmissive = true;
+    else material.userData.drawBeforeEmissive = true;
     material.transparent = true;
     const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
-    mesh.geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, z), 1);
+    mesh.geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, z), opts.radius ?? 1);
     mesh.userData.nodeType = 'mesh';
     mesh.userData.committedData = { some: 'source' };
     return mesh;
   }
+
+  /** Register a glass mesh the way the mesh commit path does. */
+  const commitGlass = (
+    coord: Awaited<ReturnType<typeof loadCoordinator>>,
+    glass: THREE.Mesh
+  ): void => {
+    coord.noteDepthSortCommit(glass, () => new Float32Array(9), 3, new Uint32Array(9));
+  };
 
   it('unranked glass sits at renderOrder -1, ahead of the unranked emissive layers at 0', async () => {
     // On WebGPU glass shares the transparent list with every emissive layer and
@@ -5199,6 +5209,105 @@ describe('depth-sort coordinator — layer_order bands', () => {
     expect(far.renderOrder).toBe(1);
     expect(glass.renderOrder).toBe(2);
     expect(near.renderOrder).toBe(3);
+  });
+
+  // ---- Phase 3: refracting glass draws AFTER the data (spec §3.4) ----------
+
+  it('refracting glass takes a rank even when nothing else would, after the unranked emissive layers at 0', async () => {
+    // On WebGPU the glass samples the framebuffer as it stands when it draws, so
+    // "after the data" must be a real renderOrder above the emissive layers' 0.
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const lens = makeGlassMesh(-10, { after: true });
+    const additive = makeGSplatsMesh(2, 'additive');
+    commitGlass(coord, lens);
+    coord.noteDepthSortCommit(additive, new Float32Array([0, 0, -1]), 1);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(additive.renderOrder).toBe(0);
+    expect(lens.renderOrder).toBe(1);
+    expect(mockApi.registerNode).not.toHaveBeenCalled();
+  });
+
+  it('refracting glass draws last in its band even when it is the FARTHEST object', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const { far, near } = twoDisjointLeaves();
+    // Farther than both ranked layers: by depth alone it would draw FIRST.
+    const lens = makeGlassMesh(-100, { after: true });
+    commitGlass(coord, lens);
+    for (const m of [near, far]) coord.noteDepthSortCommit(m, new Float32Array([0, 0, -1]), 1);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(far.renderOrder).toBe(1);
+    expect(near.renderOrder).toBe(2);
+    expect(lens.renderOrder).toBe(3);
+  });
+
+  it('refracting glass stays within its band: a higher authored band still draws after it', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const { far, near } = twoDisjointLeaves();
+    const lens = makeGlassMesh(-5, { after: true }); // band 0 (unset), nearest of all
+    setLevel(far, 0);
+    setLevel(near, 1);
+    commitGlass(coord, lens);
+    for (const m of [near, far]) coord.noteDepthSortCommit(m, new Float32Array([0, 0, -1]), 1);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    // Band 0: far, then the lens LAST in that band; band 1 after both.
+    expect(far.renderOrder).toBe(1);
+    expect(lens.renderOrder).toBe(2);
+    expect(near.renderOrder).toBe(3);
+  });
+
+  it('a lens that spatially CONTAINS a ranked cluster is not hoisted before it', async () => {
+    // The #843 hoist ("container draws first so the content composites on top")
+    // is exactly the relation a lens around a cluster has — and it would paint the
+    // cluster crisp on top instead of refracting it. The glass-last intent wins,
+    // like an authored band does, and without a diagnostic.
+    const coord = await loadCoordinator();
+    const { log } = await import('../../../utils/log');
+    const warn = vi.spyOn(log, 'warning');
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const lens = makeGlassMesh(-20, { after: true, radius: 100 });
+    const marker = makeGSplatsMesh(2, 'volumetric');
+    marker.geometry.boundingSphere!.center.set(0, 0, -30);
+    marker.geometry.boundingSphere!.radius = 1;
+    commitGlass(coord, lens);
+    coord.noteDepthSortCommit(marker, new Float32Array([0, 0, -1]), 1);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(marker.renderOrder).toBe(1);
+    expect(lens.renderOrder).toBe(2);
+    expect(warn.mock.calls.some(([, msg]) => String(msg).includes('CONTAINS'))).toBe(false);
+    warn.mockRestore();
+  });
+
+  it('glass-first at -1, emissive at 0 and glass-last ranked, all in one scene', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const shell = makeGlassMesh(-10);
+    const lens = makeGlassMesh(-12, { after: true });
+    const additive = makeGSplatsMesh(2, 'additive');
+    commitGlass(coord, shell);
+    commitGlass(coord, lens);
+    coord.noteDepthSortCommit(additive, new Float32Array([0, 0, -1]), 1);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(shell.renderOrder).toBe(-1);
+    expect(additive.renderOrder).toBe(0);
+    expect(lens.renderOrder).toBe(1);
   });
 
   it('an authored band overrides the containment hoist, and warns', async () => {

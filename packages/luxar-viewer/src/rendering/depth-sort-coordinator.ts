@@ -97,6 +97,7 @@ import {
   authoredLayerOrder,
   clearRenderOrderFrameState,
   collectRenderOrderSlot,
+  drawsAfterEmissive,
   drawsBeforeEmissive,
   setRenderOrderDisplayDimsAccessor,
 } from './depth-sort-coordinator/render-order';
@@ -1827,7 +1828,13 @@ export function evaluateDepthSortPerFrame(): void {
     // removed at runtime would keep a stale positive rank forever — the same
     // class of bug `computeDrawOrder` already documents for opaque meshes after
     // a live blending switch.
-    const wantsRank = orderDependent || authoredLayerOrder(mesh) !== undefined;
+    //
+    // A refracting glass (`drawsAfterEmissive`, spec MESH_PHYSICAL_MATERIALS §3.4
+    // Phase 3) ALWAYS takes a rank: the unranked emissive layers sit at
+    // renderOrder 0, ranks start at 1, and "after them, within my band" is what
+    // the `last` slot flag then expresses — no sentinel value could.
+    const wantsRank =
+      orderDependent || authoredLayerOrder(mesh) !== undefined || drawsAfterEmissive(mesh);
     if (!wantsRank) {
       // Neither order-dependent nor authored — clear any cross-part renderOrder
       // bias so it doesn't strand a stale ordering. The one exception is glass
