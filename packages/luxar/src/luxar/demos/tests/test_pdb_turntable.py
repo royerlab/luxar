@@ -32,7 +32,10 @@ def test_pymol_script_turns_exactly_once_with_a_transparent_ray_traced_backgroun
     assert "cmd.load('/x/1OMG.pdb', 'mol')" in script
     assert "cmd.set('ray_opaque_background', 0)" in script  # alpha channel
     assert "for i in range(360):" in script
-    assert "cmd.turn('y', 1.0)" in script  # 360 frames → exactly 1° per frame
+    assert "cmd.turn('y', -1.0)" in script  # 360 frames → exactly 1° per frame, spun
+    # in the negative sense to match the scene's auto-rotation; standing on the
+    # longest axis (orient lays it along x, the quarter turn makes it vertical).
+    assert "cmd.turn('z', 90)" in script
     assert "ray=1" in script and "width=1024, height=1024" in script
     # The look the demo promises: an opaque clay surface of the polymer alone,
     # per-chain shades of the story colour, soft shadows + ambient occlusion.
@@ -56,7 +59,7 @@ def test_pymol_script_turns_exactly_once_with_a_transparent_ray_traced_backgroun
     assert "cmd.set('antialias', 1)" in script
     # The defaults give a slow 30 s turn: 900 frames of 0.4 deg at 30 fps.
     assert tt.DEFAULT_FRAMES / tt.DEFAULT_FPS == 30
-    assert "cmd.turn('y', 0.4)" in tt.pymol_script(
+    assert "cmd.turn('y', -0.4)" in tt.pymol_script(
         Path("a.pdb"), Path("f"), frames=tt.DEFAULT_FRAMES, size=768
     )
     assert "cmd.set('max_threads', 4)" in script
@@ -64,7 +67,7 @@ def test_pymol_script_turns_exactly_once_with_a_transparent_ray_traced_backgroun
         Path("a.pdb"), Path("f"), frames=360, size=768, threads=6
     )
     # Non-integer steps still sum to one turn.
-    assert "cmd.turn('y', 2.5)" in tt.pymol_script(
+    assert "cmd.turn('y', -2.5)" in tt.pymol_script(
         Path("a.pdb"), Path("f"), frames=144, size=256
     )
 

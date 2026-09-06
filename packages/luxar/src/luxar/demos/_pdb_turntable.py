@@ -12,7 +12,9 @@ Pipeline (all cached under ``~/.cache/luxar/pdb_turntables``):
 1. Fetch ``<ID>.pdb`` and the entry title from RCSB (``files.rcsb.org`` and
    ``data.rcsb.org``).
 2. Drive PyMOL headless (``pymol -cq <script>``) to ray-trace ``frames`` PNG
-   frames with a transparent background, turning 360°/frames per frame — at the
+   frames with a transparent background, the structure standing on its longest
+   principal axis and turning 360°/frames per frame about it, in the same sense
+   as the scene's auto-rotation — at the
    default 900 frames that is 0.4° per frame, a slow 30 s turn at 30 fps (the
    owner found one turn in 6 s far too fast; 0.4° per displayed frame is well
    below the step that reads as judder at overlay size). The
@@ -45,7 +47,7 @@ from typing import Mapping, Optional, Sequence
 from arbol import aprint
 
 #: Bump when :func:`pymol_script` changes so cached turntables re-render.
-STYLE_VERSION = 4
+STYLE_VERSION = 5
 DEFAULT_FRAMES = 900
 DEFAULT_FPS = 30
 # 768 px covers the overlay's ~26% of a 4K kiosk width (~1000 px) at a 1.3x
@@ -185,7 +187,11 @@ def pymol_script(
     the polymer alone (no cartoon, ligands or ions), each chain in a pastel shade
     of the story colour (:func:`chain_palette`), soft three-light studio
     lighting with low specular, ray-traced shadows and ambient occlusion, and a
-    transparent background. One ``turn y`` per frame around the oriented view;
+    transparent background. The structure stands on its longest principal axis
+    (``orient`` lays that axis along x; a quarter turn about the view axis makes
+    it vertical) and spins about it, one ``turn y`` per frame, in the NEGATIVE
+    sense so the spin reads in the same direction as the scene's world-y
+    auto-rotation beside it (the owner saw the positive sense as opposite).
     ``zoom(complete=1)`` plus an open clipping slab keep a long complex inside
     the square frame at every angle (a plain zoom fits the default 4:3 viewport
     and clipped photosystem II's ends).
@@ -241,9 +247,13 @@ def pymol_script(
             "cmd.orient('mol and polymer')",
             "cmd.zoom('mol and polymer', buffer=2.0, complete=1)",
             "cmd.clip('slab', 10000)",
+            # orient lays the longest principal axis along the screen's x; a
+            # quarter turn about the view axis stands the structure up so the
+            # spin axis below IS its long axis (the bounding sphere still fits).
+            "cmd.turn('z', 90)",
             f"for i in range({frames}):",
             f"    cmd.png({str(frames_dir)!r} + '/frame_%04d.png' % i, width={size}, height={size}, dpi=-1, ray=1)",
-            f"    cmd.turn('y', {step!r})",
+            f"    cmd.turn('y', {-step!r})",
         ]
     )
 

@@ -1,9 +1,9 @@
 # Sound Spec — ambient and spatial audio as scene-graph nodes
 
-**Status:** Design agreed with the project owner on 2026-09-06; Phase 1 is
-implemented in draft PR #2566 (`feat/sound-layer`, stacked on PR #2536, which it
-needs for the story waypoints its triggers use). Phase 1 decisions and
-deviations are marked inline below.
+**Status:** Design agreed with the project owner on 2026-09-06; all four phases
+are implemented in draft PR #2566 (`feat/sound-layer`, stacked on PR #2536, which
+it needs for the story waypoints its triggers use; it stays a draft until #2536
+merges). Implementation decisions and deviations are marked inline below.
 
 ## 1. Motivation
 
@@ -27,7 +27,7 @@ Decisions taken (owner, 2026-09-06):
 | Narration | Text-to-speech at scene build time: OpenAI TTS when a key is present, else macOS `say`, else warn. |
 | Ambient / cluster clips | Recorded CC0 clips (Freesound and the like), licence recorded per node. |
 | Default | Authored per scene; viewer default ON with a mute control shown only when the scene has sound nodes. |
-| Extras | Recording panel captures audio; ambisonic beds (Omnitone) as a later phase. |
+| Extras | Recording panel captures audio; ambisonic (first-order) beds rotating with the camera — decoded by a dependency-free native graph, NOT Omnitone (Phase 4 decision: Omnitone decodes to binaural only, wrong on room speakers; fetches HRIRs from a CDN at runtime, impossible on an offline kiosk; unmaintained). |
 | Branch | New branch and PR stacked on #2536. |
 
 ## 2. Framework
@@ -130,8 +130,15 @@ scene.add_sound(
 attrs: type, spatial, trigger, delay_ms, gain, bus, loop (derived), fade_in_ms,
        fade_out_ms, distance_model, ref_distance, max_distance, rolloff, cone_*,
        orientation, attach_to, format, duration_ms, license, attribution,
-       source_url, layer (bool), extend_to_all, transform, nd_transform
+       source_url, layer (bool), extend_to_all, transform, nd_transform,
+       ambisonic ("foa" for a first-order AmbiX ACN/SN3D field; absent otherwise),
+       channels (stamped when a tag reader is present)
 ```
+
+`format` is the CODEC (`mp3` / `aac`), never the spatial layout: an ambisonic
+field is `format: "aac"` + `ambisonic: "foa"`, and the writer refuses a field
+that is not four-channel. World front is −Z; the viewer decodes with nine gains
+over the dipoles plus a virtual-cardioid pair at ±60° for the room's stereo.
 
 `content_hash` covers the audio bytes (the same gap #1720 closed for overlay
 PNGs must not reopen).
@@ -181,9 +188,12 @@ persists like other rendering settings.
 `waypoint-departed {index}` and `waypoint-arrived {index, completed}` (arrival
 fires when the `flyTo` promise resolves, or immediately after a snap). Sound
 nodes with `on_depart` / `on_arrive` subscribe and match the waypoint's `when`
-against their own row. A flight cancelled by the visitor still resolves, so
-narration still starts — but from wherever the camera stopped, which is the
-right behaviour.
+against their own row. A flight cancelled by the visitor still resolves
+(`completed: false`), so narration still starts — but from wherever the camera
+stopped, which is the right behaviour. A flight SUPERSEDED by a newer waypoint
+never fires `waypoint-arrived`, so two narrations cannot overlap when a visitor
+steps quickly. An `on_arrive` clip fades out on the slab's falling edge (moving
+on cuts the previous story's narration); an `on_depart` clip plays out.
 
 ### 4.4 Autoplay
 
@@ -232,9 +242,11 @@ waypoint events above.
 | Phase | Scope |
 | --- | --- |
 | 1 | `sound` node type (Python writer + validation, viewer loader, `AudioEngine`, `SoundNode`, listener), non-spatial and spatial playback, slab audibility, `continuous`/`once`, buses and ducking, autoplay gate + kiosk flag docs, rail mute, `viewer_config.audio`, remote `setAudio`/`playSound`; demo narration + ambient bed |
-| 2 | `on_depart`/`on_arrive` via waypoint events, `attach_to`, cluster sounds in the demo, Layers-panel gain sliders |
-| 3 | Recording panel captures the audio destination into story videos |
-| 4 | Ambisonic beds via Omnitone (`format: "ambisonic-foa"`), rotating with the camera |
+| 2 | `on_depart`/`on_arrive` via waypoint events, `attach_to`, cluster sounds in the demo (a pentatonic hum per story attached to the highlight node), Layers-panel rows (eye = mute, group eye mutes the subtree, inline gain slider, provenance tooltip; `LayerSummary`/`LayerPatch` gain) |
+| 3 | Recording panel "Include Audio": the master-gain tap into real-time WebM (Opus mime first; the offline path stays silent) |
+| 4 | Ambisonic beds (`ambisonic: "foa"`, AmbiX ACN/SN3D, four-channel AAC — Chrome decodes it to four channels) rotating with the camera through the native decoder, no Omnitone |
+
+All four phases shipped together in draft PR #2566 (2026-09-06).
 
 Out of scope: sonification (procedural data-driven sound), live TTS over the
 remote API (Phase D of the remote-control spec owns it), multichannel outputs.
