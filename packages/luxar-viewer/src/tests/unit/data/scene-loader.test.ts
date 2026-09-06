@@ -1825,6 +1825,29 @@ describe('SceneLoader', () => {
       internals.gsplatLoaders.clear();
     });
 
+    it('refinementHoldReason: density gate first, then the last run’s residency budget, else null', () => {
+      const caps = { blendable: 4, nonBlendable: 1 };
+      const sample = { areaPx: 100, elements: 1_000_000, onScreen: true, blendable: true };
+      type Internals = {
+        refinementDensityGate: { deferred: Map<string, number> } | null;
+        lastResidencyBudget: { isDeclined(path: string): boolean } | null;
+      };
+      const internals = sceneLoader as unknown as Internals;
+      try {
+        expect(sceneLoader.refinementHoldReason('/g/part_0')).toBeNull();
+        internals.lastResidencyBudget = { isDeclined: (p) => p === '/g/part_0' };
+        expect(sceneLoader.refinementHoldReason('/g/part_0')).toBe('budget');
+        expect(sceneLoader.refinementHoldReason('/g/part_1')).toBeNull();
+        sceneLoader.setRefinementDensityProvider(() => sample, caps);
+        internals.refinementDensityGate!.deferred.set('/g/part_0', 1e9);
+        // Both hold it: the camera-dependent reason wins.
+        expect(sceneLoader.refinementHoldReason('/g/part_0')).toBe('density');
+      } finally {
+        sceneLoader.setRefinementDensityProvider(null, caps);
+        internals.lastResidencyBudget = null;
+      }
+    });
+
     // Turning the density guard off at runtime clears the rung gate. The rungs
     // it was holding back have no other way to load: `resumeDensityDeferred
     // Refinement` has no gate left to consult, so the clear itself must kick.

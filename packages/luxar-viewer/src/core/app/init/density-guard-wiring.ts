@@ -26,6 +26,7 @@ import {
 } from '../../../scene/projected-density';
 import type { NodeDensityState } from '../../../types/data-monitor-types';
 import type { DensityGuardControl } from '../../../ui/rendering-controls/types';
+import { log, Modules } from '../../../utils/log';
 
 /** What the wiring reads live each frame. Every accessor is called, never captured. */
 export interface DensityGuardWiringDeps {
@@ -34,6 +35,11 @@ export interface DensityGuardWiringDeps {
   /** `LuxarAppOptions.densityGuard` (`?no-density-guard` → false). */
   option: boolean | undefined;
   config: DensityGuardConfig;
+  /**
+   * `LuxarAppOptions.densityCap` (`?density-cap=N`): session-only override of
+   * the blendable cap, followed by BOTH consumers (ladder + rung gate).
+   */
+  capOverride?: number;
   /** The `?no-lod-energy` flag, passed through to `applyLodFade`. */
   energyComp: boolean;
   sceneManager: {
@@ -116,16 +122,45 @@ export function summarizeThinning(tracker: ProjectedDensityTracker): {
   return { nodes, minKeep };
 }
 
+/**
+ * The config the guard actually runs with: the configured slice, or a copy
+ * with the blendable cap replaced by a valid `?density-cap=N` override. The
+ * non-blendable cap is documented as the TIGHTER of the two ("one element per
+ * pixel already saturates a max projection"), so an override below it pulls it
+ * down too; an override above it leaves it alone.
+ */
+export function resolveDensityGuardConfig(
+  base: DensityGuardConfig,
+  capOverride: number | undefined
+): DensityGuardConfig {
+  if (capOverride === undefined || !(capOverride > 0) || !Number.isFinite(capOverride)) {
+    return base;
+  }
+  return {
+    ...base,
+    capElementsPerPixel: capOverride,
+    nonBlendableCapElementsPerPixel: Math.min(base.nonBlendableCapElementsPerPixel, capOverride),
+  };
+}
+
 export function wireDensityGuard(deps: DensityGuardWiringDeps): DensityGuardWiring {
   const sessionDisabled = deps.option === false;
   let enabled = resolveDensityGuardEnabled(deps.configEnabled, deps.option);
+  const cfg = resolveDensityGuardConfig(deps.config, deps.capOverride);
+  if (cfg.capElementsPerPixel !== deps.config.capElementsPerPixel) {
+    log.info(
+      Modules.RENDERER,
+      `Density guard cap overridden for this session: ${cfg.capElementsPerPixel} el/px ` +
+        `(configured ${deps.config.capElementsPerPixel}; ?density-cap)`
+    );
+  }
   const tracker = deps.tracker ?? getProjectedDensityTracker();
   const guard = deps.guard ?? getDensityGuard();
 
   // The keep-fraction ladder rides the tracker's visit hook (blendable modes
   // only; brightness-compensated through applyLodFade).
   guard.configure({
-    config: () => deps.config,
+    config: () => cfg,
     energyComp: () => deps.energyComp,
     registerMaterial: (material) => deps.registerMaterial(material),
   });
@@ -146,8 +181,8 @@ export function wireDensityGuard(deps: DensityGuardWiringDeps): DensityGuardWiri
   // loader kicks refinement for anything the old gate was holding back.
   const provider = buildDensityProvider(tracker);
   const caps: DensityGateCaps = {
-    blendable: deps.config.capElementsPerPixel,
-    nonBlendable: deps.config.nonBlendableCapElementsPerPixel,
+    blendable: cfg.capElementsPerPixel,
+    nonBlendable: cfg.nonBlendableCapElementsPerPixel,
   };
   const publish = (): void => deps.setRefinementDensityProvider(enabled ? provider : null, caps);
   publish();
@@ -164,6 +199,7 @@ export function wireDensityGuard(deps: DensityGuardWiringDeps): DensityGuardWiri
     provider,
     sessionDisabled,
     isEnabled: () => enabled,
+    capElementsPerPixel: () => cfg.capElementsPerPixel,
     setEnabled: (on) => {
       if (on === enabled) return;
       enabled = on;

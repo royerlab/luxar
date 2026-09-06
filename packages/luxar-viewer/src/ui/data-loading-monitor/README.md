@@ -130,10 +130,13 @@ in `timing-panel.ts`.
   collapse to one logical layer in `getGlobalStats`.
 - **Additive-chip glyphs**: `LOD x/N` = detail levels loaded of total;
   `●` = last refinement pass fully cache-resident, `◌` = still streaming
-  from the network; `⏳` = refinement in progress; `LOD –/N` = the node
-  has N additive levels but no live streaming loader (typically an
-  inactive substitutive level). Every glyph is spelled out in the chip's
-  `title` tooltip.
+  from the network; `⏳` = refinement in progress; a trailing pause glyph
+  (`MONITOR_ICONS.lodHeld`) = the next level is HELD, not downloading —
+  by the density guard at this framing or at the residency ceiling
+  (`LODProgressState.held`), and the header counts those as `held N`
+  apart from `refining N`; `LOD –/N` = the node has N additive levels
+  but no live streaming loader (typically an inactive substitutive
+  level). Every glyph is spelled out in the chip's `title` tooltip.
 - **Active substitutive level rows** are highlighted (and inactive levels
   dimmed) via `data-level-of`/`data-level-index` attributes that the
   per-tick patcher re-marks from the group's `activeLevel` — the tree

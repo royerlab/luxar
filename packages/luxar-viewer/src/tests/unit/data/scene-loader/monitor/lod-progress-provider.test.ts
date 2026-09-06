@@ -44,6 +44,27 @@ describe('createLODProgressProvider', () => {
     });
   });
 
+  it('carries the hold reason only when the caller reports one, never on a streaming path', () => {
+    const loaders = new Map<string, unknown>([
+      ['/density', progressiveLoader(2, 4, false)],
+      ['/budget', progressiveLoader(2, 4, false)],
+      ['/streaming', progressiveLoader(2, 4, false)],
+    ]);
+    const provider = createLODProgressProvider({
+      loaderMaps: [loaders],
+      lodGroupRegistry: null,
+      refinementHold: (path) =>
+        path === '/density' ? 'density' : path === '/budget' ? 'budget' : null,
+    });
+    const states = provider.getLODStates();
+    expect(states.get('/density')?.held).toBe('density');
+    expect(states.get('/budget')?.held).toBe('budget');
+    expect(states.get('/streaming')).not.toHaveProperty('held');
+    // Without the accessor nothing is flagged (tests / headless wiring).
+    const bare = createLODProgressProvider({ loaderMaps: [loaders], lodGroupRegistry: null });
+    expect(bare.getLODStates().get('/density')).not.toHaveProperty('held');
+  });
+
   it('surfaces the committed energy fraction e(k) when the loader is stamped', () => {
     const stamped = { ...progressiveLoader(2, 4, true), committedEnergyFraction: 0.7 };
     const unstamped = { ...progressiveLoader(2, 4, true), committedEnergyFraction: null };

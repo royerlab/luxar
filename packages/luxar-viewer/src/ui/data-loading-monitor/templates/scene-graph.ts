@@ -87,7 +87,7 @@ function renderKindBadge(node: SceneGraphNode): string {
 export function lodChipContent(
   node: SceneGraphNode,
   state: LODProgressState | undefined
-): { text: string; title: string } | null {
+): ChipContent | null {
   if (node.kind === 'lod') {
     const count = state?.levelCount ?? node.lodGroupChildCount ?? 0;
     if (count <= 0) return null;
@@ -119,9 +119,22 @@ export function lodChipContent(
     }
     const loaded = state.loaded ?? 0;
     const refining = state.refining === true;
+    // A HELD rung is not waiting on the network: show the pause glyph instead
+    // of the streaming ⏳, and say why first in the tooltip.
+    const held = refining ? state.held : undefined;
     const residency =
       state.lastAllResident === false ? ' ◌' : state.lastAllResident === true ? ' ●' : '';
-    const spinner = refining ? ' ⏳' : '';
+    const spinner = refining && !held ? ' ⏳' : '';
+    const heldNote =
+      held === 'density'
+        ? 'Next level HELD by the density guard — at this framing the node already projects ' +
+          `more elements per pixel than its cap, so level ${loaded + 1} is not loaded; it loads ` +
+          'as you zoom in (or with the Density Guard toggle off). '
+        : held === 'budget'
+          ? `Next level HELD at the residency ceiling — loading level ${loaded + 1} would push ` +
+            'resident data over the refinement working-set budget (capped at 512 MB), so it is ' +
+            'not loaded; nothing more loads until resident data shrinks (a smaller slice). '
+          : '';
     // Always spell out what the residency dot means — the ● typically
     // appears exactly when refinement has finished, so the explanation
     // must not be gated on `refining`.
@@ -142,12 +155,15 @@ export function lodChipContent(
       typeof state.energy === 'number'
         ? ` · ~${Math.round(state.energy * 100)}% of the level's total energy already on screen (energy-ordered streaming loads the visually important elements first)`
         : '';
-    const base = refining
-      ? `Additive LOD refining — ${loaded}/${total} levels loaded`
-      : `Additive LOD — ${loaded}/${total} levels loaded`;
+    const base = held
+      ? `Additive LOD held — ${loaded}/${total} levels loaded`
+      : refining
+        ? `Additive LOD refining — ${loaded}/${total} levels loaded`
+        : `Additive LOD — ${loaded}/${total} levels loaded`;
     return {
-      text: `LOD ${loaded}/${total}${energyStr}${residency}${spinner}`,
-      title: `${base}${energyNote}${residencyNote}`,
+      ...(held ? { icon: MONITOR_ICONS.lodHeld, iconPosition: 'after' as const } : {}),
+      text: `LOD ${loaded}/${total}${energyStr}${residency}${spinner}${held ? ' ' : ''}`,
+      title: `${heldNote}${base}${energyNote}${residencyNote}`,
     };
   }
 
@@ -157,7 +173,7 @@ export function lodChipContent(
 function renderLodChip(node: SceneGraphNode, state: LODProgressState | undefined): string {
   const content = lodChipContent(node, state);
   if (!content) return '';
-  return `<span class="luxar-scene-graph__lod" data-lod-path="${escapeHtml(node.path)}" title="${escapeHtml(content.title)}">${escapeHtml(content.text)}</span>`;
+  return `<span class="luxar-scene-graph__lod" data-lod-path="${escapeHtml(node.path)}" title="${escapeHtml(content.title)}">${chipInnerHtml(content)}</span>`;
 }
 
 /**
@@ -168,6 +184,8 @@ function renderLodChip(node: SceneGraphNode, state: LODProgressState | undefined
  */
 export interface ChipContent {
   icon?: string;
+  /** Where the glyph sits relative to the text (default before). */
+  iconPosition?: 'before' | 'after';
   text: string;
   title: string;
 }
@@ -175,7 +193,9 @@ export interface ChipContent {
 /** Inner HTML for a chip: glyph markup + escaped text; `''` for no content. */
 export function chipInnerHtml(content: ChipContent | null): string {
   if (!content) return '';
-  return `${content.icon ?? ''}${escapeHtml(content.text)}`;
+  const icon = content.icon ?? '';
+  const text = escapeHtml(content.text);
+  return content.iconPosition === 'after' ? `${text}${icon}` : `${icon}${text}`;
 }
 
 /**
@@ -607,11 +627,16 @@ export function summariseLodStates(
   let additive = 0;
   let partition = 0;
   let refining = 0;
+  let held = 0;
   for (const s of lodStates.values()) {
     if (s.kind === 'lod') lod++;
     else if (s.kind === 'additive') {
       additive++;
-      if (s.refining) refining++;
+      // A held rung (density gate or residency ceiling) is "refining" to the
+      // loader but not streaming; count it apart so "refining 12" cannot read
+      // as 12 downloads in flight.
+      if (s.refining && s.held) held++;
+      else if (s.refining) refining++;
     } else if (s.kind === 'partition') partition++;
   }
   const parts: string[] = [];
@@ -626,5 +651,6 @@ export function summariseLodStates(
   }
   if (partition > 0) parts.push(`${partition} partition${partition !== 1 ? 's' : ''}`);
   if (refining > 0) parts.push(`refining ${refining}`);
+  if (held > 0) parts.push(`held ${held}`);
   return parts.join(' · ');
 }

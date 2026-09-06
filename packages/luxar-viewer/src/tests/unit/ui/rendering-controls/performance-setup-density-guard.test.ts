@@ -114,6 +114,7 @@ function makeControl(overrides: Partial<DensityGuardControl> = {}): DensityGuard
       enabled = on;
     }),
     thinning: () => ({ nodes: 0, minKeep: 1 }),
+    capElementsPerPixel: () => 4,
     ...overrides,
   };
   return control as DensityGuardControl & { setEnabled: ReturnType<typeof vi.fn> };
@@ -126,18 +127,25 @@ describe('formatKeepFraction / formatThinning', () => {
     expect(formatKeepFraction(1 / 64)).toBe('1/64');
   });
 
-  it('reads off / none / N nodes · keep 1/K', () => {
+  it('reads off / none / N nodes · keep 1/K, with the cap in force', () => {
     let enabled = false;
     const control = makeControl({ isEnabled: () => enabled });
     expect(formatThinning(control)).toBe('off');
     enabled = true;
-    expect(formatThinning(control)).toBe('none');
+    expect(formatThinning(control)).toBe('none · cap 4');
     expect(formatThinning(makeControl({ thinning: () => ({ nodes: 1, minKeep: 0.25 }) }))).toBe(
-      '1 node · keep 1/4'
+      '1 node · keep 1/4 · cap 4'
     );
     expect(formatThinning(makeControl({ thinning: () => ({ nodes: 3, minKeep: 1 / 8 }) }))).toBe(
-      '3 nodes · keep 1/8'
+      '3 nodes · keep 1/8 · cap 4'
     );
+    // A `?density-cap=` sweep shows the value as typed — halving down from 4
+    // reaches 0.25, which must not round to 0.3.
+    expect(formatThinning(makeControl({ capElementsPerPixel: () => 2.5 }))).toBe('none · cap 2.5');
+    expect(formatThinning(makeControl({ capElementsPerPixel: () => 0.25 }))).toBe(
+      'none · cap 0.25'
+    );
+    expect(formatThinning(makeControl({ capElementsPerPixel: () => 4.0 }))).toBe('none · cap 4');
   });
 });
 
@@ -205,7 +213,7 @@ describe('setupPerformanceControls — Density Guard', () => {
       'Manual DPR',
     ]);
     expect(result.densityGuardEnabled).toBe(byName(folder, 'Density Guard'));
-    expect(rowValue(folder, 'Thinning').textContent).toBe('2 nodes · keep 1/8');
+    expect(rowValue(folder, 'Thinning').textContent).toBe('2 nodes · keep 1/8 · cap 4');
   });
 
   it('binds the toggle to the LIVE guard state, not the stored flag', () => {
@@ -248,9 +256,9 @@ describe('setupPerformanceControls — Density Guard', () => {
       false
     );
     setupPerformanceControls(context);
-    expect(rowValue(folder, 'Thinning').textContent).toBe('none');
+    expect(rowValue(folder, 'Thinning').textContent).toBe('none · cap 4');
     nodes = 1;
     vi.advanceTimersByTime(500);
-    expect(rowValue(folder, 'Thinning').textContent).toBe('1 node · keep 1/2');
+    expect(rowValue(folder, 'Thinning').textContent).toBe('1 node · keep 1/2 · cap 4');
   });
 });

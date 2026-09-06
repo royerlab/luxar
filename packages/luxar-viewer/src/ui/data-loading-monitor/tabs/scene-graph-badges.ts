@@ -54,7 +54,7 @@ export function updateSceneGraphBadges(
     const node = model.getSceneGraphNodeByPath(path);
     if (!node) return;
     const content = lodChipContent(node, lodStates.get(path));
-    chip.textContent = content?.text ?? '';
+    chip.innerHTML = chipInnerHtml(content);
     (chip as HTMLElement).title = content?.title ?? '';
   });
 
