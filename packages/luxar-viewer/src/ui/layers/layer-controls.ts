@@ -959,8 +959,8 @@ export class LayerControls {
    * One live slider for a physical knob, from its table spec: the track spans the
    * spec's slider domain (a log track for a length spanning decades, its top stop
    * meaning `∞` where the spec says so), and a drag follows the mesh-appearance
-   * pattern — mutate every selected layer's record, then push each through the
-   * apply engine, which maps slider space back onto the material.
+   * pattern — map the slider value into material space, mutate every selected
+   * layer's record, then push each through the apply engine.
    */
   private buildPhysicalKnobSlider(key: PhysicalMeshKnobKey): void {
     if (!this.physicalGroupEl) return;
@@ -979,8 +979,9 @@ export class LayerControls {
       constrain: (v) => physicalKnobToSlider(key, v),
       onChange: (val) => {
         this.controlsInteracting = true;
+        const materialValue = physicalKnobFromSlider(key, val);
         this.deps.state.applyToSelected((l) => {
-          if (l.physicalKnobs) l.physicalKnobs[key] = val;
+          if (l.physicalKnobs) l.physicalKnobs[key] = materialValue;
         });
         for (const sel of this.deps.state.getSelected()) {
           this.deps.apply.applyPhysicalKnobs(sel);
@@ -1005,7 +1006,7 @@ export class LayerControls {
     const live: Partial<Record<PhysicalMeshKnobKey, number>> & { attenuation_color?: string } = {
       attenuation_color: knobs.attenuation_color,
     };
-    for (const key of PHYSICAL_MESH_KNOB_KEYS) live[key] = physicalKnobFromSlider(key, knobs[key]);
+    for (const key of PHYSICAL_MESH_KNOB_KEYS) live[key] = knobs[key];
     for (const [key, slider] of this.physicalSliders) {
       slider.setInert(physicalKnobInertReason(key, live));
     }
@@ -1023,7 +1024,9 @@ export class LayerControls {
     rows.textContent = '';
     const knobs = primary.physicalKnobs;
     if (primary.material !== 'physical' || !knobs) return;
-    for (const [key, slider] of this.physicalSliders) slider.setValue(knobs[key]);
+    for (const [key, slider] of this.physicalSliders) {
+      slider.setValue(physicalKnobToSlider(key, knobs[key]));
+    }
     this.syncPhysicalInertStates(knobs);
     const addRow = (label: string, value: string): void => {
       const row = document.createElement('div');
