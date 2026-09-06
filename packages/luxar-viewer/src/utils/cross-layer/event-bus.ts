@@ -54,6 +54,14 @@ export interface LuxarEventMap {
     total: number;
     activeQueries: number;
   };
+  /**
+   * A node's geometry was committed (or re-committed) to the GPU — the same
+   * moment the pick buffer is invalidated. Consumers that derive something from
+   * WHAT IS RESIDENT (the scene-derived environment capture in
+   * `rendering/environment/`) mark themselves stale on it and rebuild once the
+   * loader settles, rather than polling the scene graph.
+   */
+  'geometry-committed': { path: string };
 
   // ── Command events (input → UI panel toggles) ───────────────
   /**

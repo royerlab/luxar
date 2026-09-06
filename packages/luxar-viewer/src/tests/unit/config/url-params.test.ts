@@ -37,7 +37,22 @@ describe('readUrlParams', () => {
       dpr: null,
       lineJoin: null,
       linePrimitive: null,
+      bakeEnv: false, // the `luxar env bake` driver's one-shot (opt-in via ?bake-env)
+      probe: null,
+      envResolution: null,
     });
+  });
+
+  it('parses the environment bake parameters (?bake-env&probe=&env-resolution=)', () => {
+    expect(readUrlParams('?bake-env').bakeEnv).toBe(true);
+    expect(readUrlParams('?bake-env&probe=node:clusters/shell&env-resolution=256')).toMatchObject({
+      bakeEnv: true,
+      probe: 'node:clusters/shell',
+      envResolution: 256,
+    });
+    expect(readUrlParams('?probe=%201,2,3%20').probe).toBe('1,2,3');
+    expect(readUrlParams('?probe=').probe).toBeNull();
+    expect(readUrlParams('?env-resolution=abc').envResolution).toBeNull();
   });
 
   it('parses ?title=, decoding and trimming; blank collapses to null', () => {

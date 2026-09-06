@@ -42,11 +42,12 @@ import { GSplatTSLMaterial } from '../materials/gsplat/material-tsl';
 import { MeshTSLMaterial } from '../materials/mesh/material-tsl';
 import { PhysicalMeshTSLMaterial } from '../materials/mesh-physical/material-tsl';
 
-// The WebGPU renderer's own PMREM generator, for the lazily built scene environment
-// that lights physical meshes (`rendering/environment/scene-environment.ts`). A
-// different class from `three`'s WebGL one, and the one place outside the material
-// classes where the environment code needs a `three/webgpu` symbol.
-import { PMREMGenerator } from 'three/webgpu';
+// The WebGPU renderer's own PMREM generator and cube render target, for the scene
+// environment that lights physical meshes (`rendering/environment/`). Different
+// classes from `three`'s WebGL ones (`PMREMGenerator`, `WebGLCubeRenderTarget`), and
+// the one place outside the material classes where the environment code needs a
+// `three/webgpu` symbol.
+import { CubeRenderTarget, PMREMGenerator } from 'three/webgpu';
 
 // Picking material classes (`extends NodeMaterial`).
 import { PointPickingTSLMaterial } from '../picking/point/material-tsl';
@@ -114,7 +115,7 @@ export const TSL_REGISTRY = {
     meshPhysical: PhysicalMeshTSLMaterial,
   },
   /** Backend-specific scene-environment tooling (`rendering/environment/`). */
-  environment: { PMREMGenerator },
+  environment: { PMREMGenerator, CubeRenderTarget },
   /** Picking material classes, keyed by geometry kind. */
   picking: {
     point: PointPickingTSLMaterial,

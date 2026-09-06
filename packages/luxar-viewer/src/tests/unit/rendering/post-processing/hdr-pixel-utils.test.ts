@@ -327,6 +327,49 @@ function extractRowIndices(buf: Uint8Array): number[] {
   return out;
 }
 
+describe('readPixelsCompactAsync — cube face threading', () => {
+  // The two renderer signatures put the face in DIFFERENT slots: WebGL after the
+  // destination buffer (7th), WebGPU after `textureIndex` (7th as well, but with
+  // `textureIndex = 0` occupying the 6th). Pinned because a swap is silent: both
+  // backends would happily read face 0 six times.
+  it('WebGL2: passes faceIndex as activeCubeFaceIndex after the buffer', async () => {
+    const read = vi.fn(
+      async (_t: unknown, _x: number, _y: number, _w: number, _h: number, buffer: Uint16Array) => {
+        buffer.fill(7);
+      }
+    );
+    const renderer = { readRenderTargetPixelsAsync: read } as unknown as THREE.WebGLRenderer;
+    const { pixels } = await readPixelsCompactAsync(renderer, makeCaps('webgl2', false), {
+      target: makeTarget(2, 2),
+      kind: 'rgba16f',
+      faceIndex: 4,
+      flipY: true,
+    });
+    expect(read).toHaveBeenCalledTimes(1);
+    const args = read.mock.calls[0] as unknown[];
+    expect(args[5]).toBeInstanceOf(Uint16Array);
+    expect(args[6]).toBe(4);
+    expect(pixels).toBeInstanceOf(Uint16Array);
+    expect(pixels[0]).toBe(7);
+  });
+
+  it('WebGPU: passes textureIndex 0 then faceIndex (undefined → the renderer defaults it to 0)', async () => {
+    const read = vi.fn(async () => new Uint16Array(2 * 2 * 4).fill(3));
+    const renderer = { readRenderTargetPixelsAsync: read } as unknown as THREE.WebGLRenderer;
+    await readPixelsCompactAsync(renderer, makeCaps('webgpu', false), {
+      target: makeTarget(2, 2),
+      kind: 'rgba16f',
+      faceIndex: 2,
+    });
+    await readPixelsCompactAsync(renderer, makeCaps('webgpu', false), {
+      target: makeTarget(2, 2),
+      kind: 'rgba16f',
+    });
+    expect((read.mock.calls[0] as unknown[]).slice(5)).toEqual([0, 2]);
+    expect((read.mock.calls[1] as unknown[]).slice(5)).toEqual([0, undefined]);
+  });
+});
+
 describe('readPixelsCompactAsync', () => {
   describe('WebGL2 (bottom-up framebuffer)', () => {
     // Under WebGL2, `readRenderTargetPixelsAsync` writes the raw
@@ -500,7 +543,10 @@ describe('readPixelsCompactAsync', () => {
       expect(readPixels).toHaveBeenCalledTimes(1);
       const args = readPixels.mock.calls[0];
       // WebGPU signature: 5 args (target + x + y + w + h). No destination.
-      expect(args.length).toBe(5);
+      // …plus `textureIndex` (0) and the caller's `faceIndex` (undefined here → the
+      // renderer's own default of 0) — see the cube-face threading suite above.
+      expect(args.length).toBe(7);
+      expect(args.slice(5)).toEqual([0, undefined]);
     });
   });
 

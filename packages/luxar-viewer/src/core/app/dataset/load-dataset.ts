@@ -7,6 +7,7 @@ import type { RenderingControls } from '../../../ui/rendering-controls';
 import type { LayersPanel } from '../../../ui/layers';
 import type { LoaderConfig } from '../../../data/data-loader-types';
 import type { ZarrViewerConfig } from '../../../types/zarr';
+import { extractEnvironmentConfig } from '../../../config/zarr-bridge/viewer-config-utils';
 
 /**
  * Load a dataset and initialize the scene-dependent UI in the order
@@ -72,6 +73,12 @@ export async function loadDataset(src: string, ports: LoadDatasetPorts): Promise
   // authored camera position already carried its resolved FOV during loading.
   const viewerConfig = ports.sceneManager.getSceneViewerConfig();
   ports.renderingControls.setZarrViewerConfig(viewerConfig);
+  // The scene environment: authored source (room | scene | hdri) plus any baked map
+  // the loader found. Both are inert until a physical material asks for light.
+  ports.sceneManager.environment?.configure(
+    viewerConfig ? (extractEnvironmentConfig(viewerConfig) ?? null) : null
+  );
+  ports.sceneManager.environment?.setBaked(ports.sceneManager.getSceneBakedEnvironment());
   if (applyViewerConfigDefaults && viewerConfig) {
     ports.renderingControls.applyZarrDefaults();
   } else if (!applyViewerConfigDefaults) {

@@ -122,6 +122,14 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
     renderer: ports.sceneManager.renderer,
     controls: ports.sceneManager.controls,
     postProcessing: ports.sceneManager.postProcessing,
+    // The scene environment's state, and the `?bake-env` hand-off slot the
+    // `luxar env bake` driver polls (`lastBake` is filled by `run-bake.ts`).
+    environment: {
+      ...(existing.environment ?? {}),
+      kind: () => ports.sceneManager.environment?.activeKind() ?? 'none',
+      captureCount: () => ports.sceneManager.environment?.captureCount ?? 0,
+      hasBaked: () => ports.sceneManager.environment?.hasBaked() ?? false,
+    },
     animationController: ports.animationController,
     inputHandler: ports.inputHandler,
     renderingControls: ports.renderingControls,

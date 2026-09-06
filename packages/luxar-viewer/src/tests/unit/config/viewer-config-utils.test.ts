@@ -8,6 +8,8 @@ import {
   extractRenderingOverrides,
   extractCameraOverrides,
   extractBackgroundColor,
+  extractEnvironmentConfig,
+  environmentConfigToZarr,
   renderingSettingsToZarr,
   RENDERING_SETTINGS_MAP,
 } from '../../../config/zarr-bridge/viewer-config-utils';
@@ -432,6 +434,65 @@ describe('extractCameraOverrides', () => {
       camera: { target_node: 'embryo' },
     });
     expect(cam.targetNode).toBe('embryo');
+  });
+});
+
+describe('extractEnvironmentConfig', () => {
+  it('is undefined when the scene authored no block (absent ≠ default)', () => {
+    expect(extractEnvironmentConfig({})).toBeUndefined();
+  });
+
+  it('narrows a full block', () => {
+    expect(
+      extractEnvironmentConfig({
+        environment: { source: 'scene', probe: 'node:shell', resolution: 64, intensity: 1.5 },
+      })
+    ).toEqual({ source: 'scene', probe: { node: 'shell' }, resolution: 64, intensity: 1.5 });
+    expect(
+      extractEnvironmentConfig({
+        environment: { source: 'hdri', url: 'env/studio.hdr', probe: [1, 2, 3] },
+      })
+    ).toEqual({
+      source: 'hdri',
+      probe: { position: [1, 2, 3] },
+      resolution: 128,
+      intensity: 1,
+      url: 'env/studio.hdr',
+    });
+  });
+
+  it('warns and falls back per field, never lighting the scene with a typo', () => {
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const out = extractEnvironmentConfig({
+      environment: {
+        source: 'studio',
+        probe: 'centre',
+        resolution: 4,
+        intensity: -1,
+        url: 'ignored.hdr',
+      },
+    });
+    expect(out).toEqual({ source: 'room', probe: 'auto', resolution: 16, intensity: 1 });
+    const messages = warn.mock.calls.map((c) => String(c[1]));
+    expect(messages.some((m) => m.includes("unknown source 'studio'"))).toBe(true);
+    expect(messages.some((m) => m.includes('malformed probe'))).toBe(true);
+    expect(messages.some((m) => m.includes('snapped to 16'))).toBe(true);
+    expect(messages.some((m) => m.includes('intensity'))).toBe(true);
+    expect(messages.some((m) => m.includes("url is only read with source 'hdri'"))).toBe(true);
+    // hdri without a url is the room, said once.
+    expect(extractEnvironmentConfig({ environment: { source: 'hdri' } })!.source).toBe('room');
+    warn.mockRestore();
+  });
+
+  it('round-trips through the zarr spelling', () => {
+    const config = extractEnvironmentConfig({
+      environment: { source: 'scene', probe: [0.5, 1, 2], resolution: 256, intensity: 0.8 },
+    })!;
+    const zarr = environmentConfigToZarr(config);
+    expect(zarr).toEqual({ source: 'scene', probe: [0.5, 1, 2], resolution: 256, intensity: 0.8 });
+    expect(extractEnvironmentConfig({ environment: zarr })).toEqual(config);
+    expect(environmentConfigToZarr({ ...config, probe: { node: 'a/b' } }).probe).toBe('node:a/b');
+    expect(environmentConfigToZarr({ ...config, probe: 'auto' }).probe).toBe('auto');
   });
 });
 

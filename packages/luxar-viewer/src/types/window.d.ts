@@ -220,6 +220,18 @@ declare global {
       getPerf?: () => unknown;
       /** True as soon as `getPerf` exists (bootstrap), before `runtimeReady`. */
       perfReady?: boolean;
+      /**
+       * The scene environment (`rendering/environment/`): what lights
+       * `material="physical"` meshes, and — under `?bake-env` — the last bake's
+       * container for the `luxar env bake` driver to pull (`lastBake`).
+       */
+      environment?: {
+        kind: () => string;
+        captureCount: () => number;
+        hasBaked: () => boolean;
+        lastBake?: { header: unknown; base64: string; byteLength: number };
+        bakeError?: string;
+      };
     };
   }
 }
