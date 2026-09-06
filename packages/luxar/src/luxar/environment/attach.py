@@ -20,6 +20,7 @@ serve:
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Union
@@ -100,7 +101,11 @@ def attach_environment(
     with asection(f"Attaching environment map to {store_path.name}"):
         env = root.require_group(ENVIRONMENT_GROUP)
         existing = dict(env.attrs)
-        if existing.get(FACES_ATTR) == array_name and array_name in env:
+        if (
+            existing.get(FACES_ATTR) == array_name
+            and existing.get("scene_content_hash") == scene_hash
+            and array_name in env
+        ):
             aprint(f"unchanged: {ENVIRONMENT_GROUP}/{array_name} is already attached")
             return AttachReport(
                 store=store_path,
@@ -171,5 +176,6 @@ def _digest(header: Dict[str, Any], samples: np.ndarray) -> str:
     hasher = xxhash.xxh64()
     hasher.update(np.ascontiguousarray(samples).tobytes())
     for key in ("probe", "resolution", "coordinate_system", "face_order"):
-        hasher.update(f"{key}={header.get(key)!r};".encode())
+        value = json.dumps(header.get(key), sort_keys=True, separators=(",", ":"))
+        hasher.update(f"{key}={value};".encode())
     return hasher.hexdigest()

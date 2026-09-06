@@ -274,17 +274,14 @@ class LuxarScene:
 
         A root-level group in :data:`RESERVED_ROOT_GROUPS` (a baked
         ``environment`` map, a ``.gsplats.zarr`` bookkeeping bucket) is not a
-        node, and neither is any group that carries neither a ``type`` nor a
-        ``kind`` attr — the viewer's loader skips exactly those as metadata
-        sidecars, and this listing must agree with it rather than default them
-        to ``"group"``.
+        node. Other untyped groups remain visible as ``"group"`` containers:
+        authored nodes such as overlays can live below one, so skipping the
+        container before recursion would hide real scene content.
         """
         for name in group.group_keys():
             if not prefix and name in RESERVED_ROOT_GROUPS:
                 continue
             child = group[name]
-            if "type" not in child.attrs and "kind" not in child.attrs:
-                continue
             full_name = f"{prefix}/{name}" if prefix else name
             node_type = child.attrs.get("type", "group")
 
