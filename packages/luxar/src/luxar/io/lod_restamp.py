@@ -99,7 +99,11 @@ from .._zarr_compat import (
     read_consolidated_attrs,
 )
 from ..core.group.lod.group import coverage_fractions, partitioned_coverage_fractions
-from ..typing_utils.constants import DERIVED_LOD_SELECTOR, LOD_SELECTORS
+from ..typing_utils.constants import (
+    DERIVED_LOD_SELECTOR,
+    ENVIRONMENT_GROUP,
+    LOD_SELECTORS,
+)
 
 # Private imports, deliberately. Both express rules this pass must MIRROR
 # EXACTLY rather than re-state: `_lod_children` is the three-tier coarsest→finest
@@ -914,6 +918,14 @@ def _apply(
         # failure restores the store's OWN digests instead of recomputing them.
         _snapshot_content_hashes(root, undo, deep=is_scene)
         report.content_hash = _restamp_content_hash(root)
+        if report.content_hash is not None and ENVIRONMENT_GROUP in root:
+            _write_attr(
+                _handle(root, ENVIRONMENT_GROUP, cache),
+                ENVIRONMENT_GROUP,
+                "scene_content_hash",
+                report.content_hash,
+                undo,
+            )
         report.content_hash_status = (
             HASH_RESTAMPED if report.content_hash is not None else HASH_UNSTAMPABLE
         )
