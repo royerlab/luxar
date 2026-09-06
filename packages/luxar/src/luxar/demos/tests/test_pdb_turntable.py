@@ -89,10 +89,15 @@ def test_render_turntables_reports_and_skips_a_failing_structure(
 ) -> None:
     monkeypatch.setattr(tt, "find_pymol", lambda: ["/usr/bin/pymol", "-cq"])
     monkeypatch.setattr(tt, "find_ffmpeg", lambda: "/usr/bin/ffmpeg")
+    monkeypatch.setattr(tt, "render_threads", lambda: 12)
+    sizes = {"1OMG": 300, "BAD1": 500, "3WU2": tt.LARGE_STRUCTURE_ATOMS + 1}
+    monkeypatch.setattr(tt, "structure_atoms", lambda pdb_id, cache_dir: sizes[pdb_id])
+    calls: list[tuple[str, object]] = []
 
     def fake_render(
         pdb_id: str, cache_dir: Path, **kwargs: object
     ) -> tt.TurntableAssets:
+        calls.append((pdb_id, kwargs["threads"]))
         if pdb_id == "BAD1":
             raise RuntimeError("PyMOL produced 0 of 360 frames for BAD1")
         return tt.TurntableAssets(
@@ -100,6 +105,10 @@ def test_render_turntables_reports_and_skips_a_failing_structure(
         )
 
     monkeypatch.setattr(tt, "render_turntable", fake_render)
-    assets = tt.render_turntables(["1OMG", "BAD1"], tmp_path, jobs=2)
-    assert set(assets) == {"1OMG"}
+    assets = tt.render_turntables(["3WU2", "1OMG", "BAD1"], tmp_path, jobs=2)
+    assert set(assets) == {"1OMG", "3WU2"}
     assert "BAD1 failed" in capsys.readouterr().out
+    # Small structures share the cores across the pool; the large one runs
+    # LAST, alone, with every core.
+    assert sorted(calls[:2]) == [("1OMG", 6), ("BAD1", 6)]
+    assert calls[2] == ("3WU2", 12)

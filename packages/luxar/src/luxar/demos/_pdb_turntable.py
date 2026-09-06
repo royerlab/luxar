@@ -332,7 +332,7 @@ def render_turntables(
     pymol_cmd = find_pymol()
     ffmpeg_exe = find_ffmpeg()
     jobs = max(1, jobs)
-    threads = max(1, (os.cpu_count() or jobs) // jobs)
+    cores = render_threads()
     if pymol_cmd is None or ffmpeg_exe is None:
         aprint("⚠️  Turntable videos skipped:")
         for line in (
@@ -341,7 +341,7 @@ def render_turntables(
             aprint(f"   {line}")
         return {}
 
-    def one(pdb_id: str) -> Optional[TurntableAssets]:
+    def one(pdb_id: str, threads: int) -> Optional[TurntableAssets]:
         try:
             return render_turntable(
                 pdb_id,
@@ -362,6 +362,51 @@ def render_turntables(
             aprint(f"⚠️  Turntable for {pdb_id} failed{detail or f': {e}'} — skipped")
             return None
 
-    with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
-        results = list(pool.map(one, pdb_ids))
+    # Small structures parallelise well; large ones are memory-bound and slow
+    # each other down (three side by side rendered a frame of photosystem II 4x
+    # slower than one alone with every core), so they run one at a time, last.
+    small: list[str] = []
+    large: list[str] = []
+    for pdb_id in pdb_ids:
+        try:
+            n_atoms = structure_atoms(pdb_id, cache_dir)
+        except (OSError, ValueError) as e:
+            aprint(f"⚠️  Turntable for {pdb_id} failed: {e} — skipped")
+            continue
+        (large if n_atoms > LARGE_STRUCTURE_ATOMS else small).append(pdb_id)
+
+    results: list[Optional[TurntableAssets]] = []
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        results.extend(pool.map(lambda i: one(i, max(1, cores // jobs)), small))
+    results.extend(one(pdb_id, cores) for pdb_id in large)
     return {a.pdb_id: a for a in results if a is not None}
+
+
+def structure_atoms(pdb_id: str, cache_dir: Path) -> int:
+    """ATOM + HETATM record count of a (cached, fetched on demand) PDB entry."""
+    pdb_path, _ = fetch_pdb(pdb_id, cache_dir)
+    with pdb_path.open("rb") as f:
+        return sum(1 for line in f if line.startswith((b"ATOM", b"HETATM")))
+
+
+def render_threads() -> int:
+    """Ray-tracing threads for a render that owns the machine.
+
+    PyMOL splits each frame into per-thread strips and waits for the slowest,
+    so on Apple silicon a strip scheduled onto an efficiency core stalls the
+    frame: use the performance-core count there, every logical CPU elsewhere.
+    """
+    if sys.platform == "darwin":
+        try:
+            out = subprocess.run(  # noqa: S603
+                ["/usr/sbin/sysctl", "-n", "hw.perflevel0.logicalcpu"],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=5,
+            ).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            out = ""
+        if out.isdigit() and int(out) > 0:
+            return int(out)
+    return os.cpu_count() or 4
