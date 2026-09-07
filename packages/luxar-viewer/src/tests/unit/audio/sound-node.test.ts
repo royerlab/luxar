@@ -193,6 +193,22 @@ describe('SoundNode — waypoint triggers and attach_to', () => {
     expect((parent.children[1] as THREE.PositionalAudio).isPlaying).toBe(true);
   });
 
+  it('keeps a spatial waypoint row mask when the trigger arrives before decode', () => {
+    const desc = descriptor({
+      rows: [
+        [1, 0, 0, 0],
+        [2, 5, 5, 5],
+      ],
+    });
+    const node = makeNode({ trigger: 'on_arrive', spatial: true }, desc);
+    node.setGateOpen(true);
+    node.triggerFromWaypoint('arrive', Uint8Array.from([0, 1]));
+    node.setBuffer(new FakeAudioBuffer() as unknown as AudioBuffer);
+    expect(ctx.sources).toHaveLength(1);
+    expect((parent.children[0] as THREE.PositionalAudio).isPlaying).toBe(false);
+    expect((parent.children[1] as THREE.PositionalAudio).isPlaying).toBe(true);
+  });
+
   it('attach_to places every voice at the target centre in the placeholder frame, re-resolved on evaluate', () => {
     const desc = descriptor({ rows: [[1, 0, 0, 0]] });
     parent.position.set(10, 0, 0);
@@ -292,6 +308,26 @@ describe('SoundNode — edges', () => {
     expect(ended).toEqual([]);
   });
 
+  it('pairs lifecycle events when a rising edge restarts a fading voice', () => {
+    const node = makeNode(
+      { trigger: 'continuous', fade_out_ms: 500 },
+      descriptor({ rows: [[1, 0, 0, 0]] })
+    );
+    node.setGateOpen(true);
+    node.setBuffer(new FakeAudioBuffer() as unknown as AudioBuffer);
+    node.setViewState(buildSoundBaseViewState(storyDims(1)), null);
+    vi.advanceTimersByTime(0);
+    node.setViewState(buildSoundBaseViewState(storyDims(2)), null);
+    vi.advanceTimersByTime(100);
+    node.setViewState(buildSoundBaseViewState(storyDims(1)), null);
+    vi.advanceTimersByTime(0);
+    expect(started).toEqual(['clip', 'clip']);
+    expect(ended).toEqual(['clip']);
+    node.setViewState(buildSoundBaseViewState(storyDims(2)), null);
+    vi.advanceTimersByTime(500);
+    expect(ended).toEqual(['clip', 'clip']);
+  });
+
   it('once: fires once per rising edge and not again while staying audible', () => {
     const desc = descriptor({ rows: [[1, 0, 0, 0]] });
     const node = makeNode({ trigger: 'once' }, desc);
@@ -359,6 +395,15 @@ describe('SoundNode — edges', () => {
     expect(node.stop()).toBe(true);
     expect(node.isPlaying).toBe(false);
     expect(node.stop()).toBe(false);
+  });
+
+  it('manual play() reports false while the gate is closed or the node is muted', () => {
+    const node = makeNode({ trigger: 'once' });
+    node.setBuffer(new FakeAudioBuffer() as unknown as AudioBuffer);
+    expect(node.play()).toBe(false);
+    node.setGateOpen(true);
+    node.setMuted(true);
+    expect(node.play()).toBe(false);
   });
 
   it('dispose stops and detaches every voice', () => {

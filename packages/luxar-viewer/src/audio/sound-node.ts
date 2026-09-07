@@ -73,6 +73,8 @@ export interface Voice {
   playing: boolean;
   /** Whether this start has emitted the public started event. */
   started: boolean;
+  /** Whether a reported start still needs its matching ended event. */
+  endPending: boolean;
   /** A waypoint trigger recorded while nothing could start (gate closed / no buffer). */
   pending: boolean;
   startTimer?: ReturnType<typeof setTimeout>;
@@ -163,13 +165,20 @@ export class SoundNode {
     }
     if (this.voices.length === 0) {
       this.createVoices();
-      if (this.pendingBeforeVoices) {
-        this.pendingBeforeVoices = false;
-        for (const v of this.voices) v.pending = true;
-      }
+      this.restorePendingVoices();
     }
     for (const v of this.voices) v.audio.setBuffer(buffer);
     this.applyEdges(true);
+  }
+
+  private restorePendingVoices(): void {
+    if (this.pendingBeforeVoices === undefined) return;
+    const rows = this.pendingBeforeVoices;
+    const multiVoice = this.attrs.spatial && this.desc.nPositions > 1;
+    this.pendingBeforeVoices = undefined;
+    for (const v of this.voices) {
+      if (!rows || !multiVoice || rows[v.row] === 1) v.pending = true;
+    }
   }
 
   private createVoices(): void {
@@ -192,6 +201,7 @@ export class SoundNode {
         audible: false,
         playing: false,
         started: false,
+        endPending: false,
         pending: false,
       };
       // Three binds `source.onended` to `this.onEnded` at play() time, so an
@@ -199,9 +209,10 @@ export class SoundNode {
       audio.onEnded = () => {
         THREE.Audio.prototype.onEnded.call(audio);
         if (voice.playing) {
-          const wasStarted = voice.started;
+          const wasStarted = voice.endPending || voice.started;
           voice.playing = false;
           voice.started = false;
+          voice.endPending = false;
           if (wasStarted) this.deps.onEnded(this.name);
         }
       };
@@ -358,27 +369,38 @@ export class SoundNode {
       if (rows && this.voices.length > 1 && rows[v.row] !== 1) continue;
       this.startVoice(v);
     }
-    if (this.voices.length === 0) this.pendingBeforeVoices = true;
+    if (this.voices.length === 0) {
+      this.pendingBeforeVoices = rows ? Uint8Array.from(rows) : null;
+    }
     return true;
   }
 
   /** A waypoint trigger that arrived before the clip decoded (no voices yet). */
-  private pendingBeforeVoices = false;
+  private pendingBeforeVoices: Uint8Array | null | undefined;
 
-  private startVoice(v: Voice): void {
+  private reportEnded(v: Voice): void {
+    if (!v.endPending && !v.started) return;
+    v.endPending = false;
+    v.started = false;
+    this.deps.onEnded(this.name);
+  }
+
+  private startVoice(v: Voice): boolean {
     if (!this.buffer || !this.gateOpen || this.muted) {
       if (this.isWaypointTriggered) v.pending = true;
-      return;
+      return false;
     }
     v.pending = false;
     if (v.stopTimer) {
       clearTimeout(v.stopTimer);
       v.stopTimer = undefined;
+      this.reportEnded(v);
     }
     if (v.audio.isPlaying || v.playing) {
       // Restart (a re-rise during a fade-out, or a `once` re-triggered).
-      v.audio.stop();
+      this.reportEnded(v);
       v.playing = false;
+      if (v.audio.isPlaying) v.audio.stop();
     }
     const ctx = this.context;
     const now = ctx.currentTime;
@@ -400,9 +422,11 @@ export class SoundNode {
       v.startTimer = undefined;
       if (v.playing) {
         v.started = true;
+        v.endPending = true;
         this.deps.onStarted(this.name);
       }
     }, this.attrs.delay_ms);
+    return true;
   }
 
   private stopVoice(v: Voice, fadeMs: number): void {
@@ -414,7 +438,7 @@ export class SoundNode {
     const ctx = this.context;
     const now = ctx.currentTime;
     const end = rampGain(v.audio.gain.gain, { now, target: 0, ms: fadeMs });
-    const wasStarted = v.started;
+    v.endPending = v.endPending || v.started;
     v.playing = false;
     v.started = false;
     if (v.audio.isPlaying) v.audio.stop(end - now);
@@ -422,7 +446,7 @@ export class SoundNode {
     v.stopTimer = setTimeout(
       () => {
         v.stopTimer = undefined;
-        if (wasStarted) this.deps.onEnded(this.name);
+        this.reportEnded(v);
       },
       Math.ceil((end - now) * 1000)
     );
@@ -487,11 +511,12 @@ export class SoundNode {
   /** Manual start (embedder API): plays regardless of the slab. */
   play(): boolean {
     if (!this.buffer || this.voices.length === 0) return false;
+    let any = false;
     for (const v of this.voices) {
       v.audible = true;
-      this.startVoice(v);
+      any = this.startVoice(v) || any;
     }
-    return true;
+    return any;
   }
 
   /** Manual stop (embedder API), with the node's fade-out. */
