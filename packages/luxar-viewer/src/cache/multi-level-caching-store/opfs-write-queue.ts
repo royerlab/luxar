@@ -24,10 +24,11 @@
  * no contiguous region is complete. Dropping the arrival lets the oldest end
  * drain in enqueue order, so what lands on disk is CONTIGUOUS RUNS from that
  * end (one prefix only while nothing drains; with the pump running, a run per
- * burst) — which is what a warm revisit can actually serve from. Nor does it
- * cost extra drops: the old loop evicted until BOTH caps fit, so one large
- * arrival could displace several small pending entries, making the new policy's
- * count never higher and strictly lower whenever sizes are mixed.
+ * burst) — which is what a warm revisit can actually serve from. The tradeoff
+ * is locality, not drop count: uniform-size writes drop equally under either
+ * policy, while mixed sizes can favour either one. A large arrival no longer
+ * displaces several small pending writes, but a large pending write can now
+ * hold off several smaller arrivals.
  *
  * Correctness is the caller's (MultiLevelCachingStore) responsibility: the
  * enqueued task must re-check staleness (disposed / dataAbort / epoch) at drain
