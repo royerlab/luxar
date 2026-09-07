@@ -678,16 +678,21 @@ def framing_radius(cluster: StoryCluster) -> float:
 
 
 # The shell is a SOAP BUBBLE: `material="physical"` (MESH_PHYSICAL_MATERIALS_SPEC
-# Phases 1-2, 4). Fully transmissive so the cluster stays crisp inside (points
-# draw after the glass on both backends), a thin-film iridescence for the
-# rainbow sheen, a whisper of dispersion for the diffraction fringe at the limb,
-# and an environment captured from the scene itself so the film reflects the
-# surrounding map — the data is the light.
+# Phases 1-4). Fully transmissive, a thin-film iridescence for the rainbow sheen,
+# a whisper of dispersion for the diffraction fringe at the limb, and an
+# environment captured from the scene itself so the film reflects the
+# surrounding map — the data is the light. `refract_data` (Phase 3) draws the
+# bubble AFTER the points and bends the map seen through it; the viewer's depth
+# partition keeps the cluster in front of the far wall crisp. The bend is set by
+# `thickness` (three's transmission path treats it as a solid slab), so a true
+# film thickness would bend nothing; 0.4 × radius already magnifies the cluster
+# inside into a blob, 0.2 × radius reads as a gentle lens.
 BUBBLE_ROUGHNESS = 0.04
 BUBBLE_IOR = 1.33  # a water film
 BUBBLE_IRIDESCENCE = 1.0
 BUBBLE_DISPERSION = 0.25  # very subtle; three's scale runs to 1.0
-BUBBLE_THICKNESS_FRAC = 0.02  # × radius: a film, not a solid glass ball
+BUBBLE_THICKNESS_FRAC = 0.2  # × radius: a gentle bend of the map behind
+BUBBLE_REFRACT_DATA = True
 # Base colour of the film: near-white with a hint of the story colour, so the
 # iridescence and the reflections carry the colour rather than a tint.
 BUBBLE_TINT = 0.15
@@ -1203,6 +1208,7 @@ def build_stories_scene(
                     thickness=float(radius * BUBBLE_THICKNESS_FRAC),
                     dispersion=BUBBLE_DISPERSION,
                     iridescence=BUBBLE_IRIDESCENCE,
+                    refract_data=BUBBLE_REFRACT_DATA,
                     layer=True,
                     layer_order=SPHERE_LAYER_ORDER,
                 )
