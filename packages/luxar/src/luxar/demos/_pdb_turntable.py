@@ -260,6 +260,33 @@ def fetch_pdb(pdb_id: str, cache_dir: Path) -> tuple[Path, str]:
     return pdb_path, title
 
 
+def _cached_turntable_assets(
+    pdb_id: str,
+    cache_dir: Path,
+    *,
+    frames: int,
+    fps: int,
+    size: int,
+    color: RGB,
+) -> Optional[TurntableAssets]:
+    """Return complete cached assets without requiring render dependencies."""
+    pdb_id = pdb_id.upper()
+    stem = cache_key(pdb_id, frames, size, color=color)
+    webm = cache_dir / f"{stem}.webm"
+    poster = cache_dir / f"{stem}.png"
+    if not (webm.exists() and poster.exists()):
+        return None
+
+    title = pdb_id
+    meta_path = cache_dir / f"{pdb_id}.json"
+    if meta_path.exists():
+        try:
+            title = str(json.loads(meta_path.read_text()).get("title", pdb_id))
+        except (OSError, ValueError, TypeError):
+            pass
+    return TurntableAssets(pdb_id, webm, poster, title, frames, fps)
+
+
 def structure_atoms(pdb_id: str, cache_dir: Path) -> int:
     """ATOM + HETATM record count of a (cached, fetched on demand) PDB entry."""
     pdb_path, _ = fetch_pdb(pdb_id, cache_dir)
@@ -333,6 +360,17 @@ def render_turntable(
     one a renderer is created for this call.
     """
     pdb_id = pdb_id.upper()
+    cached = _cached_turntable_assets(
+        pdb_id,
+        cache_dir,
+        frames=frames,
+        fps=fps,
+        size=size,
+        color=color,
+    )
+    if cached is not None:
+        return cached
+
     pymol_cmd = list(pymol) if pymol is not None else find_pymol()
     ffmpeg_exe = ffmpeg if ffmpeg is not None else find_ffmpeg()
     if pymol_cmd is None:
@@ -346,8 +384,6 @@ def render_turntable(
     stem = cache_key(pdb_id, frames, size, color=color)
     webm = cache_dir / f"{stem}.webm"
     poster = cache_dir / f"{stem}.png"
-    if webm.exists() and poster.exists():
-        return TurntableAssets(pdb_id, webm, poster, title, frames, fps)
 
     quality = surface_quality_for(structure_atoms(pdb_id, cache_dir))
     files = export_surface_meshes(pdb_id, cache_dir, quality=quality, pymol=pymol_cmd)
@@ -386,12 +422,31 @@ def render_turntables(
     structure is rendered in — the demo passes each story's highlight colour so
     the turntable matches its cluster; ids without one get ``DEFAULT_COLOR``.
 
-    Returns the assets that rendered, keyed by PDB id. When PyMOL, ffmpeg or
-    moderngl is missing (or no GL context can be created), prints the hint ONCE
-    and returns an empty dict — the caller builds its scene without turntables.
-    A structure that fails to render is reported and skipped; the others still
-    return.
+    Returns cached or newly rendered assets keyed by PDB id. Missing render
+    dependencies only skip uncached structures; complete cached assets remain
+    usable. A structure that fails to render is reported and skipped; the
+    others still return.
     """
+    palette = {k.upper(): v for k, v in (colors or {}).items()}
+    results: dict[str, TurntableAssets] = {}
+    pending: list[str] = []
+    for pdb_id in pdb_ids:
+        normalized = pdb_id.upper()
+        cached = _cached_turntable_assets(
+            normalized,
+            cache_dir,
+            frames=frames,
+            fps=fps,
+            size=size,
+            color=palette.get(normalized, DEFAULT_COLOR),
+        )
+        if cached is None:
+            pending.append(normalized)
+        else:
+            results[normalized] = cached
+    if not pending:
+        return results
+
     pymol_cmd = find_pymol()
     ffmpeg_exe = find_ffmpeg()
     hint = None
@@ -405,17 +460,15 @@ def render_turntables(
         aprint("⚠️  Turntable videos skipped:")
         for line in hint.splitlines():
             aprint(f"   {line}")
-        return {}
+        return results
     try:
         renderer = ClayRenderer(size)
     except Exception as e:  # noqa: BLE001 — no GL context on this machine
         aprint(f"⚠️  Turntable videos skipped: no GPU context ({e})")
-        return {}
+        return results
 
-    palette = {k.upper(): v for k, v in (colors or {}).items()}
-    results: dict[str, TurntableAssets] = {}
     try:
-        for pdb_id in pdb_ids:
+        for pdb_id in pending:
             try:
                 a = render_turntable(
                     pdb_id,

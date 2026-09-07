@@ -93,6 +93,27 @@ def test_render_turntables_soft_gates_on_missing_tools(
     assert "luxar[demos]" in capsys.readouterr().out  # bounded, per INSTALL_SPECS
 
 
+def test_render_turntables_returns_cached_assets_before_tool_gates(
+    monkeypatch, tmp_path
+) -> None:
+    stem = tt.cache_key("1OMG", tt.DEFAULT_FRAMES, tt.DEFAULT_SIZE)
+    webm = tmp_path / f"{stem}.webm"
+    poster = tmp_path / f"{stem}.png"
+    webm.write_bytes(b"cached video")
+    poster.write_bytes(b"cached poster")
+    (tmp_path / "1OMG.json").write_text('{"title": "Title 1OMG"}')
+
+    monkeypatch.setattr(tt, "find_pymol", lambda: None)
+    monkeypatch.setattr(tt, "find_ffmpeg", lambda: None)
+
+    assets = tt.render_turntables(["1OMG", "2HHB"], tmp_path)
+
+    assert set(assets) == {"1OMG"}
+    assert assets["1OMG"] == tt.TurntableAssets(
+        "1OMG", webm, poster, "Title 1OMG", tt.DEFAULT_FRAMES, tt.DEFAULT_FPS
+    )
+
+
 def test_render_turntables_skips_when_no_gpu_context(
     monkeypatch, tmp_path, capsys
 ) -> None:
