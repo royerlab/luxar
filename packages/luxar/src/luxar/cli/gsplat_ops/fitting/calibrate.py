@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Optional
 
 import typer
 from arbol import aprint, asection
+
+if TYPE_CHECKING:
+    from luxar.gsplats.calibration import CalibrationResult, HeldOutPeak
 
 
 def _print_k_star_scope_caveat(calibration_region: Optional[dict]) -> None:
@@ -30,12 +33,16 @@ def _print_k_star_scope_caveat(calibration_region: Optional[dict]) -> None:
     )
 
 
-def _selected_summary(result: Any) -> tuple[Any, str, list[float]]:
+def _selected_summary(
+    result: "CalibrationResult",
+) -> tuple["HeldOutPeak", str, list[float]]:
     """Return the effective peak, metric label, and displayed metric curve."""
     selected_peak = result.held_out_peak_selected or result.held_out_peak
     selected_metric = result.k_star_metric
     if selected_metric != "psnr_minmax" and result.held_out_peak_selected is None:
         selected_metric = "psnr_minmax (fallback: selected curve is undefined)"
+        selected_curve = result.held_out_psnr_db
+        return selected_peak, selected_metric, selected_curve
     selected_curve = {
         "psnr_minmax": result.held_out_psnr_db,
         "psnr_foreground": result.held_out_psnr_fg_db,
