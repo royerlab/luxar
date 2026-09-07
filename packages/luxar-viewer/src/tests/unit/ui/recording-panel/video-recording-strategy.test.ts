@@ -107,6 +107,7 @@ describe('VideoRecordingStrategy', () => {
       (MediaRecorder as any).isTypeSupported = vi.fn().mockReturnValue(false);
 
       const freshPanel = new RecordingPanel(mockSceneManager, mockAnimController);
+      vi.spyOn((freshPanel as any).session, 'showConfirmationDialog').mockResolvedValue(true);
       await freshPanel.startVideoRecording();
 
       expect(showToast).toHaveBeenCalledWith('Video recording not supported in this browser');

@@ -452,7 +452,6 @@ export class AudioEngine {
   applySceneConfig(overrides: AudioConfigOverrides): void {
     const prefs = loadAudioPrefs();
     this.masterGain = prefs.masterGain ?? DEFAULT_MASTER_GAIN;
-    this.busGains = { ...DEFAULT_BUSES };
     this.applyBusGains(DEFAULT_BUSES);
     this.setPanningModel('equalpower');
     this.duckDb = DEFAULT_DUCK_DB;

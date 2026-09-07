@@ -97,16 +97,13 @@ export class VideoRecordingStrategy implements CaptureStrategy {
     // Audio rides only when asked for AND the sound layer has something to
     // give (a scene without sound nodes has no graph — a silent video, as before).
     const audioPort = opts.includeAudio ? (this.hooks.audioCapture?.() ?? null) : null;
+    const confirmed = await session.showConfirmationDialog({ mode, options: opts });
+    if (!confirmed || session.isDisposed()) return;
     const audio = audioPort?.acquire() ?? null;
     const mimeType = getSupportedMimeTypePure(undefined, audio !== null);
     if (!mimeType) {
       if (audio) audioPort?.release(audio);
       showToast('Video recording not supported in this browser');
-      return;
-    }
-    const confirmed = await session.showConfirmationDialog({ mode, options: opts });
-    if (!confirmed || session.isDisposed()) {
-      if (audio) audioPort?.release(audio);
       return;
     }
     this.audioCaptureStream = audio;
@@ -128,6 +125,7 @@ export class VideoRecordingStrategy implements CaptureStrategy {
         await new Promise((r) => requestAnimationFrame(r));
         if (session.isDisposed()) {
           session.restoreRecordingState();
+          this.cleanupCaptureStream();
           return;
         }
       }
