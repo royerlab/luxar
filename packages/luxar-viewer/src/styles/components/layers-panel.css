@@ -14,6 +14,7 @@
 /* ========== Main Container ========== */
 
 .luxar-layers-panel {
+  -webkit-touch-callout: none;
   /* Positioning — matches .luxar-gui (20px from viewport edge) */
   position: fixed;
   top: 20px;
