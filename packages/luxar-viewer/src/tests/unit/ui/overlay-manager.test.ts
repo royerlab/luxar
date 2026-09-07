@@ -317,27 +317,40 @@ describe('OverlayManager.loadOverlays', () => {
     pausedSpy.mockRestore();
   });
 
-  it('serves a zipped-store video from a blob URL with the sniffed video MIME type', async () => {
+  it('serves a zipped-store video and poster from typed blob URLs', async () => {
     vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(() => Promise.resolve());
     vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
     const webm = new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 0, 0, 0, 0]);
-    const readFile = vi.fn().mockResolvedValue(webm);
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const readFile = vi.fn(async (path: string) => (path.endsWith('.webm') ? webm : png));
     const createObjectURLSpy = vi
       .spyOn(URL, 'createObjectURL')
-      .mockReturnValue('blob:overlay-video');
+      .mockReturnValueOnce('blob:overlay-video')
+      .mockReturnValueOnce('blob:overlay-poster');
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
 
     await manager.loadOverlays(
-      [makeTextOverlay({ name: 'clip', type: 'overlay_video', video_file: 'video.webm' })],
+      [
+        makeTextOverlay({
+          name: 'clip',
+          type: 'overlay_video',
+          video_file: 'video.webm',
+          poster_file: 'poster.png',
+        }),
+      ],
       'https://example.com/scene.luxar.zarr.zip',
       readFile
     );
 
-    expect(readFile).toHaveBeenCalledExactlyOnceWith('/overlays/clip/video.webm');
-    const blob = createObjectURLSpy.mock.calls[0][0] as Blob;
-    expect(blob.type).toBe('video/webm');
+    expect(readFile.mock.calls.map(([path]) => path)).toEqual([
+      '/overlays/clip/video.webm',
+      '/overlays/clip/poster.png',
+    ]);
+    expect((createObjectURLSpy.mock.calls[0][0] as Blob).type).toBe('video/webm');
+    expect((createObjectURLSpy.mock.calls[1][0] as Blob).type).toBe('image/png');
     const video = document.querySelector('.luxar-overlay--video video') as HTMLVideoElement;
     expect(video.src).toBe('blob:overlay-video');
+    expect(video.poster).toBe('blob:overlay-poster');
     manager.dispose();
   });
 

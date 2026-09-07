@@ -18,6 +18,11 @@ import { MAX_OVERLAY_HTML_CHARS, type OverlayConfig } from '../data/loaders';
 /** Read one opaque file from the active scene store. */
 export type OverlayFileReader = (path: string) => Promise<Uint8Array | undefined>;
 
+interface ArchivedOverlayMedia {
+  primary?: Uint8Array;
+  poster?: Uint8Array;
+}
+
 /** Font preset mappings to CSS font-family stacks */
 export const FONT_PRESETS: Record<string, string> = {
   sans: 'system-ui, -apple-system, sans-serif',
@@ -225,15 +230,15 @@ export class OverlayManager {
     this.baseUrl = baseUrl;
     this.readFile = readFile;
 
-    const imageReads = await Promise.allSettled(
-      overlayConfigs.map((config) => this.readArchivedImage(config))
+    const mediaReads = await Promise.allSettled(
+      overlayConfigs.map((config) => this.readArchivedMedia(config))
     );
 
     for (const [index, config] of overlayConfigs.entries()) {
       try {
-        const imageRead = imageReads[index];
-        if (imageRead.status === 'rejected') throw imageRead.reason;
-        const el = this.createOverlayElement(config, imageRead.value);
+        const mediaRead = mediaReads[index];
+        if (mediaRead.status === 'rejected') throw mediaRead.reason;
+        const el = this.createOverlayElement(config, mediaRead.value);
         getViewerContainer().appendChild(el);
         this.overlayElements.set(config.name, el);
         this.configs.set(config.name, config);
@@ -487,20 +492,24 @@ export class OverlayManager {
    * it can be served from a blob URL; the poster of a video is not read (the
    * video itself is what plays there). Plain HTTP stores stream by URL instead.
    */
-  private async readArchivedImage(config: OverlayConfig): Promise<Uint8Array | undefined> {
-    if (!isZippedStoreUrl(this.baseUrl) || !this.readFile) return undefined;
-    const file =
-      config.type === 'overlay_image'
-        ? config.image_file
-        : config.type === 'overlay_video'
-          ? config.video_file
-          : undefined;
-    if (!file) return undefined;
-    return this.readFile(`/overlays/${config.name}/${file}`);
+  private async readArchivedMedia(config: OverlayConfig): Promise<ArchivedOverlayMedia> {
+    if (!isZippedStoreUrl(this.baseUrl) || !this.readFile) return {};
+    const path = (filename: string): string => `/overlays/${config.name}/${filename}`;
+    if (config.type === 'overlay_image' && config.image_file) {
+      return { primary: await this.readFile(path(config.image_file)) };
+    }
+    if (config.type === 'overlay_video' && config.video_file) {
+      const [primary, poster] = await Promise.all([
+        this.readFile(path(config.video_file)),
+        config.poster_file ? this.readFile(path(config.poster_file)) : undefined,
+      ]);
+      return { primary, poster };
+    }
+    return {};
   }
 
   /** Create a DOM element for a single overlay. */
-  private createOverlayElement(config: OverlayConfig, archivedImage?: Uint8Array): HTMLDivElement {
+  private createOverlayElement(config: OverlayConfig, archivedMedia: ArchivedOverlayMedia): HTMLDivElement {
     const el = document.createElement('div');
     el.className = 'luxar-overlay';
     el.dataset.overlayName = config.name;
@@ -539,10 +548,10 @@ export class OverlayManager {
         this.createTextContent(el, config);
         break;
       case 'overlay_image':
-        this.createImageContent(el, config, archivedImage);
+        this.createImageContent(el, config, archivedMedia.primary);
         break;
       case 'overlay_video':
-        this.createVideoContent(el, config, archivedImage);
+        this.createVideoContent(el, config, archivedMedia.primary, archivedMedia.poster);
         break;
       case 'overlay_html':
         this.createHtmlContent(el, config);
@@ -561,7 +570,8 @@ export class OverlayManager {
   private createVideoContent(
     el: HTMLDivElement,
     config: OverlayConfig,
-    archivedVideo?: Uint8Array
+    archivedVideo?: Uint8Array,
+    archivedPoster?: Uint8Array
   ): void {
     el.classList.add('luxar-overlay--video');
     if (!config.video_file) return;
@@ -596,16 +606,24 @@ export class OverlayManager {
       );
       this.objectUrls.add(objectUrl);
       video.src = objectUrl;
+      if (archivedPoster) {
+        const posterBytes = Uint8Array.from(archivedPoster);
+        const posterUrl = URL.createObjectURL(
+          new Blob([posterBytes], { type: detectMimeType(posterBytes) })
+        );
+        this.objectUrls.add(posterUrl);
+        video.poster = posterUrl;
+      }
     } else {
       video.src = `${base}${config.video_file}`;
       if (config.poster_file) video.poster = `${base}${config.poster_file}`;
-      video.onerror = () => {
-        log.warning(
-          Modules.UI,
-          `Video overlay "${config.name}" failed to load ${video.src} — showing poster only`
-        );
-      };
     }
+    video.onerror = () => {
+      log.warning(
+        Modules.UI,
+        `Video overlay "${config.name}" failed to load ${config.video_file} — showing poster only`
+      );
+    };
 
     if (config.size) {
       video.style.width = `${config.size[0] * 100}vw`;
