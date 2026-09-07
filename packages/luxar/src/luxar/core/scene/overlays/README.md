@@ -1,6 +1,6 @@
 # luxar.core.scene.overlays
 
-2D screen-space overlay implementations for `Scene` — text, image, and HTML
+2D screen-space overlay implementations for `Scene` — text, image, video, and HTML
 overlays anchored to the viewport, plus auto-injection of hover overlays for
 nodes that carry labels.
 
@@ -23,7 +23,7 @@ compiler finalization when nodes have labels but no hover overlay was defined.
 ```
 overlays/
 ├── __init__.py        # empty package marker
-├── adders.py          # add_text_impl / add_image_impl / add_html_impl
+├── adders.py          # add_text_impl / add_image_impl / add_video_impl / add_html_impl
 ├── internals.py       # next_overlay_name / write_overlay (naming + persistence)
 └── hover_inject.py    # auto_inject_hover_overlay (label-driven default hover)
 ```

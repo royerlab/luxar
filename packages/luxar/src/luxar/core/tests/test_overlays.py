@@ -1,4 +1,4 @@
-"""Tests for Scene overlay methods (add_text, add_image, add_html).
+"""Tests for Scene overlay methods (add_text, add_image, add_video, add_html).
 
 Functional tests that verify the full round-trip: Python API -> zarr storage -> metadata.
 """

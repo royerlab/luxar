@@ -54,7 +54,7 @@ See `__init__.py` for the full public API. Primary classes:
 - `LuxarZarrCompiler` -- progressive Zarr writer (context manager)
 - `LuxarScene` -- reader for compiled Luxar Zarr archives
 - `Node`, `Scene`, `Group`, `Points`, `Lines`, `GSplats` -- scene graph nodes
-- `Overlay` -- screen-space text/image/HTML annotation descriptor
+- `Overlay` -- screen-space text/image/video/HTML annotation descriptor
 - `Dimensions`, `Dimension` -- nD coordinate system definitions
 - `ViewerConfig`, `CameraConfig`, `UIConfig` -- viewer configuration
 - `transforms` -- 4x4 matrix utilities (translate, rotate, scale, compose, etc.)

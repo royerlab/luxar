@@ -835,11 +835,12 @@ Scene (root)
 ├── Group "markers"
 │   ├── Points "marker_points"
 │   └── Lines "marker_connections"
-└── (overlays)            # screen-space text/image/HTML, not 3D nodes
+└── (overlays)            # screen-space text/image/video/HTML, not 3D nodes
 ```
 
-Overlays (`add_text` / `add_image` / `add_html`) are tracked separately on the
-`Scene` and live in normalized screen space, not in the 3D transform hierarchy.
+Overlays (`add_text` / `add_image` / `add_video` / `add_html`) are tracked
+separately on the `Scene` and live in normalized screen space, not in the 3D
+transform hierarchy.
 
 ### Transform Hierarchy
 
@@ -889,7 +890,7 @@ Tests are located in `core/tests/`:
 - `test_mesh.py` - Mesh DataNode: add_mesh round-trips (topology, normals/normal_dims, colors, labels), shading/double_sided resolution, the `partition=` split (face conservation, vertex duplication, per-vertex attribute gathering), and the volumetric-blending / LOD refusals
 - `test_node_properties.py` - Node properties and method chaining
 - `test_node_rendering.py` - Rendering attributes for Node class
-- `test_overlays.py` - Screen-space overlays (add_text / add_image / add_html)
+- `test_overlays.py` - Screen-space overlays (add_text / add_image / add_video / add_html)
 - `test_physical_units.py` - Physical units support through Dimensions system
 - `test_api_regressions.py` - Regression tests pinning core API invariants (ndim metadata key, property-setter persistence, cross-scene node inequality, Scene.dimensions, Scene.to_zarr export, top-level GSplatData export)
 - `test_scene_advanced.py` - Advanced Scene class tests (initialization, error handling)
