@@ -32,8 +32,8 @@
  * `AdaptiveDPRManager` here, and `scene/scene-manager/viewport/dpr-policy`
  * — and dependency-cruiser's layer rules forbid `rendering/` from
  * importing `scene/`. A leaf module in the lower of the two layers is the
- * only place both can reach. It imports nothing, so it cannot take part
- * in a cycle.
+ * only place both can reach. It imports only `utils/input-capabilities`,
+ * which is itself import-free, so it cannot take part in a cycle.
  *
  * `dpr-policy.getActivePixelRatio` is what actually applies the cap, and
  * that is the ONE function the renderer boundary calls (see
@@ -50,7 +50,14 @@
  * add a fourth, document it here:**
  *
  * 1. The `allowHighDPR` setting — `Infinity` when allowed, else 1.0.
- *    The normal path (`RenderingControls`, on load and on toggle).
+ *    The normal path (`RenderingControls`, on load and on toggle). On a
+ *    MOBILE device class "allowed" resolves to {@link MOBILE_MAX_PIXEL_RATIO}
+ *    instead of `Infinity`: a scene authored with `allow_high_dpr` is
+ *    tuned for a desktop Retina panel, and on a DPR-3 phone the same flag
+ *    means 9× the fragment work of CSS resolution from the very first
+ *    frame — before the adaptive loop's evaluation interval can react.
+ *    Measured under iPhone emulation on the protein-stories scene: DPR
+ *    3.00 into a 2340×3984 target, then a slow walk down at 0.8–3.9 FPS.
  * 2. `AdaptiveDPRManager.pinManualDPR` (the `?dpr=` URL param) raises the
  *    cap to the pinned value for the session, so `?dpr=2` renders at 2
  *    even with the setting off. An explicit request wins, and
@@ -62,6 +69,8 @@
  *    down to whatever is on screen.
  */
 
+import { getInputProfile } from '../utils/input-capabilities';
+
 /**
  * The cap applied when high DPR is not allowed: exactly CSS resolution.
  *
@@ -72,6 +81,16 @@
  * demotion made the default.
  */
 export const DEFAULT_MAX_PIXEL_RATIO = 1.0;
+
+/**
+ * The cap `allowHighDPR` resolves to on a MOBILE device class (phones and
+ * tablets, iPhone and iPad included). 2 keeps the high-frequency detail the
+ * setting exists for on the line-dominant scenes that author it, at 4× the
+ * fragment work of CSS resolution rather than the 9× a DPR-3 panel would
+ * otherwise take. Explicit requests (`?dpr=`, the recording panel's
+ * `captureDPR`) are not clamped by this — see the writer list above.
+ */
+export const MOBILE_MAX_PIXEL_RATIO = 2;
 
 /**
  * The cap, as an absolute DPR. `Infinity` means "no cap — use whatever
@@ -114,11 +133,19 @@ export function getMaxPixelRatioCap(): number {
 }
 
 /**
- * Convenience for the common case: allow high DPR (no cap) or not (CSS
- * resolution).
+ * The cap "high DPR allowed" resolves to on this device: no cap on a
+ * laptop/desktop, {@link MOBILE_MAX_PIXEL_RATIO} on a phone or tablet.
+ */
+export function deviceHighDprCeiling(): number {
+  return getInputProfile().deviceClass === 'mobile' ? MOBILE_MAX_PIXEL_RATIO : Infinity;
+}
+
+/**
+ * Convenience for the common case: allow high DPR (up to the device's
+ * ceiling — see {@link deviceHighDprCeiling}) or not (CSS resolution).
  */
 export function setHighDPRAllowed(allowed: boolean): void {
-  setMaxPixelRatioCap(allowed ? Infinity : DEFAULT_MAX_PIXEL_RATIO);
+  setMaxPixelRatioCap(allowed ? deviceHighDprCeiling() : DEFAULT_MAX_PIXEL_RATIO);
 }
 
 /**

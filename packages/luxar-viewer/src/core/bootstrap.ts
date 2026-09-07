@@ -27,7 +27,7 @@ import { buildInfo, buildInfoLine } from '../config/build-info';
 import { initUserSettings } from '../config/user-settings';
 import { configureGpuByteBudget } from '../rendering/gpu-byte-budget';
 import { cachePoolOverrideBytes } from '../cache/heap-budget';
-import { setInputProfileOverride } from '../utils/input-capabilities';
+import { getInputProfile, setInputProfileOverride } from '../utils/input-capabilities';
 import { setLineJoinOverride } from '../types/line-join';
 import { setLinePrimitiveOverride, setLinePrimitivePolicy } from '../types/line-primitive';
 import { StorageKeys } from '../utils/storage-keys';
@@ -147,7 +147,8 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // The persisted Settings budget remains cache-only by design; the regression
   // guard is tests/unit/core/bootstrap.test.ts:594. The ambient JS heap limit is
   // deliberately not folded in: its coarse Chromium tiers are not a GPU-memory
-  // measurement.
+  // measurement. A MOBILE device class is folded in (inside
+  // `computeAutoBudget`): on WebKit it is the only memory signal a phone has.
   configureGpuByteBudget(
     urlParams.gpuBudgetMB != null
       ? urlParams.gpuBudgetMB * 1_000_000
@@ -336,7 +337,11 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     densityCap: urlParams.densityCap ?? undefined,
     // Opt-in capture-quality override (`?lod-finest` — the gallery harness).
     lodFinest: urlParams.lodFinest,
-    blendWarmup: urlParams.blendWarmup,
+    // Off on a phone/tablet: program links cost 50-300 ms each on a mobile GPU
+    // and `requestIdleCallback` is absent before Safari 18.2, so the warm-up
+    // becomes seconds of serialized load-time jank for a feature (runtime
+    // blend switching) a phone user rarely reaches.
+    blendWarmup: urlParams.blendWarmup && getInputProfile().deviceClass !== 'mobile',
     // `?bake-env[&probe=…][&env-resolution=…]` — the `luxar env bake` driver.
     bakeEnvironment: urlParams.bakeEnv
       ? { probe: urlParams.probe ?? undefined, resolution: urlParams.envResolution ?? undefined }

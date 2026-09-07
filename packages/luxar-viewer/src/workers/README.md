@@ -72,7 +72,7 @@ unless they have their own timeout strategy.
 
 ### Configuration
 
-- **Worker count**: Defaults to `navigator.hardwareConcurrency - 1` (reserves one core for main thread)
+- **Worker count**: Defaults to `navigator.hardwareConcurrency - 1` (reserves one core for main thread); capped at `MOBILE_MAX_WORKERS` (3) on a phone/tablet device class, where every worker's WASM heap counts against the tab's memory budget
 - **Minimum**: 1 worker
 - **Fallback**: If `hardwareConcurrency` is unavailable, assumes 4 cores
 

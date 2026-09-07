@@ -122,6 +122,7 @@ vi.mock('../../../../../ui/debug-console', () => ({
   DebugConsole: vi.fn().mockImplementation(() => ({ kind: 'debug-console' })),
 }));
 vi.mock('../../../../../rendering/adaptive-dpr-manager', () => ({
+  mobileAdaptiveDprOverrides: vi.fn(() => undefined),
   AdaptiveDPRManager: vi.fn().mockImplementation(() => ({
     setRenderer: vi.fn(),
     setOnDPRChangeCallback: vi.fn(),

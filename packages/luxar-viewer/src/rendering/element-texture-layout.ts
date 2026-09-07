@@ -61,6 +61,7 @@
  */
 import * as THREE from 'three';
 import { log, Modules } from '../utils/log';
+import { getInputProfile } from '../utils/input-capabilities';
 
 /** Descriptor parameterizing the generic layout math per geometry type. */
 export interface ElementTextureLayout {
@@ -207,15 +208,39 @@ export function getElementTextureWidth(layout: ElementTextureLayout): number {
   );
 }
 
+/** RGBA32F: four 32-bit channels per texel. */
+const BYTES_PER_TEXEL = 16;
+
+/**
+ * Largest single element texture a MOBILE device class may allocate per
+ * node. An A-series iPhone reports `MAX_TEXTURE_SIZE` 16384, which alone would
+ * permit a 4096 × 16384 RGBA32F texture — 1.07 GB for one node — and the GPU
+ * byte budget can only evict AFTER an allocation, not prevent it. 256 MiB is
+ * 4.19 M splats (4 texels each), the same count a 4096-class desktop bound
+ * allows, and comfortably above the 250K/part tiles idiom.
+ */
+const MOBILE_ELEMENT_TEXTURE_MAX_BYTES = 256 * 1024 * 1024;
+
+/** Byte ceiling on one element texture for this device class (`Infinity` off-mobile). */
+function maxElementTextureBytes(): number {
+  return getInputProfile().deviceClass === 'mobile' ? MOBILE_ELEMENT_TEXTURE_MAX_BYTES : Infinity;
+}
+
 /**
  * Hard per-node element capacity: `width × maxTextureSize /
  * texelsPerElement` texels. For gsplats: 4.19M splats on a 4096-class
- * device, 8.38M at 8192 — comfortably above the 250K/part tiles idiom.
+ * device, 8.38M at 8192 — comfortably above the 250K/part tiles idiom. On a
+ * mobile device class the texture's BYTE size is bounded as well (see
+ * `MOBILE_ELEMENT_TEXTURE_MAX_BYTES`); the tighter of the two applies.
  */
 export function getMaxElementCapacityPerNode(layout: ElementTextureLayout): number {
-  return Math.floor(
+  const byTexture = Math.floor(
     (getElementTextureWidth(layout) * effectiveMaxTextureSize()) / layout.texelsPerElement
   );
+  const byBytes = Math.floor(
+    maxElementTextureBytes() / (layout.texelsPerElement * BYTES_PER_TEXEL)
+  );
+  return Math.min(byTexture, byBytes);
 }
 
 /**
@@ -254,7 +279,11 @@ export function clampElementCapacity(
       Modules.GPU_BUFFER_POOL,
       `${noun} capacity ${requested.toLocaleString()} exceeds the per-node texture bound ` +
         `${max.toLocaleString()} (width ${getElementTextureWidth(layout)} × maxTextureSize ` +
-        `${effectiveMaxTextureSize()}); clamping — the last ` +
+        `${effectiveMaxTextureSize()}` +
+        (maxElementTextureBytes() < Infinity
+          ? `, and ${Math.round(maxElementTextureBytes() / (1024 * 1024))} MiB per element texture on this device class`
+          : '') +
+        '); clamping — the last ' +
         `${(requested - max).toLocaleString()} ${layout.label}s of this node will NEVER ` +
         'render, and being spatially ordered they are one contiguous region of the scene. ' +
         `${layout.clampHint}`

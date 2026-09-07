@@ -77,6 +77,7 @@ import { ProbeController, type ProbeVerdict } from './adaptive-dpr/probe-control
 import { BoundsLedger } from './adaptive-dpr/bounds-ledger';
 import { HysteresisTracker } from './adaptive-dpr/hysteresis-tracker';
 import { RefreshRateEstimator } from './adaptive-dpr/refresh-rate-estimator';
+import { getInputProfile } from '../utils/input-capabilities';
 import { StallDetector } from './adaptive-dpr/stall-detector';
 
 /**
@@ -212,6 +213,36 @@ export interface AdaptiveDPRDiagnostics extends AdaptiveDPRState {
 /**
  * Manages adaptive pixel ratio for performance optimization
  */
+/**
+ * Floor the adaptive walk stops at on a phone or tablet. The desktop floor of
+ * 0.5 is a 1/4-pixel-density image on a DPR-1 panel; on a DPR-3 phone the same
+ * absolute 0.5 is 1/6 of the panel's linear resolution and reads as smeared.
+ * Three quarters of CSS resolution is the lowest a 6-inch screen held at arm's
+ * length stays legible at.
+ */
+export const MOBILE_MIN_DPR = 0.75;
+
+/**
+ * Refresh-cap ceiling on a phone or tablet. ProMotion iPads report 120 Hz on a
+ * light scene, after which the 75% scale-down threshold sits at 90 fps and a
+ * perfectly healthy 60 fps session walks the DPR down. 60 keeps the thresholds
+ * where the rest of the design was tuned.
+ */
+export const MOBILE_REFRESH_RATE_CEILING = 60;
+
+/**
+ * Construction-time overrides for a MOBILE device class, `undefined` elsewhere
+ * so a laptop/desktop constructs the manager exactly as before. Pass the result
+ * as the manager's `customConfig`.
+ */
+export function mobileAdaptiveDprOverrides(): Partial<AdaptiveDPRConfig> | undefined {
+  if (getInputProfile().deviceClass !== 'mobile') return undefined;
+  return {
+    minDPR: Math.max(config.adaptiveDPR.minDPR, MOBILE_MIN_DPR),
+    refreshRateCeiling: MOBILE_REFRESH_RATE_CEILING,
+  };
+}
+
 export class AdaptiveDPRManager {
   private config: AdaptiveDPRConfig;
   private renderer: DPRRenderer | null = null;
@@ -341,7 +372,10 @@ export class AdaptiveDPRManager {
       hysteresisMs: this.config.hysteresisSeconds * 1000,
       graceSamples: this.config.midbandGraceSamples,
     });
-    this.refreshRateEstimator = new RefreshRateEstimator(this.config.refreshRateFallback);
+    this.refreshRateEstimator = new RefreshRateEstimator(
+      this.config.refreshRateFallback,
+      this.config.refreshRateCeiling
+    );
     this.stallDetector = new StallDetector(this.config.gapResetMs);
     // Initial enabled state from config. At runtime, this is overridden by
     // renderingControls.defaults.adaptiveDPREnabled (persisted per-scene in localStorage).

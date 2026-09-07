@@ -58,6 +58,9 @@ export function validateAdaptiveDPR(config: AppConfig, errors: string[], warning
   if (finite('refreshRateFallback', dpr.refreshRateFallback) && dpr.refreshRateFallback <= 0) {
     errors.push(`adaptiveDPR.refreshRateFallback must be > 0 (got ${dpr.refreshRateFallback})`);
   }
+  if (finite('refreshRateCeiling', dpr.refreshRateCeiling) && dpr.refreshRateCeiling < 0) {
+    errors.push(`adaptiveDPR.refreshRateCeiling must be >= 0 (got ${dpr.refreshRateCeiling})`);
+  }
   if (
     finite('midbandGraceSamples', dpr.midbandGraceSamples) &&
     (dpr.midbandGraceSamples < 0 || !Number.isInteger(dpr.midbandGraceSamples))

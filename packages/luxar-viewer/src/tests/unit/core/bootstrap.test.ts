@@ -511,6 +511,17 @@ describe('bootstrapStandalone', () => {
       });
     });
 
+    it('disables the blend-variant warm-up on a mobile device class (?input=touch)', async () => {
+      await bootstrapStandalone({
+        canvas: CANVAS,
+        urlParams: { ...EMPTY_PARAMS, input: 'touch' },
+      });
+      expect(mocks.init.mock.calls.at(-1)?.[0].blendWarmup).toBe(false);
+      // …and the override is cleared again by a plain bootstrap, restoring it.
+      await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
+      expect(mocks.init.mock.calls.at(-1)?.[0].blendWarmup).toBe(true);
+    });
+
     it('threads urlParams.dpr into init() as pinnedDPR, and omits it when absent', async () => {
       await bootstrapStandalone({
         canvas: CANVAS,
