@@ -38,6 +38,7 @@ import {
   type MeshShadingMode,
 } from './appearance';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
+import { getGlassDepthTexture } from '../_shared/glass-partition';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
 import { clampGamma, isGammaOne, isNoGOG } from '../_shared/uniform-helpers';
 import {
@@ -198,6 +199,10 @@ export class MeshMaterial
         },
         uIsOrtho: { value: 0 }, // 0 = perspective, 1 = orthographic
         uNearCull: { value: 0.1 }, // Default; overridden per-scene by updateCameraParams
+        // Refraction split (glass-partition.ts): mode 0 outside the split; the ONE
+        // shared depth texture the split renders the refracting glass into.
+        uGlassPartition: { value: 0 },
+        uGlassDepth: { value: getGlassDepthTexture() },
         ...(materialConfig.baseColorTexture
           ? { uBaseColorTex: { value: materialConfig.baseColorTexture } }
           : {}),

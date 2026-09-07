@@ -36,6 +36,10 @@
  */
 
 import { GLSL_SANITIZE_FUNCTIONS, GLSL_NEAR_FADE_FUNCTIONS } from '../_shared/glsl-lib';
+import {
+  GLSL_GLASS_PARTITION_GUARD,
+  GLSL_GLASS_PARTITION_UNIFORMS,
+} from '../_shared/glass-partition';
 import { MESH_LIGHT_DIRECTION, MESH_NORMAL_EPS_SQ } from './appearance';
 import type { ShaderSource } from '../_shared/shader-source';
 import { requireTslMaterials } from '../../tsl/slot';
@@ -184,6 +188,7 @@ export const MESH_VERTEX_SHADER = /* glsl */ `
  */
 export const MESH_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
+    ${GLSL_GLASS_PARTITION_UNIFORMS}
 
     ${GLSL_NEAR_FADE_FUNCTIONS}
 
@@ -219,6 +224,7 @@ export const MESH_FRAGMENT_SHADER = /* glsl */ `
     out vec4 fragColor;
 
     void main() {
+      ${GLSL_GLASS_PARTITION_GUARD}
       #ifndef LUXAR_MESH_NO_SHADING
       // (1) Derivative normal, UNCONDITIONALLY — see the module doc.
       highp vec3 derivativeNormal = normalize(cross(dFdx(vViewPos), dFdy(vViewPos)));

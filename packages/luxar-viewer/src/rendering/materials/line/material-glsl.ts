@@ -24,6 +24,7 @@ import {
   LINE_TEXTURE_LAYOUT,
 } from '../../element-texture-layout';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
+import { getGlassDepthTexture } from '../_shared/glass-partition';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
 import { clampGamma, isGammaOne, isNoGOG } from '../_shared/uniform-helpers';
 import {
@@ -169,6 +170,10 @@ export class LineMaterial
         // flip must not recompile the program).
         uSortedIndexSlot: { value: 0 },
         uDensityDrop: { value: 0 },
+        // Refraction split (glass-partition.ts): mode 0 outside the split; the ONE
+        // shared depth texture the split renders the refracting glass into.
+        uGlassPartition: { value: 0 },
+        uGlassDepth: { value: getGlassDepthTexture() },
         uOpacity: { value: materialConfig.opacity ?? 1.0 },
         uInvGamma: { value: 1.0 / gammaValue }, // Pre-computed inverse for performance
         uIntensity: { value: materialConfig.intensity ?? 1.0 },

@@ -10,6 +10,10 @@ import {
   GLSL_NEAR_FADE_FUNCTIONS,
   GLSL_SORTED_INDEX,
 } from '../_shared/glsl-lib';
+import {
+  GLSL_GLASS_PARTITION_GUARD,
+  GLSL_GLASS_PARTITION_UNIFORMS,
+} from '../_shared/glass-partition';
 import type { ShaderSource } from '../_shared/shader-source';
 import {
   ALPHA_CLAMP,
@@ -468,6 +472,7 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
  */
 export const GSPLAT_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
+    ${GLSL_GLASS_PARTITION_UNIFORMS}
 
     // All varyings use flat - no interpolation needed (constant per instance)
     // OPTIMIZATION: flat qualifier skips GPU interpolation hardware
@@ -499,6 +504,7 @@ export const GSPLAT_FRAGMENT_SHADER = /* glsl */ `
     out vec4 fragColor;
 
     void main() {
+      ${GLSL_GLASS_PARTITION_GUARD}
         // Pixel offset from splat center
         vec2 d = gl_FragCoord.xy - vCenterScreen;
 

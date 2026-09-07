@@ -60,6 +60,12 @@ import {
   Discard,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
+import {
+  clipDepthVarying,
+  glassPartitionGuardTSL,
+  glassPartitionNodesFromUniforms,
+  type GlassPartitionTSLNodes,
+} from '../_shared/glass-partition-tsl';
 import { FALLOFF_FLOOR, FALLOFF_K, INV_ONE_MINUS_FALLOFF_FLOOR } from '../_shared/falloff';
 import {
   getPlaceholderElementTexture,
@@ -168,6 +174,9 @@ export interface LineTSLNodes {
   /** Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB. */
   readonly uSortedIndexSlot: TSLNode;
   readonly uDensityDrop: TSLNode;
+  /** Refraction split (glass-partition-tsl.ts): mode + shared glass depth texture. */
+  readonly uGlassPartition: GlassPartitionTSLNodes['uGlassPartition'];
+  readonly uGlassDepth: GlassPartitionTSLNodes['uGlassDepth'];
   readonly uNearCull: TSLNode;
   readonly uMaxLinePixelWidth: TSLNode;
   readonly uPerspectiveLineScale: TSLNode;
@@ -286,6 +295,7 @@ export function lineWebGPUFactory(
   // qualifier on the same fields.
   const vColor: TSLNode = varying(vec3(float(0.0), float(0.0), float(0.0)));
   const vSharpness: TSLNode = varying(float(0.0));
+  const vClipZW: TSLNode = clipDepthVarying();
   const vPerpNorm: TSLNode = varying(float(0.0));
   const vT: TSLNode = varying(float(0.0));
   const vSegmentLength: TSLNode = varying(float(0.0)).setInterpolation('flat');
@@ -695,6 +705,7 @@ export function lineWebGPUFactory(
     // the worker's lerp kernel, so the whole segment renders
     // loud-opaque. Mirrors the GLSL twin.
     vAlpha.assign(mix(sanitizeAlpha(lineT5.z), sanitizeAlpha(lineT5.w), tEff));
+    vClipZW.assign(clipPosOut.zw);
 
     return clipPosOut;
   });
@@ -704,6 +715,9 @@ export function lineWebGPUFactory(
   // ---- Fragment computation ----
 
   const colorNode = Fn(() => {
+    // Refraction split partition FIRST: a fragment on the wrong side of the glass
+    // costs nothing further (glass-partition-tsl.ts; GLSL twin at the top of main()).
+    glassPartitionGuardTSL(nodes, vClipZW);
     const p: TSLNode = vPerpNorm.abs();
     Discard(p.greaterThanEqual(1.0));
 
@@ -893,6 +907,7 @@ export function buildLineTSLNodesFromUniforms(
     uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
     uSortedIndexSlot: uniform((uniforms.uSortedIndexSlot?.value as number) ?? 0),
     uDensityDrop: uniform((uniforms.uDensityDrop?.value as number) ?? 0),
+    ...glassPartitionNodesFromUniforms(uniforms),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
     uMaxLinePixelWidth: uniform((uniforms.uMaxLinePixelWidth?.value as number) ?? 1.0),
     uPerspectiveLineScale: uniform((uniforms.uPerspectiveLineScale?.value as number) ?? 1.0),

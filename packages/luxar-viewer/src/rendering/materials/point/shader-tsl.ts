@@ -54,6 +54,12 @@ import {
   cameraProjectionMatrix,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
+import {
+  clipDepthVarying,
+  glassPartitionGuardTSL,
+  glassPartitionNodesFromUniforms,
+  type GlassPartitionTSLNodes,
+} from '../_shared/glass-partition-tsl';
 import { FALLOFF_FLOOR, FALLOFF_K, INV_ONE_MINUS_FALLOFF_FLOOR } from '../_shared/falloff';
 import {
   sanitizeAlpha,
@@ -161,6 +167,9 @@ export interface PointTSLNodes {
   /** Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB. */
   readonly uSortedIndexSlot: TSLNode;
   readonly uDensityDrop: TSLNode;
+  /** Refraction split (glass-partition-tsl.ts): mode + shared glass depth texture. */
+  readonly uGlassPartition: GlassPartitionTSLNodes['uGlassPartition'];
+  readonly uGlassDepth: GlassPartitionTSLNodes['uGlassDepth'];
   readonly uNearCull: TSLNode;
   readonly uPixelRatio: TSLNode;
   readonly uResolution: TSLNode;
@@ -285,6 +294,7 @@ export function pointWebGPUFactory(
   // pass them to the fragment stage.
   const vSpriteCoord: TSLNode = varying(vec2(float(0.0), float(0.0)));
   const vRadius: TSLNode = varying(float(0.0));
+  const vClipZW: TSLNode = clipDepthVarying();
   const vBeta: TSLNode = varying(float(0.0));
   const vColor: TSLNode = varying(vec3(float(0.0), float(0.0), float(0.0)));
   const vPointSize: TSLNode = varying(float(0.0));
@@ -418,6 +428,7 @@ export function pointWebGPUFactory(
     // identity, finite values clamp to [0, 1] (alpha is load-bearing and
     // feeds optical depth under volumetric).
     vAlpha.assign(sanitizeAlpha(pointT2.y));
+    vClipZW.assign(clipPos.zw);
 
     return clipPos;
   });
@@ -427,6 +438,9 @@ export function pointWebGPUFactory(
   // ---- Fragment computation ----
 
   const colorNode = Fn(() => {
+    // Refraction split partition FIRST: a fragment on the wrong side of the glass
+    // costs nothing further (glass-partition-tsl.ts; GLSL twin at the top of main()).
+    glassPartitionGuardTSL(nodes, vClipZW);
     // Zero-radius nD-slicing discard.
     // Exact-zero only — see the GLSL twin's comment.
     Discard(vRadius.lessThanEqual(0.0));
@@ -588,6 +602,7 @@ export function buildPointTSLNodesFromUniforms(
     uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
     uSortedIndexSlot: uniform((uniforms.uSortedIndexSlot?.value as number) ?? 0),
     uDensityDrop: uniform((uniforms.uDensityDrop?.value as number) ?? 0),
+    ...glassPartitionNodesFromUniforms(uniforms),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 0.1),
     uPixelRatio: uniform((uniforms.uPixelRatio?.value as number) ?? 1),
     uResolution: uniform(

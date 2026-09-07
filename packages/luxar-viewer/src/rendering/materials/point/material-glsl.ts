@@ -14,6 +14,7 @@ import {
   POINT_TEXTURE_LAYOUT,
 } from '../../element-texture-layout';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
+import { getGlassDepthTexture } from '../_shared/glass-partition';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
 import { clampGamma, isGammaOne, isNoGOG } from '../_shared/uniform-helpers';
 import { computePointSizeFactor, computeMaxPointSize } from '../_shared/camera-uniforms';
@@ -143,6 +144,10 @@ export class PointMaterial
         // flip must not recompile the program).
         uSortedIndexSlot: { value: 0 },
         uDensityDrop: { value: 0 },
+        // Refraction split (glass-partition.ts): mode 0 outside the split; the ONE
+        // shared depth texture the split renders the refracting glass into.
+        uGlassPartition: { value: 0 },
+        uGlassDepth: { value: getGlassDepthTexture() },
         uNearCull: { value: 0.1 }, // near-fade start (world units; scene-bounds scaled)
         uPixelRatio: { value: 1 },
 
