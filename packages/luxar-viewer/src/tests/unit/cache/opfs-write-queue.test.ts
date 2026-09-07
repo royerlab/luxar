@@ -85,7 +85,7 @@ describe('OpfsWriteQueue', () => {
     expect(order).toEqual(['busy', 'k-v2']);
   });
 
-  it('drops the oldest pending task past maxDepth (best-effort overflow)', async () => {
+  it('drops the arriving task past maxDepth (best-effort overflow)', async () => {
     const q = new OpfsWriteQueue({ concurrency: 1, maxDepth: 2, maxBytes: 100 });
     const gate = makeGate();
     const ran: string[] = [];
@@ -112,7 +112,8 @@ describe('OpfsWriteQueue', () => {
       },
       1
     );
-    // pending = [a, b] (depth 2 == maxDepth). Enqueue a third → drop oldest (a).
+    // pending = [a, b] (depth 2 == maxDepth). Enqueue a third → drop the
+    // arrival (c), leaving the older pending pair to drain in order.
     q.enqueue(
       'c',
       async () => {
@@ -127,11 +128,11 @@ describe('OpfsWriteQueue', () => {
     gate.release();
     await q.drain();
 
-    // 'a' was dropped; 'busy' (in flight) + the two newest survive.
-    expect(ran).toEqual(['busy', 'b', 'c']);
+    // 'c' was dropped; 'busy' (in flight) + the two oldest pending survive.
+    expect(ran).toEqual(['busy', 'a', 'b']);
   });
 
-  it('drops the oldest pending task when retained bytes exceed maxBytes', async () => {
+  it('drops the arriving task when retained bytes would exceed maxBytes', async () => {
     const q = new OpfsWriteQueue({ concurrency: 1, maxDepth: 100, maxBytes: 5 });
     const gate = makeGate();
     const ran: string[] = [];
@@ -159,13 +160,58 @@ describe('OpfsWriteQueue', () => {
       3
     );
 
+    // 3 + 3 = 6 > 5, so 'b' never joins; the retain stays at 'a' alone.
     expect(q.stats()).toMatchObject({ depth: 1, pendingBytes: 3, dropped: 1, maxBytes: 5 });
 
     gate.release();
     await q.drain();
 
-    expect(ran).toEqual(['busy', 'b']);
+    expect(ran).toEqual(['busy', 'a']);
     expect(q.stats().pendingBytes).toBe(0);
+  });
+
+  it('bounds retained bytes under a burst and leaves a contiguous runnable prefix', async () => {
+    // The #2561 property: with a small byte cap and a burst larger than it, the
+    // retain must never exceed the cap AND what actually reaches disk must be a
+    // contiguous prefix of the load (what a warm revisit can serve from), not
+    // the scattered newest remnant drop-oldest leaves behind.
+    const maxBytes = 10;
+    const bytesEach = 4;
+    const q = new OpfsWriteQueue({ concurrency: 1, maxDepth: 100, maxBytes });
+    const gate = makeGate();
+    const ran: string[] = [];
+    const observedPendingBytes: number[] = [];
+
+    // k0 takes the single slot and stays gated, so nothing drains during the
+    // burst: every later arrival meets a full queue.
+    for (let i = 0; i < 12; i++) {
+      const key = `k${i}`;
+      q.enqueue(
+        key,
+        async () => {
+          if (key === 'k0') await gate.promise;
+          ran.push(key);
+        },
+        bytesEach
+      );
+      observedPendingBytes.push(q.stats().pendingBytes);
+    }
+
+    // k0 runs immediately; k1 (4) and k2 (8) fit; k3..k11 would each take the
+    // retain to 12 > 10, so all nine are dropped on arrival.
+    expect(Math.max(...observedPendingBytes)).toBeLessThanOrEqual(maxBytes);
+    expect(Math.max(...observedPendingBytes)).toBe(2 * bytesEach);
+    expect(q.stats()).toMatchObject({ depth: 2, pendingBytes: 2 * bytesEach, dropped: 9 });
+
+    gate.release();
+    await q.drain();
+
+    // Exact prefix — under drop-oldest this would be the newest survivors
+    // (['k0', 'k10', 'k11']) instead.
+    expect(ran).toEqual(['k0', 'k1', 'k2']);
+    expect(q.stats().pendingBytes).toBe(0);
+    expect(q.stats().depth).toBe(0);
+    expect(q.stats().dropped).toBe(9);
   });
 
   it('clear() drops pending tasks but lets in-flight tasks finish', async () => {

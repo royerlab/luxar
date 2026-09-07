@@ -12,9 +12,18 @@
  * This queue moves the write off the fetch critical path while keeping it
  * bounded: the caller `enqueue()`s and returns immediately; the queue drains
  * tasks at a fixed `concurrency`, coalesces repeat writes of the same key
- * (keeping the latest), and drops the oldest pending task past `maxDepth` or
- * `maxBytes` (L2 is a best-effort persistence tier — L1 still serves the
- * current session and the next session simply re-fetches a dropped chunk).
+ * (keeping the latest), and past `maxDepth` or `maxBytes` drops the ARRIVAL —
+ * the entry that just overflowed — not the oldest pending one (L2 is a
+ * best-effort persistence tier — L1 still serves the current session and the
+ * next session simply re-fetches a dropped chunk).
+ *
+ * Dropping the arrival rather than the oldest matters for what the next session
+ * finds on disk. `pump()` takes from the same oldest end the drop loop used to
+ * evict from, so drop-oldest kept discarding the entry the pump was about to
+ * run and left a scattered remnant — chunks from all over the store, of which
+ * no contiguous region is complete. Dropping the arrival lets the oldest
+ * cap-worth drain in order, leaving a CONTIGUOUS PREFIX of the load that a warm
+ * revisit can actually serve from. The drop COUNT is the same either way.
  *
  * Correctness is the caller's (MultiLevelCachingStore) responsibility: the
  * enqueued task must re-check staleness (disposed / dataAbort / epoch) at drain
@@ -26,9 +35,9 @@
 export interface OpfsWriteQueueOptions {
   /** Max writes running concurrently against OPFS. */
   concurrency: number;
-  /** Max pending (not-yet-started) tasks; excess drops the oldest. */
+  /** Max pending (not-yet-started) tasks; an overflowing arrival is dropped. */
   maxDepth: number;
-  /** Max bytes retained by pending tasks; excess drops the oldest. */
+  /** Max bytes retained by pending tasks; an overflowing arrival is dropped. */
   maxBytes: number;
 }
 
@@ -84,8 +93,9 @@ export class OpfsWriteQueue {
   /**
    * Schedule a write. Returns synchronously; the task runs in the background
    * when a concurrency slot frees. Re-enqueuing the same key replaces its
-   * pending task (coalesce, keep-latest). Past `maxDepth` or `maxBytes`, the
-   * oldest pending task is dropped.
+   * pending task (coalesce, keep-latest). Past `maxDepth` or `maxBytes`, THIS
+   * arrival is dropped and the already-pending tasks are left to drain in order
+   * (see the module docstring for why the oldest end is the one worth keeping).
    */
   enqueue(key: string, run: () => Promise<void>, byteLength: number): void {
     // Coalesce: delete-then-set so the re-enqueued key becomes newest in FIFO
@@ -97,14 +107,18 @@ export class OpfsWriteQueue {
     this.pending.set(key, pending);
     this.pendingBytes += pending.byteLength;
 
-    // Drop-oldest overflow. Best-effort tier: a dropped write just isn't
-    // persisted to disk this session (L1 still holds it).
-    while (this.pending.size > this.maxDepth || this.pendingBytes > this.maxBytes) {
-      const oldest = this.pending.keys().next().value as string | undefined;
-      if (oldest === undefined) break;
-      const dropped = this.pending.get(oldest);
-      this.pending.delete(oldest);
-      if (dropped) this.pendingBytes -= dropped.byteLength;
+    // Drop-the-arrival overflow, for both caps: the oldest end is the prefix a
+    // warm revisit can use, so it drains instead of being evicted. Best-effort
+    // tier: a dropped write just isn't persisted to disk this session (L1 still
+    // holds it). ONE removal always suffices — this call added exactly one
+    // entry and both caps held before it, so deleting that entry returns
+    // `pendingBytes` to its pre-enqueue value and `pending.size` to at most
+    // `maxDepth`. A coalescing re-enqueue that overflows therefore loses BOTH
+    // the task it replaced and this arrival for that key; acceptable for the
+    // same best-effort reason.
+    if (this.pending.size > this.maxDepth || this.pendingBytes > this.maxBytes) {
+      this.pending.delete(key);
+      this.pendingBytes -= pending.byteLength;
       this.droppedCount++;
     }
 

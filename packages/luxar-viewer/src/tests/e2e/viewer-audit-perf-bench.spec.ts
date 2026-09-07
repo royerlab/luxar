@@ -6,7 +6,8 @@
  * Per scene, per repetition, in a FRESH browser context (empty OPFS = cold):
  *   load     ttfpMs, sceneLoadedMs, initUpdateDoneMs, refinementCompleteMs,
  *            stateReadyMs (when `getState` appears = blend warm-up settled),
- *            requests, bytes, longTaskMs during the load, opfsDropped,
+ *            requests, bytes, longTaskMs during the load, opfsDropped (now
+ *            also ASSERTED to be 0, cold and warm — see #2561),
  *            refinement passes/rungs
  *   frames   rAF-cadence p50 under forced continuous render at DPR 1 and 0.5
  *            in the default framing, and at DPR 1 dollied 4x closer
@@ -26,7 +27,7 @@
  * the production bundle is measured — dev-mode ESM inflates TTFP and requests.
  */
 
-import { test, type Browser, type BrowserContext, type Page } from '@playwright/test';
+import { expect, test, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import { execSync } from 'child_process';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
@@ -337,6 +338,19 @@ test.describe('viewer audit bench', () => {
       const outPath = path.join(VIEWER_ROOT, 'perf-results', currentCommitSha(), 'results.json');
       mergeResultRow(outPath, currentCommitSha(), row);
       console.log(`[audit] ${scenarioId}: ${JSON.stringify(row.audit)}`);
+
+      // Guard for #2561: a retained-byte cap that binds below what a scene
+      // streams silently turns L2 into a no-op, and the only symptom is a
+      // slower warm revisit — so assert the drop counters here rather than
+      // trusting a reader to notice the row. Asserted AFTER the row is written
+      // so a regression still leaves the measurement behind, soft so one scene
+      // does not hide the others' numbers, and `null`-tolerant because the
+      // helper reports null when the stat is unavailable (L2 off / skipped).
+      const dropMessage = `${scene.id}: L2 write-queue drops must stay at 0 (#2561)`;
+      const loadDrops = medians.opfsDropped;
+      if (typeof loadDrops === 'number') expect.soft(loadDrops, dropMessage).toBe(0);
+      const warmDrops = warm?.opfsDropped ?? null;
+      if (warmDrops !== null) expect.soft(warmDrops, `${dropMessage} — warm revisit`).toBe(0);
     });
   }
 

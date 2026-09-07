@@ -6,6 +6,7 @@ import { hashUrl, mergeAbortSignals } from './multi-level-caching-store/fetch-re
 import { ValidationQueue, type QueueEntry } from './multi-level-caching-store/validation-queue';
 import type { ChunkPrefetcher } from './chunk-prefetcher';
 import { OpfsWriteQueue } from './multi-level-caching-store/opfs-write-queue';
+import { computeOpfsWriteQueueBudgetBytes } from './heap-budget';
 import type { ChunkSource } from './chunk-source';
 import { HttpChunkSource } from './chunk-source/http-chunk-source';
 import { log, Modules } from '../utils/log';
@@ -59,6 +60,14 @@ export interface MultiLevelCachingStoreOptions {
    * `config.cache.opfsWriteQueueMax`.
    */
   opfsWriteQueueMax?: number;
+  /**
+   * Max bytes retained by pending L2 writes. Defaults to
+   * {@link computeOpfsWriteQueueBudgetBytes} — the non-cache heap remainder's
+   * share, no longer derived from the L1 budget because the pending buffer IS
+   * the L1 entry's buffer (see the enqueue site in `getResult`), so an
+   * L1-resident pending write costs a reference rather than a second copy.
+   */
+  opfsWriteQueueMaxBytes?: number;
 }
 
 /**
@@ -85,7 +94,6 @@ export class MultiLevelCachingStore implements AsyncReadable {
 
   private static readonly DEFAULT_L1_SIZE = config.cache.l1MaxSizeMB * 1024 * 1024;
   private static readonly DEFAULT_L2_SIZE = config.cache.l2MaxSizeMB * 1024 * 1024;
-  private static readonly MIN_OPFS_WRITE_QUEUE_BYTES = 64 * 1024 * 1024;
   // This instance's own validation queue entry, captured synchronously when
   // validateCache() enters the shared queue. dispose() aborts THIS entry
   // directly — never "whatever is the current head" — so an older store can
@@ -188,7 +196,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
     this.l2WriteQueue = new OpfsWriteQueue({
       concurrency: options?.opfsWriteConcurrency ?? config.cache.opfsWriteConcurrency,
       maxDepth: options?.opfsWriteQueueMax ?? config.cache.opfsWriteQueueMax,
-      maxBytes: Math.max(l1Size, MultiLevelCachingStore.MIN_OPFS_WRITE_QUEUE_BYTES),
+      maxBytes: options?.opfsWriteQueueMaxBytes ?? computeOpfsWriteQueueBudgetBytes(),
     });
   }
 

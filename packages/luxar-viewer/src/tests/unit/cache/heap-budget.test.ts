@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   cachePoolOverrideBytes,
   computeCacheBudgets,
+  computeOpfsWriteQueueBudgetBytes,
   computeWorkingSetBudgetBytes,
   readHeapLimitBytes,
   inferDeviceClass,
@@ -64,6 +65,64 @@ describe('computeWorkingSetBudgetBytes', () => {
     expect(computeWorkingSetBudgetBytes()).toBe(256 * MB);
     expect(computeWorkingSetBudgetBytes(0)).toBe(256 * MB);
     expect(computeWorkingSetBudgetBytes(Number.NaN)).toBe(256 * MB);
+  });
+});
+
+describe('computeOpfsWriteQueueBudgetBytes', () => {
+  it('uses half of the non-cache share of the configured heap target', () => {
+    // 512MB × 0.8 target × 0.4 non-cache = 163.84MB remainder; half = 81.92MB,
+    // well under the 512MB cap.
+    const heap = 512 * MB;
+    expect(computeOpfsWriteQueueBudgetBytes(heap)).toBe(Math.floor(heap * target * 0.4 * 0.5));
+  });
+
+  it('caps the retained-byte allowance on a large measured heap', () => {
+    // 4GiB: remainder 1310MB, half 655MB → capped. Same at 8GiB.
+    expect(computeOpfsWriteQueueBudgetBytes(4 * 1024 * MB)).toBe(512 * MB);
+    expect(computeOpfsWriteQueueBudgetBytes(8 * 1024 * MB)).toBe(512 * MB);
+  });
+
+  it('uses an explicit cache-pool override before a measured heap', () => {
+    // Pool 768MB → remainder 768 × (0.4/0.6) = 512MB; half = 256MB.
+    expect(computeOpfsWriteQueueBudgetBytes(512 * MB, 768 * MB)).toBe(256 * MB);
+  });
+
+  it('derives a WebKit allowance from the device-class cache pool when no override exists', () => {
+    // Mobile pool 384MB → remainder 256MB; half = 128MB.
+    expect(computeOpfsWriteQueueBudgetBytes(undefined, undefined, 384 * MB)).toBe(128 * MB);
+    // A measured heap still wins over the device-class fallback.
+    expect(computeOpfsWriteQueueBudgetBytes(512 * MB, undefined, 2048 * MB)).toBe(
+      Math.floor(512 * MB * target * 0.4 * 0.5)
+    );
+  });
+
+  it('uses the fixed fallback when no pool or heap signal is available', () => {
+    expect(computeOpfsWriteQueueBudgetBytes()).toBe(256 * MB);
+    expect(computeOpfsWriteQueueBudgetBytes(0)).toBe(256 * MB);
+    expect(computeOpfsWriteQueueBudgetBytes(Number.NaN)).toBe(256 * MB);
+  });
+
+  it('does not depend on the L1 cache budget (#2561)', () => {
+    // The regression that matters: the allowance used to be
+    // max(resolved L1 size, 64MB), which bound at half of what a large scene
+    // streams on a machine whose L1 resolves to ~100MB. It must now move only
+    // with the heap remainder.
+    const heap = 4192 * MB;
+    const before = computeOpfsWriteQueueBudgetBytes(heap);
+    const noSignal = computeOpfsWriteQueueBudgetBytes();
+    const originalL1MB = config.cache.l1MaxSizeMB;
+    try {
+      config.cache.l1MaxSizeMB = originalL1MB * 8;
+      expect(computeOpfsWriteQueueBudgetBytes(heap)).toBe(before);
+      expect(computeOpfsWriteQueueBudgetBytes()).toBe(noSignal);
+      config.cache.l1MaxSizeMB = 10; // the validator's floor
+      expect(computeOpfsWriteQueueBudgetBytes(heap)).toBe(before);
+      expect(computeOpfsWriteQueueBudgetBytes()).toBe(noSignal);
+    } finally {
+      config.cache.l1MaxSizeMB = originalL1MB;
+    }
+    // …and it is not the old formula's value for this heap either.
+    expect(before).not.toBe(Math.max(computeCacheBudgets(heap).l1Bytes, 64 * MB));
   });
 });
 
