@@ -105,28 +105,53 @@ def test_story_camera_looks_at_the_centre_from_outside_the_cloud() -> None:
     import math
 
     from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
+    from luxar.demos.demo_esm3_protein_stories import (
+        SPARSE_TAIL_RATIO,
+        SPHERE_RADIUS_SCALE,
+        bubble_radius,
+        framing_radius,
+    )
 
     cam = story_camera(
-        cluster, _story(frame_fraction=0.36, min_distance=2.5), np.zeros(3)
+        cluster, _story(frame_fraction=0.46, min_distance=1.0), np.zeros(3)
     )
     assert cam.target == (4.0, 0.0, 0.0)
     assert cam.position is not None
     offset = np.array(cam.position) - np.array(cam.target)
-    # The blob (diameter 1.0) spans 36% of the frame height under the cinematic
-    # lens: distance = r95 / (0.5 * 0.36 * tan(fov/2)); along +x lifted in +y,
-    # never through the cloud. The pose leaves fov to cinematic mode.
-    expected = 0.5 / (0.5 * 0.36 * math.tan(math.radians(CINEMATIC_FOV_DEG) / 2))
+    # The BUBBLE (radius 1.35 * r95) spans 46% of the frame height under the
+    # cinematic lens — the panel's height: distance = R / (0.5 * 0.46 * tan(fov/2));
+    # along +x lifted in +y, never through the cloud. fov is left to cinematic mode.
+    r_bubble = SPHERE_RADIUS_SCALE * 0.5
+    assert bubble_radius(cluster) == r_bubble
+    expected = r_bubble / (0.5 * 0.46 * math.tan(math.radians(CINEMATIC_FOV_DEG) / 2))
     assert np.isclose(np.linalg.norm(offset), expected)
     assert offset[0] > 0 and offset[1] > 0
     assert cam.fov is None
     # min_distance is a floor, not a scale.
     far = story_camera(
-        cluster, _story(frame_fraction=0.36, min_distance=20.0), np.zeros(3)
+        cluster, _story(frame_fraction=0.46, min_distance=20.0), np.zeros(3)
     )
     assert far.position is not None
     assert np.isclose(
         np.linalg.norm(np.array(far.position) - np.array(far.target)), 20.0
     )
+    # A sparse cluster (long tail: r95 far beyond r50) is framed on its core, so
+    # the camera comes closer than the bubble alone would ask for.
+    sparse = StoryCluster(
+        indices=np.arange(3), centre=np.zeros(3), r95=1.0, n_named=3, r50=0.2
+    )
+    dense = StoryCluster(
+        indices=np.arange(3), centre=np.zeros(3), r95=1.0, n_named=3, r50=0.6
+    )
+    assert framing_radius(dense) == bubble_radius(dense)
+    assert framing_radius(sparse) < bubble_radius(sparse)
+    assert framing_radius(sparse) == max(
+        0.35, SPHERE_RADIUS_SCALE * SPARSE_TAIL_RATIO * 0.2
+    )
+    near = story_camera(sparse, _story(min_distance=0.1), np.zeros(3))
+    farther = story_camera(dense, _story(min_distance=0.1), np.zeros(3))
+    assert near.position is not None and farther.position is not None
+    assert np.linalg.norm(near.position) < np.linalg.norm(farther.position)
 
 
 def test_story_camera_falls_back_when_the_cluster_sits_at_the_centre() -> None:

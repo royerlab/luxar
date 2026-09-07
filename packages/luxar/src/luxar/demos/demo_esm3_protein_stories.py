@@ -124,12 +124,15 @@ class Story:
     radius: float = 0.8
     #: Optional taxon filter (a value of the base demo's kingdom column).
     kingdom: str | None = None
-    #: Framing: the blob (diameter 2·r95) spans this fraction of the frame
-    #: height under the 63° cinematic lens, the rest of the landscape giving
-    #: context; the camera distance follows from the lens (see
-    #: ``_story_camera``) but never drops below ``min_distance``.
-    frame_fraction: float = 0.36
-    min_distance: float = 5.0
+    #: Framing: the BUBBLE (diameter 2·R, R = SPHERE_RADIUS_SCALE·r95) spans
+    #: this fraction of the frame height under the 63° cinematic lens — the
+    #: same height as the story panel and the turntable beside it (each ~46%
+    #: of the frame). The camera distance follows from the lens (see
+    #: ``_story_camera``) but never drops below ``min_distance``; a sparse
+    #: cluster (see ``SPARSE_TAIL_RATIO``) is framed on its dense core, so its
+    #: oversized bubble deliberately overflows the frame.
+    frame_fraction: float = 0.46
+    min_distance: float = 2.5
     flight_ms: int = 2500
     tags: tuple[str, ...] = field(default_factory=tuple)
     #: Representative PDB entry rendered as the left-hand turntable ("" = none).
@@ -644,6 +647,28 @@ SPHERE_RADIUS_SCALE = 1.35  # × the cluster's r95
 SPHERE_MIN_RADIUS = 0.35
 SPHERE_SUBDIVISIONS = 3  # icosphere: 642 vertices, 1280 faces
 SPHERE_LAYER_ORDER = 5  # backdrop 0 < sphere < highlight 10
+# A cluster whose 95th-percentile radius exceeds this multiple of its median
+# radius is a big bubble around a small dense core (a 3D Gaussian blob has
+# r95/r50 ≈ 1.8): the camera then frames the core the bubble WOULD have had
+# with a normal tail, so the oversized bubble overflows the frame and the
+# visitor is brought closer to the proteins that matter.
+SPARSE_TAIL_RATIO = 2.5
+
+
+def bubble_radius(cluster: StoryCluster) -> float:
+    """World radius of the story's soap bubble."""
+    return max(SPHERE_MIN_RADIUS, SPHERE_RADIUS_SCALE * cluster.r95)
+
+
+def framing_radius(cluster: StoryCluster) -> float:
+    """The radius the camera frames: the bubble, or the dense core when sparse."""
+    if cluster.r50 > 0 and cluster.r95 > SPARSE_TAIL_RATIO * cluster.r50:
+        return max(
+            SPHERE_MIN_RADIUS, SPHERE_RADIUS_SCALE * SPARSE_TAIL_RATIO * cluster.r50
+        )
+    return bubble_radius(cluster)
+
+
 # The shell is a SOAP BUBBLE: `material="physical"` (MESH_PHYSICAL_MATERIALS_SPEC
 # Phases 1-2, 4). Fully transmissive so the cluster stays crisp inside (points
 # draw after the glass on both backends), a thin-film iridescence for the
@@ -684,10 +709,14 @@ class StoryCluster:
 
     indices: np.ndarray
     centre: np.ndarray
-    #: 95th-percentile distance of members to the centre (framing radius).
+    #: 95th-percentile distance of members to the centre (the bubble's radius).
     r95: float
     #: How many proteins matched the name pattern before the radius cut.
     n_named: int
+    #: Median distance of members to the centre — the dense core. A cluster
+    #: whose r95 is far beyond its r50 is a big bubble around a small core, and
+    #: the camera frames the core instead (``0`` = unknown, never sparse).
+    r50: float = 0.0
 
 
 def _densest_member(family_pos: np.ndarray, radius: float) -> np.ndarray:
@@ -748,8 +777,12 @@ def select_story_members(
     # Re-centre on the blob itself (the family median can be pulled by
     # stragglers) and measure its framing radius.
     centre = np.median(positions[indices], axis=0)
-    r95 = float(np.percentile(np.linalg.norm(positions[indices] - centre, axis=1), 95))
-    return StoryCluster(indices=indices, centre=centre, r95=r95, n_named=n_named)
+    radial = np.linalg.norm(positions[indices] - centre, axis=1)
+    r95 = float(np.percentile(radial, 95))
+    r50 = float(np.percentile(radial, 50))
+    return StoryCluster(
+        indices=indices, centre=centre, r95=r95, n_named=n_named, r50=r50
+    )
 
 
 def _midpoint_vertex(
@@ -839,7 +872,7 @@ def story_camera(
     half_height_per_unit = math.tan(math.radians(CINEMATIC_FOV_DEG) / 2)
     distance = max(
         story.min_distance,
-        cluster.r95 / (0.5 * story.frame_fraction * half_height_per_unit),
+        framing_radius(cluster) / (0.5 * story.frame_fraction * half_height_per_unit),
     )
     position = cluster.centre + outward * distance
     return CameraConfig(
@@ -1129,7 +1162,7 @@ def build_stories_scene(
             # slot. The unit icosphere's vertices are its normals.
             unit_verts, unit_faces = icosphere()
             for k, (s, c) in enumerate(zip(stories, clusters, strict=True), start=1):
-                radius = max(SPHERE_MIN_RADIUS, SPHERE_RADIUS_SCALE * c.r95)
+                radius = bubble_radius(c)
                 nv = len(unit_verts)
                 sphere_vertices = np.column_stack(
                     [
