@@ -1389,6 +1389,30 @@ describe('PickingSystem — stale readback ordering', () => {
 
     expect(onPickResult).toHaveBeenCalledExactlyOnceWith(fakeResult);
   });
+
+  it('drops an explicit pick when the pointer leaves during readback', async () => {
+    const { system, onPickResult, gate, fakeResult } = buildGatedSystem();
+
+    const pending = system.pickAt(400, 300);
+    system.onMouseLeave();
+    onPickResult.mockClear();
+    gate.resolve(fakeResult);
+    await pending;
+
+    expect(onPickResult).not.toHaveBeenCalled();
+  });
+
+  it('drops an explicit pick when the system is disposed during readback', async () => {
+    const { system, onPickResult, gate, fakeResult } = buildGatedSystem();
+
+    const pending = system.pickAt(400, 300);
+    system.dispose();
+    onPickResult.mockClear();
+    gate.resolve(fakeResult);
+    await pending;
+
+    expect(onPickResult).not.toHaveBeenCalled();
+  });
 });
 
 describe('PickingSystem — element-ID remap (issue #1421)', () => {

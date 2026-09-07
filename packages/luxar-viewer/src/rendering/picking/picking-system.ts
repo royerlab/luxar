@@ -475,6 +475,8 @@ export class PickingSystem {
    * Invalidate the cached pick buffer. Call when camera, geometry, or
    * viewport changes. Fades the current hover overlay (matches the
    * drag-suppression UX: while the camera is moving, tooltips hide).
+   * While an explicit tap pick is in flight, keep its delivery authoritative
+   * and defer that fade; the tap describes the frame where the finger lifted.
    * The rAF scheduler will fire a fresh pick once everything has been
    * still for HOVER_SETTLE_MS.
    */
