@@ -255,6 +255,7 @@ def calibrate(
         fg_weighted_dev,
         fg_bg_ratio,
     )
+    del fg_weighted_dev, fg_weighted_t
 
     # 2-3. Fit at each K
     for i, K in enumerate(k_grid):
@@ -345,7 +346,6 @@ def calibrate(
         ref_dev,
         mask_dev,
         fg_dev,
-        fg_weighted_dev,
         train_mask_dev,
         held_fg_dev,
         held_weighted_fg_sel,

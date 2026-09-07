@@ -94,7 +94,7 @@ def _plot_rate_distortion(
 ) -> None:
     ks = np.asarray(result.k_values_effective, dtype=float)
     held = np.asarray(result.held_out_psnr_db, dtype=float)
-    selected, selected_label, selected_peak, _resolved_metric = _selected_metric(result)
+    selected, selected_label, selected_peak, resolved_metric = _selected_metric(result)
     train = np.asarray(result.train_psnr_db, dtype=float)
     full = np.asarray(result.full_psnr_db, dtype=float)
     ssim = np.asarray(result.full_ssim, dtype=float)
@@ -104,7 +104,7 @@ def _plot_rate_distortion(
 
     # PSNR panel
     ax_psnr.plot(ks, held, "o-", color="C1", label="held-out")
-    if selected_label not in ("held-out PSNR", "held-out gain over predict-zero"):
+    if resolved_metric not in ("psnr_minmax", "gain"):
         ax_psnr.plot(ks, selected, "d-", color="C6", label=selected_label)
     ax_psnr.plot(ks, train, "s--", color="C0", label="train")
     ax_psnr.plot(ks, full, "v:", color="C2", label="full volume")
@@ -120,9 +120,10 @@ def _plot_rate_distortion(
             color="grey",
         )
     star_idx = result.k_values_requested.index(k_star)
+    displayed_selected = held if resolved_metric == "gain" else selected
     ax_psnr.plot(
         ks[star_idx],
-        (held if result.k_star_metric == "gain" else selected)[star_idx],
+        displayed_selected[star_idx],
         marker="*",
         color="C3",
         markersize=18,
@@ -133,7 +134,7 @@ def _plot_rate_distortion(
     if knee_idx is not None:
         ax_psnr.plot(
             ks[knee_idx],
-            (held if result.k_star_metric == "gain" else selected)[knee_idx],
+            displayed_selected[knee_idx],
             marker="D",
             color="C6",
             markersize=10,
@@ -228,7 +229,7 @@ def _plot_blind_spot(fig: "Figure", ax: "Axes", result: CalibrationResult) -> No
         )
     _safe_log_x(ax)
     ax.set_xlabel("Effective splat count K")
-    ax.set_ylabel("Gain (dB)" if result.k_star_metric == "gain" else "PSNR (dB)")
+    ax.set_ylabel("Gain (dB)" if resolved_metric == "gain" else "PSNR (dB)")
     ax.set_title("Blind-spot cross-validation")
     ax.legend(loc="best", fontsize=10)
 
@@ -379,17 +380,26 @@ def render_calibration_report(
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    _selected_curve, _selected_label, selected_peak, resolved_metric = _selected_metric(
+        result
+    )
+    knee_idx = _knee_display_idx(result)
 
     with PdfPages(output_path) as pdf:
         # ── Page 1: rate-distortion (4 panels) ────────────────────────
         fig, axes = plt.subplots(2, 2, figsize=(11, 8))
         suptitle = (
             f"Calibration: {tuple(result.volume_shape)} volume — "
-            f"K* = {result.held_out_peak.k_star:,} "
-            f"(type: {result.held_out_peak.type})"
+            f"K* = {selected_peak.k_star:,} "
+            f"(metric: {resolved_metric}, type: {selected_peak.type})"
         )
-        if _knee_display_idx(result) is not None:
-            suptitle += f" — operating point = {result.held_out_peak.k_knee:,}"
+        if knee_idx is not None:
+            suptitle += f" — operating point = {selected_peak.k_knee:,}"
+        if resolved_metric != "psnr_minmax":
+            suptitle += (
+                f"\npsnr_minmax K* = {result.held_out_peak.k_star:,} "
+                f"(type: {result.held_out_peak.type})"
+            )
         fig.suptitle(suptitle, fontsize=12)
         _plot_rate_distortion(
             fig,
@@ -409,14 +419,19 @@ def render_calibration_report(
         # Annotation: peak detection summary
         nf = result.noise_floor
         annotation = (
-            f"K* = {result.held_out_peak.k_star:,}  "
-            f"(type: {result.held_out_peak.type}, "
-            f"confidence: {result.held_out_peak.confidence_db:.2f} dB)\n"
+            f"K* = {selected_peak.k_star:,}  "
+            f"(metric: {resolved_metric}, type: {selected_peak.type}, "
+            f"confidence: {selected_peak.confidence_db:.2f} dB)\n"
         )
-        if _knee_display_idx(result) is not None:
+        if knee_idx is not None:
             annotation += (
                 f"operating point (diminishing returns) = "
-                f"{result.held_out_peak.k_knee:,} splats\n"
+                f"{selected_peak.k_knee:,} splats\n"
+            )
+        if resolved_metric != "psnr_minmax":
+            annotation += (
+                f"psnr_minmax K* = {result.held_out_peak.k_star:,} "
+                f"(type: {result.held_out_peak.type})\n"
             )
         annotation += (
             f"σ̂ = {nf.sigma_hat:.4f}, "
@@ -440,7 +455,7 @@ def render_calibration_report(
             ks_req = result.k_values_requested
             k_low = ks_req[0]
             k_high = ks_req[-1]
-            star_idx = ks_req.index(result.held_out_peak.k_star)
+            star_idx = ks_req.index(selected_peak.k_star)
             shape = tuple(result.volume_shape)
 
             rendered_low = _render_splat_path(splat_paths[0], shape)
@@ -462,12 +477,12 @@ def render_calibration_report(
                 rendered_star,
                 rendered_high,
                 k_low,
-                result.held_out_peak.k_star,
+                selected_peak.k_star,
                 k_high,
             )
             fig.suptitle(
                 f"Reconstruction slices  —  target vs K = {k_low:,} / "
-                f"K* = {result.held_out_peak.k_star:,} / K = {k_high:,}",
+                f"K* = {selected_peak.k_star:,} / K = {k_high:,}",
                 fontsize=11,
             )
             fig.tight_layout(rect=(0, 0, 1, 0.96))
@@ -493,7 +508,7 @@ def render_calibration_report(
         d = pdf.infodict()
         d["Title"] = f"Luxar calibration — {tuple(result.volume_shape)}"
         d["Subject"] = (
-            f"Recommended K = {result.held_out_peak.k_star} "
-            f"({result.held_out_peak.type})"
+            f"Recommended K = {selected_peak.k_star} "
+            f"({resolved_metric}, {selected_peak.type})"
         )
         d["Creator"] = "luxar gsplat cal"

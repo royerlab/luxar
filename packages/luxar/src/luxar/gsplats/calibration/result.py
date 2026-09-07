@@ -86,7 +86,11 @@ class CalibrationResult:
     k_star_metric: str = "psnr_minmax"
     """Metric used for ``held_out_peak_selected``."""
     held_out_peak_selected: Optional[HeldOutPeak] = None
-    """K* under ``k_star_metric`` (None when it equals the default psnr_minmax)."""
+    """K* under ``k_star_metric``.
+
+    None when the metric is the default ``psnr_minmax``, or when the selected
+    curve was undefined and K* fell back to min-max PSNR.
+    """
     calibration_region: Optional[Dict[str, Any]] = None
     """Provenance when an auto-selected sub-region was calibrated (else None)."""
     original_volume_shape: Optional[List[int]] = None

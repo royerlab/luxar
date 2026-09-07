@@ -16,6 +16,7 @@ from luxar.gsplats.calibration import (
 matplotlib = pytest.importorskip("matplotlib")
 matplotlib.use("Agg")
 
+import luxar.gsplats.calibration_report as calibration_report  # noqa: E402
 from luxar.gsplats.calibration_report import (  # noqa: E402
     _knee_display_idx,
     _plot_blind_spot,
@@ -143,6 +144,63 @@ class TestKneeDisplayIdx:
 
 
 class TestRenderReport:
+    def test_selected_peak_controls_report_text_montage_and_metadata(
+        self, tmp_path, monkeypatch
+    ):
+        res = _make_result([10, 20, 40], [20.0, 25.0, 24.0])
+        selected_curve = [20.0, 24.0, 30.0]
+        res.k_star_metric = "psnr_fg_weighted"
+        res.held_out_psnr_fg_weighted_db = selected_curve
+        res.held_out_peak_selected = find_k_star(res.k_values_requested, selected_curve)
+        captured_pages = []
+        metadata = {}
+        rendered_paths = []
+
+        class CapturePdfPages:
+            def __init__(self, _path):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def savefig(self, fig):
+                captured_pages.append(
+                    (
+                        fig._suptitle.get_text() if fig._suptitle else "",
+                        [text.get_text() for text in fig.texts],
+                    )
+                )
+
+            def infodict(self):
+                return metadata
+
+        def render_splat(path, shape):
+            rendered_paths.append(path)
+            return np.zeros(shape, dtype=np.float32)
+
+        monkeypatch.setattr("matplotlib.backends.backend_pdf.PdfPages", CapturePdfPages)
+        monkeypatch.setattr(calibration_report, "_render_splat_path", render_splat)
+
+        render_calibration_report(
+            res,
+            np.zeros((32, 32, 32), dtype=np.float32),
+            tmp_path / "report.pdf",
+            splat_paths=["k10", "k20", "k40"],
+        )
+
+        assert "K* = 40" in captured_pages[0][0]
+        assert "metric: psnr_fg_weighted" in captured_pages[0][0]
+        assert "psnr_minmax K* = 20" in captured_pages[0][0]
+        assert any("K* = 40" in text for text in captured_pages[1][1])
+        assert "K* = 40" in captured_pages[2][0]
+        assert rendered_paths == ["k10", "k40", "k40"]
+        assert metadata["Subject"] == (
+            f"Recommended K = 40 (psnr_fg_weighted, {res.held_out_peak_selected.type})"
+        )
+
     def test_render_with_decoupled_knee(self, tmp_path):
         res = _make_result(SIGNAL_LIMITED_KS, SIGNAL_LIMITED_PSNR)
         out = tmp_path / "report.pdf"

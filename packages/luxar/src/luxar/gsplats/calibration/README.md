@@ -13,9 +13,9 @@ As a free byproduct, an ensemble noise-floor estimator (Laplacian + Haar HH + ba
 Split by phase:
 
 - **`masking.py`** — Bernoulli mask generation (`cv_mask`) and donut-median self-supervision fill (`donut_median_fill`)
-- **`metrics.py`** — Held-out reconstruction metrics (`held_out_psnr`, `held_out_gain_db`, `held_out_psnr_foreground`, `predict_zero_baseline_mse`)
+- **`metrics.py`** — Held-out reconstruction metrics (`held_out_psnr`, `held_out_gain_db`, `held_out_psnr_foreground`, `held_out_psnr_fg_weighted`, `predict_zero_baseline_mse`)
 - **`noise_floor.py`** — Ensemble noise-floor estimation (`estimate_noise_floor` → `NoiseFloor`) and DC-offset estimation (`estimate_floor`)
-- **`content.py`** — Feature content estimation (local-maxima / edges / intensity counts) for splat-density prediction; Otsu foreground masks; auto region selection
+- **`content.py`** — Feature content estimation (local-maxima / edges / intensity counts) for splat-density prediction; Otsu and lightly smoothed foreground masks; auto region selection
 - **`curve_analysis.py`** — K-grid construction (`build_k_grid`), peak detection (`find_k_star` → `HeldOutPeak`), transferable splat-density model (`SplatDensity`, `fit_saturation_exponent` → `ExponentFit`), parametric rate-distortion model (`fit_rd_model` → `RDModel`)
 - **`result.py`** — `CalibrationResult` container with JSON serialisation (non-finite floats round-trip as `null`)
 - **`driver.py`** — Top-level `calibrate` driver (wires together mask → fit → metrics → curve analysis) and `calibrate_saturation_exponent` (multi-scale α fit)
