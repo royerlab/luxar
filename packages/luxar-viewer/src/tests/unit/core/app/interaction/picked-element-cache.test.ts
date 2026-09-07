@@ -14,6 +14,8 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import {
   PickedElementCache,
+  TOUCH_CLICK_SLOP_PX,
+  clickSlopFor,
   CLICK_SLOP_PX,
   type CachedPick,
   type PickGenerationPort,
@@ -168,5 +170,36 @@ describe('PickedElementCache — an ordinary click must survive', () => {
     expect(ports.pickGeneration).toBe(generationBefore);
 
     expect(cache.read(ports, 200, 150)).not.toBeNull();
+  });
+});
+
+describe('click slop per pointer type', () => {
+  it('a finger gets the wider tolerance, everything else the mouse value', () => {
+    expect(clickSlopFor('touch')).toBe(TOUCH_CLICK_SLOP_PX);
+    expect(clickSlopFor('mouse')).toBe(CLICK_SLOP_PX);
+    expect(clickSlopFor('pen')).toBe(CLICK_SLOP_PX);
+    expect(clickSlopFor('')).toBe(CLICK_SLOP_PX);
+    expect(TOUCH_CLICK_SLOP_PX).toBeGreaterThan(CLICK_SLOP_PX);
+  });
+
+  it('read() honours an explicit slop', () => {
+    const cache = new PickedElementCache();
+    const ports = { pickGeneration: 1, visibleSignature: 1 };
+    cache.store(
+      {
+        mainNode: new THREE.Object3D(),
+        nodeName: 'n',
+        hitNodeName: 'n',
+        elementIndex: 0,
+        label: null,
+        key: null,
+        screenX: 100,
+        screenY: 100,
+      },
+      ports
+    );
+    expect(cache.read(ports, 110, 100)).toBeNull(); // 10 px > mouse slop
+    expect(cache.read(ports, 110, 100, TOUCH_CLICK_SLOP_PX)).not.toBeNull();
+    expect(cache.read(ports, 113, 100, TOUCH_CLICK_SLOP_PX)).toBeNull(); // 13 px > 12
   });
 });

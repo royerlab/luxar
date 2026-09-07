@@ -51,12 +51,31 @@ import type * as THREE from 'three';
 export const CLICK_SLOP_PX = 4;
 
 /**
+ * The same tolerance for a finger. A tap routinely drifts 8–15 px between
+ * `pointerdown` and `pointerup`; at the mouse's 4 px every tap read as a camera
+ * drag and no touch device could ever select an element.
+ */
+export const TOUCH_CLICK_SLOP_PX = 12;
+
+/** The click slop for a pointer type: fingers get {@link TOUCH_CLICK_SLOP_PX}. */
+export function clickSlopFor(pointerType: string): number {
+  return pointerType === 'touch' ? TOUCH_CLICK_SLOP_PX : CLICK_SLOP_PX;
+}
+
+/**
  * The subset of `PickingSystem` this cache validates against. A structural
  * port, so tests can pass a plain object with two numbers.
  */
 export interface PickGenerationPort {
   readonly pickGeneration: number;
   readonly visibleSignature: number;
+  /**
+   * Pick immediately at a viewport position (tap-to-pick). Resolves once the
+   * result has been delivered to the pick consumers — or dropped as stale —
+   * so a caller can read the cache right after. Optional: a port without it
+   * (tests) means "act on whatever the cache already holds".
+   */
+  pickAt?(clientX: number, clientY: number): Promise<void>;
 }
 
 /** A picked element, as much of it as a click needs. */
@@ -117,18 +136,24 @@ export class PickedElementCache {
 
   /**
    * The current pick if it is still valid AND the given point is within
-   * {@link CLICK_SLOP_PX} of where the pick was taken.
+   * `slopPx` (default {@link CLICK_SLOP_PX}; a finger passes
+   * {@link TOUCH_CLICK_SLOP_PX}) of where the pick was taken.
    *
    * Returns null rather than a best guess: refusing to act is always
    * recoverable (the user hovers again), whereas acting on a stale pick opens
    * a link for the wrong element, which is not.
    */
-  read(ports: PickGenerationPort, screenX: number, screenY: number): CachedPick | null {
+  read(
+    ports: PickGenerationPort,
+    screenX: number,
+    screenY: number,
+    slopPx: number = CLICK_SLOP_PX
+  ): CachedPick | null {
     const e = this.peek(ports);
     if (!e) return null;
     const dx = screenX - e.screenX;
     const dy = screenY - e.screenY;
-    if (dx * dx + dy * dy > CLICK_SLOP_PX * CLICK_SLOP_PX) return null;
+    if (dx * dx + dy * dy > slopPx * slopPx) return null;
     return e;
   }
 }

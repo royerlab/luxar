@@ -679,7 +679,9 @@ describe('initPicking', () => {
       // it — and the canvas actions' cursor reset (#1917), which must run on
       // teardown so a session disposed mid-hover leaves no pointer cursor
       // behind.
-      expect(addSpy.mock.calls.length).toBe(5);
+      // Plus (touch, PR B) the canvas actions' timer reset — a pending long-press or a
+      // deferred tap navigation must not fire into a torn-down session.
+      expect(addSpy.mock.calls.length).toBe(6);
       // Each registered cleanup is a function (not a value / object).
       for (const call of addSpy.mock.calls) {
         expect(typeof call[0]).toBe('function');

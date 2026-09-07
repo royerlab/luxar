@@ -50,6 +50,7 @@ utils/
 ├── format-error.ts          # Unknown thrown value → message / name: message / stack
 ├── input-capabilities.ts    # getInputProfile(), isTouchLikePointer(), deriveInputProfile() (import-free)
 ├── log.ts                   # log object, Modules registry, LogEmoji, createModuleLogger
+├── long-press.ts            # attachLongPress(el, …) — touch long-press → secondary action, single opener across platforms
 ├── object-visibility.ts     # isEffectivelyVisible (ancestor-aware scene-graph visibility)
 ├── platform.ts              # isMacPlatform()
 ├── result.ts                # Result<T, E> + ok/err/isOk/isErr/match/mapOk/mapErr/unwrap/tryAsync
@@ -203,6 +204,10 @@ The single answer to "is this a touch-first device, is it an iPhone or an iPad, 
 - `isTouchLikePointer(event)` — a finger, or a pen used as a finger on a coarse-pointer device (iPad + Pencil, with no secondary button held). Consistent across a gesture: `pointermove` reports `button === -1`, so held buttons are read from `buttons`. A pen on a fine-pointer desktop keeps the mouse mapping.
 - `deriveInputProfile(signals)`, `inferDeviceClass(signals)`, `readInputSignals()` — the pure derivation and its raw browser signals (`InputSignals`), injectable for tests. No-signal default (node, jsdom) is a hover-capable fine-pointer laptop, i.e. the historical desktop behaviour.
 - `resetInputProfileForTests()`.
+
+### long-press.ts - Long-press → secondary action (touch)
+
+`attachLongPress(el, { onLongPress, durationMs = 500, slopPx = 12 })` arms a delegated long-press on `el` for touch-like pointers only (`isTouchLikePointer`; a mouse keeps its right button and never sees a timer). Cancels on movement past the slop, on release, on `pointercancel`/`pointerleave`, or when a second finger lands (a pinch). On firing it becomes the SINGLE opener across platforms: it swallows the `contextmenu` Android Chrome synthesises for a long press (iOS never fires one) so a press cannot open two menus, and swallows the release `click` so the button's primary action does not run under the menu that just opened. Returns a disposer. Used by the control rail (context popovers), the dimension sliders' play button (animation settings) and the layers panel (row / eye / header menus); the canvas has its own long-press inside `core/app/interaction/canvas-actions.ts` because its release path is `pointerup`, not `click`.
 
 ### platform.ts - Platform Detection
 

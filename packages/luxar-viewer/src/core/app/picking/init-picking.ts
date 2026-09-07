@@ -67,6 +67,8 @@ export interface InitPickingPorts {
   allowLinks?: boolean;
   /** Sinks for the public `element-click` / `element-contextmenu` events. */
   onElementClick?: (payload: ElementPointerPayload) => void;
+  /** Touch double-tap on the canvas re-frames the scene (see canvas-actions). */
+  fitScene?: () => void;
   onElementContextMenu?: (payload: ElementPointerPayload) => void;
 }
 
@@ -367,6 +369,7 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
     allowLinks: ports.allowLinks ?? true,
     onElementClick: ports.onElementClick,
     onElementContextMenu: ports.onElementContextMenu,
+    fitScene: ports.fitScene,
   });
 
   log.info(Modules.APP, 'GPU picking system initialized');

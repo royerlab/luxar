@@ -29,6 +29,7 @@ import { isDocumentFullscreen } from '../utils/fullscreen';
 import { RailOverlay } from './control-rail/rail-overlay';
 import { isPanelVisible, escapeHtml } from './control-rail/dom-helpers';
 import type { ControlRailItem } from './control-rail/types';
+import { attachLongPress } from '../utils/long-press';
 
 /**
  * Rail item descriptors, re-exported so callers configuring a rail need only
@@ -71,6 +72,8 @@ export class ControlRail {
   private readonly buttons = new Map<string, HTMLButtonElement>();
   /** Flyout + panel-popover lifecycle (only one open at a time). */
   private readonly overlay: RailOverlay;
+  /** Long-press → the same context popovers right-click opens (touch). */
+  private readonly disposeLongPress: () => void;
   private hint?: HTMLDivElement;
   private hintAutoHideTimer?: number;
   private hintFadeTimer?: number;
@@ -175,14 +178,14 @@ export class ControlRail {
     // here (not per-button) so EVERY right-click on the rail is captured.
     this.root.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      const btnEl = (e.target as HTMLElement | null)?.closest<HTMLButtonElement>(
-        '.luxar-control-rail__btn'
-      );
-      const item = btnEl ? this.items.find((it) => it.id === btnEl.dataset.railId) : undefined;
-      if (item?.popover?.trigger === 'context' && !btnEl?.disabled) {
-        this.dismissHint();
-        this.overlay.togglePopover(item, btnEl!);
-      }
+      this.openContextPopoverFor(e.target as HTMLElement | null);
+    });
+    // A finger has no right button: a long press on a button that owns a
+    // 'context' popover opens it (iOS never synthesises `contextmenu` for a
+    // long press; the helper is the single opener on Android too, and
+    // swallows the release click so `activate()` does not also fire).
+    this.disposeLongPress = attachLongPress(this.root, {
+      onLongPress: (_x, _y, ev) => this.openContextPopoverFor(ev.target as HTMLElement | null),
     });
 
     this.container.appendChild(this.root);
@@ -494,6 +497,21 @@ export class ControlRail {
     this.hint = undefined;
   }
 
+  /**
+   * Open the 'context'-trigger popover of the rail button under `target`, if
+   * any — the shared body of the right-click delegate and the touch
+   * long-press. A disabled button or a button without such a popover is a
+   * no-op (the native menu is still suppressed by the caller).
+   */
+  private openContextPopoverFor(target: HTMLElement | null): void {
+    const btnEl = target?.closest<HTMLButtonElement>('.luxar-control-rail__btn');
+    const item = btnEl ? this.items.find((it) => it.id === btnEl.dataset.railId) : undefined;
+    if (item?.popover?.trigger === 'context' && btnEl && !btnEl.disabled) {
+      this.dismissHint();
+      this.overlay.togglePopover(item, btnEl);
+    }
+  }
+
   /** Apply side effects for a keydown handled by the official input router. */
   handleRoutedKeyDown(): void {
     this.dismissHint();
@@ -514,6 +532,7 @@ export class ControlRail {
     if (this.hintFadeTimer) window.clearTimeout(this.hintFadeTimer);
     if (this.refreshRaf !== undefined) cancelAnimationFrame(this.refreshRaf);
     this.overlay.dispose();
+    this.disposeLongPress();
     this.container.removeEventListener('pointermove', this.onContainerMove);
     document.removeEventListener('fullscreenchange', this.onFullscreenChange);
     document.removeEventListener('webkitfullscreenchange', this.onFullscreenChange);

@@ -25,6 +25,23 @@ scene.add_gsplats(
 
 They land in `userData.attrs` on each geometry leaf, which is what a pick hits.
 
+## Touch
+
+A finger neither hovers nor right-clicks, so the mouse model has no touch
+equivalent on its own. Touch-like pointers (`utils/input-capabilities.isTouchLikePointer`)
+get a wider slop (`TOUCH_CLICK_SLOP_PX` = 12 vs the mouse's 4 — a tap drifts 8–15 px,
+so at 4 px every tap read as a camera drag), and three gestures:
+
+- **Tap** — pick at the tap through `PickGenerationPort.pickAt` (the
+  `PickingSystem` method that bypasses the hover-settle scheduler; the tooltip
+  shows through the normal result path), then the click action. Any navigation
+  is deferred by `DOUBLE_TAP_MS` so a second tap can pre-empt it; the mouse path
+  stays synchronous so its user activation is never spent.
+- **Long-press** (`LONG_PRESS_MS`, held within the slop, one finger) — pick, then
+  the element menu; the finger's release is then inert.
+- **Double-tap** (within `DOUBLE_TAP_MS` / `DOUBLE_TAP_SLOP_PX`) — `fitScene`
+  (wired to `LuxarApp.recenterCamera`).
+
 ## File Structure
 
 ```

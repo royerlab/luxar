@@ -539,6 +539,27 @@ export class PickingSystem {
   }
 
   /**
+   * Pick NOW at a viewport position — the touch counterpart of the
+   * hover-settle path. A finger never hovers, so a tap has nothing to settle:
+   * it bypasses the scheduler (cancelling any pending settle so the same
+   * point is not picked twice) and runs the pick directly. Resolves after
+   * the result has been delivered through `onPickResult` (or dropped as
+   * stale by the sequence guard), so the caller can read the picked-element
+   * cache immediately afterwards. Honours the same `setShouldPick` gate as a
+   * hover pick: with no consumer there is nothing to pick for.
+   */
+  pickAt(clientX: number, clientY: number): Promise<void> {
+    if (!this._canvasRect) {
+      this._canvasRect = this.renderer.domElement.getBoundingClientRect();
+    }
+    const x = clientX - this._canvasRect.left;
+    const y = clientY - this._canvasRect.top;
+    this.scheduler.cancelPending();
+    if (!this._shouldPick()) return Promise.resolve();
+    return this.performPick(x, y);
+  }
+
+  /**
    * Cursor left the canvas. Drop the pending position so the
    * camera-settle re-pick path doesn't fire a stale pick when the
    * cursor isn't even over the viewer, and cancel any pending rAF.

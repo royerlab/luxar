@@ -654,6 +654,7 @@ export class LuxarApp {
       allowLinks: this.options.allowLinks ?? true,
       onElementClick: (p) => this.embedderEvents.emit('element-click', p),
       onElementContextMenu: (p) => this.embedderEvents.emit('element-contextmenu', p),
+      fitScene: () => this.recenterCamera(),
     });
     this.pickingSystem = result.pickingSystem;
     this.labelLoader = result.labelLoader;
