@@ -1435,7 +1435,7 @@ for (const demo of DEMOS) {
       console.log(`[${demo.id}] exposure=${stops.toFixed(2)} stops (${how})`);
       if (guardExhausted) {
         console.warn(
-          `[${demo.id}] exposure guard exhausted at ${stops.toFixed(2)} stops — still blown at the floor`
+          `[${demo.id}] exposure guard exhausted at ${stops.toFixed(2)} stops — still over the clip/background limit at the floor`
         );
       }
     } else {
