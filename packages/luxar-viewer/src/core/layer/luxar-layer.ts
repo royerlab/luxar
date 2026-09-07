@@ -143,6 +143,7 @@ import {
   getOrthoFrustumHeight,
   type LuxarCamera,
 } from '../../utils/camera-utils';
+import { getInputProfile } from '../../utils/input-capabilities';
 import { config } from '../../config';
 import { isLuxarMaterial } from '../../ui/layers/luxar-material';
 import { clamp } from '../../utils/clamp';
@@ -777,7 +778,7 @@ export class LuxarLayer {
   private configureBlendWarmup(): void {
     const renderer = isWebGLRenderer(this.options.renderer) ? this.options.renderer : null;
     configureBlendModeProgramWarmup({
-      enabled: renderer !== null,
+      enabled: renderer !== null && getInputProfile().deviceClass !== 'mobile',
       renderer,
       camera: this.options.getCamera(),
       targetScene: this.options.scene,
