@@ -126,10 +126,24 @@ describe('coarse-pointer.css contract', () => {
 
     // Rail: the ITEMS wrapper scrolls (the root must not — it hosts popovers).
     const items = ruleBody(coarse, '.luxar-control-rail__items');
-    expect(items).toMatch(/overflow-y:\s*auto/);
+    expect(items).toMatch(/overflow:\s*hidden auto/);
     expect(items).toMatch(/min-height:\s*0/);
     expect(items).toMatch(/overscroll-behavior:\s*contain/);
     expect(ruleBody(coarse, '.luxar-control-rail')).not.toMatch(/overflow/);
+    expect(ruleBody(coarse, '.luxar-control-rail')).toMatch(/max-height:\s*calc\(100vh/);
+
+    // The wrapper scrolls, but its children and the root's fixed controls do not shrink.
+    expect(coarse).toMatch(
+      /\.luxar-control-rail__items > \.luxar-control-rail__btn,[\s\S]*?\.luxar-control-rail > \.luxar-perf\s*\{[^}]*flex:\s*0 0 auto/
+    );
+
+    // Labels cannot render outside the clipped scroll box; D2 provides the touch label route.
+    expect(ruleBody(coarse, '.luxar-control-rail__tip')).toMatch(/display:\s*none/);
+
+    // The empty wrapper must not add a flex gap to the collapsed horizontal rail.
+    expect(ruleBody(coarse, '.luxar-control-rail.is-collapsed .luxar-control-rail__items')).toMatch(
+      /display:\s*none/
+    );
 
     // Width clamps use min(<desktop width>, viewport - margins).
     expect(ruleBody(coarse, '.luxar-help-overlay')).toMatch(/width:\s*min\(400px,/);
@@ -140,6 +154,8 @@ describe('coarse-pointer.css contract', () => {
     expect(coarse).toMatch(
       /\.luxar-has-control-rail \.luxar-layers-panel \{[^}]*safe-area-inset-left[^}]*!important/
     );
+    expect(ruleBody(coarse, '.luxar-control-rail-hint')).toMatch(/safe-area-inset-left/);
+    expect(ruleBody(coarse, '.luxar-debug-console')).toMatch(/safe-area-inset-bottom/);
     for (const sel of [
       '.luxar-dimension-sliders',
       '.luxar-toast',

@@ -251,7 +251,6 @@ export class RailOverlay {
     this.close();
   }
 
-  /** Tear down the overlay (rail disposal). */
   /**
    * A button's top edge in the rail root's coordinate space — what an
    * absolutely positioned popover/flyout child of the root needs for
@@ -265,6 +264,7 @@ export class RailOverlay {
     return btn.getBoundingClientRect().top - root.getBoundingClientRect().top - root.clientTop;
   }
 
+  /** Tear down the overlay (rail disposal). */
   dispose(): void {
     this.close();
     window.removeEventListener('resize', this.onViewportChange);

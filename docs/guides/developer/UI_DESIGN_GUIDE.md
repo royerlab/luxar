@@ -619,12 +619,12 @@ The rail is the canonical interactive surface; its patterns generalize:
   first-run hint all share it — it is the popovers' own computed left edge (the
   rail box including its border, plus their 10px gap), so whichever surface is
   open its left edge lands in exactly the same place. Docked panels get it as
-  an `!important` override of inline positioning (`control-rail.css:527`,
+  an `!important` override of inline positioning (`control-rail.css:547`,
   sanctioned by §13 and registered in §15.6); the draggable debug console gets
   the same default *without* `!important` so dragging still wins.
   **The rule is a hardcoded selector pair** — only `.luxar-gui` and
   `.luxar-layers-panel`, each under `.luxar-has-control-rail`
-  (`control-rail.css:522-523`) — so a new docked surface that is neither of
+  (`control-rail.css:542-543`) — so a new docked surface that is neither of
   those silently gets no gutter and opens under the rail. Adding its class to
   that selector pair is part of docking it, not an afterthought. (The recording
   panel is already covered: `ui/gui/gui.ts:87` builds it as a `.luxar-gui`, and
@@ -955,19 +955,22 @@ media features in any other stylesheet, and the load-bearing clamps present.
   fallback.
 - **Safe areas.** `index.html` declares `viewport-fit=cover`; the rail gutter
   (`left: calc(73px + env(safe-area-inset-left))`, `!important` like the
-  docking rule it restates — §15.6) and every bottom-strip surface (dimension
-  sliders, toast, scale bar, colormap legend, resolution indicator) add the
-  matching `env(safe-area-inset-*)`.
+  docking rule it restates — §15.6), its first-run hint, and every bottom-strip
+  surface (dimension sliders, toast, scale bar, colormap legend, resolution
+  indicator, debug console) add the matching `env(safe-area-inset-*)`.
 - **The rail scrolls its items, never its root.** Popovers, flyouts and the
   footer are children of the rail root, so `overflow` on the root would clip
   them. The buttons live in `.luxar-control-rail__items`, `display: contents`
-  on fine pointers (layout-transparent) and a `min-height: 0; overflow-y: auto`
-  scroll box under `(pointer: coarse)`, so a ~600px rail fits a ~340px
-  landscape phone. `RailOverlay` anchors popovers with a root-relative rect,
-  not `offsetTop`, so a scrolled wrapper still points the arrow at its button.
+  on fine pointers (layout-transparent) and a `min-height: 0; overflow: hidden
+  auto` scroll box under `(pointer: coarse)`, so a ~600px rail fits a ~340px
+  landscape phone without horizontal panning. Its children and the root's
+  collapse/footer controls do not shrink. Rail tooltips are suppressed there
+  because they cannot escape the scroll clip; D2 supplies the coarse-pointer
+  label route. `RailOverlay` anchors popovers with a root-relative rect, not
+  `offsetTop`, so a scrolled wrapper still points the arrow at its button.
 - **Buttons are `touch-action: manipulation`** (no 300 ms double-tap delay,
-  no page zoom on a double-tap over UI). The canvas itself is
-  `touch-action: none` — gesture ownership belongs to the controls.
+  no page zoom on a double-tap over UI). Canvas `touch-action: none` and gesture
+  ownership are planned separately.
 - **Hit sizes, input sizes and press states** for coarse pointers (44px
   targets, 16px inputs against iOS focus-zoom, `:active` fills where `:hover`
   cannot fire) follow the same media gates and belong in the same file.
@@ -1358,10 +1361,10 @@ migrated.
   every other reduced-motion block in the tree spells a plain
   `animation: none` / `transition: none` and needs no override, so `!important`
   is not automatic there. Also sanctioned: the rail-docking gutter
-  `left: 73px !important` (`control-rail.css:527`, §7.5) — restated with the
+  `left: 73px !important` (`control-rail.css:547`, §7.5) — restated with the
   safe-area inset under `(pointer: coarse)` in `coarse-pointer.css` (§11.5) — and the
   popover-nesting overrides that unpin a GUI mounted inside a popover
-  (`control-rail.css:368-371`); and the state-forcing rules in
+  (`control-rail.css:388-391`); and the state-forcing rules in
   `overlay-layer.css:33-34` that must beat inline styles.
 - Off-tier z-indexes via `calc()` (§3.5): the modal scrim at
   `calc(var(--luxar-z-modal) - 1)` (`dataset-browser.css:18`), the debug

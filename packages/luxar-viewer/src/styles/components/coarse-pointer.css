@@ -18,7 +18,8 @@
  * `(hover: none)` = no pointer can hover: hover-revealed affordances are dead,
  * so the rail must not idle-dim and tooltips need another route. An iPad with
  * a Magic Keyboard trackpad matches the first but NOT the second, and keeps
- * its hover behaviour — that is deliberate.
+ * hover-driven rail visibility. Rail labels are handled separately below
+ * because the scrolling items box must clip overflow.
  *
  * Viewport units: `dvh` (dynamic viewport height) instead of `vh` — on iOS
  * Safari `vh` is the LARGE viewport (toolbars retracted), so a `70vh` panel
@@ -40,6 +41,7 @@
   /* ---- Control rail: honour the left safe area (landscape notch). ---- */
   .luxar-control-rail {
     left: calc(12px + env(safe-area-inset-left, 0px));
+    max-height: calc(100vh - 2 * var(--luxar-spacing-8, 16px));
   }
 
   /* The rail's items box scrolls when the rail is taller than the viewport
@@ -52,7 +54,7 @@
     gap: 2px;
     flex: 1 1 auto;
     min-height: 0;
-    overflow-y: auto;
+    overflow: hidden auto;
     overscroll-behavior: contain;
     scrollbar-width: none;
     /* Keep the active pip (`.is-active::after`, 3px at left -6px) inside the
@@ -63,8 +65,17 @@
   .luxar-control-rail__items::-webkit-scrollbar {
     display: none;
   }
-  .luxar-control-rail.is-collapsed {
-    transform: translateY(calc(50vh - 16px - 100%));
+  .luxar-control-rail__items > .luxar-control-rail__btn,
+  .luxar-control-rail__items > .luxar-control-rail__sep,
+  .luxar-control-rail > .luxar-control-rail__btn,
+  .luxar-control-rail > .luxar-perf {
+    flex: 0 0 auto;
+  }
+  .luxar-control-rail__tip {
+    display: none;
+  }
+  .luxar-control-rail.is-collapsed .luxar-control-rail__items {
+    display: none;
   }
   .luxar-control-rail__popover-body {
     width: min(264px, calc(100vw - 73px - 12px - env(safe-area-inset-left, 0px)));
@@ -94,6 +105,7 @@
   .luxar-debug-console {
     width: min(600px, calc(100vw - 73px - var(--luxar-spacing-10, 20px)));
     height: min(400px, 60vh);
+    bottom: calc(var(--luxar-spacing-10, 20px) + env(safe-area-inset-bottom, 0px));
   }
 
   /* ---- Rail gutter + safe area for the docked panels (the docking rule in
@@ -104,6 +116,9 @@
     left: calc(73px + env(safe-area-inset-left, 0px)) !important;
   }
   .luxar-has-control-rail .luxar-debug-console {
+    left: calc(73px + env(safe-area-inset-left, 0px));
+  }
+  .luxar-control-rail-hint {
     left: calc(73px + env(safe-area-inset-left, 0px));
   }
 
@@ -128,8 +143,8 @@
   }
 
   /* ---- Buttons: no 300ms double-tap-zoom delay, no page zoom on a
-     double-tap over UI. The canvas itself is `touch-action: none`
-     (gesture ownership, index.html / core/app). ---- */
+     double-tap over UI. Canvas gesture ownership (`touch-action: none`) is
+     planned separately. ---- */
   .luxar-control-rail__btn,
   .luxar-control-rail__chip,
   .luxar-panel-close,

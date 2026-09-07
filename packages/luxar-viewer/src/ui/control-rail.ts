@@ -135,6 +135,7 @@ export class ControlRail {
     // root (see components/coarse-pointer.css).
     const itemsEl = document.createElement('div');
     itemsEl.className = 'luxar-control-rail__items';
+    itemsEl.setAttribute('role', 'presentation');
     for (const item of items) {
       if (item.separatorBefore) {
         const sep = document.createElement('div');
