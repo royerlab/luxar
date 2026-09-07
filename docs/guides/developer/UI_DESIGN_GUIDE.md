@@ -955,19 +955,22 @@ media features in any other stylesheet, and the load-bearing clamps present.
   fallback.
 - **Safe areas.** `index.html` declares `viewport-fit=cover`; the rail gutter
   (`left: calc(73px + env(safe-area-inset-left))`, `!important` like the
-  docking rule it restates — §15.6), its first-run hint, and every bottom-strip
-  surface (dimension sliders, toast, scale bar, colormap legend, resolution
-  indicator, debug console) add the matching `env(safe-area-inset-*)`.
+  docking rule it restates — §15.6), its first-run hint, collapsed grip, and
+  every bottom-strip surface (dimension sliders, toast, scale bar, colormap
+  legend, resolution indicator, debug console) add the matching
+  `env(safe-area-inset-*)`.
 - **The rail scrolls its items, never its root.** Popovers, flyouts and the
   footer are children of the rail root, so `overflow` on the root would clip
   them. The buttons live in `.luxar-control-rail__items`, `display: contents`
   on fine pointers (layout-transparent) and a `min-height: 0; overflow: hidden
   auto` scroll box under `(pointer: coarse)`, so a ~600px rail fits a ~340px
   landscape phone without horizontal panning. Its children and the root's
-  collapse/footer controls do not shrink. Rail tooltips are suppressed there
-  because they cannot escape the scroll clip; D2 supplies the coarse-pointer
+  collapse/footer controls do not shrink. Item tooltips are suppressed there
+  because they cannot escape the scroll clip; the collapse handle remains
+  outside the wrapper and keeps its label. D2 supplies the coarse-pointer item
   label route. `RailOverlay` anchors popovers with a root-relative rect, not
-  `offsetTop`, so a scrolled wrapper still points the arrow at its button.
+  `offsetTop`, so a scrolled wrapper still points the arrow at its button; the
+  unit test stubs both rects to guard that distinction.
 - **Buttons are `touch-action: manipulation`** (no 300 ms double-tap delay,
   no page zoom on a double-tap over UI). Canvas `touch-action: none` and gesture
   ownership are planned separately.

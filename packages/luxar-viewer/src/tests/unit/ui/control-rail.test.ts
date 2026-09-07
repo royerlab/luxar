@@ -621,6 +621,31 @@ describe('ControlRail', () => {
     expect(btn.getAttribute('aria-expanded')).toBe('false');
   });
 
+  it('anchors a panel popover from root-relative rects when the items wrapper scrolls', () => {
+    rail = new ControlRail([
+      {
+        id: 'settings',
+        title: 'Settings',
+        icon: RAIL_ICONS.settings,
+        activate: vi.fn(),
+        popover: { trigger: 'click', build: vi.fn() },
+      },
+    ]);
+    const root = document.querySelector<HTMLElement>('.luxar-control-rail')!;
+    const btn = document.querySelector<HTMLButtonElement>('[data-rail-id="settings"]')!;
+    root.getBoundingClientRect = () => ({ top: 100 }) as DOMRect;
+    btn.getBoundingClientRect = () => ({ top: 140 }) as DOMRect;
+    Object.defineProperty(root, 'clientTop', { configurable: true, value: 2 });
+    Object.defineProperty(btn, 'offsetHeight', { configurable: true, value: 38 });
+
+    btn.click();
+
+    const pop = document.querySelector<HTMLElement>('.luxar-control-rail__popover')!;
+    const arrow = pop.querySelector<HTMLElement>('.luxar-control-rail__popover-arrow')!;
+    expect(pop.style.top).toBe('38px');
+    expect(arrow.style.top).toBe('57px');
+  });
+
   it('a context-trigger popover opens on right-click; left-click still fires activate()', () => {
     const activate = vi.fn();
     const build = vi.fn(() => vi.fn());
