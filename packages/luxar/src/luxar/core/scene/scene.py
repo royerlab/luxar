@@ -100,6 +100,9 @@ class Scene(Group):
                     "system and are the single source of truth for all data in the scene."
                 )
 
+            if viewer_config is not None:
+                viewer_config.validate_dimensions(dimensions.names)
+
             # Create lightweight root node (sets self._writer)
             super().__init__("Scene", writer=writer)
 
@@ -341,11 +344,13 @@ class Scene(Group):
         Args:
             vc: ViewerConfig object, or None to clear.
         """
-        self._viewer_config = vc
         if vc is not None:
             vc.validate()
+            vc.validate_dimensions(self._dimensions.names)
+            self._viewer_config = vc
             self._persist_attr("viewer_config", vc.to_dict())
         else:
+            self._viewer_config = None
             self._delete_attr("viewer_config")
 
     # ---------------------------------------------------------- overlays
@@ -519,6 +524,99 @@ class Scene(Group):
             anchor=anchor,
             blend_mode=blend_mode,
             format=format,
+            visible_range=visible_range,
+            transition=transition,
+            transition_duration=transition_duration,
+            interactive=interactive,
+        )
+
+    def add_video(
+        self,
+        video: Any,
+        position: Tuple[float, float],
+        *,
+        name: Optional[str] = None,
+        size: Optional[Tuple[float, Optional[float]]] = None,
+        opacity: float = 1.0,
+        anchor: str = "top-left",
+        blend_mode: str = "normal",
+        loop: bool = True,
+        autoplay: bool = True,
+        muted: bool = True,
+        playback_rate: float = 1.0,
+        poster: Any = None,
+        visible_range: Optional[Dict[str, Union[float, Tuple[float, float]]]] = None,
+        transition: str = "none",
+        transition_duration: float = 0.3,
+        interactive: bool = False,
+    ) -> "Overlay":
+        """Add a looping video overlay to the scene.
+
+        The file is stored verbatim inside the zarr directory (like an image
+        overlay) and rendered as an HTML ``<video>`` over the canvas. Muted
+        autoplay is what browsers allow without a user gesture, so that is the
+        default and the only autoplay mode accepted. A hidden video (its
+        ``visible_range`` not matching) is paused, so ten story turntables cost
+        one decode at a time.
+
+        Captures: video overlays stay synchronized in real-time recordings.
+        Offline capture runs on a synthetic frame clock while the HTML video
+        follows wall time, so its recorded playback speed is not preserved.
+
+        Transparency: a VP9 WebM with an alpha channel (``yuva420p``) plays
+        transparent in Chrome and Firefox; Safari cannot decode it and shows
+        the ``poster`` instead — always supply one for a transparent video.
+
+        Args:
+            video: Raw bytes or a file path. Must already be WebM or MP4; there
+                is no re-encoding. A recognized path suffix must match the payload.
+            position: (x, y) in normalized screen coords [0, 1]. Origin is top-left.
+            name: Optional overlay name. Auto-generated if None.
+            size: Optional (width, height) as fractions of the viewport. A
+                ``None`` height keeps the video's own aspect ratio.
+            opacity: Opacity 0.0-1.0 (default 1.0).
+            anchor: Anchor point for positioning (default 'top-left').
+            blend_mode: CSS blend mode (default 'normal').
+            loop: Loop playback (default True).
+            autoplay: Start on load / when it becomes visible (default True).
+                False shows native controls and makes the overlay capture
+                pointer events so those controls can be used.
+            muted: Required True while ``autoplay`` is True (default True).
+            playback_rate: Speed multiplier in (0, 16] (default 1.0).
+            poster: Optional still shown before play and where the video cannot
+                be decoded (PNG/JPEG/WebP bytes, path, array or PIL image).
+            visible_range: Optional dimension-based visibility filter.
+            transition: 'none' or 'fade' (default 'none').
+            transition_duration: Transition duration in seconds (default 0.3).
+            interactive: If True, overlay captures pointer events (default False).
+                Non-autoplay videos capture them regardless of this setting.
+
+        Returns:
+            Overlay metadata object.
+
+        Example:
+            >>> scene.add_video(
+            ...     "turntable.webm", position=(0.06, 0.5), anchor="center-left",
+            ...     size=(0.26, None), poster="turntable.png",
+            ...     visible_range={"story": 3}, transition="fade",
+            ... )
+        """
+        from .overlays.adders import add_video_impl
+
+        return add_video_impl(
+            self,
+            video=video,
+            position=position,
+            name=name,
+            size=size,
+            opacity=opacity,
+            anchor=anchor,
+            blend_mode=blend_mode,
+            loop=loop,
+            autoplay=autoplay,
+            muted=muted,
+            playback_rate=playback_rate,
+            poster=poster,
             visible_range=visible_range,
             transition=transition,
             transition_duration=transition_duration,

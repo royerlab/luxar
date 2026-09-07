@@ -89,6 +89,9 @@ export async function loadDataset(src: string, ports: LoadDatasetPorts): Promise
     // with the live camera before any later settings application can reuse it.
     ports.renderingControls.syncCameraFovState();
   }
+  if (viewerConfig?.camera?.zoom !== undefined) {
+    ports.sceneManager.setCameraZoom(viewerConfig.camera.zoom);
+  }
 
   // Update fly speed slider range and value based on scene scale
   ports.renderingControls.updateSceneScale();

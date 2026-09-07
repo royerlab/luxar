@@ -34,6 +34,7 @@ from .viewer_config import (
     EnvironmentConfig,
     UIConfig,
     ViewerConfig,
+    Waypoint,
 )
 
 __all__ = [
@@ -55,6 +56,7 @@ __all__ = [
     "UIConfig",
     "DimensionsConfig",
     "AnimationConfig",
+    "Waypoint",
     # Transform functions
     "compose",
     "from_list",

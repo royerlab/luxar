@@ -750,10 +750,11 @@ Dataclasses for viewer configuration hints stored in the zarr file.
 
 **Key Classes:**
 - `ViewerConfig` - Top-level viewer configuration (camera, rendering, bloom, effects, UI, theme)
-- `CameraConfig` - Camera position, target, FOV, clipping planes, target_node
+- `CameraConfig` - Camera position, target, FOV, clipping planes, target_node, ortho `zoom`
 - `UIConfig` - Panel visibility (help, rendering controls, performance, dimensions, scale bar, layers, overlays)
 - `DimensionsConfig` - nD navigation state (current step, selected dimension)
 - `AnimationConfig` - Per-dimension animation (playing, target_fps, loop mode, direction, step size)
+- `Waypoint` - A camera pose bound to a hidden-dimension position (`when={"story": 1, "time": (10, 20)}`, the overlay `visible_range` rule; first match wins), with optional `duration_ms`, `easing` and a `rendering` override block — how a scene's story dimension drives the camera
 
 **Usage Example:**
 ```python
@@ -786,12 +787,12 @@ Lightweight metadata descriptor for a screen-space annotation. Overlays are
 positioned in normalized screen coordinates over the viewer canvas.
 
 `Overlay` is a frozen-style dataclass returned (for optional inspection) by
-`Scene.add_text()`, `Scene.add_image()`, and `Scene.add_html()`. The overlay is
-written immediately to zarr; the returned object is just a descriptor.
+`Scene.add_text()`, `Scene.add_image()`, `Scene.add_html()`, and `Scene.add_video()`.
+The overlay is written immediately to zarr; the returned object is just a descriptor.
 
 **Attributes:**
 - `name` - Unique overlay name (auto-generated or user-specified)
-- `overlay_type` - One of `'overlay_text'`, `'overlay_image'`, `'overlay_html'`
+- `overlay_type` - One of `'overlay_text'`, `'overlay_image'`, `'overlay_html'`, `'overlay_video'`
 - `position` - `(x, y)` in normalized screen coordinates `[0, 1]`, top-left origin
 - `attrs` - All overlay attributes as written to the zarr `.zattrs`
 
@@ -834,11 +835,12 @@ Scene (root)
 ├── Group "markers"
 │   ├── Points "marker_points"
 │   └── Lines "marker_connections"
-└── (overlays)            # screen-space text/image/HTML, not 3D nodes
+└── (overlays)            # screen-space text/image/video/HTML, not 3D nodes
 ```
 
-Overlays (`add_text` / `add_image` / `add_html`) are tracked separately on the
-`Scene` and live in normalized screen space, not in the 3D transform hierarchy.
+Overlays (`add_text` / `add_image` / `add_video` / `add_html`) are tracked
+separately on the `Scene` and live in normalized screen space, not in the 3D
+transform hierarchy.
 
 ### Transform Hierarchy
 
@@ -888,7 +890,7 @@ Tests are located in `core/tests/`:
 - `test_mesh.py` - Mesh DataNode: add_mesh round-trips (topology, normals/normal_dims, colors, labels), shading/double_sided resolution, the `partition=` split (face conservation, vertex duplication, per-vertex attribute gathering), and the volumetric-blending / LOD refusals
 - `test_node_properties.py` - Node properties and method chaining
 - `test_node_rendering.py` - Rendering attributes for Node class
-- `test_overlays.py` - Screen-space overlays (add_text / add_image / add_html)
+- `test_overlays.py` - Screen-space overlays (add_text / add_image / add_video / add_html)
 - `test_physical_units.py` - Physical units support through Dimensions system
 - `test_api_regressions.py` - Regression tests pinning core API invariants (ndim metadata key, property-setter persistence, cross-scene node inequality, Scene.dimensions, Scene.to_zarr export, top-level GSplatData export)
 - `test_scene_advanced.py` - Advanced Scene class tests (initialization, error handling)

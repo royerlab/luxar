@@ -1,6 +1,6 @@
 # luxar.core.scene.overlays
 
-2D screen-space overlay implementations for `Scene` — text, image, and HTML
+2D screen-space overlay implementations for `Scene` — text, image, video, and HTML
 overlays anchored to the viewport, plus auto-injection of hover overlays for
 nodes that carry labels.
 
@@ -23,7 +23,7 @@ compiler finalization when nodes have labels but no hover overlay was defined.
 ```
 overlays/
 ├── __init__.py        # empty package marker
-├── adders.py          # add_text_impl / add_image_impl / add_html_impl
+├── adders.py          # add_text_impl / add_image_impl / add_video_impl / add_html_impl
 ├── internals.py       # next_overlay_name / write_overlay (naming + persistence)
 └── hover_inject.py    # auto_inject_hover_overlay (label-driven default hover)
 ```
@@ -40,9 +40,10 @@ return the resulting `Overlay`.
 |----------|--------------|--------------------|
 | `add_text_impl` | `overlay_text` | `font_size`, `font`, `color`, `anchor`, `text_align`, `line_height`, `background`, `stroke_color`/`stroke_width`, `visible_range`, `transition`, `hover` |
 | `add_image_impl` | `overlay_image` | `size`, `anchor`, `blend_mode`, `format`, `visible_range`, `transition` |
+| `add_video_impl` | `overlay_video` | `size` (height may be `None` = keep aspect), `loop`, `autoplay`, `muted`, `playback_rate`, `poster`, `anchor`, `blend_mode`, `visible_range`, `transition` |
 | `add_html_impl` | `overlay_html` | `width`, `anchor`, `blend_mode`, `visible_range`, `transition`, `hover`, `hover_image_size` |
 
-All three share a common validation pass against `luxar.validation.overlays`
+All four share a common validation pass against `luxar.validation.overlays`
 (`validate_position`, `validate_anchor`, `validate_transition`,
 `validate_blend_mode`, `validate_visible_range`, plus type-specific checks such
 as `validate_font` / `validate_text_align` for text, `validate_image_input` for
@@ -54,13 +55,28 @@ matching storage format via `validate_image_input`, stores the filename as
 `image_file`, and passes the raw bytes through to `write_overlay` for on-disk
 persistence.
 
+`add_video_impl` stores a WebM or MP4 **verbatim** (`validate_video_input`
+sniffs the container — EBML header or `ftyp` box — and refuses anything else, so
+an unplayable clip fails at authoring, not on the display) as `video_file`, plus
+an optional `poster_file` still through the image path. It refuses
+`autoplay=True` with `muted=False`, because browsers block un-muted autoplay
+without a user gesture. The viewer renders a muted looping `<video>` and pauses
+it while its `visible_range` does not match, so many clips cost one decode at a
+time. With `autoplay=False`, it shows native controls and captures pointer
+events regardless of `interactive`, so the controls remain usable but camera
+drags do not pass through the clip. A VP9 WebM with an alpha channel plays
+transparent in Chrome/Firefox and Safari falls back to the poster. Offline
+capture does not synchronize the video's wall-clock playback to its synthetic
+frame clock, so recorded playback speed is not preserved. Both payloads go
+through `write_overlay`'s `files=` mapping.
+
 ### `internals.py` — naming and persistence
 
 - `next_overlay_name(scene, name)` — generates `overlay_{counter}` when `name`
   is `None`, rejects names containing `/`, and raises on duplicate names.
 - `write_overlay(scene, name, overlay_type, position, attrs, image_data=None,
-  image_filename=None)` — writes an `overlays/{name}` group (with `attrs` as
-  `.zattrs`) through `scene._writer`, optionally writes a raw image file into
+  image_filename=None, files=None)` — writes an `overlays/{name}` group (with `attrs` as
+  `.zattrs`) through `scene._writer`, optionally writes a raw image file (plus any extra `files` payloads such as a video and its poster) into
   the overlay's zarr directory, constructs an `Overlay`, appends it to
   `scene._overlays`, and returns it.
 

@@ -23,7 +23,7 @@ from luxar.typing_utils.constants import ENVIRONMENT_GROUP
 # metadata, so `array_keys()` and `group_keys()` are blind to them and their bytes
 # reach the digest only through this list. A new payload kind registers its attr
 # key here. Full rationale: `finalize/README.md`.
-PAYLOAD_FILE_ATTRS: tuple[str, ...] = ("image_file",)
+PAYLOAD_FILE_ATTRS: tuple[str, ...] = ("image_file", "poster_file", "video_file")
 
 #: zarr's own metadata documents, both on-disk formats (`_zarr_compat` already
 #: names the attr/group ones; `.zarray` and `.zmetadata` complete the set).

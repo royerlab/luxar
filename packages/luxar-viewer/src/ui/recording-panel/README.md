@@ -479,6 +479,13 @@ The compositor is torn down in `cleanupCaptureStream()`, which every path
 that ends a recording already routes through, so a per-frame listener
 cannot outlive its recording.
 
+Video overlays stay synchronized only in real-time recordings. Offline
+capture advances a synthetic frame clock as quickly as rendering, LOD
+settling, and encoding allow, while each HTML `<video>` continues on its own
+wall clock. Offline output therefore samples whatever video frame is current
+at each capture step; it does not preserve the overlay video's authored
+playback speed.
+
 One path still cannot composite overlays, and the confirmation dialog
 says so when overlays are visible: the EXR driver writes the raw
 pre-grade HDR buffer, where a display-space overlay has no meaning.

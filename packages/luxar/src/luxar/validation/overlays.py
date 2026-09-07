@@ -371,6 +371,52 @@ def validate_image_input(
     )
 
 
+VALID_VIDEO_FORMATS: Set[str] = {"webm", "mp4"}
+
+
+def _detect_encoded_video_format(data: bytes) -> str:
+    """Sniff a pre-encoded video payload: WebM (EBML header) or MP4 (``ftyp`` box).
+
+    Raises:
+        ValueError: for anything else — an overlay video must be one the
+            browser can play; Ogg, AVI or a mislabelled PNG are refused here
+            rather than failing silently on the display.
+    """
+    if len(data) >= 4 and data[:4] == b"\x1a\x45\xdf\xa3":
+        return "webm"
+    if len(data) >= 12 and data[4:8] == b"ftyp":
+        return "mp4"
+    raise ValueError(
+        "Unsupported video payload: expected WebM (EBML header) or MP4 ('ftyp' "
+        "box). Encode turntables as VP9 WebM (with alpha) or H.264/AV1 MP4."
+    )
+
+
+def validate_video_input(video: Any) -> Tuple[bytes, str]:
+    """Return ``(bytes, format)`` for a video overlay payload.
+
+    Accepts raw bytes or a file path. Unlike images there is no decode/re-encode
+    path: the payload is stored verbatim, so it must already be a browser-playable
+    container (:data:`VALID_VIDEO_FORMATS`). A recognized path suffix must agree
+    with the sniffed payload.
+    """
+    if isinstance(video, bytes):
+        return video, _detect_encoded_video_format(video)
+    if isinstance(video, (str, Path)):
+        path = Path(video)
+        if not path.is_file():
+            raise ValueError(f"Video file not found: {path}")
+        data = path.read_bytes()
+        fmt = _detect_encoded_video_format(data)
+        suffix = path.suffix.lower().lstrip(".")
+        if suffix in VALID_VIDEO_FORMATS and suffix != fmt:
+            raise ValueError(
+                f"Video path suffix '.{suffix}' does not match its payload ({fmt})"
+            )
+        return data, fmt
+    raise ValueError(f"video must be bytes or a file path, got {type(video).__name__}")
+
+
 def _detect_encoded_image_format(
     image: bytes,
     context: Optional[Path] = None,

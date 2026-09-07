@@ -10,7 +10,7 @@
  *   - the renderer's GL canvas (only needed for the HTML branch's
  *     coordinate mapping).
  *
- * Text and image overlays are drawn with canvas-2D primitives (one
+ * Text, image, and video overlays are drawn with canvas-2D primitives (one
  * blend-mode map, one save/restore per overlay, the shared anchor
  * offset rules); HTML overlays are rasterized by wrapping the live node
  * in an `<svg><foreignObject>` data URL. That wrapper is parsed as XML,
@@ -151,6 +151,8 @@ export function compositeOverlays(
       compositeTextOverlay(ctx, el, config, x, y, metrics);
     } else if (el.classList.contains('luxar-overlay--image')) {
       compositeImageOverlay(ctx, el, config, x, y, metrics);
+    } else if (el.classList.contains('luxar-overlay--video')) {
+      compositeVideoOverlay(ctx, el, config, [x, y], metrics);
     } else if (el.classList.contains('luxar-overlay--html')) {
       compositeHtmlOverlay(ctx, el, glCanvas);
     }
@@ -302,7 +304,12 @@ export function compositeImageOverlay(
     // `size` is [vw, vh] fractions — the units the manager writes onto
     // the <img> style.
     drawW = config.size[0] * metrics.vw;
-    drawH = config.size[1] * metrics.vh;
+    // A null height means "keep the media's aspect": derive it from the
+    // element's natural dimensions, falling back to square.
+    drawH =
+      config.size[1] == null
+        ? drawW * (img.naturalWidth > 0 ? img.naturalHeight / img.naturalWidth : 1)
+        : config.size[1] * metrics.vh;
   } else {
     // No configured size: the <img> lays out at its natural size in CSS
     // pixels, so the capture has to scale those into capture pixels.
@@ -315,6 +322,37 @@ export function compositeImageOverlay(
 
   const [dx, dy] = computeAnchorOffset(config.anchor, drawW, drawH);
   ctx.drawImage(img, xIn + dx, yIn + dy, drawW, drawH);
+}
+
+/** Composite the current frame of a single video overlay. */
+export function compositeVideoOverlay(
+  ctx: CanvasRenderingContext2D,
+  el: HTMLDivElement,
+  config: OverlayConfig,
+  position: readonly [number, number],
+  metrics: OverlayCaptureMetrics
+): void {
+  const video = el.querySelector('video');
+  if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth === 0) {
+    return;
+  }
+
+  let drawW: number;
+  let drawH: number;
+  if (config.size) {
+    drawW = config.size[0] * metrics.vw;
+    drawH =
+      config.size[1] == null
+        ? drawW * (video.videoHeight / video.videoWidth)
+        : config.size[1] * metrics.vh;
+  } else {
+    drawW = video.videoWidth * metrics.scaleX;
+    drawH = video.videoHeight * metrics.scaleY;
+  }
+
+  const [dx, dy] = computeAnchorOffset(config.anchor, drawW, drawH);
+  const [xIn, yIn] = position;
+  ctx.drawImage(video, xIn + dx, yIn + dy, drawW, drawH);
 }
 
 /**

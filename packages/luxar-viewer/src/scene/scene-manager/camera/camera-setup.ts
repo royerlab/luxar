@@ -28,7 +28,7 @@ import {
 import type { ZarrViewerConfig } from '../../../types/zarr';
 import type { ControlsManager } from '../../../controls/controls-manager';
 import { log, Modules } from '../../../utils/log';
-import type { LuxarCamera } from '../../../utils/camera-utils';
+import { isOrthographicCamera, type LuxarCamera } from '../../../utils/camera-utils';
 
 /**
  * Build a fresh `PerspectiveCamera` configured with the FOV /
@@ -181,6 +181,13 @@ export function applyZarrViewerConfig(
     // reinitialize() (which reads quaternion, not camera.up) picks up the
     // author's roll. Use the current orbit target as the look-at point.
     camera.lookAt(controls.getFocusTarget());
+  }
+
+  // Orthographic framing: distance changes nothing under an ortho projection,
+  // only zoom does. A perspective camera ignores the field.
+  if (camOverrides.zoom !== undefined && isOrthographicCamera(camera)) {
+    camera.zoom = camOverrides.zoom;
+    camera.updateProjectionMatrix();
   }
 
   if (camOverrides.position || camOverrides.target || camOverrides.targetNode || camOverrides.up) {

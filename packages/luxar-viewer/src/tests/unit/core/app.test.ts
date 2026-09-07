@@ -138,6 +138,7 @@ import { SceneManager } from '../../../scene/scene-manager';
 import { AnimationController } from '../../../scene/animation/animation-controller';
 import { InputHandler } from '../../../input';
 import { RenderingControls } from '../../../ui/rendering-controls';
+import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import { DatasetBrowser } from '../../../ui/dataset-browser';
 import { cleanupUI as mockCleanupUI } from '../../../ui/ui-cleanup';
 import { clearError as mockClearError } from '../../../ui/error-overlay';
@@ -169,14 +170,26 @@ describe('LuxarApp', () => {
       warmBlendModePrograms: vi.fn(),
       updateDynamicClippingPlanes: vi.fn(),
       getSceneViewerConfig: vi.fn().mockReturnValue(undefined),
+      setCameraZoom: vi.fn(),
       getSceneBakedEnvironment: vi.fn().mockReturnValue(null),
       attachEnvironmentRuntime: vi.fn(),
       environment: null,
       dispose: vi.fn(),
       renderer: { domElement: {} },
       scene: {},
-      camera: {},
-      controls: {},
+      // Enough of a camera for captureSnapshot() (the camera-changed
+      // embedder event reads position / up / near / far).
+      camera: { position: { x: 1, y: 2, z: 3 }, up: { x: 0, y: 1, z: 0 }, near: 0.1, far: 100 },
+      // The ControlsManager surface the embedder hooks subscribe to.
+      controls: {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        getFocusTarget: vi.fn(() => ({ x: 0, y: 0, z: 0 })),
+        setTarget: vi.fn(),
+        reinitialize: vi.fn(),
+        dispatchEvent: vi.fn(),
+        isAutoRotateActive: vi.fn(() => false),
+      },
       postProcessing: {},
       // Embedder-API delegation targets.
       resizeToCanvas: vi.fn(),
@@ -231,6 +244,9 @@ describe('LuxarApp', () => {
       setZarrViewerConfig: vi.fn(),
       hasStoredSettings: vi.fn().mockReturnValue(false),
       applyZarrDefaults: vi.fn(),
+      syncCameraFovState: vi.fn(),
+      applyOverrides: vi.fn(),
+      getSettingsSnapshot: vi.fn(() => ({})),
       updateSceneScale: vi.fn(),
       dispose: vi.fn(),
     };
@@ -505,6 +521,32 @@ describe('LuxarApp', () => {
         { applyViewerConfigFov: true }
       );
       expect(DatasetBrowser).not.toHaveBeenCalled();
+    });
+
+    it('applies authored zoom after first-load rendering defaults switch to ortho', async () => {
+      const order: string[] = [];
+      mockSceneManager.getSceneViewerConfig.mockReturnValue({
+        camera: { zoom: 2.5 },
+        control_type: 'ortho',
+      });
+      mockRenderingControls.applyZarrDefaults.mockImplementation(() => order.push('defaults'));
+      mockSceneManager.setCameraZoom.mockImplementation(() => order.push('zoom'));
+
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
+
+      expect(mockSceneManager.setCameraZoom).toHaveBeenCalledWith(2.5);
+      expect(order).toEqual(['defaults', 'zoom']);
+    });
+
+    it('reapplies authored zoom after stored settings and auto-framing', async () => {
+      mockRenderingControls.hasStoredSettings.mockReturnValue(true);
+      mockSceneManager.getSceneViewerConfig.mockReturnValue({ camera: { zoom: 3 } });
+
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
+
+      expect(mockRenderingControls.applyZarrDefaults).not.toHaveBeenCalled();
+      expect(mockRenderingControls.syncCameraFovState).toHaveBeenCalledOnce();
+      expect(mockSceneManager.setCameraZoom).toHaveBeenCalledWith(3);
     });
 
     it('should load directly for an unsuffixed URL whose zarr probe hits', async () => {
@@ -1346,6 +1388,8 @@ describe('LuxarApp', () => {
         getFocusTarget: () => ({ x: 0, y: 0, z: 0 }),
         setTarget: vi.fn(),
         reinitialize: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
       };
       await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
@@ -1357,6 +1401,173 @@ describe('LuxarApp', () => {
       } catch (e) {
         expect((e as Error).message).not.toMatch(/before init/);
       }
+    });
+  });
+
+  describe('remote-control embedder API (flyTo / settings / layers / state)', () => {
+    const SRC = 'http://example.com/data.zarr';
+    const POSE = {
+      position: [0, 0, 10] as [number, number, number],
+      target: [0, 0, 0] as [number, number, number],
+      up: [0, 1, 0] as [number, number, number],
+      isOrtho: false,
+      near: 0.1,
+      far: 1000,
+    };
+
+    it('every new method throws a clear message before init()', () => {
+      expect(() => app.flyTo(POSE)).toThrow(/flyTo called before init/);
+      expect(() => app.getRenderingSettings()).toThrow(/getRenderingSettings called before init/);
+      expect(() => app.setRenderingSettings({ exposure: 1 })).toThrow(
+        /setRenderingSettings called before init/
+      );
+      expect(() => app.getLayers()).toThrow(/getLayers called before init/);
+      expect(() => app.setLayer('/x', { opacity: 1 })).toThrow(/setLayer called before init/);
+      expect(() => app.getViewerState()).toThrow(/getViewerState called before init/);
+    });
+
+    it('subscribes to the controls change stream and re-emits it as camera-changed', async () => {
+      await app.init({ canvas: mockCanvas, src: SRC });
+      const calls = mockSceneManager.controls.addEventListener.mock.calls as Array<
+        [string, () => void]
+      >;
+      const change = calls.find(([type]) => type === 'change');
+      expect(change).toBeDefined();
+
+      const onCamera = vi.fn();
+      app.on('camera-changed', onCamera);
+      change![1]();
+
+      expect(onCamera).toHaveBeenCalledTimes(1);
+      expect(onCamera.mock.calls[0][0]).toMatchObject({ position: [1, 2, 3], target: [0, 0, 0] });
+
+      // Torn down with the app: the same listener reference is removed.
+      app.dispose();
+      expect(mockSceneManager.controls.removeEventListener).toHaveBeenCalledWith(
+        'change',
+        change![1]
+      );
+    });
+
+    it('flyTo registers the flight driver and starts the loop; a dataset switch cancels it', async () => {
+      await app.init({ canvas: mockCanvas, src: SRC });
+      mockAnimationController.startAnimation.mockClear();
+
+      const done = app.flyTo(POSE, { durationMs: 1000 });
+
+      expect(mockAnimationController.addPerFrameCallback).toHaveBeenCalledWith(
+        'camera-flight',
+        expect.any(Function),
+        { continuous: true }
+      );
+      expect(mockAnimationController.startAnimation).toHaveBeenCalled();
+
+      await app.switchDataset('http://example.com/other.zarr');
+      await expect(done).resolves.toEqual({ completed: false });
+      expect(mockAnimationController.removePerFrameCallback).toHaveBeenCalledWith('camera-flight');
+    });
+
+    it('setRenderingSettings rides the same override path as an authored viewer_config', async () => {
+      await app.init({ canvas: mockCanvas, src: SRC });
+
+      app.setRenderingSettings({ exposure: 1.5, toneMapping: 'ACES' });
+
+      expect(mockRenderingControls.applyOverrides).toHaveBeenCalledWith({
+        exposure: 1.5,
+        toneMapping: 'ACES',
+      });
+    });
+
+    it('authored waypoints snap at load and fly when the story dimension changes', async () => {
+      // A camera restoreCamera() can write to (the snap path), on top of the
+      // readable fields the default mock already has.
+      mockSceneManager.camera = {
+        position: { x: 0, y: 0, z: 10, set: vi.fn() },
+        up: { x: 0, y: 1, z: 0, set: vi.fn() },
+        near: 0.1,
+        far: 100,
+        updateProjectionMatrix: vi.fn(),
+      };
+      mockSceneManager.getSceneViewerConfig.mockReturnValue({
+        waypoints: [
+          { when: { story: 0 }, camera: { position: [0, 0, 5] } },
+          { when: { story: 1 }, camera: { position: [5, 0, 0] }, duration_ms: 700 },
+        ],
+      });
+      // The scene's dims (the real dims manager is not mocked): three shown
+      // axes plus a hidden `story` axis at 0.
+      const dimensions = ['x', 'y', 'z', 'story'].map((name, i) => ({
+        name,
+        unit: '',
+        range: [0, 3] as [number, number],
+        step: 1,
+        display: i < 3,
+      }));
+      const fakeScene = {
+        userData: { sceneDimensions: { dimensions } },
+        children: [],
+        getObjectByName: () => undefined,
+      } as unknown as Parameters<typeof sceneDimsManager.initFromScene>[0];
+      sceneDimsManager.initFromScene(fakeScene);
+      sceneDimsManager.setDimensionValue(3, 0);
+      // init() only loads `src` directly when the probe says it exists;
+      // otherwise it opens the dataset browser instead.
+      mockFetch.mockResolvedValue({ ok: true });
+
+      try {
+        await app.init({ canvas: mockCanvas, src: SRC });
+
+        // Load-time: the matched waypoint is applied as a SNAP (restoreCamera),
+        // not a flight.
+        expect(mockSceneManager.camera.position.set).toHaveBeenCalledWith(0, 0, 5);
+        expect(mockAnimationController.addPerFrameCallback).not.toHaveBeenCalledWith(
+          'camera-flight',
+          expect.any(Function),
+          expect.anything()
+        );
+
+        // Stepping the story dimension to a different waypoint flies.
+        sceneDimsManager.setDimensionValue(3, 1);
+        expect(mockAnimationController.addPerFrameCallback).toHaveBeenCalledWith(
+          'camera-flight',
+          expect.any(Function),
+          { continuous: true }
+        );
+
+        const flightsStarted = (): number =>
+          mockAnimationController.addPerFrameCallback.mock.calls.filter(
+            (c: unknown[]) => c[0] === 'camera-flight'
+          ).length;
+
+        // A move that keeps the same waypoint matched does nothing more.
+        mockAnimationController.addPerFrameCallback.mockClear();
+        sceneDimsManager.setDimensionValue(3, 1.2);
+        expect(flightsStarted()).toBe(0);
+
+        // A scene without waypoints detaches the previous scene's binding
+        // (the switch itself registers other per-frame work; only flights count).
+        mockSceneManager.getSceneViewerConfig.mockReturnValue({});
+        await app.switchDataset('http://example.com/plain.zarr');
+        mockAnimationController.addPerFrameCallback.mockClear();
+        sceneDimsManager.setDimensionValue(3, 0);
+        expect(flightsStarted()).toBe(0);
+      } finally {
+        sceneDimsManager.reset();
+      }
+    });
+
+    it('getViewerState bundles dataset, camera, dims, rendering and layers', async () => {
+      await app.init({ canvas: mockCanvas, src: SRC });
+      mockRenderingControls.getSettingsSnapshot.mockReturnValue({ exposure: 0.25 });
+
+      const state = app.getViewerState();
+
+      expect(state.src).toBe(SRC);
+      expect(state.camera).toMatchObject({ position: [1, 2, 3] });
+      expect(state.dimensions).toMatchObject({ ndim: 0 });
+      expect(state.rendering).toEqual({ exposure: 0.25 });
+      // LayersPanel is mocked: its summaries come back undefined → empty list.
+      expect(state.layers).toEqual([]);
     });
   });
 

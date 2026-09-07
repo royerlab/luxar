@@ -59,6 +59,8 @@ class ZarrWriterProtocol(Protocol):
     without keeping data in memory.
     """
 
+    store: zarr.Group
+
     def write_group(
         self, path: NodePath, *, _transform_normalized: bool = False, **attrs: Any
     ) -> None:

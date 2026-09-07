@@ -1,7 +1,7 @@
 """Overlay data class for screen-space annotations in Luxar scenes.
 
-Overlays are lightweight metadata containers representing text, image, or HTML
-annotations positioned in normalized screen coordinates over the viewer canvas.
+Overlays are lightweight metadata containers representing text, image, video,
+or HTML annotations positioned in normalized screen coordinates over the viewer canvas.
 They are NOT part of the 3D scene graph — they exist at the Scene level only.
 """
 
@@ -15,13 +15,14 @@ from typing import Any, Dict, Tuple
 class Overlay:
     """Metadata container for a single screen-space overlay.
 
-    Returned by Scene.add_text(), Scene.add_image(), and Scene.add_html()
-    for optional inspection. Overlays are immediately written to zarr and
-    not kept in memory beyond this lightweight descriptor.
+    Returned by Scene.add_text(), Scene.add_image(), Scene.add_video(), and
+    Scene.add_html() for optional inspection. Overlays are immediately written
+    to zarr and not kept in memory beyond this lightweight descriptor.
 
     Attributes:
         name: Unique name of the overlay (auto-generated or user-specified)
-        overlay_type: One of 'overlay_text', 'overlay_image', 'overlay_html'
+        overlay_type: One of 'overlay_text', 'overlay_image', 'overlay_video',
+            'overlay_html'
         position: (x, y) in normalized screen coordinates [0, 1], top-left origin
         attrs: All overlay attributes as written to zarr .zattrs
     """

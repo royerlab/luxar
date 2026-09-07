@@ -966,10 +966,9 @@ def read_raw_bytes(group: zarr.Group, key: str) -> bytes | None:
     which is why it belongs behind this facade with the rest of the
     version-sensitive surface rather than at its one call site.
 
-    A claim about reading only: Luxar's overlay WRITER goes through a filesystem
-    ``Path`` (``core.scene.overlays.internals.write_overlay``), so a payload file
-    only ever exists in a directory store today. Reading through the store is
-    what keeps that an accident of the writer rather than an assumption here.
+    Luxar's overlay writer uses the matching store-level facade below, so raw
+    payloads are read through the same abstraction they were written through
+    rather than assuming a directory-backed store.
 
     Args:
         group: Group whose own prefix the key is resolved against — ``group``
@@ -1056,9 +1055,8 @@ def write_raw_bytes(group: zarr.Group, key: str, payload: bytes) -> None:
     metadata, so only the store reaches it, and the store API is async. Driving
     ``StorePath.set()`` through ``zarr.core.sync.sync`` is what keeps this
     store-agnostic — a ``LocalStore`` and a ``MemoryStore`` take the same call,
-    whereas the caller writing through a filesystem ``Path`` (which is what
-    ``core.scene.overlays.internals.write_overlay`` does) only works for one of
-    them.
+    whereas bypassing the store through a filesystem ``Path`` only works for a
+    directory-backed store.
 
     One backstop lives here rather than only at a call site, because this writes
     UNDER a live node's own prefix and is exported: a key whose last path

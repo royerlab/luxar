@@ -1497,6 +1497,32 @@ Note: the overlay `blend_mode` is a screen-space-overlay compositing concept
 (how the 2D overlay image blends over the rendered frame) — distinct from the
 scene-node attribute `blending_mode` that controls 3D geometry blending.
 
+**Video overlay** (`overlay_video`):
+```json
+{
+  "type": "overlay_video",
+  "position": [0.06, 0.5],
+  "anchor": "center-left",
+  "video_file": "video.webm",
+  "poster_file": "poster.png",
+  "size": [0.26, null],
+  "loop": true,
+  "autoplay": true,
+  "muted": true,
+  "playback_rate": 1.0,
+  "blend_mode": "normal",
+  "z_index": 3
+}
+```
+The clip is stored verbatim beside the overlay as `video.webm` or `video.mp4`
+(the compiler sniffs the container — an EBML header or an `ftyp` box — and
+refuses anything else); an optional `poster_file` follows the image-overlay
+payload rules. A `null` height in `size` keeps the clip's own aspect ratio.
+`autoplay` requires `muted` (browsers block un-muted autoplay), and the viewer
+plays a clip only while its `visible_range` matches, pausing it otherwise. A
+VP9 WebM with an alpha channel renders transparent over the scene in Chrome and
+Firefox; Safari cannot decode alpha WebM and shows the poster instead.
+
 **HTML overlay** (`overlay_html`):
 ```json
 {

@@ -675,6 +675,14 @@ UNLISTED_IMPORTS_OK = {
     # A hard dependency of `requests`, which is a CORE dependency, so it is
     # always importable. Nothing to advertise.
     "urllib3": "transitive of requests (a core dependency) — always present",
+    # PyMOL open-source is NOT on PyPI (conda-forge / Homebrew only), so no pip
+    # spec can be advertised: `_pdb_turntable.find_pymol` probes the `pymol`
+    # executable, then this import, and prints its own two-route install hint.
+    # The stories demo builds without turntables when it is absent.
+    "pymol": "not pip-installable; probed by find_pymol, own conda/brew hint, soft optional",
+    # Optional provider of an ffmpeg binary when none is on PATH; probed inside
+    # try/except in `_pdb_turntable.find_ffmpeg`, which prints its own hint.
+    "imageio_ffmpeg": "soft optional ffmpeg fallback; probed in try/except with its own hint",
 }
 
 

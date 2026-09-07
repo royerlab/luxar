@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlsplit
 
+from ..validation.overlays import validate_visible_range
+
 # Valid enum values (must match TypeScript RenderingSettings union types)
 VALID_TONE_MAPPINGS = ("None", "Linear", "Reinhard", "Cineon", "ACES", "AgX", "Neutral")
 VALID_CONTROL_TYPES = ("orbit", "fly", "ortho")
@@ -86,6 +88,10 @@ class CameraConfig:
         target_node: Name of a scene graph node whose bounding box center
             becomes the camera target. Resolved at viewer load time.
             If both target and target_node are set, target_node takes precedence.
+        zoom: Orthographic zoom factor (> 0). Only meaningful when the viewer
+            is in ortho mode, where camera distance changes nothing and zoom
+            is what frames tighter; ignored by a perspective camera. This is
+            how an ortho waypoint frames a cluster.
     """
 
     position: Optional[Tuple[float, float, float]] = None
@@ -96,6 +102,7 @@ class CameraConfig:
     near: Optional[float] = None
     far: Optional[float] = None
     target_node: Optional[str] = None
+    zoom: Optional[float] = None
 
     def __post_init__(self) -> None:
         """Validate camera configuration values."""
@@ -128,6 +135,12 @@ class CameraConfig:
         if self.far is not None and self.far <= 0:
             raise ValueError(f"far must be > 0, got {self.far}")
 
+        self._validate_zoom()
+
+    def _validate_zoom(self) -> None:
+        if self.zoom is not None and (not math.isfinite(self.zoom) or self.zoom <= 0):
+            raise ValueError(f"zoom must be finite and > 0, got {self.zoom}")
+
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dictionary, omitting None fields."""
         result: Dict[str, Any] = {}
@@ -147,6 +160,8 @@ class CameraConfig:
             result["far"] = self.far
         if self.target_node is not None:
             result["target_node"] = self.target_node
+        if self.zoom is not None:
+            result["zoom"] = self.zoom
         return result
 
     @classmethod
@@ -161,6 +176,7 @@ class CameraConfig:
             near=data.get("near"),
             far=data.get("far"),
             target_node=data.get("target_node"),
+            zoom=data.get("zoom"),
         )
 
 
@@ -313,6 +329,151 @@ class AnimationConfig:
             loop=data.get("loop"),
             direction=data.get("direction"),
             step_size=data.get("step_size"),
+        )
+
+
+VALID_WAYPOINT_EASINGS = ("linear", "ease-in-out")
+
+# A `when` clause: dimension NAME -> exact value, or an inclusive (min, max)
+# range. Deliberately the same syntax as an overlay's `visible_range`, so one
+# vocabulary describes both "show this caption here" and "look from here".
+WaypointCondition = Dict[str, Union[float, Tuple[float, float]]]
+
+
+@dataclass
+class Waypoint:
+    """A camera pose bound to a position along the scene's hidden dimensions.
+
+    Waypoints are how a scene tells a story: give the scene a hidden discrete
+    "story" dimension, author one waypoint per value, and stepping that
+    dimension (keyboard ``[`` / ``]``, the slider, or an external controller
+    calling ``setDimensionValue``) flies the camera to the matching pose. The
+    matching rule is the overlay rule (``visible_range``): every named
+    dimension must match, an exact value matches within ±0.5 of the current
+    step, a ``(min, max)`` range matches inclusively. The FIRST matching
+    waypoint in list order wins, so put specific clauses before broad ones.
+
+    At load the viewer snaps (no flight) to whichever waypoint matches the
+    opening dimension state, ahead of the plain ``camera`` block — the more
+    specific pose wins. Afterwards a change of matched waypoint flies; slider
+    moves that stay inside the same waypoint's ranges do nothing, and leaving
+    every waypoint leaves the camera where it is. A visitor moving the camera
+    mid-flight cancels the flight (their hand always wins).
+
+    Attributes:
+        when: Condition on dimension positions, keyed by dimension name.
+        camera: Pose to reach. Fields left ``None`` keep the live camera's
+            value at flight time, so a waypoint may name only a ``target`` (or
+            ``target_node``) to re-aim without moving.
+        duration_ms: Flight duration in milliseconds; ``None`` uses the viewer
+            default (1500). ``0`` snaps.
+        easing: ``"ease-in-out"`` (default) or ``"linear"``.
+        rendering: Optional rendering overrides applied on arrival, using the
+            same snake_case keys as ``ViewerConfig`` itself (``exposure``,
+            ``bloom_strength``, ``tone_mapping``, ...). Validated against that
+            key list; values are validated by the viewer exactly as authored
+            defaults are.
+    """
+
+    when: WaypointCondition
+    camera: CameraConfig
+    duration_ms: Optional[float] = None
+    easing: Optional[str] = None
+    rendering: Optional[Dict[str, Any]] = None
+
+    def __post_init__(self) -> None:
+        self._validate_when()
+
+        if not isinstance(self.camera, CameraConfig) or not self.camera.to_dict():
+            raise ValueError(
+                "camera must be a CameraConfig with at least one field set"
+            )
+
+        if self.duration_ms is not None and (
+            not math.isfinite(self.duration_ms) or self.duration_ms < 0
+        ):
+            raise ValueError(
+                f"duration_ms must be finite and >= 0, got {self.duration_ms}"
+            )
+
+        if self.easing is not None and self.easing not in VALID_WAYPOINT_EASINGS:
+            raise ValueError(
+                f"easing must be one of {VALID_WAYPOINT_EASINGS}, got '{self.easing}'"
+            )
+
+        if self.rendering is not None:
+            if not isinstance(self.rendering, dict):
+                raise ValueError("rendering must be a dict of viewer_config keys")
+            unknown = sorted(
+                k for k in self.rendering if k not in ViewerConfig._RENDERING_FIELDS
+            )
+            if unknown:
+                raise ValueError(
+                    f"rendering has unknown keys {unknown}; use ViewerConfig field "
+                    "names such as 'exposure' or 'bloom_strength'"
+                )
+
+    def _validate_when(self) -> None:
+        if not isinstance(self.when, dict) or not self.when:
+            raise ValueError("when must be a non-empty dict of dimension name -> value")
+        for name, constraint in self.when.items():
+            if not isinstance(name, str) or not name:
+                raise ValueError(f"when keys must be dimension names, got {name!r}")
+            if isinstance(constraint, (int, float)) and not isinstance(
+                constraint, bool
+            ):
+                if not math.isfinite(constraint):
+                    raise ValueError(f"when[{name!r}] must be finite, got {constraint}")
+                continue
+            if (
+                isinstance(constraint, (tuple, list))
+                and len(constraint) == 2
+                and all(
+                    isinstance(v, (int, float)) and not isinstance(v, bool)
+                    for v in constraint
+                )
+            ):
+                lo, hi = constraint
+                if not (math.isfinite(lo) and math.isfinite(hi)) or lo > hi:
+                    raise ValueError(
+                        f"when[{name!r}] range must be finite with min <= max, got {constraint}"
+                    )
+                continue
+            raise ValueError(
+                f"when[{name!r}] must be a number or a (min, max) pair, got {constraint!r}"
+            )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary, omitting None fields."""
+        result: Dict[str, Any] = {
+            "when": {
+                name: (list(c) if isinstance(c, (tuple, list)) else c)
+                for name, c in self.when.items()
+            },
+            "camera": self.camera.to_dict(),
+        }
+        if self.duration_ms is not None:
+            result["duration_ms"] = self.duration_ms
+        if self.easing is not None:
+            result["easing"] = self.easing
+        if self.rendering:
+            result["rendering"] = dict(self.rendering)
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> Waypoint:
+        """Create from dictionary."""
+        when_raw = data.get("when", {})
+        when: WaypointCondition = {
+            name: (tuple(c) if isinstance(c, list) else c)
+            for name, c in when_raw.items()
+        }
+        return cls(
+            when=when,
+            camera=CameraConfig.from_dict(data.get("camera", {})),
+            duration_ms=data.get("duration_ms"),
+            easing=data.get("easing"),
+            rendering=data.get("rendering"),
         )
 
 
@@ -701,6 +862,10 @@ class ViewerConfig:
     # Animation state (per-dimension, list indexed by dimension)
     animation: Optional[List[AnimationConfig]] = None
 
+    # Story waypoints: camera poses bound to hidden-dimension positions. See
+    # `Waypoint`. First match in list order wins.
+    waypoints: Optional[List[Waypoint]] = None
+
     def __post_init__(self) -> None:
         """Validate all configuration values."""
         self.validate()
@@ -708,6 +873,8 @@ class ViewerConfig:
     def validate(self) -> None:
         """Validate configuration values. Raises ValueError on invalid values."""
         # Camera validation is handled by CameraConfig.__post_init__
+
+        self._validate_waypoints()
 
         if self.title is not None:
             if not isinstance(self.title, str) or not self.title.strip():
@@ -780,6 +947,18 @@ class ViewerConfig:
         _validate_range(self.fly_rotation_damping, "fly_rotation_damping", 0, 1)
         _validate_min(self.vignette_offset, "vignette_offset", 0)
 
+    def _validate_waypoints(self) -> None:
+        if self.waypoints is not None and (
+            not isinstance(self.waypoints, list)
+            or not all(isinstance(w, Waypoint) for w in self.waypoints)
+        ):
+            raise ValueError("waypoints must be a list of Waypoint")
+
+    def validate_dimensions(self, dimension_names: List[str]) -> None:
+        """Validate dimension-bound settings against a scene's dimensions."""
+        for waypoint in self.waypoints or []:
+            validate_visible_range(waypoint.when, dimension_names)
+
     # -- Simple field names for sparse serialization --
     _SIMPLE_FIELDS = [
         "title",
@@ -834,6 +1013,14 @@ class ViewerConfig:
         "theme",
     ]
 
+    # The subset of _SIMPLE_FIELDS a `Waypoint.rendering` patch may carry: the
+    # rendering pipeline + navigation feel, i.e. what the viewer's
+    # `extractRenderingOverrides` reads. Scene identity and theme are not
+    # per-waypoint state.
+    _RENDERING_FIELDS = frozenset(
+        f for f in _SIMPLE_FIELDS if f not in ("title", "background_color", "theme")
+    )
+
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dictionary, omitting None fields.
 
@@ -861,7 +1048,14 @@ class ViewerConfig:
             if any(a for a in anim_list):
                 result["animation"] = anim_list
 
+        result.update(self._waypoints_to_dict())
+
         return result
+
+    def _waypoints_to_dict(self) -> Dict[str, Any]:
+        if not self.waypoints:
+            return {}
+        return {"waypoints": [w.to_dict() for w in self.waypoints]}
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> ViewerConfig:
@@ -893,12 +1087,19 @@ class ViewerConfig:
         if "animation" in data and isinstance(data["animation"], list):
             animation = [AnimationConfig.from_dict(a) for a in data["animation"]]
 
+        waypoints = None
+        if "waypoints" in data and isinstance(data["waypoints"], list):
+            waypoints = [
+                Waypoint.from_dict(w) for w in data["waypoints"] if isinstance(w, dict)
+            ]
+
         kwargs: Dict[str, Any] = {
             "camera": camera,
             "environment": environment,
             "ui": ui,
             "dimensions": dimensions,
             "animation": animation,
+            "waypoints": waypoints,
         }
 
         # Populate simple fields from data

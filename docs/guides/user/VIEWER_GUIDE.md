@@ -399,10 +399,16 @@ and opacity control.
 
 ### Overlays (U)
 
-Screen-space annotations (text, images, HTML) positioned over the 3D canvas.
-Overlays are defined in the zarr scene by the Python API and rendered as HTML
-elements. Some overlays are dimension-aware: they appear or disappear as you
-navigate through dimensions. Press **U** to toggle all overlays on/off.
+Screen-space annotations (text, images, videos, HTML) positioned over the 3D
+canvas. Overlays are defined in the zarr scene by the Python API and rendered as
+HTML elements. Some overlays are dimension-aware: they appear or disappear as
+you navigate through dimensions. Press **U** to toggle all overlays on/off.
+
+Video overlays (`Scene.add_video`) are muted, looping clips stored inside the
+scene; a clip plays only while its dimension filter matches, so a story scene
+with one turntable per slot decodes one video at a time. A VP9 WebM with an
+alpha channel is drawn transparent over the data in Chrome and Firefox; Safari
+cannot decode it and shows the clip's poster image instead.
 
 ---
 
@@ -637,7 +643,7 @@ at — which is what keeps a reloaded or shared post-switch link named.
 | Category | Example fields |
 |----------|---------------|
 | Scene identity | `title` (browser tab title) |
-| Camera | `position`, `target`, `fov`, `fov_preset`, `near`, `far`, `target_node` |
+| Camera | `position`, `target`, `up`, `fov`, `fov_preset`, `near`, `far`, `target_node`, `zoom` (ortho only) |
 | Theme | `theme` (`dark`, `light`, `frosted-glass`, `liquid-glass`) |
 | Tone mapping | `tone_mapping`, `exposure`, `global_offset`, `global_gamma` |
 | Bloom | `bloom_enabled`, `bloom_strength`, `bloom_radius`, `bloom_threshold` |
@@ -650,6 +656,7 @@ at — which is what keeps a reloaded or shared post-switch link named.
 | UI visibility | `ui.show_help`, `ui.show_rendering_controls`, `ui.show_dimensions`, `ui.show_performance_monitor`, `ui.show_scale_bar`, `ui.show_layers` |
 | Dimensions | `dimensions.current_step`, `dimensions.selected_dimension` |
 | Animation | `animation` (per-dimension: `playing`, `target_fps`, `loop`, `direction`, `step_size`) — a scene with `playing: true` on a dimension starts that dimension animating on load, from wherever `dimensions.current_step` put it |
+| Story waypoints | `waypoints` (list of `Waypoint`: `when`, `camera`, `duration_ms`, `easing`, `rendering`) — camera poses bound to hidden-dimension positions; see below |
 
 Set `allow_high_dpr=True` if your scene is **line-dominated** — a river network,
 a tractogram, a wiring diagram. The viewer renders at CSS resolution by default
@@ -677,6 +684,64 @@ bundled demos instead leave the FOV unpinned and compose their authored position
 for 63°. A returning visitor's stored FOV still takes precedence for auto-framed
 scenes; an authored camera position is always restored with the resolved scene FOV
 it was composed for.
+
+### Story waypoints: a camera pose per hidden-dimension position
+
+A scene can tell a story. Give it a hidden discrete "story" dimension, author
+the colours per story value in the data, caption each value with overlays that
+carry a `visible_range`, and bind the camera with `waypoints`:
+
+```python
+import luxar
+from luxar import CameraConfig, Waypoint
+
+vc = luxar.ViewerConfig(
+    waypoints=[
+        # Story 0: the overview.
+        Waypoint(when={"story": 0}, camera=CameraConfig(position=(0, 0, 40))),
+        # Story 1, but only while time is in [10, 20]: fly to the cluster
+        # and brighten the exposure on arrival.
+        Waypoint(
+            when={"story": 1, "time": (10, 20)},
+            camera=CameraConfig(target_node="cluster_7", position=(12, 3, 8)),
+            duration_ms=2500,
+            rendering={"exposure": 0.5},
+        ),
+        # Story 1 anywhere else in time: re-aim only (position is kept).
+        Waypoint(when={"story": 1}, camera=CameraConfig(target_node="cluster_7")),
+    ]
+)
+```
+
+The `when` clause uses the overlay `visible_range` rule: every named dimension
+must match, an exact value matches within ±0.5 of the current step, a
+`(min, max)` range matches inclusively, and the **first** matching waypoint in
+list order wins — so put specific clauses before broad ones. Fields left out of
+a waypoint's `camera` keep the live camera's value at flight time, which is how
+a waypoint can re-aim without moving.
+
+The viewer acts on a change of *matched waypoint*, not on every slider tick. At
+load it snaps to whichever waypoint matches the opening dimension state (ahead
+of the plain `camera` block). Afterwards stepping the story dimension — the
+`[` / `]` keys, the slider, or an external controller — flies to the new
+waypoint with its own `duration_ms` (default 1500; `0` snaps) and `easing`
+(`"ease-in-out"` or `"linear"`); moves that stay inside the same waypoint's
+ranges do nothing, and leaving every waypoint leaves the camera where it is.
+Any mouse, touch or key input during a flight cancels it where it is. The
+optional `rendering` block takes the same snake_case keys as `ViewerConfig`
+itself and is applied on arrival through the same validated path.
+
+Waypoints compose with the orbit turntable: while auto-rotate is on, a story
+step keeps the current viewing direction and only moves the point the camera
+spins around (and how far away it sits), so the spin never pauses and the
+authored orientation is ignored. In ortho mode camera distance changes nothing,
+so author `CameraConfig(zoom=...)` to frame a cluster tighter. In fly mode a
+waypoint moves and aims the camera just the same; flying with the keyboard
+during a flight cancels it.
+
+For a complete worked example — story dimension, dimmed backdrop, per-story
+highlight layers, fact panels and waypoints — run
+`luxar demo run esm3_protein_stories` (it reads the ESM3 landscape demo's cache).
 
 See `luxar.ViewerConfig` docstring for the full field list with types and
 valid ranges.

@@ -14,7 +14,17 @@ import type {
   EmbedderDimensions,
   ScreenshotOptions,
   DatasetFaultPayload,
+  LayerPatch,
+  LayerSummary,
+  ViewerState,
 } from './app/embedder/events';
+import { CameraFlight, type FlyToOptions, type FlightResult } from './app/camera/camera-flight';
+import { WaypointDriver, resolveWaypointPose } from './app/camera/waypoint-driver';
+import { extractRenderingOverrides } from '../config/zarr-bridge/viewer-config-utils';
+import { resolveTargetNodeCenter } from '../scene/scene-manager/camera/camera-setup';
+import { config, type RenderingSettings } from '../config';
+import type * as THREE from 'three';
+import type { ZarrWaypoint } from '../types/zarr';
 import { captureScreenshot } from './app/embedder/screenshot';
 import type { AnimationController } from '../scene/animation/animation-controller';
 import type { ContextConfig, InputContextId, InputHandler, KeyBinding } from '../input';
@@ -142,6 +152,13 @@ export class LuxarApp {
   private datasetFaultUnsubscribe?: Unsubscribe;
   private datasetFaultLoader?: SceneLoader;
   private currentDatasetSrc?: string;
+  /** Smooth camera transitions for {@link flyTo}; created in {@link setupEmbedderHooks}. */
+  private cameraFlight?: CameraFlight;
+  /**
+   * Dims-manager listener driving the loaded scene's authored story waypoints
+   * (`viewer_config.waypoints`); the driver itself lives in its closure.
+   */
+  private waypointListener?: () => void;
 
   /**
    * Observes the canvas box so the viewer re-fits when the host container
@@ -344,6 +361,8 @@ export class LuxarApp {
     this.datasetFaultUnsubscribe = undefined;
     this.datasetFaultLoader = undefined;
     this.currentDatasetSrc = undefined;
+    // The outgoing scene's waypoints must not fire on the incoming scene's dims.
+    this.disposeWaypoints();
     try {
       await loadDatasetImpl(src, {
         inputHandler: this.inputHandler,
@@ -398,6 +417,31 @@ export class LuxarApp {
     sceneDimsManager.addListener(dimsListener);
     this.events.add(() => sceneDimsManager.removeListener(dimsListener));
 
+    // Camera pose feedback: the ControlsManager is created once per app and
+    // forwards every active control's `change`, so one listener covers
+    // orbit/fly/ortho input, setCameraPose(), flight frames and auto-rotate.
+    const controls = this.sceneManager.controls;
+    const cameraListener = (): void => {
+      if (this.isInitialized) {
+        this.embedderEvents.emit('camera-changed', captureViewerSnapshot(this.sceneManager).camera);
+      }
+    };
+    controls.addEventListener('change', cameraListener);
+    this.events.add(() => controls.removeEventListener('change', cameraListener));
+
+    // flyTo() driver. The canvas is the input surface whose pointer / wheel /
+    // touch events hand control back to the user mid-flight.
+    this.cameraFlight = new CameraFlight({
+      sceneManager: this.sceneManager,
+      animationController: this.animationController,
+      inputElement: canvas instanceof HTMLElement ? canvas : null,
+    });
+    this.events.add(() => {
+      this.cameraFlight?.dispose();
+      this.cameraFlight = undefined;
+    });
+    this.events.add(() => this.disposeWaypoints());
+
     // Guard on a real Element: ResizeObserver may be absent (some test
     // environments) and observing a non-Element throws.
     if (typeof ResizeObserver !== 'undefined' && canvas instanceof Element) {
@@ -438,6 +482,66 @@ export class LuxarApp {
    * preserve the viewer's built-in defaults.
    */
   private applyViewerConfigState(viewerConfig: ZarrViewerConfig | undefined): void {
+    this.applyViewerConfigStateCore(viewerConfig);
+    // AFTER the core pass: `dimensions.current_step` has been applied, so the
+    // load-time match sees the authored opening position and snaps to it.
+    this.installWaypoints(viewerConfig?.waypoints);
+  }
+
+  /**
+   * Bind the scene's authored story waypoints to the dims manager: match once
+   * now (snap — the opening framing, ahead of the plain `camera` block), then
+   * fly whenever a dimension change makes a different waypoint match. Each
+   * port is a piece the app already owns; the driver only sequences them.
+   */
+  private installWaypoints(waypoints: ZarrWaypoint[] | undefined): void {
+    this.disposeWaypoints();
+    if (!Array.isArray(waypoints) || waypoints.length === 0) return;
+
+    const driver = new WaypointDriver(waypoints, {
+      getDims: () => sceneDimsManager.getDims(),
+      getLivePose: () => captureViewerSnapshot(this.sceneManager).camera,
+      resolvePose: (camera, live) =>
+        resolveWaypointPose(camera, live, {
+          resolveNodeCenter: (name) => {
+            const root = this.sceneManager.scene?.children?.find((c) => c.name === 'LuxarScene') as
+              THREE.Group | undefined;
+            return root ? resolveTargetNodeCenter(root, name) : null;
+          },
+          fovPresets: config.camera.fovPresets,
+        }),
+      snapTo: (pose) => restoreCamera(this.sceneManager, pose),
+      autoRotateActive: () => this.sceneManager.controls.isAutoRotateActive(),
+      flyTo: (pose, opts) => {
+        // The first load's config pass runs before setupEmbedderHooks(), so the
+        // flight driver may not exist yet; a snap is the faithful fallback.
+        if (this.cameraFlight) return this.cameraFlight.flyTo(pose, opts);
+        restoreCamera(this.sceneManager, pose);
+        return Promise.resolve({ completed: true });
+      },
+      // Snake_case keys → the same validated override path authored defaults take.
+      applyRendering: (rendering) =>
+        this.renderingControls.applyOverrides(
+          extractRenderingOverrides(rendering as ZarrViewerConfig),
+          'Applied waypoint rendering overrides'
+        ),
+    });
+    const listener = (): void => {
+      driver.evaluate('fly');
+    };
+    sceneDimsManager.addListener(listener);
+    this.waypointListener = listener;
+    driver.evaluate('snap');
+  }
+
+  private disposeWaypoints(): void {
+    if (this.waypointListener) {
+      sceneDimsManager.removeListener(this.waypointListener);
+      this.waypointListener = undefined;
+    }
+  }
+
+  private applyViewerConfigStateCore(viewerConfig: ZarrViewerConfig | undefined): void {
     applyViewerConfigStateHelper(viewerConfig, {
       showHelp: () => showHelpOverlay(this.inputHandler.getRegisteredShortcutBindings()),
       renderingControls: this.renderingControls,
@@ -828,6 +932,8 @@ export class LuxarApp {
         new Error('LuxarApp.switchDataset: a dataset switch is already in progress')
       );
     }
+    // A flight aimed at the outgoing scene has nothing to land on.
+    this.cameraFlight?.cancel();
     this.options.src = src;
     // Re-title the tab for the incoming scene BEFORE the load. Neither of the
     // two things that could be naming it survives a switch: `?title=` names
@@ -940,6 +1046,103 @@ export class LuxarApp {
       throw new Error('LuxarApp.setCameraPose called before init()');
     }
     restoreCamera(this.sceneManager, pose);
+  }
+
+  /**
+   * Fly the camera smoothly to `pose` (the same shape {@link getCameraPose}
+   * returns). Interpolates in the orbit parameterisation — focus target,
+   * viewing direction, distance, up — so the transition arcs around the
+   * scene instead of cutting through it, and lands on `pose` exactly.
+   *
+   * Any user input on the canvas or keyboard cancels the flight where it is,
+   * as does a newer `flyTo()` or a dataset switch; the promise then resolves
+   * `{ completed: false }`. `durationMs: 0` is equivalent to
+   * {@link setCameraPose}.
+   *
+   * @throws if the app has not been initialised yet.
+   */
+  flyTo(pose: CameraSnapshot, opts?: FlyToOptions): Promise<FlightResult> {
+    if (!this.isInitialized || !this.cameraFlight) {
+      throw new Error('LuxarApp.flyTo called before init()');
+    }
+    return this.cameraFlight.flyTo(pose, opts);
+  }
+
+  /**
+   * Copy of the live rendering settings (tone mapping, exposure, bloom,
+   * anti-aliasing, navigation feel, …) — the `RenderingSettings` object the
+   * Rendering panel edits.
+   *
+   * @throws if the app has not been initialised yet.
+   */
+  getRenderingSettings(): RenderingSettings {
+    if (!this.isInitialized) {
+      throw new Error('LuxarApp.getRenderingSettings called before init()');
+    }
+    return this.renderingControls.getSettingsSnapshot();
+  }
+
+  /**
+   * Apply a partial rendering-settings override. Takes the same path an
+   * authored `viewer_config` takes at load (validation, camera FOV / planes,
+   * navigation, post-processing), so anything an author can bake a
+   * controller can set live. Values are validated and clamped; nothing is
+   * persisted to the user's stored preferences.
+   *
+   * @throws if the app has not been initialised yet.
+   */
+  setRenderingSettings(patch: Partial<RenderingSettings>): void {
+    if (!this.isInitialized) {
+      throw new Error('LuxarApp.setRenderingSettings called before init()');
+    }
+    this.renderingControls.applyOverrides(patch);
+  }
+
+  /**
+   * Per-layer appearance summaries in Layers-panel order (copies). Empty
+   * before a scene has loaded.
+   *
+   * @throws if the app has not been initialised yet.
+   */
+  getLayers(): LayerSummary[] {
+    if (!this.isInitialized) {
+      throw new Error('LuxarApp.getLayers called before init()');
+    }
+    return this.layersPanel?.getLayerSummaries() ?? [];
+  }
+
+  /**
+   * Patch one layer's appearance (visibility, opacity, display window, gamma,
+   * colormap, blending mode, absorption, order). Each field takes the same
+   * route the Layers panel's own control does. `path` is the
+   * {@link LayerSummary.path} of a layer from {@link getLayers}.
+   *
+   * @throws if the app has not been initialised yet, or on an unknown path.
+   */
+  setLayer(path: string, patch: LayerPatch): void {
+    if (!this.isInitialized || !this.layersPanel) {
+      throw new Error('LuxarApp.setLayer called before init()');
+    }
+    this.layersPanel.setLayer(path, patch);
+  }
+
+  /**
+   * One-call mirror of everything a remote controller needs: dataset,
+   * camera, slice position, rendering settings, layers. All copies.
+   *
+   * @throws if the app has not been initialised yet.
+   */
+  getViewerState(): ViewerState {
+    if (!this.isInitialized) {
+      throw new Error('LuxarApp.getViewerState called before init()');
+    }
+    return {
+      src: this.currentDatasetSrc ?? this.options.src ?? null,
+      camera: this.getCameraPose(),
+      dimensions: this.getDimensions(),
+      rendering: this.getRenderingSettings(),
+      layers: this.getLayers(),
+    };
   }
 
   /**

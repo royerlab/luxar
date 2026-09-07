@@ -28,8 +28,8 @@ export const MAX_OVERLAY_HTML_CHARS = 64 * 1024;
 export interface OverlayConfig {
   /** Overlay name (zarr group name) */
   name: string;
-  /** Overlay type: 'overlay_text', 'overlay_image', 'overlay_html' */
-  type: 'overlay_text' | 'overlay_image' | 'overlay_html';
+  /** Overlay type: 'overlay_text', 'overlay_image', 'overlay_video', 'overlay_html' */
+  type: 'overlay_text' | 'overlay_image' | 'overlay_video' | 'overlay_html';
   /** Position in normalized screen coords [0, 1], top-left origin */
   position: [number, number];
   /** Opacity 0-1 */
@@ -70,7 +70,18 @@ export interface OverlayConfig {
 
   // --- Image-specific ---
   image_file?: string;
-  size?: [number, number];
+  /** [width, height] as viewport fractions; a null height keeps the media's own aspect. */
+  size?: [number, number | null];
+
+  // --- Video-specific ---
+  /** Opaque file beside the group: `video.webm` (VP9, optionally with alpha) or `video.mp4`. */
+  video_file?: string;
+  /** Optional still (PNG/JPEG/WebP) shown before play and where the video cannot decode. */
+  poster_file?: string;
+  loop?: boolean;
+  autoplay?: boolean;
+  muted?: boolean;
+  playback_rate?: number;
 
   // --- HTML-specific ---
   html?: string;
@@ -138,9 +149,15 @@ export async function loadOverlayConfigs(
           stroke_color: attrs.stroke_color as string | undefined,
           stroke_width: attrs.stroke_width as number | undefined,
           image_file: attrs.image_file as string | undefined,
-          size: attrs.size as [number, number] | undefined,
+          size: attrs.size as [number, number | null] | undefined,
           blend_mode: attrs.blend_mode as string | undefined,
           html: attrs.html as string | undefined,
+          video_file: attrs.video_file as string | undefined,
+          poster_file: attrs.poster_file as string | undefined,
+          loop: attrs.loop as boolean | undefined,
+          autoplay: attrs.autoplay as boolean | undefined,
+          muted: attrs.muted as boolean | undefined,
+          playback_rate: attrs.playback_rate as number | undefined,
         };
 
         // `.zattrs` is untrusted JSON and the assignments above are only type

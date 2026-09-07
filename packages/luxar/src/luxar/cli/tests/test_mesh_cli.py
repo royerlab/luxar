@@ -1475,13 +1475,12 @@ class TestMeshLod:
     def test_a_user_authored_overlay_is_named_as_dropped(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """Reviewer round 2: all THREE overlay types, not just `add_text`.
+        """All four overlay types are reported before the rewrite drops them.
 
         `overlays` itself is not a user node (`Scene` refuses to let anyone
         create one by that name) and must not be reported; a genuine overlay
-        living under it — text, HTML, AND image — is real content and must be
-        named. `add_image` was the specific gap: `overlay_image` was missing
-        from the type filter, so an image overlay was still silently dropped.
+        living under it — text, HTML, image, or video — is real content and
+        must be named.
         """
         from luxar import Dimensions, LuxarZarrCompiler
         from luxar.cli.mesh_ops.lod_commands import run_lod
@@ -1496,6 +1495,11 @@ class TestMeshLod:
             scene.add_image(
                 np.zeros((2, 2, 3), dtype=np.uint8), (0.9, 0.05), name="logo"
             )
+            scene.add_video(
+                b"\x1a\x45\xdf\xa3" + b"\x00" * 60,
+                (0.15, 0.15),
+                name="turntable",
+            )
 
         out = tmp_path / "out.luxar.zarr"
         assert len(_run(run_lod, source, out)) >= 2
@@ -1505,6 +1509,7 @@ class TestMeshLod:
         assert "'overlays/caption' (overlay)" in stdout
         assert "'overlays/note' (overlay)" in stdout
         assert "'overlays/logo' (overlay)" in stdout
+        assert "'overlays/turntable' (overlay)" in stdout
         # The reserved container itself is not a dropped node.
         assert "'overlays' (group)" not in stdout
 

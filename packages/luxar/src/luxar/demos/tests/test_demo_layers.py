@@ -93,7 +93,7 @@ GEOMETRY_ADDERS = frozenset(
 GROUP_ADDERS = frozenset({"add_group", "add_partition_group", "add_lod_group"})
 
 #: Screen-space overlays: they carry no ``layer`` flag and never reach the panel.
-OVERLAY_ADDERS = frozenset({"add_text", "add_html", "add_image"})
+OVERLAY_ADDERS = frozenset({"add_text", "add_html", "add_image", "add_video"})
 
 
 def test_every_scene_adder_is_classified() -> None:

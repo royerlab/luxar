@@ -73,6 +73,8 @@ import {
   centerCameraOnScene,
   frameCameraOnObject,
   centerOnOrigin,
+  ZOOM_IN_FACTOR,
+  ZOOM_OUT_FACTOR,
 } from './scene-manager/camera/camera-framing';
 import {
   type CameraModeCtx,
@@ -316,6 +318,16 @@ export class SceneManager extends THREE.EventDispatcher<{
     this.updateMaterialsForCurrentCamera();
     this.dispatchEvent({ type: 'change' });
     return true;
+  }
+
+  /** Apply an authored zoom after the camera has switched to ortho projection. */
+  setCameraZoom(zoom: number): void {
+    if (!isOrthographicCamera(this.camera) || !Number.isFinite(zoom) || zoom <= 0) return;
+    this.camera.zoom = zoom;
+    this.camera.updateProjectionMatrix();
+    this.lastOrthoZoom = zoom;
+    this.updateMaterialsForCurrentCamera();
+    this.controls.setZoomLimits(zoom / ZOOM_OUT_FACTOR, zoom * ZOOM_IN_FACTOR);
   }
 
   /**
