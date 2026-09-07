@@ -41,7 +41,7 @@ export const MAX_SLACK_POINTS = 3;
 
 export const COVERAGE_THRESHOLDS = {
   // Global — every file in the report, the subtrees below included.
-  lines: 86, //       measured 88.57
+  lines: 88, //       measured 89.03
   statements: 87, //  measured 87.93
   functions: 84, //   measured 85.67
   branches: 80, //    measured 82.12
