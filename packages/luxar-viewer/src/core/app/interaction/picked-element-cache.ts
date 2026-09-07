@@ -57,11 +57,6 @@ export const CLICK_SLOP_PX = 4;
  */
 export const TOUCH_CLICK_SLOP_PX = 12;
 
-/** The click slop for a pointer type: fingers get {@link TOUCH_CLICK_SLOP_PX}. */
-export function clickSlopFor(pointerType: string): number {
-  return pointerType === 'touch' ? TOUCH_CLICK_SLOP_PX : CLICK_SLOP_PX;
-}
-
 /**
  * The subset of `PickingSystem` this cache validates against. A structural
  * port, so tests can pass a plain object with two numbers.

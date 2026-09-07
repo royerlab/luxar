@@ -15,7 +15,6 @@ import * as THREE from 'three';
 import {
   PickedElementCache,
   TOUCH_CLICK_SLOP_PX,
-  clickSlopFor,
   CLICK_SLOP_PX,
   type CachedPick,
   type PickGenerationPort,
@@ -174,14 +173,6 @@ describe('PickedElementCache — an ordinary click must survive', () => {
 });
 
 describe('click slop per pointer type', () => {
-  it('a finger gets the wider tolerance, everything else the mouse value', () => {
-    expect(clickSlopFor('touch')).toBe(TOUCH_CLICK_SLOP_PX);
-    expect(clickSlopFor('mouse')).toBe(CLICK_SLOP_PX);
-    expect(clickSlopFor('pen')).toBe(CLICK_SLOP_PX);
-    expect(clickSlopFor('')).toBe(CLICK_SLOP_PX);
-    expect(TOUCH_CLICK_SLOP_PX).toBeGreaterThan(CLICK_SLOP_PX);
-  });
-
   it('read() honours an explicit slop', () => {
     const cache = new PickedElementCache();
     const ports = { pickGeneration: 1, visibleSignature: 1 };
