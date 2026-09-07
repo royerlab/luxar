@@ -169,6 +169,23 @@ describe('bootstrapStandalone', () => {
       }
     });
 
+    it('installs the ?input= override before returning', async () => {
+      const { getInputProfile, resetInputProfileForTests } =
+        await import('../../../utils/input-capabilities');
+      try {
+        await bootstrapStandalone({
+          canvas: CANVAS,
+          urlParams: { ...EMPTY_PARAMS, input: 'touch' },
+        });
+        expect(getInputProfile()).toMatchObject({
+          source: 'override',
+          coarsePointer: true,
+        });
+      } finally {
+        resetInputProfileForTests();
+      }
+    });
+
     it('names the browser tab from ?title=, and leaves it alone without one', async () => {
       const original = document.title;
       try {
