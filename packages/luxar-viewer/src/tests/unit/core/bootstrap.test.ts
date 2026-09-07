@@ -511,13 +511,14 @@ describe('bootstrapStandalone', () => {
       });
     });
 
-    it('disables the blend-variant warm-up on a mobile device class (?input=touch)', async () => {
+    it('leaves mobile blend-warm-up resolution to the shared init pipeline', async () => {
       await bootstrapStandalone({
         canvas: CANVAS,
         urlParams: { ...EMPTY_PARAMS, input: 'touch' },
       });
-      expect(mocks.init.mock.calls.at(-1)?.[0].blendWarmup).toBe(false);
-      // …and the override is cleared again by a plain bootstrap, restoring it.
+      expect(mocks.init.mock.calls.at(-1)?.[0].blendWarmup).toBe(true);
+      // Bootstrap only threads the URL option. The shared pipeline applies the
+      // mobile clamp for both standalone and direct LuxarApp construction.
       await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
       expect(mocks.init.mock.calls.at(-1)?.[0].blendWarmup).toBe(true);
     });

@@ -660,9 +660,10 @@ at — which is what keeps a reloaded or shared post-switch link named.
 | Story waypoints | `waypoints` (list of `Waypoint`: `when`, `camera`, `duration_ms`, `easing`, `rendering`) — camera poses bound to hidden-dimension positions; see below |
 
 Set `allow_high_dpr=True` if your scene is **line-dominated** — a river network,
-a tractogram, a wiring diagram. The viewer renders at CSS resolution by default
-even on a Retina display, because a 2x panel costs 4x the fragment work and
-soft-edged emissive geometry barely rewards it. Measured against DPR 2,
+a tractogram, a wiring diagram. Phones and tablets cap this setting at DPR 2;
+laptops and desktops use the panel's native DPR. The viewer renders at CSS
+resolution by default even on a Retina display, because a 2x panel costs 4x the
+fragment work and soft-edged emissive geometry barely rewards it. Measured against DPR 2,
 brightness and coverage hold to within 2.5% on every geometry type and the whole
 visible effect is a 15-35% loss of fine detail: on points and splats that is
 mild softening, but on dense thin lines the individual strands stop being

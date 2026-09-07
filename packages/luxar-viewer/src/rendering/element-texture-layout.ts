@@ -215,9 +215,11 @@ const BYTES_PER_TEXEL = 16;
  * Largest single element texture a MOBILE device class may allocate per
  * node. An A-series iPhone reports `MAX_TEXTURE_SIZE` 16384, which alone would
  * permit a 4096 × 16384 RGBA32F texture — 1.07 GB for one node — and the GPU
- * byte budget can only evict AFTER an allocation, not prevent it. 256 MiB is
- * 4.19 M splats (4 texels each), the same count a 4096-class desktop bound
- * allows, and comfortably above the 250K/part tiles idiom.
+ * byte budget can only evict AFTER an allocation, not prevent it. This is an
+ * anti-catastrophic-allocation guard, not a residency budget: the displayed
+ * level cannot be evicted and may exceed the 128 MiB mobile session target.
+ * 256 MiB keeps the same 4.19 M-splat node bound as a 4096-class device while
+ * preventing the 1.07 GB allocation a 16384-class device would otherwise make.
  */
 const MOBILE_ELEMENT_TEXTURE_MAX_BYTES = 256 * 1024 * 1024;
 

@@ -49,6 +49,31 @@ describe('mobileAdaptiveDprOverrides', () => {
     }
   });
 
+  it('keeps a tighter configured refresh ceiling', () => {
+    profile.deviceClass = 'mobile';
+    const original = config.adaptiveDPR.refreshRateCeiling;
+    config.adaptiveDPR.refreshRateCeiling = 30;
+    try {
+      expect(mobileAdaptiveDprOverrides()?.refreshRateCeiling).toBe(30);
+    } finally {
+      config.adaptiveDPR.refreshRateCeiling = original;
+    }
+  });
+
+  it('falls back to structural defaults for partial config mocks', () => {
+    profile.deviceClass = 'mobile';
+    const original = config.adaptiveDPR;
+    config.adaptiveDPR = {} as typeof config.adaptiveDPR;
+    try {
+      expect(mobileAdaptiveDprOverrides()).toEqual({
+        minDPR: MOBILE_MIN_DPR,
+        refreshRateCeiling: MOBILE_REFRESH_RATE_CEILING,
+      });
+    } finally {
+      config.adaptiveDPR = original;
+    }
+  });
+
   it('the manager accepts the overrides (a 120 Hz mark reports a 60 Hz cap)', () => {
     profile.deviceClass = 'mobile';
     const manager = new AdaptiveDPRManager(mobileAdaptiveDprOverrides());

@@ -211,9 +211,6 @@ export interface AdaptiveDPRDiagnostics extends AdaptiveDPRState {
 }
 
 /**
- * Manages adaptive pixel ratio for performance optimization
- */
-/**
  * Floor the adaptive walk stops at on a phone or tablet. The desktop floor of
  * 0.5 is a 1/4-pixel-density image on a DPR-1 panel; on a DPR-3 phone the same
  * absolute 0.5 is 1/6 of the panel's linear resolution and reads as smeared.
@@ -237,12 +234,22 @@ export const MOBILE_REFRESH_RATE_CEILING = 60;
  */
 export function mobileAdaptiveDprOverrides(): Partial<AdaptiveDPRConfig> | undefined {
   if (getInputProfile().deviceClass !== 'mobile') return undefined;
+  const configuredMinDPR = Number.isFinite(config.adaptiveDPR.minDPR)
+    ? config.adaptiveDPR.minDPR
+    : adaptiveDPRDefaults.minDPR;
+  const configuredRefreshRateCeiling = Number.isFinite(config.adaptiveDPR.refreshRateCeiling)
+    ? config.adaptiveDPR.refreshRateCeiling
+    : adaptiveDPRDefaults.refreshRateCeiling;
   return {
-    minDPR: Math.max(config.adaptiveDPR.minDPR, MOBILE_MIN_DPR),
-    refreshRateCeiling: MOBILE_REFRESH_RATE_CEILING,
+    minDPR: Math.max(configuredMinDPR, MOBILE_MIN_DPR),
+    refreshRateCeiling:
+      configuredRefreshRateCeiling > 0
+        ? Math.min(configuredRefreshRateCeiling, MOBILE_REFRESH_RATE_CEILING)
+        : MOBILE_REFRESH_RATE_CEILING,
   };
 }
 
+/** Manages adaptive pixel ratio for performance optimization. */
 export class AdaptiveDPRManager {
   private config: AdaptiveDPRConfig;
   private renderer: DPRRenderer | null = null;

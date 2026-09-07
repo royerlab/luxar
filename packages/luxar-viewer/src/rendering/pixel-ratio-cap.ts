@@ -106,12 +106,10 @@ let maxPixelRatioCap: number = DEFAULT_MAX_PIXEL_RATIO;
 /**
  * Uncapped `window.devicePixelRatio`, with the 0/undefined guard.
  *
- * Also guards `window` itself. This module has no imports, so it is the
- * cheapest thing in the tree to pull into a non-browser context — a node
- * test, or the published library bundle under SSR — and a bare
- * `window.devicePixelRatio` there is a ReferenceError rather than a
- * missing display. 1 is the honest answer when there is no display at
- * all: CSS resolution, which is what the cap defaults to anyway.
+ * Also guards `window` itself, so a node test or the published library bundle
+ * under SSR gets a missing display rather than a ReferenceError from a bare
+ * `window.devicePixelRatio`. 1 is the honest answer when there is no display
+ * at all: CSS resolution, which is what the cap defaults to anyway.
  */
 export function getNativePixelRatio(): number {
   return (typeof window === 'undefined' ? 1 : window.devicePixelRatio) || 1;
