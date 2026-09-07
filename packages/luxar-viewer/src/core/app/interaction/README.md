@@ -31,12 +31,17 @@ They land in `userData.attrs` on each geometry leaf, which is what a pick hits.
 interaction/
 ├── picked-element-cache.ts   # the settled pick + its staleness guard
 ├── element-actions.ts        # attrs → safe URL + copy string (pure)
-└── canvas-actions.ts         # pointer/keyboard listeners, menu, clipboard, cursor
+├── canvas-actions.ts         # pointer/keyboard listeners, menu, clipboard, cursor
+└── double-tap-to-fit.ts      # touch double-tap → re-frame; app-lifetime, picking-free
 ```
 
-`initPicking` (`../picking/init-picking.ts`) constructs all three and registers
-the listeners through the picking session's `EventGroup`, so one
-`pickingEvents.dispose()` tears everything down together.
+`initPicking` (`../picking/init-picking.ts`) constructs the first three and
+registers the listeners through the picking session's `EventGroup`, so one
+`pickingEvents.dispose()` tears everything down together. `double-tap-to-fit`
+is the exception: `LuxarApp.init` installs it once on the app's own
+`EventGroup`, because the picking session is provisioned only for scenes with
+labels, keys, interaction templates or an embedder consumer, and a re-frame
+has to work on a bare point cloud too.
 
 ## `picked-element-cache.ts`
 
@@ -142,8 +147,11 @@ so at 4 px every tap read as a camera drag), and three gestures:
   stays synchronous so its user activation is never spent.
 - **Long-press** (`LONG_PRESS_MS`, held within the slop, one finger) — pick, then
   the element menu; the finger's release is then inert.
-- **Double-tap** (within `DOUBLE_TAP_MS` / `DOUBLE_TAP_SLOP_PX`) — `fitScene`
-  (wired to `LuxarApp.recenterCamera`).
+- **Double-tap** (within `DOUBLE_TAP_MS` / `DOUBLE_TAP_SLOP_PX`) — re-frame,
+  via `double-tap-to-fit.ts` → `LuxarApp.recenterCamera`. `canvas-actions`
+  recognises the same second tap only to cancel the first tap's deferred
+  navigation and skip the re-pick; it never re-frames itself, so the gesture
+  behaves identically on scenes that never provision picking.
 
 ## The kill switch
 

@@ -21,10 +21,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
 import {
   installCanvasActions,
-  DOUBLE_TAP_MS,
   OPEN_ELEMENT_MENU_EVENT,
   type CanvasActionsPorts,
 } from '../../../../../core/app/interaction/canvas-actions';
+import { DOUBLE_TAP_MS } from '../../../../../core/app/interaction/double-tap-to-fit';
 import { LONG_PRESS_MS } from '../../../../../utils/long-press';
 import {
   PickedElementCache,
@@ -747,22 +747,25 @@ describe('touch: tap, long-press, double-tap', () => {
     expect(h.openUrl).not.toHaveBeenCalled();
   });
 
-  it('a double-tap re-frames the scene once and cancels the pending navigation', async () => {
-    const fitScene = vi.fn();
-    const h = setup({ fitScene }, LINKED);
+  it('the second tap of a double-tap cancels the pending navigation and does not re-pick', async () => {
+    // The re-frame itself lives in double-tap-to-fit.ts (installed for every
+    // scene, picking or not); canvas-actions only has to stay out of its way.
+    const h = setup({}, LINKED);
     gesture(h.canvas, { x: 100, y: 80, pointerType: 'touch' });
     await flush();
+    expect(h.picking.pickAt).toHaveBeenCalledTimes(1);
+    expect(h.onElementClick).toHaveBeenCalledTimes(1);
     vi.advanceTimersByTime(100);
     gesture(h.canvas, { x: 105, y: 84, pointerType: 'touch' });
     await flush();
-    expect(fitScene).toHaveBeenCalledTimes(1);
+    expect(h.picking.pickAt).toHaveBeenCalledTimes(1); // the second tap is not a tap
+    expect(h.onElementClick).toHaveBeenCalledTimes(1);
     vi.advanceTimersByTime(DOUBLE_TAP_MS * 2);
     expect(h.openUrl).not.toHaveBeenCalled(); // the first tap's navigation was cancelled
     // A third tap well after the window is a fresh single tap.
     gesture(h.canvas, { x: 100, y: 80, pointerType: 'touch' });
     await flush();
     vi.advanceTimersByTime(DOUBLE_TAP_MS);
-    expect(fitScene).toHaveBeenCalledTimes(1);
     expect(h.openUrl).toHaveBeenCalledTimes(1);
   });
 

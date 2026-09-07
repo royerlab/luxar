@@ -183,9 +183,6 @@
     }
   },
   "src/core/app/picking/init-picking.ts": {
-    "@typescript-eslint/no-misused-promises": {
-      "count": 1
-    },
     "complexity": {
       "count": 2
     },

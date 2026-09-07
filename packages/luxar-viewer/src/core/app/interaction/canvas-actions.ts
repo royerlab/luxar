@@ -31,8 +31,11 @@
  * (`PickGenerationPort.pickAt`, the tooltip shows through the normal result
  * path) and then the click action, with any navigation deferred by
  * {@link DOUBLE_TAP_MS} so a second tap can pre-empt it; **long-press** =
- * the element menu, after which the release is inert; **double-tap** =
- * `fitScene`. Mouse and pen-as-mouse paths are untouched.
+ * the element menu, after which the release is inert; **double-tap** = the
+ * second tap pre-empts the first tap's navigation and picks nothing — the
+ * re-frame itself is `double-tap-to-fit.ts`, installed for every scene, since
+ * this module only exists once picking is provisioned. Mouse and pen-as-mouse
+ * paths are untouched.
  *
  * ## Dependency injection
  *
@@ -57,6 +60,7 @@ import {
   type PickedElementCache,
   type PickGenerationPort,
 } from './picked-element-cache';
+import { DOUBLE_TAP_MS, DOUBLE_TAP_SLOP_PX } from './double-tap-to-fit';
 import { isTouchLikePointer } from '../../../utils/input-capabilities';
 import { LONG_PRESS_MS } from '../../../utils/long-press';
 import { resolveElementActions, type ResolvedElementActions } from './element-actions';
@@ -71,11 +75,6 @@ import { resolveElementActions, type ResolvedElementActions } from './element-ac
  * (`input/input-handler/key-bindings/navigation-bindings.ts`).
  */
 export const OPEN_ELEMENT_MENU_EVENT = 'luxar-open-element-menu';
-
-/** Two touch taps closer than this in time are a double-tap. */
-export const DOUBLE_TAP_MS = 300;
-/** …and closer than this in space (CSS px). */
-export const DOUBLE_TAP_SLOP_PX = 24;
 
 /** Payload for the `element-click` / `element-contextmenu` embedder events. */
 export interface ElementPointerPayload {
@@ -127,11 +126,6 @@ export interface CanvasActionsPorts {
   openMenu?: typeof openContextMenu;
   onElementClick?: (payload: ElementPointerPayload) => void;
   onElementContextMenu?: (payload: ElementPointerPayload) => void;
-  /**
-   * Touch double-tap on the canvas: re-frame the scene (the `F` key /
-   * Home rail button). Optional so embedders and tests can leave it off.
-   */
-  fitScene?: () => void;
 }
 
 /** Handle returned by {@link installCanvasActions}. */
@@ -432,7 +426,7 @@ export function installCanvasActions(ports: CanvasActionsPorts): CanvasActionsHa
 
   /**
    * Touch tap: a second tap within {@link DOUBLE_TAP_MS} / {@link DOUBLE_TAP_SLOP_PX}
-   * re-frames the scene; otherwise pick here (desktop hover + click parity), then
+   * is left to `double-tap-to-fit.ts`; otherwise pick here (desktop hover + click parity), then
    * act, deferring any navigation so a double-tap can still pre-empt it. The
    * mouse path stays synchronous so its user activation is never spent.
    */
@@ -443,9 +437,10 @@ export function installCanvasActions(ports: CanvasActionsPorts): CanvasActionsHa
       const ddx = clientX - lastTap.x;
       const ddy = clientY - lastTap.y;
       if (ddx * ddx + ddy * ddy <= DOUBLE_TAP_SLOP_PX * DOUBLE_TAP_SLOP_PX) {
+        // The re-frame itself is `double-tap-to-fit.ts`, installed for every
+        // scene; here the second tap only pre-empts the first tap's navigation.
         lastTap = null;
         clearDeferredNavigation();
-        ports.fitScene?.();
         return;
       }
     }
