@@ -535,7 +535,8 @@ export class OverlayManager {
     }
 
     // Make non-interactive overlays completely inert (no focus, no click, no events)
-    if (!config.interactive) {
+    const hasManualVideoControls = config.type === 'overlay_video' && config.autoplay === false;
+    if (!config.interactive && !hasManualVideoControls) {
       el.inert = true;
     }
 
@@ -584,6 +585,7 @@ export class OverlayManager {
     // every hidden clip would start decoding at load (all ten did). Autoplay is
     // a wish that `syncVideoPlayback` grants only while the overlay is visible.
     video.dataset.autoplay = config.autoplay !== false ? '1' : '0';
+    video.controls = config.autoplay === false;
     video.playsInline = true;
     video.preload = 'auto';
     video.disablePictureInPicture = true;

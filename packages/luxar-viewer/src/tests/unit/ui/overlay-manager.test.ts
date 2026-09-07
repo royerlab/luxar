@@ -317,6 +317,32 @@ describe('OverlayManager.loadOverlays', () => {
     pausedSpy.mockRestore();
   });
 
+  it('shows native controls when video autoplay is disabled', async () => {
+    const playSpy = vi
+      .spyOn(HTMLMediaElement.prototype, 'play')
+      .mockImplementation(() => Promise.resolve());
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+
+    await manager.loadOverlays(
+      [
+        makeTextOverlay({
+          name: 'manual-clip',
+          type: 'overlay_video',
+          video_file: 'video.webm',
+          autoplay: false,
+        }),
+      ],
+      'https://example.com/scene.luxar.zarr/'
+    );
+
+    const video = document.querySelector('.luxar-overlay--video video') as HTMLVideoElement;
+    const overlay = video.parentElement as HTMLDivElement;
+    expect(video.controls).toBe(true);
+    expect(overlay.inert).toBeFalsy();
+    expect(video.dataset.autoplay).toBe('0');
+    expect(playSpy).not.toHaveBeenCalled();
+  });
+
   it('serves a zipped-store video and poster from typed blob URLs', async () => {
     vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(() => Promise.resolve());
     vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
