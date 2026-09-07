@@ -16,17 +16,19 @@ claim was read. Items marked *[inferred]* were not directly verified.
 > was `max(resolved L1 size, 64 MB)` and a pending write's buffer is the same
 > one L1 already holds and bounds. #2561 re-sizes that cap from the non-cache
 > heap remainder instead — a quarter of it, so 328 MB on a 4 GiB Chrome heap
-> like this machine's, which clears both the 214 MB peak measured on cmu1 and
-> its 277 MB whole-store ceiling, though only by 1.18× on the latter; the
-> allowance is heap-relative, so for this scene it binds again below roughly a
-> 2.7 GiB heap, which is intended. #2561 also flips the overflow policy to
+> like this machine's, which clears both the 214 MB cmu1 streams before the cap
+> binds (peak pending ≈ cumulative streamed, since its 10 961 writes drain far
+> slower than they arrive — *[inferred]*, not a measured retention) and its
+> 277 MB whole-store ceiling, though only by 1.18× on the latter; the allowance
+> is heap-relative, so for this scene it binds again below roughly a 2.6 GiB
+> heap, which is intended. #2561 also flips the overflow policy to
 > drop-the-arrival, so the oldest end drains in order. The cmu1 before/after row
 > below has NOT been re-measured on the audit machine since; what is in place is
-> the fix plus an assertion in the audit bench (§8) that `opfsDropped` is 0 —
-> load-phase and end-of-run on every cold repetition, and on the warm revisit —
-> whenever the resolved allowance covers the bytes the scene streamed, so a cap
-> that binds again shows up as a failed bench run rather than only as a slower
-> revisit.
+> the fix plus an unconditional assertion in the audit bench (§8) that
+> `opfsDropped` is 0 — load-phase and end-of-run on every cold repetition, and
+> on the warm revisit — with a second assertion that the resolved allowance
+> still covers what the scene streamed, so a cap that binds again shows up as a
+> failed bench run rather than only as a slower revisit.
 > The ad-hoc probe kit it describes was replaced by a repeatable harness:
 > `pnpm test:perf:e2e -g "viewer audit"` (see §8). Numbers in §3 are the
 > BEFORE state; the PR carries the same-browser before/after table.

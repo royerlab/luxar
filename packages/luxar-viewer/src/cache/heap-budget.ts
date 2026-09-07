@@ -48,7 +48,7 @@ const NON_CACHE_SHARE_OF_TARGET = 1 - CACHE_SHARE_OF_TARGET;
  * `data/scene-loader/progressive/residency-budget.ts`, and
  * `rendering/gpu-byte-budget.ts` as a min-candidate), so on a 4 GiB heap the
  * commitments already total
- * 3 × 512 + 328 MB against a 1311 MB remainder. Keep that ledger in mind when
+ * 3 × 512 + 328 MiB against a 1310 MiB remainder. Keep that ledger in mind when
  * retuning: the queue takes a quarter rather than a half precisely because
  * these are ceilings on demand-filled structures competing for one heap, and
  * a second half-share would let two of them alone spend the whole remainder.
@@ -277,28 +277,42 @@ export function computeWorkingSetBudgetBytes(
  * the 214 MB a single pathology scene streams, which re-introduced the write
  * drops #2528 had removed (0 → 3 966, #2561).
  *
+ * What this bounds is nonetheless TOTAL pending bytes, not that evicted-and-
+ * pending subset. Accounting only the subset would be tighter (it is what
+ * #2561's option 3 proposed) but needs an L1 eviction hook the queue does not
+ * have; total-pending is a strict over-estimate of the extra retention, so it
+ * is conservative in the safe direction and costs nothing but a lower ceiling.
+ *
  * Resolved values (`targetHeapUsage` 0.8, so remainder = heap × 0.8 × 0.4, of
  * which this takes a quarter — i.e. simply heap × 0.08):
- *   - 4 GiB Chrome heap: remainder 1310 MB → 328 MB. That clears both the
- *     214 MB peak measured on the cmu1 pathology scene and its 277 MB
- *     whole-store ceiling (10 961 chunks, whose OPFS drain — 4-wide at
- *     16-30 ms per write — is several times slower than the ~9.7 s arrival, so
- *     peak pending tracks cumulative streamed bytes nearly 1:1). The margin
- *     over that ceiling is 1.18×, not comfortable.
- *   - 2 GiB heap: remainder 655 MB → 164 MB.
- *   - 8 GiB heap: remainder 2621 MB → 655 MB, capped at 512 MB.
- *   - `?cacheBudgetMB=2048`: remainder 1365 MB → 341 MB.
- *   - mobile device-class pool (384 MB): remainder 256 MB → 64 MB.
- *   - no memory signal at all: 256 MB.
- * So for that scene the cap BINDS below roughly a 2.7 GiB heap (214/0.08) and
- * its whole store no longer fits below ~3.4 GiB (277/0.08). That is the
- * intended heap-relative behaviour, not a regression: a small heap SHOULD drop
- * writes rather than retain a third of a gigabyte it does not have. Hence no
- * absolute floor on the measured path either — a fixed 256 MB floor on a 1 GiB
- * heap (whose whole non-cache remainder is 328 MB) would be no bound at all.
- * The no-signal 256 MB is deliberately more generous than a measured mid-size
- * heap resolves to: it is a no-INFORMATION default, sized to clear today's
- * demos rather than to a heap nobody could observe.
+ *   - 4 GiB Chrome heap: remainder 1310 MiB → 328 MiB. That clears both the
+ *     214 MB the cmu1 pathology scene streams before its cap bound (peak
+ *     pending ≈ cumulative streamed here: its 10 961 writes drain 4-wide at
+ *     tens of ms each — see the queue module's docstring — which is several
+ *     times slower than the ~9.7 s arrival) and its 277 MB whole-store
+ *     ceiling. The margin over that ceiling is 1.18×, not comfortable.
+ *   - 2 GiB heap: remainder 655 MiB → 164 MiB.
+ *   - 8 GiB heap: remainder 2621 MiB → 655 MiB, capped at 512 MiB.
+ *   - `?cacheBudgetMB=2048`: remainder 1365 MiB → 341 MiB.
+ *   - mobile device-class pool (384 MiB): remainder 256 MiB → 64 MiB.
+ *   - no memory signal at all: 256 MiB.
+ * So for that scene the cap BINDS below roughly a 2.6 GiB heap (214/0.08 =
+ * 2675 MiB) and its whole store no longer fits below ~3.4 GiB (277/0.08 =
+ * 3462 MiB). That is the intended heap-relative behaviour, not a regression: a
+ * small heap SHOULD drop writes rather than retain a third of a gigabyte it
+ * does not have. Hence no absolute floor on the measured path either — a fixed
+ * 256 MiB floor on a 1 GiB heap (whose whole non-cache remainder is 328 MiB)
+ * would be no bound at all. The no-signal 256 MiB is deliberately more generous
+ * than a measured mid-size heap resolves to: it is a no-INFORMATION default,
+ * sized to clear today's demos rather than to a heap nobody could observe.
+ *
+ * The absent floor has one pathological edge, left visible rather than papered
+ * over: a tiny explicit pool resolves below a single chunk — `?cacheBudgetMB=1`
+ * gives a 0.67 MiB remainder and a ~170 KiB allowance, under the 256 KiB a
+ * chunk can reach — and because overflow drops the ARRIVAL rather than evicting
+ * pending work, nothing is ever persisted. L2 is then effectively off for the
+ * session. That is self-inflicted by the setting, and a floor would have to
+ * exceed the whole non-cache remainder to prevent it.
  *
  * @param heapLimitBytes - Override for the device heap limit (tests). When
  *   omitted, {@link readHeapLimitBytes} is consulted; invalid explicit values

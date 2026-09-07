@@ -195,6 +195,31 @@ export async function readOpfsWrites(page: Page): Promise<number | null> {
 }
 
 /**
+ * `__luxarDebug.cache.getStats().health.opfsAvailable`, or null when
+ * unavailable. `false` means UNREQUESTED degradation only — an OPFS the store
+ * could not acquire, or a tripped circuit breaker (a documented hazard under
+ * automated Chromium). A deliberate `?no-cache` / `?no-opfs` reports `true`.
+ * Lets a caller tell "the tier never ran" from "the tier ran and dropped
+ * nothing", which the write counter alone cannot: it reads 0 for both.
+ */
+export async function readOpfsAvailable(page: Page): Promise<boolean | null> {
+  return page.evaluate(() => {
+    try {
+      const d = (
+        window as unknown as {
+          __luxarDebug: {
+            cache?: { getStats: () => { health?: { opfsAvailable?: boolean } } };
+          };
+        }
+      ).__luxarDebug;
+      return d.cache?.getStats().health?.opfsAvailable ?? null;
+    } catch {
+      return null;
+    }
+  });
+}
+
+/**
  * `__luxarDebug.cache.getStats().l2WriteQueue.maxBytes` — the session's
  * resolved retained-byte allowance, or null when unavailable. Needed to tell a
  * cap REGRESSION from the heap-relative behaviour that is by design: a small

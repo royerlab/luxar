@@ -320,23 +320,53 @@ describe('OpfsWriteQueue', () => {
     expect(q.stats().depth).toBe(0);
   });
 
-  it('clamps non-positive config to a floor of 1', () => {
-    const q = new OpfsWriteQueue({ concurrency: 0, maxDepth: 0, maxBytes: 0 });
-    expect(q.stats().concurrency).toBe(1);
-    expect(q.stats().maxDepth).toBe(1);
-    expect(q.stats().maxBytes).toBe(1);
-    // A non-finite cap must clamp too, not disable the bound: NaN fails every
-    // `pendingBytes > maxBytes` comparison, so it would be no cap at all.
+  it('clamps non-positive AND non-finite config to a floor of 1', () => {
+    const zeroed = new OpfsWriteQueue({ concurrency: 0, maxDepth: 0, maxBytes: 0 });
+    expect(zeroed.stats()).toMatchObject({ concurrency: 1, maxDepth: 1, maxBytes: 1 });
+
+    // NaN must clamp too, and on all three: `Math.max(1, Math.floor(NaN))` is
+    // NaN, and each limit then fails silently in its own way — `size < NaN`
+    // is false, so a NaN concurrency stops the pump from ever starting a task,
+    // while a NaN depth/byte limit simply removes that bound. Every one of
+    // them is reachable through MultiLevelCachingStore's options, which
+    // bypass config validation.
+    const nan = new OpfsWriteQueue({
+      concurrency: Number.NaN,
+      maxDepth: Number.NaN,
+      maxBytes: Number.NaN,
+    });
+    expect(nan.stats()).toMatchObject({ concurrency: 1, maxDepth: 1, maxBytes: 1 });
     expect(
-      new OpfsWriteQueue({ concurrency: 1, maxDepth: 1, maxBytes: Number.NaN }).stats().maxBytes
-    ).toBe(1);
+      new OpfsWriteQueue({
+        concurrency: Number.POSITIVE_INFINITY,
+        maxDepth: Number.POSITIVE_INFINITY,
+        maxBytes: Number.POSITIVE_INFINITY,
+      }).stats()
+    ).toMatchObject({ concurrency: 1, maxDepth: 1, maxBytes: 1 });
   });
 
-  it('drops a non-finite byteLength instead of admitting it unaccounted', async () => {
-    // Fails CLOSED: an unmeasurable size is treated as over-cap. Letting it in
-    // at 0 bytes would admit an unbounded payload for free, and letting NaN
-    // reach `pendingBytes` would disable the cap for the session (every
-    // `NaN > maxBytes` test is false).
+  it('a NaN concurrency still drains (the clamp keeps the pump running)', async () => {
+    // The failure this guards: `inFlightPromises.size < NaN` is false forever,
+    // so an unclamped NaN would silently persist NOTHING for the session.
+    const q = new OpfsWriteQueue({ concurrency: Number.NaN, maxDepth: 100, maxBytes: 100 });
+    const ran: string[] = [];
+    for (const key of ['a', 'b']) {
+      q.enqueue(
+        key,
+        async () => {
+          ran.push(key);
+        },
+        1
+      );
+    }
+    await q.drain();
+    expect(ran).toEqual(['a', 'b']);
+  });
+
+  it('drops an unaccountable byteLength (non-finite or negative) rather than admitting it', async () => {
+    // Fails CLOSED for both shapes: letting either in at 0 bytes would admit
+    // an unmeasured payload for free, and letting NaN reach `pendingBytes`
+    // would disable the cap for the session (every `NaN > maxBytes` is false).
     const q = new OpfsWriteQueue({ concurrency: 1, maxDepth: 100, maxBytes: 10 });
     const gate = makeGate();
     const ran: string[] = [];
@@ -349,16 +379,22 @@ describe('OpfsWriteQueue', () => {
       },
       1
     );
-    q.enqueue(
-      'nan',
-      async () => {
-        ran.push('nan');
-      },
-      Number.NaN
-    );
+    for (const [key, bytes] of [
+      ['nan', Number.NaN],
+      ['negative', -8],
+    ] as const) {
+      q.enqueue(
+        key,
+        async () => {
+          ran.push(key);
+        },
+        bytes
+      );
+    }
 
-    // Dropped on arrival: nothing queued, accounting untouched (not NaN).
-    expect(q.stats()).toMatchObject({ depth: 0, pendingBytes: 0, dropped: 1 });
+    // Both dropped on arrival: nothing queued, accounting untouched (not NaN,
+    // and not decremented by the negative length either).
+    expect(q.stats()).toMatchObject({ depth: 0, pendingBytes: 0, dropped: 2 });
 
     // The cap still binds afterwards: 8 fits, the next 8 would reach 16 > 10.
     q.enqueue(
@@ -377,12 +413,12 @@ describe('OpfsWriteQueue', () => {
       8
     );
     expect(q.stats().pendingBytes).toBe(8);
-    expect(q.stats().dropped).toBe(2); // the NaN arrival plus 'b'
+    expect(q.stats().dropped).toBe(3); // the two unaccountable arrivals plus 'b'
 
     gate.release();
     await q.drain();
 
-    // 'nan' never ran (dropped, not queued); 'b' lost to the byte cap.
+    // Neither bad arrival ran (dropped, not queued); 'b' lost to the byte cap.
     expect(ran).toEqual(['busy', 'a']);
     expect(q.stats().pendingBytes).toBe(0);
   });

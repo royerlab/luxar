@@ -25,9 +25,11 @@ This package implements a transparent caching and prefetching layer for zarr dat
 - **L2 write-queue retain (`heap-budget.ts::computeOpfsWriteQueueBudgetBytes`)**:
   resolves the same way, taking a QUARTER of that non-cache remainder (capped
   at 512 MiB, 256 MiB with no memory signal) as the bytes pending background
-  OPFS writes may hold — 328 MB on a 4 GiB heap, which clears the 214 MB peak
-  and 277 MB whole-store ceiling of the largest audited scene by 1.18×, and
-  binds again below roughly a 2.7 GiB heap (heap-relative by design). The
+  OPFS writes may hold — 328 MiB on a 4 GiB heap. That clears the 214 MB the
+  largest audited scene streams before its cap binds (peak pending ≈ cumulative
+  streamed there; inferred from the drain rate, not measured) and clears that
+  scene's 277 MB whole-store ceiling by 1.18×. It binds again below roughly a
+  2.6 GiB heap (heap-relative by design). The
   eager working set takes half of the same remainder and the last quarter is
   claimed by neither; that bounds these two shares, not total commitment —
   the eager half is handed in full to three independent consumers (see the

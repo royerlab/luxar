@@ -67,7 +67,11 @@ function apiOf(apiSurface, isWebGLBackend, b, n) {
  * field missing on one side of a present column renders `—` (via
  * {@link fmt} / {@link delta}), never a phantom 0.0%. Rows whose
  * scenario carries none of the present fields are skipped. Lower is
- * better for every field. Returns '' when nothing is present.
+ * better for every field EXCEPT the few that are not scores at all and
+ * must be read as context: `steadyDpr` (a resolved render scale) and
+ * `opfsWriteQueueMaxBytes` (a memory CEILING that moves with the host's
+ * heap, so a Δ there usually means a different machine, not a
+ * regression). Returns '' when nothing is present.
  *
  * @param {string} title      section heading
  * @param {string} unitsNote  one-line note under the heading (units etc.)

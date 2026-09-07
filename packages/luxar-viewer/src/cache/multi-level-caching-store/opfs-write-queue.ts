@@ -36,17 +36,18 @@
  * @module cache/multi-level-caching-store/opfs-write-queue
  */
 
+/**
+ * Every limit here is resolved by the same clamp (finite, floored, at least 1),
+ * so pass a real budget: a non-positive or non-finite value becomes 1, not
+ * "unbounded". For `maxBytes` that means a 1-BYTE cap under which every
+ * non-empty chunk drops; for `maxDepth`, a queue one task deep.
+ */
 export interface OpfsWriteQueueOptions {
   /** Max writes running concurrently against OPFS. */
   concurrency: number;
   /** Max pending (not-yet-started) tasks; an overflowing arrival is dropped. */
   maxDepth: number;
-  /**
-   * Max bytes retained by pending tasks; an overflowing arrival is dropped.
-   * Pass a real budget: a non-positive or non-finite value clamps to a 1-BYTE
-   * cap, under which every write of a non-empty chunk drops. `0` is not an
-   * "unbounded" idiom here.
-   */
+  /** Max bytes retained by pending tasks; an overflowing arrival is dropped. */
   maxBytes: number;
 }
 
@@ -93,13 +94,23 @@ export class OpfsWriteQueue {
   private readonly maxDepth: number;
   private readonly maxBytes: number;
 
+  /**
+   * Resolve one configured limit: finite, floored, at least 1. All three go
+   * through here because `Math.max(1, Math.floor(NaN))` is NaN, and each limit
+   * fails differently and silently on a NaN — `size < NaN` is false, so a
+   * non-finite `concurrency` means the pump never starts a task (total L2
+   * write loss) while a non-finite `maxDepth`/`maxBytes` simply removes that
+   * bound. Every one of them is reachable through `MultiLevelCachingStore`'s
+   * `opfsWrite*` options, which bypass the config validators.
+   */
+  private static resolveLimit(value: number): number {
+    return Number.isFinite(value) ? Math.max(1, Math.floor(value)) : 1;
+  }
+
   constructor(opts: OpfsWriteQueueOptions) {
-    this.concurrency = Math.max(1, Math.floor(opts.concurrency));
-    this.maxDepth = Math.max(1, Math.floor(opts.maxDepth));
-    // A non-finite cap would disable the byte bound entirely rather than
-    // clamping it — `NaN > maxBytes` is false for every comparison — so it
-    // resolves to the same floor a 0 or negative value gets.
-    this.maxBytes = Number.isFinite(opts.maxBytes) ? Math.max(1, Math.floor(opts.maxBytes)) : 1;
+    this.concurrency = OpfsWriteQueue.resolveLimit(opts.concurrency);
+    this.maxDepth = OpfsWriteQueue.resolveLimit(opts.maxDepth);
+    this.maxBytes = OpfsWriteQueue.resolveLimit(opts.maxBytes);
   }
 
   /**
@@ -110,13 +121,15 @@ export class OpfsWriteQueue {
    * (see the module docstring for why the oldest end is the one worth keeping).
    */
   enqueue(key: string, run: () => Promise<void>, byteLength: number): void {
-    // A size we cannot account for fails CLOSED: treat it as over-cap and drop
-    // it before touching any state. It must not reach `pendingBytes` (NaN
-    // there disables the bound for the session, since every `NaN > maxBytes`
-    // test is false), and charging it 0 instead would be the opposite error —
-    // admitting an unmeasured payload for free, past a cap whose whole job is
-    // to bound retained bytes. Any already-queued task for this key survives.
-    if (!Number.isFinite(byteLength)) {
+    // A size we cannot account for fails CLOSED: anything that is not a finite
+    // value >= 0 is treated as over-cap and dropped before any state is
+    // touched. NaN must not reach `pendingBytes` (it would disable the bound
+    // for the session, since every `NaN > maxBytes` test is false), and
+    // normalizing an unaccountable size to 0 instead — as a `Math.max(0, …)`
+    // clamp would for a negative length — is the opposite error: it admits an
+    // unmeasured payload for free, past a cap whose whole job is to bound
+    // retained bytes. Any already-queued task for this key survives.
+    if (!Number.isFinite(byteLength) || byteLength < 0) {
       this.droppedCount++;
       this.pump();
       return;
@@ -127,7 +140,7 @@ export class OpfsWriteQueue {
     const previous = this.pending.get(key);
     if (previous) this.pendingBytes -= previous.byteLength;
     this.pending.delete(key);
-    const pending = { run, byteLength: Math.max(0, Math.floor(byteLength)) };
+    const pending = { run, byteLength: Math.floor(byteLength) };
     this.pending.set(key, pending);
     this.pendingBytes += pending.byteLength;
 
