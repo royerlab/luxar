@@ -318,7 +318,7 @@ describe('readInputSignals / getInputProfile (browser-backed)', () => {
     expect(p.touchPoints).toBeGreaterThanOrEqual(5);
   });
 
-  it('?input=mouse forces a desktop profile on a real iPad but keeps isIPad for WebKit workarounds', () => {
+  it('?input=mouse forces a mouse profile on a real iPad but keeps isIPad and the mobile tier', () => {
     restoreNav();
     restoreNav = setNavigator({
       userAgent: MAC_UA,
@@ -333,14 +333,14 @@ describe('readInputSignals / getInputProfile (browser-backed)', () => {
       coarsePointer: false,
       hoverCapable: true,
       touchPoints: 0,
-      deviceClass: 'laptop',
+      deviceClass: 'mobile', // detected tier kept — the override is pointer-only
       source: 'override',
       isIPad: true,
       isIOS: true,
     });
   });
 
-  it('?input=mouse on a phone UA does not stay mobile', () => {
+  it('?input=mouse on a phone UA keeps the detected (mobile) memory tier', () => {
     restoreNav();
     restoreNav = setNavigator({
       userAgent: IPHONE_UA,
@@ -350,7 +350,10 @@ describe('readInputSignals / getInputProfile (browser-backed)', () => {
     });
     mm.setMatching(new Set(['(pointer: coarse)']));
     setInputProfileOverride('mouse');
-    expect(getInputProfile().deviceClass).toBe('laptop');
+    // The tier is a memory budget, not a pointer property: on WebKit it is the
+    // operative cache pool, and `mouse` must never raise it.
+    expect(getInputProfile().deviceClass).toBe('mobile');
+    expect(getInputProfile().coarsePointer).toBe(false);
     expect(getInputProfile().isIPhone).toBe(true);
   });
 
@@ -407,6 +410,20 @@ describe('isTouchLikePointer', () => {
     // Barrel button held: falls through to the secondary (mouse) mapping.
     expect(isTouchLikePointer({ pointerType: 'pen', button: 0, buttons: 3 })).toBe(false);
     expect(isTouchLikePointer({ pointerType: 'pen', button: 2, buttons: 2 })).toBe(false);
+    // Barrel RELEASE: button 2 with no buttons held is still the secondary path.
+    expect(isTouchLikePointer({ pointerType: 'pen', button: 2, buttons: 0 })).toBe(false);
+  });
+
+  it('a pen drag stays touch-like across the whole gesture (pointermove has button -1)', () => {
+    setInputProfileOverride('touch');
+    // Measured Chromium shape: down {0,1} → move {-1,1} → up {0,0}.
+    expect(isTouchLikePointer({ pointerType: 'pen', button: 0, buttons: 1 })).toBe(true);
+    expect(isTouchLikePointer({ pointerType: 'pen', button: -1, buttons: 1 })).toBe(true);
+    expect(isTouchLikePointer({ pointerType: 'pen', button: 0, buttons: 0 })).toBe(true);
+    // Hover move with no contact (pen in proximity) is also not a mouse drag.
+    expect(isTouchLikePointer({ pointerType: 'pen', button: -1, buttons: 0 })).toBe(true);
+    // A barrel drag stays on the mouse path for every move too.
+    expect(isTouchLikePointer({ pointerType: 'pen', button: -1, buttons: 3 })).toBe(false);
   });
 });
 

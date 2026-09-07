@@ -63,7 +63,12 @@ export interface InputProfile {
   touchPoints: number;
   /** iPhone / iPod touch (Safari lacks Fullscreen for non-video elements). */
   isIPhone: boolean;
-  /** iPad, including iPadOS masquerading as macOS. */
+  /**
+   * iPad, including iPadOS masquerading as macOS. An iPhone with Safari's
+   * "Request Desktop Website" active also presents the macOS UA and therefore
+   * reads as an iPad here (the UA carries no phone marker); gate on `isIOS`
+   * when the phone/tablet distinction is not load-bearing.
+   */
   isIPad: boolean;
   /** `isIPhone || isIPad` — drives WebKit-on-iOS-only workarounds. */
   isIOS: boolean;
@@ -113,7 +118,7 @@ export function readInputSignals(): InputSignals {
  * Infer a coarse device class from browser signals. `mobile` is reliable
  * (mobile UA, or a touch + coarse-pointer device — which also catches iPadOS,
  * whose UA masquerades as macOS). `desktop` vs `laptop` is the weak core-count
- * proxy (see {@link DESKTOP_CORE_THRESHOLD}). A Windows touch laptop
+ * proxy (`DESKTOP_CORE_THRESHOLD`). A Windows touch laptop
  * (`maxTouchPoints > 0` but a fine primary pointer) is NOT mobile.
  */
 export function inferDeviceClass(signals: InputSignals): DeviceClass {
@@ -153,10 +158,10 @@ export function deriveInputProfile(
 /**
  * Apply the `?input=touch|mouse` override to detected signals. `touch` makes
  * the device look like a bare phone/tablet (coarse, no hover, mobile budgets);
- * `mouse` makes it look like a mouse-driven machine (fine, hover, non-mobile
- * budgets by core count). The platform flags (`isIPad`, …) stay DETECTED in
- * both cases: they gate WebKit workarounds that remain true regardless of how
- * the user chose to interact.
+ * `mouse` makes it look like a mouse-driven machine (fine pointer, hover) while
+ * keeping the detected memory tier. The platform flags (`isIPad`, …) stay
+ * DETECTED in both cases: they gate WebKit workarounds that remain true
+ * regardless of how the user chose to interact.
  */
 function applyOverride(signals: InputSignals, mode: InputProfileOverride): InputProfile {
   // Platform flags come from the REAL signals: forcing touch points must not
@@ -171,18 +176,17 @@ function applyOverride(signals: InputSignals, mode: InputProfileOverride): Input
       deviceClass: 'mobile',
     };
   }
+  // `deviceClass` is a memory / GPU tier, not a pointer property, so the mouse
+  // override leaves it at the DETECTED tier: on WebKit without
+  // `?cacheBudgetMB=` the device-class pool is the operative cache budget, and
+  // lifting a phone from 384 MB to 1 GB because the user wants mouse-style
+  // interaction would be the one budget change with no upside. (`touch`
+  // lowering the tier is how a desktop emulates a phone, and stays.)
   return {
     ...detected,
     coarsePointer: false,
     hoverCapable: true,
     touchPoints: 0,
-    // Blank the UA so a phone's mobile UA does not keep the mobile budget tier.
-    deviceClass: inferDeviceClass({
-      ...signals,
-      userAgent: '',
-      maxTouchPoints: 0,
-      coarsePointer: false,
-    }),
   };
 }
 
@@ -239,8 +243,13 @@ export function getInputProfile(): InputProfile {
  * Whether a pointer event should take the TOUCH gesture path: a finger, or a
  * pen used as a finger on a touch-first device (iPad + Pencil, primary tip
  * only). A pen on a fine-pointer desktop (Wacom) keeps the mouse mapping, and
- * a pen barrel-button drag (`buttons & 2`) falls through to it everywhere so
- * the secondary action stays reachable.
+ * a pen barrel-button press or drag (`button === 2` / `buttons & 2`) falls
+ * through to it everywhere so the secondary action stays reachable.
+ *
+ * Must agree across a whole gesture: `pointermove` reports `button === -1`
+ * ("no button changed"), so the test is "not the barrel button" rather than
+ * "button 0" — otherwise a Pencil drag would start on the touch path, take
+ * the mouse path for every move, and end on the touch path.
  */
 export function isTouchLikePointer(event: {
   pointerType: string;
@@ -250,7 +259,9 @@ export function isTouchLikePointer(event: {
   if (event.pointerType === 'touch') return true;
   if (event.pointerType !== 'pen') return false;
   if (!getInputProfile().coarsePointer) return false;
-  return (event.button ?? 0) === 0 && ((event.buttons ?? 0) & 2) === 0;
+  const button = event.button ?? 0; // -1 on pointermove: no button changed
+  if (button === 2 || ((event.buttons ?? 0) & 2) !== 0) return false; // barrel
+  return button <= 0;
 }
 
 /** Reset memoised state between tests. */

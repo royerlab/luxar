@@ -48,9 +48,9 @@ utils/
 ├── console-interceptor.ts   # Ring-buffer console capture (Proxy singleton, opt-in patch)
 ├── escape-html.ts           # HTML entity escaping for safe rendering
 ├── format-error.ts          # Unknown thrown value → message / name: message / stack
+├── input-capabilities.ts    # getInputProfile(), isTouchLikePointer(), deriveInputProfile() (import-free)
 ├── log.ts                   # log object, Modules registry, LogEmoji, createModuleLogger
 ├── object-visibility.ts     # isEffectivelyVisible (ancestor-aware scene-graph visibility)
-├── input-capabilities.ts    # getInputProfile(), isTouchLikePointer(), deriveInputProfile() (import-free)
 ├── platform.ts              # isMacPlatform()
 ├── result.ts                # Result<T, E> + ok/err/isOk/isErr/match/mapOk/mapErr/unwrap/tryAsync
 ├── storage-keys.ts          # luxar.* localStorage key registry
@@ -199,8 +199,8 @@ Dependency-inverted UI notification surface so lower layers can surface user-vis
 The single answer to "is this a touch-first device, is it an iPhone or an iPad, can its pointer hover?" for every JS-side touch adaptation (gesture routing, long-press menus, mobile rendering budgets, tap-oriented copy). Deliberately import-free so leaf modules such as `rendering/pixel-ratio-cap.ts` can depend on it without joining an import cycle. CSS adaptations do **not** go through here — they use the `(pointer: coarse)` / `(hover: none)` media features directly.
 
 - `getInputProfile()` — memoised `InputProfile`: `coarsePointer` (primary pointer is a finger), `hoverCapable` (`(any-hover: hover)` OR a fine primary pointer — an iPad with a trackpad keeps hover tooltips), `touchPoints`, `isIPhone`, `isIPad` (real iPad UA OR `platform` starts `Mac` with `maxTouchPoints > 1` — iPadOS Safari reports a Macintosh UA by default), `isIOS`, `isAndroid`, `deviceClass` (`mobile | laptop | desktop`, the budget tier `cache/heap-budget.ts` sizes the cache pool from), `source`. Re-derived when the pointer media queries fire `change` (trackpad attach, DevTools emulation).
-- `setInputProfileOverride('touch' | 'mouse' | null)` — the `?input=` URL override, applied once in `core/bootstrap.ts` before anything reads the profile. `touch` = bare phone/tablet; `mouse` = desktop behaviour on a touch device. Platform flags stay detected in both modes (they gate WebKit workarounds that remain true). JS-only.
-- `isTouchLikePointer(event)` — a finger, or a pen used as a finger on a coarse-pointer device (iPad + Pencil, primary tip, no barrel button). A pen on a fine-pointer desktop keeps the mouse mapping.
+- `setInputProfileOverride('touch' | 'mouse' | null)` — the `?input=` URL override, applied once in `core/bootstrap.ts` before anything reads the profile. `touch` = bare phone/tablet (coarse, no hover, `mobile` tier); `mouse` = mouse-style interaction on a touch device (fine, hover) while keeping the detected memory tier — the tier is the operative WebKit cache budget, and the override is pointer-only. Platform flags stay detected in both modes (they gate WebKit workarounds that remain true). JS-only.
+- `isTouchLikePointer(event)` — a finger, or a pen used as a finger on a coarse-pointer device (iPad + Pencil, not the barrel button). Consistent across a gesture: `pointermove` reports `button === -1`, so the test is "not the barrel button", not "button 0". A pen on a fine-pointer desktop keeps the mouse mapping.
 - `deriveInputProfile(signals)`, `inferDeviceClass(signals)`, `readInputSignals()` — the pure derivation and its raw browser signals (`InputSignals`), injectable for tests. No-signal default (node, jsdom) is a hover-capable fine-pointer laptop, i.e. the historical desktop behaviour.
 - `resetInputProfileForTests()`.
 
