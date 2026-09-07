@@ -1279,8 +1279,7 @@ describe('PickingSystem — stale readback ordering', () => {
    * camera origin so the cursor ray always hits (skips the ray-cull
    * early-out), and `readbackAndVote` replaced by a caller-gated promise.
    */
-  function buildGatedSystem() {
-    const onPickResult = vi.fn();
+  function buildGatedSystem(onPickResult = vi.fn()) {
     const renderer = {
       domElement: document.createElement('canvas'),
       getDrawingBufferSize: vi.fn((t: THREE.Vector2) => t.set(800, 600)),
@@ -1359,16 +1358,24 @@ describe('PickingSystem — stale readback ordering', () => {
     expect(onPickResult).toHaveBeenCalledExactlyOnceWith(fakeResult);
   });
 
-  it('drops an explicit pick when the view changes during readback', async () => {
-    const { system, onPickResult, gate, fakeResult } = buildGatedSystem();
+  it('keeps an explicit pick authoritative while view changes continue during delivery', async () => {
+    const delivery = deferred<void>();
+    const onPickResult = vi.fn(async (result: PickResult | null) => {
+      if (result) await delivery.promise;
+    });
+    const { system, gate, fakeResult } = buildGatedSystem(onPickResult);
 
     const pending = system.pickAt(400, 300);
     system.markDirty();
     onPickResult.mockClear();
     gate.resolve(fakeResult);
+    await vi.waitFor(() => expect(onPickResult).toHaveBeenCalledWith(fakeResult));
+
+    system.markDirty();
+    delivery.resolve();
     await pending;
 
-    expect(onPickResult).not.toHaveBeenCalled();
+    expect(onPickResult).toHaveBeenCalledExactlyOnceWith(fakeResult);
   });
 
   it('drops an explicit pick when a newer explicit pick supersedes it', async () => {

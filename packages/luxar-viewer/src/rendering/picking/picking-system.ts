@@ -209,8 +209,9 @@ export class PickingSystem {
    */
   private _shouldPick: () => boolean = () => true;
 
-  /** Explicit picks ignore mousemove invalidation, but not a newer explicit pick or view change. */
+  /** Explicit picks ignore hover/view invalidation until their result handler finishes. */
   private _explicitPickSeq = 0;
+  private _explicitPicksInFlight = 0;
 
   /** Optional post-processing reference for lens distortion correction. */
   private postProcessing: PostProcessingManager | null = null;
@@ -478,12 +479,16 @@ export class PickingSystem {
    * still for HOVER_SETTLE_MS.
    */
   markDirty(): void {
-    this._explicitPickSeq++;
     this._dirty = true;
     this._canvasRect = null;
     // Supersede any in-flight readback so its late result can't override
     // this fade.
     this._pickSeq++;
+    if (this._explicitPicksInFlight > 0) {
+      this.scheduler.markDirty();
+      return;
+    }
+    this._explicitPickSeq++;
     // Fade overlay (OverlayManager dedupes against the last state, so
     // repeated calls do no DOM work).
     void this.onPickResult(null);
@@ -562,16 +567,21 @@ export class PickingSystem {
    * tap the cache as it was BEFORE its own pick landed. Honours the same `setShouldPick` gate as a
    * hover pick: with no consumer there is nothing to pick for.
    */
-  pickAt(clientX: number, clientY: number): Promise<void> {
+  async pickAt(clientX: number, clientY: number): Promise<void> {
     if (!this._canvasRect) {
       this._canvasRect = this.renderer.domElement.getBoundingClientRect();
     }
     const x = clientX - this._canvasRect.left;
     const y = clientY - this._canvasRect.top;
     this.scheduler.cancelPending();
-    if (!this._shouldPick()) return Promise.resolve();
+    if (!this._shouldPick()) return;
     const explicitPickSeq = ++this._explicitPickSeq;
-    return this.performPick(x, y, true, explicitPickSeq);
+    this._explicitPicksInFlight++;
+    try {
+      await this.performPick(x, y, true, explicitPickSeq);
+    } finally {
+      this._explicitPicksInFlight--;
+    }
   }
 
   /**
