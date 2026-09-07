@@ -93,7 +93,9 @@ describe('installCanvasGestureOwnership', () => {
     restore = stubComputedTouchAction('pan-y');
     installCanvasGestureOwnership(canvas, events);
     expect(canvas.style.touchAction).toBe('');
-    expect(canvas.style.userSelect).toBe('');
+    expect(canvas.style.getPropertyValue('-webkit-touch-callout')).toBe('none');
+    expect(canvas.style.userSelect).toBe('none');
+    expect(canvas.style.getPropertyValue('-webkit-user-select')).toBe('none');
   });
 
   it('registers Safari gesture cancellers only on devices with touch points', () => {
@@ -102,6 +104,7 @@ describe('installCanvasGestureOwnership', () => {
     const evNoTouch = new Event('gesturestart', { cancelable: true });
     canvas.dispatchEvent(evNoTouch);
     expect(evNoTouch.defaultPrevented).toBe(false);
+    events.dispose();
 
     profile.touchPoints = 5;
     const touchEvents = new EventGroup();
@@ -123,10 +126,34 @@ describe('installCanvasGestureOwnership', () => {
     restore = stubComputedTouchAction('auto');
     profile.touchPoints = 5;
     installCanvasGestureOwnership(canvas, events);
+    expect(events.size).toBe(4);
     installCanvasGestureOwnership(canvas, events);
+    expect(events.size).toBe(4);
     expect(canvas.style.touchAction).toBe('none');
     const ev = new Event('gesturestart', { cancelable: true });
     canvas.dispatchEvent(ev);
     expect(ev.defaultPrevented).toBe(true);
+  });
+
+  it('restores every inline declaration and permits reinstallation after dispose', () => {
+    restore = stubComputedTouchAction('auto');
+    canvas.style.setProperty('-webkit-touch-callout', 'default');
+    canvas.style.userSelect = 'text';
+    canvas.style.setProperty('-webkit-user-select', 'text');
+
+    installCanvasGestureOwnership(canvas, events);
+    expect(canvas.style.touchAction).toBe('none');
+    expect(canvas.style.userSelect).toBe('none');
+
+    events.dispose();
+    expect(canvas.style.touchAction).toBe('');
+    expect(canvas.style.getPropertyValue('-webkit-touch-callout')).toBe('default');
+    expect(canvas.style.userSelect).toBe('text');
+    expect(canvas.style.getPropertyValue('-webkit-user-select')).toBe('text');
+
+    const nextEvents = new EventGroup();
+    installCanvasGestureOwnership(canvas, nextEvents);
+    expect(canvas.style.touchAction).toBe('none');
+    nextEvents.dispose();
   });
 });
