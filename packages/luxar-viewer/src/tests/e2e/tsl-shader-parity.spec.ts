@@ -367,6 +367,7 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     const tslPixels = await runBloomChain(page, 'tsl');
 
     expect(tslPixels.length).toBe(glslPixels.length);
+    assertBothRendered(glslPixels, tslPixels, 'composed bloom');
     const diff = meanAbsDiff(glslPixels, tslPixels);
     expect(
       diff,

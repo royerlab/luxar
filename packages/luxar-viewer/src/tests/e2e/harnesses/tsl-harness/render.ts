@@ -1,10 +1,8 @@
 /**
- * Render executors for the TSL ↔ GLSL parity harness: `renderGLSL`
- * drives the GLSL3 `ShaderMaterial` path through `THREE.WebGLRenderer`;
- * `renderTSL` drives the NodeMaterial path through `WebGPURenderer` —
- * forced onto the WebGL backend by default (real WebGPU opt-in via
- * `{ native: true }`) — and captures the generated shader strings for
- * the codegen-snapshot spec.
+ * Render executors for the TSL ↔ GLSL parity harness. The single-pass
+ * helpers compare registered materials and capture generated shaders;
+ * the bloom helpers render the production multi-pass pyramid so blend
+ * state and destination preservation are observable at frame level.
  *
  * @module tests/e2e/harnesses/tsl-harness/render
  */
