@@ -42,9 +42,9 @@ const EXACT_MATCH_TOLERANCE = 0.5;
 export type WaypointDims = Pick<SimpleDims, 'currentStep' | 'metadata'>;
 
 /**
- * Whether `when` holds for the current dimension state. Mirrors
- * `OverlayManager.isOverlayVisible`: unknown dimension names are skipped, an
- * exact value matches within ±0.5, a range matches inclusively.
+ * Whether `when` holds for the current dimension state. Unknown dimension
+ * names are skipped, but a clause containing no known dimensions never
+ * matches. An exact value matches within ±0.5; a range matches inclusively.
  */
 export function waypointMatches(when: ZarrWaypointCondition, dims: WaypointDims): boolean {
   const metadata = dims.metadata;

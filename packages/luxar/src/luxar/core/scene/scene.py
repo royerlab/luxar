@@ -559,6 +559,10 @@ class Scene(Group):
         ``visible_range`` not matching) is paused, so ten story turntables cost
         one decode at a time.
 
+        Captures: video overlays stay synchronized in real-time recordings.
+        Offline capture runs on a synthetic frame clock while the HTML video
+        follows wall time, so its recorded playback speed is not preserved.
+
         Transparency: a VP9 WebM with an alpha channel (``yuva420p``) plays
         transparent in Chrome and Firefox; Safari cannot decode it and shows
         the ``poster`` instead — always supply one for a transparent video.
@@ -575,6 +579,8 @@ class Scene(Group):
             blend_mode: CSS blend mode (default 'normal').
             loop: Loop playback (default True).
             autoplay: Start on load / when it becomes visible (default True).
+                False shows native controls and makes the overlay capture
+                pointer events so those controls can be used.
             muted: Required True while ``autoplay`` is True (default True).
             playback_rate: Speed multiplier in (0, 16] (default 1.0).
             poster: Optional still shown before play and where the video cannot
@@ -583,6 +589,7 @@ class Scene(Group):
             transition: 'none' or 'fade' (default 'none').
             transition_duration: Transition duration in seconds (default 0.3).
             interactive: If True, overlay captures pointer events (default False).
+                Non-autoplay videos capture them regardless of this setting.
 
         Returns:
             Overlay metadata object.

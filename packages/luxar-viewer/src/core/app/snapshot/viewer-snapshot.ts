@@ -88,15 +88,6 @@ export function captureSnapshot(sceneManager: SceneManager): ViewerSnapshot {
 }
 
 /**
- * Write a {@link CameraSnapshot} back onto the live camera + controls.
- *
- * Position / up / near / far and the projection-specific parameter (fov for
- * perspective, zoom for ortho) are applied in place; then the controls are
- * re-targeted and re-initialised so subsequent orbit/fly updates don't snap
- * the camera back. Shared by {@link restoreSnapshot} and the embedder API's
- * `setCameraPose()`.
- */
-/**
  * Whether the scene manager is recomputing `near` / `far` from the scene
  * bounds every frame. While it is, a pose's clipping planes are stale by
  * construction — they describe the distance the pose was CAPTURED at — and
@@ -110,6 +101,15 @@ export function dynamicClippingActive(sceneManager: SceneManager): boolean {
   return state?.enabled === true;
 }
 
+/**
+ * Write a {@link CameraSnapshot} back onto the live camera + controls.
+ *
+ * Position / up / near / far and the projection-specific parameter (fov for
+ * perspective, zoom for ortho) are applied in place; then the controls are
+ * re-targeted and re-initialised so subsequent orbit/fly updates don't snap
+ * the camera back. Shared by {@link restoreSnapshot} and the embedder API's
+ * `setCameraPose()`.
+ */
 export function restoreCamera(sceneManager: SceneManager, cam: CameraSnapshot): void {
   const camera = sceneManager.camera;
 

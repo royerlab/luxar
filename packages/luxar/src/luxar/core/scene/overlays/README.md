@@ -62,9 +62,13 @@ an optional `poster_file` still through the image path. It refuses
 `autoplay=True` with `muted=False`, because browsers block un-muted autoplay
 without a user gesture. The viewer renders a muted looping `<video>` and pauses
 it while its `visible_range` does not match, so many clips cost one decode at a
-time; a VP9 WebM with an alpha channel plays transparent in Chrome/Firefox and
-Safari falls back to the poster. Both payloads go through `write_overlay`'s
-`files=` mapping.
+time. With `autoplay=False`, it shows native controls and captures pointer
+events regardless of `interactive`, so the controls remain usable but camera
+drags do not pass through the clip. A VP9 WebM with an alpha channel plays
+transparent in Chrome/Firefox and Safari falls back to the poster. Offline
+capture does not synchronize the video's wall-clock playback to its synthetic
+frame clock, so recorded playback speed is not preserved. Both payloads go
+through `write_overlay`'s `files=` mapping.
 
 ### `internals.py` — naming and persistence
 

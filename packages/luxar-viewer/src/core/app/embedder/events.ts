@@ -150,34 +150,6 @@ export interface ElementPointerPayload extends SelectionPayload {
 }
 
 /**
- * Events an embedder can subscribe to via `LuxarApp.on(event, listener)`.
- *
- * - `dataset-loaded` / `dataset-error` — fire around every dataset load
- *   (initial `init()`, the built-in browser, and `switchDataset()`).
- * - `dataset-fault` — fires when an already-loaded dataset becomes unable to
- *   update, for example after an archive URL expires. The last complete frame
- *   remains visible; an explicit retry clears the fault, and a recurring fault
- *   fires the event again. Call `getDatasetFault()` to inspect the current state.
- * - `dimensions-changed` — fires whenever a slice position changes (slider,
- *   keyboard, or `setDimensionValue()`), carrying a fresh `EmbedderDimensions`.
- * - `selection` — fires on hover-pick changes (the element under the cursor,
- *   or `null` when the hover clears). Works on any dataset — the picking
- *   pipeline is provisioned when a `selection` listener exists at dataset
- *   load time, so subscribe BEFORE `init()` / `switchDataset()` (on scenes
- *   with labels it is always provisioned). Hover-driven: it reports what is
- *   under the cursor, not what was clicked.
- * - `element-click` / `element-contextmenu` — fire when the user left- or
- *   right-clicks an element without dragging (issue #1917). Unlike
- *   `selection`, these are gesture-driven. They fire ALONGSIDE the built-in
- *   behaviour rather than instead of it: a host that wants exclusive control
- *   should also pass `allowLinks: false` (or load with `?no-links`), which
- *   suppresses navigation while still delivering the events. Like `selection`,
- *   a listener present at dataset-load time provisions the picking pipeline,
- *   so subscribe BEFORE `init()` / `switchDataset()` — on a scene with no
- *   labels and no interaction templates, subscribing afterwards leaves picking
- *   switched off and the event never fires.
- */
-/**
  * One row of the Layers panel as the embedder API reports it: the per-layer
  * appearance knobs a remote controller may read and (via {@link LayerPatch})
  * write. Structural / diagnostic fields of the panel's own `LayerInfo` are
@@ -236,6 +208,34 @@ export interface ViewerState {
   layers: LayerSummary[];
 }
 
+/**
+ * Events an embedder can subscribe to via `LuxarApp.on(event, listener)`.
+ *
+ * - `dataset-loaded` / `dataset-error` — fire around every dataset load
+ *   (initial `init()`, the built-in browser, and `switchDataset()`).
+ * - `dataset-fault` — fires when an already-loaded dataset becomes unable to
+ *   update, for example after an archive URL expires. The last complete frame
+ *   remains visible; an explicit retry clears the fault, and a recurring fault
+ *   fires the event again. Call `getDatasetFault()` to inspect the current state.
+ * - `dimensions-changed` — fires whenever a slice position changes (slider,
+ *   keyboard, or `setDimensionValue()`), carrying a fresh `EmbedderDimensions`.
+ * - `selection` — fires on hover-pick changes (the element under the cursor,
+ *   or `null` when the hover clears). Works on any dataset — the picking
+ *   pipeline is provisioned when a `selection` listener exists at dataset
+ *   load time, so subscribe BEFORE `init()` / `switchDataset()` (on scenes
+ *   with labels it is always provisioned). Hover-driven: it reports what is
+ *   under the cursor, not what was clicked.
+ * - `element-click` / `element-contextmenu` — fire when the user left- or
+ *   right-clicks an element without dragging (issue #1917). Unlike
+ *   `selection`, these are gesture-driven. They fire ALONGSIDE the built-in
+ *   behaviour rather than instead of it: a host that wants exclusive control
+ *   should also pass `allowLinks: false` (or load with `?no-links`), which
+ *   suppresses navigation while still delivering the events. Like `selection`,
+ *   a listener present at dataset-load time provisions the picking pipeline,
+ *   so subscribe BEFORE `init()` / `switchDataset()` — on a scene with no
+ *   labels and no interaction templates, subscribing afterwards leaves picking
+ *   switched off and the event never fires.
+ */
 export interface LuxarEmbedderEventMap {
   'dataset-loaded': { src: string };
   /**

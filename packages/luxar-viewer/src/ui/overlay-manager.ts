@@ -18,7 +18,8 @@ import { MAX_OVERLAY_HTML_CHARS, type OverlayConfig } from '../data/loaders';
 /** Read one opaque file from the active scene store. */
 export type OverlayFileReader = (path: string) => Promise<Uint8Array | undefined>;
 
-interface ArchivedOverlayMedia {
+/** Archived binary payloads used to construct an overlay. */
+export interface ArchivedOverlayMedia {
   primary?: Uint8Array;
   poster?: Uint8Array;
 }
