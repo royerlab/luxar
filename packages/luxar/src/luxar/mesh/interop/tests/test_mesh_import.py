@@ -185,59 +185,6 @@ def test_float_colors_round_to_nearest_byte(
         np.testing.assert_array_equal(color, expected[row])
 
 
-@pytest.mark.parametrize(
-    ("component_type", "authored", "expected"),
-    [
-        (
-            5121,
-            np.array(
-                [[2, 64, 128], [3, 65, 129], [4, 66, 130], [5, 67, 131]],
-                dtype=np.uint8,
-            ),
-            np.array(
-                [[2, 64, 128], [3, 65, 129], [4, 66, 130], [5, 67, 131]],
-                dtype=np.uint8,
-            ),
-        ),
-        (
-            5123,
-            np.array(
-                [
-                    [129, 16_320, 32_768],
-                    [643, 16_834, 33_282],
-                    [1_157, 17_348, 33_796],
-                    [1_671, 17_862, 34_310],
-                ],
-                dtype=np.uint16,
-            ),
-            np.array(
-                [[1, 64, 128], [3, 66, 130], [5, 68, 132], [7, 70, 134]],
-                dtype=np.uint8,
-            ),
-        ),
-    ],
-)
-def test_gltf_integer_colors_use_normalized_component_range(
-    component_type: int,
-    authored: NDArray,
-    expected: NDArray[np.uint8],
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "integer-colors.glb"
-    write_glb(
-        path,
-        GT,
-        colors=authored,
-        color_component_type=component_type,
-    )
-
-    mesh = import_mesh(path)
-    assert mesh.colors is not None
-    for vertex, color in zip(mesh.vertices, mesh.colors, strict=True):
-        row = int(np.argmin(np.linalg.norm(GT.vertices - vertex, axis=1)))
-        np.testing.assert_array_equal(color, expected[row])
-
-
 class TestReaderParity:
     @pytest.mark.parametrize("fmt", MESH_FORMATS)
     def test_every_dialect_reproduces_the_tetrahedron(
@@ -548,6 +495,59 @@ class TestStl:
 
 
 class TestGltf:
+    @pytest.mark.parametrize(
+        ("component_type", "authored", "expected"),
+        [
+            (
+                5121,
+                np.array(
+                    [[2, 64, 128], [3, 65, 129], [4, 66, 130], [5, 67, 131]],
+                    dtype=np.uint8,
+                ),
+                np.array(
+                    [[2, 64, 128], [3, 65, 129], [4, 66, 130], [5, 67, 131]],
+                    dtype=np.uint8,
+                ),
+            ),
+            (
+                5123,
+                np.array(
+                    [
+                        [129, 16_320, 32_768],
+                        [643, 16_834, 33_282],
+                        [1_157, 17_348, 33_796],
+                        [1_671, 17_862, 34_310],
+                    ],
+                    dtype=np.uint16,
+                ),
+                np.array(
+                    [[1, 64, 128], [3, 66, 130], [5, 68, 132], [7, 70, 134]],
+                    dtype=np.uint8,
+                ),
+            ),
+        ],
+    )
+    def test_integer_colors_use_normalized_component_range(
+        self,
+        component_type: int,
+        authored: NDArray,
+        expected: NDArray[np.uint8],
+        tmp_path: Path,
+    ) -> None:
+        path = tmp_path / "integer-colors.glb"
+        write_glb(
+            path,
+            GT,
+            colors=authored,
+            color_component_type=component_type,
+        )
+
+        mesh = import_mesh(path)
+        assert mesh.colors is not None
+        for vertex, color in zip(mesh.vertices, mesh.colors, strict=True):
+            row = int(np.argmin(np.linalg.norm(GT.vertices - vertex, axis=1)))
+            np.testing.assert_array_equal(color, expected[row])
+
     def test_node_translation_is_applied(self, tmp_path: Path) -> None:
         # Skip the node graph and every part of a multi-part model stacks at the
         # origin — a plausible-looking, entirely wrong import.
