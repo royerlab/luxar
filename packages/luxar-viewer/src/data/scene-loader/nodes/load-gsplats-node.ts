@@ -23,6 +23,7 @@ import { timeLodStage, timeLodStageSync } from '../lod-load-stats';
 import type { SceneNode } from '../../data-loader-types';
 import type { GSplatsMetadata, GSplatsDataLoader, GSplatsViewState } from '../../../types/gsplats';
 import type { NodeBuildCtx } from './build-ctx';
+import { PARTIAL_EXTEND_TOLERANCE } from '../partial-extend-tolerance';
 
 /** Construct the single-LOD gsplats loader and wire it to the monitor. */
 function createGSplatsLoader(
@@ -134,10 +135,10 @@ export async function loadGSplatsNodeExpensive(
   loader: GSplatsDataLoader
 ): Promise<void> {
   try {
-    // GSplats path mirrors Points: applyPartialExtendTolerance=true so
-    // tolerance overrides + nd_transform inversion both happen up front.
+    // GSplats mirrors Points so tolerance overrides + nd_transform inversion
+    // both happen up front.
     const derivedGSplats = ctx.deriveNodeViewState(node.path, node.attrs, {
-      applyPartialExtendTolerance: true,
+      applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.gsplats,
     });
     // Capture the version at DERIVE time so a deferred reload that finishes
     // after a further scrub is stamped for the slice it actually loaded (the

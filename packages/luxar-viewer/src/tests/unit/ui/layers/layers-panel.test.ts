@@ -30,6 +30,7 @@ import type { SceneNode } from '../../../../data/data-loader-types';
 import type { AnimationController } from '../../../../scene/animation/animation-controller';
 import type { FailedLoadsProviderPort } from '../../../../data/scene-loader-monitor-port';
 import { MESH_DEFAULTS } from '../../../../rendering/materials/mesh/appearance';
+import { PhysicalMeshMaterial } from '../../../../rendering/materials/mesh-physical/material-glsl';
 
 // `showToast` lives in src/ui/toast; mock so the empty-scene branch
 // is observable.
@@ -1661,6 +1662,328 @@ describe('LayersPanel — blend select drives the leaf material', () => {
       );
     }
     expect(findControlGroup(container, 'Alpha cutoff')!.style.display).not.toBe('none');
+  });
+
+  it("a material='physical' mesh swaps the house sliders for the live physical knob sliders", () => {
+    // The physical family runs none of the house shader: the four lighting sliders
+    // have no uniform to write, the cutoff and blend mode are the material's own
+    // business, and gamma has no term. So all of them hide, and the knob group
+    // shows one live slider per numeric knob — seated on what was AUTHORED and, for
+    // what was not, on three's default — plus read-only rows for the colours.
+    mountMeshLayer(container, animationController, 'opaque', {
+      material: 'physical',
+      roughness: 0.4,
+      clearcoat: 1,
+      sheen: 0.5,
+      sheen_color: '#ff4d6d',
+      transmission: 1,
+      attenuation_color: '#f6d148',
+    });
+    for (const label of [
+      'Ambient',
+      'Shade falloff',
+      'Specular',
+      'Shininess',
+      'Alpha cutoff',
+      'Gamma',
+    ]) {
+      expect(findControlGroup(container, label)!.style.display, `${label} on physical`).toBe(
+        'none'
+      );
+    }
+    expect(findBlendSelect(container)!.parentElement!.style.display).toBe('none');
+
+    const group = findControlGroup(container, 'Physical material')!;
+    expect(group).not.toBeNull();
+    expect(group.style.display).not.toBe('none');
+    // One live slider per numeric knob, in table order, seated on the authored value
+    // or the knob default (readout: two decimals; IOR three; "∞" for no attenuation).
+    const sliders = Array.from(group.querySelectorAll('.luxar-layers-panel__control-group')).map(
+      (g) => [
+        g.querySelector('.luxar-layers-panel__control-label span')!.textContent,
+        g.querySelector('.luxar-layers-panel__control-value')!.textContent,
+        (g.querySelector('input[type="range"]') as HTMLInputElement).value,
+      ]
+    );
+    expect(sliders).toEqual([
+      ['Roughness', '0.40', '0.4'],
+      ['Metalness', '0.00', '0'],
+      ['Clearcoat', '1.00', '1'],
+      ['Clearcoat roughness', '0.00', '0'],
+      ['Iridescence', '0.00', '0'],
+      ['Sheen', '0.50', '0.5'],
+      ['Transmission', '1.00', '1'],
+      ['IOR', '1.500', '1.5'],
+      ['Thickness', '0.00', '0'],
+      ['Attenuation distance', '∞', '1'], // log track: position 1 = top stop = ∞
+      ['Dispersion', '0.00', '0'],
+    ]);
+    // The colour knobs stay read-only rows (a colour picker is not a slider).
+    const rows = Array.from(group.querySelectorAll('.luxar-layers-panel__physical-row')).map(
+      (row) => row.textContent
+    );
+    expect(rows).toEqual(['Sheen colour#ff4d6d', 'Attenuation colour#f6d148']);
+    expect(
+      group.querySelector('.luxar-layers-panel__control-label')!.getAttribute('title')
+    ).toContain('transmission');
+
+    // Opacity is still live — it is the one generic control the family honours.
+    expect(findControlGroup(container, 'Opacity')!.style.display).not.toBe('none');
+  });
+
+  it('dragging a physical slider writes the REAL material live, and reset restores the authored value', () => {
+    const material = new PhysicalMeshMaterial({ roughness: 0.4, metalness: 1.0 });
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
+    mesh.name = '/cloud';
+    mesh.userData.nodeType = 'mesh';
+    mesh.userData._layerMaterialCloned = true;
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(
+      rootGroup,
+      makeLayeredSceneGraph('mesh', { material: 'physical', roughness: 0.4, metalness: 1 })
+    );
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    const group = findControlGroup(container, 'Physical material')!;
+    const inputOf = (label: string): HTMLInputElement =>
+      findControlGroup(group, label)!.querySelector('input[type="range"]') as HTMLInputElement;
+
+    // Roughness: a plain-state knob.
+    const roughness = inputOf('Roughness');
+    roughness.value = '0.05';
+    roughness.dispatchEvent(new Event('input'));
+    expect(material.roughness).toBeCloseTo(0.05, 6);
+    expect(panel.layerState.getLayer('/cloud')!.physicalKnobs!.roughness).toBeCloseTo(0.05, 6);
+
+    // Transmission: crosses zero → glass, and the material's compositing follows.
+    expect(material.transparent).toBe(false);
+    const transmission = inputOf('Transmission');
+    transmission.value = '1';
+    transmission.dispatchEvent(new Event('input'));
+    expect(material.transmission).toBe(1);
+    expect(material.transparent).toBe(true);
+    expect(material.depthWrite).toBe(false);
+    expect(material.userData.drawBeforeEmissive).toBe(true);
+
+    // Attenuation distance: the log track's top stop is three's "no attenuation".
+    const attenuation = inputOf('Attenuation distance');
+    attenuation.value = '0.5';
+    attenuation.dispatchEvent(new Event('input'));
+    expect(Number.isFinite(material.attenuationDistance)).toBe(true);
+    attenuation.value = '1';
+    attenuation.dispatchEvent(new Event('input'));
+    expect(material.attenuationDistance).toBe(Number.POSITIVE_INFINITY);
+
+    // Reset puts every knob back to what add_mesh(...) authored (or the default).
+    panel.resetAllLayers();
+    expect(material.roughness).toBe(0.4);
+    expect(material.metalness).toBe(1.0);
+    expect(material.transmission).toBe(0);
+    expect(material.transparent).toBe(false);
+    expect(material.userData.drawBeforeEmissive).toBeUndefined();
+    expect(inputOf('Roughness').value).toBe('0.4');
+  });
+
+  it('editing one physical slider preserves authored values beyond other slider tracks', () => {
+    const material = new PhysicalMeshMaterial({
+      thickness: 25,
+      attenuationDistance: 500,
+      dispersion: 3,
+    });
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
+    mesh.name = '/cloud';
+    mesh.userData.nodeType = 'mesh';
+    mesh.userData._layerMaterialCloned = true;
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(
+      rootGroup,
+      makeLayeredSceneGraph('mesh', {
+        material: 'physical',
+        thickness: 25,
+        attenuation_distance: 500,
+        dispersion: 3,
+      })
+    );
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    const group = findControlGroup(container, 'Physical material')!;
+    const roughness = findControlGroup(group, 'Roughness')!.querySelector(
+      'input[type="range"]'
+    ) as HTMLInputElement;
+    roughness.value = '0.25';
+    roughness.dispatchEvent(new Event('input'));
+
+    expect(material.thickness).toBe(25);
+    expect(material.attenuationDistance).toBe(500);
+    expect(material.dispersion).toBe(3);
+    expect(panel.layerState.getLayer('/cloud')!.physicalKnobs).toMatchObject({
+      thickness: 25,
+      attenuation_distance: 500,
+      dispersion: 3,
+    });
+
+    const thickness = findControlGroup(group, 'Thickness')!.querySelector(
+      'input[type="range"]'
+    ) as HTMLInputElement;
+    thickness.value = '5';
+    thickness.dispatchEvent(new Event('input'));
+    expect(material.thickness).toBe(5);
+
+    const row = container.querySelector<HTMLElement>('.luxar-layer-row')!;
+    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const resetLayer = Array.from(
+      document.querySelectorAll<HTMLElement>('.luxar-context-menu__item')
+    ).find((el) => el.textContent === 'Reset this layer')!;
+    resetLayer.click();
+    expect(material.thickness).toBe(25);
+    expect(material.attenuationDistance).toBe(500);
+    expect(material.dispersion).toBe(3);
+
+    thickness.value = '5';
+    thickness.dispatchEvent(new Event('input'));
+    panel.resetAllLayers();
+    expect(material.thickness).toBe(25);
+    expect(material.attenuationDistance).toBe(500);
+    expect(material.dispersion).toBe(3);
+  });
+
+  it('greys out the knobs that change nothing in the current state, with the reason as hover text', () => {
+    // A metal (metalness 1, the authored value): the whole glass family is inert
+    // and clearcoat roughness waits for a clearcoat. Measured on the reflections
+    // demo — a live slider that does nothing reads as broken.
+    const material = new PhysicalMeshMaterial({ metalness: 1.0 });
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
+    mesh.name = '/cloud';
+    mesh.userData.nodeType = 'mesh';
+    mesh.userData._layerMaterialCloned = true;
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(
+      rootGroup,
+      makeLayeredSceneGraph('mesh', { material: 'physical', metalness: 1 })
+    );
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    const group = findControlGroup(container, 'Physical material')!;
+    const knob = (label: string): HTMLElement => findControlGroup(group, label)!;
+    const inputOf = (label: string): HTMLInputElement =>
+      knob(label).querySelector('input[type="range"]') as HTMLInputElement;
+    for (const label of [
+      'Transmission',
+      'IOR',
+      'Thickness',
+      'Attenuation distance',
+      'Dispersion',
+      'Clearcoat roughness',
+    ]) {
+      expect(inputOf(label).disabled, label).toBe(true);
+      expect(knob(label).title.length, label).toBeGreaterThan(0);
+      expect(
+        knob(label).classList.contains('luxar-layers-panel__control-group--inert'),
+        label
+      ).toBe(true);
+    }
+    expect(knob('Transmission').title).toMatch(/metal/);
+    for (const label of ['Roughness', 'Metalness', 'Clearcoat', 'Iridescence', 'Sheen']) {
+      expect(inputOf(label).disabled, label).toBe(false);
+    }
+
+    // Lowering metalness wakes the glass family (transmission still 0, so the
+    // transmission-dependent knobs stay inert with THAT reason) …
+    const metalness = inputOf('Metalness');
+    metalness.value = '0';
+    metalness.dispatchEvent(new Event('input'));
+    expect(inputOf('Transmission').disabled).toBe(false);
+    expect(inputOf('IOR').disabled).toBe(false);
+    expect(knob('Thickness').title).toMatch(/Transmission/);
+    // … and turning transmission up wakes thickness and dispersion, while the
+    // attenuation distance still waits for a non-white attenuation colour.
+    const transmission = inputOf('Transmission');
+    transmission.value = '1';
+    transmission.dispatchEvent(new Event('input'));
+    expect(inputOf('Thickness').disabled).toBe(false);
+    expect(inputOf('Dispersion').disabled).toBe(false);
+    expect(knob('Attenuation distance').title).toMatch(/white/);
+    // Clearcoat wakes clearcoat roughness.
+    const clearcoat = inputOf('Clearcoat');
+    clearcoat.value = '0.5';
+    clearcoat.dispatchEvent(new Event('input'));
+    expect(inputOf('Clearcoat roughness').disabled).toBe(false);
+  });
+
+  it('resetAllLayers leaves a REAL physical material exactly where the author put it', () => {
+    // The reset path calls `applyBlendingMode` and `applyMeshAppearance` on every
+    // layer. On a material WITHOUT `applyBlendingMode`, `layer-apply.ts` falls back to
+    // writing the HOUSE shader's blend state for the mesh default `opaque` — which
+    // would turn a translucent physical shell opaque and depth-writing on a reset.
+    // The wrapper's no-op `applyBlendingMode` and the optional-chained shade setters
+    // are what make this a no-op; pinned against the real class, not a stub.
+    const material = new PhysicalMeshMaterial({
+      roughness: 0.4,
+      clearcoat: 1.0,
+      clearcoatRoughness: 0.05,
+      opacity: 0.3,
+    });
+    const before = {
+      roughness: material.roughness,
+      clearcoat: material.clearcoat,
+      clearcoatRoughness: material.clearcoatRoughness,
+      transparent: material.transparent,
+      depthWrite: material.depthWrite,
+      blending: material.blending,
+      stamp: material.userData.blendingMode,
+    };
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
+    mesh.name = '/cloud';
+    mesh.userData.nodeType = 'mesh';
+    mesh.userData._layerMaterialCloned = true;
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(
+      rootGroup,
+      makeLayeredSceneGraph('mesh', {
+        material: 'physical',
+        roughness: 0.4,
+        clearcoat: 1,
+        clearcoat_roughness: 0.05,
+        opacity: 0.3,
+      })
+    );
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    expect(() => panel.resetAllLayers()).not.toThrow();
+
+    expect(material.roughness).toBe(before.roughness);
+    expect(material.clearcoat).toBe(before.clearcoat);
+    expect(material.clearcoatRoughness).toBe(before.clearcoatRoughness);
+    expect(material.transparent).toBe(before.transparent);
+    expect(material.depthWrite).toBe(before.depthWrite);
+    expect(material.blending).toBe(before.blending);
+    expect(material.userData.blendingMode).toBe(before.stamp);
+    // Opacity is the one generic control the family honours, and reset restores the
+    // AUTHORED value, which is what the material already had.
+    expect(material.getOpacity()).toBeCloseTo(0.3, 6);
+  });
+
+  it('a HOUSE mesh layer shows no physical listing and keeps every slider', () => {
+    mountMeshLayer(container, animationController);
+    expect(findControlGroup(container, 'Physical material')!.style.display).toBe('none');
+    expect(findControlGroup(container, 'Gamma')!.style.display).not.toBe('none');
+    expect(findBlendSelect(container)!.parentElement!.style.display).not.toBe('none');
+    expect(findControlGroup(container, 'Ambient')!.style.display).not.toBe('none');
   });
 
   it('partitioned unlit mesh derives shading from its leaves', () => {

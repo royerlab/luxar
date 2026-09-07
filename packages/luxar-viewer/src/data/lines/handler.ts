@@ -18,6 +18,7 @@ import {
   type StagedLinesCommit,
 } from '../scene-loader/process/data-processor-lines';
 import { isAlreadyCommitted } from '../scene-loader/commit/noop-commit';
+import { PARTIAL_EXTEND_TOLERANCE } from '../scene-loader/partial-extend-tolerance';
 
 export const kind: GeometryKind = 'lines';
 export const label = 'Lines' as const;
@@ -49,10 +50,9 @@ export interface LinesHandlerCtx {
  * Async load + project + stage step for one Lines node. Mirrors the
  * prior inline lines-branch of `updateView`.
  *
- * Note: lines uses applyPartialExtendTolerance: false (unlike Points
- * and GSplats) — verbatim from the original behaviour. The shared
- * extendedToleranceCache parameter is therefore unused here; lines
- * read raw tolerance from the global view-state.
+ * Unlike Points and GSplats, line bounds already encode the non-displayed
+ * extent. The shared extendedToleranceCache parameter is therefore unused
+ * here; lines read raw tolerance from the global view-state.
  */
 export async function loadAndStage(
   path: string,
@@ -63,7 +63,7 @@ export async function loadAndStage(
   const mesh = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
   const attrs = mesh?.userData?.attrs as { extend_to_all?: string[] } | undefined;
   const derived = ctx.deriveNodeViewState(path, attrs, {
-    applyPartialExtendTolerance: false,
+    applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.lines,
   });
   /**
    * Mark this path healthy. Called at every terminal success, NOT right after

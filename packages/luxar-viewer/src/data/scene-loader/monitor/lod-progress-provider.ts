@@ -11,7 +11,11 @@
  * @module data/scene-loader/monitor/lod-progress-provider
  */
 
-import type { LODProgressProvider, LODProgressState } from '../../../types/data-monitor-types';
+import type {
+  LODProgressProvider,
+  LODProgressState,
+  RefinementHoldReason,
+} from '../../../types/data-monitor-types';
 import type { LODGroupRegistry } from '../../../scene/lod-group-registry';
 
 /**
@@ -65,6 +69,20 @@ export interface LODProgressProviderDeps {
    * the previous behaviour rather than losing the panel entirely.
    */
   committedLODCounts?: () => ReadonlyMap<string, number>;
+  /**
+   * Why this path's next rung is HELD back, if it is (`SceneLoader.
+   * refinementHoldReason`: the density gate at the current framing, or the
+   * residency ceiling). Lets the monitor tell a held rung from one still
+   * streaming; both read as `refining` to the loader.
+   */
+  refinementHold?: (path: string) => RefinementHoldReason | null;
+}
+
+/** `{ held }` when a reason is known, `{}` otherwise — keeps unheld states free of the key. */
+function heldEntry(reason: RefinementHoldReason | null | undefined): {
+  held?: RefinementHoldReason;
+} {
+  return reason ? { held: reason } : {};
 }
 
 /**
@@ -94,6 +112,7 @@ export function createLODProgressProvider(deps: LODProgressProviderDeps): LODPro
               loaded: onScreen ?? p.loadedLODCount ?? 0,
               total: p.totalLODCount,
               refining: p.hasMoreLODs === true,
+              ...heldEntry(deps.refinementHold?.(path)),
               lastAllResident: p.lastAllResident,
               energy:
                 typeof p.committedEnergyFraction === 'number'

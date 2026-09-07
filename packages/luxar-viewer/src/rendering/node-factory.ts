@@ -21,6 +21,11 @@ import {
 import { type InstancedLinesMeshConfig } from './line-geometry';
 import { type InstancedGSplatsMeshConfig } from './gsplat-geometry';
 import { getElementTexture, markElementTextureFullDirty } from './element-storage';
+import {
+  syncGSplatMaterialWithGeometry,
+  syncLineMaterialWithGeometry,
+  syncPointMaterialWithGeometry,
+} from './material-sync-helpers';
 import type { LoadedPointsData, DataLoader } from '../data/data-loader-types';
 import type { PointsMetadata } from '../types/points';
 import type { LinesMetadata, LinesDataLoader } from '../types/lines';
@@ -54,6 +59,7 @@ import {
 } from './node-factory/create-mesh-node';
 import type { MeshDataLoader, MeshMetadata } from '../types/mesh';
 import { isMeshPickAwareMaterial } from './picking/mesh/pick-mode';
+import { isPhysicalMeshMaterial } from './materials/mesh-physical/config';
 import type { GeometryTypeName } from '../types/format-contract';
 import { lineJoinStyleFromUniform, type LineJoinStyle } from '../types/line-join';
 import type { LinePrimitive } from '../types/line-primitive';
@@ -96,6 +102,16 @@ interface PickMaterialRecipe {
  * choice — see {@link linePrimitiveFromVisual}), mesh
  * needs the node opacity and cutout threshold (they are its coverage term), while
  * gsplats restore the live class filter after a context rebuild.
+ *
+ * The three pooled types ALSO run their commit-time material sync here
+ * (`sync*MaterialWithGeometry`): a pick material is born on the shared placeholder
+ * element texture and only a COMMIT rebinds the geometry-owned one through
+ * `userData.pickNode` — but this pass runs after `loadScene` has already committed every
+ * node, so without the sync a first-load pick pass samples the placeholder and nothing
+ * is ever hit. That stayed invisible for as long as the post-load slice update
+ * re-committed every node a second time; once that redundant pass was skipped
+ * (view state unchanged), first-load picking silently died on the retro-registered
+ * points/lines nodes. The sync is idempotent (no-op on an unchanged identity).
  */
 const PICK_MATERIAL_RECIPES: Record<GeometryTypeName, PickMaterialRecipe> = {
   points: {
@@ -104,6 +120,7 @@ const PICK_MATERIAL_RECIPES: Record<GeometryTypeName, PickMaterialRecipe> = {
         nodeId: pickId,
         radiusScale: (obj.geometry?.userData?.radiusScale as number | undefined) ?? 1.0,
       }),
+    afterRegister: syncPointMaterialWithGeometry,
   },
   lines: {
     build: (obj, pickId) =>
@@ -112,10 +129,14 @@ const PICK_MATERIAL_RECIPES: Record<GeometryTypeName, PickMaterialRecipe> = {
         join: lineJoinStyleFromVisual(obj),
         primitive: linePrimitiveFromVisual(obj),
       }),
+    afterRegister: syncLineMaterialWithGeometry,
   },
   gsplats: {
     build: (_obj, pickId) => materialManager.createGSplatPickingMaterial({ nodeId: pickId }),
-    afterRegister: syncGSplatPickMaterialToVisual,
+    afterRegister: (obj) => {
+      syncGSplatMaterialWithGeometry(obj);
+      syncGSplatPickMaterialToVisual(obj);
+    },
   },
   mesh: {
     build: (obj, pickId) => {
@@ -241,17 +262,26 @@ function syncMeshPickMaterialToVisual(obj: THREE.Mesh): void {
   const single = Array.isArray(visual) ? visual[0] : visual;
   if (!single) return;
   pickMaterial.setPickSide(single.side);
-  // The RESOLVED mode the material stamped, not the authored one.
+  // Physical compositing is data-driven; house meshes stamp their resolved mode.
   pickMaterial.setPickMode(
-    (single.userData?.blendingMode as BlendingMode | undefined) ??
-      resolveRequestedMeshMode((obj.userData?.attrs ?? {}) as MeshMetadata)
+    isPhysicalMeshMaterial(single)
+      ? single.transparent
+        ? 'normal'
+        : 'opaque'
+      : ((single.userData?.blendingMode as BlendingMode | undefined) ??
+          resolveRequestedMeshMode((obj.userData?.attrs ?? {}) as MeshMetadata))
   );
   const uniforms = (single as THREE.Material & { uniforms?: Record<string, { value?: unknown }> })
     .uniforms;
   const pick = pickMaterial as LuxarMeshPickingMaterial;
-  const liveOpacity = uniforms?.uOpacity?.value;
+  // The house material keeps its live opacity in a uniform; the PHYSICAL family is
+  // three's own material and keeps it on `material.opacity` / `alphaTest` — same
+  // values, other slots. Gated on the family stamp rather than on "no uniforms", so a
+  // uniform-less stub (tests, a foreign material) keeps the attr-seeded coverage.
+  const physical = isPhysicalMeshMaterial(single);
+  const liveOpacity = physical ? single.opacity : uniforms?.uOpacity?.value;
   if (typeof liveOpacity === 'number') pick.updateOpacityUniform(liveOpacity);
-  const liveCutoff = uniforms?.uAlphaCutoff?.value;
+  const liveCutoff = physical ? single.alphaTest : uniforms?.uAlphaCutoff?.value;
   if (typeof liveCutoff === 'number') pick.updateAlphaCutoff(liveCutoff);
 }
 

@@ -9,7 +9,7 @@
  * Validates the UX improvements for better onboarding.
  */
 
-import { test, expect, type Locator, type Page } from './fixtures';
+import { test, expect, ALLOW_CONSOLE_ERRORS, type Locator, type Page } from './fixtures';
 import {
   focusCanvas,
   isFocusOnTypingSurface,
@@ -70,7 +70,7 @@ test.describe('First-Time User Experience', () => {
 
   test('should show error dialog or dataset browser when dataset fails', async ({ page }) => {
     test.info().annotations.push({
-      type: 'allow-console-errors',
+      type: ALLOW_CONSOLE_ERRORS,
       description: 'Bad-URL recovery path intentionally produces 404s.',
     });
     // Try to load non-existent dataset via HTTP
@@ -110,7 +110,7 @@ test.describe('First-Time User Experience', () => {
 
   test('should not show hardcoded example URLs in error/browser UI', async ({ page }) => {
     test.info().annotations.push({
-      type: 'allow-console-errors',
+      type: ALLOW_CONSOLE_ERRORS,
       description: 'Bad-URL recovery path intentionally produces 404s.',
     });
     await page.goto('/?src=http://localhost:9000/missing.zarr&debug');
@@ -136,7 +136,7 @@ test.describe('First-Time User Experience', () => {
 
   test('should allow dismissing error or browser UI', async ({ page }) => {
     test.info().annotations.push({
-      type: 'allow-console-errors',
+      type: ALLOW_CONSOLE_ERRORS,
       description: 'Bad-URL recovery path intentionally produces 404s.',
     });
     await page.goto('/?src=http://localhost:9000/fail.zarr&debug');
@@ -209,7 +209,7 @@ test.describe('First-Time User Experience', () => {
 
   test('Escape closes the dataset browser AND `O` reopens it cleanly', async ({ page }) => {
     test.info().annotations.push({
-      type: 'allow-console-errors',
+      type: ALLOW_CONSOLE_ERRORS,
       description:
         'Opening the dataset browser triggers directory listing that 404s on the static test server.',
     });
@@ -238,7 +238,7 @@ test.describe('First-Time User Experience', () => {
 
   test('`O` closes the dataset browser it opened (round-trip toggle)', async ({ page }) => {
     test.info().annotations.push({
-      type: 'allow-console-errors',
+      type: ALLOW_CONSOLE_ERRORS,
       description:
         'Opening the dataset browser triggers directory listing that 404s on the static test server.',
     });
@@ -261,7 +261,7 @@ test.describe('First-Time User Experience', () => {
 
   test('typing filters the dataset listing from the first keystroke', async ({ page }) => {
     test.info().annotations.push({
-      type: 'allow-console-errors',
+      type: ALLOW_CONSOLE_ERRORS,
       description:
         'Opening the dataset browser triggers directory listing that 404s on the static test server.',
     });
@@ -288,7 +288,7 @@ test.describe('First-Time User Experience', () => {
 
   test('Escape closes the dataset browser even when focus is in a text input', async ({ page }) => {
     test.info().annotations.push({
-      type: 'allow-console-errors',
+      type: ALLOW_CONSOLE_ERRORS,
       description:
         'Opening the dataset browser triggers directory listing that 404s on the static test server.',
     });

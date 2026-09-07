@@ -2578,6 +2578,40 @@ class TestCli:
         assert result.exit_code == 0, result.output
         assert "would cut this" in result.output
 
+    def test_info_stats_warns_when_chunks_are_rtt_bound_on_http1(
+        self, tmp_path: Path
+    ) -> None:
+        """A 400-byte-chunk store is round-trip bound on an HTTP/1.1 host (which
+        ``luxar serve`` is); a 128 KB single-chunk array is not. The warning is
+        gated on the mean chunk size alone — unlike the optimise hint, it also
+        applies to a store the optimiser could not re-chunk, because the round
+        trips are paid either way."""
+        from typer.testing import CliRunner
+
+        from luxar.cli.main import app
+
+        small = _tiny_store(tmp_path / "small.luxar.zarr")  # 400-byte chunks
+        result = CliRunner().invoke(app, ["info", str(small), "--stats", "--no-tree"])
+        assert result.exit_code == 0, result.output
+        assert "HTTP/1.1" in result.output
+        assert "luxar optimise --profile hosting" in result.output
+
+        big = tmp_path / "big.luxar.zarr"
+        root = open_group(big, mode="w")
+        root.attrs["kind"] = "leaf"
+        create_array(
+            root,
+            "a",
+            data=np.zeros(32_768, dtype=np.float32),  # one 128 KB chunk
+            chunks=(32_768,),
+            compressor=None,
+        )
+        consolidate(root)
+        result = CliRunner().invoke(app, ["info", str(big), "--stats", "--no-tree"])
+        assert result.exit_code == 0, result.output
+        assert "Chunk Layout" in result.output
+        assert "HTTP/1.1" not in result.output
+
     def test_info_stats_does_not_recommend_a_no_op(self, tmp_path: Path) -> None:
         """Ten 1 KB single-chunk arrays sit under the floor and yet have nothing
         to re-chunk: the hint has to be gated on a real plan, not on the

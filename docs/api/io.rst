@@ -122,6 +122,13 @@ It defines the writer contract that any Zarr writer implementation must satisfy.
 allows for alternative implementations (e.g., remote writers, streaming writers) while
 maintaining compatibility with the compiler.
 
+The contract is enforced, not merely declared: ``LuxarZarrCompiler`` is checked
+against it by mypy with no ``type: ignore[override]`` escapes, and
+``test_writer_protocol_agreement.py`` additionally pins the parameter names,
+order and defaults of every method it declares. Order matters to a caller because
+these are positional-or-keyword parameters, and a parameter present in one
+signature but not the other renumbers every argument after it.
+
 Volume Loading
 --------------
 

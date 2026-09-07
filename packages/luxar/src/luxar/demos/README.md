@@ -636,6 +636,17 @@ The Tabula Sapiens first-draft human cell atlas (~500k cells from 24 tissues of 
 
 ---
 
+#### demo_bird_plumage_colorspace.py - Bird Plumage Colour Space
+Every reading in BirdColorBase (360,432 spectrophotometer measurements of plumage across 2,632 species, 300–700 nm) drawn as a spike in CIELAB: direction is hue, length is chroma, height is lightness, each painted its own colour. The non-displayed 4th dimension is **UV chroma** (R300–400 / R300–700) in deciles — the ultraviolet birds see and the CIE observer cannot, so two patches on the same spike can differ in UV as much as red differs from green. An `extend_to_all` ghost of the whole corpus stays behind every stop.
+
+**Run**: `luxar demo run bird_plumage_colorspace [-- --no-serve] [-- --recompute]`
+
+**Requires**: Internet access (~525 MB of `.xlsx` from the pinned BirdColorBase commit, cached). No optional dependency: the workbooks are streamed with the standard library and the CIE 1931 observer comes from the Wyman–Sloan–Shirley Gaussian fit.
+
+**Demonstrates**: Reflectance-to-CIELAB colorimetry with no data file, a scientifically motivated non-displayed dimension (a measured axis human vision drops rather than time or channel), `extend_to_all` context layer against a sliced highlight layer, `line_type="segments"` spike geometry, categorical dimension labels, per-element Wikipedia links, block-wise reduction of a corpus too large to hold.
+
+---
+
 #### demo_chromatrace_choir_umap_sequence.py - Chromatrace CHOIR UMAP — Cell-Type Walkthrough
 Variant of the Chromatrace demo with an 89-step slider stepping through each fine-grained CHOIR bio-term one at a time. Within each bio-group, cell types are reordered (nearest-neighbor + 2-opt TSP on UMAP centroids) so consecutive slots are spatially adjacent. Backdrop layer keeps the full UMAP outline visible across all slots; highlight layer shows only the active type in its CHOIR palette color.
 

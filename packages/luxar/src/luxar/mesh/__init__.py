@@ -4,7 +4,9 @@ Mirrors :mod:`luxar.gsplats`: the node class itself lives in :mod:`luxar.core.me
 while everything *about* meshes that is not the scene-graph object lives here. Today
 that is :mod:`luxar.mesh.interop`, which imports classical mesh files;
 :mod:`luxar.mesh.split`, the by-face re-indexing behind ``add_mesh(partition=…)``;
-and :mod:`luxar.mesh.decimate`, which produces substitutive mesh LOD levels.
+:mod:`luxar.mesh.decimate`, which produces substitutive mesh LOD levels; and
+:mod:`luxar.mesh.primitives`, analytic shapes (the welded ``icosphere``) for demos
+and marker geometry.
 
 Deliberately does NOT re-export ``Mesh``. ``luxar.mesh`` and ``luxar.core.mesh`` are
 distinct modules, and pulling the node class up here would make this package import
@@ -18,10 +20,12 @@ from .interop import (
     import_mesh,
     import_mesh_directory,
 )
+from .primitives import icosphere
 
 __all__ = [
     "TriangleMesh",
     "detect_mesh_format",
+    "icosphere",
     "import_mesh",
     "import_mesh_directory",
 ]

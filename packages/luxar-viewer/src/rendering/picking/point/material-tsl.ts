@@ -46,6 +46,7 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
     uNodeId: TSLNode;
     uResolution: TSLNode;
     uSortedIndexSlot: TSLNode;
+    uDensityDrop: TSLNode;
   };
 
   constructor(config: PointPickingMaterialConfig) {
@@ -74,6 +75,7 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
       // coordinator's `syncSortedIndexSlot`, which finds it through
       // `uniforms` below.
       uSortedIndexSlot: uniform(0),
+      uDensityDrop: uniform(0),
     };
 
     this.uniforms = {
@@ -87,6 +89,7 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
       uNodeId: proxyIUniform(this.tslNodes.uNodeId),
       uResolution: proxyIUniform(this.tslNodes.uResolution),
       uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
+      uDensityDrop: proxyIUniform(this.tslNodes.uDensityDrop),
     };
 
     this.toneMapped = false;
@@ -135,6 +138,7 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
     // geometry draws from slot 1 would otherwise read the stale buffer
     // until the coordinator's next per-frame re-assert.
     cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
+    cloned.uniforms.uDensityDrop.value = this.uniforms.uDensityDrop.value;
     return cloned as this;
   }
 

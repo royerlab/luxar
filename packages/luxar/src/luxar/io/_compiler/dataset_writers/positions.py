@@ -4,19 +4,20 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-import numpy as np
 import zarr
 from arbol import aprint
-from numpy.typing import NDArray
 
 from ....encoding import SemanticType
+from ....typing_utils.aliases import (
+    PositionArray,
+)
 from ..chunking import calculate_intelligent_chunks
 from ..context import DatasetCtx
 
 
 def write_positions(
     group: zarr.Group,
-    positions: NDArray[np.float32],
+    positions: PositionArray,
     spatial_index_data: Optional[Dict[str, Any]],
     ctx: DatasetCtx,
 ) -> None:

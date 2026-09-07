@@ -30,7 +30,9 @@ async function waitHttp(url, t = 60000) {
     try {
       const r = await fetch(url);
       if (r.ok || r.status === 404) return;
-    } catch {}
+    } catch {
+      // Connection refused while the server is still coming up: retry below.
+    }
     await new Promise((r) => setTimeout(r, 250));
   }
   throw new Error(`no server at ${url}`);

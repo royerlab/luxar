@@ -138,9 +138,10 @@ export function buildPerfDiff(base, next) {
   md += `New captured: ${next.capturedAt}\n\n`;
   md += `Sample window: ${next.sampleWindowMs ?? '?'} ms, warmup: ${next.warmupFrames ?? '?'} frames.\n\n`;
 
-  md += `## JS frame timing\n\n`;
-  md += `| Scenario / backend | API | Segs | base median (ms) | new median (ms) | Δ median | base p95 | new p95 | Δ p95 |\n`;
-  md += `|---|---|---:|---:|---:|---|---:|---:|---|\n`;
+  md += '## JS frame timing\n\n';
+  md +=
+    '| Scenario / backend | API | Segs | base median (ms) | new median (ms) | Δ median | base p95 | new p95 | Δ p95 |\n';
+  md += '|---|---|---:|---:|---:|---|---:|---:|---|\n';
 
   for (const k of sortedKeys) {
     const b = baseByKey.get(k);
@@ -219,9 +220,10 @@ export function buildPerfDiff(base, next) {
   });
 
   if (anyGpu) {
-    md += `\n## GPU pass time (timestamp-query)\n\n`;
-    md += `| Scenario / backend | API | Segs | base median (ms) | new median (ms) | Δ median | base p95 | new p95 | Δ p95 |\n`;
-    md += `|---|---|---:|---:|---:|---|---:|---:|---|\n`;
+    md += '\n## GPU pass time (timestamp-query)\n\n';
+    md +=
+      '| Scenario / backend | API | Segs | base median (ms) | new median (ms) | Δ median | base p95 | new p95 | Δ p95 |\n';
+    md += '|---|---|---:|---:|---:|---|---:|---:|---|\n';
 
     for (const k of sortedKeys) {
       const b = baseByKey.get(k);
@@ -250,6 +252,33 @@ export function buildPerfDiff(base, next) {
   // Depth-sort worker-stage medians + end-to-end sort latency. Only the
   // columns some scenario actually carries are shown (worker-stage
   // breakdown is optional; sort-latency may be null). Lower is better.
+  md += metricSection(
+    'Viewer audit (load + frames)',
+    'Rows from viewer-audit-perf-bench.spec.ts: load milestones in ms from loadStart (lower is better), request/byte counts, main-thread long-task ms during the load, forced-continuous-render frame p50 (ms) at DPR 1 / 0.5 / dollied 4x, playback step ms (first commit / settled), OPFS write drops.',
+    sortedKeys,
+    baseByKey,
+    nextByKey,
+    (scn) => scn?.audit,
+    [
+      { label: 'ttfp', key: 'ttfpMs' },
+      { label: 'sceneLoaded', key: 'sceneLoadedMs' },
+      { label: 'initUpdate', key: 'initUpdateDoneMs' },
+      { label: 'refined', key: 'refinementCompleteMs' },
+      { label: 'stateReady', key: 'stateReadyMs' },
+      { label: 'warmLoaded', key: 'warmSceneLoadedMs' },
+      { label: 'requests', key: 'requests' },
+      { label: 'bytes', key: 'bytes' },
+      { label: 'longTask', key: 'longTaskMs' },
+      { label: 'frame@1', key: 'frameP50Ms_dpr1' },
+      { label: 'frame@0.5', key: 'frameP50Ms_dpr05' },
+      { label: 'frame@zoom', key: 'frameP50Ms_zoom4x' },
+      { label: 'playFirst', key: 'playbackFirstMs_warm' },
+      { label: 'playFull', key: 'playbackFullMs_warm' },
+      { label: 'opfsDrop', key: 'opfsDropped' },
+      { label: 'steadyDPR', key: 'steadyDpr' },
+    ]
+  );
+
   md += metricSection(
     'Depth-sort stages',
     'Per-scenario depth-sort timing (ms, lower is better). Worker-stage medians are optional; sort-latency may be absent.',
@@ -285,10 +314,11 @@ export function buildPerfDiff(base, next) {
   // not a measurement — those cells get a `(lb)` marker and no delta.
   const anyLadder = sortedKeys.some((k) => baseByKey.get(k)?.ladder || nextByKey.get(k)?.ladder);
   if (anyLadder) {
-    md += `\n## Ladder load\n\n`;
-    md += `Wall time from navigation to ladder-complete (ms, lower is better). \`(lb)\` = lower bound: the ladder finished before polling began (\`observedGrowth: false\`), so no delta is computed.\n\n`;
-    md += `| Scenario / backend | base wallMs | new wallMs | Δ wallMs |\n`;
-    md += `|---|---:|---:|---|\n`;
+    md += '\n## Ladder load\n\n';
+    md +=
+      'Wall time from navigation to ladder-complete (ms, lower is better). `(lb)` = lower bound: the ladder finished before polling began (`observedGrowth: false`), so no delta is computed.\n\n';
+    md += '| Scenario / backend | base wallMs | new wallMs | Δ wallMs |\n';
+    md += '|---|---:|---:|---|\n';
     for (const k of sortedKeys) {
       const b = baseByKey.get(k)?.ladder;
       const n = nextByKey.get(k)?.ladder;
@@ -313,13 +343,12 @@ export function buildPerfDiff(base, next) {
   }
 
   md += '\n';
-  md += `🟢 = ≥5% faster on this metric · 🔴 = ≥5% slower\n`;
+  md += '🟢 = ≥5% faster on this metric · 🔴 = ≥5% slower\n';
 
   return md;
 }
 
 function usage() {
-  // eslint-disable-next-line no-console
   console.error('Usage: perf-diff.mjs <baseline.json> <new.json>');
   process.exit(2);
 }
@@ -329,12 +358,10 @@ function main() {
 
   const [, , basePath, newPath] = process.argv;
   if (!fs.existsSync(basePath)) {
-    // eslint-disable-next-line no-console
     console.error(`Baseline not found: ${basePath}`);
     process.exit(2);
   }
   if (!fs.existsSync(newPath)) {
-    // eslint-disable-next-line no-console
     console.error(`New results not found: ${newPath}`);
     process.exit(2);
   }
@@ -344,13 +371,12 @@ function main() {
 
   const md = buildPerfDiff(base, next);
 
-  // eslint-disable-next-line no-console
   console.log(md);
 
   // Resolve any relative paths for the user.
   const baseAbs = path.resolve(basePath);
   const newAbs = path.resolve(newPath);
-  // eslint-disable-next-line no-console
+
   console.error(`baseline: ${baseAbs}\nnew:      ${newAbs}`);
 }
 

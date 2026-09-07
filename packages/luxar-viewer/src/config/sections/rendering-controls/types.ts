@@ -90,6 +90,13 @@ export interface RenderingSettings {
   adaptiveDPREnabled: boolean;
   /** Whether the viewer may render above CSS resolution on a HiDPI display. */
   allowHighDPR: boolean;
+  /**
+   * Runtime toggle for the projected-density guard (shader thinning of
+   * over-dense blendable nodes + the refinement rung cap). Persisted per
+   * scene; `?no-density-guard` overrides it for one session without
+   * touching the stored value.
+   */
+  densityGuardEnabled: boolean;
   // Cinematic mode toggle (for UI only, actual state determined by effects)
   cinematicMode: boolean;
 }

@@ -480,14 +480,27 @@ procedure are in
 **On a node with a hidden dimension, count elements per SLICE, not per node.** A
 ladder's rungs are sized against the whole node while the viewer draws one hidden
 coordinate. An explicit absolute first rung (`-b stream:<c>`) is divided among
-the slices: Nexrad's explicit `stream:20000` ladder has p05 = 4 splats per played
-coordinate. Before the CLI scaling fix, Drosophila's `--target-ms` resolved to a
-20,833-splat rung 0 for 500 timepoints; the measured slices had median = 45, p05 =
-7, and min = 1, and playback rendered an empty frame. The CLI now scales
-`--target-ms` by the observed slice count and logs that multiplier. Prefer
-`--n-lods 3..4` for an aggregate slice-invariant share, then verify long or
-non-uniform axes because the global prefix can still concentrate away from sparse
-slices. The "Sliced nodes" section of that reference carries the measured table.
+the slices: the published Nexrad store's `stream:20000` ladder has p05 = 4 splats
+per played coordinate (the demo SOURCE no longer authors that — see below — but
+the shipped store carries it until the corpus is regenerated). Before the CLI
+scaling fix, Drosophila's `--target-ms` resolved to a 20,833-splat rung 0 for 500
+timepoints; the measured slices had median = 45, p05 = 7, and min = 1, and
+playback rendered an empty frame. The CLI now scales `--target-ms` by the observed
+slice count and logs that multiplier. Prefer `--n-lods 3..4` for an aggregate
+slice-invariant share, then verify long or non-uniform axes because the global
+prefix can still concentrate away from sparse slices.
+
+From **Python** there is a stronger option than any share:
+`additive_lod=dict(n_lods=4, slice_dims=[3], recompute=True)` — where `[3]` lists
+raw pre-`dim_order` centre columns — interleaves the ordering round-robin across the hidden
+coordinates, so every rung carries an equal ABSOLUTE per-slice budget and any
+slice smaller than the budget is carried whole — a guarantee, not an average.
+Nexrad now authors exactly that, and its p05 scan (774 splats) arrives complete.
+Two things to get right: `slice_dims` indexes the RAW pre-`dim_order` centre
+columns, not the scene's dimension positions; and `recompute=True` is required on
+a stacked dataset, or the spec is shadowed by the merged per-source ladder and
+never runs. No CLI equivalent — `gsplat lod` has no scene to say which columns are
+hidden. The "Sliced nodes" section of that reference carries the measured table.
 
 - **`overview` — ~3 eager rungs, independent of part count.** Its root is a
   `kind=lod` whose fine partition defers behind a fills-screen selector. Crossing

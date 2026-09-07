@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { MONITOR_ICONS } from '../../../../../ui/data-loading-monitor/templates/primitives';
 import {
   renderSceneGraphTree,
   summariseLodStates,
@@ -108,7 +109,92 @@ describe('lodChipContent', () => {
   });
 });
 
+describe('lodChipContent — density-held rung', () => {
+  const node: SceneGraphNode = {
+    path: '/held',
+    name: 'held',
+    type: 'gsplats',
+    additiveSublods: 4,
+    children: [],
+  };
+
+  it('names the residency ceiling when that is what holds the rung', () => {
+    const c = lodChipContent(node, {
+      kind: 'additive',
+      loaded: 2,
+      total: 4,
+      refining: true,
+      held: 'budget',
+    })!;
+    expect(c.icon).toBe(MONITOR_ICONS.lodHeld);
+    expect(c.text).not.toContain('⏳');
+    expect(c.title.startsWith('Next level HELD at the residency ceiling')).toBe(true);
+    expect(c.title).toContain('refinement working-set budget (capped at 512 MB)');
+    // No "raise ?cacheBudgetMB" remedy: on desktop Chrome the working-set cap
+    // already binds, so that knob cannot lift the ceiling (and a low value lowers it).
+    expect(c.title).not.toContain('cacheBudgetMB');
+  });
+
+  it('shows the pause glyph after the text instead of ⏳, and explains the hold first', () => {
+    const c = lodChipContent(node, {
+      kind: 'additive',
+      loaded: 2,
+      total: 4,
+      refining: true,
+      held: 'density',
+      lastAllResident: false,
+    })!;
+    expect(c.text).toBe('LOD 2/4 ◌ ');
+    expect(c.text).not.toContain('⏳');
+    expect(c.icon).toBe(MONITOR_ICONS.lodHeld);
+    expect(c.iconPosition).toBe('after');
+    expect(c.title.startsWith('Next level HELD by the density guard')).toBe(true);
+    expect(c.title).toContain('level 3 is not loaded');
+    expect(c.title).toContain('Additive LOD held — 2/4 levels loaded');
+    // The tree renders glyph markup after the escaped text.
+    const state: SceneGraphState = {
+      root: node,
+      totalNodes: 1,
+      nodesByType: { points: 0, lines: 0, gsplats: 1, mesh: 0 },
+      totalByType: { points: 0, lines: 0, gsplats: 0, mesh: 0 },
+      visibleByType: { points: 0, lines: 0, gsplats: 0, mesh: 0 },
+      droppedElements: 0,
+    };
+    const html = renderSceneGraphTree(
+      state,
+      new Set(),
+      new Map([
+        ['/held', { kind: 'additive', loaded: 2, total: 4, refining: true, held: 'density' }],
+      ])
+    );
+    expect(html).toContain(`LOD 2/4 ${MONITOR_ICONS.lodHeld}</span>`);
+  });
+
+  it('a held flag without refining is ignored (nothing is pending)', () => {
+    const c = lodChipContent(node, {
+      kind: 'additive',
+      loaded: 4,
+      total: 4,
+      refining: false,
+      held: 'density',
+    })!;
+    expect(c.icon).toBeUndefined();
+    expect(c.text).toBe('LOD 4/4');
+    expect(c.title).not.toContain('HELD');
+  });
+});
+
 describe('summariseLodStates', () => {
+  it('counts held rungs (density or budget) apart from streaming ones', () => {
+    const states = new Map<string, LODProgressState>([
+      ['/a', { kind: 'additive', loaded: 1, total: 4, refining: true, held: 'density' }],
+      ['/b', { kind: 'additive', loaded: 1, total: 4, refining: true }],
+      ['/c', { kind: 'additive', loaded: 4, total: 4, refining: false }],
+      ['/d', { kind: 'additive', loaded: 2, total: 4, refining: true, held: 'budget' }],
+    ]);
+    expect(summariseLodStates(states)).toBe('4 additive · refining 1 · held 2');
+  });
+
   it('summarises substitutive groups, additive nodes, and refinement', () => {
     const states = new Map<string, LODProgressState>([
       ['/a', { kind: 'lod', levelCount: 3, activeLevel: 0 }],
@@ -309,6 +395,74 @@ describe('renderSceneGraphTree — kind badges', () => {
     expect(html).toContain('4 parts');
   });
 
+  describe('density-guard chip', () => {
+    const gsplatsNode: SceneGraphNode = {
+      path: '/cloud',
+      name: 'cloud',
+      type: 'gsplats',
+      children: [],
+    };
+    const thinned = { keep: 1 / 8, elementsPerPixel: 25.2, blendable: true, onScreen: true };
+
+    it('renders the lattice glyph + 1/K while the node is thinned, with the density in the tooltip', () => {
+      const html = renderSceneGraphTree(
+        tree(gsplatsNode),
+        new Set(),
+        new Map(),
+        new Map(),
+        new Map([['/cloud', thinned]])
+      );
+      expect(html).toContain('data-density-path="/cloud"');
+      expect(html).toContain(MONITOR_ICONS.densityThinned);
+      expect(html).toContain('</svg>1/8</span>');
+      expect(html).toContain('Drawn 1/8 of the resident elements');
+      expect(html).toContain('25 resident elements per pixel');
+      expect(html).toContain('brightens each ×8');
+    });
+
+    it.each([
+      ['unthinned', { ...thinned, keep: 1 }],
+      ['off-screen', { ...thinned, onScreen: false }],
+    ])('renders an empty slot when %s', (_label, state) => {
+      const html = renderSceneGraphTree(
+        tree(gsplatsNode),
+        new Set(),
+        new Map(),
+        new Map(),
+        new Map([['/cloud', state]])
+      );
+      expect(html).toContain('data-density-path="/cloud" title=""></span>');
+      expect(html).not.toContain(MONITOR_ICONS.densityThinned);
+    });
+
+    it('renders an empty slot for a drawable node with no state, and none for a group', () => {
+      const html = renderSceneGraphTree(tree(gsplatsNode), new Set(), new Map(), new Map());
+      expect(html).toContain('data-density-path="/cloud" title=""></span>');
+      expect(html).not.toContain(MONITOR_ICONS.densityThinned);
+      const group: SceneGraphNode = { path: '/g', name: 'g', type: 'group', children: [] };
+      expect(renderSceneGraphTree(tree(group), new Set(), new Map(), new Map())).not.toContain(
+        'data-density-path'
+      );
+    });
+
+    it('threads the density map down to expanded children', () => {
+      const parent: SceneGraphNode = {
+        path: '/p',
+        name: 'p',
+        type: 'group',
+        children: [gsplatsNode],
+      };
+      const html = renderSceneGraphTree(
+        tree(parent),
+        new Set(['/p']),
+        new Map(),
+        new Map(),
+        new Map([['/cloud', thinned]])
+      );
+      expect(html).toContain('</svg>1/8</span>');
+    });
+  });
+
   describe('draw-order chip', () => {
     const gsplatsNode: SceneGraphNode = {
       path: '/cloud',
@@ -317,14 +471,27 @@ describe('renderSceneGraphTree — kind badges', () => {
       children: [],
     };
 
-    it('renders bucket + renderOrder when live state exists', () => {
+    it('renders a bucket glyph + renderOrder when live state exists, bucket named in the tooltip', () => {
       const drawOrderStates = new Map<string, NodeDrawOrder>([
         ['/cloud', { bucket: 'transparent', depthWrite: false, renderOrder: 3 }],
       ]);
       const html = renderSceneGraphTree(tree(gsplatsNode), new Set(), new Map(), drawOrderStates);
       expect(html).toContain('data-draworder-path="/cloud"');
-      expect(html).toContain('#3 transparent');
-      expect(html).not.toContain('O0 #3 transparent');
+      // The word moved into the glyph + tooltip: the chip text is just the order.
+      expect(html).toContain('</svg>#3</span>');
+      expect(html).toContain(MONITOR_ICONS.bucketTransparent);
+      expect(html).not.toContain('#3 transparent');
+      expect(html).not.toContain('O0 #3');
+      expect(html).toMatch(/title="[^"]*&#39;transparent&#39; render bucket[^"]*depthWrite off/);
+    });
+
+    it('uses the filled glyph for the opaque bucket', () => {
+      const drawOrderStates = new Map<string, NodeDrawOrder>([
+        ['/cloud', { bucket: 'opaque', depthWrite: true, renderOrder: 0 }],
+      ]);
+      const html = renderSceneGraphTree(tree(gsplatsNode), new Set(), new Map(), drawOrderStates);
+      expect(html).toContain(MONITOR_ICONS.bucketOpaque);
+      expect(html).toContain('</svg>#0</span>');
     });
 
     it('prefixes an authored layer order', () => {
@@ -332,7 +499,7 @@ describe('renderSceneGraphTree — kind badges', () => {
         ['/cloud', { bucket: 'transparent', depthWrite: false, renderOrder: 3, layerOrder: 2 }],
       ]);
       const html = renderSceneGraphTree(tree(gsplatsNode), new Set(), new Map(), drawOrderStates);
-      expect(html).toContain('O2 #3 transparent');
+      expect(html).toContain('</svg>O2 #3</span>');
     });
 
     it('renders a persistent EMPTY chip slot for a drawable node without state', () => {

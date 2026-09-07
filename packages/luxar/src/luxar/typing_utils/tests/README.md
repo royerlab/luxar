@@ -4,8 +4,10 @@ Tests for the Luxar type utilities package.
 
 ## Test Files
 
-- `test_config.py` - Tests for configuration settings (chunk size validation, compression level, memory estimation)
+- `test_constants.py` - Cross-language constant guards: viewer unions are parsed and compared here, numeric mirrors are asserted per side, and the Python-side single-sourcing of the default radii (plus `lift`'s documented divergence) is pinned
 - `test_enums.py` - Tests for enum types (BlendingMode, NodeType, PhysicalUnit, RenderingLimits, Defaults)
+- `test_format_contract.py` - Tests that the committed Python and TypeScript projections of `format-contract/contract.yaml` — and the published version claims quoting them — stay in sync
+- `test_geometry_capabilities.py` - Tests for the per-geometry-type capability table
 
 ## Running
 

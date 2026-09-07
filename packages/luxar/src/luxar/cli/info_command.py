@@ -18,6 +18,7 @@ from arbol import aprint
 
 from .._zarr_compat import open_group as zarr_open_group
 from ..typing_utils._format_contract import GEOMETRY_TYPES
+from ._traceback import exit_with_error
 from .utils import (
     format_memory_size,
     format_tree_node,
@@ -146,8 +147,14 @@ def register_info_command(app: typer.Typer) -> None:
         except typer.Exit:
             raise
         except Exception as e:
-            aprint(f"❌ Error reading info for {path}: {e}")
-            raise typer.Exit(1)
+            exit_with_error(f"❌ Error reading info for {path}: {e}", e)
+
+
+#: Mean chunk payload below which a full load is dominated by per-request
+#: round trips on an HTTP/1.1 host (six connections, no multiplexing). Distinct
+#: from ``MIN_CHUNK_BYTES`` (the optimiser's re-chunk floor): a 20 KB chunk is
+#: above the floor and still costs a 30 ms RTT per 20 KB on such a host.
+HTTP1_RTT_BOUND_CHUNK_BYTES = 32 * 1024
 
 
 def _print_chunk_layout(root: zarr.Group) -> None:
@@ -181,6 +188,19 @@ def _print_chunk_layout(root: zarr.Group) -> None:
         f"({summary.share_under_floor:.0%})"
     )
     aprint(f"  Projected requests for a full load: {summary.n_chunks:,} chunks")
+    if summary.mean_chunk_bytes < HTTP1_RTT_BOUND_CHUNK_BYTES:
+        # The request count, not the byte count, is what a cold load pays on an
+        # HTTP/1.1 host — and `luxar serve` (uvicorn) IS HTTP/1.1 only, as is
+        # any plain static server. Measured on a 1.5 M-point example at
+        # 25 Mbps / 30 ms RTT (2026-09 viewer audit): 10.6 s over HTTP/1.1
+        # against 4.0 s for the same 1,548 chunks multiplexed over HTTP/2.
+        aprint(
+            f"  ⚠️  Chunks under {HTTP1_RTT_BOUND_CHUNK_BYTES // 1024} KB are round-trip "
+            "bound on HTTP/1.1 hosts (`luxar serve` and plain static servers): "
+            "measured 10.6 s vs 4.0 s over HTTP/2 for the same 1.5 M points at "
+            "25 Mbps / 30 ms. Re-chunk with `luxar optimise --profile hosting`, "
+            "or serve behind an HTTP/2 front (CDN, nginx, Caddy)."
+        )
     if summary.mean_chunk_bytes >= MIN_CHUNK_BYTES:
         return
     # Gated on a REAL plan, not on the average alone. A store of ten 1 KB

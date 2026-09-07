@@ -9,14 +9,24 @@ behavior-preserving move).
 
 from __future__ import annotations
 
-from typing import Any, List, Optional, Sequence, Tuple, Union
+from typing import Any, Optional, Sequence, Union
 
 import numpy as np
 from arbol import aprint
-from numpy.typing import NDArray
 
-from ....typing_utils.aliases import NodePath, PointsMetadata
+from ....typing_utils.aliases import (
+    ColorArray,
+    NodePath,
+    PointsMetadata,
+    PositionArray,
+    ScalarArray,
+)
 from ....typing_utils.constants import SHARPNESS_MAX
+from ....validation.writing import (
+    POINTS_RESERVED_ATTRS,
+    validate_points_channels,
+    validate_render_attrs,
+)
 from ..bounds import compute_position_bounds
 from ..context import GeometryWriteCtx
 from ..dataset_writers.colors import write_colors
@@ -27,19 +37,14 @@ from ..dataset_writers.scalars import (
     write_scalars,
 )
 from ..labels.image_labels import (
-    validate_image_labels_for_writing,
     write_image_labels_csr,
 )
 from ..labels.text_labels import write_string_channels_csr
 from ..node_common import (
-    POINTS_RESERVED_ATTRS,
     apply_default_render_attrs,
     prepare_transform_attrs,
     record_forwarded_sort_order,
-    validate_broadcast_color,
     validate_node_path,
-    validate_render_attrs,
-    validate_scalars_preflight,
     warn_if_over_element_cap,
 )
 from ..spatial_ordering.points import (
@@ -48,102 +53,14 @@ from ..spatial_ordering.points import (
 )
 
 
-def validate_points_channels(
-    n_points: int,
-    *,
-    colors: Any = None,
-    radii: Any = None,
-    sharpness: Any = None,
-    scalars: Any = None,
-    labels: Any = None,
-    image_labels: Any = None,
-    keys: Any = None,
-) -> None:
-    """Validate every per-point channel against ``n_points``. Pure — no I/O.
-
-    Steps 0d-0f of :func:`write_points`'s fail-fast gate, factored out because a
-    SECOND caller needs exactly them and nothing else:
-    :func:`luxar.core.group.compositing.validate_points_channels_before_split`
-    runs this against the SOURCE point count before a ``partition=`` /
-    ``additive_lod=`` / ``substitutive_lod=`` decomposition. Without that, a
-    wrong-length channel rode the per-part slicer's pass-through branch into
-    every part and was ACCEPTED by any part whose own count happened to match
-    (#1437), and the plain-leaf path refuses the same input outright.
-
-    ``image_labels`` (issue #1491) does not fit the per-part-slicer trap
-    above at all — it has no slicer in the first place: on
-    ``substitutive_lod=`` the value is forwarded ONLY to the finest child
-    (Points itself), which the wrapper writes LAST, after every coarse gsplat
-    level is already committed. Pre-fix, the length/index check ran INSIDE
-    ``write_image_labels_csr``, near the very end of that finest child's own
-    write — AFTER its ``type``, ``n_points``, positions, radii, colors,
-    sharpness, scalars and ``labels`` were already on disk. So a wrong-length
-    ``image_labels`` left a COMPLETE, fully loadable N-level ``kind=lod``
-    ladder on disk — every level present, every other array on every level
-    present — silently missing only the ``image_label_offsets`` /
-    ``image_label_bytes`` the caller actually asked for. That is HARDER to
-    notice than a missing level, not milder: nothing about the ladder looks
-    incomplete, it simply has no images.
-
-    Sharing the function rather than repeating the checks is what keeps that
-    promise true as the rules change: the pre-split gate cannot drift from what
-    the child write accepts, because it IS what the child write runs. Same
-    contract, and same wording, as the mesh sibling
-    :func:`~luxar.io._compiler.geometry_writers.mesh.validate_mesh_arrays`.
-    """
-    from ....validation.base import (
-        validate_colors_for_writing,
-        validate_labels_for_writing,
-        validate_radii_for_writing,
-        validate_sharpness_for_writing,
-    )
-
-    # 0d. Pre-flight length sweep over ALL provided per-point arrays. The
-    # spatial-ordering fancy-indexing below silently TRUNCATES a too-long
-    # array and raises a raw IndexError on a too-short one, so lengths must
-    # be checked before build_points_ordering runs. The per-dataset
-    # validators further down remain in place (belt and braces).
-    if colors is not None:
-        if isinstance(colors, np.ndarray):
-            # Points accept RGBA: the alpha column is per-point opacity
-            # (consumed by every blending mode; mapped into optical depth in
-            # volumetric — see VOLUMETRIC_BLENDING_SPEC.md, phase 3).
-            validate_colors_for_writing(colors, n_points, channels=(3, 4))
-        elif isinstance(colors, (list, tuple)):
-            validate_broadcast_color(colors, "colors")
-    if radii is not None:
-        # Validates arrays AND broadcast scalars (same finite/positive rules).
-        validate_radii_for_writing(radii, n_points)
-    if sharpness is not None:
-        # Validates arrays AND broadcast scalars (same [0, 1] bounds).
-        validate_sharpness_for_writing(sharpness, n_points)
-    if scalars is not None:
-        validate_scalars_preflight(scalars, n_points)
-    # 0e. Labels: sequence-of-str type + length check (the CSR serializer
-    # would otherwise AttributeError on a non-str entry AFTER the arrays
-    # were written).
-    if labels is not None:
-        validate_labels_for_writing(labels, n_points)
-    # Keys ride the same pre-flight as labels: the CSR serializer
-    # UTF-8-encodes each entry, so a non-str or a length mismatch must be
-    # caught BEFORE any array reaches disk (#1917).
-    if keys is not None:
-        validate_labels_for_writing(keys, n_points, context="keys", noun="Keys")
-    # 0f. Image labels: length (dense) / index bounds (sparse dict) — see
-    # validate_image_labels_for_writing for why this moved out of the CSR
-    # writer itself.
-    if image_labels is not None:
-        validate_image_labels_for_writing(image_labels, n_points)
-
-
 def write_points(
     ctx: GeometryWriteCtx,
     path: NodePath,
-    positions: NDArray[np.float32],
-    colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]] = None,
-    radii: Optional[Union[NDArray[np.float32], float]] = None,
-    sharpness: Optional[Union[NDArray[np.float32], float]] = None,
-    scalars: Optional[Union[NDArray[np.float32], float]] = None,
+    positions: PositionArray,
+    colors: Optional[Union[ColorArray, tuple, list]] = None,
+    radii: Optional[Union[ScalarArray, float]] = None,
+    sharpness: Optional[Union[ScalarArray, float]] = None,
+    scalars: Optional[Union[ScalarArray, float]] = None,
     labels: Optional["Sequence[str]"] = None,
     image_labels: Optional[Any] = None,
     keys: Optional["Sequence[str]"] = None,

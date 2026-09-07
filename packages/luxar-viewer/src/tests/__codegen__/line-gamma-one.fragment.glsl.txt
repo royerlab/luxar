@@ -70,6 +70,7 @@ layout( std140 ) uniform object {
 	uint nodeUniform31;
 	mat3 nodeUniform32;
 	uint nodeUniform33;
+	float nodeUniform34;
 };
 
 

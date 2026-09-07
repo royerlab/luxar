@@ -14,6 +14,7 @@ import type { SceneConfig, ShaderConfig } from './sections/scene/types';
 export type { SceneConfig, ShaderConfig };
 
 import type { AdaptiveDPRConfig } from './sections/adaptive-dpr/types';
+import type { DensityGuardConfig } from './sections/density-guard/types';
 /** Adaptive device-pixel-ratio configuration type. */
 export type { AdaptiveDPRConfig };
 
@@ -100,6 +101,7 @@ export interface AppConfig {
   camera: CameraConfig;
   animation: AnimationConfig;
   adaptiveDPR: AdaptiveDPRConfig;
+  densityGuard: DensityGuardConfig;
   depthSort: DepthSortConfig;
   scene: SceneConfig;
   shader: ShaderConfig;

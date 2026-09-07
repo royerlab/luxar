@@ -40,6 +40,13 @@ import { PointTSLMaterial } from '../materials/point/material-tsl';
 import { LineTSLMaterial } from '../materials/line/material-tsl';
 import { GSplatTSLMaterial } from '../materials/gsplat/material-tsl';
 import { MeshTSLMaterial } from '../materials/mesh/material-tsl';
+import { PhysicalMeshTSLMaterial } from '../materials/mesh-physical/material-tsl';
+
+// The WebGPU renderer's own PMREM generator, for the lazily built scene environment
+// that lights physical meshes (`rendering/environment/scene-environment.ts`). A
+// different class from `three`'s WebGL one, and the one place outside the material
+// classes where the environment code needs a `three/webgpu` symbol.
+import { PMREMGenerator } from 'three/webgpu';
 
 // Picking material classes (`extends NodeMaterial`).
 import { PointPickingTSLMaterial } from '../picking/point/material-tsl';
@@ -98,7 +105,16 @@ export const TSL_REGISTRY = {
     line: LineTSLMaterial,
     gsplat: GSplatTSLMaterial,
     mesh: MeshTSLMaterial,
+    /**
+     * The physical mesh family — three's `MeshPhysicalNodeMaterial` behind the Luxar
+     * leaf-material surface. Its own key rather than a variant of `mesh`, because none
+     * of the house contracts (codegen snapshots, per-epoch shading variant, blend-mode
+     * defines) apply to it; picking still uses `picking.mesh`.
+     */
+    meshPhysical: PhysicalMeshTSLMaterial,
   },
+  /** Backend-specific scene-environment tooling (`rendering/environment/`). */
+  environment: { PMREMGenerator },
   /** Picking material classes, keyed by geometry kind. */
   picking: {
     point: PointPickingTSLMaterial,

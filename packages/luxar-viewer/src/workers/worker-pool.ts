@@ -27,6 +27,7 @@ import { withTimeout } from './worker-pool/timeout/with-timeout';
 import { combineSignals, type CombinedSignalScope } from './worker-pool/timeout/combine-signals';
 import { pickTimeoutMs } from './worker-pool/timeout/pick-timeout-ms';
 import { getConfiguredWorkerCount } from './worker-pool/lifecycle/worker-count';
+import { getSharedWasmModule } from '../wasm/shared-module';
 import { initializeWithGuard } from './worker-pool/lifecycle/init-with-guard';
 import { spawnWorker, terminateAttemptWorkers } from './worker-pool/lifecycle/spawn-worker';
 import {
@@ -36,6 +37,7 @@ import {
 import { selectLeastBusy, type TrackedWorkerHandle } from './worker-pool/selection/least-busy';
 import { nextRoundRobin } from './worker-pool/selection/round-robin';
 import { computeStats, computeQueueDepth, type PoolStats } from './worker-pool/stats';
+import { markLoad } from '../profiling/load-timeline';
 
 export type { WorkerInstance };
 export {
@@ -89,6 +91,24 @@ export function setDataWorkerWasmPath(url: string): void {
 export class WorkerPool {
   private workers: WorkerInstance[] = [];
   private initPromise: Promise<void> | null = null;
+  /**
+   * "At least ONE worker is usable" gate, settled as soon as the first worker
+   * is published — rejected only when the attempt ends with none.
+   *
+   * Distinct from {@link initPromise}, which keeps its all-settled meaning.
+   * The hot path awaits THIS one: a 1024-splat first LOD rung has no use for
+   * workers 2..N, and waiting for them cost 2.23 s of a measured 8.0 s first
+   * paint (workers become ready ~160 ms apart as each compiles its own copy
+   * of the WASM module).
+   *
+   * Mirrors `initPromise`'s deliberate "stays rejected" contract — it is NOT
+   * nulled on failure, so a poisoned pool keeps failing fast instead of
+   * re-running the init guard per call. `dispose()`, `reinitialize()` and the
+   * `'pool-empty'` branch of {@link handleWorkerFailure} are the only resets.
+   */
+  private readyPromise: Promise<void> | null = null;
+  /** Settles {@link readyPromise}: no argument resolves, an error rejects. */
+  private settleReady: ((error?: unknown) => void) | null = null;
   private nextWorkerIndex = 0;
   /**
    * Pool-wide abort signal. When set (by `setAbortSignal`), every
@@ -150,6 +170,27 @@ export class WorkerPool {
     const myGeneration = ++this.initGeneration;
     const attemptWorkers: WorkerInstance[] = [];
 
+    // The usable-worker gate, created SYNCHRONOUSLY (before the first await)
+    // so `whenUsable()` can rely on it existing the moment `initialize()`
+    // returns. Per-attempt-local for exactly the reason `attemptWorkers` is:
+    // a stale attempt settling late must never settle a newer attempt's gate,
+    // so the IIFE below only ever calls `settleMyReady`, never `this.settleReady`.
+    let readySettled = false;
+    const myReady = new Promise<void>((resolve, reject) => {
+      this.settleReady = (error?: unknown) => {
+        if (readySettled) return;
+        readySettled = true;
+        if (error === undefined) resolve();
+        else reject(error);
+      };
+    });
+    const settleMyReady = this.settleReady as (error?: unknown) => void;
+    // Nobody need be awaiting the gate — `warmUpDataWorkerPool` is
+    // fire-and-forget — and an unobserved rejection fails the test run.
+    // Marking it handled here does not change what a later `await` sees.
+    myReady.catch(() => {});
+    this.readyPromise = myReady;
+
     this.initPromise = (async () => {
       try {
         const workerCount = this.getConfiguredWorkerCount();
@@ -160,6 +201,24 @@ export class WorkerPool {
         // calls made before the first getWorkerPool() take effect.
         const urlOverride = dataWorkerUrlOverride;
         const wasmPathOverride = dataWorkerWasmPathOverride;
+        // Publish each worker the MOMENT it is ready rather than batching
+        // after `allSettled`, so the first one unblocks the hot path.
+        //
+        // Carries the same generation check the batch push used to: a worker
+        // whose init resolved after a `dispose()` bumped the generation must
+        // self-terminate and never touch `this.workers`. `spawnWorker` already
+        // checks this before returning; re-checking at push time closes the
+        // microtask gap between the two.
+        const publish = (entry: WorkerInstance): void => {
+          if (this.initGeneration !== myGeneration) {
+            terminateAttemptWorkers([entry]);
+            return;
+          }
+          attemptWorkers.push(entry);
+          this.workers.push(entry);
+          settleMyReady();
+        };
+
         const workerPromises = Array.from({ length: workerCount }, (_, index) =>
           spawnWorker({
             index,
@@ -170,20 +229,17 @@ export class WorkerPool {
             attachPermanentHandlers: (w, n) => this.attachWorkerErrorHandlers(w, n),
             runInitGuard: (w, a, n) => this.initializeWithGuard(w, a, n, wasmPathOverride),
             isCurrentGeneration: () => this.initGeneration === myGeneration,
+          }).then((entry) => {
+            publish(entry);
+            return entry;
           })
         );
 
-        // Wait for all workers to initialize
-        const results = await Promise.allSettled(workerPromises);
-
-        // Collect successful workers into the attempt-local list first, so
-        // stale-generation cleanup doesn't reach for any newer attempt's
-        // published workers.
-        for (const result of results) {
-          if (result.status === 'fulfilled') {
-            attemptWorkers.push(result.value);
-          }
-        }
+        // Still wait for every spawn to settle: `initialize()`'s contract is
+        // unchanged ("the pool is as full as it is going to get"). Only the
+        // hot path's gate moved. Publishing already happened above, so the
+        // settled results are just the completion signal.
+        await Promise.allSettled(workerPromises);
 
         // Stale-generation guard. If dispose() bumped the generation while
         // we were awaiting allSettled, terminate ONLY this attempt's workers
@@ -191,15 +247,23 @@ export class WorkerPool {
         // have already published its own workers there.
         if (this.initGeneration !== myGeneration) {
           terminateAttemptWorkers(attemptWorkers);
+          // Unblock anyone parked on the gate: this branch returns without
+          // publishing, so nothing else would ever settle it and a hot-path
+          // caller would hang for the tab's lifetime.
+          settleMyReady(
+            new WorkerUnavailableError('[WorkerPool] Pool disposed during initialization')
+          );
           return;
         }
 
-        // Generation still current — publish.
-        for (const entry of attemptWorkers) {
-          this.workers.push(entry);
-        }
+        // Workers were published incrementally by `publish()` above.
 
         if (this.workers.length === 0) {
+          // Two ways to land here now. The original: every spawn failed.
+          // The new one: workers were published and then all evicted at
+          // runtime while the remaining spawns were still settling. Both are
+          // equally fatal for this attempt, and both want the same sweep.
+          //
           // MED-22: `Promise.allSettled(workerPromises)` above blocks until
           // every spawnWorker() has either resolved or rejected, and
           // spawnWorker removes its worker from `pendingWorkers` in BOTH
@@ -232,6 +296,7 @@ export class WorkerPool {
 
         this.nextWorkerIndex = 0;
         log.info(Modules.WORKER_POOL, `Worker pool ready with ${this.workers.length} worker(s)`);
+        markLoad('poolReady', { workers: this.workers.length });
 
         // One-time backend summary (replaces the per-worker WASM/TS lines).
         // Workers each load WASM independently but share one build, so the
@@ -261,6 +326,7 @@ export class WorkerPool {
         // generation has taken over, only clean up this attempt's workers.
         if (this.initGeneration !== myGeneration) {
           terminateAttemptWorkers(attemptWorkers);
+          settleMyReady(e);
           throw e;
         }
         // Generation current — full cleanup of this generation's state.
@@ -281,11 +347,55 @@ export class WorkerPool {
         // the page's `waitForLuxarReady` timeout. To opt back in to a fresh
         // init attempt (e.g. after a transient network blip), call
         // `reinitialize()`.
+        //
+        // A no-op when a worker already published and the pool died after —
+        // that caller holds a live handle, and `whenUsable()`'s re-check
+        // covers the rest.
+        settleMyReady(e);
         throw e;
       }
     })();
 
+    // The hot path now awaits `readyPromise`, so an `initialize()` rejection
+    // can go unobserved (a fire-and-forget warm-up, or a caller that got its
+    // worker from the gate). Mark it handled without changing what an explicit
+    // `await initialize()` sees.
+    this.initPromise.catch(() => {});
+
     return this.initPromise;
+  }
+
+  /**
+   * Resolve as soon as the pool has ONE usable worker, instead of all of them.
+   *
+   * The hot path's contract. `initialize()` keeps the all-settled one, so
+   * anything that genuinely wants a full pool (or wants to observe the final
+   * worker count) should keep awaiting that.
+   */
+  private async whenUsable(): Promise<void> {
+    // Already usable. Also the path taken by tests that inject `workers` and a
+    // pre-resolved `initPromise` directly and never create a gate.
+    if (this.workers.length > 0) return;
+
+    if (!this.initPromise) {
+      // `initialize()` assigns both promises synchronously before its first
+      // await, so `readyPromise` is non-null by the time this returns. The
+      // rejection is observed through the gate below; this catch only stops
+      // the wrapper promise surfacing as an unhandled rejection.
+      void this.initialize().catch(() => {});
+    }
+
+    const gate = this.readyPromise ?? this.initPromise;
+    if (!gate) return;
+    await gate;
+
+    // The first worker published and then died while spawns 2..N were still in
+    // flight. Falling straight through to the empty-pool throw would abandon
+    // workers that are milliseconds from ready, so wait out the full attempt
+    // once before giving up.
+    if (this.workers.length === 0 && this.initPromise) {
+      await this.initPromise;
+    }
   }
 
   /**
@@ -311,15 +421,26 @@ export class WorkerPool {
     workerNumber: number,
     wasmPath?: string
   ): Promise<WorkerInitResult> {
-    return initializeWithGuard(
-      worker,
-      api,
-      // Keeps the pre-existing message text (`Worker 3 init exceeded …`)
-      // now that the guard is label-driven and shared with the sort worker.
-      `Worker ${workerNumber}`,
-      config.dataLoading.performance.workerInitTimeoutMs,
-      () => this.attachWorkerErrorHandlers(worker, workerNumber),
-      wasmPath
+    // Resolved BEFORE the guard's timer starts, so a slow compile is not
+    // charged against the per-worker init deadline. `getSharedWasmModule`
+    // never rejects and self-deadlines, so this await is bounded; `null` means
+    // every worker falls back to compiling its own copy, exactly as before.
+    //
+    // Memoized, so the compile is kicked off by whichever worker gets here
+    // first and then overlaps every OTHER worker's script fetch — the part
+    // that was already unavoidable.
+    return getSharedWasmModule(wasmPath).then((sharedModule) =>
+      initializeWithGuard(
+        worker,
+        api,
+        // Keeps the pre-existing message text (`Worker 3 init exceeded …`)
+        // now that the guard is label-driven and shared with the sort worker.
+        `Worker ${workerNumber}`,
+        config.dataLoading.performance.workerInitTimeoutMs,
+        () => this.attachWorkerErrorHandlers(worker, workerNumber),
+        wasmPath,
+        sharedModule ?? undefined
+      )
     );
   }
 
@@ -350,10 +471,23 @@ export class WorkerPool {
    */
   private handleWorkerFailure(worker: Worker, reason: string): void {
     const outcome = evictFailedWorker(this.workers, worker, reason);
-    if (outcome === 'pool-empty') {
-      // Allow the next initialize() call to attempt a fresh pool.
-      this.initPromise = null;
-    }
+    if (outcome !== 'pool-empty') return;
+    // Since workers are published incrementally, an empty pool no longer means
+    // "this attempt finished and produced nothing" — worker 1 can die while
+    // spawns 2..N are still in flight. `pendingWorkers` is exactly the set of
+    // constructed-but-unpublished workers, so a non-empty set means more are
+    // still coming: leave the promises alone and let them publish into the
+    // SAME generation. Clearing here would let the next `initialize()` bump the
+    // generation and orphan every one of them.
+    //
+    // Sound because `spawnWorker` registers into `pendingWorkers` before its
+    // first await, so all N are registered synchronously before `initialize()`
+    // returns — there is no window where the set is spuriously empty mid-init.
+    if (this.pendingWorkers.size > 0) return;
+    // Allow the next initialize() call to attempt a fresh pool.
+    this.initPromise = null;
+    this.readyPromise = null;
+    this.settleReady = null;
   }
 
   /**
@@ -367,8 +501,12 @@ export class WorkerPool {
    * (instant reject) instead of stacking 10s init guards.
    */
   reinitialize(): void {
-    if (this.workers.length === 0) {
+    // Same "is the attempt actually over?" test as `handleWorkerFailure`:
+    // an empty pool with spawns still in flight is filling, not failed.
+    if (this.workers.length === 0 && this.pendingWorkers.size === 0) {
       this.initPromise = null;
+      this.readyPromise = null;
+      this.settleReady = null;
     }
   }
 
@@ -404,7 +542,7 @@ export class WorkerPool {
    * underlying `Worker` so {@link runWithTimeout} can evict it on timeout.
    */
   private async nextWorkerInstance(): Promise<WorkerInstance> {
-    await this.initialize();
+    await this.whenUsable();
 
     if (this.workers.length === 0) {
       throw new WorkerUnavailableError('[WorkerPool] No workers available after initialization');
@@ -574,7 +712,7 @@ export class WorkerPool {
    * until it timed out individually.
    */
   async getWorkerWithTracking(): Promise<TrackedWorkerHandle> {
-    await this.initialize();
+    await this.whenUsable();
 
     if (this.workers.length === 0) {
       throw new WorkerUnavailableError('[WorkerPool] No workers available after initialization');
@@ -657,6 +795,14 @@ export class WorkerPool {
     // after failed init would surface the stale rejection from the cache
     // instead of attempting a fresh `initialize()`.
     this.initPromise = null;
+    // Settle the usable-worker gate before dropping it: an in-flight attempt
+    // takes its stale-generation branch and returns WITHOUT publishing, so a
+    // hot-path caller parked in `whenUsable()` would otherwise wait forever.
+    this.settleReady?.(
+      new WorkerUnavailableError('[WorkerPool] Pool disposed during initialization')
+    );
+    this.settleReady = null;
+    this.readyPromise = null;
     this.nextWorkerIndex = 0;
     this.poolAbortSignal = undefined;
   }
@@ -673,6 +819,37 @@ export function getWorkerPool(): WorkerPool {
     workerPoolInstance = new WorkerPool();
   }
   return workerPoolInstance;
+}
+
+/**
+ * Start the data-worker pool NOW instead of waiting for the first decode.
+ *
+ * Fire-and-forget and idempotent: `initialize()` dedupes on its cached promise,
+ * and the pool deliberately outlives dataset switches (only app teardown
+ * disposes it), so calling this on every scene load is free after the first.
+ *
+ * Why it exists: the pool used to be created lazily by the first chunk decode,
+ * which on a hosted demo meant it started 1.93 s AFTER the scene fetch began —
+ * and the first LOD's bytes had already arrived and were waiting on it. Warming
+ * at scene-load time overlaps worker startup with the metadata fetch that has
+ * to happen anyway.
+ *
+ * The config guard preserves the existing "Web Workers disabled" contract;
+ * warming must not fetch WASM or spawn workers no data path will use. The
+ * `Worker` guard mirrors `warmUpDepthSortWorker`: the unit suite runs in
+ * node/jsdom with no constructor, where spawning would latch the pool's
+ * deliberately-sticky rejected `initPromise` for the rest of the file.
+ */
+export function warmUpDataWorkerPool(): void {
+  if (!config.dataLoading.performance.useWebWorkers) return;
+  if (typeof Worker === 'undefined') return;
+  void getWorkerPool()
+    .initialize()
+    .catch(() => {
+      // Already logged inside initialize(). A failed warm-up must not surface
+      // as an unhandled rejection, and the hot path re-observes the same
+      // (deliberately sticky) rejection when it actually needs a worker.
+    });
 }
 
 /**

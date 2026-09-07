@@ -4,6 +4,7 @@ This module centralizes all magic numbers and constants to improve
 maintainability and provide clear documentation of their purposes.
 """
 
+import math
 from typing import Final
 
 from ._format_contract import SCENE_FORMAT_VERSION
@@ -23,11 +24,9 @@ DEFAULT_GAMMA: Final[float] = 1.0
 
 INTENSITY_MIN: Final[float] = 0.0
 INTENSITY_MAX: Final[float] = 100.0
-DEFAULT_INTENSITY: Final[float] = 1.0
 
 OFFSET_MIN: Final[float] = -10.0
 OFFSET_MAX: Final[float] = 10.0
-DEFAULT_OFFSET: Final[float] = 0.0
 
 # Blending modes
 DEFAULT_BLENDING_MODE: Final[str] = "additive"
@@ -132,7 +131,6 @@ DEFAULT_ABSORPTION: Final[float] = 1.0
 # Gaussian), higher s -> harder/crisper edge, lower s -> peakier cusp.
 SHARPNESS_MIN: Final[float] = 0.0  # Normalised range floor
 SHARPNESS_MAX: Final[float] = 1.0  # Normalised range ceiling
-SHARPNESS_DEFAULT: Final[float] = 0.5  # -> beta = 2 (Gaussian)
 
 # HDR color constants
 COLOR_SDR_MIN: Final[float] = 0.0  # Standard dynamic range minimum
@@ -151,15 +149,6 @@ COORDINATE_U16_MAX_EXTENT: Final[float] = 65_536.0
 TARGET_CHUNK_BYTES: Final[int] = 65_536  # 64KB target chunk size
 MIN_CHUNK_BYTES: Final[int] = 16_384  # 16KB minimum to amortize HTTP overhead
 MAX_CHUNK_BYTES: Final[int] = 262_144  # 256KB maximum for responsive streaming
-
-# Memory constants
-KB_TO_BYTES: Final[int] = 1024
-MB_TO_BYTES: Final[int] = 1024 * 1024
-GB_TO_BYTES: Final[int] = 1024 * 1024 * 1024
-
-# Array size constants
-MAX_POINTS_RECOMMENDED: Final[int] = 10_000_000  # 10M points
-MAX_POINTS_WARNING: Final[int] = 100_000_000  # 100M points
 
 # Hard ceiling on a mesh node's vertex count. Unlike the advisory point limits
 # above this is a CORRECTNESS bound, not a performance hint, so it is enforced
@@ -200,17 +189,13 @@ MESH_DECODE_BUDGET_BYTES: Final[int] = 512 * 1024 * 1024  # 536,870,912
 # MIRROR: DECODED_BYTES_PER_VALUE in packages/luxar-viewer/src/data/mesh/preflight.ts
 MESH_DECODED_BYTES_PER_VALUE: Final[int] = 4
 
-# Compression constants
-COMPRESSION_LEVEL_MIN: Final[int] = 0  # No compression
-COMPRESSION_LEVEL_DEFAULT: Final[int] = 3
-COMPRESSION_LEVEL_MAX: Final[int] = 9  # Maximum compression
+# Container/codec family this project writes, for metadata and docs. The REAL
+# default is the width-aware per-dtype policy in luxar.encoding.compression
+# (zstd level 9 inside Blosc), which is where a level belongs — the
+# COMPRESSION_LEVEL_MIN/DEFAULT/MAX trio that used to sit here named 0/3/9,
+# agreeing with neither that policy nor the 1-9 band the old
+# typing_utils.config validator enforced, and had no reader either way.
 DEFAULT_COMPRESSOR: Final[str] = "blosc"  # Default compression algorithm
-
-# Transform matrix constants
-TRANSFORM_MATRIX_SIZE: Final[int] = 4  # 4x4 matrices
-
-# Dimension constants
-MAX_DISPLAYED_DIMENSIONS: Final[int] = 3  # Maximum dimensions shown in viewer
 
 # Categorical dimension constants
 MIN_CATEGORIES: Final[int] = 1  # Minimum categories for categorical dimensions
@@ -276,6 +261,26 @@ DEFAULT_POINT_RADIUS: Final[float] = 0.5
 #: 3.0349``. Measured radial-weighted relative L2 of the lift: 1.96% at T=3.0,
 #: 16.91% at T=2.75. See ``lift.py`` for the derivation.
 DEFAULT_TRUNCATION_RADIUS: Final[float] = 2.75
+
+#: Lower bound on each Cholesky diagonal (a splat's per-axis width), in voxels.
+#:
+#: ``sqrt(1/12)`` is the standard deviation of a uniform distribution over one
+#: voxel — the width at which a Gaussian stops describing structure and starts
+#: describing the sampling grid. Below it a splat is narrower than the data can
+#: resolve, and the fit spends capacity on a delta it cannot justify.
+#:
+#: Passing ``sigma_min_diag=None`` removes the bound entirely; that is a
+#: deliberate act, not a default. It used to be reachable by accident —
+#: ``ConstraintConfig`` defaulted to ``None`` while the fitter defaulted to this
+#: value, so unpacking a default-constructed config switched the floor off while
+#: reading as "no change" (audit A3-01).
+#:
+#: Lives here rather than in ``gsplats.fitting.validation``, where it was
+#: defined, because ``validation`` imports ``FitConfig`` from
+#: ``gsplats.fitting.config`` — so the config module could not name its own
+#: default without a circular import. ``validation`` re-exports it for the
+#: existing import sites.
+DEFAULT_SIGMA_MIN_DIAG: Final[float] = float(math.sqrt(1.0 / 12.0))
 
 
 # =============================================================================

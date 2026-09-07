@@ -65,7 +65,7 @@ The evictor sees pooled-only buffers — active (in-use) buffers are never candi
 ## Shared types — `pool-stats.ts`
 
 - `PooledBuffer` — one pooled geometry plus the metadata the pool needs: `capacity`, `type` (`'points' | 'lines' | 'gsplats'`), `inUse`, `lastUsedFrame`.
-- `TypePoolStats` / `PoolStats` — per-type counters plus aggregate totals. `PoolStats.deferredEvictions` is incremented when the per-call batch cap (`evictBatchSize`) trips, so a long pause + resume that stretches the eviction queue across multiple frames is observable.
+- `TypePoolStats` / `PoolStats` — per-type counters plus aggregate totals. `PoolStats.deferredEvictions` is incremented when the per-call batch cap (`evictBatchSize`) trips, so a long pause + resume that stretches the eviction queue across multiple frames is observable. `PoolStats.byteBudgetEvictions` is the subset of `evictions` charged by the byte-budget pass alone: `evictions` is dominated by routine LRU recycling on any nD scene, so only this counter says the pool shed geometry it could not afford, and only it makes the rendered counts unreproducible (consumed by `core/app/debug/capture-readiness.ts`).
 - `PooledBufferRef` — minimal `{ bytes, payload? }` shape consumed by the pure `selectBuffersToEvict` selector.
 
 ## Invariants

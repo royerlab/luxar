@@ -11,7 +11,10 @@ import numpy as np
 import torch
 
 from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
-from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
+from luxar.typing_utils.constants import (
+    DEFAULT_SIGMA_MIN_DIAG,
+    DEFAULT_TRUNCATION_RADIUS,
+)
 
 if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import GSplatData
@@ -38,21 +41,37 @@ IterCallback = Callable[[int, torch.Tensor, Dict[str, Any]], None]
 
 @dataclass(frozen=True)
 class OptimConfig:
-    """Optimization hyperparameters for fit_gaussian_splats().
+    """Optimization hyperparameters for :func:`fit_gaussian_splats`.
 
-    Example::
+    A declarative bundle. ``fit_gaussian_splats`` takes these as FLAT keyword
+    arguments — there is no ``optim=`` parameter — so a config is applied by
+    unpacking it::
 
+        from dataclasses import asdict
+
+        from luxar.gsplats import fit_gaussian_splats
         from luxar.gsplats.fitting.config import OptimConfig
+
         cfg = OptimConfig(n_iters=2000, lr=0.01, early_stop_patience=500)
-        result = fit_gaussian_splats(volume, optim=cfg)
+        result = fit_gaussian_splats(volume, **asdict(cfg))
+
+    Every field defaults to exactly what ``fit_gaussian_splats`` defaults to, so
+    unpacking a default-constructed config is a no-op rather than a silent
+    change of behaviour. ``test_no_default_disagrees_with_the_entry_point``
+    enforces that for every field of all three configs.
     """
 
     n_iters: int = 1000
     lr: float = 0.01
-    gradient_clip: Optional[float] = 1.0
+    # Disabled, matching the fitter: MSE gradients are well-scaled.
+    gradient_clip: Optional[float] = None
     scheduler_type: str = "plateau"
-    patience: int = 25
-    lr_reduction_factor: float = 0.98
+    # 15/0.9, not the gentler 25/0.98 this once carried: the fitter's own
+    # comment records that the tuned pair is 33% faster at the same PSNR, and a
+    # config claiming to configure the fitter must not hand back the superseded
+    # values.
+    patience: int = 15
+    lr_reduction_factor: float = 0.9
     early_stop_patience: Optional[int] = 300
     sort_splats_enabled: bool = True
     sort_splats_interval: int = 1000
@@ -67,32 +86,42 @@ class LossConfig:
     dataset tested. Pass ``loss_type="mse"`` or ``loss_type="poisson"`` to
     override.
 
-    Example::
+    Applied by unpacking — there is no ``loss=`` parameter::
 
+        from dataclasses import asdict
+
+        from luxar.gsplats import fit_gaussian_splats
         from luxar.gsplats.fitting.config import LossConfig
+
         cfg = LossConfig(loss_type="poisson", asymmetric_penalty=5.0)
-        result = fit_gaussian_splats(volume, loss=cfg)
+        result = fit_gaussian_splats(volume, **asdict(cfg))
     """
 
     loss_type: str = "l1"
     asymmetric_penalty: Optional[float] = 1.0
     l1_amp: Optional[float] = None
     l1_diag: Optional[float] = None
-    boundary_penalty: Optional[float] = None
 
 
 @dataclass(frozen=True)
 class ConstraintConfig:
-    """Constraint configuration for fit_gaussian_splats().
+    """Constraint configuration for :func:`fit_gaussian_splats`.
 
-    Example::
+    Applied by unpacking — there is no ``constraints=`` parameter::
 
+        from dataclasses import asdict
+
+        from luxar.gsplats import fit_gaussian_splats
         from luxar.gsplats.fitting.config import ConstraintConfig
+
         cfg = ConstraintConfig(amp_max=2.0, max_eccentricity=5.0)
-        result = fit_gaussian_splats(volume, constraints=cfg)
+        result = fit_gaussian_splats(volume, **asdict(cfg))
     """
 
-    sigma_min_diag: Optional[Sequence[float] | float] = None
+    # DEFAULT_SIGMA_MIN_DIAG, not None. `None` removes the lower bound on splat
+    # width entirely, so unpacking a default config used to switch the floor OFF
+    # while reading as "no change".
+    sigma_min_diag: Optional[Sequence[float] | float] = DEFAULT_SIGMA_MIN_DIAG
     sigma_max_diag: Optional[Sequence[float] | float] = None
     amp_max: Optional[float] = None
     max_eccentricity: Optional[float] = 10.0
@@ -229,7 +258,11 @@ class FitConfig:
     amp_max: Optional[float] = None  # Maximum amplitude value if specified
 
     # Constraint parameters
-    max_eccentricity: Optional[float] = None  # Limit ratio of longest to shortest axis
+    # 10.0, matching `ConstraintConfig` and `fit_gaussian_splats`. It was
+    # None here, so constructing a `FitConfig(...)` without explicitly passing
+    # this optional field removed the eccentricity limit entirely while every
+    # documented default says 10.
+    max_eccentricity: Optional[float] = 10.0  # Limit ratio of longest to shortest axis
 
     # Voxel footprint correction (post-processing)
     # - False: Disabled (default)

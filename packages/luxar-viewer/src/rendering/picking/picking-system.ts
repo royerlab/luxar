@@ -37,6 +37,7 @@
 import * as THREE from 'three';
 import type { PostProcessingManager } from '../post-processing/post-processing-manager';
 import { isCameraAwareMaterial } from '../materials/_shared/camera-aware-material';
+import { getDensityDrop, setDensityDrop } from '../materials/_shared/density-drop';
 import { isSurfacePickAwareMaterial } from './gsplat/material';
 import { isMeshPickAwareMaterial } from './mesh/pick-mode';
 import { alignProvokingVertexWithWebGPU } from './mesh/provoking-vertex';
@@ -63,6 +64,7 @@ import {
 import type { LuxarCamera } from '../../utils/camera-utils';
 import { log, Modules } from '../../utils/log';
 import { clamp } from '../../utils/clamp';
+import { isPhysicalMeshMaterial } from '../materials/mesh-physical/config';
 
 /** Result of a successful pick operation. */
 export interface PickResult {
@@ -767,6 +769,11 @@ export class PickingSystem {
       if (isCameraAwareMaterial(mat)) {
         mat.updateCameraParams(fov, pickRes, isOrtho, undefined, pixelRatio);
       }
+      // Density-guard thinning sync: the pick pass must drop exactly the
+      // elements the visual pass drops (same hash of the same storage
+      // index), or hovering a thinned-away element would resolve a pick the
+      // user cannot see. Cheap no-op when unchanged.
+      setDensityDrop(mat, getDensityDrop((entry.main as THREE.Mesh).material));
 
       // Pick-depth convention sync: under the depth-ordered surface
       // modes — 'normal' (sorted alpha-over) and 'opaque' (depth-
@@ -794,7 +801,12 @@ export class PickingSystem {
         const mainMat = (entry.main as THREE.Mesh).material as
           THREE.Material | THREE.Material[] | undefined;
         const single = Array.isArray(mainMat) ? mainMat[0] : mainMat;
-        const mode = (single?.userData.blendingMode ?? 'additive') as BlendingMode;
+        const mode =
+          single && isPhysicalMeshMaterial(single)
+            ? single.transparent
+              ? 'normal'
+              : 'opaque'
+            : ((single?.userData.blendingMode ?? 'additive') as BlendingMode);
         if (isMeshPickAwareMaterial(mat)) {
           mat.setPickMode(mode);
           if (single) mat.setPickSide(single.side);

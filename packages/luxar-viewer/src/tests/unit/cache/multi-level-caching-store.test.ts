@@ -1,5 +1,6 @@
 import { getEventListeners } from 'node:events';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { computeCacheBudgets } from '../../../cache/heap-budget';
 import { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
 import { OPFSStore } from '../../../cache/multi-level-caching-store/opfs-store';
 
@@ -2541,6 +2542,20 @@ describe('MultiLevelCachingStore', () => {
       };
     }
 
+    it('floors the pending-byte budget without shrinking larger L1 budgets', () => {
+      const constrainedBudgets = computeCacheBudgets(undefined, 16 * 1024 * 1024);
+      const constrainedStore = new MultiLevelCachingStore('https://example.com/data.zarr', {
+        l1MaxSize: constrainedBudgets.l1Bytes,
+      });
+      const roomyStore = new MultiLevelCachingStore('https://example.com/data.zarr', {
+        l1MaxSize: 80 * 1024 * 1024,
+      });
+
+      expect(constrainedBudgets.l1Bytes).toBe(0);
+      expect(constrainedStore.getStats().l2WriteQueue.maxBytes).toBe(64 * 1024 * 1024);
+      expect(roomyStore.getStats().l2WriteQueue.maxBytes).toBe(80 * 1024 * 1024);
+    });
+
     it('does not block get() on the L2 write, then persists it in the background', async () => {
       const gate = installChunkWriteGate(mocks);
       gate.open();
@@ -2555,6 +2570,7 @@ describe('MultiLevelCachingStore', () => {
       expect(mocks.files.size).toBe(before);
       const q = store.getStats().l2WriteQueue;
       expect(q.inFlight + q.depth).toBeGreaterThanOrEqual(1);
+      expect(q.maxBytes).toBe(64 * 1024 * 1024);
       expect(store.getStats().l2.writes).toBe(0);
 
       // Release + drain → the background write lands.

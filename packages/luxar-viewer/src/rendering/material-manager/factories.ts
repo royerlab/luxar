@@ -21,6 +21,7 @@ import { LineMaterial } from '../materials/line/material-glsl';
 import type { MeshShadingMode } from '../materials/mesh/appearance';
 import { GSplatMaterial } from '../materials/gsplat/material-glsl';
 import { MeshMaterial } from '../materials/mesh/material-glsl';
+import { PhysicalMeshMaterial } from '../materials/mesh-physical/material-glsl';
 import { PointPickingMaterial } from '../picking/point/material';
 import { LinePickingMaterial } from '../picking/line/material';
 import { GSplatPickingMaterial } from '../picking/gsplat/material';
@@ -214,7 +215,26 @@ export const VISUAL_FACTORIES = {
   line: { glsl: () => LineMaterial, tsl: () => requireTslMaterials().materials.line },
   gsplat: { glsl: () => GSplatMaterial, tsl: () => requireTslMaterials().materials.gsplat },
   mesh: { glsl: () => MeshMaterial, tsl: () => requireTslMaterials().materials.mesh },
+  /**
+   * The mesh's second material FAMILY, not a fifth geometry type: three's own
+   * physically based material behind the Luxar leaf surface
+   * (`MESH_PHYSICAL_MATERIALS_SPEC.md` §3.2). A separate key rather than a variant of
+   * `mesh` because none of the house contracts apply to it — no codegen snapshot, no
+   * per-epoch shading define, no blend-mode state — and, deliberately, NO matching
+   * `PICKING_FACTORIES` entry: picking renders geometry, not appearance, so a physical
+   * mesh picks through the house `mesh` pick material.
+   */
+  meshPhysical: {
+    glsl: () => PhysicalMeshMaterial,
+    tsl: () => requireTslMaterials().materials.meshPhysical,
+  },
 } as const;
+
+/**
+ * The geometry KINDS — the keys that must have both a visual and a picking pair.
+ * `meshPhysical` is excluded on purpose (see its entry above).
+ */
+export const GEOMETRY_KINDS = ['point', 'line', 'gsplat', 'mesh'] as const;
 
 /**
  * Constructor table for the picking material pair of each geometry

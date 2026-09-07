@@ -367,6 +367,60 @@ describe('byte-budget eviction', () => {
 
     generousPool.dispose();
   });
+
+  /**
+   * `evictions` conflates two events that mean opposite things to a capture
+   * tool (#2508): routine LRU recycling of released pooled buffers, which every
+   * nD scene does constantly as slices change, and byte-budget reclamation,
+   * which means the pool could not hold what the scene asked for. Only the
+   * second makes the rendered counts unreproducible, so it gets its own
+   * counter — and a consumer that refused on `evictions` would refuse every
+   * normal nD capture.
+   */
+  describe('byteBudgetEvictions attribution', () => {
+    it('counts the byte-budget pass', () => {
+      const bytePool = new GPUBufferPool(20, 300, 5, () => 200);
+      bytePool.acquirePointsGeometry('p1', 500);
+      bytePool.releasePointsGeometry('p1'); // release runs evictUnused internally
+
+      const stats = bytePool.getStats();
+      expect(stats.byteBudgetEvictions).toBeGreaterThan(0);
+      // A subset of the total, never a second tally of the same event.
+      expect(stats.byteBudgetEvictions).toBeLessThanOrEqual(stats.evictions);
+      bytePool.dispose();
+    });
+
+    it('stays 0 for a count-based LRU eviction', () => {
+      // THE BUDGET REGIME IS THE WHOLE TEST. A GENEROUS but ENABLED byte budget
+      // is the discriminating setup: with the pass disabled (budget 0) the
+      // whole block is skipped, so a counter mis-wired to `evictUnused`'s TOTAL
+      // would still read 0 and this would prove nothing. Verified by mutation —
+      // `byteBudgetEvictions += evicted` survives at budget 0 and fails here.
+      // Eviction age 1 frame, so the LRU pass disposes the pooled buffer while
+      // the byte pass finds the pool comfortably under budget and does nothing.
+      const lruPool = new GPUBufferPool(20, 1, 5, () => 100_000_000);
+      lruPool.acquirePointsGeometry('p1', 100);
+      lruPool.releasePointsGeometry('p1');
+      for (let i = 0; i < 5; i++) lruPool.beginFrame();
+
+      expect(lruPool.evictUnused()).toBeGreaterThan(0);
+      const stats = lruPool.getStats();
+      expect(stats.evictions).toBeGreaterThan(0);
+      expect(stats.byteBudgetEvictions).toBe(0);
+      lruPool.dispose();
+    });
+
+    it('stays 0 when the byte-budget pass is disabled outright', () => {
+      const countOnly = new GPUBufferPool(20, 1, 5, () => 0);
+      countOnly.acquirePointsGeometry('p1', 500);
+      countOnly.releasePointsGeometry('p1');
+      for (let i = 0; i < 5; i++) countOnly.beginFrame();
+      countOnly.evictUnused();
+
+      expect(countOnly.getStats().byteBudgetEvictions).toBe(0);
+      countOnly.dispose();
+    });
+  });
 });
 
 describe('post-grow reclaim (#2426 pool retention)', () => {

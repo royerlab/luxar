@@ -34,6 +34,11 @@ from ...encoding import (
     gridded_axis_step,
 )
 from ...encoding.compression import resolve_compressor
+from ...typing_utils.aliases import (
+    ColorArray,
+    PositionArray,
+    ScalarArray,
+)
 from ...typing_utils.constants import (
     COORDINATE_U16_MAX_EXTENT,
     DEFAULT_TRUNCATION_RADIUS,
@@ -165,7 +170,7 @@ class _CentersEncodingPlan(NamedTuple):
 
 def _axis_center_offender(
     axis: int,
-    column: NDArray[np.float32],
+    column: NDArray[np.floating[Any]],
     lo: float,
     extent: float,
     chol: NDArray[np.float32],
@@ -242,7 +247,7 @@ def _axis_center_offender(
 
 
 def _center_quantization_offender(
-    centers: NDArray[np.float32],
+    centers: PositionArray,
     cholesky_factors: NDArray[np.float32],
     n_dims: int,
 ) -> Optional[Tuple[int, float, int, float, float]]:
@@ -308,7 +313,11 @@ def _center_quantization_offender(
     if n_rows == 0:
         return None
 
-    arr = np.asarray(centers)
+    # Annotated because `PositionArray` is a union and reducing a union loses
+    # the dtype for the type checker. `np.asarray` with no `dtype=` is a view,
+    # so this costs nothing at runtime — which matters: a float64 copy of the
+    # centers is 53 MB on a 1.65M x 4 leaf, paid per leaf per ladder.
+    arr: NDArray[np.floating[Any]] = np.asarray(centers)
     if arr.ndim != 2 or arr.shape[1] != n_dims:
         # Neither this rail nor the encoder's snap reasons about a non-(N, d)
         # coordinate array — both are per-axis, and the encoder falls through to
@@ -359,7 +368,7 @@ def _center_quantization_offender(
 
 
 def _resolve_centers_encoding_mode(
-    centers: NDArray[np.float32],
+    centers: PositionArray,
     cholesky_factors: NDArray[np.float32],
     n_dims: int,
     mode: EncodingMode,
@@ -414,7 +423,7 @@ def _resolve_centers_encoding_mode(
 
 def _centers_mode_for_write(
     plan: Optional[_CentersEncodingPlan],
-    centers: NDArray[np.float32],
+    centers: PositionArray,
     cholesky_factors: NDArray[np.float32],
     n_dims: int,
     ctx: DatasetCtx,
@@ -427,121 +436,11 @@ def _centers_mode_for_write(
     )
 
 
-def validate_gsplat_inputs(
-    centers: NDArray[np.float32],
-    amplitudes: Union[NDArray[np.float32], float],
-    cholesky_factors: NDArray[np.float32],
-    colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]] = None,
-    *,
-    check_values: bool = True,
-) -> Tuple[
-    NDArray[np.float32],
-    Union[NDArray[np.float32], float],
-    NDArray[np.float32],
-    Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]],
-    int,
-    int,
-    bool,
-]:
-    """Validate and normalize gsplat inputs.
-
-    ``check_values=False`` skips the O(N) value scans (finiteness / sign /
-    color checks) and keeps only the cheap shape normalization. It is for
-    callers that already ran the full check on the SAME arrays — the per-level
-    write after ``preflight_validate_leaf`` — so each leaf is value-scanned
-    exactly once instead of two or three times.
-
-    Returns:
-        (centers, amplitudes, cholesky_factors, colors,
-         n_splats, n_dims, cholesky_is_uniform)
-    """
-    from ...validation.base import (
-        _validate_numeric_finite_values,
-        validate_cholesky_for_writing,
-        validate_colors_for_writing,
-        validate_positions_for_writing,
-    )
-    from .node_common import validate_broadcast_color
-
-    if check_values:
-        n_splats, n_dims = validate_positions_for_writing(centers)
-    else:
-        # Shape/finiteness already checked on these arrays by the caller.
-        n_splats, n_dims = centers.shape
-    expected_k = n_dims * (n_dims + 1) // 2
-    cholesky_is_uniform = False
-
-    if cholesky_factors.ndim == 1:
-        if cholesky_factors.shape[0] != expected_k:
-            raise ValueError(
-                f"Cholesky factors shape mismatch: expected ({expected_k},), "
-                f"got {cholesky_factors.shape}"
-            )
-        cholesky_factors = cholesky_factors.reshape(1, expected_k)
-        cholesky_is_uniform = True
-    elif cholesky_factors.shape != (n_splats, expected_k):
-        raise ValueError(
-            f"Cholesky factors shape mismatch: expected ({n_splats}, {expected_k}), "
-            f"got {cholesky_factors.shape}"
-        )
-
-    # Finiteness + positive-diagonal gate (shape is normalized above). Mirrors
-    # the radii/widths validators: a NaN or non-positive diagonal used to pass
-    # the shape-only check and either die deep in the encoder after centers were
-    # written or be silently clamped to a degenerate covariance.
-    if check_values:
-        validate_cholesky_for_writing(cholesky_factors, n_dims)
-
-    # Validate amplitudes (finiteness first, mirroring radii/widths — a NaN
-    # would silently pass `< 0` since `nan < 0` is False and corrupt the store).
-    if isinstance(amplitudes, np.ndarray):
-        if amplitudes.shape[0] != n_splats:
-            raise ValueError(
-                f"Amplitudes shape {amplitudes.shape} doesn't match n_splats {n_splats}"
-            )
-        if check_values:
-            _validate_numeric_finite_values(amplitudes, "amplitudes")
-            if np.any(amplitudes < 0):
-                min_val = float(np.min(amplitudes))
-                raise ValueError(
-                    f"Amplitudes must be non-negative (>= 0). "
-                    f"Found minimum value: {min_val:.3f}"
-                )
-    elif isinstance(amplitudes, (int, float)):
-        if not np.isfinite(amplitudes):
-            raise ValueError(f"Amplitude must be finite. Got {amplitudes}")
-        if amplitudes < 0:
-            raise ValueError(f"Amplitude must be non-negative (>= 0). Got {amplitudes}")
-
-    # Colors: the same check write_gsplat_arrays historically ran POST-write;
-    # running it here puts colors in the pre-group gate on every path (flat
-    # write_gsplats and the leaf preflight alike). GSplats accept RGBA — the
-    # alpha column is per-splat opacity. Broadcast list/tuple colors get the
-    # same pre-write gate Points/Lines use (validate_broadcast_color) — a NaN
-    # or wrong-length tuple would otherwise be discovered only in write_colors,
-    # after centers/amplitudes/Cholesky were already on disk.
-    if check_values:
-        if isinstance(colors, np.ndarray):
-            validate_colors_for_writing(colors, n_splats, channels=(3, 4))
-        elif isinstance(colors, (list, tuple)):
-            validate_broadcast_color(colors)
-
-    return (
-        centers,
-        amplitudes,
-        cholesky_factors,
-        colors,
-        n_splats,
-        n_dims,
-        cholesky_is_uniform,
-    )
-
-
 def apply_gsplat_spatial_ordering(
-    centers: NDArray[np.float32],
-    amplitudes: Union[NDArray[np.float32], float],
+    centers: PositionArray,
+    amplitudes: Union[ScalarArray, float],
     cholesky_factors: NDArray[np.float32],
-    colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]],
+    colors: Optional[Union[ColorArray, tuple, list]],
     label_ids: Optional[np.ndarray],
     n_splats: int,
     n_dims: int,
@@ -552,10 +451,10 @@ def apply_gsplat_spatial_ordering(
     *,
     dataset_ctx: Optional[DatasetCtx] = None,
 ) -> Tuple[
+    PositionArray,
+    Union[ScalarArray, float],
     NDArray[np.float32],
-    Union[NDArray[np.float32], float],
-    NDArray[np.float32],
-    Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]],
+    Optional[Union[ColorArray, tuple, list]],
     Optional[np.ndarray],
     Optional[Dict[str, Any]],
     Optional[_CentersEncodingPlan],
@@ -682,7 +581,7 @@ def resolve_gsplat_chunk_size(n_splats: int, n_dims: int) -> int:
 
 
 def compute_amplitude_mass_stats(
-    amplitudes: Union[NDArray[np.float32], float],
+    amplitudes: Union[ScalarArray, float],
     chol_diag: NDArray[np.float32],
     n_splats: int,
 ) -> Tuple[float, float]:
@@ -755,7 +654,7 @@ _OPTIONAL_AMPLITUDE_ATTRS: Tuple[str, ...] = (
 
 
 def amplitude_mass_stats_attrs(
-    amplitudes: Union[NDArray[np.float32], float],
+    amplitudes: Union[ScalarArray, float],
     chol_diag: NDArray[np.float32],
     n_splats: int,
 ) -> Dict[str, float]:
@@ -837,10 +736,10 @@ def _apply_label_metadata(group: zarr.Group, metadata: Dict[str, Any]) -> None:
 
 def write_gsplat_arrays(
     group: zarr.Group,
-    centers: NDArray[np.float32],
-    amplitudes: Union[NDArray[np.float32], float],
+    centers: PositionArray,
+    amplitudes: Union[ScalarArray, float],
     cholesky_factors: NDArray[np.float32],
-    colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]],
+    colors: Optional[Union[ColorArray, tuple, list]],
     label_ids: Optional[np.ndarray],
     label_vocabulary: Optional[Dict[int, str]],
     n_splats: int,

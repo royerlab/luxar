@@ -94,7 +94,7 @@ against what the deployed viewer commits while the axis plays:
 | node | levels | p05 rung 0 | observed playback | reads as |
 |---|---|---|---|---|
 | `drosophila_embryogenesis` | 14 | 7 | 20-51 of 166,443 | blank |
-| `nexrad_supercell` | 7 | 4 | 187-440 of ~10,000 | structure gone |
+| `nexrad_supercell` (published store) | 7 | 4 | 187-440 of ~10,000 | structure gone |
 | `zebrafish_timelapse/endoderm` | 4 | 330 | ~1,449 of ~11,159 | soft, usable |
 | `celegans_tracking` | 4 | 1,069 | ~2,970 of 3,209 | fine |
 | `neuromast_2ch/membranes` | 8 | 2,962 | 12,842-17,465 of 110,614 | soft, usable |
@@ -105,9 +105,23 @@ playback column above was measured under the old LOD-0-only policy. Rung 0
 remains the floor every slice starts from, so a starved p05 still identifies a
 starved opening frame wherever playback lands.
 
+The `nexrad_supercell` row describes the **published** store and stays true until
+the corpus is regenerated. Its *source* no longer authors that ladder: since #2485
+the demo passes `additive_lod=dict(n_lods=4, slice_dims=[3], recompute=True)`,
+whose rung 0 delivers a measured 2,744 splats per scan and carries the
+5th-percentile scan (774 splats) whole. The row is kept rather than deleted
+because the lesson — count per slice, not per node — is what it is here to teach.
+
 **Rules that follow.** Prefer `--n-lods 3..4` on any node with a hidden
 dimension, then inspect the per-slice histogram on a long or non-uniform axis
-rather than trusting the aggregate share. If you use `--target-ms` there, read
+rather than trusting the aggregate share. From Python, the stronger option is
+`additive_lod=dict(..., slice_dims=[3])` — raw pre-`dim_order` centre columns —
+which interleaves the ordering round-robin across the hidden coordinates so every
+rung carries an equal ABSOLUTE per-slice budget instead of a proportional share —
+a guarantee rather than an average. Pair it with `recompute=True` on a stacked
+dataset, or the spec is shadowed by the merged per-source ladder and never runs.
+There is no CLI flag for it: `gsplat lod` has no scene to say which columns are
+hidden. If you use `--target-ms`, read
 the CLI's logged slice multiplier rather than assuming the number you typed is
 what a viewer will see. Count stops as distinct OCCURRING combinations across
 all hidden axes: not the product of per-axis cardinality
@@ -115,12 +129,17 @@ all hidden axes: not the product of per-axis cardinality
 `Dimension` range (`drosophila_embryogenesis` declares 500 timepoints and its
 coarsest rung carries data at 499).
 
-Three landed protections keep this from resting on memory: the CLI scales
+Four landed protections keep this from resting on memory: the CLI scales
 `--target-ms` by the slice count; the demo policy floors sliced first rungs at an
-aggregate share before stores are built; and `hatch run check-demo-ladders` fails
-a built store whose sparsest slices fall below the floor. The gate measures the
-5th percentile, not the maximum — a ladder starves at its sparsest slice, and one
-busy coordinate used to mask hundreds of starved ones.
+aggregate share before stores are built; `additive_lod=dict(slice_dims=…)` makes
+a gsplat ladder's per-slice budget absolute rather than proportional, and the demo
+authoring gate requires it (with `recompute=True`) on any gsplats adder that
+*authors* an `additive_lod=` in a hidden-dimension demo — 12 of the 13 such demos
+pass none, so the gate does not reach them; and `hatch run check-demo-ladders`
+fails a built store
+whose sparsest slices fall below the floor. The gate measures the 5th percentile,
+not the maximum — a ladder starves at its sparsest slice, and one busy coordinate
+used to mask hundreds of starved ones.
 
 ## Measured example
 

@@ -23,6 +23,7 @@ import { clampLineCapacity } from '../../../rendering/element-texture-layout';
 import { syncLineMaterialWithGeometry } from '../../../rendering/material-sync-helpers';
 import { invalidateRenderObjectFor } from './invalidate-render-object';
 import { stampLadderComplete, stampLoadedViewVersion } from './stamp-view-version';
+import { markFirstCommit } from '../../../profiling/load-timeline';
 import {
   getCommittedData,
   hasCommittedData,
@@ -65,6 +66,7 @@ export function commitLinesGeometry(
     // so the registry keeps treating this node as fresh; touch no geometry.
     stampLoadedViewVersion(mesh.userData, loadedViewVersion);
     stampLadderComplete(mesh.userData);
+    markFirstCommit('lines');
     return;
   }
 
@@ -243,6 +245,7 @@ export function commitLinesGeometry(
     stampLoadedViewVersion(mesh.userData, loadedViewVersion);
     // Ladder-completeness stamp for the never-downgrade display gate.
     stampLadderComplete(mesh.userData);
+    markFirstCommit('lines');
     // Record the committed data reference — a later update returning the
     // SAME reference (memoized progressive concat) can then take the
     // stamp-only no-op path instead of re-projecting + re-uploading.

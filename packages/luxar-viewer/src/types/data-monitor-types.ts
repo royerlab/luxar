@@ -546,6 +546,9 @@ export interface SceneGraphNode {
  */
 export type LODNodeKind = NodeKind | 'additive';
 
+/** Why a progressive loader's next rung is held back (see `LODProgressState.held`). */
+export type RefinementHoldReason = 'density' | 'budget';
+
 /**
  * Live, per-node LOD / progressive-refinement / cache-residency state,
  * polled by the monitor each tick. Keyed by scene-graph path. All fields
@@ -569,6 +572,15 @@ export interface LODProgressState {
   total?: number;
   /** additive: more LODs pending — refinement loop still running. */
   refining?: boolean;
+  /**
+   * additive: why the next rung is HELD rather than streaming, when it is.
+   * `'density'`: the density guard's rung gate — at the current framing the
+   * node already projects more elements per pixel than its cap; loads once
+   * the camera moves in. `'budget'`: the residency ceiling — loading it would
+   * exceed the in-memory budget; nothing more loads until memory frees.
+   * Absent while a pending rung is genuinely downloading (or nothing is pending).
+   */
+  held?: RefinementHoldReason;
   /**
    * additive: whether the most recent streamed load was fully
    * cache-resident (drives a "cached" vs "streaming" indicator). Mirrors
@@ -629,6 +641,30 @@ export interface NodeDrawOrder {
  */
 export interface DrawOrderProvider {
   getDrawOrderStates(): Map<string, NodeDrawOrder>;
+}
+
+/**
+ * Live projected-density state of one drawable node, as measured by the
+ * density guard (`scene/projected-density.ts`). Distinct from the LOD chip:
+ * that one says how much of the node is RESIDENT, this one says how much of
+ * the resident data the shader actually DRAWS this frame. Pure observability.
+ */
+export interface NodeDensityState {
+  /** Fraction of the resident elements drawn (1 = all; 1/2, 1/4, … when thinned). */
+  keep: number;
+  /** Resident elements per drawing-buffer pixel of the node's projected footprint (0 off-screen). */
+  elementsPerPixel: number;
+  /** Whether the node's blend mode sums energy — only such nodes are ever thinned. */
+  blendable: boolean;
+  onScreen: boolean;
+}
+
+/**
+ * Per-path density snapshot for the scene-graph tree's lattice-glyph `1/K` density chip.
+ * App-scoped (the guard outlives any one scene); wired by the init pipeline.
+ */
+export interface DensityProvider {
+  getDensityStates(): Map<string, NodeDensityState>;
 }
 
 /**

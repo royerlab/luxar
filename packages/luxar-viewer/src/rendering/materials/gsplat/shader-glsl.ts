@@ -116,6 +116,12 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         // changes downstream of this block. The width is a multiple of
         // 4 (element-texture-layout.ts), so a splat's 4 texels share one
         // row and only x advances.
+        // Projected-density thinning (density-guard): drop this instance
+        // before any texel fetch; the rasterizer discards a z=-2 vertex.
+        if (luxarDensityDropped()) {
+            gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
+            return;
+        }
         int splatBase = int(luxarSortedIndex()) * 4;
         int splatTexW = LUXAR_SPLAT_TEX_W;
         ivec2 texel0 = ivec2(splatBase % splatTexW, splatBase / splatTexW);

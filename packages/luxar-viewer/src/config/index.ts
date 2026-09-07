@@ -7,6 +7,7 @@ import { cameraConfig } from './sections/camera/data';
 import { animationConfig } from './sections/animation/data';
 import { sceneConfig, shaderConfig } from './sections/scene/data';
 import { adaptiveDPRConfig } from './sections/adaptive-dpr/data';
+import { densityGuardConfig } from './sections/density-guard/data';
 import { depthSortConfig } from './sections/depth-sort/data';
 import { cacheConfig } from './sections/cache/data';
 import { dimensionAnimationConfig } from './sections/dimension-animation/data';
@@ -30,6 +31,8 @@ export const config: AppConfig = {
   animation: animationConfig,
 
   adaptiveDPR: adaptiveDPRConfig,
+
+  densityGuard: densityGuardConfig,
 
   depthSort: depthSortConfig,
 

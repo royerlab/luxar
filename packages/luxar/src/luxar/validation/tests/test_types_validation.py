@@ -6,6 +6,7 @@ from typing import Any, cast
 import numpy as np
 import pytest
 
+from luxar.typing_utils.enums import NodeType, PhysicalUnit
 from luxar.validation import validate_categories
 from luxar.validation.types import (
     MAX_TRUNCATION_RADIUS_FLOAT32,
@@ -30,6 +31,21 @@ from luxar.validation.types import (
     validate_sharpness,
     validate_transform,
     validate_truncation_radius,
+)
+
+_ACCEPTED_UNIT_SPELLINGS = (
+    "nm",
+    "um",
+    "mm",
+    "cm",
+    "m",
+    "metre",
+    "meter",
+    "km",
+    "inch",
+    "foot",
+    "px",
+    "au",
 )
 
 
@@ -131,13 +147,31 @@ class TestNodeTypeValidation:
         assert validate_node_type("group") == "group"
         assert validate_node_type("scene") == "scene"
 
+    def test_every_node_type_member_is_accepted(self) -> None:
+        """The whole ``NodeType`` vocabulary validates and round-trips.
+
+        Derived from the enum, so a member added to ``NodeType`` (and therefore
+        to ``format-contract/contract.yaml``) is covered without editing this
+        test. It used to be hand-copied into ``validate_node_type``, which had
+        drifted: ``mesh`` was missing, so this public validator rejected a
+        shipped geometry type while ``validate_zarr_attributes`` — which reads
+        the contract — accepted it.
+        """
+        members = list(NodeType)
+        assert members, "NodeType is empty — the loop would be vacuous"
+        assert "mesh" in {m.value for m in members}, (
+            "the regression this test guards is specifically about `mesh`"
+        )
+        for member in members:
+            assert validate_node_type(member.value) == member.value
+
     def test_invalid_node_type(self) -> None:
         """Test that invalid node types raise ValueError."""
         with pytest.raises(ValueError, match="Invalid node type 'invalid'"):
             validate_node_type("invalid")
 
-        with pytest.raises(ValueError, match="Invalid node type 'mesh'"):
-            validate_node_type("mesh")
+        with pytest.raises(ValueError, match="Invalid node type 'volume'"):
+            validate_node_type("volume")
 
         with pytest.raises(ValueError, match="Invalid node type ''"):
             validate_node_type("")
@@ -148,23 +182,24 @@ class TestPhysicalUnitValidation:
 
     def test_valid_units(self) -> None:
         """Test that valid physical units are accepted."""
-        # Test all valid units
-        valid_units = [
-            "nm",
-            "um",
-            "mm",
-            "cm",
-            "m",
-            "metre",
-            "meter",
-            "km",
-            "inch",
-            "foot",
-            "px",
-            "au",
-        ]
-        for unit in valid_units:
+        for unit in _ACCEPTED_UNIT_SPELLINGS:
             assert validate_physical_unit(unit) == unit
+
+    def test_accepted_unit_spellings_match_the_enum(self) -> None:
+        """Pin the explicit expectation to its source.
+
+        ``_ACCEPTED_UNIT_SPELLINGS`` deliberately spells out the accepted
+        strings — that is what catches an accidental *widening* of the enum.
+        This test is the other half: it fails if the enum gains or loses a
+        member and the tuple was not updated, so the two can never diverge
+        silently. Before this refactor the same twelve strings existed in four places
+        (``PhysicalUnit``, ``typing_utils.config.SUPPORTED_UNITS``,
+        ``validate_physical_unit``'s local tuple, and this test tuple) with nothing
+        holding them together.
+        """
+        derived = {member.value for member in PhysicalUnit} | {"meter"}
+        assert derived, "PhysicalUnit is empty — the comparison would be vacuous"
+        assert derived == set(_ACCEPTED_UNIT_SPELLINGS)
 
     def test_invalid_unit(self) -> None:
         """Test that invalid units raise ValueError."""

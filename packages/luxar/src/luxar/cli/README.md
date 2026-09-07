@@ -47,6 +47,7 @@ print(result.stdout)
 
 - `__init__.py` - Package initialization, exports the main app
 - `main.py` - Main CLI application with the top-level commands
+- `_traceback.py` - Shared quiet-error reporting with the `LUXAR_TRACEBACK` opt-in escape hatch
 - `serving.py` - HTTP serving internals (`create_server_app`, data/viewer servers; re-exported by `main.py`)
 - `info_command.py` - The `luxar info` command implementation
 - `optimise_command.py` - The `luxar optimise` command (a thin Typer layer over `luxar.io.optimise`)
@@ -160,6 +161,9 @@ luxar info data.luxar.zarr --format json # JSON output
 share of arrays under the 16 KB floor, and the projected request count for a
 full load — computed off the same helper `luxar optimise` plans from, so a
 store that is badly chunked for streaming is visible without hosting it first.
+When the mean chunk is under 32 KB it also warns that the load will be
+round-trip bound on an HTTP/1.1 host (which `luxar serve` is): measured 10.6 s vs
+4.0 s over HTTP/2 for the same 1.5 M-point example at 25 Mbps / 30 ms RTT.
 
 ### `luxar optimise`
 Re-chunk an existing store for streaming. One structure-preserving pass: only
@@ -289,7 +293,7 @@ luxar gsplat info splats.gsplats.zarr
 ```
 
 #### `luxar gsplat view`
-Open a `.gsplats.zarr` in the web viewer. The standalone `.gsplats.zarr` is a v3.3 node subtree — exactly what the viewer renders inside a scene — so it is served **directly** via `?src=` with no scene-compile round-trip (works for a single leaf, an additive ladder, a `kind=lod` hierarchy, a `kind=partition` split, and arbitrary nestings; archives are extracted first).
+Open a `.gsplats.zarr` in the web viewer. The standalone `.gsplats.zarr` is a v3.4 node subtree — exactly what the viewer renders inside a scene — so it is served **directly** via `?src=` with no scene-compile round-trip (works for a single leaf, an additive ladder, a `kind=lod` hierarchy, a `kind=partition` split, and arbitrary nestings; archives are extracted first).
 ```bash
 luxar gsplat view splats.gsplats.zarr
 ```
@@ -409,7 +413,7 @@ luxar gsplat cal volume.zarr cal.json --progression power --power 2  # Polynomia
 **Options**: `--k-grid` (explicit comma-separated K values), `--n-grid` (default 10), `--k-min` (default 1000), `--k-max` (default 512000), `--progression` (exp/power), `--power`, `--mask-seed`, `--mask-fraction` (default 0.05), `--preset` (default n2s), `--config`, `--floor` (background floor / DC-offset suppression, default `auto` — K* is measured on floor-suppressed data, matching `fit`; pass `none` for the legacy hard-min behavior), `--device/-d`, `--k-star-metric` (psnr_minmax/psnr_foreground/gain), `--auto-region/--no-auto-region` + `--region-size`/`--region-strategy` (calibrate on a content-rich sub-region), `--feature-metric`, `--saturation-exponent`, `--rd-model/--no-rd-model`, `--fit-exponent`/`--exponent-scales` (measure the saturation exponent alpha instead of assuming the default), `--pdf` (multi-page PDF report), `--keep-fits` (persist per-K fits), `--quiet/-q`, plus volume-loader pass-through (`--channel/-c`, `--timepoint`, `--array-key`, `--axes`).
 
 #### `luxar gsplat migrate-format`
-Convert a legacy `.gsplats.zarr` layout to the current node-tree format. Five input shapes are auto-detected: v1.0 (single flat splat set), v1.1 (multi-LOD additive `/splats/lod_<i>/` subgroups), a pre-v2.0 substitutive directory (`manifest.json` + `level_<i>.gsplats.zarr`), the v2.0 `substitutive_<s>/additive_<a>/` matrix, and a v3.0/v3.1 store whose `kind=lod` groups still carry the pre-v3.2 `pixel_size` selector attrs (rewritten as `selector: "coverage"` + derived per-child `coverage_fraction`). All migrate to a single current-format (v3.3) `.gsplats.zarr`. By default the output adopts the AUTO encoding policy, so legacy float32 Cholesky factors are re-encoded as the split diagonal/off-diagonal arrays with certified uint8 per-column quantization (the encode-time covariance certificate escalates to uint16 when the measured Σ error demands it); pass `--lossless` to keep them float32 for archival fidelity.
+Convert a legacy `.gsplats.zarr` layout to the current node-tree format. Five input shapes are auto-detected: v1.0 (single flat splat set), v1.1 (multi-LOD additive `/splats/lod_<i>/` subgroups), a pre-v2.0 substitutive directory (`manifest.json` + `level_<i>.gsplats.zarr`), the v2.0 `substitutive_<s>/additive_<a>/` matrix, and a v3.0/v3.1 store whose `kind=lod` groups still carry the pre-v3.2 `pixel_size` selector attrs (rewritten as `selector: "screen-area"` + derived per-child `coverage_fraction`). All migrate to a single current-format (v3.4) `.gsplats.zarr`. By default the output adopts the AUTO encoding policy, so legacy float32 Cholesky factors are re-encoded as the split diagonal/off-diagonal arrays with certified uint8 per-column quantization (the encode-time covariance certificate escalates to uint16 when the measured Σ error demands it); pass `--lossless` to keep them float32 for archival fidelity.
 ```bash
 luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr             # single file (AUTO encoding)
 luxar gsplat migrate-format old_pyr/ v3.gsplats.zarr                        # substitutive directory
@@ -558,7 +562,7 @@ luxar gsplat batch-fit run vol.zarr out/ --gpus auto --merge-recipe stream --mer
 luxar gsplat batch-fit run vol.zarr out/ --gpus cpu                                  # CPU fallback
 luxar gsplat batch-fit run vol.zarr out/ --tiling content --cal cal.json --dry-run   # plan only
 ```
-`--gpus`: `auto` = visible cards above a free-VRAM floor (skips small cards; override `LUXAR_GPU_VRAM_FLOOR_GB`), `all` = every card, `cpu` = CPU, or an explicit list like `0,1,3`.
+`--gpus` SELECTS devices here: `auto` = visible cards above a free-VRAM floor (skips small cards; override `LUXAR_GPU_VRAM_FLOOR_GB`), `all` = every card, `cpu` = CPU, or an explicit list like `0,1,3`. Not to be confused with `submit --gpus-per-task`, which is a COUNT.
 
 #### `luxar gsplat batch-fit submit`
 Plan and submit HPC Slurm fitting jobs for large OME-Zarr datasets. Submits by default; pass `--dry-run` to plan without submitting.
@@ -566,7 +570,9 @@ Plan and submit HPC Slurm fitting jobs for large OME-Zarr datasets. Submits by d
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu                    # Submit to Slurm
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --dry-run          # Dry-run plan (no submit)
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --preset draft     # Fast preview
+luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --gpus-per-task 2  # 2 GPUs per Slurm task
 ```
+`--gpus-per-task` is a COUNT of GPUs to request for each task, emitted verbatim as `#SBATCH --gpus-per-task`. It is deliberately not spelled `--gpus`: that means the opposite thing one command over, where `batch-fit run --gpus` SELECTS which local devices to use.
 
 #### `luxar gsplat batch-fit status`
 Check the status of a batch fitting run (local `run` or Slurm `submit`).

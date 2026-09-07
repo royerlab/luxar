@@ -14,6 +14,7 @@
 
 import * as THREE from 'three';
 import { isOrthographicCamera, type LuxarCamera } from '../utils/camera-utils';
+import { config } from '../config';
 import { applyPan, type PanCtx } from './luxar-orbit-controls/math/pan';
 import { applyToCamera, initializeFromCamera } from './luxar-orbit-controls/camera-application';
 import { runUpdateStep, type OrbitUpdateCtx } from './luxar-orbit-controls/update';
@@ -21,6 +22,7 @@ import { autoRotateAxisVector } from './luxar-orbit-controls/math/auto-rotate';
 import { dollyAmplitudeChangeScale, dollyScale } from './luxar-orbit-controls/math/auto-dolly';
 import { applyZoomScale } from './luxar-orbit-controls/math/zoom';
 import { clamp } from '../utils/clamp';
+import { normalizeWheelDelta } from '../utils/wheel-delta';
 import {
   type AutoRotateAxis,
   DEFAULT_AUTO_DOLLY_AMPLITUDE,
@@ -486,8 +488,12 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
       event.preventDefault();
       event.stopImmediatePropagation();
 
-      // Accumulate into rollDelta — damping is applied in update()
-      this.rollDelta += event.deltaY * speed;
+      // Accumulate into rollDelta — damping is applied in update().
+      // The delta is normalized to pixel-mode equivalent first, which puts a
+      // line-mode browser (Firefox reports 3 lines where Chromium reports
+      // 100 px) in the same ballpark per notch: 0.024 rad against 0.050,
+      // instead of 0.0015 against 0.050.
+      this.rollDelta += normalizeWheelDelta(event, this.domElement) * speed;
 
       // Wake up animation loop (rollDelta is applied in update())
       this.dispatchEvent({ type: 'change' });
@@ -591,6 +597,9 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
       trackballRadius: this.trackballRadius,
       rotateSpeed: this.rotateSpeed,
       zoomSpeed: this.zoomSpeed,
+      // Read from config per event (the ctx is rebuilt per call) so the
+      // Settings slider applies to the very next wheel notch.
+      wheelZoomSensitivity: config.controls.wheelZoomSensitivity,
       boundOnPointerMove: this.boundOnPointerMove,
       boundOnPointerUp: this.boundOnPointerUp,
       pointers: this.pointers,

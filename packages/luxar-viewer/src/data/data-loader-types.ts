@@ -75,6 +75,17 @@ export interface SceneNode {
   /** Node type (group, points, etc.) */
   type: string;
 
+  /**
+   * Names of the child ARRAYS the store listing reports directly under this
+   * node (`positions`, `colors`, …), when the store exposed a consolidated
+   * listing that contained arrays. `undefined` when no such listing was
+   * available — loaders then fall back to probing optional arrays with a GET
+   * (the historical behaviour). Never an empty set from a listing that showed
+   * no arrays at all: a listing that cannot see arrays must not be read as
+   * "this node has none".
+   */
+  arrays?: ReadonlySet<string>;
+
   /** Rendering and node attributes from Zarr */
   attrs: {
     /**
@@ -176,9 +187,9 @@ export interface LoaderStats {
 // before it becomes drawable (loader + descriptor row + tolerance arm). Keying
 // dispatch on the wider `GeometryTypeName` would let a not-yet-drawable type
 // resolve to no loader at RUNTIME; keying it here makes omitting a drawable type
-// a COMPILE error at `LoaderByKind`, `GEOMETRY_DESCRIPTORS` and
-// `computeHiddenDimTolerance`. To switch a type on, widen `loader_types` in
-// `format-contract/contract.yaml` — never this alias.
+// a COMPILE error at `LoaderByKind`, `GEOMETRY_DESCRIPTORS`,
+// `PARTIAL_EXTEND_TOLERANCE` and `computeHiddenDimTolerance`. To switch a type
+// on, widen `loader_types` in `format-contract/contract.yaml` — never this alias.
 /**
  * Tag identifying which geometry kind the viewer can load and draw, and which a
  * node or handler therefore operates on. Used by the per-type registry that

@@ -3,7 +3,7 @@ import json
 import zarr
 
 from luxar._zarr_compat import ZARR_FORMAT
-from luxar.typing_utils.config import DEFAULT_COMP
+from luxar.io.reader import DEFAULT_COMP
 from luxar.utils.scenes import create_lorenz_attractor
 
 

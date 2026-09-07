@@ -27,6 +27,7 @@ if HAS_TORCH:
         PreprocessedData,
     )
     from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
+    from luxar.gsplats.fitting.validation import DEFAULT_SIGMA_MIN_DIAG
 
 
 def _make_fit_config(**overrides) -> "FitConfig":
@@ -109,7 +110,12 @@ class TestFitConfig:
         assert config.init_L is None
         assert config.init_amps is None
         assert config.amp_max is None
-        assert config.max_eccentricity is None
+        # 10.0, matching `ConstraintConfig` and `fit_gaussian_splats`. This line
+        # asserted None and so PINNED a divergence (audit A2-02): a
+        # `FitConfig(...)` that supplied the required fields but omitted this one
+        # removed the eccentricity limit while every documented default said 10.
+        # `test_fit_schema_agreement.py` now derives this rather than restating it.
+        assert config.max_eccentricity == 10.0
         assert config.voxel_footprint_correction is False
         assert config.clip_to_bounds is False
         assert config.voxel_size is None
@@ -183,10 +189,10 @@ class TestOptimConfig:
         cfg = OptimConfig()
         assert cfg.n_iters == 1000
         assert cfg.lr == 0.01
-        assert cfg.gradient_clip == 1.0
+        assert cfg.gradient_clip is None
         assert cfg.scheduler_type == "plateau"
-        assert cfg.patience == 25
-        assert cfg.lr_reduction_factor == 0.98
+        assert cfg.patience == 15
+        assert cfg.lr_reduction_factor == 0.9
         assert cfg.early_stop_patience == 300
         assert cfg.sort_splats_enabled is True
         assert cfg.sort_splats_interval == 1000
@@ -215,7 +221,6 @@ class TestLossConfig:
         assert cfg.asymmetric_penalty == 1.0
         assert cfg.l1_amp is None
         assert cfg.l1_diag is None
-        assert cfg.boundary_penalty is None
 
     def test_custom_values(self) -> None:
         """Test LossConfig with custom values."""
@@ -237,7 +242,7 @@ class TestConstraintConfig:
     def test_default_values(self) -> None:
         """Test ConstraintConfig default values."""
         cfg = ConstraintConfig()
-        assert cfg.sigma_min_diag is None
+        assert cfg.sigma_min_diag == DEFAULT_SIGMA_MIN_DIAG
         assert cfg.sigma_max_diag is None
         assert cfg.amp_max is None
         assert cfg.max_eccentricity == 10.0
@@ -440,3 +445,87 @@ class TestModelComponents:
             scheduler=None,
         )
         assert isinstance(components.optimizer, torch.optim.Adam)
+
+
+class TestConfigDefaultsTrackTheFitter:
+    """The three configs must describe the function they claim to configure.
+
+    ``test_constants.py::test_fit_default_uses_the_constant`` already states the
+    principle for ONE field — "ConstraintConfig carries the user-facing default;
+    fit_gaussian_splats' own signature must agree with it". Nothing checked the
+    other 22, and four had drifted:
+
+        gradient_clip        config 1.0    fitter None
+        patience             config 25     fitter 15
+        lr_reduction_factor  config 0.98   fitter 0.9
+        sigma_min_diag       config None   fitter DEFAULT_SIGMA_MIN_DIAG
+
+    That is not cosmetic. The docstrings tell you to apply a config by
+    unpacking it, and 15/0.9 is the pair the fitter's own comment records as
+    33% faster at equal PSNR, while `sigma_min_diag=None` removes the lower
+    bound on splat width altogether. Unpacking a DEFAULT-constructed config
+    therefore used to change behaviour while reading as "no change" — the worst
+    shape for a default. Default agreement is enforced centrally by
+    ``test_fit_schema_agreement.py::test_no_default_disagrees_with_the_entry_point``.
+    """
+
+    @staticmethod
+    def _fitter_defaults() -> dict:
+        """Default value of every keyword parameter of the fitter."""
+        import inspect
+
+        from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+
+        return {
+            name: parameter.default
+            for name, parameter in inspect.signature(
+                fit_gaussian_splats
+            ).parameters.items()
+            if parameter.default is not inspect.Parameter.empty
+        }
+
+    @pytest.mark.parametrize("config_cls", [OptimConfig, LossConfig, ConstraintConfig])
+    def test_every_field_is_actually_a_fitter_parameter(self, config_cls) -> None:
+        """`**asdict(cfg)` fields must not be diverted into seed generation.
+
+        The other half of the contract: matching defaults are worthless if the
+        field is absorbed by `**seed_kwargs` instead of configuring the fitter.
+        This is what the previous docstrings got wrong in the opposite direction
+        — they advertised `optim=`/`loss=`/`constraints=` parameters that never
+        existed.
+        """
+        import dataclasses
+
+        fitter = self._fitter_defaults()
+        unknown = [
+            field.name
+            for field in dataclasses.fields(config_cls)
+            if field.name not in fitter
+        ]
+
+        assert not unknown, (
+            f"{config_cls.__name__} has field(s) fit_gaussian_splats does not "
+            f"accept: {unknown}. `**asdict(cfg)` would pass them to "
+            "`**seed_kwargs` instead of configuring the fitter."
+        )
+
+    @pytest.mark.parametrize(
+        ("left_cls", "right_cls"),
+        [
+            (OptimConfig, LossConfig),
+            (OptimConfig, ConstraintConfig),
+            (LossConfig, ConstraintConfig),
+        ],
+    )
+    def test_config_field_sets_are_pairwise_disjoint(self, left_cls, right_cls) -> None:
+        """All three configs must compose in one keyword-unpacked fitter call."""
+        import dataclasses
+
+        left_fields = {field.name for field in dataclasses.fields(left_cls)}
+        right_fields = {field.name for field in dataclasses.fields(right_cls)}
+
+        assert left_fields.isdisjoint(right_fields), (
+            f"{left_cls.__name__} and {right_cls.__name__} both define "
+            f"{sorted(left_fields & right_fields)}. Unpacking both configs in "
+            "one call would raise TypeError for duplicate keyword arguments."
+        )

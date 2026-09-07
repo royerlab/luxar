@@ -26,11 +26,15 @@ import { PointPickingMaterial } from '../../../../rendering/picking/point/materi
 import { LinePickingMaterial } from '../../../../rendering/picking/line/material';
 import { GSplatPickingMaterial } from '../../../../rendering/picking/gsplat/material';
 import { MeshPickingMaterial } from '../../../../rendering/picking/mesh/material';
+import { PhysicalMeshMaterial } from '../../../../rendering/materials/mesh-physical/material-glsl';
 import { GEOMETRY_TYPES } from '../../../../types/format-contract';
 import { LINE_JOIN_UNIFORM, type LineJoinStyle } from '../../../../types/line-join';
 import { DEFAULT_LINE_PRIMITIVE } from '../../../../types/line-primitive';
 import type { PickingSystem } from '../../../../rendering/picking/picking-system';
 import { applyMeshTexture } from '../../../../rendering/node-factory/create-mesh-node';
+import { attachPointStorage } from '../../../../rendering/point-geometry';
+import { attachLineStorage } from '../../../../rendering/line-geometry';
+import { attachSplatStorage } from '../../../../rendering/gsplat-geometry';
 import type { MeshDataLoader, MeshMetadata, MeshTextureData } from '../../../../types/mesh';
 
 /** Minimal PickingSystem stand-in: the three members the pass touches. */
@@ -121,6 +125,42 @@ describe('registerExistingSceneNodes', () => {
     expect(byName.get('/lines')).toBeInstanceOf(LinePickingMaterial);
     expect(byName.get('/gsplats')).toBeInstanceOf(GSplatPickingMaterial);
     expect(byName.get('/mesh')).toBeInstanceOf(MeshPickingMaterial);
+  });
+
+  it('binds the geometry-owned element texture on the pick material of every pooled type', () => {
+    // The pick material is created on the shared PLACEHOLDER texture; only a commit
+    // (or this pass) rebinds the geometry-owned one through `userData.pickNode`. On a
+    // first load this pass runs AFTER loadScene has committed every node, so without
+    // the rebind the pick shader samples the placeholder and nothing is ever hit —
+    // which stayed hidden only while the post-load slice update re-committed every
+    // node a second time.
+    const { stub, registered } = stubPickingSystem();
+    factory.setPickingSystem(stub);
+
+    const root = new THREE.Group();
+    const attach = {
+      points: attachPointStorage,
+      lines: attachLineStorage,
+      gsplats: attachSplatStorage,
+    } as const;
+    const textures = new Map<string, THREE.DataTexture>();
+    for (const [type, attachStorage] of Object.entries(attach)) {
+      const geometry = new THREE.InstancedBufferGeometry();
+      textures.set(type, attachStorage(geometry, 8));
+      const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+      mesh.name = `/${type}`;
+      mesh.userData = { nodeType: type, attrs: {} };
+      root.add(mesh);
+    }
+    factory.registerExistingSceneNodes(root);
+
+    const uniformFor = { points: 'uPointTex', lines: 'uLineTex', gsplats: 'uSplatTex' } as const;
+    for (const { main, pick } of registered) {
+      const type = main.userData.nodeType as keyof typeof uniformFor;
+      const mat = pick.material as THREE.ShaderMaterial;
+      expect(mat.uniforms[uniformFor[type]].value, main.name).toBe(textures.get(type));
+    }
+    expect(registered).toHaveLength(3);
   });
 
   it('shares the visual geometry with the pick node and copies its world matrix', () => {
@@ -234,6 +274,22 @@ describe('registerExistingSceneNodes', () => {
     expect(pick.uniforms.uAlphaCutoff.value).toBeCloseTo(0.9);
     // The RESOLVED mode, not the authored one.
     expect(pick.uniforms.uAlphaCutout.value).toBe(0);
+  });
+
+  it('seeds translucent physical mesh picking from live compositing, not inherited attrs', () => {
+    const { stub, registered } = stubPickingSystem();
+    factory.setPickingSystem(stub);
+    const root = new THREE.Group();
+    const node = makeNode('mesh', '/glass');
+    node.userData.attrs = { blending_mode: 'additive' };
+    node.material = new PhysicalMeshMaterial({ opacity: 0.5 });
+    root.add(node);
+
+    factory.registerExistingSceneNodes(root);
+
+    const pick = registered[0].pick.material as MeshPickingMaterial;
+    expect(pick.uniforms.uAlphaCutout.value).toBe(0);
+    expect(pick.uniforms.uSurfaceDepth.value).toBe(1);
   });
 
   it('preserves the live gsplat label filter on a fresh pick material', () => {

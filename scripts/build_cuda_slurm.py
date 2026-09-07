@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -97,17 +98,17 @@ def list_available_gcc_modules() -> list[str]:
 
 def best_gcc_module(available: list[str]) -> str | None:
     """
-    Pick the highest available GCC module that is >= 9 (required by PyTorch 2.x).
+    Pick the highest available GCC module that is >= 10 (required for C++20).
 
     Module names look like 'gcc/11.3' or 'gcc/14.2'.
-    Returns None if no suitable module is found (system GCC may already be >=9).
+    Returns None if no suitable module is found (system GCC may already be >=10).
     """
     candidates = []
     for m in available:
         ver_str = m.split("/")[1].split(".")[0]  # e.g. "11" from "gcc/11.3"
         try:
             major = int(ver_str)
-            if major >= 9:
+            if major >= 10:
                 candidates.append((major, m))
         except ValueError:
             continue
@@ -115,6 +116,35 @@ def best_gcc_module(available: list[str]) -> str | None:
         return None
     candidates.sort(key=lambda x: x[0])
     return candidates[-1][1]  # highest major version
+
+
+def _highest_gcc_module(available: list[str]) -> str | None:
+    """Return the highest versioned GCC module, regardless of compiler floor."""
+    candidates = []
+    for module in available:
+        match = re.fullmatch(r"gcc/(\d+(?:\.\d+)*)", module)
+        if match is None:
+            continue
+        version = tuple(int(part) for part in match.group(1).split("."))
+        candidates.append((version, module))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0])
+    return candidates[-1][1]
+
+
+def gcc_module_status(gcc_module: str | None, available: list[str]) -> str:
+    """Describe the selected GCC module or why none can be selected."""
+    if gcc_module:
+        return f"{gcc_module}  (auto-selected; system GCC 8.5.0 is too old for C++20)"
+    if available:
+        highest_gcc = _highest_gcc_module(available)
+        found = highest_gcc or ", ".join(available)
+        return (
+            f"none suitable (highest found: {found}; "
+            "cannot compile the shipped C++20 build)"
+        )
+    return "none needed (system GCC >= 10 assumed)"
 
 
 def get_virtual_env() -> str | None:
@@ -197,14 +227,14 @@ def generate_sbatch_script(
     _i = "        "  # 8 spaces — matches the template's indent level
     if gcc_module:
         gcc_load_block = (
-            f"{_i}# PyTorch 2.x requires GCC >= 9.  Load a newer GCC module.\n"
+            f"{_i}# The shipped C++20 build requires GCC >= 10.  Load a newer GCC module.\n"
             f'{_i}echo "    Loading GCC module: {gcc_module}"\n'
             f"{_i}module load {gcc_module}\n"
             f'{_i}echo "    g++ version: $(g++ --version | head -1)"\n'
         )
     else:
         gcc_load_block = (
-            f"{_i}# GCC module: none needed (system GCC is assumed to be >= 9)\n"
+            f"{_i}# GCC module: none needed (system GCC is assumed to be >= 10)\n"
             f'{_i}echo "    g++ version: $(g++ --version | head -1)"\n'
         )
 
@@ -246,7 +276,7 @@ def generate_sbatch_script(
         echo "============================================================"
         echo ""
 
-        # ── Step 1: Load CUDA toolkit (and GCC >= 9 if needed) ───────────
+        # ── Step 1: Load CUDA toolkit (and GCC >= 10 if needed) ──────────
         echo ">>> Step 1/5: Loading CUDA module ({cuda_module})"
         module load {cuda_module}
         echo "    nvcc version: $(nvcc --version | grep 'release' | awk '{{print $6}}')"
@@ -339,10 +369,10 @@ def generate_sbatch_script(
             echo ""
             echo " Possible causes and fixes:"
             echo ""
-            echo " 1. GCC version too old (C++17 required):"
+            echo " 1. GCC version too old (C++20 required):"
             echo "      g++ --version"
-            echo "    If GCC < 9, load a newer toolchain:"
-            echo "      module load gcc/9.3.0   # or highest available"
+            echo "    If GCC < 10, load a newer toolchain:"
+            echo "      module load gcc/10   # or highest available"
             echo "      make build-cuda SLURM=1 SLURM_PARTITION={partition}"
             echo ""
             echo " 2. CUDA/PyTorch version mismatch:"
@@ -523,15 +553,10 @@ def main() -> None:
     print(f"{virtual_env}")
 
     # ── Detect GCC module ─────────────────────────────────────────────────
-    print("  Finding GCC >= 9 module...", end=" ", flush=True)
+    print("  Finding GCC >= 10 module...", end=" ", flush=True)
     available_gcc = list_available_gcc_modules()
     gcc_module = best_gcc_module(available_gcc)
-    if gcc_module:
-        print(
-            f"{gcc_module}  (auto-selected; system GCC 8.5.0 is too old for PyTorch 2.x)"
-        )
-    else:
-        print("none needed (system GCC >= 9 assumed)")
+    print(gcc_module_status(gcc_module, available_gcc))
 
     # ── Validate partition ─────────────────────────────────────────────────
     if not args.dry_run:

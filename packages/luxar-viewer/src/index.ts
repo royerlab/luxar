@@ -96,6 +96,13 @@ export { normalizeDataSourceUrl, readUrlParams, type UrlParams } from './config/
 // (e.g. on uninstall) without grepping the codebase for prefixes.
 export { StorageKeys } from './utils/storage-keys';
 
+// Build identity. Exported because the standalone surfaces (`window.__luxarBuild`,
+// the `<meta>` tag, the startup log line) are all attached by
+// `bootstrapStandalone`, and the documented common case for an embedder is to
+// construct `LuxarApp` directly and skip it — which would leave the one thing a
+// bug report needs unreachable.
+export { buildInfo, buildInfoLine, type BuildInfo } from './config/build-info';
+
 /**
  * Loader configuration — shape of the cache/prefetch flags accepted by
  * `LuxarAppOptions.loaderConfig`.

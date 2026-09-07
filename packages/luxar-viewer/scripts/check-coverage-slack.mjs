@@ -94,8 +94,8 @@ export function evaluate(summary, thresholds, viewerRoot, maxSlack) {
     if (glob && entries.length === 0) {
       failures.push(
         `${key}: matched 0 files. vitest reports pct "Unknown" for an empty ` +
-          `group and passes it silently, so this gate currently inspects ` +
-          `nothing. Fix the glob or delete the entry.`
+          'group and passes it silently, so this gate currently inspects ' +
+          'nothing. Fix the glob or delete the entry.'
       );
       continue;
     }
@@ -107,8 +107,8 @@ export function evaluate(summary, thresholds, viewerRoot, maxSlack) {
         if (glob) {
           failures.push(
             `${key}: ${metric} has 0 countable items across ${entries.length} ` +
-              `matched file(s), so this floor currently inspects nothing. ` +
-              `Fix the glob or delete the metric floor.`
+              'matched file(s), so this floor currently inspects nothing. ' +
+              'Fix the glob or delete the metric floor.'
           );
         }
         continue;
@@ -125,7 +125,7 @@ export function evaluate(summary, thresholds, viewerRoot, maxSlack) {
       if (slack < 0) {
         failures.push(
           `${key} ${metric}: measured ${pct.toFixed(2)} is BELOW floor ${floor}. ` +
-            `vitest should already have failed; check the reporter output.`
+            'vitest should already have failed; check the reporter output.'
         );
       }
     }
@@ -161,7 +161,7 @@ async function main() {
     // script exists to close.
     console.error(
       `check-coverage-slack: cannot read ${resolved}.\n` +
-        `Run \`pnpm test:coverage\` first (it emits the json-summary reporter).\n` +
+        'Run `pnpm test:coverage` first (it emits the json-summary reporter).\n' +
         `${error.message}`
     );
     process.exit(1);
@@ -183,7 +183,7 @@ async function main() {
     for (const f of failures) console.error(`  - ${f}`);
     console.error(
       `\nCoverage floors must stay within ${maxSlack} pts of measured, or they ` +
-        `stop gating anything. Update packages/luxar-viewer/coverage-thresholds.mjs.`
+        'stop gating anything. Update packages/luxar-viewer/coverage-thresholds.mjs.'
     );
     process.exit(1);
   }

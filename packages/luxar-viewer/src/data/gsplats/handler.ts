@@ -22,6 +22,7 @@ import {
   type StagedGSplatsCommit,
 } from '../scene-loader/process/data-processor-gsplats';
 import { isAlreadyCommitted } from '../scene-loader/commit/noop-commit';
+import { PARTIAL_EXTEND_TOLERANCE } from '../scene-loader/partial-extend-tolerance';
 
 export const kind: GeometryKind = 'gsplats';
 export const label = 'GSplats' as const;
@@ -53,9 +54,8 @@ export interface GSplatsHandlerCtx {
  * Async load + project + stage step for one GSplats node. Mirrors the
  * prior inline gsplats-branch of `updateView`.
  *
- * Like Points (and unlike Lines) gsplats uses
- * applyPartialExtendTolerance: true — verbatim from the original
- * behaviour.
+ * Like Points (and unlike Lines), gsplats widens tolerance across dimensions
+ * the node only partially extends through.
  */
 export async function loadAndStage(
   path: string,
@@ -66,7 +66,7 @@ export async function loadAndStage(
   const mesh = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
   const attrs = mesh?.userData?.attrs as GSplatsMetadata | undefined;
   const derived = ctx.deriveNodeViewState(path, attrs, {
-    applyPartialExtendTolerance: true,
+    applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.gsplats,
     extendedToleranceCache: ctx.extendedToleranceCache,
   });
   /**

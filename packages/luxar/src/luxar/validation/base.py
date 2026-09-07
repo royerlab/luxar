@@ -9,6 +9,7 @@ from typing import Any, Optional, Sequence, Tuple, Union
 import numpy as np
 from numpy.typing import NDArray
 
+from ..typing_utils._format_contract import NODE_TYPES, SUPPORTED_SCENE_VERSIONS
 from ..typing_utils.constants import (
     MESH_DECODE_BUDGET_BYTES,
     SHARPNESS_MAX,
@@ -1630,24 +1631,21 @@ def validate_zarr_attributes(attrs: dict, is_root: bool = False) -> None:
     # cause — a hand-copied vocabulary. Iteration order is the contract's, so
     # the hint is deterministic (a set's ``join`` was not).
     if "type" in attrs:
-        from ..typing_utils._format_contract import NODE_TYPES
-
         if attrs["type"] not in NODE_TYPES:
             raise ValidationError(
                 f"Invalid node type: '{attrs['type']}'",
                 f"Use one of: {', '.join(NODE_TYPES)}",
             )
 
-    # Validate version if present. Keep this import local: typing_utils.config
-    # itself imports io.reader.DEFAULT_COMP via a lazy/inline path, and io.reader
-    # transitively imports core.dimensions which imports validation.category_validation.
-    # validation.base is imported early enough that an unconditional top-level
-    # import here would risk re-entering this module via that chain.
+    # Validate version against the contract vocabulary too. Both of these used
+    # to be function-local imports; the version one carried a comment about a
+    # cycle through ``typing_utils.config`` -> ``io.reader`` -> ``core.dimensions``
+    # -> ``validation.category_validation``. That module is gone, and
+    # ``_format_contract`` is generated code importing nothing but ``typing``,
+    # so there is no chain left to re-enter.
     if "luxar_version" in attrs:
-        from ..typing_utils.config import SUPPORTED_VERSIONS
-
-        if attrs["luxar_version"] not in SUPPORTED_VERSIONS:
+        if attrs["luxar_version"] not in SUPPORTED_SCENE_VERSIONS:
             raise ValidationError(
                 f"Unsupported Luxar version: '{attrs['luxar_version']}'",
-                f"Supported versions: {', '.join(SUPPORTED_VERSIONS)}",
+                f"Supported versions: {', '.join(SUPPORTED_SCENE_VERSIONS)}",
             )

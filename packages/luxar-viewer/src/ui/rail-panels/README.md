@@ -9,13 +9,13 @@ flat, headerless `GUI`. These builders produce that content.
 
 ## Modules
 
-| Module                   | Rail button         | Trigger     | Contents                                                                                                                                                      |
-| ------------------------ | ------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `settings-popover.ts`    | Settings (gear)     | left-click  | Theme picker + persisted global prefs (`config/user-settings.ts`): Input / Performance / Caching / Advanced folders, reload hint, Clear Caches                |
-| `performance-popover.ts` | Performance (gauge) | right-click | Adaptive Resolution + Manual DPR + live DPR/FPS (reuses `setup/performance-setup`)                                                                            |
-| `navigation-popover.ts`  | Navigation          | right-click | Segmented mode selector (orbit/fly/ortho, current highlighted, click to switch) + the current mode's parameters                                               |
-| `home-popover.ts`        | Home (house)        | right-click | Icon-chip row + live caption: fit scene (F), center on origin, reset dimensions, reset rendering, reset layers                                                |
-| `popover-gui.ts`         | —                   | —           | `makePopoverGui(host, title)`: builds a `GUI` mounted in the popover host, styled as flat content (drops the nested glass marker; CSS neutralizes its frame). |
+| Module                   | Rail button         | Trigger     | Contents                                                                                                                                                                      |
+| ------------------------ | ------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `settings-popover.ts`    | Settings (gear)     | left-click  | Theme picker + persisted global prefs (`config/user-settings.ts`): Input (FOV + wheel Zoom Sensitivity) / Performance / Caching / Advanced folders, reload hint, Clear Caches |
+| `performance-popover.ts` | Performance (gauge) | right-click | Adaptive Resolution + Density Guard + Manual DPR + live DPR/FPS/thinning (reuses `setup/performance-setup`)                                                                   |
+| `navigation-popover.ts`  | Navigation          | right-click | Segmented mode selector (orbit/fly/ortho, current highlighted, click to switch) + the current mode's parameters                                                               |
+| `home-popover.ts`        | Home (house)        | right-click | Icon-chip row + live caption: fit scene (F), center on origin, reset dimensions, reset rendering, reset layers                                                                |
+| `popover-gui.ts`         | —                   | —           | `makePopoverGui(host, title)`: builds a `GUI` mounted in the popover host, styled as flat content (drops the nested glass marker; CSS neutralizes its frame).                 |
 
 ## Conventions
 

@@ -3,7 +3,8 @@
  * Extracted from `luxar-fly-controls.ts` so the orchestrator stays
  * focused on lifecycle and the per-frame physics loop.
  *
- * - Plain scroll: forward/backward velocity impulse
+ * - Plain scroll: forward/backward velocity impulse (scaled by the global
+ *   wheel zoom sensitivity)
  * - Shift+scroll: roll (rotate around viewing axis)
  * - Ctrl/Meta+scroll: FOV (handled by InputHandler upstream, not
  *   intercepted here)
@@ -27,6 +28,12 @@ export interface FlyWheelCtx {
   inertialMode: boolean;
   movementSpeed: number;
   rotationSpeed: number;
+  /**
+   * Global per-machine multiplier on the plain-scroll forward/back impulse
+   * (Settings > Input > Zoom Sensitivity; `config.controls.wheelZoomSensitivity`).
+   * Shift+scroll roll is not scaled — it is not a zoom.
+   */
+  wheelZoomSensitivity: number;
 
   camera: LuxarCamera;
   orientation: THREE.Quaternion;
@@ -52,7 +59,11 @@ export function handleWheel(ctx: FlyWheelCtx, event: WheelEvent): void {
 
   event.preventDefault();
 
-  // Normalize deltaY across browsers (line vs pixel vs page scrolling)
+  // Discard the magnitude entirely and keep only the direction: one notch is
+  // one fixed impulse regardless of how far the browser says the wheel
+  // turned. That makes `deltaMode` (pixel vs line vs page) irrelevant on this
+  // path — unlike the orbit zoom / roll / FOV paths, which do consume the
+  // magnitude and therefore normalize it via `utils/wheel-delta`.
   const delta = -Math.sign(event.deltaY);
 
   if (event.shiftKey) {
@@ -71,7 +82,7 @@ export function handleWheel(ctx: FlyWheelCtx, event: WheelEvent): void {
   } else {
     // Plain scroll: move forward/backward
     _v0.set(0, 0, -1).applyQuaternion(ctx.orientation);
-    const impulse = delta * ctx.movementSpeed * 0.3;
+    const impulse = delta * ctx.movementSpeed * ctx.wheelZoomSensitivity * 0.3;
 
     if (ctx.inertialMode) {
       ctx.velocity.addScaledVector(_v0, impulse);

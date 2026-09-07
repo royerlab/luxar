@@ -13,6 +13,7 @@ import { config } from '../../../config';
 import { createTestCamera } from '../../test-config';
 
 describe('LuxarFlyControls', () => {
+  const defaultWheelZoomSensitivity = config.controls.wheelZoomSensitivity;
   let camera: THREE.PerspectiveCamera;
   let domElement: HTMLElement;
   let controls: LuxarFlyControls;
@@ -34,8 +35,23 @@ describe('LuxarFlyControls', () => {
   });
 
   afterEach(() => {
+    config.controls.wheelZoomSensitivity = defaultWheelZoomSensitivity;
     controls.dispose();
     document.body.removeChild(domElement);
+  });
+
+  describe('wheel input', () => {
+    it('reads the live wheel sensitivity from config through the public event path', () => {
+      const velocityFor = (wheelZoomSensitivity: number): number => {
+        config.controls.wheelZoomSensitivity = wheelZoomSensitivity;
+        (controls as any).velocity.set(0, 0, 0);
+        domElement.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }));
+        return (controls as any).velocity.length();
+      };
+
+      const defaultVelocity = velocityFor(1);
+      expect(velocityFor(0.25)).toBeCloseTo(defaultVelocity * 0.25, 10);
+    });
   });
 
   describe('initialization', () => {

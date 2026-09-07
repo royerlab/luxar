@@ -61,6 +61,15 @@ server advertises and honours the HTTP byte ranges the viewer uses to read
 members without extracting the archive. Zipped scenes are read-only. The viewer
 has no browser local-file or drag-and-drop opening path for any scene format.
 
+`luxar serve` runs uvicorn, which speaks HTTP/1.1 only, and browsers open at most
+six connections per host with no multiplexing. A scene chunked for streaming
+therefore pays one round trip per chunk file: measured at 25 Mbps / 30 ms RTT, the
+1.5 M-point example (1,548 chunks, 10.7 MB) loaded in 10.6 s from `luxar serve`
+and in 4.0 s when the same files were served over HTTP/2. The `luxar info`
+chunk-layout report warns when the mean chunk is under 32 KB; re-chunk with the
+`hosting` profile of `luxar optimise`, or put an HTTP/2 front (a CDN, nginx,
+Caddy) in front of the data server for hosting.
+
 `luxar export` also requires a directory store; passing an archive fails with
 `Invalid zarr store: Path is not a directory`. Its exported preview server does
 not add byte-range support for archives. See the
@@ -304,7 +313,7 @@ luxar gsplat flatten    # Collapse any tree (leaf/lod/partition/nested) into one
 luxar gsplat convert         # Convert a .gsplats.zarr into a Luxar scene for the web viewer
 luxar gsplat import          # Import a classical splat file (INRIA PLY / .splat / .spz) → .gsplats.zarr
 luxar gsplat export          # Export a .gsplats.zarr → classical INRIA PLY
-luxar gsplat migrate-format  # Upgrade a legacy .gsplats.zarr layout to the current v3.3 format
+luxar gsplat migrate-format  # Upgrade a legacy .gsplats.zarr layout to the current v3.4 format
 luxar gsplat reencode        # Re-quantize a current-format dataset's Cholesky encoding (structure-preserving)
 ```
 

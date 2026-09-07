@@ -33,7 +33,9 @@ import * as THREE from 'three';
 import * as zarr from '../../zarr';
 import { log, Modules, LogEmoji } from '../../../utils/log';
 import { notifier } from '../../../utils/cross-layer/notifier';
-import { getWorkerPool } from '../../../workers/worker-pool';
+import { getWorkerPool, warmUpDataWorkerPool } from '../../../workers/worker-pool';
+import { markLoad, noteRefinementComplete } from '../../../profiling/load-timeline';
+import type { RefinementHoldReason } from '../../../types/data-monitor-types';
 import { ZarrSceneAttrs, SceneDimensionAttrs } from '../../../types/zarr';
 import { SUPPORTED_GSPLATS_FORMAT_VERSIONS } from '../../../types/format-contract';
 import type { LoaderConfig, SceneNode, ViewState } from '../../data-loader-types';
@@ -135,6 +137,13 @@ export interface LoadSceneCtx {
    * error badge read the same live failure set.
    */
   getFailedLoadsProvider(): FailedLoadsProviderPort;
+  /**
+   * Why this path's next rung is held back, if it is (`SceneLoader.
+   * refinementHoldReason`: density gate or residency ceiling); the monitor
+   * marks such rungs as held rather than streaming. Optional so headless test
+   * contexts need not supply it.
+   */
+  refinementHoldReason?(path: string): RefinementHoldReason | null;
   /** Kick the GSplats LOD refinement loop after initial load. */
   scheduleGSplatsRefinement(): Promise<void>;
   /**
@@ -233,6 +242,7 @@ function synthesizeSceneDimensionsFromNode(
  */
 export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.Group> {
   log.custom(LogEmoji.SCENE, Modules.SCENE_LOADER, `Loading scene from ${url}`);
+  markLoad('loadStart', { url });
   setSceneLineLoad(0);
 
   // Clear any existing loaders from monitor before loading new scene
@@ -250,6 +260,13 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
     ctx.setDatasetAbortController(null);
   }
   getWorkerPool().setAbortSignal(undefined);
+
+  // Spawn the data workers NOW, in parallel with the metadata fetch and the
+  // teardown below, rather than letting the first chunk decode pay for it.
+  // Measured on a hosted demo: lazy creation started the pool 1.93 s after
+  // this point, by which time LOD 0's bytes had already arrived and were
+  // simply waiting. Fire-and-forget and idempotent across dataset switches.
+  warmUpDataWorkerPool();
 
   // Dispose of any existing loaders. Awaited so the previous caching
   // store fully drains (prefetcher tear-down, OPFS metadata flush,
@@ -296,7 +313,10 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
 
   // Load scene metadata
   const rootLoc = zarr.root(zarrStore);
-  const rootZarrGroup = await zarr.open(rootLoc, { kind: 'group' });
+  // v3-first: the generic `open` guesses format 2 on a store object it has not
+  // seen, costing two 404s (`.zattrs`, `.zgroup`) before the first data byte.
+  const rootZarrGroup = await zarr.openGroupPreferV3(rootLoc);
+  markLoad('metadataReady');
   const sceneAttrs = rootZarrGroup.attrs as ZarrSceneAttrs;
 
   // Watch the dataset's identity from here on: a demo/dev server dying and a
@@ -329,12 +349,13 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   }
 
   // A stale standalone .gsplats.zarr opened directly won't render correctly —
-  // surface a migrate hint rather than failing silently. v3.0–v3.3 are all
+  // surface a migrate hint rather than failing silently. v3.0–v3.4 are all
   // readable (v3.1 splits the Cholesky factors into diag + offdiag; v3.2
   // renames the lod selector attrs to coverage_fraction — v3.0/3.1 stores with
   // the legacy attrs are auto-adapted by load-lod-group-node; v3.3 adds the
   // optional luxar_delta_v1 filter, undone transparently by the codec that
-  // data/zarr.ts registers). The supported set is single-sourced from
+  // data/zarr.ts registers; v3.4 adds the screen-area lod selector while legacy
+  // coverage stores read unchanged). The supported set is single-sourced from
   // format-contract/contract.yaml.
   const fmtType = (sceneAttrs as Record<string, unknown>)?.format_type;
   const fmtVersion = (sceneAttrs as Record<string, unknown>)?.format_version;
@@ -457,6 +478,7 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
     sceneGraph,
     updateVisibleCounts: () => ctx.updateVisibleCountsInMonitor(),
     failedLoads: ctx.getFailedLoadsProvider(),
+    refinementHold: ctx.refinementHoldReason ? (path) => ctx.refinementHoldReason!(path) : null,
     drawOrderProvider: createDrawOrderProvider(rootGroup),
     committedLODCounts: createCommittedLODCountReader(rootGroup),
   });
@@ -466,6 +488,7 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   // failed logged success over an empty viewport. Container-wide archive faults
   // rethrow before this point. Totality is graded against the registered path set
   // because a failed lazy LOD level records a failure without registering.
+  markLoad('sceneLoaded');
   reportLoadOutcome(
     ctx.getFailedLoaderPaths(),
     [...ctx.loaders.keys(), ...ctx.linesLoaders.keys(), ...ctx.gsplatLoaders.keys()],
@@ -483,7 +506,12 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   const linesNeed = [...ctx.linesLoaders.values()].some(hasMore);
   const meshNeed = [...ctx.meshLoaders.values()].some(hasMore);
 
-  if (gsplatsNeed || pointsNeed || linesNeed || meshNeed) {
+  const needsRefinement = gsplatsNeed || pointsNeed || linesNeed || meshNeed;
+  // Nothing to stream: the load timeline's "refinement complete" milestone is
+  // reached trivially (perf probes gate `isSettled` on it).
+  if (!needsRefinement) noteRefinementComplete();
+
+  if (needsRefinement) {
     log.info(
       Modules.SCENE_LOADER,
       'Scheduling post-load progressive LOD refinement ' +

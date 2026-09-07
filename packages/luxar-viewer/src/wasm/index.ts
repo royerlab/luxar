@@ -98,7 +98,14 @@ export function wasmShimCandidateUrls(baseUrl: string): string[] {
  * {@link importFirstWasmShim}'s return type — a private alias in a public
  * signature trips the TypeDoc warning ratchet.
  */
-export type WasmShimModule = { default: () => Promise<unknown> } & Record<string, unknown>;
+export type WasmShimModule = {
+  /**
+   * wasm-bindgen's `__wbg_init`. Takes no argument in the common case; a
+   * `{ module_or_path }` object (or a bare `WebAssembly.Module`) hands it an
+   * already-compiled binary to instantiate — see {@link instantiateWasmShim}.
+   */
+  default: (moduleOrPath?: unknown) => Promise<unknown>;
+} & Record<string, unknown>;
 
 /**
  * Import the first URL that yields something shaped like the wasm-bindgen
@@ -274,7 +281,67 @@ export function setWasmJsUrl(url: string | undefined): void {
  *
  * @returns Promise resolving to WasmModule interface
  */
-export async function initWasm(): Promise<WasmModule> {
+/**
+ * The JS-shim candidate hrefs {@link initWasm} will try, in order.
+ *
+ * Extracted so the main-thread precompiler (`wasm/shared-module.ts`) resolves
+ * exactly the same URLs, and honours the same {@link setWasmJsUrl} override,
+ * instead of duplicating this branch and drifting from it.
+ *
+ * See {@link initWasm}'s own comment for why each build lands where it does.
+ */
+export function resolveWasmShimUrls(): string[] {
+  const isDev = Boolean((import.meta as { env?: { DEV?: boolean } }).env?.DEV);
+  if (wasmJsUrlOverride) {
+    return [wasmJsUrlOverride];
+  }
+  if (isDev && typeof location !== 'undefined' && location?.origin) {
+    // public/ is served at the server root in dev regardless of the
+    // production-only relative `base`.
+    return [new URL('/wasm/luxar_wasm.js', location.origin).href];
+  }
+  return wasmShimCandidateUrls(import.meta.url);
+}
+
+/**
+ * Run a loaded shim's `default()` — handing it an already-compiled module when
+ * one is available.
+ *
+ * wasm-bindgen's generated `__wbg_init` accepts either a raw value or
+ * `{ module_or_path }`, and its `__wbg_load` skips `new WebAssembly.Module(...)`
+ * when the value already IS a `WebAssembly.Module`. So passing one means the
+ * binary is neither re-fetched nor re-compiled — which is the whole point:
+ * 15 workers each compiling their own copy came ready ~160 ms apart, 2.2 s from
+ * first to last.
+ *
+ * Exported (and given an injectable shim) for the same reason
+ * `importFirstWasmShim` is: `initWasm` reaches the real shim through a
+ * `new Function('url', 'return import(url)')` indirection that vitest's module
+ * runner does not service, so this path cannot be exercised through
+ * `initWasm` itself.
+ *
+ * Degrades: a relocated or older shim that rejects the object form is retried
+ * once with no argument. `__wbg_init` only assigns its module-scoped `wasm`
+ * inside `__wbg_finalize_init`, so a throw before that leaves the retry clean.
+ */
+export async function instantiateWasmShim(
+  shim: WasmShimModule,
+  precompiled?: WebAssembly.Module
+): Promise<unknown> {
+  if (!precompiled) return shim.default();
+  try {
+    return await shim.default({ module_or_path: precompiled });
+  } catch (error) {
+    log.warning(
+      Modules.WASM,
+      'Precompiled WASM module rejected by the shim; falling back to self-initialization',
+      error
+    );
+    return shim.default();
+  }
+}
+
+export async function initWasm(precompiled?: WebAssembly.Module): Promise<WasmModule> {
   // Declared outside the try so the catch can report the candidate list this
   // load RESOLVED. It is deliberately NOT phrased as "the candidates it tried":
   // the same catch also covers a post-import failure — `default()` throwing, or
@@ -316,16 +383,7 @@ export async function initWasm(): Promise<WasmModule> {
     // Embedders whose bundlers don't support `import.meta.url` resolution
     // can override the URL via {@link setWasmJsUrl} (forwarded by
     // LuxarAppOptions.wasmPath); the override takes precedence over both.
-    const isDev = Boolean((import.meta as { env?: { DEV?: boolean } }).env?.DEV);
-    if (wasmJsUrlOverride) {
-      wasmJsUrls = [wasmJsUrlOverride];
-    } else if (isDev && typeof location !== 'undefined' && location?.origin) {
-      // public/ is served at the server root in dev regardless of the
-      // production-only relative `base`.
-      wasmJsUrls = [new URL('/wasm/luxar_wasm.js', location.origin).href];
-    } else {
-      wasmJsUrls = wasmShimCandidateUrls(import.meta.url);
-    }
+    wasmJsUrls = resolveWasmShimUrls();
 
     // Use Function constructor to avoid TypeScript compile-time module resolution
     // This allows the code to compile even when WASM module doesn't exist yet
@@ -345,7 +403,7 @@ export async function initWasm(): Promise<WasmModule> {
     // fallback path, which is the documented runtime behaviour for a missing or
     // stale build. Do not "fix" it by moving the call out of the try; that
     // would make every embedder crash instead.
-    const instanceExports = await wasmModule.default();
+    const instanceExports = await instantiateWasmShim(wasmModule, precompiled);
     assertRequiredWasmExports(wasmModule as Record<string, unknown>, instanceExports);
 
     log.info(Modules.WASM, 'Loaded compiled WASM module');

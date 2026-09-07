@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import sys
 import warnings
 from contextlib import contextmanager
 from typing import Iterator
 
 import pytest
+from arbol import Arbol
 
 from luxar._zarr_compat import memory_group
 from luxar.utils.arbol_warnings import (
@@ -29,7 +31,8 @@ def _default_display_sandbox() -> Iterator[None]:
     """
 
     def _impl(msg: object) -> None:  # stand-in for the stock displayer
-        pass
+        text = warnings._formatwarnmsg(msg)  # type: ignore[attr-defined]
+        print(text, file=getattr(msg, "file", None) or sys.stderr, end="")
 
     _impl.__module__ = "warnings"
     with warnings.catch_warnings():
@@ -41,13 +44,41 @@ def _default_display_sandbox() -> Iterator[None]:
 
 class TestArbolShowwarning:
     def test_formats_via_aprint(self, capsys: pytest.CaptureFixture) -> None:
-        _arbol_showwarning("splat drifted", UserWarning, "/a/b/encoder.py", 42)
-        out = capsys.readouterr().out
-        assert "⚠️" in out
-        assert "UserWarning" in out
-        assert "splat drifted" in out
-        assert "encoder.py:42" in out
-        assert "/a/b/" not in out  # basename only, no raw stderr-style path
+        with _default_display_sandbox():
+            _arbol_showwarning("splat drifted", UserWarning, "/a/b/encoder.py", 42)
+        captured = capsys.readouterr()
+        assert "⚠️" in captured.out
+        assert "UserWarning" in captured.out
+        assert "splat drifted" in captured.out
+        assert "encoder.py:42" in captured.out
+        assert "/a/b/" not in captured.out  # basename only, no raw stderr-style path
+        assert captured.err == ""
+
+    @pytest.mark.parametrize(
+        ("enable_output", "depth", "max_depth"),
+        [(False, 0, float("inf")), (True, 2, 1)],
+    )
+    def test_falls_back_to_stock_display_when_arbol_would_hide_warning(
+        self,
+        enable_output: bool,
+        depth: int,
+        max_depth: float,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        saved = (Arbol.enable_output, Arbol._depth, Arbol.max_depth)
+        try:
+            Arbol.enable_output = enable_output
+            Arbol._depth = depth
+            Arbol.max_depth = max_depth
+            with _default_display_sandbox():
+                _arbol_showwarning("still visible", UserWarning, "/a/b/encoder.py", 42)
+        finally:
+            Arbol.enable_output, Arbol._depth, Arbol.max_depth = saved
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "UserWarning: still visible" in captured.err
+        assert "/a/b/encoder.py:42" in captured.err
 
 
 class TestArbolWarningsContext:
@@ -58,9 +89,10 @@ class TestArbolWarningsContext:
             assert _default_display_active()
             with arbol_warnings():
                 warnings.warn("engage-me", UserWarning, stacklevel=1)
-        out = capsys.readouterr().out
-        assert "⚠️" in out
-        assert "engage-me" in out
+        captured = capsys.readouterr()
+        assert "⚠️" in captured.out
+        assert "engage-me" in captured.out
+        assert captured.err == ""
 
     def test_restores_previous_handler(self) -> None:
         with _default_display_sandbox():

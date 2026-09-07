@@ -109,7 +109,15 @@ export default defineConfig({
         // bundled Chromium so the GPU driver path matches what an
         // end-user would see. The user explicitly asked for "as real
         // as possible browser".
-        channel: 'chrome',
+        //
+        // LUXAR_PERF_BROWSER=chromium falls back to the bundled Chromium. Headless
+        // system Chrome on macOS was observed (2026-09, Chrome 152) to pick a 30 Hz
+        // BeginFrame cadence on some launches — every forced-continuous-render
+        // frame metric then reads 33.3 ms with a 96 %-idle main thread — and
+        // occasionally to stop firing rAF in a hidden headless window, which
+        // hangs a frame-cadence measurement until the test timeout. The bundled
+        // Chromium ran the same pages at the display's 120 Hz throughout.
+        channel: process.env.LUXAR_PERF_BROWSER === 'chromium' ? undefined : 'chrome',
       },
     },
   ],
@@ -117,7 +125,14 @@ export default defineConfig({
   // Reuse the standard viewer + dataset dev servers.
   webServer: [
     {
-      command: `pnpm dev --host 127.0.0.1 --port ${viewerPort} --strictPort`,
+      // LUXAR_PERF_PREVIEW=1 serves the PRODUCTION bundle (`pnpm build` first):
+      // dev-mode ESM inflates time-to-first-paint and request counts, so the
+      // viewer-audit bench must run against `vite preview`. The checkout-identity
+      // endpoint is served by both servers (tools/e2e-server-identity.ts).
+      command:
+        process.env.LUXAR_PERF_PREVIEW === '1'
+          ? `pnpm exec vite preview --host 127.0.0.1 --port ${viewerPort} --strictPort`
+          : `pnpm dev --host 127.0.0.1 --port ${viewerPort} --strictPort`,
       url: serverMetadata.viewerIdentityURL,
       reuseExistingServer: !process.env.CI,
       timeout: 120000,

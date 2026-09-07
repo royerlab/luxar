@@ -14,6 +14,7 @@ import type { DataLoader, GeometryKind, LoadedPointsData, ViewState } from '../d
 import { log, Modules } from '../../utils/log';
 import type { UpdateSession } from '../../profiling/update-profiler';
 import type { ViewStateQueue } from '../scene-loader/view-state/view-state-queue';
+import { PARTIAL_EXTEND_TOLERANCE } from '../scene-loader/partial-extend-tolerance';
 
 export const kind: GeometryKind = 'points';
 export const label = 'Points' as const;
@@ -66,7 +67,7 @@ export async function loadAndStage(
   const obj = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
   const attrs = obj?.userData?.attrs as { extend_to_all?: string[] } | undefined;
   const derived = ctx.deriveNodeViewState(path, attrs, {
-    applyPartialExtendTolerance: true,
+    applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.points,
     extendedToleranceCache: ctx.extendedToleranceCache,
   });
   /**

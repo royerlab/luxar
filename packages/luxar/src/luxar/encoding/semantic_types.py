@@ -29,9 +29,9 @@ class SemanticType(str, Enum):
     - POSITIVE_SCALAR: Non-negative scalars, potentially wide dynamic range.
       Examples: radii, amplitudes, distances
       Valid: uint8/uint16 linear (``bounded_scalar_*``) for narrow ranges;
-      ``geolog_scalar_u8/u16`` (min/max-anchored geometric-log, reserved zero
-      level) for wide ranges — no nonzero value can quantize to zero and
-      relative precision is uniform; float32 under PRECISION.
+      ``geolog_scalar_uint8/uint16`` (min/max-anchored geometric-log, reserved
+      zero level) for wide ranges — no nonzero value can quantize to zero
+      and relative precision is uniform; float32 under PRECISION.
     - CHOLESKY: Packed lower-triangular Cholesky factors (whole, unsplit).
       Shape: (N, d*(d+1)/2) for d-dimensional covariance
       Valid: float32, float16

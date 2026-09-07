@@ -98,7 +98,18 @@ ext_modules = [
         sources=["src/bindings.mm"],
         extra_compile_args={
             "cxx": [
-                "-std=c++17",
+                # C++20, not 17. torch's own builder emits
+                # `cflags = common_cflags + ['-fPIC', '-std=c++20'] + extra_cflags`,
+                # so anything set here lands AFTER torch's flag and the last
+                # `-std=` wins. `torch/all.h` has
+                # `#if __cplusplus < 202002L -> #error C++20 or later ... is
+                # required`, so a `-std=c++17` here does not merely relax the
+                # standard, it makes the extension fail to compile at all --
+                # 20 errors out of torch's headers before one line of ours is
+                # read. Only noticed late because this package builds itself on
+                # FIRST USE, so the failure lands on a user rather than in a
+                # build. `make check-native` is the gate that catches it now.
+                "-std=c++20",
                 "-fno-objc-arc",  # Manual memory management for Metal objects
                 "-Wno-deprecated-declarations",
             ],

@@ -8,7 +8,7 @@
  * - Render basic demo datasets
  */
 
-import { test, expect } from './fixtures';
+import { test, expect, ALLOW_CONSOLE_ERRORS } from './fixtures';
 import { waitForLuxarReady } from './helpers';
 
 test.describe('Luxar Basic Rendering', () => {
@@ -44,7 +44,7 @@ test.describe('Luxar Basic Rendering', () => {
 
   test('should handle missing dataset gracefully', async ({ page }) => {
     test.info().annotations.push({
-      type: 'allow-console-errors',
+      type: ALLOW_CONSOLE_ERRORS,
       description: 'Bad-URL recovery path intentionally produces 404/502 responses.',
     });
     // Navigate with non-existent dataset

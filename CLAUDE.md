@@ -48,7 +48,21 @@ pnpm build        # Build
 pnpm test --run   # Unit tests
 pnpm test:e2e     # E2E tests (Playwright)
 pnpm typecheck    # Type check
-pnpm lint         # Lint
+pnpm lint         # Lint (includes TYPE-AWARE rules: no-floating-promises,
+                  # no-misused-promises, await-thenable, no-base-to-string).
+                  # Also caps production functions at complexity 10, 120 code
+                  # lines, depth 4, and 5 parameters. The 721 pre-existing
+                  # findings are recorded in
+                  # eslint-suppressions.json — ESLint's own baseline, so a NEW
+                  # violation fails, including an increase inside a suppressed
+                  # file (the suppression is a COUNT, not a file exemption).
+                  # Fixed some? `pnpm lint --prune-suppressions` tightens it.
+                  # Moved/renamed a baselined file? Re-key with `pnpm exec
+                  # eslint . --suppress-rule <rule>`, then
+                  # prune; verify the suppressions diff only moves that path.
+                  # Do NOT add a `// eslint-disable` to get green: a floating
+                  # promise here is a load that silently stalls, which no test
+                  # asserts and E2E does not gate.
 pnpm format       # Format
 ```
 
@@ -83,6 +97,15 @@ make test-perf-e2e   # Opt-in Playwright performance suite
 make check-all    # All quality checks (Python, TypeScript, Rust, Go) — reformats
 make lint-python        # read-only: ruff check
 make check-complexity   # read-only: ruff C901 ratcheted against scripts/complexity_baseline.json
+make check-lint-ratchet # read-only: ruff's DEFECT rules (flake8-bugbear + RUF012)
+                  # ratcheted against scripts/lint_baseline.json. Existing debt is
+                  # tolerated; a file that newly breaks one of these rules — or
+                  # gains another violation of one it already breaks — fails.
+                  # B905 (`zip` without `strict=`) is the bulk of the baseline and
+                  # its fix CHANGES BEHAVIOUR (`strict=True` raises), so pay it
+                  # down per call site rather than sweeping. B008 is gated at zero:
+                  # the Typer `Option`/`Argument` idiom is exempted in pyproject.
+make check-native       # read-only: compile-check shipped CUDA/Metal sources
 make type-check-python  # read-only: mypy
 make security           # read-only: bandit
 make check-typescript   # read-only: typecheck + lint + unit tests
@@ -228,7 +251,7 @@ make test-cuda
 
 **What `make build-cuda SLURM=1` does:**
 1. Detects the PyTorch CUDA version (e.g., 12.8) and finds a matching `cuda/` module
-2. Detects and loads the highest available GCC >= 9 module (required by PyTorch 2.x)
+2. Detects and loads the highest available GCC >= 10 module (required for C++20)
 3. Captures the current hatch virtual environment path
 4. Generates a self-contained sbatch script (`build-cuda-logs/build_cuda_job.sh`)
 5. Submits it to Slurm and prints monitoring commands
@@ -262,7 +285,7 @@ See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for complete documentation.
 
 ### Luxar CLI
 ```bash
-luxar demo                       # List the 90 bundled demos (table)
+luxar demo                       # List the 91 bundled demos (table)
 luxar demo run lorenz            # Run a demo by key/index (forwards -- args)
 luxar demo stop                  # Stop running demos and free their ports (--dry-run lists)
 luxar demo cache list            # Inventory / clear demo caches (cache clear …)
@@ -314,6 +337,47 @@ luxar export scene.luxar.zarr -o my_export/ --open      # Export and serve in br
 luxar export scene.luxar.zarr -o my_export/ --overwrite # Overwrite existing export
 luxar export scene.luxar.zarr -o out/ --native macos    # Native macOS .app bundle (requires `make build-launchers`)
 luxar export scene.luxar.zarr -o out/ --native macos,linux-amd64,linux-arm64 --name MyScene
+```
+
+### Mesh CLI (importing classical surfaces, mesh LOD)
+```bash
+# Convert a classical mesh file into a single-node scene. PLY / OBJ / STL / VTP /
+# glTF-GLB, no extra dependencies; polygons are fan-triangulated. `--center` is
+# ON by default because most mesh files sit far from the origin, which fights the
+# viewer's default framing.
+luxar mesh import bunny.ply bunny.luxar.zarr
+luxar mesh import scan.stl scan.luxar.zarr --unit mm --name Skull
+luxar mesh import surface.obj surface.luxar.zarr --scale 0.001 --unit m
+luxar mesh import model.glb model.luxar.zarr --no-center
+# `--weld` (default ON) merges vertices agreeing on position AND normals/colours.
+# STL always, index-free glTF, and any OBJ indexing normals separately arrive with
+# unshared vertices, which defeat per-vertex normals and give picking a different
+# id per corner per triangle. Hard edges survive — they differ in normal.
+luxar mesh import faceted.stl faceted.luxar.zarr --no-weld
+# Drop stored normals to force the shader's derivative flat-normal path (faceted).
+luxar mesh import smooth.ply flat.luxar.zarr --no-keep-normals
+# A DIRECTORY stacks files carrying `T<number>` and optional `Ch<number>` filename
+# coordinates into hidden discrete dimensions — a mesh timelapse is one scene.
+luxar mesh import frames/ frames.luxar.zarr --pattern '*.ply'
+luxar mesh import frames/ frames.luxar.zarr --pattern '*.ply' --index-regex 'frame_(?P<t>\d+)'
+
+# Build a mesh LOD ladder. TWO recipes, and they are not interchangeable:
+#   levels  decimated coarse levels that REPLACE one another (substitutive, default)
+#   reveal  an additive ladder of disjoint face groups the viewer concatenates
+# A surface has NO coarse prefix — dropping triangles punches holes — so a mesh
+# cannot have both, and `add_mesh` refuses them together. `levels` is what you
+# want for zooming across scales; `reveal` is a progressive reveal of a partial
+# surface, whose every prefix is ONE connected patch (that restriction is what
+# makes a partial load a growing surface rather than lace).
+luxar mesh lod bunny.luxar.zarr bunny_lod.luxar.zarr                 # levels, L=3, K=4
+luxar mesh lod cortex.luxar.zarr cortex_lod.luxar.zarr -L 4 -K 8
+# --subst-method auto resolves to `qem` (quadric error metrics) through 10,000
+# vertices and the vectorized `cluster` grid-collapse above that; cluster is
+# O(V log V) and is the only one usable at the writer's 2**27-vertex cap.
+luxar mesh lod big.luxar.zarr big_lod.luxar.zarr --subst-method cluster
+luxar mesh lod bunny.luxar.zarr bunny_reveal.luxar.zarr --recipe reveal --n-lods 4
+# --node picks the mesh when the scene holds more than one.
+luxar mesh lod multi.luxar.zarr multi_lod.luxar.zarr --node Nuclei
 ```
 
 ### GSplat CLI (fitting, converting, rendering, merging)
@@ -453,6 +517,11 @@ luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --tiling content \
     --k-star-ref 60000 --n-features-ref 5000 --plan-samples 24   # density knobs + 24-timepoint max-proj plan
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --parallel         # Concurrent tasks per GPU
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --tasks-per-job 5  # Manual packing
+# `--gpus-per-task` is a COUNT (emitted verbatim as `#SBATCH --gpus-per-task`).
+# NOT the same flag as `batch-fit run --gpus`, which SELECTS local devices --
+# they used to share the name `--gpus`, so `--gpus 2` meant "card #2" on one
+# command and "2 GPUs per task" on the other.
+luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --gpus-per-task 2  # 2 GPUs per Slurm task
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu \
     --axes time,camera,channel,z,y,x                                    # Override axis labels
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu \
@@ -590,8 +659,10 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream --target-ms 20
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream -b stream:14000
 # ON A NODE THE VIEWER SLICES (any hidden dim), COUNT PER SLICE, NOT PER NODE.
 # An explicit `-b stream:C` fixes an ABSOLUTE first rung for the whole node, but
-# only one hidden coordinate is on screen, so each slice receives part of C;
-# Nexrad's explicit `stream:20000` ladder has p05 = 4 splats per played coordinate.
+# only one hidden coordinate is on screen, so each slice receives part of C; the
+# PUBLISHED Nexrad store's `stream:20000` ladder has p05 = 4 splats per played
+# coordinate (its source no longer authors that — see `slice_dims` below — but the
+# shipped store carries it until the corpus is regenerated).
 # Before the CLI scaling fix, drosophila's `--target-ms` resolved to a 20,833-splat
 # rung 0 for 500 timepoints; the measured slices had median = 45, p05 = 7, min = 1,
 # and playback rendered an empty frame (#2374/#2376). Prefer `--n-lods 3..4` for
@@ -599,6 +670,16 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream -b stream:1400
 # non-uniform axes: the global prefix can still starve sparse slices. The CLI now
 # scales `--target-ms` by the observed slice count and LOGS the multiplier; read
 # that line rather than assuming the number you typed is what renders.
+# From PYTHON, `additive_lod=dict(n_lods=4, slice_dims=[<raw pre-dim_order centre
+# columns>], recompute=True)` beats any share: it interleaves the ordering
+# round-robin across the hidden coordinates, so every rung carries an equal
+# ABSOLUTE per-slice budget and a slice smaller than the budget is carried WHOLE
+# (#2485). Nexrad authors that now; its p05 scan of 774 splats arrives complete.
+# `slice_dims` are the RAW pre-`dim_order` centre columns, NOT the scene's
+# dimension positions; and `recompute=True` is required on a STACKED dataset —
+# `combine_as_new_dimension` merges its sources' ladders rather than dropping them,
+# so without the flag the whole spec is a silent no-op. No CLI flag: `gsplat lod`
+# has no scene to say which columns are hidden.
 # Count stops as distinct OCCURRING combinations over all hidden axes: not the
 # product of per-axis cardinality, and not the declared Dimension range (that
 # demo declares 500 timepoints and its coarsest rung has data at 499).
@@ -747,7 +828,7 @@ luxar gsplat export imported.gsplats.zarr back.ply --opacity amplitude
 luxar gsplat export timelapse.gsplats.zarr t42.ply --timepoint 42
 
 # Migrate legacy .gsplats.zarr layouts (v1.0 / v1.1 / pre-v2.0 substitutive dir / v2.0 matrix /
-# v3.0-v3.1 with pre-v3.2 pixel_size lod selector attrs) → v3.3
+# v3.0-v3.1 with pre-v3.2 pixel_size lod selector attrs) → v3.4
 luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr               # single file
 luxar gsplat migrate-format old_pyr/ v3.gsplats.zarr                          # substitutive directory
 
@@ -965,6 +1046,26 @@ with asection("Processing"):
     aprint("Step 1...")
     aprint("Step 2...")
 ```
+
+Library-layer narration must stay SILENCEABLE. `luxar.set_verbosity()` /
+`luxar.verbosity()` (in `luxar/utils/verbosity.py`) drive arbol's
+`enable_output` and `max_depth`, so a notebook or napari caller can quiet the
+tree without a per-call flag on every entry point:
+
+```python
+import luxar
+
+luxar.set_verbosity("silent")     # process-wide: silent | summary | normal | full
+with luxar.verbosity("summary"):  # scoped, restores on exit
+    scene.save()
+```
+
+Two things not to get wrong. The setting is arbol CLASS state, so it is
+process-global and not thread-safe — never reach for it to scope output inside a
+library function. And `set_verbosity(0)` is NOT silence: arbol at depth 0 still
+prints depth-0 lines plus a "(log tree truncated here)" notice for each section
+it truncates at the cap, so pass `"silent"`. A bool is refused outright for that
+reason (`set_verbosity(False)` reads as quiet but would resolve to depth 0).
 
 ### TypeScript
 - Format with prettier

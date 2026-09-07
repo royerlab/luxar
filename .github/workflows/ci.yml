@@ -18,7 +18,9 @@ on:
     # TypeScript legs take considerably longer, so most push runs are cancelled by
     # the next merge before they can produce a promotable commit. Schedule events
     # have their own concurrency group, so dev merges cannot cancel them. Run one
-    # every three hours to supply deliberate green windows for promotion.
+    # every three hours to supply deliberate dev-tip coverage windows. Their
+    # contexts still attach to the scheduled event SHA on main; the repair walk
+    # below supplies the promotion value by repairing cancelled dev push runs.
     #
     # Scheduled runs still share a group with EACH OTHER, so a window still in
     # flight three hours later is cancelled by its successor -- which is itself a
@@ -46,12 +48,12 @@ on:
     # capacity recovers.
     #
     # DEFAULT-BRANCH DEPENDENCE. GitHub runs `schedule:` triggers only on the
-    # repository DEFAULT branch, at its tip. While `dev` is the default the event
-    # SHA is dev's tip at dispatch, and every suite checkout is pinned to that exact
-    # event SHA so the contexts attest the tree they test. The repair walk also
-    # resolves dev explicitly. After the default flips to main, however, the event
-    # SHA and scheduled checkouts both point at main; #2466 tracks replacing this
-    # cron trigger before that flip so promotion windows still run against dev.
+    # repository DEFAULT branch, at its tip, and dispatches the event against that
+    # branch's SHA. The default is now `main`, so `github.sha` and the resulting
+    # contexts point at main. Once this workflow reaches main, `changes` instead
+    # checks out `refs/heads/dev`, captures that tip as `dev_sha`, and every suite
+    # checkout reuses it for internally consistent dev-tip coverage. The repair
+    # walk resolves dev explicitly and repairs its cancelled push contexts (#2466).
     - cron: '17 9 * * *'
     - cron: '17 0,3,6,12,15,18,21 * * *'
 
@@ -136,9 +138,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # While dev is the default, the scheduled event SHA is dev's immutable
-          # tip at dispatch. Empty on push/PR == default.
-          ref: ${{ github.event_name == 'schedule' && github.sha || '' }}
+          # `github.sha` follows the default branch on schedule events, which is
+          # now `main`, not `dev`. Once this workflow reaches main, pin dev here,
+          # capture the resolved commit as `dev_sha`, and reuse that immutable SHA
+          # in every suite checkout for consistent dev-tip coverage. The contexts
+          # still attach to `github.sha`; the repair walk below restores promotion
+          # value by repairing dev push runs. Empty on push/PR == default.
+          ref: ${{ github.event_name == 'schedule' && 'refs/heads/dev' || '' }}
           fetch-depth: 0
       - id: scheduled-dev
         if: github.event_name == 'schedule'
@@ -182,7 +188,10 @@ jobs:
             # each an input of a test that would otherwise skip:
             # scripts/complexity_baseline.json (the C901 ratchet's only non-.py
             # input — unclassified, a baseline-only diff went green in 7s without
-            # checking the baseline still MATCHES the tree, #1678), the Makefile
+            # checking the baseline still MATCHES the tree, #1678),
+            # scripts/lint_baseline.json (the same for the bugbear/RUF012 ratchet:
+            # editing it is exactly how someone would silence real debt, so the
+            # edit must run the test that re-derives it), the Makefile
             # (test_python_version_declarations.py, test_demo_commands.py),
             # scripts/gallery/manifest.json (test_demo_meta.py cross-validates it
             # against the demo registry), benchmark_bisect.sh (executed directly
@@ -211,7 +220,7 @@ jobs:
             # external-reference-audits.yml is one too: its schedule, permissions
             # and token wiring are asserted by test_run_external_reference_audits.py,
             # and a workflow file matches no other domain on its own.
-            printf '%s\n' "$changed" | grep -qE '(\.py$|^Makefile$|^README\.md$|^CLAUDE\.md$|^CITATION\.cff$|^\.agents/skills/luxar-(gsplat-pipeline/SKILL|visualization/(SKILL|references/scene-api))\.md$|^pyproject\.toml$|^\.pre-commit-config\.yaml$|\.(pyx|pxd|cu|cuh)$|^\.gitattributes$|^scripts/complexity_baseline\.json$|^scripts/gallery/manifest\.json$|^scripts/benchmarks/benchmark_bisect\.sh$|^scripts/demo_archive_characteristics\.json$|^scripts/release\.sh$|^docs/(guides/user/CLI_REFERENCE|specs/GSPLATS_DIMENSION_MAPPING)\.md$|^format-contract/|^\.github/workflows/(docs|external-reference-audits)\.yml$|^packages/luxar/src/luxar/demos/(README\.md$|data)|^packages/luxar-viewer/(package\.json$|src/(config/sections/(camera|rendering-controls)/data\.ts$|data/(attrs-composer\.ts$|loaders/spatial-query/tolerance-computer\.ts$)|rendering/(blending-state\.ts$|element-texture-layout\.ts$|materials/mesh/appearance\.ts$|node-factory/create-(points|lines|gsplats|mesh)-node\.ts$)|scene/lod-group-registry\.ts$|tests/(global-setup\.ts$|README\.md$|screenshots/exposure-policy\.ts$|screenshots/generate-gallery\.spec\.ts$)|types/(data-monitor-types|format-contract|geometry-capabilities|line-join|lod-group|partition-group)\.ts$)|tests/fixtures/README\.md$|tools/example-fixture-freshness\.ts$))' && dom_py=true || true
+            printf '%s\n' "$changed" | grep -qE '(\.py$|^Makefile$|^README\.md$|^CLAUDE\.md$|^CITATION\.cff$|^\.agents/skills/luxar-(gsplat-pipeline/SKILL|visualization/(SKILL|references/scene-api))\.md$|^pyproject\.toml$|^\.pre-commit-config\.yaml$|\.(pyx|pxd|cu|cuh|cpp|h|hpp|mm|metal)$|^\.gitattributes$|^scripts/complexity_baseline\.json$|^scripts/lint_baseline\.json$|^scripts/gallery/manifest\.json$|^scripts/benchmarks/benchmark_bisect\.sh$|^scripts/demo_archive_characteristics\.json$|^scripts/release\.sh$|^docs/(guides/user/CLI_REFERENCE|specs/GSPLATS_DIMENSION_MAPPING)\.md$|^format-contract/|^\.github/workflows/(docs|external-reference-audits)\.yml$|^packages/luxar/src/luxar/demos/(README\.md$|data)|^packages/luxar-viewer/(package\.json$|src/(config/sections/(camera|rendering-controls)/data\.ts$|data/(attrs-composer\.ts$|loaders/spatial-query/tolerance-computer\.ts$)|rendering/(blending-state\.ts$|element-texture-layout\.ts$|materials/mesh/appearance\.ts$|node-factory/create-(points|lines|gsplats|mesh)-node\.ts$)|scene/lod-group-registry\.ts$|tests/(global-setup\.ts$|README\.md$|screenshots/exposure-policy\.ts$|screenshots/generate-gallery\.spec\.ts$)|types/(data-monitor-types|format-contract|geometry-capabilities|line-join|lod-group|partition-group)\.ts$)|tests/fixtures/README\.md$|tools/example-fixture-freshness\.ts$))' && dom_py=true || true
             # TS domain = the WHOLE viewer package (its py fixture-generators feed TS tests -> hierarchy) + root TS config.
             # The gallery-selection unit test also reads the root README and gallery manifest.
             printf '%s\n' "$changed" | grep -qE '(^packages/luxar-viewer/|^README\.md$|^scripts/gallery/manifest\.json$|^tsconfig[^/]*\.json$|(^|/)vitest[^/]*\.(ts|js|mjs)$)' && dom_ts=true || true
@@ -294,16 +303,23 @@ jobs:
   # started. If it was dispatched before its slot recycled, the timeout can run
   # with no steps or runner name recorded and eventually cancel the required leg.
   # This job covers the first 10 minutes from the hosted side: while any
-  # obsidian-routed job is still queued, it checks in-progress obsidian jobs across
-  # repository runs. If none are visible it cancels the run.
+  # obsidian-routed job is still queued, it checks active obsidian jobs across
+  # repository runs listed under BOTH run-level statuses. `queued` must be covered
+  # too: GitHub reports a run as `queued` while any one of its jobs is queued, so
+  # live obsidian legs hide inside runs that read `queued`, and scanning only
+  # `in_progress` runs sees a dead box (#2480). If none are visible it cancels the
+  # run.
   # The workflow token cannot read repository-variable updates, so the publisher
   # is unavailable here; a stale GitHub `in_progress` state can therefore keep a
   # dead runner covered. A box that dies after this window can still leave an
   # undispatched leg queued until the 24-hour ceiling, or a dispatch-lost leg
-  # running down its timeout. To recover, create/set the Actions repository
-  # variable LUXAR_CI_FORCE_HOSTED to 1 and re-run all jobs; "Re-run failed"
-  # reuses the previous router output. Clear the override after obsidian capacity
-  # recovers.
+  # running down its timeout. Covering queued runs widens that concession: for as
+  # long as such a leg's own run still has a queued sibling it reads `queued` at
+  # run level, so its stale liveness covers every run in the repository for that
+  # leg's timeout, not just its own run.
+  # To recover, create/set the Actions repository variable LUXAR_CI_FORCE_HOSTED
+  # to 1 and re-run all jobs; "Re-run failed" reuses the previous router output.
+  # Clear the override after obsidian capacity recovers.
   #
   # On a push or the daily full-matrix schedule, max-parallel deliberately holds
   # one Python leg queued while two Python legs and TypeScript occupy the three
@@ -415,8 +431,14 @@ jobs:
               echo "waiting for the next repository liveness scan; still queued: $queued"
               sleep 30; continue
             fi
+            # `--max-runs` is spent first-come, less one run reserved for each
+            # status still to come — so neither pass can hide the other, and
+            # none is capped while budget remains. `queued` goes first only
+            # because that is usually where the evidence is, so
+            # `--stop-after-running 1` short-circuits soonest.
             liveness=$(python3 scripts/ci_queue_scan.py scan \
               --repository "$GITHUB_REPOSITORY" \
+              --status queued \
               --status in_progress \
               --max-runs 100 \
               --exclude-run "$GITHUB_RUN_ID" \
@@ -712,9 +734,28 @@ jobs:
       # The gates below judge the SOURCE, not the runtime (ruff target-version
       # py312, mypy python_version 3.12), so they run once — on the 3.12 leg —
       # while staying under the required `python-tests (3.12)` context.
+      # The target list is the project's own (`hatch run lint`), not just the
+      # package. It used to be `packages/luxar/src/luxar/` alone, which left
+      # `scripts/` (121 files, 35K LOC — including every gate implementation),
+      # `scripts/benchmarks/`, `stats/` and `hatch_build.py` with no E/W/F/I
+      # check in CI at all (audit A12-04). The gates that guard this repository
+      # were the least-checked code in it.
       - name: Lint (ruff)
         if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
-        run: hatch run python -m ruff check packages/luxar/src/luxar/
+        run: >-
+          hatch run python -m ruff check
+          packages/luxar/src scripts scripts/benchmarks stats hatch_build.py
+
+      # Formatting was enforced ONLY by the opt-in pre-commit hook, which sees
+      # the STAGED files and nothing else — so 10 files had drifted unformatted
+      # in the tree with no gate able to notice. Same targets as the lint above.
+      # `[tool.ruff.format] exclude = ["*.md"]` keeps this to Python; see the
+      # rationale in pyproject.toml.
+      - name: Format check (ruff)
+        if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
+        run: >-
+          hatch run python -m ruff format --check
+          packages/luxar/src scripts scripts/benchmarks stats hatch_build.py
 
       - name: Type check (mypy)
         if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
@@ -722,8 +763,12 @@ jobs:
 
       - name: Layer check (import-linter)
         if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
-        # Domain layers (gsplats/io/core/encoding) must not import luxar.cli.
+        # Enforce the full subpackage stack plus the narrower forbidden contracts.
         run: hatch run lint-imports
+
+      - name: Layer order and debt ratchet
+        if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
+        run: hatch run check-layer-order
 
       - name: Version consistency (Python == viewer == citation)
         if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
@@ -755,6 +800,21 @@ jobs:
         # Gates on unwaived medium/high findings. Low findings (subprocess
         # usage, etc.) and demos are out of scope; see [tool.bandit].
         run: hatch run security
+
+      - name: Native compile check (CUDA/Metal, no GPU)
+        if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
+        # ~3,900 lines of CUDA/Metal ride into the wheel as a second and third
+        # implementation of the splat-rasterization maths (A15-03). This
+        # compile-only gate needs no GPU. The ubuntu runner checks the host
+        # translation units (one also needs CUDA headers when available) and
+        # reports the unavailable `metal`/`nvcc` arms as SKIP.
+        #
+        # `--require cxx` is the point of the flag: without it a runner that
+        # somehow lost its C++ compiler would SKIP and report green over
+        # nothing. The Metal and CUDA arms are deliberately NOT required here
+        # -- they cannot exist on ubuntu -- so full coverage of those two waits
+        # on a macOS runner and a CUDA image respectively (#2544).
+        run: hatch run check-native --require cxx
 
       - name: Test with coverage
         if: needs.changes.outputs.dom_py != 'false'
@@ -823,12 +883,33 @@ jobs:
         with:
           toolchain: 1.92.0
           targets: wasm32-unknown-unknown
+          # Explicit, even though rust-toolchain.toml also lists it: this action
+          # pins the toolchain by input and installs the minimal profile, so the
+          # clippy gate below would otherwise depend on which of the two rustup
+          # happens to consult first.
+          components: clippy
 
       - name: Cache cargo build
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: packages/luxar-viewer/src/wasm/rust
+
+      # clippy ran NOWHERE in CI (audit A12-02). `cargo check` reaches CI only
+      # as a side effect of `pnpm build` -> wasm-pack, and `make check-rust` —
+      # the one place clippy was invoked at all — could not fail: the recipe is
+      # a single backslash-joined shell command that ended `; echo "...passed!"`,
+      # making the echo's status the target's. Verified with a minimal recipe of
+      # the same shape: `false && true; echo PASSED` exits 0. The Makefile is
+      # fixed in the same commit; this is the half that gates a PR.
+      #
+      # Nearly free here: the toolchain and cargo cache are already set up above
+      # for the WASM build, and a warm clippy over this crate takes ~7s.
+      # `--all-targets` lints test and bench code too, matching the Makefile.
+      - name: Lint Rust (clippy)
+        if: needs.changes.outputs.dom_rust != 'false'
+        working-directory: packages/luxar-viewer/src/wasm/rust
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Install wasm-pack
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
@@ -1076,21 +1157,85 @@ jobs:
             || { echo "::error::viewer dist missing the depth-sort worker"; exit 1; }
           echo "Wheel viewer application and critical assets are present."
 
-  # A scheduled run can put fresh successful checks on the same SHA as an older
-  # cancelled push run, but branch protection's rollup can retain the cancelled
-  # duplicate for each required context. Once this run has proved the five
-  # protected contexts green, walk commits still ahead of main through DEV'S TIP
-  # newest first and rerun cancelled required jobs from up to two push suites.
-  # This repairs skipped commits without an unbounded runner burst.
+      # ---------------------------------------------------------------------
+      # The PYTHON wheel, built from the dist just verified above.
+      #
+      # Nothing built, inspected or installed it until a release tag was pushed:
+      # `hatch build` appeared exactly once in the repo, in publish.yml on `v*`
+      # (audit A12-01). The npm side already had this gate — `release-readiness`
+      # — and the Python side never mirrored it. A `.gitignore` pattern once
+      # matched a package directory, hatchling dropped it from the wheel, every
+      # test stayed green (they import from the source tree), and the break
+      # surfaced only as `luxar --version` failing on a clean install.
+      #
+      # It lives in THIS job rather than a new one because the viewer dist it
+      # force-includes has just been built here; a separate job would repeat the
+      # pnpm + Rust + wasm build to produce the same bytes. `wheel-viewer` is
+      # already a required context, so this gates every PR without a
+      # branch-protection change.
+      # ---------------------------------------------------------------------
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: (needs.changes.outputs.dom_py != 'false' || needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
+        with:
+          # 3.12 is the floor `requires-python` declares; a wheel that installs
+          # and runs there installs and runs on 3.13/3.14 too.
+          python-version: '3.12'
+
+      - name: Build the Python wheel
+        if: (needs.changes.outputs.dom_py != 'false' || needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
+        working-directory: ${{ github.workspace }}
+        # Identical to publish.yml's build, so this gate proves the artifact the
+        # release actually produces rather than a lookalike.
+        run: |
+          python -m pip install --upgrade hatch
+          hatch build
+
+      - name: Inspect the wheel contents
+        if: (needs.changes.outputs.dom_py != 'false' || needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
+        working-directory: ${{ github.workspace }}
+        # Asserts package completeness against the source tree, that every
+        # `exclude` pattern in pyproject was honoured, that no Git-LFS pointer
+        # stub shipped in place of data, that nothing exceeds PyPI's 100 MB
+        # per-file limit, and that the viewer dist is bundled. All derived from
+        # the repository, so the gate cannot drift from what it guards.
+        run: |
+          set -euo pipefail
+          WHEEL="$(ls dist/*.whl)"
+          python scripts/check_wheel.py "$WHEEL"
+
+      - name: Install the wheel into a bare venv and run it
+        if: (needs.changes.outputs.dom_py != 'false' || needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
+        working-directory: ${{ github.workspace }}
+        # The half no static inspection can do. A wheel can hold every expected
+        # member and still fail to import — a missing runtime dependency, a
+        # broken entry point, a module importable only from the source tree.
+        # Deliberately a CLEAN venv with no dev extras and no repo on sys.path:
+        # running from the checkout is how the dropped-package bug stayed
+        # invisible for as long as it did.
+        run: |
+          set -euo pipefail
+          python -m venv /tmp/wheel-venv
+          /tmp/wheel-venv/bin/python -m pip install --quiet --upgrade pip
+          /tmp/wheel-venv/bin/python -m pip install --quiet "$(ls dist/*.whl)"
+          # An EMPTY directory, not just "not the checkout". Python puts the
+          # working directory on sys.path, so any stray `inspect.py`/`types.py`
+          # sitting in a shared scratch dir shadows the stdlib and fails the
+          # import with an error about the wheel. (Hit exactly this locally.)
+          mkdir -p /tmp/wheel-smoke && cd /tmp/wheel-smoke
+          /tmp/wheel-venv/bin/luxar --version
+          /tmp/wheel-venv/bin/luxar --help > /dev/null
+          /tmp/wheel-venv/bin/python -c "import luxar; print('import OK:', luxar.__version__)"
+
+  # A scheduled run tests one captured dev commit, but its contexts attach to the
+  # scheduled event SHA on main. Once the dev tree has proved the five protected
+  # contexts green, walk commits still ahead of main through DEV'S TIP newest first
+  # and rerun cancelled required jobs from up to two dev push suites. This repairs
+  # skipped commits without an unbounded runner burst.
   #
-  # The walk anchors on dev's tip resolved EXPLICITLY (git/refs/heads/dev), NOT
-  # on the scheduled run's own ref/SHA: GitHub runs schedules on the default
-  # branch, so ${GITHUB_SHA} is `dev`'s tip only while `dev` is the default. Once
-  # the default flips to `main`, ${GITHUB_SHA} is main's tip, `main...${GITHUB_SHA}`
-  # collapses to `main...main`, the walk finds nothing, and promotion stalls
-  # SILENTLY. The checkout + guard below assert the resolved SHA really is
-  # origin/dev's tip and fail LOUDLY otherwise, because this failure has no other
-  # red signal.
+  # The walk anchors on dev's tip resolved EXPLICITLY (git/refs/heads/dev), NOT on
+  # the scheduled run's own ref/SHA. The checkout + ancestry guard below assert
+  # that the suite's captured commit remains on dev's line and fail loudly for an
+  # unresolvable dev ref or an off-dev checkout.
   repair-cancelled-push-checks:
     needs:
       [changes, python-tests, typescript-tests, release-readiness, wheel-viewer, docs-quality]
@@ -1132,25 +1277,10 @@ jobs:
             fi
           done
 
-          # PRECONDITION GUARD: scheduled runs are dispatched on the repository
-          # default branch, and this workflow only serves promotion while that
-          # branch is dev. Ask that question directly rather than inferring it
-          # from commit topology, where a caught-up main tip is indistinguishable
-          # from the scheduled event SHA after the default-branch flip.
-          default_branch=$(gh api "repos/${GITHUB_REPOSITORY}" \
-            --jq '.default_branch') || default_branch=""
-          if [ -z "$default_branch" ]; then
-            echo "::error::could not resolve the repository default branch; cannot verify that this scheduled run belongs to dev -- failing loudly rather than risking a silent pass"
-            exit 1
-          fi
-          if [ "$default_branch" != "dev" ]; then
-            echo "::error::scheduled runs are dispatched on '$default_branch', not dev; this promotion window cannot attest dev after the default-branch flip -- refusing to walk"
-            exit 1
-          fi
-
           # Resolve dev's tip EXPLICITLY as the WALK ANCHOR. ${GITHUB_SHA} is the
-          # scheduled event's immutable dev commit, but dev may advance while the
-          # window runs, so the repair must walk through the current tip.
+          # scheduled event commit on main, while the checked-out HEAD is the
+          # captured dev commit. Dev may advance while the window runs, so the
+          # repair must walk through the current tip.
           dev_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/refs/heads/dev" \
             --jq '.object.sha') || dev_sha=""
           if [ -z "$dev_sha" ]; then
@@ -1158,7 +1288,7 @@ jobs:
             exit 1
           fi
 
-          # Cross-check that the immutable event commit remains on dev's line.
+          # Cross-check that the captured dev commit remains on dev's line.
           # HEAD normally equals origin/dev, but a merge landing during the window
           # leaves HEAD behind the tip. That older ancestor is healthy; any commit
           # outside dev's ancestry is an unknown checkout and fails closed.

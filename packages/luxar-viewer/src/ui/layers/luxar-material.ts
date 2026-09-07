@@ -13,6 +13,7 @@
 
 import * as THREE from 'three';
 import type { BlendingMode } from '../../rendering';
+import type { PhysicalMeshKnobKey } from '../../rendering/materials/mesh-physical/config';
 import { computeDisplayRange } from './layer-state';
 
 /**
@@ -66,6 +67,12 @@ export interface LuxarMaterial extends THREE.Material {
   updateSpecular?(v: number): void;
   updateShininess?(v: number): void;
   updateAlphaCutoff?(v: number): void;
+  /**
+   * One physically based knob (`material="physical"` meshes only — the two wrappers
+   * in `rendering/materials/mesh-physical/`). Same optional-chained gate as the
+   * house knobs above: a house or emissive material simply lacks it.
+   */
+  updatePhysicalKnob?(key: PhysicalMeshKnobKey, value: number): void;
   updateColormapTexture?(texture: THREE.DataTexture | null): void;
   updateScalarRange?(min: number, max: number): void;
   updateLabelStyle?(colorByLabel: boolean, filterIndex: number): void;

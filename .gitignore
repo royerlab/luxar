@@ -189,6 +189,15 @@ autoresearch-progressive-results.tsv
 
 # Claude Code lock files
 .claude/scheduled_tasks.lock
+
+# Local agent tooling is NOT part of Luxar and is not shipped. The `luxar-*`
+# skills under .claude/skills/ ARE shipped -- they are symlinks into
+# .agents/skills/ and document this project. General-purpose agent tooling
+# belongs in the user's own ~/.claude, where it applies to every project.
+.claude/skills/autoresearch/
+.claude/commands/autoresearch.md
+.claude/commands/autoresearch/
+.claude/settings.local.json
 scripts/benchmarks/data/pareto_baseline.json
 scripts/benchmarks/data/progressive_pareto_baseline.json
 

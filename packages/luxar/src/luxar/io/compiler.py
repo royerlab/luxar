@@ -50,9 +50,18 @@ from ..encoding import (
 )
 from ..io.reader import DEFAULT_COMP
 from ..io.writer import RollbackState, ZarrWriterProtocol
-from ..typing_utils.aliases import ChunkSpec, MaxShape, NodePath, PointsMetadata
-from ..typing_utils.config import DEFAULT_VERSION
+from ..typing_utils.aliases import (
+    ChunkSpec,
+    ColorArray,
+    MaxShape,
+    NodePath,
+    PointsMetadata,
+    PositionArray,
+    ScalarArray,
+)
+from ..typing_utils.constants import LUXAR_VERSION_CURRENT
 from ..utils.arbol_warnings import arbol_warnings
+from ..validation.writing import validate_render_attrs as _validate_render_attrs
 from ._compiler.bounds import (
     WorldBoundsLeaf,
     collect_world_bounds,
@@ -93,7 +102,6 @@ from ._compiler.labels.text_labels import (
 )
 from ._compiler.node_common import prepare_transform_attrs as _prepare_transform_attrs
 from ._compiler.node_common import validate_node_path as _validate_node_path
-from ._compiler.node_common import validate_render_attrs as _validate_render_attrs
 from ._compiler.node_common import warn_if_over_element_cap
 
 # Ordering functions will be imported locally where needed to avoid circular imports
@@ -154,7 +162,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self,
         store_path: Optional[Union[str, Path]] = None,
         compressor: "CompressorLike" = DEFAULT_COMP,
-        version: str = DEFAULT_VERSION,
+        version: str = LUXAR_VERSION_CURRENT,
         enable_spatial_index: bool = True,
         encoding_mode: EncodingMode = EncodingMode.AUTO,
         ordering_method: Literal["morton", "hilbert"] = "hilbert",
@@ -688,16 +696,14 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             self._transaction_depth = 0
 
     @arbol_warnings()
-    def write_points(  # type: ignore[override]
+    def write_points(
         self,
         path: NodePath,
-        positions: NDArray[np.float32],
-        colors: Optional[
-            Union[NDArray[np.float32], List[float], Tuple[float, ...]]
-        ] = None,
-        radii: Optional[Union[NDArray[np.float32], float]] = None,
-        sharpness: Optional[Union[NDArray[np.float32], float]] = None,
-        scalars: Optional[Union[NDArray[np.float32], float]] = None,
+        positions: PositionArray,
+        colors: Optional[Union[ColorArray, tuple, list]] = None,
+        radii: Optional[Union[ScalarArray, float]] = None,
+        sharpness: Optional[Union[ScalarArray, float]] = None,
+        scalars: Optional[Union[ScalarArray, float]] = None,
         labels: Optional["Sequence[str]"] = None,
         image_labels: Optional[Any] = None,
         keys: Optional[Sequence[str]] = None,
@@ -753,16 +759,14 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         return metadata
 
     @arbol_warnings()
-    def write_lines(  # type: ignore[override]
+    def write_lines(
         self,
         path: NodePath,
-        vertices: NDArray[np.float32],
-        widths: Union[NDArray[np.float32], float],
-        colors: Optional[
-            Union[NDArray[np.float32], List[float], Tuple[float, ...]]
-        ] = None,
-        sharpness: Optional[Union[NDArray[np.float32], float]] = None,
-        scalars: Optional[Union[NDArray[np.float32], float]] = None,
+        vertices: PositionArray,
+        widths: Union[ScalarArray, float],
+        colors: Optional[Union[ColorArray, tuple, list]] = None,
+        sharpness: Optional[Union[ScalarArray, float]] = None,
+        scalars: Optional[Union[ScalarArray, float]] = None,
         indices: Optional[NDArray[np.uint32]] = None,
         line_type: str = "polyline",
         labels: Optional["Sequence[str]"] = None,
@@ -826,17 +830,15 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self._metadata_cache[path.lstrip("/")] = metadata
         return metadata
 
-    def write_mesh(  # type: ignore[override]
+    def write_mesh(
         self,
         path: NodePath,
-        vertices: NDArray[np.float32],
+        vertices: PositionArray,
         faces: NDArray[np.uint32],
         normals: Optional[NDArray[np.float32]] = None,
         normal_dims: Optional[Sequence[int]] = None,
-        colors: Optional[
-            Union[NDArray[np.float32], List[float], Tuple[float, ...]]
-        ] = None,
-        scalars: Optional[Union[NDArray[np.float32], float]] = None,
+        colors: Optional[Union[ColorArray, tuple, list]] = None,
+        scalars: Optional[Union[ScalarArray, float]] = None,
         uvs: Optional[NDArray[np.float32]] = None,
         texture: Optional[NDArray[Any]] = None,
         texture_encoding: str = "raw",
@@ -1591,15 +1593,13 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
     # ── GSplats public write methods ───────────────────────────
 
     @arbol_warnings()
-    def write_gsplats(  # type: ignore[override]
+    def write_gsplats(
         self,
         path: NodePath,
-        centers: NDArray[np.float32],
-        amplitudes: Union[NDArray[np.float32], float],
+        centers: PositionArray,
+        amplitudes: Union[ScalarArray, float],
         cholesky_factors: NDArray[np.float32],
-        colors: Optional[
-            Union[NDArray[np.float32], List[float], Tuple[float, ...]]
-        ] = None,
+        colors: Optional[Union[ColorArray, tuple, list]] = None,
         label_ids: Optional[Union[np.ndarray[Any, Any], Sequence[int]]] = None,
         label_vocabulary: Optional[dict[int, str]] = None,
         labels: Optional["Sequence[str]"] = None,
@@ -1760,7 +1760,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
     # ------------------------------------------------------------------
 
     def _compute_position_bounds(
-        self, positions: NDArray[np.float32]
+        self, positions: PositionArray
     ) -> Dict[str, List[float]]:
         return compute_position_bounds(positions)
 

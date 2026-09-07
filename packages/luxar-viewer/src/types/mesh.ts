@@ -90,6 +90,13 @@ export type MeshTextureFilter = 'linear' | 'nearest';
 export type MeshTextureWrap = 'repeat' | 'clamp';
 
 /**
+ * The two mesh material families. `'luxar'` is the house shader (spec §6.2) and
+ * what an absent attr means; `'physical'` opts into three's physically based
+ * material (`MESH_PHYSICAL_MATERIALS_SPEC.md`).
+ */
+export type MeshMaterialKind = 'luxar' | 'physical';
+
+/**
  * Mesh node metadata from zarr `.zattrs`.
  *
  * Field-for-field what `io/_compiler/geometry_writers/mesh.py` stamps, plus the
@@ -264,6 +271,68 @@ export interface MeshMetadata {
 
   /** `opaque`-mode alpha cutout threshold in `[0, 1]` (§6.2). */
   alpha_cutoff?: number;
+
+  /**
+   * Which material family renders this mesh
+   * (`docs/guides/specs/MESH_PHYSICAL_MATERIALS_SPEC.md` §3.1).
+   *
+   * Absent or `'luxar'`: the house shader (§6.2). `'physical'`: three's own
+   * physically based material, lit by the scene environment the viewer builds
+   * lazily on the first such mesh. Written only when authored, so every
+   * pre-existing store reads as the house shader.
+   */
+  material?: MeshMaterialKind;
+
+  /** Physical: microfacet roughness in `[0, 1]`; three's default `1`. */
+  roughness?: number;
+
+  /** Physical: metalness in `[0, 1]`; three's default `0`. */
+  metalness?: number;
+
+  /** Physical: clearcoat layer strength in `[0, 1]`; three's default `0`. */
+  clearcoat?: number;
+
+  /** Physical: clearcoat roughness in `[0, 1]`; three's default `0`. */
+  clearcoat_roughness?: number;
+
+  /** Physical: thin-film iridescence strength in `[0, 1]`; three's default `0`. */
+  iridescence?: number;
+
+  /** Physical: sheen strength in `[0, 1]`; three's default `0`. */
+  sheen?: number;
+
+  /**
+   * Physical: sheen tint as `#rrggbb`. Viewer-defaulted to WHITE rather than
+   * three's black, because a black sheen is a no-op and `sheen` alone would then
+   * render nothing.
+   */
+  sheen_color?: string;
+
+  /**
+   * Physical (glass, spec §3.4): share of light transmitted in `[0, 1]`; three's
+   * default `0`. Above zero the mesh composites as translucent and refracts the
+   * background and other meshes — NOT points, lines or splats, which three's
+   * transmission pass never sees.
+   */
+  transmission?: number;
+
+  /** Physical: index of refraction in `[1, 2.333]`; three's default `1.5`. */
+  ior?: number;
+
+  /** Physical: refraction volume thickness in scene units, `>= 0`; three's default `0`. */
+  thickness?: number;
+
+  /**
+   * Physical: `#rrggbb` tint reached after `attenuation_distance` through the volume
+   * (Beer–Lambert); three's default white = no tint.
+   */
+  attenuation_color?: string;
+
+  /** Physical: attenuation length in scene units, `> 0`; absent = `Infinity` (none). */
+  attenuation_distance?: number;
+
+  /** Physical: chromatic dispersion strength, `>= 0`; three's default `0`. */
+  dispersion?: number;
 
   /**
    * Half-width, IN CELLS, of the nD membership slab a CONTINUOUS hidden dimension

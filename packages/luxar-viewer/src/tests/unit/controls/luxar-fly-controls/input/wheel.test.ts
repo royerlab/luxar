@@ -22,6 +22,7 @@ function makeCtx(overrides: Partial<FlyWheelCtx> = {}): FlyWheelCtx {
     inertialMode: true,
     movementSpeed: 1,
     rotationSpeed: 1,
+    wheelZoomSensitivity: 1,
     camera,
     orientation: new THREE.Quaternion(), // identity → forward = -Z
     velocity: new THREE.Vector3(),
@@ -113,6 +114,27 @@ describe('handleWheel — plain scroll (forward/backward)', () => {
     handleWheel(ctxA, makeWheelEvent(-10));
     handleWheel(ctxB, makeWheelEvent(-10000));
     expect(ctxA.velocity.z).toBeCloseTo(ctxB.velocity.z, 10);
+  });
+});
+
+describe('handleWheel — wheelZoomSensitivity (Settings > Input > Zoom Sensitivity)', () => {
+  it('scales the forward impulse linearly (speed 2 × sensitivity 0.25 → 0.15)', () => {
+    const ctx = makeCtx({ inertialMode: true, movementSpeed: 2, wheelZoomSensitivity: 0.25 });
+    handleWheel(ctx, makeWheelEvent(-100));
+    expect(ctx.velocity.z).toBeCloseTo(-0.15, 5);
+  });
+
+  it('also scales the non-inertial direct move', () => {
+    const ctx = makeCtx({ inertialMode: false, movementSpeed: 2, wheelZoomSensitivity: 0.5 });
+    handleWheel(ctx, makeWheelEvent(-100));
+    // impulse = 1 * 2 * 0.5 * 0.3 = 0.3; position += -0.3 * 0.2
+    expect(ctx.camera.position.z).toBeCloseTo(5 - 0.06, 5);
+  });
+
+  it('leaves shift+scroll roll unscaled (roll is not a zoom)', () => {
+    const ctx = makeCtx({ inertialMode: true, rotationSpeed: 2, wheelZoomSensitivity: 0.25 });
+    handleWheel(ctx, makeWheelEvent(-100, { shiftKey: true }));
+    expect(ctx.angularVelocity.z).toBeCloseTo(-0.12, 5);
   });
 });
 

@@ -71,6 +71,14 @@ export const MONITOR_ICONS = {
   kindLod: `${MICON}<path d="M1.8 4.4h10.4M1.8 9.6h10.4"/><circle cx="5" cy="4.4" r="1.6"/><circle cx="9" cy="9.6" r="1.6"/></svg>`,
   /** kind=partition group — BSP-split square (was the 🧩 emoji). */
   kindPartition: `${MICON}<rect x="2" y="2" width="10" height="10" rx="1.2"/><path d="M7.6 2v6.2M2 8.2h5.6M7.6 8.2H12" /></svg>`,
+  /** Draw-order chip: `transparent` render bucket — two overlapping outlines (blended). */
+  bucketTransparent: `${MICON}<rect x="1.8" y="4.2" width="7.2" height="7.2" rx="1"/><rect x="5" y="2.6" width="7.2" height="7.2" rx="1"/></svg>`,
+  /** Draw-order chip: `opaque` render bucket — one filled square (depth-first, covers). */
+  bucketOpaque: `${MICON}<rect x="3" y="3" width="8" height="8" rx="1" fill="currentColor"/></svg>`,
+  /** LOD chip: next additive rung HELD (density guard or residency ceiling), not ⏳ streaming. */
+  lodHeld: `${MICON}<path d="M5 3.4v7.2M9 3.4v7.2"/></svg>`,
+  /** Density chip: a dot lattice with every other dot missing — a hashed subset is drawn. */
+  densityThinned: `${MICON}<circle cx="3" cy="3" r="1.1" fill="currentColor" stroke="none"/><circle cx="11" cy="3" r="1.1" fill="currentColor" stroke="none"/><circle cx="7" cy="7" r="1.1" fill="currentColor" stroke="none"/><circle cx="3" cy="11" r="1.1" fill="currentColor" stroke="none"/><circle cx="11" cy="11" r="1.1" fill="currentColor" stroke="none"/><circle cx="7" cy="3" r="1.1" stroke-width="0.8"/><circle cx="3" cy="7" r="1.1" stroke-width="0.8"/><circle cx="11" cy="7" r="1.1" stroke-width="0.8"/><circle cx="7" cy="11" r="1.1" stroke-width="0.8"/></svg>`,
 } as const;
 
 /**

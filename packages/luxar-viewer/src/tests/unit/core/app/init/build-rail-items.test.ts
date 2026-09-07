@@ -72,6 +72,13 @@ function makeDeps(
     },
     animationController: { startAnimation: vi.fn() },
     adaptiveDPRManager: {},
+    densityGuard: {
+      isEnabled: () => true,
+      sessionDisabled: false,
+      setEnabled: () => {},
+      thinning: () => ({ nodes: 0, minKeep: 1 }),
+      capElementsPerPixel: () => 4,
+    },
     performanceMonitor: { visible: false },
     layersPanel: {
       isVisible: vi.fn().mockReturnValue(overrides.layersVisible ?? false),

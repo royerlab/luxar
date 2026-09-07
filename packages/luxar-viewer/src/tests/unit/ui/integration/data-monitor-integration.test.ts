@@ -67,6 +67,9 @@ vi.mock('three', () => ({
     set: vi.fn().mockReturnThis(),
     copy: vi.fn().mockReturnThis(),
   })),
+  // The physical mesh wrapper `extends THREE.MeshPhysicalMaterial` at module load,
+  // so the class must exist on the mock even though nothing here constructs it.
+  MeshPhysicalMaterial: class {},
   ShaderMaterial: vi.fn().mockImplementation(function (this: any, params: any) {
     Object.assign(this, {
       uniforms: params?.uniforms || {},

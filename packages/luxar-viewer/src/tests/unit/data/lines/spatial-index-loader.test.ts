@@ -375,6 +375,39 @@ describe('LinesSpatialIndexLoader', () => {
         expect(opens.some((c) => String(c[0]).includes('segments'))).toBe(true);
       });
 
+      it('does not probe optional arrays the store listing rules out', async () => {
+        // The consolidated listing saw vertices/segments/widths under this node and
+        // nothing else: colors / sharpnesses must not cost a 404 round trip, while
+        // widths (listed) is still opened.
+        const listedNode = makeLinesNode({
+          arrays: new Set([
+            'vertices',
+            'segments',
+            'widths',
+            'vertex_chunk_bounds',
+            'segment_chunk_bounds',
+          ]),
+        });
+        const listedLoader = new LinesSpatialIndexLoader(
+          makeMockZarrLocation() as unknown as ConstructorParameters<
+            typeof LinesSpatialIndexLoader
+          >[0],
+          listedNode
+        );
+        await listedLoader.loadLines({
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        });
+        const opens = (zarr.open as unknown as ReturnType<typeof vi.fn>).mock.calls.map((c) =>
+          String(c[0])
+        );
+        expect(opens.some((p) => p.includes('widths'))).toBe(true);
+        expect(opens.some((p) => p.includes('colors'))).toBe(false);
+        expect(opens.some((p) => p.includes('sharpnesses'))).toBe(false);
+        listedLoader.dispose();
+      });
+
       it('should handle missing spatial index gracefully', async () => {
         const noOrderingNode: SceneNode = {
           ...mockNode,

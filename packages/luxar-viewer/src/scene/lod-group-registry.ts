@@ -1072,6 +1072,17 @@ export class LODGroupRegistry {
     return true;
   }
 
+  /**
+   * Whether any lazy LOD-group level has an `ensureLoaded` fetch in flight.
+   * These promotions run outside every `updateView` cycle, so neither
+   * `isUpdateInProgress()` nor `getState().isLoading` sees them; the perf
+   * snapshot's `isSettled` does. (Deferred partition parts load through
+   * `updateView` and are covered by the update lock instead.)
+   */
+  isAnyLevelLoading(): boolean {
+    return this.anyChildLoading();
+  }
+
   private anyChildLoading(): boolean {
     for (const entry of this.entries.values()) {
       for (const child of entry.children) {

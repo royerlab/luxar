@@ -90,6 +90,7 @@ from .typing_utils.enums import (
     PhysicalUnit,
     RenderingLimits,
 )
+from .utils.verbosity import get_verbosity, set_verbosity, verbosity
 from .validation.nd_transforms import (
     apply_nd_transform_to_bounds,
     compose_nd_transforms,
@@ -100,12 +101,20 @@ __version__ = "2026.06.05"
 
 # Optional re-exports.
 # gsplats always provides names (real or stub that raises on use if torch is missing).
-from . import colormaps, core, io, typing_utils, utils
-from . import validation as validation_module
+from . import colormaps, core, io, typing_utils, utils, validation
 from .core import node, points, scene
 from .io import writer
 from .utils import array as array_utils
-from .validation import base as validation
+
+# NB `validation` above must stay bound to the SUBPACKAGE. It used to read
+# `from .validation import base as validation`, which bound the attribute to
+# `validation/base.py` — so `import luxar.validation.types` raised
+# ``ImportError: cannot import name 'types' from 'luxar.validation.base'``
+# (the statement resolves `luxar.validation` by attribute lookup, not through
+# ``sys.modules``). A `from . import validation as validation_module` alias
+# existed alongside it as the escape hatch and had no readers at all.
+# ``test_import_paths.py`` pins the submodule imports so the shadow cannot
+# come back.
 
 __all__: list[str] = [
     # Core classes
@@ -165,6 +174,10 @@ __all__: list[str] = [
     "validate_nd_transform",
     "compose_nd_transforms",
     "apply_nd_transform_to_bounds",
+    # Console output
+    "set_verbosity",
+    "get_verbosity",
+    "verbosity",
     # Gaussian Splatting (optional)
     "GSplatData",
     "fit_gaussian_splats",

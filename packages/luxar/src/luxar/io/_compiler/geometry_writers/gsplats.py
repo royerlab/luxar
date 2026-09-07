@@ -9,30 +9,37 @@ functions are the thin pipelines that sequence those steps behind a narrow
 
 from __future__ import annotations
 
-from typing import Any, List, Optional, Sequence, Tuple, Union
+from typing import Any, List, Optional, Sequence, Union
 
 import numpy as np
 import zarr
 from arbol import aprint
 from numpy.typing import NDArray
 
-from ....typing_utils.aliases import NodePath
+from ....typing_utils.aliases import (
+    ColorArray,
+    NodePath,
+    PositionArray,
+    ScalarArray,
+)
 from ....typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
+from ....validation.writing import (
+    GSPLATS_RESERVED_ATTRS,
+    validate_gsplat_inputs,
+    validate_image_labels_for_writing,
+    validate_render_attrs,
+)
 from ..context import GSplatsWriteCtx
 from ..gsplat_assembly import (
     apply_gsplat_spatial_ordering,
-    validate_gsplat_inputs,
     write_gsplat_arrays,
 )
 from ..labels.image_labels import (
-    validate_image_labels_for_writing,
     write_image_labels_csr,
 )
 from ..labels.text_labels import write_string_channels_csr
 from ..node_common import (
-    GSPLATS_RESERVED_ATTRS,
     validate_node_path,
-    validate_render_attrs,
 )
 
 
@@ -83,10 +90,10 @@ def _write_element_annotations(
 def write_gsplats(
     ctx: GSplatsWriteCtx,
     path: NodePath,
-    centers: NDArray[np.float32],
-    amplitudes: Union[NDArray[np.float32], float],
+    centers: PositionArray,
+    amplitudes: Union[ScalarArray, float],
     cholesky_factors: NDArray[np.float32],
-    colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]] = None,
+    colors: Optional[Union[ColorArray, tuple, list]] = None,
     label_ids: Optional[Union[np.ndarray, Sequence[int]]] = None,
     label_vocabulary: Optional[dict[int, str]] = None,
     labels: Optional["Sequence[str]"] = None,

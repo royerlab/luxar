@@ -4,12 +4,24 @@ This module provides validation to ensure all point groups in a scene
 have consistent coverage of non-displayed dimensions.
 """
 
-from typing import Dict, Optional, Set, Tuple
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Dict, Optional, Set, Tuple
 
 import numpy as np
 from numpy.typing import NDArray
 
-from ..core.dimensions import Dimensions
+from ..typing_utils.aliases import (
+    Float32Array,
+    PositionArray,
+)
+
+if TYPE_CHECKING:
+    # Annotation only, in two signatures. `validation` sits BELOW `core`: core
+    # imports validation (and now imports `validation.writing` at module level,
+    # since A1-03 moved the shared pre-write gates there), so a runtime import
+    # back into core is the one edge that would reinstate a cycle.
+    from ..core.dimensions import Dimensions
 
 
 class DimensionalCoverageError(ValueError):
@@ -117,13 +129,11 @@ def validate_dimensional_coverage(
 
 
 def broadcast_to_all_slices(
-    positions: NDArray[np.float32],
-    colors: Optional[NDArray[np.float32]],
-    radii: Optional[NDArray[np.float32]],
+    positions: PositionArray,
+    colors: Optional[Float32Array],
+    radii: Optional[Float32Array],
     scene_dimensions: Dimensions,
-) -> Tuple[
-    NDArray[np.float32], Optional[NDArray[np.float32]], Optional[NDArray[np.float32]]
-]:
+) -> Tuple[PositionArray, Optional[Float32Array], Optional[Float32Array]]:
     """Broadcast points to cover all non-displayed dimension values.
 
     Helper function that replicates points across all combinations of

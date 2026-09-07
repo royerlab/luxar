@@ -13,6 +13,15 @@ import { LoaderConfig } from './data-loader-types';
 import { UpdateProfiler } from '../profiling/update-profiler';
 import type { SceneLoaderMonitorFactory } from './scene-loader-monitor-port';
 import type { KTX2TextureDecoder } from '../types/mesh';
+import type {
+  DensityGateCaps,
+  ProjectedDensityProvider,
+} from './scene-loader/progressive/density-gate';
+import {
+  RESIDENCY_DECLINED_PATH_SAMPLE,
+  type RefinementResidencyStop,
+} from './scene-loader/progressive/residency-budget';
+import type { PoolStats } from '../rendering/gpu-buffer-pool/pool-stats';
 
 /**
  * Manager for SceneLoader instances.
@@ -56,6 +65,15 @@ export class SceneLoaderManager {
    * wake a loop — SceneLoader treats it as a no-op.
    */
   private requestRender: (() => void) | null = null;
+  /**
+   * Projected-density provider + caps for the refinement rung gate, forwarded
+   * to every created loader (→ `SceneLoader.setRefinementDensityProvider`).
+   * Null provider = bytes-only admission.
+   */
+  private refinementDensity: {
+    provider: ProjectedDensityProvider | null;
+    caps: DensityGateCaps;
+  } | null = null;
   private decodeKTX2: KTX2TextureDecoder | null = null;
 
   /**
@@ -92,6 +110,20 @@ export class SceneLoaderManager {
    */
   setRequestRender(callback: (() => void) | null): void {
     this.requestRender = callback;
+  }
+
+  /**
+   * Provide the projected-density source for the refinement rung gate.
+   * Forwarded to every existing and subsequently created ``SceneLoader``.
+   */
+  setRefinementDensityProvider(
+    provider: ProjectedDensityProvider | null,
+    caps: DensityGateCaps
+  ): void {
+    this.refinementDensity = { provider, caps };
+    for (const loader of this.loaders.values()) {
+      loader.setRefinementDensityProvider(provider, caps);
+    }
   }
 
   setKTX2TextureDecoder(decoder: KTX2TextureDecoder | null): void {
@@ -148,6 +180,12 @@ export class SceneLoaderManager {
       this.decodeKTX2
     );
     loader.setRequestRender(this.requestRender);
+    if (this.refinementDensity) {
+      loader.setRefinementDensityProvider(
+        this.refinementDensity.provider,
+        this.refinementDensity.caps
+      );
+    }
     this.loaders.set(id, loader);
 
     if (setAsDefault || !this.defaultLoaderId) {
@@ -192,6 +230,12 @@ export class SceneLoaderManager {
       this.decodeKTX2
     );
     loader.setRequestRender(this.requestRender);
+    if (this.refinementDensity) {
+      loader.setRefinementDensityProvider(
+        this.refinementDensity.provider,
+        this.refinementDensity.caps
+      );
+    }
     this.loaders.set(id, loader);
 
     if (setAsDefault || !this.defaultLoaderId) {
@@ -260,6 +304,60 @@ export class SceneLoaderManager {
       if (loader.isLoadPassInProgress()) return true;
     }
     return false;
+  }
+
+  /**
+   * The progressive-refinement BYTE-ceiling stop across every registered
+   * loader, or `undefined` when none of them ever declined a rung.
+   *
+   * MERGE RULE. The FIRST loader (in registration order) that reports a stop
+   * supplies `reason`, `residentBytes`, `budgetBytes` and `firstPath` — those
+   * four describe one verdict at one instant and averaging or concatenating
+   * them across loaders would describe no verdict at all. `declinedPathCount`
+   * sums, because "how much of the scene stopped short" is genuinely additive,
+   * and `declinedPaths` concatenates in the same order and is re-truncated to
+   * {@link RESIDENCY_DECLINED_PATH_SAMPLE} so the merged sample cannot grow with
+   * the loader count. So on a multi-loader page the reported verdict is the
+   * first-registered loader's, while the count covers all of them.
+   *
+   * Aggregated for the same reason as {@link isAnyLoadPassInProgress}: the
+   * manager's contract admits several loaders even though production registers
+   * exactly one.
+   *
+   * Consumed by the debug snapshot (`__luxarDebug.getState().refinementResidency`),
+   * which `core/app/debug/capture-readiness.ts` refuses a capture on.
+   */
+  refinementResidencyStop(): RefinementResidencyStop | undefined {
+    let merged: RefinementResidencyStop | undefined;
+    for (const loader of this.loaders.values()) {
+      const stop = loader.refinementResidencyStop;
+      if (!stop) continue;
+      if (!merged) {
+        merged = { ...stop, declinedPaths: [...stop.declinedPaths] };
+        continue;
+      }
+      merged.declinedPathCount += stop.declinedPathCount;
+      merged.declinedPaths.push(...stop.declinedPaths);
+    }
+    if (merged) {
+      merged.declinedPaths = merged.declinedPaths.slice(0, RESIDENCY_DECLINED_PATH_SAMPLE);
+    }
+    return merged;
+  }
+
+  /**
+   * The DEFAULT loader's GPU buffer-pool statistics, or `undefined` when no
+   * loader is registered or pooling is disabled.
+   *
+   * Deliberately NOT an aggregate, unlike {@link refinementResidencyStop}:
+   * `PoolStats` carries a per-type breakdown and a `largestPooledBytes` figure
+   * that do not sum, and inventing a half-merged shape for a case production
+   * never reaches (one loader, under `'default'`) would be a worse answer than
+   * a precisely-scoped one. A second registered loader's pool is therefore NOT
+   * represented here.
+   */
+  gpuPoolStats(): PoolStats | undefined {
+    return this.getDefaultLoader()?.gpuBufferPool?.getStats();
   }
 
   /**

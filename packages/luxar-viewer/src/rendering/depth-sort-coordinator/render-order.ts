@@ -384,6 +384,11 @@ interface OrderSlot {
    * inferred band is not reported as author intent (spec D2/D3).
    */
   levelExplicit: boolean;
+  /**
+   * The mesh must draw before everything else in its band — a transmissive
+   * (glass) physical mesh, see {@link drawsBeforeEmissive}.
+   */
+  first: boolean;
 }
 let orderSlots: OrderSlot[] = [];
 
@@ -401,6 +406,8 @@ interface OrderGroup {
   level: number;
   /** True when the winning member's order was authored rather than defaulted. */
   levelExplicit: boolean;
+  /** True when the group draws first in its band (its first member says so). */
+  first: boolean;
 }
 
 /**
@@ -739,7 +746,28 @@ export function collectRenderOrderSlot(
     radius: Number.isFinite(scaledRadius) ? scaledRadius : -1,
     level: authored ?? 0,
     levelExplicit: authored !== undefined,
+    first: drawsBeforeEmissive(mesh),
   });
+}
+
+/**
+ * Whether a mesh asks to be drawn BEFORE the emissive data sharing its band.
+ *
+ * Stamped as `userData.drawBeforeEmissive` by the physical material's compositing
+ * decision (`materials/mesh-physical/config.ts`) for a transmissive (glass) surface.
+ * On WebGPU a transmissive mesh lives in the same transparent render list as every
+ * point, line and splat layer and lands its fragments with alpha 1, so if a cluster's
+ * centre sorted farther than the sphere the cluster would draw first and be painted
+ * over; ordering the glass first keeps the spec §3.4 contract ("data in front and
+ * behind stays visible, unrefracted") on both backends. Read off the MATERIAL's
+ * `userData` (where the live `transmission` slider keeps it current), through the
+ * record rather than the material type for the same layering reason as
+ * {@link authoredLayerOrder}. A multi-material mesh never asks.
+ */
+export function drawsBeforeEmissive(mesh: THREE.Mesh): boolean {
+  const material = mesh.material as THREE.Material | THREE.Material[] | undefined;
+  if (!material || Array.isArray(material)) return false;
+  return (material.userData as { drawBeforeEmissive?: unknown }).drawBeforeEmissive === true;
 }
 
 /**
@@ -794,7 +822,10 @@ export function authoredLayerOrder(mesh: THREE.Mesh): number | undefined {
  *    the single-wrapper special case); otherwise the whole group falls
  *    back to member view-z (a partition with no stored tree, or one whose
  *    tree does not name every part).
- * 6. Sequential global integers 1..M are written to mesh.renderOrder.
+ * 6. Sequential global integers are written to mesh.renderOrder. When a glass
+ *    group exists, the prefix through the last glass group occupies negative
+ *    ranks so every draw-first surface stays ahead of unranked emissive objects
+ *    at three's default 0; later groups resume at 1.
  *
  * Transparent objects OUTSIDE the coordinator's sorted set (commutative
  * modes, plus empty parts that have never committed) keep renderOrder 0
@@ -825,27 +856,41 @@ export function assignGlobalRenderOrder(): void {
         sumZ: slot.viewZ,
         level: slot.level,
         levelExplicit: slot.levelExplicit,
+        first: slot.first,
       });
     }
   }
 
-  // Band first (lower level = farther = drawn first), then farthest group
-  // within a band (ascending mean view-z: more negative = farther), then hoist
-  // strict bounding-sphere containers before their contents.
+  // Band first (lower level = farther = drawn first), then any group that must
+  // draw first in its band (glass — see `drawsBeforeEmissive`), then farthest
+  // group within a band (ascending mean view-z: more negative = farther), then
+  // hoist strict bounding-sphere containers before their contents.
   //
-  // With no level authored anywhere every group is band 0, so the first term is
-  // always 0 and this falls through to EXACTLY today's comparator — which,
-  // together with the intra-band edge restriction below, is what makes an
-  // unauthored scene bit-identical to before the feature existed.
+  // With no level authored anywhere every group is band 0, and with no glass the
+  // second term is always 0, so this falls through to EXACTLY today's comparator
+  // — which, together with the intra-band edge restriction below, is what makes
+  // an unauthored scene bit-identical to before the feature existed.
   const byDepth = [...groups.values()].sort(
-    (a, b) => a.level - b.level || a.sumZ / a.slots.length - b.sumZ / b.slots.length
+    (a, b) =>
+      a.level - b.level ||
+      Number(!a.first) - Number(!b.first) ||
+      a.sumZ / a.slots.length - b.sumZ / b.slots.length
   );
   const ordered = orderGroupsWithContainment(byDepth);
   warnBucketOrderConflict(ordered);
 
-  // Reserve THREE's default 0 for meshes the coordinator does not track yet,
-  // so an empty never-committed partition placeholder cannot alias a live rank.
-  let nextRank = 1;
+  assignRenderOrderRanks(ordered);
+}
+
+/** Write the already ordered groups onto one renderOrder scale, reserving 0. */
+function assignRenderOrderRanks(ordered: OrderGroup[]): void {
+  let prefixSize = 0;
+  let negativePrefixSize = 0;
+  for (const group of ordered) {
+    prefixSize += group.slots.length;
+    if (group.first) negativePrefixSize = prefixSize;
+  }
+  let nextRank = negativePrefixSize > 0 ? -negativePrefixSize : 1;
   for (const group of ordered) {
     // BSP ranks when EVERY member has one; view-z otherwise (a rank-less legacy
     // wrapper, or a partition with no stored tree).
@@ -865,6 +910,7 @@ export function assignGlobalRenderOrder(): void {
       everyMemberRanked ? (a, b) => a.partRank - b.partRank : (a, b) => a.viewZ - b.viewZ
     );
     for (const slot of group.slots) {
+      if (nextRank === 0) nextRank = 1;
       slot.mesh.renderOrder = nextRank++;
     }
   }

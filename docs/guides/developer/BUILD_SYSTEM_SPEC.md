@@ -366,6 +366,8 @@ MIN_NODE_MINOR := 22
 | `make changelog-draft` | Preview the `changelog.d/` fold into `CHANGELOG.md`; changes nothing |
 | `make changelog` | Fold `changelog.d/*.md` fragments into `CHANGELOG.md` and delete them (`MONTH="August 2026"` pins the heading) |
 | `make set-version` | Set release version in code (`DATE=YYYY.MM.DD`, default today) |
+| `make changelog-release-draft` | Preview cutting `## [Unreleased]` into the current version; changes nothing |
+| `make changelog-release` | Cut `## [Unreleased]` into the current version after `make changelog` → `make set-version` |
 | `make release-check` | Dry-run release: run ALL preflight checks, tag/push nothing |
 | `make release` | Cut release: validate main + CI green, tag `v<version>`, push (triggers PyPI publish) |
 | `make publish` / `make publish-test` | Disabled — use `make release` (tag-triggered OIDC publish via CI) |
@@ -580,7 +582,7 @@ HPC login nodes typically lack sudo, pipx, and GPU access. The Makefile handles 
 | No sudo / no pipx | `install-hatch` tries `pip install --user`, then venv fallback |
 | No global npm | `install-pnpm` tries global npm, then `npm install --prefix ~/.local` fallback |
 | No GPU on login node | `make build-cuda SLURM=1` submits the build to a GPU node |
-| Old system GCC (< 9) | `build_cuda_slurm.py` auto-detects a `gcc/` module >= 9 to load |
+| Old system GCC (< 10) | `build_cuda_slurm.py` auto-detects a `gcc/` module >= 10 to load |
 | CUDA modules vs PATH | `build_cuda_slurm.py` auto-selects the matching `cuda/` module |
 
 ### Step-by-step HPC first-time setup
@@ -618,7 +620,7 @@ The submission script is `scripts/build_cuda_slurm.py`. Before submitting, it:
 
 1. **Detects PyTorch CUDA version** — queries `torch.version.cuda` from the hatch env
 2. **Finds matching CUDA module** — runs `module spider cuda`, picks the highest `cuda/X.Y.z` matching the torch CUDA major.minor
-3. **Finds GCC >= 9 module** — runs `module spider gcc`, picks the highest `gcc/X.Y` with X >= 9 (required by PyTorch 2.x; system GCC on RHEL 8 is 8.5.0)
+3. **Finds GCC >= 10 module** — runs `module spider gcc`, picks the highest `gcc/X.Y` with X >= 10 (required for the shipped C++20 build; system GCC on RHEL 8 is 8.5.0)
 4. **Captures VIRTUAL_ENV** — the hatch env path must be reachable from the compute node (shared filesystem)
 5. **Generates sbatch script** at `build-cuda-logs/build_cuda_job.sh`
 6. **Submits with sbatch** and prints monitoring commands
@@ -646,7 +648,7 @@ All compiler output is in `build-cuda-logs/build_<JOB_ID>.out`. Common issues:
 
 | Error | Cause | Fix |
 |-------|-------|-----|
-| `GCC version too old` | System GCC < 9 | Ensure `module spider gcc` shows gcc >= 9 on compute nodes |
+| `GCC version too old` | System GCC < 10 | Ensure `module spider gcc` shows gcc >= 10 on compute nodes |
 | `torch.cuda.is_available() False` | CUDA/torch version mismatch | Check `torch.version.cuda` vs loaded module |
 | `.so not found after build` | Build succeeded but path wrong | Run `make test-cuda` which also searches for the .so |
 | `sbatch: Invalid job id` | Job already finished | Check the `.out` file — it may have succeeded |
@@ -719,6 +721,7 @@ hatch run luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu \
 | `--tasks-per-job` | Number of tasks per Slurm job (auto-calculated from GPU capacity) |
 | `--parallel` / `--sequential` | Run packed tasks concurrently or one-by-one (default: sequential) |
 | `--preset` | Fitting preset: `draft` (2000 iter), `standard` (5000), `hifi` (10000), `ultra` (20000), `n2s` (= ultra; canonical Noise2Self protocol name) |
+| `--gpus-per-task` | GPUs to request per task, emitted as `#SBATCH --gpus-per-task` (default 1). A COUNT — unlike `batch-fit run --gpus`, which SELECTS local devices |
 | `--gpu` | GPU profile name when auto-detect unavailable (login node) |
 
 **Auto-tiling**: compares total spatial voxels against the GPU's benchmarked
@@ -946,15 +949,18 @@ returns it to the same queue.
 
 Scheduled and push runs differ from a PR run in *scope* as well: neither has a PR
 base, so the `changes` job cannot path-filter and selects the whole suite plus the
-documentation gate. On a scheduled run, `changes` checks out the immutable event SHA
-and captures that commit once; every downstream suite and repair checkout uses the
-captured SHA. The run's check contexts attach to that same event SHA regardless of
-what the jobs check out, so the pin keeps the tested tree and its contexts aligned.
+documentation gate. Once the workflow containing this behavior reaches the default
+branch (`main`), a scheduled `changes` job checks out `refs/heads/dev`, captures the
+resolved commit once, and every downstream suite and repair checkout uses that SHA.
+The run's check contexts still attach to the scheduled event SHA on `main`, not to
+the checked-out dev commit. The window therefore supplies internally consistent
+dev-tip coverage; `repair-cancelled-push-checks` supplies the promotion value by
+repairing cancelled push contexts that are attached to dev commits.
 
-Scheduled runs sit in their own `concurrency` group. While `dev` is the default,
-they share `refs/heads/dev` with merge-triggered runs; after the default flips,
-their event ref becomes `refs/heads/main`, but `github.event_name` still keeps the
-groups separate. Under one shared group `cancel-in-progress` let whichever started
+Scheduled runs sit in their own `concurrency` group. While `dev` was the default,
+their event ref was `refs/heads/dev`, the same ref as merge-triggered runs. Their
+event ref is now `refs/heads/main`, but `github.event_name` still keeps the groups
+separate. Under one shared group `cancel-in-progress` let whichever started
 second cancel the other. A merge landing mid-schedule killed the scheduled run; a
 cron firing over an in-flight merge killed that merge's push run, which is the only
 place the new `dev` commit gets the full matrix at all. Scheduled runs still share a
@@ -1008,8 +1014,8 @@ obsidian-routed legs alongside the next push run, so the two-candidate cap permi
 to eight per window. Do not widen that cap without re-measuring queue pressure.
 Reruns execute the workflow definition from their original SHA, so commits predating
 the run-id key retain the older attempt-only collision behavior; the scheduled SHA
-itself carries the new policy and provides the forward promotion candidate that clears
-that rollout backlog.
+itself carries the new repair policy, and the dev push runs it repairs provide the
+forward promotion candidates that clear that rollout backlog.
 
 ## Architecture Notes
 

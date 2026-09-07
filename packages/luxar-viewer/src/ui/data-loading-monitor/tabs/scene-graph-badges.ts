@@ -1,12 +1,15 @@
 import type {
   LODProgressState,
+  NodeDensityState,
   NodeDrawOrder,
   SceneGraphNode,
   SceneGraphState,
 } from '../../../types/data-monitor-types';
 import {
   activeLevelRole,
+  chipInnerHtml,
   countAdditiveNodes,
+  densityChipContent,
   drawOrderChipContent,
   levelRoleTitleSuffix,
   lodChipContent,
@@ -24,7 +27,8 @@ export function updateSceneGraphBadges(
   container: HTMLElement,
   model: SceneGraphBadgeSource,
   lodStates: ReadonlyMap<string, LODProgressState>,
-  drawOrderStates: ReadonlyMap<string, NodeDrawOrder>
+  drawOrderStates: ReadonlyMap<string, NodeDrawOrder>,
+  densityStates: ReadonlyMap<string, NodeDensityState> = new Map()
 ): void {
   const root = model.getSceneGraph().root;
   if (!root) return;
@@ -50,7 +54,7 @@ export function updateSceneGraphBadges(
     const node = model.getSceneGraphNodeByPath(path);
     if (!node) return;
     const content = lodChipContent(node, lodStates.get(path));
-    chip.textContent = content?.text ?? '';
+    chip.innerHTML = chipInnerHtml(content);
     (chip as HTMLElement).title = content?.title ?? '';
   });
 
@@ -62,7 +66,18 @@ export function updateSceneGraphBadges(
     const path = (chip as HTMLElement).dataset.draworderPath;
     if (!path) return;
     const content = drawOrderChipContent(drawOrderStates.get(path));
-    chip.textContent = content?.text ?? '';
+    // Glyph + text: the glyph is trusted `MONITOR_ICONS` markup, the text is escaped.
+    chip.innerHTML = chipInnerHtml(content);
+    (chip as HTMLElement).title = content?.title ?? '';
+  });
+
+  // Density thinning comes and goes with the camera (and the guard toggle).
+  const densityChips = container.querySelectorAll('.luxar-scene-graph__density[data-density-path]');
+  densityChips.forEach((chip) => {
+    const path = (chip as HTMLElement).dataset.densityPath;
+    if (!path) return;
+    const content = densityChipContent(densityStates.get(path));
+    chip.innerHTML = chipInnerHtml(content);
     (chip as HTMLElement).title = content?.title ?? '';
   });
 

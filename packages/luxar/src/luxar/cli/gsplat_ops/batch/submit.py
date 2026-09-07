@@ -10,8 +10,8 @@ from arbol import aprint
 
 from luxar.utils.lod_methods import GSPLAT_ADDITIVE_CHOICES_HELP
 
+from .plan_configs import build_plan_configs
 from .submit_pipeline import (
-    build_plan_configs,
     generate_all_scripts,
     resolve_gpu_context,
     resolve_packing,
@@ -276,8 +276,11 @@ def run_batch_submit(
         None, "--account", "-A", rich_help_panel="Slurm resources"
     ),
     qos: Optional[str] = typer.Option(None, "--qos", rich_help_panel="Slurm resources"),
-    gpus: int = typer.Option(
-        1, "--gpus", help="GPUs per task", rich_help_panel="Slurm resources"
+    gpus_per_task: int = typer.Option(
+        1,
+        "--gpus-per-task",
+        help="GPUs per task (becomes `#SBATCH --gpus-per-task`). Distinct from `batch-fit run --gpus`, which SELECTS local devices.",
+        rich_help_panel="Slurm resources",
     ),
     cpus: int = typer.Option(
         4, "--cpus", help="CPUs per task", rich_help_panel="Slurm resources"
@@ -635,7 +638,7 @@ def run_batch_submit(
             partition=partition,
             account=account,
             qos=qos,
-            gpus=gpus,
+            gpus_per_task=gpus_per_task,
             cpus=cpus,
             mem=mem,
             parallel=parallel,
@@ -683,7 +686,7 @@ def run_batch_submit(
             total_gpu_hours=total_gpu_hours,
             slurm_time=slurm_time,
             partition=partition,
-            gpus=gpus,
+            gpus_per_task=gpus_per_task,
             cpus=cpus,
             mem=mem,
             output_dir=output_dir,

@@ -24,6 +24,11 @@ def normalize_coords_to_grid(
     Returns:
         Integer coordinates, shape (N, d), dtype uint32
     """
+    working_dtype = np.promote_types(coords.dtype, np.float32)
+    coords = coords.astype(working_dtype, copy=False)
+    min_coords = min_coords.astype(working_dtype, copy=False)
+    max_coords = max_coords.astype(working_dtype, copy=False)
+
     # Normalize to [0, 1]
     ranges = max_coords - min_coords
     # Handle degenerate dimensions (zero range)
@@ -49,6 +54,7 @@ def compute_auto_resolution(coords: np.ndarray, max_resolution: int = 2**16) -> 
     Returns:
         Resolution as power of 2, capped at max_resolution
     """
+    coords = coords.astype(np.promote_types(coords.dtype, np.float32), copy=False)
     spread = coords.max(axis=0) - coords.min(axis=0)
     max_spread = spread.max()
 

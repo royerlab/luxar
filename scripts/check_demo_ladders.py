@@ -29,9 +29,15 @@ Usage:
     hatch run check-demo-ladders                              # all built demos
     hatch run check-demo-ladders path/to.luxar.zarr ...
     hatch run check-demo-ladders --min-elements 500000
+    hatch run check-demo-ladders --require-scenes             # scenes MUST exist
 
 Exit code is non-zero if any leaf fails. The command is part of ``hatch run
-check``; on a checkout without built demos it is a read-only no-op.
+check``; on a checkout without built demos it remains a read-only no-op, since
+the output directory is gitignored and an empty inventory is the normal state
+of a fresh clone and of CI. That run now reports INSPECTED NOTHING instead of
+wording that reads like a pass (audit A9-04), and ``--require-scenes`` makes it
+a failure for callers that know scenes should be there — release prep, or a
+demo-build pipeline running this after the build.
 
 A SECOND, independent pass lives behind ``--screen`` (``--screen-only`` to skip
 the ladder gate above): the LOD **opening-shot screen** from
@@ -521,6 +527,14 @@ def build_parser() -> argparse.ArgumentParser:
     """The CLI surface: the streaming-ladder gate, plus the opt-in screen."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("scenes", nargs="*", help="scene paths (default: built demos)")
+    parser.add_argument(
+        "--require-scenes",
+        action="store_true",
+        help=(
+            "fail instead of passing when no scene was inspected (use wherever "
+            "demos ARE expected to be built: release prep, a demo-build pipeline)"
+        ),
+    )
     parser.add_argument("--min-elements", type=int, default=DEFAULT_MIN_ELEMENTS)
     parser.add_argument("--max-share", type=float, default=DEFAULT_MAX_SHARE)
     parser.add_argument(
@@ -694,8 +708,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error(f"--screen-aspect: {error}")
 
     paths = scene_paths(args.scenes)
+
+    # An empty inventory means this run inspected NOTHING. That is legitimate on
+    # a checkout that has never built demos — the output directory is gitignored
+    # — so it stays exit 0 by default. But it is not evidence that the ladders
+    # are sound, and the old wording ("No scenes found. Build a demo first")
+    # read like a tidy pass (audit A9-04). Say plainly that nothing was looked
+    # at, and give callers who know demos SHOULD be present a way to enforce it.
     if not paths:
-        aprint("No scenes found. Build a demo first, or pass a path explicitly.")
+        if args.require_scenes:
+            aprint(
+                "❌ --require-scenes: INSPECTED NOTHING — no scene found. Build "
+                "a demo first, or pass a path explicitly."
+            )
+            return 1
+        aprint(
+            "INSPECTED NOTHING — no scene found (this is not a pass). Build a "
+            "demo first, pass a path explicitly, or use --require-scenes where "
+            "scenes are expected to exist."
+        )
         return 0
 
     if args.screen_only:

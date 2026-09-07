@@ -23,6 +23,11 @@ from typing import (
 import numpy as np
 from arbol import aprint
 
+from ....typing_utils.json_safe import json_safe_value
+from ....validation.writing import (
+    LINES_RESERVED_ATTRS,
+    validate_render_attrs,
+)
 from ...lines import Lines
 from ..compositing import (
     ABSENT_WHEN_NONE_RENDER_ATTRS,
@@ -287,11 +292,6 @@ def add_lines_impl(
         # means the split path refuses byte-identically to the flat path
         # below (which still runs it once more, inside write_lines —
         # idempotent).
-        from ....io._compiler.node_common import (
-            LINES_RESERVED_ATTRS,
-            validate_render_attrs,
-        )
-
         validate_render_attrs(attrs, reserved_attrs=LINES_RESERVED_ATTRS)
 
         # Substitutive-LOD branch — coarse levels are synthesised gsplats (each
@@ -955,8 +955,6 @@ def add_lines_multi_lod_wrapper_impl(
         # (NaN/±Inf) is dropped — the computed reference_energy then shows
         # through — instead of reaching .zattrs as a bare NaN token the viewer's
         # strict JSON.parse rejects. Finite caller keys still win.
-        from ....io._compiler.gsplat_tree import json_safe_value
-
         _, safe_caller = json_safe_value(caller_level_stats)
         attrs["level_stats"] = {
             "reference_energy": parent_level_stats["reference_energy"],

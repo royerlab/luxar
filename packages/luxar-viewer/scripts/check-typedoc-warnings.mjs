@@ -22,6 +22,10 @@ import {
 } from 'typedoc';
 
 const DEFAULT_BASELINE = 'typedoc-warnings-baseline.json';
+// Matching the ESC control character is the entire point here: TypeDoc colours
+// its output, and an unstripped escape makes two identical warnings compare
+// unequal against the baseline.
+// eslint-disable-next-line no-control-regex
 const ANSI_ESCAPE = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 const BASELINE_COMMENT =
   'TypeDoc warning baseline. Regenerate with: pnpm run typedoc:check-warnings -- --update-baseline. ' +
@@ -89,7 +93,8 @@ export async function loadWarningBaseline(baselinePath) {
   } catch (error) {
     throw new Error(
       `Could not read TypeDoc warning baseline ${baselinePath}: ${error.message}. ` +
-        'Create or repair it with: pnpm run typedoc:check-warnings -- --update-baseline'
+        'Create or repair it with: pnpm run typedoc:check-warnings -- --update-baseline',
+      { cause: error }
     );
   }
 
@@ -244,7 +249,7 @@ function printHumanReport(report, baselinePath) {
       console.log(`  - ${warning}`);
     }
     console.log(
-      `\nTighten the baseline with: pnpm run typedoc:check-warnings -- --update-baseline`
+      '\nTighten the baseline with: pnpm run typedoc:check-warnings -- --update-baseline'
     );
   }
 

@@ -137,12 +137,27 @@ test = [
 ]
 dev = [
     "luxar[test]",
-    "ruff>=0.1.0",
+    # Pinned to a minor series because ruff is now a GATE, not just a helper:
+    # `hatch run lint` runs `ruff format --check`, so a formatter change in a new
+    # ruff turns CI red on an unrelated PR, at a moment nobody is thinking about
+    # ruff. `>=0.1.0` also let every machine resolve a different formatter.
+    # Keep in lockstep with `.pre-commit-config.yaml`'s ruff-pre-commit `rev`,
+    # or the hook and the gate disagree about the same file.
+    "ruff>=0.16,<0.17",
     "mypy>=1.5.0",
     "types-PyYAML>=6.0.12",
     "pre-commit>=3.3.0",
     "bandit[toml]>=1.7.5",
     "import-linter>=2.0",
+    # grimp is import-linter's Rust-backed graph engine, pinned here rather than
+    # left to the transitive because 3.16 dropped the macOS arm64 wheel for
+    # STANDARD CPython 3.14 -- from 3.16 the only cp314 mac wheel is `cp314t`,
+    # the free-threaded build. A normal 3.14 interpreter therefore falls through
+    # to a source build, which needs rustc >= 1.94 and fails on anything older
+    # with an error naming ruff_python_ast rather than grimp. Linux keeps its
+    # standard cp314 wheel at every version, so CI never sees this and only
+    # Mac developers are broken. Revisit once upstream restores the wheel.
+    "grimp<3.16",
 ]
 io = [
     "tifffile>=2023.1.0",
@@ -412,12 +427,24 @@ format = [
 ]
 lint = [
     "ruff check packages/luxar/src scripts scripts/benchmarks stats hatch_build.py",
+    # Formatting was enforced ONLY by an opt-in pre-commit hook, which sees just
+    # the staged files — so 10 Python files had drifted unformatted in the tree
+    # with nothing to notice (audit A12-04). Checked here so `hatch run lint`
+    # and CI ask the identical question.
+    "ruff format --check packages/luxar/src scripts scripts/benchmarks stats hatch_build.py",
     "check-complexity",
+    "check-lint-ratchet",
     "mypy packages/luxar/src/luxar/ scripts/ci_queue_scan.py"
 ]
 security = "bandit -r packages/luxar/src/luxar -c pyproject.toml --severity-level medium --confidence-level medium -q"
-# Enforce layer direction: domain (gsplats/io/core/encoding) must not import cli.
+# Enforce layer direction: the full `Subpackage layering` stack, plus the three
+# narrower `forbidden` contracts.
 check-imports = "lint-imports"
+# Keep that contract honest: assert the declared order is still the measured
+# minimum, and that its dated debt list has not GROWN. import-linter refuses an
+# ignore matching nothing, so it already stops the list rotting; this stops a new
+# violation being waved through by appending a line.
+check-layer-order = "python scripts/check_layer_order.py {args}"
 # Assert Python, viewer, and citation metadata describe the same release.
 check-versions = "python scripts/check_version_consistency.py"
 # Regenerate the Python + TS format-contract projections from contract.yaml.
@@ -450,6 +477,27 @@ check-scene-credits = "python scripts/check_scene_credits.py {args}"
 # Ratchet ruff's C901 against scripts/complexity_baseline.json: existing debt is
 # tolerated, a newly over-complex (or newly worse) function fails.
 check-complexity = "python scripts/check_complexity.py {args}"
+# Inspect a BUILT wheel: package completeness against the source tree, the
+# pyproject excludes honoured, no Git-LFS pointer stubs, no member over PyPI's
+# 100 MB limit, viewer dist bundled. Deliberately NOT in `check-static` — it
+# needs `hatch build` to have run, and `make build-viewer` before that. CI runs
+# it in `wheel-viewer`, where the dist already exists.
+#   make build-viewer && hatch build && hatch run check-wheel dist/luxar-*.whl
+check-wheel = "python scripts/check_wheel.py {args}"
+# Ratchet ruff's defect-bearing rules (flake8-bugbear + RUF012) against
+# scripts/lint_baseline.json. Same shape as check-complexity and for the same
+# reason: 473 pre-existing violations mean the rules cannot go into
+# `[tool.ruff.lint] select` without a large, behaviour-changing sweep.
+check-lint-ratchet = "python scripts/check_lint_ratchet.py {args}"
+# Compile-check the shipped CUDA/Metal sources -- no GPU, no linking, just
+# `-fsyntax-only` / `metal -c` / `nvcc -cuda`. First no-GPU compile gate over
+# ~3,900 lines of native code that rides into the wheel; it immediately caught
+# both build paths pinning a C++ standard below what torch demands, which stopped
+# compiling at all. Every toolchain is optional and reported as SKIP when
+# absent (a Linux box has no `metal`, a Mac has no `nvcc`), so it is safe in
+# `check-static`; CI passes `--require` for the toolchains its runner has, so a
+# skipped arm cannot pass for a run one.
+check-native = "python scripts/check_native_compiles.py {args}"
 # Everything in `check` EXCEPT the test suite. `make check-all` runs this, so
 # that `make test-all` is the single place the Python tests execute — following
 # the documented pre-commit checklist used to run the whole suite twice (once
@@ -458,12 +506,14 @@ check-static = [
     "format",
     "lint",
     "check-imports",
+    "check-layer-order",
     "check-versions",
     "check-contract",
     "check-data-manifest",
     "check-demo-counts",
     "check-demo-ladders",
     "check-scene-credits",
+    "check-native",
     "security"
 ]
 # The complete gate: static checks plus the coverage-measured suite. Kept for
@@ -808,9 +858,127 @@ directory = "coverage/python/htmlcov"
 
 [tool.importlinter]
 root_package = "luxar"
-# Test modules colocated under domain packages may import the CLI to exercise
-# CLI behaviour; the contract targets production code only.
+# Exclude annotation-only imports guarded by `if TYPE_CHECKING:`. This keeps the
+# eight deferred `ZarrWriterProtocol` imports from #2526 out of the runtime graph.
 exclude_type_checking_imports = true
+
+[[tool.importlinter.contracts]]
+# THE layering contract. Until this landed, import-linter declared three
+# `forbidden` contracts and reported them kept over 1,026 files -- green, while
+# the graph carried ten mutually-cyclic subpackage pairs (audit A1-01).
+#
+# ## Why this order
+#
+# Chosen by measurement, not taste. `scripts/check_layer_order.py` scores every
+# ordering of the seven ambiguous middle packages by how many production edges
+# point UP the stack; this one is the minimum at 33. `cli`/`demos` are
+# unambiguously the top (201 and 343 outgoing edges against 2 and 6 incoming)
+# and the five zero-outgoing packages the bottom, so only the middle was in
+# question. Re-run that script after any structural change; it prints the top
+# orderings and the exact edges each would violate.
+#
+# The count alone did not settle `gsplats`: above `core`/`io` and below both
+# score within one edge of each other. It sits BELOW because of what the edges
+# ARE -- `core -> gsplats` is the scene graph consuming the splat DATA MODEL
+# (`gsplat_data`, `tree`, `lift`, `utils.trils`), which is a consumer reaching
+# down, while `gsplats -> io` is `gsplats.io.save_gsplats` reaching into the
+# private `luxar.io._compiler` tree, which is the same debt A1-03 removed from
+# `core`. Ordering it the other way would have declared that debt to be the
+# architecture.
+#
+# ## The ignore list is DATED DEBT, not design
+#
+# 33 edges, measured 2026-09-05. Every one is a layering violation someone
+# should eventually remove, and the two large groups are one job each:
+#
+#   gsplats -> io    (17)  mostly `gsplats.io.*` reaching into `io._compiler`;
+#                          the residue A1-03 left behind (see #2526).
+#   gsplats -> core  (10)  mostly `core.group.partition` / `core.group.compositing`
+#                          -- shared helpers that belong lower, same species as
+#                          the validators A1-03 moved to `luxar.validation`.
+#
+# import-linter REFUSES an `ignore_imports` entry that matches nothing, while
+# `check-layer-order` pins a high-water mark of 33. Delete an edge from the code,
+# its ignore here, and lower that constant; the list can shrink but not grow.
+# That property is why a seeded contract is worth having now rather than a
+# perfect one later.
+name = "Subpackage layering"
+type = "layers"
+layers = [
+    "luxar.cli",
+    "luxar.demos",
+    "luxar.io",
+    "luxar.core",
+    "luxar.gsplats",
+    "luxar.encoding",
+    "luxar.validation",
+    "luxar.utils",
+    "luxar.typing_utils",
+    "luxar.colormaps",
+    "luxar.mesh",
+    "luxar.shading",
+    "luxar._zarr_compat",
+    "luxar._process",
+]
+# Layers contracts report indirect chains too. The `luxar` package root
+# re-exports the public API, so imports of that hub need explicit exemptions
+# below; direct cross-layer imports remain governed by the declared order.
+ignore_imports = [
+    # Colocated tests drive higher layers on purpose -- a `core` test may load
+    # the compiler. The contract targets production code, matching the three
+    # contracts below.
+    "luxar.**.tests.** -> luxar.**",
+    "luxar.**.tests.** -> luxar",
+    "luxar.tests.** -> luxar.**",
+    "luxar.tests.** -> luxar",
+    # `luxar/__init__.py` re-exports the whole public API, so ANY module that
+    # imports the package root reaches every layer through it. That is the
+    # public API working; a layers contract that called it a fault would be
+    # unusable. Only the root itself is exempted -- a direct
+    # `luxar.utils.x -> luxar.demos.y` still fails.
+    "luxar.utils.** -> luxar",
+    # gsplats -> io (17)
+    "luxar.gsplats._data.io_adapter -> luxar.io.reader",
+    "luxar.gsplats.batch.merge_orchestrator -> luxar.io.volume",
+    "luxar.gsplats.batch.slurm_gen -> luxar.io.ome_zarr",
+    "luxar.gsplats.fitting.sorting -> luxar.io.ordering",
+    "luxar.gsplats.io -> luxar.io.ordering",
+    "luxar.gsplats.io.load_gsplats -> luxar.io._compiler.gsplat_tree",
+    "luxar.gsplats.io.migrate -> luxar.io._compiler.gsplat_tree",
+    "luxar.gsplats.io.save_gsplats -> luxar.io._compiler.finalize.amplitude_window",
+    "luxar.gsplats.io.save_gsplats -> luxar.io._compiler.finalize.hashing",
+    "luxar.gsplats.io.save_gsplats -> luxar.io._compiler.gsplat_assembly",
+    "luxar.gsplats.io.save_gsplats -> luxar.io._compiler.gsplat_tree",
+    "luxar.gsplats.io.save_gsplats -> luxar.io._ordering.gsplats",
+    "luxar.gsplats.io.save_gsplats -> luxar.io.ordering",
+    "luxar.gsplats.io.save_gsplats -> luxar.io.reader",
+    "luxar.gsplats.lod._substitutive.warm_start -> luxar.io.ordering",
+    "luxar.gsplats.lod.annotate -> luxar.io._compiler.gsplat_tree",
+    "luxar.gsplats.preprocessing.denoise_pipeline -> luxar.io.volume",
+    # gsplats -> core (10)
+    "luxar.gsplats._data.composition -> luxar.core.group.partition",
+    "luxar.gsplats.batch.merge_orchestrator -> luxar.core.group.partition",
+    "luxar.gsplats.doctor.checks -> luxar.core.dimensions",
+    "luxar.gsplats.doctor.checks -> luxar.core.group.partition",
+    "luxar.gsplats.io.load_gsplats -> luxar.core.group.compositing",
+    "luxar.gsplats.io.save_gsplats -> luxar.core.group.compositing",
+    "luxar.gsplats.lod.recipes -> luxar.core.group.lod.group",
+    "luxar.gsplats.lod.recipes -> luxar.core.group.partition",
+    "luxar.gsplats.restride -> luxar.core.group.partition",
+    "luxar.gsplats.tree -> luxar.core.group.lod.group",
+    # demos -> cli (1)
+    "luxar.demos.demo_gsplats_3d_flylight_mcfo_63x_brain -> luxar.cli",
+    # gsplats -> demos (1)
+    "luxar.gsplats.demos.demo_3d_celegans_culling -> luxar.demos",
+    # typing_utils -> validation (1)
+    "luxar.typing_utils -> luxar.validation.types",
+    # utils -> core (1)
+    "luxar.utils.scenes -> luxar.core.dimensions",
+    # utils -> demos (1)
+    "luxar.utils.scenes -> luxar.demos.demo_lorenz",
+    # utils -> io (1)
+    "luxar.utils.scenes -> luxar.io.compiler",
+]
 
 [[tool.importlinter.contracts]]
 name = "Domain layers must not import the CLI"
@@ -829,6 +997,42 @@ forbidden_modules = ["luxar.cli"]
 # the contract still catches any production domain -> CLI import.
 ignore_imports = [
     "luxar.**.tests.** -> luxar.cli.**",
+]
+
+[[tool.importlinter.contracts]]
+# `io` sits ABOVE `core`: the compiler reads core's domain types (Dimensions,
+# transforms, the compositing constants), while core only ever NAMES
+# `ZarrWriterProtocol` -- a Protocol io implements. So core -> io is a back-edge,
+# and it was a real one: five function-local imports reached from
+# `core.group.compositing` and `core.group.gsplats_pipeline.from_io` into the
+# PRIVATE `io._compiler` tree (audit A1-03).
+#
+# Being function-local is what made it invisible. mypy does not follow deferred
+# imports for cycle purposes and neither existing contract looked at this pair,
+# so a mutual dependency between the two largest packages was carried for months
+# with every gate green. The shared pre-write validators now live in
+# `luxar.validation.writing`, below both.
+#
+# DIRECT edges only, matching the utils contract below. An indirect chain here
+# is not a layering fault: `luxar.core.tests.test_scene_structure` reaches io
+# through `luxar.utils.scenes`, and any module that imports the `luxar` package
+# root reaches it through `luxar/__init__.py`. Both are the public API working
+# as intended. The fault A1-03 found -- and the one this contract exists to
+# refuse -- is core NAMING io itself.
+#
+# `exclude_type_checking_imports` (set above) keeps the eight annotation-only
+# `ZarrWriterProtocol` imports out of scope. Those are the dependency inversion
+# working: core declares the Protocol it needs, io implements it.
+name = "core must not import io"
+type = "forbidden"
+source_modules = ["luxar.core"]
+forbidden_modules = ["luxar.io"]
+allow_indirect_imports = true
+ignore_imports = [
+    # Colocated tests drive the compiler on purpose; the contract targets
+    # production code, matching the convention of the CLI contract above.
+    "luxar.core.tests.** -> luxar.io",
+    "luxar.core.tests.** -> luxar.io.**",
 ]
 
 [[tool.importlinter.contracts]]
@@ -877,6 +1081,20 @@ exclude = [
     "packages/luxar/src/luxar/typing_utils/_format_contract.py",
 ]
 
+# The FORMATTER is Python-only. Ruff 0.16 also formats Python code blocks inside
+# Markdown, which means `hatch run format` (and therefore `make check-all`)
+# silently rewrites the code samples in 33 package READMEs — measured, not
+# hypothetical. Those samples are prose: the rewrite collapses a deliberately
+# multi-line teaching example onto one 88-column line and re-quotes it, which is
+# a documentation decision rather than a formatting one.
+#
+# Two things follow from excluding them, both wanted. `make check-all` stops
+# surprising anyone with a 33-file README diff, and `ruff format --check`
+# becomes gateable in CI (see the `lint` script) instead of red on arrival.
+# The linter is unaffected — it never read Markdown.
+[tool.ruff.format]
+exclude = ["*.md"]
+
 [tool.ruff.lint]
 # Enable various rule sets - start with essential ones
 select = [
@@ -891,6 +1109,10 @@ ignore = [
     "E501",   # line too long (handled by formatter)
 ]
 
+# B007 treats every name matching this regex as an intentional dummy. Keep
+# ruff's default explicit because it is part of the ratchet's settings fingerprint.
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
 # Per-file ignores
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]  # imported but unused
@@ -900,6 +1122,18 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["luxar"]
+
+# The whole `B` (flake8-bugbear) family plus RUF012 is enforced as a RATCHET by
+# `scripts/check_lint_ratchet.py`, not by `select` above — see that script's
+# module docstring for why (473 pre-existing violations, and B905's fix changes
+# behaviour). This setting exists so the ratchet baselines real defects only:
+# `typer.Option(...)` / `typer.Argument(...)` in a parameter default is the
+# documented Typer idiom, evaluated once at import ON PURPOSE, and it accounted
+# for ALL 83 B008 findings in the tree. Declaring the two calls immutable takes
+# B008 to zero, so the ratchet gates it at zero and a genuine mutable default
+# elsewhere still fires. It also covers B006, which reads the same list.
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["typer.Option", "typer.Argument"]
 
 # C901 (the rule this limit feeds) is intentionally NOT in `[tool.ruff.lint]
 # select`: ruff has no baseline mechanism, so a bare `select` entry would fail

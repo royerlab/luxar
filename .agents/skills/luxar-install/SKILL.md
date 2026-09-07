@@ -167,7 +167,7 @@ inside an interactive `srun`/`salloc` on a GPU node to actually exercise the
 extension.
 
 `build-cuda SLURM=1` detects the PyTorch CUDA version, finds matching
-`cuda/` + GCC>=9 modules, captures the Hatch env path, generates a self-contained
+`cuda/` + GCC>=10 modules, captures the Hatch env path, generates a self-contained
 sbatch script, and submits it — the job log merges compiler output for
 debugging. Full details: `docs/guides/developer/BUILD_SYSTEM_SPEC.md`.
 

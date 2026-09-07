@@ -48,9 +48,10 @@ object is never created, so there is zero overhead in production.
 
 | Property | Type | Description |
 |---|---|---|
+| `window.__luxarBuild` | `BuildInfo` | Unconditional pre-initialization build identity: version, commit, build time, and whether the bundle was stamped. |
 | `app` | `LuxarApp` | The application instance. |
 | `consoleInterceptor` | `ConsoleInterceptor` | Captures all console output for replay. |
-| `version` | `string` | Viewer version string (currently `"1.0.0"`). |
+| `version` | `string` | Build-stamp version from `buildInfo().version`: a CalVer in a built bundle, or `"unknown"` in an unstamped development or embedder context. |
 
 ### Runtime components (from `installDebugInterface()`, available once `runtimeReady` is `true`)
 
@@ -72,9 +73,29 @@ object is never created, so there is zero overhead in production.
 
 | Method | Return type | Description |
 |---|---|---|
-| `getState()` | `object` | JSON-serializable snapshot of current state (point counts per cloud, camera position/FOV, dimension info, animation status, initialization status, and `isLoading` — true while a load pass, i.e. an `updateView` fetch/decode/upload sweep up to its geometry commit, is in flight on any registered scene loader, or a view-state is queued behind one; see the scope notes below). |
+| `getState()` | `object` | JSON-serializable snapshot of current state (point counts per cloud, camera position/FOV, dimension info, animation status, initialization status, the two memory-ceiling fields tabled below, and `isLoading` — true while a load pass, i.e. an `updateView` fetch/decode/upload sweep up to its geometry commit, is in flight on any registered scene loader, or a view-state is queued behind one; see the scope notes below). |
 | `renderOnce()` | `void` | Kicks the animation loop to force a single render frame. Useful for stable screenshots. |
 | `getSceneLoader()` | `SceneLoaderManager` | Returns the singleton scene loader manager for inspecting loaded data. |
+
+#### Memory-ceiling fields on `getState()`
+
+Two fields answer "were these element counts decided by the store, or by this
+machine?". `core/app/debug/capture-readiness.ts` refuses a capture on either
+(#2508). `refinementResidency` and `gpuPool.byteBudgetEvictions` are
+**cumulative for the life of the scene loader and never reset within it**: they
+report that something happened at some point while this scene was loaded, not
+that it is true right now. The scope is the LOADER, not the page — an in-page
+dataset switch builds a fresh `SceneLoader` (fresh reporter, fresh GPU pool), so
+the next scene starts clean with no reload. The rest of `gpuPool` is *not*
+cumulative: `activeBytes`,
+`pooledBytes`, `totalBytes`, `largestPooledBytes`, `activeBuffers` and
+`pooledBuffers` are instantaneous readings, and `evictions` is a lifetime
+counter dominated by routine recycling.
+
+| Field | Type | Description |
+|---|---|---|
+| `gpuPool` | `GPUPoolDebugStats` (absent when unavailable) | GPU buffer-pool usage — the instantaneous `activeBuffers` / `pooledBuffers` / `activeBytes` / `pooledBytes` / `totalBytes` / `largestPooledBytes`, plus the cumulative `evictions` and `byteBudgetEvictions`. The last is the subset charged by the VRAM byte-budget pass: `evictions` alone is dominated by routine LRU recycling and means nothing on its own. Not new to the snapshot TYPE, but only **populated in production** as of #2508 (a `gpuPoolStats` provider had been declared and never passed), so an older build reports `undefined` here. Absent when no loader is registered or pooling is disabled. |
+| `refinementResidency` | `RefinementResidencyStop` (absent when nothing was declined) | Present once progressive refinement declined at least one rung at the residency byte ceiling; carries the first refusal's `reason` / `residentBytes` / `budgetBytes` / `firstPath`, the distinct `declinedPathCount`, and a bounded `declinedPaths` sample. **Presence is the signal** — absence means "never stopped" (or an older build), never "in trouble". |
 
 ### Cache helpers (`__luxarDebug.cache`)
 

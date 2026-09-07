@@ -31,6 +31,8 @@ import { createKTX2TextureDecoder } from '../../../rendering/ktx2-texture-decode
 import { resolveFactories, type AppFactories } from '../factories';
 import type { LuxarAppOptions } from '../options';
 import type { EventGroup } from '../../../utils/cross-layer/event-group';
+import { wireDensityGuard } from './density-guard-wiring';
+import { buildLoadActivityPredicate } from './load-activity';
 
 /**
  * Everything `LuxarApp.init()` constructs is returned in this result.
@@ -325,6 +327,28 @@ export async function runInitPipeline(
   animationController.addPerFrameCallback('depth-sort-scheduler', () => {
     evaluateDepthSortPerFrame();
   });
+  // Projected-density guard walker (config.densityGuard; `?no-density-guard`):
+  // measures elements per drawing-buffer pixel for every committed data mesh
+  // once per frame. Consumers read it through getProjectedDensityTracker()
+  // (shader keep fraction, refinement rung cap, getPerf().density).
+  // The keep-fraction ladder, the refinement rung-gate provider and the
+  // per-frame walk are wired in density-guard-wiring.ts (unit-tested there).
+  const loaderManager = SceneLoaderManager.getInstance();
+  const densityWiring = wireDensityGuard({
+    configEnabled: config.densityGuard.enabled,
+    option: ports.options.densityGuard,
+    config: config.densityGuard,
+    capOverride: ports.options.densityCap,
+    energyComp: lodEnergyCompEnabled,
+    sceneManager,
+    registerMaterial: (material) => materialManager.register(material),
+    setRefinementDensityProvider: (provider, caps) =>
+      loaderManager.setRefinementDensityProvider(provider, caps),
+    getDefaultLoader: () => getSceneLoader('default'),
+    getAdaptiveDpr: () => partial.adaptiveDPRManager,
+    requestRender: () => animationController.startAnimation(),
+  });
+  animationController.addPerFrameCallback('projected-density', densityWiring.perFrame);
   animationController.addPerFrameCallback('lod-group-selector', () => {
     const loader = getSceneLoader('default');
     // When a substitutive-LOD group swaps its active level (a camera-move
@@ -364,11 +388,17 @@ export async function runInitPipeline(
     adaptiveDPRManager.pinManualDPR(ports.options.pinnedDPR);
   }
 
-  // While an updateView sweep is in flight, frame jank reflects
-  // decode/upload work, not steady-state render cost — the manager
-  // suppresses probe/estimator learning for those samples.
+  // While the viewer is not SETTLED — an updateView sweep, any loader's load
+  // pass, a lazy LOD level load, or the post-load refinement drain (each
+  // rung is fetch + decode + commit with the lock released between passes)
+  // — frame jank reflects that work, not steady-state render cost, and the
+  // manager suppresses probe/estimator learning for those samples. Same
+  // predicate the perf probes read as `getPerf().isSettled`, inverted.
   adaptiveDPRManager.setLoadActivityPredicate(
-    () => getSceneLoader('default')?.isUpdateInProgress() ?? false
+    buildLoadActivityPredicate({
+      getDefaultLoader: () => getSceneLoader('default'),
+      isAnyLoadPassInProgress: () => SceneLoaderManager.getInstance().isAnyLoadPassInProgress(),
+    })
   );
 
   // Dataset/layer changes invalidate the learned DPR bounds (the floor
@@ -485,6 +515,12 @@ export async function runInitPipeline(
     const mgr = DataMonitorManager.getInstance();
     if (!mgr.hasMonitor(monitorId)) {
       mgr.createMonitor(monitorId, document.body);
+      // The density guard is app-scoped (it outlives scenes), so its provider
+      // is wired here, once per monitor, rather than through the per-scene
+      // monitor wiring in data/ — which cannot import scene/ anyway.
+      mgr
+        .getMonitor(monitorId)
+        ?.setDensityProvider({ getDensityStates: () => densityWiring.densityStates() });
     }
     return mgr.getMonitor(monitorId) ?? null;
   });
@@ -511,6 +547,9 @@ export async function runInitPipeline(
 
   // Connect rendering controls to adaptive DPR manager for performance UI
   renderingControls.setAdaptiveDPRManager(adaptiveDPRManager);
+  // ...and to the density guard, so the persisted per-scene Density Guard
+  // choice is applied by loadSettings alongside the two DPR flags.
+  renderingControls.setDensityGuardControl(densityWiring);
 
   // Connect rendering controls to input handler
   inputHandler.setRenderingControls(renderingControls);
@@ -593,6 +632,7 @@ export async function runInitPipeline(
     renderingControls,
     animationController,
     adaptiveDPRManager,
+    densityGuard: densityWiring,
     performanceMonitor,
     layersPanel,
     debugConsole,

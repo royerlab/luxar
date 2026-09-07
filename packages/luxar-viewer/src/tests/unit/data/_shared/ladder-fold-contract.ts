@@ -37,7 +37,7 @@
  * @module tests/unit/data/_shared/ladder-fold-contract
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 /** The surface this contract probes, including two private fields. */
 export interface FoldableLadderLoader {
@@ -80,6 +80,15 @@ function priv<T>(loader: object, field: string): T {
   return (loader as unknown as Record<string, T>)[field];
 }
 
+async function loadWithStableClock(loadAll: () => Promise<void>): Promise<void> {
+  const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(0);
+  try {
+    await loadAll();
+  } finally {
+    nowSpy.mockRestore();
+  }
+}
+
 /**
  * Run the shared fold/residency contract against one geometry's loader.
  *
@@ -93,7 +102,7 @@ export function testLadderFoldContract(
   describe(`${geometry} ladder fold contract`, () => {
     it('folds a fully-loaded ladder to a single payload', async () => {
       const { loader, loadAll, totalLevels } = await makeSubject();
-      await loadAll();
+      await loadWithStableClock(loadAll);
 
       expect(loader.loadedLODCount).toBe(totalLevels);
       // The fold: one cumulative payload retained, not one per rung. A loader
@@ -104,7 +113,7 @@ export function testLadderFoldContract(
 
     it('reports residency as the cumulative payload against LOGICAL rungs', async () => {
       const { loader, loadAll, totalLevels } = await makeSubject();
-      await loadAll();
+      await loadWithStableClock(loadAll);
 
       const residency = loader.ladderResidency();
       // Logical levels, not payload entries. Reporting 1 here would make the

@@ -22,12 +22,13 @@ This package splits cleanly into two layers:
   take both axes; mesh's vocabulary is the shortest — decimation rather than a lift,
   and a **reveal-only** additive axis.
 
-The two sampler modules (`spatial_uniform.py`, `poisson_disk.py`) are pure-NumPy
-ordering primitives shared by the Points and Lines resolvers, and `reveal.py` is a
-third such primitive — the concentric-shell scorer behind `method="radial"`, plus
-the resolvers that decide which columns may be shell dimensions. It depends on
-nothing in this package (`group.py` imports *it*), which is what let it come out
-of `group.py` cleanly.
+The two sampler modules (`spatial_uniform.py`, `poisson_disk.py`) are NumPy
+ordering primitives shared by the Points and Lines resolvers (`poisson_disk` also
+runs an interpreted rejection loop — Bridson is sequential by construction), and
+`reveal.py` is a third such primitive — the concentric-shell scorer behind
+`method="radial"`, plus the resolvers that decide which columns may be shell
+dimensions. It depends on nothing in this package (`group.py` imports *it*), which
+is what let it come out of `group.py` cleanly.
 
 ## File structure
 
@@ -61,7 +62,7 @@ Luxar's gsplat LOD model has two orthogonal axes; the helpers here build both:
   `additive_lod=` kwarg. For gsplats it is applied per substitutive level
   (`resolve_additive_axis_gsplats`).
 
-See `docs/specs/GSPLATS_ZARR_FORMAT.md` for the v3.3 node-tree grammar
+See `docs/specs/GSPLATS_ZARR_FORMAT.md` for the v3.4 node-tree grammar
 (leaf / kind=lod / kind=partition) the gsplat format stores.
 
 ## Geometry-agnostic machinery (`group.py`)
@@ -397,6 +398,13 @@ resolvers:
   applied independently per substitutive level. `dict(...)` computes a ladder on
   any level missing one via `gsplats.lod.additive.make_additive_lod` (default
   `n_lods=4`); `False` flattens each level to a single additive sub-LOD.
+  **Trap:** "missing one" means `n_additive_lods <= 1`, and
+  `GSplatData.combine_as_new_dimension` MERGES its sources' ladders (rung *i* of
+  every source becomes rung *i* of the stack) rather than dropping them — so on a
+  stacked dataset built from already-laddered per-timepoint fits the spec is
+  silently a NO-OP and the merged per-source ladder is what ships. Pass
+  `recompute=True`. The store's tell for the shadowed case is an
+  `additive_0/lod_stats` carrying `n_sources` and no `lod_method` (#2485).
 - `resolve_additive_rungs(spec, *, stored_rungs, n_splats)` — the same vocabulary
   stated a second time, ordering-free: it answers only "how many rungs would this
   leave on one leaf?", without building anything (#1632). `None` means UNKNOWN
@@ -492,8 +500,15 @@ uniform spatial density. Returns `(permutation, per_level_counts)`. Pure NumPy,
 
 Opt-in blue-noise alternative (Bridson, SIGGRAPH 2007). Runs progressively
 finer radii (`r_i = (diag/2) · 0.5^i`); each level keeps the points its radius
-selects that no coarser level already took. A cell grid sized at `r/√3` keeps
-the rejection test to a local 5×5×5 neighborhood (`O(N)` expected per level).
+selects that no coarser level already took. A cell grid **of accepted samples**
+sized at `r/√3` keeps the rejection test to a local 5×5×5 neighborhood, which is
+what makes it `O(N)` per level — measured flat in cost-per-point from 10K to 1M
+(25 µs/point at `n_lods=6` on an Apple M-series core, ~100 µs/point on a slower
+x86 one, or roughly 25 to 100 seconds at 1M; the walk is interpreted, so the
+constant is hardware-bound).
+Bucketing every input index there instead is quadratic and was the shipped
+behaviour until #2530 (~4.3 h at 1M points); `test_cost_grows_linearly_with_n`
+is the regression gate.
 Same `(permutation, per_level_counts)` contract as the stratified sampler, so
 `make_additive_lod_*` stays symmetric across methods; the last level absorbs any
 points the finest pass rejected.
@@ -529,4 +544,4 @@ scene.add_gsplats_from_data(
   `resolve_display_type` from `group.py`
 - `luxar.gsplats.lod` — `make_substitutive_lod` / `make_additive_lod` builders
   the gsplats resolvers delegate to
-- `docs/specs/GSPLATS_ZARR_FORMAT.md` — the v3.3 node-tree format (leaf / kind=lod / kind=partition)
+- `docs/specs/GSPLATS_ZARR_FORMAT.md` — the v3.4 node-tree format (leaf / kind=lod / kind=partition)

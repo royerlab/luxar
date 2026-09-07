@@ -9,15 +9,26 @@ Behavior-preserving.
 
 from __future__ import annotations
 
-from typing import Any, List, Optional, Sequence, Tuple, Union
+from typing import Any, Optional, Sequence, Union
 
 import numpy as np
 from arbol import aprint
 from numpy.typing import NDArray
 
 from ....encoding import SemanticType
-from ....typing_utils.aliases import NodePath
+from ....typing_utils.aliases import (
+    ColorArray,
+    NodePath,
+    PositionArray,
+    ScalarArray,
+)
 from ....typing_utils.constants import SHARPNESS_MAX
+from ....validation.writing import (
+    LINES_RESERVED_ATTRS,
+    validate_line_indices,
+    validate_lines_channels,
+    validate_render_attrs,
+)
 from ...ordering import convert_to_indexed
 from ..bounds import compute_position_bounds
 from ..chunking import calculate_intelligent_chunks
@@ -29,19 +40,14 @@ from ..dataset_writers.scalars import (
     write_scalars,
 )
 from ..labels.image_labels import (
-    validate_image_labels_for_writing,
     write_image_labels_csr,
 )
 from ..labels.text_labels import write_string_channels_csr
 from ..node_common import (
-    LINES_RESERVED_ATTRS,
     apply_default_render_attrs,
     prepare_transform_attrs,
     record_forwarded_sort_order,
-    validate_broadcast_color,
     validate_node_path,
-    validate_render_attrs,
-    validate_scalars_preflight,
     warn_if_over_element_cap,
 )
 from ..spatial_ordering.lines import build_lines_ordering, write_lines_ordering_to_zarr
@@ -50,7 +56,7 @@ _AUTHORING_LINT_MIN_VERTICES = 16
 _AUTHORING_LINT_SHARED_THRESHOLD = 0.9
 
 
-def _exploded_chain_fraction(vertices: NDArray[np.float32]) -> Optional[float]:
+def _exploded_chain_fraction(vertices: PositionArray) -> Optional[float]:
     """Return the forward-chain adjacency fraction when it strongly signals intent.
 
     Immediate ``(a, b), (b, a)`` reversals are excluded: they are common in
@@ -80,134 +86,14 @@ def _line_authoring_warning_key(ctx: GeometryWriteCtx, path: str) -> str:
     return path
 
 
-def validate_line_indices(indices: Any, n_vertices: int) -> NDArray[Any]:
-    """Validate an ``indexed`` edge list and return it normalized. Pure — no I/O.
-
-    The ``line_type == "indexed"`` half of step 0d of :func:`write_lines`'s
-    fail-fast gate (everything after the "requires indices array" check),
-    factored out because a SECOND caller needs exactly it:
-    :func:`luxar.core.group.compositing.validate_line_indices_before_split` runs
-    it in the split paths, where the topology builders
-    (``lod.lines.identify_polylines`` / ``make_additive_lod_lines``) check only
-    dtype and bounds and then reshape to pairs — so an ``(E, 3)`` array was
-    silently reinterpreted as ``3E/2`` edges the author never wound, and an
-    odd flat count died on a raw numpy reshape instead of the guided message.
-    Shared rather than repeated so the two cannot drift (same contract as
-    :func:`~luxar.io._compiler.geometry_writers.points.validate_points_channels`).
-
-    Returns:
-        ``indices`` as an ndarray, since the writer uses the normalized array
-        downstream (a Python-list ``indices`` is a legitimate adder input).
-    """
-    # Normalize to ndarray first: a Python-list `indices` is a legitimate
-    # adder input (passed through un-arrayed), and `.size` / the reshape
-    # in convert_to_indexed both AttributeError on a bare list.
-    arr: NDArray[Any] = np.asarray(indices)
-    # Accept ONLY the two documented layouts — flat (2E,) or pairs
-    # (E, 2). An even-size but wrong-width array (e.g. (E, 3)) would
-    # otherwise pass the element-count checks below and then silently
-    # reshape into bogus edges inside convert_to_indexed.
-    if arr.ndim > 2 or (arr.ndim == 2 and arr.shape[1] != 2):
-        raise ValueError(
-            "Indices must be a flat (2E,) array or an (E, 2) array of "
-            f"pairs, got shape {arr.shape}"
-        )
-    # Accept BOTH accepted layouts — flat (2E,) and pairs (E, 2) —
-    # by counting ELEMENTS, not rows: len() on an (E, 2) array counts
-    # edges, which wrongly rejected any odd edge count.
-    if arr.size < 2:
-        raise ValueError("Indexed requires at least 2 indices")
-    if arr.size % 2 != 0:
-        raise ValueError("Indices must have an even element count (pairs)")
-    # Reject non-integer indices: convert_to_indexed casts with
-    # `.astype(np.uint32)`, which silently TRUNCATES a float (1.7 -> 1),
-    # so a float array would produce edges the user never authored.
-    if not np.issubdtype(arr.dtype, np.integer):
-        raise ValueError(f"Indices must be an integer array, got dtype {arr.dtype}")
-    # Bounds check BOTH ends before convert_to_indexed casts to uint32:
-    # a negative index would silently wrap to ~4 billion and blow up
-    # with a raw IndexError deep inside the spatial ordering.
-    if np.min(arr) < 0:
-        raise ValueError(f"Index {np.min(arr)} < 0 (indices must be >= 0)")
-    if np.max(arr) >= n_vertices:
-        raise ValueError(f"Index {np.max(arr)} >= n_vertices {n_vertices}")
-    return arr
-
-
-def validate_lines_channels(
-    n_vertices: int,
-    *,
-    widths: Any,
-    colors: Any = None,
-    sharpness: Any = None,
-    scalars: Any = None,
-    labels: Any = None,
-    image_labels: Any = None,
-    keys: Any = None,
-) -> None:
-    """Validate every per-vertex channel against ``n_vertices``. Pure — no I/O.
-
-    Steps 0e-0h of :func:`write_lines`'s fail-fast gate, factored out for the
-    same reason and with the same contract as the Points sibling
-    :func:`~luxar.io._compiler.geometry_writers.points.validate_points_channels`
-    — read that docstring (including the ``image_labels`` / issue #1491
-    paragraph on why the finest-child-written-last ``substitutive_lod=``
-    wrapper needs this pre-split, not just at the flat writer). ``widths`` is
-    required, so it is validated unconditionally and FIRST; all seven channels
-    are per-VERTEX, not per-segment.
-    """
-    from ....validation.base import (
-        validate_colors_for_writing,
-        validate_labels_for_writing,
-        validate_sharpness_for_writing,
-        validate_widths_for_writing,
-    )
-
-    # 0e. Shared validator (the Lines sibling of validate_radii_for_writing)
-    validate_widths_for_writing(widths, n_vertices)
-
-    # 0f. Pre-flight length sweep over ALL provided per-vertex arrays. The
-    # spatial-ordering fancy-indexing below silently TRUNCATES a too-long
-    # array and raises a raw IndexError on a too-short one, so lengths must
-    # be checked before build_lines_ordering runs. The per-dataset validators
-    # further down remain in place (belt and braces).
-    if colors is not None:
-        if isinstance(colors, np.ndarray):
-            # channels=(3, 4): lines accept RGBA since volumetric phase 4
-            # (the alpha column is per-vertex opacity) — mirrors points.
-            validate_colors_for_writing(colors, n_vertices, channels=(3, 4))
-        elif isinstance(colors, (list, tuple)):
-            validate_broadcast_color(colors, "colors")
-    if sharpness is not None:
-        # Validates arrays AND broadcast scalars (same [0, 1] bounds).
-        validate_sharpness_for_writing(sharpness, n_vertices)
-    if scalars is not None:
-        validate_scalars_preflight(scalars, n_vertices)
-    # 0g. Labels: sequence-of-str type + length check (the CSR serializer
-    # would otherwise AttributeError on a non-str entry AFTER the arrays
-    # were written).
-    if labels is not None:
-        validate_labels_for_writing(labels, n_vertices)
-    # Keys ride the same pre-flight as labels: the CSR serializer
-    # UTF-8-encodes each entry, so a non-str or a length mismatch must be
-    # caught BEFORE any array reaches disk (#1917).
-    if keys is not None:
-        validate_labels_for_writing(keys, n_vertices, context="keys", noun="Keys")
-    # 0h. Image labels: length (dense) / index bounds (sparse dict) — see
-    # validate_image_labels_for_writing for why this moved out of the CSR
-    # writer itself.
-    if image_labels is not None:
-        validate_image_labels_for_writing(image_labels, n_vertices)
-
-
 def write_lines(
     ctx: GeometryWriteCtx,
     path: NodePath,
-    vertices: NDArray[np.float32],
-    widths: Union[NDArray[np.float32], float],
-    colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]] = None,
-    sharpness: Optional[Union[NDArray[np.float32], float]] = None,
-    scalars: Optional[Union[NDArray[np.float32], float]] = None,
+    vertices: PositionArray,
+    widths: Union[ScalarArray, float],
+    colors: Optional[Union[ColorArray, tuple, list]] = None,
+    sharpness: Optional[Union[ScalarArray, float]] = None,
+    scalars: Optional[Union[ScalarArray, float]] = None,
     indices: Optional[NDArray[np.uint32]] = None,
     line_type: str = "polyline",
     labels: Optional["Sequence[str]"] = None,

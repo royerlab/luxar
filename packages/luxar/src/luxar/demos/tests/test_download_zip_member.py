@@ -97,6 +97,37 @@ class _RedirectRangeHTTPHandler(_RangeHTTPHandler):
         return super().send_head()
 
 
+class _CrossHostRedirectHTTPHandler(http.server.SimpleHTTPRequestHandler):
+    """Redirect every request to the configured host, preserving its path."""
+
+    def log_message(self, *args: object) -> None:  # keep test output quiet
+        pass
+
+    def send_head(self):  # noqa: ANN201 - stdlib override
+        self.send_response(302)
+        self.send_header(
+            "Location",
+            f"{self.server.redirect_target}{self.path}",  # type: ignore[attr-defined]
+        )
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+        return None
+
+
+class _HeaderRecordingRangeHTTPHandler(_RangeHTTPHandler):
+    """Record credential headers delivered to the redirected range host."""
+
+    def send_head(self):  # noqa: ANN201 - stdlib override
+        self.server.seen.append(  # type: ignore[attr-defined]
+            {
+                "path": self.path,
+                "api_key": self.headers.get("api-key"),
+                "authorization": self.headers.get("Authorization"),
+            }
+        )
+        return super().send_head()
+
+
 class _OverSendRangeHTTPHandler(_RangeHTTPHandler):
     """Range handler that honours the requested START but streams to EOF,
     ignoring the requested END — a misbehaving/malicious server that returns
@@ -194,6 +225,26 @@ def redirect_range_server(tmp_path: Path):
     finally:
         server.shutdown()
         thread.join(timeout=5)
+
+
+@pytest.fixture()
+def cross_host_redirect_range_server(tmp_path: Path):
+    """Redirect range requests from 127.0.0.1 to localhost and record headers."""
+    target, target_thread = _serve(tmp_path, _HeaderRecordingRangeHTTPHandler)
+    target.seen = []  # type: ignore[attr-defined]
+    target.handle_error = lambda request, client_address: None  # type: ignore[method-assign]
+    origin, origin_thread = _serve(tmp_path, _CrossHostRedirectHTTPHandler)
+    origin.handle_error = lambda request, client_address: None  # type: ignore[method-assign]
+    origin.redirect_target = (  # type: ignore[attr-defined]
+        f"http://localhost:{target.server_address[1]}"
+    )
+    try:
+        yield f"http://127.0.0.1:{origin.server_address[1]}", target.seen  # type: ignore[attr-defined]
+    finally:
+        origin.shutdown()
+        origin_thread.join(timeout=5)
+        target.shutdown()
+        target_thread.join(timeout=5)
 
 
 @pytest.fixture()
@@ -392,6 +443,32 @@ class TestDownloadZipMember:
         # /dl/archive.zip 302-redirects to /archive.zip on every hop.
         download_zip_member(f"{redirect_range_server}/dl/archive.zip", member, out)
         assert out.read_bytes() == payloads[member]
+
+    def test_cross_host_redirect_drops_custom_headers(
+        self, cross_host_redirect_range_server, tmp_path: Path
+    ) -> None:
+        """Every redirected ZIP probe and body request drops caller credentials."""
+        base_url, seen = cross_host_redirect_range_server
+        payloads = _make_payloads()
+        archive = tmp_path / "archive.zip"
+        _build_zip(archive, payloads)
+        member = "readme.txt"
+        out = tmp_path / "redirected.txt"
+
+        download_zip_member(
+            f"{base_url}/archive.zip",
+            member,
+            out,
+            extra_headers={
+                "api-key": "super-secret-token",
+                "Authorization": "Bearer super-secret-token",
+            },
+        )
+
+        assert out.read_bytes() == payloads[member]
+        assert seen
+        assert all(request["api_key"] is None for request in seen), seen
+        assert all(request["authorization"] is None for request in seen), seen
 
     def test_rejects_decompression_bomb(
         self, range_server: str, tmp_path: Path

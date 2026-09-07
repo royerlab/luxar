@@ -35,9 +35,9 @@ function parseArgs(): DriverConfig {
   const config: DriverConfig = {
     url: process.env.APP_URL || 'http://localhost:5173/?debug',
     headless: true,
-    waitTime: 5000,  // Time to wait for scene initialization (ms)
+    waitTime: 5000, // Time to wait for scene initialization (ms)
     screenshotPath: 'test-results/debug/debug-view.png',
-    errorScreenshotPath: 'test-results/debug/error-state.png'
+    errorScreenshotPath: 'test-results/debug/error-state.png',
   };
 
   for (const arg of args) {
@@ -65,7 +65,7 @@ function parseArgs(): DriverConfig {
 function setupConsoleLogging(page: Page): void {
   // Mirror browser console logs to terminal
   // This is CRITICAL - it allows Claude to see what's happening in the browser
-  page.on('console', msg => {
+  page.on('console', (msg) => {
     const type = msg.type().toUpperCase();
     const text = msg.text();
 
@@ -88,7 +88,7 @@ function setupConsoleLogging(page: Page): void {
   });
 
   // Catch uncaught errors (JavaScript runtime errors)
-  page.on('pageerror', err => {
+  page.on('pageerror', (err) => {
     console.error('\x1b[31m[BROWSER-CRASH]\x1b[0m', err.message);
     if (err.stack) {
       console.error('  Stack:', err.stack);
@@ -96,7 +96,7 @@ function setupConsoleLogging(page: Page): void {
   });
 
   // Catch failed network requests
-  page.on('requestfailed', request => {
+  page.on('requestfailed', (request) => {
     const failure = request.failure();
     console.error(
       `\x1b[31m[NETWORK-FAIL]\x1b[0m ${request.url()}`,
@@ -105,12 +105,10 @@ function setupConsoleLogging(page: Page): void {
   });
 
   // Log successful navigation
-  page.on('response', response => {
+  page.on('response', (response) => {
     const status = response.status();
     if (status >= 400) {
-      console.error(
-        `\x1b[31m[HTTP-ERROR]\x1b[0m ${status} ${response.url()}`
-      );
+      console.error(`\x1b[31m[HTTP-ERROR]\x1b[0m ${status} ${response.url()}`);
     }
   });
 }
@@ -127,67 +125,75 @@ async function extractLuxarState(page: Page): Promise<object> {
     if (!debug) {
       return {
         error: 'Debug mode not enabled',
-        hint: 'Add ?debug to URL to enable debug mode'
+        hint: 'Add ?debug to URL to enable debug mode',
       };
     }
 
     // Extract scene information
-    const sceneInfo = debug.scene ? {
-      totalChildren: debug.scene.children.length,
-      pointClouds: debug.scene.children.filter((obj: any) => obj.type === 'Points').length,
-      groups: debug.scene.children.filter((obj: any) => obj.type === 'Group').length,
-      pointCloudDetails: debug.scene.children
-        .filter((obj: any) => obj.type === 'Points')
-        .map((obj: any) => ({
-          name: obj.name || 'unnamed',
-          pointCount: obj.geometry?.attributes?.position?.count || 0,
-          visible: obj.visible,
-          hasColors: !!obj.geometry?.attributes?.color,
-          hasRadii: !!obj.geometry?.attributes?.radius,
-        }))
-    } : null;
+    const sceneInfo = debug.scene
+      ? {
+          totalChildren: debug.scene.children.length,
+          pointClouds: debug.scene.children.filter((obj: any) => obj.type === 'Points').length,
+          groups: debug.scene.children.filter((obj: any) => obj.type === 'Group').length,
+          pointCloudDetails: debug.scene.children
+            .filter((obj: any) => obj.type === 'Points')
+            .map((obj: any) => ({
+              name: obj.name || 'unnamed',
+              pointCount: obj.geometry?.attributes?.position?.count || 0,
+              visible: obj.visible,
+              hasColors: !!obj.geometry?.attributes?.color,
+              hasRadii: !!obj.geometry?.attributes?.radius,
+            })),
+        }
+      : null;
 
     // Extract camera information
-    const cameraInfo = debug.camera ? {
-      position: {
-        x: debug.camera.position.x,
-        y: debug.camera.position.y,
-        z: debug.camera.position.z
-      },
-      fov: debug.camera.fov,
-      near: debug.camera.near,
-      far: debug.camera.far,
-      aspect: debug.camera.aspect
-    } : null;
+    const cameraInfo = debug.camera
+      ? {
+          position: {
+            x: debug.camera.position.x,
+            y: debug.camera.position.y,
+            z: debug.camera.position.z,
+          },
+          fov: debug.camera.fov,
+          near: debug.camera.near,
+          far: debug.camera.far,
+          aspect: debug.camera.aspect,
+        }
+      : null;
 
     // Extract renderer information
-    const rendererInfo = debug.renderer ? (() => {
-      try {
-        // Create a proper Vector2-like object for getSize
-        const sizeVec = new (window as any).THREE.Vector2();
-        debug.renderer.getSize(sizeVec);
+    const rendererInfo = debug.renderer
+      ? (() => {
+          try {
+            // Create a proper Vector2-like object for getSize
+            const sizeVec = new (window as any).THREE.Vector2();
+            debug.renderer.getSize(sizeVec);
 
-        return {
-          pixelRatio: debug.renderer.getPixelRatio(),
-          size: { width: sizeVec.x, height: sizeVec.y },
-          capabilities: {
-            maxTextureSize: debug.renderer.capabilities.maxTextureSize,
-            maxTextures: debug.renderer.capabilities.maxTextures,
+            return {
+              pixelRatio: debug.renderer.getPixelRatio(),
+              size: { width: sizeVec.x, height: sizeVec.y },
+              capabilities: {
+                maxTextureSize: debug.renderer.capabilities.maxTextureSize,
+                maxTextures: debug.renderer.capabilities.maxTextures,
+              },
+            };
+          } catch (error) {
+            return {
+              pixelRatio: debug.renderer.getPixelRatio(),
+              size: { width: 0, height: 0 },
+              error: String(error),
+            };
           }
-        };
-      } catch (error) {
-        return {
-          pixelRatio: debug.renderer.getPixelRatio(),
-          size: { width: 0, height: 0 },
-          error: String(error)
-        };
-      }
-    })() : null;
+        })()
+      : null;
 
     // Extract performance stats (if available)
-    const performanceInfo = debug.getState ? debug.getState() : {
-      note: 'Performance stats not available - getState() not implemented'
-    };
+    const performanceInfo = debug.getState
+      ? debug.getState()
+      : {
+          note: 'Performance stats not available - getState() not implemented',
+        };
 
     return {
       timestamp: new Date().toISOString(),
@@ -209,7 +215,7 @@ async function main() {
   console.log('\n' + '='.repeat(80));
   console.log('🤖 Luxar Agent Driver - Browser Automation for AI Development');
   console.log('='.repeat(80));
-  console.log(`\nConfiguration:`);
+  console.log('\nConfiguration:');
   console.log(`  URL: ${config.url}`);
   console.log(`  Headless: ${config.headless}`);
   console.log(`  Wait Time: ${config.waitTime}ms`);
@@ -225,12 +231,12 @@ async function main() {
     browser = await chromium.launch({
       headless: config.headless,
       args: [
-        '--use-gl=egl',                          // Force GPU acceleration
-        '--ignore-gpu-blocklist',                // Ignore GPU blacklist
-        '--enable-webgl-developer-extensions',   // Enable WebGL extensions
-        '--enable-webgl-draft-extensions',       // Enable draft extensions
-        '--disable-web-security',                // Allow CORS for local testing
-      ]
+        '--use-gl=egl', // Force GPU acceleration
+        '--ignore-gpu-blocklist', // Ignore GPU blacklist
+        '--enable-webgl-developer-extensions', // Enable WebGL extensions
+        '--enable-webgl-draft-extensions', // Enable draft extensions
+        '--disable-web-security', // Allow CORS for local testing
+      ],
     });
 
     page = await browser.newPage();
@@ -241,8 +247,8 @@ async function main() {
     // Navigate to app
     console.log(`[AGENT] Navigating to ${config.url}...`);
     await page.goto(config.url, {
-      waitUntil: 'networkidle',  // Wait for all network requests to finish
-      timeout: 60000              // 60 second timeout
+      waitUntil: 'networkidle', // Wait for all network requests to finish
+      timeout: 60000, // 60 second timeout
     });
 
     console.log('[AGENT] Page loaded, waiting for Three.js scene initialization...');
@@ -259,11 +265,11 @@ async function main() {
     console.log('\n' + '-'.repeat(80) + '\n');
 
     // Take screenshot
-    console.log(`[AGENT] Taking screenshot...`);
+    console.log('[AGENT] Taking screenshot...');
     await page.screenshot({
       path: config.screenshotPath,
-      fullPage: false,  // Canvas doesn't scroll
-      timeout: 10000
+      fullPage: false, // Canvas doesn't scroll
+      timeout: 10000,
     });
     console.log(`[AGENT] ✅ Screenshot saved to: ${config.screenshotPath}`);
 
@@ -279,7 +285,6 @@ async function main() {
     console.log('\n' + '='.repeat(80));
     console.log('✅ Agent driver completed successfully');
     console.log('='.repeat(80) + '\n');
-
   } catch (error) {
     console.error('\n' + '='.repeat(80));
     console.error('❌ AGENT DRIVER ERROR');
@@ -291,7 +296,7 @@ async function main() {
       try {
         await page.screenshot({
           path: config.errorScreenshotPath,
-          fullPage: false
+          fullPage: false,
         });
         console.error(`\n📸 Error screenshot saved to: ${config.errorScreenshotPath}`);
       } catch (screenshotError) {
@@ -301,7 +306,6 @@ async function main() {
 
     console.error('\n' + '='.repeat(80) + '\n');
     process.exit(1);
-
   } finally {
     // Cleanup
     if (browser) {
@@ -311,7 +315,7 @@ async function main() {
 }
 
 // Run the driver
-main().catch(error => {
+main().catch((error) => {
   console.error('Fatal error:', error);
   process.exit(1);
 });

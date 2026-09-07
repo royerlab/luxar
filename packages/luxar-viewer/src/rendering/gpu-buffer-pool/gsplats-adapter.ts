@@ -89,6 +89,7 @@ export interface GSplatsAdapterHost {
     evictions: number;
     capacityGrowths: number;
     deferredEvictions: number;
+    byteBudgetEvictions: number;
   };
   typeStats: {
     points: { allocations: number; reuses: number; evictions: number };

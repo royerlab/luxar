@@ -59,17 +59,20 @@ def export_scene(
     if not is_valid:
         raise ValueError(f"Invalid zarr store: {error}")
 
-    # Handle output directory (check before viewer so users get the right error)
+    # Preserve the existing-output error when overwrite was not requested.
     if output.exists():
         if not overwrite:
             raise FileExistsError(f"Output directory already exists: {output}")
-        shutil.rmtree(output)
 
-    # Check viewer is built
+    # Preflight the viewer before an overwrite can remove the user's old export.
     if not check_viewer_built():
         raise FileNotFoundError(
             "Viewer not built. Run: cd packages/luxar-viewer && pnpm build"
         )
+    _require_third_party_notices(get_viewer_dist_path())
+
+    if output.exists():
+        shutil.rmtree(output)
 
     output.mkdir(parents=True, exist_ok=True)
 
@@ -89,6 +92,33 @@ def export_scene(
     return output
 
 
+#: Emitted into the viewer build by
+#: ``packages/luxar-viewer/scripts/generate-third-party-licenses.mjs``.
+THIRD_PARTY_LICENSES = "THIRD_PARTY_LICENSES.txt"
+
+
+def _require_third_party_notices(viewer_dist: Path) -> None:
+    """Refuse to export a bundle whose third-party notices are missing.
+
+    An export folder is redistribution: it is zipped, hosted, and handed to
+    people who never see this repository. MIT / Apache-2.0 / MPL-2.0 / BSD all
+    require their notices to travel with the binary, so a folder without them
+    is not one we should be able to produce by accident.
+
+    The production build always emits this file, so its absence means the dist
+    predates that change or was assembled by hand -- both of which are worth
+    stopping for, because the resulting folder looks complete.
+    """
+    if (viewer_dist / THIRD_PARTY_LICENSES).is_file():
+        return
+    raise FileNotFoundError(
+        f"{viewer_dist} has no {THIRD_PARTY_LICENSES}, so exporting it would "
+        f"redistribute third-party code without the notices its licences "
+        f"require. Rebuild the viewer (`make build-viewer`, or `pnpm build` in "
+        f"packages/luxar-viewer) — the production build generates it."
+    )
+
+
 def _copy_viewer(dest: Path) -> None:
     """Copy viewer dist files to destination.
 
@@ -96,6 +126,7 @@ def _copy_viewer(dest: Path) -> None:
         dest: Destination directory for viewer files.
     """
     viewer_dist = get_viewer_dist_path()
+    _require_third_party_notices(viewer_dist)
     with asection("Copying viewer files"):
         # CL-1: atomic copy — partial output on crash leaves no half-written
         # `dest` for the user to clean up.

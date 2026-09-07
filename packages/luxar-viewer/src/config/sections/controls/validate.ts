@@ -24,6 +24,12 @@ export function validateControls(config: AppConfig, errors: string[], _warnings:
     { name: 'orbit.damping.factor', range: controls.orbit.damping.factor },
   ];
 
+  if (!Number.isFinite(controls.wheelZoomSensitivity) || controls.wheelZoomSensitivity <= 0) {
+    errors.push(
+      `Invalid controls.wheelZoomSensitivity: ${controls.wheelZoomSensitivity} (must be finite and > 0)`
+    );
+  }
+
   for (const { name, range } of ranges) {
     // NaN check on every range field — without this, any of
     // {min, max, default} could be NaN and silently pass.

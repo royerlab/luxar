@@ -20,22 +20,25 @@
 import * as THREE from 'three';
 import type { LoadedMeshData, MeshDataLoader, MeshMetadata, MeshViewState } from '../../types/mesh';
 import type { StagedMeshCommit } from '../scene-loader/process/data-processor-mesh';
-import { log, Modules } from '../../utils/log';
-import { notifier } from '../../utils/cross-layer/notifier';
-import { isAbortError } from '../loaders/abort-error';
-import { tryRollbackToPassStart } from '../loaders/progressive/pass-rollback';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 import type { ViewState } from '../data-loader-types';
 import type { ViewStateQueue } from '../scene-loader/view-state/view-state-queue';
-import type {
-  LadderResidency,
-  RefinementResidencyBudget,
-} from '../scene-loader/progressive/residency-budget';
+import type { RefinementResidencyBudget } from '../scene-loader/progressive/residency-budget';
 import {
-  MAX_CONSECUTIVE_REFINEMENT_FAILURES,
   RefinementFailureTracker,
   runProgressiveRefinement,
 } from '../scene-loader/progressive/refinement';
+import { PARTIAL_EXTEND_TOLERANCE } from '../scene-loader/partial-extend-tolerance';
+import {
+  admitRefinementCandidate,
+  handleRefinementError,
+  makeRefinementProgressCallbacks,
+  recordRefinementResidency,
+  type RefinableLoader,
+} from '../scene-loader/progressive/refinement-wrapper';
+
+/** Geometry name in this wrapper's log lines and toasts. */
+const LABEL = 'Mesh';
 
 export interface MeshRefinementCtx {
   rootGroup: THREE.Group | null;
@@ -90,27 +93,17 @@ export async function runMeshRefinement(ctx: MeshRefinementCtx): Promise<void> {
     viewStateQueue: ctx.viewStateQueue,
     isActive: ctx.isActive,
     processLoader: async (path, loader) => {
-      // Only the progressive loader exposes `hasMoreLODs`; an unladdered
-      // `MeshWholeNodeLoader` does not, so it skips on absence. That is also what
-      // keeps this loop free for the overwhelmingly common single-level mesh.
-      const progressiveLoader = loader as MeshDataLoader & {
-        hasMoreLODs?: boolean;
-        // Optional for the same reason as `hasMoreLODs`: only the progressive
-        // loader has a ladder to unwind. Every `MeshProgressiveLoader` has it.
-        rollbackToPassStart?: () => number;
-        ladderResidency?: () => LadderResidency;
-      };
-      if (progressiveLoader.hasMoreLODs !== true) return false;
-      if (failures.isExhausted(path)) return false;
-      // Shared sweep residency ceiling. Declining here is not enough on its own —
-      // `anyHasMoreLODs` and `getLoaderProgress` below must also exclude
-      // declined paths, or the loop re-offers this loader every frame forever
-      // while holding the update lock (the trap `isExhausted` already avoids).
-      const residency = progressiveLoader.ladderResidency?.();
-      const admission = residency ? ctx.residencyBudget?.admit(path, residency) : undefined;
-      if (admission?.admitted === false) {
-        return false;
-      }
+      // Every progressive field is optional here because `meshLoaders` is
+      // typed as plain `MeshDataLoader`: a non-progressive loader has no
+      // ladder. `admitRefinementCandidate` gates on `hasMoreLODs`.
+      const progressiveLoader = loader as MeshDataLoader & RefinableLoader;
+      const admission = admitRefinementCandidate(
+        path,
+        progressiveLoader,
+        failures,
+        ctx.residencyBudget
+      );
+      if (!admission.admitted) return false;
       try {
         const object = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
         const nodeAttrs = object?.userData?.attrs as MeshMetadata | undefined;
@@ -118,7 +111,7 @@ export async function runMeshRefinement(ctx: MeshRefinementCtx): Promise<void> {
         // segment bounds already encode the non-displayed extent). Matches
         // `load-mesh-node.ts` and the descriptor's `retryCommit`.
         const refined = ctx.deriveNodeViewState(path, nodeAttrs, {
-          applyPartialExtendTolerance: true,
+          applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.mesh,
         });
         const meshVS: MeshViewState = refined.viewState;
 
@@ -131,7 +124,7 @@ export async function runMeshRefinement(ctx: MeshRefinementCtx): Promise<void> {
             meshVS,
             session,
             ctx.signal,
-            admission?.allowanceBytes ?? undefined
+            admission.allowanceBytes
           );
           if (data) {
             const staged = await ctx.processMesh(path, data, meshVS, {
@@ -154,80 +147,25 @@ export async function runMeshRefinement(ctx: MeshRefinementCtx): Promise<void> {
         failures.recordSuccess(path);
         return true;
       } catch (error) {
-        // Superseded, not failed: a newer view-state (or dispose) aborted the
-        // in-flight read on purpose. Don't count it toward the failure backoff or
-        // log an error — the loop's next-pass pending check hands off.
-        if (isAbortError(error)) return false;
-        // Unwind the levels this pass appended before the throw, so the retry
-        // re-attempts the SAME prefix rather than resuming from the advanced
-        // cursor with a larger allocation. See
-        // `../loaders/progressive/pass-rollback`.
-        const unwound = tryRollbackToPassStart(progressiveLoader);
-        if (failures.recordFailure(path)) {
-          log.error(
-            Modules.SCENE_LOADER,
-            `Mesh refinement failed for ${path}: ${(error as Error).message} — ` +
-              `giving up after ${MAX_CONSECUTIVE_REFINEMENT_FAILURES} consecutive failures ` +
-              `(will retry on the next view change; unwound ${unwound} level(s))`
-          );
-          // The node silently freezes at its last revealed patch — a console-only
-          // error leaves the user staring at a permanently partial surface with no
-          // explanation. Same channel as leaf-load failures.
-          notifier.toast(`Refinement failed for ${path} — showing a partial surface`, 5000);
-        } else {
-          log.error(
-            Modules.SCENE_LOADER,
-            `Mesh refinement failed for ${path}: ${(error as Error).message} ` +
-              `(unwound ${unwound} level(s))`
-          );
-        }
-        return false;
+        return handleRefinementError(
+          { label: LABEL, degradedState: 'showing a partial surface' },
+          path,
+          error,
+          progressiveLoader,
+          failures
+        );
       } finally {
-        const measured = progressiveLoader.ladderResidency?.();
-        if (measured) ctx.residencyBudget?.record(path, measured);
+        recordRefinementResidency(path, progressiveLoader, ctx.residencyBudget);
       }
     },
-    getLoaderProgress: (path, loader) => {
-      const progressiveLoader = loader as MeshDataLoader & {
-        hasMoreLODs?: boolean;
-        loadedLODCount: number;
-        totalLODCount: number;
-      };
-      if (
-        failures.isExhausted(path) ||
-        ctx.residencyBudget?.isDeclined(path) === true ||
-        progressiveLoader.hasMoreLODs !== true
-      ) {
-        return null;
-      }
-      return {
-        loaded: progressiveLoader.loadedLODCount,
-        total: progressiveLoader.totalLODCount,
-      };
-    },
-    // A budget-declined loader still reports `hasMoreLODs`, so it MUST be
-    // excluded here as well or the loop never terminates.
-    anyHasMoreLODs: () =>
-      [...ctx.meshLoaders.entries()].some(([path, l]) => {
-        const ml = l as MeshDataLoader & { hasMoreLODs?: boolean };
-        return (
-          !failures.isExhausted(path) &&
-          ctx.residencyBudget?.isDeclined(path) !== true &&
-          ml.hasMoreLODs === true
-        );
-      }),
-    onNoProgress: (stalled) => {
-      for (const { path, loaded, total } of stalled) {
-        log.warning(
-          Modules.SCENE_LOADER,
-          `Mesh refinement stopped for ${path}: no progress at LOD ${loaded}/${total}`
-        );
-      }
-    },
+    ...makeRefinementProgressCallbacks(
+      LABEL,
+      ctx.meshLoaders as Map<string, MeshDataLoader & RefinableLoader>,
+      failures,
+      ctx.residencyBudget
+    ),
     updateVisibleCountsInMonitor: () => ctx.updateVisibleCountsInMonitor(),
     releaseLock: () => ctx.releaseLock(),
     retriggerUpdate: (pending) => ctx.retriggerUpdate(pending),
-    onError: (error) =>
-      log.error(Modules.SCENE_LOADER, `Mesh refinement loop error: ${(error as Error).message}`),
   });
 }

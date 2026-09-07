@@ -36,10 +36,12 @@ import {
   applyMeshSide,
   applyMeshShading,
   applyMeshTexture,
+  applyMeshVertexAlpha,
 } from '../../../rendering/node-factory/create-mesh-node';
 import { noteDepthSortCommit } from '../../../rendering/depth-sort-coordinator';
 import { computeFaceCentroids } from '../../../rendering/depth-sort-coordinator/triangle-ordering';
 import { stampLadderComplete, stampLoadedViewVersion } from './stamp-view-version';
+import { markFirstCommit } from '../../../profiling/load-timeline';
 import { setCommittedData } from '../../../types/committed-data';
 import { isMeshUserData, type MeshMetadata } from '../../../types/mesh';
 import type { StagedMeshCommit } from '../process/data-processor-mesh';
@@ -155,6 +157,11 @@ export function commitMeshGeometry(
   // this is the first moment it exists. Idempotent, so every later commit is free.
   if (data.texture) applyMeshTexture(object, nodeAttrs, data.texture);
 
+  // Whether the colours carry alpha, which a PHYSICAL mesh needs to decide its own
+  // translucency (it has no blending mode to be told). Data, like the texture above,
+  // and known only now; a no-op for the house material and on every later commit.
+  applyMeshVertexAlpha(object, data.colorComponents);
+
   // A first-commit vertex-attribute rebind (position grow / color install) leaves
   // three's cached WebGPU RenderObject pointing at the old vertex buffers; evict it
   // so the next draw rebuilds from the current attributes. WebGPU-gated — a no-op on
@@ -224,6 +231,7 @@ export function commitMeshGeometry(
   // exactly wrong for a partial object at full brightness (§9.1). An unladdered mesh
   // has no such getter and stamps `1`, which is true: its commit IS its content.
   stampLadderComplete(object.userData);
+  markFirstCommit('mesh');
 
   if (projected.visibleFaceCount === 0) {
     log.info(

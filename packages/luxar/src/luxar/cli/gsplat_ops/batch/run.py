@@ -8,6 +8,7 @@ from typing import Optional
 import typer
 from arbol import aprint
 
+from .plan_configs import build_plan_configs
 from .run_orchestration import run_batch_local_orchestration
 
 
@@ -155,6 +156,12 @@ def run_batch_run(
     batch_denoise_backend: str = typer.Option(
         "auto", "--denoise-backend", rich_help_panel="Denoising"
     ),
+    batch_calibration_samples: int = typer.Option(
+        5,
+        "--calibration-samples",
+        help="Timepoints to sample for h calibration",
+        rich_help_panel="Denoising",
+    ),
     # Local GPUs
     gpus: str = typer.Option(
         "auto",
@@ -281,21 +288,15 @@ def run_batch_run(
         raise typer.Exit(1)
 
     try:
-        run_batch_local_orchestration(
-            input_path=input_path,
-            output_dir=output_dir,
-            tiling=tiling,
-            tile_size=tile_size,
-            tile_overlap=tile_overlap,
-            axes=axes,
-            array_key=array_key,
-            timepoints_slice=timepoints_slice,
-            channels_slice=channels_slice,
+        # ONE flat-flags -> config-objects mapping, shared verbatim with
+        # `batch-fit submit`. Inlining a second copy here is what let
+        # --calibration-samples exist on submit and silently not on run.
+        cfgs = build_plan_configs(
             preset=preset,
-            config=config,
-            floor=floor,
             seeds=seeds,
             iters=iters,
+            config=config,
+            floor=floor,
             batch_progressive=batch_progressive,
             batch_splats_per_pass=batch_splats_per_pass,
             batch_psnr_patience=batch_psnr_patience,
@@ -307,6 +308,12 @@ def run_batch_run(
             batch_denoise_patch_size=batch_denoise_patch_size,
             batch_denoise_search_distance=batch_denoise_search_distance,
             batch_denoise_backend=batch_denoise_backend,
+            batch_calibration_samples=batch_calibration_samples,
+            # `--preprocess` is submit-only by design: writing denoised.zarr up
+            # front is a separate dependent Slurm job, and the local runner
+            # denoises per tile on the fly. planning.py's own error text points
+            # users at `batch-fit submit` for it.
+            batch_preprocess=False,
             cal=cal,
             k_star_ref=k_star_ref,
             n_features_ref=n_features_ref,
@@ -320,10 +327,6 @@ def run_batch_run(
             max_leaf=max_leaf,
             plan_timepoint=plan_timepoint,
             plan_samples=plan_samples,
-            gpus=gpus,
-            jobs_per_gpu=jobs_per_gpu,
-            no_resume=no_resume,
-            dry_run=dry_run,
             merge_recipe=merge_recipe,
             channel_colors=channel_colors,
             merge_n_lods=merge_n_lods,
@@ -338,6 +341,23 @@ def run_batch_run(
             merge_refine_iters=merge_refine_iters,
             merge_substitutive_method=merge_substitutive_method,
             merge_coarsen_dims=merge_coarsen_dims,
+        )
+
+        run_batch_local_orchestration(
+            input_path=input_path,
+            output_dir=output_dir,
+            tiling=tiling,
+            tile_size=tile_size,
+            tile_overlap=tile_overlap,
+            axes=axes,
+            array_key=array_key,
+            timepoints_slice=timepoints_slice,
+            channels_slice=channels_slice,
+            cfgs=cfgs,
+            gpus=gpus,
+            jobs_per_gpu=jobs_per_gpu,
+            no_resume=no_resume,
+            dry_run=dry_run,
         )
 
     except typer.Exit:

@@ -201,6 +201,24 @@ export class LabeledSlider {
     this.wrapper.style.display = visible ? '' : 'none';
   }
 
+  /**
+   * Mark the slider INERT — a knob that, in the current state of its siblings,
+   * changes nothing on screen (a clearcoat roughness with no clearcoat, a
+   * transmission on a metal). The input is disabled, the group dims, and the
+   * reason is the hover text, so a dead-feeling control explains itself instead
+   * of reading as broken. `null` restores the live state.
+   */
+  setInert(reason: string | null): void {
+    this.input.disabled = reason !== null;
+    this.wrapper.classList.toggle('luxar-layers-panel__control-group--inert', reason !== null);
+    this.wrapper.title = reason ?? '';
+  }
+
+  /** The hover text of the whole group (the inert reason, or empty). */
+  getInertReason(): string | null {
+    return this.input.disabled ? this.wrapper.title || null : null;
+  }
+
   /** Remove from DOM and detach listeners. */
   dispose(): void {
     this.input.removeEventListener('input', this.inputHandler);

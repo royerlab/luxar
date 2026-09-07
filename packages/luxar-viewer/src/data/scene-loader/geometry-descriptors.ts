@@ -30,6 +30,7 @@ import type { AnyDataLoader } from './loaders/loader-registry';
 import type { LoaderFactoryDeps } from './loaders/loader-factory';
 import type { NodeBuildCtx } from './nodes/build-ctx';
 import type { RetryCtx } from './lifecycle/retry';
+import { PARTIAL_EXTEND_TOLERANCE } from './partial-extend-tolerance';
 import { loadPointsNode } from './nodes/load-points-node';
 import { loadLinesNode } from './nodes/load-lines-node';
 import { loadGSplatsNode } from './nodes/load-gsplats-node';
@@ -58,6 +59,11 @@ export interface GeometryDescriptor {
    * Whether `deriveNodeViewState` applies the partial-extend tolerance for this
    * kind. Lines opt out: their segment bounds already encode the non-displayed
    * extent, so applying it again double-counts during clipping.
+   *
+   * Sourced from {@link PARTIAL_EXTEND_TOLERANCE}, never restated. The separate
+   * no-runtime-import module lets leaf handlers read one boolean without
+   * pulling in every node loader and loader factory. Twelve call sites used to
+   * hardcode the boolean instead; they all read the table now.
    */
   readonly applyPartialExtendTolerance: boolean;
 
@@ -92,7 +98,7 @@ export interface GeometryDescriptor {
 export const GEOMETRY_DESCRIPTORS: Record<GeometryKind, GeometryDescriptor> = {
   points: {
     loadNode: loadPointsNode,
-    applyPartialExtendTolerance: true,
+    applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.points,
     async retryCommit(ctx, path, loader, viewState) {
       const data = await (loader as DataLoader).updateView(viewState);
       // No staged null-check, unlike lines/gsplats below: `processPointsData`
@@ -104,7 +110,7 @@ export const GEOMETRY_DESCRIPTORS: Record<GeometryKind, GeometryDescriptor> = {
   },
   lines: {
     loadNode: loadLinesNode,
-    applyPartialExtendTolerance: false,
+    applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.lines,
     async retryCommit(ctx, path, loader, viewState) {
       const linesViewState = viewState as LinesViewState;
       const data = await (loader as LinesDataLoader).updateView(linesViewState);
@@ -118,7 +124,7 @@ export const GEOMETRY_DESCRIPTORS: Record<GeometryKind, GeometryDescriptor> = {
   },
   gsplats: {
     loadNode: loadGSplatsNode,
-    applyPartialExtendTolerance: true,
+    applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.gsplats,
     async retryCommit(ctx, path, loader, viewState) {
       // Pass the derived state through whole, exactly as the lines arm does.
       // Rebuilding it field-by-field drops `noPreimage`, which
@@ -142,7 +148,7 @@ export const GEOMETRY_DESCRIPTORS: Record<GeometryKind, GeometryDescriptor> = {
     // out, because its segment bounds already encode the non-displayed extent so
     // applying it again double-counts during clipping. A mesh has no per-element
     // bounds at all, so there is nothing to double-count.
-    applyPartialExtendTolerance: true,
+    applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.mesh,
     async retryCommit(ctx, path, loader, viewState) {
       // Pass the derived state through WHOLE, as the lines and gsplats arms do.
       // Rebuilding it field-by-field drops `noPreimage`, which

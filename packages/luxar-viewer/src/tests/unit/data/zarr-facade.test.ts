@@ -79,6 +79,41 @@ function makeUnconsolidatedStore(): MemoryReadable {
   ]);
 }
 
+/**
+ * A zarr FORMAT 3 store with a consolidated index at the root `zarr.json` —
+ * the shape every Luxar-written scene has today.
+ */
+function makeV3ConsolidatedStore(): MemoryReadable {
+  const pointsV3 = {
+    zarr_format: 3,
+    node_type: 'array',
+    shape: [4, 2],
+    data_type: 'float32',
+    chunk_grid: { name: 'regular', configuration: { chunk_shape: [2, 2] } },
+    chunk_key_encoding: { name: 'default', configuration: { separator: '/' } },
+    fill_value: 0,
+    codecs: [{ name: 'bytes', configuration: { endian: 'little' } }],
+    attributes: pointsAttrs,
+  };
+  return new MemoryReadable([
+    [
+      '/zarr.json',
+      jsonBytes({
+        zarr_format: 3,
+        node_type: 'group',
+        attributes: rootAttrs,
+        consolidated_metadata: {
+          kind: 'inline',
+          must_understand: false,
+          metadata: { points: pointsV3 },
+        },
+      }),
+    ],
+    ['/points/c/0/0', float32Bytes([1, 2, 3, 4])],
+    ['/points/c/1/0', float32Bytes([5, 6, 7, 8])],
+  ]);
+}
+
 function makeConsolidatedStore(): MemoryReadable {
   return new MemoryReadable([
     [
@@ -227,7 +262,11 @@ describe('Zarr facade contract', () => {
     const rawStore = makeConsolidatedStore();
     const store = await zarr.openStore(rawStore);
 
-    expect(rawStore.calls.map((call) => call.key)).toEqual(['/.zmetadata']);
+    // v3-first probe order (see `openStore`): a legacy format-2 store now pays
+    // one speculative `zarr.json` miss before its `.zmetadata` is found. That
+    // is the deliberate trade — Luxar writes format 3, so the common case
+    // should be the cheap one — and the cost is bounded at exactly one probe.
+    expect(rawStore.calls.map((call) => call.key)).toEqual(['/zarr.json', '/.zmetadata']);
     expect(store.contents?.()).toEqual([
       { path: '/', kind: 'group' },
       { path: '/points', kind: 'array' },
@@ -325,5 +364,45 @@ describe('Zarr facade contract', () => {
     expect(Array.from(second.data as Float32Array)).toEqual([1, 2, 3, 4]);
     expect(rawStore.callsFor('/points/0.0')).toHaveLength(readsAfterFirstChunk);
     expect(cache.getStats().hits).toBeGreaterThanOrEqual(1);
+  });
+
+  // --- Format probe order ------------------------------------------------
+  //
+  // zarrita guesses v2 first for any store object its version counter has not
+  // seen, which costs a 404 round trip per guess on the critical path of first
+  // paint. Luxar writes format 3, so the facade flips the order. These pin
+  // that BOTH formats still open — the point is the order, not a pin.
+
+  it('does not probe format-2 documents when opening a format-3 store', async () => {
+    const rawStore = makeV3ConsolidatedStore();
+    const store = await zarr.openStore(rawStore);
+    const group = await zarr.openGroupPreferV3(zarr.root(store));
+
+    expect(group.attrs).toEqual(rootAttrs);
+    // The legacy documents must never be asked for: `.zmetadata` is the
+    // consolidated-metadata guess, `.zattrs`/`.zgroup` the root-open guess.
+    expect(rawStore.callsFor('/.zmetadata')).toHaveLength(0);
+    expect(rawStore.callsFor('/.zattrs')).toHaveLength(0);
+    expect(rawStore.callsFor('/.zgroup')).toHaveLength(0);
+  });
+
+  it('still opens a format-2 store, falling back from the v3 attempt', async () => {
+    const rawStore = makeUnconsolidatedStore();
+    const store = await zarr.openStore(rawStore);
+    const group = await zarr.openGroupPreferV3(zarr.root(store));
+
+    // The format-2 arm is the one that matters: flipping the order must not
+    // cost a legacy store correctness, only an extra probe.
+    expect(group.attrs).toEqual(rootAttrs);
+    expect(rawStore.callsFor('/.zgroup').length).toBeGreaterThan(0);
+  });
+
+  it('reads chunk data through a format-3 store opened v3-first', async () => {
+    const rawStore = makeV3ConsolidatedStore();
+    const store = await zarr.openStore(rawStore);
+    const points = await zarr.openArray(zarr.root(store).resolve('points'));
+    const { data } = await zarr.readArray(points);
+
+    expect(Array.from(data as Float32Array)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
   });
 });

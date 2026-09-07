@@ -257,8 +257,11 @@ reduced-quota OPFS that wipes on tab close — the cache degrades to L1
 
 ## OPFS availability and quota
 
-OPFS is available in modern Chrome/Edge/Safari/Firefox. Older browsers
-fall back to L1-only (no L2 persistence). The cache tab surfaces:
+OPFS is available in modern Chrome/Edge/Safari/Firefox, but WebKit has no
+main-thread `FileSystemFileHandle.createWritable()`: Safari and the native
+WKWebView launcher therefore fail the init write probe and run L1-only. See the
+`opfs-unavailable` row under [Cache Status Badges](#cache-status-badges). Older
+browsers also fall back to L1-only (no L2 persistence). The cache tab surfaces:
 
 - `cache-enabled`: caching is operational.
 - `no-cache`: `?no-cache` URL flag set.
@@ -832,7 +835,9 @@ shrink proportionally to avoid OOM.
 
 - ✅ Chrome 86+ (October 2020)
 - ✅ Firefox 111+ (March 2023)
-- ✅ Safari 15.2+ (December 2021)
+- ⚠️ Safari 15.2+ exposes OPFS, but WebKit lacks main-thread
+  `FileSystemFileHandle.createWritable()`; the init write probe disables L2 and
+  raises the [`opfs-unavailable` badge](#cache-status-badges)
 
 **Graceful Degradation**:
 

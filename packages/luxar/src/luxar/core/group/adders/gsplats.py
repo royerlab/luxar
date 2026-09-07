@@ -12,6 +12,10 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union, ca
 import numpy as np
 from arbol import aprint
 
+from ....validation.writing import (
+    GSPLATS_RESERVED_ATTRS,
+    validate_render_attrs,
+)
 from ...gsplats import GSplats
 from ..auto_partition import resolve_auto_partition
 from ..compositing import (
@@ -178,11 +182,6 @@ def add_gsplats_impl(
         # writer below still validates the same dict once more inside
         # ``write_gsplats`` — the validator is read-only, so running it here on
         # the live ``attrs`` (not a copy) is safe and idempotent.
-        from ....io._compiler.node_common import (
-            GSPLATS_RESERVED_ATTRS,
-            validate_render_attrs,
-        )
-
         validate_render_attrs(attrs, reserved_attrs=GSPLATS_RESERVED_ATTRS)
 
         # Apply compiler-level auto-partition heuristic (opt-in; default

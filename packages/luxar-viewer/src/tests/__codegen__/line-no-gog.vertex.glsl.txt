@@ -74,6 +74,7 @@ layout( std140 ) uniform object {
 	uint nodeUniform30;
 	mat3 nodeUniform31;
 	uint nodeUniform32;
+	float nodeUniform33;
 };
 uniform sampler2D nodeUniform7;
 
@@ -231,8 +232,8 @@ vec2 nodeVar137;
 vec2 nodeVar138;
 vec4 nodeVar139;
 vec4 clipPos;
-float nodeVar140;
-float nodeVar141;
+uint nodeVar140;
+uint nodeVar141;
 float nodeVar142;
 float nodeVar143;
 float nodeVar144;
@@ -240,6 +241,8 @@ float nodeVar145;
 float nodeVar146;
 float nodeVar147;
 float nodeVar148;
+float nodeVar149;
+float nodeVar150;
 
 // codes
 
@@ -640,31 +643,40 @@ void main() {
 	nodeVar138 = nodeVar137;
 	nodeVar139 = vec4( ( nodeVar66.xy + ( ( ( ( nodeVar138 * vec2( aQuadCorner.y ) ) / nodeUniform21 ) * vec2( 2.0 ) ) * vec2( nodeVar66.w ) ) ), nodeVar66.z, nodeVar66.w );
 	clipPos = vec4( 0.0, 0.0, -2.0, 1.0 );
-	clipPos = nodeVar139;
+	nodeVar140 = ( ( uint( nodeVar10 ) ^ ( uint( nodeVar10 ) >> 16u ) ) * 2146121005u );
+	nodeVar141 = ( ( nodeVar140 ^ ( nodeVar140 >> 15u ) ) * 2221713035u );
+
+	if ( ( ! ( ( nodeUniform33 > 0.0 ) && ( ( float( ( nodeVar141 ^ ( nodeVar141 >> 16u ) ) ) * 2.3283064365386963e-10 ) < nodeUniform33 ) ) ) ) {
+
+		clipPos = nodeVar139;
+
+
+	}
+
 	nodeVarying0 = mix( nodeVar29.xyz, nodeVar34.xyz, nodeVar59 );
 
 	if ( ( ( ( nodeVar49 < 1e30 ) && ( nodeVar49 > -1e30 ) ) && ( nodeVar49 >= 0.0 ) ) ) {
 
-		nodeVar140 = nodeVar49;
+		nodeVar142 = nodeVar49;
 
 	} else {
 
-		nodeVar140 = 0.5;
+		nodeVar142 = 0.5;
 
 	}
 
 
 	if ( ( ( ( nodeVar50 < 1e30 ) && ( nodeVar50 > -1e30 ) ) && ( nodeVar50 >= 0.0 ) ) ) {
 
-		nodeVar141 = nodeVar50;
+		nodeVar143 = nodeVar50;
 
 	} else {
 
-		nodeVar141 = 0.5;
+		nodeVar143 = 0.5;
 
 	}
 
-	nodeVarying1 = mix( clamp( nodeVar140, 0.0, 1.0 ), clamp( nodeVar141, 0.0, 1.0 ), nodeVar59 );
+	nodeVarying1 = mix( clamp( nodeVar142, 0.0, 1.0 ), clamp( nodeVar143, 0.0, 1.0 ), nodeVar59 );
 	nodeVarying2 = aQuadCorner.y;
 	nodeVarying3 = nodeVar59;
 	nodeVarying4 = nodeVar51;
@@ -673,43 +685,20 @@ void main() {
 
 	if ( ( nodeVar75 <= nodeVar77 ) ) {
 
-		nodeVar142 = 1.0;
+		nodeVar144 = 1.0;
 
 	} else {
 
-		nodeVar142 = nodeVar78;
+		nodeVar144 = nodeVar78;
 
 	}
 
-	nodeVarying7 = nodeVar142;
+	nodeVarying7 = nodeVar144;
 
 	if ( ( nodeVar83 < 0.0 ) ) {
 
 
 		if ( ( ( ( nodeVar52 > -0.5 ) && ( nodeVar52 < 0.5 ) ) || ( ( nodeVar52 < -1.5 ) && ( nodeVar52 > -2.5 ) ) ) ) {
-
-			nodeVar144 = 0.0;
-
-		} else {
-
-			nodeVar144 = 1.0;
-
-		}
-
-		nodeVar143 = nodeVar144;
-
-	} else {
-
-		nodeVar143 = nodeVar83;
-
-	}
-
-	nodeVarying8 = nodeVar143;
-
-	if ( ( nodeVar84 < 0.0 ) ) {
-
-
-		if ( ( ( ( nodeVar53 > -0.5 ) && ( nodeVar53 < 0.5 ) ) || ( ( nodeVar53 < -1.5 ) && ( nodeVar53 > -2.5 ) ) ) ) {
 
 			nodeVar146 = 0.0;
 
@@ -723,34 +712,57 @@ void main() {
 
 	} else {
 
-		nodeVar145 = nodeVar84;
+		nodeVar145 = nodeVar83;
 
 	}
 
-	nodeVarying9 = nodeVar145;
+	nodeVarying8 = nodeVar145;
 
-	if ( ( ( nodeVar44.z < 1e30 ) && ( nodeVar44.z > -1e30 ) ) ) {
+	if ( ( nodeVar84 < 0.0 ) ) {
 
-		nodeVar147 = min( max( nodeVar44.z, 0.0 ), 1.0 );
+
+		if ( ( ( ( nodeVar53 > -0.5 ) && ( nodeVar53 < 0.5 ) ) || ( ( nodeVar53 < -1.5 ) && ( nodeVar53 > -2.5 ) ) ) ) {
+
+			nodeVar148 = 0.0;
+
+		} else {
+
+			nodeVar148 = 1.0;
+
+		}
+
+		nodeVar147 = nodeVar148;
 
 	} else {
 
-		nodeVar147 = 1.0;
+		nodeVar147 = nodeVar84;
+
+	}
+
+	nodeVarying9 = nodeVar147;
+
+	if ( ( ( nodeVar44.z < 1e30 ) && ( nodeVar44.z > -1e30 ) ) ) {
+
+		nodeVar149 = min( max( nodeVar44.z, 0.0 ), 1.0 );
+
+	} else {
+
+		nodeVar149 = 1.0;
 
 	}
 
 
 	if ( ( ( nodeVar44.w < 1e30 ) && ( nodeVar44.w > -1e30 ) ) ) {
 
-		nodeVar148 = min( max( nodeVar44.w, 0.0 ), 1.0 );
+		nodeVar150 = min( max( nodeVar44.w, 0.0 ), 1.0 );
 
 	} else {
 
-		nodeVar148 = 1.0;
+		nodeVar150 = 1.0;
 
 	}
 
-	nodeVarying10 = mix( nodeVar147, nodeVar148, nodeVar59 );
+	nodeVarying10 = mix( nodeVar149, nodeVar150, nodeVar59 );
 
 	// result
 	gl_Position = clipPos;

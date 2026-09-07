@@ -309,7 +309,7 @@ Node Tree
 ---------
 
 The in-memory gsplat node tree (leaf / lod / partition nodes) shared by the
-fitting, LOD, and I/O layers — the v3.3 ``.gsplats.zarr`` on-disk structure.
+fitting, LOD, and I/O layers — the v3.4 ``.gsplats.zarr`` on-disk structure.
 
 .. automodule:: luxar.gsplats.tree
    :members:

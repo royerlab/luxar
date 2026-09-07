@@ -23,6 +23,7 @@ import { config } from '../config';
 import { archiveFaultFrom } from '../cache/chunk-source';
 import { validateAndLog } from '../config/validation';
 import { readUrlParams, type UrlParams } from '../config/url-params';
+import { buildInfo, buildInfoLine } from '../config/build-info';
 import { initUserSettings } from '../config/user-settings';
 import { configureGpuByteBudget } from '../rendering/gpu-byte-budget';
 import { cachePoolOverrideBytes } from '../cache/heap-budget';
@@ -40,6 +41,7 @@ import { consoleInterceptor } from '../utils/console-interceptor';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { getErrorMessage } from '../utils/format-error';
 import { codecRegistry } from '../data/zarr';
+import { computePerfSnapshot } from './app/debug/perf-snapshot';
 
 /**
  * Options for {@link bootstrapStandalone}.
@@ -111,6 +113,14 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   const shortcutForAction = (actionId: string): string | undefined =>
     app?.shortcutForAction(actionId);
 
+  // Publish the build stamp FIRST, unconditionally, and before anything that
+  // can fail. Two deliberate choices:
+  //   - not gated on `?debug`, because the bug reports that need a revision
+  //     come from users who did not know to add it;
+  //   - before init, because "the viewer renders black" is exactly the case
+  //     where init threw and every later surface is gone.
+  window.__luxarBuild = buildInfo();
+
   // Load + apply the persisted global viewer preferences (Settings popover)
   // BEFORE the first config read below: live-read values are applied by
   // mutating `config`; startup-only values are threaded into appOptions
@@ -179,6 +189,7 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   if (patchConsole) {
     consoleInterceptor.patch();
   }
+  log.custom(LogEmoji.START, Modules.LUXAR, `Luxar viewer ${buildInfoLine()}`);
 
   // Wire the cross-layer notifier surface to the concrete UI helpers.
   // Lower layers (data, scene, input) call notifier.toast / .error /
@@ -313,6 +324,9 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     allowLinks: urlParams.allowLinks,
     lodEnergyComp: urlParams.lodEnergyComp,
     depthSort: urlParams.depthSort,
+    densityGuard: urlParams.densityGuard,
+    // `?density-cap=<N>` sweeps the guard's threshold for one session.
+    densityCap: urlParams.densityCap ?? undefined,
     // Opt-in capture-quality override (`?lod-finest` — the gallery harness).
     lodFinest: urlParams.lodFinest,
     blendWarmup: urlParams.blendWarmup,
@@ -346,7 +360,13 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     window.__luxarDebug = {
       app,
       consoleInterceptor,
-      version: '1.0.0',
+      version: buildInfo().version,
+      // Perf probes must not wait for the dataset load + blend warm-up that
+      // gate the runtime surface (`getState` etc.): the load timeline is
+      // readable from here on, and installDebugInterface swaps in the
+      // runtime-aware snapshot once the components exist.
+      perfReady: true,
+      getPerf: () => computePerfSnapshot(),
       showError: (message) =>
         showError(message, shortcutForAction, {
           datasetBrowser: KeyAction.toggleDatasetBrowser,

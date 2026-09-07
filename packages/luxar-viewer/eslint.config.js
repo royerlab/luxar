@@ -25,9 +25,9 @@ export default [
     rules: {
       'no-unused-vars': 'off',
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
-      'semi': ['error', 'always'],
-      'quotes': ['error', 'single', { avoidEscape: true }],
-      'indent': 'off', // Handled by prettier — eslint indent conflicts with prettier ternary formatting
+      semi: ['error', 'always'],
+      quotes: ['error', 'single', { avoidEscape: true }],
+      indent: 'off', // Handled by prettier — eslint indent conflicts with prettier ternary formatting
       'no-undef': 'off', // TypeScript handles this
       // Channel all logging through src/utils/log.ts. The two exceptions
       // (utils/log.ts itself and console-interceptor.ts which monkey-patches
@@ -83,6 +83,35 @@ export default [
           ],
         },
       ],
+
+      // Type-aware rules. The parser already sets `parserOptions.project`
+      // above, so the type information these need was being computed and then
+      // thrown away — ESLint enabled no typescript-eslint recommended set and
+      // no type-aware rule at all (audit A12-03).
+      //
+      // These four are the DEFECT-BEARING ones. In a viewer this heavy on
+      // workers, loaders and caches — hundreds of `async` occurrences — an
+      // unhandled rejection does not crash anything. It shows up as a load
+      // that silently stalls, which no test asserts and E2E does not gate.
+      //
+      // Measured before enabling: 24 findings in production
+      // (10 no-floating-promises, 6 no-misused-promises, 8 no-base-to-string,
+      // 0 await-thenable) and 160 including tests. Existing findings are
+      // recorded in `eslint-suppressions.json` — ESLint's own baseline
+      // mechanism, not a hand-rolled ratchet — so nothing goes red today and a
+      // higher per-file count fails immediately. Burn them down with
+      // `pnpm lint --prune-suppressions`. The default lint script deliberately
+      // passes `--pass-on-unpruned-suppressions`, so paying down debt or deleting
+      // a baselined file does not fail CI before pruning. Until then, a file that
+      // drops two of three findings retains all three slots without a reminder.
+      //
+      // `no-unnecessary-type-assertion` is deliberately NOT here: 867 findings,
+      // auto-fixable, and a redundant `as` is untidy rather than wrong. Landing
+      // it would bury 867 suppression entries next to the 160 that matter.
+      '@typescript-eslint/no-floating-promises': 'error',
+      '@typescript-eslint/no-misused-promises': 'error',
+      '@typescript-eslint/await-thenable': 'error',
+      '@typescript-eslint/no-base-to-string': 'error',
     },
   },
   {
@@ -130,12 +159,7 @@ export default [
     // Tests, benchmarks, screenshot drivers and mocks are tooling — they
     // legitimately use console.* for diagnostic output that doesn't need
     // to flow through the in-app debug console.
-    files: [
-      'src/tests/**/*.ts',
-      'src/tests/**/*.tsx',
-      'src/**/*.test.ts',
-      'src/**/*.spec.ts',
-    ],
+    files: ['src/tests/**/*.ts', 'src/tests/**/*.tsx', 'src/**/*.test.ts', 'src/**/*.spec.ts'],
     rules: {
       'no-console': 'off',
     },
@@ -158,6 +182,87 @@ export default [
     },
   },
   {
-    ignores: ['dist/**', 'node_modules/**', 'coverage/**', '*.config.js', '*.config.ts'],
+    // Size and complexity. 218K LOC of production TypeScript had no size,
+    // nesting, parameter-count or complexity gate of any kind (audit A2-05) —
+    // 36 methods at 120+ lines and 13 at 200+ were invisible to everything,
+    // with nothing stopping the next 672-line method. The Python side has had
+    // a C901 ratchet for months and demonstrably shrank its debt with it.
+    //
+    // Thresholds are not taste. `complexity: 10` is the same number
+    // `[tool.ruff.lint.mccabe] max-complexity` enforces on the Python side, so
+    // the two languages are held to one standard; 120 lines is the audit's own
+    // stated concern. Measured at these values: 561 production findings
+    // (378 complexity, 71 length, 61 params, 51 depth), all baselined in
+    // eslint-suppressions.json so nothing goes red today.
+    //
+    // PRODUCTION ONLY, and deliberately so rather than by omission. The
+    // finding is about the shipped surface; tests are not shipped; and the
+    // rules do not mean the same thing there — a long test body is a sequence
+    // of arrange/act/assert, not tangled control flow. It is also the
+    // difference between a 561-entry baseline and a 1,121-entry one, 435 of
+    // the extra being `max-lines-per-function` in test setup alone. If tests
+    // are ever brought in, `complexity`/`max-depth`/`max-params` add only 125
+    // between them — measured — and are the defensible subset to start with.
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/tests/**', 'src/**/*.test.ts', 'src/**/*.spec.ts'],
+    rules: {
+      complexity: ['error', { max: 10 }],
+      // Blank lines and comments excluded: this measures how much CODE a
+      // function holds. Counting a long explanatory comment against it would
+      // penalise precisely the thing this codebase does well.
+      'max-lines-per-function': ['error', { max: 120, skipBlankLines: true, skipComments: true }],
+      'max-depth': ['error', { max: 4 }],
+      'max-params': ['error', { max: 5 }],
+    },
+  },
+  {
+    // Build, gate and tooling code: the root configs, the .mjs gate scripts,
+    // the Playwright/Vite/Vitest configs, the tools/ harnesses and the two
+    // embedding examples. 5,774 LOC across 37 files sat outside eslint,
+    // prettier and tsc entirely (audit A15-09), and the selection is adverse:
+    // these are the scripts that enforce every other gate.
+    //
+    // NOT type-aware. Half of them are .mjs/.cjs, which no tsconfig covers,
+    // and the value here is the ordinary correctness set -- unused bindings,
+    // unreachable code, empty blocks. The .ts members are separately
+    // type-checked: tsconfig.json covers tools and tsconfig.tooling.json covers
+    // root configs and gate scripts.
+    files: [
+      '*.{ts,mts,cts,js,mjs,cjs}',
+      'scripts/**/*.{ts,mts,cts,js,mjs,cjs}',
+      'tools/**/*.{ts,mts,cts,js,mjs,cjs}',
+      'examples/**/*.{js,mjs}',
+    ],
+    languageOptions: {
+      parser: typescriptParser,
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: { ...globals.node, ...globals.browser },
+    },
+    plugins: {
+      '@typescript-eslint': typescript,
+    },
+    rules: {
+      'no-unused-vars': 'off',
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      semi: ['error', 'always'],
+      quotes: ['error', 'single', { avoidEscape: true }],
+      'no-undef': 'off', // TypeScript / node globals handle this
+      // These ARE command-line programs; stdout is their output channel, not
+      // a stray debug statement. src/utils/log.ts is a browser concern.
+      'no-console': 'off',
+    },
+  },
+  {
+    ignores: [
+      'dist/**',
+      'node_modules/**',
+      'coverage/**',
+      // wasm-pack output, regenerated by `pnpm build:wasm`.
+      'public/wasm/**',
+      // Playwright run artifacts.
+      'test-results/**',
+      'playwright-report/**',
+    ],
   },
 ];

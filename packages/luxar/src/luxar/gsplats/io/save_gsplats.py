@@ -51,7 +51,6 @@ from luxar.io._compiler.finalize.amplitude_window import (
     harmonize_gsplat_amplitude_windows,
 )
 from luxar.io._compiler.gsplat_tree import (
-    json_safe_value,
     make_dataset_ctx,
     make_ordering_ctx,
     write_gsplat_node,
@@ -62,6 +61,7 @@ from luxar.typing_utils._format_contract import (
     SUPPORTED_GSPLATS_VERSIONS,
 )
 from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
+from luxar.typing_utils.json_safe import json_safe_value
 from luxar.utils.arbol_warnings import arbol_warnings
 from luxar.utils.paths import normalize_zarr_path
 

@@ -12,6 +12,10 @@ from numpy.typing import NDArray
 from luxar._zarr_compat import create_array
 
 from ....encoding.compression import resolve_compressor
+from ....typing_utils.aliases import (
+    PositionArray,
+    ScalarArray,
+)
 from ..context import DatasetCtx, OrderingCtx
 
 if TYPE_CHECKING:
@@ -19,9 +23,9 @@ if TYPE_CHECKING:
 
 
 def build_lines_ordering(
-    vertices: NDArray[np.float32],
+    vertices: PositionArray,
     segments: NDArray[np.uint32],
-    widths: Union[NDArray[np.float32], float],
+    widths: Union[ScalarArray, float],
     n_vertices: int,
     n_dims: int,
     n_segments: int,

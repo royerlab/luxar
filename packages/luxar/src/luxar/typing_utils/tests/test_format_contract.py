@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 from luxar.typing_utils import _format_contract as fc
-from luxar.typing_utils import config, constants
+from luxar.typing_utils import constants
 from luxar.typing_utils.enums import NodeType
 
 REPO_ROOT = Path(__file__).resolve().parents[6]
@@ -104,9 +104,51 @@ def test_scene_version_consumers_single_sourced() -> None:
     """Scene-format constants must be the ones projected from the contract."""
     assert constants.LUXAR_VERSION_CURRENT == fc.SCENE_FORMAT_VERSION
     assert constants.DEFAULT_ZARR_VERSION == fc.SCENE_FORMAT_VERSION
-    assert config.DEFAULT_VERSION == fc.SCENE_FORMAT_VERSION
-    assert config.SUPPORTED_VERSIONS == fc.SUPPORTED_SCENE_VERSIONS
     assert fc.SCENE_FORMAT_VERSION in fc.SUPPORTED_SCENE_VERSIONS
+
+
+def test_the_compiler_stamps_the_contract_version_by_default() -> None:
+    """``LuxarZarrCompiler(version=...)`` must default to the contract version.
+
+    Read off the real public signature rather than off an intermediate alias.
+    This replaces two assertions about ``typing_utils.config.DEFAULT_VERSION`` /
+    ``SUPPORTED_VERSIONS``, which were aliases of the two constants checked
+    above — so the old test could only ever catch a broken alias, never a
+    compiler that stamped something else.
+    """
+    import inspect
+
+    from luxar.io.compiler import LuxarZarrCompiler
+
+    default = (
+        inspect.signature(LuxarZarrCompiler.__init__).parameters["version"].default
+    )
+    assert default == fc.SCENE_FORMAT_VERSION
+    assert default in fc.SUPPORTED_SCENE_VERSIONS
+
+
+def test_the_scene_validator_accepts_exactly_the_contract_versions() -> None:
+    """``validate_zarr_attributes`` must gate on the contract's version tuple.
+
+    The other half of the same seam: a store stamped with a supported version
+    must load, and one stamped with anything else must be refused. Derived from
+    ``SUPPORTED_SCENE_VERSIONS``, which is where the check now reads from
+    directly (it used to go through ``typing_utils.config.SUPPORTED_VERSIONS``).
+    """
+    from luxar.validation.base import ValidationError, validate_zarr_attributes
+
+    supported = fc.SUPPORTED_SCENE_VERSIONS
+    assert supported, "SUPPORTED_SCENE_VERSIONS is empty — the loop would be vacuous"
+    for version in supported:
+        validate_zarr_attributes(
+            {"type": "scene", "luxar_version": version, "scene_dimensions": {}},
+            is_root=True,
+        )
+    with pytest.raises(ValidationError, match="Unsupported Luxar version"):
+        validate_zarr_attributes(
+            {"type": "scene", "luxar_version": "0.0", "scene_dimensions": {}},
+            is_root=True,
+        )
 
 
 def test_gsplats_version_consumers_single_sourced() -> None:
@@ -121,6 +163,228 @@ def test_gsplats_version_consumers_single_sourced() -> None:
     assert save_gsplats_mod.FORMAT_VERSION == fc.GSPLATS_FORMAT_VERSION
     assert save_gsplats_mod.SUPPORTED_FORMAT_VERSIONS == fc.SUPPORTED_GSPLATS_VERSIONS
     assert fc.GSPLATS_FORMAT_VERSION in fc.SUPPORTED_GSPLATS_VERSIONS
+
+
+#: Documentation surfaces that state the CURRENT gsplats format version, each
+#: with a regex capturing exactly that claim.
+#:
+#: The 3.3 -> 3.4 bump reached the constant, the spec and nothing else: the
+#: published `FORMAT_AND_MIGRATION.md` — a page whose entire job is a table of
+#: current on-disk versions — still said v3.3, as did the CLI reference, the
+#: API reference and two package READMEs (audit A11-02). N-1-of-N, and the kind
+#: of error that gets copied into someone else's reader.
+#:
+#: Anchored regexes rather than "does 3.3 appear anywhere", because the tree
+#: legitimately holds v3.3 HISTORY ("v3.3 added the delta filter") and section
+#: numbers ("### 3.3 Spacing tokens"). A gate that cannot tell those apart
+#: either fires constantly or is switched off.
+CURRENT_VERSION_CLAIMS: tuple[tuple[str, str], ...] = (
+    (
+        "docs/guides/user/FORMAT_AND_MIGRATION.md",
+        r'`format_type="gsplats_zarr"`\) \| \*\*v(\d+\.\d+)\*\* \|',
+    ),
+    # Anchored on the Gsplats bullet specifically. A bare `current \*\*(...)\*\*`
+    # also matches the SCENE version two lines above ("current **0.1**") — which
+    # this gate caught on its first run, red against a correctly-swept page.
+    (
+        "docs/guides/user/FORMAT_AND_MIGRATION.md",
+        r"\*\*Gsplats \(`\.gsplats\.zarr`\):\*\* current \*\*(\d+\.\d+)\*\*",
+    ),
+    (
+        "docs/guides/user/LUXAR_ZARR_FORMAT.md",
+        r"current standalone format version: \*\*v(\d+\.\d+)\*\*",
+    ),
+    (
+        "docs/guides/user/LUXAR_ZARR_FORMAT.md",
+        r"The current format is \*\*v(\d+\.\d+)\*\*, which adds",
+    ),
+    ("docs/guides/user/CLI_REFERENCE.md", r"to the current v(\d+\.\d+) format"),
+    (
+        "docs/api/gsplats.rst",
+        r"the v(\d+\.\d+) ``\.gsplats\.zarr`` on-disk structure",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        r"\(\*\*format v(\d+\.\d+)\*\*",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        r"v3\.0-v(\d+\.\d+) files remain readable",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        r"Convert to a new v(\d+\.\d+) file",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        r"→ v(\d+\.\d+) bare leaf",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        r"→ v(\d+\.\d+) additive ladder leaf",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        r"v(\d+\.\d+) `kind=lod` group",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        r"→ v(\d+\.\d+) node tree",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        r"stamped v(\d+\.\d+)",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        r"writes the v(\d+\.\d+) root header",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        r'`SUPPORTED_FORMAT_VERSIONS` \(`"3\.0"`, `"3\.1"`, `"3\.2"`, `"3\.3"`, `"(\d+\.\d+)"`\)',
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        r"current writer emits v(\d+\.\d+)",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        r"selector attrs — to v(\d+\.\d+)",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        r"current node-tree format \(v3\.0-v(\d+\.\d+)\)",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        r"migration to v(\d+\.\d+) node-tree layout",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        r"Format spec \(v(\d+\.\d+)\)",
+    ),
+    (
+        "CLAUDE.md",
+        r"\.gsplats\.zarr is format v(\d+\.\d+)",
+    ),
+    (
+        "CLAUDE.md",
+        r"pre-v3\.2 pixel_size lod selector attrs\) → v(\d+\.\d+)",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/README.md",
+        r"standalone v(\d+\.\d+) \.gsplats\.zarr",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/README.md",
+        r"levels; v(\d+\.\d+) kind=lod group",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/README.md",
+        r"In v(\d+\.\d+) a saved `\.gsplats\.zarr`",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/README.md",
+        r"layouts → v(\d+\.\d+)",
+    ),
+    (
+        "packages/luxar/src/luxar/cli/README.md",
+        r"standalone `\.gsplats\.zarr` is a v(\d+\.\d+) node subtree",
+    ),
+    (
+        "packages/luxar/src/luxar/cli/README.md",
+        r"single current-format \(v(\d+\.\d+)\)",
+    ),
+    (
+        "packages/luxar-viewer/src/data/codecs/README.md",
+        r"current \*\*standalone gsplat format is v(\d+\.\d+)\*\*",
+    ),
+    (
+        "packages/luxar-viewer/src/data/codecs/README.md",
+        r"Supported versions: 3\.0, 3\.1, 3\.2, 3\.3, (\d+\.\d+)",
+    ),
+    (
+        "packages/luxar-viewer/src/data/codecs/README.md",
+        r"Standalone gsplat format spec \(v(\d+\.\d+)\)",
+    ),
+    (
+        "packages/luxar/src/luxar/core/group/lod/README.md",
+        r"v(\d+\.\d+) node-tree (?:grammar|format)",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/lod/README.md",
+        r"# v(\d+\.\d+) (?:leaf|kind=lod group)",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/lod/README.md",
+        r"Output is written as a v(\d+\.\d+) `\.gsplats\.zarr` node tree",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/lod/README.md",
+        r"on-disk container is a v(\d+\.\d+)",
+    ),
+    (
+        "packages/luxar/src/luxar/core/group/gsplats_pipeline/README.md",
+        r"v(\d+\.\d+) node tree grafted into the scene",
+    ),
+    (
+        "packages/luxar/src/luxar/core/group/gsplats_pipeline/README.md",
+        r"v(\d+\.\d+) node-tree format",
+    ),
+    (
+        "scripts/reencode_gsplat_demos.py",
+        r"format v(\d+\.\d+) \+ modern quantization",
+    ),
+    (
+        "scripts/reencode_gsplat_demos.py",
+        r"AUTO/v(\d+\.\d+), rebuilding its ladder",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/tests/test_format.py",
+        r"Tests for the v(\d+\.\d+) ``\.gsplats\.zarr``",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/tests/test_format.py",
+        r'``format_version`` = ``"(\d+\.\d+)"``',
+    ),
+    (
+        "packages/luxar-viewer/src/data/scene-loader/lifecycle/load-scene.ts",
+        r"v3\.0–v(\d+\.\d+) are all\s+// readable",
+    ),
+    (
+        "docs/specs/GSPLATS_ZARR_FORMAT.md",
+        r"The current format is \*\*v(\d+\.\d+)\*\*",
+    ),
+)
+
+
+@pytest.mark.skipif(
+    not (REPO_ROOT / "docs").is_dir(),
+    reason="docs/ not present (packaged install without the repo tree)",
+)
+@pytest.mark.parametrize(("relpath", "pattern"), CURRENT_VERSION_CLAIMS)
+def test_docs_state_the_current_gsplats_version(relpath: str, pattern: str) -> None:
+    """Every published "current version" claim must equal the contract."""
+    import re
+
+    path = REPO_ROOT / relpath
+    assert path.exists(), f"{relpath} is gone — update CURRENT_VERSION_CLAIMS"
+
+    matches = re.findall(pattern, path.read_text())
+
+    # An anchor that stops matching is the failure mode that matters: the claim
+    # is still on the page, the gate silently stops reading it, and the next
+    # bump goes N-1-of-N again with a green tick.
+    assert matches, (
+        f"{relpath}: the anchor {pattern!r} matched nothing. The wording moved; "
+        "re-anchor it rather than deleting the entry, or this surface stops "
+        "being checked."
+    )
+    stale = [v for v in matches if v != fc.GSPLATS_FORMAT_VERSION]
+    assert not stale, (
+        f"{relpath} claims gsplats format {stale} but the contract says "
+        f"{fc.GSPLATS_FORMAT_VERSION!r}. Bump the docs, not the constant."
+    )
 
 
 def test_contract_sets_are_nonempty_and_unique() -> None:

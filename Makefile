@@ -5,7 +5,7 @@
 # pre-installed tools. Run 'make setup-dev' to automatically install all dependencies.
 #
 .PHONY: help install-dev install-demo-deps format-python format-typescript format-rust format-cuda format-go format-all gen-contract gen-data-manifest sync-demo-counts \
-        lint-python lint-typescript type-check-python type-check-typescript security check-complexity \
+        lint-python lint-typescript type-check-python type-check-typescript security check-complexity check-lint-ratchet check-native \
         test-all test-python test-cov-python test-cov-typescript test-cov-all test-fixtures ensure-viewer-fixtures test-wasm test-viewer test-viewer-fixtures \
         test-e2e test-e2e-smoke test-perf-e2e \
         clean-all clean-python clean-viewer clean-examples clean-cache clean-setup enable-pre-commit run-pre-commit \
@@ -652,6 +652,14 @@ lint-python:  ## Run ruff linting on Python code
 check-complexity:  ## Ratchet cyclomatic complexity (ruff C901) against the baseline
 	@echo "📐 Checking cyclomatic complexity against the baseline..."
 	$(HATCH) run check-complexity
+
+check-lint-ratchet:  ## Ratchet ruff's defect rules (bugbear + RUF012) against the baseline
+	@echo "🐛 Checking defect-bearing lint rules against the baseline..."
+	$(HATCH) run check-lint-ratchet
+
+check-native:  ## read-only: compile-check the shipped CUDA/Metal sources (no GPU needed)
+	@echo "🧩 Compile-checking native CUDA/Metal sources..."
+	$(HATCH) run check-native
 
 lint-typescript:  ## Run ESLint on TypeScript code
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
@@ -2759,6 +2767,13 @@ check-knip:  ## Report unused viewer files/exports/deps (non-gating)
 	@echo ""
 	@echo "ℹ️  Report only — the enforced subset (files + dependencies) runs in 'make check-all'."
 
+# The `&&` before the success echo is load-bearing, not style. The whole recipe
+# is ONE backslash-joined shell command, so a trailing `; echo "...passed!"`
+# made the echo the last command and its exit status the recipe's: clippy could
+# fail, the target printed "✅ Rust checks passed!", and make exited 0
+# (audit A12-02). Verified with a minimal recipe of the same shape — `false &&
+# true; echo PASSED` exits 0, `false && true && echo PASSED` exits 2. Not
+# macOS-specific as first reported; it is plain shell semantics.
 check-rust:  ## Run Rust type/lint checks (cargo check + clippy)
 	@if [ -f "$(HOME)/.cargo/env" ]; then \
 		. "$(HOME)/.cargo/env"; \
@@ -2769,7 +2784,7 @@ check-rust:  ## Run Rust type/lint checks (cargo check + clippy)
 		exit 1; \
 	fi; \
 	echo "🦀 Running Rust checks..."; \
-	cd packages/luxar-viewer/src/wasm/rust && cargo check && cargo clippy -- -D warnings; \
+	cd packages/luxar-viewer/src/wasm/rust && cargo check && cargo clippy --all-targets -- -D warnings && \
 	echo "✅ Rust checks passed!"
 
 check-wasm-deps:  ## Check WASM development dependencies (Rust, wasm-pack)
@@ -2903,8 +2918,14 @@ publish:  ## DISABLED — use `make release` (tag-triggered OIDC publish). See s
 publish-test:  ## DISABLED — use `make release` (tag-triggered OIDC publish). See scripts/release.sh
 	$(PUBLISH_DISABLED)
 
-.PHONY: changelog changelog-draft
+.PHONY: changelog changelog-draft changelog-release changelog-release-draft
 changelog: ## Fold changelog.d/*.md fragments into CHANGELOG.md (release prep)
 	python3 scripts/changelog_build.py $(if $(MONTH),--month "$(MONTH)",)
 changelog-draft: ## Preview the changelog fold without changing anything
 	python3 scripts/changelog_build.py --draft
+# Run AFTER `changelog` and AFTER `set-version`: the cut is named for
+# __version__, which is the release date and is deliberately set last.
+changelog-release: ## Cut the Unreleased section into a versioned one
+	python3 scripts/changelog_build.py --release
+changelog-release-draft: ## Preview the release cut without changing anything
+	python3 scripts/changelog_build.py --release --draft

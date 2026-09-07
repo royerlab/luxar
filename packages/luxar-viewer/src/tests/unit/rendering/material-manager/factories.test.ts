@@ -17,6 +17,7 @@ import {
   VISUAL_FACTORIES,
   PICKING_FACTORIES,
   MEGA_SHADER_FACTORIES,
+  GEOMETRY_KINDS,
 } from '../../../../rendering/material-manager/factories';
 import {
   loadTslMaterials,
@@ -54,9 +55,15 @@ describe('resolveMaterialBackend', () => {
 });
 
 describe('VISUAL_FACTORIES / PICKING_FACTORIES / MEGA_SHADER_FACTORIES shape', () => {
-  it('VISUAL_FACTORIES has one entry per geometry kind, each resolving to a distinct class', () => {
-    expect(Object.keys(VISUAL_FACTORIES).sort()).toEqual(['gsplat', 'line', 'mesh', 'point']);
-    for (const kind of ['point', 'line', 'gsplat', 'mesh'] as const) {
+  it('VISUAL_FACTORIES has one entry per geometry kind plus the physical mesh family, each a distinct class', () => {
+    expect(Object.keys(VISUAL_FACTORIES).sort()).toEqual([
+      'gsplat',
+      'line',
+      'mesh',
+      'meshPhysical',
+      'point',
+    ]);
+    for (const kind of ['point', 'line', 'gsplat', 'mesh', 'meshPhysical'] as const) {
       const glsl = VISUAL_FACTORIES[kind].glsl();
       const tsl = VISUAL_FACTORIES[kind].tsl();
       expect(typeof glsl).toBe('function');
@@ -85,12 +92,45 @@ describe('VISUAL_FACTORIES / PICKING_FACTORIES / MEGA_SHADER_FACTORIES shape', (
     }
   });
 
-  it('every VISUAL_FACTORIES kind has a matching PICKING_FACTORIES kind', () => {
+  it('every GEOMETRY kind has a matching PICKING_FACTORIES kind', () => {
     // The invariant the two assertions above only imply. Stated directly so adding a
     // fifth geometry type fails HERE — with a message naming the missing pick pair —
     // rather than by rendering an unpickable node in production.
-    expect(Object.keys(PICKING_FACTORIES).sort()).toEqual(Object.keys(VISUAL_FACTORIES).sort());
+    expect(Object.keys(PICKING_FACTORIES).sort()).toEqual([...GEOMETRY_KINDS].sort());
   });
+
+  it('the physical mesh FAMILY has a visual pair but deliberately no pick pair', () => {
+    // Picking renders geometry, not appearance: a physical mesh picks through the
+    // house `mesh` pick material (spec MESH_PHYSICAL_MATERIALS_SPEC.md §3.2). A pick
+    // entry here would be a second mesh pick shader to keep in sync for no gain.
+    expect('meshPhysical' in PICKING_FACTORIES).toBe(false);
+    expect(VISUAL_FACTORIES.meshPhysical.glsl().name).toBe('PhysicalMeshMaterial');
+    expect(VISUAL_FACTORIES.meshPhysical.tsl().name).toBe('PhysicalMeshTSLMaterial');
+    // And it is a different class from the house mesh material on both backends.
+    expect(VISUAL_FACTORIES.meshPhysical.glsl()).not.toBe(VISUAL_FACTORIES.mesh.glsl());
+    expect(VISUAL_FACTORIES.meshPhysical.tsl()).not.toBe(VISUAL_FACTORIES.mesh.tsl());
+  });
+
+  it.each(['glsl', 'tsl'] as const)(
+    '%s physical mesh material updates its shading variant',
+    (backend) => {
+      const MaterialClass = VISUAL_FACTORIES.meshPhysical[backend]();
+      const material = new MaterialClass({ flatShading: false });
+      const initialVersion = material.version;
+
+      material.updateShading('flat');
+      expect(material.flatShading).toBe(true);
+      expect(material.version).toBeGreaterThan(initialVersion);
+
+      const flatVersion = material.version;
+      material.updateShading('flat');
+      expect(material.version).toBe(flatVersion);
+
+      material.updateShading('smooth');
+      expect(material.flatShading).toBe(false);
+      expect(material.version).toBeGreaterThan(flatVersion);
+    }
+  );
 
   it('MEGA_SHADER_FACTORIES exposes a flat {glsl, tsl} pair (no per-geometry split)', () => {
     expect(Object.keys(MEGA_SHADER_FACTORIES).sort()).toEqual(['glsl', 'tsl']);

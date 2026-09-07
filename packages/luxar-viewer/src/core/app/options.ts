@@ -176,6 +176,22 @@ export interface LuxarAppOptions {
   depthSort?: boolean;
 
   /**
+   * Projected-density guard: per-node keep-fraction thinning (blendable
+   * modes, brightness-compensated) and a refinement rung cap on nodes whose
+   * elements-per-pixel exceed `config.densityGuard.capElementsPerPixel`.
+   * Default: true. Mirrors `UrlParams.densityGuard` (`?no-density-guard`).
+   */
+  densityGuard?: boolean;
+
+  /**
+   * Session-only override of the density guard's blendable cap (elements per
+   * drawing-buffer pixel), applied to both the thinning ladder and the
+   * refinement rung gate. Undefined ⇒ `config.densityGuard.capElementsPerPixel`.
+   * Mirrors `UrlParams.densityCap` (`?density-cap=8`). Not persisted.
+   */
+  densityCap?: number;
+
+  /**
    * Allow a picked element's authored `link` to be opened on left-click
    * (issue #1917). Defaults to true.
    *

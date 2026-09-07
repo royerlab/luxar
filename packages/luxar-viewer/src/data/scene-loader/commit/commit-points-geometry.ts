@@ -32,6 +32,7 @@ import type { LoadedPointsData } from '../../data-loader-types';
 import { noteDepthSortCommit } from '../../../rendering/depth-sort-coordinator';
 import { isPointsUserData } from '../../../types/points';
 import { stampLadderComplete, stampLoadedViewVersion } from './stamp-view-version';
+import { markFirstCommit } from '../../../profiling/load-timeline';
 import { isAlreadyCommitted } from './noop-commit';
 import {
   getCommittedData,
@@ -89,6 +90,7 @@ export function commitPointsGeometry(
   if (isAlreadyCommitted(points, data)) {
     stampLoadedViewVersion(points.userData, loadedViewVersion);
     stampLadderComplete(points.userData);
+    markFirstCommit('points');
     return;
   }
 
@@ -344,6 +346,7 @@ export function commitPointsGeometry(
     stampLoadedViewVersion(points.userData, loadedViewVersion);
     // Ladder-completeness stamp for the never-downgrade display gate.
     stampLadderComplete(points.userData);
+    markFirstCommit('points');
     // Record the committed data reference — a later update returning the
     // SAME reference (memoized progressive concat) takes the stamp-only
     // no-op path above instead of re-uploading.

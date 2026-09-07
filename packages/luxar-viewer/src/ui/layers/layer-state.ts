@@ -23,7 +23,12 @@ import {
   type MeshShadingMode,
 } from '../../rendering/materials/mesh/appearance';
 import { resolveMeshShading } from '../../rendering/node-factory/create-mesh-node';
-import type { MeshMetadata } from '../../types/mesh';
+import type { MeshMaterialKind, MeshMetadata } from '../../types/mesh';
+import {
+  PHYSICAL_MESH_KNOB_KEYS,
+  PHYSICAL_MESH_KNOBS,
+  type PhysicalMeshKnobKey,
+} from '../../rendering/materials/mesh-physical/config';
 
 /**
  * Geometry type of a layer.
@@ -270,6 +275,78 @@ function deriveMeshShadingFromDescendants(node: SceneNode): MeshShadingMode {
 }
 
 /**
+ * The AUTHORED physical knobs of a mesh layer, as the panel lists them read-only.
+ *
+ * Only knobs actually present are returned — an absent knob renders as three's
+ * default, and the panel says so rather than printing a number the author never
+ * wrote. Read off the node, else off its first mesh descendant, for the same
+ * kind=partition reason as `deriveMeshAttrFromDescendants`.
+ */
+export type PhysicalKnobValues = Record<PhysicalMeshKnobKey, number> & {
+  sheen_color?: string;
+  attenuation_color?: string;
+  alpha_cutoff?: number;
+};
+
+/**
+ * Which material family a mesh layer renders with (spec
+ * `MESH_PHYSICAL_MATERIALS_SPEC.md` §3.1). A partition wrapper reads it off its
+ * parts; an absent attr is the house shader.
+ */
+function deriveMeshMaterialFromDescendants(node: SceneNode): MeshMaterialKind {
+  const read = (candidate: SceneNode): MeshMaterialKind | undefined =>
+    candidate.attrs.material === 'physical' ? 'physical' : undefined;
+  if (node.type === 'mesh') return read(node) ?? 'luxar';
+  let found: MeshMaterialKind | undefined;
+  const visit = (candidate: SceneNode): void => {
+    if (found !== undefined || isLayerEnabled(candidate.attrs.layer)) return;
+    if (candidate.type === 'mesh') {
+      found = read(candidate);
+      return;
+    }
+    candidate.children?.forEach(visit);
+  };
+  node.children?.forEach(visit);
+  return found ?? 'luxar';
+}
+
+/**
+ * The DENSE physical knob record a layer's sliders start from: the authored value
+ * where one exists, else the knob's default — in the MATERIAL domain. Keeping the
+ * authored value here matters for unbounded knobs: their finite slider tracks are a
+ * presentation detail and cannot round-trip a thickness or attenuation distance above
+ * the track maximum.
+ */
+function derivePhysicalKnobsFromDescendants(node: SceneNode): PhysicalKnobValues {
+  const knobs = {} as PhysicalKnobValues;
+  for (const key of PHYSICAL_MESH_KNOB_KEYS) {
+    const authored = deriveMeshAttrFromDescendants(node, key);
+    knobs[key] = authored ?? PHYSICAL_MESH_KNOBS[key].default;
+  }
+  const cutoff = deriveMeshAttrFromDescendants(node, 'alpha_cutoff');
+  if (cutoff !== undefined) knobs.alpha_cutoff = cutoff;
+  const sheen = deriveMeshStringAttrFromDescendants(node, 'sheen_color');
+  if (sheen !== undefined) knobs.sheen_color = sheen;
+  const attenuation = deriveMeshStringAttrFromDescendants(node, 'attenuation_color');
+  if (attenuation !== undefined) knobs.attenuation_color = attenuation;
+  return knobs;
+}
+
+/** The string-valued twin of `deriveMeshAttrFromDescendants` (the two colour knobs). */
+function deriveMeshStringAttrFromDescendants(node: SceneNode, attr: string): string | undefined {
+  const read = (candidate: SceneNode): string | undefined =>
+    typeof candidate.attrs[attr] === 'string' ? (candidate.attrs[attr] as string) : undefined;
+  let value = read(node);
+  const visit = (candidate: SceneNode): void => {
+    if (value !== undefined || isLayerEnabled(candidate.attrs.layer)) return;
+    value = read(candidate);
+    if (value === undefined) candidate.children?.forEach(visit);
+  };
+  if (value === undefined) node.children?.forEach(visit);
+  return value;
+}
+
+/**
  * The display window a layer starts at — i.e. what `[displayMin, displayMax]`
  * the panel pushes into the material before the user touches anything.
  *
@@ -342,6 +419,18 @@ export interface LayerInfo {
    * smooth versus flat ignores the material's view-dependent normal-frame check.
    */
   shading: MeshShadingMode;
+  /**
+   * Which material family a mesh layer renders with. `'luxar'` (the house shader,
+   * and what every non-mesh layer carries) shows the shading sliders;
+   * `'physical'` hides them and shows the {@link physicalKnobs} sliders instead.
+   */
+  material?: MeshMaterialKind;
+  /**
+   * The LIVE physical knobs in material space, seeded from the authored attrs and
+   * knob defaults. Slider mapping is presentation-only, so values beyond a finite
+   * track remain intact. Absent for every non-physical layer.
+   */
+  physicalKnobs?: PhysicalKnobValues;
   /**
    * Mesh `opaque`-mode cutout threshold (0–1) — the §6.2 `alpha_cutoff`.
    *
@@ -691,6 +780,7 @@ export class LayerStateManager {
         // the layer non-explicit so it does not impose that default on descendants.
         const effectiveAttrs = getEffectiveAttrs(root, node.path);
         const composedBlendingMode = effectiveAttrs.blending_mode;
+        const material = layerType === 'mesh' ? deriveMeshMaterialFromDescendants(node) : 'luxar';
 
         this.layerOrder.push(node.path);
         this.layers.set(node.path, {
@@ -718,6 +808,11 @@ export class LayerStateManager {
           specular: deriveMeshAttrFromDescendants(node, 'specular') ?? MESH_DEFAULTS.specular,
           shininess: deriveMeshAttrFromDescendants(node, 'shininess') ?? MESH_DEFAULTS.shininess,
           shading: deriveMeshShadingFromDescendants(node),
+          material,
+          physicalKnobs:
+            layerType === 'mesh' && material === 'physical'
+              ? derivePhysicalKnobsFromDescendants(node)
+              : undefined,
           alphaCutoff:
             deriveMeshAttrFromDescendants(node, 'alpha_cutoff') ?? MESH_DEFAULTS.alphaCutoff,
           displayMin,

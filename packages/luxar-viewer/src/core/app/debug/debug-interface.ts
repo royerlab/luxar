@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { log, Modules } from '../../../utils/log';
 import { consoleInterceptor } from '../../../utils/console-interceptor';
+import { buildInfo } from '../../../config/build-info';
 import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import { SceneLoaderManager } from '../../../data/scene-loader-manager';
 import { getWorkerPool } from '../../../workers/worker-pool';
@@ -18,6 +19,7 @@ import {
   syncLineMaterialWithGeometry,
   syncPointMaterialWithGeometry,
 } from '../../../rendering/material-sync-helpers';
+import { getBlendModeProgramWarmupStats } from '../../../rendering/webgl-blend-warmup';
 import { materialManager, type BlendingMode } from '../../../rendering/material-manager';
 import { normalizeBlendingMode } from '../../../rendering/blending-state';
 import {
@@ -46,6 +48,10 @@ import type { PickingSystem } from '../../../rendering/picking/picking-system';
 import type { OverlayManager } from '../../../ui/overlay-manager';
 import type { LuxarApp } from '../../app';
 import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../config/constants';
+import { computePerfSnapshot } from './perf-snapshot';
+import { getRendererInfoSnapshot, installRendererInfoSampler } from './renderer-info-sampler';
+import { snapshotProjectedDensity } from '../../../scene/projected-density';
+import type { LODGroupRegistry } from '../../../scene/lod-group-registry';
 
 /**
  * Populate `window.__luxarDebug` with runtime components, helper
@@ -85,13 +91,18 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
   // __luxarDebug.getLodLoadStats().
   setLodLoadStatsEnabled(true);
 
+  // Sample renderer.info at every frame-end for getPerf().rendererInfo —
+  // between frames Three's autoReset leaves only the last post-processing
+  // pass in it. Debug sessions only; re-install replaces a prior subscription.
+  installRendererInfoSampler(() => ports.sceneManager.renderer);
+
   // Extend whatever bootstrap seeded (app/consoleInterceptor/version). When
   // LuxarApp is instantiated outside the standalone-app entry point
   // (tests, embeds), bootstrap hasn't run; fall back to a fresh base.
   const existing = window.__luxarDebug ?? {
     app: ports.app,
     consoleInterceptor: consoleInterceptor,
-    version: '1.0.0',
+    version: buildInfo().version,
   };
 
   window.__luxarDebug = {
@@ -138,10 +149,18 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
     // Implementation lives in `./debug-state.ts` so the
     // scene-walking logic can be unit-tested directly.
     //
-    // `isLoading` is read from the loader manager INSIDE the getter, per
-    // snapshot — capturing it once here would freeze it at install time (when
-    // nothing is loading yet) and hand every polling E2E helper a permanent
-    // "idle".
+    // `isLoading`, the pool stats and the refinement stop are all read from the
+    // loader manager INSIDE the getter, per snapshot — capturing any of them
+    // once here would freeze it at install time (when nothing is loading, the
+    // pool is empty and refinement has not run) and hand every polling E2E
+    // helper a permanent "idle".
+    //
+    // `gpuPoolStats` has been declared and documented on the context since the
+    // field was added but production never passed it, so `state.gpuPool` was
+    // always undefined; wiring it here is what makes the pool side legible at
+    // all. Projected down to the debug subset rather than forwarded whole:
+    // `PoolStats` also carries a per-type breakdown that no snapshot consumer
+    // reads.
     getState: () =>
       computeDebugState({
         scene: ports.sceneManager.scene,
@@ -151,6 +170,21 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
         initialized: ports.isInitialized(),
         isLoading: SceneLoaderManager.getInstance().isAnyLoadPassInProgress(),
         dims: sceneDimsManager.getDims(),
+        gpuPoolStats: () => {
+          const stats = SceneLoaderManager.getInstance().gpuPoolStats();
+          if (!stats) return undefined;
+          return {
+            activeBuffers: stats.activeBuffers,
+            pooledBuffers: stats.pooledBuffers,
+            activeBytes: stats.activeBytes,
+            pooledBytes: stats.pooledBytes,
+            totalBytes: stats.totalBytes,
+            largestPooledBytes: stats.largestPooledBytes,
+            evictions: stats.evictions,
+            byteBudgetEvictions: stats.byteBudgetEvictions,
+          };
+        },
+        refinementResidency: () => SceneLoaderManager.getInstance().refinementResidencyStop(),
       }),
 
     // Helper to trigger a single frame render (for stable screenshots)
@@ -438,6 +472,34 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
     // data/scene-loader/lod-load-stats.ts. Only meaningful under ?debug.
     getLodLoadStats: () => snapshotLodLoadStats(),
     resetLodLoadStats: () => resetLodLoadStats(),
+
+    // Perf snapshot for probes (see perf-snapshot.ts). Bootstrap seeds a
+    // timeline-only version before init(); this one adds the runtime hooks.
+    // Every hook is read INSIDE the getter, per snapshot, for the same
+    // reason `isLoading` is: capturing once here would freeze it.
+    perfReady: true,
+    getPerf: () =>
+      computePerfSnapshot({
+        rendererInfo: getRendererInfoSnapshot,
+        adaptiveDpr: () => ports.adaptiveDPRManager.getDiagnostics(),
+        workers: () => getWorkerPool().getStats(),
+        density: snapshotProjectedDensity,
+        cache: () => SceneLoaderManager.getInstance().getDefaultLoader()?.getCacheStats() ?? null,
+        blendWarmup: getBlendModeProgramWarmupStats,
+        isUpdateInProgress: () => {
+          const loader = SceneLoaderManager.getInstance().getDefaultLoader() as {
+            isUpdateInProgress?: () => boolean;
+          } | null;
+          return loader?.isUpdateInProgress?.() ?? false;
+        },
+        isAnyLoadPassInProgress: () => SceneLoaderManager.getInstance().isAnyLoadPassInProgress(),
+        isAnyLodLevelLoading: () => {
+          const loader = SceneLoaderManager.getInstance().getDefaultLoader() as {
+            lodGroupRegistry?: LODGroupRegistry | null;
+          } | null;
+          return loader?.lodGroupRegistry?.isAnyLevelLoading() ?? false;
+        },
+      }),
 
     // Mark that runtime components are now available
     runtimeReady: true,

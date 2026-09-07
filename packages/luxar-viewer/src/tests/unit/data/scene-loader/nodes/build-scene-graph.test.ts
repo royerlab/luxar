@@ -91,6 +91,37 @@ describe('buildSceneGraph — hierarchy', () => {
   });
 });
 
+describe('buildSceneGraph — child arrays from the listing', () => {
+  it('records the child arrays of each node so leaf loaders can skip 404 probes', async () => {
+    enumerateStoreMock.mockResolvedValue([
+      { path: '/pts', kind: 'group' },
+      { path: '/pts/positions', kind: 'array' },
+      { path: '/pts/radii', kind: 'array' },
+      { path: '/bare', kind: 'group' },
+      { path: '/scene_array', kind: 'array' },
+    ]);
+    attrsByPath['/pts'] = { type: 'points' };
+    attrsByPath['/bare'] = { type: 'points' };
+
+    const root = await buildSceneGraph(makeStubLoc('') as never, makeRootAttrs(), {} as never);
+
+    const byPath = new Map(root.children?.map((c) => [c.path, c]));
+    expect([...(byPath.get('/pts')?.arrays ?? [])].sort()).toEqual(['positions', 'radii']);
+    // A node the listing saw with NO arrays gets an empty set (nothing to probe),
+    // not undefined — the listing did see arrays elsewhere, so it is trusted.
+    expect(byPath.get('/bare')?.arrays?.size).toBe(0);
+    expect([...(root.arrays ?? [])]).toEqual(['scene_array']);
+  });
+
+  it('leaves arrays undefined when the listing shows no arrays at all (loaders keep probing)', async () => {
+    enumerateStoreMock.mockResolvedValue([{ path: '/pts', kind: 'group' }]);
+    attrsByPath['/pts'] = { type: 'points' };
+    const root = await buildSceneGraph(makeStubLoc('') as never, makeRootAttrs(), {} as never);
+    expect(root.arrays).toBeUndefined();
+    expect(root.children?.[0].arrays).toBeUndefined();
+  });
+});
+
 describe('buildSceneGraph — sibling order (napari-style insertion order)', () => {
   it('sorts siblings by child_index, not by alphabetical enumeration order', async () => {
     // enumerateStore yields consolidated-metadata (alphabetical) order, but

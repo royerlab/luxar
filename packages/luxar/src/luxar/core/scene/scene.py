@@ -9,17 +9,25 @@ from __future__ import annotations
 
 from os import PathLike
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple, Union
 
 import numpy as np
 from arbol import aprint
 
-from ...io.writer import ZarrWriterProtocol
 from ...utils.atomic_copy import atomic_copytree
 from ..citation import validate_citation
 from ..dimensions import Dimensions
 from ..group import Group
 from ..overlay import Overlay
+
+if TYPE_CHECKING:
+    # Annotation only (`save(writer: ZarrWriterProtocol)`). `io` sits ABOVE
+    # `core` -- it reads core's domain types, while core only names a Protocol
+    # that io implements -- so a runtime import here is a back-edge. The seven
+    # sibling modules that name this Protocol all already guard it this way;
+    # this one was the outlier, and the only `core` -> `io` runtime import left
+    # once the A1-03 validator move landed.
+    from ...io.writer import ZarrWriterProtocol
 from ..viewer_config import ViewerConfig
 
 

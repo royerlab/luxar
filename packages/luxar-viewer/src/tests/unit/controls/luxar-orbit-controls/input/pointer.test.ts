@@ -89,6 +89,7 @@ function makeBaseCtx(overrides: Partial<OrbitInputCtx> = {}): {
     trackballRadius: 1.0,
     rotateSpeed: 1.0,
     zoomSpeed: 1.0,
+    wheelZoomSensitivity: 1.0,
     boundOnPointerMove: vi.fn(),
     boundOnPointerUp: vi.fn(),
     pointers,
@@ -183,6 +184,130 @@ describe('mouseAction — Shift+left "invert primary" (M4 mutation suspect)', ()
     const { ctx } = makeBaseCtx();
     ctx.enableRotate = false;
     expect(mouseAction(0, true, ctx)).toBe('none');
+  });
+});
+
+describe('handleWheel — wheelZoomSensitivity (Settings > Input > Zoom Sensitivity)', () => {
+  it('scales the per-notch zoom exactly like zoomSpeed (the two multiply)', () => {
+    const base = makeBaseCtx();
+    const scaled = makeBaseCtx();
+    scaled.ctx.wheelZoomSensitivity = 0.25;
+    const halfSpeed = makeBaseCtx();
+    halfSpeed.ctx.zoomSpeed = 0.25;
+    const evt = () => new WheelEvent('wheel', { deltaY: 100, cancelable: true });
+    handleWheel(base.ctx, evt());
+    handleWheel(scaled.ctx, evt());
+    handleWheel(halfSpeed.ctx, evt());
+    // Exponential in speed: a quarter of the exponent, not a quarter of the delta.
+    expect(scaled.state.zoomDelta).toBeCloseTo(-(Math.pow(0.95, 0.25) - 1), 10);
+    expect(scaled.state.zoomDelta).toBeCloseTo(halfSpeed.state.zoomDelta, 10);
+    expect(Math.abs(scaled.state.zoomDelta)).toBeLessThan(Math.abs(base.state.zoomDelta));
+  });
+
+  it('does not touch pointer-drag dolly (a drag delta is user-controlled pixels)', () => {
+    const { ctx, state } = makeBaseCtx();
+    ctx.wheelZoomSensitivity = 0.25;
+    state.action = 'zoom';
+    ctx.dollyStart.set(0, 0);
+    ctx.pointers.push(makePointerEvent('pointerdown', { pointerId: 0, clientX: 0, clientY: 0 }));
+    ctx.pointerPositions.set(0, new THREE.Vector2(0, 0));
+    handlePointerMove(
+      ctx,
+      makePointerEvent('pointermove', { pointerId: 0, clientX: 0, clientY: 100 })
+    );
+    // computeZoomScale(100, zoomSpeed=1) - 1, with the sensitivity NOT applied.
+    expect(state.zoomDelta).toBeCloseTo(Math.pow(0.95, 1.0) - 1, 10);
+  });
+});
+
+describe('handleWheel — deltaMode normalization (#2531)', () => {
+  // jsdom defaults `deltaMode` to 0, so every other wheel test in this file
+  // constructs a pixel-mode event and was blind to the bug by construction.
+  // These set it explicitly. A line-mode notch (Firefox: deltaY 3) used to
+  // reach computeZoomScale as a raw 3, ~32x smaller than Chromium's 100.
+  //
+  // Deliberately a LOCAL copy, not the export from `utils/wheel-delta`:
+  // importing it would move both sides of the line-vs-pixel comparison
+  // together and make the test tautological. Do not "fix" this.
+  const PIXELS_PER_LINE = 16;
+
+  it('a line-mode notch produces the same zoom step as its pixel equivalent', () => {
+    const line = makeBaseCtx();
+    const pixel = makeBaseCtx();
+    handleWheel(line.ctx, new WheelEvent('wheel', { deltaY: 3, deltaMode: 1, cancelable: true }));
+    handleWheel(
+      pixel.ctx,
+      new WheelEvent('wheel', { deltaY: 3 * PIXELS_PER_LINE, deltaMode: 0, cancelable: true })
+    );
+    expect(line.state.zoomDelta).toBeCloseTo(pixel.state.zoomDelta, 10);
+    // And it is far bigger than the pre-fix value, which treated the 3 as px.
+    const rawThree = makeBaseCtx();
+    handleWheel(
+      rawThree.ctx,
+      new WheelEvent('wheel', { deltaY: 3, deltaMode: 0, cancelable: true })
+    );
+    expect(Math.abs(line.state.zoomDelta)).toBeGreaterThan(Math.abs(rawThree.state.zoomDelta) * 10);
+  });
+
+  it('pixel mode is unchanged: a 100 px notch is still exactly 0.95^1 - 1', () => {
+    // Regression anchor for the bit-identity invariant — Chromium/WebKit
+    // behaviour must not have moved, so nothing needed re-tuning.
+    const { ctx, state } = makeBaseCtx();
+    handleWheel(ctx, new WheelEvent('wheel', { deltaY: 100, deltaMode: 0, cancelable: true }));
+    expect(state.zoomDelta).toBeCloseTo(-(Math.pow(0.95, 1.0) - 1), 10);
+  });
+
+  it('line mode preserves the sign: negative deltaY zooms IN', () => {
+    const { ctx, state } = makeBaseCtx();
+    handleWheel(ctx, new WheelEvent('wheel', { deltaY: -3, deltaMode: 1, cancelable: true }));
+    expect(state.zoomDelta).toBeLessThan(0);
+    // Magnitude matches the pixel-mode equivalent, not the raw -3.
+    const pixel = makeBaseCtx();
+    handleWheel(
+      pixel.ctx,
+      new WheelEvent('wheel', { deltaY: -48, deltaMode: 0, cancelable: true })
+    );
+    expect(state.zoomDelta).toBeCloseTo(pixel.state.zoomDelta, 10);
+  });
+
+  it('page mode scales by ctx.domElement.clientHeight (pins the element argument)', () => {
+    // The ONLY test in this file that pins `ctx.domElement` being passed to
+    // normalizeWheelDelta — dropping that argument is invisible to every
+    // pixel/line-mode test here, and it is a per-site requirement, not a
+    // duplicate of the helper's own tests. Do not delete as redundant.
+    //
+    // makeBaseCtx stubs clientHeight = 600, so 0.2 pages → 120 px. The
+    // nominal 800 px fallback would give 160 px. Both are under the 200 px
+    // cap, so the two outcomes are distinct AND neither is the clamp.
+    const page = makeBaseCtx();
+    handleWheel(page.ctx, new WheelEvent('wheel', { deltaY: 0.2, deltaMode: 2, cancelable: true }));
+
+    const pixel120 = makeBaseCtx();
+    handleWheel(
+      pixel120.ctx,
+      new WheelEvent('wheel', { deltaY: 120, deltaMode: 0, cancelable: true })
+    );
+    expect(page.state.zoomDelta).toBeCloseTo(pixel120.state.zoomDelta, 10);
+
+    // And NOT what the nominal-height fallback would have produced.
+    const pixel160 = makeBaseCtx();
+    handleWheel(
+      pixel160.ctx,
+      new WheelEvent('wheel', { deltaY: 160, deltaMode: 0, cancelable: true })
+    );
+    expect(page.state.zoomDelta).not.toBeCloseTo(pixel160.state.zoomDelta, 5);
+  });
+
+  it('wheelZoomSensitivity still multiplies on top of a normalized delta', () => {
+    const base = makeBaseCtx();
+    const scaled = makeBaseCtx();
+    scaled.ctx.wheelZoomSensitivity = 0.25;
+    const evt = () => new WheelEvent('wheel', { deltaY: 3, deltaMode: 1, cancelable: true });
+    handleWheel(base.ctx, evt());
+    handleWheel(scaled.ctx, evt());
+    // Normalized delta 48 → exponent 0.48 × sensitivity.
+    expect(base.state.zoomDelta).toBeCloseTo(-(Math.pow(0.95, 0.48) - 1), 10);
+    expect(scaled.state.zoomDelta).toBeCloseTo(-(Math.pow(0.95, 0.48 * 0.25) - 1), 10);
   });
 });
 

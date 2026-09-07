@@ -14,11 +14,11 @@
  * Specs that genuinely tolerate certain errors annotate the test:
  *
  * ```ts
- * import { test } from './fixtures';
+ * import { test, ALLOW_CONSOLE_ERRORS } from './fixtures';
  *
  * test('intentionally errors when the URL is bad', async ({ page }) => {
  *   test.info().annotations.push({
- *     type: 'allow-console-errors',
+ *     type: ALLOW_CONSOLE_ERRORS,
  *     description: 'Bad-URL recovery surfaces a console.error by design.',
  *   });
  *   // ... test body ...
