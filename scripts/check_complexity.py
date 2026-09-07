@@ -20,6 +20,10 @@ currently hold a violation would also blind the guard to brand-new offenders
 inside those very files — precisely the code most likely to grow. This checker
 selects the rule explicitly and diffs the findings against the baseline, so the
 limit applies to new code while existing debt stays visible and shrinkable.
+Ruff's root resolved settings are fingerprinted in the baseline, nested Ruff
+configs are refused, and existing baselined files must remain in Ruff's
+``--show-files`` set. Configuration changes and partial scans therefore fail
+closed instead of masquerading as paid-down complexity debt.
 
 Usage:
     python scripts/check_complexity.py
@@ -38,6 +42,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import ruff_ratchet
 from arbol import aprint
 
 # Repository root (this script lives in `<root>/scripts/`).
@@ -52,6 +57,7 @@ DEFAULT_TARGETS: tuple[str, ...] = (
     "stats",
     "hatch_build.py",
 )
+RATCHETED_SELECT: tuple[str, ...] = ("C901",)
 
 # Baseline path relative to the project root.
 DEFAULT_BASELINE_RELPATH = "scripts/complexity_baseline.json"
@@ -63,7 +69,8 @@ BASELINE_COMMENT = (
     "complexities of the over-limit functions with that name in that file (a "
     "list, because one file may hold several same-named functions). A function "
     "not listed here, or one whose complexity exceeds its baselined value, "
-    "fails the check."
+    "fails the check. 'settings_fingerprint' records Ruff's normalized root "
+    "resolved settings; a mismatch fails rather than silently retiring debt."
 )
 
 # ruff's C901 message, e.g. "`robust_download` is too complex (66 > 10)".
@@ -168,6 +175,43 @@ def run_ruff(targets: tuple[str, ...] | list[str], project_root: Path) -> str:
     return proc.stdout
 
 
+def ruff_settings_fingerprint(target: str, project_root: Path) -> str:
+    """Hash Ruff's normalized resolved settings for this ratchet."""
+    return ruff_ratchet.settings_fingerprint(
+        target, project_root, RATCHETED_SELECT, subprocess.run
+    )
+
+
+def find_nested_ruff_configs(
+    targets: tuple[str, ...] | list[str], project_root: Path
+) -> list[Path]:
+    """Return non-root Ruff config files that can affect ``targets``."""
+    return ruff_ratchet.find_nested_configs(targets, project_root)
+
+
+def ensure_no_nested_ruff_configs(
+    targets: tuple[str, ...] | list[str], project_root: Path
+) -> None:
+    """Reject hierarchical Ruff configs outside the root fingerprint."""
+    ruff_ratchet.ensure_no_nested_configs(targets, project_root)
+
+
+def list_ruff_files(
+    targets: tuple[str, ...] | list[str], project_root: Path
+) -> set[str]:
+    """Return the repo-relative files Ruff says it will scan."""
+    return ruff_ratchet.list_files(
+        targets, project_root, RATCHETED_SELECT, subprocess.run
+    )
+
+
+def ensure_baselined_files_were_scanned(
+    baseline: dict[str, list[int]], scanned_files: set[str], project_root: Path
+) -> None:
+    """Fail when an existing baselined file was silently excluded by Ruff."""
+    ruff_ratchet.ensure_baselined_files_scanned(baseline, scanned_files, project_root)
+
+
 def parse_findings(
     stdout: str, project_root: Path = PROJECT_ROOT
 ) -> dict[str, list[int]]:
@@ -222,7 +266,9 @@ def parse_findings(
 # ---------------------------------------------------------------------------
 
 
-def load_baseline(path: Path) -> dict[str, list[int]]:
+def load_baseline(
+    path: Path, settings_fingerprint: str | None = None
+) -> dict[str, list[int]]:
     """Load the baselined complexities from ``path``.
 
     Returns ``{}`` if the file does not exist. Raises a clear ``ValueError`` if
@@ -241,6 +287,24 @@ def load_baseline(path: Path) -> dict[str, list[int]]:
         raise ValueError(
             f"Baseline file {path} is malformed: expected a JSON object with a "
             "'functions' object."
+        )
+
+    recorded_fingerprint = data.get("settings_fingerprint")
+    if not isinstance(recorded_fingerprint, str) or not recorded_fingerprint:
+        raise ValueError(
+            f"Baseline file {path} is malformed: 'settings_fingerprint' must "
+            "be a non-empty string."
+        )
+    if (
+        settings_fingerprint is not None
+        and recorded_fingerprint != settings_fingerprint
+    ):
+        raise ValueError(
+            f"Baseline file {path} was recorded for Ruff settings fingerprint "
+            f"{recorded_fingerprint!r}, but this run resolves to "
+            f"{settings_fingerprint!r}. A complexity setting changed which "
+            "findings the ratchet can see. Re-run --update-baseline deliberately "
+            "after reviewing `ruff check --show-settings`."
         )
 
     functions = data["functions"]
@@ -264,14 +328,23 @@ def load_baseline(path: Path) -> dict[str, list[int]]:
     return {key: sorted(values, reverse=True) for key, values in functions.items()}
 
 
-def save_baseline(path: Path, entries: dict[str, list[int]]) -> None:
+def save_baseline(
+    path: Path,
+    entries: dict[str, list[int]],
+    settings_fingerprint: str | None = None,
+) -> None:
     """Write ``entries`` to ``path`` as deterministic, human-diffable JSON.
 
     Keys are sorted and each value descending-sorted; the file uses ``indent=2``
     and ends with a trailing newline.
     """
+    if settings_fingerprint is None:
+        settings_fingerprint = ruff_settings_fingerprint(
+            DEFAULT_TARGETS[0], PROJECT_ROOT
+        )
     payload = {
         "_comment": BASELINE_COMMENT,
+        "settings_fingerprint": settings_fingerprint,
         "functions": {
             key: sorted(entries[key], reverse=True) for key in sorted(entries)
         },
@@ -460,7 +533,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _update_baseline(
-    baseline_path: Path, current: dict[str, list[int]], restricted: bool
+    baseline_path: Path,
+    current: dict[str, list[int]],
+    restricted: bool,
+    settings_fingerprint: str,
 ) -> int:
     """Rewrite ``baseline_path`` from ``current``; returns the exit code."""
     # Refuse to replace a populated baseline with an empty one. Belt and braces
@@ -492,7 +568,7 @@ def _update_baseline(
             "new findings on the next full run. Re-run without target arguments "
             "to record the whole tree."
         )
-    save_baseline(baseline_path, current)
+    save_baseline(baseline_path, current, settings_fingerprint)
     total = sum(len(v) for v in current.values())
     aprint(
         f"📝 Wrote complexity baseline with {total} over-limit functions "
@@ -626,12 +702,11 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         current = parse_findings(run_ruff(targets, project_root), project_root)
+        settings_fingerprint = ruff_settings_fingerprint(targets[0], project_root)
+        ensure_no_nested_ruff_configs(targets, project_root)
     except (RuntimeError, ValueError) as exc:
         aprint(f"❌ {exc}")
         return 2
-
-    if args.update_baseline:
-        return _update_baseline(baseline_path, current, restricted)
 
     if not baseline_path.exists():
         aprint(
@@ -640,10 +715,32 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     try:
-        baseline = load_baseline(baseline_path)
+        baseline = load_baseline(baseline_path, settings_fingerprint)
     except (ValueError, OSError) as exc:
+        if args.update_baseline:
+            aprint(
+                f"⚠️  {exc}\n"
+                "   Replacing the unreadable baseline because "
+                "--update-baseline was requested deliberately."
+            )
+            return _update_baseline(
+                baseline_path, current, restricted, settings_fingerprint
+            )
         aprint(f"❌ {exc}")
         return 2
+
+    if not restricted and baseline:
+        try:
+            scanned_files = list_ruff_files(targets, project_root)
+            ensure_baselined_files_were_scanned(baseline, scanned_files, project_root)
+        except RuntimeError as exc:
+            aprint(f"❌ {exc}")
+            return 2
+
+    if args.update_baseline:
+        return _update_baseline(
+            baseline_path, current, restricted, settings_fingerprint
+        )
 
     # Zero findings against a populated baseline. Over the DEFAULT targets that
     # can only mean the scan covered nothing (ruff signals a mistyped path or an

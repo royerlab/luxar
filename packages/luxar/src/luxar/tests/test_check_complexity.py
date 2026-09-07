@@ -20,6 +20,7 @@ _ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 def _load_checker() -> ModuleType:
     """Import ``scripts/check_complexity.py`` as a module by file path."""
     script_path = PROJECT_ROOT / "scripts/check_complexity.py"
+    sys.path.insert(0, str(script_path.parent))
     spec = importlib.util.spec_from_file_location("check_complexity", script_path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Could not load {script_path}")
@@ -32,6 +33,28 @@ def _load_checker() -> ModuleType:
 
 
 checker = _load_checker()
+_REAL_RUFF_SETTINGS_FINGERPRINT = checker.ruff_settings_fingerprint
+_TEST_SETTINGS_FINGERPRINT = "test-settings-fingerprint"
+
+
+@pytest.fixture(autouse=True)
+def _stable_settings_fingerprint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep unit fixtures independent of Ruff's resolved-settings dump."""
+    monkeypatch.setattr(
+        checker,
+        "ruff_settings_fingerprint",
+        lambda _target, _project_root: _TEST_SETTINGS_FINGERPRINT,
+    )
+
+
+def _baseline_payload(functions: object) -> str:
+    """Return a complexity baseline document for unit fixtures."""
+    return json.dumps(
+        {
+            "settings_fingerprint": _TEST_SETTINGS_FINGERPRINT,
+            "functions": functions,
+        }
+    )
 
 
 def _finding(filename: str, name: str, value: int) -> dict[str, object]:
@@ -220,10 +243,10 @@ def test_load_baseline_missing_file_is_empty(tmp_path: Path) -> None:
     [
         ("{not json", "not valid JSON"),
         ('{"oops": {}}', "'functions' object"),
-        ('{"functions": []}', "must be an object"),
-        ('{"functions": {"a.py::f": 12}}', "non-empty list of integers"),
-        ('{"functions": {"a.py::f": []}}', "non-empty list of integers"),
-        ('{"functions": {"a.py::f": ["12"]}}', "non-empty list of integers"),
+        (_baseline_payload([]), "must be an object"),
+        (_baseline_payload({"a.py::f": 12}), "non-empty list of integers"),
+        (_baseline_payload({"a.py::f": []}), "non-empty list of integers"),
+        (_baseline_payload({"a.py::f": ["12"]}), "non-empty list of integers"),
     ],
 )
 def test_load_baseline_raises_on_malformed_file(
@@ -240,7 +263,7 @@ def test_load_baseline_raises_on_malformed_file(
 def test_load_baseline_sorts_values_descending(tmp_path: Path) -> None:
     """An ascending on-disk list loads descending (the comparison's invariant)."""
     path = tmp_path / "baseline.json"
-    path.write_text(json.dumps({"functions": {"a.py::f": [11, 31, 20]}}))
+    path.write_text(_baseline_payload({"a.py::f": [11, 31, 20]}))
 
     assert checker.load_baseline(path) == {"a.py::f": [31, 20, 11]}
 
@@ -264,6 +287,7 @@ def test_save_baseline_round_trips_and_is_deterministic(tmp_path: Path) -> None:
     data = json.loads(text)
     assert list(data["functions"]) == sorted(data["functions"])
     assert data["functions"]["scripts/b.py::render"] == [31, 11]
+    assert data["settings_fingerprint"] == _TEST_SETTINGS_FINGERPRINT
     assert "_comment" in data
 
 
@@ -273,7 +297,7 @@ def test_baseline_is_populated_never_reads_a_bad_file_as_empty(
     """The overwrite guard must treat anything it cannot read as populated."""
     missing = tmp_path / "missing.json"
     empty = tmp_path / "empty.json"
-    empty.write_text('{"functions": {}}')
+    empty.write_text(_baseline_payload({}))
     malformed = tmp_path / "malformed.json"
     malformed.write_text("{not json")
     populated = tmp_path / "populated.json"
@@ -452,6 +476,13 @@ def _clean_output(capsys: pytest.CaptureFixture[str]) -> str:
     return _ANSI_ESCAPE.sub("", capsys.readouterr().out)
 
 
+def _require_ruff() -> None:
+    """Fail clearly when the dependency that enforces this gate is absent."""
+    assert importlib.util.find_spec("ruff") is not None, (
+        "ruff is required for the complexity-ratchet tests"
+    )
+
+
 def _unrestrict(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make the fixture target count as the FULL scope, not a restricted run.
 
@@ -466,7 +497,7 @@ def test_main_fails_on_a_function_that_is_not_baselined(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """The CLI exits 1 and names the offending function."""
-    pytest.importorskip("ruff", reason="ruff is not installed in this environment")
+    _require_ruff()
     _write_tree(tmp_path, complex_function=True)
 
     exit_code = _run_main(tmp_path, tmp_path / "baseline.json")
@@ -481,7 +512,7 @@ def test_main_passes_when_the_function_is_baselined(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """The same tree with a matching baseline is tolerated (exit 0)."""
-    pytest.importorskip("ruff", reason="ruff is not installed in this environment")
+    _require_ruff()
     _write_tree(tmp_path, complex_function=True)
     baseline = tmp_path / "baseline.json"
 
@@ -492,9 +523,87 @@ def test_main_passes_when_the_function_is_baselined(
     assert "No new complexity regressions" in _clean_output(capsys)
 
 
+def test_main_rejects_ruff_settings_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A config edit that suppresses C901 must fail, not retire the debt."""
+    _require_ruff()
+    monkeypatch.setattr(
+        checker, "ruff_settings_fingerprint", _REAL_RUFF_SETTINGS_FINGERPRINT
+    )
+    _write_tree(tmp_path, complex_function=True)
+    baseline = tmp_path / "baseline.json"
+
+    assert _run_main(tmp_path, baseline, "--update-baseline") == 0
+    capsys.readouterr()
+
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.ruff.lint.mccabe]\nmax-complexity = 40\n"
+    )
+
+    assert _run_main(tmp_path, baseline) == 2
+    assert "settings" in _clean_output(capsys)
+
+
+def test_main_rejects_an_existing_baselined_file_omitted_by_ruff(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A partial scan must fail instead of reporting the omitted key improved."""
+    _require_ruff()
+    monkeypatch.setattr(checker, "DEFAULT_TARGETS", ("pkg",))
+    for directory in (tmp_path / "pkg" / "kept", tmp_path / "pkg" / "sub"):
+        directory.mkdir(parents=True)
+        _write_tree(directory, complex_function=True)
+    baseline = tmp_path / "baseline.json"
+    args = [
+        "pkg",
+        "--project-root",
+        str(tmp_path),
+        "--baseline",
+        str(baseline),
+    ]
+
+    assert checker.main([*args, "--update-baseline"]) == 0
+    capsys.readouterr()
+    (tmp_path / "pyproject.toml").write_text('[tool.ruff]\nexclude = ["pkg/sub"]\n')
+
+    assert checker.main(args) == 2
+    output = _clean_output(capsys)
+    assert "scan is PARTIAL" in output
+    assert "pkg/sub/sample.py" in output
+
+
+def test_main_rejects_nested_ruff_configuration(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A per-subtree Ruff configuration cannot escape the root fingerprint."""
+    _require_ruff()
+    target = tmp_path / "pkg" / "sample.py"
+    target.parent.mkdir()
+    target.write_text("def simple() -> int:\n    return 1\n")
+    (target.parent / "ruff.toml").write_text('[lint]\nselect = ["C901"]\n')
+
+    exit_code = checker.main(
+        [
+            "pkg",
+            "--project-root",
+            str(tmp_path),
+            "--baseline",
+            str(tmp_path / "baseline.json"),
+        ]
+    )
+
+    assert exit_code == 2
+    assert "Nested Ruff configuration" in _clean_output(capsys)
+
+
 def test_main_update_baseline_writes_the_expected_entry(tmp_path: Path) -> None:
     """`--update-baseline` on a fresh path records the over-limit function."""
-    pytest.importorskip("ruff", reason="ruff is not installed in this environment")
+    _require_ruff()
     _write_tree(tmp_path, complex_function=True)
     baseline = tmp_path / "fresh.json"
 
@@ -509,7 +618,7 @@ def test_main_refuses_to_wipe_a_populated_baseline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A full scan collapsing to zero findings must not disable the ratchet."""
-    pytest.importorskip("ruff", reason="ruff is not installed in this environment")
+    _require_ruff()
     _unrestrict(monkeypatch)
     _write_tree(tmp_path, complex_function=False)
     baseline = tmp_path / "baseline.json"
@@ -529,7 +638,7 @@ def test_main_refusal_diagnoses_a_clean_restricted_update(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A restricted scan finding nothing is not evidence that ruff misbehaved."""
-    pytest.importorskip("ruff", reason="ruff is not installed in this environment")
+    _require_ruff()
     _write_tree(tmp_path, complex_function=False)
     baseline = tmp_path / "baseline.json"
     checker.save_baseline(baseline, {"other/mod.py::elsewhere": [13]})
@@ -550,7 +659,7 @@ def test_main_reports_a_move_as_advisory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A baselined function that relocated does not fail the gate."""
-    pytest.importorskip("ruff", reason="ruff is not installed in this environment")
+    _require_ruff()
     _unrestrict(monkeypatch)
     _write_tree(tmp_path, complex_function=True)
     baseline = tmp_path / "baseline.json"
@@ -581,7 +690,7 @@ def test_main_does_not_pair_moves_on_a_restricted_run(
 ) -> None:
     """A partial scan makes every unscanned key look vanished, so it must not
     absorb a genuinely new over-complex function as a `moved` one."""
-    pytest.importorskip("ruff", reason="ruff is not installed in this environment")
+    _require_ruff()
     _write_tree(tmp_path, complex_function=True)
     baseline = tmp_path / "baseline.json"
     # Same function NAME, higher complexity, in a file this run never scans:
@@ -601,7 +710,7 @@ def test_main_fails_on_a_worsened_baselined_function(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A baselined function that got MORE complex is a regression, exit 1."""
-    pytest.importorskip("ruff", reason="ruff is not installed in this environment")
+    _require_ruff()
     _write_tree(tmp_path, complex_function=True)
     baseline = tmp_path / "baseline.json"
     checker.save_baseline(baseline, {"sample.py::tangled": [11]})
@@ -620,7 +729,7 @@ def test_main_fails_closed_when_a_full_scan_covers_nothing(
 ) -> None:
     """Over the DEFAULT targets, zero findings against a populated baseline is
     an error — that is the gating path, and it can only mean nothing was scanned."""
-    pytest.importorskip("ruff", reason="ruff is not installed in this environment")
+    _require_ruff()
     _unrestrict(monkeypatch)
     _write_tree(tmp_path, complex_function=False)
     baseline = tmp_path / "baseline.json"
@@ -638,7 +747,7 @@ def test_main_only_warns_when_a_restricted_scan_is_clean(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Scanning a subtree with no over-limit functions is legitimate, not an error."""
-    pytest.importorskip("ruff", reason="ruff is not installed in this environment")
+    _require_ruff()
     _write_tree(tmp_path, complex_function=False)
     baseline = tmp_path / "baseline.json"
     checker.save_baseline(baseline, {"sample.py::tangled": [13]})
@@ -656,7 +765,7 @@ def test_main_restricted_run_does_not_advise_updating_the_baseline(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Keys outside an explicit target set went unscanned, not fixed."""
-    pytest.importorskip("ruff", reason="ruff is not installed in this environment")
+    _require_ruff()
     _write_tree(tmp_path, complex_function=True)
     baseline = tmp_path / "baseline.json"
 
@@ -679,7 +788,7 @@ def test_main_restricted_update_baseline_warns_about_dropped_debt(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Writing a baseline from a restricted scan must say what it drops."""
-    pytest.importorskip("ruff", reason="ruff is not installed in this environment")
+    _require_ruff()
     _write_tree(tmp_path, complex_function=True)
     baseline = tmp_path / "baseline.json"
 
@@ -804,20 +913,30 @@ def test_default_targets_match_the_lint_scripts_ruff_paths() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_repository_has_no_complexity_regressions() -> None:
+def test_repository_has_no_complexity_regressions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The real tree must not add (or worsen) an over-limit function.
 
     Deliberately fails closed: a missing baseline is NOT skipped, it reports
     every function as new — deleting the baseline must not turn the only
     enforcing gate green.
     """
-    pytest.importorskip("ruff", reason="ruff is not installed in this environment")
+    _require_ruff()
+    monkeypatch.setattr(
+        checker, "ruff_settings_fingerprint", _REAL_RUFF_SETTINGS_FINGERPRINT
+    )
     baseline_path = PROJECT_ROOT / checker.DEFAULT_BASELINE_RELPATH
-    baseline = checker.load_baseline(baseline_path)
+    settings_fingerprint = _REAL_RUFF_SETTINGS_FINGERPRINT(
+        checker.DEFAULT_TARGETS[0], PROJECT_ROOT
+    )
+    baseline = checker.load_baseline(baseline_path, settings_fingerprint)
 
     current = checker.parse_findings(
         checker.run_ruff(checker.DEFAULT_TARGETS, PROJECT_ROOT), PROJECT_ROOT
     )
+    checker.ensure_no_nested_ruff_configs(checker.DEFAULT_TARGETS, PROJECT_ROOT)
+    scanned_files = checker.list_ruff_files(checker.DEFAULT_TARGETS, PROJECT_ROOT)
     # Same fail-closed guard `main()` applies: a scan that covered nothing would
     # otherwise report every baselined key as fixed and pass this gate green.
     assert baseline, f"{baseline_path} is missing or empty — the ratchet has no floor"
@@ -826,6 +945,7 @@ def test_repository_has_no_complexity_regressions() -> None:
         f"{checker.DEFAULT_TARGETS}, while {baseline_path} baselines "
         f"{len(baseline)}. The scan covered nothing."
     )
+    checker.ensure_baselined_files_were_scanned(baseline, scanned_files, PROJECT_ROOT)
 
     report = checker.evaluate_ratchet(current, baseline)
 

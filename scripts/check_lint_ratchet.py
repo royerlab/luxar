@@ -64,15 +64,14 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import re
 import subprocess
 import sys
-import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import ruff_ratchet
 from arbol import aprint
 
 # Repository root (this script lives in `<root>/scripts/`).
@@ -112,7 +111,6 @@ BASELINE_COMMENT = (
 # ruff's stderr line for a path it could not read at all, e.g.
 # "warning: Failed to lint stats: No such file or directory (os error 2)".
 _UNSCANNED_RE = re.compile(r"Failed to lint ")
-_RUFF_CONFIG_NAMES = ("ruff.toml", ".ruff.toml", "pyproject.toml")
 
 
 def is_ratcheted_code(code: str) -> bool:
@@ -213,198 +211,40 @@ def run_ruff(targets: tuple[str, ...] | list[str], project_root: Path) -> str:
 
 
 def ruff_settings_fingerprint(target: str, project_root: Path) -> str:
-    """Hash Ruff's normalized resolved settings for this ratchet.
-
-    Ruff's output includes a target-specific banner and absolute checkout paths;
-    neither describes lint behaviour, so both are removed before hashing. The
-    remaining full settings dump intentionally includes every current and future
-    option in that resolved root configuration that can change which findings
-    the ratchet sees. Nested configurations are rejected separately.
-    """
-    command = [
-        sys.executable,
-        "-m",
-        "ruff",
-        "check",
-        "--show-settings",
-        "--select",
-        ",".join(RATCHETED_SELECT),
-        target,
-    ]
-    try:
-        proc = subprocess.run(
-            command,
-            cwd=project_root,
-            capture_output=True,
-            text=True,
-        )
-    except OSError as exc:  # pragma: no cover - environment failure
-        raise RuntimeError(f"Could not run ruff ({' '.join(command)}): {exc}") from exc
-
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"ruff --show-settings failed (exit {proc.returncode}): "
-            f"{' '.join(command)}\n{proc.stderr.strip()}"
-        )
-
-    resolved_lines = [
-        line
-        for line in proc.stdout.splitlines()
-        if not line.startswith("Resolved settings for:")
-    ]
-    normalized = "\n".join(resolved_lines)
-    for root in {str(project_root), project_root.as_posix()}:
-        normalized = normalized.replace(root, "")
-    if not normalized.strip():
-        raise RuntimeError(
-            "ruff --show-settings returned no resolved settings, so the lint "
-            "configuration fingerprint cannot be trusted"
-        )
-    return hashlib.sha256(normalized.encode()).hexdigest()
-
-
-def _ruff_config_candidates(target: str, project_root: Path) -> set[Path]:
-    """Return possible Ruff config files affecting one lint target."""
-    candidates: set[Path] = set()
-    target_path = Path(target)
-    if not target_path.is_absolute():
-        target_path = project_root / target_path
-    target_path = target_path.resolve()
-    target_dir = target_path if target_path.is_dir() else target_path.parent
-
-    if target_path.is_dir():
-        for name in _RUFF_CONFIG_NAMES:
-            candidates.update(target_dir.rglob(name))
-
-    for directory in (target_dir, *target_dir.parents):
-        if directory == project_root or project_root not in directory.parents:
-            break
-        candidates.update(
-            config
-            for name in _RUFF_CONFIG_NAMES
-            if (config := directory / name).is_file()
-        )
-    return candidates
-
-
-def _is_nested_ruff_config(config: Path, project_root: Path) -> bool:
-    """Return whether ``config`` is a non-root config Ruff will consume."""
-    if config.parent == project_root:
-        return False
-    if config.name != "pyproject.toml":
-        return True
-    try:
-        pyproject = tomllib.loads(config.read_text())
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
-        raise RuntimeError(f"Could not inspect nested {config}: {exc}") from exc
-    tool = pyproject.get("tool")
-    return isinstance(tool, dict) and "ruff" in tool
+    """Hash Ruff's normalized resolved settings for this ratchet."""
+    return ruff_ratchet.settings_fingerprint(
+        target, project_root, RATCHETED_SELECT, subprocess.run
+    )
 
 
 def find_nested_ruff_configs(
     targets: tuple[str, ...] | list[str], project_root: Path
 ) -> list[Path]:
     """Return non-root Ruff config files that can affect ``targets``."""
-    project_root = project_root.resolve()
-    candidates: set[Path] = set()
-    for target in targets:
-        candidates.update(_ruff_config_candidates(target, project_root))
-
-    return [
-        config
-        for config in sorted(candidates)
-        if _is_nested_ruff_config(config, project_root)
-    ]
+    return ruff_ratchet.find_nested_configs(targets, project_root)
 
 
 def ensure_no_nested_ruff_configs(
     targets: tuple[str, ...] | list[str], project_root: Path
 ) -> None:
     """Reject hierarchical Ruff configs outside the root fingerprint."""
-    nested_configs = find_nested_ruff_configs(targets, project_root)
-    if not nested_configs:
-        return
-    displayed = []
-    for config in nested_configs:
-        try:
-            displayed.append(config.relative_to(project_root.resolve()).as_posix())
-        except ValueError:
-            displayed.append(str(config))
-    raise RuntimeError(
-        "Nested Ruff configuration cannot be checked against the root settings "
-        "fingerprint. Move these settings into the repository-root config:\n"
-        + "\n".join(f"  {config}" for config in displayed)
-    )
+    ruff_ratchet.ensure_no_nested_configs(targets, project_root)
 
 
 def list_ruff_files(
     targets: tuple[str, ...] | list[str], project_root: Path
 ) -> set[str]:
     """Return the repo-relative files ruff says it will scan."""
-    command = [
-        sys.executable,
-        "-m",
-        "ruff",
-        "check",
-        "--show-files",
-        "--select",
-        ",".join(RATCHETED_SELECT),
-        *targets,
-    ]
-    try:
-        proc = subprocess.run(
-            command,
-            cwd=project_root,
-            capture_output=True,
-            text=True,
-        )
-    except OSError as exc:  # pragma: no cover - environment failure
-        raise RuntimeError(f"Could not run ruff ({' '.join(command)}): {exc}") from exc
-
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"ruff --show-files failed (exit {proc.returncode}): "
-            f"{' '.join(command)}\n{proc.stderr.strip()}"
-        )
-
-    unscanned = [
-        line for line in proc.stderr.splitlines() if _UNSCANNED_RE.search(line)
-    ]
-    if unscanned:
-        raise RuntimeError(
-            "ruff could not enumerate every target, so the scan is PARTIAL:\n"
-            + "\n".join(f"  {line}" for line in unscanned)
-        )
-
-    files: set[str] = set()
-    for line in proc.stdout.splitlines():
-        path = Path(line)
-        try:
-            files.add(path.relative_to(project_root).as_posix())
-        except ValueError:
-            files.add(path.as_posix())
-    return files
+    return ruff_ratchet.list_files(
+        targets, project_root, RATCHETED_SELECT, subprocess.run
+    )
 
 
 def ensure_baselined_files_were_scanned(
     baseline: dict[str, int], scanned_files: set[str], project_root: Path
 ) -> None:
     """Fail when an existing baselined file was silently excluded by ruff."""
-    omitted = sorted(
-        path
-        for path in {key.rpartition("::")[0] for key in baseline}
-        if (project_root / path).exists() and path not in scanned_files
-    )
-    if omitted:
-        shown = "\n".join(f"  {path}" for path in omitted[:20])
-        suffix = f"\n  ... and {len(omitted) - 20} more" if len(omitted) > 20 else ""
-        raise RuntimeError(
-            "ruff omitted existing baselined files, so the scan is PARTIAL. "
-            "Check Ruff excludes and the checkout. If the exclusion is "
-            "deliberate, remove those files' keys from the baseline by hand; "
-            "--update-baseline is blocked by this same guard:\n"
-            f"{shown}{suffix}"
-        )
+    ruff_ratchet.ensure_baselined_files_scanned(baseline, scanned_files, project_root)
 
 
 def parse_findings(stdout: str, project_root: Path = PROJECT_ROOT) -> dict[str, int]:

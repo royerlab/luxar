@@ -22,6 +22,7 @@ scripts/
 | `check_layer_order.py` | Assert the `Subpackage layering` order is still the measured minimum and that its dated debt list has not grown |
 | `check_wheel.py` | Inspect a built `.whl`: package completeness against the source tree, `pyproject` excludes honoured, no Git-LFS pointer stubs, nothing over PyPI's per-file limit, viewer dist bundled |
 | `check_lint_ratchet.py` | Baseline-driven ratchet over ruff's defect-bearing rules — flake8-bugbear (`B`) plus `RUF012` (fails only on newly-broken rules) |
+| `ruff_ratchet.py` | Shared fail-closed Ruff settings, nested-config, and scan-coverage guards used by both baseline ratchets |
 | `check_demo_ladders.py` | Audit built demo scenes for missing or degenerate additive streaming ladders |
 | `check_demo_links.py` | Report whether canonical demo click-through destinations still discriminate known-good and known-bad identifiers without gating on third-party availability |
 | `check_scene_credits.py` | Verify built demo stores carry the `short`, `doi`, and `license` their registry citation declares |
@@ -180,9 +181,11 @@ ratchet, the same shape as the documentation ratchet above.
   only — see the restricted-scan note below
 - Fail closed (exit 2) rather than green whenever the scan cannot be trusted: a
   ruff that did not run, a target ruff could not read (its `Failed to lint`
-  warning otherwise leaves a partial scan behind a normal exit code), or a FULL
-  run that found nothing while the baseline is populated (a mistyped target, a
-  wrong `--project-root`, a partial checkout).
+  warning otherwise leaves a partial scan behind a normal exit code), an
+  existing baselined file missing from Ruff's `--show-files` set, a nested Ruff
+  config outside the root settings fingerprint, a root settings change, or a
+  FULL run that found nothing while the baseline is populated (a mistyped
+  target, a wrong `--project-root`, a partial checkout).
   A *restricted* run finding nothing is legitimate — a subtree may simply be
   clean — so that only warns
 
@@ -213,14 +216,17 @@ hatch run python scripts/check_complexity.py --baseline path/to/baseline.json
 hatch run python scripts/check_complexity.py packages/luxar/src
 ```
 
-Baseline keys are `<repo-relative-path>::<function-name>` mapping to the
+The baseline records Ruff's normalized resolved-settings fingerprint alongside
+keys of the form `<repo-relative-path>::<function-name>`, which map to the
 descending-sorted complexities of the over-limit functions with that name in
-that file — no line numbers, so an unrelated edit above a function never churns
-the baseline. Because a move pairs on the function name alone, a genuinely new
-function can in principle be absorbed by a same-named one vanishing in the same
-run; what the ratchet always guarantees is the bound, not the identity — a pair
-can never increase total debt. The checker runs as part of `hatch run lint` and
-`hatch run check`, and the Python test suite
+that file. A settings mismatch requires reviewing `ruff check --show-settings`
+before deliberately re-running `--update-baseline`; no line numbers are stored,
+so an unrelated edit above a function never churns the baseline. Because a move
+pairs on the function name alone, a genuinely new function can in principle be
+absorbed by a same-named one vanishing in the same run; what the ratchet always
+guarantees is the bound, not the identity — a pair can never increase total
+debt. The checker runs as part of `hatch run lint` and `hatch run check`, and the
+Python test suite
 (`packages/luxar/src/luxar/tests/test_check_complexity.py`) asserts the real
 tree is regression-free and is what gates every PR in CI.
 

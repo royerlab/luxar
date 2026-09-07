@@ -27,6 +27,7 @@ _ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 def _load_checker() -> ModuleType:
     """Import ``scripts/check_lint_ratchet.py`` as a module by file path."""
     script_path = PROJECT_ROOT / "scripts/check_lint_ratchet.py"
+    sys.path.insert(0, str(script_path.parent))
     spec = importlib.util.spec_from_file_location("check_lint_ratchet", script_path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Could not load {script_path}")
@@ -489,8 +490,10 @@ def _unrestrict(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _require_ruff() -> None:
-    """Skip when ruff is absent; these arms need a real scan to mean anything."""
-    pytest.importorskip("ruff", reason="ruff is not installed in this environment")
+    """Fail clearly when the dependency that enforces this gate is absent."""
+    assert importlib.util.find_spec("ruff") is not None, (
+        "ruff is required for the lint-ratchet tests"
+    )
 
 
 def test_main_fails_on_a_violation_that_is_not_baselined(
