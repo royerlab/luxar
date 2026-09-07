@@ -93,7 +93,7 @@ is the slow exception).
 git clone https://github.com/royerlab/luxar.git
 cd luxar
 make setup-dev          # Auto-installs Node.js, pnpm, Hatch (no sudo)
-luxar demo              # Browse the 92 bundled demos
+luxar demo              # Browse the 93 bundled demos
 luxar demo run lorenz   # Run one — generates the data and opens the viewer
 ```
 
@@ -107,7 +107,7 @@ That last command generates a Lorenz attractor and opens the viewer:
 geometry, what it needs, and whether you have already built it:
 
 ```
-🎬 92 Luxar demos  ·  75 built  ·  8 cached  ·  9 not generated yet
+🎬 93 Luxar demos  ·  75 built  ·  8 cached  ·  10 not generated yet
 
  ASTRONOMY ──────────────────────────────────────────────────────────── 6 demos
  ✓  2  asteroids_solar_system                  points+lines  300 MB
