@@ -609,6 +609,7 @@ STORIES: tuple[Story, ...] = (
 )
 
 OVERVIEW_TITLE = "Ten stories in the protein universe"
+ATTRIBUTION = f"{DEMO_META['citation']['ref']} — {DEMO_META['citation']['license']}"
 OVERVIEW_HTML = (
     "Every point is one of {n:,} Swiss-Prot proteins, placed by a protein "
     "language model (ESM C) so that proteins with similar sequences sit close "
@@ -1220,6 +1221,14 @@ def build_stories_scene(
                 font_size=0.05,
                 anchor="top-left",
                 color="rgba(255,255,255,0.65)",
+                blend_mode="difference",
+            )
+            scene.add_text(
+                ATTRIBUTION,
+                position=(0.02, 0.085),
+                font_size=0.014,
+                anchor="top-left",
+                color="rgba(255,255,255,0.55)",
                 blend_mode="difference",
             )
 

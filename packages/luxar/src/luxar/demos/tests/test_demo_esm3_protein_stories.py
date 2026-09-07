@@ -190,6 +190,28 @@ def test_panels_escape_html_and_carry_the_counts() -> None:
     assert "1,234 Swiss-Prot proteins" in overview_panel_html(1234)
 
 
+def test_persistent_attribution_matches_the_demo_citation() -> None:
+    import ast
+    import inspect
+
+    import luxar.demos.demo_esm3_protein_stories as demo
+
+    citation = demo.DEMO_META["citation"]
+    assert citation["ref"] in demo.ATTRIBUTION
+    assert citation["license"] in demo.ATTRIBUTION
+
+    tree = ast.parse(inspect.getsource(demo))
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "add_text"
+        and node.args
+        and isinstance(node.args[0], ast.Name)
+        and node.args[0].id == "ATTRIBUTION"
+        for node in ast.walk(tree)
+    )
+
+
 def test_story_narration_is_the_short_spoken_script_not_the_panel() -> None:
     from luxar.demos.demo_esm3_protein_stories import (
         OVERVIEW_NARRATION,
