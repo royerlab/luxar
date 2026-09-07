@@ -924,7 +924,9 @@ refer to a dev commit. The `changes` job captures that SHA once and every downst
 suite and repair checkout reuses it. Dispatches have no PR base, so they select the
 whole suite and documentation gate. Their `workflow_dispatch` concurrency group is
 separate from push runs; a newer dispatch can supersede an older dispatch without
-cancelling the merge push that produced the candidate commit.
+cancelling the merge push that produced the candidate commit. A dispatch requested
+on any other ref fails before checkout rather than attaching a dev-tree verdict to
+the wrong commit.
 
 After a dispatched window completes the five protected contexts successfully,
 `repair-cancelled-push-checks` resolves dev's current tip and enumerates commits in

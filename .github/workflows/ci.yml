@@ -84,6 +84,11 @@ jobs:
       dom_rust: ${{ steps.filter.outputs.dom_rust }}
       dom_go: ${{ steps.filter.outputs.dom_go }}
     steps:
+      - name: Require a dev dispatch
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/dev'
+        run: |
+          echo "::error::CI repair windows must be dispatched with --ref dev"
+          exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # `github.sha` follows the default branch on dispatch events, which is

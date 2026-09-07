@@ -1003,6 +1003,16 @@ def test_ci_repair_window_is_dispatched_on_dev(workflow: str) -> None:
     assert "github.event.schedule" not in matrix_line
     assert "inputs.full_python_matrix" in matrix_line
 
+    changes = yaml.safe_load(workflow)["jobs"]["changes"]
+    guard = next(
+        step for step in changes["steps"] if step["name"] == "Require a dev dispatch"
+    )
+    assert guard["if"] == (
+        "github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/dev'"
+    )
+    assert "--ref dev" in guard["run"]
+    assert "exit 1" in guard["run"]
+
 
 def test_green_dispatch_repairs_cancelled_push_contexts(workflow: str) -> None:
     """A green dev dispatch must clear cancelled duplicate contexts on that SHA."""
