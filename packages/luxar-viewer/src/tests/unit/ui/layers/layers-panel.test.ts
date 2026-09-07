@@ -4348,6 +4348,36 @@ describe('LayersPanel programmatic API (getLayerSummaries / setLayer)', () => {
     panel.dispose();
   });
 
+  it('applies a requested display range after switching to a colormap', () => {
+    const panel = openPanel({ has_scalars: true, scalar_data_range: [10, 20] });
+    const live = panel.layerState.getLayer('/cloud')!;
+
+    panel.setLayer('/cloud', { colormap: 'viridis', displayRange: [12, 18] });
+
+    expect(live.colormap).toBe('viridis');
+    expect(live.scalarWindow).toBe(true);
+    expect(live.displayMin).toBe(12);
+    expect(live.displayMax).toBe(18);
+    panel.dispose();
+  });
+
+  it('applies a requested display range after releasing a colormap', () => {
+    const panel = openPanel({
+      has_scalars: true,
+      scalar_data_range: [10, 20],
+      colormap: 'viridis',
+    });
+    const live = panel.layerState.getLayer('/cloud')!;
+
+    panel.setLayer('/cloud', { colormap: null, displayRange: [0.2, 0.8] });
+
+    expect(live.colormap).toBeUndefined();
+    expect(live.scalarWindow).toBe(false);
+    expect(live.displayMin).toBe(0.2);
+    expect(live.displayMax).toBe(0.8);
+    panel.dispose();
+  });
+
   it('throws on an unknown path instead of failing silently', () => {
     const panel = openPanel();
     expect(() => panel.setLayer('/nope', { opacity: 0.5 })).toThrow(/unknown layer '\/nope'/);

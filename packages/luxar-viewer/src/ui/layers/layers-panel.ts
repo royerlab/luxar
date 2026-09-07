@@ -615,6 +615,8 @@ export class LayersPanel {
         this.applyEngine.applyVisibility(path, visible);
         this.refreshRowVisual(path);
       },
+      colormap: (colormap) => this.setLayerColormap(path, colormap),
+      blendingMode: (mode) => this.setLayerBlending(path, mode),
       displayRange: ([min, max]) => {
         this.state.setDisplayRange(path, min, max);
         this.applyEngine.applyDisplayRange(live);
@@ -635,8 +637,6 @@ export class LayersPanel {
         this.state.setLayerOrder(path, order);
         this.applyEngine.applyLayerOrder(live);
       },
-      blendingMode: (mode) => this.setLayerBlending(path, mode),
-      colormap: (colormap) => this.setLayerColormap(path, colormap),
     };
     // `null` means "release" for the nullable fields (layerOrder, colormap).
     const releasers: Partial<Record<keyof LayerPatch, () => void>> = {
