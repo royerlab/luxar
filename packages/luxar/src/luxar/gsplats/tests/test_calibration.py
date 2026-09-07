@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import torch
 
 from luxar.gsplats.calibration import (
     CalibrationResult,
@@ -32,6 +33,10 @@ from luxar.gsplats.calibration import (
     held_out_psnr_foreground,
     predict_zero_baseline_mse,
     select_calibration_region,
+)
+from luxar.gsplats.calibration.driver import (
+    _foreground_weighted_psnr,
+    _foreground_weighting,
 )
 
 # -----------------------------------------------------------------------------
@@ -129,6 +134,44 @@ class TestForegroundWeightedMetric:
         assert 0.0 < threshold < 1.0
         np.testing.assert_array_equal(mask, foreground_mask_otsu_smoothed(volume)[0])
         assert np.array_equal(mask, mask.astype(bool))
+
+    @pytest.mark.parametrize("fg_bg_ratio", [0.25, 1.0, 4.0])
+    def test_driver_reduction_matches_reference_metric(self, fg_bg_ratio: float):
+        rng = np.random.default_rng(7)
+        truth = rng.random(64, dtype=np.float32)
+        pred = truth + rng.normal(0.0, 0.1, 64).astype(np.float32)
+        held = rng.random(64) < 0.4
+        foreground = truth > 0.6
+        data_range = float(truth.max() - truth.min())
+
+        expected = held_out_psnr_fg_weighted(
+            pred,
+            truth,
+            held,
+            foreground,
+            fg_bg_ratio=fg_bg_ratio,
+            data_range=data_range,
+        )
+        foreground_sel, background_sel, n_fg, n_bg, background_weight = (
+            _foreground_weighting(
+                torch.from_numpy(held),
+                torch.from_numpy(foreground),
+                fg_bg_ratio,
+            )
+        )
+        errors = torch.from_numpy((pred[held] - truth[held]) ** 2)
+
+        actual = _foreground_weighted_psnr(
+            errors,
+            foreground_sel,
+            background_sel,
+            n_fg,
+            n_bg,
+            background_weight,
+            data_range,
+        )
+
+        assert actual == pytest.approx(expected, abs=5e-7)
 
 
 # -----------------------------------------------------------------------------
@@ -803,6 +846,59 @@ class TestCalibrateSmoke:
         # Transferable density still emitted (additive, doesn't affect K*)
         assert result.splat_density is not None
         assert result.splat_density["feature_method"] == "peaks"
+
+    def test_sparse_volume_selects_on_foreground_weighted_curve(self):
+        volume = _sparse_blobs(
+            shape=(16, 16, 16),
+            centers=[(5, 5, 5), (10, 10, 10)],
+            sigma2=2.0,
+        )
+
+        result = calibrate(
+            volume,
+            k_grid=[20, 60],
+            mask_fraction=0.2,
+            k_star_metric="psnr_fg_weighted",
+            fit_kwargs={
+                "n_iters": 30,
+                "device": "cpu",
+                "verbose": False,
+                "early_stop_patience": 30,
+                "use_cuda": False,
+                "use_metal": False,
+            },
+        )
+
+        assert result.k_star_metric == "psnr_fg_weighted"
+        assert all(math.isfinite(value) for value in result.held_out_psnr_fg_weighted_db)
+        assert result.held_out_peak_selected is not None
+        expected = find_k_star(
+            result.k_values_requested, result.held_out_psnr_fg_weighted_db
+        )
+        assert result.held_out_peak_selected.k_star == expected.k_star
+        assert result.held_out_peak_selected.type == expected.type
+
+    def test_invalid_metric_is_rejected_before_fitting(self, monkeypatch):
+        called = False
+
+        def _unexpected_fit(*args, **kwargs):
+            nonlocal called
+            called = True
+            raise AssertionError("fit should not run for an invalid metric")
+
+        monkeypatch.setattr(
+            "luxar.gsplats.fit_gsplats.fit_gaussian_splats", _unexpected_fit
+        )
+
+        with pytest.raises(ValueError, match="unknown k_star_metric"):
+            calibrate(
+                np.eye(4, dtype=np.float32),
+                k_grid=[2],
+                k_star_metric="not-a-metric",
+                fit_kwargs={"device": "cpu"},
+            )
+
+        assert not called
 
 
 # -----------------------------------------------------------------------------

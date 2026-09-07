@@ -42,6 +42,10 @@ from .result import CalibrationResult, _json_safe
 ProgressCallback = Callable[[int, int, str], None]
 """``(index, total, message)`` callback emitted before/after each fit."""
 
+_K_STAR_METRICS = frozenset(
+    {"psnr_minmax", "psnr_foreground", "psnr_fg_weighted", "gain"}
+)
+
 
 def _foreground_weighting(
     mask_dev: Any, foreground_dev: Any, fg_bg_ratio: float
@@ -151,6 +155,11 @@ def calibrate(
     if len(k_grid) < 1:
         raise ValueError("k_grid must contain at least one K value")
     _validate_fg_bg_ratio(fg_bg_ratio)
+    if k_star_metric not in _K_STAR_METRICS:
+        raise ValueError(
+            f"unknown k_star_metric {k_star_metric!r}; use "
+            "'psnr_minmax', 'psnr_foreground', 'psnr_fg_weighted', or 'gain'"
+        )
 
     fit_kwargs = dict(fit_kwargs or {})
     fit_kwargs.pop("seeds", None)
@@ -369,11 +378,6 @@ def calibrate(
         "psnr_fg_weighted": held_psnr_fg_weighted,
         "gain": held_gain,
     }
-    if k_star_metric not in _metric_curves:
-        raise ValueError(
-            f"unknown k_star_metric {k_star_metric!r}; use "
-            "'psnr_minmax', 'psnr_foreground', 'psnr_fg_weighted', or 'gain'"
-        )
     peak_selected: Optional[HeldOutPeak] = None
     if k_star_metric != "psnr_minmax":
         curve = _metric_curves[k_star_metric]
