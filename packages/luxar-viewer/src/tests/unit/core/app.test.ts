@@ -241,6 +241,7 @@ describe('LuxarApp', () => {
       setZarrViewerConfig: vi.fn(),
       hasStoredSettings: vi.fn().mockReturnValue(false),
       applyZarrDefaults: vi.fn(),
+      syncCameraFovState: vi.fn(),
       applyOverrides: vi.fn(),
       getSettingsSnapshot: vi.fn(() => ({})),
       updateSceneScale: vi.fn(),
@@ -532,6 +533,17 @@ describe('LuxarApp', () => {
 
       expect(mockSceneManager.setCameraZoom).toHaveBeenCalledWith(2.5);
       expect(order).toEqual(['defaults', 'zoom']);
+    });
+
+    it('reapplies authored zoom after stored settings and auto-framing', async () => {
+      mockRenderingControls.hasStoredSettings.mockReturnValue(true);
+      mockSceneManager.getSceneViewerConfig.mockReturnValue({ camera: { zoom: 3 } });
+
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
+
+      expect(mockRenderingControls.applyZarrDefaults).not.toHaveBeenCalled();
+      expect(mockRenderingControls.syncCameraFovState).toHaveBeenCalledOnce();
+      expect(mockSceneManager.setCameraZoom).toHaveBeenCalledWith(3);
     });
 
     it('should load directly for an unsuffixed URL whose zarr probe hits', async () => {

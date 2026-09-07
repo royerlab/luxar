@@ -168,6 +168,58 @@ def test_interrupted_turntable_encode_never_publishes_cache_assets(
     assert not (tmp_path / "turntable.part.png").exists()
 
 
+def test_completed_turntable_encode_publishes_both_cache_assets(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    webm = tmp_path / "turntable.webm"
+    poster = tmp_path / "turntable.png"
+
+    class FakeStdin:
+        def write(self, _data: bytes) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    class FakeProcess:
+        def __init__(self, command: list[str]) -> None:
+            self.command = command
+            self.stdin = FakeStdin()
+
+        def wait(self) -> int:
+            Path(self.command[-1]).write_bytes(b"complete webm")
+            return 0
+
+    monkeypatch.setattr(
+        subprocess, "Popen", lambda command, **_kwargs: FakeProcess(command)
+    )
+
+    class SteadyRenderer:
+        size = 1
+
+        def set_meshes(self, _meshes: object) -> None:
+            pass
+
+        def render(self, _frame: float) -> bytes:
+            return b"\x00\x00\x00\x00"
+
+    cr.render_turntable_video(
+        [],
+        frames=1,
+        fps=1,
+        size=1,
+        webm=webm,
+        poster=poster,
+        ffmpeg="ffmpeg",
+        renderer=SteadyRenderer(),  # type: ignore[arg-type]
+    )
+
+    assert webm.read_bytes() == b"complete webm"
+    assert poster.exists()
+    assert not (tmp_path / "turntable.part.webm").exists()
+    assert not (tmp_path / "turntable.part.png").exists()
+
+
 def _gpu_renderer(**kwargs: object) -> cr.ClayRenderer:
     pytest.importorskip("moderngl")
     try:
