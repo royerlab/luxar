@@ -75,14 +75,6 @@ export interface SceneDimensionAttrs {
   }>;
 }
 
-/**
- * Viewer configuration from Python API (stored in zarr root .zattrs).
- * All fields are optional — only set fields are present.
- * Keys use snake_case to match the Python/zarr convention.
- *
- * This is also the format exported by Ctrl+Shift+S in the viewer,
- * enabling full Python → zarr → viewer → export → Python round-trips.
- */
 /** The authored camera block — the scene-level `camera` and each waypoint's `camera`. */
 export interface ZarrCameraConfig {
   position?: [number, number, number];
@@ -119,6 +111,14 @@ export interface ZarrWaypoint {
   rendering?: Record<string, unknown>;
 }
 
+/**
+ * Viewer configuration from Python API (stored in zarr root .zattrs).
+ * All fields are optional — only set fields are present.
+ * Keys use snake_case to match the Python/zarr convention.
+ *
+ * This is also the format exported by Ctrl+Shift+S in the viewer,
+ * enabling full Python → zarr → viewer → export → Python round-trips.
+ */
 export interface ZarrViewerConfig {
   // Camera
   camera?: ZarrCameraConfig;

@@ -1,6 +1,6 @@
-"""Overlay adder impls: add_text / add_image / add_html.
+"""Overlay adder impls: add_text / add_image / add_html / add_video.
 
-Pure functions called by Scene's add_text / add_image / add_html
+Pure functions called by Scene's add_text / add_image / add_html / add_video
 method delegates. Each takes a ``scene: Scene`` first arg.
 """
 

@@ -787,12 +787,12 @@ Lightweight metadata descriptor for a screen-space annotation. Overlays are
 positioned in normalized screen coordinates over the viewer canvas.
 
 `Overlay` is a frozen-style dataclass returned (for optional inspection) by
-`Scene.add_text()`, `Scene.add_image()`, and `Scene.add_html()`. The overlay is
-written immediately to zarr; the returned object is just a descriptor.
+`Scene.add_text()`, `Scene.add_image()`, `Scene.add_html()`, and `Scene.add_video()`.
+The overlay is written immediately to zarr; the returned object is just a descriptor.
 
 **Attributes:**
 - `name` - Unique overlay name (auto-generated or user-specified)
-- `overlay_type` - One of `'overlay_text'`, `'overlay_image'`, `'overlay_html'`
+- `overlay_type` - One of `'overlay_text'`, `'overlay_image'`, `'overlay_html'`, `'overlay_video'`
 - `position` - `(x, y)` in normalized screen coordinates `[0, 1]`, top-left origin
 - `attrs` - All overlay attributes as written to the zarr `.zattrs`
 
