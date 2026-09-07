@@ -35,6 +35,11 @@ type TSLResult = {
   fragmentShader: string;
 };
 
+type BloomChainResult = {
+  pixels: number[];
+  mipCount: number;
+};
+
 async function bootHarness(page: Page): Promise<string[]> {
   await page.goto(HARNESS_URL);
   await page.waitForFunction(() => Boolean(window.__tslHarness));
@@ -57,13 +62,13 @@ async function runTSL(page: Page, shaderName: string): Promise<TSLResult> {
   }, shaderName);
 }
 
-async function runBloomChain(page: Page, backend: 'glsl' | 'tsl'): Promise<number[]> {
+async function runBloomChain(page: Page, backend: 'glsl' | 'tsl'): Promise<BloomChainResult> {
   return page.evaluate(async (selectedBackend) => {
-    const pixels =
+    const result =
       selectedBackend === 'glsl'
         ? await window.__tslHarness!.renderBloomChainGLSL()
         : await window.__tslHarness!.renderBloomChainTSL();
-    return Array.from(pixels);
+    return { pixels: Array.from(result.pixels), mipCount: result.mipCount };
   }, backend);
 }
 
@@ -363,17 +368,19 @@ test.describe('TSL ↔ GLSL shader parity', () => {
   test('composed bloom pyramid renders identically through both backends', async ({ page }) => {
     await bootHarness(page);
 
-    const glslPixels = await runBloomChain(page, 'glsl');
-    const tslPixels = await runBloomChain(page, 'tsl');
+    const glslResult = await runBloomChain(page, 'glsl');
+    const tslResult = await runBloomChain(page, 'tsl');
 
-    expect(tslPixels.length).toBe(glslPixels.length);
-    assertBothRendered(glslPixels, tslPixels, 'composed bloom');
-    const diff = meanAbsDiff(glslPixels, tslPixels);
+    expect(glslResult.mipCount).toBeGreaterThanOrEqual(3);
+    expect(tslResult.mipCount).toBe(glslResult.mipCount);
+    expect(tslResult.pixels.length).toBe(glslResult.pixels.length);
+    assertBothRendered(glslResult.pixels, tslResult.pixels, 'composed bloom');
+    const diff = meanAbsDiffPerCoveredPixel(glslResult.pixels, tslResult.pixels);
     expect(
       diff,
-      `Composed bloom parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.\n` +
-        `GLSL first 4 pixels:\n${previewPixels(glslPixels)}\n` +
-        `TSL first 4 pixels:\n${previewPixels(tslPixels)}`
+      `Composed bloom parity: covered-pixel mean abs diff ${diff.toFixed(2)} on 0-255 scale.\n` +
+        `GLSL first 4 pixels:\n${previewPixels(glslResult.pixels)}\n` +
+        `TSL first 4 pixels:\n${previewPixels(tslResult.pixels)}`
     ).toBeLessThan(2.0);
   });
 

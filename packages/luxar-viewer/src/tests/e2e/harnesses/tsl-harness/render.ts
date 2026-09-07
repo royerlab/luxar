@@ -28,9 +28,32 @@ import { loadTslMaterials } from '../../../../rendering/tsl/load';
 
 /** Edge length (px) of the square offscreen render target the parity harness draws into. */
 export const HARNESS_SIZE = 64;
-const BLOOM_OUTPUT_SIZE = HARNESS_SIZE / 2;
+
+export interface BloomChainRenderResult {
+  pixels: Uint8Array;
+  mipCount: number;
+}
+
+function copyReadback(readback: ArrayBufferView): Uint8Array {
+  return new Uint8Array(readback.buffer, readback.byteOffset, readback.byteLength).slice();
+}
+
+function flipRowsInPlace(pixels: Uint8Array, width: number, height: number): void {
+  const rowBytes = width * 4;
+  const temporaryRow = new Uint8Array(rowBytes);
+  for (let y = 0; y < height >> 1; y++) {
+    const top = y * rowBytes;
+    const bottom = (height - 1 - y) * rowBytes;
+    temporaryRow.set(pixels.subarray(top, top + rowBytes));
+    pixels.copyWithin(top, bottom, bottom + rowBytes);
+    pixels.set(temporaryRow, bottom);
+  }
+}
 
 function buildBloomChainTexture(): THREE.DataTexture {
+  // Radial symmetry keeps this case focused on magnitude and additive
+  // accumulation. It intentionally cannot cover Y-dependent spatial errors;
+  // the asymmetric composed-chain defect is tracked separately in #2584.
   const data = new Uint8Array(HARNESS_SIZE * HARNESS_SIZE * 4);
   for (let y = 0; y < HARNESS_SIZE; y++) {
     for (let x = 0; x < HARNESS_SIZE; x++) {
@@ -39,7 +62,7 @@ function buildBloomChainTexture(): THREE.DataTexture {
       const dy = y - (HARNESS_SIZE - 1) / 2;
       const radiusSquared = dx * dx + dy * dy;
       const value = Math.round(
-        36 * Math.exp(-radiusSquared / 180) + 20 * Math.exp(-radiusSquared / 18)
+        144 * Math.exp(-radiusSquared / 180) + 80 * Math.exp(-radiusSquared / 18)
       );
       data[offset] = value;
       data[offset + 1] = Math.round(value * 0.75);
@@ -65,17 +88,18 @@ function buildBloomChainTexture(): THREE.DataTexture {
 async function renderBloomChain(
   renderer: Renderer,
   caps: RendererCapabilities
-): Promise<Uint8Array> {
+): Promise<BloomChainRenderResult> {
   const input = buildBloomChainTexture();
   const chain = new BloomChain({
     width: HARNESS_SIZE,
     height: HARNESS_SIZE,
     levels: 3,
-    threshold: 0.02,
-    smoothing: 0.03,
+    threshold: 0.25,
+    smoothing: 0.15,
     radius: 1,
     caps,
   });
+  const outputSize = chain.outputSize;
   const copyMaterial = new THREE.MeshBasicMaterial({
     map: chain.outputTexture,
     depthTest: false,
@@ -83,7 +107,7 @@ async function renderBloomChain(
     toneMapped: false,
   });
   const copyPass = new FullscreenPass(copyMaterial, caps);
-  const target = new THREE.WebGLRenderTarget(BLOOM_OUTPUT_SIZE, BLOOM_OUTPUT_SIZE, {
+  const target = new THREE.WebGLRenderTarget(outputSize.width, outputSize.height, {
     type: THREE.UnsignedByteType,
     format: THREE.RGBAFormat,
     minFilter: THREE.NearestFilter,
@@ -98,32 +122,36 @@ async function renderBloomChain(
 
   let pixels: Uint8Array;
   if (caps.apiSurface === 'webgl2') {
-    pixels = new Uint8Array(BLOOM_OUTPUT_SIZE * BLOOM_OUTPUT_SIZE * 4);
+    pixels = new Uint8Array(outputSize.width * outputSize.height * 4);
     (renderer as THREE.WebGLRenderer).readRenderTargetPixels(
       target,
       0,
       0,
-      BLOOM_OUTPUT_SIZE,
-      BLOOM_OUTPUT_SIZE,
+      outputSize.width,
+      outputSize.height,
       pixels
     );
   } else {
     const readback = await (
       renderer as import('three/webgpu').WebGPURenderer
-    ).readRenderTargetPixelsAsync(target, 0, 0, BLOOM_OUTPUT_SIZE, BLOOM_OUTPUT_SIZE);
-    pixels = new Uint8Array(readback.buffer.slice(0));
+    ).readRenderTargetPixelsAsync(target, 0, 0, outputSize.width, outputSize.height);
+    pixels = copyReadback(readback);
+    // This composed fallback path reads top-down; normalize it to the
+    // WebGL arm's bottom-up convention before comparing pixel positions.
+    flipRowsInPlace(pixels, outputSize.width, outputSize.height);
   }
+  const mipCount = chain.mipCount;
 
   target.dispose();
   copyPass.dispose();
   copyMaterial.dispose();
   chain.dispose();
   input.dispose();
-  return pixels;
+  return { pixels, mipCount };
 }
 
 /** Render the production bloom pyramid through WebGL ShaderMaterials. */
-export async function renderBloomChainGLSL(): Promise<Uint8Array> {
+export async function renderBloomChainGLSL(): Promise<BloomChainRenderResult> {
   const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false });
   renderer.setPixelRatio(1);
   renderer.setSize(HARNESS_SIZE, HARNESS_SIZE);
@@ -131,13 +159,13 @@ export async function renderBloomChainGLSL(): Promise<Uint8Array> {
     apiSurface: 'webgl2',
     framebufferYDown: false,
   } as RendererCapabilities;
-  const pixels = await renderBloomChain(renderer, caps);
+  const result = await renderBloomChain(renderer, caps);
   renderer.dispose();
-  return pixels;
+  return result;
 }
 
 /** Render the production bloom pyramid through NodeMaterials on WebGL fallback. */
-export async function renderBloomChainTSL(): Promise<Uint8Array> {
+export async function renderBloomChainTSL(): Promise<BloomChainRenderResult> {
   await loadTslMaterials();
   const { WebGPURenderer } = await import('three/webgpu');
   const renderer = new WebGPURenderer({ antialias: false, alpha: false, forceWebGL: true });
@@ -148,9 +176,9 @@ export async function renderBloomChainTSL(): Promise<Uint8Array> {
     apiSurface: 'webgpu',
     framebufferYDown: true,
   } as RendererCapabilities;
-  const pixels = await renderBloomChain(renderer, caps);
+  const result = await renderBloomChain(renderer, caps);
   renderer.dispose();
-  return pixels;
+  return result;
 }
 
 /**
@@ -381,19 +409,11 @@ export async function renderTSL(
   );
   // The renderer returns its own typed array — copy into Uint8Array so
   // the rest of the harness treats both paths uniformly.
-  const pixels = new Uint8Array(readback.buffer.slice(0));
+  const pixels = copyReadback(readback);
   if (opts.native) {
     // Normalize the native readback to the WebGL bottom-up row order
     // (see the note above `renderer` construction).
-    const rowBytes = HARNESS_SIZE * 4;
-    const tmp = new Uint8Array(rowBytes);
-    for (let y = 0; y < HARNESS_SIZE >> 1; y++) {
-      const top = y * rowBytes;
-      const bot = (HARNESS_SIZE - 1 - y) * rowBytes;
-      tmp.set(pixels.subarray(top, top + rowBytes));
-      pixels.copyWithin(top, bot, bot + rowBytes);
-      pixels.set(tmp, bot);
-    }
+    flipRowsInPlace(pixels, HARNESS_SIZE, HARNESS_SIZE);
   }
 
   const vertexShader = capturedRef.value?.vertex ?? '';

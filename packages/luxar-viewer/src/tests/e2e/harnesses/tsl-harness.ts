@@ -2,9 +2,9 @@
  * TSL ↔ GLSL parity harness — page entry.
  *
  * Loaded by `tsl-harness.html` (Vite serves it at `/tsl-harness.html`).
- * Exposes `window.__tslHarness` with primitives that render a fullscreen
- * pass through both backends and return the result for pixel-diffing in
- * a Playwright spec.
+ * Exposes `window.__tslHarness` with primitives that render registered
+ * fullscreen passes or the composed bloom pipeline through both backends
+ * and return the result for pixel-diffing in a Playwright spec.
  *
  * The harness internals live in `./tsl-harness/`, split by shader family:
  * - `types.ts` — the `RegistryEntry` registry contract
@@ -15,7 +15,7 @@
  * - `gsplats.ts` — gsplat + gsplat-pick variants
  * - `mesh.ts` — mesh + mesh-pick variants
  * - `erf.ts` — shared-math erf polynomial
- * - `render.ts` — the `renderGLSL` / `renderTSL` executors
+ * - `render.ts` — the single-pass and composed bloom executors
  * - `index.ts` — merges the families into `SHADER_REGISTRY` (use
  *   `listShaders()` for the live entry count — hardcoded totals drift)
  *
@@ -53,8 +53,8 @@ declare global {
         shaderName: string,
         opts?: { native?: boolean }
       ) => Promise<{ pixels: Uint8Array; vertexShader: string; fragmentShader: string }>;
-      renderBloomChainGLSL: () => Promise<Uint8Array>;
-      renderBloomChainTSL: () => Promise<Uint8Array>;
+      renderBloomChainGLSL: () => Promise<{ pixels: Uint8Array; mipCount: number }>;
+      renderBloomChainTSL: () => Promise<{ pixels: Uint8Array; mipCount: number }>;
       listShaders: () => string[];
     };
   }
