@@ -364,8 +364,12 @@ export function extractEnvironmentConfig(
 type EnvironmentBlock = NonNullable<ZarrViewerConfig['environment']>;
 type Warn = (what: string) => void;
 
-function environmentProbeField(raw: EnvironmentBlock['probe'], warn: Warn): EnvironmentProbe {
+function environmentProbeField(raw: unknown, warn: Warn): EnvironmentProbe {
   if (raw === undefined) return DEFAULT_ENVIRONMENT_CONFIG.probe;
+  if (typeof raw !== 'string' && !Array.isArray(raw)) {
+    warn(`malformed probe ${JSON.stringify(raw)}; using 'auto'`);
+    return DEFAULT_ENVIRONMENT_CONFIG.probe;
+  }
   const parsed = parseProbeSpec(Array.isArray(raw) ? raw.join(',') : raw);
   if (parsed) return parsed;
   warn(`malformed probe ${JSON.stringify(raw)}; using 'auto'`);
