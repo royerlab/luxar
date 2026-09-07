@@ -5372,6 +5372,13 @@ describe('depth-sort coordinator — layer_order bands', () => {
     (lens.material as THREE.Material).userData.drawAfterEmissive = true;
     hiddenLevel.visible = true;
     expect(coord.collectRefractingGlass(out)).toEqual([lens, hiddenLens]);
+    // A lens the nD slice cull emptied (visible, but a zero draw range — the way a mesh
+    // pinned to another coordinate of a hidden dimension is culled) draws nothing and
+    // must not make the split pay its glass pass.
+    hiddenLens.geometry.setDrawRange(0, 0);
+    expect(coord.collectRefractingGlass(out)).toEqual([lens]);
+    hiddenLens.geometry.setDrawRange(0, Infinity);
+    expect(coord.collectRefractingGlass(out)).toEqual([lens, hiddenLens]);
     // …and disposal removes the mesh for good.
     coord.releaseDepthSortNode(lens);
     expect(coord.collectRefractingGlass(out)).toEqual([hiddenLens]);
@@ -5402,6 +5409,9 @@ describe('depth-sort coordinator — layer_order bands', () => {
     expect(coord.collectRefractingGlass()).toEqual([]);
     hiddenLevel.visible = true;
     expect(coord.collectUnpartitionedMeshes(out)).toEqual([lens, shell, hiddenShell]);
+    // Slice-culled (empty draw range): nothing to park on the pass-A-only layer either.
+    shell.geometry.setDrawRange(0, 0);
+    expect(coord.collectUnpartitionedMeshes(out)).toEqual([lens, hiddenShell]);
     coord.releaseAllDepthSortNodes();
     expect(coord.collectUnpartitionedMeshes()).toEqual([]);
   });

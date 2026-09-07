@@ -2169,9 +2169,23 @@ export function collectRefractingGlass(out: THREE.Mesh[] = []): THREE.Mesh[] {
   out.length = 0;
   for (const state of nodeStates.values()) {
     const mesh = state.mesh;
-    if (drawsAfterEmissive(mesh) && isEffectivelyVisible(mesh)) out.push(mesh);
+    if (drawsAfterEmissive(mesh) && isEffectivelyVisible(mesh) && drawsAnyFace(mesh)) {
+      out.push(mesh);
+    }
   }
   return out;
+}
+
+/**
+ * Whether a mesh has anything to draw. The nD slice cull does not hide a mesh whose
+ * faces all fall outside the slab — it leaves `visible` alone and empties the geometry's
+ * `drawRange` (`mesh-geometry.ts`: the index buffer is capacity-sized, `drawRange.count`
+ * is the drawn quantity). A refracting glass pinned to another coordinate of a hidden
+ * dimension is therefore "visible" yet draws nothing, and must not make the refraction
+ * split pay its glass pass on every frame.
+ */
+function drawsAnyFace(mesh: THREE.Mesh): boolean {
+  return mesh.geometry.drawRange.count !== 0;
 }
 
 /**
@@ -2190,7 +2204,8 @@ export function collectUnpartitionedMeshes(out: THREE.Mesh[] = []): THREE.Mesh[]
     if (
       isPhysicalMeshMaterial(mesh.material) &&
       !drawsAfterEmissive(mesh) &&
-      isEffectivelyVisible(mesh)
+      isEffectivelyVisible(mesh) &&
+      drawsAnyFace(mesh)
     ) {
       out.push(mesh);
     }
