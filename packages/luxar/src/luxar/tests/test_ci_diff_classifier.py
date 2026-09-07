@@ -994,12 +994,15 @@ def test_ci_repair_window_is_dispatched_on_dev(workflow: str) -> None:
     assert full_matrix["default"] == "false"
     assert full_matrix["type"] == "boolean"
     assert "dev" in full_matrix["description"]
-    assert "repair cancelled push checks" in full_matrix["description"]
+    assert "repairs cancelled push checks" in full_matrix["description"]
     matrix_line = next(
         line for line in workflow.splitlines() if "python-version: ${{" in line
     )
     assert "github.event.schedule" not in matrix_line
-    assert "inputs.full_python_matrix" in matrix_line
+    assert (
+        "github.event_name == 'workflow_dispatch' && inputs.full_python_matrix"
+        in matrix_line
+    )
 
     changes = yaml.safe_load(workflow)["jobs"]["changes"]
     guard = next(

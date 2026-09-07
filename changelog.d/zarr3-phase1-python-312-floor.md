@@ -22,10 +22,11 @@ while push-to-dev and an explicit full-matrix dispatch exercise 3.12, 3.13 and 3
 `requires-python = ">=3.12"` has no ceiling — 3.13 and 3.14 are supported,
 `install-hatch` prefers them, and a developer's Hatch environment picks the newest
 interpreter on the box — so the version most people actually run is exercised
-within 24 h rather than on every PR. The full-matrix set is exactly what the
-published classifiers advertise (3.12–3.14), so "declared" and "tested" cannot
-drift apart; the `test` Hatch matrix carries the same three legs. The `tomli`
-backport is dropped from the dev extra now that `tomllib` is always stdlib.
+on every merge to `dev` rather than on every PR. The full-matrix set is exactly
+what the published classifiers advertise (3.12–3.14), so "declared" and
+"tested" cannot drift apart; the `test` Hatch matrix carries the same three
+legs. The `tomli` backport is dropped from the dev extra now that `tomllib` is
+always stdlib.
 
 `make setup-dev` now says so when it cannot find a supported interpreter. Both it
 and `install-hatch` scan newest-first for 3.12+, but the pipx branch is tried first

@@ -47,12 +47,9 @@ def _ci_legs(workflow: str) -> tuple[set[str], set[str]]:
     assert "github.event_name == 'push'" in line, (
         f"matrix must keep the full supported set on dev pushes: {line.strip()}"
     )
-    assert "github.event_name == 'workflow_dispatch'" in line, (
-        f"matrix must support explicit full-version dispatches: {line.strip()}"
-    )
-    assert "inputs.full_python_matrix" in line, (
-        f"matrix dispatch must require the full-matrix input: {line.strip()}"
-    )
+    assert (
+        "github.event_name == 'workflow_dispatch' && inputs.full_python_matrix" in line
+    ), f"matrix dispatch must require the full-matrix input: {line.strip()}"
     assert "github.event.schedule" not in line
     lists = re.findall(r"fromJSON\('(\[[^\]]*\])'\)", line)
     assert len(lists) == 2, f"matrix expression lost a branch: {line.strip()}"

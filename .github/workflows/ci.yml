@@ -20,7 +20,7 @@ on:
     # leg, with an explicit full-matrix override for manual diagnostics.
     inputs:
       full_python_matrix:
-        description: Dispatch on dev; full matrix; all dispatches repair cancelled push checks
+        description: Run the full 3.12/3.13/3.14 matrix (dispatch with --ref dev; every dispatch also repairs cancelled push checks)
         required: false
         default: false
         type: boolean
@@ -84,6 +84,8 @@ jobs:
       dom_rust: ${{ steps.filter.outputs.dom_rust }}
       dom_go: ${{ steps.filter.outputs.dom_go }}
     steps:
+      # Make an operator mistake loud, but preserve the fail-safe contract above:
+      # dependent jobs still run against and report on the dispatched commit.
       - name: Require a dev dispatch
         if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/dev'
         run: |
@@ -104,7 +106,7 @@ jobs:
         run: |
           base='${{ github.event.pull_request.base.sha }}'
           if [ -z "$base" ]; then
-            echo "push event (no PR base) -> full CI + documentation checks"
+            echo "push/dispatch event (no PR base) -> full CI + documentation checks"
             echo "docs_relevant=true" >> "$GITHUB_OUTPUT"
             printf "dom_py=true\ndom_ts=true\ndom_rust=true\ndom_go=true\n" >> "$GITHUB_OUTPUT"
             exit 0
@@ -1176,11 +1178,11 @@ jobs:
           /tmp/wheel-venv/bin/luxar --help > /dev/null
           /tmp/wheel-venv/bin/python -c "import luxar; print('import OK:', luxar.__version__)"
 
-  # A dispatched run tests the same immutable dev commit its contexts attest.
-  # Once that tree has proved the five protected
-  # contexts green, walk commits still ahead of main through DEV'S TIP newest first
-  # and rerun cancelled required jobs from up to two dev push suites. This repairs
-  # skipped commits without an unbounded runner burst.
+  # A dispatched run tests the same immutable dev commit its contexts attest. Once
+  # that tree has proved the five protected contexts green, walk commits still ahead
+  # of main through DEV'S TIP newest first and rerun cancelled required jobs from up
+  # to two dev push suites. This repairs skipped commits without an unbounded runner
+  # burst.
   #
   # The walk anchors on dev's tip resolved EXPLICITLY (git/refs/heads/dev), NOT on
   # the dispatched run's own ref/SHA. The checkout + ancestry guard below assert
@@ -1227,9 +1229,8 @@ jobs:
             fi
           done
 
-          # Resolve dev's tip EXPLICITLY as the WALK ANCHOR. ${GITHUB_SHA} is the
-          # dispatched event commit on dev, while the checked-out HEAD is the
-          # captured dev commit. Dev may advance while the window runs, so the
+          # Resolve dev's tip EXPLICITLY as the WALK ANCHOR. Dev may advance past
+          # the dispatched and checked-out commit while the window runs, so the
           # repair must walk through the current tip.
           dev_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/refs/heads/dev" \
             --jq '.object.sha') || dev_sha=""

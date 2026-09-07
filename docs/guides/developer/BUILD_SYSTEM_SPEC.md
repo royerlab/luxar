@@ -922,11 +922,10 @@ open **Settings → Secrets and variables → Actions → Variables**, create or
 `queue-watchdog` uses the stdlib-only `scripts/ci_queue_scan.py` helper to detect an
 obsidian-routed run whose jobs remain queued while no obsidian work is active. It
 sparse-checks out `scripts/` with credentials disabled, fails open on unreadable
-liveness data, and only cancels after two consecutive empty scans. A dispatched run
-checks out the scanner from `dev`. More precisely, it cancels only when jobs are still
-queued and two consecutive scans find no active obsidian job. The former scheduled queue
-redispatcher was removed because cancelling a queued run and creating a fresh attempt
-merely returns it to the same queue.
+liveness data, and only cancels when jobs are still queued and two consecutive scans
+find no active obsidian job. A dispatched run checks out the scanner from `dev`. The
+former scheduled queue redispatcher was removed because cancelling a queued run and
+creating a fresh attempt merely returns it to the same queue.
 
 The promotion service requests repair windows with `workflow_dispatch --ref dev`.
 That makes `github.sha`, the check-run attachment, the tree checked out by `changes`,
@@ -935,7 +934,9 @@ repair checkout reuses it. Dispatches have no PR base, so they select the whole 
 and documentation gate. Their `workflow_dispatch` concurrency group is separate from
 push runs; a newer dispatch can supersede an older dispatch without cancelling the
 merge push that produced the candidate commit. A dispatch requested on any other ref
-fails before checkout rather than attaching a dev-tree verdict to the wrong commit.
+fails `changes`, but the fail-safe suite jobs still run against and report on that same
+dispatched commit. The operator error is therefore loud and self-consistent, but wastes
+a repair window rather than aborting it.
 
 After a dispatched window completes the five protected contexts successfully,
 `repair-cancelled-push-checks` resolves dev's current tip and enumerates commits in
