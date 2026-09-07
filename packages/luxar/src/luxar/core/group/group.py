@@ -445,7 +445,7 @@ class Group(Node):
         """Add a sound node — an MP3/AAC clip that plays in the viewer.
 
         The one node type that is *heard* rather than drawn
-        (``docs/guides/specs/SOUND_SPEC.md``). Three placements:
+        (``docs/guides/specs/SOUND_SPEC.md``). Four placements:
 
         * **Everywhere** — ``positions=None, hidden=None``: an ambient bed that
           plays whatever the sliders say.
