@@ -48,6 +48,7 @@ import type { OverlayManager } from '../ui/overlay-manager';
 import type { PickingSystem } from '../rendering/picking/picking-system';
 import type { LabelLoader, ImageLabelLoader } from '../data/loaders';
 import { EventGroup } from '../utils/cross-layer/event-group';
+import { installCanvasGestureOwnership } from './app/interaction/canvas-gesture-ownership';
 import { setViewerContainer } from '../utils/viewer-container';
 import { assertBrowserEnvironment, assertThreeRevision } from './app/init/environment-guards';
 import { applyModuleOverrides } from './app/init/module-overrides';
@@ -409,6 +410,13 @@ export class LuxarApp {
    * outside the live window, and both are torn down through {@link events}.
    */
   private setupEmbedderHooks(canvas: HTMLCanvasElement): void {
+    // The viewer, not the browser, owns touch gestures over the canvas
+    // (`touch-action: none`, Safari gesture events) — for the embedder's
+    // canvas as much as the standalone page's. Guarded: tests hand in stubs.
+    if (canvas instanceof HTMLElement) {
+      installCanvasGestureOwnership(canvas, this.events);
+    }
+
     const dimsListener = (): void => {
       if (this.isInitialized) {
         this.embedderEvents.emit('dimensions-changed', this.getDimensions());
