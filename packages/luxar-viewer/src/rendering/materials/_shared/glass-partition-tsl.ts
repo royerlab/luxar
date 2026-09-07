@@ -29,7 +29,17 @@
  */
 
 import * as THREE from 'three';
-import { Discard, float, nodeObject, screenUV, texture, uniform, varying, vec2 } from 'three/tsl';
+import {
+  Discard,
+  float,
+  If,
+  nodeObject,
+  screenUV,
+  texture,
+  uniform,
+  varying,
+  vec2,
+} from 'three/tsl';
 import { Node, type NodeBuilder } from 'three/webgpu';
 import { getGlassDepthTexture } from './glass-partition';
 import type { TSLNode } from './tsl-helpers';
@@ -113,9 +123,11 @@ export class GlassFragmentDepthNode extends Node {
  * keeps every fragment; the texture sample is inside the same uniform branch.
  */
 export function glassPartitionGuardTSL(nodes: GlassPartitionTSLNodes, vClipZW: TSLNode): void {
-  const fragDepth: TSLNode = nodeObject(new GlassFragmentDepthNode(vClipZW));
-  const glassDepth: TSLNode = nodes.uGlassDepth.sample(screenUV);
-  const inFront: TSLNode = glassDepth.lessThan(float(1.0)).and(fragDepth.lessThan(glassDepth));
-  Discard(nodes.uGlassPartition.equal(float(1.0)).and(inFront));
-  Discard(nodes.uGlassPartition.equal(float(2.0)).and(inFront.not()));
+  If(nodes.uGlassPartition.notEqual(float(0.0)), () => {
+    const fragDepth: TSLNode = nodeObject(new GlassFragmentDepthNode(vClipZW));
+    const glassDepth: TSLNode = nodes.uGlassDepth.sample(screenUV);
+    const inFront: TSLNode = glassDepth.lessThan(float(1.0)).and(fragDepth.lessThan(glassDepth));
+    Discard(nodes.uGlassPartition.equal(float(1.0)).and(inFront));
+    Discard(nodes.uGlassPartition.equal(float(2.0)).and(inFront.not()));
+  });
 }

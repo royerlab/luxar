@@ -33,6 +33,10 @@
  * 5. **Pass C** — the data again in partition mode 2: only the fragments IN FRONT of the
  *    glass survive, and they land crisp on top of it. Modes 1 and 2 are complements of
  *    the one predicate, so every data fragment is drawn exactly once across A and C.
+ *    The one-layer depth map represents only the nearest glass front face. Overlapping
+ *    refracting glasses can paint over data in front of the farther glass; viewed from
+ *    inside a double-sided refracting glass, the front-face proxy writes no depth and
+ *    the shell can paint over enclosed data.
  *
  * **Under MSAA the copies are load-bearing, not an optimisation.** Three's WebGL
  * renderer resolves a multisampled target's colour to its texture at the end of every
@@ -255,6 +259,7 @@ export class DataRefractionSplit {
   private readonly blitCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   private readonly copyTarget: THREE.WebGLRenderTarget;
   private readonly depthOnlyMaterial = createDepthOnlyMaterial();
+  private readonly emptyGeometry = new THREE.BufferGeometry();
   private readonly proxies: THREE.Mesh[] = [];
   private readonly apiSurface: 'webgl2' | 'webgpu';
   private readonly collectRefractingGlass: (out: THREE.Mesh[]) => THREE.Mesh[];
@@ -262,7 +267,7 @@ export class DataRefractionSplit {
   private readonly setGlassPartition: (mode: GlassPartition) => void;
   /** Pass B's transmission target scale (see the module doc). */
   readonly transmissionResolutionScale: number;
-  /** Frames in which the split ran (a diagnostic; the debug surface reads it). */
+  /** Frames in which the split ran; the partition E2E spec reads it through the manager. */
   framesSplit = 0;
   /** `render()` calls the last split frame issued (4, 5 or 6 by backend and MSAA). */
   lastPassCount = 0;
@@ -324,7 +329,6 @@ export class DataRefractionSplit {
     camera: THREE.Camera,
     hdrTarget: THREE.WebGLRenderTarget
   ): boolean {
-    this.prime(renderer);
     const glass = this.collectRefractingGlass(this.glassScratch);
     if (glass.length === 0) return false;
     const r = renderer as unknown as SplitRenderer;
@@ -333,6 +337,7 @@ export class DataRefractionSplit {
       this.warnFallbackOnce();
       return false;
     }
+    this.prime(renderer);
     const unpartitioned = this.collectUnpartitionedMeshes(this.unpartitionedScratch);
     this.syncProxies(glass);
     const borrowed = this.borrow(r, scene, camera, glass, unpartitioned);
@@ -480,11 +485,12 @@ export class DataRefractionSplit {
     this.lastPassCount++;
   }
 
-  /** Release both targets, the proxies' material and the quads (not the shared depth texture's owner). */
+  /** Release the targets, including the shared depth texture's GPU resources, and owned helpers. */
   dispose(): void {
     this.copyTarget.dispose();
     this.glassDepthTarget.dispose();
     this.depthOnlyMaterial.dispose();
+    this.emptyGeometry.dispose();
     this.proxies.length = 0;
     this.glassDepthScene.clear();
     this.screenQuad.geometry.dispose();
@@ -525,7 +531,10 @@ export class DataRefractionSplit {
       proxy.matrixWorld.copy(glass[i].matrixWorld);
       proxy.visible = true;
     }
-    for (let i = glass.length; i < this.proxies.length; i++) this.proxies[i].visible = false;
+    for (let i = glass.length; i < this.proxies.length; i++) {
+      this.proxies[i].geometry = this.emptyGeometry;
+      this.proxies[i].visible = false;
+    }
   }
 
   private warnFallbackOnce(): void {

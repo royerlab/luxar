@@ -198,7 +198,7 @@ describe('renderSceneToHdr — the refraction split (spec §3.4 Phase 3)', () =>
     expect(rig.calls[0]).toMatchObject({ what: 'scene', target: hdrTarget, autoClear: true });
   });
 
-  it('renders once when no visible glass asks to refract, having primed the depth target', () => {
+  it('renders once without allocating the depth target when no visible glass asks to refract', () => {
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x101010);
     const camera = new THREE.PerspectiveCamera();
@@ -208,25 +208,41 @@ describe('renderSceneToHdr — the refraction split (spec §3.4 Phase 3)', () =>
 
     renderSceneToHdr(ctx);
 
-    // The prime: bind the glass depth target, clear it, hand the HDR target back.
-    expect(rig.raw.setRenderTarget.mock.calls.map((c) => c[0])).toEqual([
-      hdrTarget,
-      split.glassDepthTarget,
-      hdrTarget,
-    ]);
-    expect(rig.raw.clear).toHaveBeenCalledTimes(2);
+    expect(rig.raw.setRenderTarget.mock.calls.map((c) => c[0])).toEqual([hdrTarget]);
+    expect(rig.raw.clear).toHaveBeenCalledTimes(1);
     expect(rig.calls).toHaveLength(1);
     expect(rig.calls[0]).toMatchObject({ what: 'scene', target: hdrTarget, cameraMask: DEFAULT });
     expect(split.framesSplit).toBe(0);
     expect(rig.partitionWrites).toEqual([]);
     expect(scene.children).not.toContain(split.screenQuad);
 
-    // Idempotent until a resize.
+    // Resizing still must not allocate a target until glass actually needs the split.
     renderSceneToHdr(ctx);
-    expect(rig.raw.clear).toHaveBeenCalledTimes(3);
+    expect(rig.raw.clear).toHaveBeenCalledTimes(2);
     split.setSize(8, 8);
     renderSceneToHdr(ctx);
-    expect(rig.raw.clear).toHaveBeenCalledTimes(5);
+    expect(rig.raw.clear).toHaveBeenCalledTimes(3);
+  });
+
+  it('releases geometry from surplus depth proxies when the glass set shrinks', () => {
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera();
+    const retiredGeometry = new THREE.BufferGeometry();
+    retiredGeometry.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0], 3));
+    const glass = [makeMesh(), new THREE.Mesh(retiredGeometry, new THREE.Material())];
+    glass[1].updateMatrixWorld(true);
+    const rig = makeRig(scene, { glass });
+    const split = rig.split();
+    const { ctx } = makeCtx(rig.renderer, scene, camera, split);
+
+    renderSceneToHdr(ctx);
+    glass.pop();
+    renderSceneToHdr(ctx);
+
+    const surplus = split.glassDepthScene.children[1] as THREE.Mesh;
+    expect(surplus.visible).toBe(false);
+    expect(surplus.geometry).not.toBe(retiredGeometry);
+    expect(surplus.geometry.getAttribute('position')).toBeUndefined();
   });
 
   it('WebGL: glass depth, data behind, blit, glass + quad, data in front — every borrowed state handed back', () => {

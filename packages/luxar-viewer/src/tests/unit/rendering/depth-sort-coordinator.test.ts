@@ -5328,6 +5328,24 @@ describe('depth-sort coordinator — layer_order bands', () => {
     warn.mockRestore();
   });
 
+  it('Phase 2 glass inside a ranked container keeps its authored leading rank', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const glass = makeGlassMesh(-20);
+    setLevel(glass, 0);
+    const container = makeGSplatsMesh(2, 'volumetric');
+    container.geometry.boundingSphere!.center.set(0, 0, -20);
+    container.geometry.boundingSphere!.radius = 100;
+    commitGlass(coord, glass);
+    coord.noteDepthSortCommit(container, new Float32Array([0, 0, -1]), 1);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(glass.renderOrder).toBe(-1);
+    expect(container.renderOrder).toBe(1);
+  });
+
   it('glass-first at -1, emissive at 0 and glass-last ranked, all in one scene', async () => {
     const coord = await loadCoordinator();
     coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });

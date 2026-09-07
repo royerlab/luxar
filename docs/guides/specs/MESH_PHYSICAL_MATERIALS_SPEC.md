@@ -406,6 +406,10 @@ described last below.
   quad-corner attribute) remapped to window depth per coordinate system at
   build time, and samples at `screenUV` exactly as three's `viewportDepthTexture`
   does, so the depth texture's Y flip on the GLSL builder is applied for free.
+  The depth map stores only the nearest refracting front face, so overlapping
+  refracting glasses can paint over data in front of the farther glass. Viewed from
+  inside a double-sided refracting glass, the front-face proxy writes no depth and the
+  shell can paint over enclosed data.
 - **Two things three does that the split must undo.** (1) Both renderers FORCE a
   clear at the start of every `render()` whose scene has a colour background,
   whatever `autoClear` says — passes B and C run with `scene.background` taken away

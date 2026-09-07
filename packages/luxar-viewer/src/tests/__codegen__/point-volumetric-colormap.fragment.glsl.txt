@@ -111,34 +111,41 @@ void main() {
 	// flow
 	// code
 
-	nodeVar0 = ( nodeUniform2 * vec3( ( vec2( gl_FragCoord.xy.x, nodeUniform3.y - gl_FragCoord.xy.y ) / nodeUniform3 ), 1.0 ) ).xy;
-	nodeVar2 = bool( nodeUniform4 );
 
-	if ( nodeVar2 ) {
+	if ( ( nodeUniform0 != 0.0 ) ) {
 
-		nodeVar3 = nodeVar0;
-		nodeVar1 = vec2( nodeVar3.x, 1.0 - nodeVar3.y );
+		nodeVar0 = ( nodeUniform2 * vec3( ( vec2( gl_FragCoord.xy.x, nodeUniform3.y - gl_FragCoord.xy.y ) / nodeUniform3 ), 1.0 ) ).xy;
+		nodeVar2 = bool( nodeUniform4 );
 
-	} else {
+		if ( nodeVar2 ) {
 
-		nodeVar1 = nodeVar0;
+			nodeVar3 = nodeVar0;
+			nodeVar1 = vec2( nodeVar3.x, 1.0 - nodeVar3.y );
 
-	}
+		} else {
 
-	nodeVar4 = texture( nodeUniform1, nodeVar1 ).x;
-	nodeVar5 = ( ( nodeVar4 < 1.0 ) && ( ( ( ( nodeVarying7.x / nodeVarying7.y ) * 0.5 ) + 0.5 ) < nodeVar4 ) );
+			nodeVar1 = nodeVar0;
 
-	if ( ( ( nodeUniform0 == 1.0 ) && nodeVar5 ) ) {
+		}
 
-		discard;
+		nodeVar4 = texture( nodeUniform1, nodeVar1 ).x;
+		nodeVar5 = ( ( nodeVar4 < 1.0 ) && ( ( ( ( nodeVarying7.x / nodeVarying7.y ) * 0.5 ) + 0.5 ) < nodeVar4 ) );
+
+		if ( ( ( nodeUniform0 == 1.0 ) && nodeVar5 ) ) {
+
+			discard;
 
 
-	}
+		}
 
 
-	if ( ( ( nodeUniform0 == 2.0 ) && ( ! nodeVar5 ) ) ) {
+		if ( ( ( nodeUniform0 == 2.0 ) && ( ! nodeVar5 ) ) ) {
 
-		discard;
+			discard;
+
+
+		}
+
 
 
 	}
