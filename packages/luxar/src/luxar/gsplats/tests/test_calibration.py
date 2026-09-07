@@ -879,6 +879,12 @@ class TestCalibrateSmoke:
         )
         assert result.held_out_peak_selected.k_star == expected.k_star
         assert result.held_out_peak_selected.type == expected.type
+        assert result.held_out_peak_selected.confidence_db == pytest.approx(
+            expected.confidence_db
+        )
+        assert result.held_out_peak_selected.confidence_db != pytest.approx(
+            result.held_out_peak.confidence_db, abs=1e-4
+        )
 
     def test_invalid_metric_is_rejected_before_fitting(self, monkeypatch):
         called = False
