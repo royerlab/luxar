@@ -452,6 +452,16 @@ describe('runInitPipeline', () => {
 
       expect(sceneStub.init).toHaveBeenCalledWith(expect.objectContaining({ blendWarmup: false }));
     });
+
+    it('keeps blend warm-up enabled by default on desktop', async () => {
+      const { factories, sceneStub } = makeFactoryOverrides();
+      const ports = makePorts();
+      ports.options.factories = factories as never;
+
+      await runInitPipeline(ports, {});
+
+      expect(sceneStub.init).toHaveBeenCalledWith(expect.objectContaining({ blendWarmup: true }));
+    });
   });
 
   describe('sceneSrc resolution', () => {
