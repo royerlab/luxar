@@ -487,7 +487,7 @@ export class AudioEngine {
     if (!Number.isFinite(value)) return;
     this.masterGain = Math.min(2, Math.max(0, value));
     this.listener?.setMasterVolume(this.effectiveMaster());
-    saveAudioPrefs({ muted: this.muted, masterGain: this.masterGain });
+    saveAudioPrefs({ masterGain: this.masterGain });
     this.deps.notifyUiChanged();
   }
 
@@ -501,7 +501,7 @@ export class AudioEngine {
     if (!muted) this.sceneEnabled = true;
     this.listener?.setMasterVolume(this.effectiveMaster());
     for (const node of this.nodes.values()) node.setMuted(muted);
-    saveAudioPrefs({ muted: this.muted, masterGain: this.masterGain });
+    saveAudioPrefs({ muted: this.muted });
     if (muted) this.gate.hide();
     else this.checkGate();
     this.deps.notifyUiChanged();

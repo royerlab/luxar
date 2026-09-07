@@ -396,6 +396,16 @@ describe('AudioEngine — mute, prefs and the autoplay gate', () => {
     expect(h.engine.getMasterGain()).toBe(0.4);
   });
 
+  it('muting does not persist the current scene-authored master gain', () => {
+    const h = makeHarness();
+    h.engine.applySceneConfig({ masterGain: 0.3 });
+    h.engine.setMuted(true);
+    h.engine.setMuted(false);
+    expect(JSON.parse(localStorage.getItem(StorageKeys.audio)!)).toEqual({ muted: false });
+    h.engine.applySceneConfig({ masterGain: 0.9 });
+    expect(h.engine.getMasterGain()).toBe(0.9);
+  });
+
   it('scene enabled:false reads as muted and shows no gate; the rail unmute re-enables', () => {
     const h = makeHarness('suspended');
     h.root.add(soundPlaceholder('/bed', { trigger: 'continuous' }));

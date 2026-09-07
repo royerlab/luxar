@@ -38,13 +38,19 @@ export function loadAudioPrefs(): Partial<AudioPrefs> {
   }
 }
 
-/** Persist the preferences (quota errors and private-mode refusals are swallowed). */
-export function saveAudioPrefs(prefs: AudioPrefs): void {
+/** Merge and persist chosen fields (quota/private-mode refusals are swallowed). */
+export function saveAudioPrefs(patch: Partial<AudioPrefs>): void {
   try {
     if (typeof localStorage === 'undefined') return;
+    const prefs = { ...loadAudioPrefs(), ...patch };
     localStorage.setItem(
       StorageKeys.audio,
-      JSON.stringify({ muted: prefs.muted, masterGain: clamp01to2(prefs.masterGain) ?? 0.8 })
+      JSON.stringify({
+        ...(prefs.muted !== undefined ? { muted: prefs.muted } : {}),
+        ...(prefs.masterGain !== undefined
+          ? { masterGain: clamp01to2(prefs.masterGain) ?? 0.8 }
+          : {}),
+      })
     );
   } catch {
     /* ignore */
