@@ -110,6 +110,17 @@ def _stamp_optional(attrs: Dict[str, Any], **values: Optional[Any]) -> None:
             attrs[key] = value
 
 
+def _coerce_positions(positions: Any, name: str) -> np.ndarray:
+    """Return a non-empty two-dimensional float32 positions array."""
+    pos_arr = np.asarray(positions, dtype=np.float32)
+    if pos_arr.ndim != 2 or pos_arr.shape[0] == 0:
+        raise ValueError(
+            f"positions for sound '{name}' must have shape (K, D) with "
+            f"K >= 1, got {pos_arr.shape}"
+        )
+    return pos_arr
+
+
 def _resolve_placement(
     scene: Any,
     name: str,
@@ -150,12 +161,7 @@ def _resolve_placement(
             hidden_extend if extend_to_all is None else extend_to_all,
         )
     if positions is not None:
-        pos_arr = np.asarray(positions, dtype=np.float32)
-        if pos_arr.ndim != 2 or pos_arr.shape[0] == 0:
-            raise ValueError(
-                f"positions for sound '{name}' must have shape (K, D) with "
-                f"K >= 1, got {pos_arr.shape}"
-            )
+        pos_arr = _coerce_positions(positions, name)
         return pos_arr, True if spatial is None else bool(spatial), extend_to_all
     if attach_name is not None:
         # Follows the target's centre, live everywhere.
