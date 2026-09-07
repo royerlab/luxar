@@ -2544,21 +2544,55 @@ describe('MultiLevelCachingStore', () => {
 
     it('sizes the pending-byte budget from the heap remainder, not from L1 (#2561)', () => {
       // A pending write's buffer IS the L1 entry's buffer, so the allowance
-      // must not track the L1 budget: two very different L1 sizes resolve to
-      // the same cap.
+      // must not track the L1 budget. This is where the old formula lived
+      // (max(l1MaxSize, 64MB)), so the L1 OPTION is what has to be varied: a
+      // wide spread of L1 sizes — including the 0 a tight heap resolves to and
+      // one far above the old 64MB floor — must all yield the same cap.
       const constrainedBudgets = computeCacheBudgets(undefined, 16 * 1024 * 1024);
-      const constrainedStore = new MultiLevelCachingStore('https://example.com/data.zarr', {
-        l1MaxSize: constrainedBudgets.l1Bytes,
-      });
-      const roomyStore = new MultiLevelCachingStore('https://example.com/data.zarr', {
-        l1MaxSize: 80 * 1024 * 1024,
-      });
-
       expect(constrainedBudgets.l1Bytes).toBe(0);
-      expect(constrainedStore.getStats().l2WriteQueue.maxBytes).toBe(
-        computeOpfsWriteQueueBudgetBytes()
+
+      const expected = computeOpfsWriteQueueBudgetBytes();
+      const l1Sizes = [
+        constrainedBudgets.l1Bytes,
+        16 * 1024 * 1024,
+        100 * 1024 * 1024,
+        512 * 1024 * 1024,
+      ];
+      const resolved = l1Sizes.map(
+        (l1MaxSize) =>
+          new MultiLevelCachingStore('https://example.com/data.zarr', {
+            l1MaxSize,
+          }).getStats().l2WriteQueue.maxBytes
       );
-      expect(roomyStore.getStats().l2WriteQueue.maxBytes).toBe(computeOpfsWriteQueueBudgetBytes());
+
+      // The old formula would have produced 64MB / 64MB / 100MB / 512MB here,
+      // i.e. varied with L1 — so this array being constant is the assertion.
+      expect(resolved).toEqual(l1Sizes.map(() => expected));
+    });
+
+    it('resolves the default pending-byte budget from a MEASURED heap', () => {
+      // The case above compares against `computeOpfsWriteQueueBudgetBytes()`,
+      // which in this environment has no heap signal and returns the 256MB
+      // no-signal fallback — the same constant the EAGER working-set budget
+      // falls back to. So that comparison alone would still pass if the
+      // constructor were wired to `computeWorkingSetBudgetBytes()`, which
+      // takes half the remainder and would double the production cap.
+      // Stubbing a real heap separates them: on 4GiB the queue resolves to
+      // 4096MiB × 0.8 × 0.4 × 0.25 = 327.68MiB, while the working set would
+      // give 512MB (its cap) and either fallback would give 256MB.
+      const realPerformance = globalThis.performance;
+      vi.stubGlobal('performance', {
+        now: () => realPerformance.now(),
+        memory: { jsHeapSizeLimit: 4 * 1024 * 1024 * 1024 },
+      });
+      try {
+        const s = new MultiLevelCachingStore('https://example.com/data.zarr', {
+          l1MaxSize: 20 * 1024 * 1024,
+        });
+        expect(s.getStats().l2WriteQueue.maxBytes).toBe(343_597_383);
+      } finally {
+        vi.stubGlobal('performance', realPerformance);
+      }
     });
 
     it('honours an explicit opfsWriteQueueMaxBytes option', () => {

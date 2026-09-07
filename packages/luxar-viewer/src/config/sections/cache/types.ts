@@ -51,8 +51,11 @@ export interface CacheConfig {
    * ones to drain in order (L2 is best-effort — L1 still serves the session and
    * the next session re-fetches). Bounds the task count; retained chunk bytes
    * are separately capped from the non-cache heap remainder
-   * (`cache/heap-budget.ts::computeOpfsWriteQueueBudgetBytes`). The depth limit
-   * is secondary unless mean pending chunks are below roughly 4-6KB.
+   * (`cache/heap-budget.ts::computeOpfsWriteQueueBudgetBytes`), so which cap
+   * binds first is heap-dependent: the crossover is that byte cap divided by
+   * this count — ~32KiB per pending chunk at the 512MB ceiling, 16KiB with no
+   * heap signal, ~4KiB were the allowance only 64MB. For typical 64KB chunks
+   * the byte cap binds first and this depth limit is the secondary bound.
    * Default: 16384.
    */
   opfsWriteQueueMax: number;

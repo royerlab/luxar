@@ -21,9 +21,13 @@
  * finds on disk. `pump()` takes from the same oldest end the drop loop used to
  * evict from, so drop-oldest kept discarding the entry the pump was about to
  * run and left a scattered remnant — chunks from all over the store, of which
- * no contiguous region is complete. Dropping the arrival lets the oldest
- * cap-worth drain in order, leaving a CONTIGUOUS PREFIX of the load that a warm
- * revisit can actually serve from. The drop COUNT is the same either way.
+ * no contiguous region is complete. Dropping the arrival lets the oldest end
+ * drain in enqueue order, so what lands on disk is CONTIGUOUS RUNS from that
+ * end (one prefix only while nothing drains; with the pump running, a run per
+ * burst) — which is what a warm revisit can actually serve from. Nor does it
+ * cost extra drops: the old loop evicted until BOTH caps fit, so one large
+ * arrival could displace several small pending entries, making the new policy's
+ * count never higher and strictly lower whenever sizes are mixed.
  *
  * Correctness is the caller's (MultiLevelCachingStore) responsibility: the
  * enqueued task must re-check staleness (disposed / dataAbort / epoch) at drain
@@ -37,7 +41,12 @@ export interface OpfsWriteQueueOptions {
   concurrency: number;
   /** Max pending (not-yet-started) tasks; an overflowing arrival is dropped. */
   maxDepth: number;
-  /** Max bytes retained by pending tasks; an overflowing arrival is dropped. */
+  /**
+   * Max bytes retained by pending tasks; an overflowing arrival is dropped.
+   * Pass a real budget: a non-positive or non-finite value clamps to a 1-BYTE
+   * cap, under which every write of a non-empty chunk drops. `0` is not an
+   * "unbounded" idiom here.
+   */
   maxBytes: number;
 }
 
@@ -87,7 +96,10 @@ export class OpfsWriteQueue {
   constructor(opts: OpfsWriteQueueOptions) {
     this.concurrency = Math.max(1, Math.floor(opts.concurrency));
     this.maxDepth = Math.max(1, Math.floor(opts.maxDepth));
-    this.maxBytes = Math.max(1, Math.floor(opts.maxBytes));
+    // A non-finite cap would disable the byte bound entirely rather than
+    // clamping it — `NaN > maxBytes` is false for every comparison — so it
+    // resolves to the same floor a 0 or negative value gets.
+    this.maxBytes = Number.isFinite(opts.maxBytes) ? Math.max(1, Math.floor(opts.maxBytes)) : 1;
   }
 
   /**
@@ -98,6 +110,18 @@ export class OpfsWriteQueue {
    * (see the module docstring for why the oldest end is the one worth keeping).
    */
   enqueue(key: string, run: () => Promise<void>, byteLength: number): void {
+    // A size we cannot account for fails CLOSED: treat it as over-cap and drop
+    // it before touching any state. It must not reach `pendingBytes` (NaN
+    // there disables the bound for the session, since every `NaN > maxBytes`
+    // test is false), and charging it 0 instead would be the opposite error —
+    // admitting an unmeasured payload for free, past a cap whose whole job is
+    // to bound retained bytes. Any already-queued task for this key survives.
+    if (!Number.isFinite(byteLength)) {
+      this.droppedCount++;
+      this.pump();
+      return;
+    }
+
     // Coalesce: delete-then-set so the re-enqueued key becomes newest in FIFO
     // order and its task is the latest.
     const previous = this.pending.get(key);

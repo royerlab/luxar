@@ -23,13 +23,20 @@ This package implements a transparent caching and prefetching layer for zarr dat
   of the corresponding non-cache remainder (capped at 512 MiB) for overlapping
   line decode/projection/staging work.
 - **L2 write-queue retain (`heap-budget.ts::computeOpfsWriteQueueBudgetBytes`)**:
-  resolves the same way, taking half of that non-cache remainder (capped at
-  512 MiB, 256 MiB with no memory signal) as the bytes pending background OPFS
-  writes may hold. Deliberately NOT derived from the L1 budget: a pending
-  write's buffer is the same one L1 already holds and bounds, so an
-  L1-resident pending write costs a reference rather than a second copy
-  (#2561). An overflowing arrival is the entry dropped, so the oldest
-  cap-worth drains in order and leaves a contiguous prefix on disk.
+  resolves the same way, taking a QUARTER of that non-cache remainder (capped
+  at 512 MiB, 256 MiB with no memory signal) as the bytes pending background
+  OPFS writes may hold — 328 MB on a 4 GiB heap, which clears the 214 MB peak
+  and 277 MB whole-store ceiling of the largest audited scene by 1.18×, and
+  binds again below roughly a 2.7 GiB heap (heap-relative by design). The
+  eager working set takes half of the same remainder and the last quarter is
+  claimed by neither; that bounds these two shares, not total commitment —
+  the eager half is handed in full to three independent consumers (see the
+  share constants in `heap-budget.ts`).
+  Deliberately NOT derived from the L1 budget: a pending write's buffer is the
+  same one L1 already holds and bounds, so an L1-resident pending write costs a
+  reference rather than a second copy (#2561). An overflowing arrival is the
+  entry dropped, so the oldest end drains in order and what lands on disk is
+  contiguous runs of the load.
 - **L0 (Decompressed)**: LRU cache for decoded TypedArrays (eliminates Blosc decompression); heap-aware budget, config `l0MaxSizeMB` (200) is the ceiling — see `heap-budget.ts`
 - **L1 (Memory)**: segmented LRU cache with metadata protection; heap-aware budget, config `l1MaxSizeMB` (100) is the ceiling
 - **L2 (OPFS)**: 2GB persistent storage surviving browser restarts (disk — fixed, not heap-sized)
@@ -446,9 +453,10 @@ new MultiLevelCachingStore(source: string | ChunkSource, options?: {
   opfsWriteQueueMax?: number;     // L2 write-queue max depth (default: config.cache.opfsWriteQueueMax)
   opfsWriteQueueMaxBytes?: number; // Max bytes retained by pending L2 writes
                                    // (default: computeOpfsWriteQueueBudgetBytes() —
-                                   // half the non-cache heap remainder, capped at
-                                   // 512MB. NOT derived from the L1 budget: a
-                                   // pending write's buffer IS the L1 entry's.)
+                                   // a quarter of the non-cache heap remainder,
+                                   // capped at 512MB. NOT derived from the L1
+                                   // budget: a pending write's buffer IS the L1
+                                   // entry's.)
 })
 ```
 

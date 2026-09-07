@@ -173,6 +173,48 @@ export async function readOpfsDropped(page: Page): Promise<number | null> {
   });
 }
 
+/**
+ * `__luxarDebug.cache.getStats().l2.writes`, or null when unavailable. The
+ * LIVENESS counterpart of {@link readOpfsDropped}: zero drops is only good news
+ * if the tier actually wrote something, and an L2 that never ran (no store, or
+ * the OPFS circuit breaker tripped) reports zero drops too.
+ */
+export async function readOpfsWrites(page: Page): Promise<number | null> {
+  return page.evaluate(() => {
+    try {
+      const d = (
+        window as unknown as {
+          __luxarDebug: { cache?: { getStats: () => { l2?: { writes?: number } } } };
+        }
+      ).__luxarDebug;
+      return d.cache?.getStats().l2?.writes ?? null;
+    } catch {
+      return null;
+    }
+  });
+}
+
+/**
+ * `__luxarDebug.cache.getStats().l2WriteQueue.maxBytes` — the session's
+ * resolved retained-byte allowance, or null when unavailable. Needed to tell a
+ * cap REGRESSION from the heap-relative behaviour that is by design: a small
+ * heap resolves to a small allowance and is then expected to drop writes.
+ */
+export async function readOpfsWriteQueueMaxBytes(page: Page): Promise<number | null> {
+  return page.evaluate(() => {
+    try {
+      const d = (
+        window as unknown as {
+          __luxarDebug: { cache?: { getStats: () => { l2WriteQueue?: { maxBytes?: number } } } };
+        }
+      ).__luxarDebug;
+      return d.cache?.getStats().l2WriteQueue?.maxBytes ?? null;
+    } catch {
+      return null;
+    }
+  });
+}
+
 /** Timestamp (ms since navigation) at which `getState` became available, or null. */
 export async function waitForStateReady(page: Page, timeout: number): Promise<number | null> {
   try {

@@ -170,11 +170,53 @@ describe('OpfsWriteQueue', () => {
     expect(q.stats().pendingBytes).toBe(0);
   });
 
+  it('admits an arrival that lands exactly ON maxBytes', async () => {
+    // The cap is `pendingBytes > maxBytes`, not `>=`: filling the retain to
+    // exactly the cap is legal. Without this case, tightening the comparison
+    // to `>=` would pass the whole file (the depth boundary is covered above).
+    const q = new OpfsWriteQueue({ concurrency: 1, maxDepth: 100, maxBytes: 8 });
+    const gate = makeGate();
+    const ran: string[] = [];
+
+    q.enqueue(
+      'busy',
+      async () => {
+        await gate.promise;
+        ran.push('busy');
+      },
+      1
+    );
+    q.enqueue(
+      'a',
+      async () => {
+        ran.push('a');
+      },
+      4
+    );
+    q.enqueue(
+      'b',
+      async () => {
+        ran.push('b');
+      },
+      4
+    );
+
+    // 4 + 4 === 8 === maxBytes: both pending, nothing dropped.
+    expect(q.stats()).toMatchObject({ depth: 2, pendingBytes: 8, dropped: 0 });
+
+    gate.release();
+    await q.drain();
+
+    expect(ran).toEqual(['busy', 'a', 'b']);
+    expect(q.stats().pendingBytes).toBe(0);
+  });
+
   it('bounds retained bytes under a burst and leaves a contiguous runnable prefix', async () => {
     // The #2561 property: with a small byte cap and a burst larger than it, the
-    // retain must never exceed the cap AND what actually reaches disk must be a
-    // contiguous prefix of the load (what a warm revisit can serve from), not
-    // the scattered newest remnant drop-oldest leaves behind.
+    // retain must never exceed the cap AND what reaches disk must be a
+    // contiguous run from the oldest end (what a warm revisit can serve from),
+    // not the scattered newest remnant drop-oldest leaves behind. Nothing
+    // drains during the burst here, so that run is the whole prefix.
     const maxBytes = 10;
     const bytesEach = 4;
     const q = new OpfsWriteQueue({ concurrency: 1, maxDepth: 100, maxBytes });
@@ -283,6 +325,66 @@ describe('OpfsWriteQueue', () => {
     expect(q.stats().concurrency).toBe(1);
     expect(q.stats().maxDepth).toBe(1);
     expect(q.stats().maxBytes).toBe(1);
+    // A non-finite cap must clamp too, not disable the bound: NaN fails every
+    // `pendingBytes > maxBytes` comparison, so it would be no cap at all.
+    expect(
+      new OpfsWriteQueue({ concurrency: 1, maxDepth: 1, maxBytes: Number.NaN }).stats().maxBytes
+    ).toBe(1);
+  });
+
+  it('drops a non-finite byteLength instead of admitting it unaccounted', async () => {
+    // Fails CLOSED: an unmeasurable size is treated as over-cap. Letting it in
+    // at 0 bytes would admit an unbounded payload for free, and letting NaN
+    // reach `pendingBytes` would disable the cap for the session (every
+    // `NaN > maxBytes` test is false).
+    const q = new OpfsWriteQueue({ concurrency: 1, maxDepth: 100, maxBytes: 10 });
+    const gate = makeGate();
+    const ran: string[] = [];
+
+    q.enqueue(
+      'busy',
+      async () => {
+        await gate.promise;
+        ran.push('busy');
+      },
+      1
+    );
+    q.enqueue(
+      'nan',
+      async () => {
+        ran.push('nan');
+      },
+      Number.NaN
+    );
+
+    // Dropped on arrival: nothing queued, accounting untouched (not NaN).
+    expect(q.stats()).toMatchObject({ depth: 0, pendingBytes: 0, dropped: 1 });
+
+    // The cap still binds afterwards: 8 fits, the next 8 would reach 16 > 10.
+    q.enqueue(
+      'a',
+      async () => {
+        ran.push('a');
+      },
+      8
+    );
+    expect(q.stats().pendingBytes).toBe(8);
+    q.enqueue(
+      'b',
+      async () => {
+        ran.push('b');
+      },
+      8
+    );
+    expect(q.stats().pendingBytes).toBe(8);
+    expect(q.stats().dropped).toBe(2); // the NaN arrival plus 'b'
+
+    gate.release();
+    await q.drain();
+
+    // 'nan' never ran (dropped, not queued); 'b' lost to the byte cap.
+    expect(ran).toEqual(['busy', 'a']);
+    expect(q.stats().pendingBytes).toBe(0);
   });
 
   it('holds the concurrency cap even if a task re-enters enqueue() during its own run', async () => {

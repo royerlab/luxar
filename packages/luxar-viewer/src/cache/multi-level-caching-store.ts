@@ -66,6 +66,9 @@ export interface MultiLevelCachingStoreOptions {
    * share, no longer derived from the L1 budget because the pending buffer IS
    * the L1 entry's buffer (see the enqueue site in `getResult`), so an
    * L1-resident pending write costs a reference rather than a second copy.
+   * Pass a real budget when overriding: the queue clamps a non-positive or
+   * non-finite value to a 1-BYTE cap, i.e. every write drops — `0` does not
+   * mean "unbounded".
    */
   opfsWriteQueueMaxBytes?: number;
 }

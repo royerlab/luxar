@@ -37,18 +37,34 @@ const MB = 1024 * 1024;
  */
 const CACHE_SHARE_OF_TARGET = 0.6;
 const NON_CACHE_SHARE_OF_TARGET = 1 - CACHE_SHARE_OF_TARGET;
+/**
+ * How the two shares DERIVED HERE divide the non-cache remainder: eager line
+ * working set 0.5, L2 write-queue retain 0.25, leaving a quarter of the
+ * remainder unclaimed by either. That is a bound on what THESE TWO numbers
+ * hand out, not on total commitment — the eager 0.5 is claimed independently,
+ * in full, by three consumers (`createLineWorkingSetGate` in
+ * `data/scene-loader/nodes/load-children-concurrently.ts`,
+ * `RefinementResidencyBudget.forSession` in
+ * `data/scene-loader/progressive/residency-budget.ts`, and
+ * `rendering/gpu-byte-budget.ts` as a min-candidate), so on a 4 GiB heap the
+ * commitments already total
+ * 3 × 512 + 328 MB against a 1311 MB remainder. Keep that ledger in mind when
+ * retuning: the queue takes a quarter rather than a half precisely because
+ * these are ceilings on demand-filled structures competing for one heap, and
+ * a second half-share would let two of them alone spend the whole remainder.
+ */
 const EAGER_WORKING_SET_SHARE_OF_REMAINDER = 0.5;
 const EAGER_WORKING_SET_CAP_BYTES = 512 * MB;
 /** Historical line-admission fallback when no session memory signal exists. */
 const EAGER_WORKING_SET_FIXED_FALLBACK_BYTES = 256 * MB;
 
 /**
- * The L2 (OPFS) write queue's share of the same non-cache heap remainder. Its
- * own constants deliberately — the eager working set and the write queue are
- * unrelated consumers, so one's ceiling must never move because the other's was
- * retuned.
+ * The L2 (OPFS) write queue's share of that same remainder (see the split
+ * above). Its own constants deliberately — the eager working set and the write
+ * queue are unrelated consumers, so one's ceiling must never move because the
+ * other's was retuned.
  */
-const OPFS_WRITE_QUEUE_SHARE_OF_REMAINDER = 0.5;
+const OPFS_WRITE_QUEUE_SHARE_OF_REMAINDER = 0.25;
 /** Ceiling so a very large heap can't let the queue pin an absurd retain. */
 const OPFS_WRITE_QUEUE_CAP_BYTES = 512 * MB;
 /** No-signal fallback: clears today's largest demo while still being a bound. */
@@ -219,10 +235,12 @@ function nonCacheRemainderBytes(
 
 /**
  * The eager child loader's share of the heap headroom left outside the cache
- * pool (`nonCacheRemainderBytes`). Half of that shared remainder stays
- * available for render, WASM, prefetch, and unrelated scene-graph work, while
- * the absolute cap prevents a large V8 heap limit from recreating an eight-wide
- * allocation spike.
+ * pool (`nonCacheRemainderBytes`): half of it. The L2 write-queue retain takes
+ * a quarter (see {@link computeOpfsWriteQueueBudgetBytes}) and the last quarter
+ * is claimed by neither, while the absolute cap prevents a large V8 heap limit
+ * from recreating an eight-wide allocation spike. Note that this budget is
+ * handed to several independent consumers in full — see the ledger on the share
+ * constants — so it bounds each of them, not their sum.
  *
  * @param heapLimitBytes - Override for the device heap limit (tests). When
  *   omitted, {@link readHeapLimitBytes} is consulted; invalid explicit values
@@ -259,15 +277,28 @@ export function computeWorkingSetBudgetBytes(
  * the 214 MB a single pathology scene streams, which re-introduced the write
  * drops #2528 had removed (0 → 3 966, #2561).
  *
- * Resolved worst case (`targetHeapUsage` 0.8, so remainder = heap × 0.8 × 0.4,
- * of which this takes half):
- *   - 4 GiB Chrome heap: remainder 1310 MB, half 655 MB → capped at 512 MB.
- *   - 2 GiB heap: remainder 655 MB → 328 MB.
- *   - no heap signal: 256 MB.
- * A genuinely small heap therefore gets a proportionally small bound, which is
- * the correct answer there — hence no absolute floor on the measured path: a
- * fixed 256 MB floor on a 1 GiB heap (whose whole non-cache remainder is
- * 328 MB) would be no bound at all. The 256 MB is a NO-SIGNAL fallback only.
+ * Resolved values (`targetHeapUsage` 0.8, so remainder = heap × 0.8 × 0.4, of
+ * which this takes a quarter — i.e. simply heap × 0.08):
+ *   - 4 GiB Chrome heap: remainder 1310 MB → 328 MB. That clears both the
+ *     214 MB peak measured on the cmu1 pathology scene and its 277 MB
+ *     whole-store ceiling (10 961 chunks, whose OPFS drain — 4-wide at
+ *     16-30 ms per write — is several times slower than the ~9.7 s arrival, so
+ *     peak pending tracks cumulative streamed bytes nearly 1:1). The margin
+ *     over that ceiling is 1.18×, not comfortable.
+ *   - 2 GiB heap: remainder 655 MB → 164 MB.
+ *   - 8 GiB heap: remainder 2621 MB → 655 MB, capped at 512 MB.
+ *   - `?cacheBudgetMB=2048`: remainder 1365 MB → 341 MB.
+ *   - mobile device-class pool (384 MB): remainder 256 MB → 64 MB.
+ *   - no memory signal at all: 256 MB.
+ * So for that scene the cap BINDS below roughly a 2.7 GiB heap (214/0.08) and
+ * its whole store no longer fits below ~3.4 GiB (277/0.08). That is the
+ * intended heap-relative behaviour, not a regression: a small heap SHOULD drop
+ * writes rather than retain a third of a gigabyte it does not have. Hence no
+ * absolute floor on the measured path either — a fixed 256 MB floor on a 1 GiB
+ * heap (whose whole non-cache remainder is 328 MB) would be no bound at all.
+ * The no-signal 256 MB is deliberately more generous than a measured mid-size
+ * heap resolves to: it is a no-INFORMATION default, sized to clear today's
+ * demos rather than to a heap nobody could observe.
  *
  * @param heapLimitBytes - Override for the device heap limit (tests). When
  *   omitted, {@link readHeapLimitBytes} is consulted; invalid explicit values

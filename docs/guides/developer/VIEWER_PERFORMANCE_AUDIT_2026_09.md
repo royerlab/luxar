@@ -11,16 +11,22 @@ claim was read. Items marked *[inferred]* were not directly verified.
 > **Status.** This is the dated record that drove the September 2026 viewer
 > performance work (PR #2528, follow-ups in #2527). Every finding below is now
 > either landed, or dismissed with a measurement in that PR's description —
-> including finding 8 (OPFS write-queue drops): its fix landed, then a
-> review-time byte cap on the queue brought the cmu1 drops back (0 → 3 966),
-> because the cap was `max(resolved L1 size, 64 MB)` and a pending write's
-> buffer is the same one L1 already holds and bounds. #2561 re-sizes that cap
-> from the non-cache heap remainder instead (512 MB on this machine) and flips
-> the overflow policy to drop-the-arrival, so the oldest cap-worth drains in
-> order. The cmu1 before/after row below has NOT been re-measured on the audit
-> machine since; what is in place is the fix plus a bench assertion that
-> `opfsDropped` is 0 cold and warm, so a cap that binds again fails the run
-> rather than only showing up as a slower revisit.
+> including finding 8 (OPFS write-queue drops): its fix landed, then #2528's
+> byte cap on the queue brought the cmu1 drops back (0 → 3 966), because the cap
+> was `max(resolved L1 size, 64 MB)` and a pending write's buffer is the same
+> one L1 already holds and bounds. #2561 re-sizes that cap from the non-cache
+> heap remainder instead — a quarter of it, so 328 MB on a 4 GiB Chrome heap
+> like this machine's, which clears both the 214 MB peak measured on cmu1 and
+> its 277 MB whole-store ceiling, though only by 1.18× on the latter; the
+> allowance is heap-relative, so for this scene it binds again below roughly a
+> 2.7 GiB heap, which is intended. #2561 also flips the overflow policy to
+> drop-the-arrival, so the oldest end drains in order. The cmu1 before/after row
+> below has NOT been re-measured on the audit machine since; what is in place is
+> the fix plus an assertion in the audit bench (§8) that `opfsDropped` is 0 —
+> load-phase and end-of-run on every cold repetition, and on the warm revisit —
+> whenever the resolved allowance covers the bytes the scene streamed, so a cap
+> that binds again shows up as a failed bench run rather than only as a slower
+> revisit.
 > The ad-hoc probe kit it describes was replaced by a repeatable harness:
 > `pnpm test:perf:e2e -g "viewer audit"` (see §8). Numbers in §3 are the
 > BEFORE state; the PR carries the same-browser before/after table.
@@ -185,7 +191,7 @@ Each item names the mechanism, the evidence, and the expected effect. "Verified"
 
 6. **Batch the refinement pass.** `refinement.ts:203` awaits loaders serially and yields one rAF per rung. Allow up to N loaders (or a byte budget) per frame and commit all rungs already resident in the S-cache in one frame. Verified: fully cached timepoint costs 40 ms; a one-frame commit would be ≈ 8 ms. Playback of cached 4-D data goes from ~25 fps to display rate.
 7. **Adaptive DPR: gate on GPU-boundness and direction.** Do not evaluate while `isLoading` or while a commit landed in the window; compare the probe against a same-load-state baseline (the first probe credited the end of loading to the DPR step, §3.3); and treat "lower DPR got slower" as evidence of overdraw, which should feed (1), not DPR. Verified: monotonic slow-down at lower DPR on both overdraw scenes.
-8. **OPFS write queue.** Raise `maxDepth` to cover a burst (chunks/session is 10 k+ here), or coalesce writes into fewer, larger files, or drop to a "write after load settles" policy instead of drop-oldest. Verified 89 % dropped on cmu1. Also `?no-opfs` skipping `?clear-cache` (`multi-level-caching-store.ts:271`).
+8. **OPFS write queue.** Raise `maxDepth` to cover a burst (chunks/session is 10 k+ here), or coalesce writes into fewer, larger files, or drop to a "write after load settles" policy instead of drop-oldest. Verified 89 % dropped on cmu1. Also `?no-opfs` skipping `?clear-cache` (`multi-level-caching-store.ts:271`). *What landed:* the depth cap went to 16 384, the retained-byte cap is a quarter of the non-cache heap remainder (#2528, #2561), and overflow now drops the arriving write rather than the oldest — so the "write after load settles" alternative was never needed. The `?clear-cache` note is untouched.
 9. **Chunk sizing guidance for HTTP/1.1 hosts.** `luxar optimise` already exists; the `dense` example is authored at 4 KB chunks (1 504 requests for 9.8 MB) and is 2.6× slower on HTTP/1.1 than HTTP/2. Make `luxar serve` speak HTTP/2 (or at least advise `optimise --profile hosting`), and have `luxar info --stats` flag stores whose chunk count exceeds ~1 request per 30 KB.
 10. **Cut the 404 probes.** Gate `colors`/`radii`/`sharpnesses` opens on the node attrs or the consolidated metadata (the loader already has the group listing), as `scalars` is (`points-spatial-index-loader.ts:424`). 4 requests per node on hosted stores, uncached.
 11. **Blend warm-up: one keeper per distinct program, not per node.** Key keepers by `getProgramCacheKey` (9 programs) instead of per source material; drop the retained per-node clones. Verified: 400 idle steps and 3.3 s readiness on 100 nodes.

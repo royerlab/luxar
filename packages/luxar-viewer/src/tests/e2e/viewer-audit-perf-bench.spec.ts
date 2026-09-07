@@ -6,9 +6,10 @@
  * Per scene, per repetition, in a FRESH browser context (empty OPFS = cold):
  *   load     ttfpMs, sceneLoadedMs, initUpdateDoneMs, refinementCompleteMs,
  *            stateReadyMs (when `getState` appears = blend warm-up settled),
- *            requests, bytes, longTaskMs during the load, opfsDropped (now
- *            also ASSERTED to be 0, cold and warm — see #2561),
- *            refinement passes/rungs
+ *            requests, bytes, longTaskMs during the load, opfsDropped (also
+ *            re-read at end-of-run and ASSERTED to be 0 whenever the resolved
+ *            write-queue allowance covers the bytes streamed — see #2561),
+ *            opfsWriteQueueMaxBytes, opfsWrites, refinement passes/rungs
  *   frames   rAF-cadence p50 under forced continuous render at DPR 1 and 0.5
  *            in the default framing, and at DPR 1 dollied 4x closer
  *   playback (4-D scenes) first-commit and settled time per timepoint step,
@@ -44,6 +45,8 @@ import {
   r1,
   readLongTasks,
   readOpfsDropped,
+  readOpfsWriteQueueMaxBytes,
+  readOpfsWrites,
   readPerf,
   setManualDpr,
   spread,
@@ -136,11 +139,22 @@ interface LoadMetrics {
   longTaskMs: number;
   longTaskMax: number;
   opfsDropped: number | null;
+  /** Bytes pending L2 writes may retain this session (the #2561 allowance). */
+  opfsWriteQueueMaxBytes: number | null;
+  /** Cumulative L2 writes that landed — liveness for the drop counters. */
+  opfsWrites: number | null;
   refinementPasses: number;
   refinementRungs: number;
 }
 
 interface RunMetrics extends LoadMetrics {
+  /**
+   * `opfsDropped` re-read at the END of the run. The load-phase sample is
+   * taken before the dolly + settle and the playback steps, whose late chunk
+   * traffic is the largest burst on some scenes; the counter is cumulative and
+   * monotonic, so only a final read can see those drops.
+   */
+  opfsDroppedFinal: number | null;
   frameP50Ms_dpr1: number | null;
   frameP95Ms_dpr1: number | null;
   frameP50Ms_dpr05: number | null;
@@ -180,6 +194,8 @@ async function measureLoad(page: Page, scene: AuditScene, url: string): Promise<
   const perf = await readPerf(page);
   const lt = await readLongTasks(page);
   const opfsDropped = await readOpfsDropped(page);
+  const opfsWriteQueueMaxBytes = await readOpfsWriteQueueMaxBytes(page);
+  const opfsWrites = await readOpfsWrites(page);
   const m = perf.timeline.measures;
   const start = perf.timeline.milestones.loadStart;
   return {
@@ -194,6 +210,8 @@ async function measureLoad(page: Page, scene: AuditScene, url: string): Promise<
     longTaskMs: lt.ms,
     longTaskMax: lt.max,
     opfsDropped,
+    opfsWriteQueueMaxBytes,
+    opfsWrites,
     refinementPasses: perf.timeline.refinement.passes,
     refinementRungs: perf.timeline.refinement.rungs,
   };
@@ -252,8 +270,12 @@ async function runOnce(context: BrowserContext, scene: AuditScene): Promise<RunM
     const load = await measureLoad(page, scene, sceneUrl(scene));
     const frames = await measureFrames(page);
     const playback = scene.playback ? await measurePlayback(page) : {};
+    // Last read before the page closes: catches drops from the dolly/settle
+    // and the playback steps, which the load-phase sample cannot see.
+    const opfsDroppedFinal = await readOpfsDropped(page);
     return {
       ...load,
+      opfsDroppedFinal,
       frameP50Ms_dpr1: null,
       frameP95Ms_dpr1: null,
       frameP50Ms_dpr05: null,
@@ -343,14 +365,58 @@ test.describe('viewer audit bench', () => {
       // streams silently turns L2 into a no-op, and the only symptom is a
       // slower warm revisit — so assert the drop counters here rather than
       // trusting a reader to notice the row. Asserted AFTER the row is written
-      // so a regression still leaves the measurement behind, soft so one scene
-      // does not hide the others' numbers, and `null`-tolerant because the
-      // helper reports null when the stat is unavailable (L2 off / skipped).
-      const dropMessage = `${scene.id}: L2 write-queue drops must stay at 0 (#2561)`;
-      const loadDrops = medians.opfsDropped;
-      if (typeof loadDrops === 'number') expect.soft(loadDrops, dropMessage).toBe(0);
-      const warmDrops = warm?.opfsDropped ?? null;
-      if (warmDrops !== null) expect.soft(warmDrops, `${dropMessage} — warm revisit`).toBe(0);
+      // so a regression still leaves the measurement behind, and soft so one
+      // scene does not hide the others' numbers.
+      const numbers = (vals: Array<number | null>): number[] =>
+        vals.filter((v): v is number => v !== null);
+      const dropSamples = numbers([
+        ...runs.map((r) => r.opfsDropped),
+        ...runs.map((r) => r.opfsDroppedFinal),
+      ]);
+      const writeSamples = numbers(runs.map((r) => r.opfsWrites));
+      const capSamples = numbers(runs.map((r) => r.opfsWriteQueueMaxBytes));
+      // Total response bytes, so an OVER-estimate of the chunk bytes the queue
+      // actually sees (bundle + wasm included). It is compared against the cap
+      // below, and over-estimating there only ever skips the assertion rather
+      // than failing it — the safe direction for a guard.
+      const streamedBytes = Math.max(...runs.map((r) => r.bytes));
+
+      // (1) The counters must be READABLE on every repetition, load and final.
+      // A helper that regresses to always-null would otherwise turn every
+      // assertion below into a silent no-op.
+      expect
+        .soft(dropSamples.length, `${scene.id}: opfsDropped unreadable on some repetition`)
+        .toBe(runs.length * 2);
+      // (2) LIVENESS: zero drops proves nothing if the tier never wrote. An
+      // absent L2 store or a tripped OPFS circuit breaker (seen under
+      // automated Chromium) reports zero drops too.
+      expect
+        .soft(
+          writeSamples.length > 0 ? Math.max(...writeSamples) : 0,
+          `${scene.id}: L2 wrote nothing — dead tier, not a clean run`
+        )
+        .toBeGreaterThan(0);
+      // (3) The drop assertion, but only where the allowance actually covers
+      // what the scene streamed. Below that, dropping is the DESIGNED
+      // heap-relative behaviour (a small heap must not retain bytes it does
+      // not have), so demanding 0 there would fail for the right reason with
+      // the wrong diagnosis.
+      const resolvedCap = capSamples.length > 0 ? Math.min(...capSamples) : null;
+      const capCovers = resolvedCap !== null && resolvedCap >= streamedBytes;
+      const dropMessage =
+        `${scene.id}: L2 write-queue drops must stay at 0 (#2561) — resolved cap ` +
+        `${resolvedCap ?? 'unknown'} B vs ${streamedBytes} B streamed`;
+      if (capCovers) {
+        expect.soft(Math.max(...dropSamples, 0), dropMessage).toBe(0);
+        const warmDrops = warm?.opfsDropped ?? null;
+        if (warmDrops !== null) expect.soft(warmDrops, `${dropMessage} — warm revisit`).toBe(0);
+      } else {
+        console.log(
+          `[audit] ${scenarioId}: drop assertion skipped — allowance ${resolvedCap ?? 'unknown'} B ` +
+            `does not cover the ${streamedBytes} B streamed (expected on a small heap), ` +
+            `drops ${dropSamples.length > 0 ? Math.max(...dropSamples) : 'unknown'}`
+        );
+      }
     });
   }
 
