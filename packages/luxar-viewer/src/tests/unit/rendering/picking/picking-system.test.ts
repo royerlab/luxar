@@ -1346,6 +1346,18 @@ describe('PickingSystem — stale readback ordering', () => {
 
     expect(onPickResult).toHaveBeenCalledExactlyOnceWith(fakeResult);
   });
+
+  it('delivers an explicit pick when a compatibility mousemove lands during readback', async () => {
+    const { system, onPickResult, gate, fakeResult } = buildGatedSystem();
+
+    const pending = system.pickAt(400, 300);
+    system.onMouseMove(makeMouseEvent(400, 300));
+    onPickResult.mockClear();
+    gate.resolve(fakeResult);
+    await pending;
+
+    expect(onPickResult).toHaveBeenCalledExactlyOnceWith(fakeResult);
+  });
 });
 
 describe('PickingSystem — element-ID remap (issue #1421)', () => {

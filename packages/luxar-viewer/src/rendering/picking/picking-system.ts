@@ -566,7 +566,7 @@ export class PickingSystem {
     const y = clientY - this._canvasRect.top;
     this.scheduler.cancelPending();
     if (!this._shouldPick()) return Promise.resolve();
-    return this.performPick(x, y);
+    return this.performPick(x, y, true);
   }
 
   /**
@@ -619,7 +619,11 @@ export class PickingSystem {
    * all effectively visible registered nodes to the cached buffer first. Otherwise just reads
    * from the cached buffer — zero GPU cost on hover.
    */
-  private async performPick(screenX: number, screenY: number): Promise<void> {
+  private async performPick(
+    screenX: number,
+    screenY: number,
+    authoritative: boolean = false
+  ): Promise<void> {
     // Claim this pick's slot. Any later pick/move/dirty/leave bumps
     // `_pickSeq`, marking this readback stale (see the post-`await` guard).
     const pickSeq = ++this._pickSeq;
@@ -719,7 +723,7 @@ export class PickingSystem {
     // Drop the result if a newer pick/move/dirty/leave superseded us while
     // the readback was in flight — emitting it would clobber fresher state
     // with a stale tooltip.
-    if (pickSeq !== this._pickSeq) return;
+    if (!authoritative && pickSeq !== this._pickSeq) return;
     await this.onPickResult(result);
   }
 
