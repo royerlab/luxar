@@ -46,13 +46,20 @@
  * one combination (`?webgpu-force-webgl` + MSAA, both diagnostic switches) falls back
  * to the single pass and says so once.
  *
+ * **Passes B and C run with `scene.background` taken away.** Both renderers FORCE a
+ * clear at the start of every `render()` whose scene has a colour background, whatever
+ * `autoClear` says (three's `WebGLBackground` / `Background` node set `forceClear`), and
+ * a texture background is redrawn over everything as an opaque mesh — either way the
+ * frame pass A just drew would be gone. Pass A keeps the background, so the frame is
+ * still cleared to the configured colour exactly once.
+ *
  * Everything the split touches is restored in a `finally` before `render()` returns —
  * the partition mode FIRST (an exception must never leave the data materials
  * discarding), then the glass and unpartitioned meshes' layer masks, the camera mask,
- * `autoClear`, the renderer's `transmissionResolutionScale`, and the quads' membership
- * of the scene — so the pick pass, the environment cube capture, the blend warm-up and
- * scene disposal never see any of it. The scene holds no lights today; a future light
- * would need `layers.enableAll()` to reach pass B.
+ * `autoClear`, the scene background, the renderer's `transmissionResolutionScale`, and
+ * the quads' membership of the scene — so the pick pass, the environment cube capture,
+ * the blend warm-up and scene disposal never see any of it. The scene holds no lights
+ * today; a future light would need `layers.enableAll()` to reach pass B.
  *
  * `transmissionResolutionScale` (config `renderingControls.refraction`) applies to
  * pass B only: three reads it per transmission pass, so Phase 2 glass in pass A keeps
@@ -208,12 +215,19 @@ function createDepthOnlyMaterial(): THREE.MeshBasicMaterial {
   return m;
 }
 
-/** Renderer and camera state the split borrows for one `render()` call. */
+/** Renderer, camera and scene state the split borrows for one `render()` call. */
 interface BorrowedState {
   readonly cameraMask: number;
   readonly autoClear: boolean;
   /** `undefined` on `WebGPURenderer`, which has no transmission scale. */
   readonly scale: number | undefined;
+  /**
+   * The scene's background, taken away for passes B and C: three FORCES a clear at
+   * the start of every `render()` whose scene has a colour background (both renderers,
+   * `autoClear` notwithstanding), and a texture background would be redrawn over the
+   * data. Pass A keeps it, so the frame is still cleared to the configured colour.
+   */
+  readonly background: THREE.Scene['background'];
 }
 
 /** Owns the depth target, the copy target, the proxies and the quads; one per manager. */
@@ -321,7 +335,7 @@ export class DataRefractionSplit {
     }
     const unpartitioned = this.collectUnpartitionedMeshes(this.unpartitionedScratch);
     this.syncProxies(glass);
-    const borrowed = this.borrow(r, camera, glass, unpartitioned);
+    const borrowed = this.borrow(r, scene, camera, glass, unpartitioned);
     try {
       this.passGlassDepth(r, camera);
       this.passBehind(r, scene, camera, hdrTarget);
@@ -337,6 +351,7 @@ export class DataRefractionSplit {
   /** Save every piece of renderer / scene state the passes write, and park the meshes. */
   private borrow(
     r: SplitRenderer,
+    scene: THREE.Scene,
     camera: THREE.Camera,
     glass: readonly THREE.Mesh[],
     unpartitioned: readonly THREE.Mesh[]
@@ -357,6 +372,7 @@ export class DataRefractionSplit {
       cameraMask: camera.layers.mask,
       autoClear: r.autoClear,
       scale: r.transmissionResolutionScale,
+      background: scene.background,
     };
   }
 
@@ -375,6 +391,7 @@ export class DataRefractionSplit {
     this.setGlassPartition(GLASS_PARTITION_OFF);
     scene.remove(this.screenQuad);
     scene.remove(this.restoreQuad);
+    scene.background = borrowed.background;
     camera.layers.mask = borrowed.cameraMask;
     r.autoClear = borrowed.autoClear;
     if (borrowed.scale !== undefined) r.transmissionResolutionScale = borrowed.scale;
@@ -426,6 +443,9 @@ export class DataRefractionSplit {
       this.screenQuad.material.uniforms.map.value = this.copyTarget.texture;
       scene.add(this.screenQuad);
     }
+    // From here to the `finally`: no background, or three would clear (colour) or
+    // repaint (texture) the frame pass A just drew — see BorrowedState.background.
+    scene.background = null;
     r.setRenderTarget(hdrTarget);
     r.autoClear = false;
     camera.layers.set(RENDER_LAYER_REFRACTING_GLASS);

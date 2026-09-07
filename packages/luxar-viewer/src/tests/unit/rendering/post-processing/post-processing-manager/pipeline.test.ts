@@ -45,6 +45,8 @@ interface RenderCall {
   restoreQuadInScene: boolean;
   glassMasks: number[];
   unpartitionedMasks: number[];
+  /** `scene.background` at the draw (a colour forces a clear on every render). */
+  background: THREE.Scene['background'];
 }
 
 interface Rig {
@@ -105,6 +107,7 @@ function makeRig(
         restoreQuadInScene: split ? scene.children.includes(split.restoreQuad) : false,
         glassMasks: meshes.glass.map((g) => g.layers.mask),
         unpartitionedMasks: unpartitioned.map((g) => g.layers.mask),
+        background: scene.background,
       });
       if (opts.throwOnCall === calls.length) throw new Error('lost context mid-pass');
     }),
@@ -183,6 +186,7 @@ const UNPARTITIONED = 1 << RENDER_LAYER_UNPARTITIONED;
 describe('renderSceneToHdr — the refraction split (spec §3.4 Phase 3)', () => {
   it('renders once, exactly as before, when there is no split (disposed manager)', () => {
     const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x101010);
     const camera = new THREE.PerspectiveCamera();
     const rig = makeRig(scene, { glass: [] });
     const { ctx, hdrTarget } = makeCtx(rig.renderer, scene, camera, null);
@@ -196,6 +200,7 @@ describe('renderSceneToHdr — the refraction split (spec §3.4 Phase 3)', () =>
 
   it('renders once when no visible glass asks to refract, having primed the depth target', () => {
     const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x101010);
     const camera = new THREE.PerspectiveCamera();
     const rig = makeRig(scene, { glass: [] });
     const split = rig.split();
@@ -226,6 +231,7 @@ describe('renderSceneToHdr — the refraction split (spec §3.4 Phase 3)', () =>
 
   it('WebGL: glass depth, data behind, blit, glass + quad, data in front — every borrowed state handed back', () => {
     const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x101010);
     const camera = new THREE.PerspectiveCamera();
     const glass = makeMesh();
     const phaseTwo = makeMesh();
@@ -258,6 +264,9 @@ describe('renderSceneToHdr — the refraction split (spec §3.4 Phase 3)', () =>
     expect(passA.autoClear).toBe(true);
     expect(passA.scale).toBe(1);
     expect(passA.screenQuadInScene).toBe(false);
+    // Pass A keeps the background (the one clear to the configured colour) …
+    expect(passG.background).toBeInstanceOf(THREE.Color);
+    expect(passA.background).toBeInstanceOf(THREE.Color);
     // The blit goes to the copy target, not the HDR target.
     expect(blit.target).not.toBe(hdrTarget);
     expect(blit.target).not.toBe(split.glassDepthTarget);
@@ -269,6 +278,9 @@ describe('renderSceneToHdr — the refraction split (spec §3.4 Phase 3)', () =>
     expect(passB.cameraMask).toBe(GLASS);
     expect(passB.screenQuadInScene).toBe(true);
     expect(passB.scale).toBe(0.5);
+    // … and passes B and C run WITHOUT it: a colour background forces a clear on
+    // every render() whatever autoClear says, which erased pass A's frame.
+    expect(passB.background).toBeNull();
     // Pass C: the data in "front" mode on the default layer only (no glass, no
     // unpartitioned meshes), no clear, the quad gone, the scale back.
     expect(passC.target).toBe(hdrTarget);
@@ -278,6 +290,7 @@ describe('renderSceneToHdr — the refraction split (spec §3.4 Phase 3)', () =>
     expect(passC.screenQuadInScene).toBe(false);
     expect(passC.restoreQuadInScene).toBe(false); // no MSAA: nothing to repaint
     expect(passC.scale).toBe(1);
+    expect(passC.background).toBeNull();
     // Everything handed back, the partition first of all.
     expect(rig.partition()).toBe(0);
     expect(rig.partitionWrites).toEqual([1, 2, 0]);
@@ -286,6 +299,7 @@ describe('renderSceneToHdr — the refraction split (spec §3.4 Phase 3)', () =>
     expect(phaseTwo.layers.mask).toBe(DEFAULT);
     expect(rig.raw.autoClear).toBe(true);
     expect(rig.raw.transmissionResolutionScale).toBe(1);
+    expect(scene.background).toBeInstanceOf(THREE.Color);
     expect(scene.children).not.toContain(split.screenQuad);
     expect(scene.children).not.toContain(split.restoreQuad);
     expect(split.framesSplit).toBe(1);
@@ -294,6 +308,7 @@ describe('renderSceneToHdr — the refraction split (spec §3.4 Phase 3)', () =>
 
   it('WebGL under MSAA: a second blit and the restore quad repaint the target under pass C', () => {
     const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x101010);
     const camera = new THREE.PerspectiveCamera();
     const glass = makeMesh();
     scene.add(glass);
@@ -321,6 +336,7 @@ describe('renderSceneToHdr — the refraction split (spec §3.4 Phase 3)', () =>
 
   it('WebGPU: the same partition without the copy or the quads, and no transmission scale', () => {
     const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x101010);
     const camera = new THREE.PerspectiveCamera();
     const glass = makeMesh();
     scene.add(glass);
@@ -336,6 +352,8 @@ describe('renderSceneToHdr — the refraction split (spec §3.4 Phase 3)', () =>
     expect(passB).toMatchObject({ target: hdrTarget, cameraMask: GLASS, autoClear: false });
     expect(passC).toMatchObject({ target: hdrTarget, partition: 2, cameraMask: DEFAULT });
     expect(rig.calls.every((c) => !c.screenQuadInScene && !c.restoreQuadInScene)).toBe(true);
+    expect(rig.calls.map((c) => c.background === null)).toEqual([false, false, true, true]);
+    expect(scene.background).toBeInstanceOf(THREE.Color);
     expect(rig.calls.every((c) => c.scale === undefined)).toBe(true);
     expect('transmissionResolutionScale' in rig.raw).toBe(false);
     expect(rig.partitionWrites).toEqual([1, 2, 0]);
@@ -344,6 +362,7 @@ describe('renderSceneToHdr — the refraction split (spec §3.4 Phase 3)', () =>
 
   it('WebGPU on its WebGL2 fallback with MSAA falls back to one pass and never partitions', () => {
     const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x101010);
     const camera = new THREE.PerspectiveCamera();
     const glass = makeMesh();
     scene.add(glass);
@@ -372,6 +391,7 @@ describe('renderSceneToHdr — the refraction split (spec §3.4 Phase 3)', () =>
 
   it.each([1, 2, 3, 4, 5])('restores every borrowed state when render call %i throws', (n) => {
     const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x101010);
     const camera = new THREE.PerspectiveCamera();
     const glass = makeMesh();
     const phaseTwo = makeMesh();
@@ -388,6 +408,7 @@ describe('renderSceneToHdr — the refraction split (spec §3.4 Phase 3)', () =>
     expect(phaseTwo.layers.mask).toBe(DEFAULT);
     expect(rig.raw.autoClear).toBe(true);
     expect(rig.raw.transmissionResolutionScale).toBe(1);
+    expect(scene.background).toBeInstanceOf(THREE.Color);
     expect(scene.children).not.toContain(split.screenQuad);
     expect(scene.children).not.toContain(split.restoreQuad);
   });
@@ -416,6 +437,7 @@ describe('renderSceneToHdr — the refraction split (spec §3.4 Phase 3)', () =>
 
   it('pass G draws one front-face, depth-only proxy per glass carrying its world matrix; surplus proxies hide', () => {
     const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x101010);
     const camera = new THREE.PerspectiveCamera();
     const a = makeMesh();
     const b = makeMesh();
@@ -449,6 +471,7 @@ describe('renderSceneToHdr — the refraction split (spec §3.4 Phase 3)', () =>
 
   it('runPipeline goes through the same stage 0, then the mega pass', () => {
     const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x101010);
     const camera = new THREE.PerspectiveCamera();
     const glass = makeMesh();
     scene.add(glass);
