@@ -10,9 +10,9 @@
  * long-press raises iOS's image callout sheet over the canvas.
  *
  * Two layers, because the canvas has three owners:
- *   - The standalone page styles its own canvas in `index.html` /
- *     `styles/base/layout.css` (`touch-action: none` there is the fast path,
- *     applied before any script runs).
+ *   - The standalone page styles its own canvas in `styles/base/layout.css`
+ *     (`touch-action: none` there is the fast path, applied before any script
+ *     runs).
  *   - An npm-library embedder supplies the canvas (`LuxarAppOptions.canvas`),
  *     so this function stamps the same declarations from JS — but only when
  *     the computed `touch-action` is still the default `auto`, so an embedder
