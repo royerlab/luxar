@@ -167,6 +167,7 @@ def attach_environment(
 
 
 def _require_directory_store(store: Union[str, Path]) -> Path:
+    """Return the store path, refusing a missing path or a compressed archive."""
     store_path = Path(store)
     if not store_path.exists():
         raise FileNotFoundError(f"Scene not found: {store_path}")

@@ -1983,7 +1983,9 @@ class TestDestinationGuards:
     ) -> None:
         src = tmp_path / "climate.zarr"
         root = open_group(src, mode="w")
+        root.attrs["content_hash"] = "foreign-digest"
         environment = root.create_group("environment")
+        environment.attrs["units"] = "celsius"
         create_array(
             environment,
             "temperature",
@@ -2000,7 +2002,31 @@ class TestDestinationGuards:
         assert temperature.path == "environment/temperature"
         assert temperature.skip_reason == ""
         assert temperature.target_chunks == (16_384,)
-        assert open_group(dst, mode="r")["environment/temperature"].chunks == (16_384,)
+        output = open_group(dst, mode="r")
+        assert output["environment/temperature"].chunks == (16_384,)
+        assert dict(output["environment"].attrs) == {"units": "celsius"}
+
+    def test_generic_store_does_not_treat_an_environment_array_as_a_sidecar(
+        self, tmp_path: Path
+    ) -> None:
+        src = tmp_path / "climate.zarr"
+        root = open_group(src, mode="w")
+        root.attrs["content_hash"] = "foreign-digest"
+        environment = create_array(
+            root,
+            "environment",
+            data=np.zeros(32_768, dtype=np.float32),
+            chunks=(1000,),
+            compressor=None,
+        )
+        environment.attrs["units"] = "celsius"
+        consolidate(root)
+
+        dst = tmp_path / "out.zarr"
+        optimise_store(src, dst, generic=True, verify=True)
+
+        output = open_group(dst, mode="r")
+        assert dict(output["environment"].attrs) == {"units": "celsius"}
 
     @pytest.mark.parametrize(
         "attrs",

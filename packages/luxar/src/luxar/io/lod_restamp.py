@@ -686,6 +686,19 @@ def _write_attr(
     node.attrs[key] = value
 
 
+def _baked_environment_group(
+    root: zarr.Group, cache: Dict[str, zarr.Group]
+) -> zarr.Group | None:
+    """Return the baked sidecar, never ordinary data that only shares its name."""
+    if ENVIRONMENT_GROUP not in root:
+        return None
+    candidate = _handle(root, ENVIRONMENT_GROUP, cache)
+    faces = dict(candidate.attrs).get("faces")
+    if not isinstance(faces, str) or faces not in candidate.array_keys():
+        return None
+    return candidate
+
+
 def _undo_attr(
     root: "zarr.Group", entry: _AttrWrite, cache: Dict[str, "zarr.Group"]
 ) -> bool:
@@ -918,9 +931,10 @@ def _apply(
         # failure restores the store's OWN digests instead of recomputing them.
         _snapshot_content_hashes(root, undo, deep=is_scene)
         report.content_hash = _restamp_content_hash(root)
-        if report.content_hash is not None and ENVIRONMENT_GROUP in root:
+        environment = _baked_environment_group(root, cache)
+        if report.content_hash is not None and environment is not None:
             _write_attr(
-                _handle(root, ENVIRONMENT_GROUP, cache),
+                environment,
                 ENVIRONMENT_GROUP,
                 "scene_content_hash",
                 report.content_hash,

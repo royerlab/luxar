@@ -996,6 +996,19 @@ def _restamp_content_hash(root: zarr.Group) -> str | None:
     return None
 
 
+def _baked_environment_group(root: zarr.Group) -> zarr.Group | None:
+    """Return the baked sidecar, never ordinary data that only shares its name."""
+    if ENVIRONMENT_GROUP not in root:
+        return None
+    candidate = root[ENVIRONMENT_GROUP]
+    if not isinstance(candidate, zarr.Group):
+        return None
+    faces = dict(candidate.attrs).get("faces")
+    if not isinstance(faces, str) or faces not in candidate.array_keys():
+        return None
+    return candidate
+
+
 #: dtype kinds whose memory buffer IS the stored payload, so comparing
 #: ``tobytes()`` compares the data. Everything outside this set (numpy's
 #: variable-width ``StringDType``, kind ``T``; an object array, kind ``O``) puts
@@ -1462,8 +1475,9 @@ def _write_store(
             "chunks_after": plan.target_n_chunks,
         }
         scene_hash = _restamp_content_hash(dest)
-        if scene_hash is not None and ENVIRONMENT_GROUP in dest:
-            dest[ENVIRONMENT_GROUP].attrs["scene_content_hash"] = scene_hash
+        environment = _baked_environment_group(dest)
+        if scene_hash is not None and environment is not None:
+            environment.attrs["scene_content_hash"] = scene_hash
         consolidate(dest)
     finally:
         close(dest)

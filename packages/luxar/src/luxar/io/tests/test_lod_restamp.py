@@ -29,6 +29,7 @@ import zarr
 from luxar._zarr_compat import (
     close,
     consolidate,
+    create_array,
     create_root_group,
     is_consolidated,
     open_group,
@@ -889,7 +890,15 @@ def test_a_real_run_keeps_the_baked_environment_current(legacy_scene: Path) -> N
     before = _hash(legacy_scene)
     root = open_group(legacy_scene, mode="r+")
     environment = root.require_group(ENVIRONMENT_GROUP)
-    environment.attrs["scene_content_hash"] = before
+    faces = "faces-test"
+    create_array(
+        environment,
+        faces,
+        data=np.zeros((6, 1, 1, 4), dtype=np.uint16),
+        chunks=(1, 1, 1, 4),
+        compressor=None,
+    )
+    environment.attrs.update({"faces": faces, "scene_content_hash": before})
     consolidate(root)
     close(root)
 
@@ -900,6 +909,26 @@ def test_a_real_run_keeps_the_baked_environment_current(legacy_scene: Path) -> N
     root = open_group(legacy_scene, mode="r")
     try:
         assert dict(root[ENVIRONMENT_GROUP].attrs)["scene_content_hash"] == after
+    finally:
+        close(root)
+
+
+def test_a_real_run_does_not_stamp_an_ordinary_environment_group(
+    legacy_scene: Path,
+) -> None:
+    """A reserved-looking name alone does not make foreign data a baked sidecar."""
+    root = open_group(legacy_scene, mode="r+")
+    root.require_group(ENVIRONMENT_GROUP).attrs["units"] = "celsius"
+    consolidate(root)
+    close(root)
+
+    restamp_lod_store(legacy_scene)
+
+    root = open_group(legacy_scene, mode="r")
+    try:
+        attrs = dict(root[ENVIRONMENT_GROUP].attrs)
+        assert attrs["units"] == "celsius"
+        assert "scene_content_hash" not in attrs
     finally:
         close(root)
 
