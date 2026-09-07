@@ -354,6 +354,39 @@ def encode_foa(
     ).astype(np.float32)
 
 
+def loop_crossfade(pcm: np.ndarray, sample_rate: int, seconds: float) -> np.ndarray:
+    """Make a clip loop cleanly by blending its last ``seconds`` into its first.
+
+    The tail is faded out while the head is faded in underneath it (equal-power,
+    so the level does not dip), and the blended stretch replaces the tail: the
+    clip gets ``seconds`` shorter and its last sample now leads straight into
+    its first, which is what a looping player needs. A clip that ends quieter
+    than it starts (the usual "pop" at the loop point) is exactly what this
+    fixes. ``seconds <= 0`` returns the input unchanged; a clip shorter than
+    twice the fade is refused.
+    """
+    data = np.asarray(pcm, dtype=np.float32)
+    if data.ndim == 1:
+        data = data[:, None]
+    if seconds <= 0:
+        return data
+    n_fade = int(round(seconds * sample_rate))
+    if n_fade <= 0:
+        return data
+    if data.shape[0] < 2 * n_fade:
+        raise ValueError(
+            f"loop crossfade of {seconds:g} s needs a clip at least {2 * seconds:g} s long "
+            f"(got {data.shape[0] / sample_rate:.1f} s)"
+        )
+    t = np.linspace(0.0, 1.0, n_fade, endpoint=False, dtype=np.float32)[:, None]
+    fade_out = np.cos(0.5 * np.pi * t)
+    fade_in = np.sin(0.5 * np.pi * t)
+    head = data[:n_fade]
+    tail = data[-n_fade:]
+    blended = tail * fade_out + head * fade_in
+    return np.concatenate([data[n_fade:-n_fade], blended], axis=0)
+
+
 def foa_from_stereo(pcm: np.ndarray, spread_deg: float = 50.0) -> np.ndarray:
     """Place a stereo (or mono) clip in a first-order field: L at ``+spread``, R at ``-spread``.
 
@@ -377,13 +410,16 @@ def synthesise_foa_from_clip(
     cache_dir: Path,
     *,
     spread_deg: float = 50.0,
+    loop_crossfade_s: float = 0.0,
     encoder: Optional[str] = None,
     encoders: Optional[Mapping[str, Encoder]] = None,
     decoders: Optional[Mapping[str, Decoder]] = None,
 ) -> Optional[Path]:
     """Re-encode a stereo clip as a 4-channel first-order ambisonic AAC field.
 
-    Cached under ``cache_dir`` by the source file's size + mtime and the spread;
+    ``loop_crossfade_s`` blends the clip's tail into its head first
+    (:func:`loop_crossfade`) so the field loops without a pop. Cached under
+    ``cache_dir`` by the source file's size + mtime, the spread and the fade;
     ``None`` when no decoder/encoder is available (the caller keeps the stereo clip).
     """
     src = Path(src)
@@ -395,6 +431,7 @@ def synthesise_foa_from_clip(
             "size": stat.st_size,
             "mtime": int(stat.st_mtime),
             "spread": float(spread_deg),
+            "loop": float(loop_crossfade_s),
         },
     )
     clip = cache_dir / f"foa_{key}.m4a"
@@ -411,8 +448,64 @@ def synthesise_foa_from_clip(
         return None
     pcm, rate = decoded
     aprint(
-        f"🌐 Encoding {src.name} as a first-order ambisonic field (±{spread_deg:g}°)"
+        f"🌐 Encoding {src.name} as a first-order ambisonic field (±{spread_deg:g}°"
+        + (f", {loop_crossfade_s:g} s loop blend" if loop_crossfade_s > 0 else "")
+        + ")"
     )
+    looped = loop_crossfade(pcm, rate, loop_crossfade_s)
     return encode_pcm(
-        foa_from_stereo(pcm, spread_deg), rate, clip, encoder=encoder, encoders=encoders
+        foa_from_stereo(looped, spread_deg),
+        rate,
+        clip,
+        encoder=encoder,
+        encoders=encoders,
+    )
+
+
+def synthesise_loop_clip(
+    src: Path,
+    cache_dir: Path,
+    *,
+    loop_crossfade_s: float,
+    encoder: Optional[str] = None,
+    encoders: Optional[Mapping[str, Encoder]] = None,
+    decoders: Optional[Mapping[str, Decoder]] = None,
+) -> Optional[Path]:
+    """Re-encode a clip (mono/stereo, channels kept) with its loop point blended.
+
+    The stereo sibling of :func:`synthesise_foa_from_clip`, for a build box that
+    can decode and encode but where the caller wants a plain clip. Cached the
+    same way; ``None`` without a decoder/encoder (the caller keeps the original).
+    """
+    src = Path(src)
+    stat = src.stat()
+    key = synthesis_cache_key(
+        "loop",
+        {
+            "name": src.name,
+            "size": stat.st_size,
+            "mtime": int(stat.st_mtime),
+            "loop": float(loop_crossfade_s),
+        },
+    )
+    clip = cache_dir / f"loop_{key}.m4a"
+    if clip.exists() and clip.stat().st_size > 0:
+        return clip
+    decoded = decode_to_pcm(src, decoder=encoder, decoders=decoders)
+    if decoded is None:
+        warnings.warn(
+            "No audio decoder available (afconvert on macOS, or ffmpeg on PATH): the "
+            "loop blend is skipped and the clip is used as is.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return None
+    pcm, rate = decoded
+    aprint(f"🔁 Re-encoding {src.name} with a {loop_crossfade_s:g} s loop blend")
+    return encode_pcm(
+        loop_crossfade(pcm, rate, loop_crossfade_s),
+        rate,
+        clip,
+        encoder=encoder,
+        encoders=encoders,
     )

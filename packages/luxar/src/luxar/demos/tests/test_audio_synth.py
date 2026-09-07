@@ -18,11 +18,13 @@ from luxar.demos._audio_synth import (
     encode_pcm,
     foa_from_stereo,
     hum_pcm,
+    loop_crossfade,
     read_wav,
     resolve_encoder,
     synthesis_cache_key,
     synthesise_foa_from_clip,
     synthesise_hum,
+    synthesise_loop_clip,
     write_wav,
 )
 from luxar.validation.sound import sniff_audio_format
@@ -222,3 +224,68 @@ def test_synthesise_foa_from_clip_without_a_decoder_warns_and_keeps_the_stereo_c
     with pytest.warns(UserWarning, match="No audio decoder"):
         assert synthesise_foa_from_clip(src, tmp_path / "foa") is None
     assert decode_to_pcm(src) is None
+
+
+def test_loop_crossfade_blends_the_tail_into_the_head_at_equal_power() -> None:
+    sr = 100
+    # A clip that ends quiet and starts loud: the classic loop pop.
+    head = np.ones(300, dtype=np.float32)
+    body = np.full(400, 0.5, dtype=np.float32)
+    tail = np.zeros(300, dtype=np.float32)
+    pcm = np.concatenate([head, body, tail])
+    out = loop_crossfade(pcm, sr, 3.0)
+    assert out.shape == (700, 1)
+    # Untouched middle, then the blended stretch: quiet tail fading out under
+    # the loud head fading in — it ends at (almost) the head's level, so the
+    # loop wraps without a step.
+    assert np.allclose(out[:400, 0], np.concatenate([head[300:], body])[:400])
+    assert out[-1, 0] == pytest.approx(1.0, abs=0.02)
+    assert out[400, 0] == pytest.approx(0.0, abs=0.02)
+    # Equal power: with the tail on one channel and the head on the other, the
+    # summed power across the blend stays constant (cos² + sin² = 1).
+    two = np.zeros((1000, 2), dtype=np.float32)
+    two[:200, 1] = 0.3  # head → channel 1
+    two[-200:, 0] = 0.3  # tail → channel 0
+    flat = loop_crossfade(two, sr, 2.0)
+    assert np.allclose(np.sum(flat[-200:] ** 2, axis=1), 0.3**2, atol=1e-6)
+    assert loop_crossfade(pcm, sr, 0.0).shape == (1000, 1)
+    with pytest.raises(ValueError, match="at least"):
+        loop_crossfade(pcm, sr, 6.0)
+
+
+def test_loop_blend_is_part_of_the_foa_cache_key_and_the_stereo_sibling(
+    tmp_path,
+) -> None:
+    src = tmp_path / "bed.mp3"
+    src.write_bytes(b"\xff\xfb\x90\x00" + b"\x00" * 64)
+
+    def fake_decode(clip: Path, wav: Path) -> None:
+        write_wav(np.stack([np.ones(4000), np.zeros(4000)], axis=1) * 0.5, 1_000, wav)
+
+    frames: list[tuple[int, int]] = []
+
+    def fake_encode(wav: Path, out: Path) -> None:
+        with wave.open(str(wav), "rb") as w:
+            frames.append((w.getnchannels(), w.getnframes()))
+        out.write_bytes(FAKE_M4A)
+
+    kw = dict(
+        encoder="ffmpeg",
+        encoders={"ffmpeg": fake_encode},
+        decoders={"ffmpeg": fake_decode},
+    )
+    plain = synthesise_foa_from_clip(src, tmp_path / "foa", **kw)
+    blended = synthesise_foa_from_clip(
+        src, tmp_path / "foa", loop_crossfade_s=1.0, **kw
+    )
+    assert plain is not None and blended is not None and plain != blended
+    # Four channels both times; the blended field is one second (1000 frames) shorter.
+    assert frames == [(4, 4000), (4, 3000)]
+    stereo = synthesise_loop_clip(src, tmp_path / "loop", loop_crossfade_s=1.0, **kw)
+    assert stereo is not None and stereo.suffix == ".m4a"
+    assert frames[-1] == (2, 3000)
+    assert (
+        synthesise_loop_clip(src, tmp_path / "loop", loop_crossfade_s=1.0, **kw)
+        == stereo
+    )
+    assert len(frames) == 3  # cache hit

@@ -94,7 +94,11 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import AudioConfig, CameraConfig, ViewerConfig, Waypoint
 from luxar.demos import add_demo_caption, cached_download, launch_viewer
-from luxar.demos._audio_synth import synthesise_foa_from_clip, synthesise_hum
+from luxar.demos._audio_synth import (
+    synthesise_foa_from_clip,
+    synthesise_hum,
+    synthesise_loop_clip,
+)
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG, pull_in
 from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
 from luxar.demos._narration import resolve_engine, synthesise
@@ -671,6 +675,11 @@ AMBISONIC_BED_CACHE_DIR = (
     Path.home() / ".cache" / "luxar" / "esm3_protein_stories" / "ambisonic"
 )
 AMBISONIC_BED_SPREAD_DEG = 50.0
+# The bed ends quieter than it starts, so a bare loop pops at the seam; its last
+# 15 s are blended into its first (equal-power crossfade) at build time, for the
+# ambisonic field and for the stereo fallback alike. Needs a decoder + encoder;
+# without one the original MP3 plays as is.
+AMBIENT_BED_LOOP_CROSSFADE_S = 15.0
 
 # Narration is synthesised at BUILD time (OpenAI TTS when a key is present, the
 # macOS system voice otherwise; a Linux box without a key builds silently) and
@@ -1011,13 +1020,26 @@ def add_story_sounds(
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
             field = synthesise_foa_from_clip(
-                bed, ambisonic_dir, spread_deg=AMBISONIC_BED_SPREAD_DEG
+                bed,
+                ambisonic_dir,
+                spread_deg=AMBISONIC_BED_SPREAD_DEG,
+                loop_crossfade_s=AMBIENT_BED_LOOP_CROSSFADE_S,
+            )
+            looped = (
+                None
+                if field is not None
+                else synthesise_loop_clip(
+                    bed, ambisonic_dir, loop_crossfade_s=AMBIENT_BED_LOOP_CROSSFADE_S
+                )
             )
         if field is None:
-            aprint("🔈 No audio decoder/encoder: the bed stays stereo")
+            aprint(
+                "🔈 No audio decoder/encoder: the bed stays stereo"
+                + (" (unblended loop)" if looped is None else "")
+            )
         scene.add_sound(  # type: ignore[attr-defined]
             "bed_ambient",
-            field if field is not None else bed,
+            field if field is not None else (looped if looped is not None else bed),
             ambisonic="foa" if field is not None else None,
             trigger="continuous",
             gain=AMBIENT_BED_GAIN,
