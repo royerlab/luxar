@@ -820,6 +820,19 @@ class TestWaypoint:
         with pytest.raises(ValueError, match="list of Waypoint"):
             ViewerConfig(waypoints=[{"when": {"story": 0}}])  # type: ignore[list-item]
 
+    def test_waypoint_dimensions_are_validated_against_the_scene(self) -> None:
+        vc = ViewerConfig(
+            waypoints=[
+                Waypoint(
+                    when={"stroy": 1},
+                    camera=CameraConfig(position=(0, 0, 5)),
+                )
+            ]
+        )
+
+        with pytest.raises(ValueError, match="Unknown dimension 'stroy'"):
+            vc.validate_dimensions(["x", "y", "z", "story"])
+
 
 class TestCameraZoom:
     """Ortho framing: distance changes nothing under an orthographic projection."""

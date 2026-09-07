@@ -59,6 +59,16 @@ describe('waypointMatches / matchWaypoint (the overlay visible_range rule)', () 
     expect(waypointMatches({ story: 0, nonexistent: 7 }, dims([0, 0, 0, 0, 0]))).toBe(true);
   });
 
+  it('rejects a clause when none of its dimension names exist in the scene', () => {
+    const typoFirst: ZarrWaypoint[] = [
+      { when: { stroy: 0 }, camera: { position: [9, 9, 9] } },
+      { when: { story: 1 }, camera: { position: [1, 2, 3] } },
+    ];
+
+    expect(waypointMatches({ stroy: 0 }, dims([0, 0, 0, 1, 0]))).toBe(false);
+    expect(matchWaypoint(typoFirst, dims([0, 0, 0, 1, 0]))).toBe(1);
+  });
+
   it('returns false with no metadata (dims not ready)', () => {
     expect(waypointMatches({ story: 0 }, { currentStep: [0, 0, 0, 0, 0] })).toBe(false);
   });

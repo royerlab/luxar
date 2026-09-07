@@ -100,6 +100,9 @@ class Scene(Group):
                     "system and are the single source of truth for all data in the scene."
                 )
 
+            if viewer_config is not None:
+                viewer_config.validate_dimensions(dimensions.names)
+
             # Create lightweight root node (sets self._writer)
             super().__init__("Scene", writer=writer)
 
@@ -341,11 +344,13 @@ class Scene(Group):
         Args:
             vc: ViewerConfig object, or None to clear.
         """
-        self._viewer_config = vc
         if vc is not None:
             vc.validate()
+            vc.validate_dimensions(self._dimensions.names)
+            self._viewer_config = vc
             self._persist_attr("viewer_config", vc.to_dict())
         else:
+            self._viewer_config = None
             self._delete_attr("viewer_config")
 
     # ---------------------------------------------------------- overlays

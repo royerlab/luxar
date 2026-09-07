@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from ..validation.overlays import validate_visible_range
+
 # Valid enum values (must match TypeScript RenderingSettings union types)
 VALID_TONE_MAPPINGS = ("None", "Linear", "Reinhard", "Cineon", "ACES", "AgX", "Neutral")
 VALID_CONTROL_TYPES = ("orbit", "fly", "ortho")
@@ -769,6 +771,11 @@ class ViewerConfig:
         _validate_range(self.fly_damping, "fly_damping", 0, 1)
         _validate_range(self.fly_rotation_damping, "fly_rotation_damping", 0, 1)
         _validate_min(self.vignette_offset, "vignette_offset", 0)
+
+    def validate_dimensions(self, dimension_names: List[str]) -> None:
+        """Validate dimension-bound settings against a scene's dimensions."""
+        for waypoint in self.waypoints or []:
+            validate_visible_range(waypoint.when, dimension_names)
 
     # -- Simple field names for sparse serialization --
     _SIMPLE_FIELDS = [

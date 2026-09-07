@@ -8,8 +8,8 @@
  * rule the overlay manager uses for `visible_range`, so one vocabulary
  * describes both "show this caption here" and "look from here":
  *
- * - every named dimension in `when` must match (dimensions the scene does not
- *   have are skipped, exactly as `isOverlayVisible` skips them);
+ * - every known dimension in `when` must match; unknown names are skipped, but
+ *   a clause containing no known dimensions never matches;
  * - an exact value matches within ±0.5 of the current step;
  * - a `[min, max]` range matches inclusively;
  * - the FIRST matching waypoint in list order wins.
@@ -49,13 +49,16 @@ export type WaypointDims = Pick<SimpleDims, 'currentStep' | 'metadata'>;
 export function waypointMatches(when: ZarrWaypointCondition, dims: WaypointDims): boolean {
   const metadata = dims.metadata;
   if (!metadata) return false;
+  let knownDimensions = 0;
   for (const [dimName, constraint] of Object.entries(when)) {
     const dimIndex = metadata.findIndex((m) => m.name === dimName);
-    const current = dimIndex < 0 ? undefined : dims.currentStep[dimIndex];
+    if (dimIndex < 0) continue;
+    knownDimensions += 1;
+    const current = dims.currentStep[dimIndex];
     if (current === undefined) continue;
     if (!constraintHolds(current, constraint)) return false;
   }
-  return true;
+  return knownDimensions > 0;
 }
 
 /**
