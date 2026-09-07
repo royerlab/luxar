@@ -323,7 +323,9 @@ export class SceneEnvironment {
     this.hdriTexture = null;
     this.active = 'none';
     this.staleSince = null;
-    return this.apply();
+    const rebuilt = this.apply();
+    this.markStale();
+    return rebuilt;
   }
 
   /** Release everything and clear `scene.environment` if it is ours. */

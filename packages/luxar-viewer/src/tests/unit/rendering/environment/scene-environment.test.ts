@@ -332,6 +332,10 @@ describe('SceneEnvironment — sources and precedence (Phase 4)', () => {
     expect(targets).toHaveLength(2);
     expect(env.activeKind()).toBe('scene');
     expect(env.captureCount).toBe(2);
+    expect(env.tick(performance.now() + CAPTURE_DEBOUNCE_MS + 1)).toBe(true);
+    expect(targets).toHaveLength(2);
+    expect(targets[1].disposed).toBe(false);
+    expect(env.captureCount).toBe(3);
   });
 
   it('resetForDataset clears demand and releases dataset-owned textures', () => {
