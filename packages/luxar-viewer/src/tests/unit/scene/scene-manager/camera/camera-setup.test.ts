@@ -114,6 +114,31 @@ describe('resolveTargetNodeCenter', () => {
     expect(center!.z).toBeCloseTo(0, 6);
   });
 
+  it('resolves a bare node name against a path-named scene object', () => {
+    const root = new THREE.Group();
+    const target = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), new THREE.MeshBasicMaterial());
+    target.name = '/story/Cluster';
+    target.position.set(10, 0, 0);
+    root.add(target);
+
+    const center = resolveTargetNodeCenter(root, 'Cluster');
+    expect(center?.x).toBeCloseTo(10, 6);
+  });
+
+  it('prefers an exact object name over an earlier path-name fallback', () => {
+    const root = new THREE.Group();
+    const fallback = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), new THREE.MeshBasicMaterial());
+    fallback.name = '/story/Cluster';
+    fallback.position.set(10, 0, 0);
+    const exact = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), new THREE.MeshBasicMaterial());
+    exact.name = 'Cluster';
+    exact.position.set(20, 0, 0);
+    root.add(fallback, exact);
+
+    const center = resolveTargetNodeCenter(root, 'Cluster');
+    expect(center?.x).toBeCloseTo(20, 6);
+  });
+
   it('stops on the first match (does not match later siblings with the same name)', () => {
     const root = new THREE.Group();
     const a = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), new THREE.MeshBasicMaterial());
