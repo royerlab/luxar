@@ -20,7 +20,7 @@ on:
     # leg, with an explicit full-matrix override for manual diagnostics.
     inputs:
       full_python_matrix:
-        description: Run the full supported Python matrix
+        description: Dispatch on dev; run full Python matrix (all dispatches also repair cancelled push checks)
         required: false
         default: false
         type: boolean
@@ -91,13 +91,9 @@ jobs:
           exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # `github.sha` follows the default branch on dispatch events, which is
-          # now `main`, not `dev`. Once this workflow reaches main, pin dev here,
-          # capture the resolved commit as `dev_sha`, and reuse that immutable SHA
-          # in every suite checkout for consistent dev-tip coverage. The contexts
-          # still attach to `github.sha`; the repair walk below restores promotion
-          # value by repairing dev push runs. Empty on push/PR == default.
-          ref: ${{ github.event_name == 'workflow_dispatch' && 'refs/heads/dev' || '' }}
+          # A validated `--ref dev` dispatch attaches its contexts to `github.sha`.
+          # Check out that exact immutable commit, capture it as `dev_sha`, and
+          # reuse it in every suite checkout so the tested tree is the attested SHA.
           fetch-depth: 0
       - id: dispatched-dev
         if: github.event_name == 'workflow_dispatch'
@@ -300,7 +296,8 @@ jobs:
         continue-on-error: true
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Dispatched runs materialise dev's scanner (see the trigger note).
+          # Unlike `changes`, this actions:write job does not depend on the dispatch
+          # ref guard. Materialise dev's trusted scanner, not the requested ref.
           # Empty on push/PR == default.
           ref: ${{ github.event_name == 'workflow_dispatch' && 'refs/heads/dev' || '' }}
           persist-credentials: false
@@ -540,11 +537,12 @@ jobs:
       # slot from being monopolised by one run's Python matrix. The shared
       # repository queue may still put other work ahead of this run's
       # `typescript-tests`; pushes and the full-matrix dispatch execute two
-      # Python legs, then the third. PRs and required-context dispatches have one Python leg and are unaffected. Keep the GitHub-hosted
-      # fork/override branch elastic: its matrix legs run on separate VMs.
+      # Python legs, then the third. PRs and required-context dispatches have one
+      # Python leg and are unaffected. Keep the GitHub-hosted fork/override branch
+      # elastic: its matrix legs run on separate VMs.
       max-parallel: ${{ needs.pick-runner.outputs.label == 'obsidian' && 2 || 3 }}
       matrix:
-        # FLOOR on every event, floor + NEWEST on push-to-dev and the daily
+        # FLOOR on every event, full supported set on push-to-dev and an explicit
         # full-matrix dispatch.
         #
         # 3.12 is the floor (`requires-python = ">=3.12"`, what zarr 3.2+ needs)
@@ -553,7 +551,9 @@ jobs:
         # `install-hatch` bootstrap explicitly prefers them, and a developer's
         # `hatch env` picks the newest interpreter on the box — so testing only the
         # floor would leave the version most people actually run unexercised.
-        # Hence 3.14 on merge pushes and an explicit full-matrix dispatch. Required-context dispatches intentionally carry only the required 3.12 context.
+        # Hence 3.14 on merge pushes and an explicit full-matrix dispatch.
+        # Required-context dispatches intentionally carry only the required 3.12
+        # context.
         #
         # If newer interpreters are ever deliberately unsupported, the honest fix
         # is a `requires-python` upper bound, not a quiet single-leg matrix.
@@ -1176,8 +1176,8 @@ jobs:
           /tmp/wheel-venv/bin/luxar --help > /dev/null
           /tmp/wheel-venv/bin/python -c "import luxar; print('import OK:', luxar.__version__)"
 
-  # A dispatched run tests one captured dev commit, but its contexts attach to the
-  # dispatched event SHA on dev. Once the dev tree has proved the five protected
+  # A dispatched run tests the same immutable dev commit its contexts attest.
+  # Once that tree has proved the five protected
   # contexts green, walk commits still ahead of main through DEV'S TIP newest first
   # and rerun cancelled required jobs from up to two dev push suites. This repairs
   # skipped commits without an unbounded runner burst.

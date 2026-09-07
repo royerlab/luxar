@@ -859,13 +859,13 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     assert watchdog["steps"][2]["if"] == ("steps.scanner-checkout.outcome == 'success'")
 
 
-def test_live_ci_checkouts_share_one_dispatched_dev_sha(workflow: str) -> None:
-    """A dispatched run captures one dev SHA and reuses it across every suite job."""
+def test_live_ci_checkouts_attest_one_dispatched_dev_sha(workflow: str) -> None:
+    """A dispatched run tests and attests one immutable dev SHA in every suite."""
     parsed = yaml.safe_load(workflow)
     jobs = parsed["jobs"]
     expected_ref = "${{ needs.changes.outputs.dev_sha || '' }}"
 
-    scheduled_suite_jobs = {
+    dispatched_suite_jobs = {
         job_name
         for job_name, job in jobs.items()
         if job_name == "changes"
@@ -886,18 +886,16 @@ def test_live_ci_checkouts_share_one_dispatched_dev_sha(workflow: str) -> None:
             None,
         )
         for job_name, job in jobs.items()
-        if job_name in scheduled_suite_jobs and job.get("if") is not False
+        if job_name in dispatched_suite_jobs and job.get("if") is not False
     }
     checkout_jobs = {
         job_name: checkout
         for job_name, checkout in checkout_jobs.items()
         if checkout is not None
     }
-    assert set(checkout_jobs) == scheduled_suite_jobs
+    assert set(checkout_jobs) == dispatched_suite_jobs
 
-    assert checkout_jobs["changes"]["with"]["ref"] == (
-        "${{ github.event_name == 'workflow_dispatch' && 'refs/heads/dev' || '' }}"
-    )
+    assert checkout_jobs["changes"]["with"] == {"fetch-depth": 0}
     changes = jobs["changes"]
     assert changes["outputs"]["dev_sha"] == (
         "${{ steps.dispatched-dev.outputs.dev_sha }}"
@@ -991,12 +989,12 @@ def test_ci_repair_window_is_dispatched_on_dev(workflow: str) -> None:
     parsed = yaml.load(workflow, Loader=yaml.BaseLoader)
     assert "schedule" not in parsed["on"]
     dispatch = parsed["on"]["workflow_dispatch"]
-    assert dispatch["inputs"]["full_python_matrix"] == {
-        "description": "Run the full supported Python matrix",
-        "required": "false",
-        "default": "false",
-        "type": "boolean",
-    }
+    full_matrix = dispatch["inputs"]["full_python_matrix"]
+    assert full_matrix["required"] == "false"
+    assert full_matrix["default"] == "false"
+    assert full_matrix["type"] == "boolean"
+    assert "dev" in full_matrix["description"]
+    assert "repair cancelled push checks" in full_matrix["description"]
     matrix_line = next(
         line for line in workflow.splitlines() if "python-version: ${{" in line
     )
@@ -1040,7 +1038,7 @@ def test_green_dispatch_repairs_cancelled_push_contexts(workflow: str) -> None:
     assert "!cancelled()" in condition
     assert repair["permissions"] == {"actions": "write", "contents": "read"}
 
-    # The job checks out the captured dev commit so the guard can cross-check it.
+    # The job checks out the attested dev commit so the guard can cross-check it.
     checkout_step = next(step for step in repair["steps"] if "checkout" in step["uses"])
     assert checkout_step["with"] == {
         "ref": "${{ needs.changes.outputs.dev_sha || '' }}",
@@ -1052,8 +1050,8 @@ def test_green_dispatch_repairs_cancelled_push_contexts(workflow: str) -> None:
     script = run_step["run"]
     assert "actions/runs/${GITHUB_RUN_ID}/jobs?filter=latest" in script
     # REGRESSION TRIPWIRE: the walk must resolve dev's tip explicitly and must
-    # NOT anchor on ${GITHUB_SHA} (the run's own ref == main's tip after the
-    # default-branch flip), which would silently stall promotion.
+    # NOT replace the explicit dev-tip walk with ${GITHUB_SHA}; the dispatch SHA
+    # may lag dev's tip while the window runs.
     assert "git/refs/heads/dev" in script
     assert "compare/main...${dev_sha}" in script
     assert "compare/main...${GITHUB_SHA}" not in script
@@ -1128,7 +1126,7 @@ elif endpoint.endswith("/git/refs/heads/dev"):
 elif f"/runs/{os.environ['GITHUB_RUN_ID']}/jobs?" in endpoint:
     print(json.dumps([{"jobs": [
         {"id": 10, "name": "python-tests (3.12)", "conclusion": "cancelled"},
-        {"id": 11, "name": "python-tests (3.12)", "conclusion": os.environ["SCHEDULED_PYTHON"]},
+        {"id": 11, "name": "python-tests (3.12)", "conclusion": os.environ["DISPATCHED_PYTHON"]},
         {"id": 12, "name": "typescript-tests", "conclusion": "success"},
         {"id": 13, "name": "release-readiness", "conclusion": "success"},
         {"id": 14, "name": "wheel-viewer", "conclusion": "success"},
@@ -1215,7 +1213,7 @@ elif len(sys.argv) > 2 and sys.argv[1] == "merge-base" and sys.argv[2] == "--is-
             "GITHUB_REPOSITORY": "royerlab/luxar",
             "GITHUB_RUN_ID": "800",
             "GITHUB_SHA": github_sha,
-            "SCHEDULED_PYTHON": dispatched_python,
+            "DISPATCHED_PYTHON": dispatched_python,
             "PUSH_PYTHON_LATEST": push_python_latest,
             "PUSH_TYPESCRIPT": push_typescript,
             "PUSH_RELEASE": push_release,
@@ -1383,10 +1381,9 @@ def test_non_green_dispatch_does_not_repair_push_jobs(
 
 
 # --- Precondition guard: the dispatched checkout must remain on dev, loudly. ----
-# GitHub attaches a workflow dispatch to the requested ref, so the
-# run's own ref/SHA is main's tip even though the suite checks out captured dev.
-# The guard asserts that checkout remains on origin/dev's line before walking the
-# explicit dev tip. Its failure arms are tested because they have no other signal.
+# A `--ref dev` dispatch SHA is a dev commit that may lag dev's tip while the
+# window runs. The guard asserts that checkout remains on origin/dev's line before
+# walking the explicit dev tip. Its failure arms have no other signal.
 
 
 def test_promotion_guard_green_when_dev_is_ahead_of_main(
@@ -1434,19 +1431,19 @@ def test_promotion_guard_green_when_dev_equals_main(
 def test_promotion_guard_green_when_dispatch_targets_dev(
     workflow: str, tmp_path: Path
 ) -> None:
-    """A main event SHA does not block repair of the captured dev checkout."""
+    """A dev dispatch attests the same commit that the repair job checks out."""
     result, calls = _run_cancelled_push_repair(
         workflow,
         tmp_path,
         dev_ref_sha="devtip",
         git_origin_dev="devtip",
         git_head_sha="devtip",
-        github_sha="maintip",
+        github_sha="devtip",
         candidate_shas=(),
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "dispatched run SHA maintip" in result.stdout
+    assert "dispatched run SHA devtip" in result.stdout
     assert "dev is level with main" in result.stdout
     assert calls == []
 
