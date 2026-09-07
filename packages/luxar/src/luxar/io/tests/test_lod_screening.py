@@ -11,13 +11,14 @@ whole point of the module.
 from __future__ import annotations
 
 import math
+import warnings
 from pathlib import Path
 from typing import List
 
 import numpy as np
 import pytest
 
-from luxar._zarr_compat import consolidate, create_array, open_group
+from luxar._zarr_compat import close, consolidate, create_array, open_group
 from luxar.core.group.lod.group import (
     PARTITION_FINEST_AREA,
     WHOLE_OBJECT_FINEST_ANCHOR,
@@ -539,6 +540,46 @@ def _handmade_store(
 # --------------------------------------------------------------------------- #
 # The screen, end to end.
 # --------------------------------------------------------------------------- #
+
+
+def test_payload_files_do_not_warn_during_the_scene_walk(tmp_path: Path) -> None:
+    path = _handmade_store(
+        tmp_path / "payload.luxar.zarr",
+        group_bounds={
+            "coarse": {
+                "type": "points",
+                "n_points": 10,
+                "child_index": 0,
+                "coverage_fraction": 0.0,
+                "position_bounds": {
+                    "min": [-1.0, -1.0, -1.0],
+                    "max": [1.0, 1.0, 1.0],
+                },
+            },
+            "fine": {
+                "type": "points",
+                "n_points": 100,
+                "child_index": 1,
+                "coverage_fraction": 1.0,
+                "position_bounds": {
+                    "min": [-1.0, -1.0, -1.0],
+                    "max": [1.0, 1.0, 1.0],
+                },
+            },
+        },
+    )
+    root = open_group(path, mode="a")
+    sound = root.create_group("sound")
+    sound.attrs.update({"type": "sound", "audio_file": "audio.mp3"})
+    (path / "sound" / "audio.mp3").write_bytes(b"ID3payload")
+    close(root)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        scene = screen_lod_store(path)
+
+    assert scene.skipped_reason == ""
+    assert [group.path for group in scene.groups] == ["lod"]
 
 
 def test_whole_object_group_is_a_win_at_every_aspect(win_scene: Path) -> None:
