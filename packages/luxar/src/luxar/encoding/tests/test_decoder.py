@@ -274,20 +274,34 @@ class TestQuantizedDecoding:
 
         np.testing.assert_array_equal(decoded, np.array([[2]], dtype=np.uint8))
 
-    def test_integer_restoration_clamps_to_dtype_range(self, tmp_path) -> None:
+    @pytest.mark.parametrize(
+        ("min_value", "max_value", "stored", "expected"),
+        [
+            (0.0, 255.6, 255, 255),
+            (-0.6, 254.4, 0, 0),
+        ],
+    )
+    def test_integer_restoration_clamps_to_dtype_range(
+        self,
+        tmp_path,
+        min_value: float,
+        max_value: float,
+        stored: int,
+        expected: int,
+    ) -> None:
         group = zarr.open_group(tmp_path, mode="w")
-        create_array(group, "test", data=np.array([255], dtype=np.uint8))
+        create_array(group, "test", data=np.array([stored], dtype=np.uint8))
         group["test"].attrs["encoding"] = {
             "name": "bounded_scalar_uint8",
-            "min": 0.0,
-            "max": 255.6,
+            "min": min_value,
+            "max": max_value,
             "bits": 8,
             "original_dtype": "uint8",
         }
 
         decoded = ArrayDecoder().decode(group["test"], group)
 
-        np.testing.assert_array_equal(decoded, np.array([255], dtype=np.uint8))
+        np.testing.assert_array_equal(decoded, np.array([expected], dtype=np.uint8))
 
     def test_integer_roundtrip_is_exact_below_half_unit_quantum(self, tmp_path) -> None:
         data = np.arange(1, 33, dtype=np.uint8)
