@@ -2164,6 +2164,8 @@ When using spatial indices:
 Every data array self-describes its on-disk encoding via an `encoding` attr
 in its `.zattrs` (`{"name": "<scheme>", ...}`); readers dispatch on
 `encoding.name` and decode back to float32 (or the original integer dtype).
+When `original_dtype` is integral, readers round decoded values to the nearest
+integer before casting rather than truncating toward zero.
 The full scheme vocabulary is single-sourced in
 `format-contract/contract.yaml`. Besides the quantization schemes described
 per-array above (`linear_perchannel_u16`, `rgb_uint8`,
