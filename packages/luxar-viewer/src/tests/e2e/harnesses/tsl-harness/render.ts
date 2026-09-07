@@ -136,8 +136,10 @@ async function renderBloomChain(
       renderer as import('three/webgpu').WebGPURenderer
     ).readRenderTargetPixelsAsync(target, 0, 0, outputSize.width, outputSize.height);
     pixels = copyReadback(readback);
-    // This composed fallback path reads top-down; normalize it to the
-    // WebGL arm's bottom-up convention before comparing pixel positions.
+    // At levels=1 the composed WebGPU readback is the exact row reversal of
+    // WebGL (0.0000 against its mirror), so normalize before comparison.
+    // renderTSL's force-WebGL path needs no flip; #2584 tracks why forcing
+    // framebufferYDown alone does not remove the reversal here.
     flipRowsInPlace(pixels, outputSize.width, outputSize.height);
   }
   const mipCount = chain.mipCount;
