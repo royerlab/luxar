@@ -20,7 +20,7 @@ on:
     # leg, with an explicit full-matrix override for manual diagnostics.
     inputs:
       full_python_matrix:
-        description: Dispatch on dev; run full Python matrix (all dispatches also repair cancelled push checks)
+        description: Dispatch on dev; full matrix; all dispatches repair cancelled push checks
         required: false
         default: false
         type: boolean
