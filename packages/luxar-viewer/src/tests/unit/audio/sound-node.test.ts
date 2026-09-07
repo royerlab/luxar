@@ -319,8 +319,10 @@ describe('SoundNode — edges', () => {
     vi.advanceTimersByTime(0);
     node.setViewState(buildSoundBaseViewState(storyDims(2)), null);
     vi.advanceTimersByTime(100);
+    ctx.advance(0.1);
     node.setViewState(buildSoundBaseViewState(storyDims(1)), null);
     vi.advanceTimersByTime(0);
+    expect(ctx.sources[0].stops).toEqual([0.5, 0.1]);
     expect(started).toEqual(['clip', 'clip']);
     expect(ended).toEqual(['clip']);
     node.setViewState(buildSoundBaseViewState(storyDims(2)), null);

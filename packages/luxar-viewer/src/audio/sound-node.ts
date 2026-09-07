@@ -395,6 +395,7 @@ export class SoundNode {
       clearTimeout(v.stopTimer);
       v.stopTimer = undefined;
       this.reportEnded(v);
+      v.audio.stop();
     }
     if (v.audio.isPlaying || v.playing) {
       // Restart (a re-rise during a fade-out, or a `once` re-triggered).
