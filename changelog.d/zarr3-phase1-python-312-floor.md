@@ -16,10 +16,10 @@ importer, a loop variable rebound from `int` to a numpy integer in the batched
 spatial hash, an unnarrowed `np.squeeze` result in `load_volume`, and a
 `min(int, np.signedinteger)` in gsplat culling.
 
-The CI Python matrix is rebased on the new floor rather than shrunk: a pull request
-and the seven other scheduled windows use 3.12 (the floor, and the required status
-context), while push-to-dev and one daily scheduled run exercise 3.12, 3.13 and
-3.14. `requires-python = ">=3.12"` has no ceiling — 3.13 and 3.14 are supported,
+The CI Python matrix is rebased on the new floor rather than shrunk: pull requests
+and repair dispatches use 3.12 by default (the floor, and the required status context),
+while push-to-dev and an explicit full-matrix dispatch exercise 3.12, 3.13 and 3.14.
+`requires-python = ">=3.12"` has no ceiling — 3.13 and 3.14 are supported,
 `install-hatch` prefers them, and a developer's Hatch environment picks the newest
 interpreter on the box — so the version most people actually run is exercised
 within 24 h rather than on every PR. The full-matrix set is exactly what the

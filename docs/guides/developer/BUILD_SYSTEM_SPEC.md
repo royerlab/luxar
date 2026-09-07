@@ -897,9 +897,14 @@ runs everything. The same trade as the per-PR Python matrix below: found on
 
 3.12 is the floor (`requires-python = ">=3.12"`) and names the required
 `python-tests (3.12)` context. Merge pushes exercise every supported interpreter,
-so the wheel classifiers and tested versions stay aligned. A manually dispatched
-repair window defaults to the required leg; the full-matrix input is available for
-diagnostics without restoring a redundant daily cron. On obsidian,
+so the wheel classifiers and tested versions stay aligned. The promotion service
+requests a repair window at most once every three hours while cancelled contexts block
+promotion. A missed dispatch leaves promotion stale until a later request or a naturally
+green merge push; the service warns rather than failing its promotion pass. A manually
+dispatched repair window defaults to the required leg; the full-matrix input is available
+for diagnostics without restoring a redundant daily cron. Every dispatch also runs the
+cancelled-push repair walk. Dispatch from `dev`, not the Actions UI's default `main`
+selection. On obsidian,
 `max-parallel: 2` prevents one Python matrix from monopolising all three shared
 slots. The TypeScript timeout remains 120 minutes to cover both dispatch latency
 and the measured `SCHED_IDLE` slowdown.
@@ -910,37 +915,53 @@ it claims, rather than whatever pipx selected — the defect behind issue #839.
 `pick-runner` is deliberately not a capacity router. Fork PRs and the explicit
 `LUXAR_CI_FORCE_HOSTED=1` break-glass use `ubuntu-latest`; every other event,
 including workflow dispatches and reruns, uses `obsidian`. It reads no heartbeat,
-repository activity, or backlog state.
+repository activity, or backlog state. During an extended outage or promotion stall,
+open **Settings → Secrets and variables → Actions → Variables**, create or set
+`LUXAR_CI_FORCE_HOSTED` to `1`, rerun all jobs, and clear it after capacity recovers.
 
 `queue-watchdog` uses the stdlib-only `scripts/ci_queue_scan.py` helper to detect an
 obsidian-routed run whose jobs remain queued while no obsidian work is active. It
 sparse-checks out `scripts/` with credentials disabled, fails open on unreadable
 liveness data, and only cancels after two consecutive empty scans. A dispatched run
-checks out the scanner from `dev`.
+checks out the scanner from `dev`. More precisely, it cancels only when jobs are still
+queued and two consecutive scans find no active obsidian job. The former scheduled queue
+redispatcher was removed because cancelling a queued run and creating a fresh attempt
+merely returns it to the same queue.
 
 The promotion service requests repair windows with `workflow_dispatch --ref dev`.
-That makes `github.sha`, the check-run attachment, and the captured `dev_sha` all
-refer to a dev commit. The `changes` job captures that SHA once and every downstream
-suite and repair checkout reuses it. Dispatches have no PR base, so they select the
-whole suite and documentation gate. Their `workflow_dispatch` concurrency group is
-separate from push runs; a newer dispatch can supersede an older dispatch without
-cancelling the merge push that produced the candidate commit. A dispatch requested
-on any other ref fails before checkout rather than attaching a dev-tree verdict to
-the wrong commit.
+That makes `github.sha`, the check-run attachment, the tree checked out by `changes`,
+and the captured `dev_sha` the same immutable dev commit. Every downstream suite and
+repair checkout reuses it. Dispatches have no PR base, so they select the whole suite
+and documentation gate. Their `workflow_dispatch` concurrency group is separate from
+push runs; a newer dispatch can supersede an older dispatch without cancelling the
+merge push that produced the candidate commit. A dispatch requested on any other ref
+fails before checkout rather than attaching a dev-tree verdict to the wrong commit.
 
 After a dispatched window completes the five protected contexts successfully,
 `repair-cancelled-push-checks` resolves dev's current tip and enumerates commits in
-`main..dev`, newest first. It reruns cancelled required jobs from up to two completed
-push suites. One cancelled context uses a job-level rerun; multiple contexts use one
-failed-jobs rerun because GitHub rejects a second job-level rerun after the attempt
-changes. The repair checkout must remain on dev's ancestry, and an unresolvable dev
-ref or off-dev checkout fails loudly. Candidate API failures and rejected reruns are
-warnings so one candidate does not abort the remaining walk.
+`main..dev`, newest first. This is necessary because GitHub branch protection does not
+necessarily replace a cancelled push check with a later successful check of the same
+name on the same SHA. It reruns cancelled required jobs from up to two completed push
+suites. The second candidate hedges against a genuinely red newest candidate; repairing
+still-older commits cannot advance the same promotion. One cancelled context uses a
+job-level rerun. Multiple contexts use one failed-jobs rerun because GitHub rejects a
+second job-level rerun after the attempt changes; that run-level path also re-enqueues
+cancelled or failed non-required legs such as Python 3.13/3.14. A failed repaired job is
+terminal for that SHA unless a multi-job failed-jobs rerun includes it; otherwise it
+needs a manual rerun. The repair checkout must remain on dev's ancestry, and an
+unresolvable dev ref or off-dev checkout fails loudly. Candidate API failures and
+rejected reruns are warnings so one candidate does not abort the remaining walk.
 
 Fresh runs coalesce by event and ref; reruns use the original run id so later merges
 cannot cancel repaired attempts and repairs for different commits do not collide.
-The two-candidate cap bounds the additional obsidian work and must not be widened
-without re-measuring queue pressure.
+Reruns execute the workflow definition from their original SHA, and neither rerun path
+restarts `queue-watchdog`. A job left undispatched after its runners disappear can remain
+queued until GitHub's 24-hour ceiling; one dispatched before its slot recycles can reach
+its timeout before any step starts or runner name is recorded. `pick-runner`'s
+`ubuntu-latest` output is only a fallback if the selector job itself fails, ensuring the
+required jobs never receive an empty `runs-on`. A multi-job candidate can add up to four
+long obsidian legs, so the two-candidate cap permits up to eight per window. Do not widen
+that cap without re-measuring queue pressure.
 
 ## Architecture Notes
 
