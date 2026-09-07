@@ -1429,8 +1429,8 @@ for (const demo of DEMOS) {
       await setExposure(page, demo.exposure);
       console.log(`[${demo.id}] exposure=${demo.exposure.toFixed(2)} stops (override)`);
     } else if (demo.autoExpose !== false) {
-      const { stops, flatSubject } = await autoExpose(page);
-      const how = flatSubject ? 'auto, flat subject' : 'auto';
+      const { stops, flatSubject, guardExhausted } = await autoExpose(page);
+      const how = `auto${flatSubject ? ', flat subject' : ''}${guardExhausted ? ', guard exhausted' : ''}`;
       console.log(`[${demo.id}] exposure=${stops.toFixed(2)} stops (${how})`);
     } else {
       console.log(`[${demo.id}] exposure=baked (autoExpose off)`);

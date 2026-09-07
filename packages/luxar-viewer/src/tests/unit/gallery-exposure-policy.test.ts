@@ -30,7 +30,6 @@ import {
   AUTO_EXPOSURE_ITERS,
   BG_LUMA_MAX,
   CLIP_FRAC_MAX,
-  CLIP_GUARD_ITERS,
   CLIP_GUARD_STEP,
   CLIP_LUMA,
   CLIP_SAT_MAX,
@@ -158,6 +157,8 @@ function makeIO(profile: SubjectProfile): RecordingIO {
 // Pre-fix reference algorithm (p99 pass + clip guard only, no mid-tone phase)
 // ---------------------------------------------------------------------------
 
+const REFERENCE_CLIP_GUARD_ITERS = 8;
+
 async function referenceAutoExposure(io: ExposureIO): Promise<number> {
   let stops = 1.0;
   await io.apply(stops);
@@ -177,7 +178,7 @@ async function referenceAutoExposure(io: ExposureIO): Promise<number> {
     stops = next;
     await io.apply(stops);
   }
-  for (let iter = 0; iter < CLIP_GUARD_ITERS; iter++) {
+  for (let iter = 0; iter < REFERENCE_CLIP_GUARD_ITERS; iter++) {
     const { clippedFrac, bgLuma } = await io.measure();
     const tooBlown = clippedFrac > CLIP_FRAC_MAX;
     const bgTooBright = bgLuma > BG_LUMA_MAX;
@@ -285,9 +286,10 @@ describe('gallery auto-exposure policy', () => {
     for (const curve of CURVES) {
       it(`chooses EXACTLY the pre-fix exposure under ${curve.name}`, async () => {
         const profile = emissive(curve);
-        const { stops, flatSubject } = await computeAutoExposure(makeIO(profile));
+        const { stops, flatSubject, guardExhausted } = await computeAutoExposure(makeIO(profile));
         expect(stops).toBe(await referenceAutoExposure(makeIO(profile)));
         expect(flatSubject).toBe(false);
+        expect(guardExhausted).toBe(false);
       });
     }
 
@@ -358,13 +360,45 @@ describe('gallery auto-exposure policy', () => {
       expect(stops).toBe(1.0 + 2 * AUTO_EXPOSURE_ITERS);
     });
 
-    it('runs the guard to its full budget on a subject that never responds', async () => {
-      // Permanently blown + grey background, and a WIDE histogram so the
-      // mid-tone pass stays out of it. Lands at -3.41, i.e. above EXPOSURE_MIN —
-      // this pins the budget, not the clamp (see the next test for the clamp).
+    it('continues past the old guard budget until the frame satisfies the predicate', async () => {
+      let applied = 0;
+      const measured: number[] = [];
       const io: ExposureIO = {
-        async apply() {},
+        async apply(stops) {
+          applied = stops;
+        },
         async measure(): Promise<LumaStats> {
+          measured.push(applied);
+          const guarded = applied > -5;
+          return {
+            hiLuma: TARGET_HI,
+            loLuma: 0.2,
+            midLuma: 0.6,
+            litFraction: 0.5,
+            clippedFrac: guarded ? 1 : 0,
+            bgLuma: guarded ? 0.5 : 0,
+          };
+        },
+      };
+
+      const { stops, guardExhausted } = await computeAutoExposure(io);
+      expect(stops).toBe(-5);
+      expect(measured.at(-1)).toBe(-5);
+      expect(guardExhausted).toBe(false);
+    });
+
+    it('measures the floor and reports when a permanently blown subject exhausts the guard', async () => {
+      // Permanently blown + grey background, and a WIDE histogram so the
+      // mid-tone pass stays out of it. The guard must use its full available
+      // range, then measure the applied floor before declaring exhaustion.
+      let applied = 0;
+      const measured: number[] = [];
+      const io: ExposureIO = {
+        async apply(stops) {
+          applied = stops;
+        },
+        async measure(): Promise<LumaStats> {
+          measured.push(applied);
           return {
             hiLuma: 0.99,
             loLuma: 0.2,
@@ -375,14 +409,11 @@ describe('gallery auto-exposure policy', () => {
           };
         },
       };
-      const { stops, flatSubject } = await computeAutoExposure(io);
+      const { stops, flatSubject, guardExhausted } = await computeAutoExposure(io);
       expect(flatSubject).toBe(false);
-      expect(stops).toBeGreaterThan(EXPOSURE_MIN);
-      const expected =
-        1.0 +
-        AUTO_EXPOSURE_ITERS * Math.log2(TARGET_HI / 0.99) -
-        CLIP_GUARD_ITERS * CLIP_GUARD_STEP;
-      expect(stops).toBeCloseTo(expected, 6);
+      expect(stops).toBe(EXPOSURE_MIN);
+      expect(measured.at(-1)).toBe(EXPOSURE_MIN);
+      expect(guardExhausted).toBe(true);
     });
 
     it('clamps at EXPOSURE_MIN when the mid-tone pass cannot reach the target', async () => {
