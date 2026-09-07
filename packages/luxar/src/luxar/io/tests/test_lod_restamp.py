@@ -1536,7 +1536,16 @@ def test_a_failed_run_restores_a_digest_it_could_not_have_recomputed(
     root = open_group(legacy_scene, mode="r+")
     strip(root)
     root.attrs["content_hash"] = "LEGACY-DIGEST"
-    root.require_group(ENVIRONMENT_GROUP).attrs["scene_content_hash"] = "LEGACY-DIGEST"
+    environment = root.require_group(ENVIRONMENT_GROUP)
+    faces = "faces-test"
+    create_array(
+        environment,
+        faces,
+        data=np.zeros((6, 1, 1, 4), dtype=np.uint16),
+        chunks=(1, 1, 1, 4),
+        compressor=None,
+    )
+    environment.attrs.update({"faces": faces, "scene_content_hash": "LEGACY-DIGEST"})
     consolidate(root)
     close(root)
     stale = _node_attrs(legacy_scene)
@@ -1544,17 +1553,26 @@ def test_a_failed_run_restores_a_digest_it_could_not_have_recomputed(
     assert stale[ENVIRONMENT_GROUP]["scene_content_hash"] == "LEGACY-DIGEST"
     assert "content_hash" not in stale["pts"]
 
+    real_write = lod_restamp._write_attr
+    writes: list[tuple[str, str]] = []
+
+    def track_write(node: Any, path: str, key: str, value: Any, undo: Any) -> None:
+        writes.append((path, key))
+        real_write(node, path, key, value, undo)
+
     def no_index(root: Any) -> None:
         raise OSError("simulated consolidate failure")
 
     # Fails AFTER the hash pass, so the digests really were overwritten and the
     # rollback has to put every one of them back.
+    monkeypatch.setattr(lod_restamp, "_write_attr", track_write)
     monkeypatch.setattr(lod_restamp, "consolidate", no_index)
 
     with pytest.raises(OSError, match="simulated consolidate failure"):
         restamp_lod_store(legacy_scene)
 
     after = _node_attrs(legacy_scene)
+    assert (ENVIRONMENT_GROUP, "scene_content_hash") in writes
     assert after["/"]["content_hash"] == "LEGACY-DIGEST"
     assert [path for path, attrs in after.items() if "content_hash" in attrs] == ["/"]
     assert after == stale, "an attrs-level rollback has to be exact everywhere"
