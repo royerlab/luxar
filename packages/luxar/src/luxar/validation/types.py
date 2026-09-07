@@ -427,12 +427,15 @@ PHYSICAL_MATERIAL_FRACTION_ATTRS: Tuple[str, ...] = (
     "transmission",
 )
 
-#: The Phase 2 glass family (spec §3.4). Only ``transmission`` and ``ior`` mean
-#: anything on their own; three compiles ``thickness``, the two ``attenuation_*``
-#: knobs and ``dispersion`` inside its ``USE_TRANSMISSION`` block, so the mesh
-#: adder refuses them without ``transmission > 0`` (see
-#: ``PHYSICAL_TRANSMISSION_DEPENDENT_ATTRS``). ``ior`` stands alone because it
-#: also sets the specular reflectance at normal incidence of an opaque surface.
+#: The glass family (spec §3.4): the Phase 2 knobs plus Phase 3's ``refract_data``
+#: flag. Only ``transmission`` and ``ior`` mean anything on their own; three
+#: compiles ``thickness``, the two ``attenuation_*`` knobs and ``dispersion``
+#: inside its ``USE_TRANSMISSION`` block, and ``refract_data`` (draw the glass
+#: AFTER the emissive data so it refracts it) is meaningless on a surface that
+#: transmits nothing — so the mesh adder refuses all of them without
+#: ``transmission > 0`` (see ``PHYSICAL_TRANSMISSION_DEPENDENT_ATTRS``). ``ior``
+#: stands alone because it also sets the specular reflectance at normal incidence
+#: of an opaque surface.
 PHYSICAL_TRANSMISSION_ATTRS: FrozenSet[str] = frozenset(
     {
         "transmission",
@@ -441,13 +444,20 @@ PHYSICAL_TRANSMISSION_ATTRS: FrozenSet[str] = frozenset(
         "attenuation_color",
         "attenuation_distance",
         "dispersion",
+        "refract_data",
     }
 )
 
 #: The subset of :data:`PHYSICAL_TRANSMISSION_ATTRS` that renders NOTHING unless
 #: ``transmission`` is authored above zero — the pairing the adder refuses.
 PHYSICAL_TRANSMISSION_DEPENDENT_ATTRS: FrozenSet[str] = frozenset(
-    {"thickness", "attenuation_color", "attenuation_distance", "dispersion"}
+    {
+        "thickness",
+        "attenuation_color",
+        "attenuation_distance",
+        "dispersion",
+        "refract_data",
+    }
 )
 
 #: Every authored knob that means something ONLY under ``material="physical"``.
@@ -798,6 +808,30 @@ def validate_layer(value: Any) -> bool:
     if isinstance(value, (int, float)):
         return bool(value)
     raise TypeError(f"Layer must be a boolean, got {type(value).__name__}")
+
+
+def validate_bool_flag(value: Any, name: str = "Flag") -> bool:
+    """Validate a named boolean appearance flag (``refract_data`` and kin).
+
+    The same acceptance as :func:`validate_layer` — ``bool`` or ``numpy.bool_``
+    — but the message names the knob, because this runs from the mesh appearance
+    validator table where several flags share one code path.
+
+    Args:
+        value: Value to validate as a boolean flag
+        name: Human-readable knob name for the error message
+
+    Returns:
+        The flag as a plain ``bool``
+
+    Raises:
+        TypeError: If value is not a boolean (numbers are refused here, unlike
+            ``layer``: ``refract_data=1`` reads like a slider value, and a flag
+            that also accepts numbers invites exactly that confusion)
+    """
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    raise TypeError(f"{name} must be a bool, got {type(value).__name__}")
 
 
 def validate_link(value: Any) -> str:

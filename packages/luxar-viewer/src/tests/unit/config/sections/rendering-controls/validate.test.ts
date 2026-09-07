@@ -51,6 +51,24 @@ describe('validateRendering', () => {
     expect(result.errors).toContainEqual(expect.stringContaining('Invalid exposure'));
   });
 
+  it.each([
+    [0, false, 'zero sizes the transmission target to nothing'],
+    [-0.5, false, 'negative'],
+    [1.5, false, 'above the frame'],
+    [NaN, false, 'NaN'],
+    [Number.POSITIVE_INFINITY, false, 'Infinity'],
+    [0.5, true, 'the default'],
+    [1, true, 'full resolution, the top of the range'],
+    [0.01, true, 'a tiny but positive fraction'],
+  ])('transmissionResolutionScale=%s → valid=%s (%s)', (scale, valid, _why) => {
+    const cfg = cloneConfig();
+    cfg.renderingControls.refraction.transmissionResolutionScale = scale;
+    const result = invokeValidator(validateRendering, cfg);
+    const errors = result.errors.filter((e) => e.includes('transmissionResolutionScale'));
+    expect(errors).toHaveLength(valid ? 0 : 1);
+    if (!valid) expect(errors[0]).toContain('(0, 1]');
+  });
+
   it('rejects NaN globalOffset', () => {
     const cfg = cloneConfig();
     cfg.renderingControls.defaults.globalOffset = NaN;

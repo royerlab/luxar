@@ -5166,17 +5166,27 @@ describe('depth-sort coordinator — layer_order bands', () => {
    * Luxar blending mode (translucent, so commutative to the coordinator) and the
    * draw-before-emissive request (spec MESH_PHYSICAL_MATERIALS §3.4).
    */
-  function makeGlassMesh(z: number): THREE.Mesh {
+  function makeGlassMesh(z: number, opts: { after?: boolean; radius?: number } = {}): THREE.Mesh {
     const material = new THREE.Material();
     material.userData.material = 'physical';
-    material.userData.drawBeforeEmissive = true;
+    // `refract_data` flips the stamp to draw-AFTER (Phase 3); exactly one is set.
+    if (opts.after) material.userData.drawAfterEmissive = true;
+    else material.userData.drawBeforeEmissive = true;
     material.transparent = true;
     const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
-    mesh.geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, z), 1);
+    mesh.geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, z), opts.radius ?? 1);
     mesh.userData.nodeType = 'mesh';
     mesh.userData.committedData = { some: 'source' };
     return mesh;
   }
+
+  /** Register a glass mesh the way the mesh commit path does. */
+  const commitGlass = (
+    coord: Awaited<ReturnType<typeof loadCoordinator>>,
+    glass: THREE.Mesh
+  ): void => {
+    coord.noteDepthSortCommit(glass, () => new Float32Array(9), 3, new Uint32Array(9));
+  };
 
   it('unranked glass sits at renderOrder -1, ahead of the unranked emissive layers at 0', async () => {
     // On WebGPU glass shares the transparent list with every emissive layer and
@@ -5235,6 +5245,220 @@ describe('depth-sort coordinator — layer_order bands', () => {
     expect(glass.renderOrder).toBe(-1);
     expect(additive.renderOrder).toBe(0);
     expect(mockApi.sort).not.toHaveBeenCalled();
+  });
+
+  // ---- Phase 3: refracting glass draws AFTER the data (spec §3.4) ----------
+
+  it('refracting glass takes a rank even when nothing else would, after the unranked emissive layers at 0', async () => {
+    // On WebGPU the glass samples the framebuffer as it stands when it draws, so
+    // "after the data" must be a real renderOrder above the emissive layers' 0.
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const lens = makeGlassMesh(-10, { after: true });
+    const additive = makeGSplatsMesh(2, 'additive');
+    commitGlass(coord, lens);
+    coord.noteDepthSortCommit(additive, new Float32Array([0, 0, -1]), 1);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(additive.renderOrder).toBe(0);
+    expect(lens.renderOrder).toBe(1);
+    expect(mockApi.registerNode).not.toHaveBeenCalled();
+  });
+
+  it('refracting glass draws last in its band even when it is the FARTHEST object', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const { far, near } = twoDisjointLeaves();
+    // Farther than both ranked layers: by depth alone it would draw FIRST.
+    const lens = makeGlassMesh(-100, { after: true });
+    commitGlass(coord, lens);
+    for (const m of [near, far]) coord.noteDepthSortCommit(m, new Float32Array([0, 0, -1]), 1);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(far.renderOrder).toBe(1);
+    expect(near.renderOrder).toBe(2);
+    expect(lens.renderOrder).toBe(3);
+  });
+
+  it('refracting glass stays within its band: a higher authored band still draws after it', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const { far, near } = twoDisjointLeaves();
+    const lens = makeGlassMesh(-5, { after: true }); // band 0 (unset), nearest of all
+    setLevel(far, 0);
+    setLevel(near, 1);
+    commitGlass(coord, lens);
+    for (const m of [near, far]) coord.noteDepthSortCommit(m, new Float32Array([0, 0, -1]), 1);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    // Band 0: far, then the lens LAST in that band; band 1 after both.
+    expect(far.renderOrder).toBe(1);
+    expect(lens.renderOrder).toBe(2);
+    expect(near.renderOrder).toBe(3);
+  });
+
+  it('a lens that spatially CONTAINS a ranked cluster is not hoisted before it', async () => {
+    // The #843 hoist ("container draws first so the content composites on top")
+    // is exactly the relation a lens around a cluster has — and it would paint the
+    // cluster crisp on top instead of refracting it. The glass-last intent wins,
+    // like an authored band does, and without a diagnostic.
+    const coord = await loadCoordinator();
+    const { log } = await import('../../../utils/log');
+    const warn = vi.spyOn(log, 'warning');
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const lens = makeGlassMesh(-20, { after: true, radius: 100 });
+    const marker = makeGSplatsMesh(2, 'volumetric');
+    marker.geometry.boundingSphere!.center.set(0, 0, -30);
+    marker.geometry.boundingSphere!.radius = 1;
+    commitGlass(coord, lens);
+    coord.noteDepthSortCommit(marker, new Float32Array([0, 0, -1]), 1);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(marker.renderOrder).toBe(1);
+    expect(lens.renderOrder).toBe(2);
+    expect(warn.mock.calls.some(([, msg]) => String(msg).includes('CONTAINS'))).toBe(false);
+    warn.mockRestore();
+  });
+
+  it('Phase 2 glass inside a ranked container keeps its authored leading rank', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const glass = makeGlassMesh(-20);
+    setLevel(glass, 0);
+    const container = makeGSplatsMesh(2, 'volumetric');
+    container.geometry.boundingSphere!.center.set(0, 0, -20);
+    container.geometry.boundingSphere!.radius = 100;
+    commitGlass(coord, glass);
+    coord.noteDepthSortCommit(container, new Float32Array([0, 0, -1]), 1);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(glass.renderOrder).toBe(-1);
+    expect(container.renderOrder).toBe(1);
+  });
+
+  it('glass-first at -1, emissive at 0 and glass-last ranked, all in one scene', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const shell = makeGlassMesh(-10);
+    const lens = makeGlassMesh(-12, { after: true });
+    const additive = makeGSplatsMesh(2, 'additive');
+    commitGlass(coord, shell);
+    commitGlass(coord, lens);
+    coord.noteDepthSortCommit(additive, new Float32Array([0, 0, -1]), 1);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(shell.renderOrder).toBe(-1);
+    expect(additive.renderOrder).toBe(0);
+    expect(lens.renderOrder).toBe(1);
+  });
+
+  it('collectRefractingGlass lists the VISIBLE refracting glass and nothing else, reusing the array', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const lens = makeGlassMesh(-10, { after: true });
+    const hiddenLens = makeGlassMesh(-11, { after: true });
+    const hiddenLevel = new THREE.Group();
+    hiddenLevel.add(hiddenLens);
+    hiddenLevel.visible = false; // a demoted LOD level hides the GROUP, not the mesh
+    const shell = makeGlassMesh(-12); // glass-first: not refracting
+    const additive = makeGSplatsMesh(2, 'additive');
+    for (const g of [lens, hiddenLens, shell]) commitGlass(coord, g);
+    coord.noteDepthSortCommit(additive, new Float32Array([0, 0, -1]), 1);
+    await flush();
+
+    const out: THREE.Mesh[] = [];
+    expect(coord.collectRefractingGlass(out)).toBe(out);
+    expect(out).toEqual([lens]);
+    // A stale entry from the previous frame is cleared, not appended to.
+    coord.collectRefractingGlass(out);
+    expect(out).toEqual([lens]);
+    // The live toggle flips membership without re-registration…
+    (lens.material as THREE.Material).userData.drawAfterEmissive = undefined;
+    expect(coord.collectRefractingGlass(out)).toEqual([]);
+    (lens.material as THREE.Material).userData.drawAfterEmissive = true;
+    hiddenLevel.visible = true;
+    expect(coord.collectRefractingGlass(out)).toEqual([lens, hiddenLens]);
+    // A lens the nD slice cull emptied (visible, but a zero draw range — the way a mesh
+    // pinned to another coordinate of a hidden dimension is culled) draws nothing and
+    // must not make the split pay its glass pass.
+    hiddenLens.geometry.setDrawRange(0, 0);
+    expect(coord.collectRefractingGlass(out)).toEqual([lens]);
+    hiddenLens.geometry.setDrawRange(0, Infinity);
+    expect(coord.collectRefractingGlass(out)).toEqual([lens, hiddenLens]);
+    // …and disposal removes the mesh for good.
+    coord.releaseDepthSortNode(lens);
+    expect(coord.collectRefractingGlass(out)).toEqual([hiddenLens]);
+    coord.releaseAllDepthSortNodes();
+    expect(coord.collectRefractingGlass()).toEqual([]);
+  });
+
+  it('collectUnpartitionedMeshes lists the VISIBLE physical meshes that do not refract, and nothing else', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const lens = makeGlassMesh(-10, { after: true }); // refracting: partitioned by the split itself
+    const shell = makeGlassMesh(-12); // Phase 2 glass: three's material, cannot partition
+    const hiddenShell = makeGlassMesh(-13);
+    const hiddenLevel = new THREE.Group();
+    hiddenLevel.add(hiddenShell);
+    hiddenLevel.visible = false;
+    const additive = makeGSplatsMesh(2, 'additive'); // Luxar's shader: partitions itself
+    for (const g of [lens, shell, hiddenShell]) commitGlass(coord, g);
+    coord.noteDepthSortCommit(additive, new Float32Array([0, 0, -1]), 1);
+    await flush();
+
+    const out: THREE.Mesh[] = [];
+    expect(coord.collectUnpartitionedMeshes(out)).toBe(out);
+    expect(out).toEqual([shell]);
+    // The live "Refract data" toggle moves a glass between the two lists.
+    (lens.material as THREE.Material).userData.drawAfterEmissive = undefined;
+    expect(coord.collectUnpartitionedMeshes(out)).toEqual([lens, shell]);
+    expect(coord.collectRefractingGlass()).toEqual([]);
+    hiddenLevel.visible = true;
+    expect(coord.collectUnpartitionedMeshes(out)).toEqual([lens, shell, hiddenShell]);
+    // Slice-culled (empty draw range): nothing to park on the pass-A-only layer either.
+    shell.geometry.setDrawRange(0, 0);
+    expect(coord.collectUnpartitionedMeshes(out)).toEqual([lens, hiddenShell]);
+    coord.releaseAllDepthSortNodes();
+    expect(coord.collectUnpartitionedMeshes()).toEqual([]);
+  });
+
+  it('applyGlassPartition writes the mode onto every registered material that carries the uniform', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const additive = makeGSplatsMesh(2, 'additive');
+    const luminous = makeGSplatsMesh(2, 'luminous');
+    const shared = { value: 0 };
+    (additive.material as unknown as { uniforms: unknown }).uniforms = { uGlassPartition: shared };
+    // Two meshes sharing one material record: the second write is a cheap no-op.
+    (luminous.material as unknown as { uniforms: unknown }).uniforms = { uGlassPartition: shared };
+    const glass = makeGlassMesh(-10, { after: true }); // three's material: no uniform, untouched
+    coord.noteDepthSortCommit(additive, new Float32Array([0, 0, -1]), 1);
+    coord.noteDepthSortCommit(luminous, new Float32Array([0, 0, -1]), 1);
+    commitGlass(coord, glass);
+    await flush();
+
+    expect(coord.applyGlassPartition(1)).toBe(1);
+    expect(shared.value).toBe(1);
+    expect(coord.applyGlassPartition(1)).toBe(0);
+    expect(coord.applyGlassPartition(2)).toBe(1);
+    expect(shared.value).toBe(2);
+    expect(coord.applyGlassPartition(0)).toBe(1);
+    expect(shared.value).toBe(0);
+    expect((glass.material as THREE.Material & { uniforms?: unknown }).uniforms).toBeUndefined();
+    coord.releaseAllDepthSortNodes();
+    expect(coord.applyGlassPartition(1)).toBe(0);
   });
 
   it('an authored band overrides the containment hoist, and warns', async () => {

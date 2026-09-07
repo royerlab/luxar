@@ -19,6 +19,8 @@ import { resolveToneMappingDefault } from '../tone-mapping';
 import { materialManager, type LuxarMegaShaderMaterial } from '../../material-manager';
 import { config } from '../../../config';
 import type { Renderer, RendererCapabilities } from '../../renderer-capabilities';
+import { DataRefractionSplit } from './refraction-split';
+import type { GlassPartition } from '../../materials/_shared/glass-partition';
 
 /** Inputs to the size-derivation pair. */
 export interface SizingInputs {
@@ -90,6 +92,12 @@ export interface PipelineResources {
   megaPass: FullscreenPass;
   bloomChain: BloomChain | null;
   fxaaPass: FxaaPass | null;
+  /**
+   * The scene-pass split that lets `refract_data` glass refract the data behind it
+   * while the data in front stays crisp — on both backends. Nullable only for the
+   * disposed state.
+   */
+  refractionSplit: DataRefractionSplit | null;
 }
 
 /** Configuration handed in by the orchestrator for resource construction. */
@@ -110,6 +118,19 @@ export interface BuildResourcesConfig {
    * allocation so we don't override a previously-disabled choice.
    */
   readonly allocateBloomFromDefaults: boolean;
+  /**
+   * Source of the visible refracting glass for the refraction split (the depth-sort
+   * coordinator's `collectRefractingGlass`). Injected so this module owns no scene
+   * knowledge.
+   */
+  readonly collectRefractingGlass: (out: THREE.Mesh[]) => THREE.Mesh[];
+  /**
+   * Source of the visible meshes three's own materials draw (the coordinator's
+   * `collectUnpartitionedMeshes`): drawn in the split's pass A only.
+   */
+  readonly collectUnpartitionedMeshes: (out: THREE.Mesh[]) => THREE.Mesh[];
+  /** The per-pass partition-mode broadcast (the coordinator's `applyGlassPartition`). */
+  readonly setGlassPartition: (mode: GlassPartition) => void;
 }
 
 /**
@@ -155,7 +176,21 @@ export function buildTransientResources(c: BuildResourcesConfig): PipelineResour
   // FXAA pass (built only when enabled).
   const fxaaPass = c.fxaaEnabled ? new FxaaPass(c.physW, c.physH, c.capabilities) : null;
 
-  return { hdrTarget, ldrTarget, megaShader, megaPass, bloomChain, fxaaPass };
+  // The refraction split runs on both renderers: the data partition (glass depth
+  // pre-pass, data behind, glass, data in front) is backend-agnostic; only the copy
+  // + screen quad that three's WebGLRenderer transmission pass needs is WebGL-only,
+  // and the split branches on `apiSurface` for that.
+  const refractionSplit = new DataRefractionSplit({
+    width: c.physW,
+    height: c.physH,
+    transmissionResolutionScale: config.renderingControls.refraction.transmissionResolutionScale,
+    apiSurface: c.capabilities.apiSurface,
+    collectRefractingGlass: c.collectRefractingGlass,
+    collectUnpartitionedMeshes: c.collectUnpartitionedMeshes,
+    setGlassPartition: c.setGlassPartition,
+  });
+
+  return { hdrTarget, ldrTarget, megaShader, megaPass, bloomChain, fxaaPass, refractionSplit };
 }
 
 /** Allocate a fresh bloom chain and bind it to the mega-shader. */
@@ -193,6 +228,7 @@ export function disposeTransientResources(r: PipelineResources): void {
   r.fxaaPass?.dispose();
   r.megaShader?.dispose();
   r.megaPass?.dispose();
+  r.refractionSplit?.dispose();
 }
 
 /** Inputs for the noise re-scaling helper. */

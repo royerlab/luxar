@@ -527,6 +527,16 @@ describe("createEmptyMeshNode — the material='physical' family (MESH_PHYSICAL_
     expect(metal.transmission).toBe(0);
     expect(metal.attenuationDistance).toBe(Number.POSITIVE_INFINITY);
     expect(metal.userData.drawBeforeEmissive).toBeUndefined();
+    // Phase 3: `refract_data` flips the ordering stamp to draw-after.
+    const lens = createEmptyMeshNode(
+      '/lens',
+      { ...PHYSICAL, transmission: 1.0, refract_data: true },
+      loader,
+      null
+    ).material as PhysicalMeshMaterial;
+    expect(lens.userData.drawAfterEmissive).toBe(true);
+    expect(lens.userData.drawBeforeEmissive).toBeUndefined();
+    expect(m.userData.drawAfterEmissive).toBeUndefined();
   });
 
   it('honours the authored side and maps flat/smooth onto flatShading', () => {

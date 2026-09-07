@@ -45,10 +45,9 @@ layout( std140 ) uniform render {
 
 layout( std140 ) uniform object {
 	float nodeUniform0;
-	float nodeUniform1;
-	float nodeUniform2;
-	float nodeUniform3;
-	float nodeUniform4;
+	mat3 nodeUniform2;
+	vec2 nodeUniform3;
+	uint nodeUniform4;
 	float nodeUniform5;
 	float nodeUniform6;
 	float nodeUniform7;
@@ -56,7 +55,12 @@ layout( std140 ) uniform object {
 	float nodeUniform9;
 	float nodeUniform10;
 	float nodeUniform11;
-	mat4 nodeUniform13;
+	float nodeUniform12;
+	float nodeUniform13;
+	float nodeUniform14;
+	float nodeUniform15;
+	float nodeUniform16;
+	mat4 nodeUniform18;
 };
 
 
@@ -64,6 +68,7 @@ layout( std140 ) uniform object {
 out vec3 nodeVarying0;
 out float nodeVarying1;
 out vec3 nodeVarying2;
+out vec2 nodeVarying3;
 
 
 // attributes
@@ -72,12 +77,12 @@ layout( location = 1 ) in vec4 color;
 
 
 // vars
-vec3 nodeVar0;
 vec3 nodeVar6;
+vec3 nodeVar12;
 mat4 modelViewMatrix;
-vec4 nodeVar15;
-float nodeVar16;
-vec4 nodeVar17;
+vec4 nodeVar21;
+float nodeVar22;
+vec4 nodeVar23;
 
 // codes
 
@@ -90,31 +95,33 @@ void main() {
 	// flow
 	// code
 
-	nodeVar0 = vec3( 0.0, 0.0, 0.0 );
-	nodeVarying2 = nodeVar0;
+	nodeVarying3 = vec2( 0.0, 1.0 );
 	nodeVar6 = vec3( 0.0, 0.0, 0.0 );
-	nodeVarying0 = nodeVar6;
+	nodeVarying2 = nodeVar6;
+	nodeVar12 = vec3( 0.0, 0.0, 0.0 );
+	nodeVarying0 = nodeVar12;
 	nodeVarying1 = 1.0;
-	modelViewMatrix = ( cameraViewMatrix * nodeUniform13 );
-	nodeVar15 = ( modelViewMatrix * vec4( position, 1.0 ) );
+	modelViewMatrix = ( cameraViewMatrix * nodeUniform18 );
+	nodeVar21 = ( modelViewMatrix * vec4( position, 1.0 ) );
 	nodeVarying0 = color.xyz;
 
 	if ( ( ( color.w < 1e30 ) && ( color.w > -1e30 ) ) ) {
 
-		nodeVar16 = min( max( color.w, 0.0 ), 1.0 );
+		nodeVar22 = min( max( color.w, 0.0 ), 1.0 );
 
 	} else {
 
-		nodeVar16 = 1.0;
+		nodeVar22 = 1.0;
 
 	}
 
-	nodeVarying1 = nodeVar16;
-	nodeVarying2 = nodeVar15.xyz;
-	nodeVar17 = ( cameraProjectionMatrix * nodeVar15 );
+	nodeVarying1 = nodeVar22;
+	nodeVarying2 = nodeVar21.xyz;
+	nodeVar23 = ( cameraProjectionMatrix * nodeVar21 );
+	nodeVarying3 = nodeVar23.zw;
 
 	// result
-	gl_Position = nodeVar17;
+	gl_Position = nodeVar23;
 
 	gl_PointSize = 1.0;
 

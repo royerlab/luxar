@@ -73,6 +73,11 @@ export interface LuxarMaterial extends THREE.Material {
    * house knobs above: a house or emissive material simply lacks it.
    */
   updatePhysicalKnob?(key: PhysicalMeshKnobKey, value: number): void;
+  /**
+   * Luxar `refract_data` (physical glass only, spec §3.4 Phase 3): draw the glass
+   * after the emissive data so it refracts it. Same optional-chained gate.
+   */
+  updateRefractData?(refractData: boolean): void;
   updateColormapTexture?(texture: THREE.DataTexture | null): void;
   updateScalarRange?(min: number, max: number): void;
   updateLabelStyle?(colorByLabel: boolean, filterIndex: number): void;

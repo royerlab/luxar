@@ -16,7 +16,7 @@ import { halfFloatToFloat32, float32ToHalfFloat, readPixelsCompactAsync } from '
 import { formatHDRExrLogLine } from '../hdr/capture';
 import type { Renderer, RendererCapabilities } from '../../renderer-capabilities';
 import type { LuxarMegaShaderMaterial } from '../../material-manager';
-import { runPipeline, type PipelineCtx } from './pipeline';
+import { renderSceneToHdr, runPipeline, type PipelineCtx } from './pipeline';
 
 export type CaptureMode = 'visible-ldr' | 'hdr-effects-pre-tone' | 'raw-scene-hdr';
 
@@ -48,9 +48,9 @@ export async function captureHDRPixels(
     const prevTarget = ctx.renderer.getRenderTarget();
     const prevAutoClear = ctx.renderer.autoClear;
     try {
-      ctx.renderer.setRenderTarget(ctx.hdrTarget);
-      ctx.renderer.clear();
-      ctx.renderer.render(ctx.scene, ctx.camera);
+      // The pipeline's own stage (0), so a refract_data glass refracts the data in an
+      // EXR capture exactly as it does on screen.
+      renderSceneToHdr(ctx.pipelineCtx);
       const result = await readTarget(ctx, ctx.hdrTarget, opts);
       // Sanitize alpha: this mode reads the HDR target DIRECTLY — the
       // only capture path that bypasses the mega-shader's unconditional

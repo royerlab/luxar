@@ -285,7 +285,7 @@ See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for complete documentation.
 
 ### Luxar CLI
 ```bash
-luxar demo                       # List the 93 bundled demos (table)
+luxar demo                       # List the 91 bundled demos (table)
 luxar demo run lorenz            # Run a demo by key/index (forwards -- args)
 luxar demo stop                  # Stop running demos and free their ports (--dry-run lists)
 luxar demo cache list            # Inventory / clear demo caches (cache clear …)
@@ -392,6 +392,8 @@ luxar mesh lod multi.luxar.zarr multi_lod.luxar.zarr --node Nuclei
 # (packages/luxar-viewer/scripts/bake-env.mjs). A scene edited after the bake
 # ignores the stale map (it records the digest it was baked against).
 luxar env bake scene.luxar.zarr                                  # probe auto, 128 px, attach
+# The reference target is the reflections EXAMPLE store (`make run-examples` builds it):
+luxar env bake datasets/examples/mesh_reflections_example.luxar.zarr
 luxar env bake scene.luxar.zarr --probe node:clusters/shell --resolution 256
 luxar env bake scene.luxar.zarr --out scene.env.bin --no-attach  # keep the container only
 luxar env attach scene.luxar.zarr scene.env.bin                  # the manual half (idempotent)
@@ -1158,6 +1160,10 @@ pnpm test:generate-fixtures
 npx playwright test geometry-types.spec.ts blending-modes.spec.ts colormap-system.spec.ts \
   post-processing-pipeline.spec.ts cinematic-auto-framing.spec.ts rendering-controls.spec.ts \
   ortho-mode.spec.ts
+# refract_data glass: the lens refracts the lattice behind it AND a lattice point in
+# front of it stays crisp (the depth partition), on both renderers. Needs the
+# mesh_glass_lens_example store (`make run-examples`).
+npx playwright test glass-refraction-partition.spec.ts
 # Line joint artifacts (#780/#785/#790) — scores each joint topology as its
 # own band of one frame with TWO metrics (local-median outliers + axial flux
 # ripple; the first is structurally blind to the bead-notch class the second
@@ -1477,7 +1483,7 @@ Support: nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au
 - **Points**: positions (Float32, nD, required), colors (Uint8/Float32 HDR), radii (Float32), sharpness (Float32)
 - **Lines**: vertices (Float32, nD, required), widths (Float32, required), segments (Uint32, auto-generated), colors (Uint8/Float32), sharpness (Float32)
 - **GSplats**: centers (Float32, nD, required), amplitudes (Float32, required), cholesky_factors (Float32, required; chol(Σ), scale-like diagonal), colors (Uint8/Float32, RGB or RGBA — the optional alpha is per-splat opacity, consumed by every blending mode; mapped to optical depth in `volumetric`)
-- **Mesh** (renderable, shaded): vertices (Float32, nD, required), faces (Uint32 `(F,3)`, required), normals (Float32 `(V,3)`) + a required `normal_dims` companion attr naming which three dimensions they describe, colors (Uint8/Float32, RGB or RGBA), scalars (Float32). No per-element size — a triangle's extent comes from its own vertices, so a mesh adds zero extent padding to scene bounds. Three structural paths are supported: `kind=partition` (`add_mesh(partition=…)`, spec §9.2), *substitutive* LOD (`add_mesh(substitutive_lod=…)`, decimated by `luxar.mesh.decimate`), and a spatially coherent *reveal* additive ladder (`add_mesh(additive_lod={"method": "radial"})`) — though no two of them in the same call. No additive (prefix) LOD ladder over an *arbitrary* order — a prefix of an arbitrarily ordered index buffer is a holed surface, not a coarser one — so a non-reveal method and `volumetric` blending are both still refused with an explanation rather than silently degraded. No spatial index (`ordering="none"`): a mesh loads whole.
+- **Mesh** (renderable, shaded): vertices (Float32, nD, required), faces (Uint32 `(F,3)`, required), normals (Float32 `(V,3)`) + a required `normal_dims` companion attr naming which three dimensions they describe, colors (Uint8/Float32, RGB or RGBA), scalars (Float32). No per-element size — a triangle's extent comes from its own vertices, so a mesh adds zero extent padding to scene bounds. Three structural paths are supported: `kind=partition` (`add_mesh(partition=…)`, spec §9.2), *substitutive* LOD (`add_mesh(substitutive_lod=…)`, decimated by `luxar.mesh.decimate`), and a spatially coherent *reveal* additive ladder (`add_mesh(additive_lod={"method": "radial"})`) — though no two of them in the same call. No additive (prefix) LOD ladder over an *arbitrary* order — a prefix of an arbitrarily ordered index buffer is a holed surface, not a coarser one — so a non-reveal method and `volumetric` blending are both still refused with an explanation rather than silently degraded. No spatial index (`ordering="none"`): a mesh loads whole. An opt-in `material="physical"` hands a mesh to three's PBR material (`docs/guides/specs/MESH_PHYSICAL_MATERIALS_SPEC.md`): surface knobs, the glass family (`transmission`, `ior`, `thickness`, `attenuation_*`, `dispersion`), and `refract_data=True` for a glass that draws after — and refracts — the emissive data behind it, while data in front of it stays crisp (the viewer partitions each data fragment by depth against the glass). The examples `mesh_physical_materials_example`, `mesh_reflections_example` and `mesh_glass_lens_example` are the showcases.
 
 ### Transforms
 - 4x4 matrices stored as 16-element lists

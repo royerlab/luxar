@@ -62,6 +62,7 @@ import {
   type CompleteBlendingState,
 } from '../../blending-state';
 import { proxyIUniform, type TSLNode } from '../_shared/tsl-helpers';
+import { glassPartitionNodes } from '../_shared/glass-partition-tsl';
 import type { BlendingMode } from '../../../types/blending';
 import { computeScalarRangeUniforms } from '../_shared/scalar-range';
 import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../config/constants';
@@ -103,6 +104,8 @@ export class GSplatTSLMaterial
     uIsOrtho: TSLNode;
     uSortedIndexSlot: TSLNode;
     uDensityDrop: TSLNode;
+    uGlassPartition: TSLNode;
+    uGlassDepth: TSLNode;
     uNearCull: TSLNode;
     uMaxExtentFactor: TSLNode;
     uCov2DDilation: TSLNode;
@@ -170,6 +173,8 @@ export class GSplatTSLMaterial
       uIsOrtho: uniform(0),
       uSortedIndexSlot: uniform(0),
       uDensityDrop: uniform(0),
+      // Refraction split: mode 0 outside the split; the shared glass depth texture.
+      ...glassPartitionNodes(),
       uNearCull: uniform(0.1),
       uMaxExtentFactor: uniform(materialConfig.maxExtentFactor ?? 0.33),
       uCov2DDilation: uniform(materialConfig.cov2DDilation ?? GSPLAT_COV2D_DILATION_DEFAULT),
@@ -276,6 +281,8 @@ export class GSplatTSLMaterial
       uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
       uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
       uDensityDrop: proxyIUniform(this.tslNodes.uDensityDrop),
+      uGlassPartition: proxyIUniform(this.tslNodes.uGlassPartition),
+      uGlassDepth: proxyIUniform(this.tslNodes.uGlassDepth),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
       uMaxExtentFactor: proxyIUniform(this.tslNodes.uMaxExtentFactor),
       uCov2DDilation: proxyIUniform(this.tslNodes.uCov2DDilation),

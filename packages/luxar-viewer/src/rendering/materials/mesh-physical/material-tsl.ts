@@ -12,7 +12,8 @@
  * @module rendering/materials/mesh-physical/material-tsl
  */
 
-import { MeshPhysicalNodeMaterial } from 'three/webgpu';
+import { MeshPhysicalNodeMaterial, PhysicalLightingModel, type NodeBuilder } from 'three/webgpu';
+import { diffuseColor, property } from 'three/tsl';
 import type { BlendingMode } from '../../../types/blending';
 import type { MeshShadingMode } from '../mesh/appearance';
 import {
@@ -22,10 +23,36 @@ import {
   physicalUpdateIntensity,
   physicalUpdateOffset,
   physicalUpdateOpacity,
+  physicalUpdateRefractData,
   setPhysicalKnob,
   type PhysicalMeshKnobKey,
   type PhysicalMeshMaterialConfig,
 } from './config';
+
+/**
+ * Three's physical lighting model with the transmitted alpha pinned to 1 — the WebGPU
+ * counterpart of the GLSL twin's `onBeforeCompile` patch (see `TRANSMISSION_ALPHA_MIX_LINE`
+ * in `./config.ts` for why Luxar glass must not read the framebuffer alpha).
+ *
+ * Three's `start()` ends its transmission block with
+ * `diffuseColor.a.mulAssign( mix( 1, backdrop.a, transmission ) )`, the only place the
+ * sampled alpha reaches the fragment. It runs inside the `LightsNode` stack, so the three
+ * statements here are emitted in order: save `diffuseColor.a` into a PROPERTY node,
+ * let three run, put it back. A `toVar()` would not do — a var is declared where it is
+ * first referenced, which would be AFTER the multiply.
+ */
+class LuxarPhysicalLightingModel extends PhysicalLightingModel {
+  start(builder: NodeBuilder): void {
+    if (this.transmission !== true) {
+      super.start(builder);
+      return;
+    }
+    const saved = property('float', 'LuxarTransmittedAlpha');
+    saved.assign(diffuseColor.a);
+    super.start(builder);
+    diffuseColor.a.assign(saved);
+  }
+}
 
 /**
  * Three's `MeshPhysicalNodeMaterial` behind the Luxar leaf-material surface (WebGPU).
@@ -38,6 +65,18 @@ export class PhysicalMeshTSLMaterial extends MeshPhysicalNodeMaterial {
   constructor(config: PhysicalMeshMaterialConfig = {}) {
     super();
     applyPhysicalMeshConfig(this, config);
+  }
+
+  /** The same six feature flags three passes, into the alpha-pinning subclass. */
+  setupLightingModel(): PhysicalLightingModel {
+    return new LuxarPhysicalLightingModel(
+      this.useClearcoat,
+      this.useSheen,
+      this.useIridescence,
+      this.useAnisotropy,
+      this.useTransmission,
+      this.useDispersion
+    );
   }
 
   /** Luxar `opacity`; re-derives translucency, depth write and the cutout. */
@@ -76,6 +115,11 @@ export class PhysicalMeshTSLMaterial extends MeshPhysicalNodeMaterial {
   /** One live physical knob from the Layers panel (clamped; rebuilds on a zero crossing). */
   updatePhysicalKnob(key: PhysicalMeshKnobKey, value: number): void {
     setPhysicalKnob(this, key, value);
+  }
+
+  /** Luxar `refract_data`, live: glass draws after (true) or before (false) the data. */
+  updateRefractData(refractData: boolean): void {
+    physicalUpdateRefractData(this, refractData);
   }
 
   /** Deliberate no-op — see the GLSL twin. */

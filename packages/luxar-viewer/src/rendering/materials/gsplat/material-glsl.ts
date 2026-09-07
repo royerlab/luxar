@@ -37,6 +37,7 @@ import {
   SPLAT_TEXTURE_LAYOUT,
 } from '../../element-texture-layout';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
+import { getGlassDepthTexture } from '../_shared/glass-partition';
 import type { BlendingMode } from '../../../types/blending';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
 import { clampGamma, isGammaOne, isNoGOG } from '../_shared/uniform-helpers';
@@ -218,6 +219,10 @@ export class GSplatMaterial
         // flip must not recompile the program).
         uSortedIndexSlot: { value: 0 },
         uDensityDrop: { value: 0 },
+        // Refraction split (glass-partition.ts): mode 0 outside the split; the ONE
+        // shared depth texture the split renders the refracting glass into.
+        uGlassPartition: { value: 0 },
+        uGlassDepth: { value: getGlassDepthTexture() },
         uNearCull: { value: 0.1 }, // Default; overridden per-scene by updateCameraParams
         uMaxExtentFactor: { value: materialConfig.maxExtentFactor ?? 0.33 },
         uCov2DDilation: {

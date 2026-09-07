@@ -286,6 +286,12 @@ export type PhysicalKnobValues = Record<PhysicalMeshKnobKey, number> & {
   sheen_color?: string;
   attenuation_color?: string;
   alpha_cutoff?: number;
+  /**
+   * The LIVE `refract_data` switch (spec §3.4 Phase 3): the glass draws after, and
+   * refracts, the emissive data. Always present on a physical layer (absent authored
+   * attr = false) so the toggle always has a state to show.
+   */
+  refract_data?: boolean;
 };
 
 /**
@@ -329,7 +335,22 @@ function derivePhysicalKnobsFromDescendants(node: SceneNode): PhysicalKnobValues
   if (sheen !== undefined) knobs.sheen_color = sheen;
   const attenuation = deriveMeshStringAttrFromDescendants(node, 'attenuation_color');
   if (attenuation !== undefined) knobs.attenuation_color = attenuation;
+  knobs.refract_data = deriveMeshBoolAttrFromDescendants(node, 'refract_data') ?? false;
   return knobs;
+}
+
+/** The boolean twin of `deriveMeshStringAttrFromDescendants` (the `refract_data` flag). */
+function deriveMeshBoolAttrFromDescendants(node: SceneNode, attr: string): boolean | undefined {
+  const read = (candidate: SceneNode): boolean | undefined =>
+    typeof candidate.attrs[attr] === 'boolean' ? (candidate.attrs[attr] as boolean) : undefined;
+  let value = read(node);
+  const visit = (candidate: SceneNode): void => {
+    if (value !== undefined || isLayerEnabled(candidate.attrs.layer)) return;
+    value = read(candidate);
+    if (value === undefined) candidate.children?.forEach(visit);
+  };
+  if (value === undefined) node.children?.forEach(visit);
+  return value;
 }
 
 /** The string-valued twin of `deriveMeshAttrFromDescendants` (the two colour knobs). */

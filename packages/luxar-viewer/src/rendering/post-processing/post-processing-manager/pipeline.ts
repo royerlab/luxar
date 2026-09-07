@@ -14,6 +14,7 @@ import type { LuxarMegaShaderMaterial } from '../../material-manager';
 import type { BloomChain } from '../bloom/chain';
 import type { FullscreenPass } from '../fullscreen/pass';
 import type { FxaaPass } from '../fxaa/pass';
+import type { DataRefractionSplit } from './refraction-split';
 
 /** Read-only references the pipeline runner needs from the orchestrator. */
 export interface PipelineCtx {
@@ -26,6 +27,25 @@ export interface PipelineCtx {
   readonly megaPass: FullscreenPass;
   readonly bloomChain: BloomChain | null;
   readonly fxaaPass: FxaaPass | null;
+  /**
+   * The scene-pass split for `refract_data` glass (spec §3.4 Phase 3), both backends;
+   * null only once disposed. See {@link renderSceneToHdr}.
+   */
+  readonly refractionSplit: DataRefractionSplit | null;
+}
+
+/**
+ * Stage (0) of the pipeline, shared with the raw HDR capture path: the scene into the
+ * HDR target. Binds and clears the target, then either lets the refraction split draw
+ * the frame in its passes (glass depth, data behind, glass, data in front) — when some
+ * visible glass asks to refract the data — or renders the scene once, exactly as
+ * before Phase 3. Leaves the HDR target bound.
+ */
+export function renderSceneToHdr(ctx: PipelineCtx): void {
+  ctx.renderer.setRenderTarget(ctx.hdrTarget);
+  ctx.renderer.clear();
+  if (ctx.refractionSplit?.render(ctx.renderer, ctx.scene, ctx.camera, ctx.hdrTarget)) return;
+  ctx.renderer.render(ctx.scene, ctx.camera);
 }
 
 /**
@@ -52,10 +72,8 @@ export function runPipeline(
   const prevTarget = ctx.renderer.getRenderTarget();
   const prevAutoClear = ctx.renderer.autoClear;
   try {
-    // (0) Scene → HDR target
-    ctx.renderer.setRenderTarget(ctx.hdrTarget);
-    ctx.renderer.clear();
-    ctx.renderer.render(ctx.scene, ctx.camera);
+    // (0) Scene → HDR target (one pass, or the refraction split's two)
+    renderSceneToHdr(ctx);
 
     // (1) Bloom pyramid
     if (ctx.bloomChain) {
