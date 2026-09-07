@@ -65,6 +65,14 @@ export function attachLongPress(el: HTMLElement, options: LongPressOptions): () 
     pressed = null;
   };
   const recentlyFired = (): boolean => performance.now() - firedAt < CLICK_SWALLOW_MS;
+  const fire = (): boolean => {
+    clearTimer();
+    const p = pressed;
+    pressed = null;
+    if (!p || !options.onLongPress(p.x, p.y, p.event)) return false;
+    firedAt = performance.now();
+    return true;
+  };
 
   const onPointerDown = (e: Event): void => {
     const ev = e as PointerEvent;
@@ -78,10 +86,7 @@ export function attachLongPress(el: HTMLElement, options: LongPressOptions): () 
     pressed = { id: ev.pointerId, x: ev.clientX, y: ev.clientY, event: ev };
     timer = setTimeout(() => {
       timer = null;
-      const p = pressed;
-      pressed = null;
-      if (!p) return;
-      if (options.onLongPress(p.x, p.y, p.event)) firedAt = performance.now();
+      fire();
     }, duration);
   };
 
@@ -101,7 +106,7 @@ export function attachLongPress(el: HTMLElement, options: LongPressOptions): () 
 
   // Capture phase, so the swallow runs before any listener on the target.
   const onContextMenu = (e: Event): void => {
-    if (pressed !== null || recentlyFired()) {
+    if ((pressed !== null && fire()) || recentlyFired()) {
       e.preventDefault();
       e.stopImmediatePropagation();
     }

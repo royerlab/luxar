@@ -172,6 +172,25 @@ describe('attachLongPress', () => {
     expect(clicked).toHaveBeenCalledTimes(1);
   });
 
+  it('lets a mid-press platform contextmenu through when the long press is declined', () => {
+    dispose();
+    onLongPress.mockReturnValue(false);
+    dispose = attachLongPress(el, { onLongPress });
+    const contexted = vi.fn();
+    child.addEventListener('contextmenu', contexted);
+
+    child.dispatchEvent(pointer('pointerdown', { x: 40, y: 60 }));
+    vi.advanceTimersByTime(LONG_PRESS_MS - 50);
+    const contextmenu = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    child.dispatchEvent(contextmenu);
+    vi.advanceTimersByTime(100);
+
+    expect(onLongPress).toHaveBeenCalledTimes(1);
+    expect(onLongPress).toHaveBeenCalledWith(40, 60, expect.any(PointerEvent));
+    expect(contextmenu.defaultPrevented).toBe(false);
+    expect(contexted).toHaveBeenCalledTimes(1);
+  });
+
   it('a plain tap (no hold) leaves click and contextmenu alone', () => {
     const clicked = vi.fn();
     child.addEventListener('click', clicked);
