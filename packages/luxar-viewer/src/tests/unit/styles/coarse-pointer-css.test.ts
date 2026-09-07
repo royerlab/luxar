@@ -160,6 +160,10 @@ describe('coarse-pointer.css contract', () => {
     );
     expect(ruleBody(coarse, '.luxar-control-rail-hint')).toMatch(/safe-area-inset-left/);
     expect(ruleBody(coarse, '.luxar-debug-console')).toMatch(/safe-area-inset-bottom/);
+    expect(ruleBody(coarse, '.luxar-recording-indicator')).toMatch(
+      /top:\s*calc\(.*safe-area-inset-top[^}]*right:\s*calc\(.*safe-area-inset-right/
+    );
+    expect(ruleBody(coarse, '.luxar-layers-panel')).toMatch(/top:\s*calc\(.*safe-area-inset-top/);
     expect(
       ruleBody(coarse, '.luxar-data-monitor--top-left,\n  .luxar-data-monitor--bottom-left')
     ).toMatch(/left:\s*calc\(.*safe-area-inset-left/);
@@ -204,8 +208,12 @@ describe('coarse-pointer.css contract', () => {
     ]) {
       expect(ruleBody(dvh, sel), sel).toMatch(/dvh/);
     }
-    expect(ruleBody(coarse, '.luxar-layers-panel')).toMatch(/max-height:\s*calc\(100vh - 40px\)/);
-    expect(ruleBody(dvh, '.luxar-layers-panel')).toMatch(/max-height:\s*calc\(100dvh - 40px\)/);
+    expect(ruleBody(coarse, '.luxar-layers-panel')).toMatch(
+      /max-height:\s*calc\(\s*100vh - 40px[^;]*safe-area-inset-top[^;]*safe-area-inset-bottom/
+    );
+    expect(ruleBody(dvh, '.luxar-layers-panel')).toMatch(
+      /max-height:\s*calc\(\s*100dvh - 40px[^;]*safe-area-inset-top[^;]*safe-area-inset-bottom/
+    );
     expect(ruleBody(dvh, '.luxar-control-rail.is-collapsed')).toMatch(
       /50dvh[^;]*safe-area-inset-bottom/
     );

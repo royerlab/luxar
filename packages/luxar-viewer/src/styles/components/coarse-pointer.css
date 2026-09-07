@@ -92,11 +92,18 @@
     top: calc(var(--luxar-spacing-10, 20px) + env(safe-area-inset-top, 0px));
     right: calc(var(--luxar-spacing-10, 20px) + env(safe-area-inset-right, 0px));
   }
+  .luxar-recording-indicator {
+    top: calc(var(--luxar-spacing-10, 20px) + env(safe-area-inset-top, 0px));
+    right: calc(var(--luxar-spacing-10, 20px) + env(safe-area-inset-right, 0px));
+  }
   .luxar-data-monitor--expanded {
     width: min(600px, calc(100vw - 2 * var(--luxar-spacing-10, 20px)));
   }
   .luxar-layers-panel {
-    max-height: calc(100vh - 40px);
+    top: calc(var(--luxar-spacing-10, 20px) + env(safe-area-inset-top, 0px));
+    max-height: calc(
+      100vh - 40px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)
+    );
   }
   .luxar-data-monitor--top-left,
   .luxar-data-monitor--bottom-left {
@@ -185,7 +192,9 @@
       max-height: 82dvh;
     }
     .luxar-layers-panel {
-      max-height: calc(100dvh - 40px);
+      max-height: calc(
+        100dvh - 40px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)
+      );
     }
     .luxar-data-monitor--expanded {
       max-height: 80dvh;
