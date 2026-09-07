@@ -18,6 +18,7 @@ matplotlib.use("Agg")
 
 from luxar.gsplats.calibration_report import (  # noqa: E402
     _knee_display_idx,
+    _selected_metric,
     render_calibration_report,
 )
 
@@ -71,6 +72,31 @@ class TestKneeDisplayIdx:
         )
         assert res.held_out_peak.k_knee == res.held_out_peak.k_star
         assert _knee_display_idx(res) is None
+
+    def test_selected_metric_controls_curve_peak_and_knee(self):
+        res = _make_result([1, 2, 4], [20.0, 21.0, 22.0])
+        selected_curve = [18.0, 25.0, 19.0]
+        res.k_star_metric = "psnr_fg_weighted"
+        res.held_out_psnr_fg_weighted_db = selected_curve
+        res.held_out_peak_selected = find_k_star(res.k_values_requested, selected_curve)
+
+        curve, label, peak = _selected_metric(res)
+
+        np.testing.assert_array_equal(curve, selected_curve)
+        assert label == "foreground-weighted held-out PSNR"
+        assert peak is res.held_out_peak_selected
+        assert _knee_display_idx(res) is None
+
+    def test_missing_selected_peak_falls_back_to_minmax_curve(self):
+        res = _make_result([1, 2, 4], [20.0, 21.0, 22.0])
+        res.k_star_metric = "psnr_fg_weighted"
+        res.held_out_psnr_fg_weighted_db = [float("nan")] * 3
+
+        curve, label, peak = _selected_metric(res)
+
+        np.testing.assert_array_equal(curve, res.held_out_psnr_db)
+        assert label == "held-out PSNR"
+        assert peak is res.held_out_peak
 
     def test_legacy_zero_knee_is_suppressed(self):
         # A hand-built HeldOutPeak with the default k_knee=0 (pre-field object)

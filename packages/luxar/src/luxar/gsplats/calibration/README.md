@@ -154,8 +154,11 @@ Calibration applies `--floor` (default `"auto"`) **once** to the volume before m
 - **Background-dominated**: On large sparse volumes a trivial predict-zero reconstruction already scores 40-60 dB (most masked voxels are background ~0). Regime-robust alternatives:
   - `held_out_gain_db`: dB improvement over the all-zeros baseline — plateaus meaningfully (not inflated by trivially-reconstructed background).
   - `held_out_psnr_foreground`: Held-out PSNR restricted to voxels that are both held out AND foreground (Otsu thresholded).
+  - `held_out_psnr_fg_weighted_db`: lightly-smoothed Otsu foreground plus controlled background weight; prefer this for sparse or deconvolved volumes. `fg_bg_ratio=1` gives equal total foreground/background weight over held-out voxels.
 
-**Default K* selection**: Still uses `psnr_minmax` (additive). The alternatives are recorded in `CalibrationResult` fields (`held_out_gain_db`, `held_out_psnr_fg_db`, `predict_zero_baseline_mse`, `k_star_metric`, `held_out_peak_selected`) but not used by default.
+`held_out_gain_db` differs from `psnr_minmax` only by a constant because its predict-zero baseline does not vary with K, so it reports a useful diagnostic scale but selects the same K*.
+
+**Default K* selection**: Still uses `psnr_minmax` (additive). The alternatives are recorded in `CalibrationResult` fields (`held_out_gain_db`, `held_out_psnr_fg_db`, `held_out_psnr_fg_weighted_db`, `foreground_mask_fraction`, `foreground_otsu_threshold`, `fg_bg_ratio`, `predict_zero_baseline_mse`, `k_star_metric`, `held_out_peak_selected`) but not used by default.
 
 ### Peak Detection Hybrid Rule
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import typer
 from arbol import aprint, asection
@@ -30,6 +30,23 @@ def _print_k_star_scope_caveat(calibration_region: Optional[dict]) -> None:
     )
 
 
+def _selected_summary(result: Any) -> tuple[Any, str, list[float]]:
+    """Return the effective peak, metric label, and displayed metric curve."""
+    selected_peak = result.held_out_peak_selected or result.held_out_peak
+    selected_metric = result.k_star_metric
+    if selected_metric != "psnr_minmax" and result.held_out_peak_selected is None:
+        selected_metric = "psnr_minmax (fallback: selected curve is undefined)"
+    selected_curve = {
+        "psnr_minmax": result.held_out_psnr_db,
+        "psnr_foreground": result.held_out_psnr_fg_db,
+        "psnr_fg_weighted": result.held_out_psnr_fg_weighted_db,
+        "gain": result.held_out_gain_db,
+    }.get(result.k_star_metric, result.held_out_psnr_db)
+    if len(selected_curve) != len(result.k_values_requested):
+        selected_curve = result.held_out_psnr_db
+    return selected_peak, selected_metric, selected_curve
+
+
 def run_calibrate_command(
     *,
     input_path: Path,
@@ -51,6 +68,7 @@ def run_calibrate_command(
     array_key: Optional[str],
     axes: Optional[str],
     k_star_metric: str,
+    fg_bg_ratio: float,
     auto_region: bool,
     region_size: int,
     region_strategy: str,
@@ -125,7 +143,10 @@ def run_calibrate_command(
                 f"Mask: {mask_fraction * 100:.1f}% (seed={mask_seed}); donut radius=1"
             )
             aprint(f"K grid ({len(ks)} points): {ks}")
-            aprint(f"K*-metric: {k_star_metric}; feature metric: {feature_metric}")
+            aprint(
+                f"K*-metric: {k_star_metric}; fg:bg={fg_bg_ratio:g}; "
+                f"feature metric: {feature_metric}"
+            )
 
             # 3. Build fit kwargs from preset + YAML config + CLI overrides
             fit_kwargs = load_fit_config(
@@ -156,6 +177,7 @@ def run_calibrate_command(
                     keep_fits=keep_fits,
                     progress_callback=_on_progress,
                     k_star_metric=k_star_metric,
+                    fg_bg_ratio=fg_bg_ratio,
                     feature_method=feature_metric,
                     saturation_exponent=saturation_exponent,
                     compute_rd_model=rd_model,
@@ -230,6 +252,7 @@ def run_calibrate_command(
                         feature_method=feature_metric,
                         region_strategy=region_strategy,
                         k_star_metric=k_star_metric,
+                        fg_bg_ratio=fg_bg_ratio,
                         mask_seed=mask_seed,
                         mask_fraction=mask_fraction,
                         progress_callback=_on_progress,
@@ -330,15 +353,15 @@ def run_calibrate_command(
             aprint("")
             # The headline / table marker track the metric the user selected
             # (falls back to the legacy min--max peak when no metric switch).
-            selected_peak = result.held_out_peak_selected or result.held_out_peak
+            selected_peak, selected_metric, selected_curve = _selected_summary(result)
             aprint(
-                "    K_req     K_eff    PSNR_train  PSNR_held-out   PSNR_full   SSIM_full   fit (s)"
+                "    K_req     K_eff    PSNR_train    K*-metric     PSNR_full   SSIM_full   fit (s)"
             )
             aprint("    " + "-" * 76)
             for i, k_req in enumerate(result.k_values_requested):
                 k_eff = result.k_values_effective[i]
                 pt = result.train_psnr_db[i]
-                ph = result.held_out_psnr_db[i]
+                ph = selected_curve[i]
                 pf = result.full_psnr_db[i]
                 sf = result.full_ssim[i]
                 ft = result.fit_times_seconds[i]
@@ -358,7 +381,7 @@ def run_calibrate_command(
             # Headline = the K* under the metric the user actually selected.
             aprint(
                 f"  ★ Recommended K* = {selected_peak.k_star:,}  "
-                f"(metric: {result.k_star_metric}, type: {selected_peak.type}, "
+                f"(metric: {selected_metric}, type: {selected_peak.type}, "
                 f"confidence: {selected_peak.confidence_db:.2f} dB)"
             )
             _print_k_star_scope_caveat(result.calibration_region)
@@ -387,7 +410,8 @@ def run_calibrate_command(
             if math.isfinite(sig) and sig < 1e-4:
                 aprint(
                     "  ⚠ σ̂≈0 (noise-free/deconvolved): the blind-spot peak may not "
-                    "appear; prefer --k-star-metric gain (and --auto-region)."
+                    "appear; prefer --k-star-metric psnr_fg_weighted "
+                    "(and --auto-region)."
                 )
             if result.not_converged:
                 aprint(

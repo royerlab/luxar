@@ -25,8 +25,10 @@ from luxar.gsplats.calibration import (
     find_k_star,
     fit_rd_model,
     foreground_mask_otsu,
+    foreground_mask_otsu_smoothed,
     held_out_gain_db,
     held_out_psnr,
+    held_out_psnr_fg_weighted,
     held_out_psnr_foreground,
     predict_zero_baseline_mse,
     select_calibration_region,
@@ -66,6 +68,67 @@ class TestCvMask:
             cv_mask((10, 10), fraction=0.0)
         with pytest.raises(ValueError):
             cv_mask((10, 10), fraction=1.0)
+
+
+class TestForegroundWeightedMetric:
+    def test_equal_ratio_gives_equal_total_stratum_weight(self):
+        truth = np.array([1.0, 1.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        pred = np.zeros(6, dtype=np.float32)
+        held = np.ones(6, dtype=bool)
+        foreground = truth > 0
+
+        score = held_out_psnr_fg_weighted(
+            pred, truth, held, foreground, fg_bg_ratio=1.0, data_range=1.0
+        )
+
+        assert score == pytest.approx(10.0 * math.log10(2.0))
+
+    @pytest.mark.parametrize(
+        "foreground", [np.zeros(4, dtype=bool), np.ones(4, dtype=bool)]
+    )
+    def test_missing_held_out_stratum_is_nan(self, foreground):
+        truth = np.array([0.0, 0.0, 1.0, 1.0], dtype=np.float32)
+        pred = np.zeros_like(truth)
+        held = np.ones(4, dtype=bool)
+        assert math.isnan(
+            held_out_psnr_fg_weighted(pred, truth, held, foreground, fg_bg_ratio=1.0)
+        )
+
+    def test_non_positive_ratio_is_rejected(self):
+        values = np.zeros(2, dtype=np.float32)
+        held = np.ones(2, dtype=bool)
+        foreground = np.array([True, False])
+        with pytest.raises(ValueError, match="finite and > 0"):
+            held_out_psnr_fg_weighted(values, values, held, foreground, 0.0)
+
+    def test_sparse_volume_changes_selected_k_star(self):
+        truth = np.zeros(100, dtype=np.float32)
+        truth[:2] = 1.0
+        held = np.ones(100, dtype=bool)
+        foreground = truth > 0
+        predictions = []
+        for fg_error, bg_error in [(0.6, 0.0), (0.2, 0.15), (0.1, 0.35)]:
+            pred = truth.copy()
+            pred[:2] -= fg_error
+            pred[2:] += bg_error
+            predictions.append(pred)
+
+        full_curve = [held_out_psnr(p, truth, held, 1.0) for p in predictions]
+        weighted_curve = [
+            held_out_psnr_fg_weighted(p, truth, held, foreground, 1.0, 1.0)
+            for p in predictions
+        ]
+
+        assert find_k_star([1, 2, 3], full_curve).k_star == 1
+        assert find_k_star([1, 2, 3], weighted_curve).k_star == 2
+
+    def test_smoothed_mask_reports_its_otsu_cut(self):
+        volume = np.zeros((9, 9), dtype=np.float32)
+        volume[4, 4] = 1.0
+        mask, threshold = foreground_mask_otsu_smoothed(volume)
+        assert 0.0 < threshold < 1.0
+        np.testing.assert_array_equal(mask, foreground_mask_otsu_smoothed(volume)[0])
+        assert np.array_equal(mask, mask.astype(bool))
 
 
 # -----------------------------------------------------------------------------
@@ -558,10 +621,18 @@ class TestCalibrationResult:
             volume_shape=[32, 32, 32],
             volume_dtype="float32",
             timestamp="2026-05-06T12:00:00+00:00",
+            held_out_psnr_fg_weighted_db=[24.0, 28.0, 27.0],
+            foreground_mask_fraction=0.125,
+            foreground_otsu_threshold=0.2,
+            fg_bg_ratio=2.0,
         )
         out = tmp_path / "cal.json"
         result.to_json(out)
         loaded = CalibrationResult.from_json(out)
+        assert loaded.held_out_psnr_fg_weighted_db == [24.0, 28.0, 27.0]
+        assert loaded.foreground_mask_fraction == pytest.approx(0.125)
+        assert loaded.foreground_otsu_threshold == pytest.approx(0.2)
+        assert loaded.fg_bg_ratio == pytest.approx(2.0)
         assert loaded.k_values_requested == result.k_values_requested
         assert loaded.held_out_peak.k_star == result.held_out_peak.k_star
         assert loaded.held_out_peak.type == result.held_out_peak.type
@@ -644,6 +715,10 @@ class TestCalibrateSmoke:
         assert isinstance(result, CalibrationResult)
         assert len(result.held_out_psnr_db) == 3
         assert len(result.train_psnr_db) == 3
+        assert len(result.held_out_psnr_fg_weighted_db) == 3
+        assert 0.0 <= result.foreground_mask_fraction <= 1.0
+        assert math.isfinite(result.foreground_otsu_threshold)
+        assert result.fg_bg_ratio == 1.0
         assert all(math.isfinite(p) or math.isinf(p) for p in result.held_out_psnr_db)
         assert result.held_out_peak.k_star in (20, 80, 200)
         assert result.noise_floor.sigma_hat >= 0
@@ -770,6 +845,17 @@ class TestContentAwareMetric:
         gain = held_out_gain_db(held_mse, base)
         assert psnr_minmax > 20.0  # deceptively high
         assert abs(gain) < 1e-6  # but truthfully ~0 over baseline
+
+    def test_gain_selects_identically_to_minmax(self):
+        mse = [0.4, 0.2, 0.12, 0.13, 0.18]
+        minmax = [-10.0 * math.log10(value) for value in mse]
+        gain = [held_out_gain_db(value, 0.5) for value in mse]
+        minmax_peak = find_k_star([1, 2, 4, 8, 16], minmax)
+        gain_peak = find_k_star([1, 2, 4, 8, 16], gain)
+        assert gain_peak.k_star == minmax_peak.k_star
+        assert gain_peak.k_knee == minmax_peak.k_knee
+        assert gain_peak.type == minmax_peak.type
+        assert gain_peak.confidence_db == pytest.approx(minmax_peak.confidence_db)
 
     def test_foreground_psnr_restricts_to_signal(self):
         V = _sparse_blobs()

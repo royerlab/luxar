@@ -16,23 +16,36 @@ import numpy as np
 
 
 def _otsu_threshold(V: np.ndarray) -> float:
-    """Otsu threshold (subsampled for speed); falls back to ``V.min()``."""
+    """Dependency-free Otsu threshold, subsampled for bounded histogram cost."""
     v = np.asarray(V)
     flat = v.reshape(-1)
     if flat.size > 5_000_000:  # cap histogram sample on gigavoxel volumes
         flat = flat[:: max(1, flat.size // 5_000_000)]
-    try:
-        from skimage.filters import threshold_otsu  # lazy: optional dep
+    import torch
 
-        return float(threshold_otsu(flat.astype(np.float32, copy=False)))  # type: ignore[no-untyped-call]
-    except Exception:
-        return float(v.min())
+    from luxar.gsplats.metrics import otsu_threshold
+
+    return otsu_threshold(torch.from_numpy(flat.astype(np.float32, copy=False)))
 
 
 def foreground_mask_otsu(V: np.ndarray) -> np.ndarray:
     """Boolean foreground mask via Otsu's threshold (``V > thr``)."""
     v = np.asarray(V)
     return v > _otsu_threshold(v)
+
+
+def foreground_mask_otsu_smoothed(V: np.ndarray) -> Tuple[np.ndarray, float]:
+    """Foreground mask for weighted calibration scoring.
+
+    Applies one light separable tent blur, then computes Otsu on the
+    floor-subtracted calibration volume. The returned threshold is on that
+    smoothed scale and is recorded with the metric for reproducibility.
+    """
+    from luxar.gsplats.seeds.utils import soft_blur_nd
+
+    smoothed = soft_blur_nd(np.asarray(V, dtype=np.float32))
+    threshold = _otsu_threshold(smoothed)
+    return smoothed > threshold, threshold
 
 
 def count_features(

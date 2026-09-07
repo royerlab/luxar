@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any, List, Optional, Sequence
 
 import numpy as np
 
-from luxar.gsplats.calibration import CalibrationResult
+from luxar.gsplats.calibration import CalibrationResult, HeldOutPeak
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -37,6 +37,35 @@ def _safe_log_x(ax: "Axes") -> None:
     ax.grid(True, which="both", linestyle="--", alpha=0.3)
 
 
+def _selected_metric(
+    result: CalibrationResult,
+) -> tuple[np.ndarray, str, HeldOutPeak]:
+    """Return the curve, label, and peak selected by ``k_star_metric``."""
+    curves = {
+        "psnr_minmax": (result.held_out_psnr_db, "held-out PSNR"),
+        "psnr_foreground": (
+            result.held_out_psnr_fg_db,
+            "foreground-only held-out PSNR",
+        ),
+        "psnr_fg_weighted": (
+            result.held_out_psnr_fg_weighted_db,
+            "foreground-weighted held-out PSNR",
+        ),
+        "gain": (result.held_out_gain_db, "held-out gain over predict-zero"),
+    }
+    values, label = curves.get(
+        result.k_star_metric, (result.held_out_psnr_db, "held-out PSNR")
+    )
+    if (
+        result.k_star_metric != "psnr_minmax" and result.held_out_peak_selected is None
+    ) or len(values) != len(result.k_values_requested):
+        values, label = result.held_out_psnr_db, "held-out PSNR"
+        peak = result.held_out_peak
+    else:
+        peak = result.held_out_peak_selected or result.held_out_peak
+    return np.asarray(values, dtype=float), label, peak
+
+
 def _knee_display_idx(result: CalibrationResult) -> Optional[int]:
     """Index of the operating point (``k_knee``) in the sweep, or None.
 
@@ -45,7 +74,7 @@ def _knee_display_idx(result: CalibrationResult) -> Optional[int]:
     the K* marker, mirroring the CLI which prints the operating point only
     when it differs.
     """
-    peak = result.held_out_peak
+    _curve, _label, peak = _selected_metric(result)
     if not peak.k_knee or peak.k_knee == peak.k_star:
         return None
     if peak.k_knee not in result.k_values_requested:
@@ -63,15 +92,18 @@ def _plot_rate_distortion(
 ) -> None:
     ks = np.asarray(result.k_values_effective, dtype=float)
     held = np.asarray(result.held_out_psnr_db, dtype=float)
+    selected, selected_label, selected_peak = _selected_metric(result)
     train = np.asarray(result.train_psnr_db, dtype=float)
     full = np.asarray(result.full_psnr_db, dtype=float)
     ssim = np.asarray(result.full_ssim, dtype=float)
     fit_t = np.asarray(result.fit_times_seconds, dtype=float)
-    k_star = result.held_out_peak.k_star
+    k_star = selected_peak.k_star
     psnr_ceiling = result.noise_floor.psnr_max_db
 
     # PSNR panel
     ax_psnr.plot(ks, held, "o-", color="C1", label="held-out")
+    if selected_label not in ("held-out PSNR", "held-out gain over predict-zero"):
+        ax_psnr.plot(ks, selected, "d-", color="C6", label=selected_label)
     ax_psnr.plot(ks, train, "s--", color="C0", label="train")
     ax_psnr.plot(ks, full, "v:", color="C2", label="full volume")
     if math.isfinite(psnr_ceiling):
@@ -88,7 +120,7 @@ def _plot_rate_distortion(
     star_idx = result.k_values_requested.index(k_star)
     ax_psnr.plot(
         ks[star_idx],
-        held[star_idx],
+        (held if result.k_star_metric == "gain" else selected)[star_idx],
         marker="*",
         color="C3",
         markersize=18,
@@ -99,12 +131,12 @@ def _plot_rate_distortion(
     if knee_idx is not None:
         ax_psnr.plot(
             ks[knee_idx],
-            held[knee_idx],
+            (held if result.k_star_metric == "gain" else selected)[knee_idx],
             marker="D",
             color="C6",
             markersize=10,
             zorder=9,
-            label=f"knee={result.held_out_peak.k_knee:,}",
+            label=f"knee={selected_peak.k_knee:,}",
         )
     _safe_log_x(ax_psnr)
     ax_psnr.set_xlabel("Effective splat count K")
@@ -146,19 +178,21 @@ def _plot_rate_distortion(
 
 def _plot_blind_spot(fig: "Figure", ax: "Axes", result: CalibrationResult) -> None:
     ks = np.asarray(result.k_values_effective, dtype=float)
-    held = np.asarray(result.held_out_psnr_db, dtype=float)
+    held, held_label, selected_peak = _selected_metric(result)
     train = np.asarray(result.train_psnr_db, dtype=float)
     psnr_ceiling = result.noise_floor.psnr_max_db
-    k_star = result.held_out_peak.k_star
+    k_star = selected_peak.k_star
     star_idx = result.k_values_requested.index(k_star)
 
-    ax.plot(ks, train, "s-", color="C0", label="train")
-    ax.plot(ks, held, "o-", color="C1", label="held-out (model selection)")
-    ax.fill_between(
-        ks, train, held, where=(train > held).tolist(), alpha=0.15, color="C3"
-    )
+    if result.k_star_metric != "gain":
+        ax.plot(ks, train, "s-", color="C0", label="train")
+    ax.plot(ks, held, "o-", color="C1", label=f"{held_label} (model selection)")
+    if result.k_star_metric == "psnr_minmax":
+        ax.fill_between(
+            ks, train, held, where=(train > held).tolist(), alpha=0.15, color="C3"
+        )
 
-    if math.isfinite(psnr_ceiling):
+    if result.k_star_metric != "gain" and math.isfinite(psnr_ceiling):
         ax.axhline(psnr_ceiling, color="grey", linestyle=":", linewidth=1)
         ax.text(
             ks[0],
@@ -177,7 +211,7 @@ def _plot_blind_spot(fig: "Figure", ax: "Axes", result: CalibrationResult) -> No
         color="C3",
         markersize=22,
         zorder=10,
-        label=f"K* = {k_star:,} ({result.held_out_peak.type})",
+        label=f"K* = {k_star:,} ({selected_peak.type})",
     )
     knee_idx = _knee_display_idx(result)
     if knee_idx is not None:
@@ -188,11 +222,11 @@ def _plot_blind_spot(fig: "Figure", ax: "Axes", result: CalibrationResult) -> No
             color="C6",
             markersize=12,
             zorder=9,
-            label=f"operating point (knee) = {result.held_out_peak.k_knee:,}",
+            label=f"operating point (knee) = {selected_peak.k_knee:,}",
         )
     _safe_log_x(ax)
     ax.set_xlabel("Effective splat count K")
-    ax.set_ylabel("PSNR (dB)")
+    ax.set_ylabel("Gain (dB)" if result.k_star_metric == "gain" else "PSNR (dB)")
     ax.set_title("Blind-spot cross-validation")
     ax.legend(loc="best", fontsize=10)
 

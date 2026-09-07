@@ -8,6 +8,7 @@ measure the density exponent ``alpha``.
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -21,6 +22,7 @@ from .content import (
     count_features,
     feature_threshold,
     foreground_mask_otsu,
+    foreground_mask_otsu_smoothed,
     select_calibration_region,
 )
 from .curve_analysis import (
@@ -41,6 +43,47 @@ ProgressCallback = Callable[[int, int, str], None]
 """``(index, total, message)`` callback emitted before/after each fit."""
 
 
+def _foreground_weighting(
+    mask_dev: Any, foreground_dev: Any, fg_bg_ratio: float
+) -> Tuple[Any, Any, int, int, float]:
+    """Build held-out stratum selectors and their background weight."""
+    foreground = foreground_dev[mask_dev]
+    background = ~foreground
+    n_foreground = int(foreground.sum().item())
+    n_background = int(background.sum().item())
+    weight = (
+        n_foreground / (fg_bg_ratio * n_background)
+        if n_foreground > 0 and n_background > 0
+        else float("nan")
+    )
+    return foreground, background, n_foreground, n_background, weight
+
+
+def _validate_fg_bg_ratio(fg_bg_ratio: float) -> None:
+    """Reject ratios that cannot define finite positive stratum weights."""
+    if not np.isfinite(fg_bg_ratio) or fg_bg_ratio <= 0.0:
+        raise ValueError(f"fg_bg_ratio must be finite and > 0, got {fg_bg_ratio}")
+
+
+def _foreground_weighted_psnr(
+    errors: Any,
+    foreground: Any,
+    background: Any,
+    n_foreground: int,
+    n_background: int,
+    background_weight: float,
+    data_range: float,
+) -> float:
+    """Reduce held-out squared errors under the configured stratum weights."""
+    if not math.isfinite(background_weight):
+        return float("nan")
+    mse = float(
+        (errors[foreground].sum() + background_weight * errors[background].sum()).item()
+        / (n_foreground + background_weight * n_background)
+    )
+    return _psnr_db(mse, data_range)
+
+
 def calibrate(
     V: np.ndarray,
     k_grid: Sequence[int],
@@ -52,6 +95,7 @@ def calibrate(
     keep_fits: Optional[Path] = None,
     progress_callback: Optional[ProgressCallback] = None,
     k_star_metric: str = "psnr_minmax",
+    fg_bg_ratio: float = 1.0,
     feature_method: str = "peaks",
     saturation_exponent: float = 0.44,
     compute_rd_model: bool = True,
@@ -106,6 +150,7 @@ def calibrate(
         raise ValueError(f"V must be at least 2D, got shape {V.shape}")
     if len(k_grid) < 1:
         raise ValueError("k_grid must contain at least one K value")
+    _validate_fg_bg_ratio(fg_bg_ratio)
 
     fit_kwargs = dict(fit_kwargs or {})
     fit_kwargs.pop("seeds", None)
@@ -163,11 +208,14 @@ def calibrate(
     # metric. Both kept on the same device as the rendered tensor in-loop.
     baseline_mse = predict_zero_baseline_mse(V, mask)
     fg_mask = foreground_mask_otsu(V)
+    fg_weighted_mask, fg_otsu_threshold = foreground_mask_otsu_smoothed(V)
     fg_t = torch.from_numpy(fg_mask)
+    fg_weighted_t = torch.from_numpy(fg_weighted_mask)
 
     k_values_eff: List[int] = []
     held_psnr: List[float] = []
     held_psnr_fg: List[float] = []
+    held_psnr_fg_weighted: List[float] = []
     held_gain: List[float] = []
     train_psnr: List[float] = []
     held_mse: List[float] = []
@@ -184,8 +232,20 @@ def calibrate(
     ref_dev = V_orig_t.to(render_device)
     mask_dev = mask_t.to(render_device)
     fg_dev = fg_t.to(render_device)
+    fg_weighted_dev = fg_weighted_t.to(render_device)
     train_mask_dev = ~mask_dev
     held_fg_dev = mask_dev & fg_dev
+    (
+        held_weighted_fg_sel,
+        held_weighted_bg_sel,
+        n_weighted_fg,
+        n_weighted_bg,
+        bg_weight,
+    ) = _foreground_weighting(
+        mask_dev,
+        fg_weighted_dev,
+        fg_bg_ratio,
+    )
 
     # 2-3. Fit at each K
     for i, K in enumerate(k_grid):
@@ -220,6 +280,20 @@ def calibrate(
                 held_psnr_fg.append(_psnr_db(fg_mse, data_range))
             # Gain over the predict-zero baseline (plateaus meaningfully)
             held_gain.append(held_out_gain_db(held_mse_val, baseline_mse))
+
+            errors = (held_pred - held_true) ** 2
+            held_psnr_fg_weighted.append(
+                _foreground_weighted_psnr(
+                    errors,
+                    held_weighted_fg_sel,
+                    held_weighted_bg_sel,
+                    n_weighted_fg,
+                    n_weighted_bg,
+                    bg_weight,
+                    data_range,
+                )
+            )
+            del errors
 
             train_mse = float(torch.mean((train_pred - train_true) ** 2).item())
             train_psnr_val = _psnr_db(train_mse, data_range)
@@ -258,7 +332,16 @@ def calibrate(
             torch.cuda.empty_cache()
 
     # release the hoisted device copies
-    del ref_dev, mask_dev, fg_dev, train_mask_dev, held_fg_dev
+    del (
+        ref_dev,
+        mask_dev,
+        fg_dev,
+        fg_weighted_dev,
+        train_mask_dev,
+        held_fg_dev,
+        held_weighted_fg_sel,
+        held_weighted_bg_sel,
+    )
     if str(render_device).startswith("cuda"):
         torch.cuda.empty_cache()
 
@@ -283,12 +366,13 @@ def calibrate(
     _metric_curves: Dict[str, List[float]] = {
         "psnr_minmax": held_psnr,
         "psnr_foreground": held_psnr_fg,
+        "psnr_fg_weighted": held_psnr_fg_weighted,
         "gain": held_gain,
     }
     if k_star_metric not in _metric_curves:
         raise ValueError(
             f"unknown k_star_metric {k_star_metric!r}; use "
-            "'psnr_minmax', 'psnr_foreground', or 'gain'"
+            "'psnr_minmax', 'psnr_foreground', 'psnr_fg_weighted', or 'gain'"
         )
     peak_selected: Optional[HeldOutPeak] = None
     if k_star_metric != "psnr_minmax":
@@ -359,6 +443,10 @@ def calibrate(
         volume_dtype=str(V.dtype),
         timestamp=datetime.now(timezone.utc).isoformat(),
         held_out_psnr_fg_db=held_psnr_fg,
+        held_out_psnr_fg_weighted_db=held_psnr_fg_weighted,
+        foreground_mask_fraction=float(np.mean(fg_weighted_mask)),
+        foreground_otsu_threshold=float(fg_otsu_threshold),
+        fg_bg_ratio=float(fg_bg_ratio),
         held_out_gain_db=held_gain,
         predict_zero_baseline_mse=baseline_mse,
         k_star_metric=k_star_metric,
@@ -378,6 +466,7 @@ def calibrate_saturation_exponent(
     feature_method: str = "peaks",
     region_strategy: str = "densest",
     k_star_metric: str = "psnr_minmax",
+    fg_bg_ratio: float = 1.0,
     mask_seed: int = 42,
     mask_fraction: float = 0.05,
     progress_callback: Optional[ProgressCallback] = None,
@@ -419,6 +508,7 @@ def calibrate_saturation_exponent(
             mask_seed=mask_seed,
             mask_fraction=mask_fraction,
             k_star_metric=k_star_metric,
+            fg_bg_ratio=fg_bg_ratio,
             feature_method=feature_method,
             compute_rd_model=False,
         )
