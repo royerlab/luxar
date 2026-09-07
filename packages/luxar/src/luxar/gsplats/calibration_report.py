@@ -39,8 +39,8 @@ def _safe_log_x(ax: "Axes") -> None:
 
 def _selected_metric(
     result: CalibrationResult,
-) -> tuple[np.ndarray, str, HeldOutPeak]:
-    """Return the curve, label, and peak selected by ``k_star_metric``."""
+) -> tuple[np.ndarray, str, HeldOutPeak, str]:
+    """Return the selected curve, label, peak, and resolved metric name."""
     curves = {
         "psnr_minmax": (result.held_out_psnr_db, "held-out PSNR"),
         "psnr_foreground": (
@@ -53,17 +53,19 @@ def _selected_metric(
         ),
         "gain": (result.held_out_gain_db, "held-out gain over predict-zero"),
     }
-    values, label = curves.get(
-        result.k_star_metric, (result.held_out_psnr_db, "held-out PSNR")
+    resolved_metric = (
+        result.k_star_metric if result.k_star_metric in curves else "psnr_minmax"
     )
+    values, label = curves[resolved_metric]
     if (
         result.k_star_metric != "psnr_minmax" and result.held_out_peak_selected is None
     ) or len(values) != len(result.k_values_requested):
         values, label = result.held_out_psnr_db, "held-out PSNR"
         peak = result.held_out_peak
+        resolved_metric = "psnr_minmax"
     else:
         peak = result.held_out_peak_selected or result.held_out_peak
-    return np.asarray(values, dtype=float), label, peak
+    return np.asarray(values, dtype=float), label, peak, resolved_metric
 
 
 def _knee_display_idx(result: CalibrationResult) -> Optional[int]:
@@ -74,7 +76,7 @@ def _knee_display_idx(result: CalibrationResult) -> Optional[int]:
     the K* marker, mirroring the CLI which prints the operating point only
     when it differs.
     """
-    _curve, _label, peak = _selected_metric(result)
+    _curve, _label, peak, _resolved_metric = _selected_metric(result)
     if not peak.k_knee or peak.k_knee == peak.k_star:
         return None
     if peak.k_knee not in result.k_values_requested:
@@ -92,7 +94,7 @@ def _plot_rate_distortion(
 ) -> None:
     ks = np.asarray(result.k_values_effective, dtype=float)
     held = np.asarray(result.held_out_psnr_db, dtype=float)
-    selected, selected_label, selected_peak = _selected_metric(result)
+    selected, selected_label, selected_peak, _resolved_metric = _selected_metric(result)
     train = np.asarray(result.train_psnr_db, dtype=float)
     full = np.asarray(result.full_psnr_db, dtype=float)
     ssim = np.asarray(result.full_ssim, dtype=float)
@@ -178,21 +180,21 @@ def _plot_rate_distortion(
 
 def _plot_blind_spot(fig: "Figure", ax: "Axes", result: CalibrationResult) -> None:
     ks = np.asarray(result.k_values_effective, dtype=float)
-    held, held_label, selected_peak = _selected_metric(result)
+    held, held_label, selected_peak, resolved_metric = _selected_metric(result)
     train = np.asarray(result.train_psnr_db, dtype=float)
     psnr_ceiling = result.noise_floor.psnr_max_db
     k_star = selected_peak.k_star
     star_idx = result.k_values_requested.index(k_star)
 
-    if result.k_star_metric != "gain":
+    if resolved_metric == "psnr_minmax":
         ax.plot(ks, train, "s-", color="C0", label="train")
     ax.plot(ks, held, "o-", color="C1", label=f"{held_label} (model selection)")
-    if result.k_star_metric == "psnr_minmax":
+    if resolved_metric == "psnr_minmax":
         ax.fill_between(
             ks, train, held, where=(train > held).tolist(), alpha=0.15, color="C3"
         )
 
-    if result.k_star_metric != "gain" and math.isfinite(psnr_ceiling):
+    if resolved_metric == "psnr_minmax" and math.isfinite(psnr_ceiling):
         ax.axhline(psnr_ceiling, color="grey", linestyle=":", linewidth=1)
         ax.text(
             ks[0],

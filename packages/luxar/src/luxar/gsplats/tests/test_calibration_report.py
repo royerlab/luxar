@@ -18,6 +18,7 @@ matplotlib.use("Agg")
 
 from luxar.gsplats.calibration_report import (  # noqa: E402
     _knee_display_idx,
+    _plot_blind_spot,
     _selected_metric,
     render_calibration_report,
 )
@@ -80,11 +81,12 @@ class TestKneeDisplayIdx:
         res.held_out_psnr_fg_weighted_db = selected_curve
         res.held_out_peak_selected = find_k_star(res.k_values_requested, selected_curve)
 
-        curve, label, peak = _selected_metric(res)
+        curve, label, peak, resolved = _selected_metric(res)
 
         np.testing.assert_array_equal(curve, selected_curve)
         assert label == "foreground-weighted held-out PSNR"
         assert peak is res.held_out_peak_selected
+        assert resolved == "psnr_fg_weighted"
         assert _knee_display_idx(res) is None
 
     def test_missing_selected_peak_falls_back_to_minmax_curve(self):
@@ -92,11 +94,46 @@ class TestKneeDisplayIdx:
         res.k_star_metric = "psnr_fg_weighted"
         res.held_out_psnr_fg_weighted_db = [float("nan")] * 3
 
-        curve, label, peak = _selected_metric(res)
+        curve, label, peak, resolved = _selected_metric(res)
 
         np.testing.assert_array_equal(curve, res.held_out_psnr_db)
         assert label == "held-out PSNR"
         assert peak is res.held_out_peak
+        assert resolved == "psnr_minmax"
+
+    def test_fallback_draws_only_matching_minmax_overlays(self):
+        import matplotlib.pyplot as plt
+
+        res = _make_result([1, 2, 4], [20.0, 21.0, 22.0])
+        res.k_star_metric = "psnr_fg_weighted"
+        res.held_out_psnr_fg_weighted_db = [float("nan")] * 3
+        fig, ax = plt.subplots()
+
+        _plot_blind_spot(fig, ax, res)
+
+        labels = [line.get_label() for line in ax.lines]
+        assert "train" in labels
+        assert len(ax.collections) == 1
+        assert any("noise floor" in text.get_text() for text in ax.texts)
+        plt.close(fig)
+
+    def test_weighted_curve_omits_minmax_overlays(self):
+        import matplotlib.pyplot as plt
+
+        res = _make_result([1, 2, 4], [20.0, 21.0, 22.0])
+        selected_curve = [18.0, 25.0, 19.0]
+        res.k_star_metric = "psnr_fg_weighted"
+        res.held_out_psnr_fg_weighted_db = selected_curve
+        res.held_out_peak_selected = find_k_star(res.k_values_requested, selected_curve)
+        fig, ax = plt.subplots()
+
+        _plot_blind_spot(fig, ax, res)
+
+        labels = [line.get_label() for line in ax.lines]
+        assert "train" not in labels
+        assert len(ax.collections) == 0
+        assert not any("noise floor" in text.get_text() for text in ax.texts)
+        plt.close(fig)
 
     def test_legacy_zero_knee_is_suppressed(self):
         # A hand-built HeldOutPeak with the default k_knee=0 (pre-field object)
