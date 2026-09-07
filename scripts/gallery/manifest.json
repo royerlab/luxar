@@ -571,7 +571,7 @@
       "category": "synthetic",
       "script": "demo_particle_collision.py",
       "dataset": "datasets/demos/collision.luxar.zarr",
-      "fillTarget": 0.8,
+      "fillTarget": 0.80,
       "note": "FILLTARGET: the corrected #1970 tracks run farther toward the detector edge. Measured on every encoded 900x900 orbit frame at luma >0.04, summed border-lit pixels (worst frame): previous tile 194,404 (1,974); merged geometry at 0.95 214,205 (2,611); 0.90 219,151 (2,696); 0.80 37,489 (408). The lower target restores margin rather than preserving the tighter full-bleed wash"
     },
     {
@@ -701,13 +701,14 @@
     },
     {
       "id": "gsplats_2d_cmu1_pathology",
-      "exposure": -2.0,
       "title": "Whole-Slide Pathology (CMU-1)",
       "geometry": "gsplats",
       "category": "medical",
       "script": "demo_gsplats_2d_cmu1_pathology.py",
       "dataset": "datasets/demos/gsplats_2d_cmu1_pathology.luxar.zarr",
-      "citation": "OpenSlide test data (Goode et al. 2013)"
+      "citation": "OpenSlide test data (Goode et al. 2013)",
+      "exposure": -2.0,
+      "note": "The wider clip guard does not replace this override: auto still misses the sparse 8.9%-lit subject during the percentile pass."
     },
     {
       "id": "gsplats_3d_flylight_mcfo_63x_brain",
@@ -811,13 +812,14 @@
     },
     {
       "id": "ppi_flow_field",
-      "exposure": -6.0,
       "title": "Protein-Interaction Flow Field",
       "geometry": "points+lines",
       "category": "networks",
       "script": "demo_ppi_flow_field.py",
       "dataset": "datasets/demos/ppi_flow_field_full.luxar.zarr",
-      "citation": "Luck et al. 2020"
+      "citation": "Luck et al. 2020",
+      "exposure": -6.0,
+      "note": "Auto now reaches the same -6-stop override and reports the clip guard exhausted there; the override remains deterministic and avoids the extra captures."
     },
     {
       "id": "gsplats_3d_drosophila_gastrulation",
@@ -858,7 +860,7 @@
         "framePoint": 0.9
       },
       "citation": "Royer et al. 2016",
-      "fillTarget": 0.80,
+      "fillTarget": 0.8,
       "note": "fillTarget 0.80, not the 0.9 inherited from the h2afva timelapse: this embryo is a ~2.5:1 prolate ellipsoid, so at 0.9 it is cut flat at BOTH poles \u2014 and for an embryogenesis timelapse the anterior/posterior ends are the subject, not spare margin. Border-lit fell 737/4316 (17.1%) to 16/4316 (0.4%), a 46x reduction, and the render shows the whole embryo with margin at 0.80. The harness then suggested 0.7 for those 16 remaining pixels; that is its standing over-suggestion on any subject whose silhouette grazes an edge and was not followed. framePoint 0.9 KEPT: late in the 500-timepoint series the nuclei are individually resolved and the ventral furrow is legible, which is the point of the demo. Store needs no LOD work \u2014 the hosted archive is already flat with 14 additive rungs and no substitutive levels. Its largest node reads 37,930,613 (9x the 4,194,304 floor) but Time is display=false over [0.0, 249.5] step 0.5, so the resident slice is 166,443, i.e. 25x UNDER; this is the store _lod_policy.py cites for exactly that point."
     },
     {

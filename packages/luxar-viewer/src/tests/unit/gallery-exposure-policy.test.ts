@@ -157,6 +157,7 @@ function makeIO(profile: SubjectProfile): RecordingIO {
 // Pre-fix reference algorithm (p99 pass + clip guard only, no mid-tone phase)
 // ---------------------------------------------------------------------------
 
+// Freeze the historical flat guard budget now that production derives its cap.
 const REFERENCE_CLIP_GUARD_ITERS = 8;
 
 async function referenceAutoExposure(io: ExposureIO): Promise<number> {
@@ -302,6 +303,44 @@ describe('gallery auto-exposure policy', () => {
       expect(fixedIO.measures).toBe(refIO.measures);
     });
 
+    it('preserves a converging trajectory that takes guard steps', async () => {
+      const guardedIO = (): RecordingIO => {
+        let current = 0;
+        const io: RecordingIO = {
+          applied: [],
+          measures: 0,
+          async apply(stops) {
+            current = stops;
+            io.applied.push(stops);
+          },
+          async measure(): Promise<LumaStats> {
+            io.measures++;
+            const guarded = current > -1.5;
+            return {
+              hiLuma: TARGET_HI,
+              loLuma: 0.2,
+              midLuma: 0.6,
+              litFraction: 0.5,
+              clippedFrac: guarded ? 1 : 0,
+              bgLuma: guarded ? 0.5 : 0,
+            };
+          },
+        };
+        return io;
+      };
+
+      const fixedIO = guardedIO();
+      const result = await computeAutoExposure(fixedIO);
+      const refIO = guardedIO();
+      const reference = await referenceAutoExposure(refIO);
+      expect(result.stops).toBe(reference);
+      expect(result.guardExhausted).toBe(false);
+      expect(fixedIO.applied).toEqual(refIO.applied);
+      expect(fixedIO.measures).toBe(refIO.measures);
+      expect(fixedIO.applied).toEqual([1, 0.5, 0, -0.5, -1, -1.5]);
+      expect(fixedIO.measures).toBe(7);
+    });
+
     it('stays well clear of the narrow-spread gate', async () => {
       const profile = emissive(SHOULDER);
       const shot = capture(profile, await referenceAutoExposure(makeIO(profile)));
@@ -416,19 +455,52 @@ describe('gallery auto-exposure policy', () => {
       expect(guardExhausted).toBe(true);
     });
 
+    it('clamps a fractional guard trajectory and measures the floor', async () => {
+      let applied = 0;
+      let measures = 0;
+      const measured: number[] = [];
+      const io: ExposureIO = {
+        async apply(stops) {
+          applied = stops;
+        },
+        async measure(): Promise<LumaStats> {
+          measured.push(applied);
+          const hiLuma = measures++ === 0 ? TARGET_HI * Math.pow(2, 0.45) : TARGET_HI;
+          return {
+            hiLuma,
+            loLuma: 0.2,
+            midLuma: 0.6,
+            litFraction: 0.5,
+            clippedFrac: 1,
+            bgLuma: 0.5,
+          };
+        },
+      };
+
+      const { stops, guardExhausted } = await computeAutoExposure(io);
+      expect(stops).toBe(EXPOSURE_MIN);
+      expect(measured.at(-1)).toBe(EXPOSURE_MIN);
+      expect(guardExhausted).toBe(true);
+    });
+
     it('clamps at EXPOSURE_MIN when the mid-tone pass cannot reach the target', async () => {
       // Narrow AND pinned near white, and the subject never responds to
       // exposure, so the mid-tone pass spends its whole budget stepping down.
+      let applied = 0;
+      const measured: number[] = [];
       const io: ExposureIO = {
-        async apply() {},
+        async apply(stops) {
+          applied = stops;
+        },
         async measure(): Promise<LumaStats> {
+          measured.push(applied);
           return {
             hiLuma: 0.99,
             loLuma: 0.97,
             midLuma: 0.99,
             litFraction: 0.5,
-            clippedFrac: 0,
-            bgLuma: 0,
+            clippedFrac: 1,
+            bgLuma: 0.5,
           };
         },
       };
@@ -439,9 +511,13 @@ describe('gallery auto-exposure policy', () => {
       const unclamped = afterPhase1 + MID_EXPOSURE_ITERS * Math.log2(TARGET_MID / 0.99);
       expect(unclamped).toBeLessThan(EXPOSURE_MIN);
 
-      const { stops, flatSubject } = await computeAutoExposure(io);
+      const { stops, flatSubject, guardExhausted } = await computeAutoExposure(io);
       expect(flatSubject).toBe(true);
       expect(stops).toBe(EXPOSURE_MIN);
+      // Phase 2 measures its final applied exposure, then phase 3 enters at
+      // the floor and spends exactly one measurement declaring exhaustion.
+      expect(measured.slice(-2)).toEqual([EXPOSURE_MIN, EXPOSURE_MIN]);
+      expect(guardExhausted).toBe(true);
     });
   });
 });

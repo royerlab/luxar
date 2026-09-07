@@ -102,7 +102,10 @@ export const MID_EXPOSURE_TOL = 0.05;
  * a percentile target alone misses (the subject can have a huge blown core yet
  * a below-target p99). `scripts/gallery/score_exposure.py` re-derives the same
  * three numbers offline (hand-synced, and off a lossless PNG rather than this
- * pass's JPEG-q70 screenshot, so the two can disagree at the margin).
+ * pass's JPEG-q70 screenshot, so the two can disagree at the margin). The
+ * scorer does not mirror the guard's range or step: a clipped frame that
+ * exhausts the guard is independently OVER offline, while background-only
+ * exhaustion is intentionally a harness-only warning.
  */
 export const CLIP_LUMA = 0.95; // luma above this is "bright"
 export const CLIP_SAT_MAX = 0.15; // saturation below this is "near-white"
@@ -144,7 +147,7 @@ export interface AutoExposureResult {
    * a false fire is the main risk of the narrow-spread heuristic.
    */
   flatSubject: boolean;
-  /** Whether the guard reached EXPOSURE_MIN while the frame still violated it. */
+  /** Whether the guard exhausted its range while the frame still violated it. */
   guardExhausted: boolean;
 }
 
@@ -170,7 +173,9 @@ const clampStops = (s: number): number => Math.max(EXPOSURE_MIN, Math.min(EXPOSU
  *   3. Guard — step exposure DOWN while EITHER >5% of the subject is blown to
  *      white OR the background is lifted to grey (frame p10 above near-black).
  *      Phase 1 (p99 target) over-boosts sparse/bloomy scenes into a grey wash;
- *      the background term is what pulls those back to a black background.
+ *      the background term is what pulls those back to a black background. The
+ *      predicate or EXPOSURE_MIN terminates the guard; `guardExhausted` reports
+ *      a frame that still violates either guard condition at the floor.
  *
  * NOTE (preserved quirk): when a pass's correction is already negligible it
  * records the corrected value and breaks WITHOUT applying it, so the returned
@@ -226,19 +231,27 @@ export async function computeAutoExposure(io: ExposureIO): Promise<AutoExposureR
   // The background term is what actually fixes the "too bright / grey bg" cases
   // that a white-blown check alone misses (bloom haze sits well below clip luma).
   let guardExhausted = false;
+  let guardResolved = false;
+  // One 0.5-stop step per remaining interval, plus one final measurement at
+  // EXPOSURE_MIN. Tiles that converged within the former eight steps are unchanged.
   const clipGuardIters = Math.ceil((stops - EXPOSURE_MIN) / CLIP_GUARD_STEP) + 1;
   for (let iter = 0; iter < clipGuardIters; iter++) {
     const { clippedFrac, bgLuma } = carried ?? (await io.measure());
     carried = null;
     const tooBlown = clippedFrac > CLIP_FRAC_MAX;
     const bgTooBright = bgLuma > BG_LUMA_MAX;
-    if (!tooBlown && !bgTooBright) break;
+    if (!tooBlown && !bgTooBright) {
+      guardResolved = true;
+      break;
+    }
     if (stops <= EXPOSURE_MIN) {
       guardExhausted = true;
+      guardResolved = true;
       break;
     }
     stops = Math.max(EXPOSURE_MIN, stops - CLIP_GUARD_STEP);
     await io.apply(stops);
   }
+  if (!guardResolved) guardExhausted = true;
   return { stops, flatSubject, guardExhausted };
 }
