@@ -330,12 +330,7 @@ export function installCanvasActions(ports: CanvasActionsPorts): CanvasActionsHa
    * Pick at the pointer's position, then run `fn` once the result has landed.
    * Without a `pickAt` on the port, act on whatever the cache already holds.
    */
-  const afterPick = (
-    clientX: number,
-    clientY: number,
-    gesture: number,
-    fn: () => void
-  ): void => {
+  const afterPick = (clientX: number, clientY: number, gesture: number, fn: () => void): void => {
     const run = (): void => {
       if (gesture === gestureGeneration) fn();
     };
@@ -486,14 +481,20 @@ export function installCanvasActions(ports: CanvasActionsPorts): CanvasActionsHa
     // gesture — a pinch, not a click. The latch is what makes the second half
     // true: `down.size > 0` alone rejects releasing the FIRST of two fingers
     // but not the last, which leaves the map empty and reads as a single click.
-    if (down.size > 0 || wasMultiTouch) return;
+    if (down.size > 0 || wasMultiTouch) {
+      lastTap = null;
+      return;
+    }
     if (start.button !== ev.button) return;
     if (ev.button !== 0 && ev.button !== 2) return;
 
     const slop = start.touchLike ? TOUCH_CLICK_SLOP_PX : CLICK_SLOP_PX;
     const dx = ev.clientX - start.x;
     const dy = ev.clientY - start.y;
-    if (dx * dx + dy * dy > slop * slop) return; // a drag
+    if (dx * dx + dy * dy > slop * slop) {
+      if (start.touchLike) lastTap = null;
+      return;
+    }
 
     if (start.touchLike) handleTap(ev, start.gesture);
     else handleClick(ev);

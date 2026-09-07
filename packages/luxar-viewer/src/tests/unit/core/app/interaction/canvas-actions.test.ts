@@ -771,6 +771,54 @@ describe('touch: tap, long-press, double-tap', () => {
     expect(h.openUrl).not.toHaveBeenCalled();
   });
 
+  it('a pinch resets the canvas tap history before the next tap', async () => {
+    const h = setup({}, LINKED);
+    gesture(h.canvas, { x: 100, y: 80, pointerType: 'touch' });
+    await flush();
+
+    h.canvas.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        pointerId: 1,
+        clientX: 100,
+        clientY: 80,
+        pointerType: 'touch',
+        bubbles: true,
+      })
+    );
+    h.canvas.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        pointerId: 2,
+        clientX: 200,
+        clientY: 80,
+        pointerType: 'touch',
+        bubbles: true,
+      })
+    );
+    h.canvas.dispatchEvent(
+      new PointerEvent('pointerup', {
+        pointerId: 1,
+        clientX: 100,
+        clientY: 80,
+        pointerType: 'touch',
+        bubbles: true,
+      })
+    );
+    h.canvas.dispatchEvent(
+      new PointerEvent('pointerup', {
+        pointerId: 2,
+        clientX: 200,
+        clientY: 80,
+        pointerType: 'touch',
+        bubbles: true,
+      })
+    );
+
+    gesture(h.canvas, { x: 100, y: 80, pointerType: 'touch', pointerId: 3 });
+    await flush();
+    expect(h.picking.pickAt).toHaveBeenCalledTimes(2);
+    expect(h.onElementClick).toHaveBeenCalledTimes(2);
+  });
+
   it('the second tap of a double-tap cancels the pending navigation and does not re-pick', async () => {
     // The re-frame itself lives in double-tap-to-fit.ts (installed for every
     // scene, picking or not); canvas-actions only has to stay out of its way.
