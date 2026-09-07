@@ -484,6 +484,20 @@ describe('extractEnvironmentConfig', () => {
     warn.mockRestore();
   });
 
+  it.each([5, { x: 1 }, true])('falls back for an untrusted non-string probe (%j)', (probe) => {
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const config = { environment: { probe } } as unknown as ZarrViewerConfig;
+
+    expect(extractEnvironmentConfig(config)).toEqual({
+      source: 'room',
+      probe: 'auto',
+      resolution: 128,
+      intensity: 1,
+    });
+    expect(warn.mock.calls.some((call) => String(call[1]).includes('malformed probe'))).toBe(true);
+    warn.mockRestore();
+  });
+
   it('refuses unsafe environment fetch URLs', () => {
     for (const url of [
       'javascript:alert(1)',
