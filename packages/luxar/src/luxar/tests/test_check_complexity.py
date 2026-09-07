@@ -276,7 +276,7 @@ def test_save_baseline_round_trips_and_is_deterministic(tmp_path: Path) -> None:
         "packages/luxar/src/luxar/a.py::alpha": [12],
     }
 
-    checker.save_baseline(path, entries)
+    checker.save_baseline(path, entries, _TEST_SETTINGS_FINGERPRINT)
 
     assert checker.load_baseline(path) == {
         "scripts/b.py::render": [31, 11],
@@ -301,7 +301,7 @@ def test_baseline_is_populated_never_reads_a_bad_file_as_empty(
     malformed = tmp_path / "malformed.json"
     malformed.write_text("{not json")
     populated = tmp_path / "populated.json"
-    checker.save_baseline(populated, {"a.py::f": [12]})
+    checker.save_baseline(populated, {"a.py::f": [12]}, _TEST_SETTINGS_FINGERPRINT)
 
     assert checker._baseline_is_populated(missing) is False
     assert checker._baseline_is_populated(empty) is False
@@ -585,6 +585,34 @@ def test_main_rejects_an_existing_baselined_file_omitted_by_ruff(
     assert "pkg/sub/sample.py" in output
 
 
+def test_update_baseline_rejects_a_file_omitted_by_settings_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A fingerprint refresh must not erase keys hidden by the new settings."""
+    _require_ruff()
+    monkeypatch.setattr(checker, "DEFAULT_TARGETS", ("pkg",))
+    monkeypatch.setattr(
+        checker, "ruff_settings_fingerprint", _REAL_RUFF_SETTINGS_FINGERPRINT
+    )
+    for directory in (tmp_path / "pkg" / "kept", tmp_path / "pkg" / "sub"):
+        directory.mkdir(parents=True)
+        _write_tree(directory, complex_function=True)
+    baseline = tmp_path / "baseline.json"
+    args = ["--project-root", str(tmp_path), "--baseline", str(baseline)]
+
+    assert checker.main([*args, "--update-baseline"]) == 0
+    original = baseline.read_text()
+    capsys.readouterr()
+    (tmp_path / "pyproject.toml").write_text('[tool.ruff]\nexclude = ["pkg/sub"]\n')
+
+    assert checker.main([*args, "--update-baseline"]) == 2
+    output = _clean_output(capsys)
+    assert "pkg/sub/sample.py::tangled" in output
+    assert baseline.read_text() == original
+
+
 def test_main_rejects_nested_ruff_configuration(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -630,7 +658,9 @@ def test_main_refuses_to_wipe_a_populated_baseline(
     _unrestrict(monkeypatch)
     _write_tree(tmp_path, complex_function=False)
     baseline = tmp_path / "baseline.json"
-    checker.save_baseline(baseline, {"sample.py::tangled": [13]})
+    checker.save_baseline(
+        baseline, {"sample.py::tangled": [13]}, _TEST_SETTINGS_FINGERPRINT
+    )
 
     exit_code = _run_main(tmp_path, baseline, "--update-baseline")
     output = _clean_output(capsys)
@@ -649,7 +679,9 @@ def test_main_refusal_diagnoses_a_clean_restricted_update(
     _require_ruff()
     _write_tree(tmp_path, complex_function=False)
     baseline = tmp_path / "baseline.json"
-    checker.save_baseline(baseline, {"other/mod.py::elsewhere": [13]})
+    checker.save_baseline(
+        baseline, {"other/mod.py::elsewhere": [13]}, _TEST_SETTINGS_FINGERPRINT
+    )
 
     exit_code = _run_main(tmp_path, baseline, "--update-baseline")
     output = _clean_output(capsys)
@@ -677,7 +709,11 @@ def test_main_reports_a_move_as_advisory(
     # Simulate the move by re-keying the baseline to the function's old home,
     # and make it a move-AND-SIMPLIFY: the new complexity is strictly lower.
     moved_from = checker.load_baseline(baseline)["sample.py::tangled"]
-    checker.save_baseline(baseline, {"old/sample.py::tangled": [moved_from[0] + 5]})
+    checker.save_baseline(
+        baseline,
+        {"old/sample.py::tangled": [moved_from[0] + 5]},
+        _TEST_SETTINGS_FINGERPRINT,
+    )
 
     exit_code = _run_main(tmp_path, baseline)
     output = _clean_output(capsys)
@@ -703,7 +739,9 @@ def test_main_does_not_pair_moves_on_a_restricted_run(
     baseline = tmp_path / "baseline.json"
     # Same function NAME, higher complexity, in a file this run never scans:
     # a perfect pairing candidate that the restricted run must refuse to use.
-    checker.save_baseline(baseline, {"never/scanned.py::tangled": [40]})
+    checker.save_baseline(
+        baseline, {"never/scanned.py::tangled": [40]}, _TEST_SETTINGS_FINGERPRINT
+    )
 
     exit_code = _run_main(tmp_path, baseline)
     output = _clean_output(capsys)
@@ -721,7 +759,9 @@ def test_main_fails_on_a_worsened_baselined_function(
     _require_ruff()
     _write_tree(tmp_path, complex_function=True)
     baseline = tmp_path / "baseline.json"
-    checker.save_baseline(baseline, {"sample.py::tangled": [11]})
+    checker.save_baseline(
+        baseline, {"sample.py::tangled": [11]}, _TEST_SETTINGS_FINGERPRINT
+    )
 
     exit_code = _run_main(tmp_path, baseline)
     output = _clean_output(capsys)
@@ -741,7 +781,9 @@ def test_main_fails_closed_when_a_full_scan_covers_nothing(
     _unrestrict(monkeypatch)
     _write_tree(tmp_path, complex_function=False)
     baseline = tmp_path / "baseline.json"
-    checker.save_baseline(baseline, {"sample.py::tangled": [13]})
+    checker.save_baseline(
+        baseline, {"sample.py::tangled": [13]}, _TEST_SETTINGS_FINGERPRINT
+    )
 
     exit_code = _run_main(tmp_path, baseline)
     output = _clean_output(capsys)
@@ -758,7 +800,9 @@ def test_main_only_warns_when_a_restricted_scan_is_clean(
     _require_ruff()
     _write_tree(tmp_path, complex_function=False)
     baseline = tmp_path / "baseline.json"
-    checker.save_baseline(baseline, {"sample.py::tangled": [13]})
+    checker.save_baseline(
+        baseline, {"sample.py::tangled": [13]}, _TEST_SETTINGS_FINGERPRINT
+    )
 
     exit_code = _run_main(tmp_path, baseline)
     output = _clean_output(capsys)
@@ -767,6 +811,37 @@ def test_main_only_warns_when_a_restricted_scan_is_clean(
     assert "No over-limit functions under the restricted target set" in output
     assert "The scan covered nothing" not in output
     assert "No new complexity regressions" in output
+
+
+def test_main_diagnoses_a_target_with_no_python_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An empty target must fail in the checker's voice, not dump raw Ruff output."""
+    _require_ruff()
+    monkeypatch.setattr(
+        checker, "ruff_settings_fingerprint", _REAL_RUFF_SETTINGS_FINGERPRINT
+    )
+    target = tmp_path / "empty"
+    target.mkdir()
+
+    result = checker.main(
+        [
+            "empty",
+            "--project-root",
+            str(tmp_path),
+            "--baseline",
+            str(tmp_path / "baseline.json"),
+        ]
+    )
+
+    assert result == 2
+    output = _clean_output(capsys)
+    assert (
+        "cannot resolve Ruff settings because the target has no Python files" in output
+    )
+    assert "ruff --show-settings failed" not in output
 
 
 def test_main_restricted_run_does_not_advise_updating_the_baseline(
@@ -782,7 +857,7 @@ def test_main_restricted_run_does_not_advise_updating_the_baseline(
     # A key from elsewhere in the tree: unscanned by this restricted run.
     entries = checker.load_baseline(baseline)
     entries["other/mod.py::elsewhere"] = [14]
-    checker.save_baseline(baseline, entries)
+    checker.save_baseline(baseline, entries, _TEST_SETTINGS_FINGERPRINT)
 
     exit_code = _run_main(tmp_path, baseline)
     output = _clean_output(capsys)
@@ -878,7 +953,9 @@ def test_main_reports_a_ruff_failure_as_exit_2(
 ) -> None:
     """A ruff invocation that cannot run must fail CLOSED, never green."""
     baseline = tmp_path / "baseline.json"
-    checker.save_baseline(baseline, {"sample.py::tangled": [13]})
+    checker.save_baseline(
+        baseline, {"sample.py::tangled": [13]}, _TEST_SETTINGS_FINGERPRINT
+    )
 
     def broken_ruff(targets: object, project_root: object) -> str:
         """Stand-in for a ruff that could not be launched."""
@@ -921,9 +998,7 @@ def test_default_targets_match_the_lint_scripts_ruff_paths() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_repository_has_no_complexity_regressions(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_repository_has_no_complexity_regressions() -> None:
     """The real tree must not add (or worsen) an over-limit function.
 
     Deliberately fails closed: a missing baseline is NOT skipped, it reports
@@ -931,9 +1006,6 @@ def test_repository_has_no_complexity_regressions(
     enforcing gate green.
     """
     _require_ruff()
-    monkeypatch.setattr(
-        checker, "ruff_settings_fingerprint", _REAL_RUFF_SETTINGS_FINGERPRINT
-    )
     baseline_path = PROJECT_ROOT / checker.DEFAULT_BASELINE_RELPATH
     settings_fingerprint = _REAL_RUFF_SETTINGS_FINGERPRINT(
         checker.DEFAULT_TARGETS[0], PROJECT_ROOT

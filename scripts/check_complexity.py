@@ -132,7 +132,7 @@ def run_ruff(targets: tuple[str, ...] | list[str], project_root: Path) -> str:
         "ruff",
         "check",
         "--select",
-        "C901",
+        ",".join(RATCHETED_SELECT),
         "--output-format",
         "json",
         *targets,
@@ -177,16 +177,7 @@ def run_ruff(targets: tuple[str, ...] | list[str], project_root: Path) -> str:
 
 def ruff_settings_fingerprint(target: str, project_root: Path) -> str:
     """Hash Ruff's normalized resolved settings for this ratchet."""
-    return ruff_ratchet.settings_fingerprint(
-        target, project_root, RATCHETED_SELECT, subprocess.run
-    )
-
-
-def find_nested_ruff_configs(
-    targets: tuple[str, ...] | list[str], project_root: Path
-) -> list[Path]:
-    """Return non-root Ruff config files that can affect ``targets``."""
-    return ruff_ratchet.find_nested_configs(targets, project_root)
+    return ruff_ratchet.settings_fingerprint(target, project_root, RATCHETED_SELECT)
 
 
 def ensure_no_nested_ruff_configs(
@@ -200,9 +191,7 @@ def list_ruff_files(
     targets: tuple[str, ...] | list[str], project_root: Path
 ) -> set[str]:
     """Return the repo-relative files Ruff says it will scan."""
-    return ruff_ratchet.list_files(
-        targets, project_root, RATCHETED_SELECT, subprocess.run
-    )
+    return ruff_ratchet.list_files(targets, project_root, RATCHETED_SELECT)
 
 
 def ensure_baselined_files_were_scanned(
@@ -210,6 +199,29 @@ def ensure_baselined_files_were_scanned(
 ) -> None:
     """Fail when an existing baselined file was silently excluded by Ruff."""
     ruff_ratchet.ensure_baselined_files_scanned(baseline, scanned_files, project_root)
+
+
+def _existing_baseline_coverage_error_for_update(
+    baseline_path: Path,
+    targets: tuple[str, ...],
+    project_root: Path,
+    restricted: bool,
+) -> str | None:
+    """Return a coverage error if a settings refresh would omit baseline keys."""
+    if restricted:
+        return None
+    try:
+        previous_baseline = load_baseline(baseline_path, None)
+    except (ValueError, OSError):
+        return None
+    try:
+        scanned_files = list_ruff_files(targets, project_root)
+        ensure_baselined_files_were_scanned(
+            previous_baseline, scanned_files, project_root
+        )
+    except RuntimeError as exc:
+        return str(exc)
+    return None
 
 
 def parse_findings(
@@ -239,7 +251,7 @@ def parse_findings(
         # ruff emits `invalid-syntax` diagnostics regardless of `--select`, so a
         # WIP file with a syntax error anywhere under the targets would otherwise
         # trip the message-shape guard below with a wrong diagnosis.
-        if finding.get("code") != "C901":
+        if finding.get("code") not in RATCHETED_SELECT:
             continue
         message = finding["message"]
         match = _MESSAGE_RE.match(message)
@@ -331,17 +343,13 @@ def load_baseline(
 def save_baseline(
     path: Path,
     entries: dict[str, list[int]],
-    settings_fingerprint: str | None = None,
+    settings_fingerprint: str,
 ) -> None:
     """Write ``entries`` to ``path`` as deterministic, human-diffable JSON.
 
     Keys are sorted and each value descending-sorted; the file uses ``indent=2``
     and ends with a trailing newline.
     """
-    if settings_fingerprint is None:
-        settings_fingerprint = ruff_settings_fingerprint(
-            DEFAULT_TARGETS[0], PROJECT_ROOT
-        )
     payload = {
         "_comment": BASELINE_COMMENT,
         "settings_fingerprint": settings_fingerprint,
@@ -685,6 +693,30 @@ def _print_report(
     return 0
 
 
+def _refresh_baseline_after_load_error(
+    error: ValueError | OSError,
+    baseline_path: Path,
+    current: dict[str, list[int]],
+    targets: tuple[str, ...],
+    project_root: Path,
+    restricted: bool,
+    settings_fingerprint: str,
+) -> int:
+    """Refresh mismatched baseline metadata without hiding omitted files."""
+    coverage_error = _existing_baseline_coverage_error_for_update(
+        baseline_path, targets, project_root, restricted
+    )
+    if coverage_error:
+        aprint(f"❌ {coverage_error}")
+        return 2
+    aprint(
+        f"⚠️  {error}\n"
+        "   Re-recording the baseline for the current Ruff settings because "
+        "--update-baseline was requested deliberately."
+    )
+    return _update_baseline(baseline_path, current, restricted, settings_fingerprint)
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the complexity ratchet; returns the process exit code."""
     args = _build_parser().parse_args(argv)
@@ -718,13 +750,14 @@ def main(argv: list[str] | None = None) -> int:
         baseline = load_baseline(baseline_path, settings_fingerprint)
     except (ValueError, OSError) as exc:
         if args.update_baseline:
-            aprint(
-                f"⚠️  {exc}\n"
-                "   Replacing the unreadable baseline because "
-                "--update-baseline was requested deliberately."
-            )
-            return _update_baseline(
-                baseline_path, current, restricted, settings_fingerprint
+            return _refresh_baseline_after_load_error(
+                exc,
+                baseline_path,
+                current,
+                targets,
+                project_root,
+                restricted,
+                settings_fingerprint,
             )
         aprint(f"❌ {exc}")
         return 2

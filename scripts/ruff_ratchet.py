@@ -7,19 +7,17 @@ import re
 import subprocess
 import sys
 import tomllib
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 _UNSCANNED_RE = re.compile(r"Failed to lint ")
 _RUFF_CONFIG_NAMES = ("ruff.toml", ".ruff.toml", "pyproject.toml")
-_Run = Callable[..., subprocess.CompletedProcess[str]]
 
 
 def settings_fingerprint(
     target: str,
     project_root: Path,
     selectors: Sequence[str],
-    run: _Run = subprocess.run,
 ) -> str:
     """Hash Ruff's checkout-independent resolved settings for ``selectors``."""
     command = [
@@ -33,11 +31,16 @@ def settings_fingerprint(
         target,
     ]
     try:
-        proc = run(command, cwd=project_root, capture_output=True, text=True)
+        proc = subprocess.run(command, cwd=project_root, capture_output=True, text=True)
     except OSError as exc:  # pragma: no cover - environment failure
         raise RuntimeError(f"Could not run ruff ({' '.join(command)}): {exc}") from exc
 
     if proc.returncode != 0:
+        if "No files found under the given path" in proc.stderr:
+            raise RuntimeError(
+                "cannot resolve Ruff settings because the target has no Python "
+                f"files: {target}"
+            )
         raise RuntimeError(
             f"ruff --show-settings failed (exit {proc.returncode}): "
             f"{' '.join(command)}\n{proc.stderr.strip()}"
@@ -132,7 +135,6 @@ def list_files(
     targets: Sequence[str],
     project_root: Path,
     selectors: Sequence[str],
-    run: _Run = subprocess.run,
 ) -> set[str]:
     """Return the repo-relative files Ruff says it will scan."""
     command = [
@@ -146,7 +148,7 @@ def list_files(
         *targets,
     ]
     try:
-        proc = run(command, cwd=project_root, capture_output=True, text=True)
+        proc = subprocess.run(command, cwd=project_root, capture_output=True, text=True)
     except OSError as exc:  # pragma: no cover - environment failure
         raise RuntimeError(f"Could not run ruff ({' '.join(command)}): {exc}") from exc
 
@@ -179,18 +181,22 @@ def ensure_baselined_files_scanned(
     baseline: Mapping[str, object], scanned_files: set[str], project_root: Path
 ) -> None:
     """Fail when an existing baselined file was silently excluded by Ruff."""
-    omitted = sorted(
+    omitted_paths = sorted(
         path
         for path in {key.rpartition("::")[0] for key in baseline}
         if (project_root / path).exists() and path not in scanned_files
     )
-    if omitted:
-        shown = "\n".join(f"  {path}" for path in omitted[:20])
+    if omitted_paths:
+        omitted = [
+            key for key in sorted(baseline) if key.rpartition("::")[0] in omitted_paths
+        ]
+        shown = "\n".join(f"  {key}" for key in omitted[:20])
         suffix = f"\n  ... and {len(omitted) - 20} more" if len(omitted) > 20 else ""
         raise RuntimeError(
             "ruff omitted existing baselined files, so the scan is PARTIAL. "
             "Check Ruff excludes and the checkout. If the exclusion is "
             "deliberate, remove those files' keys from the baseline by hand; "
-            "--update-baseline is blocked by this same guard:\n"
+            "--update-baseline is blocked by this same guard. These keys would "
+            "be dropped:\n"
             f"{shown}{suffix}"
         )

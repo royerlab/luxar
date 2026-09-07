@@ -619,7 +619,9 @@ def test_main_update_baseline_replaces_an_unloadable_baseline(
     assert document["violations"] == {"sample.py::B905": 1}
     assert document["rules"] == list(checker.RATCHETED_SELECT)
     assert document["settings_fingerprint"] == _TEST_SETTINGS_FINGERPRINT
-    assert "Replacing the unreadable baseline" in _clean_output(capsys)
+    assert "Re-recording the baseline for the current Ruff settings" in _clean_output(
+        capsys
+    )
 
 
 def test_main_refuses_to_wipe_a_populated_baseline(
@@ -705,6 +707,32 @@ def test_main_rejects_a_baselined_file_excluded_from_the_full_scan(
     assert "PARTIAL" in output
     assert "pkg/sub/b.py" in output
     assert "remove those files' keys from the baseline by hand" in output
+
+
+def test_update_baseline_rejects_a_file_omitted_by_settings_drift(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fingerprint refresh must not erase keys hidden by the new settings."""
+    _require_ruff()
+    (tmp_path / "pkg" / "sub").mkdir(parents=True)
+    (tmp_path / "pkg" / "a.py").write_text(_ONE_VIOLATION)
+    (tmp_path / "pkg" / "sub" / "b.py").write_text(_ONE_VIOLATION)
+    baseline = tmp_path / "baseline.json"
+    monkeypatch.setattr(checker, "DEFAULT_TARGETS", ("pkg",))
+    monkeypatch.setattr(
+        checker, "ruff_settings_fingerprint", _REAL_RUFF_SETTINGS_FINGERPRINT
+    )
+    args = ["--project-root", str(tmp_path), "--baseline", str(baseline)]
+
+    assert checker.main([*args, "--update-baseline"]) == 0
+    original = baseline.read_text()
+    capsys.readouterr()
+    (tmp_path / "pyproject.toml").write_text('[tool.ruff]\nexclude = ["pkg/sub"]\n')
+
+    assert checker.main([*args, "--update-baseline"]) == 2
+    output = _clean_output(capsys)
+    assert "pkg/sub/b.py::B905" in output
+    assert baseline.read_text() == original
 
 
 def test_main_fails_closed_when_a_full_scan_covers_nothing(
