@@ -233,23 +233,29 @@ export class SoundNode {
    * else at its row's displayed x/y/z.
    */
   private repositionVoices(): void {
-    if (this.attrs.attach_to !== undefined && this.deps.resolveAttachCenter) {
-      const world = this.deps.resolveAttachCenter();
-      if (world) {
-        // Voices are children of the placeholder, which carries the node's own
-        // transform; the centre arrives in world space.
-        this.deps.parent.updateWorldMatrix(true, false);
-        this.deps.parent.worldToLocal(_center.copy(world));
-        for (const v of this.voices) {
-          if (v.audio instanceof THREE.PositionalAudio) v.audio.position.copy(_center);
-        }
-        return;
-      }
+    if (!this.placeAtAttachCenter()) this.placeAtRows();
+  }
+
+  /** True when an `attach_to` centre resolved and every voice now sits there. */
+  private placeAtAttachCenter(): boolean {
+    if (this.attrs.attach_to === undefined || !this.deps.resolveAttachCenter) return false;
+    const world = this.deps.resolveAttachCenter();
+    if (!world) return false;
+    // Voices are children of the placeholder, which carries the node's own
+    // transform; the centre arrives in world space.
+    this.deps.parent.updateWorldMatrix(true, false);
+    this.deps.parent.worldToLocal(_center.copy(world));
+    for (const v of this.voices) {
+      if (v.audio instanceof THREE.PositionalAudio) v.audio.position.copy(_center);
     }
+    return true;
+  }
+
+  private placeAtRows(): void {
     const positions = this.desc.positions;
+    if (!positions) return;
     const displayDims =
       this.lastBase?.displayDims ?? [1, 2, 3].slice(0, Math.min(3, this.desc.ndim));
-    if (!positions) return;
     for (const v of this.voices) {
       if (!(v.audio instanceof THREE.PositionalAudio)) continue;
       const [x, y, z] = displayedXYZ(positions, v.row, this.desc.ndim, displayDims);
@@ -299,33 +305,35 @@ export class SoundNode {
    */
   private applyEdges(replayRising: boolean): void {
     const rows = this.rowAudibility();
-    const spatialVoices = this.voices.length > 1 || (this.attrs.spatial && rows !== null);
-    let anyAudible = false;
-    if (rows) {
-      for (let i = 0; i < rows.length; i++) if (rows[i]) anyAudible = true;
-    } else {
-      anyAudible = true;
-    }
+    const perVoice = this.voices.length > 1 || (this.attrs.spatial && rows !== null);
+    const anyAudible = rows === null || rows.some((r) => r === 1);
     for (const v of this.voices) {
-      const audible = spatialVoices && rows ? rows[v.row] === 1 : anyAudible;
+      const audible = perVoice && rows ? rows[v.row] === 1 : anyAudible;
       const was = v.audible;
       v.audible = audible;
-      if (this.isWaypointTriggered) {
-        // The waypoint driver owns the start; the slab only ends an `on_arrive`
-        // clip once its story is left (see the module docs).
-        if (replayRising && v.pending) {
-          this.startVoice(v);
-        } else if (this.attrs.trigger === 'on_arrive' && !audible && was && !v.pending) {
-          this.stopVoice(v, this.attrs.fade_out_ms);
-        }
-        continue;
-      }
-      if (audible && (!was || (replayRising && !v.playing))) {
-        this.startVoice(v);
-      } else if (!audible && was) {
-        this.stopVoice(v, this.attrs.fade_out_ms);
-      }
+      if (this.isWaypointTriggered) this.applyWaypointEdge(v, audible, was, replayRising);
+      else this.applySlabEdge(v, audible, was, replayRising);
     }
+  }
+
+  /** `continuous` / `once`: the slab's rising edge starts, its falling edge stops. */
+  private applySlabEdge(v: Voice, audible: boolean, was: boolean, replayRising: boolean): void {
+    if (audible && (!was || (replayRising && !v.playing))) this.startVoice(v);
+    else if (!audible && was) this.stopVoice(v, this.attrs.fade_out_ms);
+  }
+
+  /**
+   * `on_depart` / `on_arrive`: the waypoint driver owns the start (a pending
+   * trigger replays here); the slab only ends an `on_arrive` clip once its
+   * story is left (see the module docs).
+   */
+  private applyWaypointEdge(v: Voice, audible: boolean, was: boolean, replayRising: boolean): void {
+    if (replayRising && v.pending) {
+      this.startVoice(v);
+      return;
+    }
+    const leftStory = this.attrs.trigger === 'on_arrive' && !audible && was && !v.pending;
+    if (leftStory) this.stopVoice(v, this.attrs.fade_out_ms);
   }
 
   /**
@@ -366,7 +374,13 @@ export class SoundNode {
     const delaySec = this.attrs.delay_ms / 1000;
     const startAt = now + delaySec;
     v.audio.setLoop(this.attrs.loop);
-    rampGain(v.audio.gain.gain, now, startAt, this.gain, this.attrs.fade_in_ms, 0);
+    rampGain(v.audio.gain.gain, {
+      now,
+      startAt,
+      target: this.gain,
+      ms: this.attrs.fade_in_ms,
+      from: 0,
+    });
     v.audio.play(delaySec);
     v.playing = true;
     if (v.startTimer) clearTimeout(v.startTimer);
@@ -384,7 +398,7 @@ export class SoundNode {
     if (!v.playing && !v.audio.isPlaying) return;
     const ctx = this.context;
     const now = ctx.currentTime;
-    const end = rampGain(v.audio.gain.gain, now, now, 0, fadeMs);
+    const end = rampGain(v.audio.gain.gain, { now, target: 0, ms: fadeMs });
     const wasPlaying = v.playing;
     v.playing = false;
     if (v.audio.isPlaying) v.audio.stop(end - now);
@@ -444,7 +458,7 @@ export class SoundNode {
     this.gain = Math.min(2, Math.max(0, gain));
     const now = this.context.currentTime;
     for (const v of this.voices) {
-      if (v.playing) rampGain(v.audio.gain.gain, now, now, this.gain, MIN_FADE_MS);
+      if (v.playing) rampGain(v.audio.gain.gain, { now, target: this.gain, ms: MIN_FADE_MS });
     }
   }
 

@@ -23,6 +23,7 @@ import {
   type DimensionInfo,
 } from '../data/loaders/spatial-query/tolerance-computer';
 import { deriveNodeViewState } from '../data/scene-loader/view-state/derive-node-view-state';
+import { PARTIAL_EXTEND_TOLERANCE } from '../data/scene-loader/partial-extend-tolerance';
 import { mesh_vertex_visibility_mask } from '../wasm/typescript/mesh-culling';
 
 /**
@@ -63,8 +64,10 @@ export function computeRowAudibility(
     out.fill(0);
     return 0;
   }
+  // A sound borrows the MESH rule throughout (tolerance above, widening here):
+  // like a mesh vertex, a row carries no non-displayed extent of its own.
   const derived = deriveNodeViewState(desc.path, { extend_to_all: extendToAll }, base, sceneGraph, {
-    applyPartialExtendTolerance: true,
+    applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.mesh,
   });
   const vs = derived.viewState;
   if (vs.noPreimage) {
@@ -136,26 +139,4 @@ export function buildWaypointViewState(when: SoundWaypointCondition, dims: Simpl
     tolerance,
     dimensions: dims.metadata,
   } as ViewState;
-}
-
-/**
- * Fill `out` with the rows of `desc` that belong to the waypoint `when`
- * describes (1 = belongs) and return their count. A descriptor without
- * positions belongs to every waypoint; callers handle that case themselves.
- */
-export function computeWaypointMembership(
-  desc: Pick<SoundSourceDescriptor, 'path' | 'positions' | 'nPositions' | 'ndim'>,
-  extendToAll: string[] | undefined,
-  when: SoundWaypointCondition,
-  dims: SimpleDims,
-  sceneGraph: SceneNode | null,
-  out: Uint8Array
-): number {
-  return computeRowAudibility(
-    desc,
-    extendToAll,
-    buildWaypointViewState(when, dims),
-    sceneGraph,
-    out
-  );
 }

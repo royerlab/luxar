@@ -32,7 +32,11 @@ import {
   type WaypointEventKind,
 } from '../types/audio';
 import { log, Modules } from '../utils/log';
-import { buildSoundBaseViewState, computeWaypointMembership } from './audibility';
+import {
+  buildSoundBaseViewState,
+  buildWaypointViewState,
+  computeRowAudibility,
+} from './audibility';
 import { loadAudioPrefs, saveAudioPrefs } from './audio-prefs';
 import { AutoplayGate } from './autoplay-gate';
 import { dbToGain, rampGain } from './fades';
@@ -69,6 +73,25 @@ export interface AudioEngineDeps {
 const DEFAULT_BUSES: Record<AudioBusName, number> = { ambient: 0.6, voice: 1.0, effects: 0.8 };
 /** Rendered frames between re-placements of `attach_to` sources (~0.5 s at 60 Hz). */
 const ATTACH_REFRESH_FRAMES = 30;
+
+/**
+ * Centre of an nD `position_bounds` attr over the displayed dimensions (0 where a
+ * displayed axis is missing or non-finite); null when the attr is not a bounds pair.
+ */
+function boundsCenter(bounds: unknown, displayed: readonly number[]): THREE.Vector3 | null {
+  const b = bounds as { min?: unknown; max?: unknown } | undefined;
+  if (!Array.isArray(b?.min) || !Array.isArray(b?.max)) return null;
+  const min = b.min as number[];
+  const max = b.max as number[];
+  const pick = (i: number): number => {
+    const d = displayed[i];
+    if (d === undefined) return 0;
+    const lo = min[d];
+    const hi = max[d];
+    return Number.isFinite(lo) && Number.isFinite(hi) ? (lo + hi) / 2 : 0;
+  };
+  return new THREE.Vector3(pick(0), pick(1), pick(2));
+}
 
 /** Depth-first lookup of a scene-graph node by name (last path segment) or full path. */
 function findSceneNode(root: SceneNode, name: string): SceneNode | null {
@@ -256,16 +279,7 @@ export class AudioEngine {
     const dims = this.deps.getDims();
     if (!graph || !dims) return null;
     const node = findSceneNode(graph, name);
-    const bounds = node?.attrs?.position_bounds as { min?: unknown; max?: unknown } | undefined;
-    const min = Array.isArray(bounds?.min) ? (bounds!.min as number[]) : null;
-    const max = Array.isArray(bounds?.max) ? (bounds!.max as number[]) : null;
-    if (!min || !max) return null;
-    const pick = (i: number): number => {
-      const d = dims.displayed[i];
-      if (d === undefined || !Number.isFinite(min[d]) || !Number.isFinite(max[d])) return 0;
-      return (min[d] + max[d]) / 2;
-    };
-    return new THREE.Vector3(pick(0), pick(1), pick(2));
+    return node ? boundsCenter(node.attrs?.position_bounds, dims.displayed) : null;
   }
 
   /** Re-place every `attach_to` source (its target may have loaded since). */
@@ -303,25 +317,38 @@ export class AudioEngine {
     let fired = 0;
     for (const node of this.nodes.values()) {
       if (node.attrs.trigger !== `on_${kind}`) continue;
-      let rows: Uint8Array | null = null;
-      if (node.desc.positions && node.desc.nPositions > 0) {
-        if (!dims) continue;
-        rows = new Uint8Array(node.desc.nPositions);
-        const count = computeWaypointMembership(
-          node.desc,
-          node.attrs.extend_to_all,
-          when,
-          dims,
-          sceneGraph,
-          rows
-        );
-        if (count === 0) continue;
-      }
+      const rows = this.belongingRows(node, when, dims, sceneGraph);
+      if (rows === undefined) continue;
       if (node.triggerFromWaypoint(kind, rows)) fired++;
     }
     if (fired > 0) {
       log.custom('🔈', Modules.AUDIO, `waypoint ${kind}: ${fired} sound node(s) triggered`);
     }
+  }
+
+  /**
+   * The rows of `node` that belong to the waypoint: null for a row-less node
+   * (it belongs to every waypoint), a mask otherwise, `undefined` when no row
+   * belongs (or the dims are not ready) — nothing to trigger.
+   */
+  private belongingRows(
+    node: SoundNode,
+    when: SoundWaypointCondition,
+    dims: SimpleDims | null,
+    sceneGraph: SceneNode | null
+  ): Uint8Array | null | undefined {
+    if (!node.desc.positions || node.desc.nPositions === 0) return null;
+    if (!dims) return undefined;
+    const rows = new Uint8Array(node.desc.nPositions);
+    const query = buildWaypointViewState(when, dims);
+    const count = computeRowAudibility(
+      node.desc,
+      node.attrs.extend_to_all,
+      query,
+      sceneGraph,
+      rows
+    );
+    return count === 0 ? undefined : rows;
   }
 
   private async decodeAll(): Promise<void> {
@@ -417,7 +444,7 @@ export class AudioEngine {
   private setDuck(target: number): void {
     const ctx = this.context;
     if (!ctx || !this.duck) return;
-    rampGain(this.duck.gain, ctx.currentTime, ctx.currentTime, target, DUCK_RAMP_MS);
+    rampGain(this.duck.gain, { now: ctx.currentTime, target, ms: DUCK_RAMP_MS });
   }
 
   // ── Configuration ────────────────────────────────────────────────────
@@ -433,12 +460,7 @@ export class AudioEngine {
       this.masterGain = overrides.masterGain;
     }
     if (overrides.panningModel) this.setPanningModel(overrides.panningModel);
-    if (overrides.buses) {
-      for (const name of AUDIO_BUS_NAMES) {
-        const v = overrides.buses[name];
-        if (v !== undefined) this.setBusGain(name, v);
-      }
-    }
+    this.applyBusGains(overrides.buses);
     if (overrides.duckDb !== undefined) this.duckDb = overrides.duckDb;
     this.listener?.setMasterVolume(this.effectiveMaster());
     for (const node of this.nodes.values()) node.setMuted(this.muted || !this.sceneEnabled);
@@ -450,11 +472,14 @@ export class AudioEngine {
     if (patch.masterGain !== undefined) this.setMasterGain(patch.masterGain);
     if (patch.muted !== undefined) this.setMuted(patch.muted);
     if (patch.panningModel) this.setPanningModel(patch.panningModel);
-    if (patch.buses) {
-      for (const name of AUDIO_BUS_NAMES) {
-        const v = patch.buses[name];
-        if (v !== undefined) this.setBusGain(name, v);
-      }
+    this.applyBusGains(patch.buses);
+  }
+
+  private applyBusGains(buses: Partial<Record<AudioBusName, number>> | undefined): void {
+    if (!buses) return;
+    for (const name of AUDIO_BUS_NAMES) {
+      const v = buses[name];
+      if (v !== undefined) this.setBusGain(name, v);
     }
   }
 
@@ -494,7 +519,7 @@ export class AudioEngine {
     this.busGains[bus] = v;
     const ctx = this.context;
     if (ctx && this.busNodes) {
-      rampGain(this.busNodes[bus].gain, ctx.currentTime, ctx.currentTime, v, DUCK_RAMP_MS);
+      rampGain(this.busNodes[bus].gain, { now: ctx.currentTime, target: v, ms: DUCK_RAMP_MS });
     }
     this.deps.notifyUiChanged();
   }

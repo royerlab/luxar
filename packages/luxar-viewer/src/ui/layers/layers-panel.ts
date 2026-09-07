@@ -70,6 +70,21 @@ function eyeTooltip(layer: LayerInfo): string {
   return layer.visible ? 'Hide layer' : 'Show layer';
 }
 
+/** The short type badge of a row. */
+function buildTypeBadge(layer: LayerInfo): HTMLSpanElement {
+  const typeMap: Record<string, string> = {
+    points: 'pts',
+    lines: 'lines',
+    gsplats: 'splat',
+    group: 'group',
+    sound: 'sound',
+  };
+  const badge = document.createElement('span');
+  badge.className = 'luxar-layer-row__badge';
+  badge.textContent = typeMap[layer.type] || layer.type;
+  return badge;
+}
+
 /** A sound row's name tooltip: path, then the clip's licence / author / source. */
 function soundTooltip(layer: LayerInfo): string {
   const s = layer.sound;
@@ -1223,6 +1238,28 @@ export class LayersPanel {
     return matches.length > 1 ? `${base} (${matches.length} parts failed)` : base;
   }
 
+  /** The sound row's gain slider; owns its pointer and arrow keys so neither selects the row. */
+  private buildGainSlider(layer: LayerInfo): HTMLInputElement {
+    const gainInput = document.createElement('input');
+    gainInput.type = 'range';
+    gainInput.className = 'luxar-layer-row__gain';
+    gainInput.min = '0';
+    gainInput.max = '2';
+    gainInput.step = '0.01';
+    gainInput.value = String(layer.sound?.gain ?? 1);
+    gainInput.title = 'Gain (1 = as authored)';
+    gainInput.setAttribute('aria-label', `Gain: ${layer.name}`);
+    this.events.on(gainInput, 'click', (e) => e.stopPropagation());
+    this.events.on(gainInput, 'pointerdown', (e) => e.stopPropagation());
+    this.events.on(gainInput, 'keydown', (e) => e.stopPropagation());
+    this.events.on(gainInput, 'input', () => {
+      this.state.setSoundGain(layer.path, Number(gainInput.value));
+      const live = this.state.getLayer(layer.path);
+      if (live?.sound) this.audioPort?.setNodeGain(layer.path, live.sound.gain);
+    });
+    return gainInput;
+  }
+
   private createLayerRow(layer: LayerInfo): HTMLElement {
     const row = document.createElement('div');
     row.className = 'luxar-layer-row';
@@ -1286,40 +1323,8 @@ export class LayersPanel {
 
     // Sound rows: an inline gain slider (the row IS the control — the
     // appearance section below the list has nothing to say about a clip).
-    let gainInput: HTMLInputElement | null = null;
-    if (layer.sound) {
-      gainInput = document.createElement('input');
-      gainInput.type = 'range';
-      gainInput.className = 'luxar-layer-row__gain';
-      gainInput.min = '0';
-      gainInput.max = '2';
-      gainInput.step = '0.01';
-      gainInput.value = String(layer.sound.gain);
-      gainInput.title = 'Gain (1 = as authored)';
-      gainInput.setAttribute('aria-label', `Gain: ${layer.name}`);
-      // The slider owns its pointer and arrow keys; neither selects the row.
-      this.events.on(gainInput, 'click', (e) => e.stopPropagation());
-      this.events.on(gainInput, 'pointerdown', (e) => e.stopPropagation());
-      this.events.on(gainInput, 'keydown', (e) => e.stopPropagation());
-      this.events.on(gainInput, 'input', () => {
-        const value = Number(gainInput!.value);
-        this.state.setSoundGain(layer.path, value);
-        const live = this.state.getLayer(layer.path);
-        if (live?.sound) this.audioPort?.setNodeGain(layer.path, live.sound.gain);
-      });
-    }
-
-    // Type badge
-    const typeMap: Record<string, string> = {
-      points: 'pts',
-      lines: 'lines',
-      gsplats: 'splat',
-      group: 'group',
-      sound: 'sound',
-    };
-    const badge = document.createElement('span');
-    badge.className = 'luxar-layer-row__badge';
-    badge.textContent = typeMap[layer.type] || layer.type;
+    const gainInput = layer.sound ? this.buildGainSlider(layer) : null;
+    const badge = buildTypeBadge(layer);
 
     // Optional kind-specific badge: ``N LODs`` for kind=lod, ``N parts``
     // for kind=partition. When a kind=partition layer wraps kind=lod

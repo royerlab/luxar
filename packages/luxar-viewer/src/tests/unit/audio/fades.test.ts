@@ -6,7 +6,7 @@ import { FakeAudioParam } from '../../mocks/fake-audio-context.mock';
 describe('rampGain', () => {
   it('cancels pending automation, holds, then ramps to the target', () => {
     const p = new FakeAudioParam(0.2);
-    const end = rampGain(p as unknown as AudioParam, 10, 10, 1, 500);
+    const end = rampGain(p as unknown as AudioParam, { now: 10, target: 1, ms: 500 });
     expect(p.calls.map((c) => c.method)).toEqual([
       'cancelScheduledValues',
       'setValueAtTime',
@@ -19,13 +19,13 @@ describe('rampGain', () => {
 
   it('floors every ramp at MIN_FADE_MS so a start never clicks', () => {
     const p = new FakeAudioParam(0);
-    const end = rampGain(p as unknown as AudioParam, 0, 0, 1, 0);
+    const end = rampGain(p as unknown as AudioParam, { now: 0, target: 1, ms: 0 });
     expect(end).toBeCloseTo(MIN_FADE_MS / 1000);
   });
 
   it('a delayed start holds `from` until startAt before ramping', () => {
     const p = new FakeAudioParam(0.7);
-    rampGain(p as unknown as AudioParam, 1, 1.8, 0.5, 200, 0);
+    rampGain(p as unknown as AudioParam, { now: 1, startAt: 1.8, target: 0.5, ms: 200, from: 0 });
     // cancel, set(0 @1), set(0 @1.8), ramp(0.5 @2.0)
     expect(p.calls[1]).toMatchObject({ value: 0, time: 1 });
     expect(p.calls[2]).toMatchObject({ value: 0, time: 1.8 });

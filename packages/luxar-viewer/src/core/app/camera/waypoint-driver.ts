@@ -219,14 +219,20 @@ export class WaypointDriver {
     if (previous >= 0) this.ports.emit?.('waypoint-departed', { index: previous });
     if (idx < 0) return idx;
 
-    const wp = this.waypoints[idx];
-    const flight = wp.camera && typeof wp.camera === 'object' ? this.reach(wp, wp.camera, arrival) : null;
-    if (wp.rendering && typeof wp.rendering === 'object') {
-      this.ports.applyRendering(wp.rendering);
-    }
+    const flight = this.applyWaypoint(this.waypoints[idx], arrival);
     log.info(Modules.APP, `Waypoint ${idx} reached (${arrival})`);
     this.announceArrival(idx, flight);
     return idx;
+  }
+
+  /** Camera (a flight on a story step) and rendering overrides of a matched waypoint. */
+  private applyWaypoint(wp: ZarrWaypoint, arrival: WaypointArrival): Promise<FlightResult> | null {
+    const flight =
+      wp.camera && typeof wp.camera === 'object' ? this.reach(wp, wp.camera, arrival) : null;
+    if (wp.rendering && typeof wp.rendering === 'object') {
+      this.ports.applyRendering(wp.rendering);
+    }
+    return flight;
   }
 
   /**

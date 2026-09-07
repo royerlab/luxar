@@ -9,7 +9,6 @@ import {
   buildSoundBaseViewState,
   buildWaypointViewState,
   computeRowAudibility,
-  computeWaypointMembership,
   displayedXYZ,
 } from '../../../audio/audibility';
 import type { SimpleDims } from '../../../types/dims';
@@ -109,31 +108,55 @@ describe('waypoint membership (the `when` clause as a slab)', () => {
     expect(vs.slicePosition[0]).toBe(1);
     expect(vs.tolerance[0]).toBe(0.5);
     const out = new Uint8Array(3);
-    expect(computeWaypointMembership(desc, undefined, { story: 1 }, storyDims(2), null, out)).toBe(
-      1
-    );
+    expect(
+      computeRowAudibility(
+        desc,
+        undefined,
+        buildWaypointViewState({ story: 1 }, storyDims(2)),
+        null,
+        out
+      )
+    ).toBe(1);
     expect(Array.from(out)).toEqual([0, 1, 0]);
   });
 
   it('a range takes its midpoint and half-width', () => {
     const out = new Uint8Array(3);
     expect(
-      computeWaypointMembership(desc, undefined, { story: [1, 2] }, storyDims(0), null, out)
+      computeRowAudibility(
+        desc,
+        undefined,
+        buildWaypointViewState({ story: [1, 2] }, storyDims(0)),
+        null,
+        out
+      )
     ).toBe(2);
     expect(Array.from(out)).toEqual([0, 1, 1]);
   });
 
   it('a dimension the scene does not have is skipped, so every row belongs', () => {
     const out = new Uint8Array(3);
-    expect(computeWaypointMembership(desc, undefined, { nope: 7 }, storyDims(0), null, out)).toBe(
-      3
-    );
+    expect(
+      computeRowAudibility(
+        desc,
+        undefined,
+        buildWaypointViewState({ nope: 7 }, storyDims(0)),
+        null,
+        out
+      )
+    ).toBe(3);
   });
 
   it('extend_to_all on the named dimension makes every row belong', () => {
     const out = new Uint8Array(3);
-    expect(computeWaypointMembership(desc, ['story'], { story: 1 }, storyDims(0), null, out)).toBe(
-      3
-    );
+    expect(
+      computeRowAudibility(
+        desc,
+        ['story'],
+        buildWaypointViewState({ story: 1 }, storyDims(0)),
+        null,
+        out
+      )
+    ).toBe(3);
   });
 });
