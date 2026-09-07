@@ -154,7 +154,7 @@ def test_float_colors_round_to_nearest_byte(fmt: str, tmp_path: Path) -> None:
         prefix = "" if fmt == "ply" else "v "
         rows = [
             prefix + " ".join(str(float(value)) for value in (*vertex, *color))
-            for vertex, color in zip(GT.vertices, unit_colors)
+            for vertex, color in zip(GT.vertices, unit_colors, strict=True)
         ]
         face_prefix = "3 " if fmt == "ply" else "f "
         offset = 0 if fmt == "ply" else 1
@@ -166,7 +166,7 @@ def test_float_colors_round_to_nearest_byte(fmt: str, tmp_path: Path) -> None:
 
     mesh = import_mesh(path)
     assert mesh.colors is not None
-    for vertex, color in zip(mesh.vertices, mesh.colors):
+    for vertex, color in zip(mesh.vertices, mesh.colors, strict=True):
         row = int(np.argmin(np.linalg.norm(GT.vertices - vertex, axis=1)))
         np.testing.assert_array_equal(color, expected[row])
 
