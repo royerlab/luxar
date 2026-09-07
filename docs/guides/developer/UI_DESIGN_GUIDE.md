@@ -629,6 +629,10 @@ The rail is the canonical interactive surface; its patterns generalize:
   that selector pair is part of docking it, not an afterthought. (The recording
   panel is already covered: `ui/gui/gui.ts:87` builds it as a `.luxar-gui`, and
   `recording-panel.ts:161` only adds a second class alongside.)
+- **The rail's item buttons live in `.luxar-control-rail__items`**, a
+  `display: contents` wrapper on fine pointers that becomes the rail's scroll
+  box under `(pointer: coarse)` (§11.5). Popovers, flyouts, the footer and the
+  collapse handle stay outside it, so scrolling never clips them.
 - **The rail's left dock is exclusive** — Rendering, Layers and Recording all
   open at that one position, so activating any of them from the rail (or
   opening a rail popover) closes the others rather than stacking
@@ -921,7 +925,52 @@ Every animation and transition a component introduces must be disabled under
 
 Panels define explicit widths (rail popover body 264px, layers 260px, help
 400px, monitor per-tab) — content adapts inside; panels don't reflow the
-composition.
+composition — **except under `(pointer: coarse)`**, where each fixed width is
+clamped to the viewport with `min(<desktop width>, calc(100vw - margins))` and
+the `vh` bounds become `dvh` (§11.5). On a fine pointer the values above are
+exact.
+
+### 11.5 Touch and coarse pointers
+
+The viewer is used on phones and tablets (iPhone and iPad included) as well as
+desktops. The rule that keeps the two from fighting: **touch adaptation is
+keyed on the pointer, never on viewport width**, and it lives in **one file** —
+`styles/components/coarse-pointer.css`, whose top level contains only `@media`
+blocks on `(pointer: coarse)`, `(hover: none)` and `(any-hover: hover)`. A
+narrow desktop window is not a touch device and a landscape tablet is not
+narrow. `tests/unit/styles/coarse-pointer-css.test.ts` enforces the contract:
+nothing outside media blocks, pointer-feature preludes only, no pointer/hover
+media features in any other stylesheet, and the load-bearing clamps present.
+
+- **Two features, two meanings.** `(pointer: coarse)` = the primary pointer is a
+  finger: viewport clamps, safe areas, tap-friendly targets. `(hover: none)` =
+  no pointer can hover: hover-revealed affordances are dead, so the rail does
+  not idle-dim (`opacity: 1`) and fullscreen keeps it findable (`0.35`). An
+  iPad with a trackpad matches the first and not the second and keeps its
+  hover behaviour; do not collapse the two into one query.
+- **Clamps, not reflow.** Fixed widths become `min(<desktop>, calc(100vw -
+  margins))`; `vh` heights become `dvh` inside `@supports (height: 100dvh)`
+  (iOS Safari's `vh` is the large viewport, so a `70vh` panel bottom-clips
+  under the visible toolbar). The component file keeps the `vh` value as the
+  fallback.
+- **Safe areas.** `index.html` declares `viewport-fit=cover`; the rail gutter
+  (`left: calc(73px + env(safe-area-inset-left))`, `!important` like the
+  docking rule it restates — §15.6) and every bottom-strip surface (dimension
+  sliders, toast, scale bar, colormap legend, resolution indicator) add the
+  matching `env(safe-area-inset-*)`.
+- **The rail scrolls its items, never its root.** Popovers, flyouts and the
+  footer are children of the rail root, so `overflow` on the root would clip
+  them. The buttons live in `.luxar-control-rail__items`, `display: contents`
+  on fine pointers (layout-transparent) and a `min-height: 0; overflow-y: auto`
+  scroll box under `(pointer: coarse)`, so a ~600px rail fits a ~340px
+  landscape phone. `RailOverlay` anchors popovers with a root-relative rect,
+  not `offsetTop`, so a scrolled wrapper still points the arrow at its button.
+- **Buttons are `touch-action: manipulation`** (no 300 ms double-tap delay,
+  no page zoom on a double-tap over UI). The canvas itself is
+  `touch-action: none` — gesture ownership belongs to the controls.
+- **Hit sizes, input sizes and press states** for coarse pointers (44px
+  targets, 16px inputs against iOS focus-zoom, `:active` fills where `:hover`
+  cannot fire) follow the same media gates and belong in the same file.
 
 ---
 
@@ -1056,6 +1105,10 @@ Further requirements:
 14. This guide updated if the surface introduces a new reusable pattern, and
     every sanctioned exception it needs (literal, `!important`, off-tier
     z-index) registered in §15.6 (§16).
+15. Touch: a fixed width or `vh` bound gets its `(pointer: coarse)` clamp in
+    `components/coarse-pointer.css` (never inline in the component file, never
+    keyed on width alone); a bottom- or edge-anchored surface adds its
+    `env(safe-area-inset-*)` there too (§11.5).
 
 ---
 
@@ -1305,7 +1358,8 @@ migrated.
   every other reduced-motion block in the tree spells a plain
   `animation: none` / `transition: none` and needs no override, so `!important`
   is not automatic there. Also sanctioned: the rail-docking gutter
-  `left: 73px !important` (`control-rail.css:527`, §7.5) and the
+  `left: 73px !important` (`control-rail.css:527`, §7.5) — restated with the
+  safe-area inset under `(pointer: coarse)` in `coarse-pointer.css` (§11.5) — and the
   popover-nesting overrides that unpin a GUI mounted inside a popover
   (`control-rail.css:368-371`); and the state-forcing rules in
   `overlay-layer.css:33-34` that must beat inline styles.

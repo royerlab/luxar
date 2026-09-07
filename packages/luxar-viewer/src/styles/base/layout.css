@@ -13,6 +13,16 @@ body {
   background: var(--luxar-bg-primary, #111111);
 }
 
+/* On iOS Safari the page's 100% height is the large viewport (toolbars
+   retracted); `dvh` tracks the visible area so the canvas bottom is never
+   hidden under the toolbar. Identical to 100% everywhere else. */
+@supports (height: 100dvh) {
+  html,
+  body {
+    height: 100dvh;
+  }
+}
+
 /* Ensure canvas fills viewport */
 #app {
   display: block;

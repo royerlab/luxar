@@ -22,6 +22,7 @@ the drift still awaiting migration.
 
 | File                       | UI surface                                                                                                                                                        |
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `coarse-pointer.css`       | Touch / coarse-pointer adaptations for phones and tablets — media-gated only (`(pointer: coarse)`, `(hover: none)`), applied last; the single home for every touch rule (UI Design Guide §11.5).                        |
 | `colormap-legend.css`      | Bottom-right overlay showing per-layer colormap gradients (`ui/colormap-legend.ts`).                                                                              |
 | `control-rail.css`         | Slim left-edge activity rail, its flyout, and panel popovers (`ui/control-rail.ts`).                                                                              |
 | `data-loading-monitor.css` | Real-time data-loading performance monitor with multi-state UI (`ui/data-loading-monitor.ts`).                                                                    |

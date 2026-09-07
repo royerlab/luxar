@@ -55,6 +55,25 @@ describe('ControlRail', () => {
     expect(document.querySelector('.luxar-control-rail__collapse')).not.toBeNull();
   });
 
+  it('keeps item buttons + separators in the items wrapper, and everything else on the root', () => {
+    rail = new ControlRail(items(), document.createElement('div'));
+    const root = document.querySelector('.luxar-control-rail')!;
+    const wrapper = root.querySelector('.luxar-control-rail__items')!;
+    expect(wrapper.parentElement).toBe(root);
+    // Every item button and separator is inside the wrapper (the coarse-pointer
+    // scroll box), in item order.
+    expect(wrapper.querySelectorAll('[data-rail-id]').length).toBe(3);
+    expect(wrapper.querySelectorAll('.luxar-control-rail__sep').length).toBe(1);
+    expect(
+      [...wrapper.querySelectorAll('[data-rail-id]')].map((b) => b.getAttribute('data-rail-id'))
+    ).toEqual(['help', 'render', 'screenshot']);
+    // The footer and the collapse handle are NOT in it: scrolling the wrapper
+    // must never clip them, and popovers/flyouts append to the root too.
+    expect(root.querySelector('.luxar-control-rail__collapse')?.parentElement).toBe(root);
+    expect(wrapper.querySelector('.luxar-control-rail__collapse')).toBeNull();
+    expect(root.children.length).toBe(3); // wrapper, footer, collapse handle
+  });
+
   it('collapses and expands via the handle, persisting the state', () => {
     rail = new ControlRail(items());
     const railEl = document.querySelector('.luxar-control-rail')!;
