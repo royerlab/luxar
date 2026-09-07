@@ -868,7 +868,7 @@ wedging. `docs-quality`, the fifth required context, is gated separately on
 `docs_relevant` — a docs-only change is documentation-relevant by definition,
 so it runs the full Sphinx and TypeDoc gate, which is the point.
 
-A push to `dev`, a scheduled run, or an empty diff has no PR base and selects
+A push to `dev`, a dispatched run, or an empty diff has no PR base and selects
 every domain. The gate **fails safe**: each condition is written
 `dom_x != 'false'`, so if the `changes` job itself dies its outputs read empty
 and every suite runs. (Writing them `== 'true'` would invert that — a broken
@@ -893,129 +893,52 @@ runs everything. The same trade as the per-PR Python matrix below: found on
 |-------|-------------|
 | `pull_request` | `3.12` — the floor, and the one required status context |
 | `push` to `dev` | `3.12`, `3.13`, `3.14` |
-| daily `schedule` (`09:17` UTC) | `3.12`, `3.13`, `3.14` |
-| remaining `:17` windows (`00,03,06,12,15,18,21` UTC) | `3.12` — the promotion-required context |
+| `workflow_dispatch` | `3.12` by default; `3.12`, `3.13`, `3.14` with `full_python_matrix=true` |
 
-3.12 is the FLOOR (`requires-python = ">=3.12"`, what zarr 3.2+ requires) and is
-what the required `python-tests (3.12)` status context names, so it runs on every
-event. `>=3.12` has no ceiling, though: 3.13 and 3.14 are supported, `install-hatch`
-explicitly prefers them, and a developer's `hatch env` picks the newest interpreter
-on the box. Every merge push and the daily 09:17 UTC schedule therefore run exactly
-the versions the wheel's classifiers advertise — "declared" and "tested" are kept
-identical by construction, because a claimed-but-never-exercised version is the
-same species of lie as an untested 3.10 claim would be. All eight scheduled windows
-land every three hours; the seven other than 09:17 carry only the required 3.12 leg.
-On obsidian, `max-parallel: 2` prevents one run's Python matrix from monopolising all
-three shared slots; repository-wide queue order may still put other work ahead of
-that run's `typescript-tests`. The final Python leg follows. A successful TypeScript
-attempt ran 17m53s of real steps; at the documented 3.3x `SCHED_IDLE` extreme, a
-healthy starved run projects to roughly 59 minutes, leaving the former 60-minute
-budget no headroom for any pre-step dispatch latency. A dispatch-lost leg can spend
-the same budget without starting a step. `typescript-tests` now carries 120 minutes,
-at the cost of a doubled time-to-red for that leg. Every scheduled window also runs
-`changes`, `pick-runner`, `docs-quality`, `release-readiness`, `wheel-viewer`,
-`go-launcher`, and the 10-minute `queue-watchdog` window on GitHub-hosted runners.
-Together those jobs were about a 20-minute hosted wall-clock floor on the initial PR
-run for this policy. The watchdog now runs on every same-repo run because all such
-runs select `obsidian`. The long Python/TypeScript legs always join the obsidian queue
-unless the operator has created/set the Actions repository variable
-`LUXAR_CI_FORCE_HOSTED` to `1` under **Settings → Secrets and variables → Actions →
-Variables**; schedules have no automatic paid exception. Sustained contention can
-therefore cancel successive promotion windows. During an extended outage or promotion
-stall, set the variable before the next window, then clear it after capacity recovers.
-(If newer interpreters ever become deliberately unsupported, the honest fix is a
-`requires-python` upper bound, not a quiet single-leg matrix.)
+3.12 is the floor (`requires-python = ">=3.12"`) and names the required
+`python-tests (3.12)` context. Merge pushes exercise every supported interpreter,
+so the wheel classifiers and tested versions stay aligned. A manually dispatched
+repair window defaults to the required leg; the full-matrix input is available for
+diagnostics without restoring a redundant daily cron. On obsidian,
+`max-parallel: 2` prevents one Python matrix from monopolising all three shared
+slots. The TypeScript timeout remains 120 minutes to cover both dispatch latency
+and the measured `SCHED_IDLE` slowdown.
 
-This is also why the version-equality assertion in the job matters: it proves each
-leg really ran the interpreter it claims, rather than whatever pipx picked — the
-defect behind issue #839, where all three legs silently ran the same version.
+The version-equality assertion in the job proves each leg really ran the interpreter
+it claims, rather than whatever pipx selected — the defect behind issue #839.
 
-`pick-runner` is deliberately not a capacity router. Its first step sends fork PRs and
-the explicit `LUXAR_CI_FORCE_HOSTED=1` break-glass to `ubuntu-latest`; its second step
-sends every remaining event, including schedules and full-workflow reruns, to
-`obsidian`. It reads no heartbeat, repository activity, or backlog state and checks out
-no repository code. The output retains an `ubuntu-latest` fallback only for a selector
-job failure, so required checks do not receive an empty `runs-on` value.
+`pick-runner` is deliberately not a capacity router. Fork PRs and the explicit
+`LUXAR_CI_FORCE_HOSTED=1` break-glass use `ubuntu-latest`; every other event,
+including workflow dispatches and reruns, uses `obsidian`. It reads no heartbeat,
+repository activity, or backlog state.
 
-`queue-watchdog` still uses the stdlib-only `scripts/ci_queue_scan.py` helper to detect
-an obsidian-routed run whose jobs remain queued while no obsidian work is active. It
-sparse-checks out `scripts/` with credentials disabled and treats unreadable liveness
-data as a reason not to cancel. If two consecutive scans find queued work but no active
-obsidian jobs, it cancels the run and instructs the operator to create/set the Actions
-repository variable `LUXAR_CI_FORCE_HOSTED` to `1`, rerun all jobs, and clear it after
-capacity recovers. The former scheduled queue redispatcher was removed: under
-obsidian-only routing, cancelling a queued run and creating a fresh attempt merely
-returns it to the same queue.
+`queue-watchdog` uses the stdlib-only `scripts/ci_queue_scan.py` helper to detect an
+obsidian-routed run whose jobs remain queued while no obsidian work is active. It
+sparse-checks out `scripts/` with credentials disabled, fails open on unreadable
+liveness data, and only cancels after two consecutive empty scans. A dispatched run
+checks out the scanner from `dev`.
 
-Scheduled and push runs differ from a PR run in *scope* as well: neither has a PR
-base, so the `changes` job cannot path-filter and selects the whole suite plus the
-documentation gate. Once the workflow containing this behavior reaches the default
-branch (`main`), a scheduled `changes` job checks out `refs/heads/dev`, captures the
-resolved commit once, and every downstream suite and repair checkout uses that SHA.
-The run's check contexts still attach to the scheduled event SHA on `main`, not to
-the checked-out dev commit. The window therefore supplies internally consistent
-dev-tip coverage; `repair-cancelled-push-checks` supplies the promotion value by
-repairing cancelled push contexts that are attached to dev commits.
+The promotion service requests repair windows with `workflow_dispatch --ref dev`.
+That makes `github.sha`, the check-run attachment, and the captured `dev_sha` all
+refer to a dev commit. The `changes` job captures that SHA once and every downstream
+suite and repair checkout reuses it. Dispatches have no PR base, so they select the
+whole suite and documentation gate. Their `workflow_dispatch` concurrency group is
+separate from push runs; a newer dispatch can supersede an older dispatch without
+cancelling the merge push that produced the candidate commit.
 
-Scheduled runs sit in their own `concurrency` group. While `dev` was the default,
-their event ref was `refs/heads/dev`, the same ref as merge-triggered runs. Their
-event ref is now `refs/heads/main`, but `github.event_name` still keeps the groups
-separate. Under one shared group `cancel-in-progress` let whichever started
-second cancel the other. A merge landing mid-schedule killed the scheduled run; a
-cron firing over an in-flight merge killed that merge's push run, which is the only
-place the new `dev` commit gets the full matrix at all. Scheduled runs still share a
-group with each other, so a window that remains in flight three hours later is
-cancelled by its successor — which is itself a promotion window, so a lost window
-costs three hours rather than the cadence. *Unloaded*, a floor-only window is one
-Python leg beside `typescript-tests`, about 83–91 minutes against the 180 minutes of
-spacing; the 09:17 full-matrix window is three legs at `max-parallel: 2`, so two
-waves, roughly 166–182 minutes plus the hosted `changes`/`pick-runner` preamble — at
-the spacing rather than under it. Both are unloaded figures on a deliberately
-`SCHED_IDLE` box, so neither window is guaranteed to finish. The full-matrix one is
-simply the first to lose, and the 3.13/3.14 coverage it carries then waits for the
-next day. A floor-only window needs about half as much quiet and is therefore the
-last to be lost; sustained contention at the documented 2.4–3.3x stretch can cancel
-both until the box quiets. The cron fires the whole workflow rather than
-`python-tests` alone — a schedule event has no PR base, so change detection selects
-the full suite and the documentation gate as well.
+After a dispatched window completes the five protected contexts successfully,
+`repair-cancelled-push-checks` resolves dev's current tip and enumerates commits in
+`main..dev`, newest first. It reruns cancelled required jobs from up to two completed
+push suites. One cancelled context uses a job-level rerun; multiple contexts use one
+failed-jobs rerun because GitHub rejects a second job-level rerun after the attempt
+changes. The repair checkout must remain on dev's ancestry, and an unresolvable dev
+ref or off-dev checkout fails loudly. Candidate API failures and rejected reruns are
+warnings so one candidate does not abort the remaining walk.
 
-GitHub branch protection does not necessarily replace a cancelled push check with a
-later successful scheduled check of the same name on the same SHA. After a scheduled
-run has completed the five protected contexts successfully,
-`repair-cancelled-push-checks` resolves dev's tip and enumerates every commit still in
-`main..dev`, newest first, then inspects each completed push run. This covers commits
-skipped by the three-hour schedule instead of repairing only the scheduled tip. The
-promotion daemon fast-forwards `main` to the newest green ancestor, so the walk stops
-after successfully enqueueing two candidates: the second is a hedge against a
-genuinely red newest candidate, while repairing still-older commits cannot advance the
-same promotion. Cancelled jobs for any of the five protected contexts are rerun. A
-single cancelled context uses a job-level rerun. Two or more use one failed-jobs
-rerun because GitHub returns `403` once the first job-level rerun has moved the run
-into a new attempt; the run-level path also re-enqueues cancelled or failed
-non-required matrix legs such as Python 3.13/3.14. A schedule whose own protected
-contexts are not all green performs no repair. Candidate API read failures and
-rejected reruns are reported as warnings; one candidate cannot abort the remaining
-walk. A failed repaired job is terminal for that SHA unless it is included in the
-multi-job failed-jobs rerun; otherwise recovery requires a manual rerun.
-
-Fresh runs keep coalescing by event and ref, while reruns use their original run id in
-the concurrency key. A later merge therefore cannot cancel a repaired attempt, and
-repairs for different backlog commits cannot cancel each other. A later attempt of the
-same original run now supersedes its earlier attempt because both use the same run id;
-the previous attempt-number key kept them apart. That exemption applies to ordinary PR
-reruns too, and neither rerun path restarts `queue-watchdog`. An obsidian-routed job
-left undispatched after its runners disappear can therefore remain queued until
-GitHub's 24-hour ceiling; one dispatched before its slot recycles can instead reach its
-timeout before any step starts or runner name is recorded. The repair job has only
-`actions: write` and `contents: read` permissions and runs on GitHub-hosted Linux;
-recovered long legs reuse their original runner-routing decision and repay work that
-the scheduled run already performed. A multi-job candidate can add up to four long
-obsidian-routed legs alongside the next push run, so the two-candidate cap permits up
-to eight per window. Do not widen that cap without re-measuring queue pressure.
-Reruns execute the workflow definition from their original SHA, so commits predating
-the run-id key retain the older attempt-only collision behavior; the scheduled SHA
-itself carries the new repair policy, and the dev push runs it repairs provide the
-forward promotion candidates that clear that rollout backlog.
+Fresh runs coalesce by event and ref; reruns use the original run id so later merges
+cannot cancel repaired attempts and repairs for different commits do not collide.
+The two-candidate cap bounds the additional obsidian work and must not be widened
+without re-measuring queue pressure.
 
 ## Architecture Notes
 
