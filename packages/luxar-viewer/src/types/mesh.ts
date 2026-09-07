@@ -337,9 +337,9 @@ export interface MeshMetadata {
   /**
    * Physical (glass, spec §3.4 Phase 3): draw this glass AFTER the emissive data so
    * it refracts the points, lines and splats behind it. Absent = false (Phase 2
-   * glass-first). Authoring refuses it without `transmission > 0`. Data IN FRONT of
-   * the glass is painted over — emissive layers write no depth — which is the
-   * documented limit that keeps this opt-in.
+   * glass-first). Authoring refuses it without `transmission > 0`. Data in front of
+   * the glass stays crisp: the refraction split partitions every data fragment by depth
+   * against the glass's front surface (`materials/_shared/glass-partition.ts`).
    */
   refract_data?: boolean;
 

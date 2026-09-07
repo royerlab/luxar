@@ -87,6 +87,10 @@ export class GlassFragmentDepthNode extends Node {
     super('float');
   }
 
+  /**
+   * Build the window-depth expression for this renderer: `z/w` under the WebGPU
+   * coordinate system, `z/w * 0.5 + 0.5` under WebGL's.
+   */
   override setup(builder: NodeBuilder): TSLNode {
     const ndcZ: TSLNode = this.clipZW.x.div(this.clipZW.y);
     return builder.renderer.coordinateSystem === THREE.WebGPUCoordinateSystem

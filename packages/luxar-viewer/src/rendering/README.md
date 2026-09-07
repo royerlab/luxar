@@ -45,7 +45,7 @@ rendering/
 ├── element-texture-layout.ts           # RGBA32F element-texture layout authority (gsplat + point + line bindings)
 ├── element-storage.ts                  # Shared texture-backed element storage + aSortedIndex writers
 ├── depth-sort-coordinator.ts           # Main-thread side of the depth-sort worker + camera re-sort scheduler (Phases 2-3)
-├── render-layers.ts                    # Object3D layer bits — one, used transiently by the refraction split
+├── render-layers.ts                    # Object3D layer bits — two, used transiently by the refraction split
 ├── point-geometry.ts                   # Point quad base + 3-texel layout/texel writer
 ├── mesh-geometry.ts                    # Plain indexed BufferGeometry for Mesh (NOT instanced/texture-backed): WebGPU-safe colour dtypes, capacity-sized vertex buffers + index + drawRange
 ├── widen-to-float32.ts                 # Dtype widening for the texel writers

@@ -1248,12 +1248,13 @@ behind two thin wrappers in `rendering/materials/mesh-physical/` that share ONE 
   data in front of or behind glass stays crisp and unrefracted on both backends — the spec §3.4
   default. With `refract_data` the stamp is `userData.drawAfterEmissive` instead: the coordinator gives
   the mesh a rank even when nothing else would and a `last` flag that puts it after every other group
-  in its band (the containment hoist skips such groups), which on WebGPU is the whole mechanism; on
-  WebGL the post-processing pipeline's `DataRefractionSplit` additionally renders the scene in two
-  passes with a screen-space quad so three's transmission target holds the data. Both wrappers pin the
-  transmitted alpha to 1, because the HDR framebuffer's alpha is an overdraw count, not coverage
-  (spec §3.4, the alpha finding). Data in front of a refracting glass is painted over — the documented
-  limit that keeps the flag opt-in.
+  in its band (the containment hoist skips such groups), and the post-processing pipeline's
+  `DataRefractionSplit` renders the frame in passes on both backends: the glass's front-face depth,
+  the data behind the glass, the glass (on WebGL with a screen-space quad so three's transmission
+  target holds the data), then the data in front of the glass — each data fragment classifies itself
+  against that depth in its own shader (`materials/_shared/glass-partition.ts`), so nothing nearer
+  than the glass is painted over. Both wrappers pin the transmitted alpha to 1, because the HDR
+  framebuffer's alpha is an overdraw count, not coverage (spec §3.4, the alpha finding).
 - **Lit by the scene environment**, not by the §6.2 key: a prefiltered `RoomEnvironment` on
   `scene.environment`, built lazily on the first physical material (`rendering/environment/`). House
   materials never read it, so a scene without a physical mesh renders byte-identically.

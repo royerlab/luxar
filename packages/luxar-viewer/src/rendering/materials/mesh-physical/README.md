@@ -9,11 +9,11 @@ alternative to: `../mesh/README.md` and `docs/specs/MESH_NODE_SPEC.md` §6.2.
 
 ## Files
 
-| File               | Purpose                                                                                                                                                                                                    |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| File               | Purpose                                                                                                                                                                                                                                                           |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `config.ts`        | The ONE mapping from Luxar attrs onto three's properties, the defaults, the compositing rule (`derivePhysicalCompositing`), the transmitted-alpha pin (`pinTransmittedAlphaGlsl`) and the `LuxarMaterial` surface as shared functions. Imports no `three/webgpu`. |
-| `material-glsl.ts` | `PhysicalMeshMaterial extends THREE.MeshPhysicalMaterial` — the WebGL wrapper. Thin: every method delegates to `config.ts`; its `onBeforeCompile` applies the alpha pin.                                  |
-| `material-tsl.ts`  | `PhysicalMeshTSLMaterial extends MeshPhysicalNodeMaterial` — the WebGPU twin, in the lazy `three/webgpu` cone, reached only through `rendering/tsl/registry.ts`; its lighting-model subclass applies the alpha pin. |
+| `material-glsl.ts` | `PhysicalMeshMaterial extends THREE.MeshPhysicalMaterial` — the WebGL wrapper. Thin: every method delegates to `config.ts`; its `onBeforeCompile` applies the alpha pin.                                                                                          |
+| `material-tsl.ts`  | `PhysicalMeshTSLMaterial extends MeshPhysicalNodeMaterial` — the WebGPU twin, in the lazy `three/webgpu` cone, reached only through `rendering/tsl/registry.ts`; its lighting-model subclass applies the alpha pin.                                               |
 
 Registered as `VISUAL_FACTORIES.meshPhysical` in `rendering/material-manager/factories.ts`
 and constructed by `MaterialManager.getMeshPhysicalMaterial`. There is deliberately **no**
@@ -106,14 +106,20 @@ draw first.
 
 **`refract_data` (Phase 3)** flips the stamp to `userData.drawAfterEmissive`. The
 coordinator then ranks the glass LAST in its band (a rank even when nothing else would
-earn one — the unranked emissive layers sit at 0), which on WebGPU is the whole
-mechanism; on WebGL `PostProcessingManager`'s `DataRefractionSplit`
-(`post-processing/post-processing-manager/refraction-split.ts`) renders the scene twice
-with a screen-space quad so three's transmission target holds the data. Data in front of
-a refracting glass is painted over — emissive layers write no depth — which is why the
-flag is opt-in. Compositing is otherwise identical: translucent, no depth write,
-`NormalBlending`. `transmissionResolutionScale` (config `renderingControls.refraction`,
-0.5) applies to the split's second pass only; WebGPU has no equivalent knob.
+earn one — the unranked emissive layers sit at 0), and `PostProcessingManager`'s
+`DataRefractionSplit` (`post-processing/post-processing-manager/refraction-split.ts`)
+renders the frame in passes on BOTH backends: the glass's front-face depth into the one
+shared depth texture (`_shared/glass-partition.ts`), the data in partition mode 1 (every
+fragment keeps itself only when it is BEHIND the glass or under no glass at all), the
+glass — on WebGL with a screen-space quad textured with a copy of that pass, since three's
+transmission target holds only the opaque list — then the data again in mode 2, only the
+fragments IN FRONT of the glass, crisp on top. The two modes are complements of one
+predicate, so every data fragment is drawn exactly once and the glass paints over nothing
+nearer than itself; emissive layers still write no depth, the classification happens in
+their fragment shaders (`uGlassPartition` / `uGlassDepth`, GLSL and TSL). Compositing is
+otherwise identical: translucent, no depth write, `NormalBlending`.
+`transmissionResolutionScale` (config `renderingControls.refraction`, 0.5) applies to the
+glass pass only; WebGPU has no equivalent knob.
 
 **The transmitted alpha is pinned to 1 on both backends, always.** Luxar's HDR
 framebuffer alpha is an overdraw count, not coverage (the additive, luminous and normal
@@ -151,8 +157,14 @@ linear working space — the human reading of a hex tint.
   and at renderOrder −1 when unranked; refracting glass ranked last, the containment-hoist
   skip, and `collectRefractingGlass`.
 - `tests/unit/rendering/post-processing/post-processing-manager/pipeline.test.ts` — the
-  refraction split's pass order, borrowed-state restoration (including on a throw) and the
-  quad's MSAA-critical flags.
+  refraction split's pass order on both backends (MSAA and the WebGL2-fallback case
+  included), the partition mode at every draw, borrowed-state restoration (including on a
+  throw) and the quads' MSAA-critical flags.
+- `tests/unit/rendering/materials/glass-partition.test.ts` — the partition helper, the
+  GLSL guard, every visual data material declaring the pair and no pick material doing so.
+- `tests/e2e/glass-refraction-partition.spec.ts` — on the lens example: the lens refracts
+  the lattice behind it, and lattice points in front of it read the same with the lens
+  shown or hidden, WebGL and WebGPU arms.
 - `tests/unit/ui/layers/layers-panel.test.ts` — the live sliders and the Refract data switch
   on a REAL wrapper, and both Resets restoring the authored values.
 - `tests/unit/rendering/environment/` — the environment is lazy, cached, invisible to house

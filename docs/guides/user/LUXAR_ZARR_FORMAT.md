@@ -1043,7 +1043,8 @@ physical mesh refuses `ambient` / `shade_exponent` / `specular` / `shininess`,
 `attenuation_color`, `attenuation_distance`, `dispersion` and `refract_data` are
 refused without a `transmission` above zero — none of these pairings has a
 meaning. `refract_data` (Phase 3) makes a glass draw after, and refract, the
-points, lines and splats behind it; data in front of it is then painted over.
+points, lines and splats behind it, while data in front of it stays crisp on top
+(the viewer partitions each data fragment by depth against the glass).
 
 #### vertices/ (Required)
 - **Shape:** `(V, D)` — nD vertex positions, exactly like `Lines.vertices`.

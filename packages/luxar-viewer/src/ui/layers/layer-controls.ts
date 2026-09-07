@@ -85,8 +85,7 @@ export const PHYSICAL_MATERIAL_TOOLTIP =
   'metal transmits nothing, clearcoat roughness needs a clearcoat, attenuation needs a ' +
   'colour). Transmission (glass, lenses) refracts the background and other meshes; ' +
   'switch on Refract data (it needs a transmission above 0) to also refract the points, ' +
-  'lines and splats BEHIND the glass — data in front of it is then painted over, since ' +
-  'emissive layers write no depth.';
+  'lines and splats behind the glass; data in front of it stays crisp on top.';
 
 /** Readout for a knob slider: three decimals where the step needs them, "∞" at an infinite top stop. */
 function formatPhysicalKnob(spec: PhysicalKnobSpec, value: number): string {

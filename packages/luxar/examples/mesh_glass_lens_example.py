@@ -9,9 +9,9 @@ This example demonstrates:
   first, so the data behind it stays crisp and unrefracted.
 - A tinted bubble: ``attenuation_color`` with ``attenuation_distance`` colours what
   the lens transmits.
-- The documented limit: emissive layers write no depth, so data IN FRONT of a
-  refracting glass is painted over — orbit until lattice rows cross in front of the
-  lens to see it.
+- Data IN FRONT of a refracting glass stays crisp: the viewer partitions every
+  data fragment by depth against the glass's front surface, so orbiting until
+  lattice rows cross in front of the lens shows them sharp on top of it.
 
 Educational value:
 - A regular point lattice makes refraction legible: straight rows bend and magnify
@@ -155,8 +155,8 @@ def create_scene(output_path) -> None:
                 "Lattice rows bend and magnify through the left lens, inverted.",
                 "Through the middle sphere the same rows stay straight and sharp.",
                 "The amber bubble tints what it transmits.",
-                "Orbit until rows pass IN FRONT of a lens: they are painted over — "
-                "emissive layers write no depth, which is why the flag is opt-in.",
+                "Orbit until rows pass IN FRONT of a lens: they stay crisp on top of "
+                "it — only what is behind the glass is refracted.",
                 "Layers panel (L): the Refract data switch flips a sphere live.",
             ],
         )

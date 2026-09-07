@@ -577,8 +577,9 @@ class Group(Node):
                 zero — none of them means anything in those pairings. Glass
                 refracts the background and other meshes; with
                 ``refract_data=True`` it also refracts the points, lines and
-                splats BEHIND it (data in front of the glass is painted over —
-                emissive layers write no depth; spec §3.4). Also mesh-only,
+                splats BEHIND it, while data in front of the glass stays crisp
+                on top (the viewer partitions each data fragment by depth
+                against the glass; spec §3.4). Also mesh-only,
                 and a LOADING knob rather than an appearance one:
                 ``slab_tolerance`` (strictly positive and finite, default ``1.0``)
                 — the half-width, IN CELLS, of the nD membership slab a

@@ -120,7 +120,7 @@ export interface DataRefractionSplitOptions {
 }
 
 /** The slice of either renderer the split writes; `WebGPURenderer` lacks the scale. */
-interface SplitRenderer {
+export interface SplitRenderer {
   render(scene: THREE.Object3D, camera: THREE.Camera): void;
   setRenderTarget(target: THREE.WebGLRenderTarget | null): void;
   getRenderTarget(): THREE.WebGLRenderTarget | null;
@@ -216,7 +216,7 @@ function createDepthOnlyMaterial(): THREE.MeshBasicMaterial {
 }
 
 /** Renderer, camera and scene state the split borrows for one `render()` call. */
-interface BorrowedState {
+export interface BorrowedState {
   readonly cameraMask: number;
   readonly autoClear: boolean;
   /** `undefined` on `WebGPURenderer`, which has no transmission scale. */
