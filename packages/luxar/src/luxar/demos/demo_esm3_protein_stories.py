@@ -97,7 +97,6 @@ from luxar.demos import add_demo_caption, cached_download, launch_viewer
 from luxar.demos._audio_synth import (
     synthesise_foa_from_clip,
     synthesise_hum,
-    synthesise_loop_clip,
 )
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG, pull_in
 from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
@@ -1016,7 +1015,7 @@ def add_story_sounds(
         aprint(f"⚠️ Ambient bed unavailable ({e}); building without it")
         bed = None
     if bed is not None:
-        # The field version when the box can make one; the stereo clip otherwise.
+        # The field version when the box can make one; the original stereo clip otherwise.
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
             field = synthesise_foa_from_clip(
@@ -1025,21 +1024,11 @@ def add_story_sounds(
                 spread_deg=AMBISONIC_BED_SPREAD_DEG,
                 loop_crossfade_s=AMBIENT_BED_LOOP_CROSSFADE_S,
             )
-            looped = (
-                None
-                if field is not None
-                else synthesise_loop_clip(
-                    bed, ambisonic_dir, loop_crossfade_s=AMBIENT_BED_LOOP_CROSSFADE_S
-                )
-            )
         if field is None:
-            aprint(
-                "🔈 No audio decoder/encoder: the bed stays stereo"
-                + (" (unblended loop)" if looped is None else "")
-            )
+            aprint("🔈 No audio decoder/encoder: the bed stays stereo")
         scene.add_sound(  # type: ignore[attr-defined]
             "bed_ambient",
-            field if field is not None else (looped if looped is not None else bed),
+            field if field is not None else bed,
             ambisonic="foa" if field is not None else None,
             trigger="continuous",
             gain=AMBIENT_BED_GAIN,

@@ -24,7 +24,6 @@ from luxar.demos._audio_synth import (
     synthesis_cache_key,
     synthesise_foa_from_clip,
     synthesise_hum,
-    synthesise_loop_clip,
     write_wav,
 )
 from luxar.validation.sound import sniff_audio_format
@@ -253,9 +252,7 @@ def test_loop_crossfade_blends_the_tail_into_the_head_at_equal_power() -> None:
         loop_crossfade(pcm, sr, 6.0)
 
 
-def test_loop_blend_is_part_of_the_foa_cache_key_and_the_stereo_sibling(
-    tmp_path,
-) -> None:
+def test_loop_blend_is_part_of_the_foa_cache_key(tmp_path) -> None:
     src = tmp_path / "bed.mp3"
     src.write_bytes(b"\xff\xfb\x90\x00" + b"\x00" * 64)
 
@@ -281,11 +278,3 @@ def test_loop_blend_is_part_of_the_foa_cache_key_and_the_stereo_sibling(
     assert plain is not None and blended is not None and plain != blended
     # Four channels both times; the blended field is one second (1000 frames) shorter.
     assert frames == [(4, 4000), (4, 3000)]
-    stereo = synthesise_loop_clip(src, tmp_path / "loop", loop_crossfade_s=1.0, **kw)
-    assert stereo is not None and stereo.suffix == ".m4a"
-    assert frames[-1] == (2, 3000)
-    assert (
-        synthesise_loop_clip(src, tmp_path / "loop", loop_crossfade_s=1.0, **kw)
-        == stereo
-    )
-    assert len(frames) == 3  # cache hit

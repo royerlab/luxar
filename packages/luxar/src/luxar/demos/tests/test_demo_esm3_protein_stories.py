@@ -379,7 +379,6 @@ def test_add_story_sounds_keeps_the_stereo_bed_without_an_encoder(
     bed.write_bytes(bytes.fromhex("fffb9000") + b"\x00" * 64)
     monkeypatch.setattr(demo, "cached_download", lambda *a, **k: bed)
     monkeypatch.setattr(demo, "synthesise_foa_from_clip", lambda *a, **k: None)
-    monkeypatch.setattr(demo, "synthesise_loop_clip", lambda *a, **k: None)
     store = tmp_path / "s.luxar.zarr"
     with LuxarZarrCompiler(store) as compiler:
         scene = compiler.create_scene(
