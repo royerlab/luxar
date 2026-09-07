@@ -249,6 +249,9 @@ _TINY_PNG = (
     b"\xc0\x00\x00\x03\x01\x01\x00\x18\xdd\x8d\xb0\x00\x00\x00\x00IEND\xaeB`\x82"
 )
 
+#: Minimal WebM-signature payload accepted by ``validate_video_input``.
+_TINY_WEBM = b"\x1a\x45\xdf\xa3" + b"\x00" * 60
+
 
 def build_scene_with_an_overlay_image(path: Path) -> Path:
     """A small scene carrying a plain payload file — an image overlay.
@@ -262,6 +265,20 @@ def build_scene_with_an_overlay_image(path: Path) -> Path:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
         scene.add_points("pts", _rng(13).random((20_000, 3)).astype(np.float32))
         scene.add_image(_TINY_PNG, position=(0.9, 0.05), name="logo")
+    return path
+
+
+def build_scene_with_an_overlay_video(path: Path) -> Path:
+    """A small scene carrying video and poster plain payload files."""
+    with LuxarZarrCompiler(str(path)) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_points("pts", _rng(14).random((20_000, 3)).astype(np.float32))
+        scene.add_video(
+            _TINY_WEBM,
+            position=(0.1, 0.1),
+            name="clip",
+            poster=_TINY_PNG,
+        )
     return path
 
 
@@ -422,6 +439,32 @@ class TestRoundTrip:
         copied = dst / "overlays" / "logo" / filename
         assert copied.is_file(), "the overlay image was dropped from the output"
         assert copied.read_bytes() == _TINY_PNG
+
+    def test_an_overlay_video_and_poster_survive_the_copy(self, tmp_path: Path) -> None:
+        src = build_scene_with_an_overlay_video(tmp_path / "src.luxar.zarr")
+        dst = tmp_path / "out.luxar.zarr"
+        optimise_store(src, dst, verify=True)
+
+        clip = open_group(dst, mode="r")["overlays/clip"]
+        attrs = dict(clip.attrs)
+        expected = {
+            str(attrs["video_file"]): _TINY_WEBM,
+            str(attrs["poster_file"]): _TINY_PNG,
+        }
+        for filename, payload in expected.items():
+            copied = dst / "overlays" / "clip" / filename
+            assert copied.is_file(), f"the video payload {filename!r} was dropped"
+            assert copied.read_bytes() == payload
+
+    def test_overlay_video_bytes_change_the_content_hash(self, tmp_path: Path) -> None:
+        src = build_scene_with_an_overlay_video(tmp_path / "src.luxar.zarr")
+        root = open_group(src, mode="r+")
+        before = _compute_content_hashes_streaming(root)
+
+        video = src / "overlays" / "clip" / "video.webm"
+        video.write_bytes(_TINY_WEBM[:-1] + b"\x01")
+
+        assert _compute_content_hashes_streaming(root) != before
 
     def test_consolidated_metadata_is_present_and_readable(
         self, scene: Path, tmp_path: Path
