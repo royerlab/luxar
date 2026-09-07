@@ -111,6 +111,34 @@ describe('ControlsManager', () => {
     });
   });
 
+  describe('gesture tracking', () => {
+    const fire = (type: 'start' | 'end'): void => {
+      (
+        controlsManager.getControls() as unknown as { dispatchEvent(e: { type: string }): void }
+      ).dispatchEvent({ type });
+    };
+
+    it("isGestureActive is true between the active controls' start and end", () => {
+      expect(controlsManager.isGestureActive()).toBe(false);
+      fire('start');
+      expect(controlsManager.isGestureActive()).toBe(true);
+      fire('end');
+      expect(controlsManager.isGestureActive()).toBe(false);
+    });
+
+    it('a control-mode switch mid-gesture clears the flag (the old end never fires)', () => {
+      fire('start');
+      expect(controlsManager.isGestureActive()).toBe(true);
+      controlsManager.setControlType('fly');
+      expect(controlsManager.isGestureActive()).toBe(false);
+      // …and the new controls' events are tracked in turn.
+      fire('start');
+      expect(controlsManager.isGestureActive()).toBe(true);
+      fire('end');
+      expect(controlsManager.isGestureActive()).toBe(false);
+    });
+  });
+
   describe('orbit controls configuration', () => {
     it('should set auto-rotation', () => {
       controlsManager.setAutoRotate(true);

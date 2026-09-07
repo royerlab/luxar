@@ -150,6 +150,15 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
    */
   private controlEvents: EventGroup = new EventGroup();
   private currentType: ControlType = 'orbit';
+  /**
+   * True between the active controls' `start` and `end` events — a pointer
+   * gesture (drag, pinch, press-and-hold) is in progress. Read by the
+   * AnimationController's idle check: a button or finger held still for longer
+   * than `idleTimeoutMs` must not pause the render loop, because the drag that
+   * follows feeds rotate/pan/zoom deltas into the controls that only
+   * `update()` — a per-frame call — ever applies.
+   */
+  private gestureActive = false;
 
   // Configuration - uses defaults from config
   private config: ControlsManagerConfig = {
@@ -366,7 +375,11 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   private attachControlEventForwarders(controls: ControlEventDispatcher): void {
     attachControlEventForwarders(
       controls,
-      (type) => this.dispatchEvent({ type }),
+      (type) => {
+        if (type === 'start') this.gestureActive = true;
+        else if (type === 'end') this.gestureActive = false;
+        this.dispatchEvent({ type });
+      },
       this.controlEvents
     );
   }
@@ -377,6 +390,9 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
       this.controlEvents = new EventGroup();
       this.currentControls.dispose();
       this.currentControls = null;
+      // A mode switch mid-gesture disposes the controls whose `end` would
+      // have cleared this; a stale true would keep the loop awake forever.
+      this.gestureActive = false;
     }
   }
 
@@ -516,6 +532,14 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
    * amplitude or period counts as inactive so the render loop is not held
    * awake by an oscillation of size zero.
    */
+  /**
+   * Whether a pointer gesture is in progress on the active controls — their
+   * `start` has fired and their `end` has not. See {@link gestureActive}.
+   */
+  public isGestureActive(): boolean {
+    return this.gestureActive;
+  }
+
   public isAutoDollyActive(): boolean {
     return (
       this.currentControls instanceof LuxarOrbitControls &&
