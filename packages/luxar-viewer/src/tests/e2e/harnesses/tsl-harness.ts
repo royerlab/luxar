@@ -38,6 +38,7 @@
 
 import {
   SHADER_REGISTRY,
+  type BloomChainRenderResult,
   renderBloomChainGLSL,
   renderBloomChainTSL,
   renderGLSL,
@@ -53,8 +54,8 @@ declare global {
         shaderName: string,
         opts?: { native?: boolean }
       ) => Promise<{ pixels: Uint8Array; vertexShader: string; fragmentShader: string }>;
-      renderBloomChainGLSL: () => Promise<{ pixels: Uint8Array; mipCount: number }>;
-      renderBloomChainTSL: () => Promise<{ pixels: Uint8Array; mipCount: number }>;
+      renderBloomChainGLSL: () => Promise<BloomChainRenderResult>;
+      renderBloomChainTSL: () => Promise<BloomChainRenderResult>;
       listShaders: () => string[];
     };
   }
