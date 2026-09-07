@@ -224,6 +224,7 @@ def add_video_impl(
         # Browsers refuse un-muted autoplay without a user gesture; a video that
         # never starts is worse than one that starts silent.
         raise ValueError("autoplay=True requires muted=True (browser autoplay policy)")
+    validated_size = _validate_media_size(size) if size is not None else None
     video_bytes, fmt = validate_video_input(video)
     video_filename = f"video.{fmt}"
     files: Dict[str, bytes] = {video_filename: video_bytes}
@@ -249,9 +250,9 @@ def add_video_impl(
         poster_filename = f"poster.{poster_fmt}"
         files[poster_filename] = poster_bytes
         attrs["poster_file"] = poster_filename
-    if size is not None:
+    if validated_size is not None:
         # A None height keeps the video's own aspect ratio (CSS height:auto).
-        attrs["size"] = _validate_media_size(size)
+        attrs["size"] = validated_size
     if validated_range is not None:
         attrs["visible_range"] = validated_range
 
