@@ -140,7 +140,7 @@ def test_float_colors_round_to_nearest_byte(
     path = tmp_path / f"rounded.{fmt}"
 
     if fmt == "glb":
-        write_glb(path, GT, float_colors=stored_colors)
+        write_glb(path, GT, colors=stored_colors)
     elif fmt == "vtp":
         write_vtp_point_data(
             path,
@@ -227,7 +227,7 @@ def test_gltf_integer_colors_use_normalized_component_range(
     write_glb(
         path,
         GT,
-        float_colors=authored,
+        colors=authored,
         color_component_type=component_type,
     )
 

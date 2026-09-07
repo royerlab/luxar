@@ -446,26 +446,26 @@ def write_glb(
     gt: GroundTruth,
     *,
     translation: list[float] | None = None,
-    float_colors: NDArray | None = None,
+    colors: NDArray | None = None,
     color_component_type: int = 5126,
 ) -> None:
     """A GLB with one mesh under one node, optionally translated.
 
     ``translation`` exercises the node-transform composition: skip it in the reader and
     the imported mesh sits at the origin instead of where the file put it.
-    ``float_colors`` supplies ``COLOR_0`` values; ``color_component_type`` selects their
+    ``colors`` supplies ``COLOR_0`` values; ``color_component_type`` selects their
     glTF storage type.
     """
     blob, views, accessors = _accessor_blob(gt)
     attributes = {"POSITION": 0, "NORMAL": 1}
-    if float_colors is not None:
+    if colors is not None:
         color_dtypes = {5121: "<u1", 5123: "<u2", 5126: "<f4"}
         if color_component_type not in color_dtypes:
             raise ValueError(
                 f"unsupported colour component type {color_component_type}"
             )
         color_bytes = np.asarray(
-            float_colors, dtype=color_dtypes[color_component_type]
+            colors, dtype=color_dtypes[color_component_type]
         ).tobytes()
         views.append(
             {"buffer": 0, "byteOffset": len(blob), "byteLength": len(color_bytes)}
