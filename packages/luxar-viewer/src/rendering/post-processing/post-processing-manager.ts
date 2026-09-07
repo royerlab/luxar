@@ -35,7 +35,11 @@ import {
 } from './post-processing-manager/resource-lifecycle';
 import { runPipeline, type PipelineCtx } from './post-processing-manager/pipeline';
 import type { DataRefractionSplit } from './post-processing-manager/refraction-split';
-import { collectRefractingGlass } from '../depth-sort-coordinator';
+import {
+  applyGlassPartition,
+  collectRefractingGlass,
+  collectUnpartitionedMeshes,
+} from '../depth-sort-coordinator';
 import {
   captureHDRPixels as captureHDRPixelsImpl,
   captureHDRAsEXR as captureHDRAsEXRImpl,
@@ -69,7 +73,7 @@ export class PostProcessingManager {
   private megaShader!: LuxarMegaShaderMaterial;
   private megaPass!: FullscreenPass;
   private fxaaPass: FxaaPass | null = null;
-  /** WebGL only: the scene-pass split for `refract_data` glass (null on WebGPU). */
+  /** The scene-pass split for `refract_data` glass, both backends (null once disposed). */
   private refractionSplit: DataRefractionSplit | null = null;
 
   // ----------------------------------------------------------------
@@ -207,6 +211,8 @@ export class PostProcessingManager {
       bloomIntensity: this.bloomIntensity,
       allocateBloomFromDefaults: opts.applyDefaults,
       collectRefractingGlass,
+      collectUnpartitionedMeshes,
+      setGlassPartition: applyGlassPartition,
     });
     this.hdrTarget = r.hdrTarget;
     this.ldrTarget = r.ldrTarget;

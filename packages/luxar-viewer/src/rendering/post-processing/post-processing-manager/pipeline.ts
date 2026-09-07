@@ -28,8 +28,8 @@ export interface PipelineCtx {
   readonly bloomChain: BloomChain | null;
   readonly fxaaPass: FxaaPass | null;
   /**
-   * The WebGL scene-pass split for `refract_data` glass (spec §3.4 Phase 3); null on
-   * WebGPU, where render order alone does the job. See {@link renderSceneToHdr}.
+   * The scene-pass split for `refract_data` glass (spec §3.4 Phase 3), both backends;
+   * null only once disposed. See {@link renderSceneToHdr}.
    */
   readonly refractionSplit: DataRefractionSplit | null;
 }
@@ -37,9 +37,9 @@ export interface PipelineCtx {
 /**
  * Stage (0) of the pipeline, shared with the raw HDR capture path: the scene into the
  * HDR target. Binds and clears the target, then either lets the refraction split draw
- * the frame in two passes — when it exists AND some visible glass asks to refract the
- * data — or renders the scene once, exactly as before Phase 3. Leaves the HDR target
- * bound.
+ * the frame in its passes (glass depth, data behind, glass, data in front) — when some
+ * visible glass asks to refract the data — or renders the scene once, exactly as
+ * before Phase 3. Leaves the HDR target bound.
  */
 export function renderSceneToHdr(ctx: PipelineCtx): void {
   ctx.renderer.setRenderTarget(ctx.hdrTarget);

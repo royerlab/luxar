@@ -5379,6 +5379,60 @@ describe('depth-sort coordinator — layer_order bands', () => {
     expect(coord.collectRefractingGlass()).toEqual([]);
   });
 
+  it('collectUnpartitionedMeshes lists the VISIBLE physical meshes that do not refract, and nothing else', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const lens = makeGlassMesh(-10, { after: true }); // refracting: partitioned by the split itself
+    const shell = makeGlassMesh(-12); // Phase 2 glass: three's material, cannot partition
+    const hiddenShell = makeGlassMesh(-13);
+    const hiddenLevel = new THREE.Group();
+    hiddenLevel.add(hiddenShell);
+    hiddenLevel.visible = false;
+    const additive = makeGSplatsMesh(2, 'additive'); // Luxar's shader: partitions itself
+    for (const g of [lens, shell, hiddenShell]) commitGlass(coord, g);
+    coord.noteDepthSortCommit(additive, new Float32Array([0, 0, -1]), 1);
+    await flush();
+
+    const out: THREE.Mesh[] = [];
+    expect(coord.collectUnpartitionedMeshes(out)).toBe(out);
+    expect(out).toEqual([shell]);
+    // The live "Refract data" toggle moves a glass between the two lists.
+    (lens.material as THREE.Material).userData.drawAfterEmissive = undefined;
+    expect(coord.collectUnpartitionedMeshes(out)).toEqual([lens, shell]);
+    expect(coord.collectRefractingGlass()).toEqual([]);
+    hiddenLevel.visible = true;
+    expect(coord.collectUnpartitionedMeshes(out)).toEqual([lens, shell, hiddenShell]);
+    coord.releaseAllDepthSortNodes();
+    expect(coord.collectUnpartitionedMeshes()).toEqual([]);
+  });
+
+  it('applyGlassPartition writes the mode onto every registered material that carries the uniform', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const additive = makeGSplatsMesh(2, 'additive');
+    const luminous = makeGSplatsMesh(2, 'luminous');
+    const shared = { value: 0 };
+    (additive.material as unknown as { uniforms: unknown }).uniforms = { uGlassPartition: shared };
+    // Two meshes sharing one material record: the second write is a cheap no-op.
+    (luminous.material as unknown as { uniforms: unknown }).uniforms = { uGlassPartition: shared };
+    const glass = makeGlassMesh(-10, { after: true }); // three's material: no uniform, untouched
+    coord.noteDepthSortCommit(additive, new Float32Array([0, 0, -1]), 1);
+    coord.noteDepthSortCommit(luminous, new Float32Array([0, 0, -1]), 1);
+    commitGlass(coord, glass);
+    await flush();
+
+    expect(coord.applyGlassPartition(1)).toBe(1);
+    expect(shared.value).toBe(1);
+    expect(coord.applyGlassPartition(1)).toBe(0);
+    expect(coord.applyGlassPartition(2)).toBe(1);
+    expect(shared.value).toBe(2);
+    expect(coord.applyGlassPartition(0)).toBe(1);
+    expect(shared.value).toBe(0);
+    expect((glass.material as THREE.Material & { uniforms?: unknown }).uniforms).toBeUndefined();
+    coord.releaseAllDepthSortNodes();
+    expect(coord.applyGlassPartition(1)).toBe(0);
+  });
+
   it('an authored band overrides the containment hoist, and warns', async () => {
     const coord = await loadCoordinator();
     const { log } = await import('../../../utils/log');

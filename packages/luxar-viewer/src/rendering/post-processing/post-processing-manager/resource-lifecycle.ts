@@ -20,6 +20,7 @@ import { materialManager, type LuxarMegaShaderMaterial } from '../../material-ma
 import { config } from '../../../config';
 import type { Renderer, RendererCapabilities } from '../../renderer-capabilities';
 import { DataRefractionSplit } from './refraction-split';
+import type { GlassPartition } from '../../materials/_shared/glass-partition';
 
 /** Inputs to the size-derivation pair. */
 export interface SizingInputs {
@@ -92,8 +93,9 @@ export interface PipelineResources {
   bloomChain: BloomChain | null;
   fxaaPass: FxaaPass | null;
   /**
-   * The scene-pass split that lets `refract_data` glass refract the data. WebGL only
-   * (`apiSurface === 'webgl2'`); null on WebGPU, where render order alone does it.
+   * The scene-pass split that lets `refract_data` glass refract the data behind it
+   * while the data in front stays crisp — on both backends. Nullable only for the
+   * disposed state.
    */
   refractionSplit: DataRefractionSplit | null;
 }
@@ -122,6 +124,13 @@ export interface BuildResourcesConfig {
    * knowledge.
    */
   readonly collectRefractingGlass: (out: THREE.Mesh[]) => THREE.Mesh[];
+  /**
+   * Source of the visible meshes three's own materials draw (the coordinator's
+   * `collectUnpartitionedMeshes`): drawn in the split's pass A only.
+   */
+  readonly collectUnpartitionedMeshes: (out: THREE.Mesh[]) => THREE.Mesh[];
+  /** The per-pass partition-mode broadcast (the coordinator's `applyGlassPartition`). */
+  readonly setGlassPartition: (mode: GlassPartition) => void;
 }
 
 /**
@@ -167,19 +176,19 @@ export function buildTransientResources(c: BuildResourcesConfig): PipelineResour
   // FXAA pass (built only when enabled).
   const fxaaPass = c.fxaaEnabled ? new FxaaPass(c.physW, c.physH, c.capabilities) : null;
 
-  // The refraction split exists only for three's WebGLRenderer: its transmission
-  // pass sees the opaque list alone. WebGPURenderer (even on its WebGL2 fallback)
-  // samples the live framebuffer, so render order does the job there.
-  const refractionSplit =
-    c.capabilities.apiSurface === 'webgl2'
-      ? new DataRefractionSplit({
-          width: c.physW,
-          height: c.physH,
-          transmissionResolutionScale:
-            config.renderingControls.refraction.transmissionResolutionScale,
-          collectRefractingGlass: c.collectRefractingGlass,
-        })
-      : null;
+  // The refraction split runs on both renderers: the data partition (glass depth
+  // pre-pass, data behind, glass, data in front) is backend-agnostic; only the copy
+  // + screen quad that three's WebGLRenderer transmission pass needs is WebGL-only,
+  // and the split branches on `apiSurface` for that.
+  const refractionSplit = new DataRefractionSplit({
+    width: c.physW,
+    height: c.physH,
+    transmissionResolutionScale: config.renderingControls.refraction.transmissionResolutionScale,
+    apiSurface: c.capabilities.apiSurface,
+    collectRefractingGlass: c.collectRefractingGlass,
+    collectUnpartitionedMeshes: c.collectUnpartitionedMeshes,
+    setGlassPartition: c.setGlassPartition,
+  });
 
   return { hdrTarget, ldrTarget, megaShader, megaPass, bloomChain, fxaaPass, refractionSplit };
 }

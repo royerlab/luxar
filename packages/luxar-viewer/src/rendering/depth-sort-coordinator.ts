@@ -121,6 +121,8 @@ import { log, Modules } from '../utils/log';
 // is wasted worker time; when it re-shows, the next frame's pose comparison
 // catches any past-threshold camera motion immediately.
 import { isEffectivelyVisible } from '../utils/object-visibility';
+import { isPhysicalMeshMaterial } from './materials/mesh-physical/config';
+import { setGlassPartition, type GlassPartition } from './materials/_shared/glass-partition';
 
 /**
  * Optional override for the sort-worker module URL (embedders whose
@@ -2155,9 +2157,9 @@ export function releaseAllDepthSortNodes(): void {
  * The visible meshes that ask to draw AFTER the emissive data — physical glass
  * authored with `refract_data` (spec MESH_PHYSICAL_MATERIALS §3.4, Phase 3).
  *
- * The WebGL post-processing pipeline splits its scene pass around exactly these
- * meshes, so it asks here rather than traversing the scene: every data mesh of every
- * geometry type registers with this coordinator on commit and is released on disposal
+ * The post-processing pipeline splits its scene pass around exactly these meshes, so
+ * it asks here rather than traversing the scene: every data mesh of every geometry
+ * type registers with this coordinator on commit and is released on disposal
  * (`releaseDepthSortNode` runs from the disposal walk and every LOD demotion path),
  * so `nodeStates` already IS the registry, with the visibility walk the pick pass
  * uses. A hidden LOD level or a hidden layer is excluded the same way it is excluded
@@ -2170,6 +2172,45 @@ export function collectRefractingGlass(out: THREE.Mesh[] = []): THREE.Mesh[] {
     if (drawsAfterEmissive(mesh) && isEffectivelyVisible(mesh)) out.push(mesh);
   }
   return out;
+}
+
+/**
+ * The visible meshes drawn by three's OWN materials that do not refract the data —
+ * physical glass without `refract_data`, physical opaque surfaces. They carry none of
+ * Luxar's shader code, so they cannot classify their fragments against the refracting
+ * glass's depth (`glass-partition.ts`); the refraction split draws them whole in pass A
+ * and keeps them out of pass C, where a second draw would repaint the data composited
+ * over them. Same registry, same visibility walk, same reusable array as
+ * {@link collectRefractingGlass}.
+ */
+export function collectUnpartitionedMeshes(out: THREE.Mesh[] = []): THREE.Mesh[] {
+  out.length = 0;
+  for (const state of nodeStates.values()) {
+    const mesh = state.mesh;
+    if (
+      isPhysicalMeshMaterial(mesh.material) &&
+      !drawsAfterEmissive(mesh) &&
+      isEffectivelyVisible(mesh)
+    ) {
+      out.push(mesh);
+    }
+  }
+  return out;
+}
+
+/**
+ * Broadcast a glass-partition mode to every registered data mesh's material (the
+ * refraction split's per-pass write; `glass-partition.ts`). Materials without the
+ * uniform — three's own, and the pick materials, which live in the pick scene and never
+ * register here — are left alone. Shared materials are written more than once, which
+ * `setGlassPartition` makes a cheap no-op. Returns how many materials changed.
+ */
+export function applyGlassPartition(mode: GlassPartition): number {
+  let changed = 0;
+  for (const state of nodeStates.values()) {
+    if (setGlassPartition(state.mesh.material, mode)) changed++;
+  }
+  return changed;
 }
 
 /**

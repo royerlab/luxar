@@ -35,6 +35,9 @@ import * as THREE from 'three';
 import { PostProcessingManager } from '../../../rendering/post-processing/post-processing-manager';
 import { materialManager } from '../../../rendering/material-manager';
 import type { Renderer, RendererCapabilities } from '../../../rendering/renderer-capabilities';
+import type { DataRefractionSplit } from '../../../rendering/post-processing/post-processing-manager/refraction-split';
+import { getGlassDepthTexture } from '../../../rendering/materials/_shared/glass-partition';
+import { loadTslMaterials } from '../../../rendering/tsl/load';
 
 function mockCaps(apiSurface: 'webgl2' | 'webgpu' = 'webgl2'): RendererCapabilities {
   return {
@@ -573,5 +576,29 @@ describe('PostProcessingManager → the refraction split (spec §3.4 Phase 3)', 
     expect(after).not.toBeNull();
     expect(after).not.toBe(before);
     mgr.dispose();
+  });
+
+  it('owns one on a WebGPU renderer too (the data partition is backend-agnostic), sized with the targets', async () => {
+    // The WebGPU mega-shader is a TSL material behind the lazy registry.
+    await loadTslMaterials();
+    materialManager.setCaps(mockCaps('webgpu'));
+    const mgr = new PostProcessingManager(
+      makeMockRenderer(),
+      mockCaps('webgpu'),
+      new THREE.Scene(),
+      new THREE.PerspectiveCamera(),
+      { width: 64, height: 64 }
+    );
+    const s = split(mgr) as DataRefractionSplit | null;
+    expect(s).not.toBeNull();
+    expect(s!.isWebGL).toBe(false);
+    expect(s!.glassDepthTarget.width).toBe(64);
+    mgr.resize(80, 40);
+    expect(s!.glassDepthTarget.width).toBe(80);
+    expect(s!.glassDepthTarget.height).toBe(40);
+    // The depth target wraps the ONE depth texture every data material samples.
+    expect(s!.glassDepthTarget.depthTexture).toBe(getGlassDepthTexture());
+    mgr.dispose();
+    expect(split(mgr)).toBeNull();
   });
 });
