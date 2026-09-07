@@ -244,6 +244,16 @@ def test_attribution_closes_the_overview_panel_and_is_not_a_standalone_overlay()
         and node.args[0].id == "ATTRIBUTION"
         for node in ast.walk(tree)
     )
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "add_html"
+        and node.args
+        and isinstance(node.args[0], ast.Call)
+        and isinstance(node.args[0].func, ast.Name)
+        and node.args[0].func.id == "overview_panel_html"
+        for node in ast.walk(tree)
+    )
 
 
 def test_story_highlights_declare_their_intentional_additive_blending() -> None:

@@ -22,7 +22,7 @@ Scene structure (two toggleable layers plus one highlight per story):
       colour, pinned to slot k of the ``story`` dimension.
 
 Stories are defined by a protein-name pattern AND a radius around the family's
-median position in the map, so a highlight is the visible blob, not the
+densest member in the map, so a highlight is the visible blob, not the
 family's stragglers; the counts in each panel say how many made it.
 
 Navigation:
@@ -120,7 +120,7 @@ class Story:
     #: The open question that closes the panel.
     mystery: str
     #: Members must lie within this distance (UMAP units) of the family's
-    #: median position — the visible blob, not the stragglers.
+    #: densest member — the visible blob, not the stragglers.
     radius: float = 0.8
     #: Optional taxon filter (a value of the base demo's kingdom column).
     kingdom: str | None = None
@@ -128,7 +128,7 @@ class Story:
     #: this fraction of the frame height under the 63° cinematic lens — the
     #: same height as the story panel and the turntable beside it (each ~46%
     #: of the frame). The camera distance follows from the lens (see
-    #: ``_story_camera``) but never drops below ``min_distance``; a sparse
+    #: ``story_camera``) but never drops below ``min_distance``; a sparse
     #: cluster (see ``SPARSE_TAIL_RATIO``) is framed on its dense core, so its
     #: oversized bubble deliberately overflows the frame.
     frame_fraction: float = 0.46
