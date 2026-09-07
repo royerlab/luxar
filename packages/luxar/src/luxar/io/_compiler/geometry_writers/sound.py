@@ -28,6 +28,7 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 from arbol import aprint
+from numpy.typing import NDArray
 
 from ...._zarr_compat import create_array, write_raw_bytes
 from ....typing_utils.aliases import NodePath, PositionArray
@@ -72,7 +73,7 @@ def probe_audio_duration_ms(payload: bytes, fmt: str) -> Optional[float]:
 
 
 def _positions_array(
-    positions: Optional[NDArray[np.float32]],
+    positions: Optional[PositionArray],
 ) -> tuple[Optional[NDArray[np.float32]], int, int]:
     """Validate the optional ``(K, ndim)`` rows → ``(array, K, ndim)`` (``None, 0, 0`` when absent)."""
     if positions is None:
