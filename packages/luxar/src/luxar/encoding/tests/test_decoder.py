@@ -153,42 +153,42 @@ class TestQuantizedDecoding:
                     "name": "bounded_scalar_uint8",
                     "min": 1.0,
                     "max": 3.0,
-                    "bits": 2,
+                    "bits": 8,
                     "original_dtype": "uint8",
                 },
-                np.array([1], dtype=np.uint8),
+                np.array([100], dtype=np.uint8),
                 np.array([2], dtype=np.uint8),
             ),
             (
                 {
                     "name": "log_scalar_uint8",
-                    "max_log": np.log(4.375),
-                    "bits": 2,
+                    "max_log": np.log(5.0),
+                    "bits": 8,
                     "original_dtype": "uint8",
                 },
-                np.array([2], dtype=np.uint8),
-                np.array([2], dtype=np.uint8),
+                np.array([200], dtype=np.uint8),
+                np.array([3], dtype=np.uint8),
             ),
             (
                 {
                     "name": "geolog_scalar_uint8",
                     "min_log": 0.0,
                     "max_log": np.log(3.0),
-                    "bits": 2,
+                    "bits": 8,
                     "original_dtype": "uint8",
                 },
-                np.array([2], dtype=np.uint8),
-                np.array([2], dtype=np.uint8),
+                np.array([220], dtype=np.uint8),
+                np.array([3], dtype=np.uint8),
             ),
             (
                 {
                     "name": "log_perchannel_u8",
                     "col_lo": [np.log1p(1.0)],
                     "col_hi": [np.log1p(3.0)],
-                    "bits": 2,
+                    "bits": 8,
                     "original_dtype": "uint8",
                 },
-                np.array([[1]], dtype=np.uint8),
+                np.array([[100]], dtype=np.uint8),
                 np.array([[2]], dtype=np.uint8),
             ),
             (
@@ -196,10 +196,10 @@ class TestQuantizedDecoding:
                     "name": "signed_log_perchannel_u8",
                     "col_lo": [np.log1p(1.0)],
                     "col_hi": [np.log1p(3.0)],
-                    "bits": 2,
+                    "bits": 8,
                     "original_dtype": "int8",
                 },
-                np.array([[1]], dtype=np.uint8),
+                np.array([[100]], dtype=np.uint8),
                 np.array([[2]], dtype=np.int8),
             ),
             (
@@ -207,10 +207,10 @@ class TestQuantizedDecoding:
                     "name": "linear_perchannel_u8",
                     "col_lo": [1.0],
                     "col_hi": [3.0],
-                    "bits": 2,
+                    "bits": 8,
                     "original_dtype": "uint8",
                 },
-                np.array([[1]], dtype=np.uint8),
+                np.array([[100]], dtype=np.uint8),
                 np.array([[2]], dtype=np.uint8),
             ),
             (
@@ -218,18 +218,28 @@ class TestQuantizedDecoding:
                     "name": "geolog_perchannel_u8",
                     "col_lo": [0.0],
                     "col_hi": [np.log(3.0)],
-                    "bits": 2,
+                    "bits": 8,
                     "zero_level": True,
                     "original_dtype": "uint8",
                 },
-                np.array([[2]], dtype=np.uint8),
-                np.array([[2]], dtype=np.uint8),
+                np.array([[220]], dtype=np.uint8),
+                np.array([[3]], dtype=np.uint8),
             ),
             (
                 {"name": "rgb_uint8", "original_dtype": "uint8"},
                 np.array([[200]], dtype=np.uint8),
                 np.array([[1]], dtype=np.uint8),
             ),
+        ],
+        ids=[
+            "bounded-scalar",
+            "log-scalar",
+            "geolog-scalar",
+            "log-perchannel",
+            "signed-log-perchannel",
+            "linear-perchannel",
+            "geolog-perchannel",
+            "color",
         ],
     )
     def test_quantized_integer_restoration_rounds_before_cast(
@@ -251,12 +261,12 @@ class TestQuantizedDecoding:
         self, tmp_path
     ) -> None:
         group = zarr.open_group(tmp_path, mode="w")
-        create_array(group, "test", data=np.array([[1, 2]], dtype=np.uint8))
+        create_array(group, "test", data=np.array([[100, 200]], dtype=np.uint8))
         group["test"].attrs["encoding"] = {
             "name": "linear_perchannel_u8",
             "col_lo": [1.0, 1.0],
             "col_hi": [3.0, 3.0],
-            "bits": 2,
+            "bits": 8,
             "original_dtype": "uint8",
         }
 
