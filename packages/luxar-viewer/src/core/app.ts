@@ -235,6 +235,12 @@ export class LuxarApp {
     // scope to it; resetViewerContainer() in the dispose pipeline restores it.
     setViewerContainer(options.container ?? document.body);
 
+    // Claim the input surface before any async initialization or dataset
+    // loading leaves an embedder-supplied canvas browser-owned.
+    if (options.canvas instanceof HTMLElement) {
+      installCanvasGestureOwnership(options.canvas, this.events);
+    }
+
     // Mutable accumulator: pipeline writes each subsystem here as it
     // constructs it, so even if init() throws partway through, the
     // already-constructed pieces are visible to dispose().
@@ -410,13 +416,6 @@ export class LuxarApp {
    * outside the live window, and both are torn down through {@link events}.
    */
   private setupEmbedderHooks(canvas: HTMLCanvasElement): void {
-    // The viewer, not the browser, owns touch gestures over the canvas
-    // (`touch-action: none`, Safari gesture events) — for the embedder's
-    // canvas as much as the standalone page's. Guarded: tests hand in stubs.
-    if (canvas instanceof HTMLElement) {
-      installCanvasGestureOwnership(canvas, this.events);
-    }
-
     const dimsListener = (): void => {
       if (this.isInitialized) {
         this.embedderEvents.emit('dimensions-changed', this.getDimensions());
