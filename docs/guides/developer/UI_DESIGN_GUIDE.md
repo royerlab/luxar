@@ -951,8 +951,9 @@ media features in any other stylesheet, and the load-bearing clamps present.
 - **Clamps, not reflow.** Fixed widths become `min(<desktop>, calc(100vw -
   margins))`; `vh` heights become `dvh` inside `@supports (height: 100dvh)`
   (iOS Safari's `vh` is the large viewport, so a `70vh` panel bottom-clips
-  under the visible toolbar). The component file keeps the `vh` value as the
-  fallback.
+  under the visible toolbar). The `vh` fallback stays outside `@supports` — in
+  the component file when it already has one, otherwise in the plain
+  `(pointer: coarse)` block.
 - **Safe areas.** `index.html` declares `viewport-fit=cover`; the rail gutter
   (`left: calc(73px + env(safe-area-inset-left))`, `!important` like the
   docking rule it restates — §15.6), its first-run hint, collapsed grip, and

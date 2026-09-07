@@ -25,9 +25,11 @@
  * Safari `vh` is the LARGE viewport (toolbars retracted), so a `70vh` panel
  * bottom-clips under the toolbar while it is visible; `dvh` tracks the visible
  * area. Each `dvh` rule sits under `@supports (height: 100dvh)` so an engine
- * without it keeps the component file's `vh` value. `env(safe-area-inset-*)`
- * resolves to 0 unless `index.html` declares `viewport-fit=cover`, which it
- * does; embedders decide that on their own page.
+ * without it keeps the corresponding `vh` value outside that block — in the
+ * component file when it already has one, otherwise in the plain coarse-
+ * pointer block. `env(safe-area-inset-*)` resolves to 0 unless `index.html`
+ * declares `viewport-fit=cover`, which it does; embedders decide that on their
+ * own page.
  *
  * Sanctioned `!important` (UI Design Guide §13 / §15.6): the docked-panel
  * gutter below restates the control-rail docking override, which is already
