@@ -71,6 +71,8 @@ export interface Voice {
   audible: boolean;
   /** True from a start until the voice ended or a stop was scheduled. */
   playing: boolean;
+  /** Whether this start has emitted the public started event. */
+  started: boolean;
   /** A waypoint trigger recorded while nothing could start (gate closed / no buffer). */
   pending: boolean;
   startTimer?: ReturnType<typeof setTimeout>;
@@ -184,14 +186,23 @@ export class SoundNode {
       if (audio instanceof THREE.PositionalAudio) this.configurePanner(audio);
       audio.name = `${this.path}#${row}`;
       this.deps.parent.add(audio);
-      const voice: Voice = { audio, row, audible: false, playing: false, pending: false };
+      const voice: Voice = {
+        audio,
+        row,
+        audible: false,
+        playing: false,
+        started: false,
+        pending: false,
+      };
       // Three binds `source.onended` to `this.onEnded` at play() time, so an
       // instance override is what runs when a `once` clip runs out.
       audio.onEnded = () => {
         THREE.Audio.prototype.onEnded.call(audio);
         if (voice.playing) {
+          const wasStarted = voice.started;
           voice.playing = false;
-          this.deps.onEnded(this.name);
+          voice.started = false;
+          if (wasStarted) this.deps.onEnded(this.name);
         }
       };
       this.voices.push(voice);
@@ -255,7 +266,7 @@ export class SoundNode {
     const positions = this.desc.positions;
     if (!positions) return;
     const displayDims =
-      this.lastBase?.displayDims ?? [1, 2, 3].slice(0, Math.min(3, this.desc.ndim));
+      this.lastBase?.displayDims ?? [0, 1, 2].slice(0, Math.min(3, this.desc.ndim));
     for (const v of this.voices) {
       if (!(v.audio instanceof THREE.PositionalAudio)) continue;
       const [x, y, z] = displayedXYZ(positions, v.row, this.desc.ndim, displayDims);
@@ -383,10 +394,14 @@ export class SoundNode {
     });
     v.audio.play(delaySec);
     v.playing = true;
+    v.started = false;
     if (v.startTimer) clearTimeout(v.startTimer);
     v.startTimer = setTimeout(() => {
       v.startTimer = undefined;
-      if (v.playing) this.deps.onStarted(this.name);
+      if (v.playing) {
+        v.started = true;
+        this.deps.onStarted(this.name);
+      }
     }, this.attrs.delay_ms);
   }
 
@@ -399,14 +414,15 @@ export class SoundNode {
     const ctx = this.context;
     const now = ctx.currentTime;
     const end = rampGain(v.audio.gain.gain, { now, target: 0, ms: fadeMs });
-    const wasPlaying = v.playing;
+    const wasStarted = v.started;
     v.playing = false;
+    v.started = false;
     if (v.audio.isPlaying) v.audio.stop(end - now);
     if (v.stopTimer) clearTimeout(v.stopTimer);
     v.stopTimer = setTimeout(
       () => {
         v.stopTimer = undefined;
-        if (wasPlaying) this.deps.onEnded(this.name);
+        if (wasStarted) this.deps.onEnded(this.name);
       },
       Math.ceil((end - now) * 1000)
     );

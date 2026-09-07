@@ -338,6 +338,27 @@ describe('AudioEngine — slab, ducking and buses', () => {
     await flush();
   });
 
+  it('resets omitted scene mix fields to defaults when the dataset changes', () => {
+    const h = makeHarness();
+    h.engine.applySceneConfig({
+      masterGain: 0.2,
+      buses: { voice: 0.1 },
+      panningModel: 'HRTF',
+      duckDb: -40,
+    });
+    h.engine.applySceneConfig({});
+    expect(h.engine.getMasterGain()).toBe(0.8);
+    expect(h.engine.getBusGains()).toEqual({ ambient: 0.6, voice: 1, effects: 0.8 });
+    expect(h.engine.getState().panningModel).toBe('equalpower');
+  });
+
+  it('does not notify the UI when a geometry visibility update reaches an empty engine', () => {
+    const h = makeHarness();
+    const before = h.uiChanges;
+    h.engine.setNodeMuted('/cloud', true);
+    expect(h.uiChanges).toBe(before);
+  });
+
   it('play(name) starts a node regardless of its slab and stop(name) ends it; unknown names are false', async () => {
     const h = makeHarness();
     h.root.add(soundPlaceholder('/sounds/narr', { trigger: 'once', bus: 'voice' }, [[2, 0, 0, 0]]));

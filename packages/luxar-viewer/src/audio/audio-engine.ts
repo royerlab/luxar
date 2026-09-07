@@ -128,7 +128,6 @@ export class AudioEngine {
   private busGains: Record<AudioBusName, number> = { ...DEFAULT_BUSES };
   private duckDb = DEFAULT_DUCK_DB;
   private activeVoiceClips = 0;
-  private readonly playing = new Set<string>();
   private disposed = false;
   /** Ambisonic decoders to rotate against the camera (see `ensureGraph`). */
   private readonly foaDecoders = new Set<FoaDecoder>();
@@ -257,7 +256,6 @@ export class AudioEngine {
     this.unsubscribeDims = null;
     for (const node of this.nodes.values()) node.dispose();
     this.nodes.clear();
-    this.playing.clear();
     this.activeVoiceClips = 0;
     this.setDuck(1);
     this.gate.hide();
@@ -422,7 +420,6 @@ export class AudioEngine {
   // ── Ducking + events ─────────────────────────────────────────────────
 
   private onNodeStarted(name: string, bus: AudioBusName): void {
-    this.playing.add(name);
     if (bus === 'voice') {
       this.activeVoiceClips++;
       if (this.activeVoiceClips === 1) this.setDuck(dbToGain(this.duckDb));
@@ -432,7 +429,6 @@ export class AudioEngine {
   }
 
   private onNodeEnded(name: string, bus: AudioBusName): void {
-    this.playing.delete(name);
     if (bus === 'voice') {
       this.activeVoiceClips = Math.max(0, this.activeVoiceClips - 1);
       if (this.activeVoiceClips === 0) this.setDuck(1);
@@ -455,6 +451,11 @@ export class AudioEngine {
    */
   applySceneConfig(overrides: AudioConfigOverrides): void {
     const prefs = loadAudioPrefs();
+    this.masterGain = prefs.masterGain ?? DEFAULT_MASTER_GAIN;
+    this.busGains = { ...DEFAULT_BUSES };
+    this.applyBusGains(DEFAULT_BUSES);
+    this.setPanningModel('equalpower');
+    this.duckDb = DEFAULT_DUCK_DB;
     this.sceneEnabled = overrides.enabled !== false;
     if (overrides.masterGain !== undefined && prefs.masterGain === undefined) {
       this.masterGain = overrides.masterGain;
@@ -567,6 +568,7 @@ export class AudioEngine {
    * as a hidden group hides its children whatever their own flag says.
    */
   setNodeMuted(path: string, muted: boolean): void {
+    if (this.nodes.size === 0) return;
     const prefix = path.endsWith('/') ? path : `${path}/`;
     for (const node of this.nodes.values()) {
       if (node.path === path) node.setNodeMuted(muted);

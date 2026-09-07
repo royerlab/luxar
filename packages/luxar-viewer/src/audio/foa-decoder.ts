@@ -63,6 +63,7 @@ const AMBIX_TO_WORLD = new THREE.Matrix3().set(0, -1, 0, 0, 0, 1, -1, 0, 0);
 const WORLD_TO_AMBIX = AMBIX_TO_WORLD.clone().transpose();
 
 const _cameraRotation = new THREE.Matrix3();
+const _cameraMatrix = new THREE.Matrix4();
 const _tmp = new THREE.Matrix3();
 const _rotation = new THREE.Matrix3();
 
@@ -75,7 +76,7 @@ export function foaRotationForCamera(
   q: THREE.Quaternion,
   out = new THREE.Matrix3()
 ): THREE.Matrix3 {
-  _cameraRotation.setFromMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(q)).transpose();
+  _cameraRotation.setFromMatrix4(_cameraMatrix.makeRotationFromQuaternion(q)).transpose();
   _tmp.multiplyMatrices(_cameraRotation, AMBIX_TO_WORLD);
   return out.multiplyMatrices(WORLD_TO_AMBIX, _tmp);
 }

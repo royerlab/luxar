@@ -115,6 +115,13 @@ describe('SoundNode — routing and voices', () => {
     expect(v0.panner.refDistance).toBe(3);
     expect(v0.panner.maxDistance).toBe(40);
   });
+
+  it('uses xyz columns before the first view-state update', () => {
+    const node = makeNode({ spatial: true }, descriptor({ rows: [[10, 20, 30]], ndim: 3 }));
+    node.setBuffer(new FakeAudioBuffer() as unknown as AudioBuffer);
+    const voice = parent.children[0] as THREE.PositionalAudio;
+    expect(voice.position.toArray()).toEqual([10, 20, 30]);
+  });
 });
 
 describe('SoundNode — waypoint triggers and attach_to', () => {
@@ -202,7 +209,7 @@ describe('SoundNode — waypoint triggers and attach_to', () => {
     const voice = parent.children[0] as THREE.PositionalAudio;
     expect(voice).toBeInstanceOf(THREE.PositionalAudio);
     // Unknown target: stays at the row's own displayed xyz.
-    expect(voice.position.toArray()).toEqual([0, 0, 0]);
+    expect(voice.position.toArray()).toEqual([1, 0, 0]);
     centre = new THREE.Vector3(13, 2, 1);
     node.setViewState(buildSoundBaseViewState(storyDims(1)), null);
     expect(voice.position.toArray()).toEqual([3, 2, 1]);
@@ -270,6 +277,21 @@ describe('SoundNode — edges', () => {
     expect(ended).toEqual(['clip']);
   });
 
+  it('stopping during the start delay emits neither lifecycle event', () => {
+    const node = makeNode(
+      { trigger: 'continuous', delay_ms: 600 },
+      descriptor({ rows: [[1, 0, 0, 0]] })
+    );
+    node.setGateOpen(true);
+    node.setBuffer(new FakeAudioBuffer() as unknown as AudioBuffer);
+    node.setViewState(buildSoundBaseViewState(storyDims(1)), null);
+    vi.advanceTimersByTime(100);
+    node.setViewState(buildSoundBaseViewState(storyDims(2)), null);
+    vi.runAllTimers();
+    expect(started).toEqual([]);
+    expect(ended).toEqual([]);
+  });
+
   it('once: fires once per rising edge and not again while staying audible', () => {
     const desc = descriptor({ rows: [[1, 0, 0, 0]] });
     const node = makeNode({ trigger: 'once' }, desc);
@@ -278,6 +300,7 @@ describe('SoundNode — edges', () => {
     node.setViewState(buildSoundBaseViewState(storyDims(1)), null);
     expect(ctx.sources).toHaveLength(1);
     expect(ctx.sources[0].loop).toBe(false);
+    vi.advanceTimersByTime(0);
     // Same slice again (a scrub inside the slab): no restart.
     node.setViewState(buildSoundBaseViewState(storyDims(1)), null);
     expect(ctx.sources).toHaveLength(1);
