@@ -97,14 +97,19 @@ export class VideoRecordingStrategy implements CaptureStrategy {
     // Audio rides only when asked for AND the sound layer has something to
     // give (a scene without sound nodes has no graph — a silent video, as before).
     const audioPort = opts.includeAudio ? (this.hooks.audioCapture?.() ?? null) : null;
-    const mimeType = getSupportedMimeTypePure(undefined, audioPort !== null);
+    const audio = audioPort?.acquire() ?? null;
+    const mimeType = getSupportedMimeTypePure(undefined, audio !== null);
     if (!mimeType) {
+      if (audio) audioPort?.release(audio);
       showToast('Video recording not supported in this browser');
       return;
     }
-
     const confirmed = await session.showConfirmationDialog({ mode, options: opts });
-    if (!confirmed || session.isDisposed()) return;
+    if (!confirmed || session.isDisposed()) {
+      if (audio) audioPort?.release(audio);
+      return;
+    }
+    this.audioCaptureStream = audio;
 
     // Wrap the entire setup phase. Without this, a throw from
     // canvas.captureStream(), `new MediaRecorder(...)`, or
@@ -161,13 +166,9 @@ export class VideoRecordingStrategy implements CaptureStrategy {
       const captureSource = this.liveOverlayCompositor?.canvas ?? canvas;
 
       this.captureStream = captureSource.captureStream(opts.videoFPS);
-      if (audioPort) {
-        const audio = audioPort.acquire();
-        if (audio) {
-          for (const track of audio.getAudioTracks()) this.captureStream.addTrack(track);
-          this.audioCaptureStream = audio;
-          log.info(Modules.RECORDING, 'Recording the sound layer into the video');
-        }
+      if (audio) {
+        for (const track of audio.getAudioTracks()) this.captureStream.addTrack(track);
+        log.info(Modules.RECORDING, 'Recording the sound layer into the video');
       }
       this.mediaRecorder = new MediaRecorder(this.captureStream, {
         mimeType,

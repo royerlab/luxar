@@ -276,8 +276,10 @@ describe('LayersPanel — sound rows', () => {
     gain.value = '1.25';
     gain.dispatchEvent(new Event('input', { bubbles: true }));
     expect(port.setNodeGain).toHaveBeenLastCalledWith('/story/hum', 1.25);
+    port.setNodeGain.mockClear();
     panel.setLayer('/story/hum', { gain: 9 });
-    expect(port.setNodeGain).toHaveBeenLastCalledWith('/story/hum', 2);
+    expect(port.setNodeGain).toHaveBeenCalledOnce();
+    expect(port.setNodeGain).toHaveBeenCalledWith('/story/hum', 2);
     expect(gain.value).toBe('2');
     const summary = panel.getLayerSummaries().find((l) => l.path === '/story/hum')!;
     expect(summary.type).toBe('sound');

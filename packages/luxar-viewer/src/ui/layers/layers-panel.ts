@@ -413,7 +413,11 @@ export class LayersPanel {
    */
   private applyVisibility(path: string, visible: boolean): void {
     this.applyEngine.applyVisibility(path, visible);
-    this.audioPort?.setNodeMuted(path, !visible);
+    const prefix = path.endsWith('/') ? path : `${path}/`;
+    const affectsSound = this.state
+      .getLayers()
+      .some((layer) => layer.sound && (layer.path === path || layer.path.startsWith(prefix)));
+    if (affectsSound) this.audioPort?.setNodeMuted(path, !visible);
   }
 
   // ====================================================================
@@ -725,11 +729,6 @@ export class LayersPanel {
       if (value === undefined) continue;
       if (value === null) releasers[key]?.();
       else (appliers[key] as (v: unknown) => void)(value);
-    }
-    if (patch.gain !== undefined && live.sound) {
-      this.state.setSoundGain(path, patch.gain);
-      this.audioPort?.setNodeGain(path, live.sound.gain);
-      this.refreshRowVisual(path);
     }
     this.controls.render();
     // Material changes only show when the loop runs; registration-free, so

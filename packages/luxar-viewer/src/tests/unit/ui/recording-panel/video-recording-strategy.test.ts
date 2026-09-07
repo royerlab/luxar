@@ -410,6 +410,7 @@ describe('VideoRecordingStrategy', () => {
       (panel as any).options.includeAudio = true;
       ({ done } = await startRecording());
       expect(port.acquire).toHaveBeenCalledTimes(1);
+      expect(asked[1]).toBe('video/webm;codecs=vp9');
       expect((panel as any).videoRecordingStrategy.audioCaptureStream).toBeNull();
       mockMediaRecorder.onstop();
       await done;
