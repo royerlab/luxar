@@ -23,6 +23,11 @@ interface ArchivedOverlayMedia {
   poster?: Uint8Array;
 }
 
+function isOverlayInteractive(config: OverlayConfig): boolean {
+  if (config.interactive) return true;
+  return config.type === 'overlay_video' && config.autoplay === false;
+}
+
 /** Font preset mappings to CSS font-family stacks */
 export const FONT_PRESETS: Record<string, string> = {
   sans: 'system-ui, -apple-system, sans-serif',
@@ -489,8 +494,8 @@ export class OverlayManager {
 
   /**
    * For a zipped store, read the overlay's media payload (image or video) so
-   * it can be served from a blob URL; the poster of a video is not read (the
-   * video itself is what plays there). Plain HTTP stores stream by URL instead.
+   * it can be served from a blob URL. Video posters are loaded alongside the
+   * video; plain HTTP stores stream both resources by URL instead.
    */
   private async readArchivedMedia(config: OverlayConfig): Promise<ArchivedOverlayMedia> {
     if (!isZippedStoreUrl(this.baseUrl) || !this.readFile) return {};
@@ -538,8 +543,7 @@ export class OverlayManager {
     }
 
     // Make non-interactive overlays completely inert (no focus, no click, no events)
-    const hasManualVideoControls = config.type === 'overlay_video' && config.autoplay === false;
-    if (!config.interactive && !hasManualVideoControls) {
+    if (!isOverlayInteractive(config)) {
       el.inert = true;
     }
 
@@ -595,34 +599,7 @@ export class OverlayManager {
     if (typeof config.playback_rate === 'number' && config.playback_rate > 0) {
       video.playbackRate = config.playback_rate;
     }
-    const base = `${this.baseUrl}overlays/${config.name}/`;
-
-    if (isZippedStoreUrl(this.baseUrl)) {
-      if (!archivedVideo) {
-        log.warning(
-          Modules.UI,
-          `Video overlay "${config.name}" is missing /overlays/${config.name}/${config.video_file} — skipping`
-        );
-        return;
-      }
-      const blobBytes = Uint8Array.from(archivedVideo);
-      const objectUrl = URL.createObjectURL(
-        new Blob([blobBytes], { type: detectMimeType(blobBytes) })
-      );
-      this.objectUrls.add(objectUrl);
-      video.src = objectUrl;
-      if (archivedPoster) {
-        const posterBytes = Uint8Array.from(archivedPoster);
-        const posterUrl = URL.createObjectURL(
-          new Blob([posterBytes], { type: detectMimeType(posterBytes) })
-        );
-        this.objectUrls.add(posterUrl);
-        video.poster = posterUrl;
-      }
-    } else {
-      video.src = `${base}${config.video_file}`;
-      if (config.poster_file) video.poster = `${base}${config.poster_file}`;
-    }
+    if (!this.setVideoMedia(video, config, archivedVideo, archivedPoster)) return;
     video.onerror = () => {
       log.warning(
         Modules.UI,
@@ -638,6 +615,42 @@ export class OverlayManager {
     video.style.display = 'block';
     el.appendChild(video);
     this.videoElements.set(config.name, video);
+  }
+
+  private setVideoMedia(
+    video: HTMLVideoElement,
+    config: OverlayConfig,
+    archivedVideo?: Uint8Array,
+    archivedPoster?: Uint8Array
+  ): boolean {
+    const base = `${this.baseUrl}overlays/${config.name}/`;
+    if (!isZippedStoreUrl(this.baseUrl)) {
+      video.src = `${base}${config.video_file}`;
+      if (config.poster_file) video.poster = `${base}${config.poster_file}`;
+      return true;
+    }
+    if (!archivedVideo) {
+      log.warning(
+        Modules.UI,
+        `Video overlay "${config.name}" is missing /overlays/${config.name}/${config.video_file} — skipping`
+      );
+      return false;
+    }
+    const blobBytes = Uint8Array.from(archivedVideo);
+    const objectUrl = URL.createObjectURL(
+      new Blob([blobBytes], { type: detectMimeType(blobBytes) })
+    );
+    this.objectUrls.add(objectUrl);
+    video.src = objectUrl;
+    if (archivedPoster) {
+      const posterBytes = Uint8Array.from(archivedPoster);
+      const posterUrl = URL.createObjectURL(
+        new Blob([posterBytes], { type: detectMimeType(posterBytes) })
+      );
+      this.objectUrls.add(posterUrl);
+      video.poster = posterUrl;
+    }
+    return true;
   }
 
   /** Start or stop a video overlay with its visibility (muted play needs no gesture). */
@@ -696,7 +709,7 @@ export class OverlayManager {
     }
 
     // Interaction
-    if (config.interactive || (config.type === 'overlay_video' && config.autoplay === false)) {
+    if (isOverlayInteractive(config)) {
       el.classList.add('luxar-overlay--interactive');
     }
   }

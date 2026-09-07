@@ -152,7 +152,7 @@ export function compositeOverlays(
     } else if (el.classList.contains('luxar-overlay--image')) {
       compositeImageOverlay(ctx, el, config, x, y, metrics);
     } else if (el.classList.contains('luxar-overlay--video')) {
-      compositeVideoOverlay(ctx, el, config, x, y, metrics);
+      compositeVideoOverlay(ctx, el, config, [x, y], metrics);
     } else if (el.classList.contains('luxar-overlay--html')) {
       compositeHtmlOverlay(ctx, el, glCanvas);
     }
@@ -329,8 +329,7 @@ export function compositeVideoOverlay(
   ctx: CanvasRenderingContext2D,
   el: HTMLDivElement,
   config: OverlayConfig,
-  xIn: number,
-  yIn: number,
+  position: readonly [number, number],
   metrics: OverlayCaptureMetrics
 ): void {
   const video = el.querySelector('video');
@@ -352,6 +351,7 @@ export function compositeVideoOverlay(
   }
 
   const [dx, dy] = computeAnchorOffset(config.anchor, drawW, drawH);
+  const [xIn, yIn] = position;
   ctx.drawImage(video, xIn + dx, yIn + dy, drawW, drawH);
 }
 
