@@ -8,6 +8,8 @@ import pytest
 import zarr
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler, Overlay
+from luxar._zarr_compat import read_raw_bytes
+from luxar.core.scene import Scene
 
 
 def _make_4d_dims():
@@ -333,6 +335,23 @@ class TestAddVideo:
     # A minimal EBML header: enough for the sniffer, which is all the writer checks.
     WEBM_BYTES = b"\x1a\x45\xdf\xa3" + b"\x00" * 60
     MP4_BYTES = b"\x00\x00\x00\x18ftypisom" + b"\x00" * 60
+
+    def test_video_payloads_write_through_a_memory_store(self) -> None:
+        class MemoryWriter:
+            def __init__(self) -> None:
+                self.store = zarr.group()
+
+            def write_group(self, path: str, **attrs: object) -> None:
+                group = self.store if path in ("", "/") else self.store.require_group(path)
+                group.attrs.update(attrs)
+
+        writer = MemoryWriter()
+        scene = Scene(writer=writer, dimensions=Dimensions.default_3d())  # type: ignore[arg-type]
+        scene.add_video(self.WEBM_BYTES, position=(0.1, 0.1))
+
+        group = writer.store["overlays/overlay_0"]
+        assert isinstance(group, zarr.Group)
+        assert read_raw_bytes(group, "video.webm") == self.WEBM_BYTES
 
     def test_video_from_bytes_with_poster(self, tmp_path) -> None:
         png_bytes = TestAddImage._make_tiny_png()

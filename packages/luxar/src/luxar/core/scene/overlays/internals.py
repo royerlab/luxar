@@ -7,9 +7,9 @@ the zarr store.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
+from ...._zarr_compat import write_raw_bytes
 from ...overlay import Overlay
 
 if TYPE_CHECKING:
@@ -58,11 +58,9 @@ def write_overlay(
         if image_data is not None and image_filename is not None:
             payloads[image_filename] = image_data
         if payloads:
-            store_path = Path(scene._writer.store_path)
-            overlay_dir = store_path / "overlays" / name
-            overlay_dir.mkdir(parents=True, exist_ok=True)
+            overlay_group = scene._writer.store.require_group(overlay_path)
             for filename, data in payloads.items():
-                (overlay_dir / filename).write_bytes(data)
+                write_raw_bytes(overlay_group, filename, data)
 
     overlay = Overlay(
         name=name,
