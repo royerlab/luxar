@@ -132,7 +132,8 @@ class Story:
     #: cluster (see ``SPARSE_TAIL_RATIO``) is framed on its dense core, so its
     #: oversized bubble deliberately overflows the frame.
     frame_fraction: float = 0.46
-    min_distance: float = 2.5
+    #: A safety floor only: the smallest bubble (radius 0.35) frames at ~1.2.
+    min_distance: float = 1.0
     flight_ms: int = 2500
     tags: tuple[str, ...] = field(default_factory=tuple)
     #: Representative PDB entry rendered as the left-hand turntable ("" = none).
@@ -869,10 +870,12 @@ def story_camera(
     # Compose for the cinematic lens (cinematic mode sets it; the pose leaves
     # fov unset): the distance at which a blob of radius r95 spans
     # `frame_fraction` of the frame height under a 63° vertical field of view.
+    # A sphere of radius R at distance d spans 2R of the frame's 2·d·tan(fov/2)
+    # height, so R / (d·tan) is its fraction of the height.
     half_height_per_unit = math.tan(math.radians(CINEMATIC_FOV_DEG) / 2)
     distance = max(
         story.min_distance,
-        framing_radius(cluster) / (0.5 * story.frame_fraction * half_height_per_unit),
+        framing_radius(cluster) / (story.frame_fraction * half_height_per_unit),
     )
     position = cluster.centre + outward * distance
     return CameraConfig(

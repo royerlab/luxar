@@ -119,11 +119,12 @@ def test_story_camera_looks_at_the_centre_from_outside_the_cloud() -> None:
     assert cam.position is not None
     offset = np.array(cam.position) - np.array(cam.target)
     # The BUBBLE (radius 1.35 * r95) spans 46% of the frame height under the
-    # cinematic lens — the panel's height: distance = R / (0.5 * 0.46 * tan(fov/2));
+    # cinematic lens — the panel's height: a sphere of radius R at distance d
+    # covers R / (d * tan(fov/2)) of the height, so d = R / (0.46 * tan(fov/2));
     # along +x lifted in +y, never through the cloud. fov is left to cinematic mode.
     r_bubble = SPHERE_RADIUS_SCALE * 0.5
     assert bubble_radius(cluster) == r_bubble
-    expected = r_bubble / (0.5 * 0.46 * math.tan(math.radians(CINEMATIC_FOV_DEG) / 2))
+    expected = r_bubble / (0.46 * math.tan(math.radians(CINEMATIC_FOV_DEG) / 2))
     assert np.isclose(np.linalg.norm(offset), expected)
     assert offset[0] > 0 and offset[1] > 0
     assert cam.fov is None
