@@ -431,6 +431,15 @@ class TestAddVideo:
             with pytest.raises(ValueError, match="playback_rate"):
                 scene.add_video(self.WEBM_BYTES, position=(0.1, 0.1), playback_rate=0)
 
+    def test_invalid_size_is_reported_before_an_invalid_payload(self, tmp_path) -> None:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as c:
+            scene = c.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(
+                ValueError,
+                match=r"size must be \(width, height-or-None\) with width > 0",
+            ):
+                scene.add_video(b"not a video", position=(0.1, 0.1), size=(0.0, None))
+
     def test_visible_range_is_validated_like_other_overlays(self, tmp_path) -> None:
         dims = Dimensions(
             [

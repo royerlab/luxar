@@ -163,6 +163,27 @@ def test_story_camera_falls_back_when_the_cluster_sits_at_the_centre() -> None:
     assert cam.position is not None and cam.position[2] > 0
 
 
+def test_story_camera_stays_outside_a_sparse_cluster_bubble() -> None:
+    from luxar.demos.demo_esm3_protein_stories import (
+        BUBBLE_CAMERA_CLEARANCE,
+        StoryCluster,
+        bubble_radius,
+    )
+
+    cluster = StoryCluster(
+        indices=np.arange(3),
+        centre=np.array([4.0, 0.0, 0.0]),
+        r95=2.4,
+        r50=0.2,
+        n_named=3,
+    )
+    cam = story_camera(cluster, _story(min_distance=0.1), np.zeros(3))
+
+    assert cam.position is not None
+    distance = np.linalg.norm(np.asarray(cam.position) - np.asarray(cam.target))
+    assert np.isclose(distance, BUBBLE_CAMERA_CLEARANCE * bubble_radius(cluster))
+
+
 @pytest.mark.parametrize("n", [0, 1, 3])
 def test_icosphere_is_a_closed_unit_manifold(n: int) -> None:
     from luxar.demos.demo_esm3_protein_stories import icosphere
@@ -210,6 +231,39 @@ def test_persistent_attribution_matches_the_demo_citation() -> None:
         and node.args[0].id == "ATTRIBUTION"
         for node in ast.walk(tree)
     )
+
+
+def test_story_highlights_declare_their_intentional_additive_blending() -> None:
+    import ast
+    import inspect
+
+    import luxar.demos.demo_esm3_protein_stories as demo
+
+    tree = ast.parse(inspect.getsource(demo))
+    story_points = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "add_points"
+        and node.args
+        and isinstance(node.args[0], ast.JoinedStr)
+        and any(
+            isinstance(part, ast.Constant) and part.value == "Story "
+            for part in node.args[0].values
+        )
+    ]
+    assert len(story_points) == 1
+    blending_mode = next(
+        (
+            keyword.value
+            for keyword in story_points[0].keywords
+            if keyword.arg == "blending_mode"
+        ),
+        None,
+    )
+    assert isinstance(blending_mode, ast.Constant)
+    assert blending_mode.value == "additive"
 
 
 def test_story_narration_is_the_short_spoken_script_not_the_panel() -> None:

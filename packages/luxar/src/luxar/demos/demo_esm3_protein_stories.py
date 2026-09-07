@@ -647,11 +647,8 @@ PANEL_WIDTH = 0.32
 BIOHUB_LOGO = Path(__file__).with_name("_assets") / "biohub-logo.png"
 BIOHUB_LOGO_WIDTH = 0.07
 
-# Marker sphere around each story's cluster: a subtle translucent shell so the
-# cluster reads as a place, not just as brighter dots. Built from the existing
-# mesh model — per-vertex RGBA alpha, additive blending, the light-free
-# view-anchored shade term with the ambient floor removed so only the lit
-# limb shows — and sat in its own depth band between backdrop and highlight.
+# Marker sphere geometry around each story's cluster, in its own depth band
+# between backdrop and highlight. The physical material is configured below.
 SPHERE_RADIUS_SCALE = 1.35  # × the cluster's r95
 SPHERE_MIN_RADIUS = 0.35
 SPHERE_SUBDIVISIONS = 3  # icosphere: 642 vertices, 1280 faces
@@ -662,6 +659,7 @@ SPHERE_LAYER_ORDER = 5  # backdrop 0 < sphere < highlight 10
 # with a normal tail, so the oversized bubble overflows the frame and the
 # visitor is brought closer to the proteins that matter.
 SPARSE_TAIL_RATIO = 2.5
+BUBBLE_CAMERA_CLEARANCE = 1.2
 
 
 def bubble_radius(cluster: StoryCluster) -> float:
@@ -889,6 +887,7 @@ def story_camera(
     distance = max(
         story.min_distance,
         framing_radius(cluster) / (story.frame_fraction * half_height_per_unit),
+        BUBBLE_CAMERA_CLEARANCE * bubble_radius(cluster),
     )
     position = cluster.centre + outward * distance
     return CameraConfig(
@@ -1166,6 +1165,9 @@ def build_stories_scene(
                     keys=[keys[i] for i in idx],
                     link=UNIPROT_LINK,
                     layer=True,
+                    # The highlight intentionally ignores depth so it stays
+                    # above its co-located backdrop while the bubble refracts it.
+                    blending_mode="additive",
                     # A highlight shares every position with its backdrop twin,
                     # so in one depth band the two z-fight and the backdrop
                     # (drawn later) hides it — checked in the browser: hiding

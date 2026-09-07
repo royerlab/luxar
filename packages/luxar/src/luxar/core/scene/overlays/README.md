@@ -39,7 +39,7 @@ return the resulting `Overlay`.
 | Function | Overlay type | Notable parameters |
 |----------|--------------|--------------------|
 | `add_text_impl` | `overlay_text` | `font_size`, `font`, `color`, `anchor`, `text_align`, `line_height`, `background`, `stroke_color`/`stroke_width`, `visible_range`, `transition`, `hover` |
-| `add_image_impl` | `overlay_image` | `size`, `anchor`, `blend_mode`, `format`, `visible_range`, `transition` |
+| `add_image_impl` | `overlay_image` | `size` (height may be `None` = keep aspect), `anchor`, `blend_mode`, `format`, `visible_range`, `transition` |
 | `add_video_impl` | `overlay_video` | `size` (height may be `None` = keep aspect), `loop`, `autoplay`, `muted`, `playback_rate`, `poster`, `anchor`, `blend_mode`, `visible_range`, `transition` |
 | `add_html_impl` | `overlay_html` | `width`, `anchor`, `blend_mode`, `visible_range`, `transition`, `hover`, `hover_image_size` |
 
