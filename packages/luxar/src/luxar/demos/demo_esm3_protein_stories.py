@@ -85,7 +85,7 @@ from luxar.core.viewer_config import (
     ViewerConfig,
     Waypoint,
 )
-from luxar.demos import add_demo_caption, launch_viewer
+from luxar.demos import launch_viewer
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG, pull_in
 from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
 from luxar.demos._pdb_turntable import TurntableAssets, render_turntables
@@ -638,6 +638,13 @@ STORY_DIM = "story"
 # search by protein name on the family — whichever the cached metadata offers.
 UNIPROT_LINK = "https://www.uniprot.org/uniprotkb?query={hover_key}"
 PANEL_WIDTH = 0.32
+
+# The Biohub mark shown bottom-right: a white glyph on transparency, bundled
+# inside the package (not under demos/data, which the wheel excludes) so the
+# built store is self-contained. Width is a fraction of the viewport width; the
+# height follows the image's own aspect.
+BIOHUB_LOGO = Path(__file__).with_name("_assets") / "biohub-logo.png"
+BIOHUB_LOGO_WIDTH = 0.07
 
 # Marker sphere around each story's cluster: a subtle translucent shell so the
 # cluster reads as a place, not just as brighter dots. Built from the existing
@@ -1202,7 +1209,7 @@ def build_stories_scene(
 
             # Title (constant)
             scene.add_text(
-                "ESM Protein Stories — Swiss-Prot",
+                "ESM Protein Stories",
                 position=(0.02, 0.02),
                 font_size=0.05,
                 anchor="top-left",
@@ -1293,10 +1300,16 @@ def build_stories_scene(
                 interactive=False,
             )
 
-            add_demo_caption(
-                scene,
-                f"{n:,} proteins • ESM C embeddings • 3D UMAP • {len(stories)} stories",
-                DEMO_META.get("citation"),
+            # Bottom-right: the Biohub mark in place of the usual demo caption.
+            # `difference` blending inverts whatever the map puts behind the
+            # white glyph, so it stays legible over dark sky and bright clusters.
+            scene.add_image(
+                BIOHUB_LOGO,
+                position=(0.98, 0.97),
+                anchor="bottom-right",
+                size=(BIOHUB_LOGO_WIDTH, None),
+                opacity=0.85,
+                blend_mode="difference",
             )
 
     aprint(f"✓ Wrote {n:,} proteins and {len(stories)} stories to {output_path}")

@@ -228,3 +228,25 @@ def test_shipped_stories_are_well_formed_and_author_valid_waypoints() -> None:
         ]
     )
     assert len(vc.to_dict()["waypoints"]) == 11
+
+
+def test_biohub_logo_is_a_bundled_transparent_png() -> None:
+    """The bottom-right mark ships inside the package (self-contained store).
+
+    demos/data is excluded from the wheel, so the asset lives beside the module;
+    it must be a real PNG with an alpha channel — the glyph is white, and the
+    transparency plus `difference` blending is what makes it read on any
+    background.
+    """
+    from luxar.demos.demo_esm3_protein_stories import BIOHUB_LOGO, BIOHUB_LOGO_WIDTH
+
+    assert BIOHUB_LOGO.is_file(), BIOHUB_LOGO
+    assert "demos/data" not in BIOHUB_LOGO.as_posix()
+    assert BIOHUB_LOGO.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    from PIL import Image
+
+    with Image.open(BIOHUB_LOGO) as im:
+        assert im.mode == "RGBA"
+        alpha = np.asarray(im)[..., 3]
+    assert alpha.min() == 0 and alpha.max() == 255  # transparent margin, opaque glyph
+    assert 0 < BIOHUB_LOGO_WIDTH <= 0.2

@@ -218,6 +218,21 @@ class TestAddImage:
         )
         assert image_path.exists()
 
+    def test_image_size_accepts_an_auto_height(self, tmp_path) -> None:
+        """A None height is stored as null so the viewer keeps the aspect ratio."""
+        png_bytes = self._make_tiny_png()
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as c:
+            scene = c.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_image(png_bytes, position=(0.98, 0.97), size=(0.07, None))
+            with pytest.raises(ValueError, match="width > 0"):
+                scene.add_image(png_bytes, position=(0.5, 0.5), size=(0.0, None))
+            with pytest.raises(ValueError, match="height must be > 0 or None"):
+                scene.add_image(png_bytes, position=(0.5, 0.5), size=(0.1, -1.0))
+
+        store = zarr.open_group(tmp_path / "test.luxar.zarr", mode="r")
+        attrs = dict(store["overlays/overlay_0"].attrs)
+        assert attrs["size"] == [0.07, None]
+
     def test_image_from_path(self, tmp_path) -> None:
         """Add image from file path."""
         png_bytes = self._make_tiny_png()

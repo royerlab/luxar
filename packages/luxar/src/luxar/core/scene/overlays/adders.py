@@ -105,7 +105,7 @@ def add_image_impl(
     position: Tuple[float, float],
     *,
     name: Optional[str] = None,
-    size: Optional[Tuple[float, float]] = None,
+    size: Optional[Tuple[float, Optional[float]]] = None,
     opacity: float = 1.0,
     anchor: str = "top-left",
     blend_mode: str = "normal",
@@ -149,7 +149,15 @@ def add_image_impl(
         "z_index": len(scene._overlays),
     }
     if size is not None:
-        attrs["size"] = list(size)
+        if len(size) != 2 or size[0] is None or size[0] <= 0:
+            raise ValueError(
+                f"size must be (width, height-or-None) with width > 0, got {size}"
+            )
+        if size[1] is not None and size[1] <= 0:
+            raise ValueError(f"size height must be > 0 or None, got {size[1]}")
+        # A None height lets the viewer size the image from its own aspect
+        # ratio (CSS `height: auto`), the same contract as add_video.
+        attrs["size"] = [float(size[0]), None if size[1] is None else float(size[1])]
     if validated_range is not None:
         attrs["visible_range"] = validated_range
 
