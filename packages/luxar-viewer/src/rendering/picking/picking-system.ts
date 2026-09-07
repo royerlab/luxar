@@ -212,11 +212,18 @@ export class PickingSystem {
   /** Optional post-processing reference for lens distortion correction. */
   private postProcessing: PostProcessingManager | null = null;
 
+  /**
+   * `onPickResult` may be asynchronous. The app's handler is: it fetches the
+   * label / image / key before it stores the picked-element cache, so
+   * {@link pickAt} awaits the handler's promise before resolving — a caller
+   * that reads the cache "right after the pick" would otherwise race the fetch.
+   * The hover path fires and forgets, so nothing there waits on it.
+   */
   constructor(
     private renderer: Renderer,
     private capabilities: RendererCapabilities,
     private camera: THREE.Camera,
-    private onPickResult: (result: PickResult | null) => void
+    private onPickResult: (result: PickResult | null) => void | Promise<void>
   ) {
     this.pickScene = new THREE.Scene();
     // No background — pick buffer clears to (0,0,0,0) which means "no hit"
@@ -475,7 +482,7 @@ export class PickingSystem {
     this._pickSeq++;
     // Fade overlay (OverlayManager dedupes against the last state, so
     // repeated calls do no DOM work).
-    this.onPickResult(null);
+    void this.onPickResult(null);
     this.scheduler.markDirty();
   }
 
@@ -534,7 +541,7 @@ export class PickingSystem {
     // pick's late result is now stale.
     this._pickSeq++;
     // Fade existing overlay while moving (dedupe-safe).
-    this.onPickResult(null);
+    void this.onPickResult(null);
     this.scheduler.recordMouseMove(x, y);
   }
 
@@ -543,9 +550,12 @@ export class PickingSystem {
    * hover-settle path. A finger never hovers, so a tap has nothing to settle:
    * it bypasses the scheduler (cancelling any pending settle so the same
    * point is not picked twice) and runs the pick directly. Resolves after
-   * the result has been delivered through `onPickResult` (or dropped as
-   * stale by the sequence guard), so the caller can read the picked-element
-   * cache immediately afterwards. Honours the same `setShouldPick` gate as a
+   * the result has been delivered through `onPickResult` AND that handler
+   * has finished (or the result was dropped as stale by the sequence guard),
+   * so the caller can read the picked-element cache immediately afterwards.
+   * The wait matters: the app's handler stores the cache only after an
+   * asynchronous label fetch, so resolving on delivery alone would hand a
+   * tap the cache as it was BEFORE its own pick landed. Honours the same `setShouldPick` gate as a
    * hover pick: with no consumer there is nothing to pick for.
    */
   pickAt(clientX: number, clientY: number): Promise<void> {
@@ -569,7 +579,7 @@ export class PickingSystem {
     // the cursor has already left the canvas.
     this._pickSeq++;
     this.scheduler.recordMouseLeave();
-    this.onPickResult(null);
+    void this.onPickResult(null);
   }
 
   /** Clean up all resources — render target, pick materials, scene. */
@@ -696,7 +706,7 @@ export class PickingSystem {
     const ray = this.raycaster.ray;
 
     if (!rayHitsAnyNode(ray, this.nodeMap, this._worldBoxCache)) {
-      this.onPickResult(null);
+      await this.onPickResult(null);
       return;
     }
 
@@ -710,7 +720,7 @@ export class PickingSystem {
     // the readback was in flight — emitting it would clobber fresher state
     // with a stale tooltip.
     if (pickSeq !== this._pickSeq) return;
-    this.onPickResult(result);
+    await this.onPickResult(result);
   }
 
   /**

@@ -573,6 +573,46 @@ function makeMouseEvent(x: number, y: number): MouseEvent {
   return { clientX: x, clientY: y } as MouseEvent;
 }
 
+describe('PickingSystem — pickAt', () => {
+  it('resolves only after an asynchronous result handler has finished', async () => {
+    // The app's handler fetches the label before it stores the picked-element
+    // cache. A tap reads that cache as soon as pickAt resolves, so resolving
+    // on delivery alone would race the fetch (the touch menu never opened).
+    const gate = deferred<void>();
+    let handled = false;
+    const onPickResult = vi.fn(async (_result: PickResult | null) => {
+      await gate.promise;
+      handled = true;
+    });
+    const canvas = document.createElement('canvas');
+    Object.defineProperty(canvas, 'clientWidth', { value: 200 });
+    Object.defineProperty(canvas, 'clientHeight', { value: 100 });
+    const renderer = {
+      domElement: canvas,
+      getDrawingBufferSize: vi.fn((target: THREE.Vector2) => target.set(200, 100)),
+      readRenderTargetPixels: vi.fn(),
+    } as unknown as THREE.WebGLRenderer;
+    const system = new PickingSystem(renderer, makeStubCapabilities(), makeCamera(), onPickResult);
+    // No GL here: the buffer render is a no-op, and with no registered nodes
+    // the ray-bbox cull takes the miss path, which delivers `null`.
+    (system as unknown as { renderPickBuffer: () => void }).renderPickBuffer = () => {};
+
+    let settled = false;
+    const pending = system.pickAt(50, 50).then(() => {
+      settled = true;
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(onPickResult).toHaveBeenCalledWith(null);
+    expect(settled).toBe(false);
+
+    gate.resolve();
+    await pending;
+    expect(handled).toBe(true);
+    expect(settled).toBe(true);
+    system.dispose();
+  });
+});
+
 describe('PickingSystem — settle scheduler', () => {
   let system: PickingSystem;
   let onPickResult: ReturnType<typeof vi.fn>;
