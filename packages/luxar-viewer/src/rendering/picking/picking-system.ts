@@ -567,21 +567,19 @@ export class PickingSystem {
    * tap the cache as it was BEFORE its own pick landed. Honours the same `setShouldPick` gate as a
    * hover pick: with no consumer there is nothing to pick for.
    */
-  async pickAt(clientX: number, clientY: number): Promise<void> {
+  pickAt(clientX: number, clientY: number): Promise<void> {
     if (!this._canvasRect) {
       this._canvasRect = this.renderer.domElement.getBoundingClientRect();
     }
     const x = clientX - this._canvasRect.left;
     const y = clientY - this._canvasRect.top;
     this.scheduler.cancelPending();
-    if (!this._shouldPick()) return;
+    if (!this._shouldPick()) return Promise.resolve();
     const explicitPickSeq = ++this._explicitPickSeq;
     this._explicitPicksInFlight++;
-    try {
-      await this.performPick(x, y, true, explicitPickSeq);
-    } finally {
+    return this.performPick(x, y, true, explicitPickSeq).finally(() => {
       this._explicitPicksInFlight--;
-    }
+    });
   }
 
   /**
