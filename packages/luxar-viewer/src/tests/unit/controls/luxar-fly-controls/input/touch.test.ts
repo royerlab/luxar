@@ -151,6 +151,17 @@ describe('one finger — look', () => {
     expect(ctx.dispatch).not.toHaveBeenCalled();
   });
 
+  it('does not dispatch change when look speed is zero', () => {
+    const { ctx } = makeCtx({ lookSpeed: 0 });
+    handleTouchDown(ctx, touch('pointerdown', 1, 100, 100));
+    vi.mocked(ctx.dispatch).mockClear();
+
+    handleTouchMove(ctx, touch('pointermove', 1, 110, 100));
+
+    expect(ctx.angularVelocity.length()).toBe(0);
+    expect(ctx.dispatch).not.toHaveBeenCalled();
+  });
+
   it('matches the mouse right-drag angular impulse for the same delta', () => {
     const { ctx } = makeCtx();
     handleTouchDown(ctx, touch('pointerdown', 1, 100, 100));
@@ -265,6 +276,20 @@ describe('two fingers — strafe, thrust, roll', () => {
     vi.mocked(ctx.dispatch).mockClear();
 
     handleTouchMove(ctx, touch('pointermove', 3, 710, 300));
+
+    expect(ctx.velocity.length()).toBe(0);
+    expect(ctx.angularVelocity.length()).toBe(0);
+    expect(ctx.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('does not dispatch change for pure strafe when movement speed is zero', () => {
+    const { ctx } = makeCtx({ movementSpeed: 0 });
+    handleTouchDown(ctx, touch('pointerdown', 1, 300, 300));
+    handleTouchDown(ctx, touch('pointerdown', 2, 500, 300));
+    vi.mocked(ctx.dispatch).mockClear();
+
+    handleTouchMove(ctx, touch('pointermove', 1, 320, 300));
+    handleTouchMove(ctx, touch('pointermove', 2, 520, 300));
 
     expect(ctx.velocity.length()).toBe(0);
     expect(ctx.angularVelocity.length()).toBe(0);

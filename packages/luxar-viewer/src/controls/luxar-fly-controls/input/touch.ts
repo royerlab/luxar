@@ -113,21 +113,26 @@ function reseedPinch(ctx: FlyTouchCtx): void {
 }
 
 /** One-finger drag: the same angular impulse a mouse right-drag applies. */
-function look(ctx: FlyTouchCtx, deltaX: number, deltaY: number): void {
+function look(ctx: FlyTouchCtx, deltaX: number, deltaY: number): boolean {
+  const scale = ctx.lookSpeed * TOUCH_LOOK_GAIN;
+  if (scale === 0) return false;
   _x.set(1, 0, 0).applyQuaternion(ctx.orientation);
   _y.set(0, 1, 0).applyQuaternion(ctx.orientation);
-  ctx.angularVelocity.addScaledVector(_x, -deltaY * ctx.lookSpeed * TOUCH_LOOK_GAIN);
-  ctx.angularVelocity.addScaledVector(_y, -deltaX * ctx.lookSpeed * TOUCH_LOOK_GAIN);
+  ctx.angularVelocity.addScaledVector(_x, -deltaY * scale);
+  ctx.angularVelocity.addScaledVector(_y, -deltaX * scale);
+  return true;
 }
 
 /** Two-finger midpoint drag: the same screen-plane translation as a left-drag. */
-function strafe(ctx: FlyTouchCtx, deltaX: number, deltaY: number): void {
+function strafe(ctx: FlyTouchCtx, deltaX: number, deltaY: number): boolean {
+  const scale = ctx.movementSpeed * TOUCH_STRAFE_SCALE;
+  if (scale === 0) return false;
   _x.set(1, 0, 0).applyQuaternion(ctx.orientation);
   _y.set(0, 1, 0).applyQuaternion(ctx.orientation);
-  const scale = ctx.movementSpeed * TOUCH_STRAFE_SCALE;
   const target = ctx.inertialMode ? ctx.velocity : ctx.camera.position;
   target.addScaledVector(_x, -deltaX * scale);
   target.addScaledVector(_y, deltaY * scale);
+  return true;
 }
 
 /** Pinch: thrust along the view direction; twist: roll about it. */
@@ -180,8 +185,7 @@ export function handleTouchMove(ctx: FlyTouchCtx, event: PointerEvent): void {
     const deltaX = event.clientX - pos.x;
     const deltaY = event.clientY - pos.y;
     if (deltaX !== 0 || deltaY !== 0) {
-      look(ctx, deltaX, deltaY);
-      changed = true;
+      changed = look(ctx, deltaX, deltaY);
     }
     pos.set(event.clientX, event.clientY);
   } else {
@@ -193,8 +197,7 @@ export function handleTouchMove(ctx: FlyTouchCtx, event: PointerEvent): void {
       const deltaX = next.midX - prev.midX;
       const deltaY = next.midY - prev.midY;
       if (deltaX !== 0 || deltaY !== 0) {
-        strafe(ctx, deltaX, deltaY);
-        changed = true;
+        changed = strafe(ctx, deltaX, deltaY);
       }
       changed = thrustAndRoll(ctx, prev, next) || changed;
       ctx.setPinch(next);
