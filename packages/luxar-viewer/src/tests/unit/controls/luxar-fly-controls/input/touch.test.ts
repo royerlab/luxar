@@ -13,7 +13,6 @@ import {
   handleTouchMove,
   handleTouchUp,
   FLY_TWIST_ROLL_GAIN,
-  FLY_TWIST_ROLL_SIGN,
   PINCH_THRUST_GAIN,
   type FlyPinchState,
   type FlyTouchCtx,
@@ -130,6 +129,28 @@ describe('handleTouchDown / handleTouchUp — gesture lifecycle', () => {
 });
 
 describe('one finger — look', () => {
+  it('advances a tracked finger while disabled without applying an impulse', () => {
+    const { ctx } = makeCtx();
+    handleTouchDown(ctx, touch('pointerdown', 1, 100, 100));
+    vi.mocked(ctx.dispatch).mockClear();
+
+    ctx.enabled = false;
+    handleTouchMove(ctx, touch('pointermove', 1, 400, 100));
+    expect(ctx.angularVelocity.length()).toBe(0);
+    expect(ctx.dispatch).not.toHaveBeenCalled();
+
+    ctx.enabled = true;
+    handleTouchMove(ctx, touch('pointermove', 1, 410, 100));
+    expect(ctx.angularVelocity.y).toBeCloseTo(-10 * ctx.lookSpeed * 2.5);
+  });
+
+  it('ignores a move from a pointer that was never tracked', () => {
+    const { ctx } = makeCtx();
+    handleTouchMove(ctx, touch('pointermove', 7, 100, 100));
+    expect(ctx.angularVelocity.length()).toBe(0);
+    expect(ctx.dispatch).not.toHaveBeenCalled();
+  });
+
   it('matches the mouse right-drag angular impulse for the same delta', () => {
     const { ctx } = makeCtx();
     handleTouchDown(ctx, touch('pointerdown', 1, 100, 100));
@@ -160,6 +181,25 @@ describe('one finger — look', () => {
 });
 
 describe('two fingers — strafe, thrust, roll', () => {
+  it('advances the pinch snapshot while disabled without applying an impulse', () => {
+    const { ctx } = makeCtx();
+    handleTouchDown(ctx, touch('pointerdown', 1, 300, 300));
+    handleTouchDown(ctx, touch('pointerdown', 2, 500, 300));
+    vi.mocked(ctx.dispatch).mockClear();
+
+    ctx.enabled = false;
+    handleTouchMove(ctx, touch('pointermove', 2, 700, 300));
+    expect(ctx.velocity.length()).toBe(0);
+    expect(ctx.angularVelocity.length()).toBe(0);
+    expect(ctx.dispatch).not.toHaveBeenCalled();
+
+    ctx.enabled = true;
+    handleTouchMove(ctx, touch('pointermove', 2, 710, 300));
+    expect(ctx.velocity.z).toBeCloseTo(
+      -Math.log(410 / 400) * ctx.movementSpeed * PINCH_THRUST_GAIN
+    );
+  });
+
   it('a midpoint drag strafes exactly like a mouse left-drag of the same delta', () => {
     const { ctx } = makeCtx();
     handleTouchDown(ctx, touch('pointerdown', 1, 100, 100));
@@ -212,11 +252,23 @@ describe('two fingers — strafe, thrust, roll', () => {
     // Forward for identity orientation is -Z; the roll impulse lies on it.
     expect(ctx.angularVelocity.x).toBeCloseTo(0, 10);
     expect(ctx.angularVelocity.y).toBeCloseTo(0, 10);
-    const expected = FLY_TWIST_ROLL_SIGN * FLY_TWIST_ROLL_GAIN * (Math.PI / 2);
-    // Two moves: the first changes the angle by atan2 of an intermediate pair.
-    expect(Math.abs(ctx.angularVelocity.z)).toBeCloseTo(Math.abs(expected), 6);
-    expect(Math.sign(ctx.angularVelocity.z)).toBe(-Math.sign(expected)); // -Z axis flips the sign
+    // The roll impulse is along forward (-Z), so the -1 touch sign produces +Z.
+    expect(ctx.angularVelocity.z).toBeCloseTo(FLY_TWIST_ROLL_GAIN * (Math.PI / 2), 6);
     expect(ctx.velocity.length()).toBeCloseTo(0, 6); // no net thrust at constant distance
+  });
+
+  it('does not dispatch change when only a non-anchor third finger moves', () => {
+    const { ctx } = makeCtx();
+    handleTouchDown(ctx, touch('pointerdown', 1, 300, 300));
+    handleTouchDown(ctx, touch('pointerdown', 2, 500, 300));
+    handleTouchDown(ctx, touch('pointerdown', 3, 700, 300));
+    vi.mocked(ctx.dispatch).mockClear();
+
+    handleTouchMove(ctx, touch('pointermove', 3, 710, 300));
+
+    expect(ctx.velocity.length()).toBe(0);
+    expect(ctx.angularVelocity.length()).toBe(0);
+    expect(ctx.dispatch).not.toHaveBeenCalled();
   });
 
   it('coincident fingers (degenerate pinch) add no thrust, roll or NaN', () => {

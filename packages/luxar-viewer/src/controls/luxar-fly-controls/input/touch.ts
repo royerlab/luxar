@@ -131,17 +131,21 @@ function strafe(ctx: FlyTouchCtx, deltaX: number, deltaY: number): void {
 }
 
 /** Pinch: thrust along the view direction; twist: roll about it. */
-function thrustAndRoll(ctx: FlyTouchCtx, prev: FlyPinchState, next: FlyPinchState): void {
-  if (prev.distance <= 0 || next.distance <= 0) return; // coincident fingers: no orientation
+function thrustAndRoll(ctx: FlyTouchCtx, prev: FlyPinchState, next: FlyPinchState): boolean {
+  if (prev.distance <= 0 || next.distance <= 0) return false; // coincident fingers: no orientation
   _fwd.set(0, 0, -1).applyQuaternion(ctx.orientation);
   const thrust = Math.log(next.distance / prev.distance) * ctx.movementSpeed * PINCH_THRUST_GAIN;
+  let changed = false;
   if (thrust !== 0) {
     (ctx.inertialMode ? ctx.velocity : ctx.camera.position).addScaledVector(_fwd, thrust);
+    changed = true;
   }
   const twist = wrapAngle(next.angle - prev.angle);
   if (twist !== 0) {
     ctx.angularVelocity.addScaledVector(_fwd, FLY_TWIST_ROLL_SIGN * FLY_TWIST_ROLL_GAIN * twist);
+    changed = true;
   }
+  return changed;
 }
 
 /**
@@ -160,14 +164,25 @@ export function handleTouchDown(ctx: FlyTouchCtx, event: PointerEvent): void {
 /**
  * A tracked finger moved. One finger looks; two or more strafe by the midpoint
  * delta, thrust by the pinch ratio and roll by the twist — all against the
- * previous snapshot, which is then advanced. Dispatches `change`.
+ * previous snapshot, which is then advanced. Dispatches `change` only when an
+ * impulse was applied.
  */
 export function handleTouchMove(ctx: FlyTouchCtx, event: PointerEvent): void {
-  if (!ctx.enabled) return;
   const pos = ctx.pointers.get(event.pointerId);
   if (!pos) return;
+  if (!ctx.enabled) {
+    pos.set(event.clientX, event.clientY);
+    reseedPinch(ctx);
+    return;
+  }
+  let changed = false;
   if (ctx.pointers.size === 1) {
-    look(ctx, event.clientX - pos.x, event.clientY - pos.y);
+    const deltaX = event.clientX - pos.x;
+    const deltaY = event.clientY - pos.y;
+    if (deltaX !== 0 || deltaY !== 0) {
+      look(ctx, deltaX, deltaY);
+      changed = true;
+    }
     pos.set(event.clientX, event.clientY);
   } else {
     pos.set(event.clientX, event.clientY);
@@ -175,12 +190,17 @@ export function handleTouchMove(ctx: FlyTouchCtx, event: PointerEvent): void {
     const pair = firstTwo(ctx);
     if (prev && pair) {
       const next = pinchGeometry(pair[0], pair[1]);
-      strafe(ctx, next.midX - prev.midX, next.midY - prev.midY);
-      thrustAndRoll(ctx, prev, next);
+      const deltaX = next.midX - prev.midX;
+      const deltaY = next.midY - prev.midY;
+      if (deltaX !== 0 || deltaY !== 0) {
+        strafe(ctx, deltaX, deltaY);
+        changed = true;
+      }
+      changed = thrustAndRoll(ctx, prev, next) || changed;
       ctx.setPinch(next);
     }
   }
-  ctx.dispatch('change');
+  if (changed) ctx.dispatch('change');
 }
 
 /**

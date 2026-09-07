@@ -139,14 +139,16 @@ ergonomics. In both mappings `Shift+left` performs the opposite action.
 | Pinch          | Move forward/backward (touch)   |
 | 2-finger twist | Roll (touch)                    |
 
-Touch uses the orbit controls' finger vocabulary (one finger turns, two
-fingers translate / zoom / roll) and drives the SAME physics state as the
+Touch uses the orbit controls' complete finger vocabulary (one finger turns,
+two fingers translate / zoom / roll) and drives the SAME physics state as the
 mouse path (`velocity`, `angularVelocity`, `orientation`), so inertia and
 damping behave identically — `luxar-fly-controls/input/touch.ts`. Pinch thrust
 is logarithmic in the finger distance, so pinch-in exactly undoes pinch-out. A
 touch `pointerdown` is `preventDefault`ed so the browser's compatibility mouse
-events cannot start a phantom left-drag strafe under a tap; mouse-typed pointer
-events are ignored by the touch path and keep the legacy mouse listeners.
+events cannot start a phantom left-drag strafe under a tap. The canvas must be
+`touch-action: none` for multi-touch gestures to reach the controls
+(`core/app/interaction/canvas-gesture-ownership.ts`); mouse-typed pointer events
+are ignored by the touch path and keep the legacy mouse listeners.
 
 ### 3. Ortho Controls
 
