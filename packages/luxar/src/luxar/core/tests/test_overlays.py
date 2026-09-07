@@ -342,7 +342,9 @@ class TestAddVideo:
                 self.store = zarr.group()
 
             def write_group(self, path: str, **attrs: object) -> None:
-                group = self.store if path in ("", "/") else self.store.require_group(path)
+                group = (
+                    self.store if path in ("", "/") else self.store.require_group(path)
+                )
                 group.attrs.update(attrs)
 
         writer = MemoryWriter()

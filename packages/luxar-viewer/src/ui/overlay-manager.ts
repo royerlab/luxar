@@ -509,7 +509,10 @@ export class OverlayManager {
   }
 
   /** Create a DOM element for a single overlay. */
-  private createOverlayElement(config: OverlayConfig, archivedMedia: ArchivedOverlayMedia): HTMLDivElement {
+  private createOverlayElement(
+    config: OverlayConfig,
+    archivedMedia: ArchivedOverlayMedia
+  ): HTMLDivElement {
     const el = document.createElement('div');
     el.className = 'luxar-overlay';
     el.dataset.overlayName = config.name;

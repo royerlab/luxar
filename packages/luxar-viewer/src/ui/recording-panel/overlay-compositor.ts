@@ -334,11 +334,7 @@ export function compositeVideoOverlay(
   metrics: OverlayCaptureMetrics
 ): void {
   const video = el.querySelector('video');
-  if (
-    !video ||
-    video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
-    video.videoWidth === 0
-  ) {
+  if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth === 0) {
     return;
   }
 

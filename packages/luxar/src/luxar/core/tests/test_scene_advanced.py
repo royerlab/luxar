@@ -33,7 +33,9 @@ class TestSceneInitialization:
         with pytest.raises(ValueError, match="Writer is required"):
             Scene(writer=cast(Any, None), dimensions=Dimensions.default_3d())
 
-    def test_scene_rejects_waypoints_with_unknown_dimensions(self, tmp_path: Path) -> None:
+    def test_scene_rejects_waypoints_with_unknown_dimensions(
+        self, tmp_path: Path
+    ) -> None:
         config = ViewerConfig(
             waypoints=[
                 Waypoint(
