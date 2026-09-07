@@ -870,7 +870,9 @@ class TestCalibrateSmoke:
         )
 
         assert result.k_star_metric == "psnr_fg_weighted"
-        assert all(math.isfinite(value) for value in result.held_out_psnr_fg_weighted_db)
+        assert all(
+            math.isfinite(value) for value in result.held_out_psnr_fg_weighted_db
+        )
         assert result.held_out_peak_selected is not None
         expected = find_k_star(
             result.k_values_requested, result.held_out_psnr_fg_weighted_db
