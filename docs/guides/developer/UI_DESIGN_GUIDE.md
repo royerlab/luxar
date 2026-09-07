@@ -954,12 +954,9 @@ media features in any other stylesheet, and the load-bearing clamps present.
   under the visible toolbar). The `vh` fallback stays outside `@supports` — in
   the component file when it already has one, otherwise in the plain
   `(pointer: coarse)` block.
-- **Safe areas.** `index.html` declares `viewport-fit=cover`; the rail gutter
-  (`left: calc(73px + env(safe-area-inset-left))`, `!important` like the
-  docking rule it restates — §15.6), its first-run hint, collapsed grip, and
-  every bottom-strip surface (dimension sliders, toast, scale bar, colormap
-  legend, resolution indicator, debug console) add the matching
-  `env(safe-area-inset-*)`.
+- **Safe areas.** `index.html` declares `viewport-fit=cover`; every
+  edge-anchored surface adds its matching `env(safe-area-inset-*)`. The rail
+  gutter keeps the docking rule's sanctioned `!important` (§15.6).
 - **The rail scrolls its items, never its root.** Popovers, flyouts and the
   footer are children of the rail root, so `overflow` on the root would clip
   them. The buttons live in `.luxar-control-rail__items`, `display: contents`
