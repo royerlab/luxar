@@ -22,7 +22,8 @@ _INTEROP_DEMOS = {
 }
 
 # This kiosk intentionally reserves bottom-right for its bundled Biohub mark and
-# renders the dataset/model/license credit as a persistent line under the title.
+# renders the dataset/model/license credit as the closing line of its Overview
+# panel (guarded in test_demo_esm3_protein_stories.py).
 _CUSTOM_CAPTION_DEMOS = {"demo_esm3_protein_stories.py"}
 
 

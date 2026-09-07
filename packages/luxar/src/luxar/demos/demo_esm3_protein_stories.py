@@ -609,7 +609,10 @@ STORIES: tuple[Story, ...] = (
 )
 
 OVERVIEW_TITLE = "Ten stories in the protein universe"
-ATTRIBUTION = f"{DEMO_META['citation']['ref']} — {DEMO_META['citation']['license']}"
+# The data/model/license credit. This kiosk reserves bottom-right for the Biohub
+# mark and keeps the title bare, so the credit is the closing line of the
+# Overview panel (story 0) rather than a standalone overlay.
+ATTRIBUTION = f"{DEMO_META['citation']['ref']} · {DEMO_META['citation']['license']}"
 OVERVIEW_HTML = (
     "Every point is one of {n:,} Swiss-Prot proteins, placed by a protein "
     "language model (ESM C) so that proteins with similar sequences sit close "
@@ -954,6 +957,8 @@ def overview_panel_html(n_proteins: int) -> str:
         f'<div style="font-size:2.2vh;font-weight:bold;margin-bottom:0.6vh">'
         f"{html.escape(OVERVIEW_TITLE)}</div>"
         f"{OVERVIEW_HTML.format(n=n_proteins)}"
+        f'<div style="margin-top:1.1vh;font-size:1.05vh;color:rgba(232,232,232,0.55)">'
+        f"{html.escape(ATTRIBUTION)}</div>"
         "</div>"
     )
 
@@ -1223,14 +1228,6 @@ def build_stories_scene(
                 font_size=0.05,
                 anchor="top-left",
                 color="rgba(255,255,255,0.65)",
-                blend_mode="difference",
-            )
-            scene.add_text(
-                ATTRIBUTION,
-                position=(0.02, 0.085),
-                font_size=0.014,
-                anchor="top-left",
-                color="rgba(255,255,255,0.55)",
                 blend_mode="difference",
             )
 

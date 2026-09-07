@@ -7,6 +7,8 @@ gets highlighted and WHERE the camera goes, on synthetic data.
 
 from __future__ import annotations
 
+import html
+
 import numpy as np
 import pytest
 
@@ -211,7 +213,15 @@ def test_panels_escape_html_and_carry_the_counts() -> None:
     assert "1,234 Swiss-Prot proteins" in overview_panel_html(1234)
 
 
-def test_persistent_attribution_matches_the_demo_citation() -> None:
+def test_attribution_closes_the_overview_panel_and_is_not_a_standalone_overlay() -> (
+    None
+):
+    """The credit lives inside the Overview panel (story 0), nowhere else.
+
+    The kiosk keeps the title bare and bottom-right for the Biohub mark, so the
+    dataset/model/license credit is the panel's closing line — escaped like the
+    rest of the panel — and no overlay is authored from ATTRIBUTION directly.
+    """
     import ast
     import inspect
 
@@ -220,12 +230,15 @@ def test_persistent_attribution_matches_the_demo_citation() -> None:
     citation = demo.DEMO_META["citation"]
     assert citation["ref"] in demo.ATTRIBUTION
     assert citation["license"] in demo.ATTRIBUTION
+    panel = overview_panel_html(1234)
+    assert html.escape(demo.ATTRIBUTION) in panel
+    assert panel.rstrip().endswith(html.escape(demo.ATTRIBUTION) + "</div></div>")
 
     tree = ast.parse(inspect.getsource(demo))
-    assert any(
+    assert not any(
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "add_text"
+        and node.func.attr in {"add_text", "add_html"}
         and node.args
         and isinstance(node.args[0], ast.Name)
         and node.args[0].id == "ATTRIBUTION"
