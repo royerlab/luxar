@@ -137,8 +137,12 @@ describe('coarse-pointer.css contract', () => {
       /\.luxar-control-rail__items > \.luxar-control-rail__btn,[\s\S]*?\.luxar-control-rail > \.luxar-perf\s*\{[^}]*flex:\s*0 0 auto/
     );
 
-    // Labels cannot render outside the clipped scroll box; D2 provides the touch label route.
-    expect(ruleBody(coarse, '.luxar-control-rail__tip')).toMatch(/display:\s*none/);
+    // Item labels cannot render outside the clipped scroll box; the collapse
+    // handle stays outside it and keeps its hover/focus label.
+    expect(ruleBody(coarse, '.luxar-control-rail__items .luxar-control-rail__tip')).toMatch(
+      /display:\s*none/
+    );
+    expect(coarse).not.toMatch(/(?:^|})\s*\.luxar-control-rail__tip\s*\{/);
 
     // The empty wrapper must not add a flex gap to the collapsed horizontal rail.
     expect(ruleBody(coarse, '.luxar-control-rail.is-collapsed .luxar-control-rail__items')).toMatch(
@@ -156,6 +160,9 @@ describe('coarse-pointer.css contract', () => {
     );
     expect(ruleBody(coarse, '.luxar-control-rail-hint')).toMatch(/safe-area-inset-left/);
     expect(ruleBody(coarse, '.luxar-debug-console')).toMatch(/safe-area-inset-bottom/);
+    expect(ruleBody(coarse, '.luxar-control-rail.is-collapsed')).toMatch(
+      /50vh[^;]*safe-area-inset-bottom/
+    );
     for (const sel of [
       '.luxar-dimension-sliders',
       '.luxar-toast',
@@ -181,6 +188,7 @@ describe('coarse-pointer.css contract', () => {
 
   it('converts every vh bound the panels use to dvh inside the fallback block', () => {
     // The dvh rules live in the coarse block that wraps them in @supports.
+    const coarse = mediaBlock(css, /pointer:\s*coarse/);
     const dvh = mediaBlocks(css, /pointer:\s*coarse/).find((b) => b.includes('@supports'))!;
     expect(dvh).toBeDefined();
     for (const sel of [
@@ -193,6 +201,11 @@ describe('coarse-pointer.css contract', () => {
     ]) {
       expect(ruleBody(dvh, sel), sel).toMatch(/dvh/);
     }
+    expect(ruleBody(coarse, '.luxar-layers-panel')).toMatch(/max-height:\s*calc\(100vh - 40px\)/);
+    expect(ruleBody(dvh, '.luxar-layers-panel')).toMatch(/max-height:\s*calc\(100dvh - 40px\)/);
+    expect(ruleBody(dvh, '.luxar-control-rail.is-collapsed')).toMatch(
+      /50dvh[^;]*safe-area-inset-bottom/
+    );
   });
 });
 

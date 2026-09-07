@@ -43,6 +43,9 @@
     left: calc(12px + env(safe-area-inset-left, 0px));
     max-height: calc(100vh - 2 * var(--luxar-spacing-8, 16px));
   }
+  .luxar-control-rail.is-collapsed {
+    transform: translateY(calc(50vh - 16px - env(safe-area-inset-bottom, 0px) - 100%));
+  }
 
   /* The rail's items box scrolls when the rail is taller than the viewport
      (a landscape phone is ~340px tall; the rail is ~600px). On a fine pointer
@@ -71,7 +74,7 @@
   .luxar-control-rail > .luxar-perf {
     flex: 0 0 auto;
   }
-  .luxar-control-rail__tip {
+  .luxar-control-rail__items .luxar-control-rail__tip {
     display: none;
   }
   .luxar-control-rail.is-collapsed .luxar-control-rail__items {
@@ -89,6 +92,9 @@
   }
   .luxar-data-monitor--expanded {
     width: min(600px, calc(100vw - 2 * var(--luxar-spacing-10, 20px)));
+  }
+  .luxar-layers-panel {
+    max-height: calc(100vh - 40px);
   }
   .luxar-data-monitor--top-right,
   .luxar-data-monitor--bottom-right {
@@ -164,7 +170,7 @@
       max-height: calc(100dvh - 2 * var(--luxar-spacing-8, 16px));
     }
     .luxar-control-rail.is-collapsed {
-      transform: translateY(calc(50dvh - 16px - 100%));
+      transform: translateY(calc(50dvh - 16px - env(safe-area-inset-bottom, 0px) - 100%));
     }
     .luxar-control-rail__popover-body {
       max-height: calc(100dvh - 32px);
@@ -173,7 +179,7 @@
       max-height: 82dvh;
     }
     .luxar-layers-panel {
-      max-height: 70dvh;
+      max-height: calc(100dvh - 40px);
     }
     .luxar-data-monitor--expanded {
       max-height: 80dvh;
