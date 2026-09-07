@@ -1,5 +1,5 @@
 /**
- * Overlay Manager - Renders screen-space overlays (text, image, HTML) over the canvas.
+ * Overlay Manager - Renders screen-space overlays (text, image, HTML, video) over the canvas.
  *
  * Creates an HTML overlay layer between the WebGL canvas and UI controls.
  * Supports dimension-aware visibility (overlays show/hide based on slider positions),

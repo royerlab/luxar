@@ -10,7 +10,7 @@
  *   - the renderer's GL canvas (only needed for the HTML branch's
  *     coordinate mapping).
  *
- * Text and image overlays are drawn with canvas-2D primitives (one
+ * Text, image, and video overlays are drawn with canvas-2D primitives (one
  * blend-mode map, one save/restore per overlay, the shared anchor
  * offset rules); HTML overlays are rasterized by wrapping the live node
  * in an `<svg><foreignObject>` data URL. That wrapper is parsed as XML,
