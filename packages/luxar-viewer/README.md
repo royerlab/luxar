@@ -825,6 +825,7 @@ the native WKWebView launcher fall back to L1-only caching; see the
 - `?renderer=webgpu&webgpu-force-webgl` — Keep the WebGPU/TSL API surface while Three.js routes through its internal WebGL2 backend (diagnostic)
 - `?perf-timestamp` — Enable WebGPU timestamp-query profiling for performance tests
 - `?dpr=<value>` — Pin a fixed device pixel ratio for the session (clamped to `[0.25, native]`) and lock adaptive resolution off
+- `?input=<touch|mouse>` — Force the input profile for the session: `touch` makes the viewer treat the device as a bare phone/tablet (touch gesture routing, long-press menus, mobile rendering budgets), `mouse` forces desktop behaviour on a touch device. JS-only — stylesheets still follow the real `(pointer: coarse)` / `(hover: none)` media features. Detected by default, including iPadOS masquerading as macOS
 - `?lineJoin=<none|miter>` — Force the line join style for the session; applies only to `linePrimitive=screen-space` (the capsule partitions joints unconditionally)
 - `?linePrimitive=<capsule|screen-space>` — Select the line rendering primitive for the session (#1352), overriding the `Settings → Advanced → Line primitive` policy; default policy `auto` builds the `capsule` (gaussian-like 2D point-to-segment profile: stable end-on discs, seamless partitioned joints) except for very large line nodes, which build the leaner `screen-space` quad. The third primitive, `volumetric`, was deleted after the capsule flip
 - `?gpuBudgetMB=<N>` — Override the shared GPU-geometry/LOD retention budget; `0` means unbounded

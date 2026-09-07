@@ -118,6 +118,7 @@ const EMPTY_PARAMS: UrlParams = {
   gpuBudgetMB: null,
   cacheBudgetMB: null,
   dpr: null,
+  input: null,
   lineJoin: null,
   linePrimitive: null,
   bakeEnv: false,

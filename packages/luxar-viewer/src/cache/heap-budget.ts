@@ -26,6 +26,7 @@
  */
 
 import { config } from '../config';
+import { getInputProfile, type DeviceClass } from '../utils/input-capabilities';
 
 const MB = 1024 * 1024;
 
@@ -84,24 +85,14 @@ const SLICE_ABS_MIN_BYTES = 16 * MB;
  * `performance.memory`) AND no explicit `?cacheBudgetMB=` override was given.
  * Values are demand-filled ceilings, split across tiers by the same rule as the
  * heap path. Desktop reaches ≥2 GB (with `SLICE_CAP_BYTES` raised to match).
+ * Exported so the GPU byte budget can size its own mobile candidate from the
+ * same table (`rendering/gpu-byte-budget.ts`).
  */
-const DEVICE_CLASS_POOL_BYTES = {
+export const DEVICE_CLASS_POOL_BYTES: Readonly<Record<DeviceClass, number>> = {
   mobile: 384 * MB,
   laptop: 1024 * MB,
   desktop: 2048 * MB,
-} as const;
-
-/**
- * Logical-core count at/above which a NON-mobile device is treated as a desktop
- * rather than a laptop. This is a deliberately WEAK proxy: laptop vs desktop is
- * not reliably distinguishable in-browser — there is no RAM API in WebKit
- * (`navigator.deviceMemory` is Chromium-only), no battery API in Safari, and
- * UA / core counts overlap (an 8-core MacBook vs an 8-core Mac mini). The
- * industry consensus is that only an "educated guess" is possible. Both the
- * laptop and desktop budgets are safe on the 8 GB+ machines that run the
- * desktop app, so a misclassification is low-consequence.
- */
-const DESKTOP_CORE_THRESHOLD = 12;
+};
 
 function positive(value: number | undefined): value is number {
   return value != null && Number.isFinite(value) && value > 0;
@@ -114,48 +105,16 @@ export function cachePoolOverrideBytes(
   return cacheBudgetMB != null && cacheBudgetMB > 0 ? cacheBudgetMB * MB : undefined;
 }
 
-/** Device signals used by {@link inferDeviceClass} (injectable for tests). */
-export interface DeviceSignals {
-  userAgent: string;
-  maxTouchPoints: number;
-  coarsePointer: boolean;
-  cores: number;
-}
-
-/** Read device signals from the browser (best-effort; safe in non-browser envs). */
-function readDeviceSignals(): DeviceSignals {
-  const nav = typeof navigator !== 'undefined' ? navigator : undefined;
-  const coarsePointer =
-    typeof matchMedia === 'function' ? matchMedia('(pointer: coarse)').matches : false;
-  return {
-    userAgent: nav?.userAgent ?? '',
-    maxTouchPoints: nav?.maxTouchPoints ?? 0,
-    coarsePointer,
-    cores: nav?.hardwareConcurrency ?? 0,
-  };
-}
-
-/**
- * Infer a coarse device class from browser signals. `mobile` is reliable
- * (mobile UA, or a touch + coarse-pointer device — which also catches iPadOS,
- * whose UA masquerades as macOS). `desktop` vs `laptop` is the weak core-count
- * proxy (see {@link DESKTOP_CORE_THRESHOLD}).
- */
-export function inferDeviceClass(
-  signals: DeviceSignals = readDeviceSignals()
-): 'mobile' | 'laptop' | 'desktop' {
-  const mobileUA = /Mobi|Android|iPhone|iPod|iPad/i.test(signals.userAgent);
-  if (mobileUA || (signals.maxTouchPoints > 0 && signals.coarsePointer)) return 'mobile';
-  return signals.cores >= DESKTOP_CORE_THRESHOLD ? 'desktop' : 'laptop';
-}
-
 /**
  * Device-class cache pool (bytes), or `undefined` outside a browser (node/tests)
  * so callers fall through to the fixed config sizes there rather than a guess.
+ * The class comes from the shared input profile (`utils/input-capabilities`),
+ * so the cache pool, the GPU budget and the touch UI all agree on what the
+ * device is.
  */
 export function deviceClassPoolBytes(): number | undefined {
   if (typeof navigator === 'undefined') return undefined;
-  return DEVICE_CLASS_POOL_BYTES[inferDeviceClass()];
+  return DEVICE_CLASS_POOL_BYTES[getInputProfile().deviceClass];
 }
 
 /** Resolved per-tier heap budgets, in bytes. L2 (OPFS/disk) is not included. */
