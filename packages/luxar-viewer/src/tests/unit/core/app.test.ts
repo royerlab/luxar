@@ -1424,6 +1424,36 @@ describe('LuxarApp', () => {
       expect(() => app.getLayers()).toThrow(/getLayers called before init/);
       expect(() => app.setLayer('/x', { opacity: 1 })).toThrow(/setLayer called before init/);
       expect(() => app.getViewerState()).toThrow(/getViewerState called before init/);
+      expect(() => app.getAudioState()).toThrow(/getAudioState called before init/);
+      expect(() => app.setAudio({ muted: true })).toThrow(/setAudio called before init/);
+      expect(() => app.playSound('narration')).toThrow(/playSound called before init/);
+      expect(() => app.stopSound('narration')).toThrow(/stopSound called before init/);
+    });
+
+    it('forwards the public audio controls to the engine', async () => {
+      await app.init({ canvas: mockCanvas, src: SRC });
+      const state = {
+        state: 'running',
+        muted: false,
+        masterGain: 0.8,
+        panningModel: 'equalpower',
+        buses: { ambient: 0.6, voice: 1, effects: 0.8 },
+        playing: [],
+        hasSoundNodes: true,
+      } as const;
+      const audio = {
+        getState: vi.fn(() => state),
+        setAudio: vi.fn(),
+        play: vi.fn(() => true),
+        stop: vi.fn(() => false),
+      };
+      (app as unknown as { audioEngine: typeof audio }).audioEngine = audio;
+
+      expect(app.getAudioState()).toBe(state);
+      app.setAudio({ masterGain: 0.5 });
+      expect(audio.setAudio).toHaveBeenCalledWith({ masterGain: 0.5 });
+      expect(app.playSound('narration')).toBe(true);
+      expect(app.stopSound('narration')).toBe(false);
     });
 
     it('subscribes to the controls change stream and re-emits it as camera-changed', async () => {

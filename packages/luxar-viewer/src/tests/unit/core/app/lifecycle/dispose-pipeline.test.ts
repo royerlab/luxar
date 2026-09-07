@@ -407,6 +407,16 @@ describe('runDisposePipeline', () => {
       // Final singleton still ran.
       expect(loaderSpy).toHaveBeenCalled();
     });
+
+    it('disposes audio before the scene manager', () => {
+      const s = makeStubs();
+      const audioEngine = { dispose: vi.fn() };
+      runDisposePipeline({ ...makePorts(s), audioEngine });
+      expect(audioEngine.dispose).toHaveBeenCalledOnce();
+      expect(audioEngine.dispose.mock.invocationCallOrder[0]).toBeLessThan(
+        s.sceneManager.dispose.mock.invocationCallOrder[0]
+      );
+    });
   });
 
   describe('idempotency on partial state', () => {
