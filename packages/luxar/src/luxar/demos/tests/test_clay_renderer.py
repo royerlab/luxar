@@ -8,6 +8,7 @@ treats "no GPU context" as "no turntables", not as an error.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -110,6 +111,61 @@ def test_ffmpeg_pipe_command_encodes_vp9_with_alpha_from_raw_rgba() -> None:
     assert cmd[cmd.index("-pix_fmt", cmd.index("-i")) + 1] == "yuva420p"
     assert cmd[cmd.index("-auto-alt-ref") + 1] == "0"  # keeps the alpha plane
     assert cmd[-1] == "/out.webm" and "-an" in cmd
+
+
+def test_interrupted_turntable_encode_never_publishes_cache_assets(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    webm = tmp_path / "turntable.webm"
+    poster = tmp_path / "turntable.png"
+
+    class FakeStdin:
+        def write(self, _data: bytes) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    class FakeProcess:
+        def __init__(self, command: list[str]) -> None:
+            self.command = command
+            self.stdin = FakeStdin()
+
+        def wait(self) -> int:
+            Path(self.command[-1]).write_bytes(b"valid but truncated webm")
+            return 0
+
+    monkeypatch.setattr(
+        subprocess, "Popen", lambda command, **_kwargs: FakeProcess(command)
+    )
+
+    class InterruptingRenderer:
+        size = 1
+
+        def set_meshes(self, _meshes: object) -> None:
+            pass
+
+        def render(self, frame: float) -> bytes:
+            if frame > 0:
+                raise RuntimeError("simulated interruption")
+            return b"\x00\x00\x00\x00"
+
+    with pytest.raises(RuntimeError, match="simulated interruption"):
+        cr.render_turntable_video(
+            [],
+            frames=2,
+            fps=1,
+            size=1,
+            webm=webm,
+            poster=poster,
+            ffmpeg="ffmpeg",
+            renderer=InterruptingRenderer(),  # type: ignore[arg-type]
+        )
+
+    assert not webm.exists()
+    assert not poster.exists()
+    assert not (tmp_path / "turntable.part.webm").exists()
+    assert not (tmp_path / "turntable.part.png").exists()
 
 
 def _gpu_renderer(**kwargs: object) -> cr.ClayRenderer:

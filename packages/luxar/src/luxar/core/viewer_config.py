@@ -124,6 +124,9 @@ class CameraConfig:
         if self.far is not None and self.far <= 0:
             raise ValueError(f"far must be > 0, got {self.far}")
 
+        self._validate_zoom()
+
+    def _validate_zoom(self) -> None:
         if self.zoom is not None and (not math.isfinite(self.zoom) or self.zoom <= 0):
             raise ValueError(f"zoom must be finite and > 0, got {self.zoom}")
 
@@ -368,34 +371,7 @@ class Waypoint:
     rendering: Optional[Dict[str, Any]] = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.when, dict) or not self.when:
-            raise ValueError("when must be a non-empty dict of dimension name -> value")
-        for name, constraint in self.when.items():
-            if not isinstance(name, str) or not name:
-                raise ValueError(f"when keys must be dimension names, got {name!r}")
-            if isinstance(constraint, (int, float)) and not isinstance(
-                constraint, bool
-            ):
-                if not math.isfinite(constraint):
-                    raise ValueError(f"when[{name!r}] must be finite, got {constraint}")
-                continue
-            if (
-                isinstance(constraint, (tuple, list))
-                and len(constraint) == 2
-                and all(
-                    isinstance(v, (int, float)) and not isinstance(v, bool)
-                    for v in constraint
-                )
-            ):
-                lo, hi = constraint
-                if not (math.isfinite(lo) and math.isfinite(hi)) or lo > hi:
-                    raise ValueError(
-                        f"when[{name!r}] range must be finite with min <= max, got {constraint}"
-                    )
-                continue
-            raise ValueError(
-                f"when[{name!r}] must be a number or a (min, max) pair, got {constraint!r}"
-            )
+        self._validate_when()
 
         if not isinstance(self.camera, CameraConfig) or not self.camera.to_dict():
             raise ValueError(
@@ -425,6 +401,36 @@ class Waypoint:
                     f"rendering has unknown keys {unknown}; use ViewerConfig field "
                     "names such as 'exposure' or 'bloom_strength'"
                 )
+
+    def _validate_when(self) -> None:
+        if not isinstance(self.when, dict) or not self.when:
+            raise ValueError("when must be a non-empty dict of dimension name -> value")
+        for name, constraint in self.when.items():
+            if not isinstance(name, str) or not name:
+                raise ValueError(f"when keys must be dimension names, got {name!r}")
+            if isinstance(constraint, (int, float)) and not isinstance(
+                constraint, bool
+            ):
+                if not math.isfinite(constraint):
+                    raise ValueError(f"when[{name!r}] must be finite, got {constraint}")
+                continue
+            if (
+                isinstance(constraint, (tuple, list))
+                and len(constraint) == 2
+                and all(
+                    isinstance(v, (int, float)) and not isinstance(v, bool)
+                    for v in constraint
+                )
+            ):
+                lo, hi = constraint
+                if not (math.isfinite(lo) and math.isfinite(hi)) or lo > hi:
+                    raise ValueError(
+                        f"when[{name!r}] range must be finite with min <= max, got {constraint}"
+                    )
+                continue
+            raise ValueError(
+                f"when[{name!r}] must be a number or a (min, max) pair, got {constraint!r}"
+            )
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dictionary, omitting None fields."""
@@ -695,11 +701,7 @@ class ViewerConfig:
         """Validate configuration values. Raises ValueError on invalid values."""
         # Camera validation is handled by CameraConfig.__post_init__
 
-        if self.waypoints is not None:
-            if not isinstance(self.waypoints, list) or not all(
-                isinstance(w, Waypoint) for w in self.waypoints
-            ):
-                raise ValueError("waypoints must be a list of Waypoint")
+        self._validate_waypoints()
 
         if self.title is not None:
             if not isinstance(self.title, str) or not self.title.strip():
@@ -771,6 +773,13 @@ class ViewerConfig:
         _validate_range(self.fly_damping, "fly_damping", 0, 1)
         _validate_range(self.fly_rotation_damping, "fly_rotation_damping", 0, 1)
         _validate_min(self.vignette_offset, "vignette_offset", 0)
+
+    def _validate_waypoints(self) -> None:
+        if self.waypoints is not None and (
+            not isinstance(self.waypoints, list)
+            or not all(isinstance(w, Waypoint) for w in self.waypoints)
+        ):
+            raise ValueError("waypoints must be a list of Waypoint")
 
     def validate_dimensions(self, dimension_names: List[str]) -> None:
         """Validate dimension-bound settings against a scene's dimensions."""
@@ -875,10 +884,14 @@ class ViewerConfig:
             if any(a for a in anim_list):
                 result["animation"] = anim_list
 
-        if self.waypoints:
-            result["waypoints"] = [w.to_dict() for w in self.waypoints]
+        result.update(self._waypoints_to_dict())
 
         return result
+
+    def _waypoints_to_dict(self) -> Dict[str, Any]:
+        if not self.waypoints:
+            return {}
+        return {"waypoints": [w.to_dict() for w in self.waypoints]}
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> ViewerConfig:

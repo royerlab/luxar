@@ -534,7 +534,7 @@ def meshes_from_files(paths: Sequence[Path], colors: Sequence[RGB]) -> list[Mesh
     allpos = np.concatenate([p for p, _ in loaded])
     centre, rot = principal_frame(allpos)
     meshes = []
-    for (pos, nrm), color in zip(loaded, colors):
+    for (pos, nrm), color in zip(loaded, colors, strict=True):
         meshes.append(
             Mesh(
                 positions=((pos - centre) @ rot.T).astype(np.float32),
@@ -612,9 +612,13 @@ def render_turntable_video(
 
     own = renderer is None
     r = renderer or ClayRenderer(size)
+    partial_webm = webm.with_name(f"{webm.stem}.part{webm.suffix}")
+    partial_poster = poster.with_name(f"{poster.stem}.part{poster.suffix}")
+    partial_webm.unlink(missing_ok=True)
+    partial_poster.unlink(missing_ok=True)
     try:
         r.set_meshes(meshes)
-        cmd = ffmpeg_pipe_command(ffmpeg, r.size, fps, webm)
+        cmd = ffmpeg_pipe_command(ffmpeg, r.size, fps, partial_webm)
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)  # noqa: S603
         assert proc.stdin is not None
         step = 360.0 / frames * turn_direction
@@ -623,13 +627,22 @@ def render_turntable_video(
                 rgba = r.render(i * step)
                 if i == 0:
                     img = Image.frombytes("RGBA", (r.size, r.size), rgba)
-                    img.transpose(Image.Transpose.FLIP_TOP_BOTTOM).save(poster)
+                    img.transpose(Image.Transpose.FLIP_TOP_BOTTOM).save(partial_poster)
                 proc.stdin.write(rgba)
         finally:
             proc.stdin.close()
             rc = proc.wait()
         if rc != 0:
             raise RuntimeError(f"ffmpeg exited with status {rc} encoding {webm}")
+        try:
+            partial_webm.replace(webm)
+            partial_poster.replace(poster)
+        except BaseException:
+            webm.unlink(missing_ok=True)
+            poster.unlink(missing_ok=True)
+            raise
     finally:
+        partial_webm.unlink(missing_ok=True)
+        partial_poster.unlink(missing_ok=True)
         if own:
             r.release()

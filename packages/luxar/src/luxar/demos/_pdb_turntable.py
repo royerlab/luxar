@@ -447,15 +447,7 @@ def render_turntables(
     if not pending:
         return results
 
-    pymol_cmd = find_pymol()
-    ffmpeg_exe = find_ffmpeg()
-    hint = None
-    if pymol_cmd is None:
-        hint = PYMOL_INSTALL_HINT
-    elif ffmpeg_exe is None:
-        hint = FFMPEG_INSTALL_HINT
-    elif not has_moderngl():
-        hint = MODERNGL_INSTALL_HINT
+    pymol_cmd, ffmpeg_exe, hint = _resolve_render_tools()
     if hint is not None:
         aprint("⚠️  Turntable videos skipped:")
         for line in hint.splitlines():
@@ -496,3 +488,15 @@ def render_turntables(
     finally:
         renderer.release()
     return results
+
+
+def _resolve_render_tools() -> tuple[Optional[list[str]], Optional[str], Optional[str]]:
+    pymol_cmd = find_pymol()
+    ffmpeg_exe = find_ffmpeg()
+    if pymol_cmd is None:
+        return None, ffmpeg_exe, PYMOL_INSTALL_HINT
+    if ffmpeg_exe is None:
+        return pymol_cmd, None, FFMPEG_INSTALL_HINT
+    if not has_moderngl():
+        return pymol_cmd, ffmpeg_exe, MODERNGL_INSTALL_HINT
+    return pymol_cmd, ffmpeg_exe, None

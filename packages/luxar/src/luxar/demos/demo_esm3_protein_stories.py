@@ -737,6 +737,23 @@ def select_story_members(
     return StoryCluster(indices=indices, centre=centre, r95=r95, n_named=n_named)
 
 
+def _midpoint_vertex(
+    a: int,
+    b: int,
+    vertices: list[np.ndarray],
+    midpoint_indices: dict[tuple[int, int], int],
+) -> int:
+    key = (a, b) if a < b else (b, a)
+    idx = midpoint_indices.get(key)
+    if idx is None:
+        midpoint = (vertices[a] + vertices[b]) / 2.0
+        midpoint /= np.linalg.norm(midpoint)
+        vertices.append(midpoint)
+        idx = len(vertices) - 1
+        midpoint_indices[key] = idx
+    return idx
+
+
 def icosphere(subdivisions: int = SPHERE_SUBDIVISIONS) -> tuple[np.ndarray, np.ndarray]:
     """Unit icosphere: ``(vertices (V, 3) float32, faces (F, 3) uint32)``.
 
@@ -766,22 +783,13 @@ def icosphere(subdivisions: int = SPHERE_SUBDIVISIONS) -> tuple[np.ndarray, np.n
     )  # fmt: skip
     for _ in range(subdivisions):
         vlist = [v for v in verts]
-        midpoint: dict[tuple[int, int], int] = {}
-
-        def mid(a: int, b: int) -> int:
-            key = (a, b) if a < b else (b, a)
-            idx = midpoint.get(key)
-            if idx is None:
-                m = (vlist[a] + vlist[b]) / 2.0
-                m /= np.linalg.norm(m)
-                vlist.append(m)
-                idx = len(vlist) - 1
-                midpoint[key] = idx
-            return idx
+        midpoint_indices: dict[tuple[int, int], int] = {}
 
         new_faces = []
         for a, b, c in faces:
-            ab, bc, ca = mid(a, b), mid(b, c), mid(c, a)
+            ab = _midpoint_vertex(a, b, vlist, midpoint_indices)
+            bc = _midpoint_vertex(b, c, vlist, midpoint_indices)
+            ca = _midpoint_vertex(c, a, vlist, midpoint_indices)
             new_faces += [[a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]]
         verts = np.array(vlist, dtype=np.float64)
         faces = np.array(new_faces, dtype=np.int64)
@@ -959,7 +967,7 @@ def build_stories_scene(
         clusters = [
             select_story_members(s, names, kingdoms, positions) for s in stories
         ]
-        for s, c in zip(stories, clusters):
+        for s, c in zip(stories, clusters, strict=True):
             aprint(
                 f"{s.key}: {len(c.indices):,} of {c.n_named:,} named proteins "
                 f"within {s.radius} of the blob; centre={c.centre.round(2)} "
@@ -997,7 +1005,7 @@ def build_stories_scene(
                 duration_ms=3000,
             )
         ]
-        for k, (s, c) in enumerate(zip(stories, clusters), start=1):
+        for k, (s, c) in enumerate(zip(stories, clusters, strict=True), start=1):
             waypoints.append(
                 Waypoint(
                     when={STORY_DIM: k},
@@ -1070,7 +1078,7 @@ def build_stories_scene(
                 ),
             )
 
-            for k, (s, c) in enumerate(zip(stories, clusters), start=1):
+            for k, (s, c) in enumerate(zip(stories, clusters, strict=True), start=1):
                 idx = c.indices
                 m = len(idx)
                 highlight_positions = np.column_stack(
@@ -1101,7 +1109,7 @@ def build_stories_scene(
             # Marker shells: one translucent sphere per cluster, pinned to its
             # story slot. The unit icosphere's vertices are its normals.
             unit_verts, unit_faces = icosphere()
-            for k, (s, c) in enumerate(zip(stories, clusters), start=1):
+            for k, (s, c) in enumerate(zip(stories, clusters, strict=True), start=1):
                 radius = max(SPHERE_MIN_RADIUS, SPHERE_RADIUS_SCALE * c.r95)
                 nv = len(unit_verts)
                 sphere_vertices = np.column_stack(
@@ -1172,7 +1180,7 @@ def build_stories_scene(
                 transition_duration=0.35,
             )
             total = len(stories)
-            for k, (s, c) in enumerate(zip(stories, clusters), start=1):
+            for k, (s, c) in enumerate(zip(stories, clusters, strict=True), start=1):
                 scene.add_html(
                     story_panel_html(s, len(c.indices), k, total),
                     position=(0.98, 0.5),
