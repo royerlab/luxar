@@ -383,6 +383,9 @@ def render_calibration_report(
     _selected_curve, _selected_label, selected_peak, resolved_metric = _selected_metric(
         result
     )
+    metric_description = resolved_metric
+    if result.k_star_metric != resolved_metric:
+        metric_description = f"{resolved_metric} (fallback from {result.k_star_metric} — curve undefined)"
     knee_idx = _knee_display_idx(result)
 
     with PdfPages(output_path) as pdf:
@@ -391,7 +394,7 @@ def render_calibration_report(
         suptitle = (
             f"Calibration: {tuple(result.volume_shape)} volume — "
             f"K* = {selected_peak.k_star:,} "
-            f"(metric: {resolved_metric}, type: {selected_peak.type})"
+            f"(metric: {metric_description}, type: {selected_peak.type})"
         )
         if knee_idx is not None:
             suptitle += f" — operating point = {selected_peak.k_knee:,}"
@@ -420,7 +423,7 @@ def render_calibration_report(
         nf = result.noise_floor
         annotation = (
             f"K* = {selected_peak.k_star:,}  "
-            f"(metric: {resolved_metric}, type: {selected_peak.type}, "
+            f"(metric: {metric_description}, type: {selected_peak.type}, "
             f"confidence: {selected_peak.confidence_db:.2f} dB)\n"
         )
         if knee_idx is not None:
@@ -509,6 +512,6 @@ def render_calibration_report(
         d["Title"] = f"Luxar calibration — {tuple(result.volume_shape)}"
         d["Subject"] = (
             f"Recommended K = {selected_peak.k_star} "
-            f"({resolved_metric}, {selected_peak.type})"
+            f"({metric_description}, {selected_peak.type})"
         )
         d["Creator"] = "luxar gsplat cal"

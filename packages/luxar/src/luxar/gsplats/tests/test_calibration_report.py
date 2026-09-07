@@ -155,6 +155,49 @@ class TestKneeDisplayIdx:
 
 
 class TestRenderReport:
+    def test_fallback_reason_reaches_report_text_and_metadata(
+        self, tmp_path, monkeypatch
+    ):
+        res = _make_result([10, 20, 40], [20.0, 25.0, 24.0])
+        res.k_star_metric = "psnr_fg_weighted"
+        res.held_out_psnr_fg_weighted_db = [float("nan")] * 3
+        captured_pages = []
+        metadata = {}
+
+        class CapturePdfPages:
+            def __init__(self, _path):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def savefig(self, fig):
+                captured_pages.append(
+                    (
+                        fig._suptitle.get_text() if fig._suptitle else "",
+                        [text.get_text() for text in fig.texts],
+                    )
+                )
+
+            def infodict(self):
+                return metadata
+
+        monkeypatch.setattr("matplotlib.backends.backend_pdf.PdfPages", CapturePdfPages)
+
+        render_calibration_report(
+            res,
+            np.zeros((32, 32, 32), dtype=np.float32),
+            tmp_path / "report.pdf",
+        )
+
+        fallback = "psnr_minmax (fallback from psnr_fg_weighted — curve undefined)"
+        assert f"metric: {fallback}" in captured_pages[0][0]
+        assert any(f"metric: {fallback}" in text for text in captured_pages[1][1])
+        assert metadata["Subject"] == f"Recommended K = 20 ({fallback}, peak)"
+
     def test_selected_peak_controls_report_text_montage_and_metadata(
         self, tmp_path, monkeypatch
     ):

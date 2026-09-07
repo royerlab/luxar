@@ -37,9 +37,9 @@ def foreground_mask_otsu(V: np.ndarray) -> np.ndarray:
 def foreground_mask_otsu_smoothed(V: np.ndarray) -> Tuple[np.ndarray, float]:
     """Foreground mask for weighted calibration scoring.
 
-    Applies one light separable tent blur, then computes Otsu on the
-    floor-subtracted calibration volume. The returned threshold is on that
-    smoothed scale and is recorded with the metric for reproducibility.
+    Applies one light separable tent blur, then computes Otsu on the blurred
+    field. The input is expected floor-subtracted; the returned threshold is
+    on the smoothed scale and is recorded with the metric for reproducibility.
     """
     from luxar.gsplats.seeds.utils import soft_blur_nd
 
