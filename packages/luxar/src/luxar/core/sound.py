@@ -90,7 +90,7 @@ class Sound(DataNode):
 
     @property
     def trigger(self) -> str:
-        """Playback trigger (``continuous`` or ``once``)."""
+        """Playback trigger (``continuous``, ``once``, ``on_depart``, or ``on_arrive``)."""
         return str(self._metadata.get("trigger", "continuous"))
 
     @property

@@ -67,11 +67,6 @@ def probe_audio_info(payload: bytes, fmt: str) -> tuple[Optional[float], Optiona
     return duration_ms, n_channels
 
 
-def probe_audio_duration_ms(payload: bytes, fmt: str) -> Optional[float]:
-    """Best-effort clip duration in ms (see :func:`probe_audio_info`)."""
-    return probe_audio_info(payload, fmt)[0]
-
-
 def _positions_array(
     positions: Optional[PositionArray],
 ) -> tuple[Optional[NDArray[np.float32]], int, int]:
@@ -158,6 +153,8 @@ def write_sound(
     prepare_transform_attrs(attrs, ctx.store)
 
     pos, n_positions, n_dims = _positions_array(positions)
+    metadata: Dict[str, Any] = dict(sound_attrs)
+    _stamp_probe(metadata, payload, fmt)
 
     group = ctx.store.require_group(path)
     audio_file = AUDIO_FORMAT_FILENAMES[fmt]
@@ -171,14 +168,12 @@ def write_sound(
 
     write_raw_bytes(group, audio_file, payload)
 
-    metadata: Dict[str, Any] = dict(sound_attrs)
     metadata["type"] = "sound"
     metadata["format"] = fmt
     metadata["audio_file"] = audio_file
     metadata["has_positions"] = pos is not None
     metadata["n_positions"] = n_positions
     metadata["ndim"] = n_dims
-    _stamp_probe(metadata, payload, fmt)
     # No spatial index; stamped so a reader never has to distinguish "no
     # ordering" from "attr missing" (mesh does the same).
     metadata["ordering"] = "none"

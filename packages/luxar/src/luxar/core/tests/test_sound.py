@@ -326,6 +326,24 @@ def test_luxar_info_reports_the_sound_node(tmp_path) -> None:
     assert result.exit_code == 0, result.output
     assert "bed" in result.output
     assert "🔈" in result.output
+    assert "format=mp3" in result.output
+    assert "trigger=continuous" in result.output
+
+
+def test_rejected_ambisonic_channels_leave_no_partial_node(
+    tmp_path, monkeypatch
+) -> None:
+    from luxar.io._compiler.geometry_writers import sound as sound_writer
+
+    store = tmp_path / "ambisonic.luxar.zarr"
+    monkeypatch.setattr(
+        sound_writer, "probe_audio_info", lambda _payload, _fmt: (1.0, 2)
+    )
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=_story_dims())
+        with pytest.raises(ValueError, match="needs a 4-channel AmbiX clip"):
+            scene.add_sound("field", M4A, ambisonic="foa", **LICENCE)
+    assert "field" not in open_group(store, mode="r")
 
 
 # =============================================================================
@@ -346,6 +364,11 @@ def test_luxar_info_reports_the_sound_node(tmp_path) -> None:
             "positions-and-attach-to",
         ),
         (dict(attach_to="a/b"), r"NAME, not a path", "attach-to-path"),
+        (
+            dict(attach_to="pts", extend_to_all=["story"]),
+            r"extend_to_all only applies with positions= or hidden=",
+            "attach-with-extend",
+        ),
         (dict(ambisonic="foa"), r"MP3 cannot hold", "ambisonic-needs-aac"),
         (
             dict(ambisonic="foa", clip=M4A, positions=[[1, 5, 0, 0, 0]]),

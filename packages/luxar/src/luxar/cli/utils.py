@@ -484,6 +484,9 @@ def format_tree_node(
         # across every geometry type.
         if "n_faces" in attrs:
             important_attrs.append(f"faces={attrs['n_faces']:,}")
+        for key in ("format", "trigger", "bus", "n_positions", "duration_s"):
+            if key in attrs:
+                important_attrs.append(f"{key}={attrs[key]}")
         if "shape" in attrs:
             important_attrs.append(f"shape={attrs['shape']}")
         if "dtype" in attrs:

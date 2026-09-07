@@ -159,6 +159,11 @@ def _resolve_placement(
         return pos_arr, True if spatial is None else bool(spatial), extend_to_all
     if attach_name is not None:
         # Follows the target's centre, live everywhere.
+        if extend_to_all not in (None, [], "all"):
+            raise ValueError(
+                "extend_to_all only applies with positions= or hidden=; "
+                "attach_to= without either is audible everywhere already"
+            )
         return None, True if spatial is None else bool(spatial), extend_to_all
     if spatial:
         raise ValueError(

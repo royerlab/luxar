@@ -687,6 +687,8 @@ def _copy_array(
     dimension_names = getattr(source.metadata, "dimension_names", None)
     if dimension_names:
         extra["dimension_names"] = tuple(dimension_names)
+    if dest_group.attrs.get("type") == "sound":
+        extra["config"] = {"write_empty_chunks": True}
 
     dest = create_array(
         dest_group,
