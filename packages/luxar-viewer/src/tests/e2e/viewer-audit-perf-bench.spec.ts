@@ -439,6 +439,9 @@ test.describe('viewer audit bench', () => {
       // (4) And an allowance that no longer covers the audit scene is itself a
       // finding, not a reason to skip: it means either the sizing regressed or
       // this host is smaller than the machine the bench was calibrated on.
+      // Compared against the over-estimating `streamedBytes` above, so this one
+      // can fire on a host whose allowance merely sits close to the scene's
+      // chunk total; read it with (3), which is the load-bearing assertion.
       if (resolvedCap === null || resolvedCap < streamedBytes) {
         console.log(
           `[audit] ${scenarioId}: write-queue allowance does not cover the load — ${context}`
