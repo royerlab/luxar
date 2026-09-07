@@ -1300,16 +1300,19 @@ describe('SceneManager', () => {
       sceneManager.setControlType('ortho');
       const camera = sceneManager.camera as THREE.OrthographicCamera;
       const updateProjectionMatrix = vi.spyOn(camera, 'updateProjectionMatrix');
+      const setZoomLimits = vi.spyOn(sceneManager.controls, 'setZoomLimits');
 
       sceneManager.setCameraZoom(2.5);
 
       expect(camera.zoom).toBe(2.5);
       expect(updateProjectionMatrix).toHaveBeenCalledOnce();
+      expect(setZoomLimits).toHaveBeenCalledWith(2.5 / 10_000, 2.5 * 1_000);
 
       sceneManager.setCameraZoom(Number.NaN);
       sceneManager.setCameraZoom(0);
       expect(camera.zoom).toBe(2.5);
       expect(updateProjectionMatrix).toHaveBeenCalledOnce();
+      expect(setZoomLimits).toHaveBeenCalledOnce();
     });
   });
 

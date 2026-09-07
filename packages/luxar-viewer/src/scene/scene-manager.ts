@@ -72,6 +72,8 @@ import {
   centerCameraOnScene,
   frameCameraOnObject,
   centerOnOrigin,
+  ZOOM_IN_FACTOR,
+  ZOOM_OUT_FACTOR,
 } from './scene-manager/camera/camera-framing';
 import {
   type CameraModeCtx,
@@ -322,6 +324,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     if (!isOrthographicCamera(this.camera) || !Number.isFinite(zoom) || zoom <= 0) return;
     this.camera.zoom = zoom;
     this.camera.updateProjectionMatrix();
+    this.controls.setZoomLimits(zoom / ZOOM_OUT_FACTOR, zoom * ZOOM_IN_FACTOR);
   }
 
   /**
