@@ -24,6 +24,22 @@ export function validateRendering(config: AppConfig, errors: string[], _warnings
   ) {
     errors.push(`Invalid globalGamma: ${defaults.globalGamma} (must be a finite number 0.1..10)`);
   }
+
+  validateRefraction(config, errors);
+}
+
+/**
+ * The refraction pass's transmission target scale: a fraction of the frame in
+ * `(0, 1]`. Zero would size the target to nothing (three multiplies the viewport by
+ * it); above 1 buys nothing three's stock pass does not already do at 1.
+ */
+function validateRefraction(config: AppConfig, errors: string[]): void {
+  const scale = config.renderingControls.refraction.transmissionResolutionScale;
+  if (!Number.isFinite(scale) || scale <= 0 || scale > 1) {
+    errors.push(
+      `Invalid transmissionResolutionScale: ${scale} (must be a finite number in (0, 1])`
+    );
+  }
 }
 
 /**

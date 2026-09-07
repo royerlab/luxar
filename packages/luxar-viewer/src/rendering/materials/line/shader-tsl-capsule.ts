@@ -53,6 +53,7 @@ import {
   vec4,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
+import { clipDepthVarying, glassPartitionGuardTSL } from '../_shared/glass-partition-tsl';
 import { resolveElementTextureWidth, LINE_TEXTURE_LAYOUT } from '../../element-texture-layout';
 import {
   CAPSULE_JOINT_DEFICIT_GATE,
@@ -138,6 +139,7 @@ export function capsuleLineWebGPUFactory(
   // (default interpolation is perspective-correct = hyperbolic in screen
   // space; see the GLSL twin's declaration note).
   const vLocal: TSLNode = varying(vec2(0.0, 0.0));
+  const vClipZW: TSLNode = clipDepthVarying();
   // PACKED joint state — the exact mirror of the GLSL twin's layout (see
   // shader-glsl-capsule.ts: register pressure is the measured cost; cut
   // normals stay FULL precision per #1502).
@@ -495,6 +497,7 @@ export function capsuleLineWebGPUFactory(
     If(culled.not(), () => {
       clipPosOut.assign(vec4(ndc.mul(wMix), clipMix.z, wMix));
     });
+    vClipZW.assign(clipPosOut.zw);
     return clipPosOut;
   });
 
@@ -502,6 +505,9 @@ export function capsuleLineWebGPUFactory(
 
   // ---- Fragment ----
   const colorNode = Fn(() => {
+    // Refraction split partition FIRST: a fragment on the wrong side of the glass
+    // costs nothing further (glass-partition-tsl.ts; GLSL twin at the top of main()).
+    glassPartitionGuardTSL(nodes, vClipZW);
     // Undo the w-premultiplication: screen-linear local coordinates.
     const invW: TSLNode = float(1.0)
       .div(max(vW, float(1e-9)))

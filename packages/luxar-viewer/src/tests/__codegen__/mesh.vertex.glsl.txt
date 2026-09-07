@@ -45,10 +45,9 @@ layout( std140 ) uniform render {
 
 layout( std140 ) uniform object {
 	float nodeUniform0;
-	float nodeUniform1;
-	float nodeUniform2;
-	float nodeUniform3;
-	float nodeUniform4;
+	mat3 nodeUniform2;
+	vec2 nodeUniform3;
+	uint nodeUniform4;
 	float nodeUniform5;
 	float nodeUniform6;
 	float nodeUniform7;
@@ -56,8 +55,13 @@ layout( std140 ) uniform object {
 	float nodeUniform9;
 	float nodeUniform10;
 	float nodeUniform11;
-	mat4 nodeUniform13;
-	mat3 nodeUniform14;
+	float nodeUniform12;
+	float nodeUniform13;
+	float nodeUniform14;
+	float nodeUniform15;
+	float nodeUniform16;
+	mat4 nodeUniform18;
+	mat3 nodeUniform19;
 };
 
 
@@ -66,6 +70,7 @@ out vec3 nodeVarying0;
 out float nodeVarying1;
 out vec3 nodeVarying2;
 out vec3 nodeVarying3;
+out vec2 nodeVarying4;
 
 
 // attributes
@@ -75,13 +80,13 @@ layout( location = 2 ) in vec3 normal;
 
 
 // vars
-vec3 nodeVar0;
-vec3 nodeVar4;
-vec3 nodeVar12;
+vec3 nodeVar6;
+vec3 nodeVar10;
+vec3 nodeVar18;
 mat4 modelViewMatrix;
-vec4 nodeVar21;
-float nodeVar22;
-vec4 nodeVar23;
+vec4 nodeVar27;
+float nodeVar28;
+vec4 nodeVar29;
 
 // codes
 
@@ -94,34 +99,36 @@ void main() {
 	// flow
 	// code
 
-	nodeVar0 = vec3( 0.0, 0.0, 0.0 );
-	nodeVarying2 = nodeVar0;
-	nodeVar4 = vec3( 0.0, 0.0, 0.0 );
-	nodeVarying3 = nodeVar4;
-	nodeVar12 = vec3( 0.0, 0.0, 0.0 );
-	nodeVarying0 = nodeVar12;
+	nodeVarying4 = vec2( 0.0, 1.0 );
+	nodeVar6 = vec3( 0.0, 0.0, 0.0 );
+	nodeVarying2 = nodeVar6;
+	nodeVar10 = vec3( 0.0, 0.0, 0.0 );
+	nodeVarying3 = nodeVar10;
+	nodeVar18 = vec3( 0.0, 0.0, 0.0 );
+	nodeVarying0 = nodeVar18;
 	nodeVarying1 = 1.0;
-	modelViewMatrix = ( cameraViewMatrix * nodeUniform13 );
-	nodeVar21 = ( modelViewMatrix * vec4( position, 1.0 ) );
+	modelViewMatrix = ( cameraViewMatrix * nodeUniform18 );
+	nodeVar27 = ( modelViewMatrix * vec4( position, 1.0 ) );
 	nodeVarying0 = color.xyz;
 
 	if ( ( ( color.w < 1e30 ) && ( color.w > -1e30 ) ) ) {
 
-		nodeVar22 = min( max( color.w, 0.0 ), 1.0 );
+		nodeVar28 = min( max( color.w, 0.0 ), 1.0 );
 
 	} else {
 
-		nodeVar22 = 1.0;
+		nodeVar28 = 1.0;
 
 	}
 
-	nodeVarying1 = nodeVar22;
-	nodeVarying2 = nodeVar21.xyz;
-	nodeVarying3 = ( cameraViewMatrix * vec4( ( nodeUniform14 * normal ), 0.0 ) ).xyz;
-	nodeVar23 = ( cameraProjectionMatrix * nodeVar21 );
+	nodeVarying1 = nodeVar28;
+	nodeVarying2 = nodeVar27.xyz;
+	nodeVarying3 = ( cameraViewMatrix * vec4( ( nodeUniform19 * normal ), 0.0 ) ).xyz;
+	nodeVar29 = ( cameraProjectionMatrix * nodeVar27 );
+	nodeVarying4 = nodeVar29.zw;
 
 	// result
-	gl_Position = nodeVar23;
+	gl_Position = nodeVar29;
 
 	gl_PointSize = 1.0;
 

@@ -67,7 +67,11 @@ function apiOf(apiSurface, isWebGLBackend, b, n) {
  * field missing on one side of a present column renders `—` (via
  * {@link fmt} / {@link delta}), never a phantom 0.0%. Rows whose
  * scenario carries none of the present fields are skipped. Lower is
- * better for every field. Returns '' when nothing is present.
+ * better for every field EXCEPT the few that are not scores at all and
+ * must be read as context: `steadyDpr` (a resolved render scale) and
+ * `opfsWriteQueueMaxBytes` (a memory CEILING that moves with the host's
+ * heap, so a Δ there usually means a different machine, not a
+ * regression). Returns '' when nothing is present.
  *
  * @param {string} title      section heading
  * @param {string} unitsNote  one-line note under the heading (units etc.)
@@ -254,7 +258,7 @@ export function buildPerfDiff(base, next) {
   // breakdown is optional; sort-latency may be null). Lower is better.
   md += metricSection(
     'Viewer audit (load + frames)',
-    'Rows from viewer-audit-perf-bench.spec.ts: load milestones in ms from loadStart (lower is better), request/byte counts, main-thread long-task ms during the load, forced-continuous-render frame p50 (ms) at DPR 1 / 0.5 / dollied 4x, playback step ms (first commit / settled), OPFS write drops.',
+    "Rows from viewer-audit-perf-bench.spec.ts: load milestones in ms from loadStart (lower is better), request/byte counts, main-thread long-task ms during the load, forced-continuous-render frame p50 (ms) at DPR 1 / 0.5 / dollied 4x, playback step ms (first commit / settled), OPFS write drops (load-phase and end-of-run) and the session's resolved OPFS write-queue byte allowance (a CEILING, not a score — it moves with the machine's heap).",
     sortedKeys,
     baseByKey,
     nextByKey,
@@ -275,6 +279,8 @@ export function buildPerfDiff(base, next) {
       { label: 'playFirst', key: 'playbackFirstMs_warm' },
       { label: 'playFull', key: 'playbackFullMs_warm' },
       { label: 'opfsDrop', key: 'opfsDropped' },
+      { label: 'opfsDropEnd', key: 'opfsDroppedFinal' },
+      { label: 'opfsQueueMax', key: 'opfsWriteQueueMaxBytes' },
       { label: 'steadyDPR', key: 'steadyDpr' },
     ]
   );

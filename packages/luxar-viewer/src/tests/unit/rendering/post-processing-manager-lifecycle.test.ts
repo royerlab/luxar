@@ -35,6 +35,9 @@ import * as THREE from 'three';
 import { PostProcessingManager } from '../../../rendering/post-processing/post-processing-manager';
 import { materialManager } from '../../../rendering/material-manager';
 import type { Renderer, RendererCapabilities } from '../../../rendering/renderer-capabilities';
+import type { DataRefractionSplit } from '../../../rendering/post-processing/post-processing-manager/refraction-split';
+import { getGlassDepthTexture } from '../../../rendering/materials/_shared/glass-partition';
+import { loadTslMaterials } from '../../../rendering/tsl/load';
 
 function mockCaps(apiSurface: 'webgl2' | 'webgpu' = 'webgl2'): RendererCapabilities {
   return {
@@ -537,5 +540,65 @@ describe('PostProcessingManager → size accessors', () => {
     expect(mgr.getEffectiveRenderScale()).toBe(1);
 
     mgr.dispose();
+  });
+});
+
+describe('PostProcessingManager → the refraction split (spec §3.4 Phase 3)', () => {
+  type WithSplit = {
+    refractionSplit: { setSize(w: number, h: number): void; dispose(): void } | null;
+  };
+  const split = (mgr: PostProcessingManager) => (mgr as unknown as WithSplit).refractionSplit;
+
+  beforeEach(() => {
+    materialManager.setCaps(mockCaps('webgl2'));
+  });
+
+  it('owns one on a WebGL renderer, resizes it with the targets, and disposes it with them', () => {
+    const mgr = makeManager({ width: 64, height: 64 });
+    const s = split(mgr);
+    expect(s).not.toBeNull();
+    const setSize = vi.spyOn(s!, 'setSize');
+    const dispose = vi.spyOn(s!, 'dispose');
+
+    mgr.resize(80, 40);
+    expect(setSize).toHaveBeenCalledWith(80, 40);
+
+    mgr.dispose();
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(split(mgr)).toBeNull();
+  });
+
+  it('comes back after a context restore', () => {
+    const mgr = makeManager();
+    const before = split(mgr);
+    mgr.rebuildAfterContextRestore();
+    const after = split(mgr);
+    expect(after).not.toBeNull();
+    expect(after).not.toBe(before);
+    mgr.dispose();
+  });
+
+  it('owns one on a WebGPU renderer too (the data partition is backend-agnostic), sized with the targets', async () => {
+    // The WebGPU mega-shader is a TSL material behind the lazy registry.
+    await loadTslMaterials();
+    materialManager.setCaps(mockCaps('webgpu'));
+    const mgr = new PostProcessingManager(
+      makeMockRenderer(),
+      mockCaps('webgpu'),
+      new THREE.Scene(),
+      new THREE.PerspectiveCamera(),
+      { width: 64, height: 64 }
+    );
+    const s = split(mgr) as DataRefractionSplit | null;
+    expect(s).not.toBeNull();
+    expect(s!.isWebGL).toBe(false);
+    expect(s!.glassDepthTarget.width).toBe(64);
+    mgr.resize(80, 40);
+    expect(s!.glassDepthTarget.width).toBe(80);
+    expect(s!.glassDepthTarget.height).toBe(40);
+    // The depth target wraps the ONE depth texture every data material samples.
+    expect(s!.glassDepthTarget.depthTexture).toBe(getGlassDepthTexture());
+    mgr.dispose();
+    expect(split(mgr)).toBeNull();
   });
 });

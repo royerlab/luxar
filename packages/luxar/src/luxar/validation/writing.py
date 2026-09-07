@@ -55,6 +55,7 @@ from .base import (
 from .types import (
     PHYSICAL_MATERIAL_FRACTION_ATTRS,
     validate_appearance_fraction,
+    validate_bool_flag,
     validate_hex_color,
     validate_ior,
     validate_mesh_material,
@@ -774,7 +775,8 @@ KNOWN_RENDER_ATTRS: FrozenSet[str] = frozenset(
         "join",
         "layer",
         # Mesh-only material family (``luxar`` | ``physical``) and the physically
-        # based knobs it unlocks (Phase 1 surface knobs, Phase 2 glass family).
+        # based knobs it unlocks (Phase 1 surface knobs, Phase 2 glass family,
+        # Phase 3's ``refract_data`` flag).
         # Advertised for the same reason as the shading controls below: real
         # knobs an author types, so a typo must see them in the hint. The adder
         # cross-checks them against each other (a physical knob needs
@@ -794,6 +796,7 @@ KNOWN_RENDER_ATTRS: FrozenSet[str] = frozenset(
         "attenuation_color",
         "attenuation_distance",
         "dispersion",
+        "refract_data",
         "offset",
         "opacity",
         # Mesh-only shading controls. Advertised for the same reason as
@@ -1044,6 +1047,10 @@ _MESH_APPEARANCE_VALIDATORS = {
     "attenuation_color": (validate_hex_color, "Attenuation color"),
     "attenuation_distance": (validate_positive_finite, "Attenuation distance"),
     "dispersion": (validate_non_negative_finite, "Dispersion"),
+    # Phase 3 (spec §3.4): draw this glass AFTER the emissive data so it refracts
+    # the points, lines and splats behind it. A flag, not a fraction; refused
+    # without ``transmission > 0`` by the adder's pairing rule.
+    "refract_data": (validate_bool_flag, "Refract data"),
 }
 
 

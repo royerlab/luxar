@@ -58,6 +58,12 @@ import {
   Discard,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
+import {
+  clipDepthVarying,
+  glassPartitionGuardTSL,
+  glassPartitionNodesFromUniforms,
+  type GlassPartitionTSLNodes,
+} from '../_shared/glass-partition-tsl';
 import { sanitizeAlpha, perspectiveNearFadeTSL, type TSLNode } from '../_shared/tsl-helpers';
 import { applyBlendingStateToMaterial, getCompleteBlendingState } from '../../blending-state';
 import type { BlendingMode } from '../../../types/blending';
@@ -179,6 +185,9 @@ export interface MeshTSLNodes {
   readonly uIsOrtho: TSLNode;
   /** Near-fade start distance, world units (scene-relative; see the fragment). */
   readonly uNearCull: TSLNode;
+  /** Refraction split (glass-partition-tsl.ts): mode + shared glass depth texture. */
+  readonly uGlassPartition: GlassPartitionTSLNodes['uGlassPartition'];
+  readonly uGlassDepth: GlassPartitionTSLNodes['uGlassDepth'];
   /** Set only when `config.useBaseColorTexture` is active. */
   readonly uBaseColorTex?: TSLNode;
   /** Set only when colormap mode is active. */
@@ -261,6 +270,7 @@ export function meshWebGPUFactory(
   // varyings where interpolation happens to be a no-op.
   const vColor: TSLNode = varying(vec3(float(0.0), float(0.0), float(0.0)));
   const vAlpha: TSLNode = varying(float(1.0));
+  const vClipZW: TSLNode = clipDepthVarying();
   const vViewPos: TSLNode = varying(vec3(float(0.0), float(0.0), float(0.0)));
   // Only declared for the stored-normal build. Under `flatNormal` the `normal`
   // attribute is never referenced, so it stays out of the vertex layout entirely.
@@ -322,12 +332,17 @@ export function meshWebGPUFactory(
       vNormal.assign(viewMatrix.mul(vec4(normalMatrix.mul(normalGeometry), 0.0)).xyz);
     }
 
-    return cameraProjectionMatrix.mul(mvPos);
+    const clipOut: TSLNode = cameraProjectionMatrix.mul(mvPos).toVar();
+    vClipZW.assign(clipOut.zw);
+    return clipOut;
   });
 
   const clipPos: TSLNode = vertexBody();
 
   const colorNode = Fn(() => {
+    // Refraction split partition FIRST: a fragment on the wrong side of the glass
+    // costs nothing further (glass-partition-tsl.ts; GLSL twin at the top of main()).
+    glassPartitionGuardTSL(nodes, vClipZW);
     // Computed UNCONDITIONALLY, before any guard-dependent branch: the epsilon
     // guard below reads an interpolated varying, so branching on it is non-uniform
     // control flow — where derivatives are undefined, since normal validity can
@@ -549,6 +564,7 @@ export function buildMeshTSLNodesFromUniforms(
     // materials construct with (overridden per scene by updateCameraParams).
     uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 0.1),
+    ...glassPartitionNodesFromUniforms(uniforms),
   };
   // Both optional groups are added independently, because the two colour sources
   // are mutually exclusive at the DEFINE level and this function must not encode a

@@ -21,6 +21,10 @@ import {
   GLSL_NEAR_FADE_FUNCTIONS,
   GLSL_SORTED_INDEX,
 } from '../_shared/glsl-lib';
+import {
+  GLSL_GLASS_PARTITION_GUARD,
+  GLSL_GLASS_PARTITION_UNIFORMS,
+} from '../_shared/glass-partition';
 import type { ShaderSource } from '../_shared/shader-source';
 import { FALLOFF_FLOOR, FALLOFF_K } from '../_shared/falloff';
 import {
@@ -219,6 +223,7 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
  */
 export const POINT_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
+    ${GLSL_GLASS_PARTITION_UNIFORMS}
 
     uniform float uPixelRatio;
     uniform mediump float uOpacity;
@@ -242,6 +247,7 @@ export const POINT_FRAGMENT_SHADER = /* glsl */ `
     out vec4 fragColor;
 
     void main() {
+      ${GLSL_GLASS_PARTITION_GUARD}
       // Discard zero-radius points (from nD slicing where points don't intersect hyperplane)
       // Exact-zero only — an absolute epsilon here discarded valid
       // sub-1e-4-unit radii (tiny-unit scenes rendered black). Boundary

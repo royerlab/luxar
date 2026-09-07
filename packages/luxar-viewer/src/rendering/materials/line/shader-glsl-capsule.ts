@@ -28,6 +28,10 @@ import {
   GLSL_LINE_JOINT_CODE,
   GLSL_SORTED_INDEX,
 } from '../_shared/glsl-lib';
+import {
+  GLSL_GLASS_PARTITION_GUARD,
+  GLSL_GLASS_PARTITION_UNIFORMS,
+} from '../_shared/glass-partition';
 import type { ShaderSource } from '../_shared/shader-source';
 import {
   ALPHA_CLAMP,
@@ -470,6 +474,7 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
 
 export const CAPSULE_LINE_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
+    ${GLSL_GLASS_PARTITION_UNIFORMS}
 
     uniform float uOpacity;
     uniform float uInvGamma;
@@ -526,6 +531,7 @@ export const CAPSULE_LINE_FRAGMENT_SHADER = /* glsl */ `
     }
 
     void main() {
+      ${GLSL_GLASS_PARTITION_GUARD}
       // Undo the w-premultiplication: screen-linear local coordinates.
       // gl_FragCoord.w IS the perspective-interpolated 1/w (spec identity
       // — PC-interp of a per-vertex w equals 1/gl_FragCoord.w exactly), so

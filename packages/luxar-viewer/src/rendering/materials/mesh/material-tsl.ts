@@ -58,6 +58,7 @@ import {
 } from '../../blending-state';
 import type { BlendingMode } from '../../../types/blending';
 import { proxyIUniform, type TSLNode } from '../_shared/tsl-helpers';
+import { glassPartitionNodes } from '../_shared/glass-partition-tsl';
 import { computeScalarRangeUniforms } from '../_shared/scalar-range';
 
 /**
@@ -77,6 +78,8 @@ interface MeshMaterialTSLNodeTable {
   uAlphaCutoff: TSLNode;
   uIsOrtho: TSLNode;
   uNearCull: TSLNode;
+  uGlassPartition: TSLNode;
+  uGlassDepth: TSLNode;
   uBaseColorTex?: TSLNode;
   uColormapTex?: TSLNode;
   uScalarMin?: TSLNode;
@@ -126,6 +129,8 @@ export class MeshTSLMaterial
       // overridden per scene by `updateCameraParams`.
       uIsOrtho: uniform(0),
       uNearCull: uniform(0.1),
+      // Refraction split: mode 0 outside the split; the shared glass depth texture.
+      ...glassPartitionNodes(),
     };
 
     this.uniforms = {
@@ -140,6 +145,8 @@ export class MeshTSLMaterial
       uAlphaCutoff: proxyIUniform(this.tslNodes.uAlphaCutoff),
       uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
+      uGlassPartition: proxyIUniform(this.tslNodes.uGlassPartition),
+      uGlassDepth: proxyIUniform(this.tslNodes.uGlassDepth),
     };
 
     // Colormap uniforms are added lazily — see `rebuildColormapNodes`.

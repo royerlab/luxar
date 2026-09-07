@@ -389,6 +389,12 @@ interface OrderSlot {
    * (glass) physical mesh, see {@link drawsBeforeEmissive}.
    */
   first: boolean;
+  /**
+   * The mesh must draw AFTER everything else in its band — a transmissive physical
+   * mesh authored with `refract_data`, see {@link drawsAfterEmissive}. Never true
+   * together with `first`.
+   */
+  last: boolean;
 }
 let orderSlots: OrderSlot[] = [];
 
@@ -408,6 +414,8 @@ interface OrderGroup {
   levelExplicit: boolean;
   /** True when the group draws first in its band (its first member says so). */
   first: boolean;
+  /** True when the group draws last in its band (its first member says so). */
+  last: boolean;
 }
 
 /**
@@ -635,6 +643,13 @@ function orderGroupsWithContainment(byDepth: OrderGroup[]): OrderGroup[] {
           }
           continue;
         }
+        // A glass that must draw LAST in its band (`refract_data`) — or one that must
+        // draw FIRST and would be the CONTENT here — states an intent the inferred
+        // container-first rule must not undo. A lens enclosing a cluster is exactly
+        // "container contains content", and hoisting the lens first would paint the
+        // cluster crisp on top instead of refracting it. Same standing as an authored
+        // band (spec D3), so no diagnostic.
+        if (byDepth[a].last || byDepth[b].last || byDepth[b].first) continue;
         edges.push(b);
         indegree[b]++;
         anyEdge = true;
@@ -747,6 +762,7 @@ export function collectRenderOrderSlot(
     level: authored ?? 0,
     levelExplicit: authored !== undefined,
     first: drawsBeforeEmissive(mesh),
+    last: drawsAfterEmissive(mesh),
   });
 }
 
@@ -768,6 +784,27 @@ export function drawsBeforeEmissive(mesh: THREE.Mesh): boolean {
   const material = mesh.material as THREE.Material | THREE.Material[] | undefined;
   if (!material || Array.isArray(material)) return false;
   return (material.userData as { drawBeforeEmissive?: unknown }).drawBeforeEmissive === true;
+}
+
+/**
+ * Whether a mesh asks to be drawn AFTER the emissive data sharing its band — the
+ * Phase 3 inverse of {@link drawsBeforeEmissive}.
+ *
+ * Stamped as `userData.drawAfterEmissive` by the physical material's compositing
+ * decision for glass authored with `refract_data` (spec §3.4). Such a glass must
+ * sample a framebuffer that already holds the data: on WebGPU three's transmission
+ * reads the framebuffer as it stands when the glass draws, so ranking it LAST in its
+ * band IS the whole mechanism; on WebGL the post-processing pipeline splits the scene
+ * pass instead and the rank is bookkeeping. Read off the MATERIAL's `userData` like
+ * its twin (the live Layers-panel toggle keeps it current there). A multi-material
+ * mesh never asks. The coordinator gives such a mesh a rank even when nothing else
+ * would — the unranked emissive layers sit at renderOrder 0, and "after them" is not
+ * a value 0 can express.
+ */
+export function drawsAfterEmissive(mesh: THREE.Mesh): boolean {
+  const material = mesh.material as THREE.Material | THREE.Material[] | undefined;
+  if (!material || Array.isArray(material)) return false;
+  return (material.userData as { drawAfterEmissive?: unknown }).drawAfterEmissive === true;
 }
 
 /**
@@ -857,23 +894,27 @@ export function assignGlobalRenderOrder(): void {
         level: slot.level,
         levelExplicit: slot.levelExplicit,
         first: slot.first,
+        last: slot.last,
       });
     }
   }
 
   // Band first (lower level = farther = drawn first), then any group that must
-  // draw first in its band (glass — see `drawsBeforeEmissive`), then farthest
-  // group within a band (ascending mean view-z: more negative = farther), then
-  // hoist strict bounding-sphere containers before their contents.
+  // draw first in its band (glass — see `drawsBeforeEmissive`), then any group that
+  // must draw LAST in its band goes after the rest (refracting glass — see
+  // `drawsAfterEmissive`), then farthest group within a band (ascending mean
+  // view-z: more negative = farther), then hoist strict bounding-sphere containers
+  // before their contents.
   //
   // With no level authored anywhere every group is band 0, and with no glass the
-  // second term is always 0, so this falls through to EXACTLY today's comparator
-  // — which, together with the intra-band edge restriction below, is what makes
-  // an unauthored scene bit-identical to before the feature existed.
+  // second and third terms are always 0, so this falls through to EXACTLY today's
+  // comparator — which, together with the intra-band edge restriction below, is
+  // what makes an unauthored scene bit-identical to before the feature existed.
   const byDepth = [...groups.values()].sort(
     (a, b) =>
       a.level - b.level ||
       Number(!a.first) - Number(!b.first) ||
+      Number(a.last) - Number(b.last) ||
       a.sumZ / a.slots.length - b.sumZ / b.slots.length
   );
   const ordered = orderGroupsWithContainment(byDepth);

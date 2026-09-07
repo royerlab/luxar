@@ -389,6 +389,7 @@ export function createPhysicalMeshMaterial(
     attenuationDistance: attrs.attenuation_distance,
     attenuationColor: attrs.attenuation_color,
     dispersion: attrs.dispersion,
+    refractData: attrs.refract_data === true,
     alphaCutoff: attrs.alpha_cutoff,
     // `'none'` is refused at authoring; `'flat'` is either authored or the fallback
     // for a mesh with no stored normals — in both cases three derives per-triangle

@@ -21,7 +21,7 @@
  * Usage (from packages/luxar-viewer/, with the dataset already built):
  *
  *   node scripts/ab-webgpu-vs-webgl.mjs \
- *     --dataset ../../datasets/demos/mesh_physical_materials.luxar.zarr \
+ *     --dataset ../../datasets/examples/mesh_physical_materials_example.luxar.zarr \
  *     --out ../../delme/ab-physical [--bloom] [--min-ssim 0.9] [--channel chrome]
  *
  * Spawns a Vite dev server and a plain HTTP data server (CORS sidestepped with
@@ -52,7 +52,10 @@ function arg(name, fallback) {
   return next === undefined || next.startsWith('--') ? true : next;
 }
 
-const datasetArg = arg('dataset', '../../datasets/demos/mesh_physical_materials.luxar.zarr');
+const datasetArg = arg(
+  'dataset',
+  '../../datasets/examples/mesh_physical_materials_example.luxar.zarr'
+);
 const outDir = resolve(viewerRoot, arg('out', '../../delme/ab-webgpu-vs-webgl'));
 const withBloom = arg('bloom', false) === true;
 const minSsim = Number(arg('min-ssim', 0.9));

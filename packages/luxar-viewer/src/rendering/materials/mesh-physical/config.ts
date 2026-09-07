@@ -23,6 +23,7 @@
 
 import type * as THREE from 'three';
 import type { BlendingMode } from '../../../types/blending';
+import { log, Modules } from '../../../utils/log';
 import { clampAppearanceFraction } from '../mesh/appearance';
 
 /** The three property a knob writes — the same name on both three classes. */
@@ -256,6 +257,11 @@ export interface PhysicalMeshMaterialConfig {
   /** Chromatic dispersion strength (Abbe-number-like), `>= 0`. */
   dispersion?: number;
   /**
+   * Luxar `refract_data` (spec §3.4 Phase 3): draw the glass AFTER the emissive data
+   * so it refracts what is behind it. Default false. See {@link derivePhysicalCompositing}.
+   */
+  refractData?: boolean;
+  /**
    * Luxar `alpha_cutoff`, mapped onto three's `alphaTest`. On an RGBA mesh its
    * PRESENCE also selects the cutout path over translucency — see
    * {@link derivePhysicalCompositing}.
@@ -288,13 +294,18 @@ export interface PhysicalMeshHost extends Record<PhysicalKnobProp, number> {
   userData: Record<string, unknown>;
 }
 
-/** The four inputs the compositing decision is a pure function of. */
+/** The five inputs the compositing decision is a pure function of. */
 export interface PhysicalCompositingInputs {
   opacity: number;
   vertexAlpha: boolean;
   alphaCutoff: number | undefined;
   /** The material's `transmission`; `> 0` is glass and composites as translucent. */
   transmission: number;
+  /**
+   * Luxar `refract_data`: the glass draws AFTER the emissive data instead of before
+   * it (spec §3.4 Phase 3). Meaningless without `transmission > 0`, and inert then.
+   */
+  refractData: boolean;
 }
 
 /** The compositing decision, as three material state plus the coordinator's stamp. */
@@ -318,9 +329,20 @@ export interface PhysicalCompositing {
    * then painted over. The depth-sort coordinator reads this off
    * `userData.drawBeforeEmissive` and orders the mesh first within its
    * `layer_order` band on both backends (on WebGL it is already in the earlier
-   * transmissive list, so the rule is harmless there).
+   * transmissive list, so the rule is harmless there). Exactly one of this and
+   * {@link PhysicalCompositing.drawAfterEmissive} is set for glass; neither for
+   * anything else.
    */
   drawBeforeEmissive: boolean;
+  /**
+   * The Phase 3 inverse (spec §3.4): glass authored with `refract_data` must draw
+   * AFTER the emissive data so that what it samples already holds the data. The
+   * coordinator reads `userData.drawAfterEmissive` and ranks such a mesh LAST within
+   * its `layer_order` band (that is the whole mechanism on WebGPU); on WebGL the
+   * post-processing pipeline additionally splits the scene pass so three's
+   * transmission target sees the data.
+   */
+  drawAfterEmissive: boolean;
 }
 
 /**
@@ -334,7 +356,9 @@ export interface PhysicalCompositing {
  *   write depth, and that is the spec §3.4 contract made concrete: emissive data
  *   behind a glass surface stays visible — crisp and unrefracted — where a
  *   depth-writing shell would HIDE the cluster inside it, the worse failure for the
- *   marker case this family exists for.
+ *   marker case this family exists for. With `refractData` the glass instead draws
+ *   AFTER the data and refracts it (Phase 3); the compositing state is the same,
+ *   only the ordering stamp flips.
  * - Per-vertex alpha is translucent UNLESS an `alpha_cutoff` was authored, in
  *   which case the alpha is a CUTOUT (three `alphaTest`) and the surface stays
  *   opaque — the same meaning the house shader's `opaque` mode gives the pair.
@@ -353,7 +377,8 @@ export function derivePhysicalCompositing(inputs: PhysicalCompositingInputs): Ph
     depthWrite: !translucent,
     alphaTest: translucent ? 0 : clampAppearanceFraction(inputs.alphaCutoff, 0),
     blendingMode: translucent ? undefined : 'opaque',
-    drawBeforeEmissive: glass,
+    drawBeforeEmissive: glass && !inputs.refractData,
+    drawAfterEmissive: glass && inputs.refractData,
   };
 }
 
@@ -371,6 +396,7 @@ function readInputs(host: PhysicalMeshHost): PhysicalCompositingInputs {
       vertexAlpha: false,
       alphaCutoff: undefined,
       transmission: host.transmission,
+      refractData: false,
     }
   );
 }
@@ -396,7 +422,96 @@ export function applyPhysicalCompositing(
   else delete host.userData.blendingMode;
   if (decision.drawBeforeEmissive) host.userData.drawBeforeEmissive = true;
   else delete host.userData.drawBeforeEmissive;
+  if (decision.drawAfterEmissive) host.userData.drawAfterEmissive = true;
+  else delete host.userData.drawAfterEmissive;
   if (programChanged) host.needsUpdate = true;
+}
+
+// ---------------------------------------------------------------------------
+// The transmitted-alpha pin (spec §3.4, Phase 3).
+// ---------------------------------------------------------------------------
+
+/**
+ * The one line of three's `transmission_fragment` chunk that copies the alpha of the
+ * SAMPLED framebuffer into the glass fragment's alpha (`opaque_fragment` then multiplies
+ * `diffuseColor.a` by it). Three means it as coverage, for transparent canvases where a
+ * glass over an empty background should itself be see-through.
+ *
+ * Luxar's HDR framebuffer alpha is not coverage. The additive, luminous and normal
+ * point and line shaders are alpha-weighted (RGB unweighted, alpha = intensity·opacity,
+ * blended SrcAlpha/One with One/One on the alpha channel), so behind a point cloud the
+ * alpha is an overdraw count — 8 to 18 was measured, `Infinity` on dense scenes. The
+ * house already treats it as undefined: the mega shader reads RGB only, and the EXR
+ * capture forces alpha to 1 before export. A glass that reads it composites with an
+ * UNCLAMPED blend factor on the half-float target and comes out thousands of times too
+ * bright, or negative (measured on both backends). So the physical family refuses that
+ * channel too: the line below is replaced by {@link TRANSMISSION_ALPHA_PIN_LINE}.
+ *
+ * A pixel no-op for the glass-first path, whose transmission target only ever holds the
+ * alpha-1 clear and opaque meshes. It changes what an `opaque`-mode house layer
+ * (alpha = intensity·opacity) or a cutout mesh looks like THROUGH glass — they follow the
+ * house rule now — and it is what makes `refract_data` glass composite correctly.
+ */
+export const TRANSMISSION_ALPHA_MIX_LINE =
+  'material.transmissionAlpha = mix( material.transmissionAlpha, transmitted.a, material.transmission );';
+
+/** What replaces {@link TRANSMISSION_ALPHA_MIX_LINE}: the glass keeps its own alpha. */
+export const TRANSMISSION_ALPHA_PIN_LINE = 'material.transmissionAlpha = 1.0;';
+
+/** The include three resolves AFTER `onBeforeCompile`, so the hook must expand it itself. */
+const TRANSMISSION_INCLUDE = '#include <transmission_fragment>';
+
+/** Fixed program-cache key for the WebGL wrapper (three's default is `onBeforeCompile.toString()`). */
+export const PHYSICAL_PROGRAM_CACHE_KEY = 'luxar-physical:transmitted-alpha-pinned';
+
+let warnedChunkDrift = false;
+
+/**
+ * Patch a WebGL fragment shader so its transmission pass ignores the sampled alpha.
+ *
+ * Pure over its inputs so the substitution is unit-testable against three's real chunk:
+ * `#include <transmission_fragment>` (still unresolved when `onBeforeCompile` runs) is
+ * replaced by the chunk body with {@link TRANSMISSION_ALPHA_MIX_LINE} pinned. A shader
+ * without the include (no transmission) is returned untouched. If a three upgrade moves
+ * the line, the shader is left to three's own include resolution and one warning names
+ * the consequence; the unit test on the real chunk turns that drift into a red build.
+ *
+ * @param fragmentShader - `shader.fragmentShader` as handed to `onBeforeCompile`
+ * @param transmissionChunk - `THREE.ShaderChunk.transmission_fragment` (passed in so this
+ *   module keeps its type-only `three` import)
+ */
+export function pinTransmittedAlphaGlsl(fragmentShader: string, transmissionChunk: string): string {
+  if (!fragmentShader.includes(TRANSMISSION_INCLUDE)) return fragmentShader;
+  if (!transmissionChunk.includes(TRANSMISSION_ALPHA_MIX_LINE)) {
+    if (!warnedChunkDrift) {
+      warnedChunkDrift = true;
+      log.warning(
+        Modules.RENDERER,
+        "three's transmission_fragment chunk no longer contains the transmissionAlpha mix " +
+          'line; the physical glass will read the framebuffer alpha again, and refract_data ' +
+          'glass will composite wrongly over emissive layers. Update TRANSMISSION_ALPHA_MIX_LINE.'
+      );
+    }
+    return fragmentShader;
+  }
+  const pinned = transmissionChunk.replace(
+    TRANSMISSION_ALPHA_MIX_LINE,
+    TRANSMISSION_ALPHA_PIN_LINE
+  );
+  return fragmentShader.replace(TRANSMISSION_INCLUDE, pinned);
+}
+
+/**
+ * Luxar `refract_data`, live (the Layers-panel toggle): re-derives the ordering stamp.
+ * Plain state on both backends — no program rebuild — so a toggle costs one frame.
+ */
+export function physicalUpdateRefractData(host: PhysicalMeshHost, refractData: boolean): void {
+  applyPhysicalCompositing(host, { ...readInputs(host), refractData: refractData === true });
+}
+
+/** The material's current `refract_data` decision input. */
+export function physicalGetRefractData(host: PhysicalMeshHost): boolean {
+  return readInputs(host).refractData;
 }
 
 /**
@@ -511,6 +626,7 @@ export function applyPhysicalMeshConfig(
     vertexAlpha: config.vertexAlpha === true,
     alphaCutoff: config.alphaCutoff,
     transmission: host.transmission,
+    refractData: config.refractData === true,
   });
 }
 
@@ -606,6 +722,15 @@ export function physicalKnobInertReason(
     attenuation_distance: needsTransmission ?? (state.whiteAttenuation ? INERT_WHITE : null),
   };
   return rules[key] ?? null;
+}
+
+/**
+ * Why the "Refract data" toggle is inert in the current state, or `null` when live.
+ * A surface that transmits nothing has nothing to refract (spec §3.4 Phase 3) — the
+ * same dependency the glass knobs have.
+ */
+export function physicalRefractDataInertReason(values: PhysicalKnobLiveValues): string | null {
+  return physicalKnobDependencyState(values).transmitting ? null : INERT_NEEDS_TRANSMISSION;
 }
 
 /** The live knob values (material domain) plus the attenuation colour, all optional. */

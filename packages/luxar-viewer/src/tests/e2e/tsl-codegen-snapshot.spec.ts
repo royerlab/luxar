@@ -505,11 +505,17 @@ test.describe('TSL → generated-shader snapshots', () => {
     const colormap = await runTSL(page, 'mesh-colormap');
     const plain = await runTSL(page, 'mesh');
 
-    // Colormap: sampler in the VERTEX stage, none in the fragment.
+    // Every visual fragment stage carries exactly ONE sampler of its own since the
+    // refraction split's glass-depth partition (glass-partition-tsl.ts): the plain
+    // build is that baseline, and the colour-source claims are made relative to it.
+    const samples = (src: string): number => src.split('texture(').length - 1;
+    const baseline = samples(plain.fragmentShader);
+    expect(baseline).toBe(1);
+    // Colormap: the LUT sampler is in the VERTEX stage, none added to the fragment.
     expect(colormap.vertexShader).toContain('texture(');
-    expect(colormap.fragmentShader).not.toContain('texture(');
-    // Texture: the other way round.
-    expect(textured.fragmentShader).toContain('texture(');
+    expect(samples(colormap.fragmentShader)).toBe(baseline);
+    // Texture: the other way round — one more sampler in the fragment.
+    expect(samples(textured.fragmentShader)).toBe(baseline + 1);
     // `uv` enters the vertex layout ONLY for the textured build — an attribute that
     // appears later is silently broken on WebGPU.
     expect(textured.vertexShader).toMatch(/\bin\s+vec2\s+uv\s*;/);

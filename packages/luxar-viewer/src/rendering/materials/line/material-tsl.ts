@@ -45,6 +45,7 @@ import {
 } from '../../blending-state';
 import type { BlendingMode } from '../../../types/blending';
 import { proxyIUniform, type TSLNode } from '../_shared/tsl-helpers';
+import { glassPartitionNodes } from '../_shared/glass-partition-tsl';
 import { computeScalarRangeUniforms } from '../_shared/scalar-range';
 
 /**
@@ -60,6 +61,8 @@ interface LineMaterialTSLNodeTable {
   uIsOrtho: TSLNode;
   uSortedIndexSlot: TSLNode;
   uDensityDrop: TSLNode;
+  uGlassPartition: TSLNode;
+  uGlassDepth: TSLNode;
   uNearCull: TSLNode;
   uMaxLinePixelWidth: TSLNode;
   uPerspectiveLineScale: TSLNode;
@@ -118,6 +121,8 @@ export class LineTSLMaterial
       uIsOrtho: uniform(0),
       uSortedIndexSlot: uniform(0),
       uDensityDrop: uniform(0),
+      // Refraction split: mode 0 outside the split; the shared glass depth texture.
+      ...glassPartitionNodes(),
       // 0.1 matches the point/gsplat ctor default (pre-first-broadcast only).
       uNearCull: uniform(0.1),
       uMaxLinePixelWidth: uniform(540),
@@ -149,6 +154,8 @@ export class LineTSLMaterial
       uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
       uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
       uDensityDrop: proxyIUniform(this.tslNodes.uDensityDrop),
+      uGlassPartition: proxyIUniform(this.tslNodes.uGlassPartition),
+      uGlassDepth: proxyIUniform(this.tslNodes.uGlassDepth),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
       uMaxLinePixelWidth: proxyIUniform(this.tslNodes.uMaxLinePixelWidth),
       uPerspectiveLineScale: proxyIUniform(this.tslNodes.uPerspectiveLineScale),

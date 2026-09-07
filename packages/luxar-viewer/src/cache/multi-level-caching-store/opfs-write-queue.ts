@@ -12,9 +12,23 @@
  * This queue moves the write off the fetch critical path while keeping it
  * bounded: the caller `enqueue()`s and returns immediately; the queue drains
  * tasks at a fixed `concurrency`, coalesces repeat writes of the same key
- * (keeping the latest), and drops the oldest pending task past `maxDepth` or
- * `maxBytes` (L2 is a best-effort persistence tier — L1 still serves the
- * current session and the next session simply re-fetches a dropped chunk).
+ * (keeping the latest), and past `maxDepth` or `maxBytes` drops the ARRIVAL —
+ * the entry that just overflowed — not the oldest pending one (L2 is a
+ * best-effort persistence tier — L1 still serves the current session and the
+ * next session simply re-fetches a dropped chunk).
+ *
+ * Dropping the arrival rather than the oldest matters for what the next session
+ * finds on disk. `pump()` takes from the same oldest end the drop loop used to
+ * evict from, so drop-oldest kept discarding the entry the pump was about to
+ * run and left a scattered remnant — chunks from all over the store, of which
+ * no contiguous region is complete. Dropping the arrival lets the oldest end
+ * drain in enqueue order, so what lands on disk is CONTIGUOUS RUNS from that
+ * end (one prefix only while nothing drains; with the pump running, a run per
+ * burst) — which is what a warm revisit can actually serve from. The tradeoff
+ * is locality, not drop count: uniform-size writes drop equally under either
+ * policy, while mixed sizes can favour either one. A large arrival no longer
+ * displaces several small pending writes, but a large pending write can now
+ * hold off several smaller arrivals.
  *
  * Correctness is the caller's (MultiLevelCachingStore) responsibility: the
  * enqueued task must re-check staleness (disposed / dataAbort / epoch) at drain
@@ -23,12 +37,18 @@
  * @module cache/multi-level-caching-store/opfs-write-queue
  */
 
+/**
+ * Every limit here is resolved by the same clamp (finite, floored, at least 1),
+ * so pass a real budget: a non-positive or non-finite value becomes 1, not
+ * "unbounded". For `maxBytes` that means a 1-BYTE cap under which every
+ * non-empty chunk drops; for `maxDepth`, a queue one task deep.
+ */
 export interface OpfsWriteQueueOptions {
   /** Max writes running concurrently against OPFS. */
   concurrency: number;
-  /** Max pending (not-yet-started) tasks; excess drops the oldest. */
+  /** Max pending (not-yet-started) tasks; an overflowing arrival is dropped. */
   maxDepth: number;
-  /** Max bytes retained by pending tasks; excess drops the oldest. */
+  /** Max bytes retained by pending tasks; an overflowing arrival is dropped. */
   maxBytes: number;
 }
 
@@ -75,36 +95,68 @@ export class OpfsWriteQueue {
   private readonly maxDepth: number;
   private readonly maxBytes: number;
 
+  /**
+   * Resolve one configured limit: finite, floored, at least 1. All three go
+   * through here because `Math.max(1, Math.floor(NaN))` is NaN, and each limit
+   * fails differently and silently on a NaN — `size < NaN` is false, so a
+   * non-finite `concurrency` means the pump never starts a task (total L2
+   * write loss) while a non-finite `maxDepth`/`maxBytes` simply removes that
+   * bound. Every one of them is reachable through `MultiLevelCachingStore`'s
+   * `opfsWrite*` options, which bypass the config validators.
+   */
+  private static resolveLimit(value: number): number {
+    return Number.isFinite(value) ? Math.max(1, Math.floor(value)) : 1;
+  }
+
   constructor(opts: OpfsWriteQueueOptions) {
-    this.concurrency = Math.max(1, Math.floor(opts.concurrency));
-    this.maxDepth = Math.max(1, Math.floor(opts.maxDepth));
-    this.maxBytes = Math.max(1, Math.floor(opts.maxBytes));
+    this.concurrency = OpfsWriteQueue.resolveLimit(opts.concurrency);
+    this.maxDepth = OpfsWriteQueue.resolveLimit(opts.maxDepth);
+    this.maxBytes = OpfsWriteQueue.resolveLimit(opts.maxBytes);
   }
 
   /**
    * Schedule a write. Returns synchronously; the task runs in the background
    * when a concurrency slot frees. Re-enqueuing the same key replaces its
-   * pending task (coalesce, keep-latest). Past `maxDepth` or `maxBytes`, the
-   * oldest pending task is dropped.
+   * pending task (coalesce, keep-latest). Past `maxDepth` or `maxBytes`, THIS
+   * arrival is dropped and the already-pending tasks are left to drain in order
+   * (see the module docstring for why the oldest end is the one worth keeping).
    */
   enqueue(key: string, run: () => Promise<void>, byteLength: number): void {
+    // A size we cannot account for fails CLOSED: anything that is not a finite
+    // value >= 0 is treated as over-cap and dropped before any state is
+    // touched. NaN must not reach `pendingBytes` (it would disable the bound
+    // for the session, since every `NaN > maxBytes` test is false), and
+    // normalizing an unaccountable size to 0 instead — as a `Math.max(0, …)`
+    // clamp would for a negative length — is the opposite error: it admits an
+    // unmeasured payload for free, past a cap whose whole job is to bound
+    // retained bytes. Any already-queued task for this key survives.
+    if (!Number.isFinite(byteLength) || byteLength < 0) {
+      this.droppedCount++;
+      this.pump();
+      return;
+    }
+
     // Coalesce: delete-then-set so the re-enqueued key becomes newest in FIFO
     // order and its task is the latest.
     const previous = this.pending.get(key);
     if (previous) this.pendingBytes -= previous.byteLength;
     this.pending.delete(key);
-    const pending = { run, byteLength: Math.max(0, Math.floor(byteLength)) };
+    const pending = { run, byteLength: Math.floor(byteLength) };
     this.pending.set(key, pending);
     this.pendingBytes += pending.byteLength;
 
-    // Drop-oldest overflow. Best-effort tier: a dropped write just isn't
-    // persisted to disk this session (L1 still holds it).
-    while (this.pending.size > this.maxDepth || this.pendingBytes > this.maxBytes) {
-      const oldest = this.pending.keys().next().value as string | undefined;
-      if (oldest === undefined) break;
-      const dropped = this.pending.get(oldest);
-      this.pending.delete(oldest);
-      if (dropped) this.pendingBytes -= dropped.byteLength;
+    // Drop-the-arrival overflow, for both caps: the oldest end is the prefix a
+    // warm revisit can use, so it drains instead of being evicted. Best-effort
+    // tier: a dropped write just isn't persisted to disk this session (L1 still
+    // holds it). ONE removal always suffices — this call added exactly one
+    // entry and both caps held before it, so deleting that entry returns
+    // `pendingBytes` to its pre-enqueue value and `pending.size` to at most
+    // `maxDepth`. A coalescing re-enqueue that overflows therefore loses BOTH
+    // the task it replaced and this arrival for that key; acceptable for the
+    // same best-effort reason.
+    if (this.pending.size > this.maxDepth || this.pendingBytes > this.maxBytes) {
+      this.pending.delete(key);
+      this.pendingBytes -= pending.byteLength;
       this.droppedCount++;
     }
 

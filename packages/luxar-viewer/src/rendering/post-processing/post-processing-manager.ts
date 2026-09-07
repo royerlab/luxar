@@ -34,6 +34,12 @@ import {
   applyScaledNoiseSettings,
 } from './post-processing-manager/resource-lifecycle';
 import { runPipeline, type PipelineCtx } from './post-processing-manager/pipeline';
+import type { DataRefractionSplit } from './post-processing-manager/refraction-split';
+import {
+  applyGlassPartition,
+  collectRefractingGlass,
+  collectUnpartitionedMeshes,
+} from '../depth-sort-coordinator';
 import {
   captureHDRPixels as captureHDRPixelsImpl,
   captureHDRAsEXR as captureHDRAsEXRImpl,
@@ -67,6 +73,8 @@ export class PostProcessingManager {
   private megaShader!: LuxarMegaShaderMaterial;
   private megaPass!: FullscreenPass;
   private fxaaPass: FxaaPass | null = null;
+  /** The scene-pass split for `refract_data` glass, both backends (null once disposed). */
+  private refractionSplit: DataRefractionSplit | null = null;
 
   // ----------------------------------------------------------------
   // Persisted state (survives context loss; mirrors UI state)
@@ -202,6 +210,9 @@ export class PostProcessingManager {
       bloomThreshold: this.bloomThreshold,
       bloomIntensity: this.bloomIntensity,
       allocateBloomFromDefaults: opts.applyDefaults,
+      collectRefractingGlass,
+      collectUnpartitionedMeshes,
+      setGlassPartition: applyGlassPartition,
     });
     this.hdrTarget = r.hdrTarget;
     this.ldrTarget = r.ldrTarget;
@@ -209,6 +220,7 @@ export class PostProcessingManager {
     this.megaPass = r.megaPass;
     this.bloomChain = r.bloomChain;
     this.fxaaPass = r.fxaaPass;
+    this.refractionSplit = r.refractionSplit;
 
     // Apply config defaults to the mega-shader uniforms / defines.
     // Skipped during context-restore rebuilds — the caller restores user
@@ -244,9 +256,11 @@ export class PostProcessingManager {
       fxaaPass: this.fxaaPass,
       megaShader: this.megaShader,
       megaPass: this.megaPass,
+      refractionSplit: this.refractionSplit,
     });
     this.bloomChain = null;
     this.fxaaPass = null;
+    this.refractionSplit = null;
   }
 
   // ================================================================
@@ -649,6 +663,7 @@ export class PostProcessingManager {
       megaPass: this.megaPass,
       bloomChain: this.bloomChain,
       fxaaPass: this.fxaaPass,
+      refractionSplit: this.refractionSplit,
     };
   }
 
@@ -764,6 +779,7 @@ export class PostProcessingManager {
       this.megaShader.setBloom(this.bloomIntensity, this.bloomChain.outputTexture);
     }
     this.fxaaPass?.setSize(physW, physH);
+    this.refractionSplit?.setSize(physW, physH);
     this.megaShader.setResolution(physW, physH);
 
     log.info(
