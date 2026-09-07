@@ -271,14 +271,14 @@ export interface UrlParams {
   dpr: number | null;
 
   /**
-   * Force the input profile for the session (`?input=touch|mouse`). `touch`
-   * enables profile-driven phone/tablet behaviour (long-press menus, mobile
-   * rendering budgets, tap-oriented copy, and primary-tip pen routing);
-   * `mouse` enables the corresponding desktop profile. JS-only: stylesheets
-   * and per-event gesture routing keep following the real media features and
-   * `PointerEvent.pointerType`, so a faithful check still needs device
-   * emulation or a real device. `null` (missing or unrecognised) ⇒ detect from
-   * the browser. See `utils/input-capabilities.ts`.
+   * Force the session's JS input profile (`?input=touch|mouse`): pointer flags,
+   * hover capability, touch points, and device tier. Today this only changes
+   * device-class fallback budgets where the browser heap is unavailable;
+   * gesture, layout, and copy adaptations land in follow-up touch work.
+   * Stylesheets and per-event gesture routing keep following the real media
+   * features and `PointerEvent.pointerType`, so a faithful check still needs
+   * device emulation or a real device. `null` (missing or unrecognised) ⇒
+   * detect from the browser. See `utils/input-capabilities.ts`.
    */
   input: InputProfileOverride | null;
 
