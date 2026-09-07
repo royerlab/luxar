@@ -71,7 +71,7 @@ loaded = CalibrationResult.from_json(Path("cal.json"))
 - Per-K metrics: held-out PSNR/MSE, train PSNR, full PSNR/SSIM
 - `held_out_peak` (`HeldOutPeak`): recommended `k_star`, curve `type`, `confidence_db`, operating point `k_knee`, supporting metadata
 - `noise_floor` (`NoiseFloor`): ensemble `sigma_hat`, component estimators, `psnr_max_db`
-- Optional regime-robust extensions: `held_out_psnr_fg_db`, `held_out_gain_db`, `predict_zero_baseline_mse`, `calibration_region`, `splat_density`, `rd_model`, `exponent_fit`
+- Optional regime-robust extensions: `held_out_psnr_fg_db`, `held_out_psnr_fg_weighted_db`, `foreground_mask_fraction`, `foreground_otsu_threshold`, `fg_bg_ratio`, `held_out_gain_db`, `predict_zero_baseline_mse`, `calibration_region`, `splat_density`, `rd_model`, `exponent_fit`
 - Fitting provenance: `fit_times_seconds`, `fit_config`, `volume_shape`, `volume_dtype`, `timestamp`, optional `splat_paths` (when `--keep-fits`)
 - JSON (de)serialisation: non-finite floats round-trip as `null` → `nan`/`inf`; additive fields hydrate with defaults so old `cal.json` files keep loading
 

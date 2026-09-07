@@ -3,9 +3,9 @@
 The min--max-range held-out PSNR is correct for raw/noisy data at a
 manageable scale (the manuscript regime), but it is background-dominated on
 large sparse volumes: a trivial predict-zero reconstruction already scores
-40-60 dB. The gain-over-baseline and foreground-restricted variants here are
-regime-robust alternatives; both are *additive* — the default K* selection
-still uses the min--max metric.
+40-60 dB. The gain-over-baseline, foreground-restricted, and foreground-weighted
+variants here are regime-robust alternatives; all are *additive* — the default
+K* selection still uses the min--max metric.
 """
 
 from __future__ import annotations
