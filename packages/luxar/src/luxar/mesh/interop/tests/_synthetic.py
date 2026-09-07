@@ -446,28 +446,39 @@ def write_glb(
     gt: GroundTruth,
     *,
     translation: list[float] | None = None,
-    float_colors: NDArray[np.float32] | None = None,
+    float_colors: NDArray | None = None,
+    color_component_type: int = 5126,
 ) -> None:
     """A GLB with one mesh under one node, optionally translated.
 
     ``translation`` exercises the node-transform composition: skip it in the reader and
     the imported mesh sits at the origin instead of where the file put it.
+    ``float_colors`` supplies ``COLOR_0`` values; ``color_component_type`` selects their
+    glTF storage type.
     """
     blob, views, accessors = _accessor_blob(gt)
     attributes = {"POSITION": 0, "NORMAL": 1}
     if float_colors is not None:
-        color_bytes = np.asarray(float_colors, dtype="<f4").tobytes()
+        color_dtypes = {5121: "<u1", 5123: "<u2", 5126: "<f4"}
+        if color_component_type not in color_dtypes:
+            raise ValueError(
+                f"unsupported colour component type {color_component_type}"
+            )
+        color_bytes = np.asarray(
+            float_colors, dtype=color_dtypes[color_component_type]
+        ).tobytes()
         views.append(
             {"buffer": 0, "byteOffset": len(blob), "byteLength": len(color_bytes)}
         )
-        accessors.append(
-            {
-                "bufferView": len(views) - 1,
-                "componentType": 5126,
-                "count": len(gt.vertices),
-                "type": "VEC3",
-            }
-        )
+        color_accessor = {
+            "bufferView": len(views) - 1,
+            "componentType": color_component_type,
+            "count": len(gt.vertices),
+            "type": "VEC3",
+        }
+        if color_component_type != 5126:
+            color_accessor["normalized"] = True
+        accessors.append(color_accessor)
         attributes["COLOR_0"] = len(accessors) - 1
         blob += color_bytes
     node: dict = {"mesh": 0}

@@ -11,6 +11,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from numpy.typing import NDArray
 
 from .._stl import is_binary_stl
 from .._weld import prune_unreferenced_vertices, weld_vertices
@@ -110,8 +111,21 @@ def _signed_volume(mesh: TriangleMesh) -> float:
     )
 
 
-@pytest.mark.parametrize("fmt", ["ply", "obj", "glb", "vtp"])
-def test_float_colors_round_to_nearest_byte(fmt: str, tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("fmt", "unit_range"),
+    [
+        ("ply", True),
+        ("obj", True),
+        ("glb", True),
+        ("vtp", True),
+        ("ply", False),
+        ("obj", False),
+        ("vtp", False),
+    ],
+)
+def test_float_colors_round_to_nearest_byte(
+    fmt: str, unit_range: bool, tmp_path: Path
+) -> None:
     authored = np.array(
         [
             [1.6, 63.6, 127.6],
@@ -122,16 +136,16 @@ def test_float_colors_round_to_nearest_byte(fmt: str, tmp_path: Path) -> None:
         dtype=np.float32,
     )
     expected = np.round(authored).astype(np.uint8)
-    unit_colors = authored / 255.0
+    stored_colors = authored / 255.0 if unit_range else authored
     path = tmp_path / f"rounded.{fmt}"
 
     if fmt == "glb":
-        write_glb(path, GT, float_colors=unit_colors)
+        write_glb(path, GT, float_colors=stored_colors)
     elif fmt == "vtp":
         write_vtp_point_data(
             path,
             GT,
-            [(unit_colors, "Float32", "colors", 3)],
+            [(stored_colors, "Float32", "colors", 3)],
             pdata_attrs='Scalars="colors"',
         )
     else:
@@ -154,7 +168,7 @@ def test_float_colors_round_to_nearest_byte(fmt: str, tmp_path: Path) -> None:
         prefix = "" if fmt == "ply" else "v "
         rows = [
             prefix + " ".join(str(float(value)) for value in (*vertex, *color))
-            for vertex, color in zip(GT.vertices, unit_colors, strict=True)
+            for vertex, color in zip(GT.vertices, stored_colors, strict=True)
         ]
         face_prefix = "3 " if fmt == "ply" else "f "
         offset = 0 if fmt == "ply" else 1
@@ -163,6 +177,59 @@ def test_float_colors_round_to_nearest_byte(fmt: str, tmp_path: Path) -> None:
             for face in GT.faces
         ]
         path.write_text("\n".join(header + rows + faces) + "\n", encoding="ascii")
+
+    mesh = import_mesh(path)
+    assert mesh.colors is not None
+    for vertex, color in zip(mesh.vertices, mesh.colors, strict=True):
+        row = int(np.argmin(np.linalg.norm(GT.vertices - vertex, axis=1)))
+        np.testing.assert_array_equal(color, expected[row])
+
+
+@pytest.mark.parametrize(
+    ("component_type", "authored", "expected"),
+    [
+        (
+            5121,
+            np.array(
+                [[2, 64, 128], [3, 65, 129], [4, 66, 130], [5, 67, 131]],
+                dtype=np.uint8,
+            ),
+            np.array(
+                [[2, 64, 128], [3, 65, 129], [4, 66, 130], [5, 67, 131]],
+                dtype=np.uint8,
+            ),
+        ),
+        (
+            5123,
+            np.array(
+                [
+                    [129, 16_320, 32_768],
+                    [643, 16_834, 33_282],
+                    [1_157, 17_348, 33_796],
+                    [1_671, 17_862, 34_310],
+                ],
+                dtype=np.uint16,
+            ),
+            np.array(
+                [[1, 64, 128], [3, 66, 130], [5, 68, 132], [7, 70, 134]],
+                dtype=np.uint8,
+            ),
+        ),
+    ],
+)
+def test_gltf_integer_colors_use_normalized_component_range(
+    component_type: int,
+    authored: NDArray,
+    expected: NDArray[np.uint8],
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "integer-colors.glb"
+    write_glb(
+        path,
+        GT,
+        float_colors=authored,
+        color_component_type=component_type,
+    )
 
     mesh = import_mesh(path)
     assert mesh.colors is not None
