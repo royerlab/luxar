@@ -296,6 +296,7 @@ describe('OverlayManager.loadOverlays', () => {
     expect(video.dataset.autoplay).toBe('1');
     expect(video.preload).toBe('metadata');
     expect(video.playbackRate).toBe(1.5);
+    expect(video.defaultPlaybackRate).toBe(1.5);
     expect(video.src).toBe('https://example.com/scene.luxar.zarr/overlays/turntable/video.webm');
     expect(video.poster).toBe('https://example.com/scene.luxar.zarr/overlays/turntable/poster.png');
     expect(video.style.width).toBe('26vw');

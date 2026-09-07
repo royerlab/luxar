@@ -598,6 +598,7 @@ export class OverlayManager {
     video.preload = 'metadata';
     video.disablePictureInPicture = true;
     if (typeof config.playback_rate === 'number' && config.playback_rate > 0) {
+      video.defaultPlaybackRate = config.playback_rate;
       video.playbackRate = config.playback_rate;
     }
     if (!this.setVideoMedia(video, config, archivedVideo, archivedPoster)) return;
