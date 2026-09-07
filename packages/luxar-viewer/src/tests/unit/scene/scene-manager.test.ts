@@ -1301,18 +1301,27 @@ describe('SceneManager', () => {
       const camera = sceneManager.camera as THREE.OrthographicCamera;
       const updateProjectionMatrix = vi.spyOn(camera, 'updateProjectionMatrix');
       const setZoomLimits = vi.spyOn(sceneManager.controls, 'setZoomLimits');
+      const updateMaterials = vi.spyOn(sceneManager, 'updateMaterialsForCurrentCamera');
 
       sceneManager.setCameraZoom(2.5);
 
       expect(camera.zoom).toBe(2.5);
       expect(updateProjectionMatrix).toHaveBeenCalledOnce();
       expect(setZoomLimits).toHaveBeenCalledWith(2.5 / 10_000, 2.5 * 1_000);
+      expect(updateMaterials).toHaveBeenCalledOnce();
+
+      const controlsHandler = vi
+        .mocked(sceneManager.controls.addEventListener)
+        .mock.calls.find(([type]) => type === 'change')?.[1];
+      controlsHandler?.({ type: 'change', target: sceneManager.controls });
+      expect(updateMaterials).toHaveBeenCalledOnce();
 
       sceneManager.setCameraZoom(Number.NaN);
       sceneManager.setCameraZoom(0);
       expect(camera.zoom).toBe(2.5);
       expect(updateProjectionMatrix).toHaveBeenCalledOnce();
       expect(setZoomLimits).toHaveBeenCalledOnce();
+      expect(updateMaterials).toHaveBeenCalledOnce();
     });
   });
 

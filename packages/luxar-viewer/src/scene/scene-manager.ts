@@ -325,6 +325,8 @@ export class SceneManager extends THREE.EventDispatcher<{
     if (!isOrthographicCamera(this.camera) || !Number.isFinite(zoom) || zoom <= 0) return;
     this.camera.zoom = zoom;
     this.camera.updateProjectionMatrix();
+    this.lastOrthoZoom = zoom;
+    this.updateMaterialsForCurrentCamera();
     this.controls.setZoomLimits(zoom / ZOOM_OUT_FACTOR, zoom * ZOOM_IN_FACTOR);
   }
 
