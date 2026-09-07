@@ -274,6 +274,22 @@ describe('CameraFlight', () => {
     await expect(done).resolves.toEqual({ completed: false });
   });
 
+  it('typing or adjusting an input does not cancel a flight', async () => {
+    const { flight } = makeFlight();
+    const done = flight.flyTo(DEST, { durationMs: 1000 });
+    const text = document.createElement('input');
+    const range = document.createElement('input');
+    range.type = 'range';
+    document.body.append(text, range);
+
+    text.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+    range.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+
+    expect(flight.isActive).toBe(true);
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
+    await expect(done).resolves.toEqual({ completed: false });
+  });
+
   it('a newer flyTo supersedes the active one', async () => {
     const { flight, camera } = makeFlight();
     const first = flight.flyTo(DEST, { durationMs: 1000 });

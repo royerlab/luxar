@@ -100,6 +100,13 @@ const CANCEL_ON_ELEMENT_EVENTS = ['pointerdown', 'wheel', 'touchstart'] as const
 /** Keyboard input is dispatched at the document level by the input handler. */
 const CANCEL_ON_DOCUMENT_EVENTS = ['keydown'] as const;
 
+function isEditableKeyTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  return (
+    target.matches('input, textarea, select') || target.closest('[contenteditable="true"]') !== null
+  );
+}
+
 export function easeFlight(t: number, easing: FlightEasing): number {
   const x = t < 0 ? 0 : t > 1 ? 1 : t;
   if (easing === 'linear') return x;
@@ -227,7 +234,8 @@ export interface ActiveFlight {
 export class CameraFlight {
   private readonly now: () => number;
   private active: ActiveFlight | null = null;
-  private readonly onUserInput = (): void => {
+  private readonly onUserInput = (event: Event): void => {
+    if (event.type === 'keydown' && isEditableKeyTarget(event.target)) return;
     this.cancel();
   };
 
