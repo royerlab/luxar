@@ -216,8 +216,8 @@ export class PickingSystem {
   private postProcessing: PostProcessingManager | null = null;
 
   /**
-   * `onPickResult` may be asynchronous. The app's handler is: it fetches the
-   * label / image / key before it stores the picked-element cache, so
+   * `onPickResult` is asynchronous: the app handler fetches the label / image /
+   * key before it stores the picked-element cache, so
    * {@link pickAt} awaits the handler's promise before resolving — a caller
    * that reads the cache "right after the pick" would otherwise race the fetch.
    * The hover path fires and forgets, so nothing there waits on it.
@@ -226,7 +226,7 @@ export class PickingSystem {
     private renderer: Renderer,
     private capabilities: RendererCapabilities,
     private camera: THREE.Camera,
-    private onPickResult: (result: PickResult | null) => void | Promise<void>
+    private onPickResult: (result: PickResult | null) => Promise<void>
   ) {
     this.pickScene = new THREE.Scene();
     // No background — pick buffer clears to (0,0,0,0) which means "no hit"

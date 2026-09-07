@@ -469,6 +469,17 @@ export function installCanvasActions(ports: CanvasActionsPorts): CanvasActionsHa
     });
   };
 
+  const isClickRelease = (ev: PointerEvent, start: DownPointer): boolean => {
+    if (start.button !== ev.button) return false;
+    if (ev.button !== 0 && ev.button !== 2) return false;
+    const slop = start.touchLike ? TOUCH_CLICK_SLOP_PX : CLICK_SLOP_PX;
+    const dx = ev.clientX - start.x;
+    const dy = ev.clientY - start.y;
+    if (dx * dx + dy * dy <= slop * slop) return true;
+    if (start.touchLike) lastTap = null;
+    return false;
+  };
+
   events.on(canvas, 'pointerup', (e) => {
     const ev = e as PointerEvent;
     const start = down.get(ev.pointerId);
@@ -485,16 +496,7 @@ export function installCanvasActions(ports: CanvasActionsPorts): CanvasActionsHa
       lastTap = null;
       return;
     }
-    if (start.button !== ev.button) return;
-    if (ev.button !== 0 && ev.button !== 2) return;
-
-    const slop = start.touchLike ? TOUCH_CLICK_SLOP_PX : CLICK_SLOP_PX;
-    const dx = ev.clientX - start.x;
-    const dy = ev.clientY - start.y;
-    if (dx * dx + dy * dy > slop * slop) {
-      if (start.touchLike) lastTap = null;
-      return;
-    }
+    if (!isClickRelease(ev, start)) return;
 
     if (start.touchLike) handleTap(ev, start.gesture);
     else handleClick(ev);
