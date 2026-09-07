@@ -143,8 +143,10 @@ so at 4 px every tap read as a camera drag), and three gestures:
   called: that handler stores the cache after an asynchronous label fetch, so a
   read on delivery alone would see the cache as it was before the tap's own
   pick landed (the long-press menu silently never opened under emulation). Any navigation
-  is deferred by `DOUBLE_TAP_MS` so a second tap can pre-empt it; the mouse path
-  stays synchronous so its user activation is never spent.
+  is deferred by `DOUBLE_TAP_MS` so a second tap can pre-empt it. That delay
+  starts only after the GPU readback and label / key / image fetch finish, so
+  the total tap-to-navigation gap is the async pick latency plus 300 ms; the
+  mouse path stays synchronous so its user activation is never spent.
 - **Long-press** (`LONG_PRESS_MS`, held within the slop, one finger) — pick, then
   the element menu; the finger's release is then inert.
 - **Double-tap** (within `DOUBLE_TAP_MS` / `DOUBLE_TAP_SLOP_PX`) — re-frame,

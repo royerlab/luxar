@@ -20,7 +20,10 @@ import type { EventGroup } from '../../../utils/cross-layer/event-group';
 import { isTouchLikePointer } from '../../../utils/input-capabilities';
 import { TOUCH_CLICK_SLOP_PX } from './picked-element-cache';
 
-/** Two taps at most this far apart in time are a double-tap. */
+/**
+ * Two taps at most this far apart in time are a double-tap. Tap navigation
+ * waits this long only after the async pick/readback and label fetch finish.
+ */
 export const DOUBLE_TAP_MS = 300;
 /** …and at most this far apart on screen (a finger re-lands imprecisely). */
 export const DOUBLE_TAP_SLOP_PX = 24;
@@ -62,7 +65,11 @@ export function installDoubleTapToFit(
     // a pinch clears it, and this release must still read as a pinch.
     const wasMultiTouch = multiTouch;
     forget(ev.pointerId);
-    if (!start || wasMultiTouch || down.size > 0) return;
+    if (!start) return;
+    if (wasMultiTouch || down.size > 0) {
+      lastTap = null;
+      return;
+    }
     if (Math.hypot(ev.clientX - start.x, ev.clientY - start.y) > TOUCH_CLICK_SLOP_PX) {
       lastTap = null; // a drag: whatever tap preceded it is not half of a double-tap
       return;

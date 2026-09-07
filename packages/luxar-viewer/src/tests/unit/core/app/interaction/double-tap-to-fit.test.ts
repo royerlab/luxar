@@ -119,6 +119,19 @@ describe('installDoubleTapToFit', () => {
     expect(h.fit).toHaveBeenCalledTimes(1);
   });
 
+  it('a pinch resets a tap that preceded it', () => {
+    const h = setup();
+    tap(h.canvas, 100, 80);
+    h.clock.t += 100;
+    pointer(h.canvas, 'pointerdown', { x: 60, y: 80, pointerId: 1 });
+    pointer(h.canvas, 'pointerdown', { x: 140, y: 80, pointerId: 2 });
+    pointer(h.canvas, 'pointerup', { x: 60, y: 80, pointerId: 1 });
+    pointer(h.canvas, 'pointerup', { x: 140, y: 80, pointerId: 2 });
+    h.clock.t += 100;
+    tap(h.canvas, 100, 80);
+    expect(h.fit).not.toHaveBeenCalled();
+  });
+
   it('a cancelled pointer drops out of the gesture', () => {
     const h = setup();
     pointer(h.canvas, 'pointerdown', { x: 100, y: 80 });
