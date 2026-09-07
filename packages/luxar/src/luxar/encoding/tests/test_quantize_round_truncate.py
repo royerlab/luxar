@@ -31,15 +31,15 @@ def test_quantize_normalized_clip_rounds_vs_truncates() -> None:
 
 
 def test_float16_uint16_quantization_rounds_vs_truncates_without_overflow() -> None:
-    data = np.array([0.0, 0.5, 1.0], dtype=np.float16)
+    data = np.array([0.0, 0.5, 0.50048828125, 1.0], dtype=np.float16)
     rounded = ArrayEncoder._quantize_normalized_clip(
         data, 0.0, 1.0, 65_535, np.dtype(np.uint16), round_values=True
     )
     truncated = ArrayEncoder._quantize_normalized_clip(
         data, 0.0, 1.0, 65_535, np.dtype(np.uint16), round_values=False
     )
-    np.testing.assert_array_equal(rounded, [0, 32_768, 65_535])
-    np.testing.assert_array_equal(truncated, [0, 32_767, 65_535])
+    np.testing.assert_array_equal(rounded, [0, 32_768, 32_799, 65_535])
+    np.testing.assert_array_equal(truncated, [0, 32_767, 32_799, 65_535])
 
 
 @pytest.mark.parametrize(
@@ -123,7 +123,7 @@ def test_custom_bounded_scalar_truncates() -> None:
     assert g["a"].attrs["encoding"]["name"] == "bounded_scalar_uint8"
 
 
-def test_float16_sdr_color_quantization_uses_float64_affine_map() -> None:
+def test_float16_sdr_colors_quantize_to_their_source_byte_codes() -> None:
     data = np.array(
         [[0.00392, 0.00784, 0.011765], [0.06274, 0.1098, 0.1255]],
         dtype=np.float16,
