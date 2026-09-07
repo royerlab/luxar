@@ -503,13 +503,15 @@ export class ControlRail {
    * long-press. A disabled button or a button without such a popover is a
    * no-op (the native menu is still suppressed by the caller).
    */
-  private openContextPopoverFor(target: HTMLElement | null): void {
+  private openContextPopoverFor(target: HTMLElement | null): boolean {
     const btnEl = target?.closest<HTMLButtonElement>('.luxar-control-rail__btn');
     const item = btnEl ? this.items.find((it) => it.id === btnEl.dataset.railId) : undefined;
     if (item?.popover?.trigger === 'context' && btnEl && !btnEl.disabled) {
       this.dismissHint();
       this.overlay.togglePopover(item, btnEl);
+      return true;
     }
+    return false;
   }
 
   /** Apply side effects for a keydown handled by the official input router. */

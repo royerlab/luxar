@@ -1117,7 +1117,10 @@ export class DimensionSliders {
     // Touch: press and hold opens the same settings menu (no right button).
     this.sliderEvents.add(
       attachLongPress(playButton, {
-        onLongPress: (x, y) => this.showContextMenu(dimIndex, x, y),
+        onLongPress: (x, y) => {
+          this.showContextMenu(dimIndex, x, y);
+          return true;
+        },
       })
     );
     this.playButtons.set(dimIndex, playButton);

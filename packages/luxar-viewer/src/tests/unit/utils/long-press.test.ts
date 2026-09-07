@@ -32,7 +32,7 @@ function pointer(
 describe('attachLongPress', () => {
   let el: HTMLDivElement;
   let child: HTMLButtonElement;
-  let onLongPress: Mock<(clientX: number, clientY: number, event: PointerEvent) => void>;
+  let onLongPress: Mock<(clientX: number, clientY: number, event: PointerEvent) => boolean>;
   let dispose: () => void;
 
   beforeEach(() => {
@@ -42,7 +42,7 @@ describe('attachLongPress', () => {
     child = document.createElement('button');
     el.appendChild(child);
     document.body.appendChild(el);
-    onLongPress = vi.fn();
+    onLongPress = vi.fn(() => true);
     dispose = attachLongPress(el, { onLongPress });
   });
 
@@ -119,6 +119,16 @@ describe('attachLongPress', () => {
     expect(onLongPress).toHaveBeenCalledTimes(1);
   });
 
+  it('a stray mouse pointer does not permanently disarm later touch presses', () => {
+    child.dispatchEvent(pointer('pointerdown', { id: 1 }));
+    child.dispatchEvent(pointer('pointerdown', { id: 2, pointerType: 'mouse' }));
+    child.dispatchEvent(pointer('pointerup', { id: 1 }));
+
+    child.dispatchEvent(pointer('pointerdown', { id: 3 }));
+    vi.advanceTimersByTime(LONG_PRESS_MS);
+    expect(onLongPress).toHaveBeenCalledTimes(1);
+  });
+
   it('swallows the platform contextmenu during and right after the press (Android double-menu)', () => {
     const seen = vi.fn();
     child.addEventListener('contextmenu', seen);
@@ -140,6 +150,25 @@ describe('attachLongPress', () => {
     expect(clicked).not.toHaveBeenCalled();
     // Only ONE click is swallowed: the next is a real tap.
     child.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    expect(clicked).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves click and contextmenu alone when the long press is declined', () => {
+    dispose();
+    onLongPress.mockReturnValue(false);
+    dispose = attachLongPress(el, { onLongPress });
+    const clicked = vi.fn();
+    const contexted = vi.fn();
+    child.addEventListener('click', clicked);
+    child.addEventListener('contextmenu', contexted);
+
+    child.dispatchEvent(pointer('pointerdown'));
+    vi.advanceTimersByTime(LONG_PRESS_MS);
+    child.dispatchEvent(pointer('pointerup'));
+    child.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    child.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    expect(contexted).toHaveBeenCalledTimes(1);
     expect(clicked).toHaveBeenCalledTimes(1);
   });
 

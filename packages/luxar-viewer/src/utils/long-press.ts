@@ -22,8 +22,8 @@
 import { isTouchLikePointer } from './input-capabilities';
 
 export interface LongPressOptions {
-  /** Called once when the press has been held still for `durationMs`. */
-  onLongPress: (clientX: number, clientY: number, event: PointerEvent) => void;
+  /** Called once at the hold threshold; return true when it opened an action. */
+  onLongPress: (clientX: number, clientY: number, event: PointerEvent) => boolean;
   /** Hold duration in ms (default 500 — the platforms' own long-press timing). */
   durationMs?: number;
   /**
@@ -68,16 +68,11 @@ export function attachLongPress(el: HTMLElement, options: LongPressOptions): () 
 
   const onPointerDown = (e: Event): void => {
     const ev = e as PointerEvent;
+    if (!isTouchLikePointer(ev)) return;
     activePointers.add(ev.pointerId);
     // A second finger means a pinch or a two-finger gesture, not a press.
     if (activePointers.size > 1 || pressed !== null) {
       cancel();
-      return;
-    }
-    if (!isTouchLikePointer(ev)) {
-      // A mouse/pen-as-mouse press: nothing to arm, and nothing to keep
-      // counting once it is gone (its release may not reach this element).
-      activePointers.delete(ev.pointerId);
       return;
     }
     pressed = { id: ev.pointerId, x: ev.clientX, y: ev.clientY, event: ev };
@@ -86,8 +81,7 @@ export function attachLongPress(el: HTMLElement, options: LongPressOptions): () 
       const p = pressed;
       pressed = null;
       if (!p) return;
-      firedAt = performance.now();
-      options.onLongPress(p.x, p.y, p.event);
+      if (options.onLongPress(p.x, p.y, p.event)) firedAt = performance.now();
     }, duration);
   };
 
