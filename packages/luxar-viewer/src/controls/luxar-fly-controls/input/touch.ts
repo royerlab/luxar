@@ -153,6 +153,27 @@ function thrustAndRoll(ctx: FlyTouchCtx, prev: FlyPinchState, next: FlyPinchStat
   return changed;
 }
 
+function updateLook(ctx: FlyTouchCtx, event: PointerEvent, pos: THREE.Vector2): boolean {
+  const deltaX = event.clientX - pos.x;
+  const deltaY = event.clientY - pos.y;
+  pos.set(event.clientX, event.clientY);
+  return deltaX !== 0 || deltaY !== 0 ? look(ctx, deltaX, deltaY) : false;
+}
+
+function updatePinch(ctx: FlyTouchCtx, event: PointerEvent, pos: THREE.Vector2): boolean {
+  pos.set(event.clientX, event.clientY);
+  const prev = ctx.getPinch();
+  const pair = firstTwo(ctx);
+  if (!prev || !pair) return false;
+  const next = pinchGeometry(pair[0], pair[1]);
+  const deltaX = next.midX - prev.midX;
+  const deltaY = next.midY - prev.midY;
+  const strafed = deltaX !== 0 || deltaY !== 0 ? strafe(ctx, deltaX, deltaY) : false;
+  const changed = thrustAndRoll(ctx, prev, next) || strafed;
+  ctx.setPinch(next);
+  return changed;
+}
+
 /**
  * A touch-like finger landed: track it, (re)snapshot the pinch, and start the
  * gesture when it is the first finger. Cancels the compatibility mouse events.
@@ -180,29 +201,8 @@ export function handleTouchMove(ctx: FlyTouchCtx, event: PointerEvent): void {
     reseedPinch(ctx);
     return;
   }
-  let changed = false;
-  if (ctx.pointers.size === 1) {
-    const deltaX = event.clientX - pos.x;
-    const deltaY = event.clientY - pos.y;
-    if (deltaX !== 0 || deltaY !== 0) {
-      changed = look(ctx, deltaX, deltaY);
-    }
-    pos.set(event.clientX, event.clientY);
-  } else {
-    pos.set(event.clientX, event.clientY);
-    const prev = ctx.getPinch();
-    const pair = firstTwo(ctx);
-    if (prev && pair) {
-      const next = pinchGeometry(pair[0], pair[1]);
-      const deltaX = next.midX - prev.midX;
-      const deltaY = next.midY - prev.midY;
-      if (deltaX !== 0 || deltaY !== 0) {
-        changed = strafe(ctx, deltaX, deltaY);
-      }
-      changed = thrustAndRoll(ctx, prev, next) || changed;
-      ctx.setPinch(next);
-    }
-  }
+  const changed =
+    ctx.pointers.size === 1 ? updateLook(ctx, event, pos) : updatePinch(ctx, event, pos);
   if (changed) ctx.dispatch('change');
 }
 
