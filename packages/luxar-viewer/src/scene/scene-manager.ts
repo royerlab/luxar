@@ -317,6 +317,13 @@ export class SceneManager extends THREE.EventDispatcher<{
     return true;
   }
 
+  /** Apply an authored zoom after the camera has switched to ortho projection. */
+  setCameraZoom(zoom: number): void {
+    if (!isOrthographicCamera(this.camera) || !Number.isFinite(zoom) || zoom <= 0) return;
+    this.camera.zoom = zoom;
+    this.camera.updateProjectionMatrix();
+  }
+
   /**
    * Create a new scene manager instance.
    *

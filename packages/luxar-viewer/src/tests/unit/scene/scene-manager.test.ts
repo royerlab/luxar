@@ -1292,6 +1292,25 @@ describe('SceneManager', () => {
       expect(sceneManager.camera).toBeInstanceOf(THREE.PerspectiveCamera);
       expect(listener).not.toHaveBeenCalled();
     });
+
+    it('applies authored zoom only after switching to an orthographic camera', () => {
+      sceneManager.setCameraZoom(2.5);
+      expect(sceneManager.camera).toBeInstanceOf(THREE.PerspectiveCamera);
+
+      sceneManager.setControlType('ortho');
+      const camera = sceneManager.camera as THREE.OrthographicCamera;
+      const updateProjectionMatrix = vi.spyOn(camera, 'updateProjectionMatrix');
+
+      sceneManager.setCameraZoom(2.5);
+
+      expect(camera.zoom).toBe(2.5);
+      expect(updateProjectionMatrix).toHaveBeenCalledOnce();
+
+      sceneManager.setCameraZoom(Number.NaN);
+      sceneManager.setCameraZoom(0);
+      expect(camera.zoom).toBe(2.5);
+      expect(updateProjectionMatrix).toHaveBeenCalledOnce();
+    });
   });
 
   describe('toggleCentering', () => {

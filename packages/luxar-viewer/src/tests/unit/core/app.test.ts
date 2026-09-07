@@ -170,6 +170,7 @@ describe('LuxarApp', () => {
       warmBlendModePrograms: vi.fn(),
       updateDynamicClippingPlanes: vi.fn(),
       getSceneViewerConfig: vi.fn().mockReturnValue(undefined),
+      setCameraZoom: vi.fn(),
       dispose: vi.fn(),
       renderer: { domElement: {} },
       scene: {},
@@ -516,6 +517,21 @@ describe('LuxarApp', () => {
         { applyViewerConfigFov: true }
       );
       expect(DatasetBrowser).not.toHaveBeenCalled();
+    });
+
+    it('applies authored zoom after first-load rendering defaults switch to ortho', async () => {
+      const order: string[] = [];
+      mockSceneManager.getSceneViewerConfig.mockReturnValue({
+        camera: { zoom: 2.5 },
+        control_type: 'ortho',
+      });
+      mockRenderingControls.applyZarrDefaults.mockImplementation(() => order.push('defaults'));
+      mockSceneManager.setCameraZoom.mockImplementation(() => order.push('zoom'));
+
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
+
+      expect(mockSceneManager.setCameraZoom).toHaveBeenCalledWith(2.5);
+      expect(order).toEqual(['defaults', 'zoom']);
     });
 
     it('should load directly for an unsuffixed URL whose zarr probe hits', async () => {
