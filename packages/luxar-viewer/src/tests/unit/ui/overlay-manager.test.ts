@@ -294,6 +294,7 @@ describe('OverlayManager.loadOverlays', () => {
     // its media loads); the wish is kept on the element for the visibility sync.
     expect(video.autoplay).toBe(false);
     expect(video.dataset.autoplay).toBe('1');
+    expect(video.preload).toBe('metadata');
     expect(video.playbackRate).toBe(1.5);
     expect(video.src).toBe('https://example.com/scene.luxar.zarr/overlays/turntable/video.webm');
     expect(video.poster).toBe('https://example.com/scene.luxar.zarr/overlays/turntable/poster.png');
@@ -305,6 +306,7 @@ describe('OverlayManager.loadOverlays', () => {
 
     // Story 2 shows it → play(); leaving → pause().
     setStory(2);
+    expect(video.preload).toBe('auto');
     expect(playSpy).toHaveBeenCalledTimes(1);
     pausedSpy.mockReturnValue(false);
     setStory(0);

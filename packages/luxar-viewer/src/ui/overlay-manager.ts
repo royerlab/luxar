@@ -587,7 +587,7 @@ export class OverlayManager {
     video.dataset.autoplay = config.autoplay !== false ? '1' : '0';
     video.controls = config.autoplay === false;
     video.playsInline = true;
-    video.preload = 'auto';
+    video.preload = 'metadata';
     video.disablePictureInPicture = true;
     if (typeof config.playback_rate === 'number' && config.playback_rate > 0) {
       video.playbackRate = config.playback_rate;
@@ -642,6 +642,7 @@ export class OverlayManager {
     const video = this.videoElements.get(name);
     if (!video) return;
     if (visible) {
+      video.preload = 'auto';
       if (video.paused && video.dataset.autoplay === '1') {
         // jsdom returns undefined and gesture-gated browsers reject; a rejected
         // promise must not surface as an unhandled rejection from a
