@@ -79,7 +79,12 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.core.viewer_config import CameraConfig, ViewerConfig, Waypoint
+from luxar.core.viewer_config import (
+    CameraConfig,
+    EnvironmentConfig,
+    ViewerConfig,
+    Waypoint,
+)
 from luxar.demos import add_demo_caption, launch_viewer
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG, pull_in
 from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
@@ -637,12 +642,22 @@ PANEL_WIDTH = 0.32
 # limb shows — and sat in its own depth band between backdrop and highlight.
 SPHERE_RADIUS_SCALE = 1.35  # × the cluster's r95
 SPHERE_MIN_RADIUS = 0.35
-# Tuned in the browser: 0.10 read as a solid coloured disc over the cluster;
-# this is a veil the points still shine through. Additive, double-sided, so
-# the front and back shells sum to about twice this at the centre.
-SPHERE_ALPHA = 0.035
 SPHERE_SUBDIVISIONS = 3  # icosphere: 642 vertices, 1280 faces
 SPHERE_LAYER_ORDER = 5  # backdrop 0 < sphere < highlight 10
+# The shell is a SOAP BUBBLE: `material="physical"` (MESH_PHYSICAL_MATERIALS_SPEC
+# Phases 1-2, 4). Fully transmissive so the cluster stays crisp inside (points
+# draw after the glass on both backends), a thin-film iridescence for the
+# rainbow sheen, a whisper of dispersion for the diffraction fringe at the limb,
+# and an environment captured from the scene itself so the film reflects the
+# surrounding map — the data is the light.
+BUBBLE_ROUGHNESS = 0.04
+BUBBLE_IOR = 1.33  # a water film
+BUBBLE_IRIDESCENCE = 1.0
+BUBBLE_DISPERSION = 0.25  # very subtle; three's scale runs to 1.0
+BUBBLE_THICKNESS_FRAC = 0.02  # × radius: a film, not a solid glass ball
+# Base colour of the film: near-white with a hint of the story colour, so the
+# iridescence and the reflections carry the colour rather than a tint.
+BUBBLE_TINT = 0.15
 
 # Left-hand turntable: a representative PDB structure per story, ray-traced by
 # PyMOL into a transparent WebM turning once in 30 s (see `_pdb_turntable`). Sits at panel
@@ -1033,6 +1048,10 @@ def build_stories_scene(
             # The kiosk display is high-DPI and dedicated: render at its full
             # device resolution (the viewer's default caps DPR for laptops).
             allow_high_dpr=True,
+            # The soap-bubble shells reflect the map itself: an exact cube
+            # capture of the scene from its centre (Phase 4 environments), re-run
+            # when the slice or appearance changes; `luxar env bake` pre-bakes it.
+            environment=EnvironmentConfig(source="scene", probe="auto"),
             waypoints=waypoints,
         )
 
@@ -1106,8 +1125,8 @@ def build_stories_scene(
                     layer_order=10,
                 )
 
-            # Marker shells: one translucent sphere per cluster, pinned to its
-            # story slot. The unit icosphere's vertices are its normals.
+            # Marker shells: one soap bubble per cluster, pinned to its story
+            # slot. The unit icosphere's vertices are its normals.
             unit_verts, unit_faces = icosphere()
             for k, (s, c) in enumerate(zip(stories, clusters, strict=True), start=1):
                 radius = max(SPHERE_MIN_RADIUS, SPHERE_RADIUS_SCALE * c.r95)
@@ -1120,26 +1139,27 @@ def build_stories_scene(
                         ),
                     ]
                 ).astype(np.float32)
-                rgba = np.empty((nv, 4), dtype=np.float32)
-                rgba[:, :3] = np.asarray(s.color, dtype=np.float32)
-                rgba[:, 3] = SPHERE_ALPHA
+                film = (1.0 - BUBBLE_TINT) * np.ones(3, dtype=np.float32) + (
+                    BUBBLE_TINT * np.asarray(s.color, dtype=np.float32)
+                )
+                colors = np.tile(film.astype(np.float32), (nv, 1))
                 scene.add_mesh(
                     f"Marker {k}: {s.key}",
                     sphere_vertices,
                     unit_faces,
                     normals=unit_verts,
                     normal_dims=[1, 2, 3],
-                    colors=rgba,
+                    colors=colors,
                     shading="smooth",
                     double_sided=True,
-                    blending_mode="additive",
-                    # A low ambient floor keeps the shell continuous while the
-                    # view-anchored key still gives it a soft 3D gradient; the
-                    # highlight is the one curvature cue the veil needs.
-                    ambient=0.3,
-                    shade_exponent=1.5,
-                    specular=0.3,
-                    shininess=12,
+                    material="physical",
+                    roughness=BUBBLE_ROUGHNESS,
+                    metalness=0.0,
+                    transmission=1.0,
+                    ior=BUBBLE_IOR,
+                    thickness=float(radius * BUBBLE_THICKNESS_FRAC),
+                    dispersion=BUBBLE_DISPERSION,
+                    iridescence=BUBBLE_IRIDESCENCE,
                     layer=True,
                     layer_order=SPHERE_LAYER_ORDER,
                 )
