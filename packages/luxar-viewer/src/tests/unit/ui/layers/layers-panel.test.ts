@@ -185,7 +185,7 @@ function makeLayeredSceneGraph(
   } as unknown as SceneNode;
 }
 
-function makeSoundSceneGraph(soundLayer = true): SceneNode {
+function makeSoundSceneGraph(soundLayer = true, storyVisible = true): SceneNode {
   return {
     name: 'root',
     path: '/',
@@ -196,7 +196,7 @@ function makeSoundSceneGraph(soundLayer = true): SceneNode {
         name: 'story',
         path: '/story',
         type: 'group',
-        attrs: { layer: true },
+        attrs: { layer: true, visible: storyVisible },
         children: [
           {
             name: 'hum',
@@ -288,6 +288,24 @@ describe('LayersPanel — sound rows', () => {
 
     expect(port.setNodeMuted).toHaveBeenCalledOnce();
     expect(port.setNodeMuted).toHaveBeenCalledWith('/story', true);
+  });
+
+  it('replays authored visibility to audio after sound nodes attach', () => {
+    panel.dispose();
+    container.replaceChildren();
+    panel = new LayersPanel(container, makeAnimationController());
+    panel.setAudioPort(port);
+    const root = new THREE.Group();
+    root.name = 'LuxarScene';
+    panel.initFromScene(root, makeSoundSceneGraph(true, false));
+    port.setNodeMuted.mockClear();
+
+    panel.pushAudioMutes();
+
+    expect(port.setNodeMuted.mock.calls).toEqual([
+      ['/story', true],
+      ['/story/hum', false],
+    ]);
   });
 
   it('the gain slider and setLayer({gain}) drive the port and the summary', () => {

@@ -512,7 +512,10 @@ export class LuxarApp {
     this.audioEngine.detachScene();
     this.audioEngine.applySceneConfig(extractAudioConfig(audio));
     const root = this.sceneManager.scene?.children?.find((c) => c.name === 'LuxarScene');
-    if (root) this.audioEngine.attachScene(root);
+    if (root) {
+      this.audioEngine.attachScene(root);
+      this.layersPanel?.pushAudioMutes();
+    }
     // The waypoints install first and snap to the opening waypoint before any
     // sound node exists, so the load-time arrival is replayed here — otherwise
     // the opening story's `on_arrive` narration would never fire.

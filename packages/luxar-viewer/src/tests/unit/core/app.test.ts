@@ -1456,6 +1456,37 @@ describe('LuxarApp', () => {
       expect(app.stopSound('narration')).toBe(false);
     });
 
+    it('replays layer mutes after attaching audio and before the opening waypoint', () => {
+      const order: string[] = [];
+      const root = { name: 'LuxarScene' };
+      const audioEngine = {
+        detachScene: vi.fn(() => order.push('detach')),
+        applySceneConfig: vi.fn(() => order.push('config')),
+        attachScene: vi.fn(() => order.push('attach')),
+        notifyWaypoint: vi.fn(() => order.push('waypoint')),
+        dispose: vi.fn(),
+      };
+      const layersPanel = {
+        pushAudioMutes: vi.fn(() => order.push('mutes')),
+        dispose: vi.fn(),
+      };
+      const waypointDriver = {
+        currentIndex: 0,
+        getWaypoint: vi.fn(() => ({ when: { story: 0 } })),
+      };
+      mockSceneManager.scene = { children: [root] };
+      Object.assign(app as unknown as Record<string, unknown>, {
+        audioEngine,
+        layersPanel,
+        sceneManager: mockSceneManager,
+        waypointDriver,
+      });
+
+      (app as unknown as { installAudio(audio: unknown): void }).installAudio(undefined);
+
+      expect(order).toEqual(['detach', 'config', 'attach', 'mutes', 'waypoint']);
+    });
+
     it('subscribes to the controls change stream and re-emits it as camera-changed', async () => {
       await app.init({ canvas: mockCanvas, src: SRC });
       const calls = mockSceneManager.controls.addEventListener.mock.calls as Array<

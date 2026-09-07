@@ -406,6 +406,13 @@ export class LayersPanel {
     this.audioPort = port;
   }
 
+  /** Re-send current layer visibility after a sound scene has attached. */
+  pushAudioMutes(): void {
+    for (const layer of this.state.getLayers()) {
+      this.audioPort?.setNodeMuted(layer.path, !layer.visible);
+    }
+  }
+
   /**
    * Visibility, for pixels AND sound: the scene object toggles as before, and
    * the sound layer mutes the node (or, for a group, every sound under it).
