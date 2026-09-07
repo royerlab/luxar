@@ -202,11 +202,13 @@ describe('handleTouchMove — two-finger pinch direction', () => {
 
     handleTouchMove(ctx, p2);
     expect(state.zoomDelta).toBe(0);
+    expect(state.rollDelta).toBe(0);
     expect(Number.isFinite(state.zoomDelta)).toBe(true);
 
     ctx.pointerPositions.get(2)!.set(300, 100);
     handleTouchMove(ctx, p2);
     expect(state.zoomDelta).toBeCloseTo(-1, 6);
+    expect(state.rollDelta).toBe(0);
   });
 });
 

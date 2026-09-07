@@ -148,7 +148,7 @@ function moveTwoFingers(ctx: OrbitInputCtx): void {
   const dollyDelta = g.distance / ctx.dollyStart.y;
   if (ctx.dollyStart.y > 0 && dollyDelta > 0) ctx.addZoomDelta(-(dollyDelta - 1));
 
-  if (ctx.enableRotate) {
+  if (ctx.enableRotate && ctx.dollyStart.y > 0 && g.distance > 0) {
     const twist = wrapAngle(g.angle - ctx.dollyStart.x);
     if (twist !== 0) ctx.addRollDelta(TWIST_ROLL_SIGN * TWIST_ROLL_GAIN * twist);
   }
