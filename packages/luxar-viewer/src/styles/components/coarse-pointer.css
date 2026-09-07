@@ -96,6 +96,10 @@
   .luxar-layers-panel {
     max-height: calc(100vh - 40px);
   }
+  .luxar-data-monitor--top-left,
+  .luxar-data-monitor--bottom-left {
+    left: calc(var(--luxar-spacing-10, 20px) + env(safe-area-inset-left, 0px));
+  }
   .luxar-data-monitor--top-right,
   .luxar-data-monitor--bottom-right {
     right: calc(var(--luxar-spacing-10, 20px) + env(safe-area-inset-right, 0px));

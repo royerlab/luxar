@@ -160,6 +160,12 @@ describe('coarse-pointer.css contract', () => {
     );
     expect(ruleBody(coarse, '.luxar-control-rail-hint')).toMatch(/safe-area-inset-left/);
     expect(ruleBody(coarse, '.luxar-debug-console')).toMatch(/safe-area-inset-bottom/);
+    expect(
+      ruleBody(
+        coarse,
+        '.luxar-data-monitor--top-left,\n  .luxar-data-monitor--bottom-left'
+      )
+    ).toMatch(/left:\s*calc\(.*safe-area-inset-left/);
     expect(ruleBody(coarse, '.luxar-control-rail.is-collapsed')).toMatch(
       /50vh[^;]*safe-area-inset-bottom/
     );
