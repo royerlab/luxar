@@ -4,6 +4,10 @@
 // helpers (`ui/error-overlay`) live in `error-overlay.test.ts`.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { showHelpOverlay, hideHelpOverlay } from '../../../ui/help-overlay';
+import {
+  resetInputProfileForTests,
+  setInputProfileOverride,
+} from '../../../utils/input-capabilities';
 import { isTypingInInput } from '../../../utils/dom/focus';
 import { InputContext, InputContextManager } from '../../../input/input-handler/context-manager';
 import { registerAllKeyBindings } from '../../../input/input-handler/key-bindings/register-all';
@@ -612,5 +616,32 @@ describe('hideHelpOverlay', () => {
 
   it('should be safe to call when no overlay exists', () => {
     expect(() => hideHelpOverlay()).not.toThrow();
+  });
+});
+
+describe('help overlay — Touch section', () => {
+  afterEach(() => {
+    hideHelpOverlay();
+    resetInputProfileForTests();
+  });
+
+  it('is absent on a mouse-and-keyboard machine (desktop help text unchanged)', () => {
+    resetInputProfileForTests();
+    showHelpOverlay(new Map());
+    const titles = Array.from(
+      document.querySelectorAll('.luxar-help-overlay__section-title span')
+    ).map((el) => el.textContent);
+    expect(titles).not.toContain('Touch');
+  });
+
+  it('is shown on a device with touch points', () => {
+    setInputProfileOverride('touch');
+    showHelpOverlay(new Map());
+    const titles = Array.from(
+      document.querySelectorAll('.luxar-help-overlay__section-title span')
+    ).map((el) => el.textContent);
+    expect(titles).toContain('Touch');
+    expect(document.body.textContent).toMatch(/Pinch/);
+    expect(document.body.textContent).toMatch(/Double-tap/);
   });
 });

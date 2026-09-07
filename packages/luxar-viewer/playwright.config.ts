@@ -56,7 +56,10 @@ export default defineConfig({
   // `playwright.perf.config.ts` so their sampling cost — and the
   // generated `perf-results/<sha>/` JSON they write — stay out of the
   // default `pnpm test:e2e` run.
-  testIgnore: /.*perf-bench\.spec\.ts$/,
+  // Mobile / touch specs (src/tests/e2e/mobile/) run only under
+  // `playwright.mobile.config.ts` with device emulation; on a desktop
+  // profile they have no touch to exercise.
+  testIgnore: [/.*perf-bench\.spec\.ts$/, /\/mobile\//],
 
   // Tests within a file run in parallel too.
   //
