@@ -623,10 +623,11 @@ export class OverlayManager {
     if (!video) return;
     if (visible) {
       if (video.paused && video.dataset.autoplay === '1') {
-        const p = video.play();
-        // jsdom and gesture-gated browsers reject; a rejected promise must not
-        // surface as an unhandled rejection from a visibility update.
-        if (p && typeof p.catch === 'function') p.catch(() => {});
+        // jsdom returns undefined and gesture-gated browsers reject; a rejected
+        // promise must not surface as an unhandled rejection from a
+        // visibility update.
+        const p: unknown = video.play();
+        if (p instanceof Promise) p.catch(() => {});
       }
     } else if (!video.paused) {
       video.pause();

@@ -51,14 +51,23 @@ export function waypointMatches(when: ZarrWaypointCondition, dims: WaypointDims)
   if (!metadata) return false;
   for (const [dimName, constraint] of Object.entries(when)) {
     const dimIndex = metadata.findIndex((m) => m.name === dimName);
-    if (dimIndex < 0) continue;
-    const current = dims.currentStep[dimIndex];
+    const current = dimIndex < 0 ? undefined : dims.currentStep[dimIndex];
     if (current === undefined) continue;
-    if (typeof constraint === 'number') {
-      if (Math.abs(current - constraint) > EXACT_MATCH_TOLERANCE) return false;
-    } else if (Array.isArray(constraint) && constraint.length === 2) {
-      if (current < constraint[0] || current > constraint[1]) return false;
-    }
+    if (!constraintHolds(current, constraint)) return false;
+  }
+  return true;
+}
+
+/**
+ * One `when` entry against one coordinate: a number matches within ±0.5, a
+ * two-element range inclusively; anything else is ignored (the overlay rule).
+ */
+function constraintHolds(current: number, constraint: unknown): boolean {
+  if (typeof constraint === 'number') {
+    return Math.abs(current - constraint) <= EXACT_MATCH_TOLERANCE;
+  }
+  if (Array.isArray(constraint) && constraint.length === 2) {
+    return current >= constraint[0] && current <= constraint[1];
   }
   return true;
 }
@@ -95,33 +104,40 @@ export function resolveWaypointPose(
   const pose: CameraSnapshot = { ...live };
   if (camera.position) pose.position = [...camera.position] as [number, number, number];
   if (camera.up) pose.up = [...camera.up] as [number, number, number];
-  let target: [number, number, number] | undefined = camera.target
-    ? ([...camera.target] as [number, number, number])
-    : undefined;
-  if (camera.target_node) {
-    const centre = deps.resolveNodeCenter(camera.target_node);
-    if (centre) {
-      target = [centre.x, centre.y, centre.z];
-    } else {
-      log.warning(
-        Modules.APP,
-        `waypoint target_node '${camera.target_node}' not found in scene graph; using target`
-      );
-    }
-  }
+  const target = resolveTarget(camera, deps);
   if (target) pose.target = target;
-  if (typeof camera.fov === 'number') {
-    pose.fov = camera.fov;
-  } else if (camera.fov_preset) {
-    const preset = deps.fovPresets[camera.fov_preset];
-    if (typeof preset === 'number' && preset > 0) pose.fov = preset;
-  }
+  const fov = resolveFov(camera, deps);
+  if (fov !== undefined) pose.fov = fov;
   if (typeof camera.near === 'number') pose.near = camera.near;
   if (typeof camera.far === 'number') pose.far = camera.far;
   // Orthographic framing: distance changes nothing under an ortho projection,
   // only zoom does, so a waypoint that wants to frame tighter authors `zoom`.
   if (typeof camera.zoom === 'number' && camera.zoom > 0) pose.zoom = camera.zoom;
   return pose;
+}
+
+/** `target_node` (resolved) wins over `target`; neither → keep the live target. */
+function resolveTarget(
+  camera: ZarrCameraConfig,
+  deps: ResolvePoseDeps
+): [number, number, number] | undefined {
+  if (camera.target_node) {
+    const centre = deps.resolveNodeCenter(camera.target_node);
+    if (centre) return [centre.x, centre.y, centre.z];
+    log.warning(
+      Modules.APP,
+      `waypoint target_node '${camera.target_node}' not found in scene graph; using target`
+    );
+  }
+  return camera.target ? ([...camera.target] as [number, number, number]) : undefined;
+}
+
+/** An explicit `fov` wins over a `fov_preset`; an unknown preset is ignored. */
+function resolveFov(camera: ZarrCameraConfig, deps: ResolvePoseDeps): number | undefined {
+  if (typeof camera.fov === 'number') return camera.fov;
+  if (!camera.fov_preset) return undefined;
+  const preset = deps.fovPresets[camera.fov_preset];
+  return typeof preset === 'number' && preset > 0 ? preset : undefined;
 }
 
 export interface WaypointPorts {
@@ -179,26 +195,34 @@ export class WaypointDriver {
 
     const wp = this.waypoints[idx];
     if (wp.camera && typeof wp.camera === 'object') {
-      const pose = this.ports.resolvePose(wp.camera, this.ports.getLivePose());
-      const duration = typeof wp.duration_ms === 'number' ? wp.duration_ms : undefined;
-      if (arrival === 'snap') {
-        // Load-time framing: the authored pose verbatim.
-        this.ports.snapTo(pose);
-      } else {
-        // A story step. `duration_ms: 0` is still a flight of zero length so
-        // the turntable rule below applies to it too.
-        void this.ports.flyTo(pose, {
-          ...(duration !== undefined ? { durationMs: duration } : {}),
-          ...(wp.easing ? { easing: wp.easing } : {}),
-          ...(this.ports.autoRotateActive() ? { keepOrientation: true } : {}),
-        });
-      }
+      this.reach(wp, wp.camera, arrival);
     }
     if (wp.rendering && typeof wp.rendering === 'object') {
       this.ports.applyRendering(wp.rendering);
     }
     log.info(Modules.APP, `Waypoint ${idx} reached (${arrival})`);
     return idx;
+  }
+
+  /** Apply a waypoint's camera: verbatim at load, as a flight on a story step. */
+  private reach(wp: ZarrWaypoint, camera: ZarrCameraConfig, arrival: WaypointArrival): void {
+    const pose = this.ports.resolvePose(camera, this.ports.getLivePose());
+    if (arrival === 'snap') {
+      // Load-time framing: the authored pose verbatim.
+      this.ports.snapTo(pose);
+      return;
+    }
+    // A story step. `duration_ms: 0` is still a flight of zero length so the
+    // turntable rule applies to it too.
+    void this.ports.flyTo(pose, this.flightOptions(wp));
+  }
+
+  private flightOptions(wp: ZarrWaypoint): FlyToOptions {
+    const opts: FlyToOptions = {};
+    if (typeof wp.duration_ms === 'number') opts.durationMs = wp.duration_ms;
+    if (wp.easing) opts.easing = wp.easing;
+    if (this.ports.autoRotateActive()) opts.keepOrientation = true;
+    return opts;
   }
 
   /** Forget the current match so the next `evaluate` re-applies it. */

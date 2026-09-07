@@ -607,37 +607,50 @@ export class LayersPanel {
     if (!live) {
       throw new Error(`LayersPanel.setLayer: unknown layer '${path}'`);
     }
-    if (patch.visible !== undefined) {
-      this.state.setVisible(path, patch.visible);
-      this.applyEngine.applyVisibility(path, patch.visible);
-      this.refreshRowVisual(path);
-    }
-    if (patch.displayRange !== undefined) {
-      const [min, max] = patch.displayRange;
-      this.state.setDisplayRange(path, min, max);
-      this.applyEngine.applyDisplayRange(live);
-    }
-    if (patch.gamma !== undefined) {
-      this.state.setGamma(path, patch.gamma);
-      this.applyEngine.applyGamma(live);
-    }
-    if (patch.opacity !== undefined) {
-      this.state.setOpacity(path, patch.opacity);
-      this.applyEngine.applyOpacity(live);
-    }
-    if (patch.absorption !== undefined) {
-      this.state.setAbsorption(path, patch.absorption);
-      this.applyEngine.applyAbsorption(live);
-    }
-    if (patch.layerOrder !== undefined) {
-      this.state.setLayerOrder(path, patch.layerOrder ?? undefined);
-      this.applyEngine.applyLayerOrder(live);
-    }
-    if (patch.blendingMode !== undefined) {
-      this.setLayerBlending(path, patch.blendingMode);
-    }
-    if (patch.colormap !== undefined) {
-      this.setLayerColormap(path, patch.colormap ?? undefined);
+    // One entry per patch field, each taking the route the panel's own control
+    // for that field takes (state-manager setter, then apply engine).
+    const appliers: { [K in keyof LayerPatch]-?: (value: NonNullable<LayerPatch[K]>) => void } = {
+      visible: (visible) => {
+        this.state.setVisible(path, visible);
+        this.applyEngine.applyVisibility(path, visible);
+        this.refreshRowVisual(path);
+      },
+      displayRange: ([min, max]) => {
+        this.state.setDisplayRange(path, min, max);
+        this.applyEngine.applyDisplayRange(live);
+      },
+      gamma: (gamma) => {
+        this.state.setGamma(path, gamma);
+        this.applyEngine.applyGamma(live);
+      },
+      opacity: (opacity) => {
+        this.state.setOpacity(path, opacity);
+        this.applyEngine.applyOpacity(live);
+      },
+      absorption: (absorption) => {
+        this.state.setAbsorption(path, absorption);
+        this.applyEngine.applyAbsorption(live);
+      },
+      layerOrder: (order) => {
+        this.state.setLayerOrder(path, order);
+        this.applyEngine.applyLayerOrder(live);
+      },
+      blendingMode: (mode) => this.setLayerBlending(path, mode),
+      colormap: (colormap) => this.setLayerColormap(path, colormap),
+    };
+    // `null` means "release" for the nullable fields (layerOrder, colormap).
+    const releasers: Partial<Record<keyof LayerPatch, () => void>> = {
+      layerOrder: () => {
+        this.state.setLayerOrder(path, undefined);
+        this.applyEngine.applyLayerOrder(live);
+      },
+      colormap: () => this.setLayerColormap(path, undefined),
+    };
+    for (const key of Object.keys(appliers) as (keyof LayerPatch)[]) {
+      const value = patch[key];
+      if (value === undefined) continue;
+      if (value === null) releasers[key]?.();
+      else (appliers[key] as (v: unknown) => void)(value);
     }
     this.controls.render();
     // Material changes only show when the loop runs; registration-free, so
