@@ -151,6 +151,8 @@ export function compositeOverlays(
       compositeTextOverlay(ctx, el, config, x, y, metrics);
     } else if (el.classList.contains('luxar-overlay--image')) {
       compositeImageOverlay(ctx, el, config, x, y, metrics);
+    } else if (el.classList.contains('luxar-overlay--video')) {
+      compositeVideoOverlay(ctx, el, config, x, y, metrics);
     } else if (el.classList.contains('luxar-overlay--html')) {
       compositeHtmlOverlay(ctx, el, glCanvas);
     }
@@ -320,6 +322,41 @@ export function compositeImageOverlay(
 
   const [dx, dy] = computeAnchorOffset(config.anchor, drawW, drawH);
   ctx.drawImage(img, xIn + dx, yIn + dy, drawW, drawH);
+}
+
+/** Composite the current frame of a single video overlay. */
+export function compositeVideoOverlay(
+  ctx: CanvasRenderingContext2D,
+  el: HTMLDivElement,
+  config: OverlayConfig,
+  xIn: number,
+  yIn: number,
+  metrics: OverlayCaptureMetrics
+): void {
+  const video = el.querySelector('video');
+  if (
+    !video ||
+    video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
+    video.videoWidth === 0
+  ) {
+    return;
+  }
+
+  let drawW: number;
+  let drawH: number;
+  if (config.size) {
+    drawW = config.size[0] * metrics.vw;
+    drawH =
+      config.size[1] == null
+        ? drawW * (video.videoHeight / video.videoWidth)
+        : config.size[1] * metrics.vh;
+  } else {
+    drawW = video.videoWidth * metrics.scaleX;
+    drawH = video.videoHeight * metrics.scaleY;
+  }
+
+  const [dx, dy] = computeAnchorOffset(config.anchor, drawW, drawH);
+  ctx.drawImage(video, xIn + dx, yIn + dy, drawW, drawH);
 }
 
 /**

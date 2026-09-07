@@ -104,6 +104,21 @@ function makeImageOverlay(): HTMLDivElement {
   return el;
 }
 
+function makeVideoOverlay(): HTMLDivElement {
+  const el = document.createElement('div');
+  el.classList.add('luxar-overlay--video');
+  el.style.opacity = '1';
+  const video = document.createElement('video');
+  Object.defineProperty(video, 'readyState', {
+    value: HTMLMediaElement.HAVE_CURRENT_DATA,
+    configurable: true,
+  });
+  Object.defineProperty(video, 'videoWidth', { value: 400, configurable: true });
+  Object.defineProperty(video, 'videoHeight', { value: 300, configurable: true });
+  el.appendChild(video);
+  return el;
+}
+
 function makeConfig(overrides: Partial<OverlayConfig> = {}): OverlayConfig {
   return {
     type: 'text',
@@ -198,6 +213,28 @@ describe('compositeOverlays', () => {
       makeCanvas()
     );
     expect(fake.globalCompositeOperation).toBe('source-over');
+  });
+
+  it('draws a visible video frame with its intrinsic aspect ratio', () => {
+    const canvas = makeCanvas(1000, 500);
+    const fake = makeFakeCtx(1000, 500);
+    const overlay = {
+      el: makeVideoOverlay(),
+      config: makeConfig({ type: 'overlay_video', size: [0.2, null] }),
+    };
+
+    compositeOverlays(
+      canvas,
+      fake as unknown as CanvasRenderingContext2D,
+      makeManager([overlay]),
+      makeCanvas(),
+      { width: 1000, height: 500 }
+    );
+
+    expect(fake.drawImage).toHaveBeenCalledTimes(1);
+    const [video, x, y, width, height] = fake.drawImage.mock.calls[0];
+    expect(video).toBe(overlay.el.querySelector('video'));
+    expect([x, y, width, height]).toEqual([400, 175, 200, 150]);
   });
 });
 
