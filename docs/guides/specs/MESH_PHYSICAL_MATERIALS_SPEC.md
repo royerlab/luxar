@@ -1,11 +1,11 @@
 # Mesh Physical Materials Spec — glass, metal and iridescence on Luxar meshes
 
-**Status:** Phase 1 (§4) is **implemented**; Phases 2–4 are design. Written after
-the `esm3_protein_stories` demo wanted translucent marker shells around clusters
-and got them from the existing light-free mesh model (see §2); this document is
-the plan for the materials that model cannot express, and — for Phase 1 — the
-record of what shipped and where it deviates from the sketch (the "Phase 1
-implementation notes" in §3.1, §3.2, §3.5 and §3.6).
+**Status:** Phases 1, 2 and 4 are **implemented**; Phase 3 is design (opt-in,
+deferred). Written after the `esm3_protein_stories` demo wanted translucent marker
+shells around clusters and got them from the existing light-free mesh model (see
+§2); this document is the plan for the materials that model cannot express, and —
+for the delivered phases — the record of what shipped and where it deviates from
+the sketch (the implementation notes in §3.1, §3.2, §3.3, §3.5 and §3.6).
 
 ## 1. Motivation
 
@@ -175,9 +175,11 @@ sense that matters (no light objects in the graph, nothing per-node), and gains
 one scene-level input: `scene.environment`.
 
 - **Default:** three's procedural `RoomEnvironment` through `PMREMGenerator`,
-  built lazily the first time a physical mesh is created and cached on the
-  `SceneManager`. It needs no asset, gives believable reflections and a neutral
-  key, and is what three's own examples use.
+  built lazily the first time a physical mesh is created and cached by the active
+  viewer host (`SceneManager` or `LuxarLayer`). Layer mode preserves a host-supplied
+  `scene.environment`; otherwise its environment also lights the host's own
+  lighting-model materials until the layer is disposed. It needs no asset, gives
+  believable reflections and a neutral key, and is what three's own examples use.
 - **Authored (Phase 4):** `viewer_config.environment = {"source": "room" |
   "scene" | "hdri", "probe": "auto" | [x, y, z] | "node:<path>", "resolution":
   128, "intensity": 1.0, "url": ...}`. `"room"` is today's default. `"hdri"`

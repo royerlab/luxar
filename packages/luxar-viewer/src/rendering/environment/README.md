@@ -63,6 +63,21 @@ The PMREM generator and the cube render target are backend-specific classes
 the WebGPU ones come through `rendering/tsl/registry.ts`, keeping the lazy chunk lazy.
 `CubeCamera` itself is backend-agnostic.
 
+## Hosts and lifetime
+
+Owned by the active viewer host. `SceneManager` creates it in `init()` next to the scene
+and hands it the authored config, the baked map and the capture runtime as the load
+progresses; `LuxarLayer` creates it in `load()` only when the host left
+`scene.environment` unset, so a host-supplied environment is preserved and an environment
+the layer built also lights the host's own lighting-model materials until the layer is
+disposed. Both hosts build it through the material manager's `onPhysicalMaterialCreated`
+hook, dispose it during teardown before releasing the material manager (the targets are
+the renderer's GPU resources), and call `rebuild()` after a WebGL context restore — which
+re-creates whatever was active and preserves laziness when nothing had requested a light
+yet. A dataset switch goes through `resetForDataset()`: it clears the demand, releases the
+capture target and the dataset-owned baked / HDRI textures, and keeps the reusable room
+PMREM.
+
 ## Testing
 
 `tests/unit/rendering/environment/`: the lazy contract and house-material invisibility,

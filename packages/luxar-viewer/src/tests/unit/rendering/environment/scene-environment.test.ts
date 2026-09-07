@@ -219,6 +219,33 @@ describe('SceneEnvironment — lazy room (Phase 1 contract)', () => {
     expect(second.scene.environment).toBe(other);
   });
 
+  it('rebuild() replaces a ready room target but preserves laziness before first use', () => {
+    const textures = [new THREE.Texture(), new THREE.Texture()];
+    const disposeTargets = [vi.fn(), vi.fn()];
+    let buildIndex = 0;
+    const { env, scene } = makeEnv({
+      createGenerator: () => ({
+        fromScene: vi.fn(() => ({
+          texture: textures[buildIndex],
+          dispose: disposeTargets[buildIndex++],
+        })),
+        dispose: vi.fn(),
+      }),
+    });
+
+    // Nothing asked for a light yet: a context restore must not build one.
+    expect(env.rebuild()).toBe(false);
+    expect(scene.environment).toBeNull();
+    expect(env.isReady()).toBe(false);
+
+    env.ensure();
+    expect(scene.environment).toBe(textures[0]);
+    expect(env.rebuild()).toBe(true);
+    expect(disposeTargets[0]).toHaveBeenCalledTimes(1);
+    expect(scene.environment).toBe(textures[1]);
+    expect(env.activeKind()).toBe('room');
+  });
+
   it('a throwing generator leaves the environment unbuilt and still disposes the scaffolding', () => {
     const disposeGenerator = vi.fn();
     const { env, scene } = makeEnv({
