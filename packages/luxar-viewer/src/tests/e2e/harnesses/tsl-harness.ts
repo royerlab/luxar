@@ -36,7 +36,13 @@
  * @module tests/e2e/harnesses/tsl-harness
  */
 
-import { SHADER_REGISTRY, renderGLSL, renderTSL } from './tsl-harness/index';
+import {
+  SHADER_REGISTRY,
+  renderBloomChainGLSL,
+  renderBloomChainTSL,
+  renderGLSL,
+  renderTSL,
+} from './tsl-harness/index';
 
 declare global {
   interface Window {
@@ -47,6 +53,8 @@ declare global {
         shaderName: string,
         opts?: { native?: boolean }
       ) => Promise<{ pixels: Uint8Array; vertexShader: string; fragmentShader: string }>;
+      renderBloomChainGLSL: () => Promise<Uint8Array>;
+      renderBloomChainTSL: () => Promise<Uint8Array>;
       listShaders: () => string[];
     };
   }
@@ -65,5 +73,7 @@ window.__tslHarness = {
   ready,
   renderGLSL,
   renderTSL,
+  renderBloomChainGLSL,
+  renderBloomChainTSL,
   listShaders: () => Object.keys(SHADER_REGISTRY),
 };

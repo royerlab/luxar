@@ -18,6 +18,9 @@ import {
   SPLAT_TEXTURE_LAYOUT,
 } from '../../../../rendering/element-texture-layout';
 import { buildDefaultCamera } from './shared';
+import { BloomChain } from '../../../../rendering/post-processing/bloom/chain';
+import { FullscreenPass } from '../../../../rendering/post-processing/fullscreen/pass';
+import type { Renderer, RendererCapabilities } from '../../../../rendering/renderer-capabilities';
 // Intentional module cycle: `index.ts` assembles SHADER_REGISTRY from the
 // family modules and re-exports these executors. The registry binding is
 // only dereferenced inside the function bodies (long after the module
@@ -27,6 +30,130 @@ import { loadTslMaterials } from '../../../../rendering/tsl/load';
 
 /** Edge length (px) of the square offscreen render target the parity harness draws into. */
 export const HARNESS_SIZE = 64;
+const BLOOM_OUTPUT_SIZE = HARNESS_SIZE / 2;
+
+function buildBloomChainTexture(): THREE.DataTexture {
+  const data = new Uint8Array(HARNESS_SIZE * HARNESS_SIZE * 4);
+  for (let y = 0; y < HARNESS_SIZE; y++) {
+    for (let x = 0; x < HARNESS_SIZE; x++) {
+      const offset = (y * HARNESS_SIZE + x) * 4;
+      const dx = x - (HARNESS_SIZE - 1) / 2;
+      const dy = y - (HARNESS_SIZE - 1) / 2;
+      const radiusSquared = dx * dx + dy * dy;
+      const value = Math.round(
+        36 * Math.exp(-radiusSquared / 180) + 20 * Math.exp(-radiusSquared / 18)
+      );
+      data[offset] = value;
+      data[offset + 1] = Math.round(value * 0.75);
+      data[offset + 2] = Math.round(value * 0.5);
+      data[offset + 3] = 255;
+    }
+  }
+  const texture = new THREE.DataTexture(
+    data,
+    HARNESS_SIZE,
+    HARNESS_SIZE,
+    THREE.RGBAFormat,
+    THREE.UnsignedByteType
+  );
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+async function renderBloomChain(
+  renderer: Renderer,
+  caps: RendererCapabilities
+): Promise<Uint8Array> {
+  const input = buildBloomChainTexture();
+  const chain = new BloomChain({
+    width: HARNESS_SIZE,
+    height: HARNESS_SIZE,
+    levels: 3,
+    threshold: 0.02,
+    smoothing: 0.03,
+    radius: 1,
+    caps,
+  });
+  const copyMaterial = new THREE.MeshBasicMaterial({
+    map: chain.outputTexture,
+    depthTest: false,
+    depthWrite: false,
+    toneMapped: false,
+  });
+  const copyPass = new FullscreenPass(copyMaterial, caps);
+  const target = new THREE.WebGLRenderTarget(BLOOM_OUTPUT_SIZE, BLOOM_OUTPUT_SIZE, {
+    type: THREE.UnsignedByteType,
+    format: THREE.RGBAFormat,
+    minFilter: THREE.NearestFilter,
+    magFilter: THREE.NearestFilter,
+    depthBuffer: false,
+  });
+
+  chain.render(renderer, input);
+  renderer.setRenderTarget(target);
+  copyPass.render(renderer);
+  renderer.setRenderTarget(null);
+
+  let pixels: Uint8Array;
+  if (caps.apiSurface === 'webgl2') {
+    pixels = new Uint8Array(BLOOM_OUTPUT_SIZE * BLOOM_OUTPUT_SIZE * 4);
+    (renderer as THREE.WebGLRenderer).readRenderTargetPixels(
+      target,
+      0,
+      0,
+      BLOOM_OUTPUT_SIZE,
+      BLOOM_OUTPUT_SIZE,
+      pixels
+    );
+  } else {
+    const readback = await (
+      renderer as import('three/webgpu').WebGPURenderer
+    ).readRenderTargetPixelsAsync(target, 0, 0, BLOOM_OUTPUT_SIZE, BLOOM_OUTPUT_SIZE);
+    pixels = new Uint8Array(readback.buffer.slice(0));
+  }
+
+  target.dispose();
+  copyPass.dispose();
+  copyMaterial.dispose();
+  chain.dispose();
+  input.dispose();
+  return pixels;
+}
+
+/** Render the production bloom pyramid through WebGL ShaderMaterials. */
+export async function renderBloomChainGLSL(): Promise<Uint8Array> {
+  const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false });
+  renderer.setPixelRatio(1);
+  renderer.setSize(HARNESS_SIZE, HARNESS_SIZE);
+  const caps = {
+    apiSurface: 'webgl2',
+    framebufferYDown: false,
+  } as RendererCapabilities;
+  const pixels = await renderBloomChain(renderer, caps);
+  renderer.dispose();
+  return pixels;
+}
+
+/** Render the production bloom pyramid through NodeMaterials on WebGL fallback. */
+export async function renderBloomChainTSL(): Promise<Uint8Array> {
+  await loadTslMaterials();
+  const { WebGPURenderer } = await import('three/webgpu');
+  const renderer = new WebGPURenderer({ antialias: false, alpha: false, forceWebGL: true });
+  renderer.setPixelRatio(1);
+  renderer.setSize(HARNESS_SIZE, HARNESS_SIZE);
+  await renderer.init();
+  const caps = {
+    apiSurface: 'webgpu',
+    framebufferYDown: true,
+  } as RendererCapabilities;
+  const pixels = await renderBloomChain(renderer, caps);
+  renderer.dispose();
+  return pixels;
+}
 
 /**
  * Render the GLSL3 path of a registered shader to an offscreen target

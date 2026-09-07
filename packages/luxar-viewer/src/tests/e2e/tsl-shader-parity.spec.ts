@@ -57,6 +57,16 @@ async function runTSL(page: Page, shaderName: string): Promise<TSLResult> {
   }, shaderName);
 }
 
+async function runBloomChain(page: Page, backend: 'glsl' | 'tsl'): Promise<number[]> {
+  return page.evaluate(async (selectedBackend) => {
+    const pixels =
+      selectedBackend === 'glsl'
+        ? await window.__tslHarness!.renderBloomChainGLSL()
+        : await window.__tslHarness!.renderBloomChainTSL();
+    return Array.from(pixels);
+  }, backend);
+}
+
 /** Mean absolute per-channel difference on a 0-255 scale. */
 function meanAbsDiff(a: number[], b: number[]): number {
   if (a.length !== b.length) {
@@ -347,6 +357,22 @@ test.describe('TSL ↔ GLSL shader parity', () => {
       `Bloom-threshold parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.\n` +
         `GLSL first 4 pixels:\n${previewPixels(glslPixels)}\n` +
         `TSL first 4 pixels:\n${previewPixels(tslResult.pixels)}`
+    ).toBeLessThan(2.0);
+  });
+
+  test('composed bloom pyramid renders identically through both backends', async ({ page }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runBloomChain(page, 'glsl');
+    const tslPixels = await runBloomChain(page, 'tsl');
+
+    expect(tslPixels.length).toBe(glslPixels.length);
+    const diff = meanAbsDiff(glslPixels, tslPixels);
+    expect(
+      diff,
+      `Composed bloom parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.\n` +
+        `GLSL first 4 pixels:\n${previewPixels(glslPixels)}\n` +
+        `TSL first 4 pixels:\n${previewPixels(tslPixels)}`
     ).toBeLessThan(2.0);
   });
 
