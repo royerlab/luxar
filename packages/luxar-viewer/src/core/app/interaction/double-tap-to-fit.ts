@@ -18,6 +18,7 @@
 
 import type { EventGroup } from '../../../utils/cross-layer/event-group';
 import { isTouchLikePointer } from '../../../utils/input-capabilities';
+import { LONG_PRESS_MS } from '../../../utils/long-press';
 import { TOUCH_CLICK_SLOP_PX } from './picked-element-cache';
 
 /**
@@ -38,7 +39,7 @@ export function installDoubleTapToFit(
   fit: () => void,
   now: () => number = () => performance.now()
 ): void {
-  const down = new Map<number, { x: number; y: number }>();
+  const down = new Map<number, { x: number; y: number; t: number }>();
   let multiTouch = false;
   let lastTap: { t: number; x: number; y: number } | null = null;
 
@@ -50,7 +51,7 @@ export function installDoubleTapToFit(
   events.on(canvas, 'pointerdown', (e) => {
     const ev = e as PointerEvent;
     if (!isTouchLikePointer(ev) || ev.button !== 0) return;
-    down.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    down.set(ev.pointerId, { x: ev.clientX, y: ev.clientY, t: now() });
     if (down.size > 1) multiTouch = true;
   });
 
@@ -75,6 +76,10 @@ export function installDoubleTapToFit(
       return;
     }
     const t = now();
+    if (t - start.t >= LONG_PRESS_MS) {
+      lastTap = null;
+      return;
+    }
     if (
       lastTap &&
       t - lastTap.t < DOUBLE_TAP_MS &&

@@ -102,6 +102,16 @@ describe('installDoubleTapToFit', () => {
     expect(h.fit).not.toHaveBeenCalled();
   });
 
+  it('a long-press release is not half of a double-tap', () => {
+    const h = setup();
+    pointer(h.canvas, 'pointerdown', { x: 100, y: 80 });
+    h.clock.t += 600;
+    pointer(h.canvas, 'pointerup', { x: 100, y: 80 });
+    h.clock.t += 120;
+    tap(h.canvas, 100, 80);
+    expect(h.fit).not.toHaveBeenCalled();
+  });
+
   it('a pinch (two fingers) is never a tap, even when the fingers lift together', () => {
     const h = setup();
     pointer(h.canvas, 'pointerdown', { x: 60, y: 80, pointerId: 1 });
