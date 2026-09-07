@@ -1553,4 +1553,3 @@ def _replace(new: Path, dest_path: Path) -> None:
         shutil.rmtree(aside, ignore_errors=True)
     else:
         aside.unlink(missing_ok=True)
-    group_keys,

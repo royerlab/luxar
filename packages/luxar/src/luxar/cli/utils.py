@@ -16,7 +16,8 @@ from urllib.parse import quote
 import zarr
 from arbol import aprint
 
-from .._zarr_compat import array_keys, group_keys, open_group as zarr_open_group
+from .._zarr_compat import array_keys, group_keys
+from .._zarr_compat import open_group as zarr_open_group
 
 # CORS configuration shared across the CLI. Lives here (not in main.py)
 # so subcommand modules like gsplat_commands.py can import it without

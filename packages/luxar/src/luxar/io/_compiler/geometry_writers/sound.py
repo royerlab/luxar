@@ -28,10 +28,9 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 from arbol import aprint
-from numpy.typing import NDArray
 
 from ...._zarr_compat import create_array, write_raw_bytes
-from ....typing_utils.aliases import NodePath
+from ....typing_utils.aliases import NodePath, PositionArray
 from ....validation.sound import AUDIO_FORMAT_FILENAMES, FOA_CHANNELS
 from ..bounds import compute_position_bounds
 from ..context import GeometryWriteCtx
@@ -133,7 +132,7 @@ def write_sound(
     path: NodePath,
     payload: bytes,
     fmt: str,
-    positions: Optional[NDArray[np.float32]],
+    positions: Optional[PositionArray],
     *,
     sound_attrs: Dict[str, Any],
     **attrs: Any,
