@@ -571,7 +571,7 @@ export class AudioEngine {
     const prefix = path.endsWith('/') ? path : `${path}/`;
     for (const node of this.nodes.values()) {
       if (node.path === path) node.setNodeMuted(muted);
-      else if (node.path.startsWith(prefix)) node.setAncestorMuted(muted);
+      else if (node.path.startsWith(prefix)) node.setAncestorMuted(path, muted);
     }
     this.deps.notifyUiChanged();
   }

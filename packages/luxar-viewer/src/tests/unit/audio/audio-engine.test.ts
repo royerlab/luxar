@@ -267,6 +267,25 @@ describe('AudioEngine — slab, ducking and buses', () => {
     expect(h.engine.isMuted()).toBe(false);
   });
 
+  it('keeps a nested sound muted until every hidden ancestor is visible', async () => {
+    const h = makeHarness();
+    h.root.add(soundPlaceholder('/a/b/hum', { trigger: 'continuous' }));
+    h.engine.attachScene(h.root);
+    await flush();
+    vi.advanceTimersByTime(1);
+    expect(h.engine.getState().playing).toEqual(['hum']);
+
+    h.engine.setNodeMuted('/a', true);
+    h.engine.setNodeMuted('/a/b', true);
+    h.engine.setNodeMuted('/a/b', false);
+    vi.advanceTimersByTime(1);
+    expect(h.engine.getState().playing).toEqual([]);
+
+    h.engine.setNodeMuted('/a', false);
+    vi.advanceTimersByTime(1);
+    expect(h.engine.getState().playing).toEqual(['hum']);
+  });
+
   it('setNodeGain ramps a playing node and is the value later starts use', async () => {
     const h = makeHarness();
     h.root.add(soundPlaceholder('/bed', { trigger: 'continuous', gain: 0.4 }));

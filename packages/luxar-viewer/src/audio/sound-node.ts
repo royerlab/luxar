@@ -96,8 +96,8 @@ export class SoundNode {
   private globalMuted = false;
   /** This node's own Layers-panel eye. */
   private nodeMuted = false;
-  /** A Layers-panel eye on an ancestor group. */
-  private ancestorMuted = false;
+  /** Layers-panel eyes on ancestor groups. */
+  private readonly mutingAncestors = new Set<string>();
   private disposed = false;
   /** Live per-node linear gain (the Layers-panel slider); starts at the authored value. */
   gain: number;
@@ -119,7 +119,7 @@ export class SoundNode {
   }
 
   private get muted(): boolean {
-    return this.globalMuted || this.nodeMuted || this.ancestorMuted;
+    return this.globalMuted || this.nodeMuted || this.mutingAncestors.size > 0;
   }
 
   /** Number of currently playing voices. */
@@ -475,9 +475,10 @@ export class SoundNode {
   }
 
   /** An ancestor group's Layers-panel eye. */
-  setAncestorMuted(muted: boolean): void {
+  setAncestorMuted(path: string, muted: boolean): void {
     this.applyMuteChange(() => {
-      this.ancestorMuted = muted;
+      if (muted) this.mutingAncestors.add(path);
+      else this.mutingAncestors.delete(path);
     });
   }
 
