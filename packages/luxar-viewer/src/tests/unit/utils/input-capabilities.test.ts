@@ -424,6 +424,10 @@ describe('isTouchLikePointer', () => {
     expect(isTouchLikePointer({ pointerType: 'pen', button: -1, buttons: 0 })).toBe(true);
     // A barrel drag stays on the mouse path for every move too.
     expect(isTouchLikePointer({ pointerType: 'pen', button: -1, buttons: 3 })).toBe(false);
+    // An eraser drag also stays on the mouse path for down, move, and release.
+    expect(isTouchLikePointer({ pointerType: 'pen', button: 5, buttons: 32 })).toBe(false);
+    expect(isTouchLikePointer({ pointerType: 'pen', button: -1, buttons: 32 })).toBe(false);
+    expect(isTouchLikePointer({ pointerType: 'pen', button: 5, buttons: 0 })).toBe(false);
   });
 });
 

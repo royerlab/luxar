@@ -241,15 +241,14 @@ export function getInputProfile(): InputProfile {
 
 /**
  * Whether a pointer event should take the TOUCH gesture path: a finger, or a
- * pen used as a finger on a touch-first device (iPad + Pencil, primary tip
- * only). A pen on a fine-pointer desktop (Wacom) keeps the mouse mapping, and
- * a pen barrel-button press or drag (`button === 2` / `buttons & 2`) falls
- * through to it everywhere so the secondary action stays reachable.
+ * pen used as a finger on a touch-first device (iPad + Pencil, with no
+ * secondary button held). A pen on a fine-pointer desktop (Wacom) keeps the
+ * mouse mapping, and any secondary-button press or drag falls through to it
+ * everywhere so the secondary action stays reachable.
  *
  * Must agree across a whole gesture: `pointermove` reports `button === -1`
- * ("no button changed"), so the test is "not the barrel button" rather than
- * "button 0" — otherwise a Pencil drag would start on the touch path, take
- * the mouse path for every move, and end on the touch path.
+ * ("no button changed"), so held buttons must come from `buttons` rather than
+ * `button` — otherwise a secondary-button drag can change paths on every move.
  */
 export function isTouchLikePointer(event: {
   pointerType: string;
@@ -260,7 +259,7 @@ export function isTouchLikePointer(event: {
   if (event.pointerType !== 'pen') return false;
   if (!getInputProfile().coarsePointer) return false;
   const button = event.button ?? 0; // -1 on pointermove: no button changed
-  if (button === 2 || ((event.buttons ?? 0) & 2) !== 0) return false; // barrel
+  if (((event.buttons ?? 0) & ~1) !== 0) return false; // any secondary button held
   return button <= 0;
 }
 
