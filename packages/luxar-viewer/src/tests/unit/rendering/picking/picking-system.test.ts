@@ -1358,6 +1358,30 @@ describe('PickingSystem — stale readback ordering', () => {
 
     expect(onPickResult).toHaveBeenCalledExactlyOnceWith(fakeResult);
   });
+
+  it('drops an explicit pick when the view changes during readback', async () => {
+    const { system, onPickResult, gate, fakeResult } = buildGatedSystem();
+
+    const pending = system.pickAt(400, 300);
+    system.markDirty();
+    onPickResult.mockClear();
+    gate.resolve(fakeResult);
+    await pending;
+
+    expect(onPickResult).not.toHaveBeenCalled();
+  });
+
+  it('drops an explicit pick when a newer explicit pick supersedes it', async () => {
+    const { system, onPickResult, gate, fakeResult } = buildGatedSystem();
+
+    const first = system.pickAt(400, 300);
+    const second = system.pickAt(400, 300);
+    onPickResult.mockClear();
+    gate.resolve(fakeResult);
+    await Promise.all([first, second]);
+
+    expect(onPickResult).toHaveBeenCalledExactlyOnceWith(fakeResult);
+  });
 });
 
 describe('PickingSystem — element-ID remap (issue #1421)', () => {

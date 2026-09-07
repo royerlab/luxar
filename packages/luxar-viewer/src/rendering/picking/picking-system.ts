@@ -209,6 +209,9 @@ export class PickingSystem {
    */
   private _shouldPick: () => boolean = () => true;
 
+  /** Explicit picks ignore mousemove invalidation, but not a newer explicit pick or view change. */
+  private _explicitPickSeq = 0;
+
   /** Optional post-processing reference for lens distortion correction. */
   private postProcessing: PostProcessingManager | null = null;
 
@@ -475,6 +478,7 @@ export class PickingSystem {
    * still for HOVER_SETTLE_MS.
    */
   markDirty(): void {
+    this._explicitPickSeq++;
     this._dirty = true;
     this._canvasRect = null;
     // Supersede any in-flight readback so its late result can't override
@@ -566,7 +570,8 @@ export class PickingSystem {
     const y = clientY - this._canvasRect.top;
     this.scheduler.cancelPending();
     if (!this._shouldPick()) return Promise.resolve();
-    return this.performPick(x, y, true);
+    const explicitPickSeq = ++this._explicitPickSeq;
+    return this.performPick(x, y, true, explicitPickSeq);
   }
 
   /**
@@ -578,6 +583,7 @@ export class PickingSystem {
     // Supersede any in-flight readback so it can't re-show a tooltip after
     // the cursor has already left the canvas.
     this._pickSeq++;
+    this._explicitPickSeq++;
     this.scheduler.recordMouseLeave();
     void this.onPickResult(null);
   }
@@ -588,6 +594,7 @@ export class PickingSystem {
     // dispose must not emit a result to the (now torn-down) session's
     // handlers — same generation guard the mutation paths use.
     this._pickSeq++;
+    this._explicitPickSeq++;
     this.scheduler.dispose();
 
     // Dispose all pick materials (unregisters from materialManager automatically)
@@ -622,7 +629,8 @@ export class PickingSystem {
   private async performPick(
     screenX: number,
     screenY: number,
-    authoritative: boolean = false
+    authoritative: boolean = false,
+    explicitPickSeq: number = 0
   ): Promise<void> {
     // Claim this pick's slot. Any later pick/move/dirty/leave bumps
     // `_pickSeq`, marking this readback stale (see the post-`await` guard).
@@ -723,7 +731,8 @@ export class PickingSystem {
     // Drop the result if a newer pick/move/dirty/leave superseded us while
     // the readback was in flight — emitting it would clobber fresher state
     // with a stale tooltip.
-    if (!authoritative && pickSeq !== this._pickSeq) return;
+    if (pickSeq !== this._pickSeq && (!authoritative || explicitPickSeq !== this._explicitPickSeq))
+      return;
     await this.onPickResult(result);
   }
 

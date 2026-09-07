@@ -72,9 +72,9 @@ export interface PickGenerationPort {
   /**
    * Pick immediately at a viewport position (tap-to-pick). Resolves once the
    * result has been delivered to the pick consumers and their (asynchronous:
-   * label fetch, then `store`) handler has finished — or the result was
-   * dropped as stale — so a caller can read the cache right after. Optional: a port without it
-   * (tests) means "act on whatever the cache already holds".
+   * label fetch, then `store`) handler has finished, so a caller can read the
+   * cache right after. Optional: a port without it (tests) means "act on
+   * whatever the cache already holds".
    */
   pickAt?(clientX: number, clientY: number): Promise<void>;
 }
