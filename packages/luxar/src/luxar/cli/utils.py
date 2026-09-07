@@ -16,7 +16,7 @@ from urllib.parse import quote
 import zarr
 from arbol import aprint
 
-from .._zarr_compat import open_group as zarr_open_group
+from .._zarr_compat import array_keys, group_keys, open_group as zarr_open_group
 
 # CORS configuration shared across the CLI. Lives here (not in main.py)
 # so subcommand modules like gsplat_commands.py can import it without
@@ -604,11 +604,11 @@ def get_zarr_info(store_path: Path, detailed: bool = False) -> dict[str, Any]:
                 info["n_gsplats_total"] += gsplat_info["n_splats"]
 
             # Count arrays
-            for _array_name in group.array_keys():
+            for _array_name in array_keys(group):
                 info["n_arrays"] += 1
 
             # Recurse into subgroups
-            for subgroup_name in group.group_keys():
+            for subgroup_name in group_keys(group):
                 analyze_group(group[subgroup_name], f"{path}/{subgroup_name}")
 
         analyze_group(root)

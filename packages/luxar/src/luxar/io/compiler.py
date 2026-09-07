@@ -989,7 +989,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         path: NodePath,
         payload: bytes,
         fmt: str,
-        positions: Optional[NDArray[np.float32]],
+        positions: Optional[PositionArray],
         *,
         sound_attrs: dict[str, Any],
         **attrs: Any,

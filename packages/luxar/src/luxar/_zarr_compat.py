@@ -933,6 +933,7 @@ def consolidate(target: zarr.Group | Any) -> None:
             "ignore",
             message=".*[Cc]onsolidated metadata is currently not part.*",
         )
+        warnings.filterwarnings("ignore", message=_PAYLOAD_MEMBER_WARNING)
         zarr.consolidate_metadata(store)
 
 

@@ -16,7 +16,7 @@ import typer
 import zarr
 from arbol import aprint
 
-from .._zarr_compat import open_group as zarr_open_group
+from .._zarr_compat import group_keys, open_group as zarr_open_group
 from .._zarr_compat import suppress_payload_member_warning
 from ..typing_utils._format_contract import GEOMETRY_TYPES
 from ..typing_utils.constants import RESERVED_ROOT_GROUPS
@@ -339,7 +339,7 @@ def _dfs(
     """
     try:
         yield depth, group
-        for name in group.group_keys():
+        for name in group_keys(group):
             if depth == 0 and name in RESERVED_ROOT_GROUPS:
                 continue
             yield from _dfs(group[name], depth + 1)
