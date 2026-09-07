@@ -341,6 +341,7 @@ describe('OverlayManager.loadOverlays', () => {
     const overlay = video.parentElement as HTMLDivElement;
     expect(video.controls).toBe(true);
     expect(overlay.inert).toBeFalsy();
+    expect(overlay.classList.contains('luxar-overlay--interactive')).toBe(true);
     expect(video.dataset.autoplay).toBe('0');
     expect(playSpy).not.toHaveBeenCalled();
   });

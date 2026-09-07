@@ -693,7 +693,7 @@ export class OverlayManager {
     }
 
     // Interaction
-    if (config.interactive) {
+    if (config.interactive || (config.type === 'overlay_video' && config.autoplay === false)) {
       el.classList.add('luxar-overlay--interactive');
     }
   }
