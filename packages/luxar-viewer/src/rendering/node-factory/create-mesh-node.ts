@@ -126,7 +126,7 @@ export function applyMeshShading(
   attrs: MeshMetadata,
   storedNormalsUsable: boolean
 ): void {
-  const material = object.material as LuxarMeshMaterial;
+  const material = object.material as LuxarMeshMaterial | LuxarPhysicalMeshMaterial;
   if (typeof material.updateShading !== 'function') return;
   material.updateShading(resolveMeshShading(attrs, storedNormalsUsable));
   scheduleBlendModeProgramWarmupForObject(object);
@@ -545,7 +545,7 @@ export function createEmptyMeshNode(
     // A physical mesh has no Luxar blending mode; its pick mode follows the same
     // data-driven rule its compositing does (`derivePhysicalCompositing`): the cutout
     // when opaque, every fragment when translucent. The per-render resync in
-    // `PickingSystem.renderPickBuffer` reads the same `userData.blendingMode` stamp.
+    // `PickingSystem.renderPickBuffer` reads the same live `transparent` property.
     pickMaterial.setPickMode(
       physical ? (material.transparent ? 'normal' : 'opaque') : resolveRequestedMeshMode(attrs)
     );

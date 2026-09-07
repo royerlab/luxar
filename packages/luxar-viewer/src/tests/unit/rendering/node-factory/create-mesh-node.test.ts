@@ -588,11 +588,17 @@ describe("createEmptyMeshNode — the material='physical' family (MESH_PHYSICAL_
     expect(translucentPick.uniforms.uAlphaCutout.value).toBe(0);
   });
 
-  it('applyMeshShading / applyMeshTexture are no-ops on a physical mesh', () => {
-    const node = createEmptyMeshNode('/shell', PHYSICAL, loader, null);
-    const before = (node.material as PhysicalMeshMaterial).flatShading;
-    expect(() => applyMeshShading(node, PHYSICAL, true)).not.toThrow();
-    expect((node.material as PhysicalMeshMaterial).flatShading).toBe(before);
+  it('applyMeshShading switches a physical mesh away from unusable stored normals', () => {
+    const attrs = { ...PHYSICAL, shading: 'smooth', has_normals: true } as MeshMetadata;
+    const node = createEmptyMeshNode('/shell', attrs, loader, null);
+    const material = node.material as PhysicalMeshMaterial;
+    expect(material.flatShading).toBe(false);
+
+    applyMeshShading(node, attrs, false);
+    expect(material.flatShading).toBe(true);
+
+    applyMeshShading(node, attrs, true);
+    expect(material.flatShading).toBe(false);
   });
 
   it('learns vertex alpha at commit time through applyMeshVertexAlpha', () => {

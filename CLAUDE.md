@@ -678,8 +678,10 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream --target-ms 20
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream -b stream:14000
 # ON A NODE THE VIEWER SLICES (any hidden dim), COUNT PER SLICE, NOT PER NODE.
 # An explicit `-b stream:C` fixes an ABSOLUTE first rung for the whole node, but
-# only one hidden coordinate is on screen, so each slice receives part of C;
-# Nexrad's explicit `stream:20000` ladder has p05 = 4 splats per played coordinate.
+# only one hidden coordinate is on screen, so each slice receives part of C; the
+# PUBLISHED Nexrad store's `stream:20000` ladder has p05 = 4 splats per played
+# coordinate (its source no longer authors that — see `slice_dims` below — but the
+# shipped store carries it until the corpus is regenerated).
 # Before the CLI scaling fix, drosophila's `--target-ms` resolved to a 20,833-splat
 # rung 0 for 500 timepoints; the measured slices had median = 45, p05 = 7, min = 1,
 # and playback rendered an empty frame (#2374/#2376). Prefer `--n-lods 3..4` for
@@ -687,6 +689,16 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream -b stream:1400
 # non-uniform axes: the global prefix can still starve sparse slices. The CLI now
 # scales `--target-ms` by the observed slice count and LOGS the multiplier; read
 # that line rather than assuming the number you typed is what renders.
+# From PYTHON, `additive_lod=dict(n_lods=4, slice_dims=[<raw pre-dim_order centre
+# columns>], recompute=True)` beats any share: it interleaves the ordering
+# round-robin across the hidden coordinates, so every rung carries an equal
+# ABSOLUTE per-slice budget and a slice smaller than the budget is carried WHOLE
+# (#2485). Nexrad authors that now; its p05 scan of 774 splats arrives complete.
+# `slice_dims` are the RAW pre-`dim_order` centre columns, NOT the scene's
+# dimension positions; and `recompute=True` is required on a STACKED dataset —
+# `combine_as_new_dimension` merges its sources' ladders rather than dropping them,
+# so without the flag the whole spec is a silent no-op. No CLI flag: `gsplat lod`
+# has no scene to say which columns are hidden.
 # Count stops as distinct OCCURRING combinations over all hidden axes: not the
 # product of per-axis cardinality, and not the declared Dimension range (that
 # demo declares 500 timepoints and its coarsest rung has data at 499).

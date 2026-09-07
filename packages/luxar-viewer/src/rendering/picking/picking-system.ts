@@ -64,6 +64,7 @@ import {
 import type { LuxarCamera } from '../../utils/camera-utils';
 import { log, Modules } from '../../utils/log';
 import { clamp } from '../../utils/clamp';
+import { isPhysicalMeshMaterial } from '../materials/mesh-physical/config';
 
 /** Result of a successful pick operation. */
 export interface PickResult {
@@ -800,11 +801,12 @@ export class PickingSystem {
         const mainMat = (entry.main as THREE.Mesh).material as
           THREE.Material | THREE.Material[] | undefined;
         const single = Array.isArray(mainMat) ? mainMat[0] : mainMat;
-        // Known gap, not fixed here: a translucent physical mesh (glass) stamps NO
-        // blendingMode, so this reads 'additive' and downgrades the pick mode the node
-        // factory seeded as 'normal' at creation — glass then picks by brightness rather
-        // than front-most surface. Follow-up: read the physical compositing decision here.
-        const mode = (single?.userData.blendingMode ?? 'additive') as BlendingMode;
+        const mode =
+          single && isPhysicalMeshMaterial(single)
+            ? single.transparent
+              ? 'normal'
+              : 'opaque'
+            : ((single?.userData.blendingMode ?? 'additive') as BlendingMode);
         if (isMeshPickAwareMaterial(mat)) {
           mat.setPickMode(mode);
           if (single) mat.setPickSide(single.side);

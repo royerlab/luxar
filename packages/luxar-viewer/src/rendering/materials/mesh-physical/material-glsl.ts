@@ -13,10 +13,8 @@
  * - no `updateCameraParams`: the near fade is a house-shader feature, so this
  *   material is filed as static by `MaterialManager.register` and takes no camera
  *   broadcast;
- * - no `updateShading` / `updateBaseColorTexture` / `updateColormapTexture`: the
- *   per-epoch shading variant, textures and colormaps are house-shader features
- *   (the last two are refused at authoring for a physical mesh), and the commit
- *   path already no-ops when the methods are absent;
+ * - no `updateBaseColorTexture` / `updateColormapTexture`: textures and colormaps
+ *   are house-shader features and are refused at authoring for a physical mesh;
  * - no `userData.blendingMode` unless opaque — see `derivePhysicalCompositing`.
  *
  * @module rendering/materials/mesh-physical/material-glsl
@@ -24,6 +22,7 @@
 
 import * as THREE from 'three';
 import type { BlendingMode } from '../../../types/blending';
+import type { MeshShadingMode } from '../mesh/appearance';
 import {
   applyPhysicalMeshConfig,
   physicalGetOpacity,
@@ -92,6 +91,14 @@ export class PhysicalMeshMaterial extends THREE.MeshPhysicalMaterial {
   /** Luxar `gamma` — recorded only; a physical material has no gamma term. */
   updateGamma(gamma: number): void {
     physicalUpdateGamma(this, gamma);
+  }
+
+  /** Switch between stored normals and derivative normals for the active display frame. */
+  updateShading(mode: MeshShadingMode): void {
+    const flatShading = mode !== 'smooth';
+    if (this.flatShading === flatShading) return;
+    this.flatShading = flatShading;
+    this.needsUpdate = true;
   }
 
   /** One live physical knob from the Layers panel (clamped; rebuilds on a zero crossing). */

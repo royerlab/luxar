@@ -29,6 +29,7 @@ import zarr
 from luxar._zarr_compat import (
     close,
     consolidate,
+    create_array,
     create_root_group,
     is_consolidated,
     open_group,
@@ -51,7 +52,11 @@ from luxar.io.lod_restamp import (
     _verify,
     restamp_lod_store,
 )
-from luxar.typing_utils.constants import DERIVED_LOD_SELECTOR, LEGACY_LOD_SELECTOR
+from luxar.typing_utils.constants import (
+    DERIVED_LOD_SELECTOR,
+    ENVIRONMENT_GROUP,
+    LEGACY_LOD_SELECTOR,
+)
 
 #: The legacy ladder every compiled fixture below is authored with. Off the
 #: screen-area scale entirely (4.0 is ``MAX_COVERAGE_FRACTION``), so a test that
@@ -880,6 +885,54 @@ def test_a_real_run_moves_the_content_hash(legacy_scene: Path) -> None:
     assert report.content_hash == after
 
 
+def test_a_real_run_keeps_the_baked_environment_current(legacy_scene: Path) -> None:
+    """An attrs-only scene rewrite must keep its excluded sidecar accepted."""
+    before = _hash(legacy_scene)
+    root = open_group(legacy_scene, mode="r+")
+    environment = root.require_group(ENVIRONMENT_GROUP)
+    faces = "faces-test"
+    create_array(
+        environment,
+        faces,
+        data=np.zeros((6, 1, 1, 4), dtype=np.uint16),
+        chunks=(1, 1, 1, 4),
+        compressor=None,
+    )
+    environment.attrs.update({"faces": faces, "scene_content_hash": before})
+    consolidate(root)
+    close(root)
+
+    report = restamp_lod_store(legacy_scene)
+
+    after = _hash(legacy_scene)
+    assert report.content_hash == after
+    root = open_group(legacy_scene, mode="r")
+    try:
+        assert dict(root[ENVIRONMENT_GROUP].attrs)["scene_content_hash"] == after
+    finally:
+        close(root)
+
+
+def test_a_real_run_does_not_stamp_an_ordinary_environment_group(
+    legacy_scene: Path,
+) -> None:
+    """A reserved-looking name alone does not make foreign data a baked sidecar."""
+    root = open_group(legacy_scene, mode="r+")
+    root.require_group(ENVIRONMENT_GROUP).attrs["units"] = "celsius"
+    consolidate(root)
+    close(root)
+
+    restamp_lod_store(legacy_scene)
+
+    root = open_group(legacy_scene, mode="r")
+    try:
+        attrs = dict(root[ENVIRONMENT_GROUP].attrs)
+        assert attrs["units"] == "celsius"
+        assert "scene_content_hash" not in attrs
+    finally:
+        close(root)
+
+
 def test_a_second_run_changes_nothing_at_all(legacy_scene: Path) -> None:
     """Idempotency down to the hash: re-running must not re-publish the store."""
     restamp_lod_store(legacy_scene)
@@ -1483,10 +1536,12 @@ def test_a_failed_run_restores_a_digest_it_could_not_have_recomputed(
     root = open_group(legacy_scene, mode="r+")
     strip(root)
     root.attrs["content_hash"] = "LEGACY-DIGEST"
+    root.require_group(ENVIRONMENT_GROUP).attrs["scene_content_hash"] = "LEGACY-DIGEST"
     consolidate(root)
     close(root)
     stale = _node_attrs(legacy_scene)
     assert stale["/"]["content_hash"] == "LEGACY-DIGEST"
+    assert stale[ENVIRONMENT_GROUP]["scene_content_hash"] == "LEGACY-DIGEST"
     assert "content_hash" not in stale["pts"]
 
     def no_index(root: Any) -> None:

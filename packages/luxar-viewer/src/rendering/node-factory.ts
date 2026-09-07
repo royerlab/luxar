@@ -263,10 +263,14 @@ function syncMeshPickMaterialToVisual(obj: THREE.Mesh): void {
   const single = Array.isArray(visual) ? visual[0] : visual;
   if (!single) return;
   pickMaterial.setPickSide(single.side);
-  // The RESOLVED mode the material stamped, not the authored one.
+  // Physical compositing is data-driven; house meshes stamp their resolved mode.
   pickMaterial.setPickMode(
-    (single.userData?.blendingMode as BlendingMode | undefined) ??
-      resolveRequestedMeshMode((obj.userData?.attrs ?? {}) as MeshMetadata)
+    isPhysicalMeshMaterial(single)
+      ? single.transparent
+        ? 'normal'
+        : 'opaque'
+      : ((single.userData?.blendingMode as BlendingMode | undefined) ??
+          resolveRequestedMeshMode((obj.userData?.attrs ?? {}) as MeshMetadata))
   );
   const uniforms = (single as THREE.Material & { uniforms?: Record<string, { value?: unknown }> })
     .uniforms;

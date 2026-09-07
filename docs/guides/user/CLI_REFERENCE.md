@@ -419,7 +419,9 @@ node's bounding-box centre, what a marker shell around a cluster wants) or `x,y,
 load to settle; `--force` attaches a bake whose recorded scene digest no longer
 matches. Needs a development checkout (Playwright is a devDependency of the viewer
 package, not a Python dependency); from an installed wheel, bake on a checkout and
-attach the result with `luxar env attach`.
+attach the result with `luxar env attach`. Bake and attach require an uncompressed
+`.zarr` directory because the environment attrs cannot be updated in place inside
+an archive.
 
 ### `luxar env attach`
 

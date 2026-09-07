@@ -804,6 +804,9 @@ the native WKWebView launcher fall back to L1-only caching; see the
 - `?src=<path>` — Path to a Zarr dataset (trailing slashes are normalized away)
 - `?theme=<id>` — Select `dark`, `light`, `frosted-glass`, or `liquid-glass`
 - `?debug` — Expose `window.__luxarDebug` for Playwright / dev console
+- `?bake-env` — Capture the scene environment and expose the encoded result through the debug API
+- `?probe=<auto|node:<path>|x,y,z>` — Select the environment-capture probe used by `?bake-env`
+- `?env-resolution=<16-1024>` — Set the cube-face resolution used by `?bake-env`
 - `?no-cache` — Disable all cache tiers (S-cache + L0 + L1 + L2) for this session
 - `?no-slice-cache` — Disable only S-cache; L0/L1/L2 remain active
 - `?no-opfs` — Disable only the L2 persistent (OPFS) tier; L0/L1/S-cache remain active. For environments whose OPFS stalls; the automatic circuit breaker covers the un-flagged case

@@ -205,7 +205,35 @@ def test_bake_environment_refuses_a_missing_viewer_or_bad_resolution(
         bake_environment(store, driver=lambda *a: None)
 
 
+def test_bake_environment_refuses_a_compressed_store_before_viewer_setup(
+    tmp_path, monkeypatch
+) -> None:
+    archive = tmp_path / "scene.luxar.zarr.zip"
+    archive.write_bytes(b"not opened")
+
+    def unexpected_viewer_check(*, auto_build: bool) -> bool:
+        raise AssertionError("viewer setup must not run for an unwritable store")
+
+    monkeypatch.setattr(bake_module, "ensure_viewer_built", unexpected_viewer_check)
+    with pytest.raises(ValueError, match="uncompressed .zarr directory"):
+        bake_environment(archive, driver=lambda *a: None)
+
+
 def test_env_bake_cli_funnels_errors(tmp_path) -> None:
     result = runner.invoke(app, ["env", "bake", str(tmp_path / "missing.luxar.zarr")])
+    assert result.exit_code == 1
+    assert "Scene not found" in normalized_cli_output(result)
+
+
+def test_env_attach_cli_funnels_a_missing_store(tmp_path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "env",
+            "attach",
+            str(tmp_path / "missing.luxar.zarr"),
+            str(tmp_path / "missing.env.bin"),
+        ],
+    )
     assert result.exit_code == 1
     assert "Scene not found" in normalized_cli_output(result)

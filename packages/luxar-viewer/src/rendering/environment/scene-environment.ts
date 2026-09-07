@@ -301,6 +301,31 @@ export class SceneEnvironment {
     };
   }
 
+  /** Rebuild previously-created GPU resources after the renderer context is restored. */
+  rebuild(): boolean {
+    if (!this.isReady()) return false;
+    const scene = this.deps.scene;
+    const ours = [
+      this.roomTarget?.texture,
+      this.captureTarget?.texture,
+      this.bakedTexture,
+      this.hdriTexture,
+    ];
+    if (scene.environment && ours.includes(scene.environment)) scene.environment = null;
+    this.roomTarget?.dispose();
+    this.captureTarget?.dispose();
+    this.bakedTexture?.dispose();
+    this.hdriTexture?.dispose();
+    this.roomTarget = null;
+    this.captureTarget = null;
+    this.captureProbeSpec = null;
+    this.bakedTexture = null;
+    this.hdriTexture = null;
+    this.active = 'none';
+    this.staleSince = null;
+    return this.apply();
+  }
+
   /** Release everything and clear `scene.environment` if it is ours. */
   dispose(): void {
     const scene = this.deps.scene;

@@ -477,6 +477,8 @@ def _plan_array(
     array: zarr.Array,
     atom: int | None,
     target_bytes: int,
+    *,
+    is_environment_map: bool,
 ) -> ArrayPlan:
     """Decide this array's new chunk shape (or why it keeps the one it has)."""
     shape = tuple(int(s) for s in array.shape)
@@ -506,7 +508,7 @@ def _plan_array(
     # A baked environment map (`environment/faces-<digest>`) is one chunk per
     # cube face by construction and the viewer reads it whole; it is not spatial
     # data and nothing about streaming applies. Copied verbatim.
-    if path.split("/", 1)[0] == ENVIRONMENT_GROUP:
+    if is_environment_map:
         return keep("baked environment map")
 
     structural = _structural_skip(name, array, shape, chunks)
@@ -565,7 +567,18 @@ def plan_optimisation(
             array = group[name]
             path = f"{group_path}/{name}" if group_path else name
             atom = _resolve_atom(attrs, names, name)
-            plans.append(_plan_array(path, array, atom, target_bytes))
+            is_environment_map = (
+                group_path == ENVIRONMENT_GROUP and attrs.get("faces") == name
+            )
+            plans.append(
+                _plan_array(
+                    path,
+                    array,
+                    atom,
+                    target_bytes,
+                    is_environment_map=is_environment_map,
+                )
+            )
     return OptimisePlan(target_bytes=target_bytes, profile=profile, arrays=plans)
 
 
@@ -981,6 +994,19 @@ def _restamp_content_hash(root: zarr.Group) -> str | None:
 
         return _stamp_content_hash(root)
     return None
+
+
+def _baked_environment_group(root: zarr.Group) -> zarr.Group | None:
+    """Return the baked sidecar, never ordinary data that only shares its name."""
+    if ENVIRONMENT_GROUP not in root:
+        return None
+    candidate = root[ENVIRONMENT_GROUP]
+    if not isinstance(candidate, zarr.Group):
+        return None
+    faces = dict(candidate.attrs).get("faces")
+    if not isinstance(faces, str) or faces not in candidate.array_keys():
+        return None
+    return candidate
 
 
 #: dtype kinds whose memory buffer IS the stored payload, so comparing
@@ -1449,8 +1475,9 @@ def _write_store(
             "chunks_after": plan.target_n_chunks,
         }
         scene_hash = _restamp_content_hash(dest)
-        if scene_hash is not None and ENVIRONMENT_GROUP in dest:
-            dest[ENVIRONMENT_GROUP].attrs["scene_content_hash"] = scene_hash
+        environment = _baked_environment_group(dest)
+        if scene_hash is not None and environment is not None:
+            environment.attrs["scene_content_hash"] = scene_hash
         consolidate(dest)
     finally:
         close(dest)

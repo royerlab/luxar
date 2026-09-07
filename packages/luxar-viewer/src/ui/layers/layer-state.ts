@@ -27,7 +27,6 @@ import type { MeshMaterialKind, MeshMetadata } from '../../types/mesh';
 import {
   PHYSICAL_MESH_KNOB_KEYS,
   PHYSICAL_MESH_KNOBS,
-  physicalKnobToSlider,
   type PhysicalMeshKnobKey,
 } from '../../rendering/materials/mesh-physical/config';
 
@@ -319,15 +318,16 @@ function deriveMeshMaterialFromDescendants(node: SceneNode): MeshMaterialKind {
 
 /**
  * The DENSE physical knob record a layer's sliders start from: the authored value
- * where one exists, else the knob's default — in SLIDER space, so an unbounded
- * default (`attenuation_distance` = `Infinity`) sits on the track's top stop and the
- * record stays JSON-safe. `physicalKnobFromSlider` undoes the mapping at apply time.
+ * where one exists, else the knob's default — in the MATERIAL domain. Keeping the
+ * authored value here matters for unbounded knobs: their finite slider tracks are a
+ * presentation detail and cannot round-trip a thickness or attenuation distance above
+ * the track maximum.
  */
 function derivePhysicalKnobsFromDescendants(node: SceneNode): PhysicalKnobValues {
   const knobs = {} as PhysicalKnobValues;
   for (const key of PHYSICAL_MESH_KNOB_KEYS) {
     const authored = deriveMeshAttrFromDescendants(node, key);
-    knobs[key] = physicalKnobToSlider(key, authored ?? PHYSICAL_MESH_KNOBS[key].default);
+    knobs[key] = authored ?? PHYSICAL_MESH_KNOBS[key].default;
   }
   const cutoff = deriveMeshAttrFromDescendants(node, 'alpha_cutoff');
   if (cutoff !== undefined) knobs.alpha_cutoff = cutoff;
@@ -447,9 +447,9 @@ export interface LayerInfo {
    */
   material?: MeshMaterialKind;
   /**
-   * The LIVE physical knobs, in slider space (see `physicalKnobToSlider`), seeded
-   * from the authored attrs and the knob defaults. Absent for every non-physical
-   * layer.
+   * The LIVE physical knobs in material space, seeded from the authored attrs and
+   * knob defaults. Slider mapping is presentation-only, so values beyond a finite
+   * track remain intact. Absent for every non-physical layer.
    */
   physicalKnobs?: PhysicalKnobValues;
   /**
@@ -801,6 +801,7 @@ export class LayerStateManager {
         // the layer non-explicit so it does not impose that default on descendants.
         const effectiveAttrs = getEffectiveAttrs(root, node.path);
         const composedBlendingMode = effectiveAttrs.blending_mode;
+        const material = layerType === 'mesh' ? deriveMeshMaterialFromDescendants(node) : 'luxar';
 
         this.layerOrder.push(node.path);
         this.layers.set(node.path, {
@@ -828,9 +829,9 @@ export class LayerStateManager {
           specular: deriveMeshAttrFromDescendants(node, 'specular') ?? MESH_DEFAULTS.specular,
           shininess: deriveMeshAttrFromDescendants(node, 'shininess') ?? MESH_DEFAULTS.shininess,
           shading: deriveMeshShadingFromDescendants(node),
-          material: layerType === 'mesh' ? deriveMeshMaterialFromDescendants(node) : 'luxar',
+          material,
           physicalKnobs:
-            layerType === 'mesh' && deriveMeshMaterialFromDescendants(node) === 'physical'
+            layerType === 'mesh' && material === 'physical'
               ? derivePhysicalKnobsFromDescendants(node)
               : undefined,
           alphaCutoff:

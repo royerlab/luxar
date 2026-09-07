@@ -10,6 +10,7 @@ map twice writes nothing.
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -183,6 +184,15 @@ def test_attach_refuses_a_non_scene_store(tmp_path) -> None:
     root.attrs["content_hash"] = "x"
     with pytest.raises(ValueError, match="not a Luxar scene store"):
         attach_environment(store, pack(_header("x"), _faces()))
+
+
+def test_attach_refuses_a_compressed_scene_store(tmp_path) -> None:
+    store = tmp_path / "scene.luxar.zarr"
+    scene_hash = _scene(store)
+    archive = Path(shutil.make_archive(str(store), "zip", root_dir=store))
+
+    with pytest.raises(ValueError, match="uncompressed .zarr directory"):
+        attach_environment(archive, pack(_header(scene_hash), _faces()))
 
 
 # =============================================================================

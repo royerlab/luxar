@@ -20,6 +20,20 @@ import numpy as np
 __all__ = ["icosphere"]
 
 
+def _midpoint_index(
+    vertices: List[List[float]], cache: Dict[Tuple[int, int], int], i: int, j: int
+) -> int:
+    """Return the shared midpoint index for edge ``(i, j)``."""
+    key = (min(i, j), max(i, j))
+    index = cache.get(key)
+    if index is None:
+        vi, vj = vertices[i], vertices[j]
+        vertices.append([(vi[0] + vj[0]) / 2, (vi[1] + vj[1]) / 2, (vi[2] + vj[2]) / 2])
+        index = len(vertices) - 1
+        cache[key] = index
+    return index
+
+
 def icosphere(
     subdivisions: int = 3, radius: float = 1.0
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -100,27 +114,14 @@ def icosphere(
         [9, 8, 1],
     ]
 
-    def midpoint(i: int, j: int, cache: Dict[Tuple[int, int], int]) -> int:
-        """Index of the midpoint of edge ``(i, j)``, created once per edge."""
-        key = (min(i, j), max(i, j))
-        index = cache.get(key)
-        if index is None:
-            vi, vj = verts[i], verts[j]
-            verts.append(
-                [(vi[0] + vj[0]) / 2, (vi[1] + vj[1]) / 2, (vi[2] + vj[2]) / 2]
-            )
-            index = len(verts) - 1
-            cache[key] = index
-        return index
-
     for _ in range(subdivisions):
         cache: Dict[Tuple[int, int], int] = {}
         out: List[List[int]] = []
 
         for a, b, c in faces:
-            ab = midpoint(a, b, cache)
-            bc = midpoint(b, c, cache)
-            ca = midpoint(c, a, cache)
+            ab = _midpoint_index(verts, cache, a, b)
+            bc = _midpoint_index(verts, cache, b, c)
+            ca = _midpoint_index(verts, cache, c, a)
             out += [[a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]]
         faces = out
 

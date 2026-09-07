@@ -1302,10 +1302,10 @@ environment/                        # a SIDECAR: no `type`, no `kind` attr
 ```
 
 Three rules make it safe. The group carries neither `type` nor `kind`, so the
-viewer's node discovery skips it as a metadata sidecar and every Python walker
-(`LuxarScene.nodes`, `luxar info`, `luxar optimise`, the finalize passes)
-consults `RESERVED_ROOT_GROUPS` to do the same — the compiler refuses a user node
-named `environment`. The group is **excluded from the scene `content_hash`**, so
+viewer's node discovery skips it as a metadata sidecar; `LuxarScene.nodes` and
+`luxar info` consult `RESERVED_ROOT_GROUPS`, while `luxar optimise` and scene
+hashing skip `ENVIRONMENT_GROUP` directly. The compiler refuses a user node named
+`environment`. The group is **excluded from the scene `content_hash`**, so
 attaching a map never changes the root digest: the `scene_content_hash` guard is
 exact (the viewer ignores a map whose digest is not the root's, saying so in the
 console), a visitor's warm cache survives a bake, and attaching the same map
@@ -1313,8 +1313,10 @@ twice writes nothing. And the faces array is named by its own digest, so a
 re-bake is a new path a caching viewer cannot serve stale. `uint16` rather than
 `float16` because the viewer's zarr reader needs a `Float16Array` for `<f2`
 while the GPU readback and three's half-float cube texture already speak half
-bits. `luxar optimise` copies the array verbatim (`luxar info` does not list the
-group).
+bits. `luxar optimise` copies the array verbatim and restamps its
+`scene_content_hash` to the output scene's new digest; `luxar restamp-lod`
+likewise updates the stamp after changing the scene digest (`luxar info` does
+not list the group).
 
 ## Layers (Viewer Panel)
 

@@ -2,10 +2,10 @@
 
 The map lands in a root-level ``environment/`` group that is NOT a scene node —
 it carries neither a ``type`` nor a ``kind`` attr, which is exactly the shape
-the viewer's node discovery skips as a metadata sidecar, and every Python
-walker consults :data:`~luxar.typing_utils.constants.RESERVED_ROOT_GROUPS` for
-the same reason. Three rules make the operation safe to repeat and cheap to
-serve:
+the viewer's node discovery skips as a metadata sidecar, and every general
+Python walker that enumerates root children as nodes consults
+:data:`~luxar.typing_utils.constants.RESERVED_ROOT_GROUPS` for the same reason.
+Three rules make the operation safe to repeat and cheap to serve:
 
 - **The scene digest does not move.** ``environment/`` is excluded from the
   root ``content_hash`` by the hashing walk, so attaching a map never
@@ -68,7 +68,7 @@ def attach_environment(
     viewer would ignore such a map as stale anyway, so writing it would only
     look like success.
     """
-    store_path = Path(store)
+    store_path = _require_directory_store(store)
     blob = faces if isinstance(faces, bytes) else Path(faces).read_bytes()
     header, samples = unpack(blob)
 
@@ -164,6 +164,20 @@ def attach_environment(
             resolution=resolution,
             removed=removed,
         )
+
+
+def _require_directory_store(store: Union[str, Path]) -> Path:
+    """Return the store path, refusing a missing path or a compressed archive."""
+    store_path = Path(store)
+    if not store_path.exists():
+        raise FileNotFoundError(f"Scene not found: {store_path}")
+    if not store_path.is_dir():
+        raise ValueError(
+            f"env attach requires an uncompressed .zarr directory; got "
+            f"{store_path} (unpack a .zip/.tar.gz store first — an attrs rewrite "
+            f"of a compressed archive cannot happen in place)"
+        )
+    return store_path
 
 
 def _digest(header: Dict[str, Any], samples: np.ndarray) -> str:

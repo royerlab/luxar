@@ -59,6 +59,8 @@ faces.view("float16")                     # (6, H, W, 4) radiance, px nx py ny p
   bake replaces the array and reports what it removed. A map whose
   `scene_content_hash` is not the store's current digest is refused unless
   `--force` (the viewer would ignore it as stale anyway).
+- **Directory store only.** Bake and attach refuse compressed stores because the
+  environment attrs cannot be updated in place inside an archive.
 
 ## Modules
 
@@ -77,4 +79,5 @@ Playwright), then attaches through this package.
 digest-named array, the unchanged scene digest under BOTH hashing walks,
 idempotency and replacement, the stale-bake refusal and `--force`, and that the
 group is invisible to `LuxarScene.nodes`, `luxar info` and refused as a node name
-by the compiler; `luxar optimise` copies it verbatim.
+by the compiler; `luxar optimise` copies it verbatim and restamps it to the output
+scene digest, while `luxar restamp-lod` updates the stamp after changing that digest.

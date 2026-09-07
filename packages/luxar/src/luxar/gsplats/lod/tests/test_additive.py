@@ -6,6 +6,8 @@ Covers ``compute_additive_order`` and ``make_additive_lod`` from
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -16,6 +18,7 @@ from luxar.gsplats.lod.additive import (
     _radial_score,
     _residual_energy_curve,
     _self_energy_score,
+    interleave_order_across_slices,
 )
 from luxar.utils.lod_methods import GSPLAT_ADDITIVE_METHODS
 
@@ -1362,3 +1365,345 @@ def test_a_malformed_spec_is_unknown_and_does_not_raise(
     from luxar.gsplats.lod.additive import additive_rung_count
 
     assert additive_rung_count(32, n_lods, breakpoints) is None  # type: ignore[arg-type]
+
+
+# ── slice_dims: the slice-even interleave (#2485) ─────────────────────────
+
+
+def _make_sliced_gsplat(
+    sizes: tuple[int, ...], ndim: int = 4, seed: int = 0
+) -> GSplatData:
+    """A stack whose LAST centre column is a discrete slice coordinate.
+
+    Deliberately UNBALANCED: the whole point of the interleave is what happens
+    to the small coordinates, and an even stack cannot tell a round-robin apart
+    from a global prefix. Mirrors the shape of the sliced 4D demos — three
+    spatial columns plus a stacked time column at index ``ndim - 1``.
+
+    Amplitudes are scaled by ``100 ** slice_index``, so slice 0 is both the
+    SMALLEST and the FAINTEST and a contribution ordering ranks all of it last.
+    That is the real situation this fixes — a sparse early radar scan is small
+    and weak at once — and it makes the "starved without the interleave" half
+    structural rather than a property of one lucky seed: the self-energy score
+    is $a^2|\\Sigma|^{1/2}$, so a 100x amplitude gap is a 10^4 score gap, which
+    no plausible covariance spread can close.
+    """
+    rng = np.random.default_rng(seed)
+    n = int(sum(sizes))
+    centers = (rng.standard_normal((n, ndim)) * 1.5).astype(np.float32)
+    slice_index = np.concatenate(
+        [np.full(size, float(i)) for i, size in enumerate(sizes)]
+    )
+    centers[:, ndim - 1] = slice_index.astype(np.float32)
+    amplitudes = ((np.abs(rng.standard_normal(n)) + 0.5) * 100.0**slice_index).astype(
+        np.float32
+    )
+    tril = ndim * (ndim + 1) // 2
+    chol = (rng.standard_normal((n, tril)) * 0.1).astype(np.float32)
+    diag_idx = np.cumsum(np.arange(1, ndim + 1)) - 1
+    chol[:, diag_idx] = np.abs(chol[:, diag_idx]) + 0.4
+    return GSplatData(
+        centers=centers,
+        amplitudes=amplitudes,
+        cholesky_factors=chol,
+    )
+
+
+def _slice_histogram(
+    data: GSplatData, indices: np.ndarray, n_slices: int, col: int
+) -> list[int]:
+    """How many of ``indices`` fall in each slice coordinate ``0..n_slices-1``."""
+    coords = np.asarray(data.centers)[:, col][indices]
+    return [int((coords == float(i)).sum()) for i in range(n_slices)]
+
+
+#: Slice sizes 2 / 5 / 40 over 3 coordinates — 47 splats, the smallest slice
+#: 4% of the node. At the demo's ``n_lods=4`` that puts rung 0 at 12 splats,
+#: which is more than enough budget to carry the 2-splat slice WHOLE while a
+#: global energy-ordered prefix gives it nothing.
+_UNBALANCED_SIZES = (2, 5, 40)
+
+
+def test_interleave_returns_a_permutation() -> None:
+    data = _make_sliced_gsplat(_UNBALANCED_SIZES, seed=21)
+    order = compute_additive_order(data, method="self_energy", slice_dims=[3])
+    assert order.shape == (data.n_splats,)
+    assert order.dtype == np.int64
+    assert sorted(order.tolist()) == list(range(data.n_splats))
+
+
+def test_interleave_gives_every_slice_an_equal_absolute_budget() -> None:
+    """Every prefix holds ``min(slice size, completed passes)`` of each slice.
+
+    The concrete numbers below are all pass boundaries, so they are fixed by the
+    round-robin alone and not by which base order fed it: 3 = one element each,
+    6 = two each (slice 0 now exhausted), 12 = 6 + three passes of the two
+    surviving slices, 15 = 12 + three more from the only slice still holding
+    anything. That is the equal-ABSOLUTE-budget shape
+    ``scripts/check_demo_ladders.py``'s first-paint arm asks for.
+    """
+    data = _make_sliced_gsplat(_UNBALANCED_SIZES, seed=22)
+    order = compute_additive_order(data, method="self_energy", slice_dims=[3])
+    for prefix, expected in (
+        (3, [1, 1, 1]),
+        (6, [2, 2, 2]),
+        (12, [2, 5, 5]),
+        (15, [2, 5, 8]),
+    ):
+        assert _slice_histogram(data, order[:prefix], 3, 3) == expected, (
+            f"prefix {prefix} is not slice-even"
+        )
+    assert _slice_histogram(data, order, 3, 3) == list(_UNBALANCED_SIZES)
+
+
+def test_the_small_slice_is_starved_without_the_interleave() -> None:
+    """The regression half of #2485: the base order is what shipped.
+
+    Same data, same method, same rung-0 size (``n_lods=4`` over 47 splats = 12).
+    Interleaved, the 2-splat slice arrives COMPLETE; ordered globally by
+    contribution it gets nothing at all, which is the 4-splats-per-scan failure
+    the NEXRAD supercell shipped with in miniature.
+    """
+    data = _make_sliced_gsplat(_UNBALANCED_SIZES, seed=23)
+    rung0 = -(-data.n_splats // 4)
+    base = compute_additive_order(data, method="self_energy")
+    even = compute_additive_order(data, method="self_energy", slice_dims=[3])
+    assert _slice_histogram(data, base[:rung0], 3, 3)[0] == 0
+    assert _slice_histogram(data, even[:rung0], 3, 3)[0] == _UNBALANCED_SIZES[0]
+    assert min(_slice_histogram(data, even[:rung0], 3, 3)) > 0
+
+
+def test_interleave_preserves_the_within_slice_order() -> None:
+    """Within a slice the base method still ranks — bright core first.
+
+    This is why the interleave is a MODIFIER and not an ordering method: it
+    redistributes across slices and reorders nothing inside one, so each
+    coordinate keeps painting by contribution rather than evenly thin.
+    """
+    data = _make_sliced_gsplat(_UNBALANCED_SIZES, seed=24)
+    base = compute_additive_order(data, method="self_energy")
+    even = compute_additive_order(data, method="self_energy", slice_dims=[3])
+    coords = np.asarray(data.centers)[:, 3]
+    for i in range(len(_UNBALANCED_SIZES)):
+        assert [int(k) for k in base if coords[k] == float(i)] == [
+            int(k) for k in even if coords[k] == float(i)
+        ]
+
+
+def test_interleave_is_deterministic_and_idempotent() -> None:
+    """No seed, and re-applying it is a no-op.
+
+    Idempotency is what lets both the authoring door and ``make_additive_lod``'s
+    Gram branch apply the modifier without a "has this already been done?" flag:
+    the within-group order — and hence every within-group rank — is unchanged by
+    a second pass.
+    """
+    data = _make_sliced_gsplat(_UNBALANCED_SIZES, seed=25)
+    once = compute_additive_order(data, method="self_energy", slice_dims=[3])
+    again = compute_additive_order(data, method="self_energy", slice_dims=[3])
+    assert np.array_equal(once, again)
+    assert np.array_equal(once, interleave_order_across_slices(data, once, [3]))
+
+
+def test_slice_dims_none_leaves_the_order_untouched() -> None:
+    """The modifier is strictly opt-in: no `slice_dims`, byte-identical order."""
+    data = _make_sliced_gsplat(_UNBALANCED_SIZES, seed=26)
+    for method in ("self_energy", "mass", "amplitude", "greedy", "radial"):
+        assert np.array_equal(
+            compute_additive_order(data, method=method, seed=0),
+            compute_additive_order(data, method=method, seed=0, slice_dims=None),
+        ), method
+
+
+@pytest.mark.parametrize("method", ["self_energy", "greedy"])
+def test_make_additive_lod_builds_a_slice_even_ladder(method: str) -> None:
+    """End to end, on BOTH order paths.
+
+    ``self_energy`` runs through ``compute_additive_order``; ``greedy`` takes
+    ``make_additive_lod``'s own ``_order_from_gram`` shortcut (it reuses the Gram
+    it built) and never reaches that function, so the modifier has to be applied
+    on that branch too — this parametrization is what kills a fix applied to
+    only one of them.
+
+    Counts in == counts out is asserted alongside: an interleave that dropped or
+    duplicated a splat would still look slice-even on rung 0.
+    """
+    data = _make_sliced_gsplat(_UNBALANCED_SIZES, seed=27)
+    built = make_additive_lod(data, 4, method=method, slice_dims=[3])
+    sublods = built.substitutive_levels[0].additive_sublods
+    per_rung = [
+        [
+            int((np.asarray(sub.centers)[:, 3] == float(i)).sum())
+            for i in range(len(_UNBALANCED_SIZES))
+        ]
+        for sub in sublods
+    ]
+    assert per_rung[0] == [2, 5, 5], f"{method}: rung 0 is not slice-even: {per_rung}"
+    assert [sum(a) for a in zip(*per_rung, strict=True)] == list(_UNBALANCED_SIZES)
+    assert sum(sum(rung) for rung in per_rung) == data.n_splats
+
+
+@pytest.mark.parametrize(
+    "slice_dims,match",
+    [
+        ([], "non-empty"),
+        ([-1], "non-negative"),
+        ([3, 3], "must not repeat"),
+        ([9], "out of range"),
+        ([1.5], "integer column indices"),
+    ],
+)
+def test_malformed_slice_dims_raise(slice_dims: list[object], match: str) -> None:
+    """Each of these would GROUP WRONG rather than fail — see `_validate_slice_dims`."""
+    data = _make_sliced_gsplat(_UNBALANCED_SIZES, seed=28)
+    with pytest.raises(ValueError, match=match):
+        compute_additive_order(data, method="self_energy", slice_dims=slice_dims)  # type: ignore[arg-type]
+
+
+def test_interleave_on_degenerate_inputs() -> None:
+    """N=0, N=1, one slice, and one slice per splat all reduce to the base order.
+
+    A single slice coordinate is the important one of the four: the interleave
+    must be a no-op when there is nothing to interleave across, so a demo that
+    names `slice_dims` on an axis it turns out not to be sliced on loses nothing.
+    """
+    empty = _make_empty_gsplat(ndim=4)
+    assert compute_additive_order(
+        empty, method="self_energy", slice_dims=[3]
+    ).shape == (0,)
+
+    single_splat = _make_sliced_gsplat((1,), seed=29)
+    assert compute_additive_order(
+        single_splat, method="self_energy", slice_dims=[3]
+    ).tolist() == [0]
+
+    one_slice = _make_sliced_gsplat((16,), seed=30)
+    assert np.array_equal(
+        compute_additive_order(one_slice, method="self_energy"),
+        compute_additive_order(one_slice, method="self_energy", slice_dims=[3]),
+    )
+
+    all_distinct = _make_sliced_gsplat((1,) * 16, seed=31)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        assert np.array_equal(
+            compute_additive_order(all_distinct, method="self_energy"),
+            compute_additive_order(all_distinct, method="self_energy", slice_dims=[3]),
+        )
+
+
+def test_nearly_unique_slice_keys_warn_about_the_column_frame() -> None:
+    """A continuous column usually means raw and scene indices were confused."""
+    data = _make_sliced_gsplat((16, 16), seed=36)
+
+    with pytest.warns(UserWarning, match="raw pre-.*dim_order.*post-.*dim_order"):
+        order = compute_additive_order(data, method="self_energy", slice_dims=[0])
+
+    assert sorted(order.tolist()) == list(range(data.n_splats))
+
+
+@pytest.mark.parametrize("non_finite", [np.nan, np.inf, -np.inf])
+def test_non_finite_slice_keys_are_refused_not_silently_split(
+    non_finite: float,
+) -> None:
+    """A non-finite slice coordinate is not a viewer-addressable slice.
+
+    ``np.unique`` compares NaN unequal to itself, so every NaN-keyed splat gets
+    its own group — and a singleton is smaller than any budget, i.e. "carried
+    whole", i.e. inside pass 0. Measured before the guard, 6 NaN-keyed splats
+    beside 3 real slices of 10 ALL landed in the first pass and diluted every
+    real slice's budget silently. ``_radial_score`` guards the same class on
+    ``spatial_dims``; this is the ``slice_dims`` peer.
+    """
+    data = _make_sliced_gsplat(_UNBALANCED_SIZES, seed=32)
+    centers = np.asarray(data.centers).copy()
+    centers[:6, 3] = non_finite
+    poisoned = GSplatData(
+        centers=centers,
+        amplitudes=data.amplitudes,
+        cholesky_factors=data.cholesky_factors,
+    )
+    with pytest.raises(ValueError, match="slice_dims columns of centers must be"):
+        compute_additive_order(poisoned, method="self_energy", slice_dims=[3])
+
+
+def test_negative_zero_slice_keys_group_together() -> None:
+    """``-0.0`` and ``0.0`` are ONE slice — the grouping is value-based.
+
+    Worth pinning because the guard above rejects non-finite keys and could
+    plausibly have been written to reject signed-zero pathologies too. It must
+    not: a stacked axis written through float32 can legitimately carry ``-0.0``,
+    and splitting that coordinate in two would halve its budget.
+    """
+    data = _make_sliced_gsplat((5, 5, 5), seed=33)
+    centers = np.asarray(data.centers).copy()
+    centers[:2, 3] = -0.0
+    signed = GSplatData(
+        centers=centers,
+        amplitudes=data.amplitudes,
+        cholesky_factors=data.cholesky_factors,
+    )
+    order = compute_additive_order(signed, method="self_energy", slice_dims=[3])
+    coords = centers[:, 3]
+    assert [int((coords[order[:3]] == value).sum()) for value in np.unique(coords)] == [
+        1,
+        1,
+        1,
+    ]
+
+
+@pytest.mark.parametrize("n_splats", [0, 1])
+@pytest.mark.parametrize("slice_dims", [[], [-5], [1.5], [999]])
+def test_malformed_slice_dims_raise_even_on_a_trivial_leaf(
+    n_splats: int, slice_dims: list[object]
+) -> None:
+    """Validation must not depend on how many splats the leaf happens to hold.
+
+    Both fan-out callers hand the SAME spec to many leaves —
+    ``resolve_additive_axis_gsplats`` walks substitutive levels and
+    ``add_gsplats_partition_wrapper_impl`` forwards ``leaf_attrs`` to every
+    ``part_i`` — so validating only where the interleave actually runs means one
+    build both rejects and accepts a typo, depending on which leaf is empty.
+    Measured before the fix: every entry below passed silently at N in {0, 1} and
+    raised at N = 3.
+    """
+    data = (
+        _make_empty_gsplat(ndim=4)
+        if n_splats == 0
+        else _make_sliced_gsplat((1,), seed=34)
+    )
+    assert data.n_splats == n_splats
+    with pytest.raises(ValueError):
+        compute_additive_order(data, method="self_energy", slice_dims=slice_dims)  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        make_additive_lod(data, 4, method="self_energy", slice_dims=slice_dims)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "order,match",
+    [
+        (np.arange(9, dtype=np.float64), "must be an integer array"),
+        (np.array([-1, *range(1, 9)]), "must be non-negative"),
+        (np.arange(7), "must have shape"),
+        (np.arange(10), "must have shape"),
+        (np.array([*range(8), 9]), "out of range"),
+    ],
+)
+def test_a_malformed_order_is_refused(order: np.ndarray, match: str) -> None:
+    """``interleave_order_across_slices`` is public, so ``order`` is untrusted.
+
+    Every case below was measured to give a plausible WRONG answer rather than an
+    error: the float array is truncated by the int64 cast, the negative entry
+    aliases to another element, and a short/long array silently yields a partial
+    ordering. Only the out-of-range index raised, and only via the gather.
+    """
+    data = _make_sliced_gsplat((3, 3, 3), seed=35)
+    assert data.n_splats == 9
+    with pytest.raises(ValueError, match=match):
+        interleave_order_across_slices(data, order, [3])
+
+
+# NB: no test pins the duplicate-`order` non-guarantee. Asserting that
+# `interleave_order_across_slices` does NOT reject `[0, 0, 1, …]` would be a
+# change detector — it would go red for the correct future change of adding
+# duplicate detection. The reasoning lives in `_validate_interleave_order`.
