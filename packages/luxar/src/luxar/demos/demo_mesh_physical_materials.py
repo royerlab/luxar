@@ -300,14 +300,11 @@ def backdrop_panel(
 
 
 def create_scene(output_path) -> None:
-    """Write the six-sphere scene to ``output_path``."""
+    """Write the nine-sphere scene to ``output_path``."""
     vertices, faces, normals = icosphere(SUBDIVISIONS, radius=RADIUS)
     aprint(f"icosphere: {len(vertices)} vertices, {len(faces)} faces")
 
     row_half_width = (len(SPHERES) - 1) / 2.0 * SPACING + RADIUS
-    # Nine spheres make a wide row: frame it from a little further out and higher
-    # than the six-sphere Phase 1 layout so the whole row and the backdrop fit.
-
     with asection("Writing scene"):
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.MEMORY

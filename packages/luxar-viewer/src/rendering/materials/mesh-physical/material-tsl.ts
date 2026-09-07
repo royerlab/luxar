@@ -14,6 +14,7 @@
 
 import { MeshPhysicalNodeMaterial } from 'three/webgpu';
 import type { BlendingMode } from '../../../types/blending';
+import type { MeshShadingMode } from '../mesh/appearance';
 import {
   applyPhysicalMeshConfig,
   physicalGetOpacity,
@@ -62,6 +63,14 @@ export class PhysicalMeshTSLMaterial extends MeshPhysicalNodeMaterial {
   /** Luxar `gamma` — recorded only; a physical material has no gamma term. */
   updateGamma(gamma: number): void {
     physicalUpdateGamma(this, gamma);
+  }
+
+  /** Switch between stored normals and derivative normals for the active display frame. */
+  updateShading(mode: MeshShadingMode): void {
+    const flatShading = mode !== 'smooth';
+    if (this.flatShading === flatShading) return;
+    this.flatShading = flatShading;
+    this.needsUpdate = true;
   }
 
   /** One live physical knob from the Layers panel (clamped; rebuilds on a zero crossing). */

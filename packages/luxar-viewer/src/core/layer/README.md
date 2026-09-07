@@ -163,6 +163,11 @@ blending when exposure should produce smooth surface transparency.
   later. Three.js compares that Group key before per-mesh `renderOrder`, so host
   transparent groups should use explicit lower/higher values rather than rely on
   insertion order.
+- **Scene environment sharing.** If the host leaves `scene.environment` unset, the
+  first Luxar physical mesh installs a prefiltered `RoomEnvironment` there, which can
+  also change the appearance of the host's own lighting-model materials. A
+  host-supplied environment is preserved, and an environment owned by the layer is
+  released by `dispose()`.
 - **WebGL context recovery.** The host owns the canvas events. Call
   `handleContextLost()` on loss so Luxar drops warm-up programs and reduces its
   GPU-resident byte budget, then reset the renderer / post-processing and call

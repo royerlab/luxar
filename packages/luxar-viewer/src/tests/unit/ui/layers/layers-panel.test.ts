@@ -1788,6 +1788,73 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     expect(inputOf('Roughness').value).toBe('0.4');
   });
 
+  it('editing one physical slider preserves authored values beyond other slider tracks', () => {
+    const material = new PhysicalMeshMaterial({
+      thickness: 25,
+      attenuationDistance: 500,
+      dispersion: 3,
+    });
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
+    mesh.name = '/cloud';
+    mesh.userData.nodeType = 'mesh';
+    mesh.userData._layerMaterialCloned = true;
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(
+      rootGroup,
+      makeLayeredSceneGraph('mesh', {
+        material: 'physical',
+        thickness: 25,
+        attenuation_distance: 500,
+        dispersion: 3,
+      })
+    );
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    const group = findControlGroup(container, 'Physical material')!;
+    const roughness = findControlGroup(group, 'Roughness')!.querySelector(
+      'input[type="range"]'
+    ) as HTMLInputElement;
+    roughness.value = '0.25';
+    roughness.dispatchEvent(new Event('input'));
+
+    expect(material.thickness).toBe(25);
+    expect(material.attenuationDistance).toBe(500);
+    expect(material.dispersion).toBe(3);
+    expect(panel.layerState.getLayer('/cloud')!.physicalKnobs).toMatchObject({
+      thickness: 25,
+      attenuation_distance: 500,
+      dispersion: 3,
+    });
+
+    const thickness = findControlGroup(group, 'Thickness')!.querySelector(
+      'input[type="range"]'
+    ) as HTMLInputElement;
+    thickness.value = '5';
+    thickness.dispatchEvent(new Event('input'));
+    expect(material.thickness).toBe(5);
+
+    const row = container.querySelector<HTMLElement>('.luxar-layer-row')!;
+    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const resetLayer = Array.from(
+      document.querySelectorAll<HTMLElement>('.luxar-context-menu__item')
+    ).find((el) => el.textContent === 'Reset this layer')!;
+    resetLayer.click();
+    expect(material.thickness).toBe(25);
+    expect(material.attenuationDistance).toBe(500);
+    expect(material.dispersion).toBe(3);
+
+    thickness.value = '5';
+    thickness.dispatchEvent(new Event('input'));
+    panel.resetAllLayers();
+    expect(material.thickness).toBe(25);
+    expect(material.attenuationDistance).toBe(500);
+    expect(material.dispersion).toBe(3);
+  });
+
   it('greys out the knobs that change nothing in the current state, with the reason as hover text', () => {
     // A metal (metalness 1, the authored value): the whole glass family is inert
     // and clearcoat roughness waits for a clearcoat. Measured on the reflections

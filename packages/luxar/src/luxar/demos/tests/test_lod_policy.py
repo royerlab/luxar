@@ -85,6 +85,29 @@ _SLICED_ADDITIVE_LOD_EXEMPTIONS = {
     ),
 }
 
+#: Sliced GSplats calls exempt from the slice-even ladder policy, and why.
+#:
+#: The gsplats peer of :data:`_SLICED_ADDITIVE_LOD_EXEMPTIONS`, and empty on
+#: purpose: swept over the whole corpus, ``add_gsplats``/``_from_data``/
+#: ``_from_file`` pass ``additive_lod=`` exactly once (the NEXRAD supercell), and
+#: it names ``slice_dims=`` and ``recompute=True``. The empty dict is the
+#: tripwire — a new sliced gsplat ladder must satisfy both, or land here with a
+#: reason (one entry excuses a location from BOTH requirements).
+#:
+#: Unlike its Points/Lines counterpart an entry stands on its REASON alone; it
+#: carries no structural co-requirement. That counterpart demands
+#: ``substitutive_lod=``, because the one excuse it recognises is "an eager coarse
+#: level paints first". Here there are TWO legitimate excuses and only one of them
+#: is visible in the call: ``lod_group=`` (the gsplats spelling of
+#: ``substitutive_lod=``, same reasoning), and a node that carries a hidden
+#: dimension but is NOT sliced on it because ``extend_to_all=`` replicates it
+#: across every coordinate — for which one interleave group is the correct and
+#: meaningless answer. :func:`_declares_a_hidden_dimension` is FILE-level and this
+#: gate deliberately does not try to read ``extend_to_all`` (at
+#: ``demo_gsplats_3d_kidney_multichannel_toggles.py:535`` it is a VARIABLE), so
+#: requiring ``lod_group=`` would leave that shape with no way out at all.
+_SLICED_GSPLATS_ADDITIVE_LOD_EXEMPTIONS: dict[tuple[str, int], str] = {}
+
 #: No fitting demo may be parked here instead of choosing a topology.
 #:
 #: This empty set is a tripwire: new fitting demos must route through the policy
@@ -115,6 +138,110 @@ def _additive_lod_calls(src: str) -> list[tuple[ast.Call, ast.expr]]:
             if keyword.arg == "additive_lod"
         )
     return out
+
+
+#: The gsplats adders this gate walks.
+_GSPLATS_ADDERS = ("add_gsplats", "add_gsplats_from_data", "add_gsplats_from_file")
+
+
+def _gsplats_additive_lod_calls(src: str) -> list[tuple[ast.AST, ast.expr]]:
+    """Every ``additive_lod=`` bound for a gsplats adder in *src*.
+
+    The peer of :func:`_additive_lod_calls`, split out rather than folded into
+    it because the two families do not share a spelling: Points/Lines route
+    through :func:`stream_ladder`, whose ``slices=`` term is a POLICY resolved at
+    authoring time, while gsplats pass ``make_additive_lod`` kwargs straight
+    through and get slice-evenness from ``slice_dims=`` instead. A gsplats call
+    was simply invisible to the older gate — which is the hole #2485 fell into.
+
+    TWO shapes are collected, because the direct keyword is not the only route:
+
+    1. ``add_gsplats*(..., additive_lod=<spec>)`` — the keyword on the call.
+    2. ``additive_lod`` as an entry of ANY dict literal in the file — a
+       ``{"additive_lod": …}`` key or a ``dict(additive_lod=…)`` keyword,
+       wherever it is built.
+
+    Shape 2 exists because a ``**`` spread is opaque to AST:
+    ``demo_gsplats_4d_drosophila_embryogenesis.py:748`` already calls
+    ``add_gsplats_from_data(..., **appearance)`` in a hidden-dim demo, so moving
+    ``additive_lod`` into ``appearance`` would escape the requirements entirely.
+    Failing every spread call instead would red the corpus today for no defect
+    (two demos spread, neither passes a ladder). Collecting the dict entry is the
+    cheap middle: swept over the corpus there are ZERO such entries, so it costs
+    nothing now and closes the hole for later. It over-reaches slightly by
+    design — a dict entry bound for some other consumer would also be gated —
+    which is the safe direction, and the exemption dict is the escape hatch.
+    """
+    out: list[tuple[ast.AST, ast.expr]] = []
+    for node in ast.walk(ast.parse(src)):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in _GSPLATS_ADDERS
+        ):
+            out.extend(
+                (node, keyword.value)
+                for keyword in node.keywords
+                if keyword.arg == "additive_lod"
+            )
+        elif isinstance(node, ast.Dict):
+            out.extend(
+                (node, value)
+                for key, value in zip(node.keys, node.values, strict=True)
+                if isinstance(key, ast.Constant) and key.value == "additive_lod"
+            )
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "dict"
+        ):
+            out.extend(
+                (node, keyword.value)
+                for keyword in node.keywords
+                if keyword.arg == "additive_lod"
+            )
+    return out
+
+
+def _dict_literal_items(node: ast.expr) -> dict[str, ast.expr] | None:
+    """The keyword name → value map of a readable ``dict(...)`` / ``{...}`` literal.
+
+    ``None`` means "not readable here" — a variable, a helper call, a ``**spread``
+    — and the caller must FAIL on that rather than wave it through: a spec whose
+    keys cannot be read off the source is a spec no reviewer can check either.
+    Values are returned, not just names, because one of the two gate requirements
+    is on a VALUE (``recompute=True``; ``recompute=False`` is a key that satisfies
+    nothing).
+    """
+    if isinstance(node, ast.Dict):
+        if not all(
+            isinstance(key, ast.Constant) and isinstance(key.value, str)
+            for key in node.keys
+        ):
+            return None
+        return {
+            key.value: value  # type: ignore[union-attr,misc]
+            for key, value in zip(node.keys, node.values, strict=True)
+        }
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "dict"
+        and not node.args
+        and all(keyword.arg is not None for keyword in node.keywords)
+    ):
+        return {str(keyword.arg): keyword.value for keyword in node.keywords}
+    return None
+
+
+def _is_literal_true(node: ast.expr | None) -> bool:
+    """Whether *node* is the literal ``True``."""
+    return isinstance(node, ast.Constant) and node.value is True
+
+
+def _is_literal_none(node: ast.expr | None) -> bool:
+    """Whether *node* is the literal ``None``."""
+    return isinstance(node, ast.Constant) and node.value is None
 
 
 def _declares_a_hidden_dimension(src: str) -> bool:
@@ -1005,6 +1132,121 @@ class TestASlicedNodeGetsAShareOfItsFrame:
             "Points/Lines additive ladders in demos with hidden dimensions must use "
             f"stream_ladder(..., slices=...) or an explicit exemption: {missing}"
         )
+
+    def test_every_sliced_gsplats_additive_ladder_is_slice_even(self) -> None:
+        """A sliced gsplats ladder must be slice-aware AND must actually run.
+
+        #2485, and the concrete testable half of #2482. The sibling gate above
+        walks Points/Lines only, so ``add_gsplats_from_data(...,
+        additive_lod=dict(breakpoints="stream:20000"))`` was invisible to it — an
+        ABSOLUTE first rung on a node the viewer slices 82 ways, whose sparsest
+        scan came out holding 4 splats.
+
+        TWO independent requirements, asserted separately because they fail
+        separately and a caller fixes them separately:
+
+        ``slice_dims=``
+            The ladder is authored slice-aware. On the gsplats side the fix for a
+            sliced node is not a sizing policy but an ORDERING one: the ladder is
+            interleaved round-robin across the hidden coordinates, so every rung
+            carries an equal absolute per-slice budget.
+
+        ``recompute=True``
+            The spec actually RUNS rather than being shadowed. This looks
+            redundant and is not: ``resolve_additive_axis_gsplats`` computes only
+            when ``recompute`` is set or the level holds ``<= 1`` rung, and
+            ``GSplatData.combine_as_new_dimension`` MERGES its sources' ladders
+            instead of dropping them — so on a stack of already-laddered
+            per-timepoint fits the whole spec is a silent no-op and a proportional
+            per-source ladder ships instead. That is #2485's own root cause, which
+            the first requirement alone does not catch.
+
+            Required unconditionally, including where the fitter output is flat.
+            It costs nothing there — ``needs_compute = recompute or
+            n_additive_sublods <= 1`` makes it an exact no-op on a single-rung
+            level — and a static AST check cannot tell a stacked ``result=`` from
+            a flat one, so it cannot rule the hazard out. A harmless flag that
+            closes an invisible failure mode is the right default; the alternative
+            is a gate that passes the very call site it was written for.
+
+        Both requirements apply to a spec routed through a ``**`` spread as well
+        as to one written on the call — see :func:`_gsplats_additive_lod_calls`.
+        A node that declares a hidden dimension but is not actually sliced on it
+        (``extend_to_all=``) takes the exemption dict, which is why an entry there
+        stands on its reason alone.
+        """
+        not_slice_aware: list[str] = []
+        shadowable: list[str] = []
+        seen_exemptions = set()
+        for name, src in _demo_sources().items():
+            if not _declares_a_hidden_dimension(src):
+                continue
+            for site, additive_lod in _gsplats_additive_lod_calls(src):
+                location = (name, site.lineno)  # type: ignore[attr-defined]
+                if location in _SLICED_GSPLATS_ADDITIVE_LOD_EXEMPTIONS:
+                    # No structural co-requirement: the reason carries it. See
+                    # the exemption dict for why (two legitimate excuses, and
+                    # only one of them is visible in the call).
+                    seen_exemptions.add(location)
+                    continue
+                if isinstance(additive_lod, ast.Constant) and additive_lod.value in (
+                    False,
+                    None,
+                ):
+                    continue  # deliberately no ladder at all
+                spelled = f"{name}:{location[1]} uses additive_lod="
+                items = _dict_literal_items(additive_lod)
+                if items is None:
+                    not_slice_aware.append(
+                        f"{spelled}{ast.unparse(additive_lod)}, whose keys cannot "
+                        "be read from the source"
+                    )
+                    continue
+                if "slice_dims" not in items or _is_literal_none(
+                    items.get("slice_dims")
+                ):
+                    not_slice_aware.append(f"{spelled}{ast.unparse(additive_lod)}")
+                if not _is_literal_true(items.get("recompute")):
+                    shadowable.append(f"{spelled}{ast.unparse(additive_lod)}")
+        stale_exemptions = (
+            set(_SLICED_GSPLATS_ADDITIVE_LOD_EXEMPTIONS) - seen_exemptions
+        )
+        not_slice_aware.extend(
+            f"stale exemption {location}" for location in stale_exemptions
+        )
+        assert not not_slice_aware, (
+            "GSplats additive ladders in demos with hidden dimensions must pass "
+            "additive_lod=dict(..., slice_dims=[<raw PRE-dim_order centre "
+            "columns>]) — NOT the scene's post-dim_order dimension positions, "
+            "which are a different frame of reference. An absolute first rung "
+            "(breakpoints='stream:<c>' or explicit counts) is divided across the "
+            "slices and starves the sparsest. A spec routed through a ** spread "
+            f"is gated the same way: {not_slice_aware}"
+        )
+        assert not shadowable, (
+            "GSplats additive ladders in demos with hidden dimensions must also "
+            "pass additive_lod=dict(..., recompute=True), or the spec is silently "
+            "shadowed by the merged per-source ladder of a stacked dataset and "
+            "never reaches make_additive_lod at all. A spec routed through a ** "
+            f"spread is gated the same way: {shadowable}"
+        )
+
+    def test_a_literal_none_slice_dims_does_not_satisfy_the_gate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "demo_none_slice_dims.py").write_text(
+            """
+Dimension("Time", values=[0], display=False)
+scene.add_gsplats_from_data(
+    data,
+    additive_lod=dict(slice_dims=None, recompute=True),
+)
+"""
+        )
+        monkeypatch.setattr(registry, "_DEMOS_DIR", tmp_path)
+
+        with pytest.raises(AssertionError, match="slice_dims"):
+            self.test_every_sliced_gsplats_additive_ladder_is_slice_even()
 
     def test_a_small_sliced_node_keeps_its_budget_ladder(self) -> None:
         # The floor is a max(), so a node whose budget rung already exceeds

@@ -372,8 +372,9 @@ export function configureDepthSort(options: {
 
 /**
  * Session master switch, applied at app init from `config.depthSort.enabled`
- * combined with the `?depthSort=0` URL escape hatch. Disabling pins the
- * identity (storage) ordering for deterministic E2E/visual runs.
+ * combined with the `?depthSort=0` URL escape hatch. Disabling pins each mesh's
+ * identity (storage) ordering for deterministic E2E/visual runs; authored
+ * cross-layer bands and the physical-glass draw-first rule still apply.
  */
 export function setDepthSortEnabled(enabled: boolean): void {
   depthSortEnabled = enabled;
@@ -1788,7 +1789,7 @@ export function evaluateDepthSortPerFrame(): void {
   // documented degrade-to-unsorted-normal mode). The within-mesh
   // re-sort triggers are worker-dependent, but `scheduleSort` guards
   // both `api` and init readiness itself.
-  if (!depthSortEnabled || nodeStates.size === 0) return;
+  if (nodeStates.size === 0) return;
   const camera = getCamera?.();
   if (!camera) return;
   const loadInProgress = isLoadInProgress?.() ?? false;
@@ -1797,7 +1798,7 @@ export function evaluateDepthSortPerFrame(): void {
   // saturation that starved it. Everything else the retry needs to know
   // (something visible actually wants sorting, the backoff, an offline
   // capture) it checks itself.
-  if (!loadInProgress) maybeRetryStarvedWorkerInit();
+  if (depthSortEnabled && !loadInProgress) maybeRetryStarvedWorkerInit();
 
   if (!scratch) {
     scratch = {
@@ -1814,7 +1815,7 @@ export function evaluateDepthSortPerFrame(): void {
     const mesh = state.mesh;
     if (!isEffectivelyVisible(mesh)) continue;
     const mode = liveBlendingMode(mesh);
-    const orderDependent = isLiveOrderDependent(mode);
+    const orderDependent = depthSortEnabled && isLiveOrderDependent(mode);
     // A commutative layer carrying an AUTHORED layer_order still takes part in
     // the cross-layer band ordering (`LAYER_ORDER_SPEC.md` D4): its order
     // against other commutative layers is a no-op (addition commutes), but its

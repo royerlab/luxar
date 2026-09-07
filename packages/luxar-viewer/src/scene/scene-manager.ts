@@ -583,6 +583,11 @@ export class SceneManager extends THREE.EventDispatcher<{
         getPostProcessing: () => this.postProcessing ?? null,
         updateRendererSize: () => this.resizeToCanvas(),
         onContextRestored: () => {
+          try {
+            if (this.environment?.isReady()) this.environment.rebuild();
+          } catch (error) {
+            log.warning(Modules.SCENE_MANAGER, 'Failed to rebuild scene environment', error);
+          }
           this.dispatchEvent({ type: 'webgl-context-restored' });
           void this.warmBlendModePrograms();
         },
@@ -670,7 +675,11 @@ export class SceneManager extends THREE.EventDispatcher<{
       this.scene
     );
     this.unsubscribeEnvironment = materialManager.onPhysicalMaterialCreated(() => {
-      this.environment?.ensure();
+      try {
+        this.environment?.ensure();
+      } catch (error) {
+        log.warning(Modules.SCENE_MANAGER, 'Failed to build scene environment', error);
+      }
     });
   }
 

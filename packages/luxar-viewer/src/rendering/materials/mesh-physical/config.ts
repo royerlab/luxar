@@ -416,8 +416,8 @@ export function clampPhysicalKnob(key: PhysicalMeshKnobKey, value: unknown): num
 
 /**
  * Value → slider position domain: `Infinity` (and anything past the track) lands on
- * the top stop. What the Layers panel STORES for a knob, so its state stays
- * JSON-safe (a literal `Infinity` serialises as `null`).
+ * the top stop. This is presentation-only: Layers-panel state remains in material
+ * space so an authored finite value beyond the track can survive unrelated edits.
  */
 export function physicalKnobToSlider(key: PhysicalMeshKnobKey, value: number): number {
   const spec: PhysicalKnobSpec = PHYSICAL_MESH_KNOBS[key];
@@ -475,8 +475,8 @@ export function setPhysicalColor(
 /**
  * Configure a freshly constructed physical material from Luxar attrs.
  *
- * Every numeric knob goes through {@link setPhysicalKnob}, so construction and the
- * live sliders cannot disagree about clamping or rebuild rules.
+ * Every numeric knob uses the same table and clamp as {@link setPhysicalKnob}, so
+ * construction and the live sliders cannot disagree about accepted values.
  */
 export function applyPhysicalMeshConfig(
   host: PhysicalMeshHost,

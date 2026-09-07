@@ -30,7 +30,7 @@ import { noteDepthSortBlendingModeSwitch } from '../../rendering/depth-sort-coor
 import { syncMeshPickAppearance } from '../../rendering/node-factory/create-mesh-node';
 import {
   PHYSICAL_MESH_KNOB_KEYS,
-  physicalKnobFromSlider,
+  isPhysicalMeshMaterial,
 } from '../../rendering/materials/mesh-physical/config';
 import type { GeometryTypeName } from '../../types/format-contract';
 import {
@@ -82,8 +82,8 @@ export interface LayerApplyEngineDeps {
   requestRender: () => void;
   /**
    * Marks the cached GPU pick buffer dirty so it re-renders after a panel edit
-   * changed a mesh's pick coverage (opacity/cutoff/blending). No-op when picking
-   * is inactive.
+   * changed a mesh's pick coverage (opacity/cutoff/blending/physical knobs).
+   * No-op when picking is inactive.
    */
   invalidatePickBuffer?: () => void;
 }
@@ -607,14 +607,18 @@ export class LayerApplyEngine {
       //     triggered a full clear + O(N) reprocess for nothing.
       // The coordinator's own `liveBlendingMode` reads the resolved mode, so
       // this is also what makes the hook and the per-frame scheduler agree.
-      // The `?? blendingMode` covers the generic fallback arm of
+      // A physical mesh deliberately leaves the stamp unset while translucent,
+      // but is never triangle-sorted; resolve it to opaque for this hook rather
+      // than falling back to an ignored inherited mode. The `?? blendingMode`
+      // covers the generic fallback arm of
       // `applyBlendingStateToMaterial` (a material without `applyBlendingMode`,
       // kept for external/future materials): that arm never stamps
       // `userData.blendingMode`, so reading the material alone would leave the
       // value unchanged and silently make this hook a no-op for such a node.
       if (isDepthSortable(obj.userData?.nodeType)) {
-        const resolvedMode =
-          (mat.userData?.blendingMode as BlendingMode | undefined) ?? blendingMode;
+        const resolvedMode = isPhysicalMeshMaterial(mat)
+          ? 'opaque'
+          : ((mat.userData?.blendingMode as BlendingMode | undefined) ?? blendingMode);
         noteDepthSortBlendingModeSwitch(obj as THREE.Mesh, resolvedMode, prevBlendingMode);
       }
       scheduleBlendModeProgramWarmupForObject(obj);
@@ -750,7 +754,7 @@ export class LayerApplyEngine {
   }
 
   /**
-   * Push a physical layer's live knobs (`LayerInfo.physicalKnobs`, in slider space)
+   * Push a physical layer's live knobs (`LayerInfo.physicalKnobs`, in material space)
    * onto every `material="physical"` leaf beneath it. The optional-chained
    * `updatePhysicalKnob` is the type gate, as for the house knobs above: a house or
    * emissive leaf simply lacks it. A no-op for a layer with no knob record.
@@ -765,11 +769,14 @@ export class LayerApplyEngine {
       const mat = this.getLeafMaterial(obj);
       if (!mat?.updatePhysicalKnob) continue;
       for (const key of PHYSICAL_MESH_KNOB_KEYS) {
-        mat.updatePhysicalKnob(key, physicalKnobFromSlider(key, knobs[key]));
+        mat.updatePhysicalKnob(key, knobs[key]);
       }
       applied = true;
     }
-    if (applied) this.deps.requestRender();
+    if (applied) {
+      this.deps.invalidatePickBuffer?.();
+      this.deps.requestRender();
+    }
   }
 
   applyBlendingMode(layer: LayerInfo): void {

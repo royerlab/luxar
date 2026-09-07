@@ -379,6 +379,25 @@ describe('depth-sort coordinator', () => {
     expect(requestReprocess).toHaveBeenCalledTimes(1);
   });
 
+  it('undefined→opaque preserves commit freshness and does not reprocess', async () => {
+    const coord = await loadCoordinator();
+    const requestReprocess = vi.fn();
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      requestReprocess,
+    });
+
+    const mesh = makeGSplatsMesh(3, 'opaque');
+    mesh.userData.committedData = { position: true };
+    mesh.userData.loadedViewVersion = 7;
+    coord.noteDepthSortBlendingModeSwitch(mesh, 'opaque', undefined);
+
+    expect(mesh.userData.committedData).toEqual({ position: true });
+    expect(mesh.userData.loadedViewVersion).toBe(7);
+    expect(requestReprocess).not.toHaveBeenCalled();
+  });
+
   it('generation guard: a stale ordering resolving after a newer commit is dropped', async () => {
     const coord = await loadCoordinator();
     const requestRender = vi.fn();
@@ -5196,9 +5215,26 @@ describe('depth-sort coordinator — layer_order bands', () => {
 
     coord.evaluateDepthSortPerFrame();
 
-    expect(far.renderOrder).toBe(1);
-    expect(glass.renderOrder).toBe(2);
-    expect(near.renderOrder).toBe(3);
+    expect(far.renderOrder).toBe(-2);
+    expect(glass.renderOrder).toBe(-1);
+    expect(near.renderOrder).toBe(1);
+  });
+
+  it('glass keeps its draw-first bias when depth sorting is disabled', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const glass = makeGlassMesh(-10);
+    const additive = makeGSplatsMesh(2, 'additive');
+    coord.noteDepthSortCommit(glass, () => new Float32Array(9), 3, new Uint32Array(9));
+    coord.noteDepthSortCommit(additive, new Float32Array([0, 0, -1]), 1);
+    await flush();
+    coord.setDepthSortEnabled(false);
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(glass.renderOrder).toBe(-1);
+    expect(additive.renderOrder).toBe(0);
+    expect(mockApi.sort).not.toHaveBeenCalled();
   });
 
   it('an authored band overrides the containment hoist, and warns', async () => {

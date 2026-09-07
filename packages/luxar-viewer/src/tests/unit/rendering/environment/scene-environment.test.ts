@@ -294,6 +294,19 @@ describe('SceneEnvironment — sources and precedence (Phase 4)', () => {
     expect(targets[0].disposed).toBe(true);
   });
 
+  it('rebuilds a live capture without dropping its runtime', () => {
+    const { env, targets } = makeEnv();
+    env.configure({ ...DEFAULT_ENVIRONMENT_CONFIG, source: 'scene' });
+    env.attachRuntime(makeRuntime(new THREE.Group()).runtime);
+    env.ensure();
+
+    expect(env.rebuild()).toBe(true);
+    expect(targets[0].disposed).toBe(true);
+    expect(targets).toHaveLength(2);
+    expect(env.activeKind()).toBe('scene');
+    expect(env.captureCount).toBe(2);
+  });
+
   it('resetForDataset clears demand and releases dataset-owned textures', () => {
     const { env, scene, targets } = makeEnv();
     env.configure({ ...DEFAULT_ENVIRONMENT_CONFIG, source: 'scene' });

@@ -36,11 +36,12 @@ method with a physical meaning, and nothing else:
 | `updateIntensity`   | `color` (scalar)                                    | With `vertexColors` on, base colour is `color × vertexColor`, so a scalar `color` is a gain on the authored colour — what `uIntensity` is on the house shader. |
 | `updateOffset`      | `emissive` (scalar)                                 | An additive brightness shift IS an emitted radiance. Negative (black-level subtraction) has no physical counterpart and clamps to 0.                           |
 | `updateGamma`       | `userData.gamma` only                               | Recorded, never applied — a PBR material has no gamma term. The panel hides the slider for a physical layer.                                                   |
+| `updateShading`     | `flatShading`                                       | Switches between stored and derivative normals per committed display frame.                                                                                    |
 | `applyBlendingMode` | nothing                                             | Deliberate no-op: a physical mesh has no Luxar blending mode (refused at authoring; an inherited one is ignored with a notice).                                |
 | `getOpacity`        | —                                                   | The LOD cross-fade's fade base.                                                                                                                                |
 
 Absent on purpose: `updateCameraParams` (the near fade is a house-shader feature, so
-`register()` files the material as static), `updateShading` / `updateBaseColorTexture` /
+`register()` files the material as static), `updateBaseColorTexture` /
 `updateColormapTexture` / the four shade knobs (house-shader features; the commit path
 and the panel already no-op when the methods are missing).
 
@@ -56,10 +57,11 @@ A physical mesh has no blending mode, so translucency is read off the **data**
 - Translucent → `transparent = true`, `depthWrite = false`, `userData.blendingMode`
   UNSET. Opaque → `depthWrite = true`, `userData.blendingMode = 'opaque'`.
 
-The `userData.blendingMode` stamp is what the rest of the viewer keys on: the depth-sort
-coordinator releases a node whose stamp is `opaque` or absent (a physical mesh is **never**
-triangle-sorted — spec §3.2 — but still earns its `layer_order` band rank), and the pick
-pass applies the cutout iff the stamp is `opaque`, matching the screen.
+The depth-sort coordinator releases a node whose `userData.blendingMode` stamp is
+`opaque` or absent (a physical mesh is **never** triangle-sorted — spec §3.2 — but
+still earns its `layer_order` band rank). The pick pass recognises the physical-family
+stamp separately and follows `transparent`: translucent surfaces use normal surface
+depth, while opaque surfaces also apply the cutout, matching the screen.
 
 Vertex alpha is known only at the first **commit** (`MeshMetadata` says `has_colors`,
 not how many components), so `commit-mesh-geometry.ts` calls `applyMeshVertexAlpha`

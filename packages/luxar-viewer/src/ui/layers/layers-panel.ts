@@ -564,6 +564,7 @@ export class LayersPanel {
     this.applyEngine.applyLayerOrder(live);
     this.applyEngine.applyLabelStyle(live);
     this.applyEngine.applyMeshAppearance(live);
+    this.applyEngine.applyPhysicalKnobs(live);
     this.refreshRowVisual(path);
     this.controls.render();
   }
