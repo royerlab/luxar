@@ -619,7 +619,7 @@ def _colors_from(values: NDArray, is_uint8: bool) -> NDArray[np.uint8]:
         return clipped
     peak = float(np.max(values)) if values.size else 0.0
     scaled = values * 255.0 if peak <= 1.0 else values
-    out: NDArray[np.uint8] = np.clip(scaled, 0, 255).astype(np.uint8)
+    out: NDArray[np.uint8] = np.clip(np.round(scaled), 0, 255).astype(np.uint8)
     return out
 
 

@@ -140,8 +140,59 @@ def test_float16_sdr_color_quantization_uses_float64_affine_map() -> None:
         deduplicate=False,
     )
 
-    np.testing.assert_array_equal(group["colors"], [[0, 1, 2], [15, 27, 31]])
+    np.testing.assert_array_equal(group["colors"], [[1, 2, 3], [16, 28, 32]])
     assert group["colors"].attrs["encoding"]["name"] == "rgb_uint8"
+
+
+def test_sdr_color_quantization_is_unbiased_and_half_lsb_bounded() -> None:
+    ramp = np.linspace(0.0, 1.0, 10_001, dtype=np.float64)
+    data = np.repeat(ramp[:, None], 3, axis=1)
+    group = memory_group()
+    ArrayEncoder().encode(
+        data,
+        group,
+        "colors",
+        SemanticType.COLOR,
+        mode=EncodingMode.AUTO,
+        color_mode="sdr",
+        allow_lut=False,
+        deduplicate=False,
+    )
+
+    error_lsb = np.asarray(group["colors"], dtype=np.float64) - data * 255.0
+    assert abs(float(np.mean(error_lsb))) < 0.001
+    assert float(np.max(np.abs(error_lsb))) <= 0.5
+
+
+def test_sdr_color_quantization_preserves_all_exact_byte_codes() -> None:
+    codes = np.arange(256, dtype=np.uint8)
+    data = np.repeat((codes.astype(np.float64) / 255.0)[:, None], 3, axis=1)
+    group = memory_group()
+    ArrayEncoder().encode(
+        data,
+        group,
+        "colors",
+        SemanticType.COLOR,
+        mode=EncodingMode.AUTO,
+        color_mode="sdr",
+        allow_lut=False,
+        deduplicate=False,
+    )
+
+    np.testing.assert_array_equal(np.asarray(group["colors"])[:, 0], codes)
+
+
+def test_custom_rgb_uint8_keeps_historical_truncation() -> None:
+    group = memory_group()
+    ArrayEncoder()._encode_custom(
+        group,
+        "colors",
+        np.array([[0.109, 0.109, 0.109]], dtype=np.float32),
+        "rgb_uint8",
+        None,
+    )
+
+    np.testing.assert_array_equal(group["colors"], [[27, 27, 27]])
 
 
 @pytest.mark.parametrize(

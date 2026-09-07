@@ -442,7 +442,11 @@ def _accessor_blob(gt: GroundTruth) -> tuple[bytes, list[dict], list[dict]]:
 
 
 def write_glb(
-    path: Path, gt: GroundTruth, *, translation: list[float] | None = None
+    path: Path,
+    gt: GroundTruth,
+    *,
+    translation: list[float] | None = None,
+    float_colors: NDArray[np.float32] | None = None,
 ) -> None:
     """A GLB with one mesh under one node, optionally translated.
 
@@ -450,6 +454,22 @@ def write_glb(
     the imported mesh sits at the origin instead of where the file put it.
     """
     blob, views, accessors = _accessor_blob(gt)
+    attributes = {"POSITION": 0, "NORMAL": 1}
+    if float_colors is not None:
+        color_bytes = np.asarray(float_colors, dtype="<f4").tobytes()
+        views.append(
+            {"buffer": 0, "byteOffset": len(blob), "byteLength": len(color_bytes)}
+        )
+        accessors.append(
+            {
+                "bufferView": len(views) - 1,
+                "componentType": 5126,
+                "count": len(gt.vertices),
+                "type": "VEC3",
+            }
+        )
+        attributes["COLOR_0"] = len(accessors) - 1
+        blob += color_bytes
     node: dict = {"mesh": 0}
     if translation is not None:
         node["translation"] = translation
@@ -462,7 +482,7 @@ def write_glb(
             {
                 "primitives": [
                     {
-                        "attributes": {"POSITION": 0, "NORMAL": 1},
+                        "attributes": attributes,
                         "indices": 2,
                         "mode": 4,
                     }

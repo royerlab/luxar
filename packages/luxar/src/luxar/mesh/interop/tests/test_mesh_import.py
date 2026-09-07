@@ -110,6 +110,67 @@ def _signed_volume(mesh: TriangleMesh) -> float:
     )
 
 
+@pytest.mark.parametrize("fmt", ["ply", "obj", "glb", "vtp"])
+def test_float_colors_round_to_nearest_byte(fmt: str, tmp_path: Path) -> None:
+    authored = np.array(
+        [
+            [1.6, 63.6, 127.6],
+            [2.6, 64.6, 128.6],
+            [3.6, 65.6, 129.6],
+            [4.6, 66.6, 130.6],
+        ],
+        dtype=np.float32,
+    )
+    expected = np.round(authored).astype(np.uint8)
+    unit_colors = authored / 255.0
+    path = tmp_path / f"rounded.{fmt}"
+
+    if fmt == "glb":
+        write_glb(path, GT, float_colors=unit_colors)
+    elif fmt == "vtp":
+        write_vtp_point_data(
+            path,
+            GT,
+            [(unit_colors, "Float32", "colors", 3)],
+            pdata_attrs='Scalars="colors"',
+        )
+    else:
+        header = []
+        if fmt == "ply":
+            header = [
+                "ply",
+                "format ascii 1.0",
+                f"element vertex {len(GT.vertices)}",
+                "property float x",
+                "property float y",
+                "property float z",
+                "property float red",
+                "property float green",
+                "property float blue",
+                f"element face {len(GT.faces)}",
+                "property list uchar int vertex_indices",
+                "end_header",
+            ]
+        prefix = "" if fmt == "ply" else "v "
+        rows = [
+            prefix + " ".join(str(float(value)) for value in (*vertex, *color))
+            for vertex, color in zip(GT.vertices, unit_colors)
+        ]
+        face_prefix = "3 " if fmt == "ply" else "f "
+        offset = 0 if fmt == "ply" else 1
+        faces = [
+            face_prefix + " ".join(str(int(index) + offset) for index in face)
+            for face in GT.faces
+        ]
+        path.write_text("\n".join(header + rows + faces) + "\n", encoding="ascii")
+
+    mesh = import_mesh(path)
+    assert mesh.colors is not None
+    for vertex, color in zip(mesh.vertices, mesh.colors):
+        row = int(np.argmin(np.linalg.norm(GT.vertices - vertex, axis=1)))
+        np.testing.assert_array_equal(color, expected[row])
+
+
 class TestReaderParity:
     @pytest.mark.parametrize("fmt", MESH_FORMATS)
     def test_every_dialect_reproduces_the_tetrahedron(
