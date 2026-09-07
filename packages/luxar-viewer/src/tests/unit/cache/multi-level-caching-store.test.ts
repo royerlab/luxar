@@ -1,6 +1,6 @@
 import { getEventListeners } from 'node:events';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { computeCacheBudgets } from '../../../cache/heap-budget';
+import { computeCacheBudgets, computeOpfsWriteQueueBudgetBytes } from '../../../cache/heap-budget';
 import { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
 import { OPFSStore } from '../../../cache/multi-level-caching-store/opfs-store';
 
@@ -2542,18 +2542,65 @@ describe('MultiLevelCachingStore', () => {
       };
     }
 
-    it('floors the pending-byte budget without shrinking larger L1 budgets', () => {
+    it('sizes the pending-byte budget from the heap remainder, not from L1 (#2561)', () => {
+      // A pending write's buffer IS the L1 entry's buffer, so the allowance
+      // must not track the L1 budget. This is where the old formula lived
+      // (max(l1MaxSize, 64MB)), so the L1 OPTION is what has to be varied: a
+      // wide spread of L1 sizes — including the 0 a tight heap resolves to and
+      // one far above the old 64MB floor — must all yield the same cap.
       const constrainedBudgets = computeCacheBudgets(undefined, 16 * 1024 * 1024);
-      const constrainedStore = new MultiLevelCachingStore('https://example.com/data.zarr', {
-        l1MaxSize: constrainedBudgets.l1Bytes,
-      });
-      const roomyStore = new MultiLevelCachingStore('https://example.com/data.zarr', {
-        l1MaxSize: 80 * 1024 * 1024,
-      });
-
       expect(constrainedBudgets.l1Bytes).toBe(0);
-      expect(constrainedStore.getStats().l2WriteQueue.maxBytes).toBe(64 * 1024 * 1024);
-      expect(roomyStore.getStats().l2WriteQueue.maxBytes).toBe(80 * 1024 * 1024);
+
+      const expected = computeOpfsWriteQueueBudgetBytes();
+      const l1Sizes = [
+        constrainedBudgets.l1Bytes,
+        16 * 1024 * 1024,
+        100 * 1024 * 1024,
+        512 * 1024 * 1024,
+      ];
+      const resolved = l1Sizes.map(
+        (l1MaxSize) =>
+          new MultiLevelCachingStore('https://example.com/data.zarr', {
+            l1MaxSize,
+          }).getStats().l2WriteQueue.maxBytes
+      );
+
+      // The old formula would have produced 64MB / 64MB / 100MB / 512MB here,
+      // i.e. varied with L1 — so this array being constant is the assertion.
+      expect(resolved).toEqual(l1Sizes.map(() => expected));
+    });
+
+    it('resolves the default pending-byte budget from a MEASURED heap', () => {
+      // The case above compares against `computeOpfsWriteQueueBudgetBytes()`,
+      // which in this environment has no heap signal and returns the 256MB
+      // no-signal fallback — the same constant the EAGER working-set budget
+      // falls back to. So that comparison alone would still pass if the
+      // constructor were wired to `computeWorkingSetBudgetBytes()`, which
+      // takes half the remainder and would double the production cap.
+      // Stubbing a real heap separates them: on 4GiB the queue resolves to
+      // 4096MiB × 0.8 × 0.4 × 0.25 = 327.68MiB, while the working set would
+      // give 512MB (its cap) and either fallback would give 256MB.
+      const realPerformance = globalThis.performance;
+      vi.stubGlobal('performance', {
+        now: () => realPerformance.now(),
+        memory: { jsHeapSizeLimit: 4 * 1024 * 1024 * 1024 },
+      });
+      try {
+        const s = new MultiLevelCachingStore('https://example.com/data.zarr', {
+          l1MaxSize: 20 * 1024 * 1024,
+        });
+        expect(s.getStats().l2WriteQueue.maxBytes).toBe(343_597_383);
+      } finally {
+        vi.stubGlobal('performance', realPerformance);
+      }
+    });
+
+    it('honours an explicit opfsWriteQueueMaxBytes option', () => {
+      // How cache-setup feeds the ?cacheBudgetMB= / device-class allowance in.
+      const store = new MultiLevelCachingStore('https://example.com/data.zarr', {
+        opfsWriteQueueMaxBytes: 7 * 1024 * 1024,
+      });
+      expect(store.getStats().l2WriteQueue.maxBytes).toBe(7 * 1024 * 1024);
     });
 
     it('does not block get() on the L2 write, then persists it in the background', async () => {
@@ -2570,7 +2617,7 @@ describe('MultiLevelCachingStore', () => {
       expect(mocks.files.size).toBe(before);
       const q = store.getStats().l2WriteQueue;
       expect(q.inFlight + q.depth).toBeGreaterThanOrEqual(1);
-      expect(q.maxBytes).toBe(64 * 1024 * 1024);
+      expect(q.maxBytes).toBe(computeOpfsWriteQueueBudgetBytes());
       expect(store.getStats().l2.writes).toBe(0);
 
       // Release + drain → the background write lands.

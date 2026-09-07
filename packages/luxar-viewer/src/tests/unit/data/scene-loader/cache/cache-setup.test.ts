@@ -37,6 +37,7 @@ vi.mock('../../../../../data/zarr', () => ({
 }));
 
 import { setupCaches } from '../../../../../data/scene-loader/cache/cache-setup';
+import { deviceClassPoolBytes } from '../../../../../cache/heap-budget';
 import { config as appConfig } from '../../../../../config';
 
 describe('setupCaches — cache telemetry state resolution', () => {
@@ -144,6 +145,36 @@ describe('setupCaches — cache telemetry state resolution', () => {
     expect(typeof zippedArg).toBe('object');
     expect(zippedArg).toHaveProperty('identity', 'http://example.com/scene.luxar.zarr.zip');
     expect(directoryArg).toBe('http://example.com/scene.zarr/');
+  });
+
+  it('feeds the ?cacheBudgetMB pool through to the L2 write-queue byte cap', async () => {
+    // The write queue's retained-byte allowance resolves from the same memory
+    // model as the tiers, so the explicit pool (`?cacheBudgetMB=` / the native
+    // launcher — the WKWebView path, where the heap is unmeasurable) must
+    // reach it. Dropping either argument at the construction site leaves the
+    // rest of this suite green while that override silently stops applying.
+    appConfig.cache.enabled = true;
+    appConfig.cache.l0Enabled = true;
+
+    const capFor = async (cacheBudgetMB?: number): Promise<number | undefined> => {
+      await setupCaches('http://example.com/scene.zarr/', { cacheBudgetMB });
+      return vi.mocked(MultiLevelCachingStore).mock.calls.at(-1)?.[1]?.opfsWriteQueueMaxBytes;
+    };
+
+    // A pool becomes a remainder (× 0.4/0.6) of which the queue takes a
+    // quarter: 2048MiB → 341.33MiB, 768MiB → 128MiB. TWO distinct overrides,
+    // because a single one cannot discriminate: `inferDeviceClass` can resolve
+    // this environment to the 2048MB desktop pool, in which case dropping the
+    // override argument entirely would still yield the 2048MB number.
+    expect(await capFor(2048)).toBe(357_913_941);
+    expect(await capFor(768)).toBe(134_217_728);
+
+    // With no override and no measurable heap it falls to the device-class
+    // pool, or to the fixed 256MB where there are no device signals at all.
+    const fallbackPool = deviceClassPoolBytes();
+    expect(await capFor(undefined)).toBe(
+      fallbackPool === undefined ? 256 * 1024 * 1024 : Math.floor(fallbackPool * (0.4 / 0.6) * 0.25)
+    );
   });
 
   it('L0-only configuration (l1/l2 off, l0 on) → enabled', async () => {

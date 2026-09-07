@@ -14,9 +14,13 @@ export const cacheConfig: CacheConfig = {
   opfsOperationTimeoutMs: 10_000,
   opfsTimeoutTripThreshold: 3, // consecutive timeouts before the L2 circuit breaker trips (sticky)
   opfsWriteConcurrency: 4, // background L2 writes run at most 4-wide (bounds OPFS contention)
-  // Pending L2 write depth cap; oldest dropped past this (best-effort tier).
-  // Retained chunk bytes are separately capped at max(resolved L1, 64MB), so
-  // depth binds only below roughly 4-6KB per pending chunk with these defaults.
+  // Pending L2 write depth cap; an ARRIVING write is dropped past this and the
+  // already-pending ones drain in order (best-effort tier). Retained chunk
+  // bytes are separately capped from the non-cache heap remainder
+  // (`cache/heap-budget.ts::computeOpfsWriteQueueBudgetBytes`), so the depth
+  // that binds first is heap-dependent: the byte cap divided by this count is
+  // ~32KiB per pending chunk at the 512MB ceiling, 16KiB with no heap signal.
+  // For typical 64KB chunks the byte cap binds first.
   opfsWriteQueueMax: 16_384,
   externalDatasetTtlMs: null,
   debug: false,

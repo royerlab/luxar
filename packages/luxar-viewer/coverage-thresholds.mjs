@@ -55,7 +55,10 @@ export const COVERAGE_THRESHOLDS = {
   // tests (2026-09): the subtree went 87.50 -> 88.06 and check-coverage-slack
   // flagged the old floor as stale — the ratchet working.
   'src/scene/**': { lines: 93, functions: 86, branches: 89 }, //     95.77 / 88.06 / 91.15
-  'src/cache/**': { lines: 93, functions: 93, branches: 82 }, //     94.99 / 95.15 / 84.88
+  // branches 82 -> 84 after the OPFS write-queue / heap-budget tests
+  // (2026-09, #2561): the subtree went 84.88 -> 85.25 and check-coverage-slack
+  // flagged the old floor as stale — the ratchet working.
+  'src/cache/**': { lines: 93, functions: 93, branches: 84 }, //     95.05 / 95.20 / 85.25
   'src/controls/**': { lines: 93, functions: 88, branches: 86 }, //  95.42 / 89.66 / 88.01
 
   // The bulk of the codebase.
