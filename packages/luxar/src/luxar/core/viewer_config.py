@@ -654,15 +654,7 @@ class AudioConfig:
         if self.enabled is not None and not isinstance(self.enabled, bool):
             raise ValueError(f"audio.enabled must be a bool, got {self.enabled!r}")
         if self.master_gain is not None:
-            if isinstance(self.master_gain, bool) or not isinstance(
-                self.master_gain, (int, float)
-            ):
-                raise ValueError(
-                    f"audio.master_gain must be a number, got {self.master_gain!r}"
-                )
-            if not math.isfinite(self.master_gain):
-                raise ValueError("audio.master_gain must be finite")
-            _validate_range(self.master_gain, "audio.master_gain", 0.0, 2.0)
+            _validate_finite_number(self.master_gain, "audio.master_gain", 0.0, 2.0)
         if self.panning_model is not None and self.panning_model not in (
             VALID_PANNING_MODELS
         ):
@@ -671,32 +663,22 @@ class AudioConfig:
                 f"got {self.panning_model!r}"
             )
         if self.buses is not None:
-            if not isinstance(self.buses, dict):
-                raise ValueError("audio.buses must be a dict of bus name -> gain")
-            unknown = sorted(k for k in self.buses if k not in AUDIO_BUSES)
-            if unknown:
-                raise ValueError(
-                    f"audio.buses has unknown bus(es) {unknown}; valid buses are "
-                    f"{list(AUDIO_BUSES)}"
-                )
-            for bus, gain in self.buses.items():
-                if isinstance(gain, bool) or not isinstance(gain, (int, float)):
-                    raise ValueError(
-                        f"audio.buses[{bus!r}] must be a number, got {gain!r}"
-                    )
-                if not math.isfinite(gain):
-                    raise ValueError(f"audio.buses[{bus!r}] must be finite")
-                _validate_range(gain, f"audio.buses[{bus!r}]", 0.0, 2.0)
+            self._validate_buses(self.buses)
         if self.duck_db is not None:
-            if isinstance(self.duck_db, bool) or not isinstance(
-                self.duck_db, (int, float)
-            ):
-                raise ValueError(
-                    f"audio.duck_db must be a number, got {self.duck_db!r}"
-                )
-            if not math.isfinite(self.duck_db):
-                raise ValueError("audio.duck_db must be finite")
-            _validate_range(self.duck_db, "audio.duck_db", -60.0, 0.0)
+            _validate_finite_number(self.duck_db, "audio.duck_db", -60.0, 0.0)
+
+    @staticmethod
+    def _validate_buses(buses: Any) -> None:
+        if not isinstance(buses, dict):
+            raise ValueError("audio.buses must be a dict of bus name -> gain")
+        unknown = sorted(k for k in buses if k not in AUDIO_BUSES)
+        if unknown:
+            raise ValueError(
+                f"audio.buses has unknown bus(es) {unknown}; valid buses are "
+                f"{list(AUDIO_BUSES)}"
+            )
+        for bus, gain in buses.items():
+            _validate_finite_number(gain, f"audio.buses[{bus!r}]", 0.0, 2.0)
 
     _FIELDS = ("enabled", "master_gain", "panning_model", "buses", "duck_db")
 
@@ -728,6 +710,15 @@ def _validate_hex_color(color: str) -> None:
         raise ValueError(
             f"Invalid hex color '{color}'. Expected format: '#rrggbb' (e.g., '#1a1a2e')"
         )
+
+
+def _validate_finite_number(value: Any, label: str, lo: float, hi: float) -> None:
+    """``value`` must be a real (non-bool) finite number inside ``[lo, hi]``."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{label} must be a number, got {value!r}")
+    if not math.isfinite(value):
+        raise ValueError(f"{label} must be finite")
+    _validate_range(value, label, lo, hi)
 
 
 def _validate_range(
@@ -976,9 +967,7 @@ class ViewerConfig:
         # Camera validation is handled by CameraConfig.__post_init__
 
         self._validate_waypoints()
-
-        if self.audio is not None and not isinstance(self.audio, AudioConfig):
-            raise ValueError("audio must be an AudioConfig")
+        self._validate_audio()
 
         if self.title is not None:
             if not isinstance(self.title, str) or not self.title.strip():
@@ -1160,6 +1149,10 @@ class ViewerConfig:
                 result["audio"] = audio_dict
 
         return result
+
+    def _validate_audio(self) -> None:
+        if self.audio is not None and not isinstance(self.audio, AudioConfig):
+            raise ValueError("audio must be an AudioConfig")
 
     def _waypoints_to_dict(self) -> Dict[str, Any]:
         if not self.waypoints:

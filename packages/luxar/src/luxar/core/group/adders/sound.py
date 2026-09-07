@@ -26,6 +26,7 @@ from typing import (
     Mapping,
     Optional,
     Sequence,
+    Tuple,
     Union,
     cast,
 )
@@ -100,6 +101,75 @@ def _hidden_row(
         row[0, names.index(key)] = float(value)
     extend = [d.name for d in dims.dimensions if not d.display and d.name not in hidden]
     return row, extend
+
+
+def _stamp_optional(attrs: Dict[str, Any], **values: Optional[Any]) -> None:
+    """Copy the given keys into ``attrs`` when their value is not ``None``."""
+    for key, value in values.items():
+        if value is not None:
+            attrs[key] = value
+
+
+def _resolve_placement(
+    scene: Any,
+    name: str,
+    *,
+    positions: Optional[Any],
+    hidden: Optional[Mapping[str, float]],
+    attach_name: Optional[str],
+    spatial: Optional[bool],
+    extend_to_all: Optional[Union[List[str], str]],
+) -> Tuple[Optional[np.ndarray], bool, Optional[Union[List[str], str]]]:
+    """Where the source lives: explicit rows, the ``hidden=`` sugar, an attached
+    node, or nowhere. Returns ``(positions, spatial, extend_to_all)``.
+    """
+    if positions is not None and hidden is not None:
+        raise ValueError(
+            "positions= and hidden= are mutually exclusive: hidden= builds "
+            "the one row a non-spatial clip needs, positions= places a source"
+        )
+    if positions is not None and attach_name is not None:
+        raise ValueError(
+            "positions= and attach_to= are mutually exclusive: attach_to "
+            "places the source at another node's centre, positions= places "
+            "it explicitly. Combine attach_to with hidden= to bind it to a "
+            "hidden-dimension value."
+        )
+    if hidden is not None:
+        if spatial and attach_name is None:
+            raise ValueError(
+                "spatial=True needs positions= or attach_to=; hidden= alone "
+                "binds a NON-spatial clip to a hidden-dimension value"
+            )
+        pos_arr, hidden_extend = _hidden_row(scene, hidden, name)
+        # attach_to + hidden: the row decides WHEN, the target node WHERE.
+        resolved = attach_name is not None if spatial is None else bool(spatial)
+        return (
+            pos_arr,
+            resolved,
+            hidden_extend if extend_to_all is None else extend_to_all,
+        )
+    if positions is not None:
+        pos_arr = np.asarray(positions, dtype=np.float32)
+        if pos_arr.ndim != 2 or pos_arr.shape[0] == 0:
+            raise ValueError(
+                f"positions for sound '{name}' must have shape (K, D) with "
+                f"K >= 1, got {pos_arr.shape}"
+            )
+        return pos_arr, True if spatial is None else bool(spatial), extend_to_all
+    if attach_name is not None:
+        # Follows the target's centre, live everywhere.
+        return None, True if spatial is None else bool(spatial), extend_to_all
+    if spatial:
+        raise ValueError(
+            "spatial=True needs positions= or attach_to= (where the source is)"
+        )
+    if extend_to_all not in (None, [], "all"):
+        raise ValueError(
+            "extend_to_all only applies with positions= or hidden=; a "
+            "clip without either is audible everywhere already"
+        )
+    return None, False, extend_to_all
 
 
 def add_sound_impl(
@@ -179,56 +249,15 @@ def add_sound_impl(
         )
 
         scene = group._find_scene()
-
-        # Where the source lives: explicit rows, the hidden= sugar, or nowhere.
-        pos_arr: Optional[np.ndarray] = None
-        if positions is not None and hidden is not None:
-            raise ValueError(
-                "positions= and hidden= are mutually exclusive: hidden= builds "
-                "the one row a non-spatial clip needs, positions= places a source"
-            )
-        if positions is not None and attach_name is not None:
-            raise ValueError(
-                "positions= and attach_to= are mutually exclusive: attach_to "
-                "places the source at another node's centre, positions= places "
-                "it explicitly. Combine attach_to with hidden= to bind it to a "
-                "hidden-dimension value."
-            )
-        if hidden is not None:
-            if spatial and attach_name is None:
-                raise ValueError(
-                    "spatial=True needs positions= or attach_to=; hidden= alone "
-                    "binds a NON-spatial clip to a hidden-dimension value"
-                )
-            pos_arr, hidden_extend = _hidden_row(scene, hidden, name)
-            if extend_to_all is None:
-                extend_to_all = hidden_extend
-            # attach_to + hidden: the row decides WHEN, the target node WHERE.
-            spatial = attach_name is not None if spatial is None else bool(spatial)
-        elif positions is not None:
-            pos_arr = np.asarray(positions, dtype=np.float32)
-            if pos_arr.ndim != 2 or pos_arr.shape[0] == 0:
-                raise ValueError(
-                    f"positions for sound '{name}' must have shape (K, D) with "
-                    f"K >= 1, got {pos_arr.shape}"
-                )
-            if spatial is None:
-                spatial = True
-        elif attach_name is not None:
-            # Follows the target's centre, live everywhere.
-            spatial = True if spatial is None else bool(spatial)
-        else:
-            if spatial:
-                raise ValueError(
-                    "spatial=True needs positions= or attach_to= (where the source is)"
-                )
-            spatial = False
-            if extend_to_all not in (None, [], "all"):
-                raise ValueError(
-                    "extend_to_all only applies with positions= or hidden=; a "
-                    "clip without either is audible everywhere already"
-                )
-
+        pos_arr, spatial, extend_to_all = _resolve_placement(
+            scene,
+            name,
+            positions=positions,
+            hidden=hidden,
+            attach_name=attach_name,
+            spatial=spatial,
+            extend_to_all=extend_to_all,
+        )
         if not spatial and spatial_params:
             warnings.warn(
                 f"Sound '{name}' is non-spatial; distance/cone/orientation knobs "
@@ -259,10 +288,7 @@ def add_sound_impl(
         if spatial:
             sound_attrs["distance_model"] = distance_model
             sound_attrs.update(spatial_params)
-        if attach_name is not None:
-            sound_attrs["attach_to"] = attach_name
-        if layout is not None:
-            sound_attrs["ambisonic"] = layout
+        _stamp_optional(sound_attrs, attach_to=attach_name, ambisonic=layout)
         if final_extend:
             sound_attrs["extend_to_all"] = final_extend
 

@@ -72,6 +72,62 @@ def probe_audio_duration_ms(payload: bytes, fmt: str) -> Optional[float]:
     return probe_audio_info(payload, fmt)[0]
 
 
+def _positions_array(
+    positions: Optional[NDArray[np.float32]],
+) -> tuple[Optional[NDArray[np.float32]], int, int]:
+    """Validate the optional ``(K, ndim)`` rows → ``(array, K, ndim)`` (``None, 0, 0`` when absent)."""
+    if positions is None:
+        return None, 0, 0
+    pos = np.asarray(positions, dtype=np.float32)
+    if pos.ndim != 2 or pos.shape[0] == 0:
+        raise ValueError(
+            f"sound positions must have shape (K, D) with K >= 1, got {pos.shape}"
+        )
+    if not np.all(np.isfinite(pos)):
+        raise ValueError("sound positions must be finite")
+    return pos, int(pos.shape[0]), int(pos.shape[1])
+
+
+def _write_positions(group: Any, pos: NDArray[np.float32]) -> None:
+    """Write the rows as PLAIN float32, not through the quantizing encoder.
+
+    K is a handful of rows (one per place the source exists), so the per-channel
+    uint16 fixed-point grid saves nothing and is DEGENERATE for a single row
+    (min == max collapses every coordinate to code 0 — a narration bound to
+    story 3 would decode as story 0 and play on the overview). The viewer reads
+    the array raw and runs the slab kernel on exact hidden coordinates.
+    """
+    create_array(
+        group,
+        "positions",
+        data=pos,
+        chunks=(int(pos.shape[0]), int(pos.shape[1])),
+        compressor=None,
+        overwrite=True,
+        # The overview's hidden row is all zeros == the fill value, and zarr 3
+        # skips a chunk equal to its fill value by default; the viewer then
+        # 404s on `positions/c/0/0` (harmless, but an ERROR line on every
+        # load). Write the chunk unconditionally.
+        config={"write_empty_chunks": True},
+    )
+
+
+def _stamp_probe(metadata: Dict[str, Any], payload: bytes, fmt: str) -> None:
+    """Stamp ``duration_ms`` / ``channels`` when a tag reader knows them; an
+    ambisonic clip whose channel count is known and is not 4 is refused."""
+    duration_ms, channels = probe_audio_info(payload, fmt)
+    if duration_ms is not None:
+        metadata["duration_ms"] = duration_ms
+    if channels is None:
+        return
+    metadata["channels"] = channels
+    if metadata.get("ambisonic") == "foa" and channels != FOA_CHANNELS:
+        raise ValueError(
+            f"ambisonic='foa' needs a {FOA_CHANNELS}-channel AmbiX clip; this "
+            f"clip has {channels} channel(s)"
+        )
+
+
 def write_sound(
     ctx: GeometryWriteCtx,
     path: NodePath,
@@ -101,19 +157,7 @@ def write_sound(
     # NOT idempotent (it transposes the matrix), so it runs exactly once.
     prepare_transform_attrs(attrs, ctx.store)
 
-    n_positions = 0
-    n_dims = 0
-    if positions is not None:
-        pos = np.asarray(positions, dtype=np.float32)
-        if pos.ndim != 2 or pos.shape[0] == 0:
-            raise ValueError(
-                f"sound positions must have shape (K, D) with K >= 1, got {pos.shape}"
-            )
-        if not np.all(np.isfinite(pos)):
-            raise ValueError("sound positions must be finite")
-        n_positions, n_dims = int(pos.shape[0]), int(pos.shape[1])
-    else:
-        pos = None
+    pos, n_positions, n_dims = _positions_array(positions)
 
     group = ctx.store.require_group(path)
     audio_file = AUDIO_FORMAT_FILENAMES[fmt]
@@ -123,26 +167,7 @@ def write_sound(
     aprint(f"🔈 Writing sound clip ({fmt}, {len(payload):,} bytes; {where}) to {path}")
 
     if pos is not None:
-        # Plain float32, NOT the quantizing encoder the geometry writers use:
-        # K is a handful of rows (one per place the source exists), so the
-        # per-channel uint16 fixed-point grid saves nothing and is DEGENERATE
-        # for a single row (min == max collapses every coordinate to code 0 —
-        # a narration bound to story 3 would decode as story 0 and play on the
-        # overview). The viewer reads the array raw and runs the slab kernel on
-        # exact hidden coordinates.
-        create_array(
-            group,
-            "positions",
-            data=pos,
-            chunks=(n_positions, n_dims),
-            compressor=None,
-            overwrite=True,
-            # The overview's hidden row is all zeros == the fill value, and zarr 3
-            # skips a chunk equal to its fill value by default; the viewer then
-            # 404s on `positions/c/0/0` (harmless, but an ERROR line on every
-            # load). Write the chunk unconditionally.
-            config={"write_empty_chunks": True},
-        )
+        _write_positions(group, pos)
 
     write_raw_bytes(group, audio_file, payload)
 
@@ -153,16 +178,7 @@ def write_sound(
     metadata["has_positions"] = pos is not None
     metadata["n_positions"] = n_positions
     metadata["ndim"] = n_dims
-    duration_ms, channels = probe_audio_info(payload, fmt)
-    if duration_ms is not None:
-        metadata["duration_ms"] = duration_ms
-    if channels is not None:
-        metadata["channels"] = channels
-        if sound_attrs.get("ambisonic") == "foa" and channels != FOA_CHANNELS:
-            raise ValueError(
-                f"ambisonic='foa' needs a {FOA_CHANNELS}-channel AmbiX clip; this "
-                f"clip has {channels} channel(s)"
-            )
+    _stamp_probe(metadata, payload, fmt)
     # No spatial index; stamped so a reader never has to distinguish "no
     # ordering" from "attr missing" (mesh does the same).
     metadata["ordering"] = "none"

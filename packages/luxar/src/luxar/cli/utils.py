@@ -10,7 +10,7 @@ import threading
 import time
 import webbrowser
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 from urllib.parse import quote
 
 import zarr
@@ -421,6 +421,18 @@ def build_viewer() -> bool:
         return False
 
 
+#: Type indicator per node type in `luxar info`'s tree (`sound` is heard, not drawn).
+_TREE_TYPE_ICONS: Dict[str, str] = {
+    "scene": "🌐",
+    "group": "📁",
+    "points": "⚫",
+    "lines": "📏",
+    "gsplats": "💠",
+    "mesh": "🔺",
+    "sound": "🔈",
+}
+
+
 def format_tree_node(
     name: str,
     depth: int,
@@ -450,21 +462,10 @@ def format_tree_node(
         connector = "└─" if is_last else "├─"
         line = f"{prefix}{connector} {name}"
 
-    # Add type indicator
-    if node_type == "scene":
-        line += " 🌐"
-    elif node_type == "group":
-        line += " 📁"
-    elif node_type == "points":
-        line += " ⚫"
-    elif node_type == "lines":
-        line += " 📏"
-    elif node_type == "gsplats":
-        line += " 💠"
-    elif node_type == "mesh":
-        line += " 🔺"
-    elif node_type == "sound":
-        line += " 🔈"
+    # Add type indicator (unknown types get none)
+    icon = _TREE_TYPE_ICONS.get(node_type) if node_type else None
+    if icon:
+        line += f" {icon}"
 
     # Add selected attributes
     if attrs:

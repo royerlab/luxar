@@ -297,22 +297,9 @@ def validate_sound_licence(
     return out[0], out[1], out[2]
 
 
-def validate_spatial_params(
-    *,
-    ref_distance: Optional[float],
-    max_distance: Optional[float],
-    rolloff: Optional[float],
-    cone_inner_deg: Optional[float],
-    cone_outer_deg: Optional[float],
-    cone_outer_gain: Optional[float],
-    orientation: Optional[Sequence[float]],
+def _validate_distances(
+    ref_distance: Optional[float], max_distance: Optional[float]
 ) -> Dict[str, Any]:
-    """Range-check the ``PannerNode`` knobs; return only the ones given.
-
-    Distances default in the VIEWER from the scene scale (spec §3.1: ``scale/20``
-    and ``scale``), so an absent knob stays absent on disk rather than being
-    pinned to a number the author never chose.
-    """
     out: Dict[str, Any] = {}
     if ref_distance is not None:
         v = validate_non_negative_finite("ref_distance", ref_distance)
@@ -328,8 +315,15 @@ def validate_spatial_params(
                 f"max_distance ({v}) must be >= ref_distance ({out['ref_distance']})"
             )
         out["max_distance"] = v
-    if rolloff is not None:
-        out["rolloff"] = validate_non_negative_finite("rolloff", rolloff)
+    return out
+
+
+def _validate_cone(
+    cone_inner_deg: Optional[float],
+    cone_outer_deg: Optional[float],
+    cone_outer_gain: Optional[float],
+) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
     for key, value in (
         ("cone_inner_deg", cone_inner_deg),
         ("cone_outer_deg", cone_outer_deg),
@@ -346,18 +340,45 @@ def validate_spatial_params(
                 f"cone_outer_gain must be in [0, 1], got {cone_outer_gain}"
             )
         out["cone_outer_gain"] = v
+    return out
+
+
+def _validate_orientation(orientation: Sequence[float]) -> list[float]:
+    try:
+        vec = [float(c) for c in orientation]
+    except (TypeError, ValueError) as e:
+        raise TypeError("orientation must be a sequence of 3 numbers") from e
+    if len(vec) != 3 or not all(math.isfinite(c) for c in vec):
+        raise ValueError(
+            f"orientation must be a finite 3-vector, got {list(orientation)!r}"
+        )
+    if all(c == 0 for c in vec):
+        raise ValueError("orientation must not be the zero vector")
+    return vec
+
+
+def validate_spatial_params(
+    *,
+    ref_distance: Optional[float],
+    max_distance: Optional[float],
+    rolloff: Optional[float],
+    cone_inner_deg: Optional[float],
+    cone_outer_deg: Optional[float],
+    cone_outer_gain: Optional[float],
+    orientation: Optional[Sequence[float]],
+) -> Dict[str, Any]:
+    """Range-check the ``PannerNode`` knobs; return only the ones given.
+
+    Distances default in the VIEWER from the scene scale (spec §3.1: ``scale/20``
+    and ``scale``), so an absent knob stays absent on disk rather than being
+    pinned to a number the author never chose.
+    """
+    out = _validate_distances(ref_distance, max_distance)
+    if rolloff is not None:
+        out["rolloff"] = validate_non_negative_finite("rolloff", rolloff)
+    out.update(_validate_cone(cone_inner_deg, cone_outer_deg, cone_outer_gain))
     if orientation is not None:
-        try:
-            vec = [float(c) for c in orientation]
-        except (TypeError, ValueError) as e:
-            raise TypeError("orientation must be a sequence of 3 numbers") from e
-        if len(vec) != 3 or not all(math.isfinite(c) for c in vec):
-            raise ValueError(
-                f"orientation must be a finite 3-vector, got {list(orientation)!r}"
-            )
-        if all(c == 0 for c in vec):
-            raise ValueError("orientation must not be the zero vector")
-        out["orientation"] = vec
+        out["orientation"] = _validate_orientation(orientation)
     return out
 
 

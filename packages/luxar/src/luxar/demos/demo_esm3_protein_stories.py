@@ -1058,7 +1058,7 @@ def add_story_sounds(
 
     hums = 0
     if clusters is not None:
-        for k, (s, c) in enumerate(zip(stories, clusters), start=1):
+        for k, (s, c) in enumerate(zip(stories, clusters, strict=True), start=1):
             clip = synthesise_hum(hum_frequency_hz(k), HUM_SECONDS, hum_dir)
             if clip is None:
                 break

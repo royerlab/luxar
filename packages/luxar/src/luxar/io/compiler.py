@@ -984,7 +984,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self._metadata_cache[path.lstrip("/")] = metadata
         return metadata
 
-    def write_sound(  # type: ignore[override]
+    def write_sound(
         self,
         path: NodePath,
         payload: bytes,
@@ -1942,27 +1942,29 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         with suppress_payload_member_warning():
             self._finalize_impl()
 
+    def _prepare_store_for_finalize(self) -> None:
+        """The two pre-finalize mutations, INSIDE the failure boundary.
+
+        A prior aborted attempt may have marked the store incomplete; a real
+        finalize supersedes that. A failed clear must FAIL the finalize (the
+        handler re-stamps and raises): a "successful" finalize that left the
+        marker behind would set ``_is_finalized`` and produce a valid store that
+        ``LuxarScene.load`` permanently rejects, with no way to retry. The
+        default hover overlay is injected here too: if it raises, the store is
+        already partial and must be marked incomplete.
+        """
+        if "incomplete" in self.store.attrs:
+            del self.store.attrs["incomplete"]
+        if self._scene is not None:
+            self._scene._auto_inject_hover_overlay()
+
     def _finalize_impl(self) -> None:
         if self._is_finalized:
             return
         self._check_archive_can_finalize()
 
         try:
-            # A prior aborted attempt may have marked the store incomplete; a
-            # real finalize supersedes that. Clearing it lives INSIDE the outer
-            # boundary, and a failed clear must FAIL the finalize (the handler
-            # re-stamps and raises): a "successful" finalize that left the
-            # marker behind would set _is_finalized and produce a valid store
-            # that LuxarScene.load permanently rejects, with no way to retry.
-            if "incomplete" in self.store.attrs:
-                del self.store.attrs["incomplete"]
-
-            # Auto-inject default hover overlay if labels exist but no hover
-            # overlay defined. Inside the boundary: if it raises, the store is
-            # already partial and must be marked incomplete.
-            if self._scene is not None:
-                self._scene._auto_inject_hover_overlay()
-
+            self._prepare_store_for_finalize()
             aprint("🔧 Finalizing Zarr store...")
 
             # Close the store to ensure all data is written

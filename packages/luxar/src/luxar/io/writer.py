@@ -367,11 +367,11 @@ class ZarrWriterProtocol(Protocol):
         path: NodePath,
         payload: bytes,
         fmt: str,
-        positions: Optional[PositionArray],
+        positions: Optional[NDArray[np.float32]],
         *,
-        sound_attrs: dict,
+        sound_attrs: dict[str, Any],
         **attrs: Any,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Write a sound node: an opaque MP3/AAC clip + optional positions.
 
         ``fmt`` is ``"mp3"`` or ``"aac"`` (already sniffed by the adder);

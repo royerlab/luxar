@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import typer
 import zarr
@@ -215,6 +215,52 @@ def _print_chunk_layout(root: zarr.Group) -> None:
         )
 
 
+#: Per leaf type: the array whose row count is the node's size, and its label.
+_LEAF_COUNT_ARRAYS: Dict[str, Tuple[str, str]] = {
+    "points": ("positions", "n_points"),
+    "lines": ("vertices", "n_vertices"),
+    "gsplats": ("centers", "n_splats"),
+    "mesh": ("vertices", "n_vertices"),
+}
+
+
+def _sound_tree_attrs(group: zarr.Group) -> Dict[str, Any]:
+    """A sound node's tree summary: codec, trigger, bus, rows, duration."""
+    attrs: Dict[str, Any] = {
+        "format": group.attrs.get("format", "?"),
+        "trigger": group.attrs.get("trigger", "?"),
+        "bus": group.attrs.get("bus", "?"),
+    }
+    if group.attrs.get("has_positions"):
+        attrs["n_positions"] = group.attrs.get("n_positions", 0)
+    if "duration_ms" in group.attrs:
+        attrs["duration_s"] = round(float(group.attrs["duration_ms"]) / 1000.0, 1)
+    return attrs
+
+
+def _leaf_tree_attrs(
+    group: zarr.Group, node_type: str, show_stats: bool
+) -> Dict[str, Any]:
+    """The per-type summary a tree line shows (counts; shapes/dtypes under --stats)."""
+    if node_type == "sound":
+        return _sound_tree_attrs(group)
+    spec = _LEAF_COUNT_ARRAYS.get(node_type)
+    if spec is None or spec[0] not in group:
+        return {}
+    array = group[spec[0]]
+    attrs: Dict[str, Any] = {spec[1]: array.shape[0]}
+    # Faces too for a mesh, unlike the other types' single count: a mesh's
+    # vertex count says little about its size on its own (a coarse surface and
+    # a dense one can share a vertex budget), and the face count is what the
+    # render cost tracks.
+    if node_type == "mesh" and "faces" in group:
+        attrs["n_faces"] = group["faces"].shape[0]
+    if show_stats:
+        attrs["shape"] = array.shape
+        attrs["dtype"] = str(array.dtype)
+    return attrs
+
+
 def _print_tree(
     group: zarr.Group,
     depth: int = 0,
@@ -239,47 +285,7 @@ def _print_tree(
         node_type = stored_type
     else:
         node_type = "group"
-    attrs = {}
-
-    if node_type == "points" and "positions" in group:
-        positions = group["positions"]
-        attrs["n_points"] = positions.shape[0]
-        if show_stats:
-            attrs["shape"] = positions.shape
-            attrs["dtype"] = str(positions.dtype)
-    elif node_type == "lines" and "vertices" in group:
-        vertices = group["vertices"]
-        attrs["n_vertices"] = vertices.shape[0]
-        if show_stats:
-            attrs["shape"] = vertices.shape
-            attrs["dtype"] = str(vertices.dtype)
-    elif node_type == "gsplats" and "centers" in group:
-        centers = group["centers"]
-        attrs["n_splats"] = centers.shape[0]
-        if show_stats:
-            attrs["shape"] = centers.shape
-            attrs["dtype"] = str(centers.dtype)
-    elif node_type == "mesh" and "vertices" in group:
-        vertices = group["vertices"]
-        attrs["n_vertices"] = vertices.shape[0]
-        # Faces too, unlike the sibling branches' single count: a mesh's vertex
-        # count says little about its size on its own (a coarse surface and a
-        # dense one can share a vertex budget), and the face count is what the
-        # render cost tracks.
-        if "faces" in group:
-            attrs["n_faces"] = group["faces"].shape[0]
-        if show_stats:
-            attrs["shape"] = vertices.shape
-            attrs["dtype"] = str(vertices.dtype)
-
-    elif node_type == "sound":
-        attrs["format"] = group.attrs.get("format", "?")
-        attrs["trigger"] = group.attrs.get("trigger", "?")
-        attrs["bus"] = group.attrs.get("bus", "?")
-        if group.attrs.get("has_positions"):
-            attrs["n_positions"] = group.attrs.get("n_positions", 0)
-        if "duration_ms" in group.attrs:
-            attrs["duration_s"] = round(float(group.attrs["duration_ms"]) / 1000.0, 1)
+    attrs = _leaf_tree_attrs(group, node_type, show_stats)
 
     # Print node
     if depth == 0:
