@@ -413,11 +413,7 @@ export class LayersPanel {
    */
   private applyVisibility(path: string, visible: boolean): void {
     this.applyEngine.applyVisibility(path, visible);
-    const prefix = path.endsWith('/') ? path : `${path}/`;
-    const affectsSound = this.state
-      .getLayers()
-      .some((layer) => layer.sound && (layer.path === path || layer.path.startsWith(prefix)));
-    if (affectsSound) this.audioPort?.setNodeMuted(path, !visible);
+    this.audioPort?.setNodeMuted(path, !visible);
   }
 
   // ====================================================================

@@ -185,7 +185,7 @@ function makeLayeredSceneGraph(
   } as unknown as SceneNode;
 }
 
-function makeSoundSceneGraph(): SceneNode {
+function makeSoundSceneGraph(soundLayer = true): SceneNode {
   return {
     name: 'root',
     path: '/',
@@ -203,7 +203,7 @@ function makeSoundSceneGraph(): SceneNode {
             path: '/story/hum',
             type: 'sound',
             attrs: {
-              layer: true,
+              ...(soundLayer ? { layer: true } : {}),
               gain: 0.5,
               license: 'CC0',
               attribution: 'someone',
@@ -268,6 +268,26 @@ describe('LayersPanel — sound rows', () => {
     const groupRow = container.querySelector('[data-layer-path="/story"]') as HTMLElement;
     (groupRow.querySelector('.luxar-layer-row__eye') as HTMLButtonElement).click();
     expect(port.setNodeMuted).toHaveBeenLastCalledWith('/story', true);
+  });
+
+  it('a parent group eye mutes sound descendants that are not layer rows', () => {
+    panel.dispose();
+    container.replaceChildren();
+    panel = new LayersPanel(container, makeAnimationController());
+    panel.setAudioPort(port);
+    const root = new THREE.Group();
+    root.name = 'LuxarScene';
+    const story = new THREE.Group();
+    story.name = '/story';
+    root.add(story);
+    panel.initFromScene(root, makeSoundSceneGraph(false));
+    port.setNodeMuted.mockClear();
+
+    const groupRow = container.querySelector('[data-layer-path="/story"]') as HTMLElement;
+    (groupRow.querySelector('.luxar-layer-row__eye') as HTMLButtonElement).click();
+
+    expect(port.setNodeMuted).toHaveBeenCalledOnce();
+    expect(port.setNodeMuted).toHaveBeenCalledWith('/story', true);
   });
 
   it('the gain slider and setLayer({gain}) drive the port and the summary', () => {
