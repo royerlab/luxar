@@ -117,6 +117,17 @@ menu keys) stay inside the panel, while unrelated viewer shortcuts remain availa
 - The bound labels on either side of the display-range slider are click-to-edit and scroll-to-adjust (hold **Shift** for finer increments)
 - Controls below the list (display range, gamma, opacity, absorption, the five mesh appearance sliders, blend, colormap) apply to all selected layers; the absorption, mesh-appearance, colormap, and **Active level** controls auto-hide when the primary selected layer doesn't support them
 
+### Programmatic (embedder / remote control)
+
+`LayersPanel.getLayerSummaries()` returns the stable per-layer appearance subset
+(`LayerSummary[]`, copies, panel order) and `LayersPanel.setLayer(path, patch)`
+applies a `LayerPatch` (visible, opacity, gamma, displayRange, colormap,
+blendingMode, absorption, layerOrder). Each patched field takes the SAME route the
+panel's own control takes — `LayerStateManager` setter, then `LayerApplyEngine` —
+so the row, the material and the stored state cannot drift apart; an unknown path
+throws. `LuxarApp.getLayers()` / `setLayer()` are thin wrappers over these (see
+`core/app/embedder/README.md`).
+
 ## Architecture
 
 ```

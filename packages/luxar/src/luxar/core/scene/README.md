@@ -16,8 +16,9 @@ work identically on the root. What the `Scene` class adds on top of `Group` is:
   dimensions and writer through it.
 - **Viewer config** — optional `ViewerConfig` hints persisted into the zarr file
   as scene-specific viewer defaults.
-- **Screen-space overlays** — `add_text()`, `add_image()`, `add_html()` for HTML
-  annotations anchored to the viewport (delegated to the `overlays/` subpackage).
+- **Screen-space overlays** — `add_text()`, `add_image()`, `add_video()`, and
+  `add_html()` for annotations anchored to the viewport (delegated to the
+  `overlays/` subpackage).
 - **Export** — `to_zarr()` finalizes the progressive writer, copying a
   directory store or publishing an archive at its selected output path.
 
@@ -50,7 +51,7 @@ scene/
 ├── scene.py         # Scene class: construction, properties, overlays, export
 ├── validation.py    # extend_to_all + data-dimension validation (free functions)
 ├── dim_order.py     # dim_order column remapping (free function)
-└── overlays/        # screen-space text/image/HTML overlay implementations
+└── overlays/        # screen-space text/image/video/HTML overlay implementations
 ```
 
 The `Scene` class keeps thin method stubs (`_resolve_extend_to_all`,
@@ -202,7 +203,7 @@ remapped, unmapped = apply_dim_order(
 ## Subpackages
 
 - [`overlays/`](overlays/README.md) — pure-function implementations behind
-  `Scene.add_text()` / `add_image()` / `add_html()`, plus naming, zarr
+  `Scene.add_text()` / `add_image()` / `add_video()` / `add_html()`, plus naming, zarr
   persistence, and label-driven auto-injection of a default hover overlay.
 
 ## See Also

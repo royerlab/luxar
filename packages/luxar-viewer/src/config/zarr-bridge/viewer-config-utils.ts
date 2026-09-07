@@ -297,6 +297,8 @@ export interface CameraOverrides {
   up?: { x: number; y: number; z: number };
   /** Named node whose bounding box center becomes the camera target */
   targetNode?: string;
+  /** Orthographic zoom factor (> 0); applied only to an ortho camera. */
+  zoom?: number;
 }
 
 /**
@@ -306,23 +308,27 @@ export interface CameraOverrides {
  * @returns Camera overrides (position, target, up, targetNode)
  */
 export function extractCameraOverrides(zarrConfig: ZarrViewerConfig): CameraOverrides {
+  const camera = zarrConfig.camera;
+  if (!camera) return {};
   const overrides: CameraOverrides = {};
-  if (zarrConfig.camera?.position) {
-    const [x, y, z] = zarrConfig.camera.position;
-    overrides.position = { x, y, z };
-  }
-  if (zarrConfig.camera?.target) {
-    const [x, y, z] = zarrConfig.camera.target;
-    overrides.target = { x, y, z };
-  }
-  if (zarrConfig.camera?.up) {
-    const [x, y, z] = zarrConfig.camera.up;
-    overrides.up = { x, y, z };
-  }
-  if (zarrConfig.camera?.target_node) {
-    overrides.targetNode = zarrConfig.camera.target_node;
-  }
+  const position = toXYZ(camera.position);
+  if (position) overrides.position = position;
+  const target = toXYZ(camera.target);
+  if (target) overrides.target = target;
+  const up = toXYZ(camera.up);
+  if (up) overrides.up = up;
+  if (camera.target_node) overrides.targetNode = camera.target_node;
+  if (typeof camera.zoom === 'number' && camera.zoom > 0) overrides.zoom = camera.zoom;
   return overrides;
+}
+
+/** `[x, y, z]` → `{x, y, z}`, or undefined when absent. */
+function toXYZ(
+  triple: readonly number[] | undefined
+): { x: number; y: number; z: number } | undefined {
+  if (!triple) return undefined;
+  const [x, y, z] = triple;
+  return { x, y, z };
 }
 
 /**

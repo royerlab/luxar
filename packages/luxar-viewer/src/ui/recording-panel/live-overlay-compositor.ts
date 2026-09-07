@@ -32,7 +32,7 @@
  * HTML overlays are rasterized through an async `<svg><foreignObject>`
  * data URL, and `compositeHtmlOverlay` only draws one that already
  * happens to be decoded — the same best-effort behaviour the screenshot
- * and offline paths have. Text and image overlays are exact.
+ * and offline paths have. Text, image, and video overlays are exact.
  *
  * @module ui/recording-panel/live-overlay-compositor
  */

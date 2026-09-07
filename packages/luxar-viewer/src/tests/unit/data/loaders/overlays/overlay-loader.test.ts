@@ -146,6 +146,38 @@ describe('loadOverlayConfigs', () => {
     expect(infoSpy).toHaveBeenCalled();
   });
 
+  it('carries every video attribute through (the manager renders nothing without video_file)', async () => {
+    const store = makeStoreWithContents(['overlays/turntable/.zattrs']);
+    wireOpen({
+      'overlays/turntable': {
+        type: 'overlay_video',
+        position: [0.06, 0.5],
+        anchor: 'center-left',
+        z_index: 0,
+        video_file: 'video.webm',
+        poster_file: 'poster.png',
+        size: [0.26, null],
+        loop: true,
+        autoplay: true,
+        muted: true,
+        playback_rate: 1.5,
+        visible_range: { story: 3 },
+      },
+    });
+
+    const [video] = await loadOverlayConfigs(store, makeRootLocation());
+
+    expect(video.type).toBe('overlay_video');
+    expect(video.video_file).toBe('video.webm');
+    expect(video.poster_file).toBe('poster.png');
+    expect(video.size).toEqual([0.26, null]); // null height = keep the clip's aspect
+    expect(video.loop).toBe(true);
+    expect(video.autoplay).toBe(true);
+    expect(video.muted).toBe(true);
+    expect(video.playback_rate).toBe(1.5);
+    expect(video.visible_range).toEqual({ story: 3 });
+  });
+
   it('returns [] when there is no overlays group', async () => {
     const store = makeStoreWithContents([]);
     // Opening the overlays group itself rejects → "no overlays" path.

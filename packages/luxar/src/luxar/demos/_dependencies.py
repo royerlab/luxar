@@ -127,6 +127,12 @@ INSTALL_SPECS: dict[str, DependencySpec] = {
         "NumPy 2.0 support, so below it the resolver pairs metpy with Luxar's "
         "numpy>=2.0 core pin and it breaks at runtime.",
     ),
+    "moderngl": DependencySpec(
+        "moderngl>=5.8",
+        "demos",
+        "GPU offscreen renderer for the esm3_protein_stories PDB turntables; the "
+        "demo builds without turntables when it is absent.",
+    ),
     "mrcfile": DependencySpec("mrcfile>=1.4.0", "demos"),
     "networkx": DependencySpec("networkx>=3.0", "demos"),
     "nibabel": DependencySpec("nibabel>=5.0.0", "demos"),

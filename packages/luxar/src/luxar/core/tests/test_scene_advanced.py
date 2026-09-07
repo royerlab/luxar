@@ -22,6 +22,7 @@ from luxar import Dimensions, LuxarZarrCompiler
 from luxar._zarr_compat import read_node_attrs
 from luxar.core.dimensions import Dimension
 from luxar.core.scene import Scene
+from luxar.core.viewer_config import CameraConfig, ViewerConfig, Waypoint
 
 
 class TestSceneInitialization:
@@ -31,6 +32,25 @@ class TestSceneInitialization:
         """Test that Scene requires a writer."""
         with pytest.raises(ValueError, match="Writer is required"):
             Scene(writer=cast(Any, None), dimensions=Dimensions.default_3d())
+
+    def test_scene_rejects_waypoints_with_unknown_dimensions(
+        self, tmp_path: Path
+    ) -> None:
+        config = ViewerConfig(
+            waypoints=[
+                Waypoint(
+                    when={"stroy": 1},
+                    camera=CameraConfig(position=(0, 0, 5)),
+                )
+            ]
+        )
+
+        with LuxarZarrCompiler(tmp_path / "scene.luxar.zarr") as compiler:
+            with pytest.raises(ValueError, match="Unknown dimension 'stroy'"):
+                compiler.create_scene(
+                    dimensions=Dimensions.default_3d(),
+                    viewer_config=config,
+                )
 
 
 class TestAddPointsInputHandling:

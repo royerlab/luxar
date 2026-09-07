@@ -274,7 +274,7 @@ export function buildRecordingGUI(deps: BuildGUIDeps): BuildGUIResult {
     });
   overlayCtrl.domElement
     .closest('.luxar-gui__controller')
-    ?.setAttribute('title', 'Composite text/image/HTML overlays into the capture');
+    ?.setAttribute('title', 'Composite text/image/HTML/video overlays into the capture');
 
   const captureDPRCtrl = advanced
     .add(imgSettings, 'captureDPR', 0.25, getNativePixelRatio(), 0.25)

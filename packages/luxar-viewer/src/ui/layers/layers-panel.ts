@@ -23,6 +23,7 @@ import * as THREE from 'three';
 import type { SceneNode } from '../../data/data-loader-types';
 import type { FailedLoadsProviderPort } from '../../data/scene-loader-monitor-port';
 import { LayerStateManager, type LayerInfo, type SelectionMode } from './layer-state';
+import type { LayerPatch, LayerSummary } from '../../core/app/embedder/events';
 import { config } from '../../config';
 import { log, Modules } from '../../utils/log';
 import { EventGroup } from '../../utils/cross-layer/event-group';
@@ -571,6 +572,94 @@ export class LayersPanel {
     this.applyEngine.applyPhysicalKnobs(live);
     this.refreshRowVisual(path);
     this.controls.render();
+  }
+
+  /**
+   * Stable per-layer appearance summary for the embedder API
+   * (`LuxarApp.getLayers()`). Copies, in panel display order.
+   */
+  getLayerSummaries(): LayerSummary[] {
+    return this.state.getLayers().map((l) => ({
+      path: l.path,
+      name: l.name,
+      type: l.type,
+      visible: l.visible,
+      opacity: l.opacity,
+      gamma: l.gamma,
+      displayRange: [l.displayMin, l.displayMax],
+      dataRange: [l.dataMin, l.dataMax],
+      colormap: l.colormap ?? null,
+      supportsColormap: l.supportsColormap,
+      blendingMode: l.blendingMode,
+      absorption: l.absorption,
+      layerOrder: l.layerOrderExplicit && l.layerOrder !== undefined ? l.layerOrder : null,
+    }));
+  }
+
+  /**
+   * Programmatic per-layer appearance patch (`LuxarApp.setLayer()`). Each
+   * field takes the SAME route the panel's own control does — state-manager
+   * setter (clamping, persistence, change notification) then the apply
+   * engine — so a remote controller can never put the row, the material and
+   * the stored state out of step with one another. Only the fields present
+   * in `patch` are touched.
+   *
+   * @throws on an unknown layer path: a controller typo must not fail silently.
+   */
+  setLayer(path: string, patch: LayerPatch): void {
+    const live = this.state.getLayer(path);
+    if (!live) {
+      throw new Error(`LayersPanel.setLayer: unknown layer '${path}'`);
+    }
+    // One entry per patch field, each taking the route the panel's own control
+    // for that field takes (state-manager setter, then apply engine).
+    const appliers: { [K in keyof LayerPatch]-?: (value: NonNullable<LayerPatch[K]>) => void } = {
+      visible: (visible) => {
+        this.state.setVisible(path, visible);
+        this.applyEngine.applyVisibility(path, visible);
+        this.refreshRowVisual(path);
+      },
+      colormap: (colormap) => this.setLayerColormap(path, colormap),
+      blendingMode: (mode) => this.setLayerBlending(path, mode),
+      displayRange: ([min, max]) => {
+        this.state.setDisplayRange(path, min, max);
+        this.applyEngine.applyDisplayRange(live);
+      },
+      gamma: (gamma) => {
+        this.state.setGamma(path, gamma);
+        this.applyEngine.applyGamma(live);
+      },
+      opacity: (opacity) => {
+        this.state.setOpacity(path, opacity);
+        this.applyEngine.applyOpacity(live);
+      },
+      absorption: (absorption) => {
+        this.state.setAbsorption(path, absorption);
+        this.applyEngine.applyAbsorption(live);
+      },
+      layerOrder: (order) => {
+        this.state.setLayerOrder(path, order);
+        this.applyEngine.applyLayerOrder(live);
+      },
+    };
+    // `null` means "release" for the nullable fields (layerOrder, colormap).
+    const releasers: Partial<Record<keyof LayerPatch, () => void>> = {
+      layerOrder: () => {
+        this.state.setLayerOrder(path, undefined);
+        this.applyEngine.applyLayerOrder(live);
+      },
+      colormap: () => this.setLayerColormap(path, undefined),
+    };
+    for (const key of Object.keys(appliers) as (keyof LayerPatch)[]) {
+      const value = patch[key];
+      if (value === undefined) continue;
+      if (value === null) releasers[key]?.();
+      else (appliers[key] as (v: unknown) => void)(value);
+    }
+    this.controls.render();
+    // Material changes only show when the loop runs; registration-free, so
+    // pair the change with a start (idempotent).
+    this.animationController.startAnimation();
   }
 
   /** Sync one row's eye icon + hidden class to the live state (no rebuild). */

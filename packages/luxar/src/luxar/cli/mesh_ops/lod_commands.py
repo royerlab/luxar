@@ -261,9 +261,9 @@ def _dropped_sibling_nodes(source: Any, node_path: str) -> List[Tuple[str, str]]
     return dropped
 
 
-_OVERLAY_TYPES = ("overlay_text", "overlay_html", "overlay_image")
-"""The three user-authored overlay types: `Scene.add_text` / `.add_html` /
-`.add_image` (`core/scene/overlays/adders.py`). Anything else under
+_OVERLAY_TYPES = ("overlay_text", "overlay_html", "overlay_image", "overlay_video")
+"""The four user-authored overlay types: `Scene.add_text` / `.add_html` /
+`.add_image` / `.add_video` (`core/scene/overlays/adders.py`). Anything else under
 `overlays/` is not a real overlay this command needs to report."""
 
 

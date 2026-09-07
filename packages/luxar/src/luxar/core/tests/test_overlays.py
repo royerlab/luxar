@@ -1,4 +1,4 @@
-"""Tests for Scene overlay methods (add_text, add_image, add_html).
+"""Tests for Scene overlay methods (add_text, add_image, add_video, add_html).
 
 Functional tests that verify the full round-trip: Python API -> zarr storage -> metadata.
 """
@@ -8,6 +8,8 @@ import pytest
 import zarr
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler, Overlay
+from luxar._zarr_compat import read_raw_bytes
+from luxar.core.scene import Scene
 
 
 def _make_4d_dims():
@@ -325,6 +327,117 @@ class TestAddImage:
                 b"\x00\x00\x0cIDATx\x9cc\xf8\xcf\xc0\x00\x00\x00\x03"
                 b"\x00\x01\x00\x05\xfe\xd4\x00\x00\x00\x00IEND\xaeB`\x82"
             )
+
+
+class TestAddVideo:
+    """Test Scene.add_video()."""
+
+    # A minimal EBML header: enough for the sniffer, which is all the writer checks.
+    WEBM_BYTES = b"\x1a\x45\xdf\xa3" + b"\x00" * 60
+    MP4_BYTES = b"\x00\x00\x00\x18ftypisom" + b"\x00" * 60
+
+    def test_video_payloads_write_through_a_memory_store(self) -> None:
+        class MemoryWriter:
+            def __init__(self) -> None:
+                self.store = zarr.group()
+
+            def write_group(self, path: str, **attrs: object) -> None:
+                group = (
+                    self.store if path in ("", "/") else self.store.require_group(path)
+                )
+                group.attrs.update(attrs)
+
+        writer = MemoryWriter()
+        scene = Scene(writer=writer, dimensions=Dimensions.default_3d())  # type: ignore[arg-type]
+        scene.add_video(self.WEBM_BYTES, position=(0.1, 0.1))
+
+        group = writer.store["overlays/overlay_0"]
+        assert isinstance(group, zarr.Group)
+        assert read_raw_bytes(group, "video.webm") == self.WEBM_BYTES
+
+    def test_video_from_bytes_with_poster(self, tmp_path) -> None:
+        png_bytes = TestAddImage._make_tiny_png()
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as c:
+            scene = c.create_scene(dimensions=Dimensions.default_3d())
+            overlay = scene.add_video(
+                self.WEBM_BYTES,
+                position=(0.06, 0.5),
+                anchor="center-left",
+                size=(0.26, None),
+                poster=png_bytes,
+                playback_rate=1.5,
+                transition="fade",
+            )
+
+        assert overlay.overlay_type == "overlay_video"
+        base = tmp_path / "test.luxar.zarr" / "overlays" / "overlay_0"
+        assert (base / "video.webm").read_bytes() == self.WEBM_BYTES
+        assert (base / "poster.png").read_bytes() == png_bytes
+
+        store = zarr.open_group(tmp_path / "test.luxar.zarr", mode="r")
+        attrs = dict(store["overlays/overlay_0"].attrs)
+        assert attrs["type"] == "overlay_video"
+        assert attrs["video_file"] == "video.webm"
+        assert attrs["poster_file"] == "poster.png"
+        assert (
+            attrs["loop"] is True
+            and attrs["autoplay"] is True
+            and attrs["muted"] is True
+        )
+        assert attrs["playback_rate"] == 1.5
+        # A None height survives as null: the viewer keeps the video's aspect.
+        assert attrs["size"] == [0.26, None]
+
+    def test_video_from_path_detects_mp4(self, tmp_path) -> None:
+        f = tmp_path / "clip.mp4"
+        f.write_bytes(self.MP4_BYTES)
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as c:
+            scene = c.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_video(str(f), position=(0.1, 0.1))
+        assert (
+            tmp_path / "test.luxar.zarr" / "overlays" / "overlay_0" / "video.mp4"
+        ).exists()
+
+    def test_suffix_must_match_payload(self, tmp_path) -> None:
+        f = tmp_path / "clip.mp4"
+        f.write_bytes(self.WEBM_BYTES)  # says mp4, is webm
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as c:
+            scene = c.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match="does not match its payload"):
+                scene.add_video(str(f), position=(0.1, 0.1))
+
+    def test_unsupported_payload_is_refused(self, tmp_path) -> None:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as c:
+            scene = c.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match="Unsupported video payload"):
+                scene.add_video(b"OggS" + b"\x00" * 40, position=(0.1, 0.1))
+            with pytest.raises(ValueError, match="autoplay=True requires muted=True"):
+                scene.add_video(self.WEBM_BYTES, position=(0.1, 0.1), muted=False)
+            with pytest.raises(ValueError, match="playback_rate"):
+                scene.add_video(self.WEBM_BYTES, position=(0.1, 0.1), playback_rate=0)
+
+    def test_visible_range_is_validated_like_other_overlays(self, tmp_path) -> None:
+        dims = Dimensions(
+            [
+                Dimension("story", unit="", categories=["a", "b"], display=False),
+                Dimension("x", unit="", display=True),
+                Dimension("y", unit="", display=True),
+                Dimension("z", unit="", display=True),
+            ]
+        )
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as c:
+            scene = c.create_scene(dimensions=dims)
+            scene.add_video(
+                self.WEBM_BYTES, position=(0.1, 0.1), visible_range={"story": 1}
+            )
+            with pytest.raises(ValueError, match="Unknown dimension"):
+                scene.add_video(
+                    self.WEBM_BYTES, position=(0.1, 0.1), visible_range={"nope": 1}
+                )
+        store = zarr.open_group(tmp_path / "test.luxar.zarr", mode="r")
+        assert dict(store["overlays/overlay_0"].attrs)["visible_range"] == {
+            "story": 1.0
+        }
 
 
 class TestAddHtml:

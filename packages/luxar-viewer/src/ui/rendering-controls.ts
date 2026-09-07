@@ -570,11 +570,43 @@ export class RenderingControls {
    */
   applyZarrDefaults(): void {
     if (!this.zarrViewerConfig) return;
+    this.applyOverrides(
+      extractRenderingOverrides(this.zarrViewerConfig),
+      'Applied viewer config defaults from zarr'
+    );
+  }
 
-    // Route zarr overrides through validateRenderingSettings so a
-    // corrupted viewer_config can't inject NaN/Infinity/out-of-range
-    // values into runtime rendering state. Validation clamps to defaults.
-    const zarrOverrides = extractRenderingOverrides(this.zarrViewerConfig);
+  /**
+   * JSON-safe copy of the live rendering settings (the embedder API's
+   * `getRenderingSettings()`). A copy, so a consumer cannot mutate the
+   * panel's state behind its back.
+   */
+  getSettingsSnapshot(): RenderingSettings {
+    return { ...this.settings };
+  }
+
+  /**
+   * Apply a partial settings override programmatically — the one path a
+   * scene's authored `viewer_config` and the embedder API's
+   * `setRenderingSettings()` share, so a remote controller can set exactly
+   * what an author can bake, with the same validation and the same
+   * side-effects (camera FOV/planes, navigation, DPR ceiling, post-processing).
+   *
+   * Values go through `validateRenderingSettings` so NaN / Infinity /
+   * out-of-range input clamps to defaults instead of reaching the renderer.
+   * Unknown keys are ignored by validation. Nothing is persisted: like the
+   * authored defaults, an override describes THIS session's scene, not a
+   * user preference.
+   */
+  applyOverrides(
+    overrides: Partial<RenderingSettings>,
+    logMessage = 'Applied programmatic rendering settings'
+  ): void {
+    // Route overrides through validateRenderingSettings so a corrupted
+    // viewer_config (or a remote controller) can't inject NaN/Infinity/
+    // out-of-range values into runtime rendering state. Validation clamps
+    // to defaults.
+    const zarrOverrides = overrides;
     const validated = validateRenderingSettings({ ...this.settings, ...zarrOverrides });
     Object.assign(this.settings, validated);
 
@@ -646,7 +678,7 @@ export class RenderingControls {
     // Sync HDR log slider
     // Apply post-processing and other rendering settings
     this.applySettings();
-    log.info(Modules.RENDERER, 'Applied viewer config defaults from zarr');
+    log.info(Modules.RENDERER, logMessage);
   }
 
   /**

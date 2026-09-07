@@ -41,7 +41,7 @@ export const MAX_SLACK_POINTS = 3;
 
 export const COVERAGE_THRESHOLDS = {
   // Global — every file in the report, the subtrees below included.
-  lines: 86, //       measured 88.57
+  lines: 88, //       measured 89.03
   statements: 87, //  measured 87.93
   functions: 84, //   measured 85.67
   branches: 80, //    measured 82.12
@@ -76,7 +76,7 @@ export const COVERAGE_THRESHOLDS = {
   // subtree went 85.69 -> 86.22 and check-coverage-slack.mjs flagged the old
   // floor as stale. The ratchet working, same as the src/data and src/workers
   // bumps above.
-  'src/core/**': { lines: 86, functions: 70, branches: 85 }, //      88.48 / 72.61 / 86.22
+  'src/core/**': { lines: 88, functions: 74, branches: 85 }, //      89.49 / 75.16 / 86.19
   // input jumped when ui-actions-surface.test.ts began invoking the command
   // table InputHandler builds in registerAllKeyBindings (27 thunks no test
   // had ever called): functions 76.0 -> 90.39.

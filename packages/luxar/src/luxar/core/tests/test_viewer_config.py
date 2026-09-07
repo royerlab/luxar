@@ -16,6 +16,7 @@ from luxar.core.viewer_config import (
     EnvironmentConfig,
     UIConfig,
     ViewerConfig,
+    Waypoint,
 )
 
 
@@ -828,3 +829,131 @@ class TestSceneTitle:
             ViewerConfig(title="   ")
         with pytest.raises(ValueError, match="title"):
             ViewerConfig(title=123)  # type: ignore[arg-type]
+
+
+class TestWaypoint:
+    """Story waypoints: camera poses bound to hidden-dimension positions."""
+
+    def test_round_trip_preserves_exact_and_range_clauses(self) -> None:
+        wp = Waypoint(
+            when={"story": 2, "time": (10, 20.5)},
+            camera=CameraConfig(position=(1, 2, 3), target_node="clusterA"),
+            duration_ms=2000,
+            easing="linear",
+            rendering={"exposure": 0.5, "bloom_strength": 0.2},
+        )
+        d = wp.to_dict()
+        # Ranges serialize as JSON lists, exact values as numbers.
+        assert d["when"] == {"story": 2, "time": [10, 20.5]}
+        assert d["camera"] == {"position": [1, 2, 3], "target_node": "clusterA"}
+        assert d["duration_ms"] == 2000
+        assert d["easing"] == "linear"
+        assert d["rendering"] == {"exposure": 0.5, "bloom_strength": 0.2}
+
+        back = Waypoint.from_dict(json.loads(json.dumps(d)))
+        assert back.when == {"story": 2, "time": (10, 20.5)}
+        assert back.camera.target_node == "clusterA"
+        assert back.duration_ms == 2000
+        assert back.easing == "linear"
+        assert back.rendering == {"exposure": 0.5, "bloom_strength": 0.2}
+
+    def test_optional_fields_are_omitted_not_null(self) -> None:
+        d = Waypoint(when={"story": 0}, camera=CameraConfig(target=(0, 0, 0))).to_dict()
+        assert set(d) == {"when", "camera"}
+
+    def test_when_must_be_a_non_empty_dict_of_numbers_or_ranges(self) -> None:
+        cam = CameraConfig(position=(0, 0, 1))
+        with pytest.raises(ValueError, match="non-empty"):
+            Waypoint(when={}, camera=cam)
+        with pytest.raises(ValueError, match="number or a \\(min, max\\)"):
+            Waypoint(when={"story": "two"}, camera=cam)  # type: ignore[dict-item]
+        with pytest.raises(ValueError, match="min <= max"):
+            Waypoint(when={"time": (5, 1)}, camera=cam)
+        with pytest.raises(ValueError, match="finite"):
+            Waypoint(when={"time": float("nan")}, camera=cam)
+
+    def test_camera_must_carry_at_least_one_field(self) -> None:
+        with pytest.raises(ValueError, match="at least one field"):
+            Waypoint(when={"story": 0}, camera=CameraConfig())
+
+    def test_duration_and_easing_are_validated(self) -> None:
+        cam = CameraConfig(position=(0, 0, 1))
+        with pytest.raises(ValueError, match="duration_ms"):
+            Waypoint(when={"story": 0}, camera=cam, duration_ms=-1)
+        with pytest.raises(ValueError, match="easing"):
+            Waypoint(when={"story": 0}, camera=cam, easing="bounce")
+        # Zero is a legal "snap".
+        assert Waypoint(when={"story": 0}, camera=cam, duration_ms=0).duration_ms == 0
+
+    def test_rendering_keys_are_viewer_config_field_names(self) -> None:
+        cam = CameraConfig(position=(0, 0, 1))
+        with pytest.raises(ValueError, match="unknown keys \\['bloom'\\]"):
+            Waypoint(when={"story": 0}, camera=cam, rendering={"bloom": 1})
+        # Scene identity is not per-waypoint state.
+        with pytest.raises(ValueError, match="unknown keys"):
+            Waypoint(when={"story": 0}, camera=cam, rendering={"title": "x"})
+
+    def test_viewer_config_round_trips_waypoints_in_order(self) -> None:
+        vc = ViewerConfig(
+            camera=CameraConfig(position=(0, 0, 10)),
+            waypoints=[
+                Waypoint(when={"story": 0}, camera=CameraConfig(position=(0, 0, 5))),
+                Waypoint(
+                    when={"story": (1, 3)},
+                    camera=CameraConfig(target_node="clusterB"),
+                    duration_ms=800,
+                ),
+            ],
+        )
+        d = vc.to_dict()
+        assert [w["when"] for w in d["waypoints"]] == [{"story": 0}, {"story": [1, 3]}]
+
+        back = ViewerConfig.from_dict(json.loads(json.dumps(d)))
+        assert back.waypoints is not None
+        assert len(back.waypoints) == 2
+        assert back.waypoints[1].when == {"story": (1, 3)}
+        assert back.waypoints[1].duration_ms == 800
+        # The plain camera block survives alongside.
+        assert back.camera is not None and back.camera.position == (0, 0, 10)
+
+    def test_empty_waypoint_list_is_omitted(self) -> None:
+        assert "waypoints" not in ViewerConfig(waypoints=[]).to_dict()
+
+    def test_waypoints_must_be_waypoint_instances(self) -> None:
+        with pytest.raises(ValueError, match="list of Waypoint"):
+            ViewerConfig(waypoints=[{"when": {"story": 0}}])  # type: ignore[list-item]
+
+    def test_waypoint_dimensions_are_validated_against_the_scene(self) -> None:
+        vc = ViewerConfig(
+            waypoints=[
+                Waypoint(
+                    when={"stroy": 1},
+                    camera=CameraConfig(position=(0, 0, 5)),
+                )
+            ]
+        )
+
+        with pytest.raises(ValueError, match="Unknown dimension 'stroy'"):
+            vc.validate_dimensions(["x", "y", "z", "story"])
+
+
+class TestCameraZoom:
+    """Ortho framing: distance changes nothing under an orthographic projection."""
+
+    def test_zoom_round_trips_and_is_omitted_when_unset(self) -> None:
+        cam = CameraConfig(target=(0, 0, 0), zoom=2.5)
+        assert cam.to_dict()["zoom"] == 2.5
+        assert CameraConfig.from_dict(cam.to_dict()).zoom == 2.5
+        assert "zoom" not in CameraConfig(target=(0, 0, 0)).to_dict()
+
+    def test_zoom_must_be_finite_and_positive(self) -> None:
+        with pytest.raises(ValueError, match="zoom"):
+            CameraConfig(zoom=0)
+        with pytest.raises(ValueError, match="zoom"):
+            CameraConfig(zoom=-1)
+        with pytest.raises(ValueError, match="zoom"):
+            CameraConfig(zoom=float("inf"))
+
+    def test_zoom_alone_is_a_valid_waypoint_camera(self) -> None:
+        wp = Waypoint(when={"story": 2}, camera=CameraConfig(zoom=4))
+        assert wp.to_dict()["camera"] == {"zoom": 4}

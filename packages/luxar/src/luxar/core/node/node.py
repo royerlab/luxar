@@ -353,9 +353,9 @@ class Node:
            empty. What makes structure-only validation sound is having no store
            to check against, not having no Scene — so consult the store before
            giving up, exactly as ``io/_compiler/node_common.prepare_transform_attrs``
-           does for the leaf path. Duck-typed via ``getattr``:
-           ``ZarrWriterProtocol`` exposes ``store_path``, not ``store``, and
-           widening the protocol is a bigger change than this needs.
+           does for the leaf path. Duck-typed via ``getattr`` so lightweight
+           test writers that predate the protocol's ``store`` attribute still
+           degrade to structure-only validation.
 
         Returns:
             The scene ``Dimensions``, or None when there is genuinely no Scene

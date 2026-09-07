@@ -1,5 +1,5 @@
 /**
- * Overlay Manager - Renders screen-space overlays (text, image, HTML) over the canvas.
+ * Overlay Manager - Renders screen-space overlays (text, image, HTML, video) over the canvas.
  *
  * Creates an HTML overlay layer between the WebGL canvas and UI controls.
  * Supports dimension-aware visibility (overlays show/hide based on slider positions),
@@ -17,6 +17,17 @@ import { MAX_OVERLAY_HTML_CHARS, type OverlayConfig } from '../data/loaders';
 
 /** Read one opaque file from the active scene store. */
 export type OverlayFileReader = (path: string) => Promise<Uint8Array | undefined>;
+
+/** Archived binary payloads used to construct an overlay. */
+export interface ArchivedOverlayMedia {
+  primary?: Uint8Array;
+  poster?: Uint8Array;
+}
+
+function isOverlayInteractive(config: OverlayConfig): boolean {
+  if (config.interactive) return true;
+  return config.type === 'overlay_video' && config.autoplay === false;
+}
 
 /** Font preset mappings to CSS font-family stacks */
 export const FONT_PRESETS: Record<string, string> = {
@@ -190,6 +201,8 @@ export class OverlayManager {
   private overlayElements = new Map<string, HTMLDivElement>();
   private configs = new Map<string, OverlayConfig>();
   private objectUrls = new Set<string>();
+  /** Video overlays by name, so visibility can start/stop playback. */
+  private videoElements = new Map<string, HTMLVideoElement>();
   private baseUrl = '';
   private readFile?: OverlayFileReader;
   private boundDimChangeHandler: () => void;
@@ -223,15 +236,15 @@ export class OverlayManager {
     this.baseUrl = baseUrl;
     this.readFile = readFile;
 
-    const imageReads = await Promise.allSettled(
-      overlayConfigs.map((config) => this.readArchivedImage(config))
+    const mediaReads = await Promise.allSettled(
+      overlayConfigs.map((config) => this.readArchivedMedia(config))
     );
 
     for (const [index, config] of overlayConfigs.entries()) {
       try {
-        const imageRead = imageReads[index];
-        if (imageRead.status === 'rejected') throw imageRead.reason;
-        const el = this.createOverlayElement(config, imageRead.value);
+        const mediaRead = mediaReads[index];
+        if (mediaRead.status === 'rejected') throw mediaRead.reason;
+        const el = this.createOverlayElement(config, mediaRead.value);
         getViewerContainer().appendChild(el);
         this.overlayElements.set(config.name, el);
         this.configs.set(config.name, config);
@@ -305,6 +318,7 @@ export class OverlayManager {
 
       const visible = !this.globallyHidden && this.isOverlayVisible(config);
       const isFade = config.transition === 'fade';
+      if (config.type === 'overlay_video') this.syncVideoPlayback(name, visible);
 
       if (isFade) {
         // Fade overlays use CSS opacity transition — never display:none
@@ -457,6 +471,13 @@ export class OverlayManager {
   dispose(): void {
     sceneDimsManager.removeListener(this.boundDimChangeHandler);
 
+    for (const video of this.videoElements.values()) {
+      // Stop decoding and release the media resource before the element goes.
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+    }
+    this.videoElements.clear();
     for (const el of this.overlayElements.values()) {
       el.remove();
     }
@@ -472,20 +493,32 @@ export class OverlayManager {
 
   // ---------------------------------------------------------------- private
 
-  private async readArchivedImage(config: OverlayConfig): Promise<Uint8Array | undefined> {
-    if (
-      !isZippedStoreUrl(this.baseUrl) ||
-      config.type !== 'overlay_image' ||
-      !config.image_file ||
-      !this.readFile
-    ) {
-      return undefined;
+  /**
+   * For a zipped store, read the overlay's media payload (image or video) so
+   * it can be served from a blob URL. Video posters are loaded alongside the
+   * video; plain HTTP stores stream both resources by URL instead.
+   */
+  private async readArchivedMedia(config: OverlayConfig): Promise<ArchivedOverlayMedia> {
+    if (!isZippedStoreUrl(this.baseUrl) || !this.readFile) return {};
+    const path = (filename: string): string => `/overlays/${config.name}/${filename}`;
+    if (config.type === 'overlay_image' && config.image_file) {
+      return { primary: await this.readFile(path(config.image_file)) };
     }
-    return this.readFile(`/overlays/${config.name}/${config.image_file}`);
+    if (config.type === 'overlay_video' && config.video_file) {
+      const [primary, poster] = await Promise.all([
+        this.readFile(path(config.video_file)),
+        config.poster_file ? this.readFile(path(config.poster_file)) : undefined,
+      ]);
+      return { primary, poster };
+    }
+    return {};
   }
 
   /** Create a DOM element for a single overlay. */
-  private createOverlayElement(config: OverlayConfig, archivedImage?: Uint8Array): HTMLDivElement {
+  private createOverlayElement(
+    config: OverlayConfig,
+    archivedMedia: ArchivedOverlayMedia
+  ): HTMLDivElement {
     const el = document.createElement('div');
     el.className = 'luxar-overlay';
     el.dataset.overlayName = config.name;
@@ -511,7 +544,7 @@ export class OverlayManager {
     }
 
     // Make non-interactive overlays completely inert (no focus, no click, no events)
-    if (!config.interactive) {
+    if (!isOverlayInteractive(config)) {
       el.inert = true;
     }
 
@@ -524,7 +557,10 @@ export class OverlayManager {
         this.createTextContent(el, config);
         break;
       case 'overlay_image':
-        this.createImageContent(el, config, archivedImage);
+        this.createImageContent(el, config, archivedMedia.primary);
+        break;
+      case 'overlay_video':
+        this.createVideoContent(el, config, archivedMedia.primary, archivedMedia.poster);
         break;
       case 'overlay_html':
         this.createHtmlContent(el, config);
@@ -532,6 +568,109 @@ export class OverlayManager {
     }
 
     return el;
+  }
+
+  /**
+   * Create video overlay content: a muted, looping `<video>` (the only autoplay
+   * a browser permits without a gesture), served from a blob URL for zipped
+   * stores or by URL otherwise. Playback is tied to visibility in
+   * `updateVisibility` so a hidden turntable does not keep decoding.
+   */
+  private createVideoContent(
+    el: HTMLDivElement,
+    config: OverlayConfig,
+    archivedVideo?: Uint8Array,
+    archivedPoster?: Uint8Array
+  ): void {
+    el.classList.add('luxar-overlay--video');
+    if (!config.video_file) return;
+
+    const video = document.createElement('video');
+    video.muted = config.muted !== false;
+    video.loop = config.loop !== false;
+    // Deliberately NOT the DOM `autoplay` attribute: the browser honours that
+    // once the media has loaded, which is after the initial visibility pass, so
+    // every hidden clip would start decoding at load (all ten did). Autoplay is
+    // a wish that `syncVideoPlayback` grants only while the overlay is visible.
+    video.dataset.autoplay = config.autoplay !== false ? '1' : '0';
+    video.controls = config.autoplay === false;
+    video.playsInline = true;
+    video.preload = 'metadata';
+    video.disablePictureInPicture = true;
+    if (typeof config.playback_rate === 'number' && config.playback_rate > 0) {
+      video.defaultPlaybackRate = config.playback_rate;
+      video.playbackRate = config.playback_rate;
+    }
+    if (!this.setVideoMedia(video, config, archivedVideo, archivedPoster)) return;
+    video.onerror = () => {
+      log.warning(
+        Modules.UI,
+        `Video overlay "${config.name}" failed to load ${config.video_file} — showing poster only`
+      );
+    };
+
+    if (config.size) {
+      video.style.width = `${config.size[0] * 100}vw`;
+      // A null height keeps the media's own aspect ratio.
+      video.style.height = config.size[1] == null ? 'auto' : `${config.size[1] * 100}vh`;
+    }
+    video.style.display = 'block';
+    el.appendChild(video);
+    this.videoElements.set(config.name, video);
+  }
+
+  private setVideoMedia(
+    video: HTMLVideoElement,
+    config: OverlayConfig,
+    archivedVideo?: Uint8Array,
+    archivedPoster?: Uint8Array
+  ): boolean {
+    const base = `${this.baseUrl}overlays/${config.name}/`;
+    if (!isZippedStoreUrl(this.baseUrl)) {
+      video.src = `${base}${config.video_file}`;
+      if (config.poster_file) video.poster = `${base}${config.poster_file}`;
+      return true;
+    }
+    if (!archivedVideo) {
+      log.warning(
+        Modules.UI,
+        `Video overlay "${config.name}" is missing /overlays/${config.name}/${config.video_file} — skipping`
+      );
+      return false;
+    }
+    const blobBytes = Uint8Array.from(archivedVideo);
+    const objectUrl = URL.createObjectURL(
+      new Blob([blobBytes], { type: detectMimeType(blobBytes) })
+    );
+    this.objectUrls.add(objectUrl);
+    video.src = objectUrl;
+    if (archivedPoster) {
+      const posterBytes = Uint8Array.from(archivedPoster);
+      const posterUrl = URL.createObjectURL(
+        new Blob([posterBytes], { type: detectMimeType(posterBytes) })
+      );
+      this.objectUrls.add(posterUrl);
+      video.poster = posterUrl;
+    }
+    return true;
+  }
+
+  /** Start or stop a video overlay with its visibility (muted play needs no gesture). */
+  private syncVideoPlayback(name: string, visible: boolean): void {
+    const video = this.videoElements.get(name);
+    if (!video) return;
+    if (visible) {
+      video.preload = 'auto';
+      if (video.paused && video.dataset.autoplay === '1') {
+        // jsdom returns undefined and gesture-gated browsers reject; a rejected
+        // promise must not surface as an unhandled rejection from a
+        // visibility update.
+        const p: unknown = video.play();
+        if (p instanceof Promise) p.catch(() => {});
+      }
+    } else if (!video.paused) {
+      video.pause();
+    }
   }
 
   /** Apply common positioning, transitions, and interaction styles. */
@@ -572,7 +711,7 @@ export class OverlayManager {
     }
 
     // Interaction
-    if (config.interactive) {
+    if (isOverlayInteractive(config)) {
       el.classList.add('luxar-overlay--interactive');
     }
   }
@@ -705,10 +844,10 @@ export class OverlayManager {
       }
     }
 
-    // Size
+    // Size (a null height keeps the image's own aspect ratio)
     if (config.size) {
       img.style.width = `${config.size[0] * 100}vw`;
-      img.style.height = `${config.size[1] * 100}vh`;
+      img.style.height = config.size[1] == null ? 'auto' : `${config.size[1] * 100}vh`;
     }
 
     img.style.display = 'block';
