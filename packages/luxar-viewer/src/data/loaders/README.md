@@ -384,6 +384,12 @@ narrowly-scoped helpers each spatial-index loader composes:
   fetching from `label_offsets` + `label_bytes`. Bulk-loads the whole node's
   labels on first hover; concurrent requests for the same node share one
   in-flight promise.
+- **`environment/environment-loader.ts`** — `loadBakedEnvironment(rootLoc,
+rootContentHash)`: reads the root-level `environment/` sidecar group a
+  `luxar env bake` left (six half-float cube faces as `uint16` bits, named by
+  digest) and hands it to the scene environment; a missing group is silent, a
+  stale one (its `scene_content_hash` is not the root's) or a malformed one is
+  ignored with a warning rather than failing the load.
 - **`overlays/overlay-loader.ts`** — `loadOverlayConfigs(store, rootLoc)`:
   enumerates the `overlays/` group and parses each child's `.zattrs` into an
   `OverlayConfig` (text / image / html, with per-type fields). Results are
@@ -486,6 +492,8 @@ src/data/loaders/
 │   ├── slice-cache-helper.ts     # Shared SliceCache key/snapshot/lookup helpers (S-cache)
 │   └── constants.ts              # CACHE_HIT_THRESHOLD_MS — shared streaming threshold
 │
+├── environment/                  # Baked scene-environment loader
+│   └── environment-loader.ts     # Reads environment/faces-<digest> + its guard attrs
 └── overlays/                     # Overlay metadata loader
     └── overlay-loader.ts         # Reads overlay configurations from the zarr store
 ```

@@ -25,6 +25,7 @@ import {
   createSceneEnvironment,
   type SceneEnvironment,
 } from '../rendering/environment/scene-environment';
+import type { BakedEnvironment } from '../types/environment';
 import { loadTslMaterials } from '../rendering/tsl/load';
 import { disposeColormapTextures } from '../rendering/colormap-textures';
 import {
@@ -892,6 +893,39 @@ export class SceneManager extends THREE.EventDispatcher<{
   getSceneViewerConfig(): ZarrViewerConfig | undefined {
     const root = this.scene.children.find((c) => c.name === 'LuxarScene');
     return root?.userData?.viewerConfig as ZarrViewerConfig | undefined;
+  }
+
+  /** The baked environment map the loader found in the store, if any (see `loadBakedEnvironment`). */
+  getSceneBakedEnvironment(): BakedEnvironment | null {
+    const root = this.scene.children.find((c) => c.name === 'LuxarScene');
+    return (root?.userData?.bakedEnvironment as BakedEnvironment | undefined) ?? null;
+  }
+
+  /**
+   * Give the scene environment what a live `scene` capture needs (the init pipeline
+   * calls this once the load-activity predicate exists). The capture pushes the cube
+   * camera's params (90° fov, a square drawing buffer, pixel ratio 1) to the material
+   * manager so point and line footprints render at the right size in the six faces,
+   * and restores the main camera's push afterwards through the ordinary path.
+   */
+  attachEnvironmentRuntime(isSettled: () => boolean): void {
+    const root = (): THREE.Object3D | null =>
+      this.scene.children.find((c) => c.name === 'LuxarScene') ?? null;
+    this.environment?.attachRuntime({
+      sceneRoot: root,
+      pushCaptureCameraParams: (resolution) => {
+        materialManager.updateCameraParams(
+          Math.PI / 2,
+          new THREE.Vector2(resolution, resolution),
+          false,
+          undefined,
+          1
+        );
+      },
+      restoreCameraParams: () => this.updateMaterialsForCurrentCamera(),
+      isSettled,
+      baseUrl: () => root()?.userData?.zarrBaseUrl as string | undefined,
+    });
   }
 
   /** Arm WebGL blend warm-up after all scene-dependent dataset setup completes. */

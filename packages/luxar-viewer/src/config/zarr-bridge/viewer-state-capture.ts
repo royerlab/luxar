@@ -7,7 +7,7 @@
  */
 
 import type { ZarrViewerConfig } from '../../types/zarr';
-import { REVERSE_SETTINGS_MAP } from './viewer-config-utils';
+import { REVERSE_SETTINGS_MAP, environmentConfigToZarr } from './viewer-config-utils';
 import type { SceneManager } from '../../scene/scene-manager';
 import type { RenderingSettings } from '../sections/rendering-controls/types';
 import type { SceneDimsManager } from '../../scene/scene-dims-manager';
@@ -85,6 +85,13 @@ export function captureViewerState(
     if ('isColor' in bg && (bg as { isColor: boolean }).isColor) {
       result.background_color = '#' + (bg as { getHexString: () => string }).getHexString();
     }
+  }
+
+  // --- Scene environment (material="physical" lighting) ---
+  // Only when the scene authored one: the default room is what an absent block
+  // means, and writing it out would freeze today's default into every export.
+  if (sceneManager.environment && sceneManager.getSceneViewerConfig()?.environment) {
+    result.environment = environmentConfigToZarr(sceneManager.environment.getConfig());
   }
 
   // --- RenderingSettings → snake_case ---

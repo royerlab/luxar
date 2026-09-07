@@ -154,6 +154,7 @@ Features
    :caption: Python API Reference:
 
    api/core
+   api/environment
    api/mesh
    api/shading
    api/io

@@ -8,14 +8,117 @@ import pytest
 
 from luxar.conftest import viewer_source
 from luxar.core.viewer_config import (
+    VALID_ENVIRONMENT_SOURCES,
     VALID_FOV_PRESETS,
     AnimationConfig,
     CameraConfig,
     DimensionsConfig,
+    EnvironmentConfig,
     UIConfig,
     ViewerConfig,
     Waypoint,
 )
+
+
+class TestEnvironmentConfig:
+    """The scene-environment block (MESH_PHYSICAL_MATERIALS_SPEC.md §3.3)."""
+
+    def test_default_is_empty(self) -> None:
+        env = EnvironmentConfig()
+        assert env.to_dict() == {}
+        assert ViewerConfig(environment=env).to_dict() == {}
+
+    def test_sources_match_the_viewer_contract(self) -> None:
+        assert VALID_ENVIRONMENT_SOURCES == ("room", "scene", "hdri")
+        for source in ("room", "scene"):
+            assert EnvironmentConfig(source=source).source == source
+        with pytest.raises(ValueError, match="environment.source must be one of"):
+            EnvironmentConfig(source="studio")
+
+    @pytest.mark.parametrize(
+        "probe", ["auto", "node:clusters/shell_3", (1.0, 2.0, 3.0), [0, 0, 0]]
+    )
+    def test_probe_forms(self, probe) -> None:
+        env = EnvironmentConfig(source="scene", probe=probe)
+        if isinstance(probe, str):
+            assert env.probe == probe
+        else:
+            assert env.probe == tuple(float(v) for v in probe)
+
+    @pytest.mark.parametrize(
+        "probe", ["centre", "node:", (1.0, 2.0), (1.0, float("nan"), 0.0), "auto "]
+    )
+    def test_probe_refusals(self, probe) -> None:
+        with pytest.raises(ValueError, match="environment.probe"):
+            EnvironmentConfig(source="scene", probe=probe)
+
+    def test_resolution_bounds(self) -> None:
+        assert EnvironmentConfig(resolution=16).resolution == 16
+        assert EnvironmentConfig(resolution=1024).resolution == 1024
+        for bad in (8, 2048, 128.0, True):
+            with pytest.raises(ValueError, match="environment.resolution"):
+                EnvironmentConfig(resolution=bad)  # type: ignore[arg-type]
+
+    def test_intensity_non_negative(self) -> None:
+        assert EnvironmentConfig(intensity=0.0).intensity == 0.0
+        with pytest.raises(ValueError, match="environment.intensity"):
+            EnvironmentConfig(intensity=-0.1)
+
+    def test_url_pairs_with_hdri_only(self) -> None:
+        env = EnvironmentConfig(source="hdri", url="env/studio.hdr")
+        assert env.url == "env/studio.hdr"
+        with pytest.raises(ValueError, match="requires environment.url"):
+            EnvironmentConfig(source="hdri")
+        with pytest.raises(ValueError, match="only meaningful with"):
+            EnvironmentConfig(source="scene", url="env/studio.hdr")
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "javascript:alert(1)",
+            "data:image/png,abc",
+            "//example.com/env.hdr",
+            "\\\\evil.com/env.hdr",
+            "https:example.com/env.hdr",
+            "https://u:p@example.com/env.hdr",
+        ],
+    )
+    def test_url_refuses_unsafe_fetch_targets(self, url: str) -> None:
+        with pytest.raises(ValueError, match="environment.url"):
+            EnvironmentConfig(source="hdri", url=url)
+
+    def test_url_accepts_store_relative_and_http_urls(self) -> None:
+        assert (
+            EnvironmentConfig(source="hdri", url=" env/studio.hdr ").url
+            == "env/studio.hdr"
+        )
+        assert EnvironmentConfig(
+            source="hdri", url="https://example.com/env.hdr"
+        ).url == ("https://example.com/env.hdr")
+
+    def test_round_trips_through_viewer_config(self) -> None:
+        vc = ViewerConfig(
+            environment=EnvironmentConfig(
+                source="scene", probe=(0.5, 0.5, 0.5), resolution=64, intensity=1.5
+            )
+        )
+        d = vc.to_dict()
+        assert d == {
+            "environment": {
+                "source": "scene",
+                "probe": [0.5, 0.5, 0.5],
+                "resolution": 64,
+                "intensity": 1.5,
+            }
+        }
+        back = ViewerConfig.from_dict(json.loads(json.dumps(d)))
+        assert back.environment is not None
+        assert back.environment.probe == (0.5, 0.5, 0.5)
+        assert back.environment.source == "scene"
+        assert back.to_dict() == d
+        # A string probe survives as a string.
+        d2 = ViewerConfig(environment=EnvironmentConfig(probe="node:shell")).to_dict()
+        assert ViewerConfig.from_dict(d2).environment.probe == "node:shell"
 
 
 class TestCameraConfig:

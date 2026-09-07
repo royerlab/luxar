@@ -9,6 +9,17 @@
 import type { ZarrViewerConfig } from '../../types/zarr';
 import type { RenderingSettings } from '../types';
 import {
+  DEFAULT_ENVIRONMENT_CONFIG,
+  ENVIRONMENT_RESOLUTION_MAX,
+  ENVIRONMENT_RESOLUTION_MIN,
+  ENVIRONMENT_SOURCES,
+  MAX_ENVIRONMENT_URL_CHARS,
+  parseProbeSpec,
+  type EnvironmentConfig,
+  type EnvironmentProbe,
+  type EnvironmentSource,
+} from '../../types/environment';
+import {
   buildCinematicValues,
   CINEMATIC_SNAPSHOT_KEYS,
   type CinematicSnapshotKeys,
@@ -328,4 +339,150 @@ function toXYZ(
  */
 export function extractBackgroundColor(zarrConfig: ZarrViewerConfig): string | undefined {
   return zarrConfig.background_color;
+}
+
+/**
+ * Extract and validate `viewer_config.environment` (spec
+ * `MESH_PHYSICAL_MATERIALS_SPEC.md` §3.3) into the renderer's narrowed form.
+ *
+ * Warn-and-fall-back per field, like the other extractors: a typo in `source`
+ * becomes the room, a malformed probe becomes `auto`, an out-of-range resolution
+ * snaps to the bounds — and each is said once at the console rather than silently
+ * lighting the scene with something the author did not ask for. Returns
+ * `undefined` when the block is absent, so the caller can tell "authored the
+ * default" from "authored nothing".
+ */
+export function extractEnvironmentConfig(
+  zarrConfig: ZarrViewerConfig
+): EnvironmentConfig | undefined {
+  const block = zarrConfig.environment;
+  if (!block || typeof block !== 'object') return undefined;
+  const warn = (what: string): void =>
+    log.warning(Modules.SCENE_LOADER, `viewer_config.environment: ${what}`);
+
+  const probe = environmentProbeField(block.probe, warn);
+  const resolution = environmentResolutionField(block.resolution, warn);
+  const intensity = environmentIntensityField(block.intensity, warn);
+  const { source, url } = environmentSourceFields(block.source, block.url, warn);
+  return { source, probe, resolution, intensity, ...(url ? { url } : {}) };
+}
+
+type EnvironmentBlock = NonNullable<ZarrViewerConfig['environment']>;
+type Warn = (what: string) => void;
+
+function environmentProbeField(raw: unknown, warn: Warn): EnvironmentProbe {
+  if (raw === undefined) return DEFAULT_ENVIRONMENT_CONFIG.probe;
+  if (typeof raw !== 'string' && !Array.isArray(raw)) {
+    warn(`malformed probe ${JSON.stringify(raw)}; using 'auto'`);
+    return DEFAULT_ENVIRONMENT_CONFIG.probe;
+  }
+  const parsed = parseProbeSpec(Array.isArray(raw) ? raw.join(',') : raw);
+  if (parsed) return parsed;
+  warn(`malformed probe ${JSON.stringify(raw)}; using 'auto'`);
+  return DEFAULT_ENVIRONMENT_CONFIG.probe;
+}
+
+function environmentResolutionField(raw: EnvironmentBlock['resolution'], warn: Warn): number {
+  const fallback = DEFAULT_ENVIRONMENT_CONFIG.resolution;
+  if (raw === undefined) return fallback;
+  if (!Number.isInteger(raw)) {
+    warn(`resolution ${JSON.stringify(raw)} is not an integer; using ${fallback}`);
+    return fallback;
+  }
+  const snapped = Math.min(ENVIRONMENT_RESOLUTION_MAX, Math.max(ENVIRONMENT_RESOLUTION_MIN, raw));
+  if (snapped !== raw) warn(`resolution ${raw} snapped to ${snapped}`);
+  return snapped;
+}
+
+function environmentIntensityField(raw: EnvironmentBlock['intensity'], warn: Warn): number {
+  if (raw === undefined) return DEFAULT_ENVIRONMENT_CONFIG.intensity;
+  if (typeof raw === 'number' && Number.isFinite(raw) && raw >= 0) return raw;
+  warn(`intensity ${JSON.stringify(raw)} must be a finite number >= 0; using 1`);
+  return DEFAULT_ENVIRONMENT_CONFIG.intensity;
+}
+
+function environmentSourceFields(
+  rawSource: EnvironmentBlock['source'],
+  rawUrl: EnvironmentBlock['url'],
+  warn: Warn
+): { source: EnvironmentSource; url?: string } {
+  let source: EnvironmentSource = DEFAULT_ENVIRONMENT_CONFIG.source;
+  if (rawSource !== undefined) {
+    if ((ENVIRONMENT_SOURCES as readonly string[]).includes(rawSource)) {
+      source = rawSource as EnvironmentSource;
+    } else {
+      warn(
+        `unknown source '${rawSource}' (expected ${ENVIRONMENT_SOURCES.join(' | ')}); using 'room'`
+      );
+    }
+  }
+  if (source !== 'hdri') {
+    if (rawUrl !== undefined)
+      warn(`url is only read with source 'hdri' (source is '${source}'); ignored`);
+    return { source };
+  }
+  const url = typeof rawUrl === 'string' ? rawUrl.trim() : '';
+  if (url && isAllowedEnvironmentUrl(url)) return { source, url };
+  if (url) {
+    warn(
+      'url must be HTTP(S) or store-relative, without credentials or unsafe characters; using room'
+    );
+    return { source: 'room' };
+  }
+  warn("source 'hdri' without a url; using 'room'");
+  return { source: 'room' };
+}
+
+function isAllowedEnvironmentUrl(url: string): boolean {
+  if (
+    url.length > MAX_ENVIRONMENT_URL_CHARS ||
+    url.startsWith('//') ||
+    hasUnsafeEnvironmentUrlCharacter(url)
+  ) {
+    return false;
+  }
+  if (!/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(url)) return true;
+  if (!/^https?:\/\//i.test(url)) return false;
+  return isCredentialFreeHttpUrl(url);
+}
+
+function hasUnsafeEnvironmentUrlCharacter(url: string): boolean {
+  for (const char of url) {
+    const code = char.charCodeAt(0);
+    if (code <= 0x1f || code === 0x7f || char === '<' || char === '>' || char === '\\') return true;
+  }
+  return false;
+}
+
+function isCredentialFreeHttpUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return (
+      (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+      parsed.hostname.length > 0 &&
+      parsed.username.length === 0 &&
+      parsed.password.length === 0
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** The zarr spelling of an environment config, for the Ctrl+Shift+S export. */
+export function environmentConfigToZarr(
+  config: EnvironmentConfig
+): NonNullable<ZarrViewerConfig['environment']> {
+  const probe: NonNullable<ZarrViewerConfig['environment']>['probe'] =
+    config.probe === 'auto'
+      ? 'auto'
+      : 'node' in config.probe
+        ? `node:${config.probe.node}`
+        : config.probe.position;
+  return {
+    source: config.source,
+    probe,
+    resolution: config.resolution,
+    intensity: config.intensity,
+    ...(config.url ? { url: config.url } : {}),
+  };
 }

@@ -19,7 +19,7 @@ from ..core.transforms import read_transform_from_zarr
 from ..core.viewer_config import ViewerConfig
 from ..encoding.compression import WIDTH_AWARE_DEFAULT
 from ..encoding.decoder import ArrayDecoder
-from ..typing_utils.constants import LUXAR_VERSION_CURRENT
+from ..typing_utils.constants import LUXAR_VERSION_CURRENT, RESERVED_ROOT_GROUPS
 
 # Default compressor: the width-aware policy sentinel — each array gets a
 # zstd-l9 configuration keyed on its stored dtype (byte shuffle for multi-byte
@@ -270,8 +270,17 @@ class LuxarScene:
     def _collect_nodes(
         self, group: zarr.Group, prefix: str, nodes: List[Dict[str, Any]]
     ) -> None:
-        """Recursively collect node information."""
+        """Recursively collect node information.
+
+        A root-level group in :data:`RESERVED_ROOT_GROUPS` (a baked
+        ``environment`` map, a ``.gsplats.zarr`` bookkeeping bucket) is not a
+        node. Other untyped groups remain visible as ``"group"`` containers:
+        authored nodes such as overlays can live below one, so skipping the
+        container before recursion would hide real scene content.
+        """
         for name in group.group_keys():
+            if not prefix and name in RESERVED_ROOT_GROUPS:
+                continue
             child = group[name]
             full_name = f"{prefix}/{name}" if prefix else name
             node_type = child.attrs.get("type", "group")

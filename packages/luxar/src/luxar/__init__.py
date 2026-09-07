@@ -67,6 +67,7 @@ from .core.viewer_config import (
     AnimationConfig,
     CameraConfig,
     DimensionsConfig,
+    EnvironmentConfig,
     UIConfig,
     ViewerConfig,
     Waypoint,
@@ -136,6 +137,7 @@ __all__: list[str] = [
     # Viewer configuration
     "ViewerConfig",
     "CameraConfig",
+    "EnvironmentConfig",
     "UIConfig",
     "DimensionsConfig",
     "AnimationConfig",

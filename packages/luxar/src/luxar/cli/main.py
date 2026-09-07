@@ -131,6 +131,11 @@ from .demo_commands import app_demo  # noqa: E402
 
 app.add_typer(app_demo, name="demo")
 
+# Add env subcommands (bake / attach) — baked scene environments for physical meshes
+from .env_commands import app_env  # noqa: E402
+
+app.add_typer(app_env, name="env")
+
 # Register the `info` inspection command (defined in info_command.py).
 register_info_command(app)
 

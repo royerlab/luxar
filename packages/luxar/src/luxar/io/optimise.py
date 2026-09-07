@@ -113,6 +113,7 @@ from .._zarr_compat import (
 )
 from ..typing_utils._format_contract import FORMAT_TYPE_GSPLATS, NODE_TYPES
 from ..typing_utils.constants import (
+    ENVIRONMENT_GROUP,
     MAX_CHUNK_BYTES,
     MIN_CHUNK_BYTES,
     TARGET_CHUNK_BYTES,
@@ -476,6 +477,8 @@ def _plan_array(
     array: zarr.Array,
     atom: int | None,
     target_bytes: int,
+    *,
+    is_environment_map: bool,
 ) -> ArrayPlan:
     """Decide this array's new chunk shape (or why it keeps the one it has)."""
     shape = tuple(int(s) for s in array.shape)
@@ -501,6 +504,12 @@ def _plan_array(
             source_file_grid=file_grid,
             skip_reason=reason,
         )
+
+    # A baked environment map (`environment/faces-<digest>`) is one chunk per
+    # cube face by construction and the viewer reads it whole; it is not spatial
+    # data and nothing about streaming applies. Copied verbatim.
+    if is_environment_map:
+        return keep("baked environment map")
 
     structural = _structural_skip(name, array, shape, chunks)
     if structural:
@@ -558,7 +567,18 @@ def plan_optimisation(
             array = group[name]
             path = f"{group_path}/{name}" if group_path else name
             atom = _resolve_atom(attrs, names, name)
-            plans.append(_plan_array(path, array, atom, target_bytes))
+            is_environment_map = (
+                group_path == ENVIRONMENT_GROUP and attrs.get("faces") == name
+            )
+            plans.append(
+                _plan_array(
+                    path,
+                    array,
+                    atom,
+                    target_bytes,
+                    is_environment_map=is_environment_map,
+                )
+            )
     return OptimisePlan(target_bytes=target_bytes, profile=profile, arrays=plans)
 
 
@@ -921,7 +941,7 @@ def _compute_content_hashes_streaming(root: zarr.Group) -> str:
     caller.
     """
 
-    def hash_group(group: zarr.Group) -> str:
+    def hash_group(group: zarr.Group, *, is_root: bool) -> str:
         hasher = xxhash.xxh64()
         for name in sorted(group.array_keys()):
             dataset = group[name]
@@ -933,12 +953,17 @@ def _compute_content_hashes_streaming(root: zarr.Group) -> str:
         for term in _payload_terms(group, attrs):
             hasher.update(term)
         for name in sorted(group.group_keys()):
-            hasher.update(f"{name}:{hash_group(group[name])}".encode())
+            child_hash = hash_group(group[name], is_root=False)
+            # The root's baked-environment group is stamped but not folded in —
+            # the same exception the reference walk makes, for the same reason.
+            if is_root and name == ENVIRONMENT_GROUP:
+                continue
+            hasher.update(f"{name}:{child_hash}".encode())
         content_hash = hasher.hexdigest()
         group.attrs["content_hash"] = content_hash
         return content_hash
 
-    root_hash = hash_group(root)
+    root_hash = hash_group(root, is_root=True)
     aprint(f"Scene content hash: {root_hash[:16]}...")
     return root_hash
 
@@ -969,6 +994,19 @@ def _restamp_content_hash(root: zarr.Group) -> str | None:
 
         return _stamp_content_hash(root)
     return None
+
+
+def _baked_environment_group(root: zarr.Group) -> zarr.Group | None:
+    """Return the baked sidecar, never ordinary data that only shares its name."""
+    if ENVIRONMENT_GROUP not in root:
+        return None
+    candidate = root[ENVIRONMENT_GROUP]
+    if not isinstance(candidate, zarr.Group):
+        return None
+    faces = dict(candidate.attrs).get("faces")
+    if not isinstance(faces, str) or faces not in candidate.array_keys():
+        return None
+    return candidate
 
 
 #: dtype kinds whose memory buffer IS the stored payload, so comparing
@@ -1436,7 +1474,10 @@ def _write_store(
             "chunks_before": plan.source_n_chunks,
             "chunks_after": plan.target_n_chunks,
         }
-        _restamp_content_hash(dest)
+        scene_hash = _restamp_content_hash(dest)
+        environment = _baked_environment_group(dest)
+        if scene_hash is not None and environment is not None:
+            environment.attrs["scene_content_hash"] = scene_hash
         consolidate(dest)
     finally:
         close(dest)

@@ -33,6 +33,7 @@ import type { LuxarAppOptions } from '../options';
 import type { EventGroup } from '../../../utils/cross-layer/event-group';
 import { wireDensityGuard } from './density-guard-wiring';
 import { buildLoadActivityPredicate } from './load-activity';
+import { wireSceneEnvironment } from './environment-wiring';
 
 /**
  * Everything `LuxarApp.init()` constructs is returned in this result.
@@ -394,12 +395,23 @@ export async function runInitPipeline(
   // — frame jank reflects that work, not steady-state render cost, and the
   // manager suppresses probe/estimator learning for those samples. Same
   // predicate the perf probes read as `getPerf().isSettled`, inverted.
-  adaptiveDPRManager.setLoadActivityPredicate(
-    buildLoadActivityPredicate({
-      getDefaultLoader: () => getSceneLoader('default'),
-      isAnyLoadPassInProgress: () => SceneLoaderManager.getInstance().isAnyLoadPassInProgress(),
-    })
-  );
+  // TRUE while load activity is in flight (the adaptive-DPR manager's sense).
+  const isLoadActive = buildLoadActivityPredicate({
+    getDefaultLoader: () => getSceneLoader('default'),
+    isAnyLoadPassInProgress: () => SceneLoaderManager.getInstance().isAnyLoadPassInProgress(),
+  });
+  adaptiveDPRManager.setLoadActivityPredicate(isLoadActive);
+
+  // The scene environment's live behaviour (re-capture on commit / slice /
+  // appearance change once SETTLED — the same predicate, inverted) and the
+  // `?bake-env` one-shot.
+  wireSceneEnvironment({
+    sceneManager,
+    animationController,
+    events: ports.events,
+    options: ports.options,
+    isSettled: () => !isLoadActive(),
+  });
 
   // Dataset/layer changes invalidate the learned DPR bounds (the floor
   // was evidence about the OLD content). Tracked via ports.events so
