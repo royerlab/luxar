@@ -55,7 +55,6 @@ import { showToast } from '../../../ui/toast';
 import {
   CLICK_SLOP_PX,
   TOUCH_CLICK_SLOP_PX,
-  clickSlopFor,
   type CachedPick,
   type PickedElementCache,
   type PickGenerationPort,
@@ -292,6 +291,8 @@ export function installCanvasActions(ports: CanvasActionsPorts): CanvasActionsHa
     touchLike: boolean;
     /** A long-press already acted on this pointer; its release is inert. */
     consumed: boolean;
+    /** Gesture generation captured at pointerdown. */
+    gesture: number;
   }
   /** Pointers currently down. */
   const down = new Map<number, DownPointer>();
@@ -310,6 +311,7 @@ export function installCanvasActions(ports: CanvasActionsPorts): CanvasActionsHa
   let longPress: { id: number; timer: ReturnType<typeof setTimeout> } | null = null;
   let deferredNavigation: ReturnType<typeof setTimeout> | null = null;
   let lastTap: { t: number; x: number; y: number } | null = null;
+  let gestureGeneration = 0;
 
   const clearLongPress = (): void => {
     if (longPress) {
@@ -328,15 +330,23 @@ export function installCanvasActions(ports: CanvasActionsPorts): CanvasActionsHa
    * Pick at the pointer's position, then run `fn` once the result has landed.
    * Without a `pickAt` on the port, act on whatever the cache already holds.
    */
-  const afterPick = (clientX: number, clientY: number, fn: () => void): void => {
+  const afterPick = (
+    clientX: number,
+    clientY: number,
+    gesture: number,
+    fn: () => void
+  ): void => {
+    const run = (): void => {
+      if (gesture === gestureGeneration) fn();
+    };
     const pending = picking.pickAt?.(clientX, clientY);
-    if (pending) void pending.then(fn);
-    else fn();
+    if (pending) void pending.then(run, () => {});
+    else run();
   };
 
   /** The element menu for a touch gesture at a viewport position. */
-  const openTouchMenu = (clientX: number, clientY: number): void => {
-    afterPick(clientX, clientY, () => {
+  const openTouchMenu = (clientX: number, clientY: number, gesture: number): void => {
+    afterPick(clientX, clientY, gesture, () => {
       const { x, y } = toCanvas({ clientX, clientY });
       const resolved = actionsAt(x, y, TOUCH_CLICK_SLOP_PX);
       if (!resolved) return;
@@ -358,7 +368,7 @@ export function installCanvasActions(ports: CanvasActionsPorts): CanvasActionsHa
         const entry = down.get(id);
         if (!entry || multiTouch) return;
         entry.consumed = true;
-        openTouchMenu(entry.x, entry.y);
+        openTouchMenu(entry.x, entry.y, entry.gesture);
       }, LONG_PRESS_MS),
     };
   };
@@ -366,12 +376,15 @@ export function installCanvasActions(ports: CanvasActionsPorts): CanvasActionsHa
   events.on(canvas, 'pointerdown', (e) => {
     const ev = e as PointerEvent;
     const touchLike = isTouchLikePointer(ev);
+    const gesture = ++gestureGeneration;
+    clearDeferredNavigation();
     down.set(ev.pointerId, {
       button: ev.button,
       x: ev.clientX,
       y: ev.clientY,
       touchLike,
       consumed: false,
+      gesture,
     });
     if (down.size > 1) {
       multiTouch = true;
@@ -430,7 +443,7 @@ export function installCanvasActions(ports: CanvasActionsPorts): CanvasActionsHa
    * act, deferring any navigation so a double-tap can still pre-empt it. The
    * mouse path stays synchronous so its user activation is never spent.
    */
-  const handleTap = (ev: PointerEvent): void => {
+  const handleTap = (ev: PointerEvent, gesture: number): void => {
     const now = performance.now();
     const { clientX, clientY, button } = ev;
     if (lastTap && now - lastTap.t < DOUBLE_TAP_MS) {
@@ -445,7 +458,7 @@ export function installCanvasActions(ports: CanvasActionsPorts): CanvasActionsHa
       }
     }
     lastTap = { t: now, x: clientX, y: clientY };
-    afterPick(clientX, clientY, () => {
+    afterPick(clientX, clientY, gesture, () => {
       const { x, y } = toCanvas({ clientX, clientY });
       const resolved = actionsAt(x, y, TOUCH_CLICK_SLOP_PX);
       if (!resolved) return;
@@ -455,6 +468,7 @@ export function installCanvasActions(ports: CanvasActionsPorts): CanvasActionsHa
       clearDeferredNavigation();
       deferredNavigation = setTimeout(() => {
         deferredNavigation = null;
+        if (gesture !== gestureGeneration) return;
         (ports.openUrl ?? defaultOpenUrl)(url, resolved.target);
       }, DOUBLE_TAP_MS);
     });
@@ -476,12 +490,12 @@ export function installCanvasActions(ports: CanvasActionsPorts): CanvasActionsHa
     if (start.button !== ev.button) return;
     if (ev.button !== 0 && ev.button !== 2) return;
 
-    const slop = clickSlopFor(ev.pointerType);
+    const slop = start.touchLike ? TOUCH_CLICK_SLOP_PX : CLICK_SLOP_PX;
     const dx = ev.clientX - start.x;
     const dy = ev.clientY - start.y;
     if (dx * dx + dy * dy > slop * slop) return; // a drag
 
-    if (start.touchLike) handleTap(ev);
+    if (start.touchLike) handleTap(ev, start.gesture);
     else handleClick(ev);
   });
 
@@ -491,6 +505,7 @@ export function installCanvasActions(ports: CanvasActionsPorts): CanvasActionsHa
   events.on(canvas, 'contextmenu', (e) => e.preventDefault());
 
   events.add(() => {
+    gestureGeneration++;
     clearLongPress();
     clearDeferredNavigation();
   });

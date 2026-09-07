@@ -36,6 +36,10 @@ import type {
   ContextMenuOptions,
 } from '../../../../../ui/overlay-widgets/context-menu';
 import { isMacPlatform } from '../../../../../utils/platform';
+import {
+  resetInputProfileForTests,
+  setInputProfileOverride,
+} from '../../../../../utils/input-capabilities';
 
 vi.mock('../../../../../utils/platform', () => ({
   isMacPlatform: vi.fn(),
@@ -192,12 +196,23 @@ async function flush(): Promise<void> {
   await Promise.resolve();
 }
 
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
 const LINKED = { link: 'https://www.uniprot.org/uniprotkb/{hover_label}/entry' };
 
 beforeEach(() => {
   document.body.innerHTML = '';
   vi.mocked(isMacPlatform).mockReturnValue(false);
+  resetInputProfileForTests();
 });
+
+afterEach(() => resetInputProfileForTests());
 
 describe('left-click', () => {
   it('opens the resolved URL in a new tab', () => {
@@ -638,6 +653,15 @@ describe('touch: tap, long-press, double-tap', () => {
     expect(h.onElementClick).toHaveBeenCalledTimes(1);
   });
 
+  it('a pen treated as touch gets the touch drag slop', async () => {
+    setInputProfileOverride('touch');
+    const h = setup({}, LINKED);
+    gesture(h.canvas, { x: 92, y: 80, by: 10, pointerType: 'pen' });
+    await flush();
+    expect(h.picking.pickAt).toHaveBeenCalledWith(102, 80);
+    expect(h.onElementClick).toHaveBeenCalledTimes(1);
+  });
+
   it('a mouse click is still synchronous and unchanged', () => {
     const h = setup({}, LINKED);
     gesture(h.canvas, { x: 100, y: 80 });
@@ -767,6 +791,45 @@ describe('touch: tap, long-press, double-tap', () => {
     await flush();
     vi.advanceTimersByTime(DOUBLE_TAP_MS);
     expect(h.openUrl).toHaveBeenCalledTimes(1);
+  });
+
+  it('a second tap invalidates the first tap even while its pick is unresolved', async () => {
+    const h = setup({}, LINKED);
+    const firstPick = deferred();
+    h.picking.pickAt.mockReturnValueOnce(firstPick.promise);
+
+    gesture(h.canvas, { x: 100, y: 80, pointerType: 'touch' });
+    vi.advanceTimersByTime(100);
+    gesture(h.canvas, { x: 104, y: 82, pointerType: 'touch' });
+    firstPick.resolve();
+    await flush();
+    vi.advanceTimersByTime(DOUBLE_TAP_MS * 2);
+
+    expect(h.onElementClick).not.toHaveBeenCalled();
+    expect(h.openUrl).not.toHaveBeenCalled();
+  });
+
+  it('a new press cancels navigation pending from the previous tap', async () => {
+    const h = setup({}, LINKED);
+    gesture(h.canvas, { x: 100, y: 80, pointerType: 'touch' });
+    await flush();
+    expect(h.onElementClick).toHaveBeenCalledTimes(1);
+
+    h.canvas.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        pointerId: 2,
+        clientX: 100,
+        clientY: 80,
+        pointerType: 'touch',
+        bubbles: true,
+      })
+    );
+    vi.advanceTimersByTime(LONG_PRESS_MS);
+    await flush();
+    vi.advanceTimersByTime(DOUBLE_TAP_MS * 2);
+
+    expect(h.openMenu).toHaveBeenCalledTimes(1);
+    expect(h.openUrl).not.toHaveBeenCalled();
   });
 
   it('works against a port without pickAt (acts on the cache as-is)', async () => {
