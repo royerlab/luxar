@@ -179,7 +179,7 @@ class ControlsManager extends THREE.EventDispatcher {
   setAutoRotateSpeed(speed: number): void;
   getAutoRotate(): boolean;
   isAutoRotateActive(): boolean;
-  isGestureActive(): boolean; // between the active controls' `start` and `end`
+  isGestureActive(): boolean; // active pointer gesture keeps the render loop awake
   setNaturalDrag(enabled: boolean): void; // swap LEFT↔RIGHT (orbit only)
   getNaturalDrag(): boolean;
 

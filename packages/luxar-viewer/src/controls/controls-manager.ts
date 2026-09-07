@@ -144,15 +144,15 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   // Current control instance
   private currentControls: ActiveControls | null = null;
   /**
-   * Cleanup group for the change/start/end event-forwarders attached to
-   * the active controls instance. Rebuilt on every switch so disposing
-   * the previous group detaches the old listeners atomically.
+   * Cleanup group for the active controls' event forwarders and gesture
+   * interruption listener. Rebuilt on every switch so disposing the previous
+   * group detaches the old listeners atomically.
    */
   private controlEvents: EventGroup = new EventGroup();
   private currentType: ControlType = 'orbit';
   /**
-   * True between the active controls' `start` and `end` events — a pointer
-   * gesture (drag, pinch, press-and-hold) is in progress. Read by the
+   * Tracks whether a pointer gesture (drag, pinch, press-and-hold) is in
+   * progress on the active controls. Read by the
    * AnimationController's idle check: a button or finger held still for longer
    * than `idleTimeoutMs` must not pause the render loop, because the drag that
    * follows feeds rotate/pan/zoom deltas into the controls that only
@@ -382,6 +382,9 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
       },
       this.controlEvents
     );
+    this.controlEvents.on(window, 'blur', () => {
+      this.gestureActive = false;
+    });
   }
 
   private disposeCurrentControls(): void {
@@ -526,20 +529,19 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   }
 
   /**
+   * Whether a pointer gesture is in progress on the active controls.
+   */
+  public isGestureActive(): boolean {
+    return this.gestureActive;
+  }
+
+  /**
    * Whether the auto-dolly can currently move the camera. Gated on
    * `enableZoom` rather than `enableRotate`: unlike the turntable, the dolly
    * is alive in ortho mode, where it modulates `camera.zoom`. An inert
    * amplitude or period counts as inactive so the render loop is not held
    * awake by an oscillation of size zero.
    */
-  /**
-   * Whether a pointer gesture is in progress on the active controls — their
-   * `start` has fired and their `end` has not. See {@link gestureActive}.
-   */
-  public isGestureActive(): boolean {
-    return this.gestureActive;
-  }
-
   public isAutoDollyActive(): boolean {
     return (
       this.currentControls instanceof LuxarOrbitControls &&
@@ -630,6 +632,7 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   public reset(): void {
     if (this.currentControls) {
       this.currentControls.reset();
+      this.gestureActive = false;
     }
   }
 

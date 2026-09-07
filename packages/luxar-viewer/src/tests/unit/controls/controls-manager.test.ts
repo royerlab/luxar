@@ -137,6 +137,27 @@ describe('ControlsManager', () => {
       fire('end');
       expect(controlsManager.isGestureActive()).toBe(false);
     });
+
+    it('resetting fly controls mid-drag clears the active gesture', () => {
+      controlsManager.setControlType('fly');
+      domElement.dispatchEvent(new MouseEvent('mousedown', { button: 0 }));
+      expect(controlsManager.isGestureActive()).toBe(true);
+
+      controlsManager.reset();
+      window.dispatchEvent(new MouseEvent('mouseup', { button: 0 }));
+
+      expect(controlsManager.isGestureActive()).toBe(false);
+    });
+
+    it('window blur clears a fly gesture whose mouseup may be lost', () => {
+      controlsManager.setControlType('fly');
+      domElement.dispatchEvent(new MouseEvent('mousedown', { button: 2 }));
+      expect(controlsManager.isGestureActive()).toBe(true);
+
+      window.dispatchEvent(new Event('blur'));
+
+      expect(controlsManager.isGestureActive()).toBe(false);
+    });
   });
 
   describe('orbit controls configuration', () => {
