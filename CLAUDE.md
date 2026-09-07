@@ -285,7 +285,7 @@ See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for complete documentation.
 
 ### Luxar CLI
 ```bash
-luxar demo                       # List the 91 bundled demos (table)
+luxar demo                       # List the 92 bundled demos (table)
 luxar demo run lorenz            # Run a demo by key/index (forwards -- args)
 luxar demo stop                  # Stop running demos and free their ports (--dry-run lists)
 luxar demo cache list            # Inventory / clear demo caches (cache clear …)
@@ -378,6 +378,23 @@ luxar mesh lod big.luxar.zarr big_lod.luxar.zarr --subst-method cluster
 luxar mesh lod bunny.luxar.zarr bunny_reveal.luxar.zarr --recipe reveal --n-lods 4
 # --node picks the mesh when the scene holds more than one.
 luxar mesh lod multi.luxar.zarr multi_lod.luxar.zarr --node Nuclei
+```
+
+### Environment CLI (baked scene lighting for `material="physical"` meshes)
+```bash
+# A physical mesh is lit by `scene.environment`. `viewer_config.environment =
+# EnvironmentConfig(source="scene")` makes the viewer capture it from the scene
+# itself (an exact CubeCamera render from `probe`), so metals and glass reflect the
+# data they sit in. `luxar env bake` runs that capture headlessly and stores the six
+# faces in the store as a root-level `environment/` sidecar (no `type`/`kind`; excluded
+# from the scene content_hash; faces array named by digest) so a published scene pays
+# no live capture. Needs a dev checkout: the driver is the viewer's Playwright
+# (packages/luxar-viewer/scripts/bake-env.mjs). A scene edited after the bake
+# ignores the stale map (it records the digest it was baked against).
+luxar env bake scene.luxar.zarr                                  # probe auto, 128 px, attach
+luxar env bake scene.luxar.zarr --probe node:clusters/shell --resolution 256
+luxar env bake scene.luxar.zarr --out scene.env.bin --no-attach  # keep the container only
+luxar env attach scene.luxar.zarr scene.env.bin                  # the manual half (idempotent)
 ```
 
 ### GSplat CLI (fitting, converting, rendering, merging)

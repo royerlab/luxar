@@ -387,6 +387,58 @@ luxar gsplat batch-fit validate  # Validate tile integrity (--fix deletes corrup
 luxar gsplat batch-fit cancel    # Cancel all Slurm jobs for a batch run
 ```
 
+## `luxar env`
+
+Scene environments for `material="physical"` meshes
+(`docs/guides/specs/MESH_PHYSICAL_MATERIALS_SPEC.md` §3.3). A physical mesh is lit by
+`scene.environment`; with `viewer_config.environment.source = "scene"` the viewer
+captures that environment from the scene itself, so metals and glass reflect the data
+they sit in. `luxar env` moves that capture off the viewer for a published scene by
+storing the six captured cube faces in the store.
+
+```bash
+luxar env bake     # Serve the scene + viewer, drive a headless bake, attach the result
+luxar env attach   # Attach a .env.bin container a bake produced (the manual half)
+```
+
+### `luxar env bake`
+
+```bash
+luxar env bake                                    # SCENE: probe auto, 128 px faces, attach when done
+luxar env bake --probe node:clusters/shell_3 --resolution 256   # SCENE: capture from a node's centre
+luxar env bake --out scene.env.bin --no-attach    # SCENE: keep the container, attach later
+luxar env bake --build                            # SCENE: rebuild a stale viewer dist first
+```
+
+Serves the store and the built viewer from one process, drives a headless browser to
+`?bake-env&probe=…&env-resolution=…` through the viewer's Playwright
+(`packages/luxar-viewer/scripts/bake-env.mjs`), and — by default — attaches the
+captured faces. `--probe` is `auto` (the scene bounds centre), `node:<path>` (that
+node's bounding-box centre, what a marker shell around a cluster wants) or `x,y,z`;
+`--resolution` is the cube face size (16–1024). `--timeout` bounds the wait for the
+load to settle; `--force` attaches a bake whose recorded scene digest no longer
+matches. Needs a development checkout (Playwright is a devDependency of the viewer
+package, not a Python dependency); from an installed wheel, bake on a checkout and
+attach the result with `luxar env attach`. Bake and attach require an uncompressed
+`.zarr` directory because the environment attrs cannot be updated in place inside
+an archive.
+
+### `luxar env attach`
+
+```bash
+luxar env attach            # SCENE FACES: write the container's faces into the store
+luxar env attach --force    # SCENE FACES: even though the scene changed since the bake
+```
+
+Writes the faces as `environment/faces-<digest>` (`uint16` IEEE half-float bits,
+`(6, H, W, 4)`, one chunk per face) plus the capture header as attrs of a root-level
+`environment/` group that carries no `type` and is skipped by every node walker. The
+scene `content_hash` does not change (the group is excluded from the digest), so the
+header's `scene_content_hash` guard is exact and a visitor's warm cache survives;
+attaching the same map twice writes nothing, a different bake replaces the array, and
+a stale bake is refused unless `--force`. The viewer prefers a matching baked map over
+`viewer_config.environment.source`, and ignores a stale one with a console line.
+
 ## `luxar mesh`
 
 Bring classical triangle-surface files into Luxar, and coarsen them. Both are NumPy +

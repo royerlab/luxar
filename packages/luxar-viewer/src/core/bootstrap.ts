@@ -330,6 +330,10 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     // Opt-in capture-quality override (`?lod-finest` — the gallery harness).
     lodFinest: urlParams.lodFinest,
     blendWarmup: urlParams.blendWarmup,
+    // `?bake-env[&probe=…][&env-resolution=…]` — the `luxar env bake` driver.
+    bakeEnvironment: urlParams.bakeEnv
+      ? { probe: urlParams.probe ?? undefined, resolution: urlParams.envResolution ?? undefined }
+      : undefined,
   };
 
   app = new LuxarApp();

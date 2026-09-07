@@ -97,6 +97,24 @@ export interface ZarrViewerConfig {
     target_node?: string;
   };
 
+  /**
+   * Where the scene environment that lights `material="physical"` meshes comes
+   * from (`MESH_PHYSICAL_MATERIALS_SPEC.md` §3.3). Ignored by every other
+   * material. Validated and narrowed by `extractEnvironmentConfig`.
+   */
+  environment?: {
+    /** `room` (default), `scene` (exact cube capture from `probe`), `hdri` (`url`). */
+    source?: string;
+    /** `'auto'`, `'node:<path>'`, or an `[x, y, z]` world position. */
+    probe?: string | [number, number, number];
+    /** Cube face size in pixels for a `scene` capture, 16–1024. */
+    resolution?: number;
+    /** `scene.environmentIntensity`, `>= 0`. */
+    intensity?: number;
+    /** Equirectangular image for `hdri`, relative to the store or absolute. */
+    url?: string;
+  };
+
   // Scene identity — becomes the browser tab title (document.title); wins
   // over the `?title=` URL parameter `luxar serve --open` derives from the
   // dataset file name.

@@ -210,10 +210,22 @@ const TEXEL_CTOR: { [K in TexelKind]: new (length: number) => TexelArray<K> } = 
 
 /** Arguments to {@link readPixelsCompactAsync}. */
 export interface ReadPixelsOpts<K extends TexelKind = TexelKind> {
-  /** Source render target. */
-  target: THREE.WebGLRenderTarget;
+  /**
+   * Source render target. Typed as the base `RenderTarget` so a cube target from
+   * either backend (`WebGLCubeRenderTarget`, or `three/webgpu`'s `CubeRenderTarget`,
+   * which is NOT a `WebGLRenderTarget`) is accepted; see `faceIndex`.
+   */
+  target: THREE.RenderTarget;
   /** Pixel-format discriminator. Determines the returned typed-array kind. */
   kind: K;
+  /**
+   * Cube face to read when `target` is a cube render target (0..5 in three's
+   * px, nx, py, ny, pz, nz order). Threaded into WebGL's `activeCubeFaceIndex`
+   * argument and WebGPU's `faceIndex` argument — the two signatures put it in
+   * different slots (after the destination buffer vs after `textureIndex`).
+   * Ignored for a 2D target.
+   */
+  faceIndex?: number;
   /**
    * X offset in pixels (top-down convention). Defaults to 0. Full-target
    * reads (the common case) leave this at 0; sub-region readers (e.g. the
@@ -268,11 +280,13 @@ export interface ReadPixelsResult<K extends TexelKind = TexelKind> {
 
 type WebGPUReadback = {
   readRenderTargetPixelsAsync(
-    target: THREE.WebGLRenderTarget,
+    target: THREE.RenderTarget,
     x: number,
     y: number,
     width: number,
-    height: number
+    height: number,
+    textureIndex?: number,
+    faceIndex?: number
   ): Promise<Uint8Array | Uint16Array | Float32Array>;
 };
 
@@ -327,12 +341,13 @@ export async function readPixelsCompactAsync<K extends TexelKind>(
     // buffer is always compact (no row-padding under WebGL).
     pixels = (opts.out ?? new Ctor(compactLength)) as TexelArray<K>;
     await (renderer as THREE.WebGLRenderer).readRenderTargetPixelsAsync(
-      target,
+      target as THREE.WebGLRenderTarget,
       x,
       y,
       width,
       height,
-      pixels
+      pixels,
+      opts.faceIndex
     );
   } else {
     // WebGPU signature: returns a typed array of the right kind, but
@@ -345,7 +360,10 @@ export async function readPixelsCompactAsync<K extends TexelKind>(
       x,
       y,
       width,
-      height
+      height,
+      0,
+      // `undefined` lets the renderer's own default (face 0) apply.
+      opts.faceIndex
     )) as TexelArray<K>;
     const compact = compactWebGPUReadbackRows(raw, width, height, bytesPerTexel) as TexelArray<K>;
     if (opts.out) {

@@ -120,6 +120,9 @@ const EMPTY_PARAMS: UrlParams = {
   dpr: null,
   lineJoin: null,
   linePrimitive: null,
+  bakeEnv: false,
+  probe: null,
+  envResolution: null,
 };
 
 describe('bootstrapStandalone', () => {

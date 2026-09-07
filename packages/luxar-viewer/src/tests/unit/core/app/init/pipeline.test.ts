@@ -38,6 +38,10 @@ function makeSceneStub(opts: { initThrows?: boolean } = {}) {
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
     scene: { kind: 'scene' },
+    // The scene-environment wiring (`environment-wiring.ts`) attaches its capture
+    // runtime here; `environment` stays null so the per-frame tick is a no-op.
+    attachEnvironmentRuntime: vi.fn(),
+    environment: null,
   };
 }
 function makeAnimationStub() {

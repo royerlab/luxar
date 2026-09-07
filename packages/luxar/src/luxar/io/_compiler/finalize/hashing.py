@@ -16,6 +16,7 @@ from luxar._zarr_compat import (
     list_raw_keys,
     read_raw_bytes,
 )
+from luxar.typing_utils.constants import ENVIRONMENT_GROUP
 
 # Attr keys whose value is the filename of a plain (non-zarr) payload file stored
 # *inside* the group's own directory. Such files have no chunk grid and no zarr
@@ -277,9 +278,19 @@ def compute_content_hashes(store: zarr.Group) -> str:
         #    ancestor — the same hole `_storage_identity` closes for arrays, and
         #    a group name is a path segment, so it decides which keys the
         #    viewer's cache is holding.
+        #
+        #    The root's `environment/` group is the one deliberate exception
+        #    (`ENVIRONMENT_GROUP`): a baked environment map is DERIVED from the
+        #    scene and records the scene digest it was baked against, which is
+        #    only meaningful if attaching the map leaves that digest alone. The
+        #    group still gets its OWN `content_hash` stamped (it is visited), so
+        #    tooling can tell two bakes apart; it just does not fold into the
+        #    parent. `luxar optimise`'s streaming twin mirrors this rule.
         for child_name in sorted(group.group_keys()):
             child_path = f"{group_path}/{child_name}" if group_path else child_name
             child_hash = compute_hash_recursive(child_path)
+            if not group_path and child_name == ENVIRONMENT_GROUP:
+                continue
             hasher.update(f"{child_name}:{child_hash}".encode())
 
         # Store hash in this node's attrs

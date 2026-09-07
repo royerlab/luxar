@@ -31,6 +31,7 @@ from .viewer_config import (
     AnimationConfig,
     CameraConfig,
     DimensionsConfig,
+    EnvironmentConfig,
     UIConfig,
     ViewerConfig,
 )
@@ -50,6 +51,7 @@ __all__ = [
     "Dimensions",
     "ViewerConfig",
     "CameraConfig",
+    "EnvironmentConfig",
     "UIConfig",
     "DimensionsConfig",
     "AnimationConfig",

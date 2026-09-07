@@ -18,6 +18,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
+from urllib.parse import urlsplit
 
 # Valid enum values (must match TypeScript RenderingSettings union types)
 VALID_TONE_MAPPINGS = ("None", "Linear", "Reinhard", "Cineon", "ACES", "AgX", "Neutral")
@@ -53,6 +54,16 @@ VALID_FOV_PRESETS = (
 VALID_THEMES = ("dark", "light", "frosted-glass", "liquid-glass")
 VALID_LOOP_MODES = ("once", "loop", "bounce")
 VALID_DIRECTIONS = ("forward", "backward")
+# Where the scene environment that lights `material="physical"` meshes comes
+# from (MESH_PHYSICAL_MATERIALS_SPEC.md §3.3). "room" is three's procedural
+# RoomEnvironment (the default); "scene" is an exact cube capture of the scene
+# itself from the probe (the data IS the light); "hdri" is an equirectangular
+# image the viewer loads from `url`.
+VALID_ENVIRONMENT_SOURCES = ("room", "scene", "hdri")
+MAX_ENVIRONMENT_URL_CHARS = 2048
+ENVIRONMENT_RESOLUTION_MIN = 16
+ENVIRONMENT_RESOLUTION_MAX = 1024
+ENVIRONMENT_NODE_PROBE_PREFIX = "node:"
 
 
 @dataclass
@@ -305,6 +316,153 @@ class AnimationConfig:
         )
 
 
+def _validate_environment_url(raw: str) -> str:
+    """Return an HTTP(S) or store-relative environment URL, or raise."""
+    url = raw.strip()
+    if not url or len(url) > MAX_ENVIRONMENT_URL_CHARS:
+        raise ValueError(
+            f"environment.url must contain 1-{MAX_ENVIRONMENT_URL_CHARS} characters"
+        )
+    if any(ord(char) <= 0x1F or ord(char) == 0x7F or char in "<>\\" for char in url):
+        raise ValueError("environment.url contains an unsafe character")
+    if url.startswith("//"):
+        raise ValueError("environment.url must not be protocol-relative")
+    parsed = urlsplit(url)
+    if not parsed.scheme:
+        return url
+    if parsed.scheme.lower() not in {"http", "https"}:
+        raise ValueError("environment.url scheme must be http or https")
+    if not parsed.hostname:
+        raise ValueError("environment.url must be an absolute HTTP(S) URL")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("environment.url must not contain embedded credentials")
+    return url
+
+
+def _normalize_environment_probe(
+    probe: Union[str, Tuple[float, float, float]],
+) -> Union[str, Tuple[float, float, float]]:
+    """Validate and normalize a scene-environment capture probe."""
+    if isinstance(probe, str):
+        is_node = probe.startswith(ENVIRONMENT_NODE_PROBE_PREFIX) and len(probe) > len(
+            ENVIRONMENT_NODE_PROBE_PREFIX
+        )
+        if probe != "auto" and not is_node:
+            raise ValueError(
+                "environment.probe must be 'auto', 'node:<path>' or an "
+                f"(x, y, z) position, got '{probe}'"
+            )
+        return probe
+    position = tuple(probe)
+    if len(position) != 3 or not all(
+        isinstance(value, (int, float)) and math.isfinite(value) for value in position
+    ):
+        raise ValueError(
+            f"environment.probe position must be 3 finite numbers, got {probe!r}"
+        )
+    return (float(position[0]), float(position[1]), float(position[2]))
+
+
+@dataclass
+class EnvironmentConfig:
+    """Where the scene environment that lights physical meshes comes from.
+
+    Only meaningful once a mesh opts into ``material="physical"``; house-shaded
+    meshes, points, lines and splats never read the environment, so this block
+    changes nothing about how they render (``MESH_PHYSICAL_MATERIALS_SPEC.md``
+    §3.3). All fields are optional and written only when set; a baked map
+    attached with ``luxar env attach`` takes precedence over ``source`` at load.
+
+    Attributes:
+        source: ``"room"`` (three's procedural RoomEnvironment, the default),
+            ``"scene"`` (an exact cube capture of the scene from ``probe`` —
+            metals and glass reflect the data they sit in) or ``"hdri"`` (an
+            equirectangular image at ``url``).
+        probe: Where a ``"scene"`` capture looks out from: ``"auto"`` (the
+            scene bounds centre), an ``(x, y, z)`` world position, or
+            ``"node:<path>"`` (that node's bounding-box centre — what a marker
+            shell around a cluster wants).
+        resolution: Cube face size in pixels for a ``"scene"`` capture,
+            ``16``–``1024`` (default 128; the map is prefiltered, so more buys
+            little).
+        intensity: ``scene.environmentIntensity``, ``>= 0`` (default 1).
+        url: The equirectangular image for ``"hdri"``; required with that
+            source and refused with any other.
+    """
+
+    source: Optional[str] = None
+    probe: Optional[Union[str, Tuple[float, float, float]]] = None
+    resolution: Optional[int] = None
+    intensity: Optional[float] = None
+    url: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        """Validate the environment block."""
+        if self.source is not None and self.source not in VALID_ENVIRONMENT_SOURCES:
+            raise ValueError(
+                f"environment.source must be one of {VALID_ENVIRONMENT_SOURCES}, "
+                f"got '{self.source}'"
+            )
+        if self.probe is not None:
+            self.probe = _normalize_environment_probe(self.probe)
+        if self.resolution is not None:
+            if (
+                isinstance(self.resolution, bool)
+                or not isinstance(self.resolution, int)
+                or not (
+                    ENVIRONMENT_RESOLUTION_MIN
+                    <= self.resolution
+                    <= ENVIRONMENT_RESOLUTION_MAX
+                )
+            ):
+                raise ValueError(
+                    "environment.resolution must be an int between "
+                    f"{ENVIRONMENT_RESOLUTION_MIN} and {ENVIRONMENT_RESOLUTION_MAX}, "
+                    f"got {self.resolution!r}"
+                )
+        _validate_min(self.intensity, "environment.intensity", 0.0)
+        if self.source == "hdri" and not self.url:
+            raise ValueError("environment.source='hdri' requires environment.url")
+        if self.url is not None and self.source != "hdri":
+            raise ValueError(
+                "environment.url is only meaningful with environment.source='hdri', "
+                f"got source={self.source!r}"
+            )
+        if self.url is not None:
+            self.url = _validate_environment_url(self.url)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary, omitting None fields."""
+        result: Dict[str, Any] = {}
+        if self.source is not None:
+            result["source"] = self.source
+        if self.probe is not None:
+            result["probe"] = (
+                self.probe if isinstance(self.probe, str) else list(self.probe)
+            )
+        if self.resolution is not None:
+            result["resolution"] = self.resolution
+        if self.intensity is not None:
+            result["intensity"] = self.intensity
+        if self.url is not None:
+            result["url"] = self.url
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> EnvironmentConfig:
+        """Create from dictionary (a list probe becomes a tuple)."""
+        probe = data.get("probe")
+        if isinstance(probe, list):
+            probe = tuple(probe)
+        return cls(
+            source=data.get("source"),
+            probe=probe,
+            resolution=data.get("resolution"),
+            intensity=data.get("intensity"),
+            url=data.get("url"),
+        )
+
+
 def _validate_hex_color(color: str) -> None:
     """Validate a hex color string like '#rrggbb'."""
     if not re.match(r"^#[0-9a-fA-F]{6}$", color):
@@ -325,6 +483,17 @@ def _validate_min(value: Optional[float], name: str, min_val: float) -> None:
     """Validate that value >= min_val if set."""
     if value is not None and value < min_val:
         raise ValueError(f"{name} must be >= {min_val}, got {value}")
+
+
+def _put_nonempty_config(
+    result: Dict[str, Any], key: str, config: Optional[Any]
+) -> None:
+    """Serialize a nested config when it contains at least one field."""
+    if config is None:
+        return
+    serialized = config.to_dict()
+    if serialized:
+        result[key] = serialized
 
 
 @dataclass
@@ -359,6 +528,10 @@ class ViewerConfig:
 
     # Camera
     camera: Optional[CameraConfig] = None
+
+    # Scene environment for `material="physical"` meshes (spec §3.3); ignored
+    # by everything else, so a scene without a physical mesh never sees it.
+    environment: Optional[EnvironmentConfig] = None
 
     # Scene identity — shown as the browser tab title (document.title) so
     # several open viewer tabs are tellable apart. Falls back to the ?title=
@@ -669,10 +842,8 @@ class ViewerConfig:
         """
         result: Dict[str, Any] = {}
 
-        if self.camera is not None:
-            cam = self.camera.to_dict()
-            if cam:  # only include if camera has any fields set
-                result["camera"] = cam
+        _put_nonempty_config(result, "camera", self.camera)
+        _put_nonempty_config(result, "environment", self.environment)
 
         # Simple fields — emit only if not None
         for field_name in self._SIMPLE_FIELDS:
@@ -681,15 +852,8 @@ class ViewerConfig:
                 result[field_name] = value
 
         # Nested configs
-        if self.ui is not None:
-            ui_dict = self.ui.to_dict()
-            if ui_dict:
-                result["ui"] = ui_dict
-
-        if self.dimensions is not None:
-            dims_dict = self.dimensions.to_dict()
-            if dims_dict:
-                result["dimensions"] = dims_dict
+        _put_nonempty_config(result, "ui", self.ui)
+        _put_nonempty_config(result, "dimensions", self.dimensions)
 
         if self.animation is not None:
             anim_list = [a.to_dict() for a in self.animation]
@@ -713,6 +877,10 @@ class ViewerConfig:
         if "camera" in data and isinstance(data["camera"], dict):
             camera = CameraConfig.from_dict(data["camera"])
 
+        environment = None
+        if "environment" in data and isinstance(data["environment"], dict):
+            environment = EnvironmentConfig.from_dict(data["environment"])
+
         ui = None
         if "ui" in data and isinstance(data["ui"], dict):
             ui = UIConfig.from_dict(data["ui"])
@@ -727,6 +895,7 @@ class ViewerConfig:
 
         kwargs: Dict[str, Any] = {
             "camera": camera,
+            "environment": environment,
             "ui": ui,
             "dimensions": dimensions,
             "animation": animation,

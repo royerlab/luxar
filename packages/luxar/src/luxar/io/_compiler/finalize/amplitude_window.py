@@ -98,14 +98,7 @@ _Window = Tuple[float, float]
 #: not be enumerated as one — mistaking it for the FINEST child would pick the
 #: whole structure's reference window off something that is not content.
 _NODE_TYPES = frozenset({"group", "gsplats", "points", "lines", "mesh"})
-
-#: Reserved bookkeeping groups on a standalone ``.gsplats.zarr`` root, excluded
-#: by NAME as well as by :data:`_NODE_TYPES`. None of them carries a ``type``
-#: attr today, so the type filter alone suffices — but ``pipeline_info`` is an
-#: OPEN passthrough of arbitrary caller keys, and a stray ``type`` landing in it
-#: would make :func:`_lod_children`'s sorted-name fallback rank ``provenance`` /
-#: ``pipeline`` LAST, i.e. "finest", and donate the reference window.
-_RESERVED_GROUPS = frozenset({"fitting", "provenance", "pipeline"})
+_GSPLAT_BOOKKEEPING_GROUPS = frozenset({"fitting", "provenance", "pipeline"})
 
 #: Bound on the per-level window rescale, mirroring
 #: ``gsplats.lod.substitutive._MASS_SCALE_BOUND``. The measured LOD ratios this
@@ -233,13 +226,14 @@ def _child_nodes(group: "zarr.Group") -> List[Tuple[str, "zarr.Group", dict]]:
     (``examples/partition_of_lod_example.py`` names its levels ``lod_coarse`` /
     ``lod_fine``), so a ``child_<i>`` / ``part_<i>`` name filter would silently
     skip every hand-authored structure. The ``type`` filter is what keeps a
-    non-content subgroup out — see :data:`_NODE_TYPES` — plus the three reserved
-    root bucket names of :data:`_RESERVED_GROUPS`.
+    non-content subgroup out — see :data:`_NODE_TYPES`. The three standalone
+    gsplat bookkeeping groups are excluded even if arbitrary fitting metadata
+    gives one a scene-node ``type``.
     """
     out: List[Tuple[str, "zarr.Group", dict]] = []
     for name in group.group_keys():
         text = str(name)
-        if text in _RESERVED_GROUPS:
+        if text in _GSPLAT_BOOKKEEPING_GROUPS:
             continue
         child = group[text]
         attrs = dict(child.attrs)

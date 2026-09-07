@@ -103,6 +103,24 @@ describe('loadDataset', () => {
     expect(disposeIdx).toBeLessThan(loadIdx);
   });
 
+  it('resets the previous scene environment before loading new data', async () => {
+    const trace: Trace = { order: [], recordedViewerConfig: undefined };
+    const ports = makePorts(trace);
+    const resetForDataset = vi.fn(() => trace.order.push('resetForDataset'));
+    ports.sceneManager.environment = {
+      resetForDataset,
+      configure: vi.fn(),
+      setBaked: vi.fn(),
+    } as never;
+    ports.sceneManager.getSceneBakedEnvironment = vi.fn().mockReturnValue(null);
+    await loadDataset('scene.zarr', ports);
+
+    expect(resetForDataset).toHaveBeenCalledOnce();
+    expect(trace.order.indexOf('resetForDataset')).toBeLessThan(
+      trace.order.indexOf('loadSceneData')
+    );
+  });
+
   it('disposePicking runs BEFORE loadSceneData (stale-session-vs-disposed-geometry guard)', async () => {
     // The previous picking session's nodeMap references geometries that
     // loadSceneData's clearSceneContent() disposes. Disposing the session

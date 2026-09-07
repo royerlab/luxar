@@ -60,6 +60,7 @@ import { wireMonitorAfterLoad } from '../monitor/monitor-wiring';
 import { createCommittedLODCountReader } from '../monitor/committed-lod-reader';
 import { createDrawOrderProvider } from '../monitor/draw-order-provider';
 import { loadOverlayConfigs } from '../../loaders';
+import { loadBakedEnvironment } from '../../loaders/environment/environment-loader';
 import { buildSceneGraph } from '../nodes/build-scene-graph';
 import { loadSceneNodes } from '../nodes/load-scene-nodes';
 import { reportLoadOutcome } from '../loaders/failure-report';
@@ -450,15 +451,30 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   // Load points / lines / gsplats / nested groups recursively
   await loadSceneNodes(sceneGraph, rootGroup, rootLoc, ctx.makeNodeBuildCtx());
 
+  // The store's base URL: image overlays and a store-relative `hdri` environment
+  // url both resolve against it. The root digest rides along for the environment
+  // bake, which records what it was baked against.
+  rootGroup.userData.zarrBaseUrl = ctx.normalizeURL(url);
+  rootGroup.userData.sceneContentHash = (sceneAttrs as Record<string, unknown> | undefined)
+    ?.content_hash as string | undefined;
+
   // Load overlay configs (screen-space annotations)
   const overlayConfigs = await loadOverlayConfigs(zarrStore, rootLoc);
   if (overlayConfigs.length > 0) {
     rootGroup.userData.overlayConfigs = overlayConfigs;
-    // Store both directory-URL and opaque-file access for image overlays.
-    rootGroup.userData.zarrBaseUrl = ctx.normalizeURL(url);
+    // Opaque-file access for image overlays (zipped stores have no child URLs).
     rootGroup.userData.readOverlayFile = async (path: string) =>
       zarrStore.get(path as zarr.AbsolutePath);
   }
+
+  // A baked environment map (`luxar env attach`), if the store carries one that
+  // matches this scene's digest. Parked on the root; `load-dataset.ts` hands it to
+  // the scene environment together with the authored `viewer_config.environment`.
+  const bakedEnvironment = await loadBakedEnvironment(
+    rootLoc,
+    (sceneAttrs as Record<string, unknown> | undefined)?.content_hash as string | undefined
+  );
+  if (bakedEnvironment) rootGroup.userData.bakedEnvironment = bakedEnvironment;
 
   // Post-load monitor-tab provider wiring (extracted to
   // scene-loader/monitor-wiring.ts).

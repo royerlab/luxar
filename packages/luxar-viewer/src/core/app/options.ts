@@ -159,6 +159,14 @@ export interface LuxarAppOptions {
   lodFinest?: boolean;
 
   /**
+   * Bake the scene-derived environment once the load settles and hand the
+   * container to `luxar env bake` (`__luxarDebug.environment.lastBake` + a
+   * download). Mirrors `UrlParams.bakeEnv` / `probe` / `envResolution`
+   * (`?bake-env&probe=…&env-resolution=…`). Undefined = normal viewing.
+   */
+  bakeEnvironment?: { probe?: string; resolution?: number };
+
+  /**
    * WebGL-only blend warm-up (pre-compile each DISTINCT reachable
    * blend-mode program variant, one compile per macrotask). Default:
    * true. Mirrors `UrlParams.blendWarmup` (`?no-blend-warmup`

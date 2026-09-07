@@ -16,8 +16,9 @@ imports and ``unittest.mock.patch`` targets keep resolving unchanged.
 from __future__ import annotations
 
 import threading
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, MutableMapping, Optional, cast
+from typing import Any, Callable, Iterator, MutableMapping, Optional, Union, cast
 
 import uvicorn
 from arbol import aprint
@@ -25,6 +26,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import MutableHeaders
+from starlette.routing import Mount
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .network_simulation import (
@@ -550,3 +552,95 @@ def _build_data_app(
         )
 
     return asgi_app
+
+
+# --------------------------------------------------------------------------
+# A stoppable server for programmatic callers
+# --------------------------------------------------------------------------
+
+
+class ServedStore:
+    """URLs of a store + viewer served by :func:`served_store`."""
+
+    def __init__(self, host: str, port: int) -> None:
+        self.host = host
+        self.port = port
+        #: The data root — what goes into the viewer's ``?src=`` (no trailing slash).
+        self.data_url = f"http://{host}:{port}"
+        #: The viewer's ``index.html`` (trailing slash, so a relative ``?src`` resolves).
+        self.viewer_url = f"http://{host}:{port}/viewer/"
+
+
+@contextmanager
+def served_store(
+    path: Union[str, Path],
+    *,
+    host: str = "127.0.0.1",
+    port: Optional[int] = None,
+    cors_origin: str = _DEFAULT_CORS_ORIGIN,
+    ready_timeout: float = 30.0,
+) -> Iterator[ServedStore]:
+    """Serve ``path`` at ``/`` and the built viewer under ``/viewer`` — and STOP.
+
+    The serve-family commands all end in a blocking ``uvicorn.run`` on a daemon
+    thread, which is right for a terminal and useless for a caller that needs the
+    server for the duration of one job (``luxar env bake``). This is the same
+    single-process layout ``luxar export`` ships, run through a ``uvicorn.Server``
+    handle so the ``with`` block's exit shuts it down, and readiness is a polled
+    ``/health`` rather than a sleep. Needs a built viewer
+    (:func:`~luxar.cli.utils.ensure_viewer_built`).
+    """
+    import asyncio
+    import time
+    import urllib.error
+    import urllib.request
+
+    from .utils import pick_port
+
+    viewer_dist = get_viewer_dist_path()
+    if not (viewer_dist / "index.html").exists():
+        raise RuntimeError(
+            f"The viewer is not built ({viewer_dist}); run "
+            "`cd packages/luxar-viewer && pnpm build` first."
+        )
+    chosen = pick_port(port if port is not None else 8900, host, label="server")
+    if chosen is None:
+        raise RuntimeError(f"No free port near {port or 8900} on {host}.")
+    api = create_server_app(str(path), cors_origin=cors_origin)
+    # Mounted BEFORE the data root already on `/`? No — Starlette matches mounts in
+    # order, and `/` would swallow `/viewer`, so the viewer goes on first by
+    # rebuilding the router order: FastAPI appends routes, hence insert at 0.
+    viewer_app = _build_viewer_app(viewer_dist, cors_origin=cors_origin)
+    api.router.routes.insert(0, Mount("/viewer", app=viewer_app))
+
+    config = uvicorn.Config(api, host=host, port=chosen, log_level="error")
+    server = uvicorn.Server(config)
+    thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve()),
+        daemon=True,
+        name="luxar-served-store",
+    )
+    thread.start()
+    try:
+        deadline = time.monotonic() + ready_timeout
+        while True:
+            try:
+                # The URL's scheme is fixed here; only host and selected port vary.
+                with urllib.request.urlopen(  # nosec B310
+                    f"http://{host}:{chosen}/health", timeout=1
+                ) as response:
+                    if response.status == 200:
+                        break
+            except (urllib.error.URLError, OSError):
+                pass
+            if not thread.is_alive():
+                raise RuntimeError("The server thread exited before becoming healthy.")
+            if time.monotonic() > deadline:
+                raise RuntimeError(
+                    f"The server did not become healthy within {ready_timeout:.0f}s."
+                )
+            time.sleep(0.05)
+        yield ServedStore(host, chosen)
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)

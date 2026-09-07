@@ -21,6 +21,7 @@
  */
 import { parseLineJoinStyle, type LineJoinStyle } from '../types/line-join';
 import { parseLinePrimitive, type LinePrimitive } from '../types/line-primitive';
+import { ENVIRONMENT_RESOLUTION_MAX, ENVIRONMENT_RESOLUTION_MIN } from '../types/environment';
 
 const MAX_SRC_LENGTH = 4096;
 const URL_SCHEME_PATTERN = /^[a-zA-Z][a-zA-Z\d+.-]*:/;
@@ -295,6 +296,18 @@ export interface UrlParams {
    * the built-in default. See `types/line-primitive.ts`.
    */
   linePrimitive: LinePrimitive | null;
+
+  /**
+   * Bake the scene environment (`?bake-env`, driven by `luxar env bake`): once
+   * the load settles, capture the scene-derived cube map at `probe` /
+   * `envResolution`, expose the container on `__luxarDebug.environment.lastBake`
+   * and download it. See `rendering/environment/bake.ts`.
+   */
+  bakeEnv: boolean;
+  /** Probe for the bake (`?probe=auto|node:<path>|x,y,z`). Null → the scene's config or `auto`. */
+  probe: string | null;
+  /** Cube face size for the bake (`?env-resolution=128`). Null → the scene's config or 128. */
+  envResolution: number | null;
 }
 
 /**
@@ -337,7 +350,15 @@ export function readUrlParams(search?: string): UrlParams {
     dpr: parsePositiveFloat(params.get('dpr')),
     lineJoin: parseLineJoinStyle(params.get('lineJoin')),
     linePrimitive: parseLinePrimitive(params.get('linePrimitive')),
+    bakeEnv: params.has('bake-env'),
+    probe: params.get('probe')?.trim() || null,
+    envResolution: clampEnvironmentResolution(parseNonNegativeInt(params.get('env-resolution'))),
   };
+}
+
+function clampEnvironmentResolution(value: number | null): number | null {
+  if (value === null) return null;
+  return Math.min(ENVIRONMENT_RESOLUTION_MAX, Math.max(ENVIRONMENT_RESOLUTION_MIN, value));
 }
 
 /**

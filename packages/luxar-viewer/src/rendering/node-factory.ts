@@ -32,6 +32,7 @@ import type { LinesMetadata, LinesDataLoader } from '../types/lines';
 import type { GSplatsMetadata, GSplatsDataLoader } from '../types/gsplats';
 import { isGeometryType, isPooledGeometry } from '../types/geometry-capabilities';
 import { log, Modules } from '../utils/log';
+import { eventBus } from '../utils/cross-layer/event-bus';
 import type { PickingSystem } from './picking/picking-system';
 import {
   validateLoadedPointsData as validateLoadedPointsDataImpl,
@@ -304,6 +305,11 @@ export class NodeFactory {
   markPickingDirty(): void {
     this.pickingSystem?.markDirty();
     this.pickingSystem?.invalidateBoxes();
+    // The same moment is "what is resident changed" for anything derived from
+    // the committed scene — today the scene-derived environment capture
+    // (`rendering/environment/`), which marks itself stale here and rebuilds
+    // once the loader settles.
+    eventBus.emit('geometry-committed', {});
   }
 
   /**
