@@ -90,6 +90,17 @@ class TestKneeDisplayIdx:
         assert resolved == "psnr_fg_weighted"
         assert _knee_display_idx(res) is None
 
+    def test_selected_metric_controls_decoupled_knee(self):
+        res = _make_result([10, 20, 40, 80], [10.0, 15.0, 19.9, 20.0])
+        selected_curve = [10.0, 19.85, 19.9, 20.0]
+        res.k_star_metric = "psnr_fg_weighted"
+        res.held_out_psnr_fg_weighted_db = selected_curve
+        res.held_out_peak_selected = find_k_star(res.k_values_requested, selected_curve)
+
+        assert res.held_out_peak.k_knee == 40
+        assert res.held_out_peak_selected.k_knee == 20
+        assert _knee_display_idx(res) == 1
+
     def test_missing_selected_peak_falls_back_to_minmax_curve(self):
         res = _make_result([1, 2, 4], [20.0, 21.0, 22.0])
         res.k_star_metric = "psnr_fg_weighted"
@@ -147,8 +158,8 @@ class TestRenderReport:
     def test_selected_peak_controls_report_text_montage_and_metadata(
         self, tmp_path, monkeypatch
     ):
-        res = _make_result([10, 20, 40], [20.0, 25.0, 24.0])
-        selected_curve = [20.0, 24.0, 30.0]
+        res = _make_result([10, 20, 40, 80], [20.0, 25.0, 24.0, 23.0])
+        selected_curve = [20.0, 24.0, 30.0, 29.0]
         res.k_star_metric = "psnr_fg_weighted"
         res.held_out_psnr_fg_weighted_db = selected_curve
         res.held_out_peak_selected = find_k_star(res.k_values_requested, selected_curve)
@@ -188,7 +199,7 @@ class TestRenderReport:
             res,
             np.zeros((32, 32, 32), dtype=np.float32),
             tmp_path / "report.pdf",
-            splat_paths=["k10", "k20", "k40"],
+            splat_paths=["k10", "k20", "k40", "k80"],
         )
 
         assert "K* = 40" in captured_pages[0][0]
@@ -196,7 +207,7 @@ class TestRenderReport:
         assert "psnr_minmax K* = 20" in captured_pages[0][0]
         assert any("K* = 40" in text for text in captured_pages[1][1])
         assert "K* = 40" in captured_pages[2][0]
-        assert rendered_paths == ["k10", "k40", "k40"]
+        assert rendered_paths == ["k10", "k40", "k80"]
         assert metadata["Subject"] == (
             f"Recommended K = 40 (psnr_fg_weighted, {res.held_out_peak_selected.type})"
         )
