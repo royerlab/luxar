@@ -191,6 +191,23 @@ describe('handleTouchMove — two-finger pinch direction', () => {
 
     expect(state.zoomDelta).toBeGreaterThan(0);
   });
+
+  it('does not poison zoom when coincident contacts separate', () => {
+    const p1 = makePointerEvent({ pointerId: 1, clientX: 100, clientY: 100 });
+    const p2 = makePointerEvent({ pointerId: 2, clientX: 100, clientY: 100 });
+    const { ctx, state } = makeCtx([p1, p2]);
+    handleTouchStart(ctx);
+    ctx.pointerPositions.get(2)!.set(200, 100);
+    state.action = 'zoom';
+
+    handleTouchMove(ctx, p2);
+    expect(state.zoomDelta).toBe(0);
+    expect(Number.isFinite(state.zoomDelta)).toBe(true);
+
+    ctx.pointerPositions.get(2)!.set(300, 100);
+    handleTouchMove(ctx, p2);
+    expect(state.zoomDelta).toBeCloseTo(-1, 6);
+  });
 });
 
 describe('handleTouchMove — single-finger pan', () => {
@@ -419,6 +436,12 @@ describe('wrapAngle', () => {
     expect(wrapAngle(Math.PI + 0.1)).toBeCloseTo(-Math.PI + 0.1, 12);
     expect(wrapAngle(-Math.PI - 0.1)).toBeCloseTo(Math.PI - 0.1, 12);
     expect(wrapAngle(3 * Math.PI)).toBeCloseTo(Math.PI, 12);
+  });
+
+  it('ignores non-finite inputs without looping or poisoning roll', () => {
+    expect(wrapAngle(Infinity)).toBe(0);
+    expect(wrapAngle(-Infinity)).toBe(0);
+    expect(wrapAngle(Number.NaN)).toBe(0);
   });
 });
 

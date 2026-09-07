@@ -36,6 +36,7 @@ export const TWIST_ROLL_SIGN = -1;
 
 /** Wrap an angle difference into (-π, π] so a twist across ±π does not jump. */
 export function wrapAngle(delta: number): number {
+  if (!Number.isFinite(delta)) return 0;
   let d = delta;
   while (d > Math.PI) d -= 2 * Math.PI;
   while (d <= -Math.PI) d += 2 * Math.PI;
@@ -145,7 +146,7 @@ function moveTwoFingers(ctx: OrbitInputCtx): void {
   const g = pairGeometry(p0, p1);
 
   const dollyDelta = g.distance / ctx.dollyStart.y;
-  if (dollyDelta > 0) ctx.addZoomDelta(-(dollyDelta - 1));
+  if (ctx.dollyStart.y > 0 && dollyDelta > 0) ctx.addZoomDelta(-(dollyDelta - 1));
 
   if (ctx.enableRotate) {
     const twist = wrapAngle(g.angle - ctx.dollyStart.x);

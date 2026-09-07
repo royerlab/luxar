@@ -271,8 +271,8 @@ export function handlePointerUp(ctx: OrbitInputCtx, event: PointerEvent): void {
     ctx.domElement.removeEventListener('pointermove', ctx.boundOnPointerMove);
     ctx.domElement.removeEventListener('pointerup', ctx.boundOnPointerUp);
     ctx.domElement.removeEventListener('pointercancel', ctx.boundOnPointerUp);
-  } else if (isTouchLikePointer(event)) {
-    // A finger lifted (or the browser cancelled it) while others remain:
+  } else if (remaining.some(isTouchLikePointer)) {
+    // A touch-like pointer remains after another pointer lifted or cancelled:
     // re-seed the gesture from the survivors instead of ending it. Going
     // 2 → 1 this resumes a one-finger rotate from the surviving finger's
     // CURRENT position (a stale start point would make the scene jump), and

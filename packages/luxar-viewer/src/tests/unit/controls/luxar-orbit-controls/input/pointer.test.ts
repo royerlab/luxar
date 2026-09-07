@@ -847,4 +847,46 @@ describe('handlePointerUp — a finger lifting out of a multi-finger gesture', (
     expect(ctx.onTouchStart).toHaveBeenCalledTimes(1);
     expect(ctx.dispatch).not.toHaveBeenCalledWith('end');
   });
+
+  it('re-seeds a surviving finger when a mouse pointer lifts', () => {
+    const { ctx } = makeBaseCtx();
+    const touch = makePointerEvent('pointerdown', { pointerId: 1, pointerType: 'touch' });
+    handlePointerDown(ctx, touch);
+    handlePointerDown(
+      ctx,
+      makePointerEvent('pointerdown', { pointerId: 2, pointerType: 'mouse', button: 0, buttons: 1 })
+    );
+    (ctx.onTouchStart as ReturnType<typeof vi.fn>).mockClear();
+    (ctx.dispatch as ReturnType<typeof vi.fn>).mockClear();
+
+    handlePointerUp(
+      ctx,
+      makePointerEvent('pointerup', { pointerId: 2, pointerType: 'mouse', button: 0, buttons: 0 })
+    );
+
+    expect(ctx.setPointers).toHaveBeenCalledWith([touch]);
+    expect(ctx.onTouchStart).toHaveBeenCalledTimes(1);
+    expect(ctx.dispatch).not.toHaveBeenCalledWith('end');
+  });
+
+  it('does not seed a touch gesture from a surviving mouse pointer', () => {
+    const { ctx, state } = makeBaseCtx();
+    const mouse = makePointerEvent('pointerdown', {
+      pointerId: 1,
+      pointerType: 'mouse',
+      button: 0,
+      buttons: 1,
+    });
+    handlePointerDown(ctx, mouse);
+    handlePointerDown(ctx, makePointerEvent('pointerdown', { pointerId: 2, pointerType: 'touch' }));
+    (ctx.onTouchStart as ReturnType<typeof vi.fn>).mockClear();
+    (ctx.dispatch as ReturnType<typeof vi.fn>).mockClear();
+
+    handlePointerUp(ctx, makePointerEvent('pointerup', { pointerId: 2, pointerType: 'touch' }));
+
+    expect(ctx.setPointers).toHaveBeenCalledWith([mouse]);
+    expect(ctx.onTouchStart).not.toHaveBeenCalled();
+    expect(state.action).toBe('none');
+    expect(ctx.dispatch).toHaveBeenCalledWith('end');
+  });
 });
