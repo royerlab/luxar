@@ -237,6 +237,9 @@ The constructor accepts `float16_allowed` (see [Compatibility Control](#compatib
 
 **Purpose:**
 Read encoded arrays and apply appropriate inverse transformations.
+When `original_dtype` is integral, decoded values are rounded to the nearest
+integer and clamped to the target dtype's range before casting; they are never
+truncated toward zero or allowed to wrap around.
 
 **Usage Example:**
 ```python
