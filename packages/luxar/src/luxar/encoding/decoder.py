@@ -11,8 +11,10 @@ import zarr
 
 
 def _restore_original_dtype(values: np.ndarray, original_dtype: np.dtype) -> np.ndarray:
-    """Restore decoded values, rounding before integral casts."""
+    """Restore decoded values, clamping and rounding before integral casts."""
     if original_dtype.kind in "iu":
+        dtype_limits = np.iinfo(original_dtype)
+        values = np.clip(values, dtype_limits.min, dtype_limits.max)
         values = np.rint(values)
     return np.asarray(values, dtype=original_dtype)
 

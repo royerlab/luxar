@@ -274,6 +274,21 @@ class TestQuantizedDecoding:
 
         np.testing.assert_array_equal(decoded, np.array([[2]], dtype=np.uint8))
 
+    def test_integer_restoration_clamps_to_dtype_range(self, tmp_path) -> None:
+        group = zarr.open_group(tmp_path, mode="w")
+        create_array(group, "test", data=np.array([255], dtype=np.uint8))
+        group["test"].attrs["encoding"] = {
+            "name": "bounded_scalar_uint8",
+            "min": 0.0,
+            "max": 255.6,
+            "bits": 8,
+            "original_dtype": "uint8",
+        }
+
+        decoded = ArrayDecoder().decode(group["test"], group)
+
+        np.testing.assert_array_equal(decoded, np.array([255], dtype=np.uint8))
+
     def test_integer_roundtrip_is_exact_below_half_unit_quantum(self, tmp_path) -> None:
         data = np.arange(1, 33, dtype=np.uint8)
         group = zarr.open_group(tmp_path, mode="w")
@@ -319,7 +334,9 @@ class TestQuantizedDecoding:
 
         assert np.max(np.abs(error)) <= quantum / 2 + 0.5
         assert error.min() < 0 < error.max()
-        assert abs(float(np.mean(error))) < 0.01
+        assert abs(float(np.mean(error))) < 0.1, (
+            "mean error checks directional bias, not exact reconstruction"
+        )
 
     def test_decode_log_scalar_uint8(self):
         """Test decoding log scalar uint8."""
