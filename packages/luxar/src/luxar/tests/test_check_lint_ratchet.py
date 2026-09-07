@@ -496,6 +496,14 @@ def _require_ruff() -> None:
     )
 
 
+def test_ruff_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Dropping Ruff from the test environment must fail, never skip green."""
+    monkeypatch.setattr(importlib.util, "find_spec", lambda _name: None)
+
+    with pytest.raises(AssertionError, match="ruff is required"):
+        _require_ruff()
+
+
 def test_main_fails_on_a_violation_that_is_not_baselined(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -483,6 +483,14 @@ def _require_ruff() -> None:
     )
 
 
+def test_ruff_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Dropping Ruff from the test environment must fail, never skip green."""
+    monkeypatch.setattr(importlib.util, "find_spec", lambda _name: None)
+
+    with pytest.raises(AssertionError, match="ruff is required"):
+        _require_ruff()
+
+
 def _unrestrict(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make the fixture target count as the FULL scope, not a restricted run.
 
