@@ -103,7 +103,11 @@ from luxar.demos._audio_synth import synthesise_foa_from_clip
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG, pull_in
 from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
 from luxar.demos._narration import resolve_engine, synthesise
-from luxar.demos._pdb_turntable import TurntableAssets, render_turntables
+from luxar.demos._pdb_turntable import (
+    TurntableAssets,
+    load_environment_faces,
+    render_turntables,
+)
 from luxar.demos.demo_esm3_protein_landscape import (
     TAXON_COLORS,
     _linkable_accessions,
@@ -1184,10 +1188,23 @@ def build_stories_scene(
             cache = turntable_cache or (
                 Path.home() / ".cache" / "luxar" / TURNTABLE_CACHE
             )
+            # The structures are lit by the scene's own baked environment — the
+            # map the bubbles reflect — when a previous build of this store has
+            # been through `luxar env bake`; a first build renders under the
+            # studio lights alone (the environment digest is in the cache key,
+            # so the next build after a bake re-renders them lit).
+            environment = load_environment_faces(output_path)
+            if environment is None:
+                aprint(
+                    "ℹ️  No baked environment in the output store yet: turntables "
+                    "use the studio lights only. Run `luxar env bake "
+                    f"{output_path}` and rebuild to light them with the map."
+                )
             assets = render_turntables(
                 [s.pdb_id for s in stories if s.pdb_id],
                 cache,
                 colors={s.pdb_id: s.color for s in stories if s.pdb_id},
+                environment=environment,
             )
             aprint(
                 f"{len(assets)} of {sum(1 for s in stories if s.pdb_id)} turntables ready"

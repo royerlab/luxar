@@ -166,6 +166,100 @@ def rotation_y(deg: float) -> np.ndarray:
 # Shaders
 # ----------------------------------------------------------------------------
 
+# ----------------------------------------------------------------------------
+# Environment prefiltering (numpy): the baked cube faces → small lighting cubes
+# ----------------------------------------------------------------------------
+
+#: The stored face order, which is also OpenGL's cube-map face order.
+CUBE_FACE_ORDER = ("px", "nx", "py", "ny", "pz", "nz")
+
+
+def cube_directions(res: int) -> tuple[np.ndarray, np.ndarray]:
+    """Unit directions and solid angles of every texel of a ``res``-px cube map.
+
+    OpenGL's cube-map convention (also three.js's ``WebGLCubeRenderTarget`` and
+    the baked ``environment/`` faces): per face, ``s`` runs left → right and
+    ``t`` top → bottom, ``u = 2s - 1``, ``v = 2t - 1``, and the face directions
+    are ``+X:(1,-v,-u)``, ``-X:(-1,-v,u)``, ``+Y:(u,1,v)``, ``-Y:(u,-1,-v)``,
+    ``+Z:(u,-v,1)``, ``-Z:(-u,-v,-1)``. Returns ``dirs`` of shape
+    ``(6, res, res, 3)`` and ``weights`` of shape ``(6, res, res)``: the solid
+    angle of each texel, ``4 / ((1 + u² + v²)^(3/2) · res²)``, summing to 4π.
+    """
+    c = (np.arange(res, dtype=np.float64) + 0.5) / res * 2.0 - 1.0
+    u, v = np.meshgrid(c, c)  # u along columns (s), v along rows (t)
+    one = np.ones_like(u)
+    faces = [
+        np.stack([one, -v, -u], axis=-1),
+        np.stack([-one, -v, u], axis=-1),
+        np.stack([u, one, v], axis=-1),
+        np.stack([u, -one, -v], axis=-1),
+        np.stack([u, -v, one], axis=-1),
+        np.stack([-u, -v, -one], axis=-1),
+    ]
+    raw = np.stack(faces, axis=0)
+    norm = np.linalg.norm(raw, axis=-1, keepdims=True)
+    dirs = raw / norm
+    weight = 4.0 / (norm[..., 0] ** 3 * res * res)
+    weight = np.broadcast_to(weight, (6, res, res)).copy()
+    return dirs.astype(np.float32), weight.astype(np.float32)
+
+
+def _block_mean(faces: np.ndarray, res: int) -> np.ndarray:
+    """Area-average ``(6, R, R, C)`` faces down to ``(6, res, res, C)`` (R % res == 0)."""
+    n = faces.shape[1]
+    if n == res:
+        return faces.astype(np.float32)
+    if n % res:
+        raise ValueError(f"cube face size {n} is not a multiple of {res}")
+    k = n // res
+    return (
+        faces.astype(np.float32)
+        .reshape(faces.shape[0], res, k, res, k, faces.shape[-1])
+        .mean(axis=(2, 4))
+    )
+
+
+def prefilter_cube(
+    faces: np.ndarray, out_res: int, *, exponent: float, in_res: int = 24
+) -> np.ndarray:
+    """A lobe-prefiltered cube map: ``L_out(d) = Σ L(ω) max(0, d·ω)^k dω / Σ ...``.
+
+    ``exponent`` 1 gives a cosine lobe (diffuse irradiance, up to a constant);
+    a larger one a Phong lobe (glossy reflection). ``faces`` is ``(6, R, R, 3+)``
+    linear radiance in the stored face order; the alpha channel, if any, is
+    dropped and the input is area-averaged to ``in_res`` first. The result is
+    normalised so its brightest texel has luminance 1 — the caller decides how
+    much of it to add — and is all zeros for an all-black environment.
+    """
+    rgb = np.asarray(faces, dtype=np.float32)[..., :3]
+    rgb = np.nan_to_num(rgb, nan=0.0, posinf=0.0, neginf=0.0)
+    r = rgb.shape[1]
+    in_res = min(in_res, r)
+    while r % in_res:
+        in_res -= 1
+    src = _block_mean(rgb, in_res).reshape(-1, 3)
+    src_dirs, src_w = cube_directions(in_res)
+    src_dirs = src_dirs.reshape(-1, 3)
+    src_w = src_w.reshape(-1)
+    out_dirs, _ = cube_directions(out_res)
+    out_flat = out_dirs.reshape(-1, 3)
+    out = np.zeros((out_flat.shape[0], 3), dtype=np.float32)
+    weighted_src = src * src_w[:, None]
+    step = 1024
+    for start in range(0, out_flat.shape[0], step):
+        cos = np.clip(out_flat[start : start + step] @ src_dirs.T, 0.0, None)
+        lobe = cos**exponent
+        total = lobe @ src_w
+        out[start : start + step] = (lobe @ weighted_src) / np.maximum(total, 1e-12)[
+            :, None
+        ]
+    lum = out @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
+    peak = float(lum.max())
+    if peak > 0:
+        out /= peak
+    return out.reshape(6, out_res, out_res, 3)
+
+
 _GEOM_VS = """
 #version 330
 uniform mat4 u_model;
@@ -280,6 +374,14 @@ uniform float u_fill;
 uniform float u_top;
 uniform float u_spec;
 uniform float u_spec_power;
+// Image-based lighting from the scene's baked environment (optional, additive):
+// a cosine-prefiltered irradiance cube tints the clay with the map around it,
+// a glossy-prefiltered radiance cube adds a faint reflection at the limb.
+uniform int u_env_on;
+uniform samplerCube u_env_diff;
+uniform samplerCube u_env_spec;
+uniform float u_env_diffuse;
+uniform float u_env_specular;
 in vec2 v_uv;
 out vec4 f_color;
 
@@ -297,6 +399,17 @@ vec4 shade(ivec2 px) {
     // AO darkens the ambient term fully and the direct light partly (a lit
     // crevice still reads as a crevice), as PyMOL's ray-traced AO does.
     vec3 c = albedo.rgb * (u_ambient * ao + diff * mix(1.0, ao, 0.6)) + spec * ao;
+    if (u_env_on == 1) {
+        // The studio lights stay as they are; the environment only ADDS: a
+        // hemispheric tint (irradiance, AO-darkened like the ambient term) and
+        // a Fresnel-weighted glossy reflection that lives mostly at the limb.
+        vec3 env_d = texture(u_env_diff, n).rgb;
+        vec3 r = reflect(-v, n);
+        vec3 env_s = texture(u_env_spec, r).rgb;
+        float fresnel = 0.04 + 0.96 * pow(1.0 - max(dot(n, v), 0.0), 5.0);
+        c += albedo.rgb * env_d * u_env_diffuse * ao
+           + env_s * u_env_specular * mix(0.35, 1.0, fresnel) * ao;
+    }
     return vec4(c, 1.0);  // premultiplied == straight while alpha is 1
 }
 
@@ -416,6 +529,60 @@ class ClayRenderer:
         self._radius = 1.0
         self._view = np.eye(4, dtype="f4")
         self._proj = np.eye(4, dtype="f4")
+        # Environment lighting is off until `set_environment` is given faces.
+        # The cube samplers must still be bound to SOME cube texture on their
+        # own units: a 2D texture and a cube sampler sharing a unit is a GL
+        # validation error that silently draws nothing.
+        self._env_black = self._cube_texture(np.zeros((6, 1, 1, 3), dtype="f4"))
+        self._env_diff: Any = None
+        self._env_spec: Any = None
+        self.env_diffuse = 0.0
+        self.env_specular = 0.0
+
+    # -- environment -------------------------------------------------------
+
+    def set_environment(
+        self,
+        faces: Optional[np.ndarray],
+        *,
+        diffuse: float = 0.15,
+        specular: float = 0.20,
+        gloss_exponent: float = 48.0,
+    ) -> None:
+        """Light the clay with the scene's baked environment, on top of the studio.
+
+        ``faces`` are the store's ``environment/`` cube faces, ``(6, R, R, 4)``
+        linear radiance in ``px nx py ny pz nz`` order (half floats already
+        widened; ``None`` switches the environment off again). Two small cubes are
+        prefiltered on the CPU: a cosine lobe (irradiance) that tints the surface
+        by up to ``diffuse`` of its albedo where the map is brightest, and a
+        glossy lobe (``gloss_exponent``) whose reflection adds up to ``specular``
+        at a grazing limb. Both are normalised to the map's own peak, so a dark
+        sky with a few bright clusters stays a hint rather than a light source.
+        """
+        for t in (self._env_diff, self._env_spec):
+            if t is not None:
+                t.release()
+        self._env_diff = self._env_spec = None
+        self.env_diffuse = self.env_specular = 0.0
+        if faces is None:
+            return
+        diff = prefilter_cube(faces, 16, exponent=1.0, in_res=16)
+        spec = prefilter_cube(faces, 48, exponent=gloss_exponent, in_res=48)
+        self._env_diff = self._cube_texture(diff)
+        self._env_spec = self._cube_texture(spec)
+        self.env_diffuse = float(diffuse)
+        self.env_specular = float(specular)
+
+    def _cube_texture(self, cube: np.ndarray) -> Any:
+        """Upload a ``(6, res, res, 3)`` float cube in GL face order."""
+        moderngl = self._gl
+        res = cube.shape[1]
+        tex = self.ctx.texture_cube(
+            (res, res), 3, np.ascontiguousarray(cube, dtype="f4").tobytes(), dtype="f4"
+        )
+        tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
+        return tex
 
     # -- scene -------------------------------------------------------------
 
@@ -507,6 +674,14 @@ class ClayRenderer:
         c["u_top"].value = 0.12
         c["u_spec"].value = 0.10
         c["u_spec_power"].value = 30.0
+        env_on = self._env_diff is not None and self._env_spec is not None
+        (self._env_diff if env_on else self._env_black).use(3)
+        (self._env_spec if env_on else self._env_black).use(4)
+        c["u_env_diff"].value = 3
+        c["u_env_spec"].value = 4
+        c["u_env_on"].value = 1 if env_on else 0
+        c["u_env_diffuse"].value = self.env_diffuse
+        c["u_env_specular"].value = self.env_specular
         self._quad_comp.render(moderngl.TRIANGLE_STRIP)
         return self._fbo_out.read(components=4)
 
@@ -514,6 +689,8 @@ class ClayRenderer:
         for vao, _ in self._vaos:
             vao.release()
         self._vaos = []
+        self.set_environment(None)
+        self._env_black.release()
         self.ctx.release()
 
 

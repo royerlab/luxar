@@ -281,3 +281,64 @@ def test_gpu_frame_has_straight_alpha_coverage_and_ambient_occlusion() -> None:
     assert slot < flat[slot_px][:3].mean() - 10
     # Without AO the slot floor and the face are lit alike (same normal).
     assert abs(float(flat[slot_px][:3].mean()) - float(flat[face_px][:3].mean())) < 6
+
+
+# =============================================================================
+# Environment lighting: cube-map geometry and prefiltering (pure numpy)
+# =============================================================================
+
+
+def test_cube_directions_follow_the_gl_face_convention_and_cover_the_sphere() -> None:
+    dirs, weights = cr.cube_directions(8)
+    assert dirs.shape == (6, 8, 8, 3) and weights.shape == (6, 8, 8)
+    assert np.allclose(np.linalg.norm(dirs, axis=-1), 1.0, atol=1e-6)
+    # The texels' solid angles tile the sphere (midpoint quadrature at 8 px/face
+    # is good to a few tenths of a percent).
+    assert np.isclose(weights.sum(), 4 * np.pi, rtol=1e-2)
+    # Face centres (the mean of the four central texels) point down their axis.
+    centres = dirs[:, 3:5, 3:5].mean(axis=(1, 2))
+    axes = np.array(
+        [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]
+    )
+    assert np.allclose(
+        centres / np.linalg.norm(centres, axis=1, keepdims=True), axes, atol=1e-6
+    )
+    # GL orientation: on +X the first row (t = 0) looks UP (+y) and s runs -z → +z.
+    assert dirs[0, 0, 4, 1] > 0 and dirs[0, 0, 0, 2] > dirs[0, 0, 7, 2]
+    # +Y's rows run along +z; -Y's along -z (the top/bottom faces are mirrored).
+    assert dirs[2, 7, 4, 2] > dirs[2, 0, 4, 2] and dirs[3, 7, 4, 2] < dirs[3, 0, 4, 2]
+
+
+def test_prefilter_cube_is_flat_for_a_flat_sky_and_peaks_toward_a_single_light() -> (
+    None
+):
+    flat = np.full((6, 16, 16, 4), 0.25, dtype=np.float32)
+    flat[..., 3] = 1.0
+    diff = cr.prefilter_cube(flat, 8, exponent=1.0, in_res=16)
+    assert diff.shape == (6, 8, 8, 3)
+    # Normalised to its own peak: a uniform sky is 1 everywhere, alpha ignored.
+    assert np.allclose(diff, 1.0, atol=1e-4)
+
+    sky = np.zeros((6, 16, 16, 3), dtype=np.float32)
+    sky[2, 7:9, 7:9] = (0.2, 1.0, 0.4)  # one small light straight up (+Y)
+    diffuse = cr.prefilter_cube(sky, 8, exponent=1.0, in_res=16)
+    glossy = cr.prefilter_cube(sky, 8, exponent=24.0, in_res=16)
+    dirs, _ = cr.cube_directions(8)
+    up = dirs[..., 1]
+    # Brightest looking up, dark looking down; the cosine lobe reaches the
+    # horizon, the glossy lobe hardly leaves the light's own face. Normalised
+    # to peak LUMINANCE 1, so a saturated colour's strongest channel exceeds 1.
+    lum = diffuse @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
+    assert lum.max() == pytest.approx(1.0, abs=1e-4)
+    assert diffuse[3].max() < 1e-3 and glossy[3].max() < 1e-3
+    assert (
+        diffuse[..., 1][up > 0.95].mean()
+        > diffuse[..., 1][(up > 0.2) & (up < 0.4)].mean()
+    )
+    assert (glossy[..., 1] > 0.05).sum() < (diffuse[..., 1] > 0.05).sum()
+    # The light's colour, not grey.
+    peak = np.unravel_index(diffuse[..., 1].argmax(), diffuse.shape[:3])
+    assert diffuse[peak][1] > diffuse[peak][0] > diffuse[peak][2] * 0.0
+
+    black = cr.prefilter_cube(np.zeros((6, 8, 8, 4), np.float32), 4, exponent=1.0)
+    assert not black.any()

@@ -26,7 +26,11 @@ Pipeline (all cached under ``~/.cache/luxar/pdb_turntables``):
 3. The GPU renderer stands the assembly on its longest principal axis and
    draws ``frames`` frames of one turn — matte clay in pastel shades of the
    story colour, soft lights, screen-space ambient occlusion, transparent
-   background — streaming them into ffmpeg.
+   background — streaming them into ffmpeg. When the scene's baked environment
+   is at hand (``load_environment_faces`` on a store `luxar env bake` has run
+   on), it also lights the clay: a faint hemispheric tint and a glossy limb
+   reflection of the very map the structure sits in, ON TOP of the studio
+   lights. The environment's digest is part of the cache key.
 4. ffmpeg encodes an opaque VP9 WebM as a **stacked alpha matte** — the colour
    on top, the alpha channel as a grey matte below, twice as tall — which the
    viewer recombines in a shader (``Scene.add_video(alpha_matte="stacked")``).
@@ -55,6 +59,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Optional, Sequence
 
+import numpy as np
 from arbol import aprint
 
 from luxar.demos._clay_renderer import (
@@ -172,12 +177,60 @@ def cache_key(
     size: int,
     style_version: int = STYLE_VERSION,
     color: RGB = DEFAULT_COLOR,
+    env_digest: str = "",
 ) -> str:
-    """Stable file stem for one render configuration (colour included)."""
-    digest = hashlib.sha1(
-        f"{pdb_id.upper()}|{style_version}|{frames}|{size}|{color_hex(color)}".encode()
-    ).hexdigest()
+    """Stable file stem for one render configuration (colour and lighting included).
+
+    ``env_digest`` is :func:`environment_digest` of the baked environment the
+    clay was lit with (empty when it was rendered under the studio lights alone),
+    so a re-baked scene re-renders its turntables.
+    """
+    parts = f"{pdb_id.upper()}|{style_version}|{frames}|{size}|{color_hex(color)}"
+    if env_digest:
+        parts += f"|env:{env_digest}"
+    digest = hashlib.sha1(parts.encode()).hexdigest()
     return f"{pdb_id.upper()}_v{style_version}_{frames}f_{size}px_{digest[:8]}"
+
+
+def environment_digest(faces: Optional[np.ndarray]) -> str:
+    """Eight hex characters naming a set of environment faces (``""`` for none)."""
+    if faces is None:
+        return ""
+    return hashlib.sha1(np.ascontiguousarray(faces).tobytes()).hexdigest()[:8]
+
+
+def load_environment_faces(store: Path) -> Optional[np.ndarray]:
+    """The baked ``environment/`` cube faces of ``store`` as float32, or ``None``.
+
+    Returns ``(6, R, R, 4)`` linear radiance in ``px nx py ny pz nz`` order (the
+    stored half-float bits widened) when the store exists and carries a baked
+    environment (``luxar env bake``), else ``None`` — including for a store
+    that has not been built yet, so a first build simply renders unlit.
+    """
+    from luxar._zarr_compat import open_group
+    from luxar.typing_utils.constants import ENVIRONMENT_GROUP
+
+    store = Path(store)
+    if not store.is_dir():
+        return None
+    try:
+        root = open_group(store, mode="r")
+        if ENVIRONMENT_GROUP not in root:
+            return None
+        env = root[ENVIRONMENT_GROUP]
+        name = env.attrs.get("faces")
+        if not isinstance(name, str) or name not in env:
+            return None
+        raw = np.asarray(env[name][...])
+    except Exception as e:  # noqa: BLE001 — an unreadable sidecar just means "unlit"
+        aprint(f"⚠️ Could not read the baked environment from {store.name}: {e}")
+        return None
+    if raw.dtype == np.uint16:
+        raw = raw.view(np.float16)
+    faces = raw.astype(np.float32)
+    if faces.ndim != 4 or faces.shape[0] != 6 or faces.shape[-1] < 3:
+        return None
+    return faces
 
 
 def mesh_dir_name(pdb_id: str, quality: int, mesh_version: int = MESH_VERSION) -> str:
@@ -275,10 +328,11 @@ def _cached_turntable_assets(
     fps: int,
     size: int,
     color: RGB,
+    env_digest: str = "",
 ) -> Optional[TurntableAssets]:
     """Return complete cached assets without requiring render dependencies."""
     pdb_id = pdb_id.upper()
-    stem = cache_key(pdb_id, frames, size, color=color)
+    stem = cache_key(pdb_id, frames, size, color=color, env_digest=env_digest)
     webm = cache_dir / f"{stem}.webm"
     poster = cache_dir / f"{stem}.png"
     if not (webm.exists() and poster.exists()):
@@ -360,13 +414,18 @@ def render_turntable(
     pymol: Optional[Sequence[str]] = None,
     ffmpeg: Optional[str] = None,
     renderer: Optional[ClayRenderer] = None,
+    environment: Optional[np.ndarray] = None,
 ) -> TurntableAssets:
     """Render (or reuse) one structure's turntable. Raises on tool failure.
 
     A ``renderer`` may be shared across structures (one GL context); without
-    one a renderer is created for this call.
+    one a renderer is created for this call. ``environment`` (the store's baked
+    cube faces, see :func:`load_environment_faces`) lights the clay with the map
+    on top of the studio lights and becomes part of the cache key; a shared
+    renderer is expected to carry it already (:meth:`ClayRenderer.set_environment`).
     """
     pdb_id = pdb_id.upper()
+    env_digest = environment_digest(environment)
     cached = _cached_turntable_assets(
         pdb_id,
         cache_dir,
@@ -374,6 +433,7 @@ def render_turntable(
         fps=fps,
         size=size,
         color=color,
+        env_digest=env_digest,
     )
     if cached is not None:
         return cached
@@ -388,29 +448,40 @@ def render_turntable(
         raise RuntimeError(MODERNGL_INSTALL_HINT)
 
     pdb_path, title = fetch_pdb(pdb_id, cache_dir)
-    stem = cache_key(pdb_id, frames, size, color=color)
+    stem = cache_key(pdb_id, frames, size, color=color, env_digest=env_digest)
     webm = cache_dir / f"{stem}.webm"
     poster = cache_dir / f"{stem}.png"
 
     quality = surface_quality_for(structure_atoms(pdb_id, cache_dir))
     files = export_surface_meshes(pdb_id, cache_dir, quality=quality, pymol=pymol_cmd)
     meshes = meshes_from_files(files, chain_palette(color, len(files)))
+    lit = (
+        "lit by the scene's environment" if environment is not None else "studio lights"
+    )
     aprint(
         f"GPU: rendering {frames} frames of {pdb_id} at {size}px "
         f"({len(files)} chains, {sum(len(m.positions) for m in meshes) // 3:,} "
-        f"triangles) → stacked-matte VP9 WebM at {fps} fps …"
+        f"triangles, {lit}) → stacked-matte VP9 WebM at {fps} fps …"
     )
-    render_turntable_video(
-        meshes,
-        frames=frames,
-        fps=fps,
-        size=size,
-        webm=webm,
-        poster=poster,
-        ffmpeg=ffmpeg_exe,
-        renderer=renderer,
-        turn_direction=TURN_DIRECTION,
-    )
+    own_renderer = renderer is None
+    if own_renderer:
+        renderer = ClayRenderer(size)
+        renderer.set_environment(environment)
+    try:
+        render_turntable_video(
+            meshes,
+            frames=frames,
+            fps=fps,
+            size=size,
+            webm=webm,
+            poster=poster,
+            ffmpeg=ffmpeg_exe,
+            renderer=renderer,
+            turn_direction=TURN_DIRECTION,
+        )
+    finally:
+        if own_renderer:
+            renderer.release()
     return TurntableAssets(pdb_id, webm, poster, title, frames, fps)
 
 
@@ -422,12 +493,15 @@ def render_turntables(
     fps: int = DEFAULT_FPS,
     size: int = DEFAULT_SIZE,
     colors: Optional[Mapping[str, RGB]] = None,
+    environment: Optional[np.ndarray] = None,
 ) -> dict[str, TurntableAssets]:
     """Render several structures with one shared GPU renderer.
 
     ``colors`` maps a PDB id to the RGB triple (in [0, 1]) whose hue the
     structure is rendered in — the demo passes each story's highlight colour so
     the turntable matches its cluster; ids without one get ``DEFAULT_COLOR``.
+    ``environment`` (see :func:`load_environment_faces`) lights every structure
+    with the scene's baked map on top of the studio lights.
 
     Returns cached or newly rendered assets keyed by PDB id. Missing render
     dependencies only skip uncached structures; complete cached assets remain
@@ -435,6 +509,7 @@ def render_turntables(
     others still return.
     """
     palette = {k.upper(): v for k, v in (colors or {}).items()}
+    env_digest = environment_digest(environment)
     results: dict[str, TurntableAssets] = {}
     pending: list[str] = []
     for pdb_id in pdb_ids:
@@ -446,6 +521,7 @@ def render_turntables(
             fps=fps,
             size=size,
             color=palette.get(normalized, DEFAULT_COLOR),
+            env_digest=env_digest,
         )
         if cached is None:
             pending.append(normalized)
@@ -462,6 +538,7 @@ def render_turntables(
         return results
     try:
         renderer = ClayRenderer(size)
+        renderer.set_environment(environment)
     except Exception as e:  # noqa: BLE001 — no GL context on this machine
         aprint(f"⚠️  Turntable videos skipped: no GPU context ({e})")
         return results
@@ -479,6 +556,7 @@ def render_turntables(
                     pymol=pymol_cmd,
                     ffmpeg=ffmpeg_exe,
                     renderer=renderer,
+                    environment=environment,
                 )
             except (subprocess.CalledProcessError, RuntimeError, OSError) as e:
                 detail = ""
