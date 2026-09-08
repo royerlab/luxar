@@ -230,19 +230,6 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
     expect(isPartitionPathVisible(root, leaf.name)).toBe(false);
   });
 
-  it('finds a culled multi-object part when no object has the loader path name', () => {
-    const root = new THREE.Group();
-    const first = new THREE.Group();
-    first.name = '/partition/part_4/first';
-    first.userData.partitionFrustumVisible = false;
-    const second = new THREE.Group();
-    second.name = '/partition/part_4/second';
-    second.userData.partitionFrustumVisible = false;
-    root.add(first, second);
-
-    expect(isPartitionPathVisible(root, '/partition/part_4')).toBe(false);
-  });
-
   it('removes culled partition loaders from progressive refinement maps', () => {
     const root = new THREE.Group();
     const visible = new THREE.Group();

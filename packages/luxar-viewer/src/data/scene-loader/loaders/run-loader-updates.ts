@@ -27,12 +27,6 @@ const NOOP_SESSION: UpdateSession = {
 /** Whether a loader path and every ancestor partition part are frustum-visible. */
 export function isPartitionPathVisible(root: THREE.Object3D | null, path: string): boolean {
   let object: THREE.Object3D | null | undefined = root?.getObjectByName(path);
-  if (!object && root) {
-    const descendantPrefix = `${path}/`;
-    root.traverse((candidate) => {
-      if (!object && candidate.name.startsWith(descendantPrefix)) object = candidate;
-    });
-  }
   while (object) {
     if (object.userData.partitionFrustumVisible === false) return false;
     object = object.parent;
