@@ -12,6 +12,13 @@ import { LuxarFlyControls } from '../../../controls/luxar-fly-controls';
 import { config } from '../../../config';
 import { createTestCamera } from '../../test-config';
 
+function makePointerEvent(
+  type: string,
+  init: PointerEventInit & { pointerId: number; pointerType: string }
+): PointerEvent {
+  return new PointerEvent(type, { cancelable: true, ...init });
+}
+
 describe('LuxarFlyControls', () => {
   const defaultWheelZoomSensitivity = config.controls.wheelZoomSensitivity;
   let camera: THREE.PerspectiveCamera;
@@ -228,6 +235,124 @@ describe('LuxarFlyControls', () => {
 
       window.dispatchEvent(new MouseEvent('mouseup', { button: 2 }));
       expect(endHandler).toHaveBeenCalled();
+    });
+  });
+
+  describe('touch input handling', () => {
+    it('drives touch gestures through DOM listeners and finishes tracked pointers', () => {
+      const initialPosition = camera.position.clone();
+      const initialOrientation = camera.quaternion.clone();
+      const startHandler = vi.fn();
+      const endHandler = vi.fn();
+      const changeHandler = vi.fn();
+      controls.addEventListener('start', startHandler);
+      controls.addEventListener('end', endHandler);
+      controls.addEventListener('change', changeHandler);
+
+      const down = makePointerEvent('pointerdown', {
+        pointerId: 1,
+        pointerType: 'touch',
+        clientX: 100,
+        clientY: 100,
+      });
+      domElement.dispatchEvent(down);
+      window.dispatchEvent(
+        makePointerEvent('pointermove', {
+          pointerId: 1,
+          pointerType: 'touch',
+          clientX: 130,
+          clientY: 120,
+        })
+      );
+      domElement.dispatchEvent(
+        makePointerEvent('pointerdown', {
+          pointerId: 2,
+          pointerType: 'touch',
+          clientX: 200,
+          clientY: 100,
+        })
+      );
+      window.dispatchEvent(
+        makePointerEvent('pointermove', {
+          pointerId: 2,
+          pointerType: 'mouse',
+          clientX: 220,
+          clientY: 110,
+        })
+      );
+      controls.update(0.016);
+
+      expect(down.defaultPrevented).toBe(true);
+      expect(startHandler).toHaveBeenCalledTimes(1);
+      expect(changeHandler).toHaveBeenCalled();
+      expect(camera.position.distanceTo(initialPosition)).toBeGreaterThan(0);
+      expect(camera.quaternion.angleTo(initialOrientation)).toBeGreaterThan(0);
+
+      window.dispatchEvent(makePointerEvent('pointerup', { pointerId: 2, pointerType: 'mouse' }));
+      window.dispatchEvent(makePointerEvent('pointerup', { pointerId: 1, pointerType: 'mouse' }));
+      expect(endHandler).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves mouse-typed pointerdown to the mouse handlers', () => {
+      const startHandler = vi.fn();
+      controls.addEventListener('start', startHandler);
+      const down = makePointerEvent('pointerdown', {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 100,
+        clientY: 100,
+      });
+
+      domElement.dispatchEvent(down);
+
+      expect(down.defaultPrevented).toBe(false);
+      expect(startHandler).not.toHaveBeenCalled();
+      expect((controls as any).touchPointers.size).toBe(0);
+    });
+
+    it('ignores pointermove for an id that was never tracked', () => {
+      const changeHandler = vi.fn();
+      controls.addEventListener('change', changeHandler);
+
+      window.dispatchEvent(
+        makePointerEvent('pointermove', {
+          pointerId: 99,
+          pointerType: 'touch',
+          clientX: 300,
+          clientY: 200,
+        })
+      );
+
+      expect(changeHandler).not.toHaveBeenCalled();
+      expect((controls as any).touchPointers.size).toBe(0);
+    });
+
+    it('makes pointermove inert after reset clears an active gesture', () => {
+      domElement.dispatchEvent(
+        makePointerEvent('pointerdown', {
+          pointerId: 1,
+          pointerType: 'touch',
+          clientX: 100,
+          clientY: 100,
+        })
+      );
+      controls.reset();
+      const resetOrientation = camera.quaternion.clone();
+      const changeHandler = vi.fn();
+      controls.addEventListener('change', changeHandler);
+
+      window.dispatchEvent(
+        makePointerEvent('pointermove', {
+          pointerId: 1,
+          pointerType: 'touch',
+          clientX: 300,
+          clientY: 250,
+        })
+      );
+      controls.update(0.016);
+
+      expect(changeHandler).not.toHaveBeenCalled();
+      expect(camera.quaternion.angleTo(resetOrientation)).toBe(0);
     });
   });
 
