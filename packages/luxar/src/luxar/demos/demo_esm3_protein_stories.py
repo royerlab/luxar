@@ -84,7 +84,6 @@ import re
 import sys
 import tempfile
 import warnings
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -100,10 +99,7 @@ from luxar.core.viewer_config import (
     Waypoint,
 )
 from luxar.demos import cached_download, launch_viewer
-from luxar.demos._audio_synth import (
-    synthesise_foa_from_clip,
-    synthesise_hum,
-)
+from luxar.demos._audio_synth import synthesise_foa_from_clip
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG, pull_in
 from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
 from luxar.demos._narration import resolve_engine, synthesise
@@ -705,22 +701,10 @@ NARRATION_SOURCE_URL = "https://github.com/royerlab/luxar"
 # Narration is `on_arrive`: it starts when the story's flight lands (the waypoint
 # driver's arrival event), plus a beat so the picture settles first.
 NARRATION_AFTER_FLIGHT_MS = 600
-
-# Cluster hums (sound layer Phase 2): one spatial source per story, attached to
-# the story's highlight node so it follows the cluster's centre, live only at
-# that story, louder as the camera approaches. Synthesised at build time (needs
-# afconvert or ffmpeg; otherwise the scene has no hums) and cached here.
-HUM_CACHE_DIR = Path.home() / ".cache" / "luxar" / "esm3_protein_stories" / "hums"
-HUM_SECONDS = 8.0
-HUM_GAIN = 0.5
-#: E2 as the ladder's root; each story a step up a major pentatonic scale, so
-#: stepping through the tour also walks a melody.
-HUM_BASE_HZ = 82.41
-HUM_SEMITONES = (0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24, 26)
-#: Under the inverse distance model, ``ref_distance / camera_distance`` is the
-#: gain at the story camera. Keep the original -13 dB tuning and 20x range.
-HUM_REF_DISTANCE_PER_CAMERA_DISTANCE = 10 ** (-13.0 / 20.0)
-HUM_MAX_DISTANCE_PER_CAMERA_DISTANCE = 20.0 * HUM_REF_DISTANCE_PER_CAMERA_DISTANCE
+# The sound layer's third family — a spatial "cluster hum" per story on the
+# `effects` bus, pitched up a pentatonic ladder — was tried and removed: a
+# low drone under the narration read as noise rather than place (the owner
+# muted the bus). The bed and the narration are the demo's whole soundtrack.
 
 # The Biohub mark shown bottom-right: a white glyph on transparency, bundled
 # inside the package (not under demos/data, which the wheel excludes) so the
@@ -1052,30 +1036,20 @@ def overview_panel_html(n_proteins: int) -> str:
 # =============================================================================
 
 
-def hum_frequency_hz(story_index: int) -> float:
-    """Pitch of story ``story_index`` (1-based) on the pentatonic ladder."""
-    semitone = HUM_SEMITONES[(story_index - 1) % len(HUM_SEMITONES)]
-    return HUM_BASE_HZ * 2.0 ** (semitone / 12.0)
-
-
 def add_story_sounds(
     scene: object,
     stories: tuple[Story, ...],
     *,
     narration_dir: Path = NARRATION_CACHE_DIR,
     engine: str | None = None,
-    clusters: Sequence[StoryCluster] | None = None,
-    hum_dir: Path = HUM_CACHE_DIR,
     ambisonic_dir: Path = AMBISONIC_BED_CACHE_DIR,
 ) -> int:
-    """Add the ambient bed, one narration per story slot and one hum per cluster.
+    """Add the ambient bed and one narration per story slot.
 
     Returns the node count. The bed is a cached CC0 download; a network failure
     skips it with a warning rather than failing the build. Narration is
     synthesised through :func:`luxar.demos._narration.synthesise`; when no
     engine is available the stories stay silent (the helper has already warned).
-    Hums need ``clusters`` (for the centre and framing radius) and an AAC encoder
-    (:mod:`luxar.demos._audio_synth`); without one there are simply no hums.
     """
     added = 0
     try:
@@ -1141,43 +1115,13 @@ def add_story_sounds(
         )
         added += 1
 
-    hums = 0
-    if clusters is not None:
-        for k, (s, c) in enumerate(zip(stories, clusters, strict=True), start=1):
-            clip = synthesise_hum(hum_frequency_hz(k), HUM_SECONDS, hum_dir)
-            if clip is None:
-                break
-            camera_distance = story_camera_distance(c, s)
-            scene.add_sound(  # type: ignore[attr-defined]
-                f"hum_{s.key}",
-                clip,
-                hidden={STORY_DIM: k},
-                attach_to=story_node_name(k, s),
-                trigger="continuous",
-                gain=HUM_GAIN,
-                fade_in_ms=1200,
-                fade_out_ms=1200,
-                bus="effects",
-                ref_distance=(HUM_REF_DISTANCE_PER_CAMERA_DISTANCE * camera_distance),
-                max_distance=(HUM_MAX_DISTANCE_PER_CAMERA_DISTANCE * camera_distance),
-                rolloff=1.0,
-                license="CC0",
-                attribution="Hum synthesised at build time (luxar demo)",
-                source_url=NARRATION_SOURCE_URL,
-                layer=True,
-            )
-            added += 1
-            hums += 1
     bed_kind = "no" if bed is None else ("ambisonic" if field is not None else "stereo")
-    aprint(
-        f"🔈 {added} sound node(s): bed {bed_kind}, narration engine "
-        f"{chosen}, {hums} cluster hum(s)"
-    )
+    aprint(f"🔈 {added} sound node(s): bed {bed_kind}, narration engine {chosen}")
     return added
 
 
 def story_node_name(story_index: int, story: Story) -> str:
-    """Name of a story's highlight points node (what its hum attaches to)."""
+    """Name of a story's highlight points node."""
     return f"Story {story_index}: {story.key}"
 
 
@@ -1566,7 +1510,7 @@ def build_stories_scene(
 
             if audio:
                 with asection("Sound layer"):
-                    add_story_sounds(scene, stories, clusters=clusters)
+                    add_story_sounds(scene, stories)
 
     aprint(f"✓ Wrote {n:,} proteins and {len(stories)} stories to {output_path}")
     return n
