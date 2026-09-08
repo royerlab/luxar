@@ -13,9 +13,9 @@ As a free byproduct, an ensemble noise-floor estimator (Laplacian + Haar HH + ba
 Split by phase:
 
 - **`masking.py`** — Bernoulli mask generation (`cv_mask`) and donut-median self-supervision fill (`donut_median_fill`)
-- **`metrics.py`** — Held-out reconstruction metrics (`held_out_psnr`, `held_out_gain_db`, `held_out_psnr_foreground`, `predict_zero_baseline_mse`)
+- **`metrics.py`** — Held-out reconstruction metrics (`held_out_psnr`, `held_out_gain_db`, `held_out_psnr_foreground`, `held_out_psnr_fg_weighted`, `predict_zero_baseline_mse`)
 - **`noise_floor.py`** — Ensemble noise-floor estimation (`estimate_noise_floor` → `NoiseFloor`) and DC-offset estimation (`estimate_floor`)
-- **`content.py`** — Feature content estimation (local-maxima / edges / intensity counts) for splat-density prediction; Otsu foreground masks; auto region selection
+- **`content.py`** — Feature content estimation (local-maxima / edges / intensity counts) for splat-density prediction; Otsu and lightly smoothed foreground masks; auto region selection
 - **`curve_analysis.py`** — K-grid construction (`build_k_grid`), peak detection (`find_k_star` → `HeldOutPeak`), transferable splat-density model (`SplatDensity`, `fit_saturation_exponent` → `ExponentFit`), parametric rate-distortion model (`fit_rd_model` → `RDModel`)
 - **`result.py`** — `CalibrationResult` container with JSON serialisation (non-finite floats round-trip as `null`)
 - **`driver.py`** — Top-level `calibrate` driver (wires together mask → fit → metrics → curve analysis) and `calibrate_saturation_exponent` (multi-scale α fit)
@@ -71,7 +71,7 @@ loaded = CalibrationResult.from_json(Path("cal.json"))
 - Per-K metrics: held-out PSNR/MSE, train PSNR, full PSNR/SSIM
 - `held_out_peak` (`HeldOutPeak`): recommended `k_star`, curve `type`, `confidence_db`, operating point `k_knee`, supporting metadata
 - `noise_floor` (`NoiseFloor`): ensemble `sigma_hat`, component estimators, `psnr_max_db`
-- Optional regime-robust extensions: `held_out_psnr_fg_db`, `held_out_gain_db`, `predict_zero_baseline_mse`, `calibration_region`, `splat_density`, `rd_model`, `exponent_fit`
+- Optional regime-robust extensions: `held_out_psnr_fg_db`, `held_out_psnr_fg_weighted_db`, `foreground_mask_fraction`, `foreground_otsu_threshold`, `fg_bg_ratio`, `held_out_gain_db`, `predict_zero_baseline_mse`, `calibration_region`, `splat_density`, `rd_model`, `exponent_fit`
 - Fitting provenance: `fit_times_seconds`, `fit_config`, `volume_shape`, `volume_dtype`, `timestamp`, optional `splat_paths` (when `--keep-fits`)
 - JSON (de)serialisation: non-finite floats round-trip as `null` → `nan`/`inf`; additive fields hydrate with defaults so old `cal.json` files keep loading
 
@@ -154,8 +154,11 @@ Calibration applies `--floor` (default `"auto"`) **once** to the volume before m
 - **Background-dominated**: On large sparse volumes a trivial predict-zero reconstruction already scores 40-60 dB (most masked voxels are background ~0). Regime-robust alternatives:
   - `held_out_gain_db`: dB improvement over the all-zeros baseline — plateaus meaningfully (not inflated by trivially-reconstructed background).
   - `held_out_psnr_foreground`: Held-out PSNR restricted to voxels that are both held out AND foreground (Otsu thresholded).
+  - `held_out_psnr_fg_weighted_db`: lightly-smoothed Otsu foreground plus controlled background weight; prefer this for sparse or deconvolved volumes. `fg_bg_ratio=1` gives equal total foreground/background weight over held-out voxels.
 
-**Default K* selection**: Still uses `psnr_minmax` (additive). The alternatives are recorded in `CalibrationResult` fields (`held_out_gain_db`, `held_out_psnr_fg_db`, `predict_zero_baseline_mse`, `k_star_metric`, `held_out_peak_selected`) but not used by default.
+`held_out_gain_db` differs from `psnr_minmax` only by a constant because its predict-zero baseline does not vary with K, so it reports a useful diagnostic scale but selects the same K*.
+
+**Default K* selection**: Still uses `psnr_minmax` (additive). The alternatives are recorded in `CalibrationResult` fields (`held_out_gain_db`, `held_out_psnr_fg_db`, `held_out_psnr_fg_weighted_db`, `foreground_mask_fraction`, `foreground_otsu_threshold`, `fg_bg_ratio`, `predict_zero_baseline_mse`, `k_star_metric`, `held_out_peak_selected`) but not used by default.
 
 ### Peak Detection Hybrid Rule
 
