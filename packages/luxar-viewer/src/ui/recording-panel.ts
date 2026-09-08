@@ -179,7 +179,7 @@ export class RecordingPanel {
     Object.assign(this.gui.domElement.style, {
       position: 'fixed',
       top: 'auto',
-      bottom: '20px',
+      bottom: 'calc(20px + env(safe-area-inset-bottom, 0px))',
       left: '20px',
       zIndex: String(config.ui.zIndex.recordingPanel),
     });

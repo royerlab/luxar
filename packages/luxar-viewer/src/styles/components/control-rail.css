@@ -67,6 +67,17 @@
   opacity: 1;
 }
 
+/* Wrapper around the item buttons + separators (ui/control-rail.ts). On a
+   fine pointer it is layout-transparent, so the buttons participate in the
+   rail's flex column exactly as direct children would; under a coarse
+   pointer it becomes the scroll box that keeps a ~600px rail inside a
+   ~340px landscape phone (components/coarse-pointer.css). Popovers,
+   flyouts, the footer and the collapse handle stay OUTSIDE it, so scrolling
+   never clips them. */
+.luxar-control-rail__items {
+  display: contents;
+}
+
 .luxar-control-rail__sep {
   height: 1px;
   margin: 3px 6px;

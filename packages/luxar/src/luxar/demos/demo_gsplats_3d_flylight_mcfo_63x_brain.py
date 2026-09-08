@@ -90,7 +90,7 @@ PIPELINE (how the hosted refit was produced; re-run with ``--recompute``):
     3. Gain-balance the three signal channels at p99.99 and take the per-voxel
        maximum as the fit target. Channel_3 (nc82 neuropil reference) is
        EXCLUDED — at 10-19% occupancy it is not sparse and would dominate.
-    4. ``gsplat cal --auto-region --feature-metric edges --k-star-metric gain``
+    4. ``gsplat cal --auto-region --feature-metric edges``
        -> a region-scoped density (K* 128,000, confidence 13.35 dB).
     5. ``gsplat fit --tiling content --cal … --flat --floor auto`` -> 660,035
        splats over 75 content-balanced boxes.
@@ -702,8 +702,6 @@ def recompute_archive() -> Path:
                 "--auto-region",
                 "--feature-metric",
                 "edges",
-                "--k-star-metric",
-                "gain",
                 "--device",
                 detect_device(),
             )

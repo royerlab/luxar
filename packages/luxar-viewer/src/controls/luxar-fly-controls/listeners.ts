@@ -7,6 +7,12 @@
  * removes them. The orchestrator stores the disposer and calls it from
  * `dispose()`.
  *
+ * Pointer listeners carry the touch path (fly mode's finger vocabulary,
+ * `input/touch.ts`); the mouse path stays on the legacy mouse events so a
+ * mouse user's behaviour is byte-for-byte unchanged. Like the mouse move/up
+ * pair, pointer move/up/cancel live on `window` so a drag may leave the
+ * canvas.
+ *
  * Keyboard listeners are skipped when `externalInputManagement` is set:
  * the caller (InputContextManager) routes keys via the orchestrator's
  * public `handleKeyDown` / `handleKeyUp` methods instead.
@@ -22,6 +28,11 @@ export interface FlyListenersCtx {
   onMouseUp: (e: MouseEvent) => void;
   onMouseMove: (e: MouseEvent) => void;
   onWheel: (e: WheelEvent) => void;
+  /** Touch-like pointers (the orchestrator filters by pointer type). */
+  onPointerDown: (e: PointerEvent) => void;
+  onPointerMove: (e: PointerEvent) => void;
+  /** Also receives `pointercancel`. */
+  onPointerUp: (e: PointerEvent) => void;
 }
 
 /**
@@ -42,6 +53,11 @@ export function attachListeners(ctx: FlyListenersCtx): () => void {
   window.addEventListener('mousemove', ctx.onMouseMove);
   ctx.domElement.addEventListener('wheel', ctx.onWheel, { passive: false });
   ctx.domElement.addEventListener('contextmenu', contextmenu);
+  // Touch (pointer events; the orchestrator ignores mouse-typed ones).
+  ctx.domElement.addEventListener('pointerdown', ctx.onPointerDown);
+  window.addEventListener('pointermove', ctx.onPointerMove);
+  window.addEventListener('pointerup', ctx.onPointerUp);
+  window.addEventListener('pointercancel', ctx.onPointerUp);
 
   return () => {
     if (!ctx.externalInputManagement) {
@@ -53,5 +69,9 @@ export function attachListeners(ctx: FlyListenersCtx): () => void {
     window.removeEventListener('mousemove', ctx.onMouseMove);
     ctx.domElement.removeEventListener('wheel', ctx.onWheel);
     ctx.domElement.removeEventListener('contextmenu', contextmenu);
+    ctx.domElement.removeEventListener('pointerdown', ctx.onPointerDown);
+    window.removeEventListener('pointermove', ctx.onPointerMove);
+    window.removeEventListener('pointerup', ctx.onPointerUp);
+    window.removeEventListener('pointercancel', ctx.onPointerUp);
   };
 }

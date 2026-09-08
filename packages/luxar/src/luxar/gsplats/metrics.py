@@ -389,12 +389,9 @@ def otsu_threshold(target: torch.Tensor, bins: int = _OTSU_BINS) -> float:
     """Otsu's between-class-variance threshold, on the input device.
 
     Reimplemented here rather than delegating to ``skimage.filters`` because
-    scikit-image lives in the ``demos`` extra, and the existing
-    ``calibration.content._otsu_threshold`` degrades to ``V.min()`` when the
-    import fails. A silent fallback is tolerable for a seeding heuristic and
-    is not tolerable for a published metric: it would make the *definition* of
-    foreground depend on which extras happened to be installed. This version
-    has no optional dependency, so the number means one thing everywhere.
+    scikit-image lives in the ``demos`` extra. Calibration now shares this
+    dependency-free implementation, so the *definition* of foreground does not
+    depend on which extras happened to be installed.
 
     Follows scikit-image's formulation exactly (cumulative class weights and
     means over histogram bin *centres*, threshold taken at the argmax of the

@@ -14,6 +14,9 @@ import * as THREE from 'three';
 import {
   handleTouchStart,
   handleTouchMove,
+  wrapAngle,
+  TWIST_ROLL_GAIN,
+  TWIST_ROLL_SIGN,
 } from '../../../../../controls/luxar-orbit-controls/input/touch';
 import type {
   OrbitInputCtx,
@@ -36,7 +39,10 @@ function makePointerEvent(
 function makeCtx(
   pointers: PointerEvent[],
   overrides: Partial<OrbitInputCtx> = {}
-): { ctx: OrbitInputCtx; state: { action: ControlAction; zoomDelta: number } } {
+): {
+  ctx: OrbitInputCtx;
+  state: { action: ControlAction; zoomDelta: number; rollDelta: number };
+} {
   const domElement = document.createElement('div');
   Object.defineProperty(domElement, 'clientWidth', { configurable: true, get: () => 800 });
   Object.defineProperty(domElement, 'clientHeight', { configurable: true, get: () => 600 });
@@ -52,7 +58,7 @@ function makeCtx(
     toJSON: () => ({}),
   }));
 
-  const state = { action: 'none' as ControlAction, zoomDelta: 0 };
+  const state = { action: 'none' as ControlAction, zoomDelta: 0, rollDelta: 0 };
   const pointerPositions = new Map<number, THREE.Vector2>();
   for (const p of pointers) {
     pointerPositions.set(p.pointerId, new THREE.Vector2(p.clientX, p.clientY));
@@ -88,6 +94,9 @@ function makeCtx(
     },
     addZoomDelta: (d) => {
       state.zoomDelta += d;
+    },
+    addRollDelta: (d) => {
+      state.rollDelta += d;
     },
     pan: vi.fn(),
     dispatch: vi.fn(),
@@ -181,6 +190,25 @@ describe('handleTouchMove — two-finger pinch direction', () => {
     handleTouchMove(ctx, p2);
 
     expect(state.zoomDelta).toBeGreaterThan(0);
+  });
+
+  it('does not poison zoom when coincident contacts separate', () => {
+    const p1 = makePointerEvent({ pointerId: 1, clientX: 100, clientY: 100 });
+    const p2 = makePointerEvent({ pointerId: 2, clientX: 100, clientY: 100 });
+    const { ctx, state } = makeCtx([p1, p2]);
+    handleTouchStart(ctx);
+    ctx.pointerPositions.get(2)!.set(200, 100);
+    state.action = 'zoom';
+
+    handleTouchMove(ctx, p2);
+    expect(state.zoomDelta).toBe(0);
+    expect(state.rollDelta).toBe(0);
+    expect(Number.isFinite(state.zoomDelta)).toBe(true);
+
+    ctx.pointerPositions.get(2)!.set(300, 100);
+    handleTouchMove(ctx, p2);
+    expect(state.zoomDelta).toBeCloseTo(-1, 6);
+    expect(state.rollDelta).toBe(0);
   });
 });
 
@@ -338,5 +366,119 @@ describe('handleTouchStart — zero-finger boundary (controls.md G22)', () => {
     const { ctx, state } = makeCtx([p1, p2, p3]);
     handleTouchStart(ctx);
     expect(state.action).toBe('none');
+  });
+});
+
+describe('two-finger twist → roll', () => {
+  function twoFingers(a: [number, number], b: [number, number]) {
+    return [
+      makePointerEvent({ pointerId: 1, clientX: a[0], clientY: a[1] }),
+      makePointerEvent({ pointerId: 2, clientX: b[0], clientY: b[1] }),
+    ];
+  }
+
+  it('a pure rotation of the finger pair at constant distance rolls and does not zoom', () => {
+    // Fingers on a circle of radius 100 around (400, 300): start horizontal…
+    const pointers = twoFingers([300, 300], [500, 300]);
+    const { ctx, state } = makeCtx(pointers);
+    handleTouchStart(ctx);
+    expect(state.action).toBe('zoom');
+    // …then rotate the pair by 90° (visually clockwise on a y-down screen).
+    ctx.pointerPositions.get(1)!.set(400, 200);
+    ctx.pointerPositions.get(2)!.set(400, 400);
+    handleTouchMove(ctx, pointers[0]);
+    expect(state.zoomDelta).toBeCloseTo(0, 6);
+    expect(state.rollDelta).toBeCloseTo(TWIST_ROLL_SIGN * TWIST_ROLL_GAIN * (Math.PI / 2), 6);
+    expect(ctx.pan).toHaveBeenCalledWith(0, 0);
+  });
+
+  it('a pure pinch (radial motion) zooms and does not roll', () => {
+    const pointers = twoFingers([300, 300], [500, 300]);
+    const { ctx, state } = makeCtx(pointers);
+    handleTouchStart(ctx);
+    ctx.pointerPositions.get(1)!.set(200, 300);
+    ctx.pointerPositions.get(2)!.set(600, 300);
+    handleTouchMove(ctx, pointers[0]);
+    expect(state.rollDelta).toBe(0);
+    expect(state.zoomDelta).toBeLessThan(0); // pinch-out = zoom in = negative
+  });
+
+  it('accumulates across moves and wraps across the ±π seam without a jump', () => {
+    // Start near +π (finger 1 to the left of finger 2 is angle π; nudge so the
+    // pair sits just below +π, then rotate past it).
+    const pointers = twoFingers([500, 301], [300, 299]); // atan2(2, 200) ≈ +0.01 … use reversed order to land near π
+    const { ctx, state } = makeCtx(pointers);
+    handleTouchStart(ctx);
+    const startAngle = ctx.dollyStart.x;
+    // Rotate the pair by a small positive step that crosses +π when startAngle≈π.
+    ctx.pointerPositions.get(1)!.set(500, 299);
+    ctx.pointerPositions.get(2)!.set(300, 301);
+    handleTouchMove(ctx, pointers[0]);
+    const step = wrapAngle(ctx.dollyStart.x - startAngle);
+    expect(Math.abs(step)).toBeLessThan(0.1); // a small twist, not a ~2π jump
+    expect(state.rollDelta).toBeCloseTo(TWIST_ROLL_SIGN * TWIST_ROLL_GAIN * step, 6);
+  });
+
+  it('does not roll when rotation is disabled (ortho)', () => {
+    const pointers = twoFingers([300, 300], [500, 300]);
+    const { ctx, state } = makeCtx(pointers, { enableRotate: false });
+    handleTouchStart(ctx);
+    ctx.pointerPositions.get(1)!.set(400, 200);
+    ctx.pointerPositions.get(2)!.set(400, 400);
+    handleTouchMove(ctx, pointers[0]);
+    expect(state.rollDelta).toBe(0);
+  });
+});
+
+describe('wrapAngle', () => {
+  it('maps into (-π, π]', () => {
+    expect(wrapAngle(0)).toBe(0);
+    expect(wrapAngle(Math.PI)).toBeCloseTo(Math.PI, 12);
+    expect(wrapAngle(-Math.PI)).toBeCloseTo(Math.PI, 12);
+    expect(wrapAngle(Math.PI + 0.1)).toBeCloseTo(-Math.PI + 0.1, 12);
+    expect(wrapAngle(-Math.PI - 0.1)).toBeCloseTo(Math.PI - 0.1, 12);
+    expect(wrapAngle(3 * Math.PI)).toBeCloseTo(Math.PI, 12);
+  });
+
+  it('ignores non-finite inputs without looping or poisoning roll', () => {
+    expect(wrapAngle(Infinity)).toBe(0);
+    expect(wrapAngle(-Infinity)).toBe(0);
+    expect(wrapAngle(Number.NaN)).toBe(0);
+  });
+});
+
+describe('re-seeding from live positions (a finger lifted out of a pinch)', () => {
+  it("one-finger rotate seeds rotateStart from the survivor's CURRENT position, not its pointerdown", () => {
+    const p = makePointerEvent({ pointerId: 1, clientX: 100, clientY: 100 });
+    const { ctx } = makeCtx([p]);
+    // The finger has travelled to (400, 300) — the viewport centre — since landing.
+    ctx.pointerPositions.get(1)!.set(400, 300);
+    handleTouchStart(ctx);
+    expect(ctx.rotateStart.x).toBeCloseTo(0, 6);
+    expect(ctx.rotateStart.y).toBeCloseTo(0, 6);
+  });
+
+  it('one-finger pan seeds panStart from the live position too', () => {
+    const p = makePointerEvent({ pointerId: 1, clientX: 100, clientY: 100 });
+    const { ctx } = makeCtx([p], { enableRotate: false });
+    ctx.pointerPositions.get(1)!.set(250, 75);
+    handleTouchStart(ctx);
+    expect(ctx.panStart.x).toBe(250);
+    expect(ctx.panStart.y).toBe(75);
+  });
+
+  it('two-finger seeding uses live positions for distance, angle and midpoint', () => {
+    const pointers = [
+      makePointerEvent({ pointerId: 1, clientX: 0, clientY: 0 }),
+      makePointerEvent({ pointerId: 2, clientX: 10, clientY: 0 }),
+    ];
+    const { ctx } = makeCtx(pointers);
+    ctx.pointerPositions.get(1)!.set(300, 300);
+    ctx.pointerPositions.get(2)!.set(300, 500);
+    handleTouchStart(ctx);
+    expect(ctx.dollyStart.y).toBeCloseTo(200, 6); // distance
+    expect(ctx.dollyStart.x).toBeCloseTo(Math.atan2(-200, 0), 6); // angle of (p0 - p1)
+    expect(ctx.panStart.x).toBe(300);
+    expect(ctx.panStart.y).toBe(400);
   });
 });

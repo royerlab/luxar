@@ -1,6 +1,7 @@
 import { log, Modules } from '../../utils/log';
 import { config } from '../../config';
 import { withFetchGate } from '../../utils/fetch-concurrency';
+import { getErrorMessage } from '../../utils/format-error';
 import { sha256Hex } from './sha256';
 
 const INITIAL_RETRY_DELAY_MS = 50;
@@ -199,8 +200,10 @@ export async function fetchWithRetry(
   }
 
   if (lastError) {
-    const message = lastError instanceof Error ? lastError.message : String(lastError);
-    log.warning(Modules.CACHE, `Fetch failed after ${maxAttempts} attempt(s): ${message}`);
+    log.warning(
+      Modules.CACHE,
+      `Fetch failed after ${maxAttempts} attempt(s): ${getErrorMessage(lastError)}`
+    );
   }
   return undefined;
 }

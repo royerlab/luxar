@@ -17,6 +17,18 @@ if TYPE_CHECKING:
     from ..scene import Scene
 
 
+def _validate_media_size(
+    size: Tuple[float, Optional[float]],
+) -> list[Optional[float]]:
+    if len(size) != 2 or size[0] is None or size[0] <= 0:
+        raise ValueError(
+            f"size must be (width, height-or-None) with width > 0, got {size}"
+        )
+    if size[1] is not None and size[1] <= 0:
+        raise ValueError(f"size height must be > 0 or None, got {size[1]}")
+    return [float(size[0]), None if size[1] is None else float(size[1])]
+
+
 def add_text_impl(
     scene: "Scene",
     text: str,
@@ -105,7 +117,7 @@ def add_image_impl(
     position: Tuple[float, float],
     *,
     name: Optional[str] = None,
-    size: Optional[Tuple[float, float]] = None,
+    size: Optional[Tuple[float, Optional[float]]] = None,
     opacity: float = 1.0,
     anchor: str = "top-left",
     blend_mode: str = "normal",
@@ -149,7 +161,9 @@ def add_image_impl(
         "z_index": len(scene._overlays),
     }
     if size is not None:
-        attrs["size"] = list(size)
+        # A None height lets the viewer size the image from its own aspect
+        # ratio (CSS `height: auto`), the same contract as add_video.
+        attrs["size"] = _validate_media_size(size)
     if validated_range is not None:
         attrs["visible_range"] = validated_range
 
@@ -210,14 +224,7 @@ def add_video_impl(
         # Browsers refuse un-muted autoplay without a user gesture; a video that
         # never starts is worse than one that starts silent.
         raise ValueError("autoplay=True requires muted=True (browser autoplay policy)")
-    if size is not None:
-        if len(size) != 2 or size[0] is None or size[0] <= 0:
-            raise ValueError(
-                f"size must be (width, height-or-None) with width > 0, got {size}"
-            )
-        if size[1] is not None and size[1] <= 0:
-            raise ValueError(f"size height must be > 0 or None, got {size[1]}")
-
+    validated_size = _validate_media_size(size) if size is not None else None
     video_bytes, fmt = validate_video_input(video)
     video_filename = f"video.{fmt}"
     files: Dict[str, bytes] = {video_filename: video_bytes}
@@ -243,9 +250,9 @@ def add_video_impl(
         poster_filename = f"poster.{poster_fmt}"
         files[poster_filename] = poster_bytes
         attrs["poster_file"] = poster_filename
-    if size is not None:
+    if validated_size is not None:
         # A None height keeps the video's own aspect ratio (CSS height:auto).
-        attrs["size"] = [float(size[0]), None if size[1] is None else float(size[1])]
+        attrs["size"] = validated_size
     if validated_range is not None:
         attrs["visible_range"] = validated_range
 

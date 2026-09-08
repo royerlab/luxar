@@ -42,3 +42,7 @@
 /* 4. Theme Overrides - theme-specific adjustments */
 @import './themes/frosted-glass.css';
 @import './themes/liquid-glass.css';
+
+/* 5. Coarse-pointer / touch adaptations — media-gated only; last so its clamps
+   win over the component defaults at equal specificity. */
+@import './components/coarse-pointer.css';

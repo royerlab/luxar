@@ -169,7 +169,8 @@ how you fit). Pass `--floor none` to reproduce the legacy hard-min numbers.
 ### Regime-robust extensions
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--k-star-metric` | psnr_minmax | `psnr_minmax` / `psnr_foreground` / `gain` |
+| `--k-star-metric` | psnr_minmax | `psnr_minmax` / `psnr_foreground` / `psnr_fg_weighted` / `gain`; prefer `psnr_fg_weighted` for sparse or deconvolved volumes. `gain` is diagnostic and selects identically to `psnr_minmax` because its baseline is constant across K |
+| `--fg-bg-ratio` | 1.0 | foreground:background total-weight ratio for `psnr_fg_weighted`; 1 gives equal total weight over the held-out subset |
 | `--auto-region` / `--no-auto-region` | off | calibrate on a content-rich sub-region |
 | `--region-size` | 256 | auto-region edge (voxels) |
 | `--region-strategy` | densest | `densest` / `median` |

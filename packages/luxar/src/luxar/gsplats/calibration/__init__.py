@@ -36,6 +36,7 @@ from .content import (
     count_features,
     feature_threshold,
     foreground_mask_otsu,
+    foreground_mask_otsu_smoothed,
     select_calibration_region,
 )
 from .curve_analysis import (
@@ -57,6 +58,7 @@ from .masking import cv_mask, donut_median_fill
 from .metrics import (
     held_out_gain_db,
     held_out_psnr,
+    held_out_psnr_fg_weighted,
     held_out_psnr_foreground,
     predict_zero_baseline_mse,
 )
@@ -93,8 +95,10 @@ __all__ = [
     "fit_rd_model",
     "fit_saturation_exponent",
     "foreground_mask_otsu",
+    "foreground_mask_otsu_smoothed",
     "held_out_gain_db",
     "held_out_psnr",
+    "held_out_psnr_fg_weighted",
     "held_out_psnr_foreground",
     "predict_zero_baseline_mse",
     "select_calibration_region",

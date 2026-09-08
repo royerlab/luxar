@@ -114,7 +114,18 @@ ergonomics. In both mappings `Shift+left` performs the opposite action.
   too. Composes with the user's own zoom rather than fighting it — see
   `luxar-orbit-controls/math/auto-dolly.ts`
 - Configurable mouse button mapping (CAD/Blender vs. natural-drag)
-- Touch support (1-finger rotate, 2-finger pinch-zoom + pan)
+- Touch support — the same finger vocabulary the mobile UI is built on:
+  1-finger drag rotates (arcball); 2-finger pinch zooms, 2-finger drag pans
+  and 2-finger twist rolls around the view axis, all in one gesture. Lifting
+  one finger out of a pinch re-seeds a one-finger rotate from the surviving
+  finger's current position instead of ending the gesture. Touch
+  `pointerdown` is `preventDefault`ed so the browser's compatibility mouse
+  events never double-drive the mouse-only paths. A pen counts as a finger
+  on a coarse-pointer device (iPad + Pencil, primary tip; the barrel button
+  keeps the mouse mapping) and as a mouse on a fine-pointer desktop —
+  `utils/input-capabilities.isTouchLikePointer`. The canvas must be
+  `touch-action: none` for any of this to reach the controls
+  (`core/app/interaction/canvas-gesture-ownership.ts`)
 
 ### 2. Fly Controls
 
@@ -134,6 +145,21 @@ ergonomics. In both mappings `Shift+left` performs the opposite action.
 | Shift          | 2x speed boost                  |
 | Arrow keys     | Look up/down/left/right         |
 | I              | Toggle inertial mode            |
+| 1-finger drag  | Look (touch)                    |
+| 2-finger drag  | Strafe (touch)                  |
+| Pinch          | Move forward/backward (touch)   |
+| 2-finger twist | Roll (touch)                    |
+
+Touch uses the orbit controls' complete finger vocabulary (one finger turns,
+two fingers translate / zoom / roll) and drives the SAME physics state as the
+mouse path (`velocity`, `angularVelocity`, `orientation`), so inertia and
+damping behave identically — `luxar-fly-controls/input/touch.ts`. Pinch thrust
+is logarithmic in the finger distance, so pinch-in exactly undoes pinch-out. A
+touch `pointerdown` is `preventDefault`ed so the browser's compatibility mouse
+events cannot start a phantom left-drag strafe under a tap. The canvas must be
+`touch-action: none` for multi-touch gestures to reach the controls
+(`core/app/interaction/canvas-gesture-ownership.ts`); mouse-typed pointer events
+are ignored by the touch path and keep the legacy mouse listeners.
 
 ### 3. Ortho Controls
 
@@ -179,6 +205,7 @@ class ControlsManager extends THREE.EventDispatcher {
   setAutoRotateSpeed(speed: number): void;
   getAutoRotate(): boolean;
   isAutoRotateActive(): boolean;
+  isGestureActive(): boolean; // active pointer gesture keeps the render loop awake
   setNaturalDrag(enabled: boolean): void; // swap LEFT↔RIGHT (orbit only)
   getNaturalDrag(): boolean;
 

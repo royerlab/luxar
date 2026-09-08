@@ -128,14 +128,23 @@ export class ControlRail {
       wake: () => this.wake(),
     });
 
+    // Item buttons + separators live in one wrapper. It is `display: contents`
+    // on a fine pointer (layout-transparent) and becomes the scroll box on a
+    // coarse pointer, so a landscape phone can reach every item without the
+    // rail's overflow ever clipping the popovers/flyouts appended to the
+    // root (see components/coarse-pointer.css).
+    const itemsEl = document.createElement('div');
+    itemsEl.className = 'luxar-control-rail__items';
+    itemsEl.setAttribute('role', 'presentation');
     for (const item of items) {
       if (item.separatorBefore) {
         const sep = document.createElement('div');
         sep.className = 'luxar-control-rail__sep';
-        this.root.appendChild(sep);
+        itemsEl.appendChild(sep);
       }
-      this.root.appendChild(this.buildButton(item));
+      itemsEl.appendChild(this.buildButton(item));
     }
+    this.root.appendChild(itemsEl);
 
     // Docked footer (e.g. the performance readout): sits just below the last
     // item; its own visibility is controlled by its owner (the Performance

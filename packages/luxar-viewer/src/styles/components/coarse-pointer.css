@@ -1,0 +1,245 @@
+/**
+ * Coarse-pointer / touch adaptations (phones, tablets, iPhone, iPad).
+ *
+ * CONTRACT (enforced by tests/unit/styles/coarse-pointer-css.test.ts):
+ *   - The top level of this file contains ONLY `@media` blocks keyed on the
+ *     pointer / hover media features (`(pointer: coarse)`, `(hover: none)`,
+ *     `(any-hover: hover)`), so a mouse-and-keyboard machine receives byte-
+ *     identical styling with or without this file.
+ *   - Every touch adaptation in the stylesheet tree lives HERE, not scattered
+ *     through the component files, so the desktop CSS stays readable as the
+ *     desktop CSS and one place answers "what changes on a phone?".
+ *   - Rules key on the POINTER, never on viewport width alone: a narrow
+ *     desktop window is not a touch device and a landscape tablet is not
+ *     narrow.
+ *
+ * Why two features. `(pointer: coarse)` = the primary pointer is a finger:
+ * targets grow, panels clamp to the viewport, safe areas are honoured.
+ * `(hover: none)` = no pointer can hover: hover-revealed affordances are dead,
+ * so the rail must not idle-dim and tooltips need another route. An iPad with
+ * a Magic Keyboard trackpad matches the first but NOT the second, and keeps
+ * hover-driven rail visibility. Rail labels are handled separately below
+ * because the scrolling items box must clip overflow.
+ *
+ * Viewport units: `dvh` (dynamic viewport height) instead of `vh` — on iOS
+ * Safari `vh` is the LARGE viewport (toolbars retracted), so a `70vh` panel
+ * bottom-clips under the toolbar while it is visible; `dvh` tracks the visible
+ * area. Each `dvh` rule sits under `@supports (height: 100dvh)` so an engine
+ * without it keeps the corresponding `vh` value outside that block — in the
+ * component file when it already has one, otherwise in the plain coarse-
+ * pointer block. `env(safe-area-inset-*)` resolves to 0 unless `index.html`
+ * declares `viewport-fit=cover`, which it does; embedders decide that on their
+ * own page.
+ *
+ * Sanctioned `!important` (UI Design Guide §13 / §15.6): the docked-panel
+ * gutter below restates the control-rail docking override, which is already
+ * `!important` because the panels set `left` inline.
+ */
+
+/* =========================================================================
+   Coarse primary pointer: viewport clamps, safe areas, tap targets.
+   ========================================================================= */
+@media (pointer: coarse) {
+  /* ---- Control rail: honour the left safe area (landscape notch). ---- */
+  .luxar-control-rail {
+    left: calc(12px + env(safe-area-inset-left, 0px));
+    max-height: calc(100vh - 2 * var(--luxar-spacing-8, 16px));
+  }
+  .luxar-control-rail.is-collapsed {
+    transform: translateY(calc(50vh - 16px - env(safe-area-inset-bottom, 0px) - 100%));
+  }
+
+  /* The rail's items box scrolls when the rail is taller than the viewport
+     (a landscape phone is ~340px tall; the rail is ~600px). On a fine pointer
+     this element is `display: contents` (control-rail.css) and the buttons
+     sit directly in the rail's flex column, byte-identical to before. */
+  .luxar-control-rail__items {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden auto;
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+    /* Keep the active pip (`.is-active::after`, 3px at left -6px) inside the
+       scroll box instead of clipped by its overflow. */
+    margin: 0 -6px;
+    padding: 0 6px;
+  }
+  .luxar-control-rail__items::-webkit-scrollbar {
+    display: none;
+  }
+  .luxar-control-rail__items > .luxar-control-rail__btn,
+  .luxar-control-rail__items > .luxar-control-rail__sep,
+  .luxar-control-rail > .luxar-control-rail__btn,
+  .luxar-control-rail > .luxar-perf {
+    flex: 0 0 auto;
+  }
+  .luxar-control-rail__items .luxar-control-rail__tip {
+    display: none;
+  }
+  .luxar-control-rail.is-collapsed .luxar-control-rail__items {
+    display: none;
+  }
+  .luxar-control-rail__popover-body {
+    width: min(264px, calc(100vw - 73px - 12px - env(safe-area-inset-left, 0px)));
+  }
+
+  /* ---- Fixed-width panels never wider than the viewport. ---- */
+  .luxar-help-overlay {
+    width: min(400px, calc(100vw - 2 * var(--luxar-spacing-10, 20px)));
+    top: calc(var(--luxar-spacing-10, 20px) + env(safe-area-inset-top, 0px));
+    right: calc(var(--luxar-spacing-10, 20px) + env(safe-area-inset-right, 0px));
+  }
+  .luxar-recording-indicator {
+    top: calc(var(--luxar-spacing-10, 20px) + env(safe-area-inset-top, 0px));
+    right: calc(var(--luxar-spacing-10, 20px) + env(safe-area-inset-right, 0px));
+  }
+  .luxar-data-monitor--expanded {
+    width: min(600px, calc(100vw - 2 * var(--luxar-spacing-10, 20px)));
+  }
+  .luxar-layers-panel {
+    top: calc(var(--luxar-spacing-10, 20px) + env(safe-area-inset-top, 0px));
+    max-height: calc(
+      100vh - 40px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)
+    );
+  }
+  .luxar-gui,
+  .luxar-gui__scroll {
+    max-height: calc(
+      100vh - 40px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)
+    );
+  }
+  .luxar-data-monitor--top-left,
+  .luxar-data-monitor--bottom-left {
+    left: calc(var(--luxar-spacing-10, 20px) + env(safe-area-inset-left, 0px));
+  }
+  .luxar-data-monitor--top-right,
+  .luxar-data-monitor--bottom-right {
+    right: calc(var(--luxar-spacing-10, 20px) + env(safe-area-inset-right, 0px));
+  }
+  .luxar-data-monitor--top-left,
+  .luxar-data-monitor--top-right {
+    top: calc(var(--luxar-spacing-10, 20px) + env(safe-area-inset-top, 0px));
+  }
+  .luxar-data-monitor--bottom-left,
+  .luxar-data-monitor--bottom-right {
+    bottom: calc(var(--luxar-spacing-10, 20px) + env(safe-area-inset-bottom, 0px));
+  }
+  .luxar-debug-console {
+    width: min(600px, calc(100vw - 73px - var(--luxar-spacing-10, 20px)));
+    height: min(400px, 60vh);
+    bottom: calc(var(--luxar-spacing-10, 20px) + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* ---- Rail gutter + safe area for the docked panels (the docking rule in
+     control-rail.css is `!important` because the panels set `left` inline;
+     this restates it with the inset). ---- */
+  .luxar-has-control-rail .luxar-gui,
+  .luxar-has-control-rail .luxar-layers-panel {
+    left: calc(73px + env(safe-area-inset-left, 0px)) !important;
+  }
+  .luxar-has-control-rail .luxar-debug-console {
+    left: calc(73px + env(safe-area-inset-left, 0px));
+  }
+  .luxar-control-rail-hint {
+    left: calc(73px + env(safe-area-inset-left, 0px));
+  }
+
+  /* ---- Bottom strip: clear the home indicator. ---- */
+  .luxar-dimension-sliders {
+    bottom: calc(var(--luxar-spacing-10, 20px) + env(safe-area-inset-bottom, 0px));
+  }
+  .luxar-toast {
+    bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  }
+  .luxar-scale-bar {
+    bottom: calc(var(--luxar-spacing-12, 24px) + env(safe-area-inset-bottom, 0px));
+    left: calc(var(--luxar-spacing-10, 20px) + env(safe-area-inset-left, 0px));
+  }
+  .luxar-colormap-legend {
+    bottom: calc(48px + env(safe-area-inset-bottom, 0px));
+    right: calc(var(--luxar-spacing-8, 16px) + env(safe-area-inset-right, 0px));
+  }
+  .luxar-resolution-indicator {
+    bottom: calc(var(--luxar-spacing-10, 20px) + env(safe-area-inset-bottom, 0px));
+    right: calc(var(--luxar-spacing-10, 20px) + env(safe-area-inset-right, 0px));
+  }
+
+  /* ---- Buttons: no 300ms double-tap-zoom delay, no page zoom on a
+     double-tap over UI. Canvas gesture ownership (`touch-action: none`) is
+     planned separately. ---- */
+  .luxar-control-rail__btn,
+  .luxar-control-rail__chip,
+  .luxar-panel-close,
+  .luxar-gui__button,
+  .luxar-dimension-slider__play-btn,
+  .luxar-layer-row,
+  .luxar-data-monitor__tab {
+    touch-action: manipulation;
+  }
+}
+
+/* Visible-viewport heights: every `vh` bound a panel uses becomes `dvh` so
+   iOS Safari's dynamic toolbar no longer hides the panel's bottom edge. */
+@media (pointer: coarse) {
+  @supports (height: 100dvh) {
+    .luxar-control-rail {
+      max-height: calc(100dvh - 2 * var(--luxar-spacing-8, 16px));
+    }
+    .luxar-control-rail.is-collapsed {
+      transform: translateY(calc(50dvh - 16px - env(safe-area-inset-bottom, 0px) - 100%));
+    }
+    .luxar-control-rail__popover-body {
+      max-height: calc(100dvh - 32px);
+    }
+    .luxar-help-overlay {
+      max-height: 82dvh;
+    }
+    .luxar-layers-panel {
+      max-height: calc(
+        100dvh - 40px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)
+      );
+    }
+    .luxar-data-monitor--expanded {
+      max-height: 80dvh;
+    }
+    .luxar-dataset-browser {
+      max-height: 80dvh;
+    }
+    .luxar-debug-console {
+      height: min(400px, 60dvh);
+    }
+    .luxar-dimension-sliders {
+      max-height: min(360px, 45dvh);
+    }
+    .luxar-gui,
+    .luxar-gui__scroll {
+      max-height: calc(
+        100dvh - 40px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)
+      );
+    }
+  }
+}
+
+/* =========================================================================
+   No pointer can hover: the rail cannot be woken or revealed by hovering.
+   (A touch-only device never emits ambient `pointermove`, so the idle-dim
+   would otherwise be permanent and the collapsed grip near-invisible.)
+   ========================================================================= */
+@media (hover: none) {
+  .luxar-control-rail,
+  .luxar-control-rail.is-collapsed {
+    opacity: 1;
+  }
+  /* Fullscreen keeps the rail out of the way but reachable: on a fine pointer
+     it hides completely and reveals on hover; without hover it must stay
+     findable. */
+  .luxar-control-rail.is-fullscreen {
+    opacity: 0.35;
+  }
+  .luxar-control-rail.is-fullscreen.is-awake {
+    opacity: 1;
+  }
+}

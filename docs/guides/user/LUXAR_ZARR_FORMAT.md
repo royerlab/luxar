@@ -1473,11 +1473,13 @@ Overlays are NOT part of the 3D scene graph — they use normalized screen coord
   "type": "overlay_image",
   "position": [0.9, 0.05],
   "image_file": "image.png",
-  "size": [0.1, 0.05],
+  "size": [0.1, null],
   "blend_mode": "normal",
   "z_index": 1
 }
 ```
+As for video overlays, a `null` height in `size` keeps the image's own aspect
+ratio.
 The image file is stored directly in the overlay's zarr directory. Compiler-written
 overlays use exactly `image.png`, `image.jpeg`, or `image.webp`, matching the PNG,
 JPEG, or WebP payload bytes. These canonical names avoid case-insensitive metadata
@@ -2169,6 +2171,9 @@ When using spatial indices:
 Every data array self-describes its on-disk encoding via an `encoding` attr
 in its `.zattrs` (`{"name": "<scheme>", ...}`); readers dispatch on
 `encoding.name` and decode back to float32 (or the original integer dtype).
+When `original_dtype` is integral, readers round decoded values to the nearest
+integer and clamp them to the target dtype's range before casting rather than
+truncating toward zero or allowing overflow to wrap around.
 The full scheme vocabulary is single-sourced in
 `format-contract/contract.yaml`. Besides the quantization schemes described
 per-array above (`linear_perchannel_u16`, `rgb_uint8`,
