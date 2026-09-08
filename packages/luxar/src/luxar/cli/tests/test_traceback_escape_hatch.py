@@ -3,8 +3,8 @@
 CLI handlers report one line and raise `typer.Exit(1)` by default, while
 `LUXAR_TRACEBACK=1` re-raises fatal exceptions and prints recoverable ones.
 The first seventeen routed sites included eight that discarded the exception
-chain (audit finding `A9-02`); #2553 routes the remaining interactive handlers
-that used to print a traceback unconditionally.
+chain (audit finding `A9-02`); #2553 routes the remaining handlers that used to
+print a traceback unconditionally.
 
 Three things are tested, and the third is the one that keeps working:
 
@@ -12,7 +12,7 @@ Three things are tested, and the third is the one that keeps working:
    environment the way the docstring says (including the falsey spellings).
 2. The chain survives even on the quiet path, so `--show-locals`-style tooling
    and `raise ... from` consumers still see the cause.
-3. No interactive CLI source discards a caught exception in an
+3. No CLI source discards a caught exception in an
    `except Exception` block, and the four unattended fit/batch exceptions stay
    exact. That source scan catches the next inconsistent handler.
 """
@@ -258,8 +258,8 @@ def _enclosing_function(
     return function
 
 
-def test_no_interactive_cli_handler_discards_a_caught_exception() -> None:
-    """A broad interactive handler must preserve the cause it exits from.
+def test_no_cli_handler_discards_a_caught_exception() -> None:
+    """A broad CLI handler must preserve the cause it exits from.
 
     Two ways to satisfy it:
 
