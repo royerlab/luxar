@@ -1,5 +1,6 @@
 import type { MultiLevelCachingStore } from './multi-level-caching-store';
 import { log, Modules, LogEmoji } from '../utils/log';
+import { getErrorMessage } from '../utils/format-error';
 
 export interface ChunkPrefetcherOptions {
   /** Maximum concurrent prefetch requests (default: 4) */
@@ -117,7 +118,6 @@ export class ChunkPrefetcher {
       this.addToQueue(adjKey);
     }
 
-    // Fire-and-forget (not awaited)
     this.processQueue();
   }
 
@@ -134,7 +134,7 @@ export class ChunkPrefetcher {
    * Process the prefetch queue with concurrency limiting.
    * Race-condition safe via processing flag and queueMicrotask re-trigger.
    */
-  private async processQueue(): Promise<void> {
+  private processQueue(): void {
     // Disposed-prefetcher short-circuit: bail before any further fetch
     // dispatch so a dispose() during in-flight processing cannot enqueue
     // additional store.getResult calls.
@@ -178,6 +178,9 @@ export class ChunkPrefetcher {
             if (!this.isDisposed && this.queue.size > 0) {
               queueMicrotask(() => this.processQueue());
             }
+          })
+          .catch((error: unknown) => {
+            log.warning(Modules.CACHE, `Prefetch failed for ${key}: ${getErrorMessage(error)}`);
           });
       }
     } finally {

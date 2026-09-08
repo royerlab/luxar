@@ -30,6 +30,24 @@ describe('getErrorMessage', () => {
     expect(getErrorMessage(null)).toBe('null');
   });
 
+  it('serializes plain thrown objects instead of collapsing them to [object Object]', () => {
+    expect(getErrorMessage({ code: 'ENETUNREACH', retryable: true })).toBe(
+      '{"code":"ENETUNREACH","retryable":true}'
+    );
+  });
+
+  it('prefers the message from a cross-realm Error-like object', () => {
+    const crossRealm = runInNewContext('new TypeError("cross-realm boom")') as object;
+
+    expect(getErrorMessage(crossRealm)).toBe('cross-realm boom');
+  });
+
+  it('prefers the message from an enumerable worker-style Error-like object', () => {
+    const workerError = { name: 'Error', message: 'worker boom', stack: 'at a\nat b' };
+
+    expect(getErrorMessage(workerError)).toBe('worker boom');
+  });
+
   it('never throws on a null-prototype object', () => {
     // String() raises "Cannot convert object to primitive value" here. This
     // helper runs inside catch blocks, so it must not become the thing that

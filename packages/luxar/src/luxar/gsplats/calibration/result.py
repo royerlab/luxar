@@ -71,14 +71,26 @@ class CalibrationResult:
     # --- regime-robust extensions (all optional; old cal.json still loads) ---
     held_out_psnr_fg_db: List[float] = field(default_factory=list)
     """Foreground-restricted held-out PSNR (background-domination removed)."""
+    held_out_psnr_fg_weighted_db: List[float] = field(default_factory=list)
+    """Held-out PSNR with controlled foreground/background total weight."""
+    foreground_mask_fraction: float = float("nan")
+    """Fraction selected by the smoothed Otsu foreground mask."""
+    foreground_otsu_threshold: float = float("nan")
+    """Otsu cut on the lightly smoothed, floor-subtracted calibration volume."""
+    fg_bg_ratio: float = 1.0
+    """Foreground:background total-weight ratio for the weighted metric."""
     held_out_gain_db: List[float] = field(default_factory=list)
     """dB the fit beats the predict-zero baseline (plateaus meaningfully)."""
     predict_zero_baseline_mse: float = float("nan")
     """MSE of the trivial all-zeros reconstruction at masked voxels."""
     k_star_metric: str = "psnr_minmax"
-    """Metric used for ``held_out_peak_selected`` (psnr_minmax|psnr_foreground|gain)."""
+    """Metric used for ``held_out_peak_selected``."""
     held_out_peak_selected: Optional[HeldOutPeak] = None
-    """K* under ``k_star_metric`` (None when it equals the default psnr_minmax)."""
+    """K* under ``k_star_metric``.
+
+    None when the metric is the default ``psnr_minmax``, or when the selected
+    curve was undefined and K* fell back to min-max PSNR.
+    """
     calibration_region: Optional[Dict[str, Any]] = None
     """Provenance when an auto-selected sub-region was calibrated (else None)."""
     original_volume_shape: Optional[List[int]] = None
@@ -181,6 +193,20 @@ class CalibrationResult:
             timestamp=str(raw["timestamp"]),
             # --- regime-robust extensions (default-hydrated for old files) ---
             held_out_psnr_fg_db=_hydrate_float_list(raw.get("held_out_psnr_fg_db", [])),
+            held_out_psnr_fg_weighted_db=_hydrate_float_list(
+                raw.get("held_out_psnr_fg_weighted_db", [])
+            ),
+            foreground_mask_fraction=float(
+                raw.get("foreground_mask_fraction")
+                if raw.get("foreground_mask_fraction") is not None
+                else float("nan")
+            ),
+            foreground_otsu_threshold=float(
+                raw.get("foreground_otsu_threshold")
+                if raw.get("foreground_otsu_threshold") is not None
+                else float("nan")
+            ),
+            fg_bg_ratio=float(raw.get("fg_bg_ratio", 1.0)),
             held_out_gain_db=_hydrate_float_list(raw.get("held_out_gain_db", [])),
             predict_zero_baseline_mse=float("nan")
             if baseline is None

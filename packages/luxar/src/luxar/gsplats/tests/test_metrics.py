@@ -361,10 +361,10 @@ class TestOtsuThreshold:
     """The reimplementation must agree with scikit-image, or the metric drifts.
 
     ``otsu_threshold`` exists so the foreground definition carries no optional
-    dependency (scikit-image is in the ``demos`` extra, and the calibration
-    helper silently degrades to ``V.min()`` without it). That is only safe if
-    it computes the same number, so this pins the equivalence rather than
-    trusting the port.
+    dependency. Calibration shares this implementation, so matching
+    scikit-image keeps feature thresholds, intensity counts, and content scans
+    on the same scale where scikit-image is installed. This pins that
+    equivalence rather than trusting the port.
     """
 
     @pytest.mark.parametrize(
