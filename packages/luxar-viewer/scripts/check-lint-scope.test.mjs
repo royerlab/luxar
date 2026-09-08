@@ -81,14 +81,42 @@ function authoredFiles(root = PKG) {
 
 const FILES = authoredFiles();
 
-/** Root files selected by a TypeScript project, relative to the package. */
-function typecheckedFiles(configName) {
+/** Parsed TypeScript project configuration. */
+function parsedTypeScriptConfig(configName) {
   const configPath = join(PKG, configName);
   const loaded = ts.readConfigFile(configPath, ts.sys.readFile);
   expect(loaded.error).toBeUndefined();
   const parsed = ts.parseJsonConfigFileContent(loaded.config, ts.sys, PKG, undefined, configPath);
   expect(parsed.errors).toEqual([]);
+  return parsed;
+}
+
+/** Root files selected by a TypeScript project, relative to the package. */
+function typecheckedFiles(configName) {
+  const parsed = parsedTypeScriptConfig(configName);
   return new Set(parsed.fileNames.map((file) => relative(PKG, file)));
+}
+
+/** Diagnostics for one synthetic source under a project's compiler options. */
+function sourceDiagnostics(configName, relativePath, sourceText) {
+  const parsed = parsedTypeScriptConfig(configName);
+  const sourcePath = join(PKG, relativePath);
+  const host = ts.createCompilerHost(parsed.options);
+  const originalFileExists = host.fileExists;
+  const originalGetSourceFile = host.getSourceFile;
+  const originalReadFile = host.readFile;
+
+  host.fileExists = (file) => file === sourcePath || originalFileExists(file);
+  host.readFile = (file) => (file === sourcePath ? sourceText : originalReadFile(file));
+  host.getSourceFile = (file, languageVersion, onError, shouldCreateNewSourceFile) =>
+    file === sourcePath
+      ? ts.createSourceFile(file, sourceText, languageVersion, true)
+      : originalGetSourceFile(file, languageVersion, onError, shouldCreateNewSourceFile);
+
+  const program = ts.createProgram([sourcePath], parsed.options, host);
+  return ts
+    .getPreEmitDiagnostics(program)
+    .filter((diagnostic) => diagnostic.file?.fileName === sourcePath);
 }
 
 describe('authored file discovery', () => {
@@ -166,6 +194,28 @@ describe('typecheck scope', () => {
     );
 
     expect(unreached, `add these to a TypeScript project:\n${unreached.join('\n')}`).toEqual([]);
+  });
+
+  it('keeps Node globals out of browser sources and available to Node-side code', () => {
+    const source = 'Buffer.from(process.cwd());\n';
+    const browserDiagnostics = sourceDiagnostics(
+      'tsconfig.json',
+      'src/node-global-probe.ts',
+      source
+    );
+    const browserMessages = browserDiagnostics.map((diagnostic) =>
+      ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')
+    );
+
+    expect(browserMessages).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Cannot find name 'Buffer'"),
+        expect.stringContaining("Cannot find name 'process'"),
+      ])
+    );
+    expect(
+      sourceDiagnostics('tsconfig.tooling.json', 'src/tests/node-global-probe.ts', source)
+    ).toEqual([]);
   });
 });
 
