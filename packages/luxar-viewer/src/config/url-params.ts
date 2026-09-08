@@ -273,9 +273,10 @@ export interface UrlParams {
   /**
    * Force the session's JS input profile (`?input=touch|mouse`): pointer flags,
    * hover capability, touch points, and device tier. This changes device-class
-   * fallback budgets, primary-tip pen routing, and the Safari gesture-canceller
-   * gate; long-press menus and tap-oriented copy land in follow-up touch work.
-   * Stylesheets and per-event gesture routing keep following the real media
+   * fallback budgets (`touch` only — `mouse` keeps the detected tier),
+   * primary-tip pen routing, the Safari gesture-canceller gate, and whether the
+   * help overlay lists its Touch section.
+   * Stylesheets and non-pen gesture routing keep following the real media
    * features and `PointerEvent.pointerType`, so a faithful check still needs
    * device emulation or a real device. `null` (missing or unrecognised) ⇒ detect
    * from the browser. See `utils/input-capabilities.ts`.
