@@ -12,7 +12,7 @@
  * value, and print the values that would fix it.
  *
  * Separately, warn when measured coverage moves more than
- * `MAX_EROSION_POINTS` away from the value recorded when the floor was set.
+ * `MAX_EROSION_POINTS` away from the last accepted measurement.
  * Downward drift catches erosion before the floor is crossed; upward drift
  * catches a stale baseline before that erosion signal becomes desensitized.
  *

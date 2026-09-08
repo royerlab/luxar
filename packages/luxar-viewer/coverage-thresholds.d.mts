@@ -36,5 +36,5 @@ export interface MetricFloors {
  */
 export declare const COVERAGE_THRESHOLDS: MetricFloors & Record<string, MetricFloors | number>;
 
-/** Measurements from the run that established each coverage floor. */
+/** Last accepted measurement for each coverage floor. */
 export declare const COVERAGE_RECORDED: MetricFloors & Record<string, MetricFloors | number>;
