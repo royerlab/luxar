@@ -9,9 +9,10 @@
  * Ctrl+wheel FOV all consumed that raw number, so on Firefox each moved about
  * a thirtieth as far per notch — wheel zoom felt essentially dead.
  *
- * This module converts a wheel event's vertical delta into a
+ * This module converts a wheel event's selected axis delta into a
  * pixel-mode-equivalent number so every wheel entry point can keep doing the
- * arithmetic it already does, on a browser-independent input.
+ * arithmetic it already does, on a browser-independent input. Most callers
+ * select `deltaY`; Shift+wheel roll may explicitly fall back to `deltaX`.
  *
  * @module utils/wheel-delta
  */
