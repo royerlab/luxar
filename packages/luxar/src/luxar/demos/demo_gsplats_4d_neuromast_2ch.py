@@ -266,6 +266,8 @@ NORMALIZE_INTENSITY = 1.0
 #: Volumetric optical depth shared by both layers (set by eye with the windows
 #: in CHANNELS): low enough that neither channel hides the other.
 ABSORPTION = 0.02
+#: Scene exposure in log2 stops (Rendering Controls > HDR > Exposure).
+EXPOSURE_STOPS = -3.4
 #: Progressive rungs the merge produced for each channel.
 EXPECTED_RUNGS = 8
 
@@ -606,7 +608,12 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
             scene = compiler.create_scene(
                 citation=DEMO_META["citation"],
                 dimensions=dims,
-                viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
+                # Exposure pulled down 3.4 stops (set by eye with the channel
+                # windows): at the default camera distance the rosette core
+                # otherwise saturates to white under both volumetric layers.
+                viewer_config=ViewerConfig(
+                    cinematic_mode=True, tone_mapping="ACES", exposure=EXPOSURE_STOPS
+                ),
             )
             scene.attrs["title"] = "GSplats: 4D Two-Channel Neuromast Timelapse"
             scene.attrs["description"] = (
