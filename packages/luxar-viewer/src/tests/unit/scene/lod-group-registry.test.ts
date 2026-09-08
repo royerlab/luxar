@@ -776,6 +776,41 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     expect(requestReprocess).toHaveBeenCalledOnce();
   });
 
+  it('requests a view resync when any object in a part was culled', () => {
+    const requestReprocess = vi.fn();
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      requestReprocess
+    );
+    const groupObject = new THREE.Group();
+    const first = new THREE.Group();
+    const second = new THREE.Group();
+    groupObject.add(first, second);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [first, second],
+          positionBounds: { min: [-0.5, -0.5, -0.5], max: [0.5, 0.5, 0.5] },
+        },
+      ],
+    });
+    first.userData.partitionFrustumVisible = false;
+
+    expect(reg.evaluatePerFrame()).toBe(false);
+    expect(first.userData.partitionFrustumVisible).toBe(true);
+    expect(second.userData.partitionFrustumVisible).toBe(true);
+    expect(requestReprocess).toHaveBeenCalledOnce();
+  });
+
   it('coalesces rising-edge resyncs until the active update finishes', () => {
     let updateInProgress = true;
     const requestReprocess = vi.fn();

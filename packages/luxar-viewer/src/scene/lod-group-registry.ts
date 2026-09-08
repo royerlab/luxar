@@ -637,6 +637,7 @@ function updatePartitionObjectVisibility(
   objects: readonly THREE.Object3D[],
   visible: boolean
 ): number {
+  // Any previously culled object makes the whole part a rising edge.
   let wasVisible = true;
   let changed = false;
   for (const object of objects) {
