@@ -2,9 +2,9 @@
  * TSL ↔ GLSL parity harness — page entry.
  *
  * Loaded by `tsl-harness.html` (Vite serves it at `/tsl-harness.html`).
- * Exposes `window.__tslHarness` with primitives that render a fullscreen
- * pass through both backends and return the result for pixel-diffing in
- * a Playwright spec.
+ * Exposes `window.__tslHarness` with primitives that render registered
+ * fullscreen passes or the composed bloom pipeline through both backends
+ * and return the result for pixel-diffing in a Playwright spec.
  *
  * The harness internals live in `./tsl-harness/`, split by shader family:
  * - `types.ts` — the `RegistryEntry` registry contract
@@ -15,7 +15,7 @@
  * - `gsplats.ts` — gsplat + gsplat-pick variants
  * - `mesh.ts` — mesh + mesh-pick variants
  * - `erf.ts` — shared-math erf polynomial
- * - `render.ts` — the `renderGLSL` / `renderTSL` executors
+ * - `render.ts` — the single-pass and composed bloom executors
  * - `index.ts` — merges the families into `SHADER_REGISTRY` (use
  *   `listShaders()` for the live entry count — hardcoded totals drift)
  *
@@ -36,7 +36,14 @@
  * @module tests/e2e/harnesses/tsl-harness
  */
 
-import { SHADER_REGISTRY, renderGLSL, renderTSL } from './tsl-harness/index';
+import {
+  SHADER_REGISTRY,
+  type BloomChainRenderResult,
+  renderBloomChainGLSL,
+  renderBloomChainTSL,
+  renderGLSL,
+  renderTSL,
+} from './tsl-harness/index';
 
 declare global {
   interface Window {
@@ -47,6 +54,8 @@ declare global {
         shaderName: string,
         opts?: { native?: boolean }
       ) => Promise<{ pixels: Uint8Array; vertexShader: string; fragmentShader: string }>;
+      renderBloomChainGLSL: () => Promise<BloomChainRenderResult>;
+      renderBloomChainTSL: () => Promise<BloomChainRenderResult>;
       listShaders: () => string[];
     };
   }
@@ -65,5 +74,7 @@ window.__tslHarness = {
   ready,
   renderGLSL,
   renderTSL,
+  renderBloomChainGLSL,
+  renderBloomChainTSL,
   listShaders: () => Object.keys(SHADER_REGISTRY),
 };
