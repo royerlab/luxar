@@ -1,0 +1,48 @@
+/* Autoplay gate — "Tap to enable sound" (audio/autoplay-gate.ts).
+   A full-container, click-through-free overlay that the first pointer or key
+   event dismisses. Only shown when the AudioContext is suspended and the scene
+   has sound nodes; never in a kiosk launched with the autoplay flag. */
+
+.luxar-audio-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 1300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  user-select: none;
+  animation: luxar-audio-gate-in 240ms ease-out;
+}
+
+.luxar-audio-gate__card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 22px;
+  border-radius: 12px;
+  background: var(--luxar-panel-bg, rgba(20, 20, 24, 0.92));
+  color: var(--luxar-text, #eee);
+  font: 500 15px/1.2 var(--luxar-font-family, system-ui, sans-serif);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+}
+
+.luxar-audio-gate__card svg {
+  width: 26px;
+  height: 26px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+@keyframes luxar-audio-gate-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}

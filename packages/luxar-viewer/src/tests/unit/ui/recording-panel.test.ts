@@ -423,6 +423,17 @@ describe('RecordingPanel', () => {
         expect(result).toBeNull();
       });
 
+      it('with audio, prefers an Opus-capable WebM and falls back to the video-only types', () => {
+        (MediaRecorder as any).isTypeSupported = vi.fn((type: string) => type.includes('vp9'));
+        expect(getSupportedMimeType(undefined, true)).toBe('video/webm;codecs=vp9,opus');
+        (MediaRecorder as any).isTypeSupported = vi.fn(
+          (type: string) => type.includes('vp8') && !type.includes('opus')
+        );
+        expect(getSupportedMimeType(undefined, true)).toBe('video/webm;codecs=vp8');
+        (MediaRecorder as any).isTypeSupported = vi.fn((type: string) => type.includes('vp9'));
+        expect(getSupportedMimeType(undefined, false)).toBe('video/webm;codecs=vp9');
+      });
+
       it('returns null when MediaRecorder undefined', () => {
         delete (globalThis as any).MediaRecorder;
         const result = getSupportedMimeType();

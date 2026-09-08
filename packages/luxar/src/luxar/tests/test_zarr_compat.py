@@ -762,6 +762,9 @@ def test_consolidate_is_silent(tmp_path: Path, write_format: int) -> None:
     p = tmp_path / "quiet.zarr"
     g = zc.open_group(p, mode="w")
     zc.create_array(g, "a", data=np.arange(4, dtype=np.float32), compressor=None)
+    payload = g.create_group("sound")
+    payload.attrs.update({"type": "sound", "audio_file": "audio.mp3"})
+    zc.write_raw_bytes(payload, "audio.mp3", b"ID3payload")
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")

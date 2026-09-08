@@ -558,7 +558,9 @@ export interface LODGroupEntry {
 }
 
 export interface PartitionGroupChild {
-  object: THREE.Object3D;
+  /** Stable node path for a part that may emit more than one scene object. */
+  path: string;
+  objects: THREE.Object3D[];
   positionBounds: { min: readonly number[]; max: readonly number[] };
 }
 
@@ -606,6 +608,8 @@ interface LODGroupEntryCache {
  *   - ``PARTITION_FRUSTUM_MATRIX_SCRATCH`` — padded projection × view product.
  *   - ``WORLD_BOX3_SCRATCH`` — a ``THREE.Box3`` view of a group's world bbox
  *     for ``frustum.intersectsBox`` (our ``BoundingBox`` is a plain object).
+ *   - ``FOOTPRINT_BOX3_SCRATCH`` — one object's rendered footprint on its way
+ *     into a part's cached footprint box.
  * (The eviction pass keeps its own scratches in ``lod-eviction.ts``.)
  */
 const FRUSTUM_SCRATCH = new THREE.Frustum();
@@ -621,17 +625,68 @@ const PARTITION_FRUSTUM_SCALE = new THREE.Matrix4().makeScale(
   1
 );
 const WORLD_BOX3_SCRATCH = new THREE.Box3();
+const FOOTPRINT_BOX3_SCRATCH = new THREE.Box3();
 // Bit flags returned by evaluatePartitionEntry so one child scan reports both effects.
 const PARTITION_VISIBILITY_CHANGED = 1;
 const PARTITION_BECAME_VISIBLE = 2;
 
-function matrixElementsDiffer(left: readonly number[], right: readonly number[]): boolean {
-  for (let index = 0; index < left.length; index++) {
-    if (left[index] !== right[index]) return true;
+function unionPartitionFootprints(objects: readonly THREE.Object3D[], target: THREE.Box3): void {
+  for (const object of objects) {
+    FOOTPRINT_BOX3_SCRATCH.setFromObject(object);
+    if (!FOOTPRINT_BOX3_SCRATCH.isEmpty()) target.union(FOOTPRINT_BOX3_SCRATCH);
+  }
+}
+
+/**
+ * Whether any object of a part has moved since its footprint box was captured.
+ * ``cached`` holds one 16-element world-matrix block per object, in
+ * ``objects`` order, sized by ``registerPartition``. A part that later gained an
+ * object reads ``undefined`` past the end and so counts as moved, which
+ * recaptures and grows the array; one that lost an object simply stops
+ * comparing the trailing blocks.
+ *
+ * Only the part's own objects are compared. A transform on a DESCENDANT of one
+ * of them is not detected — descendant transforms are applied at node-creation
+ * time and never animated, and every geometry commit dirties the part
+ * explicitly. Anything that starts moving a descendant later has to call
+ * ``invalidatePartitionFootprint``.
+ */
+function partitionFootprintMatricesDiffer(
+  objects: readonly THREE.Object3D[],
+  cached: readonly number[]
+): boolean {
+  for (let index = 0; index < objects.length; index++) {
+    const elements = objects[index].matrixWorld.elements;
+    const offset = index * 16;
+    for (let element = 0; element < 16; element++) {
+      if (cached[offset + element] !== elements[element]) return true;
+    }
   }
   return false;
 }
 
+/** Rebuild a part's cached footprint box and the world matrices it was taken at. */
+function capturePartitionFootprint(
+  objects: readonly THREE.Object3D[],
+  target: THREE.Box3,
+  cached: number[]
+): void {
+  target.makeEmpty();
+  unionPartitionFootprints(objects, target);
+  // Snapshot AFTER the union: ``Box3.expandByObject`` refreshes each object's
+  // world matrix, so a snapshot taken first would lag by one recompute and make
+  // every following frame look like a move.
+  for (let index = 0; index < objects.length; index++) {
+    objects[index].matrixWorld.toArray(cached, index * 16);
+  }
+}
+
+/**
+ * Dirty every part the committed ``nodePath`` belongs to — the part itself, or
+ * anything under it (an LOD level or an additive rung commits at a deeper path
+ * than the part it renders into). Returns whether any part matched, so the
+ * caller can fall back to dirtying the whole partition.
+ */
 function invalidateMatchingPartitionChildren(
   entry: PartitionGroupEntry,
   children: Array<{ footprintDirty: boolean }>,
@@ -639,13 +694,34 @@ function invalidateMatchingPartitionChildren(
 ): boolean {
   let matched = false;
   for (let index = 0; index < entry.children.length; index++) {
-    const childPath = entry.children[index].object.name;
-    if (childPath.length === 0 || nodePath === childPath || nodePath.startsWith(`${childPath}/`)) {
+    const childPath = entry.children[index].path;
+    if (nodePath === childPath || nodePath.startsWith(`${childPath}/`)) {
       children[index].footprintDirty = true;
       matched = true;
     }
   }
   return matched;
+}
+
+function updatePartitionObjectVisibility(
+  objects: readonly THREE.Object3D[],
+  visible: boolean
+): number {
+  // Any previously culled object makes the whole part a rising edge.
+  let wasVisible = true;
+  let changed = false;
+  for (const object of objects) {
+    if (object.userData.partitionFrustumVisible === false) wasVisible = false;
+    object.userData.partitionFrustumVisible = visible;
+    if (object.visible !== visible) {
+      object.visible = visible;
+      changed = true;
+    }
+  }
+  return (
+    (changed ? PARTITION_VISIBILITY_CHANGED : 0) |
+    (visible && !wasVisible ? PARTITION_BECAME_VISIBLE : 0)
+  );
 }
 
 /**
@@ -770,7 +846,10 @@ export class LODGroupRegistry {
         localBoxScratch: BoundingBox;
         worldBoxOptions: WorldBoxOptions;
         footprintBox: THREE.Box3;
-        /** World transform used to capture ``footprintBox``. */
+        /**
+         * World transforms ``footprintBox`` was captured at — one flattened
+         * 16-element block per object of the part, in ``children[i].objects`` order.
+         */
         footprintMatrixWorld: number[];
         footprintDirty: boolean;
       }>;
@@ -891,11 +970,15 @@ export class LODGroupRegistry {
           },
         },
         footprintBox: new THREE.Box3(),
-        footprintMatrixWorld: new Array<number>(16).fill(0),
+        footprintMatrixWorld: new Array<number>(child.objects.length * 16).fill(0),
         footprintDirty: true,
       })),
     });
-    for (const child of entry.children) child.object.userData.partitionFrustumVisible = true;
+    for (const child of entry.children) {
+      // Each loader path resolves to its emitted object, so stamping them all
+      // lets the loader gate use its normal ancestor walk for multi-object parts.
+      for (const object of child.objects) object.userData.partitionFrustumVisible = true;
+    }
   }
 
   /**
@@ -955,8 +1038,10 @@ export class LODGroupRegistry {
 
   private restorePartitionChildren(entry: PartitionGroupEntry): void {
     for (const child of entry.children) {
-      child.object.visible = true;
-      delete child.object.userData.partitionFrustumVisible;
+      for (const object of child.objects) {
+        object.visible = true;
+        delete object.userData.partitionFrustumVisible;
+      }
     }
   }
 
@@ -1366,15 +1451,16 @@ export class LODGroupRegistry {
       if (worldBox) {
         WORLD_BOX3_SCRATCH.min.set(worldBox.min.x, worldBox.min.y, worldBox.min.z);
         WORLD_BOX3_SCRATCH.max.set(worldBox.max.x, worldBox.max.y, worldBox.max.z);
-        child.object.updateWorldMatrix(false, false);
-        const matrixElements = child.object.matrixWorld.elements;
-        const transformChanged = matrixElementsDiffer(
-          matrixElements,
-          childCache.footprintMatrixWorld
-        );
-        if (childCache.footprintDirty || transformChanged) {
-          childCache.footprintBox.setFromObject(child.object);
-          child.object.matrixWorld.toArray(childCache.footprintMatrixWorld);
+        for (const object of child.objects) object.updateWorldMatrix(false, false);
+        if (
+          childCache.footprintDirty ||
+          partitionFootprintMatricesDiffer(child.objects, childCache.footprintMatrixWorld)
+        ) {
+          capturePartitionFootprint(
+            child.objects,
+            childCache.footprintBox,
+            childCache.footprintMatrixWorld
+          );
           childCache.footprintDirty = false;
         }
         if (!childCache.footprintBox.isEmpty()) {
@@ -1382,13 +1468,7 @@ export class LODGroupRegistry {
         }
         visible = frustum.intersectsBox(WORLD_BOX3_SCRATCH);
       }
-      const wasVisible = child.object.userData.partitionFrustumVisible !== false;
-      child.object.userData.partitionFrustumVisible = visible;
-      if (child.object.visible !== visible) {
-        child.object.visible = visible;
-        result |= PARTITION_VISIBILITY_CHANGED;
-      }
-      if (visible && !wasVisible) result |= PARTITION_BECAME_VISIBLE;
+      result |= updatePartitionObjectVisibility(child.objects, visible);
     }
     return result;
   }

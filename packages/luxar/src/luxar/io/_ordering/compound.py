@@ -23,7 +23,8 @@ def _rounded_barrier_values(values: np.ndarray) -> np.ndarray | None:
     rounded = np.rint(values)
     if not np.allclose(values, rounded, rtol=0.0, atol=1e-3):
         return None
-    return rounded.astype(np.int64)
+    as_int: np.ndarray = rounded.astype(np.int64)
+    return as_int
 
 
 def _barrier_axis_qualifies(n_splats: int, n_unique: int, max_cardinality: int) -> bool:

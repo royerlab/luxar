@@ -39,29 +39,30 @@ reference to Session for the shared scaffolding.
 
 ## Files
 
-| File                            | Role                                                                                       |
-| ------------------------------- | ------------------------------------------------------------------------------------------ |
-| `session.ts`                    | `RecordingSession` — shared state save/restore, dialog, indicator, mutex                   |
-| `capture-strategy.ts`           | `CaptureStrategy` interface + `SessionState` view + `CaptureKind` union                    |
-| `screenshot-strategy.ts`        | `ScreenshotStrategy` — single-frame capture with optional transparent BG                   |
-| `video-recording-strategy.ts`   | `VideoRecordingStrategy` — real-time MediaRecorder WebM capture                            |
-| `offline-capture-strategy.ts`   | `OfflineCaptureStrategy` — sequences the six collaborators below into one capture          |
-| `offline-capture-preflight.ts`  | Confirmation dialog, session ownership, capture resolution, turntable rotation/dolly plan  |
-| `offline-capture-context.ts`    | `createCaptureDriver` (mode → driver) + `buildCaptureContext` (the driver's dependencies)  |
-| `offline-capture-overlay.ts`    | The modal progress overlay: ARIA, focus trap, Escape/Cancel, live preview, frame counter   |
-| `offline-capture-frame-loop.ts` | The per-frame loop: orbit → settle → grab, with the consecutive-failure bail               |
-| `offline-lod-settle.ts`         | `LodSettleDrain` — the per-frame LOD quiescence wait, its latch/re-arm, and its report     |
-| `offline-capture-teardown.ts`   | The one safe teardown order (flags, driver abort, callbacks, overlay, state restore)       |
-| `screenshot-exporter.ts`        | `renderFrameToCanvas`, `encodeScreenshotBlob`, `normalizeScreenshotFormat`, `downloadBlob` |
-| `video-codec-selection.ts`      | `selectVideoCodec` — mediabunny codec fallback chain for the offline video path            |
-| `media-utilities.ts`            | `computeVideoBitrate`, `getSupportedMimeType`, `generateFilename`, `anchorOffset`          |
-| `ffmpeg-script.ts`              | `generateFfmpegScript` — the bundled `encode_video.sh`, incl. the EXR display transform    |
-| `overlay-compositor.ts`         | `compositeOverlays` + text / image / HTML overlay rasterization                            |
-| `live-overlay-compositor.ts`    | `LiveOverlayCompositor` — mirror canvas that puts overlays into REAL-TIME WebM capture     |
-| `animation-sync.ts`             | `SliderSyncCoordinator` + `getTurntableInfo` / `getNavigableDimensionOptions`              |
-| `gui-builder.ts`                | Pure mode→format and format→predicate visibility rules (`computeControlVisibility`)        |
-| `zip-sequence-capture.ts`       | `ZipSequenceCapture` — streaming ZIP writer for image / EXR sequences                      |
-| `types.ts`                      | Shared types: `RecordingMode`, `RecordingOptions`, `OutputFormat`, …                       |
+| File                            | Role                                                                                                                                                                                                     |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `session.ts`                    | `RecordingSession` — shared state save/restore, dialog, indicator, mutex                                                                                                                                 |
+| `capture-strategy.ts`           | `CaptureStrategy` interface + `SessionState` view + `CaptureKind` union                                                                                                                                  |
+| `screenshot-strategy.ts`        | `ScreenshotStrategy` — single-frame capture with optional transparent BG                                                                                                                                 |
+| `video-recording-strategy.ts`   | `VideoRecordingStrategy` — real-time MediaRecorder WebM capture                                                                                                                                          |
+| `offline-capture-strategy.ts`   | `OfflineCaptureStrategy` — sequences the six collaborators below into one capture                                                                                                                        |
+| `offline-capture-preflight.ts`  | Confirmation dialog, session ownership, capture resolution, turntable rotation/dolly plan                                                                                                                |
+| `offline-capture-context.ts`    | `createCaptureDriver` (mode → driver) + `buildCaptureContext` (the driver's dependencies)                                                                                                                |
+| `offline-capture-overlay.ts`    | The modal progress overlay: ARIA, focus trap, Escape/Cancel, live preview, frame counter                                                                                                                 |
+| `offline-capture-frame-loop.ts` | The per-frame loop: orbit → settle → grab, with the consecutive-failure bail                                                                                                                             |
+| `offline-lod-settle.ts`         | `LodSettleDrain` — the per-frame LOD quiescence wait, its latch/re-arm, and its report                                                                                                                   |
+| `offline-capture-teardown.ts`   | The one safe teardown order (flags, driver abort, callbacks, overlay, state restore)                                                                                                                     |
+| `screenshot-exporter.ts`        | `renderFrameToCanvas`, `encodeScreenshotBlob`, `normalizeScreenshotFormat`, `downloadBlob`                                                                                                               |
+| `video-codec-selection.ts`      | `selectVideoCodec` — mediabunny codec fallback chain for the offline video path                                                                                                                          |
+| `media-utilities.ts`            | `computeVideoBitrate`, `getSupportedMimeType`, `generateFilename`, `anchorOffset`                                                                                                                        |
+| `ffmpeg-script.ts`              | `generateFfmpegScript` — the bundled `encode_video.sh`, incl. the EXR display transform                                                                                                                  |
+| `overlay-compositor.ts`         | `compositeOverlays` + text / image / HTML overlay rasterization                                                                                                                                          |
+| `live-overlay-compositor.ts`    | `LiveOverlayCompositor` — mirror canvas that puts overlays into REAL-TIME WebM capture                                                                                                                   |
+| (`types.ts` `AudioCapturePort`) | The sound layer's tap ("Include Audio"): the real-time strategy adds its tracks to the canvas capture and asks for an Opus-capable WebM; released with the capture stream. Offline captures stay silent. |
+| `animation-sync.ts`             | `SliderSyncCoordinator` + `getTurntableInfo` / `getNavigableDimensionOptions`                                                                                                                            |
+| `gui-builder.ts`                | Pure mode→format and format→predicate visibility rules (`computeControlVisibility`)                                                                                                                      |
+| `zip-sequence-capture.ts`       | `ZipSequenceCapture` — streaming ZIP writer for image / EXR sequences                                                                                                                                    |
+| `types.ts`                      | Shared types: `RecordingMode`, `RecordingOptions`, `OutputFormat`, …                                                                                                                                     |
 
 ## Subpackages
 

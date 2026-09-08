@@ -136,6 +136,7 @@ function makePorts(s: Stubs): DisposePipelinePorts {
   return {
     events: s.events,
     pickingEvents: s.pickingEvents,
+    audioEngine: undefined,
     sceneManager: s.sceneManager as unknown as DisposePipelinePorts['sceneManager'],
     animationController:
       s.animationController as unknown as DisposePipelinePorts['animationController'],
@@ -406,6 +407,16 @@ describe('runDisposePipeline', () => {
       // Final singleton still ran.
       expect(loaderSpy).toHaveBeenCalled();
     });
+
+    it('disposes audio before the scene manager', () => {
+      const s = makeStubs();
+      const audioEngine = { dispose: vi.fn() };
+      runDisposePipeline({ ...makePorts(s), audioEngine });
+      expect(audioEngine.dispose).toHaveBeenCalledOnce();
+      expect(audioEngine.dispose.mock.invocationCallOrder[0]).toBeLessThan(
+        s.sceneManager.dispose.mock.invocationCallOrder[0]
+      );
+    });
   });
 
   describe('idempotency on partial state', () => {
@@ -413,6 +424,7 @@ describe('runDisposePipeline', () => {
       const ports: DisposePipelinePorts = {
         events: new EventGroup(),
         pickingEvents: new EventGroup(),
+        audioEngine: undefined,
         sceneManager: undefined,
         animationController: undefined,
         performanceMonitor: undefined,

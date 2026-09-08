@@ -276,6 +276,22 @@ export function buildRecordingGUI(deps: BuildGUIDeps): BuildGUIResult {
     .closest('.luxar-gui__controller')
     ?.setAttribute('title', 'Composite text/image/HTML/video overlays into the capture');
 
+  const audioSettings = { includeAudio: deps.options.includeAudio };
+  const audioCtrl = advanced
+    .add(audioSettings, 'includeAudio')
+    .name('Include Audio')
+    .onChange((val: boolean) => {
+      deps.options.includeAudio = val;
+    });
+  audioCtrl.domElement
+    .closest('.luxar-gui__controller')
+    ?.setAttribute(
+      'title',
+      'Record the sound layer (what you hear, after the mute and master gain) into ' +
+        'real-time videos. Frame-by-frame (Smooth) captures have no clock to record ' +
+        'audio against and stay silent.'
+    );
+
   const captureDPRCtrl = advanced
     .add(imgSettings, 'captureDPR', 0.25, getNativePixelRatio(), 0.25)
     .name('Capture DPR')

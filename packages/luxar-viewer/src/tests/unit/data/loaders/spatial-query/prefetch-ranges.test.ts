@@ -51,6 +51,17 @@ describe('prefetchRangesIntoCache', () => {
     ]);
   });
 
+  it('forwards a caller-owned abort signal to every speculative read', async () => {
+    const controller = new AbortController();
+    await prefetchRangesIntoCache(
+      [{ shape: [10] } as never],
+      [{ start: 2, end: 5 }],
+      controller.signal
+    );
+
+    expect(mockGet.mock.calls[0][2]).toEqual({ signal: controller.signal });
+  });
+
   it('issues no reads when there are no arrays or no ranges', async () => {
     await prefetchRangesIntoCache([], [{ start: 0, end: 1 }]);
     expect(mockGet).not.toHaveBeenCalled();
