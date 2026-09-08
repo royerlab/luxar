@@ -123,6 +123,17 @@ describe('handleWheel — plain scroll (forward/backward)', () => {
     expect(ctx.velocity.length()).toBe(0);
     expect(ctx.dispatch).not.toHaveBeenCalled();
   });
+
+  it('ignores a non-finite delta instead of poisoning velocity', () => {
+    const ctx = makeCtx();
+    const event = makeWheelEvent(0);
+    Object.defineProperty(event, 'deltaY', { value: Number.NaN });
+
+    handleWheel(ctx, event);
+
+    expect(ctx.velocity.toArray()).toEqual([0, 0, 0]);
+    expect(ctx.dispatch).not.toHaveBeenCalled();
+  });
 });
 
 describe('handleWheel — wheelZoomSensitivity (Settings > Input > Zoom Sensitivity)', () => {

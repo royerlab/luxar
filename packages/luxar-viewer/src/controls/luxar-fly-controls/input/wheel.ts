@@ -12,7 +12,10 @@
 
 import * as THREE from 'three';
 import type { LuxarCamera } from '../../../utils/camera-utils';
-import { normalizeWheelDeltaWithAxisFallback } from '../../../utils/wheel-delta';
+import {
+  normalizeWheelDelta,
+  normalizeWheelDeltaWithAxisFallback,
+} from '../../../utils/wheel-delta';
 
 // Module-local scratch to avoid per-event allocation.
 const _v0 = new THREE.Vector3();
@@ -61,9 +64,13 @@ export function handleWheel(ctx: FlyWheelCtx, event: WheelEvent): void {
 
   event.preventDefault();
 
-  // Shift+wheel may arrive on deltaX. Plain horizontal scrolling must not move
-  // the camera, so the fallback is deliberately limited to the roll gesture.
-  const wheelDelta = event.shiftKey ? normalizeWheelDeltaWithAxisFallback(event) : event.deltaY;
+  // Discard magnitude and keep only direction: normalization ensures a
+  // non-finite delta cannot reach the physics, while deltaMode scaling and
+  // clamping cannot affect the fixed impulse below. Only Shift+wheel opts into
+  // the axis fallback, so plain horizontal scrolling cannot move the camera.
+  const wheelDelta = event.shiftKey
+    ? normalizeWheelDeltaWithAxisFallback(event)
+    : normalizeWheelDelta(event);
   const delta = -Math.sign(wheelDelta);
   if (delta === 0) return;
 
