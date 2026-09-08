@@ -292,7 +292,7 @@ def test_load_environment_faces_reads_a_baked_store_and_is_none_otherwise(
     import numpy as np
 
     from luxar import Dimensions, LuxarZarrCompiler
-    from luxar._zarr_compat import open_group
+    from luxar._zarr_compat import create_array, open_group
     from luxar.environment import (
         ENVIRONMENT_FORMAT,
         FACE_ORDER,
@@ -332,3 +332,10 @@ def test_load_environment_faces_reads_a_baked_store_and_is_none_otherwise(
     assert loaded.dtype == np.float32
     assert np.allclose(loaded[2, 0, 0, :3], (0.1, 0.8, 0.3), atol=1e-3)
     assert not loaded[3].any()
+
+    root = open_group(store, mode="a")
+    env = root["environment"]
+    malformed = np.ones((6, res, res // 2, 4), dtype=np.float16).view(np.uint16)
+    create_array(env, "malformed", data=malformed, overwrite=True)
+    env.attrs["faces"] = "malformed"
+    assert tt.load_environment_faces(store) is None

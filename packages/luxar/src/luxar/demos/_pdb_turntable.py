@@ -230,7 +230,12 @@ def load_environment_faces(store: Path) -> Optional[np.ndarray]:
     if raw.dtype == np.uint16:
         raw = raw.view(np.float16)
     faces = raw.astype(np.float32)
-    if faces.ndim != 4 or faces.shape[0] != 6 or faces.shape[-1] < 3:
+    if (
+        faces.ndim != 4
+        or faces.shape[0] != 6
+        or faces.shape[1] != faces.shape[2]
+        or faces.shape[-1] < 3
+    ):
         return None
     return faces
 
