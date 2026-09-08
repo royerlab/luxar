@@ -18,9 +18,10 @@ luxar gsplat fit --help      # a single command and all its options
 
 All `gsplat` command failures routed through the shared reporter print a concise
 error by default. Re-run with `LUXAR_TRACEBACK=1` to include the full traceback;
-a few narrow validation paths in other command groups still report only their
-plain error message. Long-running `gsplat fit` and `gsplat batch-fit run` /
-`submit` / `merge` commands always retain tracebacks in their unattended logs.
+a few narrow validation paths — including some inside `gsplat`, such as the
+legacy-format rejection in `gsplat info` — still report only their plain error
+message. Long-running `gsplat fit` and `gsplat batch-fit run` / `submit` /
+`merge` commands always retain tracebacks in their unattended logs.
 
 ## Staying in sync
 
