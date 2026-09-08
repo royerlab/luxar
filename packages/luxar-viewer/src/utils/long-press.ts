@@ -75,15 +75,19 @@ export function attachLongPress(el: HTMLElement, options: LongPressOptions): () 
 
   const onPointerDown = (e: Event): void => {
     const ev = e as PointerEvent;
-    swallowContextMenu = false;
-    swallowClick = false;
-    if (!isTouchLikePointer(ev)) return;
+    if (!isTouchLikePointer(ev)) {
+      swallowContextMenu = false;
+      swallowClick = false;
+      return;
+    }
     activePointers.add(ev.pointerId);
     // A second finger means a pinch or a two-finger gesture, not a press.
     if (activePointers.size > 1 || pressed !== null) {
       cancel();
       return;
     }
+    swallowContextMenu = false;
+    swallowClick = false;
     pressed = { id: ev.pointerId, x: ev.clientX, y: ev.clientY, event: ev };
     timer = setTimeout(() => {
       timer = null;

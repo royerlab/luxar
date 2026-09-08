@@ -162,6 +162,20 @@ describe('attachLongPress', () => {
     expect(clicked).not.toHaveBeenCalled();
   });
 
+  it('keeps the release click swallowed when a second finger lands after the hold fires', () => {
+    const clicked = vi.fn();
+    child.addEventListener('click', clicked);
+    child.dispatchEvent(pointer('pointerdown', { id: 1 }));
+    vi.advanceTimersByTime(LONG_PRESS_MS);
+
+    child.dispatchEvent(pointer('pointerdown', { id: 2, x: 200 }));
+    child.dispatchEvent(pointer('pointerup', { id: 2, x: 200 }));
+    child.dispatchEvent(pointer('pointerup', { id: 1 }));
+    child.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    expect(clicked).not.toHaveBeenCalled();
+  });
+
   it('a later pointerdown clears an unconsumed click swallow', () => {
     const clicked = vi.fn();
     child.addEventListener('click', clicked);
