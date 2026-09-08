@@ -31,13 +31,17 @@
  * breaks the error handler. Same hazard the debug console's object branch
  * already guards.
  */
+function getErrorLikeMessage(error: unknown): string | undefined {
+  if (!isErrorLike(error)) return undefined;
+  const message = (error as { message?: unknown }).message;
+  return typeof message === 'string' && message.length > 0 ? message : undefined;
+}
+
 export function getErrorMessage(error: unknown): string {
   try {
     if (error instanceof Error) return error.message;
-    if (isErrorLike(error)) {
-      const message = (error as { message?: unknown }).message;
-      if (typeof message === 'string' && message.length > 0) return message;
-    }
+    const errorLikeMessage = getErrorLikeMessage(error);
+    if (errorLikeMessage) return errorLikeMessage;
     if (typeof error === 'object' && error !== null) {
       try {
         const serialized = JSON.stringify(error);
