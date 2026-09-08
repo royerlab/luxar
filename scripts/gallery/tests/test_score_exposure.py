@@ -18,6 +18,7 @@ import pytest
 from PIL import Image
 
 from luxar.conftest import viewer_source
+from luxar.core.viewer_config import ViewerConfig
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -222,6 +223,12 @@ def test_thresholds_match_the_capture_harness() -> None:
     assert not mismatched, (
         f"score_exposure.py has drifted from exposure-policy.ts (ts, py): {mismatched}"
     )
+
+
+def test_exposure_floor_matches_viewer_config() -> None:
+    assert ViewerConfig(exposure=se.EXPOSURE_MIN).exposure == se.EXPOSURE_MIN
+    with pytest.raises(ValueError, match="exposure must be between"):
+        ViewerConfig(exposure=se.EXPOSURE_MIN - 0.5)
 
 
 def test_black_image_scores_empty(tmp_path: Path) -> None:
