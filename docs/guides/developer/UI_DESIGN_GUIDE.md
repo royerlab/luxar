@@ -936,14 +936,14 @@ The viewer is used on phones and tablets (iPhone and iPad included) as well as
 desktops. The rule that keeps the two from fighting: **touch adaptation is
 keyed on the pointer, never on viewport width**, and it lives in **one file** —
 `styles/components/coarse-pointer.css`, whose top level contains only `@media`
-blocks on `(pointer: coarse)`, `(hover: none)` and `(any-hover: hover)`. A
+blocks on `(pointer: coarse)`, `(any-hover: none)` and `(any-hover: hover)`. A
 narrow desktop window is not a touch device and a landscape tablet is not
 narrow. `tests/unit/styles/coarse-pointer-css.test.ts` enforces the contract:
 nothing outside media blocks, pointer-feature preludes only, no pointer/hover
 media features in any other stylesheet, and the load-bearing clamps present.
 
 - **Two features, two meanings.** `(pointer: coarse)` = the primary pointer is a
-  finger: viewport clamps, safe areas, tap-friendly targets. `(hover: none)` =
+  finger: viewport clamps, safe areas, tap-friendly targets. `(any-hover: none)` =
   no pointer can hover: hover-revealed affordances are dead, so the rail does
   not idle-dim (`opacity: 1`) and fullscreen keeps it findable (`0.35`). An
   iPad with a trackpad matches the first and not the second and keeps its
@@ -965,7 +965,7 @@ media features in any other stylesheet, and the load-bearing clamps present.
   landscape phone without horizontal panning. Its children and the root's
   collapse/footer controls do not shrink. Item tooltips are suppressed there
   because they cannot escape the scroll clip; the collapse handle remains
-  outside the wrapper and keeps its label. Under `(hover: none)` a tip shows on
+  outside the wrapper and keeps its label. Under `(any-hover: none)` a tip shows on
   keyboard focus only (`:focus-visible`), and the first-run hint names the tap
   and the press-and-hold instead of "Hover". `RailOverlay` anchors popovers with a root-relative rect, not
   `offsetTop`, so a scrolled wrapper still points the arrow at its button; the
@@ -984,7 +984,7 @@ media features in any other stylesheet, and the load-bearing clamps present.
   under a coarse pointer: below that iOS Safari zooms the page into a focused
   field and never zooms back. Numeric inputs also declare `inputmode="decimal"`
   and filter fields `inputmode="search"` (inert on desktop, so ungated in JS).
-- **Press, not hover.** Under `(hover: none)` a tap leaves an element in a
+- **Press, not hover.** Under `(any-hover: none)` a tap leaves an element in a
   sticky `:hover` until the next tap elsewhere, so the hover styling is put
   back to the rest state and `:active` carries the response (a translucent
   highlight fill). The hover rule you restate must be the element's own rest

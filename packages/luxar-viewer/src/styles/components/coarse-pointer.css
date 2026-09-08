@@ -366,7 +366,7 @@
    (A touch-only device never emits ambient `pointermove`, so the idle-dim
    would otherwise be permanent and the collapsed grip near-invisible.)
    ========================================================================= */
-@media (hover: none) {
+@media (any-hover: none) {
   .luxar-control-rail,
   .luxar-control-rail.is-collapsed {
     opacity: 1;

@@ -27,7 +27,7 @@ const raw = readFileSync(FILE, 'utf8');
 const css = stripComments(raw);
 
 /** The pointer/hover features a block may be keyed on. */
-const POINTER_FEATURES = /\((pointer:\s*coarse|hover:\s*none|any-hover:\s*hover)\)/;
+const POINTER_FEATURES = /\((pointer:\s*coarse|hover:\s*none|any-hover:\s*(?:none|hover))\)/;
 /** Nested `@supports` is allowed (dvh fallback) — only inside a media block. */
 const SUPPORTS_DVH = /@supports\s*\(height:\s*100dvh\)/;
 
@@ -218,8 +218,8 @@ describe('coarse-pointer.css contract', () => {
     expect(ruleBody(coarse, '.luxar-control-rail-hint')).toMatch(/max-width:\s*calc\(/);
   });
 
-  it('swaps hover feedback for press feedback under (hover: none)', () => {
-    const noHover = mediaBlock(css, /hover:\s*none/);
+  it('swaps hover feedback for press feedback under (any-hover: none)', () => {
+    const noHover = mediaBlock(css, /any-hover:\s*none/);
     expect(noHover).toMatch(/\.luxar-control-rail__btn:active[^{]*\{[^}]*background:/);
     // A stuck :hover after a tap goes back to the rest state.
     expect(noHover).toMatch(/\.luxar-control-rail__btn:hover:not\(:active\)/);
@@ -230,8 +230,8 @@ describe('coarse-pointer.css contract', () => {
     expect(noHover).toMatch(/\.luxar-control-rail__btn:focus-visible \.luxar-control-rail__tip/);
   });
 
-  it('keeps the rail visible without hover under (hover: none)', () => {
-    const noHover = mediaBlock(css, /hover:\s*none/);
+  it('keeps the rail visible without hover under (any-hover: none)', () => {
+    const noHover = mediaBlock(css, /any-hover:\s*none/);
     expect(noHover).toMatch(
       /\.luxar-control-rail,\s*\.luxar-control-rail\.is-collapsed\s*\{[^}]*opacity:\s*1/
     );
