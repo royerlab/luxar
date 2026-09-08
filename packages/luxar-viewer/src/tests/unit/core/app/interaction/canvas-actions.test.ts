@@ -640,10 +640,12 @@ describe('touch: tap, long-press, double-tap', () => {
   });
 
   it('a tap tolerates the finger drift a mouse click may not', async () => {
-    const h = setup({}, LINKED);
+    const settleTouchNavigation = vi.fn();
+    const h = setup({ settleTouchNavigation }, LINKED);
     gesture(h.canvas, { x: 100, y: 80, by: 10 }); // mouse, 10 px > 4
     await flush();
     expect(h.onElementClick).not.toHaveBeenCalled();
+    expect(settleTouchNavigation).not.toHaveBeenCalled();
 
     // Touch: the cache entry sits at (100, 80); the finger lands at 92 and
     // lifts at 102 — within the 12 px touch slop for both the drag test and
@@ -651,6 +653,10 @@ describe('touch: tap, long-press, double-tap', () => {
     gesture(h.canvas, { x: 92, y: 80, by: 10, pointerType: 'touch' });
     await flush();
     expect(h.onElementClick).toHaveBeenCalledTimes(1);
+    expect(settleTouchNavigation).toHaveBeenCalledOnce();
+
+    gesture(h.canvas, { x: 100, y: 80, by: 25, pointerType: 'touch' });
+    expect(settleTouchNavigation).toHaveBeenCalledOnce();
   });
 
   it('a pen treated as touch gets the touch drag slop', async () => {

@@ -109,6 +109,8 @@ export interface CanvasActionsPorts {
   events: EventGroup;
   cache: PickedElementCache;
   picking: PickGenerationPort;
+  /** Discard residual camera damping when a touch release is classified as a tap. */
+  settleTouchNavigation?: () => void;
   /**
    * Whether links may be opened at all (`allowLinks` option / `?no-links`).
    * When false: no navigation, no link menu items, no pointer cursor — but
@@ -498,8 +500,10 @@ export function installCanvasActions(ports: CanvasActionsPorts): CanvasActionsHa
     }
     if (!isClickRelease(ev, start)) return;
 
-    if (start.touchLike) handleTap(ev, start.gesture);
-    else handleClick(ev);
+    if (start.touchLike) {
+      ports.settleTouchNavigation?.();
+      handleTap(ev, start.gesture);
+    } else handleClick(ev);
   });
 
   // Suppress the native menu. Both controls implementations already do this,

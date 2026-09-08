@@ -364,6 +364,7 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
     events: ports.pickingEvents,
     cache: pickedElements,
     picking: pickingSystem,
+    settleTouchNavigation: () => ports.sceneManager.controls.settleDamping(),
     allowLinks: ports.allowLinks ?? true,
     onElementClick: ports.onElementClick,
     onElementContextMenu: ports.onElementContextMenu,

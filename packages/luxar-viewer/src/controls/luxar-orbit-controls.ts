@@ -468,6 +468,14 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
     this.dollyPhase = 0;
   }
 
+  /** Keep the current pose but discard residual user-input damping. */
+  public settleDamping(): void {
+    this.rotationDelta.identity();
+    this.panDelta.set(0, 0, 0);
+    this.zoomDelta = 0;
+    this.rollDelta = 0;
+  }
+
   private applyDollyScale(scale: number): void {
     if (scale === 1) return;
     this.distance = applyZoomScale(this.camera, this.distance, scale, this.minZoom, this.maxZoom);
