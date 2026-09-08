@@ -11,7 +11,7 @@
  *      cannot quietly decay back into decoration.
  *
  * `COVERAGE_RECORDED` stores the last accepted measurement for each floor
- * (2026-09, 686 files). Re-derive with `pnpm test:coverage`, then use
+ * (2026-09). Re-derive with `pnpm test:coverage`, then use
  * `pnpm check:coverage-slack -- --print` to emit a paste-ready replacement.
  * Lowering a recorded value resets the erosion baseline, so call that decision
  * out in the PR rather than treating it as routine housekeeping.
