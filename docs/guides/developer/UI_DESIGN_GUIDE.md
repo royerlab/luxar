@@ -978,8 +978,8 @@ media features in any other stylesheet, and the load-bearing clamps present.
   set on the component roots — not a theme token, because the tokens are
   TS-generated across four theme files and a touch-only size is not a theme
   decision. Dense secondary controls (layer eye, play and step buttons) are
-  36px; range thumbs 24px (28px for the two-thumb range slider) on a 24px hit
-  band while the drawn track stays 3px; checkboxes 24px.
+  36px; range thumbs use a matching hit band (24px normally, 28px for the
+  two-thumb range slider) while the drawn track stays thin; checkboxes 24px.
 - **16px inputs.** Every text/number/select inside a panel is `font-size: 16px`
   under a coarse pointer: below that iOS Safari zooms the page into a focused
   field and never zooms back. Numeric inputs also declare `inputmode="decimal"`

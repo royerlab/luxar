@@ -198,6 +198,11 @@ describe('coarse-pointer.css contract', () => {
     expect(coarse).toMatch(
       /\.luxar-range-slider__input::-webkit-slider-thumb\s*\{[^}]*height:\s*28px/
     );
+    expect(ruleBody(coarse, '.luxar-range-slider__track-container')).toMatch(/height:\s*28px/);
+    expect(ruleBody(coarse, '.luxar-range-slider__input')).toMatch(/height:\s*28px/);
+    expect(ruleBody(coarse, '.luxar-range-slider__track')).toMatch(
+      /top:\s*12px[^}]*left:\s*14px[^}]*right:\s*14px/
+    );
     // 16 px inputs: the iOS focus-zoom threshold.
     expect(coarse).toMatch(/\.luxar-help-overlay input[^{]*\{[^}]*font-size:\s*16px/);
     // The first-run hint stays beside the rail instead of across the canvas.

@@ -255,6 +255,17 @@
     width: 28px;
     height: 28px;
   }
+  .luxar-range-slider__track-container {
+    height: 28px;
+  }
+  .luxar-range-slider__input {
+    height: 28px;
+  }
+  .luxar-range-slider__track {
+    top: 12px;
+    left: 14px;
+    right: 14px;
+  }
   .luxar-dimension-slider__track {
     height: 28px;
     border-radius: 14px;
