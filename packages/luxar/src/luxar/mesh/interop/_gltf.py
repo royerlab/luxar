@@ -338,9 +338,9 @@ def read_gltf(path: Path) -> dict[str, object]:
             if "COLOR_0" in attrs:
                 c = _read_accessor(doc, buffers, attrs["COLOR_0"])
                 if c.dtype == np.float32:
-                    col = np.clip(c * 255.0, 0, 255).astype(np.uint8)
+                    col = np.clip(np.round(c * 255.0), 0, 255).astype(np.uint8)
                 elif c.dtype == np.uint16:
-                    col = (c >> 8).astype(np.uint8)
+                    col = np.round(c / 257.0).astype(np.uint8)
                 else:
                     col = c.astype(np.uint8)
 

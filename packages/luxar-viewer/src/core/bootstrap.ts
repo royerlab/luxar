@@ -27,6 +27,7 @@ import { buildInfo, buildInfoLine } from '../config/build-info';
 import { initUserSettings } from '../config/user-settings';
 import { configureGpuByteBudget } from '../rendering/gpu-byte-budget';
 import { cachePoolOverrideBytes } from '../cache/heap-budget';
+import { setInputProfileOverride } from '../utils/input-capabilities';
 import { setLineJoinOverride } from '../types/line-join';
 import { setLinePrimitiveOverride, setLinePrimitivePolicy } from '../types/line-primitive';
 import { StorageKeys } from '../utils/storage-keys';
@@ -127,6 +128,12 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // further down with the precedence URL param > stored setting > default.
   // Standalone-only — library embedders configure via LuxarAppOptions.
   const userSettings = initUserSettings();
+
+  // Pin the input profile (`?input=touch|mouse`) BEFORE anything reads it:
+  // the GPU byte budget below, the cache pool's device class, gesture routing
+  // and the touch UI all derive from `getInputProfile()`, and it memoises on
+  // first use.
+  setInputProfileOverride(urlParams.input);
 
   // Size the single GPU-geometry byte budget before any pool / LOD
   // registry is constructed. Precedence: `?gpuBudgetMB=` URL param >

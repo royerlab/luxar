@@ -37,6 +37,7 @@ describe('BloomChain', () => {
     const chain = new BloomChain({ width: 128, height: 64, levels: 4, caps: mockCaps() });
 
     expect(chain.outputSize).toEqual({ width: 64, height: 32 });
+    expect(chain.mipCount).toBe(4);
     expect(chain.outputTexture).toBeInstanceOf(THREE.Texture);
     expect(chain.outputTexture.type).toBe(THREE.HalfFloatType);
 
@@ -55,6 +56,7 @@ describe('BloomChain', () => {
     const chain = new BloomChain({ width: 4, height: 2, levels: 12, caps: mockCaps() });
 
     expect(chain.outputSize).toEqual({ width: 2, height: 1 });
+    expect(chain.mipCount).toBe(1);
     const mips = (chain as unknown as { mips: Array<unknown> }).mips;
     expect(mips).toHaveLength(1);
 

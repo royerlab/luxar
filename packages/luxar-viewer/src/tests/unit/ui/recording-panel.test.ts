@@ -113,6 +113,11 @@ describe('RecordingPanel', () => {
   });
 
   describe('visibility', () => {
+    it('keeps the bottom-anchored panel above the safe area', () => {
+      const gui = (panel as any).gui.domElement as HTMLElement;
+      expect(gui.style.bottom).toMatch(/20px.*safe-area-inset-bottom/);
+    });
+
     it('starts hidden', () => {
       expect(panel.isVisible()).toBe(false);
     });

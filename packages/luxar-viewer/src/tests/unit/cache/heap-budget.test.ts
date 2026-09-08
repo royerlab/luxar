@@ -5,8 +5,8 @@ import {
   computeOpfsWriteQueueBudgetBytes,
   computeWorkingSetBudgetBytes,
   readHeapLimitBytes,
-  inferDeviceClass,
 } from '../../../cache/heap-budget';
+import { inferDeviceClass } from '../../../utils/input-capabilities';
 import { config } from '../../../config';
 
 const MB = 1024 * 1024;
@@ -226,8 +226,10 @@ describe('computeCacheBudgets', () => {
 describe('inferDeviceClass (core-count proxy — best-effort)', () => {
   const desktop = {
     userAgent: 'Mozilla/5.0 (Macintosh)',
+    platform: 'MacIntel',
     maxTouchPoints: 0,
     coarsePointer: false,
+    anyHover: true,
     cores: 16,
   };
 
@@ -238,7 +240,13 @@ describe('inferDeviceClass (core-count proxy — best-effort)', () => {
 
   it('classifies a touch + coarse-pointer device as mobile (catches iPadOS masquerading as Mac)', () => {
     expect(
-      inferDeviceClass({ userAgent: 'Macintosh', maxTouchPoints: 5, coarsePointer: true, cores: 8 })
+      inferDeviceClass({
+        ...desktop,
+        userAgent: 'Macintosh',
+        maxTouchPoints: 5,
+        coarsePointer: true,
+        cores: 8,
+      })
     ).toBe('mobile');
   });
 

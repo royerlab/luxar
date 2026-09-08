@@ -35,6 +35,7 @@ Cross-cutting utility functions and helpers used throughout the Luxar viewer. Th
 - **Effective Visibility**: `isEffectivelyVisible` — the single parent-chain walk answering "does this node actually render?" (`visible` is a LOCAL flag, so a hidden layer or a hidden LOD level leaves its descendants' flags true). Shared by the LOD load gate, LOD eviction, the pick pass, and the depth-sort scheduler
 - **Wheel Delta Normalization**: `normalizeWheelDelta` — converts a `WheelEvent`'s line/page-mode `deltaY` to a pixel equivalent (pixel mode passes through verbatim) so a notch lands in the same ballpark in every browser instead of ~32x apart
 - **Platform Detection**: Single `isMacPlatform()` helper for OS-conditional defaults
+- **Input Capabilities**: `getInputProfile()` — one memoised answer to "touch-first device? iPhone/iPad? can it hover?" (`coarsePointer`, `hoverCapable`, `isIPad` incl. the iPadOS-as-macOS masquerade, `deviceClass`), plus `isTouchLikePointer(event)` for per-event gesture routing and the `?input=touch|mouse` override
 - **HTML Escaping**: XSS prevention for safe HTML rendering
 - **Storage Keys**: Single registry of `luxar.*` localStorage keys
 
@@ -47,6 +48,7 @@ utils/
 ├── console-interceptor.ts   # Ring-buffer console capture (Proxy singleton, opt-in patch)
 ├── escape-html.ts           # HTML entity escaping for safe rendering
 ├── format-error.ts          # Unknown thrown value → message / name: message / stack
+├── input-capabilities.ts    # getInputProfile(), isTouchLikePointer(), deriveInputProfile() (import-free)
 ├── log.ts                   # log object, Modules registry, LogEmoji, createModuleLogger
 ├── object-visibility.ts     # isEffectivelyVisible (ancestor-aware scene-graph visibility)
 ├── platform.ts              # isMacPlatform()
@@ -119,14 +121,15 @@ Converts linear sRGB float RGBA pixels (from WebGL `readPixels`) to BT.2020 PQ Y
 Turning an unknown thrown value into something readable. `catch (error)` yields
 `unknown`, and both obvious approaches fail in the same place: `String(error)`
 loses a `DOMException`'s name, and `JSON.stringify(error)` yields `"{}"` because
-`name` / `message` / `stack` are non-enumerable. The debug console's Error branch
+`name` / `message` / `stack` are non-enumerable; worker-style Error-like objects
+can instead serialize their entire stack inline. The debug console's Error branch
 uses these so a `log.*(…, error)` call keeps its message.
 
 All five never throw — they run inside `catch` blocks and the patched
 `console.*` methods, so a hostile accessor or Proxy trap (or the null-prototype
 `String()` TypeError) must not break the very logging path reporting the error.
 
-- `getErrorMessage(error)` — the message
+- `getErrorMessage(error)` — an Error/Error-like message, serialized object, or string fallback
 - `formatErrorForDisplay(error)` — one-line `name: message`, name alone when the
   message is empty
 - `isGenuineError(value)` — a genuine `Error`: same-realm instance or the
@@ -191,6 +194,16 @@ Dependency-inverted UI notification surface so lower layers can surface user-vis
 - `notifier` — Stable call surface: `error`, `toast`, `showHelp`, `hideHelp`, `showLoading`, `hideLoading`, `clearError`. Drops calls silently (with a single warn) when no backend is registered, so unit tests and early-startup paths don't crash.
 - `setNotifierBackend(b)` — Called once by the UI bootstrap to plug in the concrete `ui/` helpers; subsequent calls replace the backend (useful for tests)
 - `clearNotifierBackend()` — Tear down the backend; also resets the once-only missing-backend warning flag
+
+### input-capabilities.ts - Input / Device Capability Profile
+
+The single answer to "is this a touch-first device, is it an iPhone or an iPad, can its pointer hover?" for every JS-side touch adaptation (gesture routing, long-press menus, mobile rendering budgets, tap-oriented copy). Deliberately import-free so leaf modules such as `rendering/pixel-ratio-cap.ts` can depend on it without joining an import cycle. CSS adaptations do **not** go through here — they use the `(pointer: coarse)` / `(hover: none)` media features directly.
+
+- `getInputProfile()` — memoised `InputProfile`: `coarsePointer` (primary pointer is a finger), `hoverCapable` (`(any-hover: hover)` OR a fine primary pointer — an iPad with a trackpad keeps hover tooltips), `touchPoints`, `isIPhone`, `isIPad` (real iPad UA OR `platform` starts `Mac` with `maxTouchPoints > 1` — iPadOS Safari reports a Macintosh UA by default), `isIOS`, `isAndroid`, `deviceClass` (`mobile | laptop | desktop`, the budget tier `cache/heap-budget.ts` sizes the cache pool from), `source`. Re-derived when the pointer media queries fire `change` (trackpad attach, DevTools emulation).
+- `setInputProfileOverride('touch' | 'mouse' | null)` — the `?input=` URL override, applied once in `core/bootstrap.ts` before anything reads the profile. `touch` = bare phone/tablet (coarse, no hover, `mobile` tier); `mouse` = fine, hover-capable profile while keeping the detected memory tier — the tier is the operative WebKit cache budget, and the override is pointer-only. Platform flags stay detected in both modes (they gate WebKit workarounds that remain true). JS-only: stylesheets and per-event gesture routing still follow the real media features and `PointerEvent.pointerType`.
+- `isTouchLikePointer(event)` — a finger, or a pen used as a finger on a coarse-pointer device (iPad + Pencil, with no secondary button held). Consistent across a gesture: `pointermove` reports `button === -1`, so held buttons are read from `buttons`. A pen on a fine-pointer desktop keeps the mouse mapping.
+- `deriveInputProfile(signals)`, `inferDeviceClass(signals)`, `readInputSignals()` — the pure derivation and its raw browser signals (`InputSignals`), injectable for tests. No-signal default (node, jsdom) is a hover-capable fine-pointer laptop, i.e. the historical desktop behaviour.
+- `resetInputProfileForTests()`.
 
 ### platform.ts - Platform Detection
 

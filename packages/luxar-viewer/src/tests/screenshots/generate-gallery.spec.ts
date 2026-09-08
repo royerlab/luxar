@@ -717,10 +717,11 @@ async function measureLuminance(page: any): Promise<LumaStats> {
       const total = w * h;
       // Histogram the lit-pixel luma (1024 bins over [0,1]) instead of pushing
       // every luma into an array and sorting it — a native-resolution frame can
-      // be ~1M lit pixels and this runs up to 21× per demo (3 p99 iterations +
-      // 1 spread probe + MID_EXPOSURE_ITERS + CLIP_GUARD_ITERS, less the probe
-      // that the next phase reuses), so the array+sort was needless memory
-      // churn. The histogram gives every percentile in O(n), no growth.
+      // be ~1M lit pixels and this runs up to ~42× per demo (3 p99 iterations +
+      // 1 spread probe + MID_EXPOSURE_ITERS + up to 29 range-derived guard
+      // iterations, less a probe reused by the next phase), so the array+sort
+      // was needless memory churn. The histogram gives every percentile in
+      // O(n), no growth.
       const BINS = 1024;
       const hist = new Int32Array(BINS); // lit-pixel luma
       const allHist = new Int32Array(BINS); // ALL-pixel luma (for background level)
@@ -881,7 +882,7 @@ async function measureBorderLitOrNull(
  *      white OR the background is lifted to grey (frame p10 above near-black).
  *      Phase 1 (p99 target) over-boosts sparse/bloomy scenes into a grey wash;
  *      the background term is what pulls those back to a black background.
- * Returns the chosen stops and whether phase 2 fired.
+ * Returns the chosen stops, whether phase 2 fired, and whether phase 3 exhausted.
  */
 async function autoExpose(page: any): Promise<AutoExposureResult> {
   return await computeAutoExposure({
@@ -1429,9 +1430,14 @@ for (const demo of DEMOS) {
       await setExposure(page, demo.exposure);
       console.log(`[${demo.id}] exposure=${demo.exposure.toFixed(2)} stops (override)`);
     } else if (demo.autoExpose !== false) {
-      const { stops, flatSubject } = await autoExpose(page);
-      const how = flatSubject ? 'auto, flat subject' : 'auto';
+      const { stops, flatSubject, guardExhausted } = await autoExpose(page);
+      const how = `auto${flatSubject ? ', flat subject' : ''}${guardExhausted ? ', guard exhausted' : ''}`;
       console.log(`[${demo.id}] exposure=${stops.toFixed(2)} stops (${how})`);
+      if (guardExhausted) {
+        console.warn(
+          `[${demo.id}] exposure guard exhausted at ${stops.toFixed(2)} stops — still over the clip/background limit at the floor`
+        );
+      }
     } else {
       console.log(`[${demo.id}] exposure=baked (autoExpose off)`);
     }

@@ -1347,7 +1347,7 @@ export class LayersPanel {
       const rect = this.panelEl.getBoundingClientRect();
       gui.style.top = `${rect.bottom + 8}px`;
     } else {
-      gui.style.top = '20px';
+      gui.style.top = 'calc(20px + env(safe-area-inset-top, 0px))';
     }
   }
 

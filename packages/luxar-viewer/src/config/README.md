@@ -558,6 +558,8 @@ From `./validation.ts`:
 From `./url-params.ts`:
 
 - `readUrlParams(search?)` — typed snapshot of recognized `?param=value` pairs.
+  Includes `input: 'touch' | 'mouse' | null` (`?input=`), the JS-only input-profile
+  override applied by `core/bootstrap.ts` via `utils/input-capabilities`.
 - `normalizeDataSourceUrl(rawSrc)`, `buildDataSourceBrowserUrl(src, location)`,
   `replaceBrowserDataSourceUrl(src, target?)`.
 

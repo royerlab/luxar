@@ -48,6 +48,7 @@ import type { OverlayManager } from '../ui/overlay-manager';
 import type { PickingSystem } from '../rendering/picking/picking-system';
 import type { LabelLoader, ImageLabelLoader } from '../data/loaders';
 import { EventGroup } from '../utils/cross-layer/event-group';
+import { installCanvasGestureOwnership } from './app/interaction/canvas-gesture-ownership';
 import { setViewerContainer } from '../utils/viewer-container';
 import { assertBrowserEnvironment, assertThreeRevision } from './app/init/environment-guards';
 import { applyModuleOverrides } from './app/init/module-overrides';
@@ -233,6 +234,12 @@ export class LuxarApp {
     // container is also promoted to a containing block so fixed overlays
     // scope to it; resetViewerContainer() in the dispose pipeline restores it.
     setViewerContainer(options.container ?? document.body);
+
+    // Claim the input surface before any async initialization or dataset
+    // loading leaves an embedder-supplied canvas browser-owned.
+    if (options.canvas instanceof HTMLElement) {
+      installCanvasGestureOwnership(options.canvas, this.events);
+    }
 
     // Mutable accumulator: pipeline writes each subsystem here as it
     // constructs it, so even if init() throws partway through, the

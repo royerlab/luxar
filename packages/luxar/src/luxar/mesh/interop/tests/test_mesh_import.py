@@ -11,6 +11,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from numpy.typing import NDArray
 
 from .._stl import is_binary_stl
 from .._weld import prune_unreferenced_vertices, weld_vertices
@@ -108,6 +109,80 @@ def _signed_volume(mesh: TriangleMesh) -> float:
     return float(
         np.sum(np.einsum("ij,ij->i", np.cross(tri[:, 0], tri[:, 1]), tri[:, 2]))
     )
+
+
+@pytest.mark.parametrize(
+    ("fmt", "unit_range"),
+    [
+        ("ply", True),
+        ("obj", True),
+        ("glb", True),
+        ("vtp", True),
+        ("ply", False),
+        ("obj", False),
+        ("vtp", False),
+    ],
+)
+def test_float_colors_round_to_nearest_byte(
+    fmt: str, unit_range: bool, tmp_path: Path
+) -> None:
+    authored = np.array(
+        [
+            [1.6, 63.6, 127.6],
+            [2.6, 64.6, 128.6],
+            [3.6, 65.6, 129.6],
+            [4.6, 66.6, 130.6],
+        ],
+        dtype=np.float32,
+    )
+    expected = np.round(authored).astype(np.uint8)
+    stored_colors = authored / 255.0 if unit_range else authored
+    path = tmp_path / f"rounded.{fmt}"
+
+    if fmt == "glb":
+        write_glb(path, GT, colors=stored_colors)
+    elif fmt == "vtp":
+        write_vtp_point_data(
+            path,
+            GT,
+            [(stored_colors, "Float32", "colors", 3)],
+            pdata_attrs='Scalars="colors"',
+        )
+    else:
+        header = []
+        if fmt == "ply":
+            header = [
+                "ply",
+                "format ascii 1.0",
+                f"element vertex {len(GT.vertices)}",
+                "property float x",
+                "property float y",
+                "property float z",
+                "property float red",
+                "property float green",
+                "property float blue",
+                f"element face {len(GT.faces)}",
+                "property list uchar int vertex_indices",
+                "end_header",
+            ]
+        prefix = "" if fmt == "ply" else "v "
+        rows = [
+            prefix + " ".join(str(float(value)) for value in (*vertex, *color))
+            for vertex, color in zip(GT.vertices, stored_colors, strict=True)
+        ]
+        face_prefix = "3 " if fmt == "ply" else "f "
+        offset = 0 if fmt == "ply" else 1
+        faces = [
+            face_prefix + " ".join(str(int(index) + offset) for index in face)
+            for face in GT.faces
+        ]
+        path.write_text("\n".join(header + rows + faces) + "\n", encoding="ascii")
+
+    mesh = import_mesh(path)
+    assert mesh.colors is not None
+    for vertex, color in zip(mesh.vertices, mesh.colors, strict=True):
+        row = int(np.argmin(np.linalg.norm(GT.vertices - vertex, axis=1)))
+        np.testing.assert_array_equal(color, expected[row])
 
 
 class TestReaderParity:
@@ -420,6 +495,59 @@ class TestStl:
 
 
 class TestGltf:
+    @pytest.mark.parametrize(
+        ("component_type", "authored", "expected"),
+        [
+            (
+                5121,
+                np.array(
+                    [[2, 64, 128], [3, 65, 129], [4, 66, 130], [5, 67, 131]],
+                    dtype=np.uint8,
+                ),
+                np.array(
+                    [[2, 64, 128], [3, 65, 129], [4, 66, 130], [5, 67, 131]],
+                    dtype=np.uint8,
+                ),
+            ),
+            (
+                5123,
+                np.array(
+                    [
+                        [129, 16_320, 32_768],
+                        [643, 16_834, 33_282],
+                        [1_157, 17_348, 33_796],
+                        [1_671, 17_862, 34_310],
+                    ],
+                    dtype=np.uint16,
+                ),
+                np.array(
+                    [[1, 64, 128], [3, 66, 130], [5, 68, 132], [7, 70, 134]],
+                    dtype=np.uint8,
+                ),
+            ),
+        ],
+    )
+    def test_integer_colors_use_normalized_component_range(
+        self,
+        component_type: int,
+        authored: NDArray,
+        expected: NDArray[np.uint8],
+        tmp_path: Path,
+    ) -> None:
+        path = tmp_path / "integer-colors.glb"
+        write_glb(
+            path,
+            GT,
+            colors=authored,
+            color_component_type=component_type,
+        )
+
+        mesh = import_mesh(path)
+        assert mesh.colors is not None
+        for vertex, color in zip(mesh.vertices, mesh.colors, strict=True):
+            row = int(np.argmin(np.linalg.norm(GT.vertices - vertex, axis=1)))
+            np.testing.assert_array_equal(color, expected[row])
+
     def test_node_translation_is_applied(self, tmp_path: Path) -> None:
         # Skip the node graph and every part of a multi-part model stacks at the
         # origin — a plausible-looking, entirely wrong import.

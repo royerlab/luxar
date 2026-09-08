@@ -705,9 +705,9 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
                 encoder_name = "float32"
             elif mode == EncodingMode.MEMORY or mode == EncodingMode.AUTO:
                 # Quantize to uint8: [0, 1] → [0, 255]
-                encoded_data = np.clip(
-                    data.astype(np.float64, copy=False) * 255.0, 0, 255
-                ).astype(np.uint8)
+                encoded_data = self._quantize_normalized_clip(
+                    data, 0.0, 1.0, 255, np.dtype(np.uint8)
+                )
                 encoder_name = "rgb_uint8"
             else:
                 raise ValueError(f"Unexpected mode for SDR COLOR: {mode}")

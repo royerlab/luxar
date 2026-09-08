@@ -51,6 +51,7 @@ describe('AnimationController', () => {
       update: vi.fn(),
       isAutoRotateActive: vi.fn().mockReturnValue(false),
       isAutoDollyActive: vi.fn().mockReturnValue(false),
+      isGestureActive: vi.fn().mockReturnValue(false),
     };
 
     // Create mock post-processing manager
@@ -350,6 +351,24 @@ describe('AnimationController', () => {
       vi.advanceTimersByTime(10000);
       expect(mockControls.update.mock.calls.length).toBe(updateCallsBefore);
       expect(mockPostProcessing.render.mock.calls.length).toBe(renderCallsBefore);
+      expect(controller.isActive).toBe(false);
+    });
+  });
+
+  describe('idle pause vs. a live pointer gesture', () => {
+    it('does not idle-pause while a gesture is in progress, and pauses once it ends', () => {
+      // A button or finger held still for longer than the idle timeout, then
+      // dragged: the drag's deltas are applied by update(), which only a live
+      // loop calls. Pausing mid-gesture froze the camera for the whole drag.
+      mockControls.isGestureActive.mockReturnValue(true);
+      controller.startAnimation();
+      vi.advanceTimersByTime(2000); // idle timeout elapses with the pointer still down
+      expect(controller.isActive).toBe(true);
+      vi.advanceTimersByTime(2000); // …and keeps re-arming while it stays down
+      expect(controller.isActive).toBe(true);
+
+      mockControls.isGestureActive.mockReturnValue(false);
+      vi.advanceTimersByTime(2000);
       expect(controller.isActive).toBe(false);
     });
   });

@@ -20,6 +20,11 @@ import {
   type ControlAction,
 } from '../../../../../controls/luxar-orbit-controls/input/pointer';
 
+import {
+  resetInputProfileForTests,
+  setInputProfileOverride,
+} from '../../../../../utils/input-capabilities';
+
 /**
  * jsdom does not implement PointerEvent. Build a minimal stub with the
  * fields the helpers actually read (pointerId, pointerType, button,
@@ -34,13 +39,17 @@ function makePointerEvent(
     clientX?: number;
     clientY?: number;
     shiftKey?: boolean;
+    buttons?: number;
+    cancelable?: boolean;
   } = {}
 ): PointerEvent {
   const base = new MouseEvent(type, {
     button: init.button ?? 0,
+    buttons: init.buttons ?? 0,
     clientX: init.clientX ?? 0,
     clientY: init.clientY ?? 0,
     shiftKey: init.shiftKey ?? false,
+    cancelable: init.cancelable ?? true,
   });
   Object.defineProperty(base, 'pointerId', { value: init.pointerId ?? 0, configurable: true });
   Object.defineProperty(base, 'pointerType', {
@@ -52,7 +61,7 @@ function makePointerEvent(
 
 function makeBaseCtx(overrides: Partial<OrbitInputCtx> = {}): {
   ctx: OrbitInputCtx;
-  state: { action: ControlAction; zoomDelta: number };
+  state: { action: ControlAction; zoomDelta: number; rollDelta: number };
   domElement: HTMLElement;
 } {
   const domElement = document.createElement('div');
@@ -71,7 +80,10 @@ function makeBaseCtx(overrides: Partial<OrbitInputCtx> = {}): {
     toJSON: () => ({}),
   }));
 
-  const state = { action: 'none' as ControlAction, zoomDelta: 0 };
+  // jsdom has no pointer capture; the helpers call both on the element.
+  Object.assign(domElement, { setPointerCapture: vi.fn(), releasePointerCapture: vi.fn() });
+
+  const state = { action: 'none' as ControlAction, zoomDelta: 0, rollDelta: 0 };
   const pointers: PointerEvent[] = [];
 
   const ctx: OrbitInputCtx = {
@@ -104,6 +116,9 @@ function makeBaseCtx(overrides: Partial<OrbitInputCtx> = {}): {
     },
     addZoomDelta: (d) => {
       state.zoomDelta += d;
+    },
+    addRollDelta: (d) => {
+      state.rollDelta += d;
     },
     pan: vi.fn(),
     dispatch: vi.fn(),
@@ -702,5 +717,176 @@ describe('handlePointerMove — rotate/pan/zoom branches [controls.md G18]', () 
     expect(ctx.rotationDelta.equals(new THREE.Quaternion())).toBe(true);
     expect(ctx.pan).not.toHaveBeenCalled();
     expect(state.zoomDelta).toBe(0);
+  });
+});
+
+describe('touch routing (isTouchLikePointer)', () => {
+  it('touch pointerdown routes to onTouchStart and suppresses compatibility mouse events', () => {
+    const { ctx } = makeBaseCtx();
+    const ev = makePointerEvent('pointerdown', { pointerId: 1, pointerType: 'touch' });
+    handlePointerDown(ctx, ev);
+    expect(ctx.onTouchStart).toHaveBeenCalledTimes(1);
+    expect(ev.defaultPrevented).toBe(true);
+  });
+
+  it('mouse pointerdown is never preventDefaulted', () => {
+    const { ctx } = makeBaseCtx();
+    const ev = makePointerEvent('pointerdown', { pointerId: 1, pointerType: 'mouse', button: 2 });
+    handlePointerDown(ctx, ev);
+    expect(ev.defaultPrevented).toBe(false);
+    expect(ctx.onTouchStart).not.toHaveBeenCalled();
+  });
+
+  it('a pen takes the mouse path on a fine-pointer device and the touch path on a coarse one', () => {
+    // jsdom's matchMedia mock reports a fine pointer; the ?input= override
+    // is the sanctioned way to force a coarse one.
+    resetInputProfileForTests();
+    let { ctx } = makeBaseCtx();
+    handlePointerDown(
+      ctx,
+      makePointerEvent('pointerdown', { pointerId: 1, pointerType: 'pen', buttons: 1 })
+    );
+    expect(ctx.onTouchStart).not.toHaveBeenCalled();
+    expect(ctx.getState()).toBe('pan'); // LEFT=PAN mapping
+
+    setInputProfileOverride('touch');
+    ({ ctx } = makeBaseCtx());
+    handlePointerDown(
+      ctx,
+      makePointerEvent('pointerdown', { pointerId: 1, pointerType: 'pen', buttons: 1 })
+    );
+    expect(ctx.onTouchStart).toHaveBeenCalledTimes(1);
+    // …and a pen move keeps the touch path even though pointermove reports button -1.
+    handlePointerMove(
+      ctx,
+      makePointerEvent('pointermove', { pointerId: 1, pointerType: 'pen', button: -1, buttons: 1 })
+    );
+    expect(ctx.onTouchMove).toHaveBeenCalledTimes(1);
+    // Barrel button: mouse mapping (secondary action stays reachable).
+    ({ ctx } = makeBaseCtx());
+    handlePointerDown(
+      ctx,
+      makePointerEvent('pointerdown', { pointerId: 2, pointerType: 'pen', button: 2, buttons: 2 })
+    );
+    expect(ctx.onTouchStart).not.toHaveBeenCalled();
+    expect(ctx.getState()).toBe('rotate'); // RIGHT=ROTATE mapping
+    resetInputProfileForTests();
+  });
+});
+
+describe('handlePointerUp — a finger lifting out of a multi-finger gesture', () => {
+  it('re-seeds from the survivors instead of ending the gesture (2 → 1)', () => {
+    const { ctx, state, domElement } = makeBaseCtx();
+    const removeSpy = vi.spyOn(domElement, 'removeEventListener');
+    const a = makePointerEvent('pointerdown', {
+      pointerId: 1,
+      pointerType: 'touch',
+      clientX: 100,
+      clientY: 100,
+    });
+    const b = makePointerEvent('pointerdown', {
+      pointerId: 2,
+      pointerType: 'touch',
+      clientX: 300,
+      clientY: 100,
+    });
+    handlePointerDown(ctx, a);
+    handlePointerDown(ctx, b);
+    state.action = 'zoom';
+    (ctx.onTouchStart as ReturnType<typeof vi.fn>).mockClear();
+    (ctx.dispatch as ReturnType<typeof vi.fn>).mockClear();
+
+    handlePointerUp(
+      ctx,
+      makePointerEvent('pointerup', {
+        pointerId: 2,
+        pointerType: 'touch',
+        clientX: 300,
+        clientY: 100,
+      })
+    );
+
+    // Pointer list shrinks to the survivor…
+    expect(ctx.setPointers).toHaveBeenCalledWith([a]);
+    expect(ctx.pointerPositions.has(2)).toBe(false);
+    // …the gesture is re-seeded, not ended.
+    expect(ctx.onTouchStart).toHaveBeenCalledTimes(1);
+    expect(ctx.dispatch).not.toHaveBeenCalledWith('end');
+    expect(state.action).toBe('zoom'); // the orchestrator's onTouchStart sets the new state
+    // …and the move/up/cancel listeners stay attached for the survivor.
+    expect(removeSpy).not.toHaveBeenCalledWith('pointermove', expect.anything());
+  });
+
+  it('ends the gesture when the last finger lifts (1 → 0)', () => {
+    const { ctx, state, domElement } = makeBaseCtx();
+    const removeSpy = vi.spyOn(domElement, 'removeEventListener');
+    handlePointerDown(ctx, makePointerEvent('pointerdown', { pointerId: 1, pointerType: 'touch' }));
+    state.action = 'rotate';
+    (ctx.onTouchStart as ReturnType<typeof vi.fn>).mockClear();
+    // The orchestrator reassigns ctx.pointers via setPointers; emulate it.
+    (ctx.setPointers as ReturnType<typeof vi.fn>).mockImplementation((p: PointerEvent[]) => {
+      ctx.pointers.length = 0;
+      ctx.pointers.push(...p);
+    });
+    handlePointerUp(ctx, makePointerEvent('pointerup', { pointerId: 1, pointerType: 'touch' }));
+    expect(ctx.onTouchStart).not.toHaveBeenCalled();
+    expect(state.action).toBe('none');
+    expect(ctx.dispatch).toHaveBeenCalledWith('end');
+    expect(removeSpy).toHaveBeenCalledWith('pointermove', ctx.boundOnPointerMove);
+  });
+
+  it('pointercancel of one finger is handled like its release (browser stole a gesture)', () => {
+    const { ctx } = makeBaseCtx();
+    handlePointerDown(ctx, makePointerEvent('pointerdown', { pointerId: 1, pointerType: 'touch' }));
+    handlePointerDown(
+      ctx,
+      makePointerEvent('pointerdown', { pointerId: 2, pointerType: 'touch', clientX: 50 })
+    );
+    (ctx.onTouchStart as ReturnType<typeof vi.fn>).mockClear();
+    handlePointerUp(ctx, makePointerEvent('pointercancel', { pointerId: 1, pointerType: 'touch' }));
+    expect(ctx.onTouchStart).toHaveBeenCalledTimes(1);
+    expect(ctx.dispatch).not.toHaveBeenCalledWith('end');
+  });
+
+  it('re-seeds a surviving finger when a mouse pointer lifts', () => {
+    const { ctx } = makeBaseCtx();
+    const touch = makePointerEvent('pointerdown', { pointerId: 1, pointerType: 'touch' });
+    handlePointerDown(ctx, touch);
+    handlePointerDown(
+      ctx,
+      makePointerEvent('pointerdown', { pointerId: 2, pointerType: 'mouse', button: 0, buttons: 1 })
+    );
+    (ctx.onTouchStart as ReturnType<typeof vi.fn>).mockClear();
+    (ctx.dispatch as ReturnType<typeof vi.fn>).mockClear();
+
+    handlePointerUp(
+      ctx,
+      makePointerEvent('pointerup', { pointerId: 2, pointerType: 'mouse', button: 0, buttons: 0 })
+    );
+
+    expect(ctx.setPointers).toHaveBeenCalledWith([touch]);
+    expect(ctx.onTouchStart).toHaveBeenCalledTimes(1);
+    expect(ctx.dispatch).not.toHaveBeenCalledWith('end');
+  });
+
+  it('does not seed a touch gesture from a surviving mouse pointer', () => {
+    const { ctx, state } = makeBaseCtx();
+    const mouse = makePointerEvent('pointerdown', {
+      pointerId: 1,
+      pointerType: 'mouse',
+      button: 0,
+      buttons: 1,
+    });
+    handlePointerDown(ctx, mouse);
+    handlePointerDown(ctx, makePointerEvent('pointerdown', { pointerId: 2, pointerType: 'touch' }));
+    (ctx.onTouchStart as ReturnType<typeof vi.fn>).mockClear();
+    (ctx.dispatch as ReturnType<typeof vi.fn>).mockClear();
+
+    handlePointerUp(ctx, makePointerEvent('pointerup', { pointerId: 2, pointerType: 'touch' }));
+
+    expect(ctx.setPointers).toHaveBeenCalledWith([mouse]);
+    expect(ctx.onTouchStart).not.toHaveBeenCalled();
+    expect(state.action).toBe('none');
+    expect(ctx.dispatch).toHaveBeenCalledWith('end');
   });
 });

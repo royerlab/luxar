@@ -25,8 +25,26 @@ index.css (library, embed-safe)
   ├── base/utilities.css   — Tailwind-like .luxar-* utility classes
   ├── components/*.css     — Per-UI-surface component styles
   ├── ../ui/gui/styles/    — Custom GUI library (gui, controller, folder)
-  └── themes/*.css         — Named theme overrides (applied last)
+  ├── themes/*.css         — Named theme overrides
+  └── components/coarse-pointer.css — Touch / coarse-pointer adaptations (media-gated only, applied last)
 ```
+
+## Touch and coarse pointers
+
+Every phone/tablet adaptation lives in **one** file, `components/coarse-pointer.css`,
+whose top level contains only `@media` blocks keyed on the pointer/hover media
+features (`(pointer: coarse)`, `(hover: none)`, `(any-hover: hover)`) — never on
+viewport width alone. A mouse-and-keyboard machine therefore receives byte-identical
+CSS; `tests/unit/styles/coarse-pointer-css.test.ts` enforces the contract (media-only
+top level, pointer-feature preludes, no pointer/hover features anywhere else in the
+tree, the load-bearing clamps present). What it does: width clamps via
+`min(<desktop width>, calc(100vw - margins))`, `vh` → `dvh` heights behind
+`@supports (height: 100dvh)` (iOS Safari's dynamic toolbar), `env(safe-area-inset-*)`
+on the rail gutter and the bottom strip (`index.html` declares `viewport-fit=cover`),
+`touch-action: manipulation` on buttons, a scrolling items box for the control rail,
+and no idle-dimming of the rail where nothing can hover. The rail's items wrapper
+(`.luxar-control-rail__items`) is `display: contents` in `control-rail.css` so it is
+layout-transparent on fine pointers. See the UI Design Guide §11.5.
 
 ## CSS Custom Properties
 

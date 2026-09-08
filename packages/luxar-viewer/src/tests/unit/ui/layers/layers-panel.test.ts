@@ -238,6 +238,26 @@ describe('LayersPanel — construction', () => {
     expect(panel.isVisible()).toBe(false);
     expect(container.children.length).toBe(0);
   });
+
+  it('keeps the rendering controls below the panel, then resets below the safe area', () => {
+    const gui = document.createElement('div');
+    gui.className = 'luxar-gui';
+    document.body.appendChild(gui);
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeLayeredSceneGraph());
+    const panelElement = container.querySelector('.luxar-layers-panel') as HTMLElement;
+    panelElement.getBoundingClientRect = vi.fn(() => ({
+      bottom: 180,
+    })) as unknown as typeof panelElement.getBoundingClientRect;
+
+    panel.show();
+    expect(gui.style.top).toBe('188px');
+
+    panel.hide();
+    expect(gui.style.top).toContain('20px');
+    expect(gui.style.top).toContain('safe-area-inset-top');
+  });
 });
 
 describe('LayersPanel.toggle — empty-scene path', () => {
