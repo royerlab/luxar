@@ -421,6 +421,7 @@ test = "pytest -n {env:LUXAR_PYTEST_JOBS:6} --dist loadfile {args:packages/luxar
 # override that per-machine choice from the wrong place. Set PYTEST_ADDOPTS
 # yourself for a fast local coverage run.
 test-cov = "mkdir -p coverage/python && pytest -m 'not slow' --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests}"
+test-nocov = "pytest -m 'not slow' {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests}"
 test-cov-all = "mkdir -p coverage/python && pytest -n {env:LUXAR_PYTEST_JOBS:6} --dist loadfile --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests}"
 # `scripts/benchmarks` remains explicit as a safety net if the anchored
 # `/benchmarks/` ignore rule ever regresses to matching nested directories.

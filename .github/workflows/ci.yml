@@ -768,9 +768,22 @@ jobs:
         # on a macOS runner and a CUDA image respectively (#2544).
         run: hatch run check-native --require cxx
 
-      - name: Test with coverage
+      - name: Test (PRs skip coverage for speed; push/dispatch enforce the gate)
         if: needs.changes.outputs.dom_py != 'false'
-        run: hatch run test-cov
+        # Coverage instrumentation is the dominant CPU cost of this job (~60-90 min
+        # under contention) and the merge-rate ceiling: it is what makes every PR
+        # wait ~an hour on the self-hosted pool. Per-PR runs now skip it and run the
+        # same `-m 'not slow'` suite plain (fast). Coverage collection AND the 89%
+        # threshold still run on every push to dev and on the full-matrix dispatch,
+        # so a coverage regression reddens dev (halting promote-ff) rather than
+        # gating each PR. The job/context name (`python-tests (<ver>)`) is unchanged,
+        # so no required status context is orphaned.
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            hatch run test-nocov
+          else
+            hatch run test-cov
+          fi
 
   typescript-tests:
     needs: [changes, pick-runner]
