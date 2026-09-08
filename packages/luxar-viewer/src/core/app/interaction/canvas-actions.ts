@@ -339,8 +339,11 @@ export function installCanvasActions(ports: CanvasActionsPorts): CanvasActionsHa
       if (gesture === gestureGeneration) fn();
     };
     const pending = picking.pickAt?.(clientX, clientY);
-    if (pending) void pending.then(run, () => {});
-    else run();
+    if (pending) {
+      void pending.then(run, (err: unknown) => {
+        log.warning(Modules.APP, `Touch pick failed: ${err}`);
+      });
+    } else run();
   };
 
   /** The element menu for a touch gesture at a viewport position. */

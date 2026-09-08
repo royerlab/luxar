@@ -36,6 +36,7 @@ import type {
   ContextMenuOptions,
 } from '../../../../../ui/overlay-widgets/context-menu';
 import { isMacPlatform } from '../../../../../utils/platform';
+import { log, Modules } from '../../../../../utils/log';
 import {
   resetInputProfileForTests,
   setInputProfileOverride,
@@ -637,6 +638,21 @@ describe('touch: tap, long-press, double-tap', () => {
       'https://www.uniprot.org/uniprotkb/P04637/entry',
       '_blank'
     );
+  });
+
+  it('logs a failed tap pick without acting on stale cache state', async () => {
+    const h = setup({}, LINKED);
+    const failure = new Error('readback failed');
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    h.picking.pickAt.mockRejectedValueOnce(failure);
+
+    gesture(h.canvas, { x: 100, y: 80, pointerType: 'touch' });
+    await flush();
+
+    expect(warning).toHaveBeenCalledWith(Modules.APP, `Touch pick failed: ${failure}`);
+    expect(h.onElementClick).not.toHaveBeenCalled();
+    expect(h.openUrl).not.toHaveBeenCalled();
+    warning.mockRestore();
   });
 
   it('a tap tolerates the finger drift a mouse click may not', async () => {
