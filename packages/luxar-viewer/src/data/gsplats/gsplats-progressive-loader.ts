@@ -58,12 +58,9 @@ const MAX_PREFETCH_LEVELS = 3;
 function resolvePrefetchDepth(
   metadataWarmStarted: boolean,
   hasCacheStats: boolean,
-  frameBudgetMs: number | null,
-  isShadowPrefetch: boolean
+  frameBudgetMs: number | null
 ): number {
-  return metadataWarmStarted && hasCacheStats && frameBudgetMs === null && !isShadowPrefetch
-    ? MAX_PREFETCH_LEVELS
-    : 1;
+  return metadataWarmStarted && hasCacheStats && frameBudgetMs === null ? MAX_PREFETCH_LEVELS : 1;
 }
 
 function readPrefetchHeadroom(loader: GSplatsSpatialIndexLoader | undefined): number | null {
@@ -581,7 +578,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       this.lastViewState.dimensions = viewState.dimensions;
     }
 
-    if (this._initialLoadDone && this._frameBudgetMs === null && !isPrefetch) {
+    if (this._initialLoadDone && this._frameBudgetMs === null) {
       this.warmRemainingLODMetadata();
     }
 
@@ -778,8 +775,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     const maxLevels = resolvePrefetchDepth(
       this._metadataWarmStarted,
       headroom !== null,
-      this._frameBudgetMs,
-      viewState.prefetch === true
+      this._frameBudgetMs
     );
     const levels = await selectPrefetchLevels(
       this.lodLoaders,
