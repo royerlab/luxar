@@ -37,6 +37,16 @@ describe('runChecks', () => {
     expect(runner.mock.calls.map(([check]) => check)).toEqual(CI_CHECKS.slice(0, 4));
   });
 
+  it('honors signals reported directly by the spawned process', () => {
+    const runner = vi.fn(() => ({ status: null, signal: 'SIGTERM' }));
+
+    expect(runChecks(CI_CHECKS, runner)).toEqual({
+      failures: [],
+      killed: { check: 'check:overrides', signal: 'SIGTERM' },
+    });
+    expect(runner).toHaveBeenCalledTimes(1);
+  });
+
   it('supports local fail-fast without changing the CI default', () => {
     const runner = vi.fn((check) => ({ status: check === 'check:format' ? 1 : 0, signal: null }));
     expect(runChecks(CI_CHECKS, runner, { bail: true })).toEqual({
