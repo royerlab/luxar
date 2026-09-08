@@ -29,8 +29,10 @@
  * touch equivalent on its own. Touch-like pointers (`isTouchLikePointer`) get:
  * a wider slop ({@link TOUCH_CLICK_SLOP_PX}); **tap** = pick at the tap
  * (`PickGenerationPort.pickAt`, the tooltip shows through the normal result
- * path) and then the click action, with any navigation deferred by
- * {@link DOUBLE_TAP_MS} so a second tap can pre-empt it; **long-press** =
+ * path) and then the click action, after first discarding residual user-input
+ * damping in orbit, ortho, or fly mode so accepted drift cannot immediately
+ * clear that result; any navigation is deferred by {@link DOUBLE_TAP_MS} so a
+ * second tap can pre-empt it; **long-press** =
  * the element menu, after which the release is inert; **double-tap** = the
  * second tap pre-empts the first tap's navigation and picks nothing — the
  * re-frame itself is `double-tap-to-fit.ts`, installed for every scene, since

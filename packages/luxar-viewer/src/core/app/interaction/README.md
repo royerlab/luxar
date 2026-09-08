@@ -151,12 +151,16 @@ so at 4 px every tap read as a camera drag), and three gestures:
 
 - **Tap** — pick at the tap through `PickGenerationPort.pickAt` (the
   `PickingSystem` method that bypasses the hover-settle scheduler; the tooltip
-  shows through the normal result path), then the click action. `pickAt`
-  resolves only after the result handler has _finished_, not merely been
-  called: that handler stores the cache after an asynchronous label fetch, so a
-  read on delivery alone would see the cache as it was before the tap's own
-  pick landed (the long-press menu silently never opened under emulation). Any navigation
-  is deferred by `DOUBLE_TAP_MS` so a second tap can pre-empt it. That delay
+  shows through the normal result path), then the click action. Before picking,
+  the accepted release discards residual user-input damping in orbit, ortho, or
+  fly mode, so the camera cannot clear the new tooltip/cache on the next frame;
+  fly translation continues, since only its touch-look angular velocity is
+  settled. `pickAt` resolves only after the result handler has _finished_, not
+  merely been called: that handler stores the cache after an asynchronous label
+  fetch, so a read on delivery alone would see the cache as it was before the
+  tap's own pick landed (the long-press menu silently never opened under
+  emulation). Any navigation is deferred by `DOUBLE_TAP_MS` so a second tap can
+  pre-empt it. That delay
   starts only after the GPU readback and label / key / image fetch finish, so
   the total tap-to-navigation gap is the async pick latency plus 300 ms; the
   mouse path stays synchronous so its user activation is never spent.
