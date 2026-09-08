@@ -11,9 +11,10 @@
  *      cannot quietly decay back into decoration.
  *
  * `COVERAGE_RECORDED` records the measurement each floor was set from
- * (2026-09, 686 files). Re-derive with `pnpm vitest run --coverage`. Any test
- * change can move these measurements, so updating tests and refreshing both
- * maps with `pnpm check:coverage-slack` is one atomic change.
+ * (2026-09, 686 files). Re-derive with `pnpm test:coverage`, then use
+ * `pnpm check:coverage-slack -- --print` to emit a paste-ready replacement.
+ * Any test change can move these measurements, so updating tests and refreshing
+ * both maps is one atomic change.
  *
  * ## vitest 4 semantics — read before editing
  *
@@ -39,7 +40,7 @@ export const METRICS = ['lines', 'statements', 'functions', 'branches'];
  */
 export const MAX_SLACK_POINTS = 3;
 
-/** Warn when measured coverage falls this far below its recorded baseline. */
+/** Warn when measured coverage moves this far from its recorded baseline. */
 export const MAX_EROSION_POINTS = 1;
 
 export const COVERAGE_THRESHOLDS = {
@@ -100,21 +101,21 @@ export const COVERAGE_THRESHOLDS = {
 
 /** Coverage measurements from the run that established each floor. */
 export const COVERAGE_RECORDED = {
-  lines: 89.03,
-  statements: 87.93,
-  functions: 85.67,
-  branches: 82.12,
-  'src/types/**': { lines: 98.87, functions: 96.61, branches: 97.93 },
-  'src/wasm/**': { lines: 98.61, functions: 100, branches: 96.88 },
-  'src/config/**': { lines: 96.3, functions: 100, branches: 93.47 },
-  'src/utils/**': { lines: 99.53, functions: 100, branches: 95.92 },
-  'src/scene/**': { lines: 95.77, functions: 88.06, branches: 91.15 },
-  'src/cache/**': { lines: 95.05, functions: 95.2, branches: 85.25 },
-  'src/controls/**': { lines: 95.42, functions: 89.66, branches: 88.01 },
-  'src/data/**': { lines: 93.4, functions: 91.66, branches: 87.36 },
-  'src/workers/**': { lines: 91.38, functions: 91.41, branches: 86.74 },
-  'src/ui/**': { lines: 91.53, functions: 86.32, branches: 79.11 },
-  'src/core/**': { lines: 89.49, functions: 75.16, branches: 86.19 },
+  lines: 89.09,
+  statements: 88.18,
+  functions: 86.25,
+  branches: 82.57,
+  'src/types/**': { lines: 98.99, functions: 96.77, branches: 98.05 },
+  'src/wasm/**': { lines: 98.58, functions: 100, branches: 96.46 },
+  'src/config/**': { lines: 95.37, functions: 100, branches: 92.73 },
+  'src/utils/**': { lines: 99.55, functions: 100, branches: 96.32 },
+  'src/scene/**': { lines: 95.48, functions: 86.67, branches: 91.09 },
+  'src/cache/**': { lines: 95.06, functions: 95.22, branches: 85.28 },
+  'src/controls/**': { lines: 95.83, functions: 89.66, branches: 88.36 },
+  'src/data/**': { lines: 93.5, functions: 91.87, branches: 87.42 },
+  'src/workers/**': { lines: 91.39, functions: 91.41, branches: 86.74 },
+  'src/ui/**': { lines: 91.77, functions: 86.72, branches: 79.25 },
+  'src/core/**': { lines: 89.61, functions: 74.76, branches: 85.3 },
   'src/input/**': { lines: 93.09, functions: 90.39, branches: 85.26 },
-  'src/rendering/**': { lines: 75.12, functions: 76.55, branches: 71.98 },
+  'src/rendering/**': { lines: 76.3, functions: 77.75, branches: 72.61 },
 };

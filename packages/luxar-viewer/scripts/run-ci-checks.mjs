@@ -15,25 +15,38 @@ export const CI_CHECKS = [
   'check:coverage-slack',
 ];
 
-/** Run every named check and return the ones that failed. */
-export function runChecks(checks, runner) {
+/** Run named checks, aggregating failures unless bail is requested. */
+export function runChecks(checks, runner, options = {}) {
   const failures = [];
   for (const check of checks) {
-    if (runner(check) !== 0) failures.push(check);
+    const result = runner(check);
+    if (result.signal) return { failures, killed: { check, signal: result.signal } };
+    if (result.status !== 0) {
+      failures.push(check);
+      if (options.bail) break;
+    }
   }
-  return failures;
+  return { failures, killed: null };
 }
 
 function runPnpmCheck(check) {
   console.log(`\n=== pnpm run ${check} ===\n`);
-  const command = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
-  const result = spawnSync(command, ['run', check], { stdio: 'inherit' });
+  const result = spawnSync('pnpm', ['run', check], { stdio: 'inherit' });
   if (result.error) console.error(`Failed to run ${check}: ${result.error.message}`);
-  return result.status ?? 1;
+  return { status: result.status ?? 1, signal: result.signal };
 }
 
 function main() {
-  const failures = runChecks(CI_CHECKS, runPnpmCheck);
+  const { failures, killed } = runChecks(CI_CHECKS, runPnpmCheck, {
+    bail: process.argv.slice(2).includes('--bail'),
+  });
+  if (killed) {
+    console.error(
+      `\ncheck:ci: ${killed.check} was killed by ${killed.signal}; remaining checks skipped.`
+    );
+    process.exitCode = 1;
+    return;
+  }
   if (failures.length === 0) {
     console.log('\ncheck:ci: all checks passed.');
     return;

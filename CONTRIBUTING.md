@@ -151,7 +151,7 @@ def test_new_feature(tmp_path):
 - All new public methods must have tests
 - Edge cases and error conditions must be covered
 - Use pytest fixtures for common setup
-- Maintain the enforced coverage floors; after viewer test changes, run `pnpm test:coverage && pnpm check:coverage-slack` and refresh `coverage-thresholds.mjs` when required
+- Maintain the enforced coverage floors; after viewer test changes, run `pnpm test:coverage && pnpm check:coverage-slack -- --print` and refresh both `COVERAGE_THRESHOLDS` and `COVERAGE_RECORDED` when required
 - Mark slow tests with `@pytest.mark.slow`
 - Mark integration tests with `@pytest.mark.integration`
 

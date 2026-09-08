@@ -17,7 +17,7 @@ export declare const METRICS: readonly ['lines', 'statements', 'functions', 'bra
 /** How far a floor may sit below the measured value before the guard fails. */
 export declare const MAX_SLACK_POINTS: number;
 
-/** How far coverage may fall below its recorded baseline before warning. */
+/** How far coverage may move from its recorded baseline before warning. */
 export declare const MAX_EROSION_POINTS: number;
 
 /** A floor per metric. Every key is optional; an omitted metric is ungated. */
