@@ -981,8 +981,9 @@ jobs:
         #   → check:knip:ci (dead-file + unlisted-dependency gate)
         #   → test:coverage (vitest with thresholds)
         #   → check:coverage-slack (reject stale or empty coverage floors)
-        # Every check runs even after an earlier failure; the runner reports
-        # the complete failure set and exits nonzero at the end.
+        # Independent checks run after ordinary failures so the runner can report
+        # the complete failure set. The slack check is skipped only when a failed
+        # coverage run produced no summary for it to inspect.
         # knip:ci runs with --include files,dependencies so policy-level
         # "unused exports" findings (test builders, type guards) don't fail
         # CI; only true dead files and unlisted deps do.

@@ -35,9 +35,11 @@ pnpm run check:ci -- --bail   # Local fail-fast variant
 `check` keeps the iteration fast. `check:ci` is what CI runs: it executes every
 command in `check:static`, then `test:coverage` and `check:coverage-slack`, and
 reports all ordinary failures together instead of stopping at the first one.
-A killed check still stops immediately, and local runs can request fail-fast
-behavior with `--bail`. The static checks include the `check:overrides` pnpm
-security-pin guard, dependency-cruiser layer rules, and the `check:knip:ci`
+A killed check still stops immediately. If a failed coverage run produced no
+summary, the dependent slack check is reported as skipped instead of adding a
+misleading second failure. Local runs can request fail-fast behavior with
+`--bail`. The static checks include the `check:overrides` pnpm security-pin
+guard, dependency-cruiser layer rules, and the `check:knip:ci`
 unused-export/unused-file gate. Coverage thresholds and their last accepted
 measurements live together in `coverage-thresholds.mjs`; after coverage moves,
 run `pnpm check:coverage-slack -- --print`, update floors when required, and

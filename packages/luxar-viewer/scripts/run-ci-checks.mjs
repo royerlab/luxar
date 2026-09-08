@@ -2,7 +2,8 @@
 /**
  * Run the viewer merge gates without the old `&&` chain's fail-fast behavior.
  * Ordinary failures are collected so one CI run reports them together, while
- * killed checks stop immediately to avoid manufacturing dependent failures.
+ * killed checks stop immediately and the slack check is skipped when a failed
+ * coverage run produced no summary, avoiding manufactured dependent failures.
  */
 
 import { spawnSync } from 'node:child_process';
