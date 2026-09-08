@@ -121,7 +121,7 @@ describe('evaluate', () => {
     );
     expect(failures).toHaveLength(1);
     expect(failures[0]).toMatch(/floor 71 is 19.0 pts under measured 90.00/);
-    expect(failures[0]).toMatch(/set COVERAGE_RECORDED\.lines to 90\.00/);
+    expect(failures[0]).toMatch(/set COVERAGE_RECORDED\.lines to 90\.$/);
   });
 
   it('accepts a floor exactly at the slack budget', () => {

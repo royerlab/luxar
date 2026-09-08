@@ -186,7 +186,7 @@ export function evaluate(summary, thresholds, recorded, options) {
         failures.push(
           `${key} ${metric}: floor ${floor} is ${slack.toFixed(1)} pts under ` +
             `measured ${pct.toFixed(2)} (budget ${maxSlack}). Raise it to ` +
-            `${Math.floor(pct - 1)} and set ${recordedTarget} to ${pct.toFixed(2)}.`
+            `${Math.floor(pct - 1)} and set ${recordedTarget} to ${Number(pct.toFixed(2))}.`
         );
       }
       if (slack < 0) {
