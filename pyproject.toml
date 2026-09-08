@@ -340,6 +340,7 @@ dependencies = [
     # Keep demo-only GL deps out: every CI Python leg builds this env, and
     # moderngl/glcontext ship no CPython 3.14 wheels. Run the GL tests with
     # `hatch run demos:pytest packages/luxar/src/luxar/demos/tests/test_clay_renderer.py`.
+
     # Ceiling lifted with the zarr 3 migration; see the tracksdata group note.
     "napari[all]>=0.8",
     "pandas>=1.5.0",
@@ -530,6 +531,12 @@ check = [
 [tool.hatch.envs.demos]
 template = "demos"
 features = ["test", "demos"]
+
+[tool.hatch.envs.demos.env-vars]
+OMP_NUM_THREADS = "{env:OMP_NUM_THREADS:1}"
+OPENBLAS_NUM_THREADS = "{env:OPENBLAS_NUM_THREADS:1}"
+MKL_NUM_THREADS = "{env:MKL_NUM_THREADS:1}"
+NUMEXPR_NUM_THREADS = "{env:NUMEXPR_NUM_THREADS:1}"
 
 [tool.hatch.envs.demos.scripts]
 pytest = "python -m pytest {args:packages/luxar/src/luxar/demos/tests}"

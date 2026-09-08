@@ -188,6 +188,10 @@ class TestHatchEnvironments:
             "the demos feature includes moderngl/glcontext, which lack CPython 3.14 "
             "wheels and must stay out of the default Hatch environment"
         )
+        assert "demos" not in test_environment["features"], (
+            "the demos feature includes moderngl/glcontext, which lack CPython 3.14 "
+            "wheels and must stay out of the test Hatch environment"
+        )
 
     def test_demos_environment_can_run_gpu_renderer_tests(self) -> None:
         """The GL tests retain an explicit environment with pytest and demo deps."""
@@ -202,6 +206,15 @@ class TestHatchEnvironments:
 
         assert demos_environment["template"] == "demos"
         assert set(demos_environment["features"]) == {"test", "demos"}
+        assert demos_environment["env-vars"] == {
+            name: f"{{env:{name}:1}}"
+            for name in (
+                "OMP_NUM_THREADS",
+                "OPENBLAS_NUM_THREADS",
+                "MKL_NUM_THREADS",
+                "NUMEXPR_NUM_THREADS",
+            )
+        }
         assert demos_environment["scripts"]["pytest"].startswith("python -m pytest ")
 
 
