@@ -683,6 +683,25 @@ def test_main_restricted_update_baseline_refuses_to_drop_debt(
     assert json.loads(baseline.read_text())["violations"] == {"other.py::B905": 4}
 
 
+def test_settings_refresh_does_not_report_retirement_when_write_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A refused refresh must not claim that baseline keys were retired."""
+    _require_ruff()
+    _write_tree(tmp_path, _ONE_VIOLATION)
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(
+        json.dumps(_baseline_payload({"other.py::B905": 4}, rules=["B"]))
+    )
+
+    assert _run_main(tmp_path, baseline, "--update-baseline") == 2
+
+    output = _clean_output(capsys)
+    assert "Refusing" in output and "RESTRICTED" in output
+    assert "Retiring" not in output
+    assert json.loads(baseline.read_text())["violations"] == {"other.py::B905": 4}
+
+
 def test_main_rejects_a_baselined_file_excluded_from_the_full_scan(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

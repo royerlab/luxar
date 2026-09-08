@@ -714,10 +714,12 @@ def _refresh_baseline_after_load_error(
         "   Re-recording the baseline for the current Ruff settings because "
         "--update-baseline was requested deliberately."
     )
-    retired = ruff_ratchet.format_retired_keys(previous_baseline, current)
-    if retired:
-        aprint(f"⚠️  {retired}")
-    return _update_baseline(baseline_path, current, restricted, settings_fingerprint)
+    result = _update_baseline(baseline_path, current, restricted, settings_fingerprint)
+    if result == 0:
+        retired = ruff_ratchet.format_retired_keys(previous_baseline, current)
+        if retired:
+            aprint(f"⚠️  {retired}")
+    return result
 
 
 def main(argv: list[str] | None = None) -> int:
