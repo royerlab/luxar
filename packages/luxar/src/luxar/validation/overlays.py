@@ -296,6 +296,26 @@ def validate_visible_range(
     return validated
 
 
+def _try_imageio_to_bytes(image: Any, fmt: str) -> Tuple[bytes, str] | None:
+    """Decode an optional imageio input, preserving runtime decoder failures."""
+    try:
+        import imageio.v3 as iio
+    except ImportError:
+        return None
+
+    try:
+        if hasattr(image, "read"):
+            arr = iio.imread(image)
+        else:
+            arr = np.asarray(image)
+        return _numpy_to_bytes(arr, fmt), fmt
+    except Exception as exc:
+        raise ValueError(
+            f"Cannot process image of type {type(image).__name__}: imageio failed "
+            f"with {type(exc).__name__}: {exc}"
+        ) from exc
+
+
 def validate_image_input(
     image: Any,
     fmt: str = "png",
@@ -352,18 +372,9 @@ def validate_image_input(
     if isinstance(image, np.ndarray):
         return _numpy_to_bytes(image, fmt), fmt
 
-    # Try imageio as fallback
-    try:
-        import imageio.v3 as iio
-
-        # imageio can read many formats; convert to numpy then to bytes
-        if hasattr(image, "read"):
-            arr = iio.imread(image)
-        else:
-            arr = np.asarray(image)
-        return _numpy_to_bytes(arr, fmt), fmt
-    except (ImportError, Exception):
-        pass
+    imageio_result = _try_imageio_to_bytes(image, fmt)
+    if imageio_result is not None:
+        return imageio_result
 
     raise ValueError(
         f"Cannot process image of type {type(image).__name__}. "

@@ -172,6 +172,81 @@ def test_hilbert_numba_numpy_parity() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("module", "encoder", "kernel_attr", "loader_attr", "label"),
+    [
+        (
+            _morton_mod,
+            morton_encode_nd,
+            "_morton_numba_kernel",
+            "_get_morton_numba_kernel",
+            "Morton",
+        ),
+        (
+            _hilbert_mod,
+            hilbert_encode_nd,
+            "_hilbert_numba_kernel",
+            "_get_hilbert_numba_kernel",
+            "Hilbert",
+        ),
+    ],
+)
+def test_numba_compile_failure_warns_once_before_fallback(
+    monkeypatch, module, encoder, kernel_attr: str, loader_attr: str, label: str
+) -> None:
+    def fail_compile():
+        raise RuntimeError("JIT unavailable")
+
+    monkeypatch.setattr(module, kernel_attr, None)
+    monkeypatch.setattr(module, loader_attr, fail_compile)
+    coords = np.array([[0, 0], [1, 2], [3, 1]], dtype=np.int64)
+
+    with pytest.warns(
+        RuntimeWarning,
+        match=rf"{label} Numba kernel failed with RuntimeError: JIT unavailable",
+    ) as caught:
+        first = encoder(coords, bits_per_dim=4)
+        second = encoder(coords, bits_per_dim=4)
+
+    np.testing.assert_array_equal(first, second)
+    assert len(caught) == 1
+
+
+@pytest.mark.parametrize(
+    ("module", "encoder", "kernel_attr", "loader_attr"),
+    [
+        (
+            _morton_mod,
+            morton_encode_nd,
+            "_morton_numba_kernel",
+            "_get_morton_numba_kernel",
+        ),
+        (
+            _hilbert_mod,
+            hilbert_encode_nd,
+            "_hilbert_numba_kernel",
+            "_get_hilbert_numba_kernel",
+        ),
+    ],
+)
+def test_missing_numba_falls_back_quietly(
+    monkeypatch, module, encoder, kernel_attr: str, loader_attr: str
+) -> None:
+    def fail_import():
+        raise ImportError("numba missing")
+
+    monkeypatch.setattr(module, kernel_attr, None)
+    monkeypatch.setattr(module, loader_attr, fail_import)
+    coords = np.array([[0, 0], [1, 2], [3, 1]], dtype=np.int64)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        encoded = encoder(coords, bits_per_dim=4)
+
+    assert encoded.shape == (3,)
+    assert not caught
+
+
 # --- Key Invariant 6: never tighter than the footprint, at ANY magnitude ------
 # The per-geometry suites pin this with hand-picked examples at |x| = 2e7 only,
 # which is one point on a curve whose whole difficulty is scale. Sweep the

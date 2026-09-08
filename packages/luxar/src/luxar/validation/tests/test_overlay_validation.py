@@ -174,6 +174,19 @@ class TestValidateImageInput:
             validate_image_input(b"not an image")
         assert str(exc.value).endswith("PNG, JPEG, or WebP payload.")
 
+    def test_imageio_failure_preserves_exception_details(self):
+        class BrokenArray:
+            def __array__(self, *_args, **_kwargs):
+                raise RuntimeError("decoder exploded")
+
+        with pytest.raises(
+            ValueError,
+            match="imageio failed with RuntimeError: decoder exploded",
+        ) as exc:
+            validate_image_input(BrokenArray())
+
+        assert isinstance(exc.value.__cause__, RuntimeError)
+
     def test_numpy_rgb(self):
         arr = np.zeros((4, 4, 3), dtype=np.uint8)
         data, fmt = validate_image_input(arr)

@@ -6,6 +6,7 @@ with automatic backend selection (CUDA > MPS > CPU).
 
 from __future__ import annotations
 
+import warnings
 from typing import TYPE_CHECKING, Tuple
 
 import numpy as np
@@ -16,6 +17,60 @@ from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
 if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import GSplatData
+
+
+_cuda_render_warning_emitted = False
+
+
+def _try_cuda_render(
+    centers: torch.Tensor,
+    cholesky_factors: torch.Tensor,
+    amplitudes: torch.Tensor,
+    shape: Tuple[int, ...],
+    truncate: float,
+    intensity_floor: float,
+) -> torch.Tensor | None:
+    """Render with the CUDA extension when its supported fast path is available."""
+    # Keep this in sync with cuda/src/cuda_splatting.h (MIN_DIMS/MAX_DIMS).
+    if not 2 <= len(shape) <= 8:
+        return None
+
+    try:
+        from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
+            CUDA_BACKEND_AVAILABLE,
+            CUDASplatFunction,
+        )
+    except ImportError:
+        return None
+
+    if not CUDA_BACKEND_AVAILABLE:
+        return None
+
+    try:
+        with torch.no_grad():
+            output: torch.Tensor = CUDASplatFunction.apply(  # type: ignore[no-untyped-call, unused-ignore]
+                centers,
+                cholesky_factors,
+                amplitudes,
+                tuple(shape),
+                truncate,
+                intensity_floor,
+                False,  # use_fp16
+            )
+            if output.shape != tuple(shape):
+                output = output.view(shape)
+            return output
+    except Exception as exc:
+        global _cuda_render_warning_emitted  # noqa: PLW0603
+        if not _cuda_render_warning_emitted:
+            warnings.warn(
+                "CUDA volume renderer failed with "
+                f"{type(exc).__name__}: {exc}; falling back to PyTorch",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            _cuda_render_warning_emitted = True
+        return None
 
 
 def render_to_volume_tensor(
@@ -96,28 +151,11 @@ def render_to_volume_tensor(
     # and much faster than the pure-PyTorch renderer (which creates massive
     # meshgrid intermediates that can OOM on large volumes).
     if device.startswith("cuda"):
-        try:
-            from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
-                CUDA_BACKEND_AVAILABLE,
-                CUDASplatFunction,
-            )
-
-            if CUDA_BACKEND_AVAILABLE:
-                with torch.no_grad():
-                    output: torch.Tensor = CUDASplatFunction.apply(  # type: ignore[no-untyped-call, unused-ignore]
-                        centers_t,
-                        Ls_t,
-                        amps_t,
-                        tuple(shape),
-                        truncate,
-                        intensity_floor,
-                        False,  # use_fp16
-                    )
-                    if output.shape != tuple(shape):
-                        output = output.view(shape)
-                    return output
-        except (ImportError, Exception):
-            pass  # Fall through to PyTorch renderer
+        output = _try_cuda_render(
+            centers_t, Ls_t, amps_t, shape, truncate, intensity_floor
+        )
+        if output is not None:
+            return output
 
     # Fallback: pure PyTorch renderer (works on all devices)
     return render_gaussians(

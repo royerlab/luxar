@@ -7,6 +7,7 @@ used when available, falling back to the ``hilbertcurve`` library.
 
 from __future__ import annotations
 
+import warnings
 from typing import Any
 
 import numpy as np
@@ -97,7 +98,15 @@ def hilbert_encode_nd(coords: np.ndarray, bits_per_dim: int = 16) -> np.ndarray:
     if _hilbert_numba_kernel is None:
         try:
             _hilbert_numba_kernel = _get_hilbert_numba_kernel()  # type: ignore[no-untyped-call]
-        except (ImportError, Exception):
+        except ImportError:
+            _hilbert_numba_kernel = False
+        except Exception as exc:
+            warnings.warn(
+                "Hilbert Numba kernel failed with "
+                f"{type(exc).__name__}: {exc}; using the Python fallback",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             _hilbert_numba_kernel = False
 
     if _hilbert_numba_kernel:

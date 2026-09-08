@@ -8,6 +8,7 @@ exercised by the parity tests in ``io/tests/test_ordering_properties.py``).
 
 from __future__ import annotations
 
+import warnings
 from typing import Any
 
 import numpy as np
@@ -57,7 +58,15 @@ def morton_encode_nd(coords: np.ndarray, bits_per_dim: int = 16) -> np.ndarray:
     if _morton_numba_kernel is None:
         try:
             _morton_numba_kernel = _get_morton_numba_kernel()  # type: ignore[no-untyped-call]
-        except (ImportError, Exception):
+        except ImportError:
+            _morton_numba_kernel = False
+        except Exception as exc:
+            warnings.warn(
+                "Morton Numba kernel failed with "
+                f"{type(exc).__name__}: {exc}; using the NumPy fallback",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             _morton_numba_kernel = False
 
     if _morton_numba_kernel:
