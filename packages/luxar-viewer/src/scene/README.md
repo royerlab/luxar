@@ -430,7 +430,9 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    also kicks the sweep refinement orchestrator
    (`SceneLoader.kickRefinementIfIdle`) so the freshly-registered part
    ladders stream to completion instead of stalling at chunk-1 until
-   the next slice change.
+   the next slice change. Activation is single-shot: those nested leaves
+   resolve later staleness through the ordinary update sweep, while re-firing
+   the group loader would attach a duplicate copy of the subtree.
 
 **Selector modes:**
 
@@ -505,7 +507,9 @@ a sub-millisecond visibility toggle. Memory is bounded once per frame
 by `enforceResidentByteBudget`, which (only when the GPU pool's live
 resident byte total exceeds the shared budget) demotes evictable
 levels — hidden-layer (undrawable) first, then off-screen, then
-furthest-from-camera, then coldest-`lastVisibleTick`. The visible
+furthest-from-camera, then coldest-`lastVisibleTick`. A resident level
+that has never been displayed is back-filled with the coldest sentinel
+so it ages ahead of every level the user has actually seen. The visible
 level of each group and eager
 fallback levels (no `release` thunk) are never evicted. "Visible" here
 is **effective** visibility (`isEffectivelyVisible`): under a hidden
