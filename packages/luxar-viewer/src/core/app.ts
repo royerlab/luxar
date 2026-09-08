@@ -539,7 +539,10 @@ export class LuxarApp {
    */
   private installWaypoints(waypoints: ZarrWaypoint[] | undefined): void {
     this.disposeWaypoints();
-    if (!Array.isArray(waypoints) || waypoints.length === 0) return;
+    if (!Array.isArray(waypoints) || waypoints.length === 0) {
+      this.overlayManager?.updateVisibility();
+      return;
+    }
 
     const driver = new WaypointDriver(waypoints, {
       getDims: () => sceneDimsManager.getDims(),

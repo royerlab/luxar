@@ -1719,7 +1719,7 @@ describe('LuxarApp', () => {
       const updateVisibility = vi.fn();
       const internals = app as unknown as {
         overlayManager: { updateVisibility: () => void; dispose: () => void };
-        installWaypoints: (waypoints: ZarrWaypoint[]) => void;
+        installWaypoints: (waypoints: ZarrWaypoint[] | undefined) => void;
       };
       internals.overlayManager = { updateVisibility, dispose: vi.fn() };
 
@@ -1727,6 +1727,11 @@ describe('LuxarApp', () => {
         internals.installWaypoints([
           { when: { story: 1 }, camera: { position: [5, 0, 0] }, reveal: 'on_arrival' },
         ]);
+
+        expect(updateVisibility).toHaveBeenCalledTimes(1);
+        updateVisibility.mockClear();
+
+        internals.installWaypoints(undefined);
 
         expect(updateVisibility).toHaveBeenCalledTimes(1);
       } finally {
