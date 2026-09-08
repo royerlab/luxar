@@ -33,6 +33,14 @@ Usage:
     python -m luxar.demos.demo_esm3_protein_stories
     python -m luxar.demos.demo_esm3_protein_stories --no-serve
     python -m luxar.demos.demo_esm3_protein_stories --no-auto-rotate
+    python -m luxar.demos.demo_esm3_protein_stories --no-audio
+
+Sound (``docs/guides/specs/SOUND_SPEC.md``): a CC0 ambient bed plays under the
+whole tour and each story is narrated on arrival. Narration is synthesised when
+the scene is BUILT — OpenAI TTS when ``OPENAI_API_KEY`` is set, the macOS
+system voice otherwise, silence (with a warning) on a box with neither — and
+cached under ``~/.cache/luxar/esm3_protein_stories/narration``. ``--no-audio``
+skips the whole layer (no download, no synthesis).
 
 Requires the base demo's cache (``~/.cache/luxar/esm3_swissprot``: the UMAP
 positions and the metadata). Run ``luxar demo run esm3_protein_landscape``
@@ -52,13 +60,16 @@ DEMO_META = {
     "category": "embeddings",
     "geometry": "points",
     "requirements": {
-        "download_mb": 0,
+        # The CC0 ambient bed (OpenGameArt "Calm Ambient 1", ~6 MiB); narration
+        # is synthesised locally, never downloaded.
+        "download_mb": 7,
         "compute": "light",
         "gpu": "none",
         "local_data": None,
     },
-    # Reads the base demo's cache; adds its own for the PDB turntables.
-    "caches": ["esm3_swissprot", "pdb_turntables"],
+    # Reads the base demo's cache; adds its own for the PDB turntables and
+    # for the sound layer (the cached ambient bed + synthesised narration).
+    "caches": ["esm3_swissprot", "pdb_turntables", "esm3_protein_stories"],
     "outputs": ["esm3_protein_stories"],
     "citation": {
         "short": "UniProt/Swiss-Prot; embeddings by EvolutionaryScale ESM C, 2024",
@@ -72,6 +83,8 @@ import math
 import re
 import sys
 import tempfile
+import warnings
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -80,14 +93,20 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import (
+    AudioConfig,
     CameraConfig,
     EnvironmentConfig,
     ViewerConfig,
     Waypoint,
 )
-from luxar.demos import launch_viewer
+from luxar.demos import cached_download, launch_viewer
+from luxar.demos._audio_synth import (
+    synthesise_foa_from_clip,
+    synthesise_hum,
+)
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG, pull_in
 from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
+from luxar.demos._narration import resolve_engine, synthesise
 from luxar.demos._pdb_turntable import TurntableAssets, render_turntables
 from luxar.demos.demo_esm3_protein_landscape import (
     TAXON_COLORS,
@@ -643,6 +662,66 @@ STORY_DIM = "story"
 UNIPROT_LINK = "https://www.uniprot.org/uniprotkb?query={hover_key}"
 PANEL_WIDTH = 0.32
 
+# =============================================================================
+# Sound layer (SOUND_SPEC.md §5): an ambient bed plus one narration per story
+# =============================================================================
+
+# A CC0 ambient pad — "Calm Ambient 1 (Synthwave 4k)" by The Cynic Project
+# (cynicmusic.com), published on OpenGameArt: soft evolving pads and slow
+# chords, no percussion, ~2.6 min. Chosen over a Freesound field-recording
+# drone the owner found too industrial. The file is a stable direct download
+# (no login), pinned by checksum so a silent swap upstream is caught.
+AMBIENT_BED_URL = "https://opengameart.org/sites/default/files/001_Synthwave_4k_0.mp3"
+AMBIENT_BED_FILENAME = "calm_ambient_1_cynicmusic.mp3"
+AMBIENT_BED_SHA256 = "56b31f997020da1abd4092f5e82457592323717a23e4d560c5f8135d26c3b8be"
+AMBIENT_BED_SOURCE_URL = "https://opengameart.org/content/calm-ambient-1-synthwave-4k"
+AMBIENT_BED_ATTRIBUTION = (
+    "The Cynic Project / cynicmusic.com — 'Calm Ambient 1 (Synthwave 4k)' "
+    "(OpenGameArt, CC0)"
+)
+AMBIENT_BED_GAIN = 0.35
+# Sound layer Phase 4: when a decoder + AAC encoder are on the build box, the
+# stereo bed is re-encoded as a first-order ambisonic FIELD (left channel at
+# +50°, right at -50°) the viewer rotates against the camera, so the music stays
+# fixed to the world as the turntable spins. Otherwise the stereo MP3 plays as is.
+AMBISONIC_BED_CACHE_DIR = (
+    Path.home() / ".cache" / "luxar" / "esm3_protein_stories" / "ambisonic"
+)
+AMBISONIC_BED_SPREAD_DEG = 50.0
+# The bed ends quieter than it starts, so a bare loop pops at the seam; its last
+# 15 s are blended into its first (equal-power crossfade) at build time, for the
+# ambisonic field and for the stereo fallback alike. Needs a decoder + encoder;
+# without one the original MP3 plays as is.
+AMBIENT_BED_LOOP_CROSSFADE_S = 15.0
+
+# Narration is synthesised at BUILD time (OpenAI TTS when a key is present, the
+# macOS system voice otherwise; a Linux box without a key builds silently) and
+# cached under this demo's own cache dir, keyed by (engine, voice, text).
+NARRATION_CACHE_DIR = (
+    Path.home() / ".cache" / "luxar" / "esm3_protein_stories" / "narration"
+)
+NARRATION_VOICES = {"openai": "alloy", "say": "Samantha"}
+NARRATION_SOURCE_URL = "https://github.com/royerlab/luxar"
+# Narration is `on_arrive`: it starts when the story's flight lands (the waypoint
+# driver's arrival event), plus a beat so the picture settles first.
+NARRATION_AFTER_FLIGHT_MS = 600
+
+# Cluster hums (sound layer Phase 2): one spatial source per story, attached to
+# the story's highlight node so it follows the cluster's centre, live only at
+# that story, louder as the camera approaches. Synthesised at build time (needs
+# afconvert or ffmpeg; otherwise the scene has no hums) and cached here.
+HUM_CACHE_DIR = Path.home() / ".cache" / "luxar" / "esm3_protein_stories" / "hums"
+HUM_SECONDS = 8.0
+HUM_GAIN = 0.5
+#: E2 as the ladder's root; each story a step up a major pentatonic scale, so
+#: stepping through the tour also walks a melody.
+HUM_BASE_HZ = 82.41
+HUM_SEMITONES = (0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24, 26)
+#: Under the inverse distance model, ``ref_distance / camera_distance`` is the
+#: gain at the story camera. Keep the original -13 dB tuning and 20x range.
+HUM_REF_DISTANCE_PER_CAMERA_DISTANCE = 10 ** (-13.0 / 20.0)
+HUM_MAX_DISTANCE_PER_CAMERA_DISTANCE = 20.0 * HUM_REF_DISTANCE_PER_CAMERA_DISTANCE
+
 # The Biohub mark shown bottom-right: a white glyph on transparency, bundled
 # inside the package (not under demos/data, which the wheel excludes) so the
 # built store is self-contained. Width is a fraction of the viewport width; the
@@ -677,6 +756,16 @@ def framing_radius(cluster: StoryCluster) -> float:
             SPHERE_MIN_RADIUS, SPHERE_RADIUS_SCALE * SPARSE_TAIL_RATIO * cluster.r50
         )
     return bubble_radius(cluster)
+
+
+def story_camera_distance(cluster: StoryCluster, story: Story) -> float:
+    """Distance from the story camera to its cluster centre."""
+    half_height_per_unit = math.tan(math.radians(CINEMATIC_FOV_DEG) / 2)
+    return max(
+        story.min_distance,
+        framing_radius(cluster) / (story.frame_fraction * half_height_per_unit),
+        BUBBLE_CAMERA_CLEARANCE * bubble_radius(cluster),
+    )
 
 
 # The shell is a SOAP BUBBLE: `material="physical"` (MESH_PHYSICAL_MATERIALS_SPEC
@@ -886,12 +975,7 @@ def story_camera(
     # `frame_fraction` of the frame height under a 63° vertical field of view.
     # A sphere of radius R at distance d spans 2R of the frame's 2·d·tan(fov/2)
     # height, so R / (d·tan) is its fraction of the height.
-    half_height_per_unit = math.tan(math.radians(CINEMATIC_FOV_DEG) / 2)
-    distance = max(
-        story.min_distance,
-        framing_radius(cluster) / (story.frame_fraction * half_height_per_unit),
-        BUBBLE_CAMERA_CLEARANCE * bubble_radius(cluster),
-    )
+    distance = story_camera_distance(cluster, story)
     position = cluster.centre + outward * distance
     return CameraConfig(
         position=tuple(float(v) for v in position),
@@ -968,6 +1052,135 @@ def overview_panel_html(n_proteins: int) -> str:
 # =============================================================================
 
 
+def hum_frequency_hz(story_index: int) -> float:
+    """Pitch of story ``story_index`` (1-based) on the pentatonic ladder."""
+    semitone = HUM_SEMITONES[(story_index - 1) % len(HUM_SEMITONES)]
+    return HUM_BASE_HZ * 2.0 ** (semitone / 12.0)
+
+
+def add_story_sounds(
+    scene: object,
+    stories: tuple[Story, ...],
+    *,
+    narration_dir: Path = NARRATION_CACHE_DIR,
+    engine: str | None = None,
+    clusters: Sequence[StoryCluster] | None = None,
+    hum_dir: Path = HUM_CACHE_DIR,
+    ambisonic_dir: Path = AMBISONIC_BED_CACHE_DIR,
+) -> int:
+    """Add the ambient bed, one narration per story slot and one hum per cluster.
+
+    Returns the node count. The bed is a cached CC0 download; a network failure
+    skips it with a warning rather than failing the build. Narration is
+    synthesised through :func:`luxar.demos._narration.synthesise`; when no
+    engine is available the stories stay silent (the helper has already warned).
+    Hums need ``clusters`` (for the centre and framing radius) and an AAC encoder
+    (:mod:`luxar.demos._audio_synth`); without one there are simply no hums.
+    """
+    added = 0
+    try:
+        bed = cached_download(
+            AMBIENT_BED_URL,
+            "esm3_protein_stories",
+            AMBIENT_BED_FILENAME,
+            sha256=AMBIENT_BED_SHA256,
+        )
+    except Exception as e:  # noqa: BLE001 - offline build must still produce the scene
+        aprint(f"⚠️ Ambient bed unavailable ({e}); building without it")
+        bed = None
+    if bed is not None:
+        # The field version when the box can make one; the original stereo clip otherwise.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            field = synthesise_foa_from_clip(
+                bed,
+                ambisonic_dir,
+                spread_deg=AMBISONIC_BED_SPREAD_DEG,
+                loop_crossfade_s=AMBIENT_BED_LOOP_CROSSFADE_S,
+            )
+        if field is None:
+            aprint("🔈 No audio decoder/encoder: the bed stays stereo")
+        scene.add_sound(  # type: ignore[attr-defined]
+            "bed_ambient",
+            field if field is not None else bed,
+            ambisonic="foa" if field is not None else None,
+            trigger="continuous",
+            gain=AMBIENT_BED_GAIN,
+            fade_in_ms=1500,
+            fade_out_ms=1500,
+            bus="ambient",
+            license="CC0",
+            attribution=AMBIENT_BED_ATTRIBUTION,
+            source_url=AMBIENT_BED_SOURCE_URL,
+            # A Layers-panel row: eye = mute the bed, slider = its gain.
+            layer=True,
+        )
+        added += 1
+
+    chosen = resolve_engine(engine)
+    voice = NARRATION_VOICES.get(chosen or "", "")
+    # The spoken scripts are authored with the stories (`Story.narration`,
+    # `OVERVIEW_NARRATION`): short and punchy, not the panel read aloud.
+    slots: list[tuple[int, str, str]] = [(0, "Overview", OVERVIEW_NARRATION)]
+    slots += [(k, s.key, story_narration(s)) for k, s in enumerate(stories, start=1)]
+    for k, key, text in slots:
+        clip = synthesise(text, voice, narration_dir, engine=chosen or "none")
+        if clip is None:
+            break
+        scene.add_sound(  # type: ignore[attr-defined]
+            f"narration_{key}",
+            clip,
+            hidden={STORY_DIM: k},
+            # Starts when the story's flight lands (waypoint arrival), a beat later.
+            trigger="on_arrive",
+            delay_ms=NARRATION_AFTER_FLIGHT_MS,
+            bus="voice",
+            license="CC0",
+            attribution=f"Narration synthesised at build time ({chosen}, voice {voice})",
+            source_url=NARRATION_SOURCE_URL,
+        )
+        added += 1
+
+    hums = 0
+    if clusters is not None:
+        for k, (s, c) in enumerate(zip(stories, clusters, strict=True), start=1):
+            clip = synthesise_hum(hum_frequency_hz(k), HUM_SECONDS, hum_dir)
+            if clip is None:
+                break
+            camera_distance = story_camera_distance(c, s)
+            scene.add_sound(  # type: ignore[attr-defined]
+                f"hum_{s.key}",
+                clip,
+                hidden={STORY_DIM: k},
+                attach_to=story_node_name(k, s),
+                trigger="continuous",
+                gain=HUM_GAIN,
+                fade_in_ms=1200,
+                fade_out_ms=1200,
+                bus="effects",
+                ref_distance=(HUM_REF_DISTANCE_PER_CAMERA_DISTANCE * camera_distance),
+                max_distance=(HUM_MAX_DISTANCE_PER_CAMERA_DISTANCE * camera_distance),
+                rolloff=1.0,
+                license="CC0",
+                attribution="Hum synthesised at build time (luxar demo)",
+                source_url=NARRATION_SOURCE_URL,
+                layer=True,
+            )
+            added += 1
+            hums += 1
+    bed_kind = "no" if bed is None else ("ambisonic" if field is not None else "stereo")
+    aprint(
+        f"🔈 {added} sound node(s): bed {bed_kind}, narration engine "
+        f"{chosen}, {hums} cluster hum(s)"
+    )
+    return added
+
+
+def story_node_name(story_index: int, story: Story) -> str:
+    """Name of a story's highlight points node (what its hum attaches to)."""
+    return f"Story {story_index}: {story.key}"
+
+
 def load_landscape_cache(cache_dir: Path) -> tuple[np.ndarray, dict[str, np.ndarray]]:
     """Load the base demo's cached UMAP positions and metadata, or explain."""
     umap_cache = cache_dir / "umap3d_esmc_300m_all.npz"
@@ -1005,8 +1218,13 @@ def build_stories_scene(
     auto_rotate: bool = True,
     turntables: bool = True,
     turntable_cache: Path | None = None,
+    audio: bool = True,
 ) -> int:
-    """Write the stories scene. Returns the number of proteins in the backdrop."""
+    """Write the stories scene. Returns the number of proteins in the backdrop.
+
+    ``audio=False`` skips the sound layer (no bed download, no narration
+    synthesis) — the ``--no-audio`` flag, for an offline or headless build.
+    """
     n = len(positions)
     names = meta["names"]
     organisms = meta["organisms"]
@@ -1106,6 +1324,17 @@ def build_stories_scene(
             # when the slice or appearance changes; `luxar env bake` pre-bakes it.
             environment=EnvironmentConfig(source="scene", probe="auto"),
             waypoints=waypoints,
+            # Sound layer defaults: room speakers (equal-power), the bed under the
+            # voice by 9 dB while a narration plays.
+            audio=AudioConfig(
+                enabled=True,
+                master_gain=0.8,
+                panning_model="equalpower",
+                buses={"ambient": 0.6, "voice": 1.0, "effects": 0.8},
+                duck_db=-9.0,
+            )
+            if audio
+            else None,
         )
 
     dims = Dimensions(
@@ -1157,7 +1386,7 @@ def build_stories_scene(
                     [np.full(m, float(k), dtype=np.float32), positions[idx]]
                 ).astype(np.float32)
                 scene.add_points(
-                    f"Story {k}: {s.key}",
+                    story_node_name(k, s),
                     highlight_positions,
                     colors=np.broadcast_to(
                         np.asarray(s.color, dtype=np.float32), (m, 3)
@@ -1326,6 +1555,10 @@ def build_stories_scene(
                 blend_mode="difference",
             )
 
+            if audio:
+                with asection("Sound layer"):
+                    add_story_sounds(scene, stories, clusters=clusters)
+
     aprint(f"✓ Wrote {n:,} proteins and {len(stories)} stories to {output_path}")
     return n
 
@@ -1343,6 +1576,7 @@ def main() -> None:
 
     auto_rotate = "--no-auto-rotate" not in sys.argv
     turntables = "--no-turntables" not in sys.argv
+    audio = "--no-audio" not in sys.argv
     cache_dir = Path.home() / ".cache" / "luxar" / "esm3_swissprot"
     try:
         positions, meta = load_landscape_cache(cache_dir)
@@ -1354,7 +1588,12 @@ def main() -> None:
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "esm3_protein_stories.luxar.zarr"
         n = build_stories_scene(
-            output_path, positions, meta, auto_rotate=auto_rotate, turntables=turntables
+            output_path,
+            positions,
+            meta,
+            auto_rotate=auto_rotate,
+            turntables=turntables,
+            audio=audio,
         )
         aprint(f"Dataset generated at {output_path} ({n:,} proteins)")
         return
@@ -1362,7 +1601,12 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="luxar_esm3_stories_") as tmpdir:
         output_path = Path(tmpdir) / "esm3_protein_stories.luxar.zarr"
         n = build_stories_scene(
-            output_path, positions, meta, auto_rotate=auto_rotate, turntables=turntables
+            output_path,
+            positions,
+            meta,
+            auto_rotate=auto_rotate,
+            turntables=turntables,
+            audio=audio,
         )
 
         aprint("")

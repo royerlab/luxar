@@ -47,10 +47,10 @@ disagree on their band.
 
 Two demos now state their order — the Acto3D heart and the 2-channel neuromast.
 The heart returns to `volumetric` with orders 3/2/1 for nuclei, vasculature, and
-cardiac tissue. The neuromast stays `additive` and states an order that
-deliberately differs from the inferred one: the membrane shell encloses the
-nuclei, but this fit gives the nuclei channel the marginally larger bounding
-sphere (555.5 vs 546.4), so containment had it backwards.
+cardiac tissue. The neuromast uses low-absorption `volumetric` blending and
+states an order that deliberately differs from the inferred one: the membrane
+shell encloses the nuclei, but this fit gives the nuclei channel the marginally
+larger bounding sphere (555.5 vs 546.4), so containment had it backwards.
 
 What this does not do is make interpenetrating layers _correct_. For two concave
 volumes no single order is right from every viewpoint, so a level pins such a

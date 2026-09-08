@@ -12,6 +12,7 @@ from typing import Any, Dict, Iterator, List, Optional, Union
 import numpy as np
 import zarr
 
+from luxar._zarr_compat import group_keys
 from luxar._zarr_compat import open_group as zc_open_group
 
 from ..core.dimensions import Dimensions
@@ -128,6 +129,45 @@ class GSplatsData(_DictCompatMixin):
     colors: Optional[np.ndarray]
     chunk_bounds: Optional[np.ndarray]
     metadata: Dict[str, Any]
+
+
+def _summarize_typed_node(
+    child: zarr.Group, node_type: str, info: Dict[str, Any]
+) -> None:
+    """Add the per-type summary fields of a leaf node to ``info`` (groups: none)."""
+    if node_type == "points":
+        info["n_points"] = child.attrs.get("n_points", 0)
+        info["ordering"] = child.attrs.get("ordering", "none")
+        # Check if arrays exist
+        info["has_colors"] = "colors" in child
+        info["has_radii"] = "radii" in child
+        info["has_sharpness"] = "sharpnesses" in child
+    elif node_type == "gsplats":
+        info["n_splats"] = child.attrs.get("n_splats", 0)
+        info["ndim"] = child.attrs.get("ndim", 3)
+        info["has_colors"] = child.attrs.get("has_colors", False)
+    elif node_type == "lines":
+        info["n_vertices"] = child.attrs.get("n_vertices", 0)
+        info["n_segments"] = child.attrs.get("n_segments", 0)
+        info["line_type"] = child.attrs.get(
+            "original_line_type",
+            child.attrs.get("line_type", "segments"),
+        )
+    elif node_type == "mesh":
+        info["n_vertices"] = child.attrs.get("n_vertices", 0)
+        info["n_faces"] = child.attrs.get("n_faces", 0)
+        info["ndim"] = child.attrs.get("ndim", 3)
+        info["has_normals"] = child.attrs.get("has_normals", False)
+        info["shading"] = child.attrs.get("shading", "flat")
+    elif node_type == "sound":
+        info["spatial"] = child.attrs.get("spatial", False)
+        info["trigger"] = child.attrs.get("trigger", "continuous")
+        info["bus"] = child.attrs.get("bus", "ambient")
+        info["format"] = child.attrs.get("format", "")
+        info["audio_file"] = child.attrs.get("audio_file", "")
+        info["n_positions"] = child.attrs.get("n_positions", 0)
+        if "duration_ms" in child.attrs:
+            info["duration_ms"] = child.attrs["duration_ms"]
 
 
 class LuxarScene:
@@ -278,7 +318,7 @@ class LuxarScene:
         authored nodes such as overlays can live below one, so skipping the
         container before recursion would hide real scene content.
         """
-        for name in group.group_keys():
+        for name in group_keys(group):
             if not prefix and name in RESERVED_ROOT_GROUPS:
                 continue
             child = group[name]
@@ -298,31 +338,8 @@ class LuxarScene:
             if "nd_transform" in child.attrs:
                 info["nd_transform"] = child.attrs["nd_transform"]
 
-            if node_type == "points":
-                info["n_points"] = child.attrs.get("n_points", 0)
-                info["ordering"] = child.attrs.get("ordering", "none")
-                # Check if arrays exist
-                info["has_colors"] = "colors" in child
-                info["has_radii"] = "radii" in child
-                info["has_sharpness"] = "sharpnesses" in child
-            elif node_type == "gsplats":
-                info["n_splats"] = child.attrs.get("n_splats", 0)
-                info["ndim"] = child.attrs.get("ndim", 3)
-                info["has_colors"] = child.attrs.get("has_colors", False)
-            elif node_type == "lines":
-                info["n_vertices"] = child.attrs.get("n_vertices", 0)
-                info["n_segments"] = child.attrs.get("n_segments", 0)
-                info["line_type"] = child.attrs.get(
-                    "original_line_type",
-                    child.attrs.get("line_type", "segments"),
-                )
-            elif node_type == "mesh":
-                info["n_vertices"] = child.attrs.get("n_vertices", 0)
-                info["n_faces"] = child.attrs.get("n_faces", 0)
-                info["ndim"] = child.attrs.get("ndim", 3)
-                info["has_normals"] = child.attrs.get("has_normals", False)
-                info["shading"] = child.attrs.get("shading", "flat")
-            elif node_type == "group":
+            _summarize_typed_node(child, node_type, info)
+            if node_type == "group":
                 # Recursively collect children
                 self._collect_nodes(child, full_name, nodes)
 
@@ -343,6 +360,10 @@ class LuxarScene:
     def list_meshes(self) -> List[str]:
         """Names of all mesh nodes."""
         return [n["name"] for n in self.nodes if n["type"] == "mesh"]
+
+    def list_sounds(self) -> List[str]:
+        """Names of all sound nodes."""
+        return [n["name"] for n in self.nodes if n["type"] == "sound"]
 
     def list_groups(self) -> List[str]:
         """Names of all group nodes."""

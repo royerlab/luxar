@@ -167,7 +167,7 @@ export class WebGLContextRecovery {
       this.deps.onContextLost?.();
     };
 
-    this.contextRestoredHandler = async (_event: Event) => {
+    this.contextRestoredHandler = (_event: Event) => {
       log.info(Modules.SCENE_MANAGER, 'WebGL context restored - recreating resources...');
       try {
         this.isContextLost = false;

@@ -52,8 +52,9 @@ attribute, and the root digest is returned. xxhash64 is chosen for speed over
 cryptographic strength.
 
 Payload files are non-zarr blobs written straight into a group's directory —
-today just an overlay image (`overlays/<name>/image.png`, named by the group's
-`image_file` attr). They have no chunk grid and no zarr metadata, so
+an overlay image (`overlays/<name>/image.png`, named by the group's `image_file`
+attr) and a sound node's clip (`<node>/audio.mp3` or `audio.m4a`, named by its
+`audio_file` attr). They have no chunk grid and no zarr metadata, so
 `array_keys()` and `group_keys()` are both blind to them: before step (3)
 existed, two scenes compiled from the same script and differing **only** in
 their overlay image bytes got the *same* root hash. `content_hash` is advertised
