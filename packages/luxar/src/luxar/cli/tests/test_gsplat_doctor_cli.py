@@ -24,6 +24,7 @@ from typer.testing import CliRunner
 from luxar._zarr_compat import consolidate as zc_consolidate
 from luxar._zarr_compat import open_group as zc_open_group
 from luxar.cli import app
+from luxar.cli._traceback import TRACEBACK_ENV_VAR
 from luxar.cli.gsplat_ops import inspect_commands
 from luxar.cli.tests._testing import normalized_cli_output
 
@@ -221,7 +222,12 @@ def test_doctor_prints_info_before_diagnosing_a_gsplat_store() -> None:
         assert "no split planes" in result.stdout
 
 
-def test_doctor_continues_when_info_rejects_a_legacy_store() -> None:
+@pytest.mark.parametrize("traceback_enabled", [False, True])
+def test_doctor_continues_when_info_rejects_a_legacy_store(
+    traceback_enabled: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if traceback_enabled:
+        monkeypatch.setenv(TRACEBACK_ENV_VAR, "1")
     with tempfile.TemporaryDirectory() as tmp:
         path = _legacy_gsplat_store(Path(tmp))
 
