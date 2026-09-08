@@ -1080,11 +1080,9 @@ describe('GSplatsProgressiveLoader', () => {
     });
 
     it('starts the remaining spatial-index initializers only after the first load returns', async () => {
-      let now = 0;
-      const spy = vi.spyOn(performance, 'now').mockImplementation(() => (now += 5));
-      lodB.updateView.mockImplementation(async () => {
-        now += 25;
-        return makeLodData(50);
+      lodB.updateViewWithResidency.mockResolvedValue({
+        data: makeLodData(50),
+        allResident: false,
       });
 
       await loader.loadGSplats(baseViewState);
@@ -1094,7 +1092,6 @@ describe('GSplatsProgressiveLoader', () => {
       await loader.updateView(baseViewState);
       expect(lodB.ensureInitialized).toHaveBeenCalledTimes(1);
       expect(lodC.ensureInitialized).toHaveBeenCalledTimes(1);
-      spy.mockRestore();
     });
 
     it('prefetches up to three later rungs once metadata warming has started', async () => {
@@ -1107,18 +1104,16 @@ describe('GSplatsProgressiveLoader', () => {
         lods.length,
         '/test_gsplats'
       );
-      let now = 0;
-      vi.spyOn(performance, 'now').mockImplementation(() => (now += 5));
-      lods[1].updateView.mockImplementation(() => {
-        now += 25;
-        return Promise.resolve(makeLodData(99));
+      lods[1].updateViewWithResidency.mockResolvedValue({
+        data: makeLodData(99),
+        allResident: false,
       });
 
       await loader.loadGSplats(baseViewState);
       for (const lod of lods) lod.prefetchChunks.mockClear();
-      lods[3].updateView.mockImplementation(() => {
-        now += 25;
-        return Promise.resolve(makeLodData(97));
+      lods[3].updateViewWithResidency.mockResolvedValue({
+        data: makeLodData(97),
+        allResident: false,
       });
 
       await loader.updateView(baseViewState);
@@ -1140,18 +1135,16 @@ describe('GSplatsProgressiveLoader', () => {
         lods.length,
         '/test_gsplats'
       );
-      let now = 0;
-      vi.spyOn(performance, 'now').mockImplementation(() => (now += 5));
-      lods[1].updateView.mockImplementation(() => {
-        now += 25;
-        return Promise.resolve(makeLodData(99));
+      lods[1].updateViewWithResidency.mockResolvedValue({
+        data: makeLodData(99),
+        allResident: false,
       });
 
       await loader.loadGSplats(baseViewState);
       for (const lod of lods) lod.prefetchChunks.mockClear();
-      lods[3].updateView.mockImplementation(() => {
-        now += 25;
-        return Promise.resolve(makeLodData(97));
+      lods[3].updateViewWithResidency.mockResolvedValue({
+        data: makeLodData(97),
+        allResident: false,
       });
 
       await loader.updateView(baseViewState);
@@ -1172,18 +1165,16 @@ describe('GSplatsProgressiveLoader', () => {
         lods.length,
         '/test_gsplats'
       );
-      let now = 0;
-      vi.spyOn(performance, 'now').mockImplementation(() => (now += 5));
-      lods[1].updateView.mockImplementation(() => {
-        now += 25;
-        return Promise.resolve(makeLodData(99));
+      lods[1].updateViewWithResidency.mockResolvedValue({
+        data: makeLodData(99),
+        allResident: false,
       });
 
       await loader.loadGSplats(baseViewState);
       for (const lod of lods) lod.prefetchChunks.mockClear();
-      lods[3].updateView.mockImplementation(() => {
-        now += 25;
-        return Promise.resolve(makeLodData(97));
+      lods[3].updateViewWithResidency.mockResolvedValue({
+        data: makeLodData(97),
+        allResident: false,
       });
 
       await loader.updateView({ ...baseViewState, frameBudgetMs: 1_000 });
@@ -1204,28 +1195,19 @@ describe('GSplatsProgressiveLoader', () => {
         lods.length,
         '/test_gsplats'
       );
-      let now = 0;
-      vi.spyOn(performance, 'now').mockImplementation(() => (now += 5));
-      lods[1].updateView.mockImplementation(() => {
-        now += 25;
-        return Promise.resolve(makeLodData(99));
+      lods[1].updateViewWithResidency.mockResolvedValue({
+        data: makeLodData(99),
+        allResident: false,
       });
-      let signal: AbortSignal | undefined;
-      lods[4].prefetchChunks.mockImplementation(
-        (_viewState: GSplatsViewState, prefetchSignal?: AbortSignal) => {
-          signal = prefetchSignal;
-          return new Promise<void>(() => {});
-        }
-      );
 
       await loader.loadGSplats(baseViewState);
-      lods[3].updateView.mockImplementation(() => {
-        now += 25;
-        return Promise.resolve(makeLodData(97));
+      lods[3].updateViewWithResidency.mockResolvedValue({
+        data: makeLodData(97),
+        allResident: false,
       });
       await loader.updateView(baseViewState);
-      expect(signal?.aborted).toBe(false);
-      const previousSignal = signal;
+      const previousSignal = lods[4].prefetchChunks.mock.calls[0]?.[1] as AbortSignal | undefined;
+      expect(previousSignal?.aborted).toBe(false);
 
       await loader.updateView({ ...baseViewState, slicePosition: [0, 0, 0, 1] });
       expect(previousSignal?.aborted).toBe(true);

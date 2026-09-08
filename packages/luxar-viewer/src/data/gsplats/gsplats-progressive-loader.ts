@@ -55,6 +55,26 @@ import { timeLodStageWithResult } from '../scene-loader/lod-load-stats';
 
 const MAX_PREFETCH_LEVELS = 3;
 
+function resolvePrefetchDepth(
+  metadataWarmStarted: boolean,
+  hasCacheStats: boolean,
+  frameBudgetMs: number | null,
+  isShadowPrefetch: boolean
+): number {
+  return metadataWarmStarted && hasCacheStats && frameBudgetMs === null && !isShadowPrefetch
+    ? MAX_PREFETCH_LEVELS
+    : 1;
+}
+
+function readPrefetchHeadroom(loader: GSplatsSpatialIndexLoader | undefined): number | null {
+  if (!loader) return null;
+  const readStats = loader.getPrefetchCacheStats;
+  if (typeof readStats !== 'function') return null;
+  const stats = readStats.call(loader);
+  if (!stats) return null;
+  return Math.max(0, (stats.maxSize ?? 0) - stats.size);
+}
+
 function selectPrefetchLevels(
   lodLoaders: readonly GSplatsSpatialIndexLoader[],
   firstLevel: number,
@@ -747,22 +767,21 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     const firstLevel = this._loadedLODCount;
     if (firstLevel >= this.nLods) return;
 
-    const controller = (this._prefetchController ??= new AbortController());
-    const stats = this.lodLoaders[0]?.getPrefetchCacheStats?.();
-    const headroom = Math.max(0, (stats?.maxSize ?? 0) - (stats?.size ?? 0));
-    const canDeepen =
-      this._metadataWarmStarted &&
-      stats &&
-      this._frameBudgetMs === null &&
-      viewState.prefetch !== true;
-    const maxLevels = canDeepen ? MAX_PREFETCH_LEVELS : 1;
+    const headroom = readPrefetchHeadroom(this.lodLoaders[0]);
+    const maxLevels = resolvePrefetchDepth(
+      this._metadataWarmStarted,
+      headroom !== null,
+      this._frameBudgetMs,
+      viewState.prefetch === true
+    );
     const levels = selectPrefetchLevels(
       this.lodLoaders,
       firstLevel,
       this.nLods,
       maxLevels,
-      headroom
+      headroom ?? 0
     );
+    const controller = (this._prefetchController ??= new AbortController());
 
     for (const level of levels) {
       if (this._prefetchingLevels.has(level)) continue;
