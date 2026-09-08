@@ -11,6 +11,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { DirectoryNavigator, type DirectoryEntry } from '../../../data';
 import { DatasetBrowser } from '../../../ui/dataset-browser';
 import { isTypingInInput } from '../../../utils/dom/focus';
+import { log } from '../../../utils/log';
 
 const navigateMock = vi.fn();
 const getFullUrlMock = vi.fn();
@@ -183,6 +184,29 @@ describe('DatasetBrowser', () => {
     });
   });
 
+  it('logs a terminal navigation failure from a directory activation', async () => {
+    navigateMock.mockResolvedValueOnce(
+      defaultNavigateResult({
+        entries: [{ name: 'nested', path: 'nested', type: 'directory' }],
+      })
+    );
+    const browser = new DatasetBrowser({ container, onDatasetSelect, onClose });
+    await vi.waitFor(() => {
+      expect(container.querySelector('.luxar-dataset-browser__file-item')).not.toBeNull();
+    });
+
+    const failure = new Error('render path failed');
+    const internals = browser as unknown as { navigate(path: string): Promise<void> };
+    vi.spyOn(internals, 'navigate').mockRejectedValue(failure);
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+
+    (container.querySelector('.luxar-dataset-browser__file-item') as HTMLElement).click();
+
+    await vi.waitFor(() => {
+      expect(warning).toHaveBeenCalledWith('UI', 'Dataset navigation failed', failure);
+    });
+  });
+
   describe('navigation + entries', () => {
     it('shows directory entries, sorted zarr → dir → file', async () => {
       const entries: DirectoryEntry[] = [
@@ -332,6 +356,59 @@ describe('DatasetBrowser', () => {
       expect(
         container.querySelector('.luxar-dataset-browser__error-details')?.textContent
       ).toContain('Network down');
+    });
+
+    it('contains a retry rejection when error rendering also throws', async () => {
+      navigateMock.mockRejectedValueOnce(new Error('Network down'));
+      new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelector('.luxar-dataset-browser__error-retry')).not.toBeNull();
+      });
+
+      const failure = Object.create(null) as object;
+      navigateMock.mockRejectedValueOnce(failure);
+      const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+      (container.querySelector('.luxar-dataset-browser__error-retry') as HTMLButtonElement).click();
+
+      await vi.waitFor(() => {
+        expect(warning).toHaveBeenCalledWith(
+          'UI',
+          'Dataset navigation failed',
+          expect.objectContaining({ message: 'Cannot convert object to primitive value' })
+        );
+      });
+    });
+
+    it.each([
+      ['root', 0, ''],
+      ['parent segment', 1, 'data'],
+    ])('contains a rejection from the %s breadcrumb', async (_label, index, expectedPath) => {
+      navigateMock.mockResolvedValueOnce(
+        defaultNavigateResult({ currentPath: 'data/sub', entries: [] })
+      );
+      new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelectorAll('.luxar-dataset-browser__breadcrumb-link').length).toBe(
+          2
+        );
+      });
+
+      const failure = Object.create(null) as object;
+      navigateMock.mockRejectedValueOnce(failure);
+      const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+      const links = container.querySelectorAll<HTMLButtonElement>(
+        '.luxar-dataset-browser__breadcrumb-link'
+      );
+      links[index].click();
+
+      await vi.waitFor(() => {
+        expect(navigateMock).toHaveBeenLastCalledWith(expectedPath);
+        expect(warning).toHaveBeenCalledWith(
+          'UI',
+          'Dataset navigation failed',
+          expect.objectContaining({ message: 'Cannot convert object to primitive value' })
+        );
+      });
     });
   });
 

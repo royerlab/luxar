@@ -99,6 +99,25 @@ def test_unknown_attribute_still_raises_attribute_error() -> None:
         raise AssertionError("expected AttributeError for unknown attribute")
 
 
+def test_fit_parameters_has_a_core_only_stub() -> None:
+    """The class-API parameter export must degrade like the fitter itself."""
+    result = _run(
+        _BLOCK_EXTRA.replace(
+            _SENTINEL,
+            "from luxar.gsplats import FitParameters\n"
+            "try:\n"
+            "    FitParameters()\n"
+            "except ImportError as exc:\n"
+            "    assert 'luxar[gsplats]' in str(exc)\n"
+            "else:\n"
+            "    raise AssertionError('expected the optional-dependency stub')\n"
+            "print('ok')",
+        )
+    )
+    assert result.returncode == 0, result.stderr
+    assert "ok" in result.stdout
+
+
 def test_lazy_device_exports_stay_visible_to_dir() -> None:
     """`luxar.gsplats.utils.__dir__` must keep the lazy torch exports listed.
 

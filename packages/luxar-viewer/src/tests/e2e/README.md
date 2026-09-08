@@ -29,6 +29,57 @@ pnpm test:e2e:report
 New specs import from `./fixtures`, not from `@playwright/test`
 directly — see [Shared Fixture](#shared-fixture-fixturests) below.
 
+### Mobile / touch suite
+
+```bash
+pnpm test:e2e:mobile          # playwright.mobile.config.ts
+```
+
+`src/tests/e2e/mobile/` runs under real device emulation (iPhone 14 portrait +
+landscape, iPad Pro 11 and Pixel 7), all on **Chromium**: the GPU box runs
+Chromium only, and the gestures are synthesised through CDP
+`Input.dispatchTouchEvent` (`mobile/touch-helpers.ts`: pinch, twist, one-finger
+drag, 2→1 release, long-press, double-tap), which WebKit does not expose. The
+main config ignores this folder; the mobile config only matches it. What it
+covers: the media queries actually match under emulation, pinch dollies the
+camera while `visualViewport.scale` stays 1, twist rolls, a finger lifting out of
+a pinch continues as a rotate, double-tap re-frames, tap picks + shows the
+tooltip, long-press opens the element / rail menus, fly mode looks and flies by
+touch, the rail / help / monitor / layers geometry stays inside a phone
+viewport, and the DPR cap and GPU budget resolve to the mobile values. Real iOS
+Safari behaviour (no `contextmenu` on long-press, no Fullscreen on iPhone,
+dynamic toolbar) is the manual device checklist's job, not this suite's.
+
+This suite is the integration check for the touch series planned in #2582, not
+a standalone test of this branch. `gestures.spec.ts` and `fly.spec.ts` require
+parts A and C (gesture ownership and touch controls), and the double-tap case in
+`gestures.spec.ts` also requires B. `pick.spec.ts` requires B,
+`layout.spec.ts` requires D1, and `runtime.spec.ts` requires E. The complete
+suite is validated with #2595 present so held pointer gestures keep the render
+loop awake. Run it against the complete series; expected failures on an earlier
+stack are not harness flakiness.
+
+Two helper rules keep the gesture specs honest under load (a shared Mac at a
+1-minute load of 26 ran a 16-step CDP drag in 5 s):
+
+- **Read the camera after two animation frames** (`cameraPose`). Controls apply
+  input inside their per-frame `update()`, so a pose read straight after the
+  last touch event can predate the frame that applies it — under software GL
+  with two workers a frame can take a second or more, and every gesture then
+  "fails" with the camera exactly at its home pose.
+- **Queue a double-tap's four touch events without awaiting** (`doubleTap`).
+  Awaited CDP round trips put 300–700 ms between the two lifts, past the
+  viewer's 300 ms double-tap window, so the gesture read as two single taps.
+  Queued on one session they land milliseconds apart whatever the box is doing.
+
+The worker count is the desktop plan's, capped at two — the phone viewports
+are cheap but the gesture timing is not, and the load-sizing in
+`tools/e2e-workers.ts` is what stops a busy box from inventing failures here.
+
+Under load the first touch move can arrive seconds after the press; before
+#2595 the loop had idle-paused by then and the whole drag moved nothing — on
+`dev` with a mouse too.
+
 ### Parallelism is sized to the machine
 
 The local worker count is not a constant. `playwright.config.ts` asks
@@ -85,10 +136,11 @@ unconditionally serial.
 
 | Script                 | Selection                                                                                                                                        |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `pnpm test:e2e`        | Everything under `src/tests/e2e/`, minus `*perf-bench.spec.ts` (`testIgnore`)                                                                    |
+| `pnpm test:e2e`        | Everything under `src/tests/e2e/`, minus `*perf-bench.spec.ts` and `src/tests/e2e/mobile/` (`testIgnore`)                                        |
 | `pnpm test:e2e:ci`     | The same, minus tests tagged `@visual` — a **title grep**, not a file list                                                                       |
 | `pnpm test:e2e:visual` | Local run of tests tagged `@visual`; snapshot assertions are active on Linux                                                                     |
 | `pnpm test:e2e:smoke`  | An explicit five-file allowlist: `viewer-initialization`, `url-parameters`, `dataset-switching`, `controls-interaction`, `keyboard-input-system` |
+| `pnpm test:e2e:mobile` | Only `src/tests/e2e/mobile/`, under `playwright.mobile.config.ts`                                                                                |
 | `pnpm test:perf:e2e`   | Only `*perf-bench.spec.ts`, under `playwright.perf.config.ts` (which shares this global setup)                                                   |
 
 The smoke subset is deliberately narrow: its CI job generates datasets at
@@ -136,6 +188,7 @@ e2e/
 ├── render-ticks.ts      # Confirmed render-tick flushing for detector specs
 ├── harnesses/
 │   └── tsl-harness.ts   # TSL ↔ GLSL parity harness (loaded by tsl-harness.html)
+├── mobile/              # touch-helpers.ts + five device-emulated specs
 ├── *.spec.ts            # Playwright specs (one per feature area)
 └── *.spec.ts-snapshots/ # Visual-regression baselines (auto-managed)
 ```

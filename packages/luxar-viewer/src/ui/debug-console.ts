@@ -40,6 +40,7 @@ import { EventGroup } from '../utils/cross-layer/event-group';
 import {
   formatArgs as formatArgsImpl,
   formatConsoleTimestamp,
+  formatFallbackValue,
   messageMatchesFilter,
 } from './debug-console/formatters';
 
@@ -430,17 +431,12 @@ export class DebugConsole {
         const json = JSON.stringify(arg, null, 2);
         span.textContent = json;
       } catch {
-        // arg.toString() throws on null-prototype objects (and on objects
-        // whose toString deliberately throws). String(arg) handles both
-        // safely; wrap in a second try/catch as belt-and-suspenders.
-        try {
-          span.textContent = String(arg);
-        } catch {
-          span.textContent = '[unprintable]';
-        }
+        // The shared fallback preserves ordinary object stringification while
+        // containing null-prototype objects and hostile toString methods.
+        span.textContent = formatFallbackValue(arg);
       }
     } else {
-      span.textContent = String(arg);
+      span.textContent = formatFallbackValue(arg);
     }
 
     return span;

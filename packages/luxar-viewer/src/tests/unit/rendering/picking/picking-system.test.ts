@@ -26,6 +26,7 @@ import {
 } from '../../../../rendering/picking/picking-system';
 import { MAX_PICK_NODE_ID } from '../../../../rendering/picking/picking-system/pick-render';
 import { setElementIdMap } from '../../../../types/committed-data';
+import { log } from '../../../../utils/log';
 
 /** A promise plus its external `resolve` — lets a test gate when the readback completes. */
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
@@ -750,6 +751,26 @@ describe('PickingSystem — settle scheduler', () => {
     onPickResult.mockClear();
     system.markDirty();
     expect(onPickResult).toHaveBeenCalledWith(null);
+  });
+
+  it('logs a rejected pick-result callback instead of leaking it', async () => {
+    const failure = new Error('overlay failed');
+    const rejectedCallback = vi.fn().mockRejectedValue(failure);
+    const rejectedSystem = new PickingSystem(
+      makeStubRenderer(),
+      makeStubCapabilities(),
+      makeCamera(),
+      rejectedCallback
+    );
+    const error = vi.spyOn(log, 'error').mockImplementation(() => {});
+
+    rejectedSystem.markDirty();
+
+    await vi.waitFor(() => {
+      expect(error).toHaveBeenCalledWith('Renderer', 'Pick result handler failed', failure);
+    });
+    error.mockRestore();
+    rejectedSystem.dispose();
   });
 });
 
