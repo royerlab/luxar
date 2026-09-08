@@ -647,11 +647,11 @@ const RISING_PARTS_SCRATCH = new Set<string>();
  * rather than silently miss it.
  */
 function noteRisingPart(
-  sink: Set<string> | null,
+  sink: Set<string>,
   object: THREE.Object3D,
   wrapperPath: string
 ): void {
-  if (sink) sink.add(object.name || wrapperPath);
+  sink.add(object.name || wrapperPath);
 }
 
 /**
@@ -1353,7 +1353,7 @@ export class LODGroupRegistry {
     entry: PartitionGroupEntry,
     displayDims: readonly number[],
     frustum: THREE.Frustum,
-    risingParts: Set<string> | null = null
+    risingParts: Set<string>
   ): number {
     const cache = this.partitionCaches.get(entry.path);
     if (!cache) return 0;
