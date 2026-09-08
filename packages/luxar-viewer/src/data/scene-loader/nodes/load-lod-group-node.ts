@@ -587,6 +587,9 @@ export async function loadLodGroupNode(
           ctx.kickRefinementIfIdle();
         }
       );
+      // Tells the registry this child activates a SUBTREE: never re-fire its
+      // `ensureLoaded` for staleness or refinement (see `LODGroupChild`).
+      entryChild.deferredGroup = true;
       registryChildren.push(entryChild);
       childPaths.set(entryChild, child.path);
       continue;

@@ -3209,6 +3209,7 @@ describe('LODGroupRegistry — settle-gated fine reload', () => {
     const group = makeChild(0.5);
     group.ready = true;
     group.ensureLoaded = ensureLoaded;
+    group.deferredGroup = true; // what load-lod-group-node stamps on the group path
     const leaf = new THREE.Group();
     leaf.userData = { nodeType: 'gsplats', loadedViewVersion: 1, visibleSplatCount: 10 };
     group.object.add(leaf);

@@ -448,6 +448,15 @@ export interface LODGroupChild {
    * single-LOD level (the common case) ⇒ no extra refinement passes.
    */
   hasMoreLODs?: () => boolean;
+  /**
+   * `true` for a deferred GROUP child (a `kind=partition` / nested `kind=lod`
+   * level — the `overview` recipe's fine branch), whose `ensureLoaded` runs
+   * `loadChildren` once to attach the whole subtree. The registry never
+   * re-fires such a child for staleness or refinement: its leaves are
+   * sweep-registered and re-stamp themselves, and a second activation would
+   * attach a second copy of the subtree. Set by `load-lod-group-node`.
+   */
+  deferredGroup?: boolean;
 }
 
 /** One LOD-group entry tracked by the registry. */
@@ -1768,15 +1777,18 @@ export class LODGroupRegistry {
     // re-firing the same ``ensureLoaded``, until the level is ready, fresh, AND
     // complete. Eager (coarse) levels have no ``ensureLoaded`` and stay
     // sweep-driven, so this only ever targets lazy levels.
-    // LEAF levels only. A deferred GROUP child (the overview recipe's fine
-    // partition / nested lod branch) has an ``ensureLoaded`` too, but its
-    // expensive step is ``loadChildren`` — re-running it attaches a SECOND copy
-    // of the whole subtree under the placeholder (double-drawn geometry,
-    // duplicate names, re-registered loaders, leaked buffers). Its leaves are
+    // Never for a deferred GROUP child (the overview recipe's fine partition /
+    // nested lod branch): it has an ``ensureLoaded`` too, but its expensive
+    // step is ``loadChildren`` — re-running it attaches a SECOND copy of the
+    // whole subtree under the placeholder (double-drawn geometry, duplicate
+    // names, re-registered loaders, leaked buffers). Its leaves are
     // sweep-registered and re-stamp themselves, so staleness needs no kick.
+    // Keyed on the explicit ``deferredGroup`` flag, not on the leaf's
+    // ``nodeType`` stamp: a lazy leaf whose placeholder is not stamped yet
+    // must still drain its ladder here.
     const needsReloadOrRefine =
       aspirationReady &&
-      isTrackedLeaf(aspiration!) &&
+      aspiration!.deferredGroup !== true &&
       (!aspirationFresh || (aspiration!.hasMoreLODs?.() ?? false));
     if (settled && needsReloadOrRefine && aspiration!.ensureLoaded) {
       this.maybeKickReload(entry, aspiration!);
