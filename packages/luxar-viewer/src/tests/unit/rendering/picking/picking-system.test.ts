@@ -1437,6 +1437,25 @@ describe('PickingSystem — stale readback ordering', () => {
     expect(onPickResult).toHaveBeenCalledExactlyOnceWith(fakeResult);
   });
 
+  it('keeps an explicit pick authoritative when mousemove lands during delivery', async () => {
+    const delivery = deferred<void>();
+    const onPickResult = vi.fn(async (result: PickResult | null) => {
+      if (result) await delivery.promise;
+    });
+    const { system, gate, fakeResult } = buildGatedSystem(onPickResult);
+
+    const pending = system.pickAt(400, 300);
+    onPickResult.mockClear();
+    gate.resolve(fakeResult);
+    await vi.waitFor(() => expect(onPickResult).toHaveBeenCalledWith(fakeResult));
+
+    system.onMouseMove(makeMouseEvent(400, 300));
+    delivery.resolve();
+    await pending;
+
+    expect(onPickResult).toHaveBeenCalledExactlyOnceWith(fakeResult);
+  });
+
   it('drops an explicit pick when a newer explicit pick supersedes it', async () => {
     const { system, onPickResult, gate, fakeResult } = buildGatedSystem();
 

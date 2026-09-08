@@ -551,8 +551,12 @@ export class PickingSystem {
     // Supersede any in-flight readback — the cursor moved, so an older
     // pick's late result is now stale.
     this._pickSeq++;
-    // Fade existing overlay while moving (dedupe-safe).
-    void this.deliverPickResult(null);
+    // Keep an explicit tap pick authoritative through async result delivery,
+    // matching markDirty(). Hover readbacks are still superseded by _pickSeq.
+    if (this._explicitPicksInFlight === 0) {
+      // Fade existing overlay while moving (dedupe-safe).
+      void this.deliverPickResult(null);
+    }
     this.scheduler.recordMouseMove(x, y);
   }
 
