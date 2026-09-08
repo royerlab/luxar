@@ -637,11 +637,21 @@ describe('help overlay — Touch section', () => {
   it('is shown on a device with touch points', () => {
     setInputProfileOverride('touch');
     showHelpOverlay(new Map());
-    const titles = Array.from(
-      document.querySelectorAll('.luxar-help-overlay__section-title span')
-    ).map((el) => el.textContent);
-    expect(titles).toContain('Touch');
-    expect(document.body.textContent).toMatch(/Pinch/);
-    expect(document.body.textContent).toMatch(/Double-tap/);
+    const touchSection = Array.from(
+      document.querySelectorAll<HTMLElement>('.luxar-help-overlay__section')
+    ).find(
+      (section) =>
+        section.querySelector('.luxar-help-overlay__section-title span')?.textContent === 'Touch'
+    );
+
+    expect(touchSection).toBeDefined();
+    expect(touchSection?.querySelector('.luxar-help-overlay__section-note')?.textContent).toBe(
+      'Phones and tablets — in ortho mode one finger pans and twist does not roll'
+    );
+    expect(
+      Array.from(touchSection?.querySelectorAll<HTMLKbdElement>('kbd') ?? []).map(
+        (key) => key.textContent
+      )
+    ).toEqual(['1 finger', '2 fingers', 'Pinch', 'Twist']);
   });
 });

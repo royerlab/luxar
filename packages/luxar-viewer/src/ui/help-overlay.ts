@@ -71,20 +71,13 @@ const HELP_SECTIONS: HelpSection[] = [
   {
     title: 'Touch',
     icon: RAIL_ICONS.navOrbit,
-    note: 'Phones and tablets — the same fingers work in every camera mode',
+    note: 'Phones and tablets — in ortho mode one finger pans and twist does not roll',
     touchOnly: true,
     entries: [
       { keys: ['1 finger'], label: 'Rotate (fly mode: look around)', order: 1 },
       { keys: ['2 fingers'], label: 'Pan (fly mode: strafe)', order: 2 },
       { keys: ['Pinch'], label: 'Zoom (fly mode: move forward / back)', order: 3 },
       { keys: ['Twist'], label: 'Roll around the view axis', order: 4 },
-      { keys: ['Tap'], label: 'Show / open the element under the finger', order: 5 },
-      {
-        keys: ['Hold'],
-        label: 'Menu for the element, rail button, layer or play button',
-        order: 6,
-      },
-      { keys: ['Double-tap'], label: 'Re-frame the scene', order: 7 },
     ],
   },
   {
