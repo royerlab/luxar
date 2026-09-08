@@ -24,6 +24,7 @@ const VALID_TYPES: ReadonlySet<GraphNodeType> = new Set<GraphNodeType>([
   'lines',
   'gsplats',
   'mesh',
+  'sound',
 ]);
 
 /**
@@ -43,6 +44,7 @@ function deriveDisplayName(path: string, rootType?: string): string {
       points: 'Points',
       lines: 'Lines',
       mesh: 'Mesh',
+      sound: 'Sound',
       lod: 'LOD',
       partition: 'Partition',
       group: 'Group',

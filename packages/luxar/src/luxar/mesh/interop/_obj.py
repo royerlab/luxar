@@ -211,7 +211,7 @@ def read_obj(path: Path) -> dict[str, object]:
             dtype=np.float32,
         )
         scaled = raw * 255.0 if unit_range else raw
-        colors = np.clip(scaled, 0, 255).astype(np.uint8)
+        colors = np.clip(np.round(scaled), 0, 255).astype(np.uint8)
 
     return {
         "vertices": vertices,

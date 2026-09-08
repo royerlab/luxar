@@ -33,7 +33,7 @@ format_type_gsplats: "gsplats_zarr"
 
 # Scene-graph node geometry/container types.
 #   Python: typing_utils/enums.py::NodeType   TS: types/data-monitor-types.ts
-node_types: ["scene", "group", "points", "lines", "gsplats", "mesh"]
+node_types: ["scene", "group", "points", "lines", "gsplats", "mesh", "sound"]
 
 # The LEAF subset of `node_types` — the first-class geometry types that carry
 # element data (as opposed to the `scene` / `group` containers). This is the

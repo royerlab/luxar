@@ -37,6 +37,8 @@ import {
 } from '../../../scene/lod-group-registry';
 import type { NodeBuildCtx } from '../../../data/scene-loader/nodes/build-ctx';
 import { getLoadTimeline, resetLoadTimeline } from '../../../profiling/load-timeline';
+import * as gsplatsRefinement from '../../../data/gsplats/lod-refinement';
+import { log, Modules } from '../../../utils/log';
 
 // THREE is NOT mocked here. The classes SceneLoader touches —
 // Group / Points / Mesh / Box3 / Vector3 / Matrix4 /
@@ -1454,6 +1456,64 @@ describe('SceneLoader', () => {
     });
   });
 
+  describe('fire-and-forget re-entry failures', () => {
+    it('logs a rejected requestReprocess update', async () => {
+      const errorLog = vi.spyOn(log, 'error').mockImplementation(() => {});
+      const failure = new Error('reprocess died');
+      const updateView = vi.spyOn(sceneLoader, 'updateView').mockRejectedValue(failure);
+
+      try {
+        sceneLoader.requestReprocess();
+        await Promise.resolve();
+
+        expect(errorLog).toHaveBeenCalledWith(
+          Modules.SCENE_LOADER,
+          'View reprocess failed: reprocess died',
+          failure
+        );
+      } finally {
+        updateView.mockRestore();
+        errorLog.mockRestore();
+      }
+    });
+
+    it('logs a rejected refinement-cancellation re-entry', async () => {
+      vi.useFakeTimers();
+      const pendingState = { slicePosition: [2, 1, 0] };
+      const errorLog = vi.spyOn(log, 'error').mockImplementation(() => {});
+      const failure = new Error('cancel re-entry died');
+      const updateView = vi.spyOn(sceneLoader, 'updateView').mockRejectedValue(failure);
+      const runRefinement = vi
+        .spyOn(gsplatsRefinement, 'runGSplatsRefinement')
+        .mockImplementation(async (ctx) => {
+          ctx.retriggerUpdate(pendingState);
+        });
+      const internals = sceneLoader as unknown as {
+        _updateInProgress: boolean;
+        scheduleGSplatsRefinement(): Promise<void>;
+      };
+      internals._updateInProgress = true;
+
+      try {
+        await internals.scheduleGSplatsRefinement();
+        await vi.runOnlyPendingTimersAsync();
+        await Promise.resolve();
+
+        expect(errorLog).toHaveBeenCalledWith(
+          Modules.SCENE_LOADER,
+          'Refinement cancellation re-entry failed: cancel re-entry died',
+          failure
+        );
+      } finally {
+        runRefinement.mockRestore();
+        updateView.mockRestore();
+        errorLog.mockRestore();
+        vi.useRealTimers();
+        internals._updateInProgress = false;
+      }
+    });
+  });
+
   describe('getFailedLoadsProvider — reason mapping', () => {
     // #1055: the layers-panel error badge reads its tooltip from the provider's
     // getFailedReason, which folds error.message → classified kind → undefined.
@@ -2028,9 +2088,10 @@ describe('SceneLoader', () => {
       const internals = sceneLoader as unknown as KickInternals;
       internals.gsplatLoaders.set('/g/part_0', { hasMoreLODs: true });
       const rejecting = vi.fn(async () => {
-        throw new Error('orchestrator glue died');
+        throw { code: 'EORCHESTRATOR', retryable: false };
       });
       internals.scheduleGSplatsRefinement = rejecting;
+      const errorLog = vi.spyOn(log, 'error').mockImplementation(() => {});
       const updateViewSpy = vi
         .spyOn(sceneLoader, 'updateView')
         .mockResolvedValue(undefined as never);
@@ -2044,10 +2105,38 @@ describe('SceneLoader', () => {
         expect(internals._updateInProgress).toBe(false); // lock released
         expect(internals.viewStateQueue.hasPending()).toBe(false); // drained
         expect(updateViewSpy).toHaveBeenCalledWith(pending); // re-entered
+        expect(errorLog).toHaveBeenCalledWith(
+          Modules.SCENE_LOADER,
+          'Deferred-activation refinement failed: {"code":"EORCHESTRATOR","retryable":false}'
+        );
       } finally {
+        errorLog.mockRestore();
         updateViewSpy.mockRestore();
         internals._updateInProgress = false;
         internals.gsplatLoaders.clear();
+      }
+    });
+
+    it('preserves a plain-object error when reloading after an archive retry', async () => {
+      const warningLog = vi.spyOn(log, 'warning').mockImplementation(() => {});
+      const failure = { code: 'ERELOAD', retryable: true };
+      const updateView = vi.spyOn(sceneLoader, 'updateView').mockRejectedValue(failure);
+      const internals = sceneLoader as unknown as {
+        resumeViewAfterRetry(hadArchiveFault: boolean): void;
+      };
+
+      try {
+        internals.resumeViewAfterRetry(true);
+        await Promise.resolve();
+
+        expect(warningLog).toHaveBeenCalledWith(
+          Modules.SCENE_LOADER,
+          'Current view reload after archive retry failed: {"code":"ERELOAD","retryable":true}',
+          failure
+        );
+      } finally {
+        updateView.mockRestore();
+        warningLog.mockRestore();
       }
     });
   });

@@ -652,6 +652,14 @@ export class AnimationController {
     // turntable is not).
     const autoCamera = this.controls.isAutoRotateActive() || this.controls.isAutoDollyActive();
 
+    // A pointer gesture in progress: button or finger down since `start`, no
+    // `end` yet. Without this, a press held still for idleTimeoutMs paused the
+    // loop, and the drag that followed fed rotate/pan/zoom deltas into the
+    // controls that no update() ever applied — the camera sat frozen until
+    // some later event happened to call startAnimation(). Reproduced with a
+    // mouse (press, hold 2 s, drag → no rotation) and with a finger alike.
+    const gesture = this.controls.isGestureActive();
+
     // Check if any post-processing effects need continuous updates
     const hasEffects = this.postProcessing.needsContinuousAnimation();
 
@@ -661,7 +669,7 @@ export class AnimationController {
       (entry) => entry.continuous
     );
 
-    return autoCamera || hasEffects || hasContinuousCallbacks;
+    return autoCamera || gesture || hasEffects || hasContinuousCallbacks;
   }
 
   /**

@@ -1,11 +1,5 @@
 {
   "src/cache/chunk-prefetcher.ts": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 2
-    },
-    "@typescript-eslint/no-misused-promises": {
-      "count": 1
-    },
     "complexity": {
       "count": 2
     }
@@ -41,9 +35,6 @@
     }
   },
   "src/cache/multi-level-caching-store/fetch-retry.ts": {
-    "@typescript-eslint/no-base-to-string": {
-      "count": 1
-    },
     "complexity": {
       "count": 1
     }
@@ -483,9 +474,6 @@
     }
   },
   "src/data/scene-loader.ts": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
-    },
     "complexity": {
       "count": 4
     },
@@ -645,18 +633,8 @@
       "count": 1
     }
   },
-  "src/data/scene-loader/update-view/queue-next.ts": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
-    }
-  },
   "src/data/scene-loader/view-state/derive-node-view-state.ts": {
     "complexity": {
-      "count": 1
-    }
-  },
-  "src/data/scene-loader/view-state/view-state-queue.ts": {
-    "@typescript-eslint/no-floating-promises": {
       "count": 1
     }
   },

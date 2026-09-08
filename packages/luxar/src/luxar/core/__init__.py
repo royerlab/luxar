@@ -10,6 +10,7 @@ from .node import Node
 from .overlay import Overlay
 from .points import Points
 from .scene import Scene
+from .sound import Sound
 from .transforms import (
     compose,
     from_list,
@@ -47,6 +48,7 @@ __all__ = [
     "Points",
     "Lines",
     "Mesh",
+    "Sound",
     "GSplats",
     "Dimension",
     "Dimensions",

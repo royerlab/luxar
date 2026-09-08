@@ -57,6 +57,12 @@ export interface ControlRailItem {
    * event listeners) when the underlying condition changes.
    */
   disabled?: () => boolean;
+  /**
+   * Optional predicate for a HIDDEN state — the button is not rendered at all
+   * (e.g. the Sound button on a scene without sound nodes), unlike
+   * {@link disabled} which grays it. Re-evaluated on every refresh.
+   */
+  hidden?: () => boolean;
 }
 
 /** A rich, lazily-built panel popover anchored to a {@link ControlRailItem}. */

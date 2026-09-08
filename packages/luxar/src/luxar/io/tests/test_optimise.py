@@ -33,7 +33,7 @@ from luxar._zarr_compat import (
     write_raw_bytes,
     zarr_format,
 )
-from luxar.core.dimensions import Dimensions
+from luxar.core.dimensions import Dimension, Dimensions
 from luxar.io import LuxarZarrCompiler
 from luxar.io import optimise as optimise_mod
 from luxar.io.optimise import (
@@ -577,6 +577,30 @@ class TestPayloadFiles:
         attrs = dict(open_group(dst, mode="r")["overlays/logo"].attrs)
         assert attrs["image_file"] == ".zattrs"
         assert attrs["type"] == "overlay_image"
+
+    def test_sound_zero_positions_chunk_survives_copy(self, tmp_path: Path) -> None:
+        src = tmp_path / "src.luxar.zarr"
+        dims = Dimensions(
+            [
+                Dimension("t", unit="", categories=["overview"], display=False),
+                Dimension("z", unit="um"),
+                Dimension("y", unit="um"),
+                Dimension("x", unit="um"),
+            ]
+        )
+        with LuxarZarrCompiler(src) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_sound(
+                "bed",
+                b"\xff\xfb\x90\x00" + bytes(range(256)) * 4,
+                hidden={"t": 0},
+                license="CC0",
+                attribution="Test",
+                source_url="https://example.org/bed",
+            )
+        dst = tmp_path / "out.luxar.zarr"
+        optimise_store(src, dst, verify=True)
+        assert (dst / "bed" / "positions" / "c" / "0" / "0").is_file()
 
     def test_a_payload_named_like_a_metadata_document_is_refused(
         self, tmp_path: Path

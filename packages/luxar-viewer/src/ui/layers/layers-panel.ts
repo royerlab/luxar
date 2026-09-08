@@ -39,6 +39,23 @@ import { LayerApplyEngine } from './layer-apply';
 import { LayerControls } from './layer-controls';
 import { ALWAYS_GLOBAL_KEYS } from '../help-overlay/type-to-filter';
 
+/**
+ * What the panel needs from the sound layer for its `sound` rows
+ * (`SOUND_SPEC.md` §4.2). Late-bound like the camera framer: the panel is
+ * built before the audio engine exists, and the engine lives in a layer the
+ * UI may not import.
+ */
+export interface LayersAudioPort {
+  /**
+   * Mute `path` (a sound node) or every sound node under it (a group). The
+   * eye of a parent group therefore silences its sounds, as it hides its
+   * geometry.
+   */
+  setNodeMuted(path: string, muted: boolean): void;
+  /** Live per-node linear gain, `[0, 2]`. */
+  setNodeGain(path: string, gain: number): void;
+}
+
 export { applyColorAdjustments, isColormapActive, type LuxarMaterial } from './luxar-material';
 
 /**
@@ -48,6 +65,38 @@ export { applyColorAdjustments, isColormapActive, type LuxarMaterial } from './l
  */
 const EYE_ICON =
   '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>';
+/** The eye's verb: pixels hide, sound mutes. */
+function eyeTooltip(layer: LayerInfo): string {
+  if (layer.sound) return layer.visible ? 'Mute sound' : 'Unmute sound';
+  return layer.visible ? 'Hide layer' : 'Show layer';
+}
+
+/** The short type badge of a row. */
+function buildTypeBadge(layer: LayerInfo): HTMLSpanElement {
+  const typeMap: Record<string, string> = {
+    points: 'pts',
+    lines: 'lines',
+    gsplats: 'splat',
+    group: 'group',
+    sound: 'sound',
+  };
+  const badge = document.createElement('span');
+  badge.className = 'luxar-layer-row__badge';
+  badge.textContent = typeMap[layer.type] || layer.type;
+  return badge;
+}
+
+/** A sound row's name tooltip: path, then the clip's licence / author / source. */
+function soundTooltip(layer: LayerInfo): string {
+  const s = layer.sound;
+  if (!s) return layer.path;
+  const lines = [layer.path, `${s.trigger} · ${s.bus} bus`];
+  const credit = [s.license, s.attribution].filter(Boolean).join(' — ');
+  if (credit) lines.push(credit);
+  if (s.sourceUrl) lines.push(s.sourceUrl);
+  return lines.join('\n');
+}
+
 const EYE_OFF_ICON =
   '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 5.2A11.3 11.3 0 0 1 12 5c6.5 0 10 7 10 7a17.6 17.6 0 0 1-3 3.9M6.5 6.5C3.6 8.4 2 12 2 12s3.5 7 10 7c1.4 0 2.7-.3 3.9-.7"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>';
 
@@ -82,6 +131,8 @@ export class LayersPanel {
   private cameraFramer: ((obj: THREE.Object3D) => boolean) | null = null;
   /** Close handle of the open context menu, if any. */
   private contextMenuClose: (() => void) | null = null;
+  /** The sound layer, for `sound` rows (null before wiring / in tests). */
+  private audioPort: LayersAudioPort | null = null;
   private sceneGraph: SceneNode | null = null;
   private animationController: AnimationController;
 
@@ -217,7 +268,7 @@ export class LayersPanel {
     for (const layer of layers) {
       this.applyEngine.applyDisplayRange(layer);
       if (!layer.visible) {
-        this.applyEngine.applyVisibility(layer.path, false);
+        this.applyVisibility(layer.path, false);
       }
     }
 
@@ -245,7 +296,7 @@ export class LayersPanel {
     for (const layer of layers) {
       // Visibility applies unconditionally: a currently-hidden layer whose
       // authored default is visible must come back.
-      this.applyEngine.applyVisibility(layer.path, layer.visible);
+      this.applyVisibility(layer.path, layer.visible);
       // applyColormap restores the authored colormap (or none) and then
       // recomposes opacity/gamma/intensity/offset/blending via applyComposed.
       this.applyEngine.applyColormap(layer);
@@ -349,6 +400,28 @@ export class LayersPanel {
   /** Inject a callback that marks the GPU pick buffer dirty (PickingSystem.markDirty). Late-bound so it survives per-dataset picking re-creation. */
   setPickBufferInvalidator(fn: (() => void) | null): void {
     this.pickBufferInvalidator = fn;
+  }
+
+  /** Inject the sound layer for `sound` rows (eye = mute, slider = gain). */
+  setAudioPort(port: LayersAudioPort | null): void {
+    this.audioPort = port;
+  }
+
+  /** Re-send current layer visibility after a sound scene has attached. */
+  pushAudioMutes(): void {
+    for (const layer of this.state.getLayers()) {
+      this.audioPort?.setNodeMuted(layer.path, !layer.visible);
+    }
+  }
+
+  /**
+   * Visibility, for pixels AND sound: the scene object toggles as before, and
+   * the sound layer mutes the node (or, for a group, every sound under it).
+   * Every visibility path in the panel routes through here.
+   */
+  private applyVisibility(path: string, visible: boolean): void {
+    this.applyEngine.applyVisibility(path, visible);
+    this.audioPort?.setNodeMuted(path, !visible);
   }
 
   // ====================================================================
@@ -535,7 +608,7 @@ export class LayersPanel {
   /** Push every layer's current state.visible into the scene objects. */
   private applyAllVisibilities(): void {
     for (const l of this.state.getLayers()) {
-      this.applyEngine.applyVisibility(l.path, l.visible);
+      this.applyVisibility(l.path, l.visible);
     }
   }
 
@@ -585,7 +658,7 @@ export class LayersPanel {
     // this dependency); applyLabelStyle restores authored colours / all
     // classes on the visual and pick materials; applyMeshAppearance covers
     // the mesh-only shading uniforms, which are not composed.
-    this.applyEngine.applyVisibility(path, live.visible);
+    this.applyVisibility(path, live.visible);
     this.applyEngine.applyColormap(live);
     this.applyEngine.applyLayerOrder(live);
     this.applyEngine.applyLabelStyle(live);
@@ -618,6 +691,7 @@ export class LayersPanel {
       blendingMode: l.blendingMode,
       absorption: l.absorption,
       layerOrder: l.layerOrderExplicit && l.layerOrder !== undefined ? l.layerOrder : null,
+      ...(l.sound ? { gain: l.sound.gain } : {}),
     }));
   }
 
@@ -641,7 +715,14 @@ export class LayersPanel {
     const appliers: { [K in keyof LayerPatch]-?: (value: NonNullable<LayerPatch[K]>) => void } = {
       visible: (visible) => {
         this.state.setVisible(path, visible);
-        this.applyEngine.applyVisibility(path, visible);
+        this.applyVisibility(path, visible);
+        this.refreshRowVisual(path);
+      },
+      // Sound layers only: the row's gain slider by API. Ignored elsewhere.
+      gain: (gain) => {
+        if (!live.sound) return;
+        this.state.setSoundGain(path, gain);
+        this.audioPort?.setNodeGain(path, live.sound.gain);
         this.refreshRowVisual(path);
       },
       colormap: (colormap) => this.setLayerColormap(path, colormap),
@@ -696,11 +777,13 @@ export class LayersPanel {
     const eye = row.querySelector<HTMLElement>('.luxar-layer-row__eye');
     if (eye) {
       eye.innerHTML = live.visible ? EYE_ICON : EYE_OFF_ICON;
-      const tooltip = live.visible ? 'Hide layer' : 'Show layer';
+      const tooltip = eyeTooltip(live);
       eye.title = tooltip;
       eye.setAttribute('aria-label', `${tooltip}: ${live.name}`);
       eye.setAttribute('aria-pressed', live.visible ? 'true' : 'false');
     }
+    const gain = row.querySelector<HTMLInputElement>('.luxar-layer-row__gain');
+    if (gain && live.sound) gain.value = String(live.sound.gain);
   }
 
   /**
@@ -1086,7 +1169,7 @@ export class LayersPanel {
       const eyeBtn = row.querySelector('.luxar-layer-row__eye') as HTMLButtonElement | null;
       if (eyeBtn) {
         eyeBtn.innerHTML = layer.visible ? EYE_ICON : EYE_OFF_ICON;
-        const tooltip = layer.visible ? 'Hide layer' : 'Show layer';
+        const tooltip = eyeTooltip(layer);
         eyeBtn.title = tooltip;
         eyeBtn.setAttribute('aria-label', `${tooltip}: ${layer.name}`);
         eyeBtn.setAttribute('aria-pressed', layer.visible ? 'true' : 'false');
@@ -1180,6 +1263,28 @@ export class LayersPanel {
     return matches.length > 1 ? `${base} (${matches.length} parts failed)` : base;
   }
 
+  /** The sound row's gain slider; owns its pointer and arrow keys so neither selects the row. */
+  private buildGainSlider(layer: LayerInfo): HTMLInputElement {
+    const gainInput = document.createElement('input');
+    gainInput.type = 'range';
+    gainInput.className = 'luxar-layer-row__gain';
+    gainInput.min = '0';
+    gainInput.max = '2';
+    gainInput.step = '0.01';
+    gainInput.value = String(layer.sound?.gain ?? 1);
+    gainInput.title = 'Gain (1 = as authored)';
+    gainInput.setAttribute('aria-label', `Gain: ${layer.name}`);
+    this.events.on(gainInput, 'click', (e) => e.stopPropagation());
+    this.events.on(gainInput, 'pointerdown', (e) => e.stopPropagation());
+    this.events.on(gainInput, 'keydown', (e) => e.stopPropagation());
+    this.events.on(gainInput, 'input', () => {
+      this.state.setSoundGain(layer.path, Number(gainInput.value));
+      const live = this.state.getLayer(layer.path);
+      if (live?.sound) this.audioPort?.setNodeGain(layer.path, live.sound.gain);
+    });
+    return gainInput;
+  }
+
   private createLayerRow(layer: LayerInfo): HTMLElement {
     const row = document.createElement('div');
     row.className = 'luxar-layer-row';
@@ -1216,7 +1321,7 @@ export class LayersPanel {
     eyeBtn.type = 'button';
     eyeBtn.className = 'luxar-layer-row__eye';
     eyeBtn.innerHTML = layer.visible ? EYE_ICON : EYE_OFF_ICON;
-    const tooltip = layer.visible ? 'Hide layer' : 'Show layer';
+    const tooltip = eyeTooltip(layer);
     eyeBtn.title = tooltip;
     eyeBtn.setAttribute('aria-label', `${tooltip}: ${layer.name}`);
     eyeBtn.setAttribute('aria-pressed', layer.visible ? 'true' : 'false');
@@ -1230,25 +1335,21 @@ export class LayersPanel {
 
       // Update state and apply to scene
       this.state.setVisible(layer.path, newVisible);
-      this.applyEngine.applyVisibility(layer.path, newVisible);
+      this.applyVisibility(layer.path, newVisible);
     });
 
     // Layer name
     const nameEl = document.createElement('span');
     nameEl.className = 'luxar-layer-row__name';
     nameEl.textContent = layer.name;
-    nameEl.title = layer.path;
+    // A sound row's tooltip is the clip's provenance (spec §3.1: every clip
+    // carries its licence, author and source).
+    nameEl.title = layer.sound ? soundTooltip(layer) : layer.path;
 
-    // Type badge
-    const typeMap: Record<string, string> = {
-      points: 'pts',
-      lines: 'lines',
-      gsplats: 'splat',
-      group: 'group',
-    };
-    const badge = document.createElement('span');
-    badge.className = 'luxar-layer-row__badge';
-    badge.textContent = typeMap[layer.type] || layer.type;
+    // Sound rows: an inline gain slider (the row IS the control — the
+    // appearance section below the list has nothing to say about a clip).
+    const gainInput = layer.sound ? this.buildGainSlider(layer) : null;
+    const badge = buildTypeBadge(layer);
 
     // Optional kind-specific badge: ``N LODs`` for kind=lod, ``N parts``
     // for kind=partition. When a kind=partition layer wraps kind=lod
@@ -1342,6 +1443,7 @@ export class LayersPanel {
 
     row.appendChild(eyeBtn);
     row.appendChild(nameEl);
+    if (gainInput !== null) row.appendChild(gainInput);
     row.appendChild(badge);
     if (kindBadge !== null) {
       row.appendChild(kindBadge);
@@ -1366,7 +1468,7 @@ export class LayersPanel {
       const rect = this.panelEl.getBoundingClientRect();
       gui.style.top = `${rect.bottom + 8}px`;
     } else {
-      gui.style.top = '20px';
+      gui.style.top = 'calc(20px + env(safe-area-inset-top, 0px))';
     }
   }
 

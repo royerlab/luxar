@@ -8,6 +8,9 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
+const jsdomDocument = document;
+const ownershipMocks = vi.hoisted(() => ({ install: vi.fn() }));
+
 // NOTE: This test file mocks 9 internal modules (below). It primarily
 // verifies initialization ordering + cross-wiring; component behavior
 // is covered by per-module tests.
@@ -58,6 +61,9 @@ vi.mock('../../../ui/error-overlay');
 vi.mock('../../../ui/toast');
 vi.mock('../../../ui/help-overlay');
 vi.mock('../../../ui/layers');
+vi.mock('../../../core/app/interaction/canvas-gesture-ownership', () => ({
+  installCanvasGestureOwnership: ownershipMocks.install,
+}));
 // scene-dims-manager is unmocked: it's a pure JS singleton (no DOM
 // or WebGL), so running it real in app.test improves coverage of the
 // dim-init wiring without affecting jsdom behavior.
@@ -162,6 +168,7 @@ describe('LuxarApp', () => {
   beforeEach(() => {
     // Clear all mocks
     vi.clearAllMocks();
+    ownershipMocks.install.mockReset();
 
     // Reset mock implementations
     mockSceneManager = {
@@ -418,6 +425,21 @@ describe('LuxarApp', () => {
       expect(firstStartIndex).toBeLessThan(loadIndex);
       expect(finalStartIndex).toBeGreaterThan(loadIndex);
       expect(warmIndex).toBeGreaterThan(finalStartIndex);
+    });
+
+    it('claims the embedder canvas before the initial dataset load', async () => {
+      mockFetch.mockResolvedValue({ ok: true });
+      mockCanvas = jsdomDocument.createElement('canvas');
+      const callOrder: string[] = [];
+      ownershipMocks.install.mockImplementation(() => void callOrder.push('ownership'));
+      mockSceneManager.loadSceneData.mockImplementation(async () => {
+        callOrder.push('loadSceneData');
+      });
+
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
+
+      expect(callOrder).toEqual(['ownership', 'loadSceneData']);
+      expect(ownershipMocks.install).toHaveBeenCalledTimes(1);
     });
 
     it('initialized starts false on a freshly-constructed LuxarApp (pre-init invariant)', () => {
@@ -1424,6 +1446,67 @@ describe('LuxarApp', () => {
       expect(() => app.getLayers()).toThrow(/getLayers called before init/);
       expect(() => app.setLayer('/x', { opacity: 1 })).toThrow(/setLayer called before init/);
       expect(() => app.getViewerState()).toThrow(/getViewerState called before init/);
+      expect(() => app.getAudioState()).toThrow(/getAudioState called before init/);
+      expect(() => app.setAudio({ muted: true })).toThrow(/setAudio called before init/);
+      expect(() => app.playSound('narration')).toThrow(/playSound called before init/);
+      expect(() => app.stopSound('narration')).toThrow(/stopSound called before init/);
+    });
+
+    it('forwards the public audio controls to the engine', async () => {
+      await app.init({ canvas: mockCanvas, src: SRC });
+      const state = {
+        state: 'running',
+        muted: false,
+        masterGain: 0.8,
+        panningModel: 'equalpower',
+        buses: { ambient: 0.6, voice: 1, effects: 0.8 },
+        playing: [],
+        hasSoundNodes: true,
+      } as const;
+      const audio = {
+        getState: vi.fn(() => state),
+        setAudio: vi.fn(),
+        play: vi.fn(() => true),
+        stop: vi.fn(() => false),
+      };
+      (app as unknown as { audioEngine: typeof audio }).audioEngine = audio;
+
+      expect(app.getAudioState()).toBe(state);
+      app.setAudio({ masterGain: 0.5 });
+      expect(audio.setAudio).toHaveBeenCalledWith({ masterGain: 0.5 });
+      expect(app.playSound('narration')).toBe(true);
+      expect(app.stopSound('narration')).toBe(false);
+    });
+
+    it('replays layer mutes after attaching audio and before the opening waypoint', () => {
+      const order: string[] = [];
+      const root = { name: 'LuxarScene' };
+      const audioEngine = {
+        detachScene: vi.fn(() => order.push('detach')),
+        applySceneConfig: vi.fn(() => order.push('config')),
+        attachScene: vi.fn(() => order.push('attach')),
+        notifyWaypoint: vi.fn(() => order.push('waypoint')),
+        dispose: vi.fn(),
+      };
+      const layersPanel = {
+        pushAudioMutes: vi.fn(() => order.push('mutes')),
+        dispose: vi.fn(),
+      };
+      const waypointDriver = {
+        currentIndex: 0,
+        getWaypoint: vi.fn(() => ({ when: { story: 0 } })),
+      };
+      mockSceneManager.scene = { children: [root] };
+      Object.assign(app as unknown as Record<string, unknown>, {
+        audioEngine,
+        layersPanel,
+        sceneManager: mockSceneManager,
+        waypointDriver,
+      });
+
+      (app as unknown as { installAudio(audio: unknown): void }).installAudio(undefined);
+
+      expect(order).toEqual(['detach', 'config', 'attach', 'mutes', 'waypoint']);
     });
 
     it('subscribes to the controls change stream and re-emits it as camera-changed', async () => {

@@ -237,6 +237,9 @@ The constructor accepts `float16_allowed` (see [Compatibility Control](#compatib
 
 **Purpose:**
 Read encoded arrays and apply appropriate inverse transformations.
+When `original_dtype` is integral, decoded values are rounded to the nearest
+integer and clamped to the target dtype's range before casting; they are never
+truncated toward zero or allowed to wrap around.
 
 **Usage Example:**
 ```python
@@ -712,11 +715,14 @@ encoder.encode(
 
 **Formula:**
 ```
-encoded = clip(value * 255, 0, 255).astype(uint8)
+encoded = clip(round(value * 255), 0, 255).astype(uint8)
 
 # Decode:
 value = encoded / 255.0
 ```
+
+CUSTOM ``rgb_uint8`` and ``rgb_uint16`` encoding deliberately preserves its
+historical truncating write convention.
 
 ### 5. Delta Pre-Filter (`_encoders/delta_codec.py`)
 

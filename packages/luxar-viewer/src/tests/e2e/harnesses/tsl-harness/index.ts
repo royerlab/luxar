@@ -42,6 +42,13 @@ export const SHADER_REGISTRY: Record<string, RegistryEntry> = {
   ...ERF_SHADERS,
 };
 
-export { HARNESS_SIZE, renderGLSL, renderTSL } from './render';
+export {
+  HARNESS_SIZE,
+  renderBloomChainGLSL,
+  renderBloomChainTSL,
+  renderGLSL,
+  renderTSL,
+} from './render';
+export type { BloomChainRenderResult } from './render';
 /** Re-export of the {@link RegistryEntry} type so harness consumers import it from the barrel. */
 export type { RegistryEntry } from './types';
