@@ -39,6 +39,8 @@ def _workflow_run_commands(workflow: Mapping[str, object]) -> list[str]:
     for job in jobs.values():
         if not isinstance(job, Mapping):
             continue
+        if job.get("continue-on-error") or job.get("if") is False:
+            continue
         steps = job.get("steps", [])
         assert isinstance(steps, list)
         commands.extend(
@@ -63,6 +65,14 @@ def _invoked_hatch_scripts(commands: Sequence[str]) -> set[str]:
 def test_non_blocking_steps_do_not_count_as_ci_coverage() -> None:
     workflow = {
         "jobs": {
+            "non-blocking-job": {
+                "continue-on-error": True,
+                "steps": [{"run": "hatch run check-contract"}],
+            },
+            "disabled-job": {
+                "if": False,
+                "steps": [{"run": "hatch run check-data-manifest"}],
+            },
             "python-tests": {
                 "steps": [
                     {"run": "hatch run security", "continue-on-error": True},
