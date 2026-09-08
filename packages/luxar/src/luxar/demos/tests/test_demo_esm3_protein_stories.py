@@ -591,3 +591,17 @@ def test_every_story_waypoint_reveals_its_overlays_on_arrival() -> None:
         reveal = next((kw.value for kw in call.keywords if kw.arg == "reveal"), None)
         assert isinstance(reveal, ast.Constant), ast.unparse(call)[:80]
         assert reveal.value == "on_arrival"
+
+    video_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "add_video"
+    ]
+    assert len(video_calls) == 1
+    alpha_matte = next(
+        (kw.value for kw in video_calls[0].keywords if kw.arg == "alpha_matte"), None
+    )
+    assert isinstance(alpha_matte, ast.Constant), ast.unparse(video_calls[0])[:80]
+    assert alpha_matte.value == "stacked"
