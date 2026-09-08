@@ -398,12 +398,16 @@ describe('OverlayManager.loadOverlays', () => {
     expect(matte.canvas.style.height).toBe('auto');
     expect(video.style.width).toBe('');
     expect(video.classList.contains('luxar-overlay__matte-source')).toBe(true);
-    // The poster sits behind the canvas until the first frame is drawn.
-    expect(matte.canvas.style.background).toContain('poster.png');
+    // The poster sits behind the canvas until the first frame is drawn — as a
+    // background IMAGE only: the colour stays untouched (and the stylesheet
+    // pins it transparent) so the page's black `canvas` rule cannot show.
+    expect(matte.canvas.style.backgroundImage).toContain('poster.png');
+    expect(matte.canvas.style.backgroundColor).toBe('');
     video.dispatchEvent(new Event('playing'));
-    expect(matte.canvas.style.background).toContain('poster.png');
+    expect(matte.canvas.style.backgroundImage).toContain('poster.png');
     firstFrame!();
-    expect(matte.canvas.style.background).toBe('');
+    expect(matte.canvas.style.backgroundImage).toBe('none');
+    expect(matte.canvas.style.backgroundColor).toBe('');
 
     expect(matte.start).not.toHaveBeenCalled();
     setStory(2);

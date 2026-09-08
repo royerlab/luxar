@@ -659,9 +659,14 @@ export class OverlayManager {
 
     const video = document.createElement('video');
     // A stacked-matte clip is read by WebGL, which refuses a tainted video:
-    // ask for CORS up front (before `src`) so a store served from another
-    // origin — the dev server against `luxar serve` — stays readable.
-    if (config.alpha_matte === 'stacked') video.crossOrigin = 'anonymous';
+    // ask for CORS up front (before `src`) when the store lives on another
+    // origin — the dev server against `luxar serve`. Same-origin clips (the
+    // exported app, zipped stores' blob URLs) are readable as they are, and
+    // WKWebView's CORS media path is flaky (a failed CORS load taints the
+    // element and every upload then throws), so do not ask when not needed.
+    if (config.alpha_matte === 'stacked' && this.isCrossOriginStore()) {
+      video.crossOrigin = 'anonymous';
+    }
     video.muted = config.muted !== false;
     video.loop = config.loop !== false;
     // Deliberately NOT the DOM `autoplay` attribute: the browser honours that
@@ -696,6 +701,16 @@ export class OverlayManager {
     this.videoElements.set(config.name, video);
   }
 
+  /** Whether the store's base URL is on another origin than the page (blob URLs are not). */
+  private isCrossOriginStore(): boolean {
+    if (!this.baseUrl || isZippedStoreUrl(this.baseUrl)) return false;
+    try {
+      return new URL(this.baseUrl, window.location.href).origin !== window.location.origin;
+    } catch {
+      return false;
+    }
+  }
+
   /**
    * For an `alpha_matte: 'stacked'` clip, show a compositor canvas instead of
    * the `<video>` (which stays in the DOM, decoding, but visually hidden — it is
@@ -714,7 +729,7 @@ export class OverlayManager {
       onFailure: (error) => this.abandonMatte(config.name, video, error),
       onFirstFrame: () => {
         const current = this.matteCompositors.get(config.name);
-        if (current) current.canvas.style.background = '';
+        if (current) current.canvas.style.backgroundImage = 'none';
       },
     });
     if (!matte) {
@@ -726,7 +741,15 @@ export class OverlayManager {
     }
     video.classList.add('luxar-overlay__matte-source');
     if (video.poster) {
-      matte.canvas.style.background = `url("${video.poster}") center / contain no-repeat`;
+      // Longhands, not the `background` shorthand: the shorthand also resets
+      // the colour, and the page's `canvas { background-color: #000 }` rule
+      // (index.html, meant for the WebGL canvas) must never show through — the
+      // stylesheet pins the matte canvas transparent, the poster is image-only.
+      const style = matte.canvas.style;
+      style.backgroundImage = `url("${video.poster}")`;
+      style.backgroundPosition = 'center';
+      style.backgroundSize = 'contain';
+      style.backgroundRepeat = 'no-repeat';
     }
     el.appendChild(matte.canvas);
     this.matteCompositors.set(config.name, matte);
