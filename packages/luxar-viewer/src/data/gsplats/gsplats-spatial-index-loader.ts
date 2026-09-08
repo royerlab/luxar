@@ -1242,6 +1242,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
    * only be thrown away.
    */
   async prefetchChunks(viewState: GSplatsViewState, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) return;
     await this.ensureInitialized();
 
     if (!this.arrays.centers) return;

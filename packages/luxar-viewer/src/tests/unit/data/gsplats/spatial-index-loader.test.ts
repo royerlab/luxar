@@ -1778,6 +1778,23 @@ describe('GSplatsSpatialIndexLoader', () => {
     // two test files (justified asymmetry).
     // ────────────────────────────────────────────────────────────────
     describe('prefetchChunks (gsplats-only)', () => {
+      it('does no initialization or query work for an already-aborted request', async () => {
+        const controller = new AbortController();
+        controller.abort();
+
+        await bodyLoader.prefetchChunks(
+          {
+            displayDims: [0, 1, 2],
+            slicePosition: [0, 0, 0],
+            tolerance: [0, 0, 0],
+          },
+          controller.signal
+        );
+
+        expect(zarr.open).not.toHaveBeenCalled();
+        expect(mockExecute).not.toHaveBeenCalled();
+      });
+
       it('estimates the visible sliced working set from stored chunk dtypes', async () => {
         bodyLoader.dispose();
         mockArrays.centers.shape = [5_000_000, 3];
