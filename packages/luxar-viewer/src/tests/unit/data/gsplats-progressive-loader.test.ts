@@ -1028,6 +1028,18 @@ describe('GSplatsProgressiveLoader', () => {
   });
 
   describe('prefetch scheduling', () => {
+    it('starts the guaranteed next rung without waiting for byte estimation', async () => {
+      lodB.updateViewWithResidency.mockResolvedValue({
+        data: makeLodData(50),
+        allResident: false,
+      });
+      lodC.estimatePrefetchBytes.mockReturnValue(new Promise(() => {}));
+
+      await loader.loadGSplats(baseViewState);
+
+      expect(lodC.prefetchChunks).toHaveBeenCalledTimes(1);
+    });
+
     it('fires prefetchChunks on the next unloaded LOD after a partial load', async () => {
       // Mock LOD B slow → C deferred, but C's prefetch fires.
       let now = 0;

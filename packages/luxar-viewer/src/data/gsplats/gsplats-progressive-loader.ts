@@ -325,6 +325,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
   private readonly sliceCache: SliceCache | null;
   private _metadataWarmStarted = false;
   private _prefetchController: AbortController | null = null;
+  private _prefetchPlanning = false;
   private readonly _prefetchingLevels = new Set<number>();
   // Per-tick LOD time budget (ms) from the CURRENT updateView call during
   // dimension-animation playback; null outside playback. A per-pass
@@ -778,31 +779,45 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       headroom !== null,
       this._frameBudgetMs
     );
-    const levels = await selectPrefetchLevels(
-      this.lodLoaders,
-      firstLevel,
-      this.nLods,
-      maxLevels,
-      headroom ?? 0,
-      viewState
-    );
-    if (controller.signal.aborted || this._disposed) return;
+    this.startLookaheadPrefetch(firstLevel, viewState, controller);
+    if (maxLevels === 1 || this._prefetchPlanning) return;
 
-    for (const level of levels) {
-      if (this._prefetchingLevels.has(level)) continue;
-
-      this._prefetchingLevels.add(level);
-      this.lodLoaders[level]
-        .prefetchChunks(viewState, controller.signal)
-        .catch(() => {
-          // Ignore errors from speculative prefetch (network failures, aborts).
-        })
-        .finally(() => {
-          if (this._prefetchController === controller) {
-            this._prefetchingLevels.delete(level);
-          }
-        });
+    this._prefetchPlanning = true;
+    try {
+      const levels = await selectPrefetchLevels(
+        this.lodLoaders,
+        firstLevel,
+        this.nLods,
+        maxLevels,
+        headroom ?? 0,
+        viewState
+      );
+      if (controller.signal.aborted || this._disposed) return;
+      for (const level of levels) {
+        if (level !== firstLevel) this.startLookaheadPrefetch(level, viewState, controller);
+      }
+    } finally {
+      if (this._prefetchController === controller) this._prefetchPlanning = false;
     }
+  }
+
+  private startLookaheadPrefetch(
+    level: number,
+    viewState: GSplatsViewState,
+    controller: AbortController
+  ): void {
+    if (this._prefetchingLevels.has(level)) return;
+    this._prefetchingLevels.add(level);
+    void this.lodLoaders[level]
+      .prefetchChunks(viewState, controller.signal)
+      .catch(() => {
+        // Ignore errors from speculative prefetch (network failures, aborts).
+      })
+      .finally(() => {
+        if (this._prefetchController === controller) {
+          this._prefetchingLevels.delete(level);
+        }
+      });
   }
 
   private warmRemainingLODMetadata(): void {
@@ -818,6 +833,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
   private cancelLookaheadPrefetch(): void {
     this._prefetchController?.abort();
     this._prefetchController = null;
+    this._prefetchPlanning = false;
     this._prefetchingLevels.clear();
   }
 
