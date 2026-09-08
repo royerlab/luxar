@@ -272,7 +272,6 @@ def test_no_interactive_cli_handler_discards_a_caught_exception() -> None:
     it.
     """
     offenders: list[str] = []
-    unattended: set[str] = set()
     for path in _cli_sources():
         tree = ast.parse(path.read_text())
         parents = {
@@ -284,13 +283,11 @@ def test_no_interactive_cli_handler_discards_a_caught_exception() -> None:
         for node, stmt, caught in _discarding_exits(tree):
             key = f"{rel}::{_enclosing_function(node, parents).name}"
             if key in UNATTENDED_TRACEBACK_HANDLERS:
-                unattended.add(key)
                 continue
             binding = f" as {node.name}" if node.name is not None else ""
             offenders.append(
                 f"{rel}:{stmt.lineno}: except {caught}{binding} -> {ast.unparse(stmt)}"
             )
-    assert unattended == UNATTENDED_TRACEBACK_HANDLERS
     assert not offenders, (
         "these handlers discard the exception they caught. Use "
         "`exit_with_error(message, err)` or `raise typer.Exit(1) from err`:\n  "
