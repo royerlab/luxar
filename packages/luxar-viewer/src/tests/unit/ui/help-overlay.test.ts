@@ -649,7 +649,7 @@ describe('help overlay — Touch section', () => {
       'Phones and tablets — in ortho mode one finger pans and twist does not roll'
     );
     expect(
-      Array.from(touchSection?.querySelectorAll<HTMLKbdElement>('kbd') ?? []).map(
+      Array.from(touchSection?.querySelectorAll<HTMLElement>('kbd') ?? []).map(
         (key) => key.textContent
       )
     ).toEqual(['1 finger', '2 fingers', 'Pinch', 'Twist']);
