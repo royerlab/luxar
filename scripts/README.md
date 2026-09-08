@@ -310,11 +310,11 @@ baseline where a rule is a false positive at that specific site — prefer it to
 `--update-baseline`, which should be reserved for moves and deliberate
 re-baselining.
 
-**What actually enforces this in CI.** The Python 3.12 leg runs `hatch run
-lint`, which reaches this checker through the same aggregate used by developers
-and `make check-all`. The test suite independently runs
+**What actually enforces this in CI.** The Python 3.12 leg runs
+`hatch run lint`, which reaches this checker through the same aggregate used by
+developers and `make check-all`. The test suite independently runs
 `test_check_lint_ratchet.py::test_repository_has_no_lint_regressions` against
-the live tree on every Python leg. That test fails closed (a missing baseline
+the live tree through `test-cov`. That test fails closed (a missing baseline
 reports every violation as new), and
 `scripts/lint_baseline.json` is in the `dom_py` change filter so editing the
 baseline cannot skip the test that re-derives it.

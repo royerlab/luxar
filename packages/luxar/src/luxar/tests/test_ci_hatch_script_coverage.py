@@ -60,7 +60,7 @@ def _invoked_hatch_scripts(commands: Sequence[str]) -> set[str]:
     }
 
 
-def test_continue_on_error_steps_do_not_count_as_ci_coverage() -> None:
+def test_non_blocking_steps_do_not_count_as_ci_coverage() -> None:
     workflow = {
         "jobs": {
             "python-tests": {
