@@ -85,11 +85,12 @@ export const TARGET_MID = 0.5;
  * Reinhard `x/(1+x)` curve: the 0.835-0.905 band early-exits on the 8th
  * iteration and a narrower 0.90-0.93 band needs 9, so the margin over the
  * measured worst case is ONE iteration. Bands starting higher still consume
- * most or all of the budget, and the tightest (0.99-0.999) exhausts it and hits
- * the EXPOSURE_MIN clamp. Those runs still land at p50 0.505-0.586 — slightly
- * high, but well under
- * FLAT_MID_MIN, so an exhausted budget degrades gracefully instead of producing
- * a wrong exposure. The extra screenshots are only ever spent on a flat subject.
+ * most or all of the budget. Under the former -6 floor, the tightest
+ * (0.99-0.999) run clamped at p50 0.586; widening the floor can only lower that
+ * outcome, so FLAT_MID_MIN remains conservative. An exhausted mid-tone budget
+ * therefore degrades gracefully into the clip/background guard instead of
+ * producing a wrong exposure. The extra screenshots are only ever spent on a
+ * flat subject.
  */
 export const MID_EXPOSURE_ITERS = 10;
 /** Early-exit threshold for the mid-tone pass, in stops. */

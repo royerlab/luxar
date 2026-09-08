@@ -74,9 +74,10 @@ TARGET_MID = 0.5  # the harness's mid-tone target (exposure-policy.ts TARGET_MID
 # (|log2(TARGET_MID / p50)| < MID_EXPOSURE_TOL ⇒ p50 ∈ [0.483, 0.518]), so a
 # flat subject that phase 1 left below target converges from below just as
 # readily as from above. In a band sweep on the simulated narrow-histogram
-# subject the converged tiles landed at p50 0.505-0.509, and runs that exhausted
-# MID_EXPOSURE_ITERS (or hit the EXPOSURE_MIN clamp) reached 0.586. 0.65 clears
-# all of those, so the scorer never flags the harness's own successful output.
+# subject the converged tiles landed at p50 0.505-0.509. Under the former -6
+# floor, an exhausted/clamped run reached 0.586; the wider floor can only lower
+# that outcome. 0.65 therefore remains conservative, so the scorer never flags
+# the harness's own successful output.
 FLAT_MID_MIN = 0.65
 # Mirrors exposure-policy.ts MIN_LIT_FRACTION: below this the frame has
 # effectively nothing lit, so its percentiles describe a handful of stray pixels
