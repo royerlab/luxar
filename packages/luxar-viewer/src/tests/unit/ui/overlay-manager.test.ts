@@ -422,6 +422,42 @@ describe('OverlayManager.loadOverlays', () => {
     vi.restoreAllMocks();
   });
 
+  it.each([
+    ['same-origin directory', `${window.location.origin}/scene.luxar.zarr/`, false],
+    ['zipped store', 'https://example.com/scene.luxar.zarr.zip', true],
+  ])('does not request CORS for a %s clip', async (_label, baseUrl, zipped) => {
+    const matte = {
+      canvas: document.createElement('canvas'),
+      start: vi.fn(),
+      stop: vi.fn(),
+      dispose: vi.fn(),
+    };
+    matteFactory.mockReturnValueOnce(matte);
+    const readFile = zipped
+      ? vi.fn().mockResolvedValue(new Uint8Array([0x1a, 0x45, 0xdf, 0xa3]))
+      : undefined;
+    if (zipped) {
+      vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:stacked-video');
+      vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    }
+
+    await manager.loadOverlays(
+      [
+        makeTextOverlay({
+          name: 'turntable',
+          type: 'overlay_video',
+          video_file: 'video.webm',
+          alpha_matte: 'stacked',
+        }),
+      ],
+      baseUrl,
+      readFile
+    );
+
+    const video = document.querySelector('video') as HTMLVideoElement;
+    expect(video.getAttribute('crossorigin')).toBeNull();
+  });
+
   it('abandons the matte and shows the raw clip when the compositor cannot read the video', async () => {
     const matte = {
       canvas: document.createElement('canvas'),
