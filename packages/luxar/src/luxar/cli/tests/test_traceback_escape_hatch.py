@@ -1,10 +1,10 @@
 """A failing CLI command must be able to hand back its traceback.
 
 CLI handlers report one line and raise `typer.Exit(1)` by default, while
-`LUXAR_TRACEBACK=1` re-raises the original exception. The first seventeen
-routed sites included eight that discarded the exception chain (audit finding
-`A9-02`); #2553 routes the remaining interactive handlers that used to print a
-traceback unconditionally.
+`LUXAR_TRACEBACK=1` re-raises fatal exceptions and prints recoverable ones.
+The first seventeen routed sites included eight that discarded the exception
+chain (audit finding `A9-02`); #2553 routes the remaining interactive handlers
+that used to print a traceback unconditionally.
 
 Three things are tested, and the third is the one that keeps working:
 
@@ -35,6 +35,7 @@ from luxar.cli import _traceback
 from luxar.cli._traceback import (
     TRACEBACK_ENV_VAR,
     exit_with_error,
+    report_error,
     traceback_requested,
 )
 
@@ -172,6 +173,32 @@ class TestExitWithError:
         cause = KeyboardInterrupt()
         with pytest.raises(KeyboardInterrupt):
             exit_with_error("❌ interrupted", cause)
+
+
+class TestReportError:
+    """Recoverable failures keep control flow unchanged in both modes."""
+
+    def test_the_quiet_path_prints_the_message_and_hint(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.delenv(TRACEBACK_ENV_VAR, raising=False)
+
+        report_error("❌ recoverable", ValueError("cause"))
+
+        output = capsys.readouterr().out
+        assert "❌ recoverable" in output
+        assert TRACEBACK_ENV_VAR in output
+
+    def test_the_loud_path_prints_the_traceback_and_returns(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv(TRACEBACK_ENV_VAR, "1")
+
+        report_error("❌ recoverable", ValueError("the underlying problem"))
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "ValueError: the underlying problem" in captured.err
 
 
 def _cli_sources() -> list[Path]:

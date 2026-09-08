@@ -7,8 +7,9 @@ its origin. The first seventeen routed sites included eight that discarded the
 original chain entirely (audit finding ``A9-02``); the remaining interactive
 handlers previously printed tracebacks unconditionally (#2553).
 
-Setting ``LUXAR_TRACEBACK=1`` re-raises the original exception, traceback
-intact, and the message itself says so — a hint nobody reads in the docs is a
+Setting ``LUXAR_TRACEBACK=1`` re-raises fatal exceptions with their traceback
+intact and prints recoverable exceptions without changing their control flow.
+The quiet message says how to opt in — a hint nobody reads in the docs is a
 hint nobody has. Fatal lines fall back to stderr when arbol verbosity hides
 normal narration, so the quiet path cannot become a silent exit 1.
 
@@ -23,10 +24,13 @@ from __future__ import annotations
 
 import os
 import sys
+import traceback
 from typing import NoReturn
 
 import typer
-from arbol import Arbol, aprint
+from arbol import aprint
+
+from luxar.utils.arbol_warnings import arbol_will_display
 
 __all__ = [
     "TRACEBACK_ENV_VAR",
@@ -43,13 +47,7 @@ _FALSEY = frozenset({"", "0", "false", "no", "off"})
 
 def _report_line(message: str) -> None:
     """Print a fatal line through arbol, or stderr when arbol hides it."""
-    captured = getattr(Arbol._thread_local, "captured", False)
-    arbol_will_display = (
-        Arbol.passthrough
-        or captured
-        or (Arbol.enable_output and Arbol._depth <= Arbol.max_depth)
-    )
-    if arbol_will_display:
+    if arbol_will_display():
         aprint(message)
     else:
         print(message, file=sys.stderr)
@@ -68,21 +66,16 @@ def traceback_requested() -> bool:
 
 
 def report_error(message: str, error: BaseException) -> None:
-    """Report a recoverable command failure — or re-raise for a traceback.
+    """Report a recoverable command failure without changing control flow.
 
     Args:
         message: The one-line explanation, already formatted (including any
-            emoji prefix the surrounding command uses). The traceback path
-            does not print it, so the exception itself must carry any context
-            essential to diagnosing the failure.
+            emoji prefix the surrounding command uses).
         error: The caught exception.
-
-    Raises:
-        BaseException: ``error`` itself, unchanged, when
-            :func:`traceback_requested`.
     """
     if traceback_requested():
-        raise error
+        traceback.print_exception(error)
+        return
     _report_line(message)
     _report_line(f"   (set {TRACEBACK_ENV_VAR}=1 and re-run for the full traceback)")
 
@@ -106,5 +99,7 @@ def exit_with_error(message: str, error: BaseException) -> NoReturn:
         ... except Exception as e:
         ...     exit_with_error(f"❌ Error doing the thing: {e}", e)
     """
+    if traceback_requested():
+        raise error
     report_error(message, error)
     raise typer.Exit(1) from error
