@@ -103,9 +103,11 @@ import zarr
 from arbol import aprint, asection
 
 from .._zarr_compat import (
+    array_keys,
     close,
     consolidate,
     create_array,
+    group_keys,
     list_raw_keys,
     open_group,
     read_raw_bytes,
@@ -294,9 +296,9 @@ class ChunkLayoutSummary:
 
 def _walk_arrays(group: zarr.Group, path: str = "") -> Iterator[tuple[str, zarr.Array]]:
     """Yield ``(store-relative path, array)`` for every array in the tree."""
-    for name in sorted(group.array_keys()):
+    for name in sorted(array_keys(group)):
         yield (f"{path}/{name}" if path else name), group[name]
-    for name in sorted(group.group_keys()):
+    for name in sorted(group_keys(group)):
         child_path = f"{path}/{name}" if path else name
         yield from _walk_arrays(group[name], child_path)
 
@@ -562,7 +564,7 @@ def plan_optimisation(
     plans: list[ArrayPlan] = []
     for group_path, group in _walk_groups(root):
         attrs = dict(group.attrs)
-        names = frozenset(group.array_keys())
+        names = frozenset(array_keys(group))
         for name in sorted(names):
             array = group[name]
             path = f"{group_path}/{name}" if group_path else name
@@ -585,7 +587,7 @@ def plan_optimisation(
 def _walk_groups(group: zarr.Group, path: str = "") -> Iterator[tuple[str, zarr.Group]]:
     """Yield ``(store-relative path, group)`` for the root and every subgroup."""
     yield path, group
-    for name in sorted(group.group_keys()):
+    for name in sorted(group_keys(group)):
         yield from _walk_groups(group[name], f"{path}/{name}" if path else name)
 
 
@@ -685,6 +687,8 @@ def _copy_array(
     dimension_names = getattr(source.metadata, "dimension_names", None)
     if dimension_names:
         extra["dimension_names"] = tuple(dimension_names)
+    if dest_group.attrs.get("type") == "sound":
+        extra["config"] = {"write_empty_chunks": True}
 
     dest = create_array(
         dest_group,
@@ -726,11 +730,11 @@ def _copy_group(
     """Mirror a group — attrs, payload files, arrays, subgroups — into ``dest``."""
     dest.attrs.update(dict(source.attrs))
     _copy_payload_files(source, dest)
-    for name in sorted(source.array_keys()):
+    for name in sorted(array_keys(source)):
         child_path = f"{path}/{name}" if path else name
         plan = plans[child_path]
         _copy_array(source[name], dest, name, plan.target_chunks, target_format)
-    for name in sorted(source.group_keys()):
+    for name in sorted(group_keys(source)):
         child_path = f"{path}/{name}" if path else name
         _copy_group(
             source[name], dest.create_group(name), plans, target_format, child_path
@@ -943,7 +947,7 @@ def _compute_content_hashes_streaming(root: zarr.Group) -> str:
 
     def hash_group(group: zarr.Group, *, is_root: bool) -> str:
         hasher = xxhash.xxh64()
-        for name in sorted(group.array_keys()):
+        for name in sorted(array_keys(group)):
             dataset = group[name]
             identity = _storage_identity(name, dataset)
             hasher.update(json.dumps(identity, sort_keys=True, default=str).encode())
@@ -952,7 +956,7 @@ def _compute_content_hashes_streaming(root: zarr.Group) -> str:
         hasher.update(json.dumps(attrs, sort_keys=True, default=str).encode())
         for term in _payload_terms(group, attrs):
             hasher.update(term)
-        for name in sorted(group.group_keys()):
+        for name in sorted(group_keys(group)):
             child_hash = hash_group(group[name], is_root=False)
             # The root's baked-environment group is stamped but not folded in —
             # the same exception the reference walk makes, for the same reason.
@@ -1004,7 +1008,7 @@ def _baked_environment_group(root: zarr.Group) -> zarr.Group | None:
     if not isinstance(candidate, zarr.Group):
         return None
     faces = dict(candidate.attrs).get("faces")
-    if not isinstance(faces, str) or faces not in candidate.array_keys():
+    if not isinstance(faces, str) or faces not in array_keys(candidate):
         return None
     return candidate
 

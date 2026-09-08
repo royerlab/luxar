@@ -11,6 +11,7 @@ from luxar.core.viewer_config import (
     VALID_ENVIRONMENT_SOURCES,
     VALID_FOV_PRESETS,
     AnimationConfig,
+    AudioConfig,
     CameraConfig,
     DimensionsConfig,
     EnvironmentConfig,
@@ -935,6 +936,72 @@ class TestWaypoint:
 
         with pytest.raises(ValueError, match="Unknown dimension 'stroy'"):
             vc.validate_dimensions(["x", "y", "z", "story"])
+
+
+class TestAudioConfig:
+    """Sound-layer defaults: master gain, buses, ducking, panning."""
+
+    def test_round_trip_through_json(self) -> None:
+        cfg = AudioConfig(
+            enabled=True,
+            master_gain=0.8,
+            panning_model="HRTF",
+            buses={"ambient": 0.6, "voice": 1.0, "effects": 0.8},
+            duck_db=-9.0,
+        )
+        d = cfg.to_dict()
+        assert d == {
+            "enabled": True,
+            "master_gain": 0.8,
+            "panning_model": "HRTF",
+            "buses": {"ambient": 0.6, "voice": 1.0, "effects": 0.8},
+            "duck_db": -9.0,
+        }
+        back = AudioConfig.from_dict(json.loads(json.dumps(d)))
+        assert back == cfg
+
+    def test_unset_fields_are_omitted(self) -> None:
+        assert AudioConfig().to_dict() == {}
+        assert AudioConfig(master_gain=0.5).to_dict() == {"master_gain": 0.5}
+        assert "audio" not in ViewerConfig(audio=AudioConfig()).to_dict()
+
+    def test_unknown_bus_is_refused_loudly(self) -> None:
+        with pytest.raises(ValueError, match=r"unknown bus\(es\) \['music'\]"):
+            AudioConfig(buses={"music": 0.5})
+
+    @pytest.mark.parametrize(
+        "kwargs,pattern",
+        [
+            ({"master_gain": 2.5}, "master_gain must be between"),
+            ({"master_gain": -0.1}, "master_gain must be between"),
+            ({"master_gain": float("nan")}, "must be finite"),
+            ({"master_gain": "loud"}, "must be a number"),
+            ({"panning_model": "binaural"}, "panning_model must be one of"),
+            ({"buses": {"voice": 3.0}}, r"buses\['voice'\] must be between"),
+            ({"buses": [0.5]}, "must be a dict"),
+            ({"duck_db": 3.0}, "duck_db must be between"),
+            ({"duck_db": -100.0}, "duck_db must be between"),
+            ({"enabled": "yes"}, "enabled must be a bool"),
+        ],
+    )
+    def test_rejections(self, kwargs, pattern) -> None:
+        with pytest.raises(ValueError, match=pattern):
+            AudioConfig(**kwargs)
+
+    def test_viewer_config_round_trips_the_audio_block(self) -> None:
+        vc = ViewerConfig(audio=AudioConfig(master_gain=0.7, buses={"voice": 1.0}))
+        d = vc.to_dict()
+        assert d["audio"] == {"master_gain": 0.7, "buses": {"voice": 1.0}}
+        back = ViewerConfig.from_dict(json.loads(json.dumps(d)))
+        assert back.audio == AudioConfig(master_gain=0.7, buses={"voice": 1.0})
+
+    def test_audio_must_be_an_audio_config(self) -> None:
+        with pytest.raises(ValueError, match="audio must be an AudioConfig"):
+            ViewerConfig(audio={"master_gain": 0.5})  # type: ignore[arg-type]
+
+    def test_unknown_keys_are_ignored_on_read(self) -> None:
+        back = AudioConfig.from_dict({"master_gain": 0.5, "reverb": 0.3})
+        assert back == AudioConfig(master_gain=0.5)
 
 
 class TestCameraZoom:

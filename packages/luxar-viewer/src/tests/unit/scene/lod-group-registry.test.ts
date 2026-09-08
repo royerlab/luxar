@@ -559,6 +559,38 @@ describe('LODGroupRegistry — registration', () => {
 });
 
 describe('LODGroupRegistry — partition frustum selection', () => {
+  it('gates and restores every object emitted by a part', () => {
+    const reg = makeRegistry();
+    const groupObject = new THREE.Group();
+    const first = new THREE.Group();
+    const second = new THREE.Group();
+    groupObject.add(first, second);
+    const entry: PartitionGroupEntry = {
+      path: '/partition',
+      groupObject,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [first, second],
+          positionBounds: { min: [2, 2, 2], max: [3, 3, 3] },
+        },
+      ],
+    };
+
+    reg.registerPartition(entry);
+    expect(reg.evaluatePerFrame()).toBe(true);
+    for (const object of [first, second]) {
+      expect(object.visible).toBe(false);
+      expect(object.userData.partitionFrustumVisible).toBe(false);
+    }
+
+    reg.unregister(entry.path);
+    for (const object of [first, second]) {
+      expect(object.visible).toBe(true);
+      expect(object.userData.partitionFrustumVisible).toBeUndefined();
+    }
+  });
+
   it('hides only parts outside the frustum using mapped 2D display dimensions', () => {
     const reg = makeRegistry([1, 3]);
     const groupObject = new THREE.Group();
@@ -570,11 +602,13 @@ describe('LODGroupRegistry — partition frustum selection', () => {
       groupObject,
       children: [
         {
-          object: visible,
+          path: '/partition/part_0',
+          objects: [visible],
           positionBounds: { min: [20, -0.5, 30, -0.5], max: [21, 0.5, 31, 0.5] },
         },
         {
-          object: culled,
+          path: '/partition/part_1',
+          objects: [culled],
           positionBounds: { min: [-0.5, 2, -0.5, 2], max: [0.5, 3, 0.5, 3] },
         },
       ],
@@ -599,8 +633,16 @@ describe('LODGroupRegistry — partition frustum selection', () => {
       path: '/partition',
       groupObject,
       children: [
-        { object: culled, positionBounds: { min: [2, 2], max: [3, 3] } },
-        { object: unprojectable, positionBounds: { min: [], max: [] } },
+        {
+          path: '/partition/part_0',
+          objects: [culled],
+          positionBounds: { min: [2, 2], max: [3, 3] },
+        },
+        {
+          path: '/partition/part_1',
+          objects: [unprojectable],
+          positionBounds: { min: [], max: [] },
+        },
       ],
     });
 
@@ -627,10 +669,15 @@ describe('LODGroupRegistry — partition frustum selection', () => {
       groupObject,
       children: [
         {
-          object: footprintVisible,
+          path: '/partition/part_0',
+          objects: [footprintVisible],
           positionBounds: { min: [1.2, -0.1, -0.1], max: [1.3, 0.1, 0.1] },
         },
-        { object: culled, positionBounds: { min: [2, 2, 2], max: [3, 3, 3] } },
+        {
+          path: '/partition/part_1',
+          objects: [culled],
+          positionBounds: { min: [2, 2, 2], max: [3, 3, 3] },
+        },
       ],
     });
 
@@ -638,6 +685,36 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     expect(footprintVisible.visible).toBe(true);
     expect(footprintVisible.userData.partitionFrustumVisible).toBe(true);
     expect(culled.visible).toBe(false);
+  });
+
+  it('unions the rendered footprints of every object in a part', () => {
+    const reg = makeRegistry();
+    const groupObject = new THREE.Group();
+    const outside = new THREE.Group();
+    const footprintGeometry = new THREE.BufferGeometry();
+    footprintGeometry.boundingBox = new THREE.Box3(
+      new THREE.Vector3(0.9, -0.1, -0.1),
+      new THREE.Vector3(1.3, 0.1, 0.1)
+    );
+    const footprintVisible = new THREE.Mesh(footprintGeometry);
+    groupObject.add(outside, footprintVisible);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [outside, footprintVisible],
+          positionBounds: { min: [1.2, 2, 2], max: [1.3, 3, 3] },
+        },
+      ],
+    });
+
+    expect(reg.evaluatePerFrame()).toBe(false);
+    for (const object of [outside, footprintVisible]) {
+      expect(object.visible).toBe(true);
+      expect(object.userData.partitionFrustumVisible).toBe(true);
+    }
   });
 
   it('preloads a cold part just outside the exact frustum', () => {
@@ -649,7 +726,11 @@ describe('LODGroupRegistry — partition frustum selection', () => {
       path: '/partition',
       groupObject,
       children: [
-        { object: child, positionBounds: { min: [1.05, -0.1, -0.1], max: [1.2, 0.1, 0.1] } },
+        {
+          path: '/partition/part_0',
+          objects: [child],
+          positionBounds: { min: [1.05, -0.1, -0.1], max: [1.2, 0.1, 0.1] },
+        },
       ],
     });
 
@@ -676,7 +757,13 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     reg.registerPartition({
       path: '/partition',
       groupObject,
-      children: [{ object: child, positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] } }],
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [child],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+        },
+      ],
     });
 
     expect(reg.evaluatePerFrame()).toBe(true);
@@ -687,8 +774,9 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     expect(reg.evaluatePerFrame()).toBe(true);
     expect(child.visible).toBe(true);
     expect(requestReprocess).toHaveBeenCalledOnce();
-    // An unnamed part cannot be targeted, so the whole partition is resynced.
-    expect(requestReprocess).toHaveBeenCalledWith(['/partition']);
+    // The part carries a registered node path, so the resync targets it rather
+    // than re-sweeping the whole partition.
+    expect(requestReprocess).toHaveBeenCalledWith(['/partition/part_0']);
   });
 
   it('passes the re-entering part path on the rising edge', () => {
@@ -705,16 +793,22 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     );
     const groupObject = new THREE.Group();
     const staying = new THREE.Group();
-    staying.name = '/partition/part_0';
     const returning = new THREE.Group();
-    returning.name = '/partition/part_1';
     groupObject.add(staying, returning);
     reg.registerPartition({
       path: '/partition',
       groupObject,
       children: [
-        { object: staying, positionBounds: { min: [-0.5, 0, 0], max: [0.5, 0.5, 0.5] } },
-        { object: returning, positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] } },
+        {
+          path: '/partition/part_0',
+          objects: [staying],
+          positionBounds: { min: [-0.5, 0, 0], max: [0.5, 0.5, 0.5] },
+        },
+        {
+          path: '/partition/part_1',
+          objects: [returning],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+        },
       ],
     });
 
@@ -748,16 +842,22 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     );
     const groupObject = new THREE.Group();
     const first = new THREE.Group();
-    first.name = '/partition/part_0';
     const second = new THREE.Group();
-    second.name = '/partition/part_1';
     groupObject.add(first, second);
     reg.registerPartition({
       path: '/partition',
       groupObject,
       children: [
-        { object: first, positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] } },
-        { object: second, positionBounds: { min: [4, 0, 0], max: [5, 0.5, 0.5] } },
+        {
+          path: '/partition/part_0',
+          objects: [first],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+        },
+        {
+          path: '/partition/part_1',
+          objects: [second],
+          positionBounds: { min: [4, 0, 0], max: [5, 0.5, 0.5] },
+        },
       ],
     });
 
@@ -776,7 +876,7 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     expect([...paths].sort()).toEqual(['/partition/part_0', '/partition/part_1']);
   });
 
-  it('falls back to the whole wrapper when a re-entering part has no name', () => {
+  it('falls back to the whole wrapper when a re-entering part has no path', () => {
     const requestReprocess = vi.fn();
     const reg = makeRegistry(
       [0, 1, 2],
@@ -790,15 +890,18 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     );
     const groupObject = new THREE.Group();
     const named = new THREE.Group();
-    named.name = '/partition/part_0';
-    const unnamed = new THREE.Group();
-    groupObject.add(named, unnamed);
+    const unpathed = new THREE.Group();
+    groupObject.add(named, unpathed);
     reg.registerPartition({
       path: '/partition',
       groupObject,
       children: [
-        { object: named, positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] } },
-        { object: unnamed, positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] } },
+        {
+          path: '/partition/part_0',
+          objects: [named],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+        },
+        { path: '', objects: [unpathed], positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] } },
       ],
     });
 
@@ -806,9 +909,44 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     groupObject.position.x = -2.5; // both re-enter
     reg.evaluatePerFrame();
     expect(requestReprocess).toHaveBeenCalledOnce();
-    // The unnamed part widens the request to the whole partition, which already
+    // The pathless part widens the request to the whole partition, which already
     // covers the named one — exactly one path, the wrapper.
     expect(requestReprocess).toHaveBeenCalledWith(['/partition']);
+  });
+
+  it('requests a view resync when any object in a part was culled', () => {
+    const requestReprocess = vi.fn();
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      requestReprocess
+    );
+    const groupObject = new THREE.Group();
+    const first = new THREE.Group();
+    const second = new THREE.Group();
+    groupObject.add(first, second);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [first, second],
+          positionBounds: { min: [-0.5, -0.5, -0.5], max: [0.5, 0.5, 0.5] },
+        },
+      ],
+    });
+    first.userData.partitionFrustumVisible = false;
+
+    expect(reg.evaluatePerFrame()).toBe(false);
+    expect(first.userData.partitionFrustumVisible).toBe(true);
+    expect(second.userData.partitionFrustumVisible).toBe(true);
+    expect(requestReprocess).toHaveBeenCalledOnce();
   });
 
   it('coalesces rising-edge resyncs until the active update finishes', () => {
@@ -833,8 +971,16 @@ describe('LODGroupRegistry — partition frustum selection', () => {
       path: '/partition',
       groupObject,
       children: [
-        { object: first, positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] } },
-        { object: second, positionBounds: { min: [4, 0, 0], max: [5, 0.5, 0.5] } },
+        {
+          path: '/partition/part_0',
+          objects: [first],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+        },
+        {
+          path: '/partition/part_1',
+          objects: [second],
+          positionBounds: { min: [4, 0, 0], max: [5, 0.5, 0.5] },
+        },
       ],
     });
 
@@ -848,9 +994,9 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     updateInProgress = false;
     reg.evaluatePerFrame();
     reg.evaluatePerFrame();
+    // Two rising edges on the same wrapper collapse into ONE request (the paths
+    // they carry are asserted by the union test above).
     expect(requestReprocess).toHaveBeenCalledOnce();
-    // Both parts are unnamed ⇒ one whole-partition request, not two.
-    expect(requestReprocess).toHaveBeenCalledWith(['/partition']);
   });
 
   it('keeps requesting frames while a rising-edge resync is pending', () => {
@@ -873,7 +1019,13 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     reg.registerPartition({
       path: '/partition',
       groupObject,
-      children: [{ object: child, positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] } }],
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [child],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+        },
+      ],
     });
 
     reg.evaluatePerFrame();
@@ -906,7 +1058,13 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     reg.registerPartition({
       path: '/partition',
       groupObject,
-      children: [{ object: child, positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] } }],
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [child],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+        },
+      ],
     });
 
     reg.evaluatePerFrame();
@@ -926,7 +1084,7 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     groupObject.visible = true;
     expect(reg.evaluatePerFrame()).toBe(false);
     expect(requestReprocess).toHaveBeenCalledOnce();
-    expect(requestReprocess).toHaveBeenCalledWith(['/partition']);
+    expect(requestReprocess).toHaveBeenCalledWith(['/partition/part_0']);
   });
 
   it('unregister removes partition entries and their per-frame visibility writes', () => {
@@ -937,7 +1095,13 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     reg.registerPartition({
       path: '/partition',
       groupObject,
-      children: [{ object: child, positionBounds: { min: [2, 2, 2], max: [3, 3, 3] } }],
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [child],
+          positionBounds: { min: [2, 2, 2], max: [3, 3, 3] },
+        },
+      ],
     });
 
     reg.evaluatePerFrame();
@@ -956,7 +1120,13 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     reg.registerPartition({
       path: '/partition',
       groupObject,
-      children: [{ object: child, positionBounds: { min: [2, 2, 2], max: [3, 3, 3] } }],
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [child],
+          positionBounds: { min: [2, 2, 2], max: [3, 3, 3] },
+        },
+      ],
     });
 
     reg.evaluatePerFrame();

@@ -1187,6 +1187,103 @@ neighbouring parts). A mesh may equally be a child of a `kind=lod` group —
 `add_mesh(substitutive_lod=…)` writes that shape, with each coarse level a decimated
 copy of the surface. The two cannot be combined in one call.
 
+### 6. Sound Nodes
+
+Sound nodes hold an audio clip — an ambient bed, a narration bound to a story
+step, or a spatial source that gets louder as the camera approaches. They are the
+one node type that is **heard rather than drawn** (design:
+`docs/guides/specs/SOUND_SPEC.md`).
+
+`sound` is in the format contract's `node_types` but **not** in `geometry_types`
+or `loader_types`: it carries no elements, no blending mode, no LOD and no
+picking, so none of the geometry vocabularies list it. The viewer dispatches it
+to its audio engine by `type` alone.
+
+**Layout:**
+```
+/sounds/hum_hsp70/          # a group under any group, like other nodes
+  zarr.json                 # type: "sound", attrs below (.zattrs at format 2)
+  positions                 # (K, ndim) plain float32 (no quantizing encoder) — ABSENT for a clip live everywhere
+  audio.mp3                 # the clip, a plain store key (or audio.m4a for AAC)
+```
+
+**Attributes:**
+```javascript
+{
+  "type": "sound",
+  "spatial": false,                  // true → K PositionalAudio voices at `positions`
+  "trigger": "once",                 // "continuous" | "once" | "on_depart" | "on_arrive"
+  "delay_ms": 800.0,                 // after the trigger fires
+  "gain": 1.0,                       // per-node linear gain
+  "bus": "voice",                    // "ambient" | "voice" | "effects"
+  "loop": false,                     // derived: trigger == "continuous"
+  "fade_in_ms": 0.0, "fade_out_ms": 0.0,
+  "license": "CC0",                  // REQUIRED provenance, all three
+  "attribution": "Freesound user X",
+  "source_url": "https://…",
+  "format": "mp3",                   // sniffed from the bytes: "mp3" | "aac"
+  "audio_file": "audio.mp3",         // the plain key holding the clip
+  "duration_ms": 31240.0,            // optional, stamped when a tag reader is available
+  "channels": 2,                     // optional, same source; checked (== 4) for an ambisonic clip
+  "attach_to": "Story 3: hsp70",     // optional: follow that node's bounding-box centre
+  "ambisonic": "foa",                // optional: a 4-channel AmbiX FIELD (AAC only, never spatial)
+  "has_positions": true, "n_positions": 1, "ndim": 4,
+  "extend_to_all": ["time"],         // as for points
+  "ordering": "none",                // never a spatial index
+  "position_bounds": {...},          // spatial only; NOT folded into the scene bounds
+  // spatial only — PannerNode knobs, absent = viewer default from the scene scale
+  "distance_model": "inverse", "ref_distance": 2.0, "max_distance": 30.0,
+  "rolloff": 1.0, "cone_inner_deg": 90, "cone_outer_deg": 180,
+  "cone_outer_gain": 0.2, "orientation": [0, 0, -1],
+  "layer": true, "visible": true, "transform": [...], "nd_transform": {...}
+}
+```
+
+**Audibility is the slab rule.** A sound node's `positions` rows are tested
+against the hidden-dimension slice exactly like a points node's: a row whose
+hidden coordinates fall inside the slab is live, others are silent, and
+`extend_to_all` makes a row live everywhere along a dimension. A node with no
+`positions` is live everywhere. The Python `hidden={"story": 3}` sugar writes
+one row at `story=3` (other columns 0) and `extend_to_all` over every other
+hidden dimension.
+
+**Triggers.** `continuous` and `once` follow the slab's edges. `on_depart` /
+`on_arrive` follow the waypoint driver's events (`viewer_config.waypoints`): the
+node fires when a story flight leaves / lands on the waypoint whose `when`
+clause its row satisfies (a node without rows belongs to every waypoint). An
+`on_arrive` clip still fades out when its story is left; an `on_depart` clip
+plays out.
+
+**`attach_to`.** The NAME of another node: the source follows that node's
+bounding-box centre in the viewer ("the cluster hums" without authoring
+coordinates). Spatial by default; combine with `hidden=` to bind it to a value.
+Mutually exclusive with `positions`.
+
+**`ambisonic: "foa"`.** The clip is a first-order ambisonic FIELD — four AmbiX
+channels (ACN order `W, Y, Z, X`, SN3D) — that the viewer decodes to stereo and
+rotates against the camera so the field stays fixed to the world. AAC only (MP3
+holds two channels); never spatial and never positioned (`hidden=` still decides
+when it is live). The writer refuses the node when a tag reader reports a
+channel count other than 4.
+
+**Formats.** MP3 and AAC (`.m4a` / ADTS) are accepted and sniffed from the
+payload, never from the filename. Ogg/Opus is refused because Safari cannot
+decode it; WAV and FLAC are refused as the wrong size class for a hosted store.
+
+**Not written for a sound node:** no appearance attrs (`opacity`, `colormap`,
+`blending_mode`, … are refused by the writer), no spatial index, and no
+contribution to the root `position_bounds` — a source at the far corner of a
+dataset must not push the opening framing out.
+
+**`content_hash` covers the clip.** The bytes of the file named by `audio_file`
+are folded into the node's digest through the same payload step that covers an
+overlay's `image_file` (`io/_compiler/finalize/hashing.py::PAYLOAD_FILE_ATTRS`),
+and `luxar optimise` carries the file into a re-chunked store for the same reason.
+
+**Viewer-side defaults** live in `viewer_config.audio` (`AudioConfig`: `enabled`,
+`master_gain`, `panning_model` `"equalpower"` | `"HRTF"`, per-bus gains, and
+`duck_db` — the ambient attenuation while anything on the voice bus plays).
+
 ## Scalar Colormap Attributes
 
 For Points, Lines and Mesh, an optional per-element `scalars` zarr array

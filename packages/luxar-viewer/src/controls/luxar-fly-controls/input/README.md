@@ -9,14 +9,15 @@ Each adapter is a free function (no class state). State lives on the
 orchestrator and is reached through a per-call `Ctx` object: object
 refs (`moveState`, `lookState`, `velocity`, `angularVelocity`,
 `orientation`, `camera`) are mutated in place; primitives
-(`speedBoost`, `mouseX/Y`, `activeMouseAction`) are read and written
-via getter/setter callbacks. Event dispatch is routed back through
+(`speedBoost`, `mouseX/Y`, `activeMouseAction`, the pinch snapshot) are
+read and written via getter/setter callbacks. Event dispatch is routed back through
 `ctx.dispatch` so the orchestrator remains the sole dispatch site.
 
 ```
 input/
 ├── keyboard.ts  WASD + QE roll + arrows + Shift speed-boost
 ├── mouse.ts     Left-drag strafe, right-drag rotate (angular impulse)
+├── touch.ts     One-finger look, two-finger strafe / thrust / roll
 └── wheel.ts     Scroll forward/back, Shift+scroll roll
 ```
 
@@ -54,6 +55,20 @@ per-event allocation.
   `velocity`; otherwise the camera position is moved directly. Drag
   direction matches on-screen motion (consistent with orbit/ortho pan).
 
+## `touch.ts`
+
+`handleTouchDown` / `handleTouchMove` / `handleTouchUp`, `FlyTouchCtx`,
+and `FlyPinchState`. The orchestrator owns the live pointer map and pinch
+snapshot; the handlers update them through the context.
+
+- **One finger** applies the same pitch/yaw impulse as a mouse right-drag.
+- **Two fingers** combine midpoint strafe, logarithmic pinch thrust, and
+  view-axis twist roll in one gesture. Coincident fingers contribute no
+  thrust or roll, and lifting a finger re-seeds the surviving gesture.
+- Tracked moves while disabled advance the pointer and pinch snapshots but
+  apply no impulse, so re-enabling cannot replay a stale delta.
+- `change` is dispatched only when a move applies a camera impulse.
+
 ## `wheel.ts`
 
 `handleWheel` and `FlyWheelCtx`. Module-local `_v0` and `_q0` scratch.
@@ -74,10 +89,12 @@ per-event allocation.
 
 ## Public API
 
-| Export                                                | Source        |
-| ----------------------------------------------------- | ------------- |
-| `handleKeyDown`, `handleKeyUp`                        | `keyboard.ts` |
-| `handleMouseDown`, `handleMouseUp`, `handleMouseMove` | `mouse.ts`    |
-| `handleWheel`                                         | `wheel.ts`    |
-| `FlyMoveState`, `FlyLookState`, `FlyMouseAction`      | `keyboard.ts` |
-| `FlyKeyboardCtx`, `FlyMouseCtx`, `FlyWheelCtx`        | each file     |
+| Export                                                        | Source        |
+| ------------------------------------------------------------- | ------------- |
+| `handleKeyDown`, `handleKeyUp`                                | `keyboard.ts` |
+| `handleMouseDown`, `handleMouseUp`, `handleMouseMove`         | `mouse.ts`    |
+| `handleTouchDown`, `handleTouchMove`, `handleTouchUp`         | `touch.ts`    |
+| `handleWheel`                                                 | `wheel.ts`    |
+| `FlyMoveState`, `FlyLookState`, `FlyMouseAction`              | `keyboard.ts` |
+| `FlyKeyboardCtx`, `FlyMouseCtx`, `FlyTouchCtx`, `FlyWheelCtx` | each file     |
+| `FlyPinchState`                                               | `touch.ts`    |

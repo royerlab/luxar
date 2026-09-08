@@ -22,6 +22,11 @@ export const RAIL_ICONS: Record<string, string> = {
   perf: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18a8 8 0 0 1 16 0"/><line x1="12" y1="18" x2="16" y2="11"/></svg>',
   data: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h5l2 2h9v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7z"/></svg>',
   monitor: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l2 6 4-13 2 7h6"/></svg>',
+  // Sound: speaker with two arcs; muted variant swaps the arcs for a slash.
+  audio:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5z"/><path d="M15.5 9a4 4 0 0 1 0 6"/><path d="M18 6.5a7.5 7.5 0 0 1 0 11"/></svg>',
+  audioMuted:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5z"/><path d="M15.5 9.5l5 5"/><path d="M20.5 9.5l-5 5"/></svg>',
   recording:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/></svg>',
   screenshot:

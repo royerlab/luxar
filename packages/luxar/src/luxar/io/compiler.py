@@ -40,7 +40,11 @@ from arbol import aprint
 from numpy.typing import NDArray
 
 from luxar._zarr_compat import close as zarr_close
-from luxar._zarr_compat import consolidate, create_array
+from luxar._zarr_compat import (
+    consolidate,
+    create_array,
+    suppress_payload_member_warning,
+)
 from luxar._zarr_compat import open_group as zarr_open_group
 
 from ..core.dimensions import Dimensions
@@ -95,6 +99,7 @@ from ._compiler.geometry_writers.gsplats import write_gsplats as _write_gsplats_
 from ._compiler.geometry_writers.lines import write_lines as _write_lines_impl
 from ._compiler.geometry_writers.mesh import write_mesh as _write_mesh_impl
 from ._compiler.geometry_writers.points import write_points as _write_points_impl
+from ._compiler.geometry_writers.sound import write_sound as _write_sound_impl
 from ._compiler.gsplat_assembly import apply_gsplat_group_attrs
 from ._compiler.labels.text_labels import (
     validate_ladder_labels,
@@ -974,6 +979,38 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             labels=labels,
             image_labels=image_labels,
             keys=keys,
+            **attrs,
+        )
+        self._metadata_cache[path.lstrip("/")] = metadata
+        return metadata
+
+    def write_sound(
+        self,
+        path: NodePath,
+        payload: bytes,
+        fmt: str,
+        positions: Optional[PositionArray],
+        *,
+        sound_attrs: dict[str, Any],
+        **attrs: Any,
+    ) -> dict[str, Any]:
+        """Write a sound node to Zarr.
+
+        The clip lands as a plain store key (``audio.mp3`` / ``audio.m4a``) next
+        to the node's zarr documents and the optional ``positions`` array is
+        written like a mesh's vertices (whole-node, no spatial index). The bytes
+        are folded into ``content_hash`` at finalize through
+        ``PAYLOAD_FILE_ATTRS`` and never touch the scene bounds. See
+        :mod:`luxar.io._compiler.geometry_writers.sound`.
+        """
+        self._check_not_finalized("write_sound")
+        metadata = _write_sound_impl(
+            self._make_geometry_ctx(),
+            path,
+            payload,
+            fmt,
+            positions,
+            sound_attrs=sound_attrs,
             **attrs,
         )
         self._metadata_cache[path.lstrip("/")] = metadata
@@ -1893,27 +1930,41 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
     @arbol_warnings()
     def finalize(self) -> None:
-        """Finalize the Zarr store with metadata consolidation."""
+        """Finalize the Zarr store with metadata consolidation.
+
+        Runs under :func:`suppress_payload_member_warning`: the finalize walkers
+        (bounds, hashing, LOD backfill, amplitude windows) enumerate every group
+        through zarr, which warns once per plain payload key it meets (an
+        overlay's ``image.png``, a sound node's ``audio.mp3``). Those keys are
+        part of the format, so the advice is noise here — and under ``-W error``
+        it used to turn every such compile into "Could not finalize Zarr store".
+        """
+        with suppress_payload_member_warning():
+            self._finalize_impl()
+
+    def _prepare_store_for_finalize(self) -> None:
+        """The two pre-finalize mutations, INSIDE the failure boundary.
+
+        A prior aborted attempt may have marked the store incomplete; a real
+        finalize supersedes that. A failed clear must FAIL the finalize (the
+        handler re-stamps and raises): a "successful" finalize that left the
+        marker behind would set ``_is_finalized`` and produce a valid store that
+        ``LuxarScene.load`` permanently rejects, with no way to retry. The
+        default hover overlay is injected here too: if it raises, the store is
+        already partial and must be marked incomplete.
+        """
+        if "incomplete" in self.store.attrs:
+            del self.store.attrs["incomplete"]
+        if self._scene is not None:
+            self._scene._auto_inject_hover_overlay()
+
+    def _finalize_impl(self) -> None:
         if self._is_finalized:
             return
         self._check_archive_can_finalize()
 
         try:
-            # A prior aborted attempt may have marked the store incomplete; a
-            # real finalize supersedes that. Clearing it lives INSIDE the outer
-            # boundary, and a failed clear must FAIL the finalize (the handler
-            # re-stamps and raises): a "successful" finalize that left the
-            # marker behind would set _is_finalized and produce a valid store
-            # that LuxarScene.load permanently rejects, with no way to retry.
-            if "incomplete" in self.store.attrs:
-                del self.store.attrs["incomplete"]
-
-            # Auto-inject default hover overlay if labels exist but no hover
-            # overlay defined. Inside the boundary: if it raises, the store is
-            # already partial and must be marked incomplete.
-            if self._scene is not None:
-                self._scene._auto_inject_hover_overlay()
-
+            self._prepare_store_for_finalize()
             aprint("🔧 Finalizing Zarr store...")
 
             # Close the store to ensure all data is written

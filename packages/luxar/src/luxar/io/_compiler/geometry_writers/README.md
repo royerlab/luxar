@@ -1,6 +1,6 @@
 # luxar.io._compiler.geometry_writers
 
-**Internal write pipelines** for the four geometry types (Points, Lines, GSplats, Mesh). Each module exports a single `write_*` function that sequences the validation → ordering → array encoding → metadata stamping pipeline for its geometry. These are the bodies of the `LuxarZarrCompiler.write_{points,lines,gsplats,mesh}` orchestrator methods; the orchestrator builds a `GeometryWriteCtx` or `GSplatsWriteCtx`, calls the appropriate pipeline here, then records the returned metadata in its cache.
+**Internal write pipelines** for the four geometry types (Points, Lines, GSplats, Mesh) plus the `sound` node. Each module exports a single `write_*` function that sequences the validation → ordering → array encoding → metadata stamping pipeline for its geometry. These are the bodies of the `LuxarZarrCompiler.write_{points,lines,gsplats,mesh}` orchestrator methods; the orchestrator builds a `GeometryWriteCtx` or `GSplatsWriteCtx`, calls the appropriate pipeline here, then records the returned metadata in its cache.
 
 ## Purpose
 
@@ -15,6 +15,7 @@ Extract the per-geometry pipeline bodies from the orchestrator so each geometry 
 | **gsplats.py** | GSplats | `write_gsplats(ctx: GSplatsWriteCtx, path, centers, amplitudes, cholesky_factors, colors=None, labels=None, image_labels=None, keys=None, **attrs)` | `GSplatsWriteCtx` |
 | **mesh.py** | Mesh | `write_mesh(ctx: GeometryWriteCtx, path, vertices, faces, normals=None, normal_dims=None, colors=None, scalars=None, shading=None, double_sided=True, labels=None, image_labels=None, keys=None, **attrs)` | `GeometryWriteCtx` |
 | **gsplats.py** | GSplats subtree | `write_gsplat_leaf_subtree(ctx: GSplatsWriteCtx, path, leaf, **attrs)` | `GSplatsWriteCtx` |
+| **sound.py** | Sound | `write_sound(ctx: GeometryWriteCtx, path, payload, fmt, positions, *, sound_attrs, **attrs)` | `GeometryWriteCtx` |
 
 The pipelines are stateless: they read only the narrow config in the `Ctx` dataclass (encoder, compressor, ordering settings, zarr store) and return a metadata dict for the caller to record.
 
@@ -214,6 +215,29 @@ for is an *additive* ladder inside a single leaf.
 5. **Stamp attrs** below `attrs.update` so a caller cannot clobber presence truth, plus `ordering="none"` (stamped rather than omitted, so a reader never distinguishes "no ordering" from "attr missing").
 
 6. **Update scene bounds** and write label / key / image-label CSR arrays — the two text channels through one `write_string_channels_csr` call, as Points and Lines do.
+
+### Sound Pipeline (`write_sound`)
+
+The smallest pipeline, because a sound node has no element arrays: the adder
+(`core/group/adders/sound.py`) has already sniffed the clip, validated every knob
+and resolved the `hidden=` sugar, so the writer only lands what it is handed.
+
+1. `validate_node_path(path)`; `prepare_transform_attrs(attrs, ctx.store)` (once).
+2. Optional `positions` `(K, ndim)` as a PLAIN float32 array (`create_array`,
+   `compressor=None`) — not the quantizing encoder: K is a handful of rows, the
+   uint16 grid is degenerate for one row (every coordinate collapses to code 0),
+   and the viewer reads the array raw to run the slab kernel on exact hidden
+   coordinates.
+3. The clip as a plain store key via `_zarr_compat.write_raw_bytes(group,
+   "audio.mp3" | "audio.m4a", payload)`; `attrs["audio_file"]` names it.
+4. Attrs: the compositing pass-throughs first, then the writer's own truth on top
+   (`type="sound"`, `format`, `audio_file`, `has_positions`, `n_positions`,
+   `ndim`, `ordering="none"`, `position_bounds` when spatial, `duration_ms` when
+   `mutagen` is importable).
+
+Deliberately **no** `ctx.update_scene_bounds()`: a sound source never stretches
+the scene's framing. The bytes reach `content_hash` through
+`finalize/hashing.py::PAYLOAD_FILE_ATTRS` (`"audio_file"`).
 
 ## Context Types
 

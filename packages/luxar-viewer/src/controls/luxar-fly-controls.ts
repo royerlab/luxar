@@ -51,6 +51,14 @@ import {
   type FlyPhysicsCtx,
 } from './luxar-fly-controls/physics';
 import { attachListeners } from './luxar-fly-controls/listeners';
+import {
+  handleTouchDown as handleTouchDownHelper,
+  handleTouchMove as handleTouchMoveHelper,
+  handleTouchUp as handleTouchUpHelper,
+  type FlyPinchState,
+  type FlyTouchCtx,
+} from './luxar-fly-controls/input/touch';
+import { isTouchLikePointer } from '../utils/input-capabilities';
 
 /**
  * Optional construction parameters for {@link LuxarFlyControls}.
@@ -147,6 +155,11 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
   private mouseX = 0;
   private mouseY = 0;
 
+  // Touch state — live finger positions and the two-finger snapshot the
+  // pinch / strafe / twist deltas are measured against (input/touch.ts).
+  private touchPointers = new Map<number, THREE.Vector2>();
+  private pinch: FlyPinchState | null = null;
+
   // References
   private camera: LuxarCamera;
   private domElement: HTMLElement;
@@ -202,6 +215,9 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
       onMouseUp: (event) => this.onMouseUp(event),
       onMouseMove: (event) => this.onMouseMove(event),
       onWheel: (event) => this.onWheel(event),
+      onPointerDown: (event) => this.onPointerDown(event),
+      onPointerMove: (event) => this.onPointerMove(event),
+      onPointerUp: (event) => this.onPointerUp(event),
     });
   }
 
@@ -280,6 +296,25 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     };
   }
 
+  private makeTouchCtx(): FlyTouchCtx {
+    return {
+      enabled: this.enabled,
+      inertialMode: this.inertialMode,
+      lookSpeed: this.lookSpeed,
+      movementSpeed: this.movementSpeed,
+      camera: this.camera,
+      orientation: this.orientation,
+      velocity: this.velocity,
+      angularVelocity: this.angularVelocity,
+      pointers: this.touchPointers,
+      getPinch: () => this.pinch,
+      setPinch: (p) => {
+        this.pinch = p;
+      },
+      dispatch: (type) => this.dispatchEvent({ type }),
+    };
+  }
+
   private onKeyDown(event: KeyboardEvent): void {
     handleKeyDownHelper(this.makeKeyboardCtx(), event);
   }
@@ -298,6 +333,24 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
 
   private onMouseMove(event: MouseEvent): void {
     handleMouseMoveHelper(this.makeMouseCtx(), event);
+  }
+
+  // Touch-like pointers only (a finger, or a pen on a coarse-pointer device);
+  // mouse-typed pointer events are left to the legacy mouse listeners so a
+  // mouse user's behaviour is unchanged.
+  private onPointerDown(event: PointerEvent): void {
+    if (!isTouchLikePointer(event)) return;
+    handleTouchDownHelper(this.makeTouchCtx(), event);
+  }
+
+  private onPointerMove(event: PointerEvent): void {
+    if (!this.touchPointers.has(event.pointerId)) return;
+    handleTouchMoveHelper(this.makeTouchCtx(), event);
+  }
+
+  private onPointerUp(event: PointerEvent): void {
+    if (!this.touchPointers.has(event.pointerId)) return;
+    handleTouchUpHelper(this.makeTouchCtx(), event);
   }
 
   private onWheel(event: WheelEvent): void {
@@ -408,9 +461,11 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     this.lookState.vertical = 0;
     this.lookState.roll = 0;
 
-    // Reset speed boost and mouse state
+    // Reset speed boost, mouse and touch state
     this.speedBoost = false;
     this.activeMouseAction = 'none';
+    this.touchPointers.clear();
+    this.pinch = null;
 
     this.updateOrientation();
   }

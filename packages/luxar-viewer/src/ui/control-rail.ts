@@ -228,6 +228,8 @@ export class ControlRail {
     // (Navigation icon/tooltip).
     window.addEventListener('luxar-layers-changed', this.onExternalStateChange);
     window.addEventListener('luxar-control-mode-changed', this.onExternalStateChange);
+    // The Sound button appears only when the scene has sound nodes and mirrors mute.
+    window.addEventListener('luxar-audio-changed', this.onExternalStateChange);
     this.syncFullscreen();
     this.scheduleSleep();
 
@@ -299,6 +301,7 @@ export class ControlRail {
       btn.setAttribute('aria-expanded', 'false');
     }
     btn.innerHTML = item.icon;
+    btn.hidden = this.isHidden(item);
 
     const tip = document.createElement('span');
     tip.className = 'luxar-control-rail__tip';
@@ -396,12 +399,29 @@ export class ControlRail {
     });
   }
 
+  /** Fail-soft `hidden` predicate: a throwing predicate leaves the button shown. */
+  private isHidden(item: ControlRailItem): boolean {
+    if (!item.hidden) return false;
+    try {
+      return item.hidden();
+    } catch {
+      return false;
+    }
+  }
+
   /** Re-read every item's active/disabled state and repaint the buttons. */
   private refresh(): void {
     if (this.disposed) return;
     for (const item of this.items) {
       const btn = this.buttons.get(item.id);
       if (!btn) continue;
+      // Hidden first: a hidden button renders nothing and is skipped entirely.
+      const isHidden = this.isHidden(item);
+      btn.hidden = isHidden;
+      if (isHidden) {
+        btn.classList.remove('is-active');
+        continue;
+      }
       // Sync any dynamic icon/label (e.g. Navigation mode) before active-state.
       this.safeRender(item, btn);
       // Disabled state (e.g. Layers with no layers): native `disabled` so the
@@ -530,6 +550,7 @@ export class ControlRail {
     document.removeEventListener('click', this.onDocClick);
     window.removeEventListener('luxar-layers-changed', this.onExternalStateChange);
     window.removeEventListener('luxar-control-mode-changed', this.onExternalStateChange);
+    window.removeEventListener('luxar-audio-changed', this.onExternalStateChange);
     bodyMarkerRefs = Math.max(0, bodyMarkerRefs - 1);
     if (bodyMarkerRefs === 0) document.body.classList.remove(BODY_MARKER_CLASS);
     // Null the field, not just the DOM: a post-dispose handleRoutedKeyDown()

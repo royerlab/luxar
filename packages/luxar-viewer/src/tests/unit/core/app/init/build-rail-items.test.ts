@@ -11,7 +11,7 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { buildRailItems, type RailItemsDeps } from '../../../../../core/app/init/build-rail-items';
-import type { ControlRailItem } from '../../../../../ui/control-rail';
+import { RAIL_ICONS, type ControlRailItem } from '../../../../../ui/control-rail';
 import { KeyAction } from '../../../../../input/input-handler/key-bindings/actions';
 
 function makeDeps(
@@ -23,6 +23,9 @@ function makeDeps(
     renderVisible?: boolean;
     layersVisible?: boolean;
     recordingVisible?: boolean;
+    /** Whether the loaded scene has sound nodes (drives the Sound button's hidden predicate). */
+    hasSoundNodes?: boolean;
+    muted?: boolean;
   } = {}
 ) {
   const controlType = overrides.controlType ?? 'orbit';
@@ -87,6 +90,21 @@ function makeDeps(
     },
     debugConsole: { toggle: vi.fn(), getIsVisible: vi.fn().mockReturnValue(false) },
     recordingPanel: { isVisible: vi.fn().mockReturnValue(overrides.recordingVisible ?? false) },
+    audioEngine: {
+      hasSoundNodes: vi.fn().mockReturnValue(overrides.hasSoundNodes ?? false),
+      isMuted: vi.fn().mockReturnValue(overrides.muted ?? false),
+      setMuted: vi.fn(),
+      getState: vi.fn().mockReturnValue({
+        state: 'running',
+        muted: false,
+        masterGain: 0.8,
+        panningModel: 'equalpower',
+        buses: { ambient: 0.6, voice: 1, effects: 0.8 },
+        playing: [],
+        hasSoundNodes: overrides.hasSoundNodes ?? false,
+      }),
+      setAudio: vi.fn(),
+    },
   };
   return deps as unknown as RailItemsDeps;
 }
@@ -135,6 +153,7 @@ describe('buildRailItems', () => {
       'layers',
       'monitor',
       'data',
+      'audio',
       'recording',
       'logs',
       'view',
@@ -431,6 +450,43 @@ describe('buildRailItems', () => {
         (i: ControlRailItem) => i.id === 'layers'
       )!;
       expect(layers.disabled!()).toBe(false);
+    });
+  });
+  describe('Sound button', () => {
+    const findAudio = (deps: RailItemsDeps) => buildRailItems(deps).find((i) => i.id === 'audio')!;
+    const engine = (deps: RailItemsDeps) =>
+      (deps as unknown as { audioEngine: { setMuted: ReturnType<typeof vi.fn> } }).audioEngine;
+
+    it('is hidden (not merely disabled) when the scene has no sound nodes', () => {
+      expect(findAudio(makeDeps({ hasSoundNodes: false })).hidden!()).toBe(true);
+      expect(findAudio(makeDeps({ hasSoundNodes: true })).hidden!()).toBe(false);
+      expect(findAudio(makeDeps()).disabled).toBeUndefined();
+    });
+
+    it('left-click toggles the mute and the active state mirrors it', () => {
+      const deps = makeDeps({ hasSoundNodes: true, muted: false });
+      const item = findAudio(deps);
+      item.activate();
+      expect(engine(deps).setMuted).toHaveBeenCalledWith(true);
+      expect(item.isActive!()).toBe(false);
+      expect(findAudio(makeDeps({ hasSoundNodes: true, muted: true })).isActive!()).toBe(true);
+    });
+
+    it('render swaps the icon and tooltip with the mute state', () => {
+      const btn = makeButtonEl();
+      findAudio(makeDeps({ hasSoundNodes: true, muted: true })).render!(btn);
+      expect(btn.dataset.audioState).toBe('muted');
+      expect(btn.querySelector('.luxar-control-rail__tip')?.textContent).toBe('Sound · Muted');
+      expect(btn.innerHTML).toContain(RAIL_ICONS.audioMuted.slice(0, 40));
+      findAudio(makeDeps({ hasSoundNodes: true, muted: false })).render!(btn);
+      expect(btn.dataset.audioState).toBe('on');
+      expect(btn.querySelector('.luxar-control-rail__tip')?.textContent).toBe('Sound · On');
+    });
+
+    it('right-click opens the Sound popover', () => {
+      const item = findAudio(makeDeps({ hasSoundNodes: true }));
+      expect(item.popover?.trigger).toBe('context');
+      expect(item.popover?.title).toBe('Sound');
     });
   });
 });

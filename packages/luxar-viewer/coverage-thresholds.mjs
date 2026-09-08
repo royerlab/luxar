@@ -59,7 +59,9 @@ export const COVERAGE_THRESHOLDS = {
   // (2026-09, #2561): the subtree went 84.88 -> 85.25 and check-coverage-slack
   // flagged the old floor as stale — the ratchet working.
   'src/cache/**': { lines: 93, functions: 93, branches: 84 }, //     95.05 / 95.20 / 85.25
-  'src/controls/**': { lines: 93, functions: 88, branches: 86 }, //  95.42 / 89.66 / 88.01
+  // lines 93 -> 95 and branches 86 -> 88 after the fly-touch orchestration
+  // and input/touch.ts tests moved the subtree past the slack budget.
+  'src/controls/**': { lines: 95, functions: 88, branches: 88 }, //  96.29 / 90.64 / 89.38
 
   // The bulk of the codebase.
   // functions 87 -> 90 after the L0-cache-wiring + spatial-extend-dims

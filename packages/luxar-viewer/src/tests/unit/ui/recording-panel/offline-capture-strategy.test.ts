@@ -100,6 +100,7 @@ function makeOpts(overrides: Partial<RecordingOptions> = {}): RecordingOptions {
     frameByFrame: true,
     showPanels: false,
     includeOverlays: true,
+    includeAudio: true,
     ...overrides,
   };
 }

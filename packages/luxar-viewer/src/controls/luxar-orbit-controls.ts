@@ -615,6 +615,9 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
       addZoomDelta: (delta) => {
         this.zoomDelta += delta;
       },
+      addRollDelta: (delta) => {
+        this.rollDelta += delta;
+      },
       pan: (dx, dy) => this.pan(dx, dy),
       dispatch: (type) => this.dispatchEvent({ type }),
       onTouchStart: () => handleTouchStart(this.makeInputCtx()),

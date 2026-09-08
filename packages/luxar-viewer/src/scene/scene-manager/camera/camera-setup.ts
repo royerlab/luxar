@@ -79,23 +79,25 @@ export function resetCameraToInitialPosition(camera: LuxarCamera): void {
 }
 
 /**
- * Walk `root` and return the world-space center of the first object
- * named `nodeName`. Returns `null` when:
- *   - no descendant has that exact `name`, OR
+ * Walk `root` and return the world-space center of the first object named
+ * `nodeName`, preferring an exact object name before a final path-segment
+ * match. Returns `null` when:
+ *   - no descendant matches that name, OR
  *   - the descendant exists but its world-space bounding box is empty.
  *
- * The traversal stops at the first match (the early-exit `!targetObject`
- * guard inside `traverse`).
+ * The first exact match wins; the first final-segment match is retained only
+ * as a fallback when no exact object name exists.
  */
 export function resolveTargetNodeCenter(root: THREE.Group, nodeName: string): THREE.Vector3 | null {
-  let targetObject: THREE.Object3D | null = null;
+  let exactMatch: THREE.Object3D | null = null;
+  let pathMatch: THREE.Object3D | null = null;
 
   root.traverse((obj) => {
-    if (obj.name === nodeName && !targetObject) {
-      targetObject = obj;
-    }
+    if (obj.name === nodeName && !exactMatch) exactMatch = obj;
+    else if (obj.name.split('/').pop() === nodeName && !pathMatch) pathMatch = obj;
   });
 
+  const targetObject = exactMatch ?? pathMatch;
   if (!targetObject) return null;
 
   const box = new THREE.Box3().setFromObject(targetObject);
