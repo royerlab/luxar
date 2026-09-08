@@ -1197,6 +1197,19 @@ describe('LODGroupRegistry — selector mode', () => {
     reg.setSelectorMode('/missing', { lockLevel: 0 });
   });
 
+  it('a lock on an entry with no children is inert (no per-frame throw)', () => {
+    // `loadLodGroupNode` registers an empty entry on purpose, and
+    // `setSelectorMode` skips clamping when there is nothing to clamp to — so
+    // `children[lockLevel]` is undefined and must not be dereferenced.
+    const reg = makeRegistry();
+    reg.register(makeEntry([], 0, '/empty'));
+    reg.setSelectorMode('/empty', { lockLevel: 2 });
+    expect(() => {
+      reg.evaluatePerFrame();
+      reg.evaluatePerFrame();
+    }).not.toThrow();
+  });
+
   it('evaluatePerFrame returns true on a level swap, false on a no-op frame', () => {
     // The per-frame callback uses this signal to refresh the monitor's
     // visible-element tally only when the rendered level actually changes
@@ -2245,6 +2258,31 @@ describe('LODGroupRegistry — lazy children', () => {
     expect(relStranded).toHaveBeenCalledTimes(1);
   });
 
+  it('a never-shown level ages as the COLDEST in its group, not the hottest', () => {
+    // Back-filling lastVisibleTick with the CURRENT tick made the one level the
+    // user never saw the most-recently-used: under budget pressure the registry
+    // evicted a level shown moments ago and kept the stranded one (#2634).
+    const relShown = vi.fn();
+    const relStranded = vi.fn();
+    const children = [
+      readyLazy(0, { tick: 1 }), // locked + displayed → never evicted
+      readyLazy(0.5, { release: relShown, tick: 15 }), // shown at tick 15
+      { ...readyLazy(1.0, { release: relStranded }), ready: false }, // still loading
+    ];
+    // Two resident levels fit the budget, three do not (100 per ready level).
+    const reg = makeRegistry([0, 1, 2], 250, residentModel(children));
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.setSelectorMode('/g', { lockLevel: 0 });
+    for (let i = 0; i < 20; i++) reg.evaluatePerFrame(); // tick → 20, under budget
+    expect(relShown).not.toHaveBeenCalled();
+
+    children[2].ready = true; // the stranded load lands at tick 21, never displayed
+    reg.evaluatePerFrame();
+    expect(children[2].lastVisibleTick).toBe(0);
+    expect(relStranded).toHaveBeenCalledTimes(1); // coldest → evicted first
+    expect(relShown).not.toHaveBeenCalled();
+  });
+
   it('self-heals a not-ready active child: kicks its load, then shows it once ready (Fix 1)', () => {
     // The blank-render bug: a fallback can pin a not-ready lazy level as the
     // active child (e.g. the eager default failed to attach). With
@@ -2341,7 +2379,12 @@ describe('LODGroupRegistry — lazy children', () => {
     const children = [makeChild(0), makeChild(0.5)];
     reg.register(makeEntry(children, 0, '/g2'));
     reg.evaluatePerFrame();
-    expect(children[0].lastVisibleTick).toBe(1); // tick reset → first frame == 1
+    // The DISPLAYED level is stamped with the tick (reset → first frame == 1);
+    // the level that was never shown gets the coldest sentinel, 0.
+    const shown = children.find((c) => c.object.visible)!;
+    const hidden = children.find((c) => !c.object.visible)!;
+    expect(shown.lastVisibleTick).toBe(1);
+    expect(hidden.lastVisibleTick).toBe(0);
   });
 });
 
@@ -3179,6 +3222,23 @@ describe('LODGroupRegistry — settle-gated fine reload', () => {
     // yet the coarse fresh level is what is displayed.
     expect(children[0].object.visible).toBe(true);
     expect(group.object.visible).toBe(false);
+  });
+
+  it('clear() resets the settle clock so a reused registry reloads promptly after a dataset switch', () => {
+    const first = vi.fn();
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    reg.register(makeEntry([makeGsplatChild(0, 2), makeStaleLazyFine(0.5, 1, first)], 0, '/a'));
+    for (let i = 0; i < 40; i++) reg.evaluatePerFrame(); // settle clock seeded at tick 1, tick now 40
+    expect(first).toHaveBeenCalledTimes(1);
+
+    // Dataset switch on a reused registry: tick restarts at 0. The SAME version
+    // (2) is observed again — without the reset the clock still points at the
+    // old scene's tick and "settled" would need ~40 more frames.
+    reg.clear();
+    const second = vi.fn();
+    reg.register(makeEntry([makeGsplatChild(0, 2), makeStaleLazyFine(0.5, 1, second)], 0, '/b'));
+    for (let i = 0; i < 12; i++) reg.evaluatePerFrame();
+    expect(second).toHaveBeenCalledTimes(1);
   });
 
   it('never reloads an eager (sweep-driven) coarse level — it has no ensureLoaded', () => {

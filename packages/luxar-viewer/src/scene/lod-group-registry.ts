@@ -948,8 +948,12 @@ export class LODGroupRegistry {
     this.partitionEntries.clear();
     this.partitionCaches.clear();
     // Reset the monotonic tick so a reused registry (shared-registry
-    // refactor) starts cold rather than inheriting stale LRU ordering.
+    // refactor) starts cold rather than inheriting stale LRU ordering — and
+    // the settle clock with it: it is keyed on the tick, and a leftover
+    // `lastChangeTick` from the old scene would read "not settled" for that
+    // many frames, freezing every stale reload after a dataset switch.
     this.tick = 0;
+    this.settleTracker.reset();
     this.warnedNoReadyChild.clear();
     this.warnedEmptyLevel.clear();
     this.fadeWasManaged = false;
@@ -1536,6 +1540,10 @@ export class LODGroupRegistry {
     // display-resolution pass below is the single owner of ``object.visible``.
     if (desired !== entry.activeChildIndex) {
       const target = entry.children[desired];
+      // `undefined` when a lock index outlives its children (an empty entry is
+      // registered on purpose and `setSelectorMode` skips clamping for it):
+      // nothing to aspire to, nothing to kick — never throw per frame.
+      if (!target) return false;
       if (isReady(target)) {
         entry.activeChildIndex = desired;
       } else {
@@ -1845,9 +1853,13 @@ export class LODGroupRegistry {
     // never displayed (camera/slice moved away mid-load) keeps
     // ``lastVisibleTick == null`` and is permanently exempt from eviction,
     // leaking VRAM.
+    // A SENTINEL, not the current tick: the eviction LRU's final tiebreak is
+    // coldest-first on this field, so stamping "now" would make the one level
+    // the user never saw the HOTTEST in its group and evict levels they looked
+    // at moments ago before it. 0 is older than any real tick (ticks start at 1).
     for (const child of entry.children) {
       if (isReady(child) && child.lastVisibleTick == null) {
-        child.lastVisibleTick = this.tick;
+        child.lastVisibleTick = 0;
       }
     }
 
