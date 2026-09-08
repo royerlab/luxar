@@ -603,7 +603,10 @@ def test_update_baseline_rejects_a_file_omitted_by_settings_drift(
     args = ["--project-root", str(tmp_path), "--baseline", str(baseline)]
 
     assert checker.main([*args, "--update-baseline"]) == 0
-    original = baseline.read_text()
+    legacy_document = json.loads(baseline.read_text())
+    del legacy_document["settings_fingerprint"]
+    original = json.dumps(legacy_document)
+    baseline.write_text(original)
     capsys.readouterr()
     (tmp_path / "pyproject.toml").write_text('[tool.ruff]\nexclude = ["pkg/sub"]\n')
 
@@ -611,6 +614,36 @@ def test_update_baseline_rejects_a_file_omitted_by_settings_drift(
     output = _clean_output(capsys)
     assert "pkg/sub/sample.py::tangled" in output
     assert baseline.read_text() == original
+
+
+def test_settings_refresh_reports_retired_complexity_keys(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A deliberate refresh names same-file debt omitted by current settings."""
+    _require_ruff()
+    _unrestrict(monkeypatch)
+    _write_tree(tmp_path, complex_function=True)
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(
+        json.dumps(
+            {
+                "settings_fingerprint": "stale-settings",
+                "functions": {
+                    "sample.py::retired": [12],
+                    "sample.py::tangled": [13],
+                },
+            }
+        )
+    )
+
+    assert _run_main(tmp_path, baseline, "--update-baseline") == 0
+
+    output = _clean_output(capsys)
+    assert "Retiring 1 baseline key" in output
+    assert "sample.py::retired" in output
+    assert json.loads(baseline.read_text())["functions"] == {"sample.py::tangled": [13]}
 
 
 def test_main_rejects_nested_ruff_configuration(

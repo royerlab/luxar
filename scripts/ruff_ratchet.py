@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import subprocess
 import sys
@@ -12,6 +13,33 @@ from pathlib import Path
 
 _UNSCANNED_RE = re.compile(r"Failed to lint ")
 _RUFF_CONFIG_NAMES = ("ruff.toml", ".ruff.toml", "pyproject.toml")
+
+
+def baseline_entries_for_update(path: Path, field: str) -> dict[str, object]:
+    """Recover existing baseline keys without validating stale metadata."""
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    entries = data.get(field)
+    return dict(entries) if isinstance(entries, dict) else {}
+
+
+def format_retired_keys(
+    previous: Mapping[str, object], current: Mapping[str, object]
+) -> str | None:
+    """Describe baseline keys a deliberate settings refresh will retire."""
+    retired = sorted(previous.keys() - current.keys())
+    if not retired:
+        return None
+    shown = "\n".join(f"  {key}" for key in retired[:20])
+    suffix = f"\n  ... and {len(retired) - 20} more" if len(retired) > 20 else ""
+    noun = "key" if len(retired) == 1 else "keys"
+    return f"Retiring {len(retired)} baseline {noun} after the settings refresh:\n{shown}{suffix}"
 
 
 def settings_fingerprint(

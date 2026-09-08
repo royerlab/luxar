@@ -244,17 +244,13 @@ def ensure_baselined_files_were_scanned(
 
 
 def _existing_baseline_coverage_error_for_update(
-    baseline_path: Path,
+    previous_baseline: dict[str, object],
     targets: tuple[str, ...],
     project_root: Path,
     restricted: bool,
 ) -> str | None:
     """Return a coverage error if a settings refresh would omit baseline keys."""
     if restricted:
-        return None
-    try:
-        previous_baseline = load_baseline(baseline_path, None)
-    except (ValueError, OSError):
         return None
     try:
         scanned_files = list_ruff_files(targets, project_root)
@@ -642,8 +638,11 @@ def _refresh_baseline_after_load_error(
     settings_fingerprint: str,
 ) -> int:
     """Refresh mismatched baseline metadata without hiding omitted files."""
+    previous_baseline = ruff_ratchet.baseline_entries_for_update(
+        baseline_path, "violations"
+    )
     coverage_error = _existing_baseline_coverage_error_for_update(
-        baseline_path, targets, project_root, restricted
+        previous_baseline, targets, project_root, restricted
     )
     if coverage_error:
         aprint(f"❌ {coverage_error}")
@@ -653,6 +652,9 @@ def _refresh_baseline_after_load_error(
         "   Re-recording the baseline for the current Ruff settings because "
         "--update-baseline was requested deliberately."
     )
+    retired = ruff_ratchet.format_retired_keys(previous_baseline, current)
+    if retired:
+        aprint(f"⚠️  {retired}")
     return _update_baseline(baseline_path, current, restricted, settings_fingerprint)
 
 

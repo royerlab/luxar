@@ -725,7 +725,10 @@ def test_update_baseline_rejects_a_file_omitted_by_settings_drift(
     args = ["--project-root", str(tmp_path), "--baseline", str(baseline)]
 
     assert checker.main([*args, "--update-baseline"]) == 0
-    original = baseline.read_text()
+    mismatched_document = json.loads(baseline.read_text())
+    mismatched_document["rules"] = ["B"]
+    original = json.dumps(mismatched_document)
+    baseline.write_text(original)
     capsys.readouterr()
     (tmp_path / "pyproject.toml").write_text('[tool.ruff]\nexclude = ["pkg/sub"]\n')
 
@@ -733,6 +736,32 @@ def test_update_baseline_rejects_a_file_omitted_by_settings_drift(
     output = _clean_output(capsys)
     assert "pkg/sub/b.py::B905" in output
     assert baseline.read_text() == original
+
+
+def test_settings_refresh_reports_retired_lint_keys(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A deliberate refresh names same-file debt omitted by current settings."""
+    _require_ruff()
+    _unrestrict(monkeypatch)
+    _write_tree(tmp_path, _ONE_VIOLATION)
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(
+        json.dumps(
+            _baseline_payload(
+                {"sample.py::B905": 1, "sample.py::RUF012": 1}, rules=["B"]
+            )
+        )
+    )
+
+    assert _run_main(tmp_path, baseline, "--update-baseline") == 0
+
+    output = _clean_output(capsys)
+    assert "Retiring 1 baseline key" in output
+    assert "sample.py::RUF012" in output
+    assert json.loads(baseline.read_text())["violations"] == {"sample.py::B905": 1}
 
 
 def test_main_fails_closed_when_a_full_scan_covers_nothing(
