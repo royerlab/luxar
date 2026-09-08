@@ -311,6 +311,28 @@ MIN_NODE_MINOR := 22
 | `make test-nlm-cuda` | Run NLM CUDA extension tests |
 | `make clean-nlm-cuda` | Clean NLM CUDA build artifacts |
 
+#### Native backend release verification
+
+The Linux compile gate cannot exercise the Objective-C++ binding, the Metal
+shader compiler, or the Metal parity suite. Hosted macOS CI and a dedicated Mac
+runner are intentionally not used, so every release candidate must be checked
+manually on Apple silicon before it is tagged:
+
+```bash
+hatch run check-native --require cxx --require metal
+hatch run pytest packages/luxar/src/luxar/gsplats/models/gsplats/metal/tests -v
+```
+
+The first command fails if either the host compiler or `xcrun metal` is missing,
+instead of reporting a misleading green run with a skipped arm. The second
+command must collect and execute the Metal tests rather than skip them; confirm
+the summary reports passed tests and no skips caused by unavailable MPS.
+
+CUDA compile and parity coverage run on a separate low-priority cadence rather
+than in pull-request CI, because the device compile takes minutes and the
+workstation GPUs are shared with interactive work. See #2544 for that runner
+work.
+
 ### Data & Demos
 
 | Command | Description |
