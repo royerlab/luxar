@@ -31,7 +31,7 @@ import type {
   MonitorEventListener,
   QueryInfo,
 } from '../../types/data-monitor-types';
-import { assertColorLayout } from '../loaders';
+import { assertColorLayout, isAbortError } from '../loaders';
 import { ProgressiveMonitorAdapter } from '../loaders/progressive-monitor-adapter';
 import { concatRequiredField } from '../loaders/progressive/concat-helpers';
 import {
@@ -54,10 +54,16 @@ import {
 import { viewStatesEqual } from '../loaders/progressive/view-state-equal';
 import type { SliceCache } from '../../cache/slice-cache';
 import { log, Modules, LogEmoji } from '../../utils/log';
+import { getErrorMessage } from '../../utils/format-error';
 import { timeLodStageWithResult } from '../scene-loader/lod-load-stats';
 
 // Three rungs overlap hosted latency without letting speculation monopolize L0 or fetch slots.
 const MAX_PREFETCH_LEVELS = 3;
+
+function reportSpeculativeFailure(action: string, error: unknown): void {
+  if (isAbortError(error)) return;
+  log.warning(Modules.GSPLATS_SPATIAL_INDEX_LOADER, `${action}: ${getErrorMessage(error)}`);
+}
 
 function resolvePrefetchDepth(
   metadataWarmStarted: boolean,
@@ -806,7 +812,13 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
   }
 
   private async planDeepLookahead(
-    request: DeepLookaheadPlan,
+    request: {
+      firstLevel: number;
+      maxLevels: number;
+      headroom: number;
+      viewState: GSplatsViewState;
+      firstPlan: Promise<GSplatsPrefetchPlan>;
+    },
     controller: AbortController
   ): Promise<void> {
     this._prefetchPlanning = true;
@@ -841,9 +853,9 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       }
     };
     void prefetch()
-      .catch(() => {
-        // Ignore errors from speculative prefetch (network failures, aborts).
-      })
+      .catch((error: unknown) =>
+        reportSpeculativeFailure('GSplat lookahead prefetch failed', error)
+      )
       .finally(() => {
         if (this._prefetchController === controller) {
           this._prefetchingLevels.delete(level);
@@ -866,9 +878,11 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     if (this._metadataWarmStarted || this._disposed) return;
     this._metadataWarmStarted = true;
     for (let level = 1; level < this.nLods; level++) {
-      void this.lodLoaders[level].ensureInitialized().catch(() => {
-        // Demand loading surfaces malformed metadata; warming stays best-effort.
-      });
+      void this.lodLoaders[level]
+        .ensureInitialized()
+        .catch((error: unknown) =>
+          reportSpeculativeFailure('GSplat metadata warming failed', error)
+        );
     }
   }
 

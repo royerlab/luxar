@@ -1033,15 +1033,33 @@ describe('GSplatsProgressiveLoader', () => {
 
   describe('prefetch scheduling', () => {
     it('starts the guaranteed next rung without waiting for byte estimation', async () => {
-      lodB.updateViewWithResidency.mockResolvedValue({
-        data: makeLodData(50),
+      const lods = Array.from({ length: 8 }, (_, index) =>
+        makeSubLoader(makeLodData(100 - index), {}, 100)
+      );
+      lods[0].getPrefetchCacheStats.mockReturnValue({ size: 0, maxSize: 10_000 });
+      loader = new GSplatsProgressiveLoader(
+        lods as unknown as GSplatsSpatialIndexLoader[],
+        lods.length,
+        '/test_gsplats'
+      );
+      lods[1].updateViewWithResidency.mockResolvedValue({
+        data: makeLodData(99),
         allResident: false,
       });
-      lodC.planPrefetch.mockReturnValue(new Promise(() => {}));
 
       await loader.loadGSplats(baseViewState);
+      for (const lod of lods) lod.prefetchChunks.mockClear();
+      lods[3].updateViewWithResidency.mockResolvedValue({
+        data: makeLodData(97),
+        allResident: false,
+      });
+      lods[5].planPrefetch.mockReturnValue(new Promise(() => {}));
+      lods[6].planPrefetch.mockReturnValue(new Promise(() => {}));
 
-      expect(lodC.prefetchChunks).toHaveBeenCalledTimes(1);
+      await loader.updateView(baseViewState);
+
+      expect(lods[4].prefetchChunks).toHaveBeenCalledTimes(1);
+      expect(lods[5].planPrefetch).toHaveBeenCalledTimes(1);
     });
 
     it('fires prefetchChunks on the next unloaded LOD after a partial load', async () => {
@@ -1073,7 +1091,8 @@ describe('GSplatsProgressiveLoader', () => {
       expect(lodC.prefetchChunks).not.toHaveBeenCalled();
     });
 
-    it('swallows prefetch failures (fire and forget)', async () => {
+    it('logs non-abort prefetch failures without rejecting the load', async () => {
+      const warningSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
       // Force a state where prefetch fires, then reject.
       let now = 0;
       const spy = vi.spyOn(performance, 'now');
@@ -1091,8 +1110,30 @@ describe('GSplatsProgressiveLoader', () => {
       await loader.loadGSplats(baseViewState);
       await Promise.resolve();
 
-      expect(lodC.prefetchChunks).toHaveBeenCalled();
+      await vi.waitFor(() =>
+        expect(warningSpy).toHaveBeenCalledWith(
+          Modules.GSPLATS_SPATIAL_INDEX_LOADER,
+          'GSplat lookahead prefetch failed: Network down'
+        )
+      );
       spy.mockRestore();
+      warningSpy.mockRestore();
+    });
+
+    it('keeps aborted prefetch failures silent', async () => {
+      const warningSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+      lodB.updateViewWithResidency.mockResolvedValue({
+        data: makeLodData(50),
+        allResident: false,
+      });
+      lodC.prefetchChunks.mockRejectedValue(new DOMException('Superseded', 'AbortError'));
+
+      await loader.loadGSplats(baseViewState);
+      await Promise.resolve();
+
+      expect(lodC.prefetchChunks).toHaveBeenCalled();
+      expect(warningSpy).not.toHaveBeenCalled();
+      warningSpy.mockRestore();
     });
 
     it('starts the remaining spatial-index initializers only after the first load returns', async () => {
@@ -1108,6 +1149,25 @@ describe('GSplatsProgressiveLoader', () => {
       await loader.updateView(baseViewState);
       expect(lodB.ensureInitialized).toHaveBeenCalledTimes(1);
       expect(lodC.ensureInitialized).toHaveBeenCalledTimes(1);
+    });
+
+    it('logs non-abort metadata warming failures', async () => {
+      const warningSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+      lodB.updateViewWithResidency.mockResolvedValue({
+        data: makeLodData(50),
+        allResident: false,
+      });
+      lodC.ensureInitialized.mockRejectedValue(new Error('Malformed chunk bounds'));
+
+      await loader.loadGSplats(baseViewState);
+      await loader.updateView(baseViewState);
+      await vi.waitFor(() =>
+        expect(warningSpy).toHaveBeenCalledWith(
+          Modules.GSPLATS_SPATIAL_INDEX_LOADER,
+          'GSplat metadata warming failed: Malformed chunk bounds'
+        )
+      );
+      warningSpy.mockRestore();
     });
 
     it('does not batch spatial-index metadata during playback', async () => {

@@ -133,6 +133,7 @@ function estimateArrayPrefetchBytes(
   return bytes;
 }
 
+/** Visible ranges and their estimated decompressed L0 cache footprint. */
 export interface GSplatsPrefetchPlan {
   bytes: number;
   ranges?: readonly SplatRange[];
