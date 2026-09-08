@@ -8,8 +8,9 @@
  * Loading strategy:
  * - On each updateView() call, loads LODs sequentially starting from LOD 0
  * - Stops at the first LOD whose load takes longer than the cache-hit threshold
- * - After returning, fires a prefetch for the next unloaded LOD (cache warming)
- * - On next call with the same viewState, the prefetched LOD is a cache hit
+ * - After first paint, initializes the remaining spatial indexes concurrently
+ * - Prefetches up to three unloaded LODs when the L0 cache has headroom
+ * - Keeps playback/shadow prefetch at one rung to avoid abandoned-slice waste
  *
  * LODs are additive: LOD 0 contains the coarsest (highest-amplitude) splats,
  * and each subsequent LOD adds residual detail. The loader concatenates all
@@ -51,6 +52,28 @@ import { viewStatesEqual } from '../loaders/progressive/view-state-equal';
 import type { SliceCache } from '../../cache/slice-cache';
 import { log, Modules, LogEmoji } from '../../utils/log';
 import { timeLodStageWithResult } from '../scene-loader/lod-load-stats';
+
+const MAX_PREFETCH_LEVELS = 3;
+
+function selectPrefetchLevels(
+  lodLoaders: readonly GSplatsSpatialIndexLoader[],
+  firstLevel: number,
+  nLods: number,
+  maxLevels: number,
+  headroom: number
+): number[] {
+  const levels: number[] = [];
+  let reservedBytes = 0;
+  const stopLevel = Math.min(nLods, firstLevel + maxLevels);
+  for (let level = firstLevel; level < stopLevel; level++) {
+    const estimate = lodLoaders[level].prefetchByteUpperBound;
+    reservedBytes +=
+      Number.isFinite(estimate) && estimate > 0 ? estimate : Number.POSITIVE_INFINITY;
+    if (level > firstLevel && reservedBytes > headroom) break;
+    levels.push(level);
+  }
+  return levels;
+}
 
 /**
  * Concatenate multiple LoadedGSplatsData into one.
@@ -278,6 +301,9 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
   // Node path (SliceCache namespace) + the shared SliceCache, if enabled.
   private readonly path: string;
   private readonly sliceCache: SliceCache | null;
+  private _metadataWarmStarted = false;
+  private _prefetchController: AbortController | null = null;
+  private readonly _prefetchingLevels = new Set<number>();
   // Per-tick LOD time budget (ms) from the CURRENT updateView call during
   // dimension-animation playback; null outside playback. A per-pass
   // directive (never part of lastViewState / viewStatesEqual / cache keys):
@@ -440,7 +466,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
    * If the view state changed since the last call, resets and starts from LOD 0.
    * Otherwise, continues loading from where it left off.
    *
-   * After returning, prefetches the next unloaded LOD in the background.
+   * After returning, prefetches later unloaded LODs in the background.
    */
   async updateView(
     viewState: GSplatsViewState,
@@ -471,6 +497,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     // `loadedLODs` outright (so `hasMoreLODs` reads false and the refinement
     // loop never re-streams), skipping the whole load+decode.
     if (!this.lastViewState || !viewStatesEqual(viewState, this.lastViewState)) {
+      if (this.lastViewState) this.cancelLookaheadPrefetch();
       // DEPARTURE store: snapshot the outgoing view's partial ladder under
       // the OUTGOING key before discarding — scrub-back stays warm even when
       // ladders never complete between navigations. Mirrors Points/Lines.
@@ -529,6 +556,8 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       // from the same determinant) are unaffected.
       this.lastViewState.dimensions = viewState.dimensions;
     }
+
+    if (this._initialLoadDone) this.warmRemainingLODMetadata();
 
     // Stream the LOD ladder under the shared streaming policy (see
     // `streaming-policy.ts`): `playback` streams cache-resident levels after an
@@ -628,8 +657,8 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       );
     }
 
-    // Fire-and-forget: prefetch next unloaded LOD to warm cache
-    this.prefetchNextLOD(viewState);
+    // Fire-and-forget: prefetch later unloaded LODs to warm cache.
+    this.prefetchNextLODs(viewState);
 
     // Snapshot into the SliceCache (upgrade-if-longer): full ladders always
     // (instant revisit restore); PREFIXES only while a playback budget is
@@ -701,7 +730,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
   }
 
   /**
-   * Prefetch the next unloaded LOD's chunks into cache.
+   * Prefetch unloaded LOD chunks into cache, bounded by L0 headroom.
    *
    * This is fire-and-forget: the prefetched chunks land in the L0/L1 cache
    * and become fast cache hits on the next updateView() call.
@@ -710,18 +739,60 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
    * get() calls (populating the cache) WITHOUT allocating full-size output
    * buffers or running the accumulator — avoiding wasted memory.
    */
-  private prefetchNextLOD(viewState: GSplatsViewState): void {
+  private prefetchNextLODs(viewState: GSplatsViewState): void {
     // Same teardown race as the streaming loop: a dispose() between the
     // awaited level and this fire-and-forget clears `lodLoaders`, and
     // indexing it would TypeError before the .catch can swallow anything.
     if (this._disposed) return;
-    const nextLevel = this._loadedLODCount;
-    if (nextLevel >= this.nLods) return;
+    const firstLevel = this._loadedLODCount;
+    if (firstLevel >= this.nLods) return;
 
-    // Fire and forget — fetch chunks into cache without decoding to output buffers
-    this.lodLoaders[nextLevel].prefetchChunks(viewState).catch(() => {
-      // Ignore errors from prefetch (network failures, aborts)
-    });
+    const controller = (this._prefetchController ??= new AbortController());
+    const stats = this.lodLoaders[0]?.getPrefetchCacheStats?.();
+    const headroom = Math.max(0, (stats?.maxSize ?? 0) - (stats?.size ?? 0));
+    const canDeepen =
+      this._metadataWarmStarted &&
+      stats &&
+      this._frameBudgetMs === null &&
+      viewState.prefetch !== true;
+    const maxLevels = canDeepen ? MAX_PREFETCH_LEVELS : 1;
+    const levels = selectPrefetchLevels(
+      this.lodLoaders,
+      firstLevel,
+      this.nLods,
+      maxLevels,
+      headroom
+    );
+
+    for (const level of levels) {
+      if (this._prefetchingLevels.has(level)) continue;
+
+      this._prefetchingLevels.add(level);
+      this.lodLoaders[level]
+        .prefetchChunks(viewState, controller.signal)
+        .catch(() => {
+          // Ignore errors from speculative prefetch (network failures, aborts).
+        })
+        .finally(() => this._prefetchingLevels.delete(level));
+    }
+  }
+
+  private warmRemainingLODMetadata(): void {
+    if (this._metadataWarmStarted || this._disposed) return;
+    this._metadataWarmStarted = true;
+    for (let level = 1; level < this.nLods; level++) {
+      const ensureInitialized = this.lodLoaders[level].ensureInitialized;
+      if (typeof ensureInitialized !== 'function') continue;
+      void ensureInitialized.call(this.lodLoaders[level]).catch(() => {
+        // Demand loading surfaces malformed metadata; warming stays best-effort.
+      });
+    }
+  }
+
+  private cancelLookaheadPrefetch(): void {
+    this._prefetchController?.abort();
+    this._prefetchController = null;
+    this._prefetchingLevels.clear();
   }
 
   // ---- LoaderMonitor surface (delegated to ProgressiveMonitorAdapter) ----
@@ -752,6 +823,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
    */
   dispose(): void {
     this._disposed = true;
+    this.cancelLookaheadPrefetch();
     for (const loader of this.lodLoaders) {
       loader.dispose();
     }

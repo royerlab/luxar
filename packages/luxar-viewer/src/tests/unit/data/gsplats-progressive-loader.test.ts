@@ -29,9 +29,12 @@ import {
 } from '../../../data/scene-loader/lod-load-stats';
 
 interface SubLoaderStub {
+  ensureInitialized: ReturnType<typeof vi.fn>;
   updateView: ReturnType<typeof vi.fn>;
   updateViewWithResidency: ReturnType<typeof vi.fn>;
   prefetchChunks: ReturnType<typeof vi.fn>;
+  prefetchByteUpperBound: number;
+  getPrefetchCacheStats: ReturnType<typeof vi.fn>;
   releaseAccumulator: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
   getMetrics: ReturnType<typeof vi.fn>;
@@ -90,7 +93,8 @@ function makeLodData(
 
 function makeSubLoader(
   initialData: LoadedGSplatsData,
-  metrics: Record<string, number> = {}
+  metrics: Record<string, number> = {},
+  prefetchByteUpperBound = 128
 ): SubLoaderStub {
   const updateView = vi.fn().mockResolvedValue(initialData);
   // Progressive loader calls updateViewWithResidency; delegate to updateView
@@ -100,9 +104,12 @@ function makeSubLoader(
     allResident: true,
   }));
   return {
+    ensureInitialized: vi.fn().mockResolvedValue(undefined),
     updateView,
     updateViewWithResidency,
     prefetchChunks: vi.fn().mockResolvedValue(undefined),
+    prefetchByteUpperBound,
+    getPrefetchCacheStats: vi.fn(() => null),
     releaseAccumulator: vi.fn(),
     dispose: vi.fn(),
     getMetrics: vi.fn(() => stubMetrics(metrics)),
@@ -1038,7 +1045,7 @@ describe('GSplatsProgressiveLoader', () => {
       // Drain microtasks / fire-and-forget promise.
       await Promise.resolve();
 
-      expect(lodC.prefetchChunks).toHaveBeenCalledWith(baseViewState);
+      expect(lodC.prefetchChunks).toHaveBeenCalledWith(baseViewState, expect.any(AbortSignal));
       spy.mockRestore();
     });
 
@@ -1070,6 +1077,158 @@ describe('GSplatsProgressiveLoader', () => {
 
       expect(lodC.prefetchChunks).toHaveBeenCalled();
       spy.mockRestore();
+    });
+
+    it('starts the remaining spatial-index initializers only after the first load returns', async () => {
+      let now = 0;
+      const spy = vi.spyOn(performance, 'now').mockImplementation(() => (now += 5));
+      lodB.updateView.mockImplementation(async () => {
+        now += 25;
+        return makeLodData(50);
+      });
+
+      await loader.loadGSplats(baseViewState);
+      expect(lodB.ensureInitialized).not.toHaveBeenCalled();
+      expect(lodC.ensureInitialized).not.toHaveBeenCalled();
+
+      await loader.updateView(baseViewState);
+      expect(lodB.ensureInitialized).toHaveBeenCalledTimes(1);
+      expect(lodC.ensureInitialized).toHaveBeenCalledTimes(1);
+      spy.mockRestore();
+    });
+
+    it('prefetches up to three later rungs once metadata warming has started', async () => {
+      const lods = Array.from({ length: 8 }, (_, index) =>
+        makeSubLoader(makeLodData(100 - index), {}, 100)
+      );
+      lods[0].getPrefetchCacheStats.mockReturnValue({ size: 0, maxSize: 10_000 });
+      loader = new GSplatsProgressiveLoader(
+        lods as unknown as GSplatsSpatialIndexLoader[],
+        lods.length,
+        '/test_gsplats'
+      );
+      let now = 0;
+      vi.spyOn(performance, 'now').mockImplementation(() => (now += 5));
+      lods[1].updateView.mockImplementation(() => {
+        now += 25;
+        return Promise.resolve(makeLodData(99));
+      });
+
+      await loader.loadGSplats(baseViewState);
+      for (const lod of lods) lod.prefetchChunks.mockClear();
+      lods[3].updateView.mockImplementation(() => {
+        now += 25;
+        return Promise.resolve(makeLodData(97));
+      });
+
+      await loader.updateView(baseViewState);
+      await Promise.resolve();
+
+      expect(lods[4].prefetchChunks).toHaveBeenCalledTimes(1);
+      expect(lods[5].prefetchChunks).toHaveBeenCalledTimes(1);
+      expect(lods[6].prefetchChunks).toHaveBeenCalledTimes(1);
+      expect(lods[7].prefetchChunks).not.toHaveBeenCalled();
+    });
+
+    it('does not deepen lookahead past available L0 cache headroom', async () => {
+      const lods = Array.from({ length: 7 }, (_, index) =>
+        makeSubLoader(makeLodData(100 - index), {}, 400)
+      );
+      lods[0].getPrefetchCacheStats.mockReturnValue({ size: 0, maxSize: 650 });
+      loader = new GSplatsProgressiveLoader(
+        lods as unknown as GSplatsSpatialIndexLoader[],
+        lods.length,
+        '/test_gsplats'
+      );
+      let now = 0;
+      vi.spyOn(performance, 'now').mockImplementation(() => (now += 5));
+      lods[1].updateView.mockImplementation(() => {
+        now += 25;
+        return Promise.resolve(makeLodData(99));
+      });
+
+      await loader.loadGSplats(baseViewState);
+      for (const lod of lods) lod.prefetchChunks.mockClear();
+      lods[3].updateView.mockImplementation(() => {
+        now += 25;
+        return Promise.resolve(makeLodData(97));
+      });
+
+      await loader.updateView(baseViewState);
+      await Promise.resolve();
+
+      expect(lods[4].prefetchChunks).toHaveBeenCalledTimes(1);
+      expect(lods[5].prefetchChunks).not.toHaveBeenCalled();
+      expect(lods[6].prefetchChunks).not.toHaveBeenCalled();
+    });
+
+    it('keeps playback lookahead at one rung to avoid wasting bytes on abandoned slices', async () => {
+      const lods = Array.from({ length: 7 }, (_, index) =>
+        makeSubLoader(makeLodData(100 - index), {}, 100)
+      );
+      lods[0].getPrefetchCacheStats.mockReturnValue({ size: 0, maxSize: 10_000 });
+      loader = new GSplatsProgressiveLoader(
+        lods as unknown as GSplatsSpatialIndexLoader[],
+        lods.length,
+        '/test_gsplats'
+      );
+      let now = 0;
+      vi.spyOn(performance, 'now').mockImplementation(() => (now += 5));
+      lods[1].updateView.mockImplementation(() => {
+        now += 25;
+        return Promise.resolve(makeLodData(99));
+      });
+
+      await loader.loadGSplats(baseViewState);
+      for (const lod of lods) lod.prefetchChunks.mockClear();
+      lods[3].updateView.mockImplementation(() => {
+        now += 25;
+        return Promise.resolve(makeLodData(97));
+      });
+
+      await loader.updateView({ ...baseViewState, frameBudgetMs: 1_000 });
+      await Promise.resolve();
+
+      expect(lods[4].prefetchChunks).toHaveBeenCalledTimes(1);
+      expect(lods[5].prefetchChunks).not.toHaveBeenCalled();
+      expect(lods[6].prefetchChunks).not.toHaveBeenCalled();
+    });
+
+    it('aborts in-flight lookahead when the view state changes', async () => {
+      const lods = Array.from({ length: 6 }, (_, index) =>
+        makeSubLoader(makeLodData(100 - index), {}, 100)
+      );
+      lods[0].getPrefetchCacheStats.mockReturnValue({ size: 0, maxSize: 10_000 });
+      loader = new GSplatsProgressiveLoader(
+        lods as unknown as GSplatsSpatialIndexLoader[],
+        lods.length,
+        '/test_gsplats'
+      );
+      let now = 0;
+      vi.spyOn(performance, 'now').mockImplementation(() => (now += 5));
+      lods[1].updateView.mockImplementation(() => {
+        now += 25;
+        return Promise.resolve(makeLodData(99));
+      });
+      let signal: AbortSignal | undefined;
+      lods[4].prefetchChunks.mockImplementation(
+        (_viewState: GSplatsViewState, prefetchSignal?: AbortSignal) => {
+          signal = prefetchSignal;
+          return new Promise<void>(() => {});
+        }
+      );
+
+      await loader.loadGSplats(baseViewState);
+      lods[3].updateView.mockImplementation(() => {
+        now += 25;
+        return Promise.resolve(makeLodData(97));
+      });
+      await loader.updateView(baseViewState);
+      expect(signal?.aborted).toBe(false);
+      const previousSignal = signal;
+
+      await loader.updateView({ ...baseViewState, slicePosition: [0, 0, 0, 1] });
+      expect(previousSignal?.aborted).toBe(true);
     });
   });
 
