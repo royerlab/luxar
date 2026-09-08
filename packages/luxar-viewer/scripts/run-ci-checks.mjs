@@ -6,6 +6,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { constants } from 'node:os';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
@@ -21,19 +22,33 @@ export const CI_CHECKS = [
   'check:coverage-slack',
 ];
 
+const COVERAGE_SUMMARY = 'coverage/coverage-summary.json';
+const MISSING_COVERAGE_REASON = `test:coverage failed without producing ${COVERAGE_SUMMARY}`;
+
 /** Run named checks, aggregating failures unless bail is requested. */
 export function runChecks(checks, runner, options = {}) {
   const failures = [];
+  const skipped = [];
+  const coverageSummaryExists =
+    options.coverageSummaryExists ?? (() => existsSync(COVERAGE_SUMMARY));
   for (const check of checks) {
+    if (
+      check === 'check:coverage-slack' &&
+      failures.includes('test:coverage') &&
+      !coverageSummaryExists()
+    ) {
+      skipped.push({ check, reason: MISSING_COVERAGE_REASON });
+      continue;
+    }
     const result = runner(check);
     const signal = result.signal ?? signalFromStatus(result.status, check);
-    if (signal) return { failures, killed: { check, signal } };
+    if (signal) return { failures, killed: { check, signal }, skipped };
     if (result.status !== 0) {
       failures.push(check);
       if (options.bail) break;
     }
   }
-  return { failures, killed: null };
+  return { failures, killed: null, skipped };
 }
 
 function signalFromStatus(status, check) {
@@ -55,7 +70,7 @@ function runPnpmCheck(check) {
 }
 
 /** Report an aggregated result and return whether every check passed. */
-export function reportResult({ failures, killed }, output = console) {
+export function reportResult({ failures, killed, skipped = [] }, output = console) {
   if (failures.length > 0) {
     output.error(`\ncheck:ci: ${failures.length} check(s) failed: ${failures.join(', ')}`);
   }
@@ -63,6 +78,9 @@ export function reportResult({ failures, killed }, output = console) {
     output.error(
       `\ncheck:ci: ${killed.check} was killed by ${killed.signal}; remaining checks skipped.`
     );
+  }
+  for (const { check, reason } of skipped) {
+    output.log(`\ncheck:ci: ${check} skipped: ${reason}.`);
   }
   if (failures.length === 0 && !killed) output.log('\ncheck:ci: all checks passed.');
   return failures.length === 0 && !killed;

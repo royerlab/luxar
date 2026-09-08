@@ -11,17 +11,38 @@ describe('runChecks', () => {
     ]);
     const runner = vi.fn((check) => ({ status: statuses.get(check) ?? 0, signal: null }));
 
-    expect(runChecks(CI_CHECKS, runner)).toEqual({
+    expect(runChecks(CI_CHECKS, runner, { coverageSummaryExists: () => true })).toEqual({
       failures: ['check:format', 'test:coverage'],
       killed: null,
+      skipped: [],
     });
     expect(runner.mock.calls.map(([check]) => check)).toEqual(CI_CHECKS);
+  });
+
+  it('skips coverage slack when failed tests produced no coverage summary', () => {
+    const runner = vi.fn((check) => ({
+      status: check === 'test:coverage' ? 1 : 0,
+      signal: null,
+    }));
+
+    expect(runChecks(CI_CHECKS, runner, { coverageSummaryExists: () => false })).toEqual({
+      failures: ['test:coverage'],
+      killed: null,
+      skipped: [
+        {
+          check: 'check:coverage-slack',
+          reason: 'test:coverage failed without producing coverage/coverage-summary.json',
+        },
+      ],
+    });
+    expect(runner.mock.calls.map(([check]) => check)).toEqual(CI_CHECKS.slice(0, -1));
   });
 
   it('reports success only when every check passes', () => {
     expect(runChecks(CI_CHECKS, () => ({ status: 0, signal: null }))).toEqual({
       failures: [],
       killed: null,
+      skipped: [],
     });
   });
 
@@ -30,9 +51,10 @@ describe('runChecks', () => {
       status: check === 'check:format' ? 1 : check === 'lint' ? 137 : 0,
       signal: null,
     }));
-    expect(runChecks(CI_CHECKS, runner)).toEqual({
+    expect(runChecks(CI_CHECKS, runner, { coverageSummaryExists: () => true })).toEqual({
       failures: ['check:format'],
       killed: { check: 'lint', signal: 'SIGKILL' },
+      skipped: [],
     });
     expect(runner.mock.calls.map(([check]) => check)).toEqual(CI_CHECKS.slice(0, 4));
   });
@@ -43,6 +65,7 @@ describe('runChecks', () => {
     expect(runChecks(CI_CHECKS, runner)).toEqual({
       failures: [],
       killed: { check: 'check:overrides', signal: 'SIGTERM' },
+      skipped: [],
     });
     expect(runner).toHaveBeenCalledTimes(1);
   });
@@ -53,9 +76,10 @@ describe('runChecks', () => {
       signal: null,
     }));
 
-    expect(runChecks(CI_CHECKS, runner)).toEqual({
+    expect(runChecks(CI_CHECKS, runner, { coverageSummaryExists: () => true })).toEqual({
       failures: ['check:layers', 'test:coverage'],
       killed: null,
+      skipped: [],
     });
     expect(runner.mock.calls.map(([check]) => check)).toEqual(CI_CHECKS);
   });
@@ -65,12 +89,36 @@ describe('runChecks', () => {
     expect(runChecks(CI_CHECKS, runner, { bail: true })).toEqual({
       failures: ['check:format'],
       killed: null,
+      skipped: [],
     });
     expect(runner.mock.calls.map(([check]) => check)).toEqual(CI_CHECKS.slice(0, 2));
   });
 });
 
 describe('reportResult', () => {
+  it('reports checks skipped because their input was not produced', () => {
+    const output = { error: vi.fn(), log: vi.fn() };
+
+    expect(
+      reportResult(
+        {
+          failures: ['test:coverage'],
+          killed: null,
+          skipped: [
+            {
+              check: 'check:coverage-slack',
+              reason: 'test:coverage failed without producing coverage/coverage-summary.json',
+            },
+          ],
+        },
+        output
+      )
+    ).toBe(false);
+    expect(output.log).toHaveBeenCalledWith(
+      '\ncheck:ci: check:coverage-slack skipped: test:coverage failed without producing coverage/coverage-summary.json.'
+    );
+  });
+
   it('reports failures collected before a killed check', () => {
     const output = { error: vi.fn(), log: vi.fn() };
 
