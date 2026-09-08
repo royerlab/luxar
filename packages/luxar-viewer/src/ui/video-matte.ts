@@ -130,13 +130,27 @@ function setupGl(
   return { gl, program, texture };
 }
 
+export interface VideoMatteOptions {
+  /**
+   * Called once if a frame upload throws — a cross-origin clip served without
+   * CORS taints the video and `texImage2D` raises a SecurityError — after the
+   * compositor has stopped itself. The caller then shows the raw clip instead.
+   */
+  onFailure?: (error: unknown) => void;
+}
+
 /**
  * Build a compositor for `video`, a stacked-matte clip. The canvas takes the
  * colour half's size as soon as the video's metadata is known (so a CSS
  * `height: auto` keeps the clip's true aspect) and is returned unattached —
- * the caller places it where the `<video>` would have gone.
+ * the caller places it where the `<video>` would have gone. The video must be
+ * readable by WebGL: same-origin, a blob URL, or `crossOrigin = 'anonymous'`
+ * against a CORS-enabled server (set BEFORE its `src`).
  */
-export function createVideoMatteCompositor(video: HTMLVideoElement): VideoMatteCompositor | null {
+export function createVideoMatteCompositor(
+  video: HTMLVideoElement,
+  options: VideoMatteOptions = {}
+): VideoMatteCompositor | null {
   const canvas = document.createElement('canvas');
   canvas.className = 'luxar-overlay__matte';
   const setup = setupGl(canvas);
@@ -155,23 +169,34 @@ export function createVideoMatteCompositor(video: HTMLVideoElement): VideoMatteC
   video.addEventListener('loadedmetadata', sizeToVideo);
 
   let running = false;
+  let failed = false;
   let handle = 0;
   let usingVfc = false;
   let hasFrame = false;
   const v = video as FrameCallbackVideo;
 
   const draw = (): void => {
-    if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+    if (failed || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
     sizeToVideo();
     gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+    try {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+    } catch (error) {
+      // A tainted (cross-origin, no CORS) video: WebGL may never read it.
+      // Stop for good and let the caller fall back to the raw clip rather
+      // than throw out of a dims-manager listener every frame.
+      failed = true;
+      running = false;
+      options.onFailure?.(error);
+      return;
+    }
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     hasFrame = true;
   };
   const tick = (): void => {
     if (!running) return;
     draw();
-    schedule();
+    if (running) schedule();
   };
   const schedule = (): void => {
     if (v.requestVideoFrameCallback) {
@@ -195,10 +220,10 @@ export function createVideoMatteCompositor(video: HTMLVideoElement): VideoMatteC
       return hasFrame;
     },
     start() {
-      if (running) return;
+      if (running || failed) return;
       running = true;
       draw();
-      schedule();
+      if (running) schedule();
     },
     stop() {
       running = false;

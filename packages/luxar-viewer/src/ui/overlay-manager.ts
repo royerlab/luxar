@@ -658,6 +658,10 @@ export class OverlayManager {
     if (!config.video_file) return;
 
     const video = document.createElement('video');
+    // A stacked-matte clip is read by WebGL, which refuses a tainted video:
+    // ask for CORS up front (before `src`) so a store served from another
+    // origin — the dev server against `luxar serve` — stays readable.
+    if (config.alpha_matte === 'stacked') video.crossOrigin = 'anonymous';
     video.muted = config.muted !== false;
     video.loop = config.loop !== false;
     // Deliberately NOT the DOM `autoplay` attribute: the browser honours that
@@ -706,7 +710,9 @@ export class OverlayManager {
     config: OverlayConfig
   ): HTMLCanvasElement | null {
     if (config.alpha_matte !== 'stacked') return null;
-    const matte = createVideoMatteCompositor(video);
+    const matte = createVideoMatteCompositor(video, {
+      onFailure: (error) => this.abandonMatte(config.name, video, error),
+    });
     if (!matte) {
       log.warning(
         Modules.UI,
@@ -724,6 +730,27 @@ export class OverlayManager {
     el.appendChild(matte.canvas);
     this.matteCompositors.set(config.name, matte);
     return matte.canvas;
+  }
+
+  /**
+   * The compositor could not read the video (a tainted cross-origin clip):
+   * drop the canvas and show the raw clip — colour over matte, visible rather
+   * than a blank square — and say why, once.
+   */
+  private abandonMatte(name: string, video: HTMLVideoElement, error: unknown): void {
+    const matte = this.matteCompositors.get(name);
+    if (!matte) return;
+    this.matteCompositors.delete(name);
+    const sizing = { width: matte.canvas.style.width, height: matte.canvas.style.height };
+    matte.dispose();
+    matte.canvas.remove();
+    video.classList.remove('luxar-overlay__matte-source');
+    video.style.width = sizing.width;
+    video.style.height = sizing.height;
+    log.warning(
+      Modules.UI,
+      `Video overlay "${name}": the alpha matte could not read the clip (${String(error)}) — showing the raw clip`
+    );
   }
 
   private setVideoMedia(

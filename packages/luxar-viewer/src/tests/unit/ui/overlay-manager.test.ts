@@ -47,11 +47,16 @@ vi.mock('../../../scene/scene-dims-manager', () => ({
  * factory is mocked so tests can hand the manager a fake compositor (or `null`,
  * the no-WebGL answer) and observe how it is driven.
  */
+type MatteModule = typeof import('../../../ui/video-matte');
 const matteFactory = vi.fn<
-  (video: HTMLVideoElement) => import('../../../ui/video-matte').VideoMatteCompositor | null
+  (
+    video: HTMLVideoElement,
+    options?: import('../../../ui/video-matte').VideoMatteOptions
+  ) => import('../../../ui/video-matte').VideoMatteCompositor | null
 >(() => null);
 vi.mock('../../../ui/video-matte', () => ({
-  createVideoMatteCompositor: (video: HTMLVideoElement) => matteFactory(video),
+  createVideoMatteCompositor: ((video, options) =>
+    matteFactory(video, options)) as MatteModule['createVideoMatteCompositor'],
 }));
 
 function makeTextOverlay(overrides: Partial<OverlayConfig> = {}): OverlayConfig {
@@ -378,7 +383,12 @@ describe('OverlayManager.loadOverlays', () => {
 
     const el = document.querySelector('.luxar-overlay--video') as HTMLDivElement;
     const video = el.querySelector('video') as HTMLVideoElement;
-    expect(matteFactory).toHaveBeenCalledWith(video);
+    expect(matteFactory).toHaveBeenCalledWith(
+      video,
+      expect.objectContaining({ onFailure: expect.any(Function) })
+    );
+    // WebGL must be allowed to read the clip when the store is on another origin.
+    expect(video.crossOrigin).toBe('anonymous');
     expect(el.contains(matte.canvas)).toBe(true);
     // The canvas is the sized, shown element; the video is the hidden source.
     expect(matte.canvas.style.width).toBe('26vw');
@@ -400,6 +410,50 @@ describe('OverlayManager.loadOverlays', () => {
     expect(matte.dispose).toHaveBeenCalledTimes(1);
     mockDimsState.current = null;
     vi.restoreAllMocks();
+  });
+
+  it('abandons the matte and shows the raw clip when the compositor cannot read the video', async () => {
+    const matte = {
+      canvas: document.createElement('canvas'),
+      start: vi.fn(),
+      stop: vi.fn(),
+      dispose: vi.fn(),
+      hasFrame: false,
+    };
+    let fail: ((error: unknown) => void) | undefined;
+    matteFactory.mockImplementationOnce((_video, opts) => {
+      fail = opts?.onFailure;
+      return matte;
+    });
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    await manager.loadOverlays(
+      [
+        makeTextOverlay({
+          name: 'turntable',
+          type: 'overlay_video',
+          video_file: 'video.webm',
+          alpha_matte: 'stacked',
+          size: [0.26, null],
+        }),
+      ],
+      'https://example.com/scene.luxar.zarr/'
+    );
+    const el = document.querySelector('.luxar-overlay--video') as HTMLDivElement;
+    const video = el.querySelector('video') as HTMLVideoElement;
+    expect(el.contains(matte.canvas)).toBe(true);
+
+    fail!(new DOMException('tainted', 'SecurityError'));
+    expect(matte.dispose).toHaveBeenCalledTimes(1);
+    expect(el.contains(matte.canvas)).toBe(false);
+    expect(video.classList.contains('luxar-overlay__matte-source')).toBe(false);
+    // The raw clip takes over the canvas's sizing.
+    expect(video.style.width).toBe('26vw');
+    expect(video.style.height).toBe('auto');
+    expect(warnSpy).toHaveBeenCalledWith(Modules.UI, expect.stringContaining('could not read'));
+    // A second failure report is a no-op (the compositor is already gone).
+    fail!(new Error('again'));
+    expect(matte.dispose).toHaveBeenCalledTimes(1);
+    warnSpy.mockRestore();
   });
 
   it('falls back to the plain <video> when the compositor declines (no WebGL)', async () => {
