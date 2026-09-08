@@ -6,13 +6,22 @@ import { describe, expect, it } from 'vitest';
 const PKG = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const REPO = resolve(PKG, '../..');
 
+function packageJson(path) {
+  return JSON.parse(readFileSync(path, 'utf8'));
+}
+
 describe('published Node compatibility', () => {
-  it('declares Vite-compatible Node consumer ranges', () => {
-    const manifest = JSON.parse(readFileSync(resolve(PKG, 'package.json'), 'utf8'));
-    expect(manifest.engines?.node).toBe('^20.19.0 || >=22.12.0');
+  it("matches Vite's supported Node range", () => {
+    const manifest = packageJson(resolve(PKG, 'package.json'));
+    const vite = packageJson(resolve(PKG, 'node_modules/vite/package.json'));
+    expect(manifest.engines?.node).toBe(vite.engines?.node);
   });
 
-  it('smoke-imports the Node 22 build on Node 20.19', () => {
+  it('smoke-imports the Node 22 build on the lowest supported Node', () => {
+    const manifest = packageJson(resolve(PKG, 'package.json'));
+    const minimumVersion = /^\^(\d+\.\d+\.\d+)/.exec(manifest.engines?.node ?? '')?.[1];
+    expect(minimumVersion).toBeDefined();
+
     const workflow = readFileSync(resolve(REPO, '.github/workflows/ci.yml'), 'utf8');
     const releaseStart = workflow.indexOf('  release-readiness:');
     const releaseEnd = workflow.indexOf('\n  wheel-viewer:', releaseStart);
@@ -21,7 +30,7 @@ describe('published Node compatibility', () => {
 
     const releaseJob = workflow.slice(releaseStart, releaseEnd);
     const build = releaseJob.indexOf('run: pnpm run ci:release');
-    const minimumNode = releaseJob.indexOf('node-version: 20.19.0');
+    const minimumNode = releaseJob.indexOf(`node-version: ${minimumVersion}`);
     const smoke = releaseJob.indexOf('run: node scripts/check-lib-exports.mjs');
 
     expect(build).toBeGreaterThan(-1);
