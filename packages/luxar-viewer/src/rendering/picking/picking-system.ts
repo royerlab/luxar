@@ -66,6 +66,9 @@ import { log, Modules } from '../../utils/log';
 import { clamp } from '../../utils/clamp';
 import { isPhysicalMeshMaterial } from '../materials/mesh-physical/config';
 
+/** Maximum time a touch pick may defer tooltip fades while its handler settles. */
+const EXPLICIT_PICK_FADE_GUARD_MS = 5_000;
+
 /** Result of a successful pick operation. */
 export interface PickResult {
   /** Assigned pick ID of the node */
@@ -212,6 +215,7 @@ export class PickingSystem {
   /** Explicit picks ignore hover/view invalidation until their result handler finishes. */
   private _explicitPickSeq = 0;
   private _explicitPicksInFlight = 0;
+  private _lastExplicitPickStartedAt = -Infinity;
 
   /** Optional post-processing reference for lens distortion correction. */
   private postProcessing: PostProcessingManager | null = null;
@@ -486,7 +490,7 @@ export class PickingSystem {
     // Supersede any in-flight readback so its late result can't override
     // this fade.
     this._pickSeq++;
-    if (this._explicitPicksInFlight > 0) {
+    if (this.hasFreshExplicitPick()) {
       this.scheduler.markDirty();
       return;
     }
@@ -553,7 +557,7 @@ export class PickingSystem {
     this._pickSeq++;
     // Keep an explicit tap pick authoritative through async result delivery,
     // matching markDirty(). Hover readbacks are still superseded by _pickSeq.
-    if (this._explicitPicksInFlight === 0) {
+    if (!this.hasFreshExplicitPick()) {
       // Fade existing overlay while moving (dedupe-safe).
       void this.deliverPickResult(null);
     }
@@ -583,8 +587,10 @@ export class PickingSystem {
     if (!this._shouldPick()) return Promise.resolve();
     const explicitPickSeq = ++this._explicitPickSeq;
     this._explicitPicksInFlight++;
+    this._lastExplicitPickStartedAt = performance.now();
     return this.performPick(x, y, true, explicitPickSeq).finally(() => {
       this._explicitPicksInFlight--;
+      if (this._explicitPicksInFlight === 0) this._lastExplicitPickStartedAt = -Infinity;
     });
   }
 
@@ -632,6 +638,13 @@ export class PickingSystem {
   // ---------------------------------------------------------------------------
   // Private implementation
   // ---------------------------------------------------------------------------
+
+  private hasFreshExplicitPick(): boolean {
+    return (
+      this._explicitPicksInFlight > 0 &&
+      performance.now() - this._lastExplicitPickStartedAt < EXPLICIT_PICK_FADE_GUARD_MS
+    );
+  }
 
   /**
    * Perform a pick at the given screen coordinates.

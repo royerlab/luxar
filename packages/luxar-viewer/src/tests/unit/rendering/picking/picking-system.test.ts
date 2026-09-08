@@ -1483,6 +1483,35 @@ describe('PickingSystem — stale readback ordering', () => {
     expect(onPickResult).toHaveBeenCalledExactlyOnceWith(fakeResult);
   });
 
+  it('resumes tooltip fading when an explicit pick delivery stalls', async () => {
+    const delivery = deferred<void>();
+    const onPickResult = vi.fn(async (result: PickResult | null) => {
+      if (result) await delivery.promise;
+    });
+    const now = vi.spyOn(performance, 'now').mockReturnValue(0);
+    const { system, gate, fakeResult } = buildGatedSystem(onPickResult);
+
+    const pending = system.pickAt(400, 300);
+    gate.resolve(fakeResult);
+    await vi.waitFor(() => expect(onPickResult).toHaveBeenCalledWith(fakeResult));
+    onPickResult.mockClear();
+
+    system.markDirty();
+    system.onMouseMove(makeMouseEvent(400, 300));
+    expect(onPickResult).not.toHaveBeenCalled();
+
+    now.mockReturnValue(60_000);
+    system.markDirty();
+    system.onMouseMove(makeMouseEvent(400, 300));
+    expect(onPickResult).toHaveBeenCalledTimes(2);
+    expect(onPickResult).toHaveBeenNthCalledWith(1, null);
+    expect(onPickResult).toHaveBeenNthCalledWith(2, null);
+
+    delivery.resolve();
+    await pending;
+    now.mockRestore();
+  });
+
   it('drops an explicit pick when the pointer leaves during readback', async () => {
     const { system, onPickResult, gate, fakeResult } = buildGatedSystem();
 
