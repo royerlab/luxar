@@ -624,6 +624,33 @@ const FOOTPRINT_BOX3_SCRATCH = new THREE.Box3();
 const PARTITION_VISIBILITY_CHANGED = 1;
 const PARTITION_BECAME_VISIBLE = 2;
 
+function unionPartitionFootprints(objects: readonly THREE.Object3D[], target: THREE.Box3): void {
+  for (const object of objects) {
+    FOOTPRINT_BOX3_SCRATCH.setFromObject(object);
+    if (!FOOTPRINT_BOX3_SCRATCH.isEmpty()) target.union(FOOTPRINT_BOX3_SCRATCH);
+  }
+}
+
+function updatePartitionObjectVisibility(
+  objects: readonly THREE.Object3D[],
+  visible: boolean
+): number {
+  let wasVisible = true;
+  let changed = false;
+  for (const object of objects) {
+    if (object.userData.partitionFrustumVisible === false) wasVisible = false;
+    object.userData.partitionFrustumVisible = visible;
+    if (object.visible !== visible) {
+      object.visible = visible;
+      changed = true;
+    }
+  }
+  return (
+    (changed ? PARTITION_VISIBILITY_CHANGED : 0) |
+    (visible && !wasVisible ? PARTITION_BECAME_VISIBLE : 0)
+  );
+}
+
 /**
  * Injected view-state accessors. Lets the registry stay test-friendly
  * (mock the camera, the viewport, the slice) without coupling to the
@@ -1294,24 +1321,10 @@ export class LODGroupRegistry {
       if (worldBox) {
         WORLD_BOX3_SCRATCH.min.set(worldBox.min.x, worldBox.min.y, worldBox.min.z);
         WORLD_BOX3_SCRATCH.max.set(worldBox.max.x, worldBox.max.y, worldBox.max.z);
-        for (const object of child.objects) {
-          FOOTPRINT_BOX3_SCRATCH.setFromObject(object);
-          if (!FOOTPRINT_BOX3_SCRATCH.isEmpty()) {
-            WORLD_BOX3_SCRATCH.union(FOOTPRINT_BOX3_SCRATCH);
-          }
-        }
+        unionPartitionFootprints(child.objects, WORLD_BOX3_SCRATCH);
         visible = frustum.intersectsBox(WORLD_BOX3_SCRATCH);
       }
-      let wasVisible = true;
-      for (const object of child.objects) {
-        if (object.userData.partitionFrustumVisible === false) wasVisible = false;
-        object.userData.partitionFrustumVisible = visible;
-        if (object.visible !== visible) {
-          object.visible = visible;
-          result |= PARTITION_VISIBILITY_CHANGED;
-        }
-      }
-      if (visible && !wasVisible) result |= PARTITION_BECAME_VISIBLE;
+      result |= updatePartitionObjectVisibility(child.objects, visible);
     }
     return result;
   }
