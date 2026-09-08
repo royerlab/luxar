@@ -36,6 +36,7 @@ test.describe('mobile gestures (orbit)', () => {
     const probe = await inputProbe(page);
     expect(probe.coarse).toBe(true);
     expect(probe.hoverNone).toBe(true);
+    expect(probe.anyHover).toBe(false);
     expect(probe.touchPoints).toBeGreaterThan(0);
     expect(probe.pageScale).toBe(1);
   });
@@ -58,7 +59,9 @@ test.describe('mobile gestures (orbit)', () => {
     const probe = await inputProbe(page);
     expect(probe.pageScale).toBe(1);
     // Pinch-out zooms IN: the camera moves toward the target.
-    expect(distance(after.position, [0, 0, 0])).toBeLessThan(distance(before.position, [0, 0, 0]));
+    expect(distance(after.position, after.target)).toBeLessThan(
+      distance(before.position, before.target)
+    );
   });
 
   test('two-finger twist rolls the view without dollying', async ({ page }) => {
@@ -68,17 +71,42 @@ test.describe('mobile gestures (orbit)', () => {
     await page.waitForTimeout(900);
     const after = await cameraPose(page);
     expect(quaternionAngle(before.quaternion, after.quaternion)).toBeGreaterThan(0.2);
-    const dBefore = distance(before.position, [0, 0, 0]);
-    const dAfter = distance(after.position, [0, 0, 0]);
+    const dBefore = distance(before.position, before.target);
+    const dAfter = distance(after.position, after.target);
     expect(Math.abs(dAfter - dBefore) / dBefore).toBeLessThan(0.05);
   });
 
   test('lifting one finger of a pinch continues as a rotate with the other', async ({ page }) => {
     const c = await canvasCentre(page);
     const before = await cameraPose(page);
+    await page.evaluate(() => {
+      const events: Array<{ type: string; touches: number[]; changed: number[] }> = [];
+      for (const type of ['touchend', 'touchmove']) {
+        document.addEventListener(type, (event) => {
+          const touchEvent = event as TouchEvent;
+          events.push({
+            type,
+            touches: Array.from(touchEvent.touches, (touch) => touch.identifier),
+            changed: Array.from(touchEvent.changedTouches, (touch) => touch.identifier),
+          });
+        });
+      }
+      (window as unknown as { __mobileTouchEvents: typeof events }).__mobileTouchEvents = events;
+    });
     await pinchThenDragSurvivor(page, c, 60, { x: c.x + 100, y: c.y + 60 });
     await page.waitForTimeout(600);
     const after = await cameraPose(page);
+    const events = await page.evaluate(
+      () =>
+        (
+          window as unknown as {
+            __mobileTouchEvents: Array<{ type: string; touches: number[]; changed: number[] }>;
+          }
+        ).__mobileTouchEvents
+    );
+    const releaseIndex = events.findIndex((event) => event.type === 'touchend');
+    expect(events[releaseIndex]).toEqual({ type: 'touchend', touches: [1], changed: [2] });
+    expect(events[releaseIndex + 1]).toMatchObject({ type: 'touchmove', touches: [1] });
     expect(quaternionAngle(before.quaternion, after.quaternion)).toBeGreaterThan(0.05);
     expect((await inputProbe(page)).pageScale).toBe(1);
   });
@@ -101,8 +129,8 @@ test.describe('mobile gestures (orbit)', () => {
     // distance (a fit lands at the FIT distance, which is not the load-time
     // auto-frame position — so the proof is not "back to home")…
     expect(distance(moved.position, after.position)).toBeGreaterThan(dollied * 0.5);
-    expect(distance(after.position, [0, 0, 0])).toBeGreaterThan(
-      distance(moved.position, [0, 0, 0])
+    expect(distance(after.position, after.target)).toBeGreaterThan(
+      distance(moved.position, moved.target)
     );
     // …and it lands exactly where the recenter command itself lands: the fit
     // is idempotent, so a direct recenter afterwards must not move the camera.

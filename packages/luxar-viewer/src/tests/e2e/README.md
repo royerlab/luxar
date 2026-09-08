@@ -36,9 +36,8 @@ pnpm test:e2e:mobile          # playwright.mobile.config.ts
 ```
 
 `src/tests/e2e/mobile/` runs under real device emulation (iPhone 14 portrait +
-landscape, iPad Pro 11 — once with the real iPad UA and once with the macOS UA
-iPadOS Safari reports by default — and Pixel 7), all on **Chromium**: the GPU box
-runs Chromium only, and the gestures are synthesised through CDP
+landscape, iPad Pro 11 and Pixel 7), all on **Chromium**: the GPU box runs
+Chromium only, and the gestures are synthesised through CDP
 `Input.dispatchTouchEvent` (`mobile/touch-helpers.ts`: pinch, twist, one-finger
 drag, 2→1 release, long-press, double-tap), which WebKit does not expose. The
 main config ignores this folder; the mobile config only matches it. What it
@@ -50,6 +49,14 @@ touch, the rail / help / monitor / layers geometry stays inside a phone
 viewport, and the DPR cap and GPU budget resolve to the mobile values. Real iOS
 Safari behaviour (no `contextmenu` on long-press, no Fullscreen on iPhone,
 dynamic toolbar) is the manual device checklist's job, not this suite's.
+
+This suite is the integration check for the touch series planned in #2582, not
+a standalone test of this branch. `gestures.spec.ts` and `fly.spec.ts` require
+parts A and C (gesture ownership and touch controls), `pick.spec.ts` requires B,
+`layout.spec.ts` requires D1, and `runtime.spec.ts` requires E. The complete
+suite is validated with #2595 present so held pointer gestures keep the render
+loop awake. Run it against the complete series; expected failures on an earlier
+stack are not harness flakiness.
 
 Two helper rules keep the gesture specs honest under load (a shared Mac at a
 1-minute load of 26 ran a 16-step CDP drag in 5 s):
@@ -68,10 +75,9 @@ The worker count is the desktop plan's, capped at two — the phone viewports
 are cheap but the gesture timing is not, and the load-sizing in
 `tools/e2e-workers.ts` is what stops a busy box from inventing failures here.
 
-The drag / pinch / twist specs also depend on #2595 (the render loop stays
-awake while a pointer gesture is in progress). Under load the first touch move
-can arrive seconds after the press; before that fix the loop had idle-paused by
-then and the whole drag moved nothing — on `dev` with a mouse too.
+Under load the first touch move can arrive seconds after the press; before
+#2595 the loop had idle-paused by then and the whole drag moved nothing — on
+`dev` with a mouse too.
 
 ### Parallelism is sized to the machine
 

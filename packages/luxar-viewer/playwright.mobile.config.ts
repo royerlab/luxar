@@ -14,6 +14,8 @@
  * driven through the Chrome DevTools Protocol (`Input.dispatchTouchEvent`, see
  * `src/tests/e2e/mobile/touch-helpers.ts`), which WebKit does not expose. Real
  * iOS Safari behaviour is covered by the manual device checklist, not here.
+ * Chromium reports `navigator.maxTouchPoints === 1` for every emulated device,
+ * so this harness does not cover behaviour gated on multiple touch points.
  *
  * Invoke via:
  *   pnpm test:e2e:mobile
@@ -47,23 +49,13 @@ const CHROMIUM_ARGS = [
   '--disable-setuid-sandbox',
 ];
 
-/**
- * iPadOS 13+ Safari's DEFAULT user agent: the desktop macOS one. A profile
- * built from it must still recognise the device as an iPad from
- * `maxTouchPoints` (see `utils/input-capabilities.ts`), so one project runs the
- * iPad viewport under this UA.
- */
-const IPAD_MASQUERADE_UA =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15';
-
 /** Force a device descriptor onto Chromium (descriptors default to WebKit). */
-function onChromium(device: (typeof devices)[string], extra: Record<string, unknown> = {}) {
+function onChromium(device: (typeof devices)[string]) {
   return {
     ...device,
     browserName: 'chromium' as const,
     defaultBrowserType: 'chromium' as const,
     launchOptions: { args: CHROMIUM_ARGS },
-    ...extra,
   };
 }
 
@@ -71,9 +63,7 @@ export default defineConfig({
   metadata: { luxarE2E: serverMetadata },
   globalSetup: path.join(__dirname, 'src/tests/e2e/global-setup.ts'),
   testDir: './src/tests/e2e',
-  // Only the mobile specs; the desktop suite ignores this folder implicitly
-  // because none of its files match `*.spec.ts` outside `mobile/`… except they
-  // do — so the MAIN config's `testIgnore` must exclude `mobile/` (it does).
+  // Only the mobile specs; the main config's `testIgnore` excludes this folder.
   testMatch: /mobile\/.*\.spec\.ts$/,
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
@@ -102,10 +92,6 @@ export default defineConfig({
     { name: 'iphone-portrait', use: onChromium(devices['iPhone 14']) },
     { name: 'iphone-landscape', use: onChromium(devices['iPhone 14 landscape']) },
     { name: 'ipad', use: onChromium(devices['iPad Pro 11']) },
-    {
-      name: 'ipad-masquerade',
-      use: onChromium(devices['iPad Pro 11'], { userAgent: IPAD_MASQUERADE_UA }),
-    },
     { name: 'pixel', use: onChromium(devices['Pixel 7']) },
   ],
 

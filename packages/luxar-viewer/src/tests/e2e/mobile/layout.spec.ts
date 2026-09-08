@@ -25,6 +25,7 @@ test.describe('mobile layout', () => {
     expect(rail!.top).toBeGreaterThanOrEqual(-0.5);
     expect(rail!.bottom).toBeLessThanOrEqual(rail!.vh + 0.5);
     const btn = await rectOf(page, '.luxar-control-rail__btn');
+    expect(btn).not.toBeNull();
     expect(btn!.height).toBeGreaterThanOrEqual(36);
     // When the rail is taller than the viewport, its items box scrolls and the
     // last button is reachable by scrolling — never clipped.
@@ -67,7 +68,10 @@ test.describe('mobile layout', () => {
     const controls = await rectOf(page, '.luxar-layers-panel__controls');
     if (controls) {
       // Either it fits, or it scrolls — never spills off the bottom unscrollably.
-      expect(controls.bottom <= controls.vh + 0.5 || controls.scrollable).toBe(true);
+      expect(
+        controls.bottom <= controls.vh + 0.5 || controls.scrollable,
+        'layers controls should fit the viewport or provide scrolling'
+      ).toBe(true);
     }
   });
 });

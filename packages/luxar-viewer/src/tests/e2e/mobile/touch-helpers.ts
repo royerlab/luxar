@@ -116,8 +116,8 @@ export async function pinchThenDragSurvivor(
   const b: TouchPoint = { x: centre.x + r, y: centre.y, id: 2 };
   await dispatch(s, 'touchStart', [a, b]);
   await page.waitForTimeout(50);
-  // Lift finger 2 — CDP expresses that as a touchEnd whose list omits it.
-  await dispatch(s, 'touchEnd', [a]);
+  // Lift finger 2 — touchEnd lists the points being released.
+  await dispatch(s, 'touchEnd', [b]);
   for (let i = 1; i <= steps; i++) {
     const t = i / steps;
     await dispatch(s, 'touchMove', [
@@ -185,9 +185,11 @@ export async function inputProbe(page: Page): Promise<{
  * under software GL with two workers a frame can take a second or more. Two
  * animation frames are awaited first, so the read follows an actual update.
  */
-export async function cameraPose(
-  page: Page
-): Promise<{ position: [number, number, number]; quaternion: [number, number, number, number] }> {
+export async function cameraPose(page: Page): Promise<{
+  position: [number, number, number];
+  quaternion: [number, number, number, number];
+  target: [number, number, number];
+}> {
   await page.evaluate(
     () =>
       new Promise<void>((resolve) =>
@@ -202,12 +204,14 @@ export async function cameraPose(
             position: { toArray: () => number[] };
             quaternion: { toArray: () => number[] };
           };
+          controls: { getFocusTarget: () => { toArray: () => number[] } };
         };
       }
     ).__luxarDebug;
     return {
       position: debug.camera.position.toArray() as [number, number, number],
       quaternion: debug.camera.quaternion.toArray() as [number, number, number, number],
+      target: debug.controls.getFocusTarget().toArray() as [number, number, number],
     };
   });
 }
