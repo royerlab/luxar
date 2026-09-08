@@ -326,6 +326,13 @@ def _try_imageio_to_bytes(image: Any, fmt: str) -> Tuple[bytes, str] | None:
             ) from exc
         if arr.ndim not in (2, 3):
             return None
+        try:
+            return _numpy_to_bytes(arr, fmt), fmt
+        except Exception as exc:
+            raise ValueError(
+                f"Cannot process image of type {type(image).__name__}: image conversion "
+                f"failed with {type(exc).__name__}: {exc}. {_SUPPORTED_IMAGE_INPUTS}"
+            ) from exc
 
     return _numpy_to_bytes(arr, fmt), fmt
 

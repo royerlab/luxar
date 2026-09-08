@@ -209,9 +209,10 @@ class TestValidateImageInput:
         assert isinstance(exc.value.__cause__, RuntimeError)
         assert "Supported: str/Path, bytes" in str(exc.value)
 
-    def test_plain_wrong_type_lists_supported_inputs(self):
+    @pytest.mark.parametrize("image", [{}, [[{}, {}], [{}, {}]]])
+    def test_plain_wrong_type_lists_supported_inputs(self, image):
         with pytest.raises(ValueError, match="Supported: str/Path, bytes") as exc:
-            validate_image_input({})
+            validate_image_input(image)
 
         assert "imageio failed" not in str(exc.value)
 
