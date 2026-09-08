@@ -903,8 +903,14 @@ def test_live_ci_checkouts_attest_one_dispatched_dev_sha(workflow: str) -> None:
     capture_step = next(
         step for step in changes["steps"] if step.get("id") == "dispatched-dev"
     )
-    assert capture_step["if"] == "github.event_name == 'workflow_dispatch'"
+    # The dev SHA is captured for dispatched repair windows AND the coverage cron.
+    # A dispatch tests HEAD (validated `--ref dev`); a schedule cron checks out the
+    # default branch, so it resolves origin/dev instead.
+    assert capture_step["if"] == (
+        "github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'"
+    )
     assert "git rev-parse HEAD" in capture_step["run"]
+    assert "git rev-parse origin/dev" in capture_step["run"]
     for job_name, checkout in checkout_jobs.items():
         if job_name == "changes":
             continue
@@ -984,10 +990,16 @@ def test_obsidian_routed_jobs_have_timeout_headroom(workflow: str) -> None:
 
 
 def test_ci_repair_window_is_dispatched_on_dev(workflow: str) -> None:
-    """Promotion requests repair windows explicitly instead of default-branch crons."""
+    """Promotion requests repair windows via dispatch, not the coverage cron.
+
+    A ``schedule`` cron exists (it is the reliable home of the coverage gate --
+    pinned by ``test_pull_requests_skip_coverage_while_other_events_enforce_it``),
+    but the promotion service still repairs cancelled contexts with an explicit
+    ``workflow_dispatch --ref dev``, never a default-branch cron.
+    """
     # BaseLoader preserves the YAML 1.1 ``on`` key instead of coercing it to True.
     parsed = yaml.load(workflow, Loader=yaml.BaseLoader)
-    assert "schedule" not in parsed["on"]
+    assert "schedule" in parsed["on"]
     dispatch = parsed["on"]["workflow_dispatch"]
     full_matrix = dispatch["inputs"]["full_python_matrix"]
     assert full_matrix["required"] == "false"
@@ -998,10 +1010,48 @@ def test_ci_repair_window_is_dispatched_on_dev(workflow: str) -> None:
     matrix_line = next(
         line for line in workflow.splitlines() if "python-version: ${{" in line
     )
-    assert "github.event.schedule" not in matrix_line
     assert (
         "github.event_name == 'workflow_dispatch' && inputs.full_python_matrix"
         in matrix_line
+    )
+
+
+def test_pull_requests_skip_coverage_while_other_events_enforce_it(
+    workflow: str,
+) -> None:
+    """The per-event coverage split is pinned so the 89% gate cannot be lost silently.
+
+    Coverage instrumentation is the dominant cost of ``python-tests``, so PRs run
+    the ``-m 'not slow'`` suite plain (``test-nocov``) while every non-PR event runs
+    ``test-cov`` (coverage + the 89% ``fail_under`` gate). The scheduled cron is the
+    reliable home of that gate -- its own concurrency group survives dev pushes --
+    and scheduled runs take the full interpreter matrix. Without this test the split
+    could regress (both branches back to ``test-cov``, or coverage dropped from the
+    schedule) while ``python-tests`` still reported green, exactly the fail-open
+    class this module exists to catch.
+    """
+    parsed = yaml.safe_load(workflow)
+
+    # (a) the test step branches test-nocov on pull_request, test-cov otherwise.
+    steps = parsed["jobs"]["python-tests"]["steps"]
+    run = next(step["run"] for step in steps if "test-nocov" in step.get("run", ""))
+    assert '"${{ github.event_name }}" = "pull_request"' in run
+    assert "hatch run test-nocov" in run
+    assert "hatch run test-cov" in run
+    # test-nocov only on the pull_request branch, test-cov only on the else branch.
+    assert run.index("test-nocov") < run.index("else") < run.index("hatch run test-cov")
+
+    # (b) scheduled runs are included in the full-matrix condition.
+    matrix_line = next(
+        line for line in workflow.splitlines() if "python-version: ${{" in line
+    )
+    assert "github.event_name == 'schedule'" in matrix_line
+
+    # (c) a schedule: trigger exists (BaseLoader keeps the YAML 1.1 ``on`` key).
+    triggers = yaml.load(workflow, Loader=yaml.BaseLoader)["on"]
+    assert "schedule" in triggers
+    assert [entry["cron"] for entry in triggers["schedule"]], (
+        "the schedule trigger must define at least one cron"
     )
 
     changes = yaml.safe_load(workflow)["jobs"]["changes"]

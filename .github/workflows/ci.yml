@@ -24,6 +24,17 @@ on:
         required: false
         default: false
         type: boolean
+  schedule:
+    # The coverage + 89% gate leg is too costly for every PR, and a push-to-dev
+    # coverage run is unreliable: the workflow-level `concurrency` group below
+    # (`cancel-in-progress: true`) cancels an in-flight dev push run when the next
+    # dev push lands, so the ~80-90 min coverage matrix rarely survives (it
+    # completed ~1 of the last ~10 dev runs). A `schedule` event gets its own
+    # `github.event_name`-keyed concurrency group, so pushes CANNOT cancel it --
+    # this cron is the reliable home of the coverage gate. It runs on `dev` (the
+    # `schedule` branch of the dev_sha capture in `changes` resolves origin/dev),
+    # NOT the default branch a cron would otherwise check out.
+    - cron: '0 */4 * * *'
 
 concurrency:
   # `github.event_name` keeps dispatched repair windows and push-to-dev runs in
@@ -98,9 +109,20 @@ jobs:
           # reuse it in every suite checkout so the tested tree is the attested SHA.
           fetch-depth: 0
       - id: dispatched-dev
-        if: github.event_name == 'workflow_dispatch'
-        name: Capture the dispatched dev commit
-        run: echo "dev_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+        name: Capture the dev commit under test
+        # A validated `--ref dev` workflow_dispatch has HEAD already on the dev
+        # commit. A `schedule` cron instead checks out the DEFAULT branch (main),
+        # so resolve dev explicitly -- the coverage gate must run on dev. The
+        # `changes` checkout above uses fetch-depth:0, so origin/dev resolves after
+        # this fetch; every suite checkout reuses the captured dev_sha.
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            git fetch --no-tags origin +refs/heads/dev:refs/remotes/origin/dev
+            echo "dev_sha=$(git rev-parse origin/dev)" >> "$GITHUB_OUTPUT"
+          else
+            echo "dev_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          fi
       - id: filter
         name: Classify the diff (language domains + documentation relevance)
         run: |
@@ -563,12 +585,12 @@ jobs:
         # The full set is EVERY version the wheel's classifiers advertise, so
         # "declared" and "tested" cannot drift apart: 3.13 was claimed but never
         # exercised, which is the same species of lie as an untested 3.10 claim.
-        # Three legs on pushes is also what this job carried before the floor moved
-        # (3.10/3.11/3.12). `max-parallel` above controls their fan-out without
-        # weakening the version coverage.
+        # Three legs on pushes (and the scheduled coverage cron) is also what this
+        # job carried before the floor moved (3.10/3.11/3.12). `max-parallel` above
+        # controls their fan-out without weakening the version coverage.
         # Pull requests and the required-context dispatches are the fallthrough. If
         # another trigger is added, classify its version coverage explicitly.
-        python-version: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' && inputs.full_python_matrix) && fromJSON('["3.12", "3.13", "3.14"]') || fromJSON('["3.12"]') }}
+        python-version: ${{ (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' && inputs.full_python_matrix) && fromJSON('["3.12", "3.13", "3.14"]') || fromJSON('["3.12"]') }}
     env:
       # Pin BLAS/OpenMP to one thread per leg. This suite runs SERIALLY, yet each
       # leg burned ~316% CPU on the self-hosted box -- numpy spawning threads to
@@ -768,16 +790,23 @@ jobs:
         # on a macOS runner and a CUDA image respectively (#2544).
         run: hatch run check-native --require cxx
 
-      - name: Test (PRs skip coverage for speed; push/dispatch enforce the gate)
+      - name: Test (PRs skip coverage for speed; push/schedule/dispatch enforce the gate)
         if: needs.changes.outputs.dom_py != 'false'
         # Coverage instrumentation is the dominant CPU cost of this job (~60-90 min
-        # under contention) and the merge-rate ceiling: it is what makes every PR
+        # under contention) and the merge-rate ceiling: it is what made every PR
         # wait ~an hour on the self-hosted pool. Per-PR runs now skip it and run the
-        # same `-m 'not slow'` suite plain (fast). Coverage collection AND the 89%
-        # threshold still run on every push to dev and on the full-matrix dispatch,
-        # so a coverage regression reddens dev (halting promote-ff) rather than
-        # gating each PR. The job/context name (`python-tests (<ver>)`) is unchanged,
-        # so no required status context is orphaned.
+        # same `-m 'not slow'` suite plain (fast, `test-nocov`).
+        #
+        # Coverage collection AND the 89% threshold run on every NON-PR event
+        # (`test-cov`, the else branch below -- i.e. EVERY dispatch, not only the
+        # full-matrix one): the every-4h `schedule` cron on dev is the reliable home
+        # of the gate (its own concurrency group survives dev pushes), a manual
+        # `workflow_dispatch` runs it too, and a push to dev runs it best-effort
+        # (the workflow `concurrency` group usually cancels the ~80-90 min coverage
+        # leg before it finishes when the next dev push lands). A regression
+        # therefore reddens the scheduled/dispatch dev run (halting promote-ff)
+        # rather than gating each PR. The job/context name (`python-tests (<ver>)`)
+        # is unchanged, so no required status context is orphaned.
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             hatch run test-nocov

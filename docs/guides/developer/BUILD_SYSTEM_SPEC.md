@@ -894,11 +894,26 @@ runs everything. The same trade as the per-PR Python matrix below: found on
 
 `python-tests` is a matrix whose legs depend on the event:
 
-| Event | Python legs |
-|-------|-------------|
-| `pull_request` | `3.12` — the floor, and the one required status context |
-| `push` to `dev` | `3.12`, `3.13`, `3.14` |
-| `workflow_dispatch` | `3.12` by default; `3.12`, `3.13`, `3.14` with `full_python_matrix=true` |
+| Event | Python legs | Coverage |
+|-------|-------------|----------|
+| `pull_request` | `3.12` — the floor, and the one required status context | no (`test-nocov`) |
+| `push` to `dev` | `3.12`, `3.13`, `3.14` | best-effort (`test-cov`) |
+| `schedule` (every 4h, on `dev`) | `3.12`, `3.13`, `3.14` | yes (`test-cov`) |
+| `workflow_dispatch` | `3.12` by default; `3.12`, `3.13`, `3.14` with `full_python_matrix=true` | yes (`test-cov`) |
+
+Coverage instrumentation plus the 89% `fail_under` gate is the dominant cost of
+`python-tests`, so it is off the per-PR critical path: PRs run the `-m 'not slow'`
+suite plain (`hatch run test-nocov`), while every non-PR event runs `hatch run
+test-cov`. A push to `dev` runs it only best-effort — the workflow-level
+`concurrency` group (`cancel-in-progress: true`) usually cancels the ~80–90 min
+coverage leg when the next dev push lands — so the reliable home of the gate is
+the every-4h `schedule` cron, which gets its own `github.event_name`-keyed
+concurrency group that pushes cannot cancel. Scheduled and dispatched runs check
+out `dev` (the `changes` job resolves `origin/dev` for a schedule event, since a
+cron otherwise checks out the default branch) and take the full interpreter
+matrix. A coverage regression therefore reddens the scheduled/dispatch dev run,
+halting promotion, rather than gating each PR; the `python-tests` context name is
+unchanged, so no required status is orphaned.
 
 3.12 is the floor (`requires-python = ">=3.12"`) and names the required
 `python-tests (3.12)` context. Merge pushes exercise every supported interpreter,
@@ -907,7 +922,7 @@ requests a repair window at most once every three hours while cancelled contexts
 promotion. A missed dispatch leaves promotion stale until a later request or a naturally
 green merge push; the service warns rather than failing its promotion pass. A manually
 dispatched repair window defaults to the required leg; the full-matrix input is available
-for diagnostics without restoring a redundant daily cron. Every dispatch also runs the
+for diagnostics; the only cron is the coverage `schedule` above, not a repair redispatcher. Every dispatch also runs the
 cancelled-push repair walk. Dispatch from `dev`, not the Actions UI's default `main`
 selection. On obsidian,
 `max-parallel: 2` prevents one Python matrix from monopolising all three shared
