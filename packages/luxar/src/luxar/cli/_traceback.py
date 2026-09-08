@@ -1,15 +1,16 @@
 """One way for a CLI command to fail, with a way to get the traceback back.
 
-Seventeen `except Exception` blocks across the CLI did the same three things:
-print a one-line message, then `raise typer.Exit(1)`. That is the right default
-— a stack trace is noise when the cause is "file not found" — but there was no
-way to opt out of it, so a genuine bug inside the library surfaced as one line
-with nowhere to go next. Eight of the seventeen discarded the original chain,
-so the cause was gone too (audit finding ``A9-02``).
+CLI handlers use this helper to print a one-line message, then
+`raise typer.Exit(1)`. That is the right default — a stack trace is noise when
+the cause is "file not found" — while a genuine bug still needs a way to expose
+its origin. The first seventeen routed sites included eight that discarded the
+original chain entirely (audit finding ``A9-02``); the remaining interactive
+handlers previously printed tracebacks unconditionally (#2553).
 
-Two things change. Setting ``LUXAR_TRACEBACK=1`` re-raises the original
-exception, traceback intact, and the message itself now says so — a hint nobody
-reads in the docs is a hint nobody has.
+Setting ``LUXAR_TRACEBACK=1`` re-raises the original exception, traceback
+intact, and the message itself says so — a hint nobody reads in the docs is a
+hint nobody has. Fatal lines fall back to stderr when arbol verbosity hides
+normal narration, so the quiet path cannot become a silent exit 1.
 
 An environment variable rather than a ``--traceback`` flag, deliberately: a
 Typer callback option has to precede the subcommand
@@ -21,10 +22,11 @@ gsplat fit …`` re-runs the exact command you just typed.
 from __future__ import annotations
 
 import os
+import sys
 from typing import NoReturn
 
 import typer
-from arbol import aprint
+from arbol import Arbol, aprint
 
 __all__ = [
     "TRACEBACK_ENV_VAR",
@@ -36,6 +38,20 @@ __all__ = [
 TRACEBACK_ENV_VAR = "LUXAR_TRACEBACK"
 
 _FALSEY = frozenset({"", "0", "false", "no", "off"})
+
+
+def _report_line(message: str) -> None:
+    """Print a fatal line through arbol, or stderr when arbol hides it."""
+    captured = getattr(Arbol._thread_local, "captured", False)
+    arbol_will_display = (
+        Arbol.passthrough
+        or captured
+        or (Arbol.enable_output and Arbol._depth <= Arbol.max_depth)
+    )
+    if arbol_will_display:
+        aprint(message)
+    else:
+        print(message, file=sys.stderr)
 
 
 def traceback_requested() -> bool:
@@ -74,6 +90,6 @@ def exit_with_error(message: str, error: BaseException) -> NoReturn:
     """
     if traceback_requested():
         raise error
-    aprint(message)
-    aprint(f"   (set {TRACEBACK_ENV_VAR}=1 and re-run for the full traceback)")
+    _report_line(message)
+    _report_line(f"   (set {TRACEBACK_ENV_VAR}=1 and re-run for the full traceback)")
     raise typer.Exit(1) from error

@@ -506,11 +506,7 @@ def _info_report(
 
         return True
     except Exception as e:
-        aprint(f"❌ Error: {e}")
-        import traceback
-
-        traceback.print_exc()
-        return False
+        exit_with_error(f"❌ Error: {e}", e)
 
 
 def info_dataset(
@@ -653,11 +649,7 @@ def napari_viewer(
     except typer.Exit:
         raise
     except Exception as e:
-        aprint(f"❌ Error opening dataset: {e}")
-        import traceback
-
-        traceback.print_exc()
-        raise typer.Exit(1)
+        exit_with_error(f"❌ Error opening dataset: {e}", e)
 
 
 def _resolve_view_target(path: Path) -> tuple[Path, Optional[Path]]:
@@ -792,11 +784,7 @@ def quick_view(
     except typer.Exit:
         raise
     except Exception as e:
-        aprint(f"❌ Error: {e}")
-        import traceback
-
-        traceback.print_exc()
-        raise typer.Exit(1)
+        exit_with_error(f"❌ Error: {e}", e)
     finally:
         # Every exit removes the extraction, not just the two error handlers
         # that used to: a NORMAL return from `_serve_viewer`, and the
@@ -1101,11 +1089,7 @@ def compare_quality(
     except typer.Exit:
         raise
     except Exception as e:
-        aprint(f"Error: {e}")
-        import traceback
-
-        traceback.print_exc()
-        raise typer.Exit(1)
+        exit_with_error(f"Error: {e}", e)
 
 
 def _print_normalization_block(root: Any) -> None:

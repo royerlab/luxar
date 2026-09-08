@@ -16,6 +16,11 @@ luxar gsplat fit --help      # a single command and all its options
 `--help` is the source of truth for options; this page is the source of truth for
 *which commands exist* and *where to read about the workflow they belong to*.
 
+Command failures print a concise error by default. Re-run the same command with
+`LUXAR_TRACEBACK=1` to include the full traceback. Long-running `gsplat fit` and
+`gsplat batch-fit run` / `submit` / `merge` commands always retain tracebacks in
+their unattended logs.
+
 ## Staying in sync
 
 The list of commands on this page is checked against the live Typer application by

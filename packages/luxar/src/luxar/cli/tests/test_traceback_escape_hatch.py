@@ -1,11 +1,10 @@
 """A failing CLI command must be able to hand back its traceback.
 
-Seventeen `except Exception` blocks across the CLI printed one line and raised
-`typer.Exit(1)`. That is the right default — a stack trace is noise when the
-cause is "file not found" — but there was no way to opt out, so a genuine bug
-inside the library surfaced as one line with nowhere to go next. Six raised a
-bare exit, and two used `from None`, so eight discarded the exception chain
-(audit finding `A9-02`).
+CLI handlers report one line and raise `typer.Exit(1)` by default, while
+`LUXAR_TRACEBACK=1` re-raises the original exception. The first seventeen
+routed sites included eight that discarded the exception chain (audit finding
+`A9-02`); #2553 routes the remaining interactive handlers that used to print a
+traceback unconditionally.
 
 Three things are tested, and the third is the one that keeps working:
 
@@ -29,6 +28,7 @@ from pathlib import Path
 
 import pytest
 import typer
+from arbol import Arbol
 
 import luxar
 from luxar.cli import _traceback
@@ -39,6 +39,12 @@ from luxar.cli._traceback import (
 )
 
 CLI_ROOT = Path(_traceback.__file__).parent
+UNATTENDED_TRACEBACK_HANDLERS = {
+    "cli/gsplat_ops/batch/merge_command.py::run_batch_merge_cmd",
+    "cli/gsplat_ops/batch/run.py::run_batch_run",
+    "cli/gsplat_ops/batch/submit.py::run_batch_submit",
+    "cli/gsplat_ops/fitting/fit.py::run_fit_volume",
+}
 
 
 def test_the_package_fixture_clears_this_exact_variable() -> None:
@@ -106,6 +112,24 @@ class TestExitWithError:
             exit_with_error("❌ nope", cause)
         assert caught.value.__cause__ is cause
 
+    def test_the_quiet_path_survives_silent_arbol(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A fatal report must not disappear with ordinary narration."""
+        monkeypatch.delenv(TRACEBACK_ENV_VAR, raising=False)
+        monkeypatch.setattr(Arbol, "enable_output", False)
+        cause = ValueError("the underlying problem")
+
+        with pytest.raises(typer.Exit):
+            exit_with_error("❌ nope", cause)
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "❌ nope" in captured.err
+        assert TRACEBACK_ENV_VAR in captured.err
+
     def test_the_loud_path_reraises_the_original_unchanged(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -158,8 +182,6 @@ def _discarding_exits(
         caught = ast.unparse(node.type) if node.type else "BaseException"
         if caught not in {"Exception", "BaseException"}:
             continue
-        body = "\n".join(ast.unparse(s) for s in node.body)
-        prints_traceback = "print_exc" in body or "format_exc" in body
         for stmt in ast.walk(node):
             if not isinstance(stmt, ast.Raise) or stmt.exc is None:
                 continue
@@ -170,49 +192,86 @@ def _discarding_exits(
                 and stmt.cause is not None
                 and ast.unparse(stmt.cause) == node.name
             )
-            if not chained and not prints_traceback:
+            if not chained:
                 offenders.append((node, stmt, caught))
     return offenders
 
 
-def test_no_cli_handler_discards_a_caught_exception() -> None:
-    """A broad handler that exits must not throw the cause away entirely.
+def _enclosing_function(
+    node: ast.AST, parents: dict[ast.AST, ast.AST]
+) -> ast.FunctionDef | ast.AsyncFunctionDef:
+    owner = node
+    while owner in parents and not isinstance(
+        parents[owner], (ast.FunctionDef, ast.AsyncFunctionDef)
+    ):
+        owner = parents[owner]
+    function = parents.get(owner)
+    assert isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
+    return function
 
-    Three ways to satisfy it, and the bar is deliberately the weakest of them:
+
+def test_no_interactive_cli_handler_discards_a_caught_exception() -> None:
+    """A broad interactive handler must preserve the cause it exits from.
+
+    Two ways to satisfy it:
 
     1. Route through `exit_with_error`, which offers the traceback on request
        and chains the cause either way. Preferred.
     2. Chain it yourself: `raise typer.Exit(1) from err`.
-    3. Print the traceback in the handler (`traceback.print_exc()`).
-
-    Option 3 is included because roughly two dozen CLI handlers already do it,
-    and they are not the defect this file is about: they surface the traceback,
-    they just surface it *unconditionally*, so a plain "file not found" arrives
-    with a stack trace attached. Routing those through `exit_with_error` too
-    would make the traceback opt-in everywhere — a real improvement, and a
-    behaviour change for two dozen commands, so it belongs in its own change
-    rather than being smuggled in behind a gate. #2553 tracks that follow-up.
-    Until then this test pins the honest invariant (nothing is thrown away)
-    rather than the one we would like (everything is consistent).
 
     Parsed with `ast` rather than grepped, so a `raise typer.Exit` in a string
     or comment cannot trip it and one inside a nested function cannot hide from
     it.
     """
     offenders: list[str] = []
+    unattended: set[str] = set()
     for path in _cli_sources():
         tree = ast.parse(path.read_text())
+        parents = {
+            child: parent
+            for parent in ast.walk(tree)
+            for child in ast.iter_child_nodes(parent)
+        }
         rel = path.relative_to(CLI_ROOT.parent)
         for node, stmt, caught in _discarding_exits(tree):
+            key = f"{rel}::{_enclosing_function(node, parents).name}"
+            if key in UNATTENDED_TRACEBACK_HANDLERS:
+                unattended.add(key)
+                continue
             binding = f" as {node.name}" if node.name is not None else ""
             offenders.append(
                 f"{rel}:{stmt.lineno}: except {caught}{binding} -> {ast.unparse(stmt)}"
             )
+    assert unattended == UNATTENDED_TRACEBACK_HANDLERS
     assert not offenders, (
         "these handlers discard the exception they caught. Use "
         "`exit_with_error(message, err)` or `raise typer.Exit(1) from err`:\n  "
         + "\n  ".join(offenders)
     )
+
+
+def test_only_unattended_handlers_print_tracebacks_unconditionally() -> None:
+    """Long-running fit/batch entry points keep tracebacks in unattended logs."""
+    observed: set[str] = set()
+    for path in _cli_sources():
+        tree = ast.parse(path.read_text())
+        parents = {
+            child: parent
+            for parent in ast.walk(tree)
+            for child in ast.iter_child_nodes(parent)
+        }
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if not (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr in {"print_exc", "format_exc"}
+            ):
+                continue
+            function = _enclosing_function(node, parents)
+            observed.add(f"{path.relative_to(CLI_ROOT.parent)}::{function.name}")
+
+    assert observed == UNATTENDED_TRACEBACK_HANDLERS
 
 
 def test_the_scan_would_notice_a_discarding_handler() -> None:
@@ -226,7 +285,6 @@ def test_the_scan_would_notice_a_discarding_handler() -> None:
     """
     source = (
         "import typer\n"
-        "import traceback\n"
         "def good():\n"
         "    try:\n"
         "        pass\n"
@@ -247,15 +305,9 @@ def test_the_scan_would_notice_a_discarding_handler() -> None:
         "        pass\n"
         "    except ValueError as e:\n"
         "        raise typer.Exit(1)\n"
-        "def printing_good():\n"
-        "    try:\n"
-        "        pass\n"
-        "    except BaseException:\n"
-        "        traceback.print_exc()\n"
-        "        raise typer.Exit(1)\n"
     )
     found = [stmt.lineno for _, stmt, _ in _discarding_exits(ast.parse(source))]
-    assert found == [12, 17], f"expected both discarding handlers, got {found}"
+    assert found == [11, 16], f"expected both discarding handlers, got {found}"
 
 
 class TestItWorksThroughTheRealCli:
