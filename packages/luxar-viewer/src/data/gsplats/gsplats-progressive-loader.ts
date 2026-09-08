@@ -577,7 +577,9 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       this.lastViewState.dimensions = viewState.dimensions;
     }
 
-    if (this._initialLoadDone) this.warmRemainingLODMetadata();
+    if (this._initialLoadDone && this._frameBudgetMs === null && !isPrefetch) {
+      this.warmRemainingLODMetadata();
+    }
 
     // Stream the LOD ladder under the shared streaming policy (see
     // `streaming-policy.ts`): `playback` streams cache-resident levels after an

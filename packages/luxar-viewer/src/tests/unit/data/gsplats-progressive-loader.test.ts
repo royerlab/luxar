@@ -1094,6 +1094,15 @@ describe('GSplatsProgressiveLoader', () => {
       expect(lodC.ensureInitialized).toHaveBeenCalledTimes(1);
     });
 
+    it('does not batch spatial-index metadata during playback', async () => {
+      await loader.loadGSplats(baseViewState);
+
+      await loader.updateView({ ...baseViewState, frameBudgetMs: 1_000 });
+
+      expect(lodB.ensureInitialized).not.toHaveBeenCalled();
+      expect(lodC.ensureInitialized).not.toHaveBeenCalled();
+    });
+
     it('prefetches up to three later rungs once metadata warming has started', async () => {
       const lods = Array.from({ length: 8 }, (_, index) =>
         makeSubLoader(makeLodData(100 - index), {}, 100)
