@@ -73,9 +73,7 @@ def test_non_blocking_steps_do_not_count_as_ci_coverage() -> None:
         }
     }
 
-    assert _invoked_hatch_scripts(_workflow_run_commands(workflow)) == {
-        "check-imports"
-    }
+    assert _invoked_hatch_scripts(_workflow_run_commands(workflow)) == {"check-imports"}
 
 
 def _uncovered_check_static_members(
