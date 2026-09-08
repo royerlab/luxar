@@ -1235,7 +1235,7 @@ export class SceneLoader {
         );
       } else {
         const scope = opts.resyncPaths
-          ? `${opts.resyncPaths.size} target path(s)`
+          ? `${opts.resyncPaths.size} target path(s): ${[...opts.resyncPaths].join(', ')}`
           : `all ${totalLoaders} loaders`;
         log.update(Modules.SCENE_LOADER, `Resyncing view v${currentVersion} (${scope})`);
       }

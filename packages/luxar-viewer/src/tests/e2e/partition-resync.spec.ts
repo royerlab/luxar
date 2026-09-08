@@ -166,7 +166,9 @@ test.describe('kind=partition of kind=lod parts — frustum re-entry resync', ()
     const updatingAfter = console.logs.filter((l) => /Updating view v/.test(l)).length;
     expect(updatingAfter, 'no view-version bump from a camera move').toBe(updatingBefore);
     expect(
-      console.logs.some((l) => /Resyncing view v\d+ \(1 target path/.test(l)),
+      console.logs.some((l) =>
+        /Resyncing view v\d+ \(1 target path\(s\): \/tiled\/part_1\)/.test(l)
+      ),
       'the re-entering part was resynced on its own'
     ).toBe(true);
 
