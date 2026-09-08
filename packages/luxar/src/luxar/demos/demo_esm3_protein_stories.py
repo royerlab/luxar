@@ -717,10 +717,10 @@ HUM_GAIN = 0.5
 #: stepping through the tour also walks a melody.
 HUM_BASE_HZ = 82.41
 HUM_SEMITONES = (0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24, 26)
-#: PannerNode distances relative to the cluster's framing radius: at the story
-#: camera (about nine radii out, inverse model) the hum sits near -13 dB.
-HUM_REF_DISTANCE_PER_R95 = 2.0
-HUM_MAX_DISTANCE_PER_R95 = 40.0
+#: Under the inverse distance model, ``ref_distance / camera_distance`` is the
+#: gain at the story camera. Keep the original -13 dB tuning and 20x range.
+HUM_REF_DISTANCE_PER_CAMERA_DISTANCE = 10 ** (-13.0 / 20.0)
+HUM_MAX_DISTANCE_PER_CAMERA_DISTANCE = 20.0 * HUM_REF_DISTANCE_PER_CAMERA_DISTANCE
 
 # The Biohub mark shown bottom-right: a white glyph on transparency, bundled
 # inside the package (not under demos/data, which the wheel excludes) so the
@@ -756,6 +756,16 @@ def framing_radius(cluster: StoryCluster) -> float:
             SPHERE_MIN_RADIUS, SPHERE_RADIUS_SCALE * SPARSE_TAIL_RATIO * cluster.r50
         )
     return bubble_radius(cluster)
+
+
+def story_camera_distance(cluster: StoryCluster, story: Story) -> float:
+    """Distance from the story camera to its cluster centre."""
+    half_height_per_unit = math.tan(math.radians(CINEMATIC_FOV_DEG) / 2)
+    return max(
+        story.min_distance,
+        framing_radius(cluster) / (story.frame_fraction * half_height_per_unit),
+        BUBBLE_CAMERA_CLEARANCE * bubble_radius(cluster),
+    )
 
 
 # The shell is a SOAP BUBBLE: `material="physical"` (MESH_PHYSICAL_MATERIALS_SPEC
@@ -965,12 +975,7 @@ def story_camera(
     # `frame_fraction` of the frame height under a 63° vertical field of view.
     # A sphere of radius R at distance d spans 2R of the frame's 2·d·tan(fov/2)
     # height, so R / (d·tan) is its fraction of the height.
-    half_height_per_unit = math.tan(math.radians(CINEMATIC_FOV_DEG) / 2)
-    distance = max(
-        story.min_distance,
-        framing_radius(cluster) / (story.frame_fraction * half_height_per_unit),
-        BUBBLE_CAMERA_CLEARANCE * bubble_radius(cluster),
-    )
+    distance = story_camera_distance(cluster, story)
     position = cluster.centre + outward * distance
     return CameraConfig(
         position=tuple(float(v) for v in position),
@@ -1142,6 +1147,7 @@ def add_story_sounds(
             clip = synthesise_hum(hum_frequency_hz(k), HUM_SECONDS, hum_dir)
             if clip is None:
                 break
+            camera_distance = story_camera_distance(c, s)
             scene.add_sound(  # type: ignore[attr-defined]
                 f"hum_{s.key}",
                 clip,
@@ -1152,8 +1158,8 @@ def add_story_sounds(
                 fade_in_ms=1200,
                 fade_out_ms=1200,
                 bus="effects",
-                ref_distance=max(0.5, HUM_REF_DISTANCE_PER_R95 * c.r95),
-                max_distance=max(20.0, HUM_MAX_DISTANCE_PER_R95 * c.r95),
+                ref_distance=(HUM_REF_DISTANCE_PER_CAMERA_DISTANCE * camera_distance),
+                max_distance=(HUM_MAX_DISTANCE_PER_CAMERA_DISTANCE * camera_distance),
                 rolloff=1.0,
                 license="CC0",
                 attribution="Hum synthesised at build time (luxar demo)",

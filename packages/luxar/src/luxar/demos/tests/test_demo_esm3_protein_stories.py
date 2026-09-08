@@ -385,12 +385,24 @@ def test_add_story_sounds_authors_a_bed_and_one_narration_per_slot(
 
     monkeypatch.setattr(demo, "synthesise_foa_from_clip", fake_foa)
     stories = (
-        _story(key="A", flight_ms=2000),
+        _story(key="A", frame_fraction=0.72, flight_ms=2000),
         _story(key="B", pattern="^x", flight_ms=4000),
     )
     clusters = [
-        StoryCluster(indices=np.array([0]), centre=np.zeros(3), r95=0.5, n_named=1),
-        StoryCluster(indices=np.array([1]), centre=np.ones(3), r95=2.0, n_named=1),
+        StoryCluster(
+            indices=np.array([0]),
+            centre=np.zeros(3),
+            r95=0.5,
+            r50=0.1,
+            n_named=1,
+        ),
+        StoryCluster(
+            indices=np.array([1]),
+            centre=np.ones(3),
+            r95=2.0,
+            r50=1.1,
+            n_named=1,
+        ),
     ]
     store = tmp_path / "s.luxar.zarr"
     with LuxarZarrCompiler(store) as compiler:
@@ -445,19 +457,27 @@ def test_add_story_sounds_authors_a_bed_and_one_narration_per_slot(
     overview = dict(root["narration_Overview"].attrs)
     assert overview["trigger"] == "on_arrive"
 
-    # One hum per cluster, attached to the story's highlight node, scaled by r95.
+    # One hum per cluster, attached to the story's highlight node and tuned from
+    # the same distance as its story camera.
     assert hums == [hum_frequency_hz(1), hum_frequency_hz(2)]
     assert hum_frequency_hz(2) > hum_frequency_hz(1)
     hum_b = dict(root["hum_B"].attrs)
     assert hum_b["attach_to"] == story_node_name(2, stories[1]) == "Story 2: B"
     assert hum_b["spatial"] is True and hum_b["bus"] == "effects"
     assert hum_b["trigger"] == "continuous" and hum_b["loop"] is True
-    assert hum_b["ref_distance"] == pytest.approx(2.0 * demo.HUM_REF_DISTANCE_PER_R95)
-    assert hum_b["max_distance"] == pytest.approx(2.0 * demo.HUM_MAX_DISTANCE_PER_R95)
+    camera_b = demo.story_camera_distance(clusters[1], stories[1])
+    assert hum_b["ref_distance"] == pytest.approx(
+        camera_b * demo.HUM_REF_DISTANCE_PER_CAMERA_DISTANCE
+    )
+    assert hum_b["max_distance"] == pytest.approx(
+        camera_b * demo.HUM_MAX_DISTANCE_PER_CAMERA_DISTANCE
+    )
+    assert 20 * np.log10(hum_b["ref_distance"] / camera_b) == pytest.approx(-13.0)
     assert hum_b["has_positions"] is True and hum_b["n_positions"] == 1
     hum_a = dict(root["hum_A"].attrs)
+    camera_a = demo.story_camera_distance(clusters[0], stories[0])
     assert hum_a["ref_distance"] == pytest.approx(
-        max(0.5, 0.5 * demo.HUM_REF_DISTANCE_PER_R95)
+        camera_a * demo.HUM_REF_DISTANCE_PER_CAMERA_DISTANCE
     )
 
 
