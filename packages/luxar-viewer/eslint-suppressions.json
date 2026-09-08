@@ -320,9 +320,6 @@
     }
   },
   "src/data/loaders/overlays/overlay-loader.ts": {
-    "@typescript-eslint/no-base-to-string": {
-      "count": 1
-    },
     "complexity": {
       "count": 2
     }
@@ -587,11 +584,6 @@
     },
     "max-params": {
       "count": 1
-    }
-  },
-  "src/data/scene-loader/nodes/load-mesh-node.ts": {
-    "@typescript-eslint/no-base-to-string": {
-      "count": 2
     }
   },
   "src/data/scene-loader/nodes/load-partition-group-node.ts": {
@@ -1110,11 +1102,6 @@
       "count": 1
     }
   },
-  "src/scene/scene-manager/render-pipeline/webgl-context-recovery.ts": {
-    "@typescript-eslint/no-misused-promises": {
-      "count": 1
-    }
-  },
   "src/scene/synthetic-scene.ts": {
     "complexity": {
       "count": 1
@@ -1261,9 +1248,6 @@
     }
   },
   "src/ui/data-loading-monitor.ts": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 2
-    },
     "complexity": {
       "count": 3
     }
@@ -1342,24 +1326,11 @@
     }
   },
   "src/ui/dataset-browser.ts": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 3
-    },
     "complexity": {
       "count": 2
     },
     "max-lines-per-function": {
       "count": 1
-    }
-  },
-  "src/ui/debug-console.ts": {
-    "@typescript-eslint/no-base-to-string": {
-      "count": 2
-    }
-  },
-  "src/ui/debug-console/formatters.ts": {
-    "@typescript-eslint/no-base-to-string": {
-      "count": 2
     }
   },
   "src/ui/dimension-sliders.ts": {
@@ -1417,9 +1388,6 @@
     }
   },
   "src/ui/layers/layers-panel.ts": {
-    "@typescript-eslint/no-misused-promises": {
-      "count": 1
-    },
     "complexity": {
       "count": 4
     }
@@ -1448,9 +1416,6 @@
     }
   },
   "src/ui/recording-panel.ts": {
-    "@typescript-eslint/no-misused-promises": {
-      "count": 2
-    },
     "complexity": {
       "count": 1
     }

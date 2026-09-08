@@ -24,6 +24,7 @@ import type {
   SceneGraphNode,
 } from '../../../types/data-monitor-types';
 import type { TimingEntry, UpdateProfiler } from '../../../profiling/update-profiler';
+import { notifier } from '../../../utils/cross-layer/notifier';
 
 function seedLODStates(monitor: DataLoadingMonitor, states: Map<string, LODProgressState>): void {
   monitor.setLODProgressProvider({ getLODStates: () => states });
@@ -1643,6 +1644,27 @@ describe('DataLoadingMonitor', () => {
       await monitor.clearAllCaches({ skipConfirm: true });
 
       expect(mockProvider.clearAll).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ['clearL2', 'clearL2Cache', 'L2 cache'],
+      ['clearAll', 'clearAllCaches', 'all caches'],
+    ] as const)('reports a rejected %s button action', async (action, method, label) => {
+      const failure = new Error(`${action} failed`);
+      vi.spyOn(monitor, method).mockRejectedValue(failure);
+      const toast = vi.spyOn(notifier, 'toast').mockImplementation(() => {});
+      const target = document.createElement('button');
+      target.dataset.action = action;
+
+      (
+        monitor as unknown as {
+          handleUIEvent(event: Event): void;
+        }
+      ).handleUIEvent({ target } as unknown as Event);
+
+      await vi.waitFor(() => {
+        expect(toast).toHaveBeenCalledWith(`Failed to clear ${label}`);
+      });
     });
 
     it('clearL2Cache without skipConfirm respects window.confirm cancel (commit 7.3)', async () => {

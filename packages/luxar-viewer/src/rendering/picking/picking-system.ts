@@ -493,7 +493,7 @@ export class PickingSystem {
     this._explicitPickSeq++;
     // Fade overlay (OverlayManager dedupes against the last state, so
     // repeated calls do no DOM work).
-    void this.onPickResult(null);
+    void this.deliverPickResult(null);
     this.scheduler.markDirty();
   }
 
@@ -552,7 +552,7 @@ export class PickingSystem {
     // pick's late result is now stale.
     this._pickSeq++;
     // Fade existing overlay while moving (dedupe-safe).
-    void this.onPickResult(null);
+    void this.deliverPickResult(null);
     this.scheduler.recordMouseMove(x, y);
   }
 
@@ -595,7 +595,7 @@ export class PickingSystem {
     this._pickSeq++;
     this._explicitPickSeq++;
     this.scheduler.recordMouseLeave();
-    void this.onPickResult(null);
+    void this.deliverPickResult(null);
   }
 
   /** Clean up all resources — render target, pick materials, scene. */
@@ -728,7 +728,7 @@ export class PickingSystem {
     const ray = this.raycaster.ray;
 
     if (!rayHitsAnyNode(ray, this.nodeMap, this._worldBoxCache)) {
-      await this.onPickResult(null);
+      await this.deliverPickResult(null);
       return;
     }
 
@@ -743,7 +743,30 @@ export class PickingSystem {
     // with a stale tooltip.
     if (pickSeq !== this._pickSeq && (!authoritative || explicitPickSeq !== this._explicitPickSeq))
       return;
-    await this.onPickResult(result);
+    await this.deliverPickResult(result);
+  }
+
+  /**
+   * Hand a result to `onPickResult`, containing both synchronous throws and
+   * async rejections so a failing handler is logged rather than leaked.
+   *
+   * Returns a promise that settles once the handler has finished, so the
+   * awaited delivery in {@link performPick} — which is what lets
+   * {@link pickAt} resolve only after the picked-element cache is written —
+   * gets the same containment as the fire-and-forget fades. Handlers are
+   * typed async, but the value is normalised through `Promise.resolve` so a
+   * synchronous callback (a bare `vi.fn()` in a test, say) cannot turn into
+   * a `.catch` of `undefined`.
+   */
+  private deliverPickResult(result: PickResult | null): Promise<void> {
+    try {
+      return Promise.resolve(this.onPickResult(result)).catch((error: unknown) => {
+        log.error(Modules.RENDERER, 'Pick result handler failed', error);
+      });
+    } catch (error) {
+      log.error(Modules.RENDERER, 'Pick result handler failed', error);
+      return Promise.resolve();
+    }
   }
 
   /**

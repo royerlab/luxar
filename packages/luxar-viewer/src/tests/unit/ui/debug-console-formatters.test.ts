@@ -6,8 +6,36 @@ import { describe, it, expect } from 'vitest';
 import {
   formatArgs,
   formatConsoleTimestamp,
+  formatFallbackValue,
   messageMatchesFilter,
 } from '../../../ui/debug-console/formatters';
+
+describe('formatFallbackValue', () => {
+  it('uses ordinary object stringification', () => {
+    expect(formatFallbackValue({ key: 'value' })).toBe('[object Object]');
+  });
+
+  it('honours Symbol.toPrimitive', () => {
+    expect(formatFallbackValue({ [Symbol.toPrimitive]: () => 'custom' })).toBe('custom');
+  });
+
+  it('always returns a string when toString returns a primitive', () => {
+    expect(formatFallbackValue({ toString: () => 42 })).toBe('42');
+  });
+
+  it('contains null-prototype and throwing stringification', () => {
+    const nullPrototype = Object.create(null) as Record<string, unknown>;
+    nullPrototype.self = nullPrototype;
+    expect(formatFallbackValue(nullPrototype)).toBe('[unprintable]');
+    expect(
+      formatFallbackValue({
+        toString: () => {
+          throw new Error('boom');
+        },
+      })
+    ).toBe('[unprintable]');
+  });
+});
 
 describe('formatArgs', () => {
   it('returns empty string for empty arg list', () => {
@@ -90,6 +118,12 @@ describe('formatArgs', () => {
     const out = formatArgs([obj]);
     // Circular fallback hits `String(arg)`, which is "[object Object]".
     expect(out).toBe('[object Object]');
+  });
+
+  it('contains a circular null-prototype argument', () => {
+    const obj = Object.create(null) as Record<string, unknown>;
+    obj.self = obj;
+    expect(formatArgs([obj])).toBe('[unprintable]');
   });
 
   it('handles a mix of types in one call', () => {
