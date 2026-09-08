@@ -404,5 +404,44 @@ describe('WaypointDriver', () => {
       driver.evaluate('fly');
       expect(driver.inTransit).toBe(false);
     });
+
+    it('a stale flight cannot arrive after leaving and re-entering the same waypoint', async () => {
+      const current = { step: [0, 0, 0, 7, 0] };
+      const ports = makePorts(current);
+      let resolveFirst!: (result: { completed: boolean }) => void;
+      let resolveSecond!: (result: { completed: boolean }) => void;
+      ports.flyTo
+        .mockImplementationOnce(() => new Promise((resolve) => (resolveFirst = resolve)))
+        .mockImplementationOnce(() => new Promise((resolve) => (resolveSecond = resolve)));
+      const arrivals: Array<{ index: number; completed: boolean }> = [];
+      const driver = new WaypointDriver(REVEALING, {
+        ...ports,
+        emit: (event, payload) => {
+          if (event === 'waypoint-arrived' && 'completed' in payload) arrivals.push(payload);
+        },
+      });
+      driver.evaluate('snap');
+
+      current.step = [0, 0, 0, 0, 0];
+      driver.evaluate('fly');
+      expect(driver.inTransit).toBe(true);
+      current.step = [0, 0, 0, 7, 0];
+      driver.evaluate('fly');
+      current.step = [0, 0, 0, 0, 0];
+      driver.evaluate('fly');
+      expect(driver.inTransit).toBe(true);
+
+      resolveFirst({ completed: false });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(driver.inTransit).toBe(true);
+      expect(arrivals).toEqual([]);
+
+      resolveSecond({ completed: true });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(driver.inTransit).toBe(false);
+      expect(arrivals).toEqual([{ index: 0, completed: true }]);
+    });
   });
 });

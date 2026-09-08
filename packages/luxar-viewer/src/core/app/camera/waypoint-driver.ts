@@ -201,6 +201,7 @@ export type WaypointArrival = 'snap' | 'fly';
 export class WaypointDriver {
   private current = -1;
   private transit = false;
+  private activeFlight: Promise<FlightResult> | null = null;
 
   constructor(
     private readonly waypoints: readonly ZarrWaypoint[],
@@ -236,12 +237,14 @@ export class WaypointDriver {
     this.current = idx;
     if (previous >= 0) this.ports.emit?.('waypoint-departed', { index: previous });
     if (idx < 0) {
+      this.activeFlight = null;
       this.transit = false;
       return idx;
     }
 
     const wp = this.waypoints[idx];
     const flight = this.applyWaypoint(wp, arrival);
+    this.activeFlight = flight;
     // The gate is per DESTINATION: a newer match re-decides it, so a superseded
     // flight cannot leave the overlays held open or closed on its behalf.
     this.transit = flight !== null && wp.reveal === 'on_arrival';
@@ -271,7 +274,8 @@ export class WaypointDriver {
       return;
     }
     void flight.then((result) => {
-      if (this.current !== idx) return;
+      if (this.activeFlight !== flight) return;
+      this.activeFlight = null;
       // Cleared BEFORE the event, so an arrival listener that re-runs the
       // overlay visibility pass already sees the gate open.
       this.transit = false;
@@ -315,6 +319,7 @@ export class WaypointDriver {
   /** Forget the current match so the next `evaluate` re-applies it. */
   reset(): void {
     this.current = -1;
+    this.activeFlight = null;
     this.transit = false;
   }
 }
