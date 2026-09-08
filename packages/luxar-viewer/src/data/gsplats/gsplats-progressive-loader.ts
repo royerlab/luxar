@@ -74,14 +74,13 @@ function readPrefetchHeadroom(loader: GSplatsSpatialIndexLoader | undefined): nu
 async function selectPrefetchLevels(
   lodLoaders: readonly GSplatsSpatialIndexLoader[],
   firstLevel: number,
-  nLods: number,
   maxLevels: number,
   headroom: number,
   viewState: GSplatsViewState
 ): Promise<number[]> {
   const levels: number[] = [];
   let reservedBytes = 0;
-  const stopLevel = Math.min(nLods, firstLevel + maxLevels);
+  const stopLevel = Math.min(lodLoaders.length, firstLevel + maxLevels);
   const candidates = lodLoaders.slice(firstLevel, stopLevel);
   const estimates = await Promise.all(
     candidates.map((loader) => loader.estimatePrefetchBytes(viewState))
@@ -683,7 +682,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     }
 
     // Fire-and-forget: prefetch later unloaded LODs to warm cache.
-    void this.prefetchNextLODs(viewState);
+    this.prefetchNextLODs(viewState);
 
     // Snapshot into the SliceCache (upgrade-if-longer): full ladders always
     // (instant revisit restore); PREFIXES only while a playback budget is
@@ -764,7 +763,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
    * get() calls (populating the cache) WITHOUT allocating full-size output
    * buffers or running the accumulator — avoiding wasted memory.
    */
-  private async prefetchNextLODs(viewState: GSplatsViewState): Promise<void> {
+  private prefetchNextLODs(viewState: GSplatsViewState): void {
     // Same teardown race as the streaming loop: a dispose() between the
     // awaited level and this fire-and-forget clears `lodLoaders`, and
     // indexing it would TypeError before the .catch can swallow anything.
@@ -782,14 +781,23 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     this.startLookaheadPrefetch(firstLevel, viewState, controller);
     if (maxLevels === 1 || this._prefetchPlanning) return;
 
+    void this.planDeepLookahead(firstLevel, maxLevels, headroom ?? 0, viewState, controller);
+  }
+
+  private async planDeepLookahead(
+    firstLevel: number,
+    maxLevels: number,
+    headroom: number,
+    viewState: GSplatsViewState,
+    controller: AbortController
+  ): Promise<void> {
     this._prefetchPlanning = true;
     try {
       const levels = await selectPrefetchLevels(
         this.lodLoaders,
         firstLevel,
-        this.nLods,
         maxLevels,
-        headroom ?? 0,
+        headroom,
         viewState
       );
       if (controller.signal.aborted || this._disposed) return;
