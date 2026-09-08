@@ -92,10 +92,27 @@ export interface LODGroupRegistryOwner {
   readonly gpuBufferPool: GPUBufferPool | null;
   /** Current archive fault latched by the owning loader, if any. */
   readonly archiveFault: ArchiveFaultError | null;
-  /** Re-run the owning loader's current view state. */
-  requestReprocess(): void;
+  /**
+   * Re-run the owning loader's current view state. With ``paths`` (partition
+   * node paths whose parts just re-entered the frustum) only loaders at or
+   * under those paths are swept; omitted/empty = every loader. Never bumps
+   * the view version — see ``_updateVersion``.
+   */
+  requestReprocess(paths?: readonly string[]): void;
   /** Whether the owning loader currently has an update or refinement pass in flight. */
   isUpdateInProgress(): boolean;
+}
+
+/** Per-call directives for {@link SceneLoader.updateView}. */
+export interface UpdateViewOptions {
+  /**
+   * Targeted partition resync: restrict the sweep to loaders whose node path
+   * is one of these paths or nested under one (``isUnderAny``). Loaders outside
+   * the set are skipped WITHOUT touching their predictive-prefetch baseline.
+   * The view state is not changed by such a pass, so the view version is not
+   * bumped either.
+   */
+  resyncPaths?: ReadonlySet<string>;
 }
 
 /**
@@ -171,6 +188,7 @@ import { SlicePrefetcher } from './scene-loader/prefetch/slice-prefetcher';
 import {
   filterPartitionVisibleLoaders,
   isPartitionPathVisible,
+  isUnderAny,
   runLoaderUpdates as runLoaderUpdatesHelper,
 } from './scene-loader/loaders/run-loader-updates';
 import { updateVisibleCountsInMonitor as updateVisibleCountsInMonitorHelper } from './scene-loader/monitor/visible-counts';
@@ -342,7 +360,31 @@ export class SceneLoader {
    */
   private _refining = false;
   private _lastUpdateWasFrameBudgeted = false;
-  private _updateVersion = 0; // For logging/debugging
+  /**
+   * Monotonic view-generation counter, read by the LOD registry as
+   * {@link currentViewVersion} and stamped onto every committed leaf as
+   * ``userData.loadedViewVersion`` (freshness is EXACT equality — see
+   * ``scene/lod-freshness.ts``).
+   *
+   * CONTRACT: it bumps ONLY when a query-determinant of the view changes
+   * (``viewStatesEqual``: displayDims / slicePosition / tolerance / the
+   * dimensions query signature). A pass whose merged view state equals the
+   * current one — a partition resync, a retry re-run, a depth-sort re-commit —
+   * re-sweeps under the SAME version. This matters because lazy ``lod_group``
+   * levels are NOT in the sweep and are never re-stamped by it: bumping on an
+   * unchanged view invalidated every resident fine level scene-wide, so a
+   * partition part crossing the screen edge dropped ALL LOD groups to coarse
+   * and re-streamed them (the #2366 regression on the h2afva 44-part scene).
+   */
+  private _updateVersion = 0;
+  /**
+   * Targeted-resync paths that arrived while a pass was in flight. Folded into
+   * the pass that runs next (or dropped when a full pending state supersedes
+   * them — a full sweep is a superset). Never aborts the in-flight pass.
+   */
+  private _pendingResyncPaths: Set<string> | null = null;
+  /** Resync paths handed to the follow-up pass by ``queueNext``'s re-entry. */
+  private _queuedResyncPaths: Set<string> | null = null;
 
   /**
    * Whether an updateView sweep (fetch/decode/upload) is currently in
@@ -676,7 +718,8 @@ export class SceneLoader {
   }
 
   /**
-   * Monotonic view-update version (bumped at the start of every ``updateView``).
+   * Monotonic view-generation version (bumped by ``updateView`` only when the
+   * merged view state differs from the current one — see ``_updateVersion``).
    * The LOD registry reads this to decide whether a level's committed geometry
    * is fresh for the CURRENT view — a mesh stamped with an older version (its
    * data still reflects a previous slice/displayDims) is treated as stale so the
@@ -1011,7 +1054,8 @@ export class SceneLoader {
     loaders: Map<string, TLoader>,
     loaderType: 'Points' | 'Lines' | 'GSplats' | 'Mesh',
     updateFn: (path: string, loader: TLoader, session: UpdateSession) => Promise<TStaged | null>,
-    onArchiveFault: (fault: ArchiveFaultError) => void
+    onArchiveFault: (fault: ArchiveFaultError) => void,
+    resyncPaths?: ReadonlySet<string>
   ): Promise<Array<{ staged: TStaged | null; session: UpdateSession }>> {
     return runLoaderUpdatesHelper(loaders, loaderType, updateFn, {
       profiler: this.profiler,
@@ -1019,12 +1063,29 @@ export class SceneLoader {
       registry: this.registry,
       onArchiveFault,
       shouldUpdatePath: (path) => isPartitionPathVisible(this.rootGroup, path),
+      isResyncTarget: resyncPaths ? (path) => isUnderAny(path, resyncPaths) : undefined,
     });
   }
 
-  /** Re-run the current view state without blocking the caller. */
-  requestReprocess(): void {
-    void this.updateView({});
+  /**
+   * Re-run the current view state without blocking the caller. With ``paths``
+   * (the partition parts that just re-entered the frustum) the sweep is
+   * restricted to loaders at/under them; otherwise every loader re-runs. Either
+   * way the view state is unchanged, so the view version is NOT bumped.
+   */
+  requestReprocess(paths?: readonly string[]): void {
+    if (paths && paths.length > 0) {
+      void this.updateView({}, { resyncPaths: new Set(paths) });
+    } else {
+      void this.updateView({});
+    }
+  }
+
+  /** Hand the resync paths parked by a mid-pass call to the follow-up pass. */
+  private takeQueuedResyncOpts(): UpdateViewOptions {
+    const paths = this._queuedResyncPaths;
+    this._queuedResyncPaths = null;
+    return paths ? { resyncPaths: paths } : {};
   }
 
   /**
@@ -1035,7 +1096,7 @@ export class SceneLoader {
    * after the current update completes. Only the LATEST pending state is kept (older ones
    * are discarded), ensuring eventual convergence without starvation.
    */
-  async updateView(viewState: Partial<ViewState>): Promise<void> {
+  async updateView(viewState: Partial<ViewState>, opts: UpdateViewOptions = {}): Promise<void> {
     // Disposed loader: never runs another pass. dispose() already flushed the
     // queued-update waiters (resolve-only), so a late call — e.g. an in-flight
     // dimension-animation tick landing during the dispose() await while a
@@ -1061,6 +1122,16 @@ export class SceneLoader {
 
     // SERIALIZATION: If an update is already in progress, queue this one and return
     if (this._updateInProgress) {
+      // A targeted resync carries no new view state, so it must NOT supersede
+      // (abort) the in-flight pass: park its paths and fold them into the
+      // pass that runs next (see the `finally` below). The registry gates on
+      // `isUpdateInProgress` synchronously, so this branch is defensive.
+      if (opts.resyncPaths) {
+        this._pendingResyncPaths ??= new Set<string>();
+        for (const path of opts.resyncPaths) this._pendingResyncPaths.add(path);
+        return;
+      }
+
       // Abort the in-flight update: it has now been superseded by this newer
       // view-state, so its remaining chunk reads/decodes should bail rather
       // than run to completion. Its commit is skipped (signal.aborted), and
@@ -1069,21 +1140,18 @@ export class SceneLoader {
 
       // Store the latest pending state (supersedes any previous pending
       // state). Log supersedes so rapid slider drags surface as
-      // "v5 superseded v4, in flight v3" rather than three identical
-      // "Update queued" lines.
+      // "superseded previous pending, in flight v3" rather than identical
+      // "Update queued" lines. (The queued pass's own version is decided when
+      // it runs — it bumps only if the merged view actually changes.)
       const supersededPrevious = this.viewStateQueue.hasPending();
       this.viewStateQueue.setPending(viewState);
-      const newVersion = this._updateVersion + 1;
       if (supersededPrevious) {
         log.info(
           Modules.SCENE_LOADER,
-          `Update queued (v${newVersion}) - supersedes previous pending; in-flight v${this._updateVersion}`
+          `Update queued - supersedes previous pending; in-flight v${this._updateVersion}`
         );
       } else {
-        log.info(
-          Modules.SCENE_LOADER,
-          `Update queued (v${newVersion}) - in-flight v${this._updateVersion}`
-        );
+        log.info(Modules.SCENE_LOADER, `Update queued - in-flight v${this._updateVersion}`);
       }
       // Resolve when the pending-OR-NEWER state completes a main pass (its
       // first commit) — NOT immediately. This is what makes the
@@ -1096,10 +1164,9 @@ export class SceneLoader {
       });
     }
 
-    // Mark update as in progress
+    // Mark update as in progress. The view version is decided below, once the
+    // merged view state is known (bump only on a real change).
     this._updateInProgress = true;
-    this._updateVersion++;
-    const currentVersion = this._updateVersion;
 
     // Fresh per-update abort controller. A superseding updateView (the
     // serialization branch above) aborts this; its signal flows to every
@@ -1119,7 +1186,10 @@ export class SceneLoader {
       // and leave the loaders capped after playback ends. It flows to the
       // loaders only via the per-type handler ctxs (buildUpdateCtxs).
       const { frameBudgetMs, ...incomingViewState } = viewState;
-      this._lastUpdateWasFrameBudgeted = frameBudgetMs !== undefined;
+      // A targeted resync is not a view pass: leave the budget marker alone so
+      // `isAtViewState` cannot skip the real re-run a budget-truncated playback
+      // pass still owes.
+      if (!opts.resyncPaths) this._lastUpdateWasFrameBudgeted = frameBudgetMs !== undefined;
       // `prefetch` is likewise a transient directive (set only on the
       // SlicePrefetcher's shadow passes); strip it too so it can never persist
       // into `this.viewState` and pin every subsequent foreground store.
@@ -1127,7 +1197,7 @@ export class SceneLoader {
 
       // CRITICAL: Deep copy arrays to prevent mutation during async operations
       // The spread operator only does shallow copy - arrays must be explicitly copied
-      this.viewState = {
+      const nextViewState: ViewState = {
         ...this.viewState,
         ...incomingViewState,
         // Always copy arrays to prevent external mutation affecting in-flight updates
@@ -1139,16 +1209,31 @@ export class SceneLoader {
           : [...this.viewState.slicePosition],
         tolerance: viewState.tolerance ? [...viewState.tolerance] : [...this.viewState.tolerance],
       };
+      // Version contract (see `_updateVersion`): bump only when a query
+      // determinant changed. An unchanged view (resync / retry / depth-sort
+      // re-commit) re-sweeps under the same version, so the lazy LOD levels
+      // outside this sweep stay fresh.
+      const viewChanged = !viewStatesEqual(nextViewState, this.viewState);
+      this.viewState = nextViewState;
+      if (viewChanged) this._updateVersion++;
+      const currentVersion = this._updateVersion;
 
       const totalLoaders =
         this.loaders.size +
         this.linesLoaders.size +
         this.gsplatLoaders.size +
         this.meshLoaders.size;
-      log.update(
-        Modules.SCENE_LOADER,
-        `Updating view v${currentVersion} for ${totalLoaders} loaders`
-      );
+      if (viewChanged) {
+        log.update(
+          Modules.SCENE_LOADER,
+          `Updating view v${currentVersion} for ${totalLoaders} loaders`
+        );
+      } else {
+        const scope = opts.resyncPaths
+          ? `${opts.resyncPaths.size} target path(s)`
+          : `all ${totalLoaders} loaders`;
+        log.update(Modules.SCENE_LOADER, `Resyncing view v${currentVersion} (${scope})`);
+      }
 
       // Start profiling update cycle
       this.profiler?.beginUpdate();
@@ -1184,28 +1269,32 @@ export class SceneLoader {
         this.loaders,
         pointsLabel,
         (path, loader, session) => pointsLoadAndStage(path, loader, session, pointsCtx),
-        onArchiveFault
+        onArchiveFault,
+        opts.resyncPaths
       );
 
       const linesTask = this.runLoaderUpdates(
         this.linesLoaders,
         linesLabel,
         (path, loader, session) => linesLoadAndStage(path, loader, session, linesCtx),
-        onArchiveFault
+        onArchiveFault,
+        opts.resyncPaths
       );
 
       const gsplatsTask = this.runLoaderUpdates(
         this.gsplatLoaders,
         gsplatsLabel,
         (path, loader, session) => gsplatsLoadAndStage(path, loader, session, gsplatsCtx),
-        onArchiveFault
+        onArchiveFault,
+        opts.resyncPaths
       );
 
       const meshTask = this.runLoaderUpdates(
         this.meshLoaders,
         meshLabel,
         (path, loader, session) => meshLoadAndStage(path, loader, session, meshCtx),
-        onArchiveFault
+        onArchiveFault,
+        opts.resyncPaths
       );
 
       // Wait for ALL loaders to complete (load + process)
@@ -1281,13 +1370,23 @@ export class SceneLoader {
         this.resolvePassWaiters();
         this._updateInProgress = false;
       } else {
+        // Targeted resyncs that arrived mid-pass: a pending full state is a
+        // superset (drop them); otherwise queue an empty state carrying them so
+        // queueNext's ordinary re-entry runs the targeted sweep.
+        if (this._pendingResyncPaths) {
+          if (!this.viewStateQueue.hasPending()) {
+            this._queuedResyncPaths = this._pendingResyncPaths;
+            this.viewStateQueue.setPending({});
+          }
+          this._pendingResyncPaths = null;
+        }
         queueNext({
           viewStateQueue: this.viewStateQueue,
           pointsLoaders: this.loaders,
           linesLoaders: this.linesLoaders,
           gsplatLoaders: this.gsplatLoaders,
           meshLoaders: this.meshLoaders,
-          updateView: (state) => this.updateView(state),
+          updateView: (state) => this.updateView(state, this.takeQueuedResyncOpts()),
           setUpdateInProgress: (v) => {
             this._updateInProgress = v;
           },
@@ -2308,6 +2407,8 @@ export class SceneLoader {
     this._updateInProgress = false;
     this._refining = false;
     this.viewStateQueue.takePending();
+    this._pendingResyncPaths = null;
+    this._queuedResyncPaths = null;
 
     // Stop the scene-identity watchdog first: its verdicts are about THIS
     // dataset, and a probe landing mid-teardown must not raise a banner

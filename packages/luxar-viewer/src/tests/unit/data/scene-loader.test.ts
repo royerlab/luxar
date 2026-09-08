@@ -374,9 +374,13 @@ describe('SceneLoader', () => {
     });
 
     it('should update all loaders with new view state', async () => {
+      // A slice that DIFFERS from the one loadScene derives from the scene
+      // dimensions (time midpoint 5, tolerance = step 0.1): re-submitting that
+      // exact state is, by the version contract, a bump-free "Resyncing view"
+      // pass rather than an "Updating view" one.
       const viewState: Partial<ViewState> = {
         displayDims: [0, 1, 2],
-        slicePosition: [0, 0, 0, 5],
+        slicePosition: [0, 0, 0, 6],
         tolerance: [0, 0, 0, 0.1],
       };
 
@@ -653,6 +657,129 @@ describe('SceneLoader', () => {
       await sceneLoader.updateView({});
 
       expect(mockLoader.updateView).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('updateView — version contract (bump only on a query-determinant change)', () => {
+    // The LOD registry judges a level's freshness by EXACT equality of its
+    // commit-time `loadedViewVersion` stamp with `currentViewVersion`, and lazy
+    // lod_group levels are never re-stamped by the sweep. So a pass that does
+    // not change the view (a partition resync, a retry re-run, a depth-sort
+    // re-commit) must NOT bump the version — bumping invalidated every resident
+    // fine level scene-wide and dropped all groups to coarse on camera motion.
+    const base: Partial<ViewState> = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 3],
+      tolerance: [0, 0, 0, 0.5],
+    };
+
+    beforeEach(async () => {
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+      await sceneLoader.updateView(base);
+    });
+
+    it('updateView({}) (a reprocess) leaves currentViewVersion unchanged', async () => {
+      const before = sceneLoader.currentViewVersion;
+      await sceneLoader.updateView({});
+      expect(sceneLoader.currentViewVersion).toBe(before);
+      // requestReprocess is the public door for the same pass.
+      sceneLoader.requestReprocess();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(sceneLoader.currentViewVersion).toBe(before);
+    });
+
+    it('re-submitting an equal view state does not bump', async () => {
+      const before = sceneLoader.currentViewVersion;
+      await sceneLoader.updateView({ ...base });
+      await sceneLoader.updateView({ slicePosition: [...base.slicePosition!] });
+      expect(sceneLoader.currentViewVersion).toBe(before);
+    });
+
+    it.each([
+      { field: 'slicePosition', next: { slicePosition: [0, 0, 0, 4] } },
+      { field: 'displayDims', next: { displayDims: [0, 1, 3] } },
+      { field: 'tolerance (displayed dim)', next: { tolerance: [1, 0, 0, 0.5] } },
+    ])('a changed $field bumps the version by exactly one', async ({ next }) => {
+      const before = sceneLoader.currentViewVersion;
+      await sceneLoader.updateView(next);
+      expect(sceneLoader.currentViewVersion).toBe(before + 1);
+      // And re-submitting the now-current state is again a no-bump pass.
+      await sceneLoader.updateView(next);
+      expect(sceneLoader.currentViewVersion).toBe(before + 1);
+    });
+
+    it('a targeted resync sweeps only loaders under the target paths and forgets no baseline', async () => {
+      const makeLoader = () => ({
+        updateView: vi.fn().mockResolvedValue(null),
+        dispose: vi.fn(),
+      });
+      const part0 = makeLoader();
+      const part1 = makeLoader();
+      const other = makeLoader();
+      const loaders = (sceneLoader as unknown as { loaders: Map<string, unknown> }).loaders;
+      loaders.set('/tiled/part_0/level_0', part0);
+      loaders.set('/tiled/part_1/level_0', part1);
+      loaders.set('/other', other);
+      const forgetPathSpy = vi.spyOn(
+        (sceneLoader as unknown as { viewStateQueue: ViewStateQueue }).viewStateQueue,
+        'forgetPath'
+      );
+      const before = sceneLoader.currentViewVersion;
+
+      sceneLoader.requestReprocess(['/tiled/part_1']);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(part1.updateView).toHaveBeenCalledTimes(1);
+      expect(part0.updateView).not.toHaveBeenCalled();
+      expect(other.updateView).not.toHaveBeenCalled();
+      expect(forgetPathSpy).not.toHaveBeenCalled();
+      expect(sceneLoader.currentViewVersion).toBe(before);
+    });
+
+    it('a targeted resync arriving mid-pass neither aborts the pass nor is lost', async () => {
+      let releaseGate!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        releaseGate = resolve;
+      });
+      let capturedSignal: AbortSignal | undefined;
+      const gated = {
+        updateView: vi.fn(async (_vs: unknown, _session: unknown, signal?: AbortSignal) => {
+          if (!capturedSignal) {
+            capturedSignal = signal;
+            await gate;
+            signal?.throwIfAborted();
+          }
+          return null;
+        }),
+        dispose: vi.fn(),
+      };
+      const target = { updateView: vi.fn().mockResolvedValue(null), dispose: vi.fn() };
+      const loaders = (sceneLoader as unknown as { loaders: Map<string, unknown> }).loaders;
+      loaders.set('/node', gated);
+      loaders.set('/tiled/part_1/level_0', target);
+
+      // A real view change runs synchronously into the gated loader and parks.
+      const p1 = sceneLoader.updateView({ slicePosition: [0, 0, 0, 7] });
+      await Promise.resolve();
+      expect(capturedSignal).toBeInstanceOf(AbortSignal);
+      expect(target.updateView).toHaveBeenCalledTimes(1);
+
+      // The resync must not take the supersede branch: no abort, no waiter.
+      sceneLoader.requestReprocess(['/tiled/part_1']);
+      await Promise.resolve();
+      expect(capturedSignal?.aborted).toBe(false);
+
+      releaseGate();
+      await p1;
+      // queueNext re-enters with the parked resync at the next frame (rAF in
+      // jsdom), so poll rather than assume a timer granularity.
+      await vi.waitFor(() => {
+        expect(target.updateView).toHaveBeenCalledTimes(2); // full pass + targeted resync
+      });
+      expect(gated.updateView).toHaveBeenCalledTimes(1); // not a target — untouched
+      expect((sceneLoader as unknown as { _updateInProgress: boolean })._updateInProgress).toBe(
+        false
+      );
     });
   });
 

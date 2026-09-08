@@ -352,8 +352,11 @@ describe('LuxarLayer', () => {
           'requestReprocess',
         ].sort()
       );
-      (deps.requestReprocess as () => void)();
+      (deps.requestReprocess as (paths: readonly string[]) => void)(['/p']);
       expect(requestReprocess).toHaveBeenCalledOnce();
+      // The re-entering part paths pass straight through to the owner so the
+      // resync stays targeted (and bump-free) in layer mode too.
+      expect(requestReprocess).toHaveBeenCalledWith(['/p']);
       expect((deps.isUpdateInProgress as () => boolean)()).toBe(true);
       expect(isUpdateInProgress).toHaveBeenCalledOnce();
     });

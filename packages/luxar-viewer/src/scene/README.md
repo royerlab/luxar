@@ -513,10 +513,30 @@ ancestor — a layer toggled off — nothing of that group is on screen, so
 all of its ready levels are ordinary cold candidates, including the
 one the selector nominally displays.
 
+**Partition frustum gating + targeted resync:** a `kind=partition`
+group registers through `registerPartition`, and every frame each part
+is tested against a frustum padded by `PARTITION_FRUSTUM_MARGIN` (10 %,
+so a cold part preloads just before it enters). A part outside it is
+hidden and stamped `userData.partitionFrustumVisible = false`; the
+scene loader's sweep (`isPartitionPathVisible`) and refinement skip its
+loaders, dropping their predictive-prefetch baseline. Because a culled
+part misses slice updates, its RE-ENTRY requests a resync of exactly
+that part's loaders — `deps.requestReprocess(partPaths)` with the
+re-entering parts' node paths (the wrapper path when a part is unnamed),
+coalesced per wrapper across frames and held while
+`isUpdateInProgress()`. The loader runs that resync under the
+**unchanged view version**: its `updateView` bumps `currentViewVersion`
+only when a query determinant changes (`viewStatesEqual`). Lazy fine
+levels never join the sweep and are never re-stamped by it, so a bump on
+an unchanged view read every resident fine level scene-wide as stale and
+dropped ALL groups to coarse on camera motion (the #2366 regression on
+the 44-part h2afva scene).
+
 **Wiring:** the SceneLoader instantiates one registry per scene and
 hooks `evaluatePerFrame()` into `AnimationController` alongside the
 dynamic-clipping callback. The injected `LODGroupRegistryDeps` supply
-the camera, viewport size, `displayDims`, and the optional resident
+the camera, viewport size, `displayDims`, the partition resync hooks
+(`requestReprocess`, `isUpdateInProgress`), and the optional resident
 byte budget / measurement — omitting the budget accessors yields pure
 retention (the unit-test default). `projectBoxAreaFraction`,
 `projectBoxDiagonalPx` and `pickChildWithHysteresis` are exported as

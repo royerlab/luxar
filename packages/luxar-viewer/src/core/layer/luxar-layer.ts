@@ -929,7 +929,7 @@ export class LuxarLayer {
           // Matches `core/app/init/pipeline.ts`.
           getDisplayDims: () => sceneDimsManager.getDims()?.displayed ?? [],
           hasArchiveFault: () => owner.archiveFault !== null,
-          requestReprocess: () => owner.requestReprocess(),
+          requestReprocess: (paths) => owner.requestReprocess(paths),
           isUpdateInProgress: () => owner.isUpdateInProgress(),
           getResidentByteBudget: () => getGpuByteBudget(),
           // Both halves of the budget are required: `lod-eviction` bails on

@@ -469,7 +469,7 @@ function makeRegistry(
   requestRender?: () => void,
   now?: () => number,
   hasArchiveFault?: () => boolean,
-  requestReprocess?: () => void,
+  requestReprocess?: (paths: readonly string[]) => void,
   isUpdateInProgress?: () => boolean
 ) {
   const camera = new THREE.Camera();
@@ -687,6 +687,128 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     expect(reg.evaluatePerFrame()).toBe(true);
     expect(child.visible).toBe(true);
     expect(requestReprocess).toHaveBeenCalledOnce();
+    // An unnamed part cannot be targeted, so the whole partition is resynced.
+    expect(requestReprocess).toHaveBeenCalledWith(['/partition']);
+  });
+
+  it('passes the re-entering part path on the rising edge', () => {
+    const requestReprocess = vi.fn();
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      requestReprocess
+    );
+    const groupObject = new THREE.Group();
+    const staying = new THREE.Group();
+    staying.name = '/partition/part_0';
+    const returning = new THREE.Group();
+    returning.name = '/partition/part_1';
+    groupObject.add(staying, returning);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [
+        { object: staying, positionBounds: { min: [-0.5, 0, 0], max: [0.5, 0.5, 0.5] } },
+        { object: returning, positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] } },
+      ],
+    });
+
+    reg.evaluatePerFrame();
+    expect(staying.visible).toBe(true);
+    expect(returning.visible).toBe(false);
+    expect(requestReprocess).not.toHaveBeenCalled();
+
+    // Bring ONLY the culled part back: the resync names it, not the wrapper and
+    // not the part that never left.
+    groupObject.position.x = -2.5;
+    reg.evaluatePerFrame();
+    expect(returning.visible).toBe(true);
+    expect(requestReprocess).toHaveBeenCalledOnce();
+    expect(requestReprocess).toHaveBeenCalledWith(['/partition/part_1']);
+  });
+
+  it('coalesces the union of re-entering parts across frames while an update is in flight', () => {
+    let updateInProgress = true;
+    const requestReprocess = vi.fn();
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      requestReprocess,
+      () => updateInProgress
+    );
+    const groupObject = new THREE.Group();
+    const first = new THREE.Group();
+    first.name = '/partition/part_0';
+    const second = new THREE.Group();
+    second.name = '/partition/part_1';
+    groupObject.add(first, second);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [
+        { object: first, positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] } },
+        { object: second, positionBounds: { min: [4, 0, 0], max: [5, 0.5, 0.5] } },
+      ],
+    });
+
+    reg.evaluatePerFrame();
+    groupObject.position.x = -2.5; // part_0 re-enters
+    reg.evaluatePerFrame();
+    groupObject.position.x = -4.5; // part_1 re-enters
+    reg.evaluatePerFrame();
+    expect(requestReprocess).not.toHaveBeenCalled();
+
+    updateInProgress = false;
+    reg.evaluatePerFrame();
+    reg.evaluatePerFrame();
+    expect(requestReprocess).toHaveBeenCalledOnce();
+    const paths = requestReprocess.mock.calls[0][0] as string[];
+    expect([...paths].sort()).toEqual(['/partition/part_0', '/partition/part_1']);
+  });
+
+  it('falls back to the whole wrapper when a re-entering part has no name', () => {
+    const requestReprocess = vi.fn();
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      requestReprocess
+    );
+    const groupObject = new THREE.Group();
+    const named = new THREE.Group();
+    named.name = '/partition/part_0';
+    const unnamed = new THREE.Group();
+    groupObject.add(named, unnamed);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [
+        { object: named, positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] } },
+        { object: unnamed, positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] } },
+      ],
+    });
+
+    reg.evaluatePerFrame();
+    groupObject.position.x = -2.5; // both re-enter
+    reg.evaluatePerFrame();
+    expect(requestReprocess).toHaveBeenCalledOnce();
+    // The unnamed part widens the request to the whole partition, which already
+    // covers the named one — exactly one path, the wrapper.
+    expect(requestReprocess).toHaveBeenCalledWith(['/partition']);
   });
 
   it('coalesces rising-edge resyncs until the active update finishes', () => {
@@ -727,6 +849,8 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     reg.evaluatePerFrame();
     reg.evaluatePerFrame();
     expect(requestReprocess).toHaveBeenCalledOnce();
+    // Both parts are unnamed ⇒ one whole-partition request, not two.
+    expect(requestReprocess).toHaveBeenCalledWith(['/partition']);
   });
 
   it('keeps requesting frames while a rising-edge resync is pending', () => {
@@ -802,6 +926,7 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     groupObject.visible = true;
     expect(reg.evaluatePerFrame()).toBe(false);
     expect(requestReprocess).toHaveBeenCalledOnce();
+    expect(requestReprocess).toHaveBeenCalledWith(['/partition']);
   });
 
   it('unregister removes partition entries and their per-frame visibility writes', () => {

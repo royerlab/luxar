@@ -39,6 +39,17 @@
  * attach + a single ``register()`` call at the end) — no per-child
  * ``ready`` gate is needed in the registry.
  *
+ * **Partition frustum gating** (``registerPartition`` / ``evaluatePartitionEntry``):
+ * a ``kind=partition`` group's parts are tested every frame against a frustum
+ * padded by ``PARTITION_FRUSTUM_MARGIN``; a part outside it is hidden and
+ * stamped ``userData.partitionFrustumVisible = false``, which the scene
+ * loader's sweep and refinement read to skip its loaders. Because a culled part
+ * misses slice updates, its RE-ENTRY requests a resync of exactly that part's
+ * loaders (``deps.requestReprocess(partPaths)``, coalesced per wrapper across
+ * frames and gated on ``isUpdateInProgress``). The resync re-sweeps under the
+ * UNCHANGED view version — bumping it here would read every lazy fine level
+ * scene-wide as stale and drop all groups to coarse on camera motion.
+ *
  * The bbox infrastructure is shared with the scene-bounds cache and
  * camera framing — ``projectBoundsToDisplayDims`` /
  * ``transformBoundingBox`` live in
@@ -623,6 +634,25 @@ const FOOTPRINT_BOX3_SCRATCH = new THREE.Box3();
 // Bit flags returned by evaluatePartitionEntry so one child scan reports both effects.
 const PARTITION_VISIBILITY_CHANGED = 1;
 const PARTITION_BECAME_VISIBLE = 2;
+// Part paths that re-entered the frustum THIS frame, collected by
+// ``evaluatePartitionEntry`` and merged into ``partitionResyncPending`` only
+// on a rising edge (rare), so the steady-state per-frame path allocates nothing.
+const RISING_PARTS_SCRATCH = new Set<string>();
+
+/**
+ * Record a part that just re-entered the frustum, by its node path
+ * (``object.name`` — the loader-registry key for a leaf part and the prefix of
+ * a nested ``kind=lod`` part's level loaders). An unnamed part cannot be
+ * targeted, so it is recorded as the WRAPPER path: resync the whole partition
+ * rather than silently miss it.
+ */
+function noteRisingPart(
+  sink: Set<string> | null,
+  object: THREE.Object3D,
+  wrapperPath: string
+): void {
+  if (sink) sink.add(object.name || wrapperPath);
+}
 
 /**
  * Injected view-state accessors. Lets the registry stay test-friendly
@@ -679,11 +709,17 @@ export interface LODGroupRegistryDeps {
    */
   requestRender?: () => void;
   /**
-   * Re-run the current view update after a partition child re-enters the
-   * frustum. Culled children skip event-driven slice updates, so the rising
-   * edge must resync any geometry that missed the latest view state.
+   * Re-run the current view update for the partition parts that just
+   * re-entered the frustum. Culled children skip event-driven slice updates, so
+   * the rising edge must resync any geometry that missed the latest view state.
+   * ``paths`` are the re-entering PART node paths (``child.object.name``), or
+   * the partition wrapper path when a part is unnamed (= resync the whole
+   * partition); the loader prefix-matches its sweep loaders under them, so a
+   * nested ``kind=lod`` part's eager level is covered. The view state is
+   * unchanged, so the loader MUST NOT bump the view version for this pass —
+   * otherwise every lazy fine level scene-wide reads stale and drops to coarse.
    */
-  requestReprocess?: () => void;
+  requestReprocess?: (paths: readonly string[]) => void;
   /** Whether the owning loader currently has an update or refinement pass in flight. */
   isUpdateInProgress?: () => boolean;
   /**
@@ -797,8 +833,14 @@ export class LODGroupRegistry {
    * byte-identical (no material writes, no subtree traversal).
    */
   private fadeWasManaged = false;
-  /** Partition rising edges waiting for their wrapper to be visible and the loader to be idle. */
-  private readonly partitionResyncPending = new Set<string>();
+  /**
+   * Partition rising edges waiting for their wrapper to be visible and the
+   * loader to be idle: wrapper path → the re-entering PART paths. A set that
+   * contains the wrapper path itself means "resync the whole partition" (an
+   * unnamed part). Coalesced across frames; flushed as ONE
+   * ``requestReprocess(paths)`` call.
+   */
+  private readonly partitionResyncPending = new Map<string, Set<string>>();
 
   constructor(private deps: LODGroupRegistryDeps) {}
 
@@ -1207,29 +1249,22 @@ export class LODGroupRegistry {
     let hasVisiblePendingResync = false;
     for (const entry of this.partitionEntries.values()) {
       if (!isEffectivelyVisible(entry.groupObject)) continue;
-      const result = this.evaluatePartitionEntry(entry, displayDims, PARTITION_FRUSTUM_SCRATCH);
+      RISING_PARTS_SCRATCH.clear();
+      const result = this.evaluatePartitionEntry(
+        entry,
+        displayDims,
+        PARTITION_FRUSTUM_SCRATCH,
+        RISING_PARTS_SCRATCH
+      );
       if ((result & PARTITION_VISIBILITY_CHANGED) !== 0) changed = true;
       if ((result & PARTITION_BECAME_VISIBLE) !== 0) {
-        this.partitionResyncPending.add(entry.path);
+        this.notePartitionRisingEdge(entry.path, RISING_PARTS_SCRATCH);
       }
       if (this.partitionResyncPending.has(entry.path)) hasVisiblePendingResync = true;
     }
-    if (
-      this.partitionResyncPending.size > 0 &&
-      this.deps.requestReprocess &&
-      this.deps.isUpdateInProgress?.() !== true
-    ) {
-      let shouldResync = false;
-      for (const path of this.partitionResyncPending) {
-        const entry = this.partitionEntries.get(path);
-        if (!entry) {
-          this.partitionResyncPending.delete(path);
-        } else if (isEffectivelyVisible(entry.groupObject)) {
-          this.partitionResyncPending.delete(path);
-          shouldResync = true;
-        }
-      }
-      if (shouldResync) this.deps.requestReprocess();
+    RISING_PARTS_SCRATCH.clear();
+    if (this.partitionResyncPending.size > 0 && this.deps.isUpdateInProgress?.() !== true) {
+      this.flushPartitionResyncs();
     }
     if (hasVisiblePendingResync && this.partitionResyncPending.size > 0) {
       this.deps.requestRender?.();
@@ -1269,10 +1304,56 @@ export class LODGroupRegistry {
     return changed;
   }
 
+  /**
+   * Rising edge (rare): remember WHICH parts of ``wrapperPath`` came back so
+   * the resync can be targeted at their loaders instead of re-sweeping the
+   * whole scene. Coalesces with parts already pending for the same wrapper.
+   */
+  private notePartitionRisingEdge(wrapperPath: string, parts: ReadonlySet<string>): void {
+    let pending = this.partitionResyncPending.get(wrapperPath);
+    if (!pending) {
+      pending = new Set<string>();
+      this.partitionResyncPending.set(wrapperPath, pending);
+    }
+    for (const partPath of parts) pending.add(partPath);
+  }
+
+  /**
+   * Hand every pending rising edge whose wrapper is visible to the loader as
+   * ONE ``requestReprocess(paths)`` call; hidden wrappers stay pending, dropped
+   * wrappers are forgotten. A set that contains its own wrapper path (an unnamed
+   * part) collapses to the wrapper path alone — it already covers every part.
+   */
+  private flushPartitionResyncs(): void {
+    const requestReprocess = this.deps.requestReprocess;
+    if (!requestReprocess) return;
+    let resyncPaths: string[] | null = null;
+    for (const [path, parts] of this.partitionResyncPending) {
+      const entry = this.partitionEntries.get(path);
+      if (!entry) {
+        this.partitionResyncPending.delete(path);
+        continue;
+      }
+      if (!isEffectivelyVisible(entry.groupObject)) continue;
+      this.partitionResyncPending.delete(path);
+      resyncPaths ??= [];
+      if (parts.has(path)) resyncPaths.push(path);
+      else resyncPaths.push(...parts);
+    }
+    if (resyncPaths) requestReprocess(resyncPaths);
+  }
+
+  /**
+   * Frustum-gate one partition's parts. Returns the ``PARTITION_*`` bit flags;
+   * parts that re-entered this frame are added to ``risingParts`` by node path
+   * (``child.object.name``), or as the WRAPPER path when a part is unnamed so
+   * the caller resyncs the whole partition rather than missing it.
+   */
   private evaluatePartitionEntry(
     entry: PartitionGroupEntry,
     displayDims: readonly number[],
-    frustum: THREE.Frustum
+    frustum: THREE.Frustum,
+    risingParts: Set<string> | null = null
   ): number {
     const cache = this.partitionCaches.get(entry.path);
     if (!cache) return 0;
@@ -1302,7 +1383,10 @@ export class LODGroupRegistry {
         child.object.visible = visible;
         result |= PARTITION_VISIBILITY_CHANGED;
       }
-      if (visible && !wasVisible) result |= PARTITION_BECAME_VISIBLE;
+      if (visible && !wasVisible) {
+        result |= PARTITION_BECAME_VISIBLE;
+        noteRisingPart(risingParts, child.object, entry.path);
+      }
     }
     return result;
   }

@@ -34,6 +34,19 @@ export function isPartitionPathVisible(root: THREE.Object3D | null, path: string
   return true;
 }
 
+/**
+ * Whether ``path`` is one of ``targets`` or nested under one. Node paths are
+ * ``/``-separated, so ``/a/b`` is under ``/a`` but ``/a/bc`` is not.
+ */
+export function isUnderAny(path: string, targets: ReadonlySet<string>): boolean {
+  if (targets.has(path)) return true;
+  for (const target of targets) {
+    const prefix = target.endsWith('/') ? target : `${target}/`;
+    if (path.startsWith(prefix)) return true;
+  }
+  return false;
+}
+
 /** Copy loaders whose paths are not nested below a culled partition part. */
 export function filterPartitionVisibleLoaders<TLoader>(
   root: THREE.Object3D | null,
@@ -45,7 +58,9 @@ export function filterPartitionVisibleLoaders<TLoader>(
 /**
  * Run a per-loader update task for every entry in `loaders`, recording
  * failures into `failedLoaders` and forgetting the predictive-prefetch
- * baseline for failed or frustum-skipped paths. Archive faults are excluded
+ * baseline for failed or frustum-culled paths. Loaders outside a targeted
+ * partition resync (`isResyncTarget`) are skipped WITHOUT forgetting their
+ * baseline — nothing about their view changed. Archive faults are excluded
  * from that bookkeeping and reported once after every task has settled.
  */
 export async function runLoaderUpdates<TLoader, TStaged>(
@@ -57,6 +72,12 @@ export async function runLoaderUpdates<TLoader, TStaged>(
     viewStateQueue: ViewStateQueue;
     registry: Pick<LoaderRegistry, 'failedLoaders' | 'recordFailure'>;
     shouldUpdatePath?: (path: string) => boolean;
+    /**
+     * Targeted partition resync: `false` ⇒ this loader is not under any
+     * re-entering part, skip it without dropping its prefetch baseline. The
+     * culled check (`shouldUpdatePath`) runs first.
+     */
+    isResyncTarget?: (path: string) => boolean;
     /** Called at most once per sweep, after Promise.all, with the first archive fault. */
     onArchiveFault: (fault: ArchiveFaultError) => void;
   }
@@ -73,6 +94,10 @@ export async function runLoaderUpdates<TLoader, TStaged>(
     if (ctx.shouldUpdatePath?.(path) === false) {
       session.markSkipped('partition part outside camera frustum');
       ctx.viewStateQueue.forgetPath(path);
+      return { staged: null, session };
+    }
+    if (ctx.isResyncTarget?.(path) === false) {
+      session.markSkipped('outside partition resync targets');
       return { staged: null, session };
     }
     try {

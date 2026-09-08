@@ -1,0 +1,17 @@
+#### Partition parts re-entering view no longer reload every LOD level
+
+On a scene whose spatial partition parts are themselves LOD groups (the 44-part
+h2afva time-lapse, every `--recipe adaptive` store, the tiled ocean-current and
+galaxy layers), rotating the camera made every group drop to its coarsest level
+and re-stream, over and over, even when the fine levels were already resident.
+The frustum gate introduced with off-screen partition culling re-ran the view
+update whenever a part came back on screen, and that re-run advanced the global
+view version although the view itself had not changed. Fine levels of LOD groups
+load outside the update sweep and are never re-stamped by it, so one tile
+crossing the screen edge read every fine level in the scene as stale.
+
+The view version now advances only when a query determinant of the view actually
+changes (display axes, slice position, tolerance, or the dimensions signature).
+A re-entering part triggers a resync of exactly that part's loaders under the
+unchanged version, and the depth-sort re-commit paths that reuse the same door
+are bump-free too, so resident LOD levels stay on screen through camera motion.
