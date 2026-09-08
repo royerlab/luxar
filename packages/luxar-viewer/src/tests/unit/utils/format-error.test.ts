@@ -30,6 +30,12 @@ describe('getErrorMessage', () => {
     expect(getErrorMessage(null)).toBe('null');
   });
 
+  it('serializes plain thrown objects instead of collapsing them to [object Object]', () => {
+    expect(getErrorMessage({ code: 'ENETUNREACH', retryable: true })).toBe(
+      '{"code":"ENETUNREACH","retryable":true}'
+    );
+  });
+
   it('never throws on a null-prototype object', () => {
     // String() raises "Cannot convert object to primitive value" here. This
     // helper runs inside catch blocks, so it must not become the thing that

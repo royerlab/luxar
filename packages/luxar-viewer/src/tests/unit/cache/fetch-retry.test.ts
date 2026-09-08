@@ -7,6 +7,7 @@ import {
   mergeAbortSignals,
 } from '../../../cache/multi-level-caching-store/fetch-retry';
 import { MAX_CONCURRENT_CHUNK_FETCHES, withFetchGate } from '../../../utils/fetch-concurrency';
+import { log } from '../../../utils/log';
 
 function mockResponse(status: number, body: ArrayBuffer | string = ''): Response {
   return {
@@ -215,6 +216,7 @@ describe('fetchWithRetry', () => {
   afterEach(() => {
     global.fetch = originalFetch;
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   it('returns the response on first success', async () => {
@@ -356,6 +358,24 @@ describe('fetchWithRetry', () => {
 
     expect(response).toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it('preserves details from a non-Error object thrown by fetch', async () => {
+    vi.useFakeTimers();
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    global.fetch = vi.fn(async () => {
+      throw { code: 'ENETUNREACH', retryable: true };
+    }) as unknown as typeof fetch;
+
+    const promise = fetchWithRetry('https://example.com/x', { timeoutMsOverride: 10_000 });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await promise;
+
+    expect(warning).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.stringContaining('{"code":"ENETUNREACH","retryable":true}')
+    );
+    warning.mockRestore();
   });
 
   it('does not retry when the caller signal is already aborted at entry', async () => {

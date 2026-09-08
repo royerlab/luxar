@@ -31,6 +31,14 @@
 export function getErrorMessage(error: unknown): string {
   try {
     if (error instanceof Error) return error.message;
+    if (typeof error === 'object' && error !== null) {
+      try {
+        const serialized = JSON.stringify(error);
+        if (serialized && serialized !== '{}') return serialized;
+      } catch {
+        // Fall through to String(error), which may still provide a useful tag.
+      }
+    }
     return String(error);
   } catch {
     return '[unprintable error]';

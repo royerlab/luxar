@@ -110,6 +110,7 @@ export interface LODGroupRegistryOwner {
 export type SceneLoaderLODGroupRegistryFactory = (owner: LODGroupRegistryOwner) => LODGroupRegistry;
 import { ArrayRefRegistry } from './array-decoder/decoder';
 import { log, Modules } from '../utils/log';
+import { getErrorMessage } from '../utils/format-error';
 import { scheduleFrame } from '../utils/schedule-frame';
 import { config as appConfig } from '../config';
 import { MultiLevelCachingStore } from '../cache/multi-level-caching-store';
@@ -1438,7 +1439,12 @@ export class SceneLoader {
         // synchronous in non-browser contexts.
         scheduleFrame(() => {
           this._updateInProgress = false;
-          this.updateView(pendingState);
+          this.updateView(pendingState).catch((error: unknown) => {
+            log.error(
+              Modules.SCENE_LOADER,
+              `Refinement cancellation re-entry failed: ${getErrorMessage(error)}`
+            );
+          });
         });
       };
       // Per-run abort controller, published as THIS loader's live update
