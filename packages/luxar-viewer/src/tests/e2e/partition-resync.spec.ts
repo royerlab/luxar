@@ -109,7 +109,7 @@ test.describe('kind=partition of kind=lod parts — frustum re-entry resync', ()
     page,
   }) => {
     test.setTimeout(120000);
-    const console = captureConsoleMessages(page);
+    const consoleMessages = captureConsoleMessages(page);
     await page.goto(`/?src=${FIXTURE}&debug`);
     await waitForLuxarReady(page);
     await waitForRenderStable(page);
@@ -127,7 +127,7 @@ test.describe('kind=partition of kind=lod parts — frustum re-entry resync', ()
       (g) => g.partition.visibleParts === 1 && g.near.activeLevel === g.near.levelCount - 1,
       `far part culled, near part at its finest level (placement ${JSON.stringify(parked)})`
     );
-    const updatingBefore = console.logs.filter((l) => /Updating view v/.test(l)).length;
+    const updatingBefore = consoleMessages.logs.filter((l) => /Updating view v/.test(l)).length;
     const nearBefore = (await readGroups(page)).near;
 
     // Turn around in place: the far cluster is now straight ahead and re-enters
@@ -163,10 +163,10 @@ test.describe('kind=partition of kind=lod parts — frustum re-entry resync', ()
     // the same fixture). The level assertion above is belt-and-braces here: a
     // local two-cluster fixture re-streams its fine level inside the 250 ms
     // stale hold, so the visible collapse needs a hosted-scale scene to show.
-    const updatingAfter = console.logs.filter((l) => /Updating view v/.test(l)).length;
+    const updatingAfter = consoleMessages.logs.filter((l) => /Updating view v/.test(l)).length;
     expect(updatingAfter, 'no view-version bump from a camera move').toBe(updatingBefore);
     expect(
-      console.logs.some((l) =>
+      consoleMessages.logs.some((l) =>
         /Resyncing view v\d+ \(1 target path\(s\): \/tiled\/part_1\)/.test(l)
       ),
       'the re-entering part was resynced on its own'
