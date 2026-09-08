@@ -295,10 +295,22 @@ def test_no_interactive_cli_handler_discards_a_caught_exception() -> None:
     )
 
 
+def _traceback_printer_name(node: ast.Call) -> str | None:
+    if isinstance(node.func, ast.Attribute):
+        name = node.func.attr
+    elif isinstance(node.func, ast.Name):
+        name = node.func.id
+    else:
+        return None
+    return name if name in {"print_exc", "print_exception", "format_exc"} else None
+
+
 def test_only_unattended_handlers_print_tracebacks_unconditionally() -> None:
     """Long-running fit/batch entry points keep tracebacks in unattended logs."""
     observed: set[str] = set()
     for path in _cli_sources():
+        if path == Path(_traceback.__file__):
+            continue
         tree = ast.parse(path.read_text())
         parents = {
             child: parent
@@ -308,15 +320,38 @@ def test_only_unattended_handlers_print_tracebacks_unconditionally() -> None:
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
-            if not (
-                isinstance(node.func, ast.Attribute)
-                and node.func.attr in {"print_exc", "format_exc"}
-            ):
+            if _traceback_printer_name(node) is None:
                 continue
             function = _enclosing_function(node, parents)
             observed.add(f"{path.relative_to(CLI_ROOT.parent)}::{function.name}")
 
-    assert observed == UNATTENDED_TRACEBACK_HANDLERS
+    assert observed == UNATTENDED_TRACEBACK_HANDLERS, (
+        "update UNATTENDED_TRACEBACK_HANDLERS only when a long-running entry "
+        "point deliberately keeps unconditional tracebacks"
+    )
+
+
+def test_the_traceback_scan_recognizes_all_supported_spellings() -> None:
+    """Attribute and directly imported traceback printers are both visible."""
+    source = (
+        "import traceback\n"
+        "from traceback import format_exc, print_exc, print_exception\n"
+        "def examples(error):\n"
+        "    traceback.print_exc()\n"
+        "    traceback.print_exception(error)\n"
+        "    traceback.format_exc()\n"
+        "    print_exc()\n"
+        "    print_exception(error)\n"
+        "    format_exc()\n"
+    )
+    tree = ast.parse(source)
+    names = {
+        name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        if (name := _traceback_printer_name(node)) is not None
+    }
+    assert names == {"print_exc", "print_exception", "format_exc"}
 
 
 def test_the_scan_would_notice_a_discarding_handler() -> None:
