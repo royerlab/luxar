@@ -16,6 +16,13 @@
  * @module utils/format-error
  */
 
+/** Return a non-empty message from an Error-like value. */
+function getErrorLikeMessage(error: unknown): string | undefined {
+  if (!isErrorLike(error)) return undefined;
+  const message = (error as { message?: unknown }).message;
+  return typeof message === 'string' && message.length > 0 ? message : undefined;
+}
+
 /**
  * The message from an unknown thrown value.
  *
@@ -31,12 +38,6 @@
  * breaks the error handler. Same hazard the debug console's object branch
  * already guards.
  */
-function getErrorLikeMessage(error: unknown): string | undefined {
-  if (!isErrorLike(error)) return undefined;
-  const message = (error as { message?: unknown }).message;
-  return typeof message === 'string' && message.length > 0 ? message : undefined;
-}
-
 export function getErrorMessage(error: unknown): string {
   try {
     if (error instanceof Error) return error.message;
