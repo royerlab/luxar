@@ -21,7 +21,10 @@
 
 import type { GSplatsDataLoader, GSplatsViewState, LoadedGSplatsData } from '../../types/gsplats';
 import { setPrefixParent } from '../../types/prefix-lineage';
-import type { GSplatsSpatialIndexLoader } from './gsplats-spatial-index-loader';
+import type {
+  GSplatsPrefetchPlan,
+  GSplatsSpatialIndexLoader,
+} from './gsplats-spatial-index-loader';
 import type { UpdateSession } from '../../profiling/update-profiler';
 import type {
   LoaderMetrics,
@@ -71,27 +74,35 @@ function readPrefetchHeadroom(loader: GSplatsSpatialIndexLoader | undefined): nu
   return Math.max(0, (stats.maxSize ?? 0) - stats.size);
 }
 
+interface DeepLookaheadPlan {
+  firstLevel: number;
+  maxLevels: number;
+  headroom: number;
+  viewState: GSplatsViewState;
+  firstPlan: Promise<GSplatsPrefetchPlan>;
+}
+
 async function selectPrefetchLevels(
   lodLoaders: readonly GSplatsSpatialIndexLoader[],
-  firstLevel: number,
-  maxLevels: number,
-  headroom: number,
-  viewState: GSplatsViewState
-): Promise<number[]> {
-  const levels: number[] = [];
+  request: DeepLookaheadPlan
+): Promise<Array<{ level: number; plan: GSplatsPrefetchPlan }>> {
+  const levels: Array<{ level: number; plan: GSplatsPrefetchPlan }> = [];
   let reservedBytes = 0;
-  const stopLevel = Math.min(lodLoaders.length, firstLevel + maxLevels);
-  const candidates = lodLoaders.slice(firstLevel, stopLevel);
-  const estimates = await Promise.all(
-    candidates.map((loader) => loader.estimatePrefetchBytes(viewState))
+  const stopLevel = Math.min(lodLoaders.length, request.firstLevel + request.maxLevels);
+  const candidates = lodLoaders.slice(request.firstLevel, stopLevel);
+  const plans = await Promise.all(
+    candidates.map((loader, index) =>
+      index === 0 ? request.firstPlan : loader.planPrefetch(request.viewState)
+    )
   );
   for (let index = 0; index < candidates.length; index++) {
-    const level = firstLevel + index;
-    const estimate = estimates[index];
+    const level = request.firstLevel + index;
+    const plan = plans[index];
+    const estimate = plan.bytes;
     reservedBytes +=
-      Number.isFinite(estimate) && estimate > 0 ? estimate : Number.POSITIVE_INFINITY;
-    if (level > firstLevel && reservedBytes > headroom) break;
-    levels.push(level);
+      Number.isFinite(estimate) && estimate >= 0 ? estimate : Number.POSITIVE_INFINITY;
+    if (level > request.firstLevel && reservedBytes > request.headroom) break;
+    levels.push({ level, plan });
   }
   return levels;
 }
@@ -326,6 +337,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
   private _prefetchController: AbortController | null = null;
   private _prefetchPlanning = false;
   private readonly _prefetchingLevels = new Set<number>();
+  private _lastLoggedPrefetchDepth: number | null = null;
   // Per-tick LOD time budget (ms) from the CURRENT updateView call during
   // dimension-animation playback; null outside playback. A per-pass
   // directive (never part of lastViewState / viewStatesEqual / cache keys):
@@ -778,31 +790,34 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       headroom !== null,
       this._frameBudgetMs
     );
-    this.startLookaheadPrefetch(firstLevel, viewState, controller);
-    if (maxLevels === 1 || this._prefetchPlanning) return;
+    if (maxLevels === 1 || headroom === null || headroom <= 0) {
+      this.logPrefetchDepth(1, headroom);
+      this.startLookaheadPrefetch(firstLevel, viewState, controller);
+      return;
+    }
+    const firstPlan = this.lodLoaders[firstLevel].planPrefetch(viewState);
+    this.startLookaheadPrefetch(firstLevel, viewState, controller, firstPlan);
+    if (this._prefetchPlanning) return;
 
-    void this.planDeepLookahead(firstLevel, maxLevels, headroom ?? 0, viewState, controller);
+    void this.planDeepLookahead(
+      { firstLevel, maxLevels, headroom, viewState, firstPlan },
+      controller
+    );
   }
 
   private async planDeepLookahead(
-    firstLevel: number,
-    maxLevels: number,
-    headroom: number,
-    viewState: GSplatsViewState,
+    request: DeepLookaheadPlan,
     controller: AbortController
   ): Promise<void> {
     this._prefetchPlanning = true;
     try {
-      const levels = await selectPrefetchLevels(
-        this.lodLoaders,
-        firstLevel,
-        maxLevels,
-        headroom,
-        viewState
-      );
+      const levels = await selectPrefetchLevels(this.lodLoaders, request);
       if (controller.signal.aborted || this._disposed) return;
-      for (const level of levels) {
-        if (level !== firstLevel) this.startLookaheadPrefetch(level, viewState, controller);
+      this.logPrefetchDepth(levels.length, request.headroom);
+      for (const { level, plan } of levels) {
+        if (level !== request.firstLevel) {
+          this.startLookaheadPrefetch(level, request.viewState, controller, Promise.resolve(plan));
+        }
       }
     } finally {
       if (this._prefetchController === controller) this._prefetchPlanning = false;
@@ -812,12 +827,20 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
   private startLookaheadPrefetch(
     level: number,
     viewState: GSplatsViewState,
-    controller: AbortController
+    controller: AbortController,
+    plan?: Promise<GSplatsPrefetchPlan>
   ): void {
     if (this._prefetchingLevels.has(level)) return;
     this._prefetchingLevels.add(level);
-    void this.lodLoaders[level]
-      .prefetchChunks(viewState, controller.signal)
+    const prefetch = async (): Promise<void> => {
+      const ranges = plan ? (await plan).ranges : undefined;
+      if (ranges) {
+        await this.lodLoaders[level].prefetchChunks(viewState, controller.signal, ranges);
+      } else {
+        await this.lodLoaders[level].prefetchChunks(viewState, controller.signal);
+      }
+    };
+    void prefetch()
       .catch(() => {
         // Ignore errors from speculative prefetch (network failures, aborts).
       })
@@ -826,6 +849,17 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
           this._prefetchingLevels.delete(level);
         }
       });
+  }
+
+  private logPrefetchDepth(depth: number, headroom: number | null): void {
+    if (depth === this._lastLoggedPrefetchDepth) return;
+    this._lastLoggedPrefetchDepth = depth;
+    const headroomLabel = headroom === null ? 'unavailable' : `${Math.round(headroom)} bytes`;
+    log.custom(
+      LogEmoji.CACHE,
+      Modules.GSPLATS_SPATIAL_INDEX_LOADER,
+      `GSplat lookahead depth ${depth} (${headroomLabel} L0 headroom)`
+    );
   }
 
   private warmRemainingLODMetadata(): void {

@@ -111,15 +111,10 @@ function dtypeByteWidth(dtype: zarr.DataType): number {
 
 function estimateArrayPrefetchBytes(
   array: zarr.Array<zarr.DataType, zarr.Readable>,
-  ranges: readonly SplatRange[],
-  fallbackChunkRows: number
+  ranges: readonly SplatRange[]
 ): number {
   const rowCount = Math.max(0, array.shape[0] ?? 0);
-  const chunkRows = Math.max(
-    1,
-    (array as zarr.Array<zarr.DataType, zarr.Readable> & { chunks?: number[] }).chunks?.[0] ??
-      fallbackChunkRows
-  );
+  const chunkRows = Math.max(1, array.chunks[0]);
   const scalarsPerRow = array.shape.slice(1).reduce((product, size) => product * size, 1);
   const chunkIndices = new Set<number>();
   for (const range of ranges) {
@@ -136,6 +131,11 @@ function estimateArrayPrefetchBytes(
     bytes += rows * scalarsPerRow * dtypeByteWidth(array.dtype) + PREFETCH_CHUNK_METADATA_BYTES;
   }
   return bytes;
+}
+
+export interface GSplatsPrefetchPlan {
+  bytes: number;
+  ranges?: readonly SplatRange[];
 }
 
 /** Test-only: re-arm the one-shot above so cases stay order-independent. */
@@ -334,22 +334,21 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     return this.l0Cache?.getStats() ?? null;
   }
 
-  /** Estimate the decompressed chunks this view's speculative read would retain. */
-  async estimatePrefetchBytes(viewState: GSplatsViewState): Promise<number> {
+  /** Resolve visible ranges and estimate the decompressed chunks they retain. */
+  async planPrefetch(viewState: GSplatsViewState): Promise<GSplatsPrefetchPlan> {
     const fallback = this.prefetchByteUpperBound;
     try {
       await this.ensureInitialized();
       const ranges = await this.queryVisibleSplatRanges(viewState);
-      const chunkRows = Math.max(
-        1,
-        (this.node.attrs as unknown as GSplatsMetadata).chunk_size || 1
-      );
-      return this.prefetchArrays().reduce(
-        (bytes, array) => bytes + estimateArrayPrefetchBytes(array, ranges, chunkRows),
-        0
-      );
+      return {
+        bytes: this.prefetchArrays().reduce(
+          (bytes, array) => bytes + estimateArrayPrefetchBytes(array, ranges),
+          0
+        ),
+        ranges,
+      };
     } catch {
-      return fallback;
+      return { bytes: fallback };
     }
   }
 
@@ -1232,24 +1231,29 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   /**
    * Prefetch chunks for the given view state into the cache without decoding.
    *
-   * Performs the same spatial index query as updateView() and issues zarr
-   * get() calls for each visible range on every array.  The fetched data
+   * Uses planned visible ranges when supplied; otherwise performs the same
+   * spatial index query as updateView(). Issues zarr get() calls for each
+   * visible range on every array. The fetched data
    * populates the HTTP cache and L0 decompressed-chunk cache but is NOT
    * accumulated into output buffers — the typed-array results are immediately
    * discarded.  This makes the subsequent updateView() call a fast cache hit
    * without the memory cost of allocating full-size output arrays that would
    * only be thrown away.
    */
-  async prefetchChunks(viewState: GSplatsViewState, signal?: AbortSignal): Promise<void> {
+  async prefetchChunks(
+    viewState: GSplatsViewState,
+    signal?: AbortSignal,
+    plannedRanges?: readonly SplatRange[]
+  ): Promise<void> {
     if (signal?.aborted) return;
     await this.ensureInitialized();
 
     if (!this.arrays.centers) return;
 
     // Query which splat ranges are visible
-    let splatRanges: SplatRange[];
+    let splatRanges: readonly SplatRange[];
     try {
-      splatRanges = await this.queryVisibleSplatRanges(viewState);
+      splatRanges = plannedRanges ?? (await this.queryVisibleSplatRanges(viewState));
     } catch {
       // Spatial query failed (e.g. malformed viewState during an animation
       // edge case). Skip the prefetch silently — production loadGSplats will
