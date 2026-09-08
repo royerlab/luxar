@@ -151,12 +151,18 @@ def test_cached_record_scene_skips_when_the_archive_is_absent(tmp_path: Path) ->
 
 
 @pytest.mark.parametrize(
-    "cached_payload",
-    [b"stale record bytes!!", b"wrong size"],
+    ("cached_payload", "expected_digest"),
+    [
+        (
+            b"stale record bytes!!",
+            hashlib.sha256(b"stale record bytes!!").hexdigest(),
+        ),
+        (b"wrong size", "not read"),
+    ],
     ids=["wrong-digest", "wrong-size"],
 )
 def test_cached_record_scene_rejects_an_unpinned_archive(
-    tmp_path: Path, cached_payload: bytes
+    tmp_path: Path, cached_payload: bytes, expected_digest: str
 ) -> None:
     cache_dir, manifest_path, _scene_zip = _write_record_fixture(
         tmp_path,
@@ -165,7 +171,8 @@ def test_cached_record_scene_rejects_an_unpinned_archive(
     )
 
     with pytest.raises(
-        pytest.fail.Exception, match="Rebuild or re-download the demo cache"
+        pytest.fail.Exception,
+        match=rf"sha256={expected_digest}.*Rebuild or re-download the demo cache",
     ):
         _cached_record_scene(cache_dir, manifest_path)
 
@@ -1109,7 +1116,9 @@ class TestSceneRowBudget:
             assert layer.attrs["kind"] == "lod"
             assert layer.attrs["selector"] == "screen-area"
             assert layer.attrs["intensity"] == pytest.approx(expected_intensity)
-            child_names = sorted(layer.group_keys())
+            child_names = sorted(
+                layer.group_keys(), key=lambda name: int(name.rsplit("_", 1)[1])
+            )
             assert child_names == ["child_0", "child_1", "child_2"]
             assert [layer[name].attrs["coverage_fraction"] for name in child_names] == [
                 0.0,
@@ -1119,6 +1128,9 @@ class TestSceneRowBudget:
             finest = layer[child_names[-1]]
             assert finest.attrs["kind"] == "partition"
             assert finest.attrs["max_elements"] == 40
+            assert sorted(
+                finest.group_keys(), key=lambda name: int(name.rsplit("_", 1)[1])
+            ) == ["part_0", "part_1", "part_2", "part_3"]
 
         tracer_positions = position_arrays(tracer_layer["child_2"])
         redshift_positions = position_arrays(redshift_layer["child_2"])
@@ -1128,11 +1140,13 @@ class TestSceneRowBudget:
         assert all(
             array.attrs["encoding"]["name"] != "array_ref" for array in tracer_positions
         )
+        redshift_encodings = [array.attrs["encoding"] for array in redshift_positions]
+        assert all(encoding["name"] == "array_ref" for encoding in redshift_encodings)
+        redshift_targets = [encoding["target"] for encoding in redshift_encodings]
         assert all(
-            array.attrs["encoding"]["name"] == "array_ref"
-            and array.attrs["encoding"]["target"].startswith("By tracer type/child_2/")
-            for array in redshift_positions
+            target.startswith("By tracer type/child_2/") for target in redshift_targets
         )
+        assert len(set(redshift_targets)) == len(redshift_targets)
 
     def test_cached_record_scene_carries_the_full_catalog(self) -> None:
         scene_zip = _cached_record_scene()
@@ -1148,11 +1162,14 @@ class TestSceneRowBudget:
             for layer_name in ("By tracer type", "By redshift"):
                 layer_attrs = read_attrs(layer_name)
                 child_paths = sorted(
-                    name.removesuffix("/zarr.json")
-                    for name in names
-                    if name.startswith(f"{layer_name}/child_")
-                    and name.count("/") == 2
-                    and name.endswith("/zarr.json")
+                    (
+                        name.removesuffix("/zarr.json")
+                        for name in names
+                        if name.startswith(f"{layer_name}/child_")
+                        and name.count("/") == 2
+                        and name.endswith("/zarr.json")
+                    ),
+                    key=lambda path: int(path.rsplit("_", 1)[1]),
                 )
                 assert child_paths == [
                     f"{layer_name}/child_0",
@@ -1173,11 +1190,14 @@ class TestSceneRowBudget:
                 finest_attrs = read_attrs(finest_path)
                 if finest_attrs.get("kind") == "partition":
                     layer_point_paths = sorted(
-                        name.removesuffix("/zarr.json")
-                        for name in names
-                        if name.startswith(f"{finest_path}/part_")
-                        and name.count("/") == 3
-                        and name.endswith("/zarr.json")
+                        (
+                            name.removesuffix("/zarr.json")
+                            for name in names
+                            if name.startswith(f"{finest_path}/part_")
+                            and name.count("/") == 3
+                            and name.endswith("/zarr.json")
+                        ),
+                        key=lambda path: int(path.rsplit("_", 1)[1]),
                     )
                 else:
                     layer_point_paths = [finest_path]
@@ -1219,6 +1239,7 @@ class TestSceneRowBudget:
                     tracer_position_paths.add(positions_path)
 
             tracer_prefix = f"{finest_paths['By tracer type']}/"
+            redshift_targets = []
             for point_path in point_paths["By redshift"]:
                 point_attrs = read_attrs(point_path)
                 for index in range(point_attrs["n_additive_sublods"]):
@@ -1227,6 +1248,8 @@ class TestSceneRowBudget:
                     assert encoding["name"] == "array_ref"
                     assert encoding["target"].startswith(tracer_prefix)
                     assert encoding["target"] in tracer_position_paths
+                    redshift_targets.append(encoding["target"])
+            assert len(set(redshift_targets)) == len(redshift_targets)
 
 
 class TestEnsureOriginFraming:
