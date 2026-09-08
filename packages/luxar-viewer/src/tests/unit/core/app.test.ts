@@ -156,6 +156,7 @@ import { LuxarApp } from '../../../core/app';
 import { SceneDimsManager } from '../../../scene/scene-dims-manager';
 import { setDocumentTitle } from '../../../core/document-title';
 import { SceneLoaderManager } from '../../../data/scene-loader-manager';
+import type { ZarrWaypoint } from '../../../types/zarr';
 
 describe('LuxarApp', () => {
   let app: LuxarApp;
@@ -1634,6 +1635,100 @@ describe('LuxarApp', () => {
         mockAnimationController.addPerFrameCallback.mockClear();
         sceneDimsManager.setDimensionValue(3, 0);
         expect(flightsStarted()).toBe(0);
+      } finally {
+        sceneDimsManager.reset();
+      }
+    });
+
+    it('re-runs overlay visibility when a dimension change opens the arrival gate', () => {
+      mockSceneManager.camera = {
+        position: { x: 0, y: 0, z: 10, set: vi.fn() },
+        up: { x: 0, y: 1, z: 0, set: vi.fn() },
+        near: 0.1,
+        far: 100,
+        updateProjectionMatrix: vi.fn(),
+      };
+      const dimensions = ['x', 'y', 'z', 'story'].map((name, index) => ({
+        name,
+        unit: '',
+        range: [0, 3] as [number, number],
+        step: 1,
+        display: index < 3,
+      }));
+      const fakeScene = {
+        userData: { sceneDimensions: { dimensions } },
+        children: [],
+        getObjectByName: () => undefined,
+      } as unknown as Parameters<typeof sceneDimsManager.initFromScene>[0];
+      sceneDimsManager.initFromScene(fakeScene);
+      const updateVisibility = vi.fn();
+      const pendingFlight = new Promise<{ completed: boolean }>(() => {});
+      const internals = app as unknown as {
+        sceneManager: typeof mockSceneManager;
+        renderingControls: typeof mockRenderingControls;
+        overlayManager: { updateVisibility: () => void; dispose: () => void };
+        cameraFlight: {
+          flyTo: () => Promise<{ completed: boolean }>;
+          cancel: () => void;
+          dispose: () => void;
+        };
+        installWaypoints: (waypoints: ZarrWaypoint[]) => void;
+      };
+      internals.sceneManager = mockSceneManager;
+      internals.renderingControls = mockRenderingControls;
+      internals.overlayManager = { updateVisibility, dispose: vi.fn() };
+      internals.cameraFlight = {
+        flyTo: () => pendingFlight,
+        cancel: vi.fn(),
+        dispose: vi.fn(),
+      };
+      const waypoints: ZarrWaypoint[] = [
+        { when: { story: 0 }, camera: { position: [0, 0, 5] }, reveal: 'on_arrival' },
+        { when: { story: 1 }, camera: { position: [5, 0, 0] }, reveal: 'on_arrival' },
+      ];
+
+      try {
+        internals.installWaypoints(waypoints);
+        updateVisibility.mockClear();
+        sceneDimsManager.setDimensionValue(3, 1);
+        updateVisibility.mockClear();
+
+        sceneDimsManager.setDimensionValue(3, 2);
+
+        expect(updateVisibility).toHaveBeenCalledTimes(1);
+      } finally {
+        sceneDimsManager.reset();
+      }
+    });
+
+    it('refreshes overlay visibility after installing waypoints with no initial match', () => {
+      const dimensions = ['x', 'y', 'z', 'story'].map((name, index) => ({
+        name,
+        unit: '',
+        range: [0, 3] as [number, number],
+        step: 1,
+        display: index < 3,
+      }));
+      const fakeScene = {
+        userData: { sceneDimensions: { dimensions } },
+        children: [],
+        getObjectByName: () => undefined,
+      } as unknown as Parameters<typeof sceneDimsManager.initFromScene>[0];
+      sceneDimsManager.initFromScene(fakeScene);
+      sceneDimsManager.setDimensionValue(3, 0);
+      const updateVisibility = vi.fn();
+      const internals = app as unknown as {
+        overlayManager: { updateVisibility: () => void; dispose: () => void };
+        installWaypoints: (waypoints: ZarrWaypoint[]) => void;
+      };
+      internals.overlayManager = { updateVisibility, dispose: vi.fn() };
+
+      try {
+        internals.installWaypoints([
+          { when: { story: 1 }, camera: { position: [5, 0, 0] }, reveal: 'on_arrival' },
+        ]);
+
+        expect(updateVisibility).toHaveBeenCalledTimes(1);
       } finally {
         sceneDimsManager.reset();
       }

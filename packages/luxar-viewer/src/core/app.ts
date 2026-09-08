@@ -594,14 +594,16 @@ export class LuxarApp {
     const listener = (): void => {
       driver.evaluate('fly');
       // The overlay manager listens to the same dims manager and may have run
-      // first, already showing the new story's captions; while the gate is
-      // closed, re-run its pass now — same task, so nothing paints in between.
-      if (driver.inTransit) this.overlayManager?.updateVisibility();
+      // first with the previous gate state. Re-run its pass now whether the
+      // new match closes OR opens the gate — same task, so nothing paints in
+      // between.
+      this.overlayManager?.updateVisibility();
     };
     sceneDimsManager.addListener(listener);
     this.waypointListener = listener;
     this.waypointDriver = driver;
     driver.evaluate('snap');
+    this.overlayManager?.updateVisibility();
   }
 
   private disposeWaypoints(): void {
