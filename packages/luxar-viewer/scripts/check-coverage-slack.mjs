@@ -11,6 +11,11 @@
  * So: fail when a floor falls more than `MAX_SLACK_POINTS` below its measured
  * value, and print the block that would fix it.
  *
+ * Separately, warn when measured coverage falls more than
+ * `MAX_EROSION_POINTS` below the value recorded when the floor was set. That
+ * catches downward drift before the floor is crossed without blocking a
+ * legitimate refactor.
+ *
  * It also closes a fail-open hole that vitest itself does not: a glob key
  * matching zero files yields pct `"Unknown"`, and `"Unknown" < 86` is `false`,
  * so a renamed directory silently turns its gate into one that inspects
@@ -274,6 +279,6 @@ async function main() {
   );
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   await main();
 }
