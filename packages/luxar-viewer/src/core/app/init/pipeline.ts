@@ -230,8 +230,10 @@ export async function runInitPipeline(
       // skips evaluation in this state.
       getDisplayDims: () => sceneDimsManager.getDims()?.displayed ?? [],
       hasArchiveFault: () => owner.archiveFault !== null,
-      requestReprocess: () => owner.requestReprocess(),
-      isUpdateInProgress: () => owner.isUpdateInProgress(),
+      requestReprocess: (paths) => owner.requestReprocess(paths),
+      // A view PASS in flight or queued — not a refinement hold, which the
+      // loader parks a resync through (see `LODGroupRegistryOwner`).
+      isUpdateInProgress: () => owner.isLoadPassInProgress(),
       // Resident-byte budget for loaded LOD geometry = the single,
       // adaptive GPU-geometry budget shared with the buffer pool (one VRAM
       // authority). Read dynamically so context-loss backoff applies live.

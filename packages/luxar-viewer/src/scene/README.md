@@ -430,7 +430,9 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    also kicks the sweep refinement orchestrator
    (`SceneLoader.kickRefinementIfIdle`) so the freshly-registered part
    ladders stream to completion instead of stalling at chunk-1 until
-   the next slice change.
+   the next slice change. Activation is single-shot: those nested leaves
+   resolve later staleness through the ordinary update sweep, while re-firing
+   the group loader would attach a duplicate copy of the subtree.
 
 **Selector modes:**
 
@@ -505,7 +507,9 @@ a sub-millisecond visibility toggle. Memory is bounded once per frame
 by `enforceResidentByteBudget`, which (only when the GPU pool's live
 resident byte total exceeds the shared budget) demotes evictable
 levels — hidden-layer (undrawable) first, then off-screen, then
-furthest-from-camera, then coldest-`lastVisibleTick`. The visible
+furthest-from-camera, then coldest-`lastVisibleTick`. A resident level
+that has never been displayed is back-filled with the coldest sentinel
+so it ages ahead of every level the user has actually seen. The visible
 level of each group and eager
 fallback levels (no `release` thunk) are never evicted. "Visible" here
 is **effective** visibility (`isEffectivelyVisible`): under a hidden
@@ -513,10 +517,34 @@ ancestor — a layer toggled off — nothing of that group is on screen, so
 all of its ready levels are ordinary cold candidates, including the
 one the selector nominally displays.
 
+**Partition frustum gating + targeted resync:** a `kind=partition`
+group registers through `registerPartition`, and every frame each part
+is tested against a frustum padded by `PARTITION_FRUSTUM_MARGIN` (10 %,
+so a cold part preloads just before it enters). A part outside it is
+hidden and stamped `userData.partitionFrustumVisible = false` — on
+EVERY object the part emitted, since one part node may produce several,
+and a part counts as re-entering when any of them was culled; the
+scene loader's sweep (`isPartitionPathVisible`) and refinement skip its
+loaders, dropping their predictive-prefetch baseline. Because a culled
+part misses slice updates, its RE-ENTRY requests a resync of exactly
+that part's loaders — `deps.requestReprocess(partPaths)` with the
+re-entering parts' registered node paths (the wrapper path when a part
+has none), coalesced per wrapper across frames and held while a view
+pass is in flight or queued (`isLoadPassInProgress`; a refinement hold
+does not count — the loader parks a resync that lands during one and
+cancels the hold into a targeted pass). The loader runs that resync
+under the **unchanged view version**: its `updateView` bumps `currentViewVersion`
+only when a query determinant changes (`viewStatesEqual`). Lazy fine
+levels never join the sweep and are never re-stamped by it, so a bump on
+an unchanged view read every resident fine level scene-wide as stale and
+dropped ALL groups to coarse on camera motion (the #2366 regression on
+the 44-part h2afva scene).
+
 **Wiring:** the SceneLoader instantiates one registry per scene and
 hooks `evaluatePerFrame()` into `AnimationController` alongside the
 dynamic-clipping callback. The injected `LODGroupRegistryDeps` supply
-the camera, viewport size, `displayDims`, and the optional resident
+the camera, viewport size, `displayDims`, the partition resync hooks
+(`requestReprocess`, `isUpdateInProgress`), and the optional resident
 byte budget / measurement — omitting the budget accessors yields pure
 retention (the unit-test default). `projectBoxAreaFraction`,
 `projectBoxDiagonalPx` and `pickChildWithHysteresis` are exported as
