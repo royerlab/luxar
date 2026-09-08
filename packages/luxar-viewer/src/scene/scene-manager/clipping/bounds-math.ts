@@ -409,11 +409,35 @@ export function calculateClippingPlanesFromSphere(
   return { near, far };
 }
 
+const TRANSFORM_W_EPSILON = 1e-12;
+
+function expandByTransformedCorner(
+  target: BoundingBox,
+  matrix: number[],
+  x: number,
+  y: number,
+  z: number
+): boolean {
+  const w = matrix[3] * x + matrix[7] * y + matrix[11] * z + matrix[15];
+  if (Math.abs(w) < TRANSFORM_W_EPSILON) return false;
+  const transformedX = (matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12]) / w;
+  const transformedY = (matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13]) / w;
+  const transformedZ = (matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14]) / w;
+  if (transformedX < target.min.x) target.min.x = transformedX;
+  if (transformedY < target.min.y) target.min.y = transformedY;
+  if (transformedZ < target.min.z) target.min.z = transformedZ;
+  if (transformedX > target.max.x) target.max.x = transformedX;
+  if (transformedY > target.max.y) target.max.y = transformedY;
+  if (transformedZ > target.max.z) target.max.z = transformedZ;
+  return true;
+}
+
 /**
  * Transforms bounding box by a 4x4 matrix
  *
  * @param box - Original bounding box
  * @param matrix - 4x4 transformation matrix (column-major, flat array)
+ * @param target - Optional caller-owned output box
  * @returns Transformed bounding box
  */
 export function transformBoundingBox(
@@ -433,41 +457,43 @@ export function transformBoundingBox(
   // Transform each corner, skipping any whose homogeneous w is ~0 to avoid
   // dividing through to ±Infinity/NaN (perspective projection of points on
   // or near the camera plane). The unprojected box is a safe fallback.
-  const W_EPSILON = 1e-12;
-  let skippedCorners = 0;
+  target.min.x = Infinity;
+  target.min.y = Infinity;
+  target.min.z = Infinity;
+  target.max.x = -Infinity;
+  target.max.y = -Infinity;
+  target.max.z = -Infinity;
   let transformedCorners = 0;
-  let minX = Infinity;
-  let minY = Infinity;
-  let minZ = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  let maxZ = -Infinity;
-
-  for (let cornerIndex = 0; cornerIndex < 8; cornerIndex++) {
-    const x = (cornerIndex & 1) === 0 ? inputMinX : inputMaxX;
-    const y = (cornerIndex & 2) === 0 ? inputMinY : inputMaxY;
-    const z = (cornerIndex & 4) === 0 ? inputMinZ : inputMaxZ;
-    const w = matrix[3] * x + matrix[7] * y + matrix[11] * z + matrix[15];
-    if (Math.abs(w) < W_EPSILON) {
-      skippedCorners++;
-      continue;
-    }
-    const transformedX = (matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12]) / w;
-    const transformedY = (matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13]) / w;
-    const transformedZ = (matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14]) / w;
-    if (transformedX < minX) minX = transformedX;
-    if (transformedY < minY) minY = transformedY;
-    if (transformedZ < minZ) minZ = transformedZ;
-    if (transformedX > maxX) maxX = transformedX;
-    if (transformedY > maxY) maxY = transformedY;
-    if (transformedZ > maxZ) maxZ = transformedZ;
-    transformedCorners++;
-  }
+  transformedCorners += Number(
+    expandByTransformedCorner(target, matrix, inputMinX, inputMinY, inputMinZ)
+  );
+  transformedCorners += Number(
+    expandByTransformedCorner(target, matrix, inputMaxX, inputMinY, inputMinZ)
+  );
+  transformedCorners += Number(
+    expandByTransformedCorner(target, matrix, inputMinX, inputMaxY, inputMinZ)
+  );
+  transformedCorners += Number(
+    expandByTransformedCorner(target, matrix, inputMaxX, inputMaxY, inputMinZ)
+  );
+  transformedCorners += Number(
+    expandByTransformedCorner(target, matrix, inputMinX, inputMinY, inputMaxZ)
+  );
+  transformedCorners += Number(
+    expandByTransformedCorner(target, matrix, inputMaxX, inputMinY, inputMaxZ)
+  );
+  transformedCorners += Number(
+    expandByTransformedCorner(target, matrix, inputMinX, inputMaxY, inputMaxZ)
+  );
+  transformedCorners += Number(
+    expandByTransformedCorner(target, matrix, inputMaxX, inputMaxY, inputMaxZ)
+  );
+  const skippedCorners = 8 - transformedCorners;
 
   if (skippedCorners > 0) {
     log.warning(
       Modules.SCENE_MANAGER,
-      `transformBoundingBox: skipped ${skippedCorners}/8 corner(s) with |w| < ${W_EPSILON} (degenerate perspective projection)`
+      `transformBoundingBox: skipped ${skippedCorners}/8 corner(s) with |w| < ${TRANSFORM_W_EPSILON} (degenerate perspective projection)`
     );
   }
 
@@ -482,12 +508,6 @@ export function transformBoundingBox(
     target.max.z = inputMaxZ;
     return target;
   }
-  target.min.x = minX;
-  target.min.y = minY;
-  target.min.z = minZ;
-  target.max.x = maxX;
-  target.max.y = maxY;
-  target.max.z = maxZ;
   return target;
 }
 

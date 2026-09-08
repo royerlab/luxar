@@ -204,7 +204,7 @@ Each item names the mechanism, the evidence, and the expected effect. "Verified"
 13. Transfer gsplat projection inputs when no S-cache retention is needed; pool the four worst-case output buffers.
 14. RGBA32F → RGBA16F element textures (planned in `gpu-byte-budget.ts:27-41`), halves resident GPU bytes and the `texSubImage2D` share.
 15. Free the LDR half-float target when FXAA is off (`resource-lifecycle.ts:71,118`); don't `dispose()` the HDR target on DPR steps when sample count is unchanged; coalesce adaptive-DPR resizes.
-16. `Box3.setFromObject` per partition child per frame (`lod-group-registry.ts:1282`) → cache world boxes and skip children already outside the frustum; per-frame allocations and O(groups²) containment in `render-order.ts:605-660,811-840`.
+16. Partition frustum bounds: the loaded-geometry footprint is now cached per part and dirtied by geometry commits, while transformed authored boxes reuse caller-owned storage (#2605). An h2afva-shaped 44-part / 4,448-node selector microbenchmark (300 static frames, five runs) dropped the median registry pass from 2.93 ms/frame and 44 `Box3.setFromObject` subtree walks/frame to 0.061 ms/frame and zero steady-state walks. The separate O(groups²) containment in `render-order.ts:605-660,811-840` remains.
 17. `gpuBufferPool.beginFrame()` is per commit cycle, not per frame (`gpu-buffer-pool.ts:172` vs `atomic-commit.ts:115`), so `evictionFrames` is mis-unit'd.
 18. WebGPU backend ignores `updateRanges` (full re-upload) — parity gap for streaming scenes.
 19. `get()` returns `undefined` after exhausted retries → zarrita fills silently (`multi-level-caching-store.ts:403,413`).

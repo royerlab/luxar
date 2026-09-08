@@ -339,6 +339,11 @@ export interface WorldBoxSource {
   }[];
 }
 
+export interface WorldBoxOptions {
+  worldBoxScratch: BoundingBox;
+  useLodBounds?: boolean;
+}
+
 /**
  * Fold an entry's children nD bounds into a single world-space
  * :type:`BoundingBox`, mapping nD axes onto X/Y/Z via the current
@@ -358,14 +363,15 @@ export function computeEntryWorldBox(
   displayDims: readonly number[],
   localBoxScratch: BoundingBox,
   matrixScratch: number[],
-  worldBoxScratch: BoundingBox,
-  useLodBounds: boolean = false
+  options: WorldBoxOptions
 ): BoundingBox | null {
   const local = localBoxScratch;
   let any = false;
   for (let ci = 0; ci < entry.children.length; ci++) {
     const child = entry.children[ci];
-    const pb = useLodBounds ? (child.lodBounds ?? child.positionBounds) : child.positionBounds;
+    const pb = options.useLodBounds
+      ? (child.lodBounds ?? child.positionBounds)
+      : child.positionBounds;
     if (pb.min.length === 0 || pb.max.length === 0 || pb.min.length !== pb.max.length) {
       continue;
     }
@@ -424,5 +430,5 @@ export function computeEntryWorldBox(
   const elements = entry.groupObject.matrixWorld.elements;
   const m = matrixScratch;
   for (let i = 0; i < 16; i++) m[i] = elements[i];
-  return transformBoundingBox(local, m, worldBoxScratch);
+  return transformBoundingBox(local, m, options.worldBoxScratch);
 }

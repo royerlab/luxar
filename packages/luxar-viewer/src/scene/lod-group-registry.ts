@@ -78,6 +78,7 @@ import {
   pickChildWithHysteresis,
   projectBoxAreaFraction,
   projectBoxDiagonalPx,
+  type WorldBoxOptions,
 } from './lod-selector-math';
 import { enforceResidentByteBudget } from './lod-eviction';
 
@@ -591,8 +592,8 @@ interface LODGroupEntryCache {
   /** Whether any child needs the optional robust-bounds metric fold. */
   hasLodBounds: boolean;
   localBoxScratch: BoundingBox;
-  worldBoxScratch: BoundingBox;
-  metricWorldBoxScratch: BoundingBox;
+  worldBoxOptions: WorldBoxOptions;
+  metricWorldBoxOptions: WorldBoxOptions;
 }
 
 /**
@@ -605,7 +606,6 @@ interface LODGroupEntryCache {
  *   - ``PARTITION_FRUSTUM_MATRIX_SCRATCH`` — padded projection × view product.
  *   - ``WORLD_BOX3_SCRATCH`` — a ``THREE.Box3`` view of a group's world bbox
  *     for ``frustum.intersectsBox`` (our ``BoundingBox`` is a plain object).
- *   - ``FOOTPRINT_BOX3_SCRATCH`` — loaded geometry footprint unioned into part bounds.
  * (The eviction pass keeps its own scratches in ``lod-eviction.ts``.)
  */
 const FRUSTUM_SCRATCH = new THREE.Frustum();
@@ -621,7 +621,6 @@ const PARTITION_FRUSTUM_SCALE = new THREE.Matrix4().makeScale(
   1
 );
 const WORLD_BOX3_SCRATCH = new THREE.Box3();
-const FOOTPRINT_BOX3_SCRATCH = new THREE.Box3();
 // Bit flags returned by evaluatePartitionEntry so one child scan reports both effects.
 const PARTITION_VISIBILITY_CHANGED = 1;
 const PARTITION_BECAME_VISIBLE = 2;
@@ -746,7 +745,9 @@ export class LODGroupRegistry {
       children: Array<{
         source: PartitionGroupEntry;
         localBoxScratch: BoundingBox;
-        worldBoxScratch: BoundingBox;
+        worldBoxOptions: WorldBoxOptions;
+        footprintBox: THREE.Box3;
+        footprintDirty: boolean;
       }>;
     }
   > = new Map();
@@ -815,13 +816,18 @@ export class LODGroupRegistry {
         min: { x: 0, y: 0, z: 0 },
         max: { x: 0, y: 0, z: 0 },
       },
-      worldBoxScratch: {
-        min: { x: 0, y: 0, z: 0 },
-        max: { x: 0, y: 0, z: 0 },
+      worldBoxOptions: {
+        worldBoxScratch: {
+          min: { x: 0, y: 0, z: 0 },
+          max: { x: 0, y: 0, z: 0 },
+        },
       },
-      metricWorldBoxScratch: {
-        min: { x: 0, y: 0, z: 0 },
-        max: { x: 0, y: 0, z: 0 },
+      metricWorldBoxOptions: {
+        worldBoxScratch: {
+          min: { x: 0, y: 0, z: 0 },
+          max: { x: 0, y: 0, z: 0 },
+        },
+        useLodBounds: true,
       },
     });
     // Apply initial visibility: only the active child is visible, and
@@ -853,13 +859,36 @@ export class LODGroupRegistry {
           min: { x: 0, y: 0, z: 0 },
           max: { x: 0, y: 0, z: 0 },
         },
-        worldBoxScratch: {
-          min: { x: 0, y: 0, z: 0 },
-          max: { x: 0, y: 0, z: 0 },
+        worldBoxOptions: {
+          worldBoxScratch: {
+            min: { x: 0, y: 0, z: 0 },
+            max: { x: 0, y: 0, z: 0 },
+          },
         },
+        footprintBox: new THREE.Box3(),
+        footprintDirty: true,
       })),
     });
     for (const child of entry.children) child.object.userData.partitionFrustumVisible = true;
+  }
+
+  /** Mark the owning partition part's rendered footprint stale after a geometry commit. */
+  invalidatePartitionFootprint(nodePath: string): void {
+    for (const [entryPath, cache] of this.partitionCaches) {
+      if (nodePath !== entryPath && !nodePath.startsWith(`${entryPath}/`)) continue;
+      const entry = this.partitionEntries.get(entryPath);
+      if (!entry) continue;
+      for (let index = 0; index < entry.children.length; index++) {
+        const childPath = entry.children[index].object.name;
+        if (
+          childPath.length === 0 ||
+          nodePath === childPath ||
+          nodePath.startsWith(`${childPath}/`)
+        ) {
+          cache.children[index].footprintDirty = true;
+        }
+      }
+    }
   }
 
   /** Drop an lod_group from the registry (called on scene teardown). */
@@ -1300,15 +1329,18 @@ export class LODGroupRegistry {
         displayDims,
         childCache.localBoxScratch,
         this.matrixScratch,
-        childCache.worldBoxScratch
+        childCache.worldBoxOptions
       );
       let visible = true;
       if (worldBox) {
         WORLD_BOX3_SCRATCH.min.set(worldBox.min.x, worldBox.min.y, worldBox.min.z);
         WORLD_BOX3_SCRATCH.max.set(worldBox.max.x, worldBox.max.y, worldBox.max.z);
-        FOOTPRINT_BOX3_SCRATCH.setFromObject(child.object);
-        if (!FOOTPRINT_BOX3_SCRATCH.isEmpty()) {
-          WORLD_BOX3_SCRATCH.union(FOOTPRINT_BOX3_SCRATCH);
+        if (childCache.footprintDirty) {
+          childCache.footprintBox.setFromObject(child.object);
+          childCache.footprintDirty = false;
+        }
+        if (!childCache.footprintBox.isEmpty()) {
+          WORLD_BOX3_SCRATCH.union(childCache.footprintBox);
         }
         visible = frustum.intersectsBox(WORLD_BOX3_SCRATCH);
       }
@@ -1769,8 +1801,7 @@ export class LODGroupRegistry {
       displayDims,
       cache.localBoxScratch,
       this.matrixScratch,
-      useLodBounds ? cache.metricWorldBoxScratch : cache.worldBoxScratch,
-      useLodBounds
+      useLodBounds ? cache.metricWorldBoxOptions : cache.worldBoxOptions
     );
   }
 

@@ -62,7 +62,7 @@ describe('computeEntryWorldBox', () => {
       [0, 1, 2],
       localBoxScratch,
       new Array<number>(16),
-      worldBoxScratch
+      { worldBoxScratch }
     );
 
     expect(result).toBe(worldBoxScratch);
@@ -673,6 +673,59 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     expect(footprintVisible.visible).toBe(true);
     expect(footprintVisible.userData.partitionFrustumVisible).toBe(true);
     expect(culled.visible).toBe(false);
+  });
+
+  it('reuses a static part footprint across frames', () => {
+    const reg = makeRegistry();
+    const groupObject = new THREE.Group();
+    const geometry = new THREE.BufferGeometry();
+    geometry.boundingBox = new THREE.Box3(
+      new THREE.Vector3(-0.5, -0.5, -0.5),
+      new THREE.Vector3(0.5, 0.5, 0.5)
+    );
+    const child = new THREE.Mesh(geometry);
+    child.name = '/partition/part_0';
+    groupObject.add(child);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [
+        { object: child, positionBounds: { min: [-0.5, -0.5, -0.5], max: [0.5, 0.5, 0.5] } },
+      ],
+    });
+    const setFromObject = vi.spyOn(THREE.Box3.prototype, 'setFromObject');
+
+    reg.evaluatePerFrame();
+    reg.evaluatePerFrame();
+
+    expect(setFromObject).toHaveBeenCalledTimes(1);
+    setFromObject.mockRestore();
+  });
+
+  it('refreshes a cached footprint after a nested geometry commit', () => {
+    const reg = makeRegistry();
+    const groupObject = new THREE.Group();
+    const part = new THREE.Group();
+    part.name = '/partition/part_0';
+    const geometry = new THREE.BufferGeometry();
+    geometry.boundingBox = new THREE.Box3(new THREE.Vector3(2, 2, 2), new THREE.Vector3(3, 3, 3));
+    part.add(new THREE.Mesh(geometry));
+    groupObject.add(part);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [{ object: part, positionBounds: { min: [2, 2, 2], max: [3, 3, 3] } }],
+    });
+    reg.evaluatePerFrame();
+    expect(part.visible).toBe(false);
+
+    geometry.boundingBox.set(new THREE.Vector3(-0.5, -0.5, -0.5), new THREE.Vector3(0.5, 0.5, 0.5));
+    reg.evaluatePerFrame();
+    expect(part.visible).toBe(false);
+
+    reg.invalidatePartitionFootprint('/partition/part_0/level_1');
+    reg.evaluatePerFrame();
+    expect(part.visible).toBe(true);
   });
 
   it('preloads a cold part just outside the exact frustum', () => {

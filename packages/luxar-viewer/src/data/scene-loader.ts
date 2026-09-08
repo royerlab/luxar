@@ -1670,6 +1670,7 @@ export class SceneLoader {
       session,
       loadedViewVersion
     );
+    this.lodGroupRegistry?.invalidatePartitionFootprint(staged.path);
     // Wake the idle-paused render loop so this commit paints (see
     // _requestRender).
     this._requestRender?.();
@@ -1716,6 +1717,7 @@ export class SceneLoader {
       session,
       loadedViewVersion
     );
+    this.lodGroupRegistry?.invalidatePartitionFootprint(staged.path);
     // Wake the idle-paused render loop so this commit paints (see
     // _requestRender).
     this._requestRender?.();
@@ -1755,6 +1757,7 @@ export class SceneLoader {
       session,
       loadedViewVersion
     );
+    this.lodGroupRegistry?.invalidatePartitionFootprint(staged.path);
     this._requestRender?.();
   }
 
@@ -1904,6 +1907,7 @@ export class SceneLoader {
       session,
       loadedViewVersion
     );
+    this.lodGroupRegistry?.invalidatePartitionFootprint(path);
     // Wake the idle-paused render loop so this commit paints (see
     // _requestRender).
     this._requestRender?.();
