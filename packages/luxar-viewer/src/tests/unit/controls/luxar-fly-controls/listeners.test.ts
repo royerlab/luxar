@@ -26,6 +26,9 @@ function makeCtx(overrides: Partial<FlyListenersCtx> = {}): FlyListenersCtx {
     onMouseUp: vi.fn(),
     onMouseMove: vi.fn(),
     onWheel: vi.fn(),
+    onPointerDown: vi.fn(),
+    onPointerMove: vi.fn(),
+    onPointerUp: vi.fn(),
     ...overrides,
   };
 }
@@ -161,6 +164,36 @@ describe('attachListeners — disposer is comprehensive', () => {
     expect(ctx.onMouseMove).not.toHaveBeenCalled();
     expect(ctx.onWheel).not.toHaveBeenCalled();
 
+    document.body.removeChild(domElement);
+  });
+});
+
+describe('attachListeners — touch (pointer events, always attached)', () => {
+  it('attaches pointerdown on domElement and pointermove/up/cancel on window', () => {
+    const domElement = document.createElement('div');
+    document.body.appendChild(domElement);
+    const ctx = makeCtx({ domElement });
+    const disposer = attachListeners(ctx);
+
+    domElement.dispatchEvent(
+      new PointerEvent('pointerdown', { pointerId: 1, pointerType: 'touch' })
+    );
+    window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, pointerType: 'touch' }));
+    window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, pointerType: 'touch' }));
+    window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 2, pointerType: 'touch' }));
+    expect(ctx.onPointerDown).toHaveBeenCalledTimes(1);
+    expect(ctx.onPointerMove).toHaveBeenCalledTimes(1);
+    expect(ctx.onPointerUp).toHaveBeenCalledTimes(2); // up + cancel
+
+    disposer();
+    domElement.dispatchEvent(
+      new PointerEvent('pointerdown', { pointerId: 3, pointerType: 'touch' })
+    );
+    window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 3, pointerType: 'touch' }));
+    window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 3, pointerType: 'touch' }));
+    expect(ctx.onPointerDown).toHaveBeenCalledTimes(1);
+    expect(ctx.onPointerMove).toHaveBeenCalledTimes(1);
+    expect(ctx.onPointerUp).toHaveBeenCalledTimes(2);
     document.body.removeChild(domElement);
   });
 });

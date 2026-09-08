@@ -272,13 +272,13 @@ export interface UrlParams {
 
   /**
    * Force the session's JS input profile (`?input=touch|mouse`): pointer flags,
-   * hover capability, touch points, and device tier. Today this only changes
-   * device-class fallback budgets where the browser heap is unavailable;
-   * gesture, layout, and copy adaptations land in follow-up touch work.
+   * hover capability, touch points, and device tier. This changes device-class
+   * fallback budgets, primary-tip pen routing, and the Safari gesture-canceller
+   * gate; long-press menus and tap-oriented copy land in follow-up touch work.
    * Stylesheets and per-event gesture routing keep following the real media
    * features and `PointerEvent.pointerType`, so a faithful check still needs
-   * device emulation or a real device. `null` (missing or unrecognised) ⇒
-   * detect from the browser. See `utils/input-capabilities.ts`.
+   * device emulation or a real device. `null` (missing or unrecognised) ⇒ detect
+   * from the browser. See `utils/input-capabilities.ts`.
    */
   input: InputProfileOverride | null;
 
