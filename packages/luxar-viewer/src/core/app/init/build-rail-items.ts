@@ -33,6 +33,8 @@ import type { RecordingPanel } from '../../../ui/recording-panel';
 import type { AudioEngine } from '../../../audio/audio-engine';
 import { KeyAction, type KeyActionId } from '../../../input';
 import { getInputProfile } from '../../../utils/input-capabilities';
+import { notifier } from '../../../utils/cross-layer/notifier';
+import { eventBus } from '../../../utils/cross-layer/event-bus';
 
 /** Everything the rail item closures reference (all constructed by the pipeline). */
 export interface RailItemsDeps {
@@ -76,6 +78,7 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
     audioEngine,
   } = deps;
   const controlModeShortcut = shortcutForAction(KeyAction.toggleControlMode);
+  const coarse = getInputProfile().coarsePointer;
 
   // Rendering, Layers, and Recording all dock at the same spot beside the
   // rail (left: 73px), so the rail opens ONE floating surface at a time —
@@ -86,6 +89,10 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
   // are deliberately not routed through this: power users may still stack
   // panels explicitly via R/L/T.
   const closeOtherLeftPanels = (except?: 'render' | 'layers' | 'recording'): void => {
+    if (coarse) {
+      notifier.hideHelp();
+      eventBus.emit('panel-hide', { panelId: 'data-monitor' });
+    }
     if (except !== 'render' && renderingControls.isVisible()) {
       ui.commands.toggleRenderingControls();
     }
@@ -101,7 +108,6 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
   // floating surface, so the help overlay and the data monitor join the
   // docked panels' exclusivity, and a "Hide panels" button stands in for the
   // Escape key a phone does not have. Desktop keeps stacking and no new item.
-  const coarse = getInputProfile().coarsePointer;
   const closeOthersOnCoarse = (): void => {
     if (coarse) closeOtherLeftPanels();
   };

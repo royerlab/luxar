@@ -17,6 +17,8 @@ import {
   resetInputProfileForTests,
   setInputProfileOverride,
 } from '../../../../../utils/input-capabilities';
+import { notifier } from '../../../../../utils/cross-layer/notifier';
+import { eventBus } from '../../../../../utils/cross-layer/event-bus';
 
 function makeDeps(
   overrides: {
@@ -573,6 +575,31 @@ describe('buildRailItems', () => {
           }
         ).ui.commands.toggleRenderingControls
       ).not.toHaveBeenCalled();
+    });
+
+    it('docked panels close Help and the data monitor only under a coarse pointer', () => {
+      const hideHelp = vi.spyOn(notifier, 'hideHelp').mockImplementation(() => {});
+      const hiddenPanels: string[] = [];
+      const off = eventBus.on('panel-hide', ({ panelId }) => hiddenPanels.push(panelId));
+
+      setInputProfileOverride('touch');
+      for (const id of ['render', 'layers', 'recording']) {
+        const deps = makeDeps({ layerCount: 3 });
+        buildRailItems(deps).find((item) => item.id === id)!.activate();
+      }
+      expect(hideHelp).toHaveBeenCalledTimes(3);
+      expect(hiddenPanels).toEqual(['data-monitor', 'data-monitor', 'data-monitor']);
+
+      hideHelp.mockClear();
+      hiddenPanels.length = 0;
+      setInputProfileOverride('mouse');
+      for (const id of ['render', 'layers', 'recording']) {
+        const deps = makeDeps({ layerCount: 3 });
+        buildRailItems(deps).find((item) => item.id === id)!.activate();
+      }
+      expect(hideHelp).not.toHaveBeenCalled();
+      expect(hiddenPanels).toEqual([]);
+      off();
     });
   });
 });
