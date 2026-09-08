@@ -792,22 +792,25 @@ describe('LODGroupRegistry — partition frustum selection', () => {
       requestReprocess
     );
     const groupObject = new THREE.Group();
-    const staying = new THREE.Group();
     const returning = new THREE.Group();
-    groupObject.add(staying, returning);
+    const staying = new THREE.Group();
+    groupObject.add(returning, staying);
+    // The RETURNING part is registered FIRST so a rising edge that leaked into
+    // later children (e.g. testing the accumulated flags instead of this
+    // child's) would name ``part_1`` too and fail the assertion below.
     reg.registerPartition({
       path: '/partition',
       groupObject,
       children: [
         {
           path: '/partition/part_0',
-          objects: [staying],
-          positionBounds: { min: [-0.5, 0, 0], max: [0.5, 0.5, 0.5] },
+          objects: [returning],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
         },
         {
           path: '/partition/part_1',
-          objects: [returning],
-          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+          objects: [staying],
+          positionBounds: { min: [-0.5, 0, 0], max: [0.5, 0.5, 0.5] },
         },
       ],
     });
@@ -823,7 +826,7 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     reg.evaluatePerFrame();
     expect(returning.visible).toBe(true);
     expect(requestReprocess).toHaveBeenCalledOnce();
-    expect(requestReprocess).toHaveBeenCalledWith(['/partition/part_1']);
+    expect(requestReprocess).toHaveBeenCalledWith(['/partition/part_0']);
   });
 
   it('coalesces the union of re-entering parts across frames while an update is in flight', () => {
@@ -889,16 +892,16 @@ describe('LODGroupRegistry — partition frustum selection', () => {
       requestReprocess
     );
     const groupObject = new THREE.Group();
-    const named = new THREE.Group();
+    const pathed = new THREE.Group();
     const unpathed = new THREE.Group();
-    groupObject.add(named, unpathed);
+    groupObject.add(pathed, unpathed);
     reg.registerPartition({
       path: '/partition',
       groupObject,
       children: [
         {
           path: '/partition/part_0',
-          objects: [named],
+          objects: [pathed],
           positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
         },
         { path: '', objects: [unpathed], positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] } },
@@ -910,7 +913,7 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     reg.evaluatePerFrame();
     expect(requestReprocess).toHaveBeenCalledOnce();
     // The pathless part widens the request to the whole partition, which already
-    // covers the named one — exactly one path, the wrapper.
+    // covers the pathed one — exactly one path, the wrapper.
     expect(requestReprocess).toHaveBeenCalledWith(['/partition']);
   });
 
@@ -949,7 +952,7 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     expect(requestReprocess).toHaveBeenCalledOnce();
   });
 
-  it('coalesces rising-edge resyncs until the active update finishes', () => {
+  it('keeps two partitions rising in the same frame in their own buckets', () => {
     let updateInProgress = true;
     const requestReprocess = vi.fn();
     const reg = makeRegistry(
@@ -963,40 +966,51 @@ describe('LODGroupRegistry — partition frustum selection', () => {
       requestReprocess,
       () => updateInProgress
     );
-    const groupObject = new THREE.Group();
-    const first = new THREE.Group();
-    const second = new THREE.Group();
-    groupObject.add(first, second);
+    const firstGroup = new THREE.Group();
+    const firstPart = new THREE.Group();
+    firstGroup.add(firstPart);
+    const secondGroup = new THREE.Group();
+    const secondPart = new THREE.Group();
+    secondGroup.add(secondPart);
     reg.registerPartition({
-      path: '/partition',
-      groupObject,
+      path: '/first',
+      groupObject: firstGroup,
       children: [
         {
-          path: '/partition/part_0',
-          objects: [first],
+          path: '/first/part_0',
+          objects: [firstPart],
           positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
         },
+      ],
+    });
+    reg.registerPartition({
+      path: '/second',
+      groupObject: secondGroup,
+      children: [
         {
-          path: '/partition/part_1',
-          objects: [second],
-          positionBounds: { min: [4, 0, 0], max: [5, 0.5, 0.5] },
+          path: '/second/part_0',
+          objects: [secondPart],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
         },
       ],
     });
 
     reg.evaluatePerFrame();
-    groupObject.position.x = -2.5;
-    reg.evaluatePerFrame();
-    groupObject.position.x = -4.5;
+    expect(firstPart.visible).toBe(false);
+    expect(secondPart.visible).toBe(false);
+
+    // Both wrappers re-enter on the SAME frame: one flush, and neither
+    // partition's rising part may be attributed to the other.
+    firstGroup.position.x = -2.5;
+    secondGroup.position.x = -2.5;
     reg.evaluatePerFrame();
     expect(requestReprocess).not.toHaveBeenCalled();
 
     updateInProgress = false;
     reg.evaluatePerFrame();
-    reg.evaluatePerFrame();
-    // Two rising edges on the same wrapper collapse into ONE request (the paths
-    // they carry are asserted by the union test above).
     expect(requestReprocess).toHaveBeenCalledOnce();
+    const paths = requestReprocess.mock.calls[0][0] as string[];
+    expect([...paths].sort()).toEqual(['/first/part_0', '/second/part_0']);
   });
 
   it('keeps requesting frames while a rising-edge resync is pending', () => {

@@ -862,8 +862,8 @@ export class LODGroupRegistry {
   /**
    * Partition rising edges waiting for their wrapper to be visible and the
    * loader to be idle: wrapper path → the re-entering PART paths. A set that
-   * contains the wrapper path itself means "resync the whole partition" (an
-   * unnamed part). Coalesced across frames; flushed as ONE
+   * contains the wrapper path itself means "resync the whole partition" (a
+   * pathless part). Coalesced across frames; flushed as ONE
    * ``requestReprocess(paths)`` call.
    */
   private readonly partitionResyncPending = new Map<string, Set<string>>();
@@ -1353,8 +1353,9 @@ export class LODGroupRegistry {
   /**
    * Hand every pending rising edge whose wrapper is visible to the loader as
    * ONE ``requestReprocess(paths)`` call; hidden wrappers stay pending, dropped
-   * wrappers are forgotten. A set that contains its own wrapper path (an unnamed
-   * part) collapses to the wrapper path alone — it already covers every part.
+   * wrappers are forgotten. A set that contains its own wrapper path (a
+   * pathless part) collapses to the wrapper path alone — it already covers
+   * every part.
    */
   private flushPartitionResyncs(): void {
     const requestReprocess = this.deps.requestReprocess;
@@ -1408,7 +1409,9 @@ export class LODGroupRegistry {
       }
       const flags = updatePartitionObjectVisibility(child.objects, visible);
       result |= flags;
-      if (flags & PARTITION_BECAME_VISIBLE) noteRisingPart(risingParts, child.path, entry.path);
+      if ((flags & PARTITION_BECAME_VISIBLE) !== 0) {
+        noteRisingPart(risingParts, child.path, entry.path);
+      }
     }
     return result;
   }
