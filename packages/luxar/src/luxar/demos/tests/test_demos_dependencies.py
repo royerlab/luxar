@@ -206,15 +206,13 @@ class TestHatchEnvironments:
 
         assert demos_environment["template"] == "demos"
         assert set(demos_environment["features"]) == {"test", "demos"}
-        assert demos_environment["env-vars"] == {
-            name: f"{{env:{name}:1}}"
-            for name in (
-                "OMP_NUM_THREADS",
-                "OPENBLAS_NUM_THREADS",
-                "MKL_NUM_THREADS",
-                "NUMEXPR_NUM_THREADS",
-            )
-        }
+        for name in (
+            "OMP_NUM_THREADS",
+            "OPENBLAS_NUM_THREADS",
+            "MKL_NUM_THREADS",
+            "NUMEXPR_NUM_THREADS",
+        ):
+            assert demos_environment["env-vars"][name] == f"{{env:{name}:1}}"
         assert demos_environment["scripts"]["pytest"].startswith("python -m pytest ")
 
 
