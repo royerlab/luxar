@@ -25,6 +25,7 @@ import {
   type PickResult,
 } from '../../../../rendering/picking/picking-system';
 import { MAX_PICK_NODE_ID } from '../../../../rendering/picking/picking-system/pick-render';
+import { buildPickResultHandler } from '../../../../core/app/picking/pick-result-handler';
 import { setElementIdMap } from '../../../../types/committed-data';
 import { log } from '../../../../utils/log';
 
@@ -1438,22 +1439,36 @@ describe('PickingSystem — stale readback ordering', () => {
   });
 
   it('keeps an explicit pick authoritative when mousemove lands during delivery', async () => {
-    const delivery = deferred<void>();
-    const onPickResult = vi.fn(async (result: PickResult | null) => {
-      if (result) await delivery.promise;
-    });
+    const label = deferred<string | null>();
+    const getLabel = vi.fn(() => label.promise);
+    const onPicked = vi.fn();
+    const onPickResult = vi.fn(
+      buildPickResultHandler({
+        labelLoader: { getLabel },
+        onPicked,
+      })
+    );
     const { system, gate, fakeResult } = buildGatedSystem(onPickResult);
+    fakeResult.mainNode.name = '/Cells';
 
     const pending = system.pickAt(400, 300);
-    onPickResult.mockClear();
     gate.resolve(fakeResult);
-    await vi.waitFor(() => expect(onPickResult).toHaveBeenCalledWith(fakeResult));
+    await vi.waitFor(() => expect(getLabel).toHaveBeenCalledWith('/Cells', 7));
 
     system.onMouseMove(makeMouseEvent(400, 300));
-    delivery.resolve();
+    label.resolve('Cell 7');
     await pending;
 
-    expect(onPickResult).toHaveBeenCalledExactlyOnceWith(fakeResult);
+    expect(onPicked).toHaveBeenCalledExactlyOnceWith({
+      mainNode: fakeResult.mainNode,
+      nodeName: '/Cells',
+      hitNodeName: '/Cells',
+      elementIndex: 7,
+      label: 'Cell 7',
+      key: null,
+      screenX: 0,
+      screenY: 0,
+    });
   });
 
   it('drops an explicit pick when a newer explicit pick supersedes it', async () => {
