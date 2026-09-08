@@ -124,6 +124,7 @@ The project enforces quality standards automatically through pre-commit hooks an
 
 ### 🌐 TypeScript Code Quality
 - **Formatting**: ESLint + Prettier (automatic)
+- **Lint suppressions**: When a lint fix reduces a baselined count, run `pnpm lint --prune-suppressions` from `packages/luxar-viewer/` and commit the updated `eslint-suppressions.json`
 - **Type Safety**: Strict TypeScript configuration
 - **Documentation**: JSDoc comments for complex functions
 - **Memory Management**: Proper WebGL resource cleanup
