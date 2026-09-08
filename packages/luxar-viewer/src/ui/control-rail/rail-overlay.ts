@@ -146,7 +146,7 @@ export class RailOverlay {
     }
     this.deps.root.appendChild(el);
     // Align the flyout's vertical centre with the opening button.
-    el.style.top = `${btn.offsetTop + btn.offsetHeight / 2}px`;
+    el.style.top = `${this.topInRoot(btn) + btn.offsetHeight / 2}px`;
     btn.setAttribute('aria-expanded', 'true');
     this.current = { item, el, btn, kind: 'flyout' };
     // Flip the chip tooltips above when the flyout sits near the viewport
@@ -205,15 +205,16 @@ export class RailOverlay {
     // Anchor near the button, then clamp inside the viewport (measured after
     // content is built so the height is real). Prefer aligning the popover top
     // with the button; if it would overflow the bottom, shift it up.
-    el.style.top = `${btn.offsetTop}px`;
+    const btnTop = this.topInRoot(btn);
+    el.style.top = `${btnTop}px`;
     const rect = el.getBoundingClientRect();
     const margin = 8;
     if (rect.bottom > window.innerHeight - margin) {
       const shift = rect.bottom - (window.innerHeight - margin);
-      el.style.top = `${Math.max(margin, btn.offsetTop - shift)}px`;
+      el.style.top = `${Math.max(margin, btnTop - shift)}px`;
     }
     // Keep the arrow pointing at the button even after a vertical shift.
-    const arrowTop = btn.offsetTop + btn.offsetHeight / 2 - el.offsetTop;
+    const arrowTop = btnTop + btn.offsetHeight / 2 - el.offsetTop;
     arrow.style.top = `${arrowTop}px`;
 
     btn.setAttribute('aria-expanded', 'true');
@@ -248,6 +249,19 @@ export class RailOverlay {
     const target = e.target as Node | null;
     if (this.current.el.contains(target) || this.current.btn.contains(target)) return;
     this.close();
+  }
+
+  /**
+   * A button's top edge in the rail root's coordinate space — what an
+   * absolutely positioned popover/flyout child of the root needs for
+   * `style.top`. Equals `btn.offsetTop` while the items wrapper is
+   * layout-transparent (fine pointers), and stays correct when the wrapper is
+   * a scroll box (coarse pointers), where `offsetTop` would ignore its
+   * `scrollTop`.
+   */
+  private topInRoot(btn: HTMLElement): number {
+    const root = this.deps.root;
+    return btn.getBoundingClientRect().top - root.getBoundingClientRect().top - root.clientTop;
   }
 
   /** Tear down the overlay (rail disposal). */
