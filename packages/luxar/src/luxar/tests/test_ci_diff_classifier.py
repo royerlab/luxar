@@ -938,12 +938,8 @@ def test_mypy_gate_targets_stay_synchronized(workflow: str) -> None:
     assert claude_command is not None
 
     ci_steps = yaml.safe_load(workflow)["jobs"]["python-tests"]["steps"]
-    lint_step = next(
-        step
-        for step in ci_steps
-        if step.get("name") == "Lint, format, ratchets, and mypy"
-    )
-    assert lint_step["run"] == "hatch run lint"
+    lint_steps = [step for step in ci_steps if step.get("run") == "hatch run lint"]
+    assert len(lint_steps) == 1
 
     commands = {
         "pyproject.toml": next(
