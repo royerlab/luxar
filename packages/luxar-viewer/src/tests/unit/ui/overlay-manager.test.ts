@@ -1782,6 +1782,34 @@ describe('OverlayManager.updateVisibility — arrival gate (Waypoint.reveal = "o
     expect(held.classList.contains('luxar-overlay--hidden')).toBe(false);
   });
 
+  it('re-hides a caption the FIRST pass showed when the driver closes the gate afterwards (listener order)', async () => {
+    // The overlay manager may hear the dimension change before the waypoint
+    // driver does. Its first pass then shows panel-1 with the gate still open;
+    // the app re-runs the pass at the same position once the gate is closed,
+    // and that second pass must withhold panel-1 — it was not on screen before
+    // this position was reached — while keeping 'both' and 'title'.
+    setStory(0);
+    await loadStoryOverlays();
+    setStory(1);
+    manager.updateVisibility(); // gate still open: panel-1 appears
+    expect(visibleNames()).toEqual(['both', 'panel-1', 'title']);
+
+    inTransit = true;
+    manager.updateVisibility(); // the driver has since closed the gate
+    expect(visibleNames()).toEqual(['both', 'title']);
+
+    inTransit = false;
+    manager.updateVisibility(); // arrival
+    expect(visibleNames()).toEqual(['both', 'panel-1', 'title']);
+
+    // The next story step snapshots what is on screen NOW, so panel-1 departs
+    // at once and panel-0 waits — nothing is remembered from two steps ago.
+    inTransit = true;
+    setStory(0);
+    manager.updateVisibility();
+    expect(visibleNames()).toEqual(['both', 'title']);
+  });
+
   it('without a gate (or with it open) behaves exactly as before', async () => {
     manager.setTransitGate(null);
     setStory(0);

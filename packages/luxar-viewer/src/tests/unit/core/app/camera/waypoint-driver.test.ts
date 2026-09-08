@@ -316,7 +316,13 @@ describe('WaypointDriver', () => {
       { when: { story: 0 }, camera: { position: [0, 0, 5] }, reveal: 'on_arrival' },
       { when: { story: 1 }, camera: { position: [5, 0, 0] }, reveal: 'on_arrival' },
       { when: { story: 2 }, camera: { position: [9, 9, 9] } },
-      { when: { story: 3 }, rendering: { exposure: 0.5 }, reveal: 'on_arrival' } as ZarrWaypoint,
+      // A camera-less waypoint (rendering only) — cast because `camera` is
+      // required by the type but optional for the driver.
+      {
+        when: { story: 3 },
+        rendering: { exposure: 0.5 },
+        reveal: 'on_arrival',
+      } as unknown as ZarrWaypoint,
     ];
 
     it('is closed after a snap, open during the flight, closed again when it resolves — before the arrival event', async () => {

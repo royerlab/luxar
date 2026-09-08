@@ -214,8 +214,17 @@ export class OverlayManager {
    * stays hidden. `null` = no gate.
    */
   private transitGate: (() => boolean) | null = null;
-  /** Non-hover overlays currently shown — what the arrival gate keeps as is. */
+  /** Non-hover overlays currently shown. */
   private shown = new Set<string>();
+  /**
+   * `shown` as it was BEFORE the current dimension position was reached —
+   * what the arrival gate keeps as is. Snapshotted when `updateVisibility()`
+   * first sees a new position, so a second pass at the same position (the app
+   * re-runs it once the driver has decided the gate) still knows which
+   * overlays were already on screen and which only just appeared.
+   */
+  private settled = new Set<string>();
+  private settledAt: string | null = null;
   /** Hover overlays that update from GPU picking results. */
   private hoverOverlays = new Map<string, HoverOverlayEntry>();
   /** Cache last hover result to skip redundant DOM updates. */
@@ -326,7 +335,7 @@ export class OverlayManager {
    */
   private resolveVisible(name: string, config: OverlayConfig, inTransit: boolean): boolean {
     let visible = !this.globallyHidden && this.isOverlayVisible(config);
-    if (visible && inTransit && config.visible_range && !this.shown.has(name)) {
+    if (visible && inTransit && config.visible_range && !this.settled.has(name)) {
       visible = false;
     }
     if (visible) this.shown.add(name);
@@ -334,8 +343,25 @@ export class OverlayManager {
     return visible;
   }
 
+  /**
+   * Re-snapshot `settled` when the dimension position changed since the last
+   * pass. The overlay manager and the waypoint driver both listen to the dims
+   * manager in unspecified order: if this pass runs first it may show the new
+   * story's captions before the driver closes the gate; the app then re-runs
+   * it at the SAME position, and the snapshot lets that second pass withhold
+   * exactly the overlays the first one had just revealed.
+   */
+  private refreshSettled(): void {
+    const dims = sceneDimsManager.getDims();
+    const key = dims ? dims.currentStep.join(',') : '';
+    if (key === this.settledAt) return;
+    this.settled = new Set(this.shown);
+    this.settledAt = key;
+  }
+
   /** Update overlay visibility based on current dimension state. */
   updateVisibility(): void {
+    this.refreshSettled();
     const inTransit = this.transitGate?.() === true;
     for (const [name, config] of this.configs) {
       const el = this.overlayElements.get(name);
@@ -527,6 +553,8 @@ export class OverlayManager {
     this.configs.clear();
     this.hoverOverlays.clear();
     this.shown.clear();
+    this.settled.clear();
+    this.settledAt = null;
     this.transitGate = null;
   }
 
