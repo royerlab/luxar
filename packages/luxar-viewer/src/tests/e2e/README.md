@@ -136,10 +136,11 @@ unconditionally serial.
 
 | Script                 | Selection                                                                                                                                        |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `pnpm test:e2e`        | Everything under `src/tests/e2e/`, minus `*perf-bench.spec.ts` (`testIgnore`)                                                                    |
+| `pnpm test:e2e`        | Everything under `src/tests/e2e/`, minus `*perf-bench.spec.ts` and `src/tests/e2e/mobile/` (`testIgnore`)                                        |
 | `pnpm test:e2e:ci`     | The same, minus tests tagged `@visual` — a **title grep**, not a file list                                                                       |
 | `pnpm test:e2e:visual` | Local run of tests tagged `@visual`; snapshot assertions are active on Linux                                                                     |
 | `pnpm test:e2e:smoke`  | An explicit five-file allowlist: `viewer-initialization`, `url-parameters`, `dataset-switching`, `controls-interaction`, `keyboard-input-system` |
+| `pnpm test:e2e:mobile` | Only `src/tests/e2e/mobile/`, under `playwright.mobile.config.ts`                                                                                |
 | `pnpm test:perf:e2e`   | Only `*perf-bench.spec.ts`, under `playwright.perf.config.ts` (which shares this global setup)                                                   |
 
 The smoke subset is deliberately narrow: its CI job generates datasets at
@@ -187,6 +188,7 @@ e2e/
 ├── render-ticks.ts      # Confirmed render-tick flushing for detector specs
 ├── harnesses/
 │   └── tsl-harness.ts   # TSL ↔ GLSL parity harness (loaded by tsl-harness.html)
+├── mobile/              # touch-helpers.ts + five device-emulated specs
 ├── *.spec.ts            # Playwright specs (one per feature area)
 └── *.spec.ts-snapshots/ # Visual-regression baselines (auto-managed)
 ```
