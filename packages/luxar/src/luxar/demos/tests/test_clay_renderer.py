@@ -363,4 +363,6 @@ def test_prefilter_cube_preserves_detail_for_prime_sized_faces() -> None:
     filtered = cr.prefilter_cube(sky, 8, exponent=24.0, in_res=64)
 
     assert filtered[2].max() == pytest.approx(1.0)
+    assert filtered[2].min() < 0.01
+    assert filtered[2].mean() < 0.3
     assert filtered[3].max() < 1e-3
