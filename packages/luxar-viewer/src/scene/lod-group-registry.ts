@@ -646,11 +646,7 @@ const RISING_PARTS_SCRATCH = new Set<string>();
  * targeted, so it is recorded as the WRAPPER path: resync the whole partition
  * rather than silently miss it.
  */
-function noteRisingPart(
-  sink: Set<string>,
-  object: THREE.Object3D,
-  wrapperPath: string
-): void {
+function noteRisingPart(sink: Set<string>, object: THREE.Object3D, wrapperPath: string): void {
   sink.add(object.name || wrapperPath);
 }
 
