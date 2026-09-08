@@ -1111,6 +1111,21 @@ describe('DimensionSliders - coarse pointer affordances', () => {
     sliders.dispose();
   });
 
+  it('positions the thumb using its rendered coarse-pointer width', () => {
+    setInputProfileOverride('touch');
+    const sliders = build();
+    const thumb = document.getElementById('luxar-dim-thumb-3')!;
+    Object.defineProperty(thumb.parentElement!, 'offsetWidth', { value: 304 });
+    Object.defineProperty(thumb, 'offsetWidth', { value: 22 });
+
+    dims.currentStep[3] = 15;
+    sliders.update();
+
+    expect(thumb.style.left).toBe('282px');
+    dims.currentStep[3] = 7;
+    sliders.dispose();
+  });
+
   it('makes the dimension name a chip that selects the [ / ] target', () => {
     setInputProfileOverride('touch');
     const onSelect = vi.fn();

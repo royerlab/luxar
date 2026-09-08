@@ -981,7 +981,7 @@ export class DimensionSliders {
     const thumb = cached?.thumb ?? document.getElementById(`luxar-dim-thumb-${dimIndex}`);
     if (thumb) {
       const containerWidth = thumb.parentElement?.offsetWidth || 300;
-      const thumbWidth = 16;
+      const thumbWidth = thumb.offsetWidth || 16;
       thumb.style.left = `${fractionToThumbLeft(fraction, containerWidth, thumbWidth)}px`;
     }
   }
