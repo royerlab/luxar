@@ -89,11 +89,13 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
   // are deliberately not routed through this: power users may still stack
   // panels explicitly via R/L/T.
   type LeftSurface = 'help' | 'render' | 'layers' | 'monitor' | 'recording';
+  const closeCoarseSurfaces = (except?: LeftSurface): void => {
+    if (!coarse) return;
+    if (except !== 'help') notifier.hideHelp();
+    if (except !== 'monitor') eventBus.emit('panel-hide', { panelId: 'data-monitor' });
+  };
   const closeOtherLeftPanels = (except?: LeftSurface): void => {
-    if (coarse) {
-      if (except !== 'help') notifier.hideHelp();
-      if (except !== 'monitor') eventBus.emit('panel-hide', { panelId: 'data-monitor' });
-    }
+    closeCoarseSurfaces(except);
     if (except !== 'render' && renderingControls.isVisible()) {
       ui.commands.toggleRenderingControls();
     }
