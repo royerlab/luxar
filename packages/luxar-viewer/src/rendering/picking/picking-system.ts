@@ -692,6 +692,7 @@ export class PickingSystem {
     this.deliverPickResult(result);
   }
 
+  /** Contain both synchronous throws and async rejections from result callbacks. */
   private deliverPickResult(result: PickResult | null): void {
     try {
       const pending = this.onPickResult(result);

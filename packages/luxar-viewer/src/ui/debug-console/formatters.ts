@@ -12,10 +12,8 @@ import { formatErrorForDisplay, isErrorLike } from '../../utils/format-error';
 
 /** Safely obtain the last-resort string form used after JSON serialization fails. */
 export function formatFallbackValue(value: unknown): string {
-  if (typeof value !== 'object' || value === null) return String(value);
   try {
-    const toString = (value as { toString?: unknown }).toString;
-    return typeof toString === 'function' ? toString.call(value) : '[unprintable]';
+    return String(value);
   } catch {
     return '[unprintable]';
   }

@@ -474,7 +474,7 @@ export class DatasetBrowser {
       const retry = content.querySelector(
         '.luxar-dataset-browser__error-retry'
       ) as HTMLButtonElement | null;
-      if (retry) retry.onclick = () => this.navigate(this.lastAttemptedPath);
+      if (retry) retry.onclick = () => this.navigateSafely(this.lastAttemptedPath);
       statusBar.textContent = 'Error loading directory';
     }
   }
@@ -504,7 +504,7 @@ export class DatasetBrowser {
     rootLink.type = 'button';
     rootLink.className = 'luxar-dataset-browser__breadcrumb-link';
     rootLink.innerHTML = `<span class="luxar-dataset-browser__breadcrumb-home" aria-hidden="true">${BROWSER_ICONS.home}</span>Root`;
-    rootLink.onclick = () => this.navigate('');
+    rootLink.onclick = () => this.navigateSafely('');
     crumbs.appendChild(rootLink);
 
     // Path segments
@@ -536,7 +536,7 @@ export class DatasetBrowser {
           link.type = 'button';
           link.className = 'luxar-dataset-browser__breadcrumb-link';
           link.textContent = part;
-          link.onclick = () => this.navigate(pathToNavigate);
+          link.onclick = () => this.navigateSafely(pathToNavigate);
           crumbs.appendChild(link);
         }
       });

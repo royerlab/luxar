@@ -433,11 +433,7 @@ export class DebugConsole {
       } catch {
         // The shared fallback preserves ordinary object stringification while
         // containing null-prototype objects and hostile toString methods.
-        try {
-          span.textContent = formatFallbackValue(arg);
-        } catch {
-          span.textContent = '[unprintable]';
-        }
+        span.textContent = formatFallbackValue(arg);
       }
     } else {
       span.textContent = formatFallbackValue(arg);
