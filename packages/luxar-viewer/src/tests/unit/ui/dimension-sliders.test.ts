@@ -1111,6 +1111,33 @@ describe('DimensionSliders - coarse pointer affordances', () => {
     sliders.dispose();
   });
 
+  it('uses the animation Step override and cyclic wrap used by [ / ]', () => {
+    setInputProfileOverride('touch');
+    dims.currentStep[3] = 15;
+    dims.metadata![3].cyclic = true;
+    const sliders = build();
+    sliders.setAnimationManager({
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      getState: vi.fn(() => undefined),
+      isAnimating: vi.fn(() => false),
+      getStepSize: vi.fn(() => 2),
+      play: vi.fn(),
+      pause: vi.fn(),
+    } as never);
+    vi.mocked(sceneDimsManager.setDimensionValue).mockClear();
+
+    const nextFrame = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('.luxar-dimension-slider__step')
+    ).find((button) => button.getAttribute('aria-label') === 'Next Frame')!;
+    nextFrame.click();
+
+    expect(sceneDimsManager.setDimensionValue).toHaveBeenCalledWith(3, 1);
+    dims.currentStep[3] = 7;
+    dims.metadata![3].cyclic = false;
+    sliders.dispose();
+  });
+
   it('positions the thumb using its rendered coarse-pointer width', () => {
     setInputProfileOverride('touch');
     const sliders = build();

@@ -1,6 +1,6 @@
 import { SimpleDims } from '../types/dims';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
-import { calculateStepSize } from '../scene/dims/step-math';
+import { calculateNextPosition, calculateStepSize } from '../scene/dims/step-math';
 import { getNonDisplayedDimensions } from '../scene/dims/selection';
 import { getViewerContainer } from '../utils/viewer-container';
 import { getInputProfile } from '../utils/input-capabilities';
@@ -869,11 +869,24 @@ export class DimensionSliders {
       btn.textContent = direction < 0 ? '\u25C0' : '\u25B6';
       btn.setAttribute('aria-label', `${direction < 0 ? 'Previous' : 'Next'} ${name}`);
       this.sliderEvents.on(btn, 'click', () => {
-        const step = calculateStepSize(dimIndex, this.dims, { shift: false, ctrl: false });
-        // Live value, not slider.value: the continuous slider's 0–1000 integer
-        // scale would quantize and drift. setDimensionValue clamps and snaps.
-        const live = this.dims.currentStep[dimIndex];
-        sceneDimsManager.setDimensionValue(dimIndex, live + direction * step);
+        const dimMeta = this.dims.metadata?.[dimIndex];
+        const step = calculateStepSize(
+          dimIndex,
+          this.dims,
+          {},
+          undefined,
+          this.animationManager?.getStepSize(dimIndex) ?? null
+        );
+        const next = calculateNextPosition(
+          this.dims.currentStep[dimIndex],
+          direction,
+          step,
+          this.dimensionRanges[dimIndex],
+          dimMeta?.discrete,
+          dimMeta?.cyclic,
+          dimMeta?.step
+        );
+        sceneDimsManager.setDimensionValue(dimIndex, next);
       });
       return btn;
     };
