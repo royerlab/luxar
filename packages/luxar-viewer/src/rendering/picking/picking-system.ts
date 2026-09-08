@@ -479,8 +479,9 @@ export class PickingSystem {
    * Invalidate the cached pick buffer. Call when camera, geometry, or
    * viewport changes. Fades the current hover overlay (matches the
    * drag-suppression UX: while the camera is moving, tooltips hide).
-   * While an explicit tap pick is in flight, keep its delivery authoritative
-   * and defer that fade; the tap describes the frame where the finger lifted.
+   * While a recent explicit tap pick is in flight, keep its delivery authoritative
+   * and defer that fade for at most EXPLICIT_PICK_FADE_GUARD_MS; the tap describes
+   * the frame where the finger lifted, while a stalled handler eventually fades.
    * The rAF scheduler will fire a fresh pick once everything has been
    * still for HOVER_SETTLE_MS.
    */
@@ -555,8 +556,9 @@ export class PickingSystem {
     // Supersede any in-flight readback — the cursor moved, so an older
     // pick's late result is now stale.
     this._pickSeq++;
-    // Keep an explicit tap pick authoritative through async result delivery,
-    // matching markDirty(). Hover readbacks are still superseded by _pickSeq.
+    // Keep a recent explicit tap pick authoritative through async result delivery,
+    // matching markDirty(), but let a stalled handler fade after the bounded guard.
+    // Hover readbacks are still superseded by _pickSeq.
     if (!this.hasFreshExplicitPick()) {
       // Fade existing overlay while moving (dedupe-safe).
       void this.deliverPickResult(null);
