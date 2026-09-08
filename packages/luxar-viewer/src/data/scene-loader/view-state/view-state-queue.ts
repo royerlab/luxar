@@ -68,7 +68,8 @@ export class ViewStateQueue {
       .catch((error: unknown) => {
         log.warning(
           Modules.SCENE_LOADER,
-          `Drained updateView after retry failed: ${getErrorMessage(error)}`
+          `Drained updateView after retry failed: ${getErrorMessage(error)}`,
+          error
         );
       });
     return true;

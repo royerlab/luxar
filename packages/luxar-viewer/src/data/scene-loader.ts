@@ -1026,7 +1026,7 @@ export class SceneLoader {
   /** Re-run the current view state without blocking the caller. */
   requestReprocess(): void {
     this.updateView({}).catch((error: unknown) => {
-      log.error(Modules.SCENE_LOADER, `View reprocess failed: ${getErrorMessage(error)}`);
+      log.error(Modules.SCENE_LOADER, `View reprocess failed: ${getErrorMessage(error)}`, error);
     });
   }
 
@@ -1444,7 +1444,8 @@ export class SceneLoader {
           this.updateView(pendingState).catch((error: unknown) => {
             log.error(
               Modules.SCENE_LOADER,
-              `Refinement cancellation re-entry failed: ${getErrorMessage(error)}`
+              `Refinement cancellation re-entry failed: ${getErrorMessage(error)}`,
+              error
             );
           });
         });
@@ -2040,7 +2041,8 @@ export class SceneLoader {
     void this.updateView(this.viewState).catch((error) => {
       log.warning(
         Modules.SCENE_LOADER,
-        `Current view reload after archive retry failed: ${getErrorMessage(error)}`
+        `Current view reload after archive retry failed: ${getErrorMessage(error)}`,
+        error
       );
     });
   }

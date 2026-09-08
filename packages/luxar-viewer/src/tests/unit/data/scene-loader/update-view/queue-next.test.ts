@@ -29,7 +29,7 @@ import type { LinesDataLoader } from '../../../../../types/lines';
 import type { MeshDataLoader } from '../../../../../types/mesh';
 import type { DataLoader } from '../../../../../data/data-loader-types';
 import type { QueueNextCtx } from '../../../../../data/scene-loader/update-view/queue-next';
-import { log } from '../../../../../utils/log';
+import { log, Modules } from '../../../../../utils/log';
 
 // ============================================================================
 // Local fixtures
@@ -142,7 +142,8 @@ describe('queueNext — pending state + rAF available', () => {
   it('logs a rejected updateView re-entry instead of leaving an unhandled rejection', async () => {
     const ctx = makeCtx();
     const errorLog = vi.spyOn(log, 'error').mockImplementation(() => {});
-    ctx.spies.updateView.mockRejectedValue(new Error('synthetic re-entry failure'));
+    const failure = new Error('synthetic re-entry failure');
+    ctx.spies.updateView.mockRejectedValue(failure);
     ctx.viewStateQueue.setPending({ displayDims: [0, 1, 2] });
 
     queueNext(ctx);
@@ -150,8 +151,9 @@ describe('queueNext — pending state + rAF available', () => {
     await Promise.resolve();
 
     expect(errorLog).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.stringContaining('synthetic re-entry failure')
+      Modules.SCENE_LOADER,
+      'Queued updateView re-entry failed: synthetic re-entry failure',
+      failure
     );
     errorLog.mockRestore();
   });

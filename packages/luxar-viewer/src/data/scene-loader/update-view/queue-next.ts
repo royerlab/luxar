@@ -87,7 +87,8 @@ export function queueNext(ctx: QueueNextCtx): void {
       ctx.updateView(pendingState).catch((error: unknown) => {
         log.error(
           Modules.SCENE_LOADER,
-          `Queued updateView re-entry failed: ${getErrorMessage(error)}`
+          `Queued updateView re-entry failed: ${getErrorMessage(error)}`,
+          error
         );
       });
     });

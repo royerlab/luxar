@@ -9,7 +9,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ViewStateQueue } from '../../../../../data/scene-loader/view-state/view-state-queue';
 import type { ViewState } from '../../../../../data/data-loader-types';
-import { log } from '../../../../../utils/log';
+import { log, Modules } from '../../../../../utils/log';
 
 const dispatchSpy = vi.fn();
 vi.mock('../../../../../data/scene-loader/view-state/predicted-view-state', () => ({
@@ -135,8 +135,9 @@ describe('ViewStateQueue.drain', () => {
 
   it('logs a synchronous trigger failure instead of rejecting the drain microtask', async () => {
     const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const failure = new Error('synthetic synchronous drain failure');
     const trigger = vi.fn(() => {
-      throw new Error('synthetic synchronous drain failure');
+      throw failure;
     });
     queue.setPending({ slicePosition: [1, 2, 3, 4] });
 
@@ -145,8 +146,9 @@ describe('ViewStateQueue.drain', () => {
     await Promise.resolve();
 
     expect(warning).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.stringContaining('synthetic synchronous drain failure')
+      Modules.SCENE_LOADER,
+      'Drained updateView after retry failed: synthetic synchronous drain failure',
+      failure
     );
     warning.mockRestore();
   });

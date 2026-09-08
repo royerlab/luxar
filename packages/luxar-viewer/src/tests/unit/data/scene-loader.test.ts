@@ -1459,9 +1459,8 @@ describe('SceneLoader', () => {
   describe('fire-and-forget re-entry failures', () => {
     it('logs a rejected requestReprocess update', async () => {
       const errorLog = vi.spyOn(log, 'error').mockImplementation(() => {});
-      const updateView = vi
-        .spyOn(sceneLoader, 'updateView')
-        .mockRejectedValue(new Error('reprocess died'));
+      const failure = new Error('reprocess died');
+      const updateView = vi.spyOn(sceneLoader, 'updateView').mockRejectedValue(failure);
 
       try {
         sceneLoader.requestReprocess();
@@ -1469,7 +1468,8 @@ describe('SceneLoader', () => {
 
         expect(errorLog).toHaveBeenCalledWith(
           Modules.SCENE_LOADER,
-          'View reprocess failed: reprocess died'
+          'View reprocess failed: reprocess died',
+          failure
         );
       } finally {
         updateView.mockRestore();
@@ -1481,9 +1481,8 @@ describe('SceneLoader', () => {
       vi.useFakeTimers();
       const pendingState = { slicePosition: [2, 1, 0] };
       const errorLog = vi.spyOn(log, 'error').mockImplementation(() => {});
-      const updateView = vi
-        .spyOn(sceneLoader, 'updateView')
-        .mockRejectedValue(new Error('cancel re-entry died'));
+      const failure = new Error('cancel re-entry died');
+      const updateView = vi.spyOn(sceneLoader, 'updateView').mockRejectedValue(failure);
       const runRefinement = vi
         .spyOn(gsplatsRefinement, 'runGSplatsRefinement')
         .mockImplementation(async (ctx) => {
@@ -1502,7 +1501,8 @@ describe('SceneLoader', () => {
 
         expect(errorLog).toHaveBeenCalledWith(
           Modules.SCENE_LOADER,
-          'Refinement cancellation re-entry failed: cancel re-entry died'
+          'Refinement cancellation re-entry failed: cancel re-entry died',
+          failure
         );
       } finally {
         runRefinement.mockRestore();
@@ -2119,9 +2119,8 @@ describe('SceneLoader', () => {
 
     it('preserves a plain-object error when reloading after an archive retry', async () => {
       const warningLog = vi.spyOn(log, 'warning').mockImplementation(() => {});
-      const updateView = vi
-        .spyOn(sceneLoader, 'updateView')
-        .mockRejectedValue({ code: 'ERELOAD', retryable: true });
+      const failure = { code: 'ERELOAD', retryable: true };
+      const updateView = vi.spyOn(sceneLoader, 'updateView').mockRejectedValue(failure);
       const internals = sceneLoader as unknown as {
         resumeViewAfterRetry(hadArchiveFault: boolean): void;
       };
@@ -2132,7 +2131,8 @@ describe('SceneLoader', () => {
 
         expect(warningLog).toHaveBeenCalledWith(
           Modules.SCENE_LOADER,
-          'Current view reload after archive retry failed: {"code":"ERELOAD","retryable":true}'
+          'Current view reload after archive retry failed: {"code":"ERELOAD","retryable":true}',
+          failure
         );
       } finally {
         updateView.mockRestore();
