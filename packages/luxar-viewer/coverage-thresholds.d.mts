@@ -17,6 +17,9 @@ export declare const METRICS: readonly ['lines', 'statements', 'functions', 'bra
 /** How far a floor may sit below the measured value before the guard fails. */
 export declare const MAX_SLACK_POINTS: number;
 
+/** How far coverage may move from its recorded baseline before warning. */
+export declare const MAX_EROSION_POINTS: number;
+
 /** A floor per metric. Every key is optional; an omitted metric is ungated. */
 export interface MetricFloors {
   lines?: number;
@@ -32,3 +35,6 @@ export interface MetricFloors {
  * from the global pool.
  */
 export declare const COVERAGE_THRESHOLDS: MetricFloors & Record<string, MetricFloors | number>;
+
+/** Last accepted measurement for each coverage floor. */
+export declare const COVERAGE_RECORDED: MetricFloors & Record<string, MetricFloors | number>;

@@ -925,14 +925,17 @@ jobs:
         working-directory: packages/luxar-viewer
         run: pnpm test:generate-fixtures
 
-      - name: Check (overrides + typecheck + lint + layers + knip + coverage)
+      - name: Check (overrides + format + typecheck + lint + layers + knip + coverage)
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         # `pnpm run check:ci` runs in this order:
         #   check:overrides (security pins single-sourced in pnpm-workspace.yaml)
-        #   → typecheck → lint → check:layers (dependency-cruiser)
+        #   → check:format → typecheck → lint → check:layers (dependency-cruiser)
         #   → check:knip:ci (dead-file + unlisted-dependency gate)
         #   → test:coverage (vitest with thresholds)
         #   → check:coverage-slack (reject stale or empty coverage floors)
+        # Independent checks run after ordinary failures so the runner can report
+        # the complete failure set. The slack check is skipped only when a failed
+        # coverage run produced no summary for it to inspect.
         # knip:ci runs with --include files,dependencies so policy-level
         # "unused exports" findings (test builders, type guards) don't fail
         # CI; only true dead files and unlisted deps do.
