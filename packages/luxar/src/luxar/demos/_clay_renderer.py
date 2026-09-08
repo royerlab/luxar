@@ -220,7 +220,12 @@ def _block_mean(faces: np.ndarray, res: int) -> np.ndarray:
 
 
 def prefilter_cube(
-    faces: np.ndarray, out_res: int, *, exponent: float, in_res: int = 24
+    faces: np.ndarray,
+    out_res: int,
+    *,
+    exponent: float,
+    in_res: int = 24,
+    reference_percentile: float = 100.0,
 ) -> np.ndarray:
     """A lobe-prefiltered cube map: ``L_out(d) = Σ L(ω) max(0, d·ω)^k dω / Σ ...``.
 
@@ -253,10 +258,16 @@ def prefilter_cube(
         out[start : start + step] = (lobe @ weighted_src) / np.maximum(total, 1e-12)[
             :, None
         ]
+    # Normalise so the luminance at `reference_percentile` is 1 and clamp above
+    # it. At 100 that is the peak; a lower percentile lets a DARK map with a few
+    # bright clusters (a star field) contribute everywhere instead of only where
+    # a reflection ray hits the single brightest spot.
     lum = out @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
-    peak = float(lum.max())
-    if peak > 0:
-        out /= peak
+    reference = float(np.percentile(lum, reference_percentile)) if lum.size else 0.0
+    if reference <= 0:
+        reference = float(lum.max())
+    if reference > 0:
+        out = np.minimum(out / reference, 1.0)
     return out.reshape(6, out_res, out_res, 3)
 
 
@@ -545,9 +556,10 @@ class ClayRenderer:
         self,
         faces: Optional[np.ndarray],
         *,
-        diffuse: float = 0.15,
-        specular: float = 0.20,
-        gloss_exponent: float = 48.0,
+        diffuse: float = 0.35,
+        specular: float = 0.8,
+        gloss_exponent: float = 160.0,
+        reference_percentile: float = 97.0,
     ) -> None:
         """Light the clay with the scene's baked environment, on top of the studio.
 
@@ -555,9 +567,13 @@ class ClayRenderer:
         linear radiance in ``px nx py ny pz nz`` order (half floats already
         widened; ``None`` switches the environment off again). Two small cubes are
         prefiltered on the CPU: a cosine lobe (irradiance) that tints the surface
-        by up to ``diffuse`` of its albedo where the map is brightest, and a
-        glossy lobe (``gloss_exponent``) whose reflection adds up to ``specular``
-        at a grazing limb. Both are normalised to the map's own peak, so a dark
+        by up to ``diffuse`` of its albedo where the map is bright, and a glossy
+        lobe (``gloss_exponent``) whose reflection adds up to ``specular`` at a
+        grazing limb. Both are normalised so the map's ``reference_percentile``
+        luminance is 1 (clamped above): at 100 that is the peak, and a star field
+        would then light nothing but the one brightest cluster; 97 lets the whole
+        map show in the reflection — the owner found the peak-normalised version
+        invisible. Still additive on top of the studio, so a dark
         sky with a few bright clusters stays a hint rather than a light source.
         """
         for t in (self._env_diff, self._env_spec):
@@ -567,8 +583,13 @@ class ClayRenderer:
         self.env_diffuse = self.env_specular = 0.0
         if faces is None:
             return
-        diff = prefilter_cube(faces, 16, exponent=1.0, in_res=16)
-        spec = prefilter_cube(faces, 48, exponent=gloss_exponent, in_res=48)
+        pct = reference_percentile
+        diff = prefilter_cube(
+            faces, 16, exponent=1.0, in_res=16, reference_percentile=pct
+        )
+        spec = prefilter_cube(
+            faces, 64, exponent=gloss_exponent, in_res=64, reference_percentile=pct
+        )
         self._env_diff = self._cube_texture(diff)
         self._env_spec = self._cube_texture(spec)
         self.env_diffuse = float(diffuse)

@@ -76,7 +76,9 @@ from luxar.demos._clay_renderer import (
 #: 7: the clip is a stacked alpha matte (colour over a grey matte, twice as
 #: tall, opaque VP9) instead of a VP9 alpha plane — Safari / WKWebView drop the
 #: alpha plane, so the exported kiosk app showed black squares.
-STYLE_VERSION = 7
+#: 8: environment lighting weights (percentile-normalised map, stronger tint
+#: and reflection) — the env digest is in the key, the WEIGHTS are not.
+STYLE_VERSION = 8
 #: Bump when the PyMOL surface export changes so cached meshes are recomputed.
 MESH_VERSION = 2
 DEFAULT_FRAMES = 900

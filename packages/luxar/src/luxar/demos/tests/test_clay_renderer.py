@@ -327,9 +327,10 @@ def test_prefilter_cube_is_flat_for_a_flat_sky_and_peaks_toward_a_single_light()
     up = dirs[..., 1]
     # Brightest looking up, dark looking down; the cosine lobe reaches the
     # horizon, the glossy lobe hardly leaves the light's own face. Normalised
-    # to peak LUMINANCE 1, so a saturated colour's strongest channel exceeds 1.
-    lum = diffuse @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
-    assert lum.max() == pytest.approx(1.0, abs=1e-4)
+    # so the reference (here the peak) luminance is 1 and clamped per channel,
+    # so a saturated colour's strongest channel tops out at exactly 1.
+    assert diffuse.max() == pytest.approx(1.0, abs=1e-4)
+    assert (diffuse <= 1.0 + 1e-6).all()
     assert diffuse[3].max() < 1e-3 and glossy[3].max() < 1e-3
     assert (
         diffuse[..., 1][up > 0.95].mean()
@@ -342,3 +343,14 @@ def test_prefilter_cube_is_flat_for_a_flat_sky_and_peaks_toward_a_single_light()
 
     black = cr.prefilter_cube(np.zeros((6, 8, 8, 4), np.float32), 4, exponent=1.0)
     assert not black.any()
+
+    # A lower reference percentile lets a dark sky with one hot spot contribute
+    # everywhere: the hot spot clamps to 1 and the faint rest is lifted.
+    dim = np.full((6, 16, 16, 3), 0.01, dtype=np.float32)
+    dim[2, 7:9, 7:9] = 5.0
+    by_peak = cr.prefilter_cube(dim, 8, exponent=1.0, in_res=16)
+    by_pct = cr.prefilter_cube(
+        dim, 8, exponent=1.0, in_res=16, reference_percentile=50.0
+    )
+    assert by_pct[3].mean() > 3 * by_peak[3].mean()  # the dark side is no longer black
+    assert by_pct.max() == pytest.approx(1.0, abs=1e-6)  # and the hot spot is clamped
