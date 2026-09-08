@@ -489,6 +489,9 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
       event.stopImmediatePropagation();
 
       // Shift+wheel may arrive on deltaX; normalize whichever axis carries it.
+      // A Firefox 3-line notch becomes 48 px, yielding 0.024 rad at the
+      // default speed versus Chromium's 0.050 rad for 100 px, rather than the
+      // near-dead 0.0015 rad produced by treating the raw line count as pixels.
       const delta = normalizeWheelDeltaWithAxisFallback(event, this.domElement);
       if (delta === 0) return;
 

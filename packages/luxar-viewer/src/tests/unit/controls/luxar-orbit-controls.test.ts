@@ -619,6 +619,21 @@ describe('LuxarOrbitControls', () => {
       expect((controls as any).rollDelta).toBeCloseTo(100 * 0.0005, 12);
     });
 
+    it('#2565 normalizes a line-mode deltaX fallback at the orbit call site', () => {
+      controls = new LuxarOrbitControls(camera, domElement);
+      controls.enableViewAxisRotation();
+      domElement.dispatchEvent(
+        new WheelEvent('wheel', {
+          deltaY: 0,
+          deltaX: 3,
+          deltaMode: WheelEvent.DOM_DELTA_LINE,
+          shiftKey: true,
+          cancelable: true,
+        })
+      );
+      expect((controls as any).rollDelta).toBeCloseTo(48 * 0.0005, 12);
+    });
+
     it('#2565 does not dispatch change when both wheel axes are zero', () => {
       controls = new LuxarOrbitControls(camera, domElement);
       controls.enableViewAxisRotation();
