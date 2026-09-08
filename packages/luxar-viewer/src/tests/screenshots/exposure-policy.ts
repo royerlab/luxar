@@ -26,7 +26,7 @@
 export const TARGET_HI = 0.9; // desired p99 luminance of the lit foreground
 export const HI_PERCENTILE = 0.99;
 export const LIT_THRESHOLD = 0.04; // pixels dimmer than this are "background"
-export const EXPOSURE_MIN = -6;
+export const EXPOSURE_MIN = -10;
 export const EXPOSURE_MAX = 8;
 export const AUTO_EXPOSURE_ITERS = 3;
 

@@ -54,6 +54,9 @@ from PIL import Image
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GALLERY_DIR = REPO_ROOT / "docs" / "images" / "gallery"
 
+# Gallery policy floor; mirrored for parity checks even though the offline
+# scorer measures a finished image and does not apply exposure itself.
+EXPOSURE_MIN = -10.0
 # Background cutoff; hand-synced with exposure-policy.ts LIT_THRESHOLD (used by
 # the harness that produces these stills), so the scores reflect what it
 # actually optimizes.

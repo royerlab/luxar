@@ -26,8 +26,10 @@ import score_exposure as se  # noqa: E402
 # Thresholds the scorer mirrors from the capture harness, as
 # {name in exposure-policy.ts: name in score_exposure.py}. Deliberately NOT
 # listed: FLAT_MID_MIN (a scorer-only margin, see its comment) and the harness's
-# iteration/exposure-range knobs (nothing offline consumes them).
+# iteration/upper-range knobs (nothing offline consumes them). EXPOSURE_MIN is
+# pinned because it is the gallery policy's viewer-limit contract.
 MIRRORED_THRESHOLDS = {
+    "EXPOSURE_MIN": "EXPOSURE_MIN",
     "LIT_THRESHOLD": "LIT_THRESHOLD",
     "CLIP_LUMA": "CLIP_LUMA",
     "CLIP_SAT_MAX": "SAT_MAX",

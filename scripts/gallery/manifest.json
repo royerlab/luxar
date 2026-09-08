@@ -818,8 +818,7 @@
       "script": "demo_ppi_flow_field.py",
       "dataset": "datasets/demos/ppi_flow_field_full.luxar.zarr",
       "citation": "Luck et al. 2020",
-      "exposure": -6.0,
-      "note": "Auto now reaches the same -6-stop override and reports the clip guard exhausted there; the override remains deterministic and avoids the extra captures."
+      "note": "After the auto-exposure floor widened to -10, auto converges at -6.95 without exhausting the guard (p50 0.266, clipped fraction 0); the stale -6 override was removed."
     },
     {
       "id": "gsplats_3d_drosophila_gastrulation",
