@@ -1166,7 +1166,7 @@ export class DimensionSliders {
     playButton.className = 'luxar-dimension-slider__play-btn';
     playButton.setAttribute('aria-label', 'Play/Pause animation (right-click for settings)');
     playButton.setAttribute('title', 'Play/Pause (right-click for settings)');
-    playButton.textContent = '▶'; // Play icon
+    playButton.textContent = '⏵'; // Play icon, distinct from the coarse step arrow
 
     // Click handler for play/pause
     const playClickHandler = () => {
@@ -1203,7 +1203,7 @@ export class DimensionSliders {
     if (sliderTrack) {
       const existing = sliderTrack.parentElement;
       if (existing?.classList.contains('luxar-dimension-slider__controls-wrapper')) {
-        existing.insertBefore(playButton, existing.firstChild);
+        existing.appendChild(playButton);
         return;
       }
       // Create wrapper container for horizontal layout
@@ -1527,7 +1527,7 @@ export class DimensionSliders {
       playButton.textContent = '⏸'; // Pause icon
       playButton.classList.add('luxar-dimension-slider__play-btn--playing');
     } else {
-      playButton.textContent = '▶'; // Play icon
+      playButton.textContent = '⏵'; // Play icon, distinct from the coarse step arrow
       playButton.classList.remove('luxar-dimension-slider__play-btn--playing');
     }
   }

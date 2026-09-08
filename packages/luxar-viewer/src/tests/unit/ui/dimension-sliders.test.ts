@@ -1138,6 +1138,32 @@ describe('DimensionSliders - coarse pointer affordances', () => {
     sliders.dispose();
   });
 
+  it('adds a distinct play control after the coarse step controls', () => {
+    setInputProfileOverride('touch');
+    const sliders = build();
+    sliders.setAnimationManager({
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      getState: vi.fn(() => undefined),
+      isAnimating: vi.fn(() => false),
+      getStepSize: vi.fn(() => null),
+      play: vi.fn(),
+      pause: vi.fn(),
+    } as never);
+
+    const frameWrapper = document
+      .querySelector<HTMLInputElement>('#luxar-dim-slider-3')!
+      .closest('.luxar-dimension-slider__controls-wrapper')!;
+    expect(Array.from(frameWrapper.children).map((child) => child.className)).toEqual([
+      'luxar-dimension-slider__step',
+      'luxar-dimension-slider__track',
+      'luxar-dimension-slider__step',
+      'luxar-dimension-slider__play-btn',
+    ]);
+    expect(frameWrapper.lastElementChild?.textContent).toBe('⏵');
+    sliders.dispose();
+  });
+
   it('positions the thumb using its rendered coarse-pointer width', () => {
     setInputProfileOverride('touch');
     const sliders = build();
