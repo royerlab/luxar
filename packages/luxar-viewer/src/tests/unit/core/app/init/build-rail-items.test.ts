@@ -521,7 +521,10 @@ describe('buildRailItems', () => {
   });
 
   describe('coarse pointer (touch-first device)', () => {
-    afterEach(() => resetInputProfileForTests());
+    afterEach(() => {
+      resetInputProfileForTests();
+      vi.restoreAllMocks();
+    });
 
     it('adds a momentary Hide panels item that fires the Escape command', () => {
       setInputProfileOverride('touch');
@@ -548,6 +551,7 @@ describe('buildRailItems', () => {
     });
 
     it('help activation closes the docked panels under a coarse pointer, not under a mouse', () => {
+      const hideHelp = vi.spyOn(notifier, 'hideHelp').mockImplementation(() => {});
       setInputProfileOverride('touch');
       let deps = makeDeps({ renderVisible: true });
       buildRailItems(deps)
@@ -565,6 +569,7 @@ describe('buildRailItems', () => {
       ).ui.commands;
       expect(commands.toggleRenderingControls).toHaveBeenCalledTimes(1);
       expect(commands.toggleHelp).toHaveBeenCalledTimes(1);
+      expect(hideHelp).not.toHaveBeenCalled();
 
       setInputProfileOverride('mouse');
       deps = makeDeps({ renderVisible: true });
@@ -578,6 +583,25 @@ describe('buildRailItems', () => {
           }
         ).ui.commands.toggleRenderingControls
       ).not.toHaveBeenCalled();
+      hideHelp.mockRestore();
+    });
+
+    it('monitor activation closes other coarse surfaces without hiding the monitor', () => {
+      const hideHelp = vi.spyOn(notifier, 'hideHelp').mockImplementation(() => {});
+      const hiddenPanels: string[] = [];
+      const off = eventBus.on('panel-hide', ({ panelId }) => hiddenPanels.push(panelId));
+      setInputProfileOverride('touch');
+
+      const deps = makeDeps({ renderVisible: true });
+      buildRailItems(deps)
+        .find((item) => item.id === 'monitor')!
+        .activate();
+
+      expect(hideHelp).toHaveBeenCalledTimes(1);
+      expect(hiddenPanels).not.toContain('data-monitor');
+      expect(mocks(deps).ui.commands.toggleRenderingControls).toHaveBeenCalledTimes(1);
+      off();
+      hideHelp.mockRestore();
     });
 
     it('docked panels close Help and the data monitor only under a coarse pointer', () => {

@@ -88,10 +88,11 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
   // an outside-click, which dismisses an open popover). Keyboard shortcuts
   // are deliberately not routed through this: power users may still stack
   // panels explicitly via R/L/T.
-  const closeOtherLeftPanels = (except?: 'render' | 'layers' | 'recording'): void => {
+  type LeftSurface = 'help' | 'render' | 'layers' | 'monitor' | 'recording';
+  const closeOtherLeftPanels = (except?: LeftSurface): void => {
     if (coarse) {
-      notifier.hideHelp();
-      eventBus.emit('panel-hide', { panelId: 'data-monitor' });
+      if (except !== 'help') notifier.hideHelp();
+      if (except !== 'monitor') eventBus.emit('panel-hide', { panelId: 'data-monitor' });
     }
     if (except !== 'render' && renderingControls.isVisible()) {
       ui.commands.toggleRenderingControls();
@@ -108,8 +109,8 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
   // floating surface, so the help overlay and the data monitor join the
   // docked panels' exclusivity, and a "Hide panels" button stands in for the
   // Escape key a phone does not have. Desktop keeps stacking and no new item.
-  const closeOthersOnCoarse = (): void => {
-    if (coarse) closeOtherLeftPanels();
+  const closeOthersOnCoarse = (except: 'help' | 'monitor'): void => {
+    if (coarse) closeOtherLeftPanels(except);
   };
   // The Fullscreen API is absent on iPhone Safari (`fullscreenEnabled` is
   // false and there is no webkit fallback on the document), so the chip would
@@ -128,7 +129,7 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
       shortcut: shortcutForAction(KeyAction.toggleHelp),
       icon: RAIL_ICONS.help,
       activate: () => {
-        closeOthersOnCoarse();
+        closeOthersOnCoarse('help');
         ui.commands.toggleHelp();
       },
       openSelector: '#luxar-help-overlay',
@@ -257,7 +258,7 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
       shortcut: shortcutForAction(KeyAction.cycleDataMonitor),
       icon: RAIL_ICONS.monitor,
       activate: () => {
-        closeOthersOnCoarse();
+        closeOthersOnCoarse('monitor');
         ui.commands.cycleDataMonitor();
       },
       openSelector: '.luxar-data-monitor',
