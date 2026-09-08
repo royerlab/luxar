@@ -653,9 +653,12 @@ overlay before attaching. Rapid `H` toggles therefore cannot arm stale handlers
 that close or retain a subsequently opened panel.
 
 On devices reporting touch points, the shortcut list also includes a `Touch`
-section for orbit, zoom, pan and roll gestures. Its note calls out the ortho
-exception: one finger pans there and twist does not roll. The section is
-filtered out for non-touch devices, leaving desktop help text unchanged.
+section: the orbit, zoom, pan and roll gestures, then the finger equivalents of
+the desktop pointer rows — tap picks an element (and follows its link when it
+has one), press and hold opens whatever menu a right-click would, and double tap
+recenters the camera the way `F` does. Its note calls out the ortho exception:
+one finger pans there and twist does not roll. The section is filtered out for
+non-touch devices, leaving desktop help text unchanged.
 
 Initial focus goes to the overlay **container**, not its filter field. A focused
 text input trips `InputHandler`'s typing guard, which drops every key but
