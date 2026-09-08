@@ -1027,7 +1027,7 @@ export class LayersPanel {
       // paste: the layer filter above and the range slider's bound editor
       // both live inside this panel, and we offer no clipboard verbs of our
       // own to replace it.
-      if (target.closest('input[type="text"], textarea')) return;
+      if (target.closest('input[type="text"], input[type="number"], textarea')) return;
       e.preventDefault();
       if (target.closest('.luxar-layer-row__gain')) return;
       this.openContextMenuAt(target, me.clientX, me.clientY);
@@ -1038,7 +1038,7 @@ export class LayersPanel {
       attachLongPress(panel, {
         onLongPress: (x, y, ev) => {
           const target = ev.target as HTMLElement;
-          if (target.closest('input[type="text"], textarea')) return false;
+          if (target.closest('input[type="text"], input[type="number"], textarea')) return false;
           return this.openContextMenuAt(target, x, y);
         },
       })

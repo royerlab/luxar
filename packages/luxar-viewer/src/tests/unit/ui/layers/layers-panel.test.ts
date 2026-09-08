@@ -4378,6 +4378,19 @@ describe('LayersPanel — filter + context-menu lifecycle across dataset reloads
     panel.dispose();
   });
 
+  it('right-clicking the layer-order number field leaves the native menu alone', () => {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeManyLayerSceneGraph('alpha'));
+
+    const input = container.querySelector<HTMLInputElement>('.luxar-layers-panel__number')!;
+    const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    input.dispatchEvent(ev);
+
+    expect(ev.defaultPrevented).toBe(false);
+    expect(document.querySelector('.luxar-context-menu')).toBeNull();
+    panel.dispose();
+  });
+
   it('Shift+F10 on the focused EYE opens the eye menu, not the row menu', () => {
     const panel = new LayersPanel(container, animationController);
     panel.initFromScene(new THREE.Group(), makeManyLayerSceneGraph());
