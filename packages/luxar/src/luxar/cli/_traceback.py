@@ -46,7 +46,7 @@ _FALSEY = frozenset({"", "0", "false", "no", "off"})
 
 
 def _report_line(message: str) -> None:
-    """Print a fatal line through arbol, or stderr when arbol hides it."""
+    """Print a failure line through arbol, or stderr when arbol hides it."""
     if arbol_will_display():
         aprint(message)
     else:
@@ -67,6 +67,9 @@ def traceback_requested() -> bool:
 
 def report_error(message: str, error: BaseException) -> None:
     """Report a recoverable command failure without changing control flow.
+
+    The traceback path does not print ``message``, so ``error`` itself must
+    carry any context essential to diagnosing the failure.
 
     Args:
         message: The one-line explanation, already formatted (including any
