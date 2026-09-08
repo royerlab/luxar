@@ -231,7 +231,7 @@ Each dimension slider includes animation controls for automated playback through
 
 - **Play Button** (`▶`/`⏸`): Compact button to the left of slider
   - Left-click: Toggle animation play/pause
-  - Right-click: Open settings context menu (Napari-style)
+  - Right-click or hold: Open settings context menu (Napari-style)
 
 - **Slider wheel**: One base step per notch (the authored step, else 1% of the
   range); `Shift` fine (÷10), `Ctrl` coarse (×10), `Ctrl+Shift` extra-fine
@@ -239,7 +239,7 @@ Each dimension slider includes animation controls for automated playback through
   animation Step override below — hand stepping stays on the dimension's own
   grid.
 
-**Context Menu Settings** (right-click play button): three sections, each a
+**Context Menu Settings** (right-click or hold the play button): three sections, each a
 micro-header row over one wrapping row of selectable chips.
 
 - **Speed Section**: Set target animation speed

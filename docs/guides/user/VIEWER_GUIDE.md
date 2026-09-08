@@ -752,9 +752,10 @@ story step, or a spatial source that gets louder as the camera approaches. Their
 audibility is the same hidden-dimension slab rule that decides which points are
 visible, so scrubbing a story dimension starts and stops the clips that belong
 to each step. When a loaded scene has sound nodes a **Sound** button appears in
-the rail: click mutes everything (persisted across scenes), right-click opens
-the mixer (master gain, the `ambient` / `voice` / `effects` buses, equal-power
-vs HRTF panning). The voice bus ducks the ambient bed while a narration plays.
+the rail: click mutes everything (persisted across scenes), while right-click or
+a hold opens the mixer (master gain, the `ambient` / `voice` / `effects` buses,
+equal-power vs HRTF panning). The voice bus ducks the ambient bed while a
+narration plays.
 Scene defaults live in `ViewerConfig(audio=AudioConfig(...))`, and a controller
 drives the same knobs through `setAudio()`, `playSound()`, `stopSound()` and
 `getViewerState().audio`.
