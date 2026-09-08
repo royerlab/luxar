@@ -717,8 +717,8 @@ async function measureLuminance(page: any): Promise<LumaStats> {
       const total = w * h;
       // Histogram the lit-pixel luma (1024 bins over [0,1]) instead of pushing
       // every luma into an array and sorting it — a native-resolution frame can
-      // be ~1M lit pixels and this runs up to ~42× per demo (3 p99 iterations +
-      // 1 spread probe + MID_EXPOSURE_ITERS + up to 29 range-derived guard
+      // be ~1M lit pixels and this runs up to ~50× per demo (3 p99 iterations +
+      // 1 spread probe + MID_EXPOSURE_ITERS + up to 37 range-derived guard
       // iterations, less a probe reused by the next phase), so the array+sort
       // was needless memory churn. The histogram gives every percentile in
       // O(n), no growth.

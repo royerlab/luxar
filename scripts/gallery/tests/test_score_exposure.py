@@ -18,6 +18,7 @@ import pytest
 from PIL import Image
 
 from luxar.conftest import viewer_source
+from luxar.core.viewer_config import ViewerConfig
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -26,8 +27,10 @@ import score_exposure as se  # noqa: E402
 # Thresholds the scorer mirrors from the capture harness, as
 # {name in exposure-policy.ts: name in score_exposure.py}. Deliberately NOT
 # listed: FLAT_MID_MIN (a scorer-only margin, see its comment) and the harness's
-# iteration/exposure-range knobs (nothing offline consumes them).
+# iteration/upper-range knobs (nothing offline consumes them). EXPOSURE_MIN is
+# pinned because it is the gallery policy's viewer-limit contract.
 MIRRORED_THRESHOLDS = {
+    "EXPOSURE_MIN": "EXPOSURE_MIN",
     "LIT_THRESHOLD": "LIT_THRESHOLD",
     "CLIP_LUMA": "CLIP_LUMA",
     "CLIP_SAT_MAX": "SAT_MAX",
@@ -220,6 +223,12 @@ def test_thresholds_match_the_capture_harness() -> None:
     assert not mismatched, (
         f"score_exposure.py has drifted from exposure-policy.ts (ts, py): {mismatched}"
     )
+
+
+def test_exposure_floor_matches_viewer_config() -> None:
+    assert ViewerConfig(exposure=se.EXPOSURE_MIN).exposure == se.EXPOSURE_MIN
+    with pytest.raises(ValueError, match="exposure must be between"):
+        ViewerConfig(exposure=se.EXPOSURE_MIN - 0.5)
 
 
 def test_black_image_scores_empty(tmp_path: Path) -> None:

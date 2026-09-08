@@ -26,7 +26,7 @@
 export const TARGET_HI = 0.9; // desired p99 luminance of the lit foreground
 export const HI_PERCENTILE = 0.99;
 export const LIT_THRESHOLD = 0.04; // pixels dimmer than this are "background"
-export const EXPOSURE_MIN = -6;
+export const EXPOSURE_MIN = -10;
 export const EXPOSURE_MAX = 8;
 export const AUTO_EXPOSURE_ITERS = 3;
 
@@ -85,11 +85,12 @@ export const TARGET_MID = 0.5;
  * Reinhard `x/(1+x)` curve: the 0.835-0.905 band early-exits on the 8th
  * iteration and a narrower 0.90-0.93 band needs 9, so the margin over the
  * measured worst case is ONE iteration. Bands starting higher still consume
- * most or all of the budget, and the tightest (0.99-0.999) exhausts it and hits
- * the EXPOSURE_MIN clamp. Those runs still land at p50 0.505-0.586 — slightly
- * high, but well under
- * FLAT_MID_MIN, so an exhausted budget degrades gracefully instead of producing
- * a wrong exposure. The extra screenshots are only ever spent on a flat subject.
+ * most or all of the budget. Under the former -6 floor, the tightest
+ * (0.99-0.999) run clamped at p50 0.586; widening the floor can only lower that
+ * outcome, so FLAT_MID_MIN remains conservative. An exhausted mid-tone budget
+ * therefore degrades gracefully into the clip/background guard instead of
+ * producing a wrong exposure. The extra screenshots are only ever spent on a
+ * flat subject.
  */
 export const MID_EXPOSURE_ITERS = 10;
 /** Early-exit threshold for the mid-tone pass, in stops. */
@@ -175,7 +176,10 @@ const clampStops = (s: number): number => Math.max(EXPOSURE_MIN, Math.min(EXPOSU
  *      Phase 1 (p99 target) over-boosts sparse/bloomy scenes into a grey wash;
  *      the background term is what pulls those back to a black background. The
  *      predicate or EXPOSURE_MIN terminates the guard; `guardExhausted` reports
- *      a frame that still violates either guard condition at the floor.
+ *      a frame that still violates either guard condition at the floor. For a
+ *      screen-filling subject, whole-frame p10 can be subject luminance rather
+ *      than background, so this term may remain unsatisfied; use the per-demo
+ *      `exposure` override for that case.
  *
  * NOTE (preserved quirk): when a pass's correction is already negligible it
  * records the corrected value and breaks WITHOUT applying it, so the returned
