@@ -812,6 +812,44 @@ describe('PickingSystem — settle scheduler', () => {
     error.mockRestore();
     rejectedSystem.dispose();
   });
+
+  it('logs a synchronously throwing pick-result callback instead of leaking it', () => {
+    const failure = new Error('overlay exploded');
+    const throwingSystem = new PickingSystem(
+      makeStubRenderer(),
+      makeStubCapabilities(),
+      makeCamera(),
+      vi.fn(() => {
+        throw failure;
+      })
+    );
+    const error = vi.spyOn(log, 'error').mockImplementation(() => {});
+
+    expect(() => throwingSystem.markDirty()).not.toThrow();
+    expect(error).toHaveBeenCalledWith('Renderer', 'Pick result handler failed', failure);
+    error.mockRestore();
+    throwingSystem.dispose();
+  });
+
+  // The handler type says `Promise<void>`, but nothing enforces that at
+  // runtime — a callback returning nothing must not be reported as a failure,
+  // and must not silently drop the wait `pickAt` is built on.
+  it('treats a callback that returns nothing as a completed delivery', async () => {
+    const voidSystem = new PickingSystem(
+      makeStubRenderer(),
+      makeStubCapabilities(),
+      makeCamera(),
+      vi.fn(() => undefined as unknown as Promise<void>)
+    );
+    const error = vi.spyOn(log, 'error').mockImplementation(() => {});
+
+    voidSystem.markDirty();
+    await expect(voidSystem.pickAt(10, 10)).resolves.toBeUndefined();
+
+    expect(error).not.toHaveBeenCalled();
+    error.mockRestore();
+    voidSystem.dispose();
+  });
 });
 
 // NOTE: pure-function tests for the world-AABB cache and votes-map reuse live

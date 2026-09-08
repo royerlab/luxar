@@ -221,7 +221,7 @@ export class PickingSystem {
    * key before it stores the picked-element cache, so
    * {@link pickAt} awaits the handler's promise before resolving — a caller
    * that reads the cache "right after the pick" would otherwise race the fetch.
-   * The hover path fires and forgets, so nothing there waits on it.
+   * The hover path voids the pick promise instead, so nothing there waits on it.
    */
   constructor(
     private renderer: Renderer,
@@ -753,10 +753,14 @@ export class PickingSystem {
    * Returns a promise that settles once the handler has finished, so the
    * awaited delivery in {@link performPick} — which is what lets
    * {@link pickAt} resolve only after the picked-element cache is written —
-   * gets the same containment as the fire-and-forget fades. Handlers are
-   * typed async, but the value is normalised through `Promise.resolve` so a
-   * synchronous callback (a bare `vi.fn()` in a test, say) cannot turn into
-   * a `.catch` of `undefined`.
+   * gets the same containment as the fire-and-forget fades.
+   *
+   * The `Promise.resolve` is load-bearing, not ceremony — it is the narrowed
+   * type's restatement of the truthiness guard the containment helper was
+   * written with. The handler type is not enforced at runtime, and on a
+   * callback that returns nothing `.catch` throws a `TypeError` that the
+   * catch below would misreport as a handler failure while silently dropping
+   * the wait that {@link pickAt} depends on.
    */
   private deliverPickResult(result: PickResult | null): Promise<void> {
     try {
