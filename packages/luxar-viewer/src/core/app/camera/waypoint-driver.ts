@@ -201,6 +201,10 @@ export type WaypointArrival = 'snap' | 'fly';
 export class WaypointDriver {
   private current = -1;
   private transit = false;
+  /**
+   * Identity of the live flight; an index can be revisited before its stale
+   * flight resolves.
+   */
   private activeFlight: Promise<FlightResult> | null = null;
 
   constructor(
@@ -274,6 +278,8 @@ export class WaypointDriver {
       return;
     }
     void flight.then((result) => {
+      // Leaving and re-entering one waypoint reuses its index, so only the
+      // current flight may open the gate or announce arrival.
       if (this.activeFlight !== flight) return;
       this.activeFlight = null;
       // Cleared BEFORE the event, so an arrival listener that re-runs the
