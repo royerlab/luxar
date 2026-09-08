@@ -272,13 +272,13 @@ export interface UrlParams {
 
   /**
    * Force the input profile for the session (`?input=touch|mouse`). `touch`
-   * makes the viewer treat the device as a bare phone/tablet (touch gesture
-   * routing, long-press menus, mobile rendering budgets, tap-oriented copy);
-   * `mouse` forces the desktop behaviour on a touch device. JS-only: the
-   * stylesheets keep following the real `(pointer: coarse)` / `(hover: none)`
-   * media features, so a faithful check still needs device emulation or a real
-   * device. `null` (missing or unrecognised) ⇒ detect from the browser. See
-   * `utils/input-capabilities.ts`.
+   * enables profile-driven phone/tablet behaviour (long-press menus, mobile
+   * rendering budgets, tap-oriented copy, and primary-tip pen routing);
+   * `mouse` enables the corresponding desktop profile. JS-only: stylesheets
+   * and per-event gesture routing keep following the real media features and
+   * `PointerEvent.pointerType`, so a faithful check still needs device
+   * emulation or a real device. `null` (missing or unrecognised) ⇒ detect from
+   * the browser. See `utils/input-capabilities.ts`.
    */
   input: InputProfileOverride | null;
 
