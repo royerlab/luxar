@@ -42,6 +42,12 @@ describe('getErrorMessage', () => {
     expect(getErrorMessage(crossRealm)).toBe('cross-realm boom');
   });
 
+  it('prefers the message from an enumerable worker-style Error-like object', () => {
+    const workerError = { name: 'Error', message: 'worker boom', stack: 'at a\nat b' };
+
+    expect(getErrorMessage(workerError)).toBe('worker boom');
+  });
+
   it('never throws on a null-prototype object', () => {
     // String() raises "Cannot convert object to primitive value" here. This
     // helper runs inside catch blocks, so it must not become the thing that
