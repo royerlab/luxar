@@ -1146,9 +1146,10 @@ export class SceneLoader {
           // of ours will run to fold the paths in. Queue an empty state so the
           // refinement loop's between-pass pending check cancels into
           // `updateView({}, resync)` (the same hand-off a slider move uses).
+          if (this.viewStateQueue.hasPending()) return;
           this._queuedResyncPaths ??= new Set<string>();
           for (const path of opts.resyncPaths) this._queuedResyncPaths.add(path);
-          if (!this.viewStateQueue.hasPending()) this.viewStateQueue.setPending({});
+          this.viewStateQueue.setPending({});
           return;
         }
         this._pendingResyncPaths ??= new Set<string>();
@@ -1169,6 +1170,7 @@ export class SceneLoader {
       // it runs — it bumps only if the merged view actually changes.)
       const supersededPrevious = this.viewStateQueue.hasPending();
       this.viewStateQueue.setPending(viewState);
+      this._queuedResyncPaths = null;
       if (supersededPrevious) {
         log.info(
           Modules.SCENE_LOADER,
@@ -1210,10 +1212,6 @@ export class SceneLoader {
       // and leave the loaders capped after playback ends. It flows to the
       // loaders only via the per-type handler ctxs (buildUpdateCtxs).
       const { frameBudgetMs, ...incomingViewState } = viewState;
-      // A targeted resync is not a view pass: leave the budget marker alone so
-      // `isAtViewState` cannot skip the real re-run a budget-truncated playback
-      // pass still owes.
-      if (!opts.resyncPaths) this._lastUpdateWasFrameBudgeted = frameBudgetMs !== undefined;
       // `prefetch` is likewise a transient directive (set only on the
       // SlicePrefetcher's shadow passes); strip it too so it can never persist
       // into `this.viewState` and pin every subsequent foreground store.
@@ -1238,6 +1236,12 @@ export class SceneLoader {
       // re-commit) re-sweeps under the same version, so the lazy LOD levels
       // outside this sweep stay fresh.
       const viewChanged = !viewStatesEqual(nextViewState, this.viewState);
+      const resyncPaths = viewChanged ? undefined : opts.resyncPaths;
+      // A targeted resync is not a view pass: leave the budget marker alone so
+      // `isAtViewState` cannot skip the real re-run a budget-truncated playback
+      // pass still owes. A changed view is always a full sweep, even if stale
+      // resync options reached this call through a delayed queue hand-off.
+      if (!resyncPaths) this._lastUpdateWasFrameBudgeted = frameBudgetMs !== undefined;
       this.viewState = nextViewState;
       if (viewChanged) this._updateVersion++;
       const currentVersion = this._updateVersion;
@@ -1253,8 +1257,8 @@ export class SceneLoader {
           `Updating view v${currentVersion} for ${totalLoaders} loaders`
         );
       } else {
-        const scope = opts.resyncPaths
-          ? `${opts.resyncPaths.size} target path(s): ${[...opts.resyncPaths].join(', ')}`
+        const scope = resyncPaths
+          ? `${resyncPaths.size} target path(s): ${[...resyncPaths].join(', ')}`
           : `all ${totalLoaders} loaders`;
         log.update(Modules.SCENE_LOADER, `Resyncing view v${currentVersion} (${scope})`);
       }
@@ -1294,7 +1298,7 @@ export class SceneLoader {
         pointsLabel,
         (path, loader, session) => pointsLoadAndStage(path, loader, session, pointsCtx),
         onArchiveFault,
-        opts.resyncPaths
+        resyncPaths
       );
 
       const linesTask = this.runLoaderUpdates(
@@ -1302,7 +1306,7 @@ export class SceneLoader {
         linesLabel,
         (path, loader, session) => linesLoadAndStage(path, loader, session, linesCtx),
         onArchiveFault,
-        opts.resyncPaths
+        resyncPaths
       );
 
       const gsplatsTask = this.runLoaderUpdates(
@@ -1310,7 +1314,7 @@ export class SceneLoader {
         gsplatsLabel,
         (path, loader, session) => gsplatsLoadAndStage(path, loader, session, gsplatsCtx),
         onArchiveFault,
-        opts.resyncPaths
+        resyncPaths
       );
 
       const meshTask = this.runLoaderUpdates(
@@ -1318,7 +1322,7 @@ export class SceneLoader {
         meshLabel,
         (path, loader, session) => meshLoadAndStage(path, loader, session, meshCtx),
         onArchiveFault,
-        opts.resyncPaths
+        resyncPaths
       );
 
       // Wait for ALL loaders to complete (load + process)

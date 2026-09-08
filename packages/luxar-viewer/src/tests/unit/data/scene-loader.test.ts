@@ -830,6 +830,40 @@ describe('SceneLoader', () => {
       expect(sceneLoader.currentViewVersion).toBe(before);
       expect(internals.takeQueuedResyncOpts()).toEqual({}); // consumed exactly once
     });
+
+    it('a real view change queued after a hold resync sweeps every loader', async () => {
+      const target = { updateView: vi.fn().mockResolvedValue(null), dispose: vi.fn() };
+      const other = { updateView: vi.fn().mockResolvedValue(null), dispose: vi.fn() };
+      const loaders = (sceneLoader as unknown as { loaders: Map<string, unknown> }).loaders;
+      loaders.set('/tiled/part_1/level_0', target);
+      loaders.set('/other', other);
+      const internals = sceneLoader as unknown as {
+        _updateInProgress: boolean;
+        _refining: boolean;
+        _updateAbortController: AbortController | null;
+        viewStateQueue: ViewStateQueue;
+        takeQueuedResyncOpts(): { resyncPaths?: ReadonlySet<string> };
+      };
+      internals._updateInProgress = true;
+      internals._refining = true;
+      internals._updateAbortController = new AbortController();
+
+      sceneLoader.requestReprocess(['/tiled/part_1']);
+      await Promise.resolve();
+      const queuedPass = sceneLoader.updateView({ slicePosition: [0, 0, 0, 9] });
+
+      internals._updateInProgress = false;
+      internals._refining = false;
+      const pending = internals.viewStateQueue.takePending() ?? {};
+      const before = sceneLoader.currentViewVersion;
+      await sceneLoader.updateView(pending, internals.takeQueuedResyncOpts());
+      await queuedPass;
+
+      expect(sceneLoader.currentViewVersion).toBe(before + 1);
+      expect(target.updateView).toHaveBeenCalledTimes(1);
+      expect(other.updateView).toHaveBeenCalledTimes(1);
+      expect(internals.takeQueuedResyncOpts()).toEqual({});
+    });
   });
 
   describe('updateView — dispose race', () => {
