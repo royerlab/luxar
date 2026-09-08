@@ -587,7 +587,7 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     }
   }
 
-  /** Stop residual user-input look damping without changing the current pose. */
+  /** Stop residual user-input damping without changing the current pose. */
   public settleDamping(): void {
     this.currentControls?.settleDamping();
   }
