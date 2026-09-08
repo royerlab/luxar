@@ -13,6 +13,7 @@
   "project": ["src/**/*.ts"],
   "ignore": [
     "src/rendering/shaders/index.ts",
+    "src/tests/type/node-runtime-contract.ts",
     "src/types/format-contract.ts",
     "typedoc.json",
     "src/tests/builders/**",
