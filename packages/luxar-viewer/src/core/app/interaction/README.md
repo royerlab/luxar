@@ -51,10 +51,10 @@ interaction/
 `initPicking` (`../picking/init-picking.ts`) constructs the first three and
 registers the listeners through the picking session's `EventGroup`, so one
 `pickingEvents.dispose()` tears everything down together. `double-tap-to-fit`
-is installed the same way `canvas-gesture-ownership` is — `LuxarApp.init` once,
-on the app's own `EventGroup` — because the picking session is provisioned only for scenes with
-labels, keys, interaction templates or an embedder consumer, and a re-frame
-has to work on a bare point cloud too.
+is installed the same way `canvas-gesture-ownership` is — by `LuxarApp.init`,
+once, on the app's own `EventGroup` — because the picking session is
+provisioned only for scenes with labels, keys, interaction templates or an
+embedder consumer, and a re-frame has to work on a bare point cloud too.
 
 ## `picked-element-cache.ts`
 
