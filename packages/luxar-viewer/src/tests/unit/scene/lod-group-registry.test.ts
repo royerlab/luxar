@@ -952,7 +952,7 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     expect(requestReprocess).toHaveBeenCalledOnce();
   });
 
-  it('keeps two partitions rising in the same frame in their own buckets', () => {
+  it('buckets rising parts per wrapper and flushes each wrapper on its own', () => {
     let updateInProgress = true;
     const requestReprocess = vi.fn();
     const reg = makeRegistry(
@@ -999,18 +999,24 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     expect(firstPart.visible).toBe(false);
     expect(secondPart.visible).toBe(false);
 
-    // Both wrappers re-enter on the SAME frame: one flush, and neither
-    // partition's rising part may be attributed to the other.
+    // Both wrappers re-enter on the SAME frame, then only the first is
+    // flushable: each wrapper carries ITS OWN parts, so the request names
+    // ``/first``'s part alone and ``/second`` stays pending.
     firstGroup.position.x = -2.5;
     secondGroup.position.x = -2.5;
     reg.evaluatePerFrame();
     expect(requestReprocess).not.toHaveBeenCalled();
 
+    secondGroup.visible = false;
     updateInProgress = false;
     reg.evaluatePerFrame();
-    expect(requestReprocess).toHaveBeenCalledOnce();
-    const paths = requestReprocess.mock.calls[0][0] as string[];
-    expect([...paths].sort()).toEqual(['/first/part_0', '/second/part_0']);
+    expect(requestReprocess).toHaveBeenCalledTimes(1);
+    expect(requestReprocess).toHaveBeenLastCalledWith(['/first/part_0']);
+
+    secondGroup.visible = true;
+    reg.evaluatePerFrame();
+    expect(requestReprocess).toHaveBeenCalledTimes(2);
+    expect(requestReprocess).toHaveBeenLastCalledWith(['/second/part_0']);
   });
 
   it('keeps requesting frames while a rising-edge resync is pending', () => {
