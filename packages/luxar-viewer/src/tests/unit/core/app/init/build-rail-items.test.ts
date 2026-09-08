@@ -530,6 +530,9 @@ describe('buildRailItems', () => {
       const hide = items.find((i: ControlRailItem) => i.id === 'hide-panels')!;
       expect(hide).toBeDefined();
       expect(hide.momentary).toBe(true);
+      expect(RAIL_ICONS.hidePanels).toContain('<svg');
+      expect(hide.icon).toBe(RAIL_ICONS.hidePanels);
+      expect(hide.icon).not.toBe(RAIL_ICONS.view);
       hide.activate();
       expect(
         (deps as unknown as { ui: { commands: { handleEscape: ReturnType<typeof vi.fn> } } }).ui

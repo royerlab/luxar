@@ -400,7 +400,7 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
             // popover (what the Escape key does on a keyboard machine).
             id: 'hide-panels',
             title: 'Hide panels',
-            icon: RAIL_ICONS.view,
+            icon: RAIL_ICONS.hidePanels,
             momentary: true,
             activate: () => ui.commands.handleEscape(),
           },
