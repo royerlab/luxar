@@ -332,6 +332,16 @@ describe('LayersPanel — sound rows', () => {
     gain.click();
     expect(panel.layerState.getPrimarySelected()?.path).toBe('/story');
   });
+
+  it('right-clicking the gain slider does not open the row menu', () => {
+    const gain = container.querySelector<HTMLInputElement>('.luxar-layer-row__gain')!;
+    const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+
+    gain.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(document.querySelector('.luxar-context-menu')).toBeNull();
+  });
 });
 
 describe('LayersPanel — construction', () => {

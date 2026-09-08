@@ -1030,6 +1030,7 @@ export class LayersPanel {
       // own to replace it.
       if (target.closest('input[type="text"], textarea')) return;
       e.preventDefault();
+      if (target.closest('.luxar-layer-row__gain')) return;
       this.openContextMenuAt(target, me.clientX, me.clientY);
     });
     // Touch: press and hold on a row / eye / the header opens the same menus
