@@ -52,7 +52,8 @@ dynamic toolbar) is the manual device checklist's job, not this suite's.
 
 This suite is the integration check for the touch series planned in #2582, not
 a standalone test of this branch. `gestures.spec.ts` and `fly.spec.ts` require
-parts A and C (gesture ownership and touch controls), `pick.spec.ts` requires B,
+parts A and C (gesture ownership and touch controls), and the double-tap case in
+`gestures.spec.ts` also requires B. `pick.spec.ts` requires B,
 `layout.spec.ts` requires D1, and `runtime.spec.ts` requires E. The complete
 suite is validated with #2595 present so held pointer gestures keep the render
 loop awake. Run it against the complete series; expected failures on an earlier
