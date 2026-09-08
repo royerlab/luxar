@@ -16,7 +16,7 @@ export default [
         ...globals.node,
       },
       parserOptions: {
-        project: ['./tsconfig.json', './tsconfig.tooling.json'],
+        project: './tsconfig.json',
       },
     },
     plugins: {
@@ -142,6 +142,11 @@ export default [
     // affect the initial payload — the thing this rule protects. The harness in
     // particular exists to drive the WebGPU path directly.
     files: ['src/tests/**/*.{ts,tsx}'],
+    languageOptions: {
+      parserOptions: {
+        project: './tsconfig.tooling.json',
+      },
+    },
     rules: {
       '@typescript-eslint/no-restricted-imports': 'off',
     },
