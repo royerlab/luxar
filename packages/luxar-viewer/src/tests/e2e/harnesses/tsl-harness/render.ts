@@ -51,19 +51,14 @@ function flipRowsInPlace(pixels: Uint8Array, width: number, height: number): voi
 }
 
 function buildBloomChainTexture(): THREE.DataTexture {
-  // Radial symmetry keeps this case focused on magnitude and additive
-  // accumulation. It intentionally cannot cover Y-dependent spatial errors;
-  // the asymmetric composed-chain defect is tracked separately in #2584.
+  // A vertical ramp makes row-order and V-range errors visible. The
+  // composed parity case is currently fixme while #2584 establishes
+  // whether its DataTexture input should emulate a render-target source.
   const data = new Uint8Array(HARNESS_SIZE * HARNESS_SIZE * 4);
   for (let y = 0; y < HARNESS_SIZE; y++) {
     for (let x = 0; x < HARNESS_SIZE; x++) {
       const offset = (y * HARNESS_SIZE + x) * 4;
-      const dx = x - (HARNESS_SIZE - 1) / 2;
-      const dy = y - (HARNESS_SIZE - 1) / 2;
-      const radiusSquared = dx * dx + dy * dy;
-      const value = Math.round(
-        144 * Math.exp(-radiusSquared / 180) + 80 * Math.exp(-radiusSquared / 18)
-      );
+      const value = 40 + 3 * y;
       data[offset] = value;
       data[offset + 1] = Math.round(value * 0.75);
       data[offset + 2] = Math.round(value * 0.5);
