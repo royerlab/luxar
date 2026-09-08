@@ -67,7 +67,10 @@ import {
 import { GSplatsDataAccumulator, type AccumulatorStats } from '../accumulators/gsplats';
 import { config as appConfig } from '../../config';
 import type { UpdateSession } from '../../profiling/update-profiler';
-import { DecompressedChunkCache } from '../../cache/decompressed-chunk-cache';
+import {
+  DecompressedChunkCache,
+  type DecompressedChunkCacheStats,
+} from '../../cache/decompressed-chunk-cache';
 import { wrapWithCache } from '../../cache/decompressed-chunk-cache/cached-zarr-array';
 import { ResidencyAccumulator } from '../../cache/residency-probe';
 import { ChunkPrefetcher } from '../../cache/chunk-prefetcher';
@@ -85,6 +88,56 @@ import type { SliceCache } from '../../cache/slice-cache';
  * fallback itself is unconditional, so nothing but the logging is suppressed.
  */
 let sliceDimsWarned = false;
+const PREFETCH_CHUNK_METADATA_BYTES = 64;
+
+function dtypeByteWidth(dtype: zarr.DataType): number {
+  switch (dtype) {
+    case 'bool':
+    case 'int8':
+    case 'uint8':
+      return 1;
+    case 'float16':
+    case 'int16':
+    case 'uint16':
+      return 2;
+    case 'float32':
+    case 'int32':
+    case 'uint32':
+      return 4;
+    default:
+      return 8;
+  }
+}
+
+function estimateArrayPrefetchBytes(
+  array: zarr.Array<zarr.DataType, zarr.Readable>,
+  ranges: readonly SplatRange[]
+): number {
+  const rowCount = Math.max(0, array.shape[0] ?? 0);
+  const chunkRows = Math.max(1, array.chunks[0]);
+  const scalarsPerRow = array.shape.slice(1).reduce((product, size) => product * size, 1);
+  const chunkIndices = new Set<number>();
+  for (const range of ranges) {
+    const start = Math.max(0, Math.min(rowCount, range.start));
+    const end = Math.max(start, Math.min(rowCount, range.end));
+    if (end === start) continue;
+    const firstChunk = Math.floor(start / chunkRows);
+    const lastChunk = Math.floor((end - 1) / chunkRows);
+    for (let chunk = firstChunk; chunk <= lastChunk; chunk++) chunkIndices.add(chunk);
+  }
+  let bytes = 0;
+  for (const chunk of chunkIndices) {
+    const rows = Math.min(chunkRows, rowCount - chunk * chunkRows);
+    bytes += rows * scalarsPerRow * dtypeByteWidth(array.dtype) + PREFETCH_CHUNK_METADATA_BYTES;
+  }
+  return bytes;
+}
+
+/** Visible ranges and their estimated decompressed L0 cache footprint. */
+export interface GSplatsPrefetchPlan {
+  bytes: number;
+  ranges?: readonly SplatRange[];
+}
 
 /** Test-only: re-arm the one-shot above so cases stay order-independent. */
 export function resetSliceDimsWarningForTests(): void {
@@ -253,6 +306,52 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   // Shared facade-helper context (data/loaders/spatial-facade.ts): stable
   // references + this-bound accessors, built once in the constructor.
   private readonly facadeCtx: SpatialFacadeCtx;
+
+  /**
+   * Conservative whole-rung L0 footprint used to bound speculative ladder
+   * lookahead before the exact visible chunk set is known. Zarr scalar types
+   * top out at 8 bytes; counting every optional channel and whole stored rung
+   * deliberately overestimates sliced/broadcast arrays so lookahead cannot
+   * evict more useful cache entries on a large scene.
+   */
+  get prefetchByteUpperBound(): number {
+    const attrs = this.node.attrs as unknown as GSplatsMetadata;
+    const nSplats = Math.max(0, attrs.n_splats || 0);
+    const ndim = Math.max(1, attrs.ndim || 3);
+    const scalarCount =
+      ndim +
+      1 +
+      choleskyPackedSize(ndim) +
+      (attrs.has_colors !== false ? 4 : 0) +
+      (attrs.has_label_ids ? 1 : 0);
+    const arrayCount = 4 + (attrs.has_colors !== false ? 1 : 0) + (attrs.has_label_ids ? 1 : 0);
+    const chunkSize = Math.max(1, attrs.chunk_size || 1);
+    const chunkCount = Math.ceil(nSplats / chunkSize);
+    return nSplats * scalarCount * 8 + chunkCount * arrayCount * PREFETCH_CHUNK_METADATA_BYTES;
+  }
+
+  /** Live L0 accounting shared by every rung in this progressive ladder. */
+  getPrefetchCacheStats(): DecompressedChunkCacheStats | null {
+    return this.l0Cache?.getStats() ?? null;
+  }
+
+  /** Resolve visible ranges and estimate the decompressed chunks they retain. */
+  async planPrefetch(viewState: GSplatsViewState): Promise<GSplatsPrefetchPlan> {
+    const fallback = this.prefetchByteUpperBound;
+    try {
+      await this.ensureInitialized();
+      const ranges = await this.queryVisibleSplatRanges(viewState);
+      return {
+        bytes: this.prefetchArrays().reduce(
+          (bytes, array) => bytes + estimateArrayPrefetchBytes(array, ranges),
+          0
+        ),
+        ranges,
+      };
+    } catch {
+      return { bytes: fallback };
+    }
+  }
 
   private arrays: {
     centers?: zarr.Array<zarr.DataType, zarr.Readable>;
@@ -457,6 +556,11 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     }
   }
 
+  /** Initialize metadata once without loading any attribute payload chunks. */
+  async ensureInitialized(): Promise<void> {
+    await this._onceInit.ensure(() => this.initialize());
+  }
+
   /**
    * Load gsplats data for the given view state
    * @param viewState - Current view state
@@ -480,7 +584,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     queryId: string,
     startTime: number
   ): Promise<LoadedGSplatsData> {
-    await this._onceInit.ensure(() => this.initialize());
+    await this.ensureInitialized();
 
     const hasCholesky = !!(this.arrays.cholesky_factors || this.arrays.cholesky_factors_diag);
     if (!this.arrays.centers || !this.arrays.amplitudes || !hasCholesky) {
@@ -1128,23 +1232,29 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   /**
    * Prefetch chunks for the given view state into the cache without decoding.
    *
-   * Performs the same spatial index query as updateView() and issues zarr
-   * get() calls for each visible range on every array.  The fetched data
+   * Uses planned visible ranges when supplied; otherwise performs the same
+   * spatial index query as updateView(). Issues zarr get() calls for each
+   * visible range on every array. The fetched data
    * populates the HTTP cache and L0 decompressed-chunk cache but is NOT
    * accumulated into output buffers — the typed-array results are immediately
    * discarded.  This makes the subsequent updateView() call a fast cache hit
    * without the memory cost of allocating full-size output arrays that would
    * only be thrown away.
    */
-  async prefetchChunks(viewState: GSplatsViewState): Promise<void> {
-    await this._onceInit.ensure(() => this.initialize());
+  async prefetchChunks(
+    viewState: GSplatsViewState,
+    signal?: AbortSignal,
+    plannedRanges?: readonly SplatRange[]
+  ): Promise<void> {
+    if (signal?.aborted) return;
+    await this.ensureInitialized();
 
     if (!this.arrays.centers) return;
 
     // Query which splat ranges are visible
-    let splatRanges: SplatRange[];
+    let splatRanges: readonly SplatRange[];
     try {
-      splatRanges = await this.queryVisibleSplatRanges(viewState);
+      splatRanges = plannedRanges ?? (await this.queryVisibleSplatRanges(viewState));
     } catch {
       // Spatial query failed (e.g. malformed viewState during an animation
       // edge case). Skip the prefetch silently — production loadGSplats will
@@ -1156,7 +1266,13 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
     // Warm every array over the visible ranges. The reads populate L0/L1/L2 as
     // a side-effect and are discarded — no output buffers allocated.
-    const arrays = [
+    const arrays = this.prefetchArrays();
+
+    await prefetchRangesIntoCache(arrays, splatRanges, signal);
+  }
+
+  private prefetchArrays(): zarr.Array<zarr.DataType, zarr.Readable>[] {
+    return [
       this.arrays.centers,
       this.arrays.amplitudes,
       // v3.1 split Cholesky arrays, or the legacy v3.0 single packed array.
@@ -1166,8 +1282,6 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       this.arrays.colors,
       this.arrays.label_ids,
     ].filter((a): a is zarr.Array<zarr.DataType, zarr.Readable> => a != null);
-
-    await prefetchRangesIntoCache(arrays, splatRanges);
   }
 
   /**

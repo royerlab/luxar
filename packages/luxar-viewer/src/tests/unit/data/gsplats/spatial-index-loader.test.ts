@@ -94,6 +94,25 @@ describe('GSplatsSpatialIndexLoader', () => {
 
   // ────────────────────────────────────────────────────────────────
   describe('monitoring', () => {
+    it('treats an omitted has_colors attr like initialization does', () => {
+      const location = makeMockZarrLocation();
+      const attrs = { ...makeGSplatsNode().attrs } as Record<string, unknown>;
+      delete attrs.has_colors;
+      const omitted = new GSplatsSpatialIndexLoader(
+        location as unknown as ConstructorParameters<typeof GSplatsSpatialIndexLoader>[0],
+        makeGSplatsNode({ attrs })
+      );
+      const present = new GSplatsSpatialIndexLoader(
+        location as unknown as ConstructorParameters<typeof GSplatsSpatialIndexLoader>[0],
+        makeGSplatsNode()
+      );
+
+      expect(omitted.prefetchByteUpperBound).toBe(present.prefetchByteUpperBound);
+
+      omitted.dispose();
+      present.dispose();
+    });
+
     it('exposes the four LoaderMonitor methods', () => {
       expect(typeof loader.addEventListener).toBe('function');
       expect(typeof loader.removeEventListener).toBe('function');
@@ -163,13 +182,18 @@ describe('GSplatsSpatialIndexLoader', () => {
     let mockZarrLocation: { resolve: ReturnType<typeof vi.fn> };
     let mockNode: SceneNode;
     let mockArrays: {
-      centers: { shape: number[]; dtype: string; attrs?: object };
-      amplitudes: { shape: number[]; dtype: string; attrs?: object };
+      centers: { shape: number[]; chunks: number[]; dtype: string; attrs?: object };
+      amplitudes: { shape: number[]; chunks: number[]; dtype: string; attrs?: object };
       // v3.1 split Cholesky layout (diagonal + off-diagonal).
-      cholesky_factors_diag: { shape: number[]; dtype: string; attrs?: object };
-      cholesky_factors_offdiag: { shape: number[]; dtype: string; attrs?: object };
-      colors: { shape: number[]; dtype: string; attrs?: object };
-      label_ids: { shape: number[]; dtype: string; attrs?: object };
+      cholesky_factors_diag: { shape: number[]; chunks: number[]; dtype: string; attrs?: object };
+      cholesky_factors_offdiag: {
+        shape: number[];
+        chunks: number[];
+        dtype: string;
+        attrs?: object;
+      };
+      colors: { shape: number[]; chunks: number[]; dtype: string; attrs?: object };
+      label_ids: { shape: number[]; chunks: number[]; dtype: string; attrs?: object };
     };
     let chunkBoundsArray: { shape: number[]; dtype: string; attrs: object };
 
@@ -178,12 +202,22 @@ describe('GSplatsSpatialIndexLoader', () => {
 
       // 3D dataset → cholesky packed = 3·4/2 = 6; v3.1 split: diag=3, offdiag=3.
       mockArrays = {
-        centers: { shape: [5000, 3], dtype: 'float32', attrs: {} },
-        amplitudes: { shape: [5000], dtype: 'float32', attrs: {} },
-        cholesky_factors_diag: { shape: [5000, 3], dtype: 'float32', attrs: {} },
-        cholesky_factors_offdiag: { shape: [5000, 3], dtype: 'float32', attrs: {} },
-        colors: { shape: [5000, 3], dtype: 'float32', attrs: {} },
-        label_ids: { shape: [5000], dtype: 'uint64', attrs: {} },
+        centers: { shape: [5000, 3], chunks: [256, 3], dtype: 'float32', attrs: {} },
+        amplitudes: { shape: [5000], chunks: [256], dtype: 'float32', attrs: {} },
+        cholesky_factors_diag: {
+          shape: [5000, 3],
+          chunks: [256, 3],
+          dtype: 'float32',
+          attrs: {},
+        },
+        cholesky_factors_offdiag: {
+          shape: [5000, 3],
+          chunks: [256, 3],
+          dtype: 'float32',
+          attrs: {},
+        },
+        colors: { shape: [5000, 3], chunks: [256, 3], dtype: 'float32', attrs: {} },
+        label_ids: { shape: [5000], chunks: [256], dtype: 'uint64', attrs: {} },
       };
 
       mockZarrLocation = makeMockZarrLocation();
@@ -1759,6 +1793,76 @@ describe('GSplatsSpatialIndexLoader', () => {
     // two test files (justified asymmetry).
     // ────────────────────────────────────────────────────────────────
     describe('prefetchChunks (gsplats-only)', () => {
+      it('does no initialization or query work for an already-aborted request', async () => {
+        const controller = new AbortController();
+        controller.abort();
+
+        await bodyLoader.prefetchChunks(
+          {
+            displayDims: [0, 1, 2],
+            slicePosition: [0, 0, 0],
+            tolerance: [0, 0, 0],
+          },
+          controller.signal
+        );
+
+        expect(zarr.open).not.toHaveBeenCalled();
+        expect(mockExecute).not.toHaveBeenCalled();
+      });
+
+      it('estimates the visible sliced working set from stored chunk dtypes', async () => {
+        bodyLoader.dispose();
+        mockArrays.centers.shape = [5_000_000, 3];
+        mockArrays.centers.chunks = [1_000, 3];
+        mockArrays.centers.dtype = 'uint16';
+        mockArrays.amplitudes.shape = [5_000_000];
+        mockArrays.amplitudes.chunks = [1_000];
+        mockArrays.amplitudes.dtype = 'uint16';
+        mockArrays.cholesky_factors_diag.shape = [5_000_000, 3];
+        mockArrays.cholesky_factors_diag.chunks = [1_000, 3];
+        mockArrays.cholesky_factors_diag.dtype = 'uint16';
+        mockArrays.cholesky_factors_offdiag.shape = [5_000_000, 3];
+        mockArrays.cholesky_factors_offdiag.chunks = [1_000, 3];
+        mockArrays.cholesky_factors_offdiag.dtype = 'uint16';
+        mockArrays.colors.shape = [5_000_000, 3];
+        mockArrays.colors.chunks = [1_000, 3];
+        mockArrays.colors.dtype = 'uint8';
+        bodyLoader = new GSplatsSpatialIndexLoader(
+          mockZarrLocation as unknown as ConstructorParameters<typeof GSplatsSpatialIndexLoader>[0],
+          makeGSplatsNode({
+            attrs: {
+              ...mockNode.attrs,
+              n_splats: 5_000_000,
+              chunk_size: 1_000,
+            },
+          })
+        );
+        mockExecute.mockResolvedValueOnce([{ start: 100, end: 200 }]);
+
+        const plan = await bodyLoader.planPrefetch({
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0, 0],
+          tolerance: [0, 0, 0, 0],
+        });
+
+        expect(plan.bytes).toBe(23_320);
+        expect(plan.ranges).toEqual([{ start: 100, end: 200 }]);
+      });
+
+      it('reuses planned visible ranges when warming the cache', async () => {
+        const viewState: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        };
+        mockExecute.mockResolvedValueOnce([{ start: 0, end: 50 }]);
+
+        const plan = await bodyLoader.planPrefetch(viewState);
+        await bodyLoader.prefetchChunks(viewState, undefined, plan.ranges);
+
+        expect(mockExecute).toHaveBeenCalledTimes(1);
+      });
+
       it('warms the cache with zarr.get on every array × range', async () => {
         mockExecute.mockResolvedValueOnce([{ start: 0, end: 50 }]);
 
