@@ -715,11 +715,14 @@ encoder.encode(
 
 **Formula:**
 ```
-encoded = clip(value * 255, 0, 255).astype(uint8)
+encoded = clip(round(value * 255), 0, 255).astype(uint8)
 
 # Decode:
 value = encoded / 255.0
 ```
+
+CUSTOM ``rgb_uint8`` and ``rgb_uint16`` encoding deliberately preserves its
+historical truncating write convention.
 
 ### 5. Delta Pre-Filter (`_encoders/delta_codec.py`)
 
