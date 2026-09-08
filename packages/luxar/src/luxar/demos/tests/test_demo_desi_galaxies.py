@@ -144,10 +144,17 @@ def test_cached_record_scene_skips_when_the_archive_is_absent(tmp_path: Path) ->
         _cached_record_scene(empty_cache, manifest_path)
 
 
-def test_cached_record_scene_rejects_an_unpinned_archive(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "cached_payload",
+    [b"stale record bytes!!", b"wrong size"],
+    ids=["wrong-digest", "wrong-size"],
+)
+def test_cached_record_scene_rejects_an_unpinned_archive(
+    tmp_path: Path, cached_payload: bytes
+) -> None:
     cache_root, manifest_path, _scene_zip = _write_record_fixture(
         tmp_path,
-        b"stale record bytes!!",
+        cached_payload,
         manifest_payload=b"current record bytes",
     )
 
