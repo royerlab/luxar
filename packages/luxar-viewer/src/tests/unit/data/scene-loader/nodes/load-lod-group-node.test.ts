@@ -751,6 +751,10 @@ describe('loadLodGroupNode — lazy level loading', () => {
       await vi.waitFor(() => expect(groupChild.loading).toBe(false));
       expect(groupLoads).toBe(1);
       expect(groupChild.object.children).toHaveLength(1);
+      expect(groupChild.ready).toBe(false);
+      expect(groupChild.permanentlyFailed).toBe(true);
+      expect(groupChild.failureReason).toBeTruthy();
+      expect(reg.getFailedLazyChildPaths()).toEqual(['/lod/child_1']);
       expect(ctx.kickRefinementIfIdle).not.toHaveBeenCalled();
       expect(warnSpy).toHaveBeenCalledWith(
         expect.anything(),
