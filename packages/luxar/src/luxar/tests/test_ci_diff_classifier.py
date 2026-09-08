@@ -838,7 +838,7 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     assert "label=obsidian" in pick_steps["route"]["run"]
     assert "ubuntu-latest" not in pick_steps["route"]["run"]
     assert "github.event" not in pick_steps["route"]["if"], (
-        "schedule and rerun events must not acquire an automatic hosted exception"
+        "dispatch and rerun events must not acquire an automatic hosted exception"
     )
     assert "ci_queue_scan" not in str(pick_runner)
     assert "LUXAR_CI_HEARTBEAT" not in str(pick_runner)
@@ -850,8 +850,8 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     watchdog_checkout = watchdog["steps"][0]
     assert watchdog_checkout["continue-on-error"] is True
     assert watchdog_checkout["with"] == {
-        # Pinned to dev's tip on the schedule event; empty (== default) otherwise.
-        "ref": "${{ github.event_name == 'schedule' && 'refs/heads/dev' || '' }}",
+        # Pinned to dev's tip on the dispatch event; empty (== default) otherwise.
+        "ref": "${{ github.event_name == 'workflow_dispatch' && 'refs/heads/dev' || '' }}",
         "persist-credentials": False,
         "sparse-checkout": "scripts",
     }
@@ -859,13 +859,13 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     assert watchdog["steps"][2]["if"] == ("steps.scanner-checkout.outcome == 'success'")
 
 
-def test_live_ci_checkouts_share_one_scheduled_dev_sha(workflow: str) -> None:
-    """A scheduled run captures one dev SHA and reuses it across every suite job."""
+def test_live_ci_checkouts_attest_one_dispatched_dev_sha(workflow: str) -> None:
+    """A dispatched run tests and attests one immutable dev SHA in every suite."""
     parsed = yaml.safe_load(workflow)
     jobs = parsed["jobs"]
     expected_ref = "${{ needs.changes.outputs.dev_sha || '' }}"
 
-    scheduled_suite_jobs = {
+    dispatched_suite_jobs = {
         job_name
         for job_name, job in jobs.items()
         if job_name == "changes"
@@ -886,26 +886,24 @@ def test_live_ci_checkouts_share_one_scheduled_dev_sha(workflow: str) -> None:
             None,
         )
         for job_name, job in jobs.items()
-        if job_name in scheduled_suite_jobs and job.get("if") is not False
+        if job_name in dispatched_suite_jobs and job.get("if") is not False
     }
     checkout_jobs = {
         job_name: checkout
         for job_name, checkout in checkout_jobs.items()
         if checkout is not None
     }
-    assert set(checkout_jobs) == scheduled_suite_jobs
+    assert set(checkout_jobs) == dispatched_suite_jobs
 
-    assert checkout_jobs["changes"]["with"]["ref"] == (
-        "${{ github.event_name == 'schedule' && 'refs/heads/dev' || '' }}"
-    )
+    assert checkout_jobs["changes"]["with"] == {"fetch-depth": 0}
     changes = jobs["changes"]
     assert changes["outputs"]["dev_sha"] == (
-        "${{ steps.scheduled-dev.outputs.dev_sha }}"
+        "${{ steps.dispatched-dev.outputs.dev_sha }}"
     )
     capture_step = next(
-        step for step in changes["steps"] if step.get("id") == "scheduled-dev"
+        step for step in changes["steps"] if step.get("id") == "dispatched-dev"
     )
-    assert capture_step["if"] == "github.event_name == 'schedule'"
+    assert capture_step["if"] == "github.event_name == 'workflow_dispatch'"
     assert "git rev-parse HEAD" in capture_step["run"]
     for job_name, checkout in checkout_jobs.items():
         if job_name == "changes":
@@ -985,35 +983,40 @@ def test_obsidian_routed_jobs_have_timeout_headroom(workflow: str) -> None:
     )
 
 
-def test_scheduled_ci_supplies_a_green_window_every_three_hours(
-    workflow: str,
-) -> None:
-    """Promotion must not depend on a merge-free hour appearing by chance."""
+def test_ci_repair_window_is_dispatched_on_dev(workflow: str) -> None:
+    """Promotion requests repair windows explicitly instead of default-branch crons."""
     # BaseLoader preserves the YAML 1.1 ``on`` key instead of coercing it to True.
     parsed = yaml.load(workflow, Loader=yaml.BaseLoader)
-    schedules = [entry["cron"] for entry in parsed["on"]["schedule"]]
+    assert "schedule" not in parsed["on"]
+    dispatch = parsed["on"]["workflow_dispatch"]
+    full_matrix = dispatch["inputs"]["full_python_matrix"]
+    assert full_matrix["required"] == "false"
+    assert full_matrix["default"] == "false"
+    assert full_matrix["type"] == "boolean"
+    assert "dev" in full_matrix["description"]
+    assert "repairs cancelled push checks" in full_matrix["description"]
     matrix_line = next(
         line for line in workflow.splitlines() if "python-version: ${{" in line
     )
-    match = re.search(r"github\.event\.schedule == '([^']+)'", matrix_line)
-    assert match is not None, "the full Python matrix must name a daily schedule"
-    assert match.group(1) in schedules, (
-        "one scheduled window must retain the full daily Python matrix"
+    assert "github.event.schedule" not in matrix_line
+    assert (
+        "github.event_name == 'workflow_dispatch' && inputs.full_python_matrix"
+        in matrix_line
     )
 
-    scheduled_hours: list[int] = []
-    for schedule in schedules:
-        minute, hour, day, month, weekday = schedule.split()
-        assert (minute, day, month, weekday) == ("17", "*", "*", "*")
-        if hour == "*/3":
-            scheduled_hours.extend(range(0, 24, 3))
-        else:
-            scheduled_hours.extend(int(value) for value in hour.split(","))
-    assert sorted(scheduled_hours) == list(range(0, 24, 3))
+    changes = yaml.safe_load(workflow)["jobs"]["changes"]
+    guard = next(
+        step for step in changes["steps"] if step["name"] == "Require a dev dispatch"
+    )
+    assert guard["if"] == (
+        "github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/dev'"
+    )
+    assert "--ref dev" in guard["run"]
+    assert "exit 1" in guard["run"]
 
 
-def test_green_schedule_repairs_cancelled_push_contexts(workflow: str) -> None:
-    """A green cron must clear cancelled duplicate contexts on the same SHA."""
+def test_green_dispatch_repairs_cancelled_push_contexts(workflow: str) -> None:
+    """A green dev dispatch must clear cancelled duplicate contexts on that SHA."""
     parsed = yaml.safe_load(workflow)
     assert parsed["concurrency"]["group"] == (
         "${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-"
@@ -1033,12 +1036,12 @@ def test_green_schedule_repairs_cancelled_push_contexts(workflow: str) -> None:
         "docs-quality",
     }
     condition = re.sub(r"\s+", "", repair["if"])
-    assert "github.event_name=='schedule'" in condition
+    assert "github.event_name=='workflow_dispatch'" in condition
     assert "always()" in condition
     assert "!cancelled()" in condition
     assert repair["permissions"] == {"actions": "write", "contents": "read"}
 
-    # The job checks out the captured dev commit so the guard can cross-check it.
+    # The job checks out the attested dev commit so the guard can cross-check it.
     checkout_step = next(step for step in repair["steps"] if "checkout" in step["uses"])
     assert checkout_step["with"] == {
         "ref": "${{ needs.changes.outputs.dev_sha || '' }}",
@@ -1050,12 +1053,12 @@ def test_green_schedule_repairs_cancelled_push_contexts(workflow: str) -> None:
     script = run_step["run"]
     assert "actions/runs/${GITHUB_RUN_ID}/jobs?filter=latest" in script
     # REGRESSION TRIPWIRE: the walk must resolve dev's tip explicitly and must
-    # NOT anchor on ${GITHUB_SHA} (the run's own ref == main's tip after the
-    # default-branch flip), which would silently stall promotion.
+    # NOT replace the explicit dev-tip walk with ${GITHUB_SHA}; the dispatch SHA
+    # may lag dev's tip while the window runs.
     assert "git/refs/heads/dev" in script
     assert "compare/main...${dev_sha}" in script
     assert "compare/main...${GITHUB_SHA}" not in script
-    # The scheduled event SHA belongs to main after the default-branch flip, so
+    # The dispatched event SHA belongs to dev, so
     # the guard must verify the captured checkout remains on dev's ancestry even
     # if dev advances mid-window. It must not reject main as the default branch.
     assert 'gh api "repos/${GITHUB_REPOSITORY}"' not in script
@@ -1087,7 +1090,7 @@ def _run_cancelled_push_repair(
     workflow: str,
     tmp_path: Path,
     *,
-    scheduled_python: str = "success",
+    dispatched_python: str = "success",
     push_python_latest: str = "cancelled",
     push_typescript: str = "cancelled",
     push_release: str = "cancelled",
@@ -1126,7 +1129,7 @@ elif endpoint.endswith("/git/refs/heads/dev"):
 elif f"/runs/{os.environ['GITHUB_RUN_ID']}/jobs?" in endpoint:
     print(json.dumps([{"jobs": [
         {"id": 10, "name": "python-tests (3.12)", "conclusion": "cancelled"},
-        {"id": 11, "name": "python-tests (3.12)", "conclusion": os.environ["SCHEDULED_PYTHON"]},
+        {"id": 11, "name": "python-tests (3.12)", "conclusion": os.environ["DISPATCHED_PYTHON"]},
         {"id": 12, "name": "typescript-tests", "conclusion": "success"},
         {"id": 13, "name": "release-readiness", "conclusion": "success"},
         {"id": 14, "name": "wheel-viewer", "conclusion": "success"},
@@ -1213,7 +1216,7 @@ elif len(sys.argv) > 2 and sys.argv[1] == "merge-base" and sys.argv[2] == "--is-
             "GITHUB_REPOSITORY": "royerlab/luxar",
             "GITHUB_RUN_ID": "800",
             "GITHUB_SHA": github_sha,
-            "SCHEDULED_PYTHON": scheduled_python,
+            "DISPATCHED_PYTHON": dispatched_python,
             "PUSH_PYTHON_LATEST": push_python_latest,
             "PUSH_TYPESCRIPT": push_typescript,
             "PUSH_RELEASE": push_release,
@@ -1234,7 +1237,7 @@ elif len(sys.argv) > 2 and sys.argv[1] == "merge-base" and sys.argv[2] == "--is-
     return result, calls
 
 
-def test_green_schedule_reruns_all_latest_cancelled_required_push_jobs(
+def test_green_dispatch_reruns_all_latest_cancelled_required_push_jobs(
     workflow: str, tmp_path: Path
 ) -> None:
     result, calls = _run_cancelled_push_repair(workflow, tmp_path)
@@ -1245,7 +1248,7 @@ def test_green_schedule_reruns_all_latest_cancelled_required_push_jobs(
     ]
 
 
-def test_green_schedule_caps_repairs_at_two_newest_candidates(
+def test_green_dispatch_caps_repairs_at_two_newest_candidates(
     workflow: str, tmp_path: Path
 ) -> None:
     result, calls = _run_cancelled_push_repair(
@@ -1263,7 +1266,7 @@ def test_green_schedule_caps_repairs_at_two_newest_candidates(
     assert "Repair cap reached; older candidates intentionally skipped" in result.stdout
 
 
-def test_green_schedule_ignores_older_cancelled_push_attempt(
+def test_green_dispatch_ignores_older_cancelled_push_attempt(
     workflow: str, tmp_path: Path
 ) -> None:
     result, calls = _run_cancelled_push_repair(
@@ -1368,11 +1371,11 @@ def test_candidate_api_failure_does_not_abort_backlog_repair(
     assert "API query failed for deadbeef; continuing backlog repair" in result.stdout
 
 
-def test_non_green_schedule_does_not_repair_push_jobs(
+def test_non_green_dispatch_does_not_repair_push_jobs(
     workflow: str, tmp_path: Path
 ) -> None:
     result, calls = _run_cancelled_push_repair(
-        workflow, tmp_path, scheduled_python="failure"
+        workflow, tmp_path, dispatched_python="failure"
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -1380,11 +1383,10 @@ def test_non_green_schedule_does_not_repair_push_jobs(
     assert "python-tests (3.12)=failure" in result.stdout
 
 
-# --- Precondition guard: the scheduled checkout must remain on dev, loudly. ----
-# GitHub runs `schedule:` on the default branch, so after the dev->main flip the
-# run's own ref/SHA is main's tip even though the suite checks out captured dev.
-# The guard asserts that checkout remains on origin/dev's line before walking the
-# explicit dev tip. Its failure arms are tested because they have no other signal.
+# --- Precondition guard: the dispatched checkout must remain on dev, loudly. ----
+# A `--ref dev` dispatch SHA is a dev commit that may lag dev's tip while the
+# window runs. The guard asserts that checkout remains on origin/dev's line before
+# walking the explicit dev tip. Its failure arms have no other signal.
 
 
 def test_promotion_guard_green_when_dev_is_ahead_of_main(
@@ -1429,22 +1431,22 @@ def test_promotion_guard_green_when_dev_equals_main(
     assert "dev is level with main" in result.stdout
 
 
-def test_promotion_guard_green_when_schedule_is_dispatched_on_main(
+def test_promotion_guard_green_when_dispatch_targets_dev(
     workflow: str, tmp_path: Path
 ) -> None:
-    """A main event SHA does not block repair of the captured dev checkout."""
+    """A dev dispatch attests the same commit that the repair job checks out."""
     result, calls = _run_cancelled_push_repair(
         workflow,
         tmp_path,
         dev_ref_sha="devtip",
         git_origin_dev="devtip",
         git_head_sha="devtip",
-        github_sha="maintip",
+        github_sha="devtip",
         candidate_shas=(),
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "scheduled run SHA maintip" in result.stdout
+    assert "dispatched run SHA devtip" in result.stdout
     assert "dev is level with main" in result.stdout
     assert calls == []
 
@@ -1513,7 +1515,7 @@ def test_promotion_guard_reds_on_unknown_branch(workflow: str, tmp_path: Path) -
 def test_promotion_guard_reds_when_dev_ref_is_unresolvable(
     workflow: str, tmp_path: Path
 ) -> None:
-    """A scheduled promotion run that cannot resolve dev fails loudly, not idle."""
+    """A dispatched promotion run that cannot resolve dev fails loudly, not idle."""
     result, calls = _run_cancelled_push_repair(
         workflow,
         tmp_path,
@@ -1568,7 +1570,7 @@ fi
 def test_pick_runner_routes_same_repo_to_obsidian(
     workflow: str, tmp_path: Path
 ) -> None:
-    """Same-repo PR, push, schedule, and rerun events must stay on obsidian."""
+    """Same-repo PR, push, dispatch, and rerun events must stay on obsidian."""
     result, label = _run_pick_runner(workflow, tmp_path)
 
     assert result.returncode == 0, result.stdout + result.stderr
