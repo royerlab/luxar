@@ -64,7 +64,7 @@ export default defineConfig({
   globalSetup: path.join(__dirname, 'src/tests/e2e/global-setup.ts'),
   testDir: './src/tests/e2e',
   // Only the mobile specs; the main config's `testIgnore` excludes this folder.
-  testMatch: /mobile\/.*\.spec\.ts$/,
+  testMatch: /src\/tests\/e2e\/mobile\/.*\.spec\.ts$/,
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,

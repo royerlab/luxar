@@ -59,7 +59,7 @@ export default defineConfig({
   // Mobile / touch specs (src/tests/e2e/mobile/) run only under
   // `playwright.mobile.config.ts` with device emulation; on a desktop
   // profile they have no touch to exercise.
-  testIgnore: [/.*perf-bench\.spec\.ts$/, /\/mobile\//],
+  testIgnore: [/.*perf-bench\.spec\.ts$/, /src\/tests\/e2e\/mobile\//],
 
   // Tests within a file run in parallel too.
   //
