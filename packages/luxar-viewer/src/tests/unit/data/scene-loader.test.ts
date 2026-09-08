@@ -738,6 +738,21 @@ describe('SceneLoader', () => {
       expect(sceneLoader.currentViewVersion).toBe(before);
     });
 
+    it('a targeted resync preserves frame-budget refine debt until an untargeted pass', async () => {
+      const stored = (sceneLoader as unknown as { viewState: ViewState }).viewState;
+
+      await sceneLoader.updateView({ ...stored, frameBudgetMs: 8 });
+      expect(sceneLoader.isAtViewState(stored)).toBe(false);
+
+      sceneLoader.requestReprocess(['/tiled/part_1']);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(sceneLoader.isAtViewState(stored)).toBe(false);
+
+      sceneLoader.requestReprocess();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(sceneLoader.isAtViewState(stored)).toBe(true);
+    });
+
     it('a targeted resync arriving mid-pass neither aborts the pass nor is lost', async () => {
       let releaseGate!: () => void;
       const gate = new Promise<void>((resolve) => {
