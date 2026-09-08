@@ -12,9 +12,9 @@ Three things are tested, and the third is the one that keeps working:
    environment the way the docstring says (including the falsey spellings).
 2. The chain survives even on the quiet path, so `--show-locals`-style tooling
    and `raise ... from` consumers still see the cause.
-3. No CLI source discards a caught exception in an `except Exception` block
-   any more. That is a source scan, and it is what catches the eighteenth site
-   somebody adds next month.
+3. No interactive CLI source discards a caught exception in an
+   `except Exception` block, and the four unattended fit/batch exceptions stay
+   exact. That source scan catches the next inconsistent handler.
 """
 
 from __future__ import annotations
@@ -128,6 +128,27 @@ class TestExitWithError:
         captured = capsys.readouterr()
         assert captured.out == ""
         assert "❌ nope" in captured.err
+        assert TRACEBACK_ENV_VAR in captured.err
+
+    def test_the_quiet_path_survives_arbol_depth_truncation(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A nested fatal report must outlive the narration depth cap."""
+        monkeypatch.delenv(TRACEBACK_ENV_VAR, raising=False)
+        monkeypatch.setattr(Arbol, "passthrough", False)
+        monkeypatch.setattr(Arbol, "enable_output", True)
+        monkeypatch.setattr(Arbol, "max_depth", 0)
+        monkeypatch.setattr(Arbol, "_depth", 1)
+        monkeypatch.setattr(Arbol._thread_local, "captured", False, raising=False)
+
+        with pytest.raises(typer.Exit):
+            exit_with_error("❌ nested nope", ValueError("cause"))
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "❌ nested nope" in captured.err
         assert TRACEBACK_ENV_VAR in captured.err
 
     def test_the_loud_path_reraises_the_original_unchanged(
@@ -324,14 +345,16 @@ class TestItWorksThroughTheRealCli:
     """
 
     @staticmethod
-    def _run(store: Path, *, traceback: bool) -> subprocess.CompletedProcess[str]:
+    def _run(
+        command: list[str], *, traceback: bool
+    ) -> subprocess.CompletedProcess[str]:
         env = {**os.environ}
         if traceback:
             env[TRACEBACK_ENV_VAR] = "1"
         else:
             env.pop(TRACEBACK_ENV_VAR, None)
         return subprocess.run(
-            [sys.executable, "-m", "luxar", "info", str(store)],
+            [sys.executable, "-m", "luxar", *command],
             capture_output=True,
             text=True,
             timeout=600,
@@ -345,8 +368,19 @@ class TestItWorksThroughTheRealCli:
         store.mkdir()
         return store
 
+    @pytest.fixture
+    def unreadable_gsplat_store(self, tmp_path: Path) -> Path:
+        """A recognized gsplat root whose required arrays are absent."""
+        from luxar._zarr_compat import open_group
+
+        store = tmp_path / "unreadable.gsplats.zarr"
+        root = open_group(str(store), mode="w")
+        root.attrs["format_type"] = "gsplats_zarr"
+        root.attrs["format_version"] = "3.4"
+        return store
+
     def test_the_default_prints_one_line_and_the_hint(self, not_a_store: Path) -> None:
-        result = self._run(not_a_store, traceback=False)
+        result = self._run(["info", str(not_a_store)], traceback=False)
         assert result.returncode == 1, result.stdout + result.stderr
         combined = result.stdout + result.stderr
         assert "Error reading info for" in combined
@@ -358,7 +392,7 @@ class TestItWorksThroughTheRealCli:
     def test_setting_the_variable_produces_a_real_traceback(
         self, not_a_store: Path
     ) -> None:
-        result = self._run(not_a_store, traceback=True)
+        result = self._run(["info", str(not_a_store)], traceback=True)
         assert result.returncode != 0
         combined = result.stdout + result.stderr
         # The exception type from deep inside zarr, i.e. the actual origin —
@@ -366,3 +400,21 @@ class TestItWorksThroughTheRealCli:
         assert "GroupNotFoundError" in combined, (
             "expected the underlying exception, got:\n" + combined
         )
+
+    def test_gsplat_info_uses_the_same_opt_in_path(
+        self, unreadable_gsplat_store: Path
+    ) -> None:
+        command = ["gsplat", "info", str(unreadable_gsplat_store)]
+
+        quiet = self._run(command, traceback=False)
+        quiet_output = quiet.stdout + quiet.stderr
+        assert quiet.returncode == 1, quiet_output
+        assert "Error: 'centers'" in quiet_output
+        assert TRACEBACK_ENV_VAR in quiet_output
+        assert "Traceback" not in quiet_output
+
+        loud = self._run(command, traceback=True)
+        loud_output = loud.stdout + loud.stderr
+        assert loud.returncode != 0
+        assert "Traceback" in loud_output
+        assert "KeyError: 'centers'" in loud_output

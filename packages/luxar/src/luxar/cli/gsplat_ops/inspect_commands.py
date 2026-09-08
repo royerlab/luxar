@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Optional
 import typer
 from arbol import aprint, asection
 
-from .._traceback import exit_with_error
+from .._traceback import exit_with_error, report_error
 from ..common_options import CorsOriginOption, make_port_option
 from ..utils import _DEFAULT_CORS_ORIGIN, format_memory_size
 
@@ -506,7 +506,8 @@ def _info_report(
 
         return True
     except Exception as e:
-        exit_with_error(f"❌ Error: {e}", e)
+        report_error(f"❌ Error: {e}", e)
+        return False
 
 
 def info_dataset(

@@ -31,6 +31,7 @@ from arbol import Arbol, aprint
 __all__ = [
     "TRACEBACK_ENV_VAR",
     "exit_with_error",
+    "report_error",
     "traceback_requested",
 ]
 
@@ -66,16 +67,33 @@ def traceback_requested() -> bool:
     return os.environ.get(TRACEBACK_ENV_VAR, "").strip().lower() not in _FALSEY
 
 
-def exit_with_error(message: str, error: BaseException) -> NoReturn:
-    """Report a command failure and exit 1 — or re-raise for a traceback.
+def report_error(message: str, error: BaseException) -> None:
+    """Report a recoverable command failure — or re-raise for a traceback.
 
     Args:
         message: The one-line explanation, already formatted (including any
             emoji prefix the surrounding command uses). The traceback path
             does not print it, so the exception itself must carry any context
             essential to diagnosing the failure.
-        error: The caught exception. Chained onto the ``typer.Exit`` via
-            ``from``, so ``__cause__`` survives even on the quiet path.
+        error: The caught exception.
+
+    Raises:
+        BaseException: ``error`` itself, unchanged, when
+            :func:`traceback_requested`.
+    """
+    if traceback_requested():
+        raise error
+    _report_line(message)
+    _report_line(f"   (set {TRACEBACK_ENV_VAR}=1 and re-run for the full traceback)")
+
+
+def exit_with_error(message: str, error: BaseException) -> NoReturn:
+    """Report a command failure and exit 1 — or re-raise for a traceback.
+
+    Args:
+        message: Passed to :func:`report_error`.
+        error: Passed to :func:`report_error`, then chained onto the
+            ``typer.Exit`` so ``__cause__`` survives on the quiet path.
 
     Raises:
         BaseException: ``error`` itself, unchanged, when
@@ -88,8 +106,5 @@ def exit_with_error(message: str, error: BaseException) -> NoReturn:
         ... except Exception as e:
         ...     exit_with_error(f"❌ Error doing the thing: {e}", e)
     """
-    if traceback_requested():
-        raise error
-    _report_line(message)
-    _report_line(f"   (set {TRACEBACK_ENV_VAR}=1 and re-run for the full traceback)")
+    report_error(message, error)
     raise typer.Exit(1) from error
