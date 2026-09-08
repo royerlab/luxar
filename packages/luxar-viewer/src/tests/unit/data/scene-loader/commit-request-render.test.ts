@@ -180,6 +180,40 @@ describe('SceneLoader commit → requestRender funnel', () => {
     expect(invalidatePartitionFootprint).toHaveBeenCalledWith('/p');
   });
 
+  it('invalidates the partition footprint when a pooled lines commit throws', () => {
+    const { loader, invalidatePartitionFootprint } = makeLoaderWithScene();
+    const geometry = new THREE.BufferGeometry();
+    internals(loader)._gpuBufferPool = {
+      acquireLinesGeometry: vi.fn(() => geometry),
+      updateLinesGeometry: vi.fn(() => {
+        throw new Error('upload failed');
+      }),
+      didLastAcquireRebuildAttributes: vi.fn(() => true),
+    };
+
+    expect(() => internals(loader).commitLinesGeometry(makeStagedLines(2))).toThrow(
+      'upload failed'
+    );
+    expect(invalidatePartitionFootprint).toHaveBeenCalledWith('/lines');
+  });
+
+  it('invalidates the partition footprint when a pooled gsplats commit throws', () => {
+    const { loader, invalidatePartitionFootprint } = makeLoaderWithScene();
+    const geometry = new THREE.BufferGeometry();
+    internals(loader)._gpuBufferPool = {
+      acquireGSplatsGeometry: vi.fn(() => geometry),
+      updateGSplatsGeometry: vi.fn(() => {
+        throw new Error('upload failed');
+      }),
+      didLastAcquireRebuildAttributes: vi.fn(() => true),
+    };
+
+    expect(() => internals(loader).commitGSplatsGeometry(makeStagedGSplats(2))).toThrow(
+      'upload failed'
+    );
+    expect(invalidatePartitionFootprint).toHaveBeenCalledWith('/g');
+  });
+
   it('bare loaders without a callback do not throw', () => {
     const loader = new SceneLoader({ enableMonitor: false });
     const root = new THREE.Group();
