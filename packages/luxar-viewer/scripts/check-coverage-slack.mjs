@@ -25,8 +25,15 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
+import { pathToFileURL } from 'node:url';
 
-import { COVERAGE_THRESHOLDS, MAX_SLACK_POINTS, METRICS } from '../coverage-thresholds.mjs';
+import {
+  COVERAGE_RECORDED,
+  COVERAGE_THRESHOLDS,
+  MAX_EROSION_POINTS,
+  MAX_SLACK_POINTS,
+  METRICS,
+} from '../coverage-thresholds.mjs';
 
 const DEFAULT_SUMMARY = 'coverage/coverage-summary.json';
 
@@ -72,6 +79,54 @@ export function relativizeSummary(summary, viewerRoot) {
   return out;
 }
 
+function compareKeys(expected, actual, label) {
+  const missing = expected.filter((key) => !actual.includes(key));
+  const extra = actual.filter((key) => !expected.includes(key));
+  if (missing.length === 0 && extra.length === 0) return null;
+  const details = [
+    missing.length > 0 ? `missing ${missing.join(', ')}` : '',
+    extra.length > 0 ? `extra ${extra.join(', ')}` : '',
+  ].filter(Boolean);
+  return `${label}: ${details.join('; ')}`;
+}
+
+/** Assert that every floor has exactly one structured recorded baseline. */
+export function validateRecorded(thresholds, recorded) {
+  const failures = [];
+  const topLevel = compareKeys(
+    Object.keys(thresholds),
+    Object.keys(recorded),
+    'coverage recorded baselines must have exactly the threshold keys'
+  );
+  if (topLevel) failures.push(topLevel);
+
+  for (const [key, value] of Object.entries(thresholds)) {
+    if (!(key in recorded)) continue;
+    if (!isGlobKey(key)) {
+      if (!Number.isFinite(recorded[key])) {
+        failures.push(`${key} recorded baseline must be a finite number`);
+      }
+      continue;
+    }
+    if (typeof recorded[key] !== 'object' || recorded[key] === null) {
+      failures.push(`${key} recorded baseline must be a metric map`);
+      continue;
+    }
+    const metrics = compareKeys(
+      Object.keys(value),
+      Object.keys(recorded[key]),
+      `${key} recorded baselines must have exactly the threshold metrics`
+    );
+    if (metrics) failures.push(metrics);
+    for (const metric of Object.keys(value)) {
+      if (metric in recorded[key] && !Number.isFinite(recorded[key][metric])) {
+        failures.push(`${key} ${metric} recorded baseline must be a finite number`);
+      }
+    }
+  }
+  return failures;
+}
+
 /**
  * Compare every floor against the measurement.
  *
@@ -79,10 +134,11 @@ export function relativizeSummary(summary, viewerRoot) {
  * holes vitest leaves open — a glob that matched nothing or a configured glob
  * metric with no countable items.
  */
-export function evaluate(summary, thresholds, viewerRoot, maxSlack) {
+export function evaluate(summary, thresholds, recorded, viewerRoot, maxSlack, maxErosion) {
   const files = relativizeSummary(summary, viewerRoot);
   const all = [...files.values()];
-  const failures = [];
+  const failures = validateRecorded(thresholds, recorded);
+  const warnings = [];
   const rows = [];
 
   for (const [key, value] of Object.entries(thresholds)) {
@@ -114,7 +170,9 @@ export function evaluate(summary, thresholds, viewerRoot, maxSlack) {
         continue;
       }
       const slack = pct - floor;
-      rows.push({ key, metric, floor, measured: pct, slack, files: entries.length });
+      const baseline = glob ? recorded[key]?.[metric] : recorded[key];
+      const erosion = typeof baseline === 'number' ? baseline - pct : null;
+      rows.push({ key, metric, floor, recorded: baseline, measured: pct, slack, erosion });
       if (slack > maxSlack) {
         failures.push(
           `${key} ${metric}: floor ${floor} is ${slack.toFixed(1)} pts under ` +
@@ -128,9 +186,16 @@ export function evaluate(summary, thresholds, viewerRoot, maxSlack) {
             'vitest should already have failed; check the reporter output.'
         );
       }
+      if (erosion !== null && erosion > maxErosion) {
+        const label = glob ? `${key} ${metric}` : key;
+        warnings.push(
+          `${label}: measured ${pct.toFixed(2)} is ${erosion.toFixed(2)} pts below ` +
+            `recorded ${baseline.toFixed(2)} (budget ${maxErosion}).`
+        );
+      }
     }
   }
-  return { failures, rows };
+  return { failures, warnings, rows };
 }
 
 export function parseArgs(argv) {
@@ -167,15 +232,31 @@ async function main() {
     process.exit(1);
   }
 
-  const { failures, rows } = evaluate(summary, COVERAGE_THRESHOLDS, viewerRoot, maxSlack);
+  const { failures, warnings, rows } = evaluate(
+    summary,
+    COVERAGE_THRESHOLDS,
+    COVERAGE_RECORDED,
+    viewerRoot,
+    maxSlack,
+    MAX_EROSION_POINTS
+  );
 
   const widest = Math.max(...rows.map((r) => r.key.length));
   for (const r of rows.sort((a, b) => b.slack - a.slack)) {
-    const flag = r.slack > maxSlack ? ' <-- stale' : '';
+    const flags = [
+      r.slack > maxSlack ? 'stale floor' : '',
+      r.erosion !== null && r.erosion > MAX_EROSION_POINTS ? 'eroded' : '',
+    ].filter(Boolean);
+    const flag = flags.length > 0 ? ` <-- ${flags.join(', ')}` : '';
     console.log(
       `  ${r.key.padEnd(widest)}  ${r.metric.padEnd(10)} floor ${String(r.floor).padStart(3)}` +
         `  measured ${r.measured.toFixed(2).padStart(6)}  slack ${r.slack.toFixed(1).padStart(5)}${flag}`
     );
+  }
+
+  if (warnings.length > 0) {
+    console.warn(`\ncheck-coverage-slack: ${warnings.length} erosion warning(s)\n`);
+    for (const warning of warnings) console.warn(`  - ${warning}`);
   }
 
   if (failures.length > 0) {
@@ -188,10 +269,11 @@ async function main() {
     process.exit(1);
   }
   console.log(
-    `\ncheck-coverage-slack: OK — ${rows.length} floors all within ${maxSlack} pts of measured.`
+    `\ncheck-coverage-slack: OK — ${rows.length} floors all within ${maxSlack} pts of measured` +
+      (warnings.length > 0 ? `; ${warnings.length} erosion warning(s).` : '.')
   );
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   await main();
 }

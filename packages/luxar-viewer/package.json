@@ -111,7 +111,7 @@
     "check": "pnpm run check:format && pnpm run typecheck && pnpm run lint && pnpm test --run",
     "check:static": "pnpm run check:overrides && pnpm run check:format && pnpm run typecheck && pnpm run lint && pnpm run check:layers && pnpm run check:knip:ci",
     "check:coverage-slack": "node scripts/check-coverage-slack.mjs",
-    "check:ci": "pnpm run check:static && pnpm run test:coverage && pnpm run check:coverage-slack",
+    "check:ci": "node scripts/run-ci-checks.mjs",
     "ci:release": "pnpm run build:lib && pnpm run build:lib:check"
   },
   "dependencies": {
