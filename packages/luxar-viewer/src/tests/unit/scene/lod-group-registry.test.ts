@@ -31,12 +31,47 @@ import {
   type LODGroupEntry,
   type PartitionGroupEntry,
 } from '../../../scene/lod-group-registry';
-import { DEGENERATE_RECT_HALF_EXTENT } from '../../../scene/lod-selector-math';
+import {
+  computeEntryWorldBox,
+  DEGENERATE_RECT_HALF_EXTENT,
+} from '../../../scene/lod-selector-math';
 import {
   calculateCameraDistance,
   type BoundingBox,
 } from '../../../scene/scene-manager/clipping/bounds-math';
 import { updateCameraAspect } from '../../../utils/camera-utils';
+
+describe('computeEntryWorldBox', () => {
+  it('reuses the caller-owned world box', () => {
+    const groupObject = new THREE.Group();
+    groupObject.position.set(5, 10, 15);
+    const localBoxScratch: BoundingBox = {
+      min: { x: 0, y: 0, z: 0 },
+      max: { x: 0, y: 0, z: 0 },
+    };
+    const worldBoxScratch: BoundingBox = {
+      min: { x: 99, y: 99, z: 99 },
+      max: { x: 99, y: 99, z: 99 },
+    };
+
+    const result = computeEntryWorldBox(
+      {
+        groupObject,
+        children: [{ positionBounds: { min: [0, 0, 0], max: [1, 1, 1] } }],
+      },
+      [0, 1, 2],
+      localBoxScratch,
+      new Array<number>(16),
+      worldBoxScratch
+    );
+
+    expect(result).toBe(worldBoxScratch);
+    expect(result).toEqual({
+      min: { x: 5, y: 10, z: 15 },
+      max: { x: 6, y: 11, z: 16 },
+    });
+  });
+});
 
 // ────────────────────────────────────────────────────────────────────────
 // pickChildWithHysteresis — pure selector math

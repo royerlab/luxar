@@ -416,38 +416,53 @@ export function calculateClippingPlanesFromSphere(
  * @param matrix - 4x4 transformation matrix (column-major, flat array)
  * @returns Transformed bounding box
  */
-export function transformBoundingBox(box: BoundingBox, matrix: number[]): BoundingBox {
-  // Get 8 corners of the box
-  const corners = [
-    { x: box.min.x, y: box.min.y, z: box.min.z },
-    { x: box.max.x, y: box.min.y, z: box.min.z },
-    { x: box.min.x, y: box.max.y, z: box.min.z },
-    { x: box.max.x, y: box.max.y, z: box.min.z },
-    { x: box.min.x, y: box.min.y, z: box.max.z },
-    { x: box.max.x, y: box.min.y, z: box.max.z },
-    { x: box.min.x, y: box.max.y, z: box.max.z },
-    { x: box.max.x, y: box.max.y, z: box.max.z },
-  ];
-
+export function transformBoundingBox(
+  box: BoundingBox,
+  matrix: number[],
+  target: BoundingBox = {
+    min: { x: 0, y: 0, z: 0 },
+    max: { x: 0, y: 0, z: 0 },
+  }
+): BoundingBox {
+  const inputMinX = box.min.x;
+  const inputMinY = box.min.y;
+  const inputMinZ = box.min.z;
+  const inputMaxX = box.max.x;
+  const inputMaxY = box.max.y;
+  const inputMaxZ = box.max.z;
   // Transform each corner, skipping any whose homogeneous w is ~0 to avoid
   // dividing through to ±Infinity/NaN (perspective projection of points on
   // or near the camera plane). The unprojected box is a safe fallback.
   const W_EPSILON = 1e-12;
   let skippedCorners = 0;
-  const transformedCorners = corners
-    .map((corner) => {
-      const w = matrix[3] * corner.x + matrix[7] * corner.y + matrix[11] * corner.z + matrix[15];
-      if (Math.abs(w) < W_EPSILON) {
-        skippedCorners++;
-        return null;
-      }
-      return {
-        x: (matrix[0] * corner.x + matrix[4] * corner.y + matrix[8] * corner.z + matrix[12]) / w,
-        y: (matrix[1] * corner.x + matrix[5] * corner.y + matrix[9] * corner.z + matrix[13]) / w,
-        z: (matrix[2] * corner.x + matrix[6] * corner.y + matrix[10] * corner.z + matrix[14]) / w,
-      };
-    })
-    .filter((p): p is { x: number; y: number; z: number } => p !== null);
+  let transformedCorners = 0;
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
+
+  for (let cornerIndex = 0; cornerIndex < 8; cornerIndex++) {
+    const x = (cornerIndex & 1) === 0 ? inputMinX : inputMaxX;
+    const y = (cornerIndex & 2) === 0 ? inputMinY : inputMaxY;
+    const z = (cornerIndex & 4) === 0 ? inputMinZ : inputMaxZ;
+    const w = matrix[3] * x + matrix[7] * y + matrix[11] * z + matrix[15];
+    if (Math.abs(w) < W_EPSILON) {
+      skippedCorners++;
+      continue;
+    }
+    const transformedX = (matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12]) / w;
+    const transformedY = (matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13]) / w;
+    const transformedZ = (matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14]) / w;
+    if (transformedX < minX) minX = transformedX;
+    if (transformedY < minY) minY = transformedY;
+    if (transformedZ < minZ) minZ = transformedZ;
+    if (transformedX > maxX) maxX = transformedX;
+    if (transformedY > maxY) maxY = transformedY;
+    if (transformedZ > maxZ) maxZ = transformedZ;
+    transformedCorners++;
+  }
 
   if (skippedCorners > 0) {
     log.warning(
@@ -458,31 +473,22 @@ export function transformBoundingBox(box: BoundingBox, matrix: number[]): Boundi
 
   // If every corner was degenerate, fall back to the input box rather than
   // returning (Infinity, -Infinity).
-  if (transformedCorners.length === 0) {
-    return { min: { ...box.min }, max: { ...box.max } };
+  if (transformedCorners === 0) {
+    target.min.x = inputMinX;
+    target.min.y = inputMinY;
+    target.min.z = inputMinZ;
+    target.max.x = inputMaxX;
+    target.max.y = inputMaxY;
+    target.max.z = inputMaxZ;
+    return target;
   }
-
-  // Find new min/max
-  let minX = Infinity,
-    minY = Infinity,
-    minZ = Infinity;
-  let maxX = -Infinity,
-    maxY = -Infinity,
-    maxZ = -Infinity;
-
-  for (const point of transformedCorners) {
-    minX = Math.min(minX, point.x);
-    minY = Math.min(minY, point.y);
-    minZ = Math.min(minZ, point.z);
-    maxX = Math.max(maxX, point.x);
-    maxY = Math.max(maxY, point.y);
-    maxZ = Math.max(maxZ, point.z);
-  }
-
-  return {
-    min: { x: minX, y: minY, z: minZ },
-    max: { x: maxX, y: maxY, z: maxZ },
-  };
+  target.min.x = minX;
+  target.min.y = minY;
+  target.min.z = minZ;
+  target.max.x = maxX;
+  target.max.y = maxY;
+  target.max.z = maxZ;
+  return target;
 }
 
 /**

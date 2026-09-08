@@ -591,6 +591,8 @@ interface LODGroupEntryCache {
   /** Whether any child needs the optional robust-bounds metric fold. */
   hasLodBounds: boolean;
   localBoxScratch: BoundingBox;
+  worldBoxScratch: BoundingBox;
+  metricWorldBoxScratch: BoundingBox;
 }
 
 /**
@@ -744,6 +746,7 @@ export class LODGroupRegistry {
       children: Array<{
         source: PartitionGroupEntry;
         localBoxScratch: BoundingBox;
+        worldBoxScratch: BoundingBox;
       }>;
     }
   > = new Map();
@@ -812,6 +815,14 @@ export class LODGroupRegistry {
         min: { x: 0, y: 0, z: 0 },
         max: { x: 0, y: 0, z: 0 },
       },
+      worldBoxScratch: {
+        min: { x: 0, y: 0, z: 0 },
+        max: { x: 0, y: 0, z: 0 },
+      },
+      metricWorldBoxScratch: {
+        min: { x: 0, y: 0, z: 0 },
+        max: { x: 0, y: 0, z: 0 },
+      },
     });
     // Apply initial visibility: only the active child is visible, and
     // only if its geometry is ready. A lazily-loaded active child that
@@ -839,6 +850,10 @@ export class LODGroupRegistry {
       children: entry.children.map((child) => ({
         source: { path: entry.path, groupObject: entry.groupObject, children: [child] },
         localBoxScratch: {
+          min: { x: 0, y: 0, z: 0 },
+          max: { x: 0, y: 0, z: 0 },
+        },
+        worldBoxScratch: {
           min: { x: 0, y: 0, z: 0 },
           max: { x: 0, y: 0, z: 0 },
         },
@@ -1284,7 +1299,8 @@ export class LODGroupRegistry {
         childCache.source,
         displayDims,
         childCache.localBoxScratch,
-        this.matrixScratch
+        this.matrixScratch,
+        childCache.worldBoxScratch
       );
       let visible = true;
       if (worldBox) {
@@ -1737,10 +1753,9 @@ export class LODGroupRegistry {
    * ``lod-selector-math.ts`` for the math). The default uses raw
    * ``positionBounds`` for frustum gating and eviction; ``useLodBounds`` uses
    * robust bounds with a per-child raw fallback for selector metrics. This
-   * wrapper supplies the per-entry ``localBoxScratch`` and the registry's
-   * ``matrixScratch``;
-   * ``transformBoundingBox`` allocates the returned box, so it is independent
-   * of those scratches and safe to keep past the next call.
+   * wrapper supplies per-entry local/world scratch boxes and the registry's
+   * ``matrixScratch``. Raw and robust metric bounds use distinct world boxes
+   * because both remain live during one selector evaluation.
    */
   private computeWorldBox(
     entry: LODGroupEntry,
@@ -1754,6 +1769,7 @@ export class LODGroupRegistry {
       displayDims,
       cache.localBoxScratch,
       this.matrixScratch,
+      useLodBounds ? cache.metricWorldBoxScratch : cache.worldBoxScratch,
       useLodBounds
     );
   }

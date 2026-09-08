@@ -350,14 +350,15 @@ export interface WorldBoxSource {
  * frustum gating and eviction so visible outliers remain part of the geometry.
  * Children with bogus bounds are skipped. Uses the caller-owned
  * ``localBoxScratch`` (per-entry) and ``matrixScratch`` (per-registry);
- * ``transformBoundingBox`` allocates the returned box, so it is independent of
- * those scratches and safe to keep past the next call.
+ * ``worldBoxScratch`` receives the transformed bounds and is reused by the
+ * caller on the next evaluation.
  */
 export function computeEntryWorldBox(
   entry: WorldBoxSource,
   displayDims: readonly number[],
   localBoxScratch: BoundingBox,
   matrixScratch: number[],
+  worldBoxScratch: BoundingBox,
   useLodBounds: boolean = false
 ): BoundingBox | null {
   const local = localBoxScratch;
@@ -423,5 +424,5 @@ export function computeEntryWorldBox(
   const elements = entry.groupObject.matrixWorld.elements;
   const m = matrixScratch;
   for (let i = 0; i < 16; i++) m[i] = elements[i];
-  return transformBoundingBox(local, m);
+  return transformBoundingBox(local, m, worldBoxScratch);
 }
