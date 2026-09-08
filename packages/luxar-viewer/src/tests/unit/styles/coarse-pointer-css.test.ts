@@ -223,6 +223,9 @@ describe('coarse-pointer.css contract', () => {
     expect(noHover).toMatch(/\.luxar-control-rail__btn:active[^{]*\{[^}]*background:/);
     // A stuck :hover after a tap goes back to the rest state.
     expect(noHover).toMatch(/\.luxar-control-rail__btn:hover:not\(:active\)/);
+    expect(
+      ruleBody(noHover, '.luxar-control-rail__btn:hover:not(:active):not(.is-active)')
+    ).toMatch(/color:\s*var\(--luxar-text-muted\)/);
     // Tooltips need a hover; without one they show on keyboard focus only.
     expect(noHover).toMatch(/\.luxar-control-rail__btn:focus-visible \.luxar-control-rail__tip/);
   });

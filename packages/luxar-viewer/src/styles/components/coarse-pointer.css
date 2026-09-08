@@ -386,7 +386,7 @@
      put back to the rest state and :active carries the response instead. ---- */
   .luxar-control-rail__btn:hover:not(:active):not(.is-active) {
     background: none;
-    color: var(--luxar-text-secondary);
+    color: var(--luxar-text-muted);
   }
   .luxar-control-rail__btn:active,
   .luxar-control-rail__chip:active,
