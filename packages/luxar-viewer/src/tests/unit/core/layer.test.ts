@@ -177,6 +177,13 @@ vi.mock('../../../rendering/webgl-blend-warmup', () => ({
   clearBlendModeProgramWarmup: () => clearBlendModeProgramWarmup(),
 }));
 
+const inputProfile = vi.hoisted(() => ({
+  deviceClass: 'laptop' as 'mobile' | 'laptop' | 'desktop',
+}));
+vi.mock('../../../utils/input-capabilities', () => ({
+  getInputProfile: () => inputProfile,
+}));
+
 const configureDepthSort = vi.fn();
 const setDepthSortEnabled = vi.fn();
 const evaluateDepthSortPerFrame = vi.fn();
@@ -220,6 +227,7 @@ function makeOptions(overrides: Partial<LuxarLayerOptions> = {}): LuxarLayerOpti
 describe('LuxarLayer', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    inputProfile.deviceClass = 'laptop';
     onPhysicalMaterialCreated.mockReturnValue(() => {});
     isEnvironmentReady.mockReturnValue(false);
     sceneLoaderStub.resetArchiveFault();
@@ -277,6 +285,20 @@ describe('LuxarLayer', () => {
       await layer.load('http://example.test/scene.zarr');
       expect(configureBlendModeProgramWarmup).toHaveBeenCalledWith({
         enabled: true,
+        renderer: options.renderer,
+        camera: expect.any(THREE.Camera),
+        targetScene: options.scene,
+      });
+    });
+
+    it('disables WebGL blend-program warm-up on mobile', async () => {
+      inputProfile.deviceClass = 'mobile';
+      const options = makeOptions();
+      const layer = new LuxarLayer(options);
+      await layer.load('http://example.test/scene.zarr');
+
+      expect(configureBlendModeProgramWarmup).toHaveBeenCalledWith({
+        enabled: false,
         renderer: options.renderer,
         camera: expect.any(THREE.Camera),
         targetScene: options.scene,

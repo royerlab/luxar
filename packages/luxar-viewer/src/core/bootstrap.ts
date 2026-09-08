@@ -133,7 +133,7 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // the GPU byte budget below, the cache pool's device class, gesture routing
   // and the touch UI all derive from `getInputProfile()`, and it memoises on
   // first use.
-  setInputProfileOverride(urlParams.input);
+  setInputProfileOverride(urlParams.input ?? null);
 
   // Size the single GPU-geometry byte budget before any pool / LOD
   // registry is constructed. Precedence: `?gpuBudgetMB=` URL param >
@@ -143,11 +143,14 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // on a large machine it pins the budget at its ceiling and the pool's
   // eviction path can never be exercised under pressure. `?cacheBudgetMB=` is
   // the only way to reproduce constrained-device behaviour on a roomy box. In
-  // WebKit it is the sole signal and may raise or lower the 512 MB fallback.
+  // desktop WebKit it is the sole signal and may raise or lower the 512 MB
+  // fallback. On mobile WebKit the device-class term is the other signal, so
+  // `?cacheBudgetMB=` can only lower its 128 MiB share.
   // The persisted Settings budget remains cache-only by design; the regression
   // guard is tests/unit/core/bootstrap.test.ts:594. The ambient JS heap limit is
   // deliberately not folded in: its coarse Chromium tiers are not a GPU-memory
-  // measurement.
+  // measurement. A MOBILE device class is folded in (inside
+  // `computeAutoBudget`): on WebKit it is the only memory signal a phone has.
   configureGpuByteBudget(
     urlParams.gpuBudgetMB != null
       ? urlParams.gpuBudgetMB * 1_000_000
@@ -336,6 +339,8 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     densityCap: urlParams.densityCap ?? undefined,
     // Opt-in capture-quality override (`?lod-finest` — the gallery harness).
     lodFinest: urlParams.lodFinest,
+    // The shared init pipeline applies the mobile default so direct LuxarApp
+    // embedders and the standalone app behave identically.
     blendWarmup: urlParams.blendWarmup,
     // `?bake-env[&probe=…][&env-resolution=…]` — the `luxar env bake` driver.
     bakeEnvironment: urlParams.bakeEnv

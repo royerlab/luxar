@@ -42,7 +42,12 @@
  * @module rendering/gpu-byte-budget
  */
 
-import { computeWorkingSetBudgetBytes, readHeapLimitBytes } from '../cache/heap-budget';
+import {
+  DEVICE_CLASS_POOL_BYTES,
+  computeWorkingSetBudgetBytes,
+  readHeapLimitBytes,
+} from '../cache/heap-budget';
+import { getInputProfile } from '../utils/input-capabilities';
 import { log, Modules } from '../utils/log';
 
 /** Fraction of system RAM to devote to GPU geometry. */
@@ -133,8 +138,20 @@ function computeAutoBudget(memory?: GpuBudgetMemorySignals): { bytes: number; so
   // a 32 GB Firefox/Safari box at the fallback purely for exposing no
   // `performance.memory`. An absent measurement is not a small one.
   const fromHeap = readHeapLimitBytes() !== undefined ? computeWorkingSetBudgetBytes() : undefined;
+  // A phone or tablet is a memory signal in itself. WebKit exposes neither
+  // `deviceMemory` nor `performance.memory`, so without this an iPhone took the
+  // 512 MB no-signal fallback — ≈7 M resident splats, each also holding a
+  // CPU-side ArrayBuffer — which is the `RangeError: Array buffer allocation
+  // failed` this module exists to prevent. The mobile cache pool the cache
+  // tiers already size from (`DEVICE_CLASS_POOL_BYTES.mobile`) takes the same
+  // proportional GPU share as an explicit `?cacheBudgetMB=` would. Laptop and
+  // desktop contribute nothing here, so their resolution is unchanged.
+  const fromDeviceClass =
+    getInputProfile().deviceClass === 'mobile'
+      ? Math.floor(DEVICE_CLASS_POOL_BYTES.mobile * CACHE_POOL_GPU_SHARE)
+      : undefined;
 
-  const candidates = [fromDeviceMemory, fromHeap, fromCachePool].filter(
+  const candidates = [fromDeviceMemory, fromHeap, fromCachePool, fromDeviceClass].filter(
     (value): value is number => value !== undefined
   );
   if (candidates.length === 0) {
@@ -161,6 +178,9 @@ function computeAutoBudget(memory?: GpuBudgetMemorySignals): { bytes: number; so
     sources.push(
       `cacheBudgetMB=${Math.round(cachePoolOverrideBytes! / MIB)} -> ${mb(fromCachePool)} MB`
     );
+  }
+  if (fromDeviceClass !== undefined) {
+    sources.push(`mobile device class -> ${mb(fromDeviceClass)} MB`);
   }
   return { bytes: Math.min(Math.min(...candidates), MAX_BUDGET_BYTES), sources };
 }

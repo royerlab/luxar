@@ -30,6 +30,10 @@ export interface AdaptiveDPRConfig {
   /** Refresh cap assumed before the estimator has warmed up, in Hz
    *  (default: 60). Also drives the indicator's displayed target FPS. */
   refreshRateFallback: number;
+  /** Upper bound on the estimated refresh cap, in Hz; `0` = no bound
+   *  (default). The mobile runtime sets 60 so a 120 Hz iPad's steady 60 fps
+   *  is not read as distress (75% of a learned 120 Hz mark is 90 fps). */
+  refreshRateCeiling: number;
   /** Consecutive mid-band samples tolerated before the scale-up streak
    *  resets (default: 1 — a single dropped-frame sample no longer
    *  restarts the whole hysteresis wait). */

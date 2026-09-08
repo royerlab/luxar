@@ -342,3 +342,29 @@ describe('RefreshRateEstimator', () => {
     expect(est.consumeDistress()).toBe(false);
   });
 });
+
+describe('RefreshRateEstimator — ceiling', () => {
+  it('bounds the reported cap without touching the learned mark', () => {
+    const est = new RefreshRateEstimator(60, 60);
+    est.addSample(119.5, 0);
+    expect(est.getCap()).toBe(60); // ProMotion iPad: thresholds stay 45/54, not 90/108
+    // The mark itself still grew: throttle detection compares against the
+    // demonstrated rate. A later 30 fps plateau is still "far below the mark".
+    const uncapped = new RefreshRateEstimator(60, 0);
+    uncapped.addSample(119.5, 0);
+    expect(uncapped.getCap()).toBeCloseTo(119.5, 5);
+  });
+
+  it('still detects a throttle plateau against the unclamped learned mark', () => {
+    const est = new RefreshRateEstimator(60, 60);
+    const provedAt = feed(est, 119.5, 4, 0);
+    feed(est, 40.3, 25, provedAt + 500);
+    expect(est.getCap()).toBeCloseTo(40.3, 5);
+  });
+
+  it('0 means no ceiling (the default), and a ceiling below the fallback wins', () => {
+    expect(new RefreshRateEstimator(60).getCap()).toBe(60);
+    expect(new RefreshRateEstimator(60, 0).getCap()).toBe(60);
+    expect(new RefreshRateEstimator(60, 30).getCap()).toBe(30);
+  });
+});
