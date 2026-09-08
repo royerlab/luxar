@@ -225,17 +225,20 @@ export function parseArgs(argv) {
 
 /** Format measured rows as a paste-ready COVERAGE_RECORDED declaration. */
 export function formatRecordedBaselines(rows) {
-  const lines = ['export const COVERAGE_RECORDED = {'];
+  const lines = [
+    '/** Coverage measurements from the run that established each floor. */',
+    'export const COVERAGE_RECORDED = {',
+  ];
   for (let index = 0; index < rows.length;) {
     const row = rows[index];
     if (!isGlobKey(row.key)) {
-      lines.push(`  ${row.key}: ${row.measured.toFixed(2)},`);
+      lines.push(`  ${row.key}: ${Number(row.measured.toFixed(2))},`);
       index += 1;
       continue;
     }
     const metrics = [];
     while (index < rows.length && rows[index].key === row.key) {
-      metrics.push(`${rows[index].metric}: ${rows[index].measured.toFixed(2)}`);
+      metrics.push(`${rows[index].metric}: ${Number(rows[index].measured.toFixed(2))}`);
       index += 1;
     }
     lines.push(`  '${row.key}': { ${metrics.join(', ')} },`);

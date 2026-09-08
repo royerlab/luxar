@@ -257,9 +257,10 @@ describe('formatRecordedBaselines', () => {
         { key: 'src/ui/**', metric: 'lines', measured: 91.234 },
         { key: 'src/ui/**', metric: 'branches', measured: 79.1 },
       ])
-    ).toBe(`export const COVERAGE_RECORDED = {
-  lines: 90.00,
-  'src/ui/**': { lines: 91.23, branches: 79.10 },
+    ).toBe(`/** Coverage measurements from the run that established each floor. */
+export const COVERAGE_RECORDED = {
+  lines: 90,
+  'src/ui/**': { lines: 91.23, branches: 79.1 },
 };`);
   });
 });
