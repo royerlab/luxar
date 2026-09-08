@@ -36,6 +36,7 @@ describe('readUrlParams', () => {
       gpuBudgetMB: null,
       cacheBudgetMB: null,
       dpr: null,
+      input: null,
       lineJoin: null,
       linePrimitive: null,
       bakeEnv: false, // the `luxar env bake` driver's one-shot (opt-in via ?bake-env)
@@ -298,6 +299,24 @@ describe('readUrlParams', () => {
       expect(params.perfTimestamp).toBe(true);
       expect(params.debug).toBe(false);
       expect(params.webgpuForceWebGL).toBe(false);
+    });
+  });
+
+  describe('?input=', () => {
+    it('is null when absent or flag-only', () => {
+      expect(readUrlParams('').input).toBeNull();
+      expect(readUrlParams('?input').input).toBeNull();
+    });
+
+    it('accepts touch and mouse case-insensitively', () => {
+      expect(readUrlParams('?input=touch').input).toBe('touch');
+      expect(readUrlParams('?input=Mouse').input).toBe('mouse');
+      expect(readUrlParams('?input=%20TOUCH%20').input).toBe('touch');
+    });
+
+    it('treats unrecognised values as no override', () => {
+      expect(readUrlParams('?input=pen').input).toBeNull();
+      expect(readUrlParams('?input=1').input).toBeNull();
     });
   });
 

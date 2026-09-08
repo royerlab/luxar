@@ -118,6 +118,7 @@ const EMPTY_PARAMS: UrlParams = {
   gpuBudgetMB: null,
   cacheBudgetMB: null,
   dpr: null,
+  input: null,
   lineJoin: null,
   linePrimitive: null,
   bakeEnv: false,
@@ -165,6 +166,23 @@ describe('bootstrapStandalone', () => {
       } finally {
         setLinePrimitiveOverride(null);
         setLineJoinOverride(null);
+      }
+    });
+
+    it('installs the ?input= override before returning', async () => {
+      const { getInputProfile, resetInputProfileForTests } =
+        await import('../../../utils/input-capabilities');
+      try {
+        await bootstrapStandalone({
+          canvas: CANVAS,
+          urlParams: { ...EMPTY_PARAMS, input: 'touch' },
+        });
+        expect(getInputProfile()).toMatchObject({
+          source: 'override',
+          coarsePointer: true,
+        });
+      } finally {
+        resetInputProfileForTests();
       }
     });
 

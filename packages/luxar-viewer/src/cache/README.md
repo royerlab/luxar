@@ -82,7 +82,7 @@ is split across the tiers the same way. One third also becomes the viewer's
 auto GPU-geometry/LOD residency signal, so the launcher default raises that
 budget from 512 to 716 MB; lower values reduce both cache and retained geometry
 pressure. Without an override, WebKit falls back to
-an inferred **device-class** pool (`inferDeviceClass`): mobile ≈ 384 MB, laptop
+an inferred **device-class** pool (the `deviceClass` of the shared input profile, `utils/input-capabilities`): mobile ≈ 384 MB, laptop
 ≈ 1 GB, desktop ≈ 2 GB. `mobile` is detected reliably (mobile UA, or touch +
 coarse pointer — which also catches iPadOS); laptop vs desktop is a deliberately
 weak `hardwareConcurrency ≥ 12` proxy (there is no in-browser RAM signal on

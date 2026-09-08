@@ -22,6 +22,7 @@
 import { parseLineJoinStyle, type LineJoinStyle } from '../types/line-join';
 import { parseLinePrimitive, type LinePrimitive } from '../types/line-primitive';
 import { ENVIRONMENT_RESOLUTION_MAX, ENVIRONMENT_RESOLUTION_MIN } from '../types/environment';
+import type { InputProfileOverride } from '../utils/input-capabilities';
 
 const MAX_SRC_LENGTH = 4096;
 const URL_SCHEME_PATTERN = /^[a-zA-Z][a-zA-Z\d+.-]*:/;
@@ -270,6 +271,18 @@ export interface UrlParams {
   dpr: number | null;
 
   /**
+   * Force the session's JS input profile (`?input=touch|mouse`): pointer flags,
+   * hover capability, touch points, and device tier. Today this only changes
+   * device-class fallback budgets where the browser heap is unavailable;
+   * gesture, layout, and copy adaptations land in follow-up touch work.
+   * Stylesheets and per-event gesture routing keep following the real media
+   * features and `PointerEvent.pointerType`, so a faithful check still needs
+   * device emulation or a real device. `null` (missing or unrecognised) ⇒
+   * detect from the browser. See `utils/input-capabilities.ts`.
+   */
+  input: InputProfileOverride | null;
+
+  /**
    * Force a line join style for the session (`?lineJoin=none|miter`).
    *
    * Overrides whatever each node authored, which is exactly its purpose: it is
@@ -348,6 +361,7 @@ export function readUrlParams(search?: string): UrlParams {
     gpuBudgetMB: parseNonNegativeInt(params.get('gpuBudgetMB')),
     cacheBudgetMB: parseNonNegativeInt(params.get('cacheBudgetMB')),
     dpr: parsePositiveFloat(params.get('dpr')),
+    input: normalizeInputParam(params.get('input')),
     lineJoin: parseLineJoinStyle(params.get('lineJoin')),
     linePrimitive: parseLinePrimitive(params.get('linePrimitive')),
     bakeEnv: params.has('bake-env'),
@@ -404,6 +418,18 @@ function normalizeRendererParam(raw: string | null): 'webgl' | 'webgpu' | null {
   const v = raw.trim().toLowerCase();
   if (v === 'webgl' || v === 'webgl2') return 'webgl';
   if (v === 'webgpu') return 'webgpu';
+  return null;
+}
+
+/**
+ * Validate the `?input=` query value. Accept `touch` and `mouse`
+ * case-insensitively; everything else (including the flag-only `?input`
+ * form) means "no override — detect".
+ */
+function normalizeInputParam(raw: string | null): InputProfileOverride | null {
+  if (raw === null) return null;
+  const v = raw.trim().toLowerCase();
+  if (v === 'touch' || v === 'mouse') return v;
   return null;
 }
 
