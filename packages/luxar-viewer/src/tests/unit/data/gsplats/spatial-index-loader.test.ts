@@ -1759,6 +1759,41 @@ describe('GSplatsSpatialIndexLoader', () => {
     // two test files (justified asymmetry).
     // ────────────────────────────────────────────────────────────────
     describe('prefetchChunks (gsplats-only)', () => {
+      it('estimates the visible sliced working set from stored chunk dtypes', async () => {
+        bodyLoader.dispose();
+        mockArrays.centers.shape = [5_000_000, 3];
+        mockArrays.centers.dtype = 'uint16';
+        mockArrays.amplitudes.shape = [5_000_000];
+        mockArrays.amplitudes.dtype = 'uint16';
+        mockArrays.cholesky_factors_diag.shape = [5_000_000, 3];
+        mockArrays.cholesky_factors_diag.dtype = 'uint16';
+        mockArrays.cholesky_factors_offdiag.shape = [5_000_000, 3];
+        mockArrays.cholesky_factors_offdiag.dtype = 'uint16';
+        mockArrays.colors.shape = [5_000_000, 3];
+        mockArrays.colors.dtype = 'uint8';
+        bodyLoader = new GSplatsSpatialIndexLoader(
+          mockZarrLocation as unknown as ConstructorParameters<
+            typeof GSplatsSpatialIndexLoader
+          >[0],
+          makeGSplatsNode({
+            attrs: {
+              ...mockNode.attrs,
+              n_splats: 5_000_000,
+              chunk_size: 1_000,
+            },
+          })
+        );
+        mockExecute.mockResolvedValueOnce([{ start: 100, end: 200 }]);
+
+        const bytes = await bodyLoader.estimatePrefetchBytes({
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0, 0],
+          tolerance: [0, 0, 0, 0],
+        });
+
+        expect(bytes).toBe(23_320);
+      });
+
       it('warms the cache with zarr.get on every array × range', async () => {
         mockExecute.mockResolvedValueOnce([{ start: 0, end: 50 }]);
 

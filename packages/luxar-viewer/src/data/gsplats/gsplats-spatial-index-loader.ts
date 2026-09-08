@@ -90,6 +90,54 @@ import type { SliceCache } from '../../cache/slice-cache';
 let sliceDimsWarned = false;
 const PREFETCH_CHUNK_METADATA_BYTES = 64;
 
+function dtypeByteWidth(dtype: zarr.DataType): number {
+  switch (dtype) {
+    case 'bool':
+    case 'int8':
+    case 'uint8':
+      return 1;
+    case 'float16':
+    case 'int16':
+    case 'uint16':
+      return 2;
+    case 'float32':
+    case 'int32':
+    case 'uint32':
+      return 4;
+    default:
+      return 8;
+  }
+}
+
+function estimateArrayPrefetchBytes(
+  array: zarr.Array<zarr.DataType, zarr.Readable>,
+  ranges: readonly SplatRange[],
+  fallbackChunkRows: number
+): number {
+  const rowCount = Math.max(0, array.shape[0] ?? 0);
+  const chunkRows = Math.max(
+    1,
+    (array as zarr.Array<zarr.DataType, zarr.Readable> & { chunks?: number[] }).chunks?.[0] ??
+      fallbackChunkRows
+  );
+  const scalarsPerRow = array.shape.slice(1).reduce((product, size) => product * size, 1);
+  const chunkIndices = new Set<number>();
+  for (const range of ranges) {
+    const start = Math.max(0, Math.min(rowCount, range.start));
+    const end = Math.max(start, Math.min(rowCount, range.end));
+    if (end === start) continue;
+    const firstChunk = Math.floor(start / chunkRows);
+    const lastChunk = Math.floor((end - 1) / chunkRows);
+    for (let chunk = firstChunk; chunk <= lastChunk; chunk++) chunkIndices.add(chunk);
+  }
+  let bytes = 0;
+  for (const chunk of chunkIndices) {
+    const rows = Math.min(chunkRows, rowCount - chunk * chunkRows);
+    bytes += rows * scalarsPerRow * dtypeByteWidth(array.dtype) + PREFETCH_CHUNK_METADATA_BYTES;
+  }
+  return bytes;
+}
+
 /** Test-only: re-arm the one-shot above so cases stay order-independent. */
 export function resetSliceDimsWarningForTests(): void {
   sliceDimsWarned = false;
@@ -284,6 +332,25 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   /** Live L0 accounting shared by every rung in this progressive ladder. */
   getPrefetchCacheStats(): DecompressedChunkCacheStats | null {
     return this.l0Cache?.getStats() ?? null;
+  }
+
+  /** Estimate the decompressed chunks this view's speculative read would retain. */
+  async estimatePrefetchBytes(viewState: GSplatsViewState): Promise<number> {
+    const fallback = this.prefetchByteUpperBound;
+    try {
+      await this.ensureInitialized();
+      const ranges = await this.queryVisibleSplatRanges(viewState);
+      const chunkRows = Math.max(
+        1,
+        (this.node.attrs as unknown as GSplatsMetadata).chunk_size || 1
+      );
+      return this.prefetchArrays().reduce(
+        (bytes, array) => bytes + estimateArrayPrefetchBytes(array, ranges, chunkRows),
+        0
+      );
+    } catch {
+      return fallback;
+    }
   }
 
   private arrays: {
@@ -1193,7 +1260,13 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
     // Warm every array over the visible ranges. The reads populate L0/L1/L2 as
     // a side-effect and are discarded — no output buffers allocated.
-    const arrays = [
+    const arrays = this.prefetchArrays();
+
+    await prefetchRangesIntoCache(arrays, splatRanges, signal);
+  }
+
+  private prefetchArrays(): zarr.Array<zarr.DataType, zarr.Readable>[] {
+    return [
       this.arrays.centers,
       this.arrays.amplitudes,
       // v3.1 split Cholesky arrays, or the legacy v3.0 single packed array.
@@ -1203,8 +1276,6 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       this.arrays.colors,
       this.arrays.label_ids,
     ].filter((a): a is zarr.Array<zarr.DataType, zarr.Readable> => a != null);
-
-    await prefetchRangesIntoCache(arrays, splatRanges, signal);
   }
 
   /**

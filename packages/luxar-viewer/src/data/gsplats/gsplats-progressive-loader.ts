@@ -75,18 +75,24 @@ function readPrefetchHeadroom(loader: GSplatsSpatialIndexLoader | undefined): nu
   return Math.max(0, (stats.maxSize ?? 0) - stats.size);
 }
 
-function selectPrefetchLevels(
+async function selectPrefetchLevels(
   lodLoaders: readonly GSplatsSpatialIndexLoader[],
   firstLevel: number,
   nLods: number,
   maxLevels: number,
-  headroom: number
-): number[] {
+  headroom: number,
+  viewState: GSplatsViewState
+): Promise<number[]> {
   const levels: number[] = [];
   let reservedBytes = 0;
   const stopLevel = Math.min(nLods, firstLevel + maxLevels);
-  for (let level = firstLevel; level < stopLevel; level++) {
-    const estimate = lodLoaders[level].prefetchByteUpperBound;
+  const candidates = lodLoaders.slice(firstLevel, stopLevel);
+  const estimates = await Promise.all(
+    candidates.map((loader) => loader.estimatePrefetchBytes(viewState))
+  );
+  for (let index = 0; index < candidates.length; index++) {
+    const level = firstLevel + index;
+    const estimate = estimates[index];
     reservedBytes +=
       Number.isFinite(estimate) && estimate > 0 ? estimate : Number.POSITIVE_INFINITY;
     if (level > firstLevel && reservedBytes > headroom) break;
@@ -680,7 +686,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     }
 
     // Fire-and-forget: prefetch later unloaded LODs to warm cache.
-    this.prefetchNextLODs(viewState);
+    void this.prefetchNextLODs(viewState);
 
     // Snapshot into the SliceCache (upgrade-if-longer): full ladders always
     // (instant revisit restore); PREFIXES only while a playback budget is
@@ -761,7 +767,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
    * get() calls (populating the cache) WITHOUT allocating full-size output
    * buffers or running the accumulator — avoiding wasted memory.
    */
-  private prefetchNextLODs(viewState: GSplatsViewState): void {
+  private async prefetchNextLODs(viewState: GSplatsViewState): Promise<void> {
     // Same teardown race as the streaming loop: a dispose() between the
     // awaited level and this fire-and-forget clears `lodLoaders`, and
     // indexing it would TypeError before the .catch can swallow anything.
@@ -770,20 +776,22 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     if (firstLevel >= this.nLods) return;
 
     const headroom = readPrefetchHeadroom(this.lodLoaders[0]);
+    const controller = (this._prefetchController ??= new AbortController());
     const maxLevels = resolvePrefetchDepth(
       this._metadataWarmStarted,
       headroom !== null,
       this._frameBudgetMs,
       viewState.prefetch === true
     );
-    const levels = selectPrefetchLevels(
+    const levels = await selectPrefetchLevels(
       this.lodLoaders,
       firstLevel,
       this.nLods,
       maxLevels,
-      headroom ?? 0
+      headroom ?? 0,
+      viewState
     );
-    const controller = (this._prefetchController ??= new AbortController());
+    if (controller.signal.aborted || this._disposed) return;
 
     for (const level of levels) {
       if (this._prefetchingLevels.has(level)) continue;

@@ -33,7 +33,7 @@ interface SubLoaderStub {
   updateView: ReturnType<typeof vi.fn>;
   updateViewWithResidency: ReturnType<typeof vi.fn>;
   prefetchChunks: ReturnType<typeof vi.fn>;
-  prefetchByteUpperBound: number;
+  estimatePrefetchBytes: ReturnType<typeof vi.fn>;
   getPrefetchCacheStats: ReturnType<typeof vi.fn>;
   releaseAccumulator: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
@@ -94,7 +94,7 @@ function makeLodData(
 function makeSubLoader(
   initialData: LoadedGSplatsData,
   metrics: Record<string, number> = {},
-  prefetchByteUpperBound = 128
+  estimatedPrefetchBytes = 128
 ): SubLoaderStub {
   const updateView = vi.fn().mockResolvedValue(initialData);
   // Progressive loader calls updateViewWithResidency; delegate to updateView
@@ -108,7 +108,7 @@ function makeSubLoader(
     updateView,
     updateViewWithResidency,
     prefetchChunks: vi.fn().mockResolvedValue(undefined),
-    prefetchByteUpperBound,
+    estimatePrefetchBytes: vi.fn().mockResolvedValue(estimatedPrefetchBytes),
     getPrefetchCacheStats: vi.fn(() => null),
     releaseAccumulator: vi.fn(),
     dispose: vi.fn(),
@@ -436,7 +436,7 @@ describe('GSplatsProgressiveLoader', () => {
         lodA.updateView.mockResolvedValue(makeLodData(0));
         await loader.updateView({ ...baseViewState, frameBudgetMs: 10 });
         expect(loader.loadedLODCount).toBe(1);
-        expect(lodB.prefetchChunks).toHaveBeenCalled();
+        await vi.waitFor(() => expect(lodB.prefetchChunks).toHaveBeenCalled());
       } finally {
         nowSpy.mockRestore();
       }
@@ -1126,11 +1126,11 @@ describe('GSplatsProgressiveLoader', () => {
       });
 
       await loader.updateView(baseViewState);
-      await Promise.resolve();
-
-      expect(lods[4].prefetchChunks).toHaveBeenCalledTimes(1);
-      expect(lods[5].prefetchChunks).toHaveBeenCalledTimes(1);
-      expect(lods[6].prefetchChunks).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => {
+        expect(lods[4].prefetchChunks).toHaveBeenCalledTimes(1);
+        expect(lods[5].prefetchChunks).toHaveBeenCalledTimes(1);
+        expect(lods[6].prefetchChunks).toHaveBeenCalledTimes(1);
+      });
       expect(lods[7].prefetchChunks).not.toHaveBeenCalled();
     });
 
@@ -1157,9 +1157,7 @@ describe('GSplatsProgressiveLoader', () => {
       });
 
       await loader.updateView(baseViewState);
-      await Promise.resolve();
-
-      expect(lods[4].prefetchChunks).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => expect(lods[4].prefetchChunks).toHaveBeenCalledTimes(1));
       expect(lods[5].prefetchChunks).not.toHaveBeenCalled();
       expect(lods[6].prefetchChunks).not.toHaveBeenCalled();
     });
@@ -1187,9 +1185,7 @@ describe('GSplatsProgressiveLoader', () => {
       });
 
       await loader.updateView({ ...baseViewState, frameBudgetMs: 1_000 });
-      await Promise.resolve();
-
-      expect(lods[4].prefetchChunks).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => expect(lods[4].prefetchChunks).toHaveBeenCalledTimes(1));
       expect(lods[5].prefetchChunks).not.toHaveBeenCalled();
       expect(lods[6].prefetchChunks).not.toHaveBeenCalled();
     });
@@ -1215,6 +1211,7 @@ describe('GSplatsProgressiveLoader', () => {
         allResident: false,
       });
       await loader.updateView(baseViewState);
+      await vi.waitFor(() => expect(lods[4].prefetchChunks).toHaveBeenCalledTimes(1));
       const previousSignal = lods[4].prefetchChunks.mock.calls[0]?.[1] as AbortSignal | undefined;
       expect(previousSignal?.aborted).toBe(false);
 
