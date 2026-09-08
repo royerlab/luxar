@@ -646,6 +646,18 @@ def test_settings_refresh_reports_retired_complexity_keys(
     assert json.loads(baseline.read_text())["functions"] == {"sample.py::tangled": [13]}
 
 
+def test_retired_key_report_is_bounded() -> None:
+    """Large refresh audits show twenty keys and summarize the remainder."""
+    previous = {f"sample.py::retired_{index:02d}": [12] for index in range(21)}
+
+    report = checker.ruff_ratchet.format_retired_keys(previous, {})
+
+    assert report is not None
+    assert "sample.py::retired_19" in report
+    assert "sample.py::retired_20" not in report
+    assert "... and 1 more" in report
+
+
 def test_main_rejects_nested_ruff_configuration(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
