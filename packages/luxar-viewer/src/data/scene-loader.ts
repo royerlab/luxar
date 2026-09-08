@@ -1663,6 +1663,7 @@ export class SceneLoader {
     session?: UpdateSession,
     loadedViewVersion: number = this._updateVersion
   ): void {
+    this.lodGroupRegistry?.invalidatePartitionFootprint(staged.path);
     commitLinesGeometryHelper(
       staged,
       this.rootGroup,
@@ -1670,7 +1671,6 @@ export class SceneLoader {
       session,
       loadedViewVersion
     );
-    this.lodGroupRegistry?.invalidatePartitionFootprint(staged.path);
     // Wake the idle-paused render loop so this commit paints (see
     // _requestRender).
     this._requestRender?.();
@@ -1710,6 +1710,7 @@ export class SceneLoader {
     session?: UpdateSession,
     loadedViewVersion: number = this._updateVersion
   ): void {
+    this.lodGroupRegistry?.invalidatePartitionFootprint(staged.path);
     commitGSplatsGeometryHelper(
       staged,
       this.rootGroup,
@@ -1717,7 +1718,6 @@ export class SceneLoader {
       session,
       loadedViewVersion
     );
-    this.lodGroupRegistry?.invalidatePartitionFootprint(staged.path);
     // Wake the idle-paused render loop so this commit paints (see
     // _requestRender).
     this._requestRender?.();
@@ -1751,13 +1751,13 @@ export class SceneLoader {
     session?: UpdateSession,
     loadedViewVersion: number = this._updateVersion
   ): void {
+    this.lodGroupRegistry?.invalidatePartitionFootprint(staged.path);
     commitMeshGeometryHelper(
       { rootGroup: this.rootGroup, currentVersion: this._updateVersion },
       staged,
       session,
       loadedViewVersion
     );
-    this.lodGroupRegistry?.invalidatePartitionFootprint(staged.path);
     this._requestRender?.();
   }
 
@@ -1898,6 +1898,7 @@ export class SceneLoader {
     // version) rather than being mis-stamped fresh.
     loadedViewVersion: number = this._updateVersion
   ): void {
+    this.lodGroupRegistry?.invalidatePartitionFootprint(path);
     commitPointsGeometryHelper(
       path,
       data,
@@ -1907,7 +1908,6 @@ export class SceneLoader {
       session,
       loadedViewVersion
     );
-    this.lodGroupRegistry?.invalidatePartitionFootprint(path);
     // Wake the idle-paused render loop so this commit paints (see
     // _requestRender).
     this._requestRender?.();

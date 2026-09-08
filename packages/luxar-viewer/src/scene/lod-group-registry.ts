@@ -986,7 +986,8 @@ export class LODGroupRegistry {
    *
    * ``SceneLoader.updatePointsGeometry`` and the three ``commit*Geometry`` methods
    * are the complete geometry-attach funnels, including lazy LOD children and
-   * additive rungs, so every successful attachment reaches this method.
+   * additive rungs. They dirty the part before writing, so a commit that hands off
+   * geometry and then throws cannot leave the previous footprint cached.
    * ``registerPartition`` starts every part dirty, which also covers a commit that
    * races registration. A path under a partition that matches no registered child
    * dirties the whole partition conservatively rather than allowing an

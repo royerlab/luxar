@@ -29,6 +29,7 @@ import type { StagedMeshCommit } from '../../../../data/scene-loader/process/dat
 interface SceneLoaderInternals {
   rootGroup: THREE.Group | null;
   lodGroupRegistry: { invalidatePartitionFootprint(path: string): void };
+  _gpuBufferPool: unknown;
   updatePointsGeometry(path: string, data: LoadedPointsData): void;
   commitLinesGeometry(staged: StagedLinesCommit): void;
   commitGSplatsGeometry(staged: StagedGSplatsCommit): void;
@@ -160,6 +161,23 @@ describe('SceneLoader commit → requestRender funnel', () => {
     internals(loader).rootGroup = null;
     internals(loader).commitMeshGeometry({ path: '/mesh' } as StagedMeshCommit);
     expect(invalidatePartitionFootprint).toHaveBeenCalledWith('/mesh');
+  });
+
+  it('invalidates the partition footprint when a pooled points commit throws', () => {
+    const { loader, invalidatePartitionFootprint } = makeLoaderWithScene();
+    const geometry = new THREE.BufferGeometry();
+    internals(loader)._gpuBufferPool = {
+      acquirePointsGeometry: vi.fn(() => geometry),
+      updatePointsGeometry: vi.fn(() => {
+        throw new Error('upload failed');
+      }),
+      didLastAcquireRebuildAttributes: vi.fn(() => true),
+    };
+
+    expect(() => internals(loader).updatePointsGeometry('/p', makePointsData(2))).toThrow(
+      'upload failed'
+    );
+    expect(invalidatePartitionFootprint).toHaveBeenCalledWith('/p');
   });
 
   it('bare loaders without a callback do not throw', () => {
