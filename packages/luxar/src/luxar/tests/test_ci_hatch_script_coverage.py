@@ -11,6 +11,12 @@ import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[5]
 
+CLASSIFIED_PYTHON_WORKFLOWS = (
+    Path(".github/workflows/ci.yml"),
+    Path(".github/workflows/docs.yml"),
+    Path(".github/workflows/external-reference-audits.yml"),
+)
+
 CHECK_STATIC_EXEMPTIONS = {
     "format": (
         "check-static's format step rewrites files; CI reaches the same formatter "
@@ -79,7 +85,7 @@ def test_non_blocking_steps_do_not_count_as_ci_coverage() -> None:
                     {"run": "hatch run check-versions", "if": False},
                     {"run": "hatch run check-imports"},
                 ]
-            }
+            },
         }
     }
 
@@ -94,27 +100,39 @@ def _uncovered_check_static_members(
 
 
 def _ci_workflow_commands() -> list[str]:
-    workflow_path = PROJECT_ROOT / ".github" / "workflows" / "ci.yml"
-    workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
-    assert isinstance(workflow, Mapping)
-    return _workflow_run_commands(workflow)
+    commands = []
+    for relative_path in CLASSIFIED_PYTHON_WORKFLOWS:
+        workflow = yaml.safe_load(
+            (PROJECT_ROOT / relative_path).read_text(encoding="utf-8")
+        )
+        assert isinstance(workflow, Mapping)
+        commands.extend(_workflow_run_commands(workflow))
+    return commands
+
+
+def test_ci_workflow_scan_includes_classified_documentation_workflow() -> None:
+    commands = _ci_workflow_commands()
+
+    assert "hatch run docs:python scripts/check_documentation.py" in commands
+    assert "hatch run docs:build" in commands
 
 
 def test_every_check_static_member_is_reached_or_explicitly_exempted() -> None:
-    """A new local static check must not silently miss every CI workflow."""
+    """A new local static check must reach a classified Python workflow."""
     pyproject_text = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     members = _default_scripts(pyproject_text)["check-static"]
     assert isinstance(members, list)
     uncovered = _uncovered_check_static_members(members, _ci_workflow_commands())
 
     assert not uncovered, (
-        "check-static member(s) are not invoked by any workflow and have no "
+        "check-static member(s) are not invoked by a classified Python workflow "
+        "and have no "
         f"documented exemption: {sorted(uncovered)}"
     )
 
 
 def test_check_static_exemptions_are_live_and_still_unwired() -> None:
-    """Remove an exemption when its artifact check leaves the aggregate or gains CI."""
+    """Remove exemptions that leave the aggregate or reach classified Python CI."""
     pyproject_text = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     scripts = _default_scripts(pyproject_text)
     members = scripts["check-static"]
