@@ -33,7 +33,7 @@ Cross-cutting utility functions and helpers used throughout the Luxar viewer. Th
 - **Result<T, E>**: Discriminated-union return type for fallible operations
 - **Camera Type Helpers**: Unified `LuxarCamera` union and type guards for perspective vs orthographic
 - **Effective Visibility**: `isEffectivelyVisible` — the single parent-chain walk answering "does this node actually render?" (`visible` is a LOCAL flag, so a hidden layer or a hidden LOD level leaves its descendants' flags true). Shared by the LOD load gate, LOD eviction, the pick pass, and the depth-sort scheduler
-- **Wheel Delta Normalization**: `normalizeWheelDelta` — converts a `WheelEvent`'s line/page-mode `deltaY` to a pixel equivalent (pixel mode passes through verbatim) so a notch lands in the same ballpark in every browser instead of ~32x apart
+- **Wheel Delta Normalization**: `normalizeWheelDelta` converts a `WheelEvent`'s line/page-mode `deltaY` to a pixel equivalent (pixel mode passes through verbatim) so a notch lands in the same ballpark in every browser instead of ~32x apart; `normalizeWheelDeltaWithAxisFallback` adds opt-in `deltaX` fallback for Shift+wheel handlers
 - **Platform Detection**: Single `isMacPlatform()` helper for OS-conditional defaults
 - **Input Capabilities**: `getInputProfile()` — one memoised answer to "touch-first device? iPhone/iPad? can it hover?" (`coarsePointer`, `hoverCapable`, `isIPad` incl. the iPadOS-as-macOS masquerade, `deviceClass`), plus `isTouchLikePointer(event)` for per-event gesture routing and the `?input=touch|mouse` override
 - **HTML Escaping**: XSS prevention for safe HTML rendering

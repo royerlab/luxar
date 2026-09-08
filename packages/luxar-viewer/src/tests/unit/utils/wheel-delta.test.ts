@@ -62,6 +62,10 @@ describe('normalizeWheelDelta — the constants themselves', () => {
 });
 
 describe('normalizeWheelDelta — pixel mode (DOM_DELTA_PIXEL) passes through', () => {
+  it('ignores deltaX', () => {
+    expect(normalizeWheelDelta(new WheelEvent('wheel', { deltaY: 0, deltaX: 100 }))).toBe(0);
+  });
+
   it('passes a Chromium notch through verbatim', () => {
     expect(normalizeWheelDelta(wheel(100, 0))).toBe(100);
     expect(normalizeWheelDelta(wheel(-100, 0))).toBe(-100);
