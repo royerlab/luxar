@@ -9,10 +9,14 @@
  * disabled predicate (grayed when the scene has no layers).
  */
 
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { buildRailItems, type RailItemsDeps } from '../../../../../core/app/init/build-rail-items';
 import { RAIL_ICONS, type ControlRailItem } from '../../../../../ui/control-rail';
 import { KeyAction } from '../../../../../input/input-handler/key-bindings/actions';
+import {
+  resetInputProfileForTests,
+  setInputProfileOverride,
+} from '../../../../../utils/input-capabilities';
 
 function makeDeps(
   overrides: {
@@ -46,6 +50,7 @@ function makeDeps(
         cycleDataMonitor: vi.fn(),
         toggleCinematicMode: vi.fn(),
         toggleFullscreen: vi.fn(),
+        handleEscape: vi.fn(),
         togglePerformanceStats: vi.fn(),
         recenterCamera: vi.fn(),
         toggleDatasetBrowser: vi.fn(),
@@ -327,7 +332,30 @@ describe('buildRailItems', () => {
         get: () => (on ? document.body : null),
       });
     };
-    afterEach(() => setFullscreen(false));
+    /** jsdom has no Fullscreen API at all: declare it available like a desktop browser. */
+    const setFullscreenEnabled = (enabled: boolean | undefined): void => {
+      Object.defineProperty(document, 'fullscreenEnabled', {
+        configurable: true,
+        get: () => enabled,
+      });
+    };
+    beforeEach(() => setFullscreenEnabled(true));
+    afterEach(() => {
+      setFullscreen(false);
+      setFullscreenEnabled(undefined);
+    });
+
+    it('omits the fullscreen chip where the Fullscreen API is absent (iPhone Safari)', () => {
+      setFullscreenEnabled(undefined);
+      expect(findView().flyout!.map((t) => t.id)).toEqual([
+        'scalebar',
+        'legend',
+        'overlays',
+        'cinematic',
+      ]);
+      setFullscreenEnabled(false);
+      expect(findView().flyout!.some((t) => t.id === 'fullscreen')).toBe(false);
+    });
 
     it('carries the five view toggles in order, fullscreen last', () => {
       expect(findView().flyout!.map((t) => t.id)).toEqual([
@@ -487,6 +515,64 @@ describe('buildRailItems', () => {
       const item = findAudio(makeDeps({ hasSoundNodes: true }));
       expect(item.popover?.trigger).toBe('context');
       expect(item.popover?.title).toBe('Sound');
+    });
+  });
+
+  describe('coarse pointer (touch-first device)', () => {
+    afterEach(() => resetInputProfileForTests());
+
+    it('adds a momentary Hide panels item that fires the Escape command', () => {
+      setInputProfileOverride('touch');
+      const deps = makeDeps();
+      const items = buildRailItems(deps);
+      const hide = items.find((i: ControlRailItem) => i.id === 'hide-panels')!;
+      expect(hide).toBeDefined();
+      expect(hide.momentary).toBe(true);
+      hide.activate();
+      expect(
+        (deps as unknown as { ui: { commands: { handleEscape: ReturnType<typeof vi.fn> } } }).ui
+          .commands.handleEscape
+      ).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not add Hide panels on a mouse-and-keyboard machine', () => {
+      setInputProfileOverride('mouse');
+      expect(buildRailItems(makeDeps()).some((i: ControlRailItem) => i.id === 'hide-panels')).toBe(
+        false
+      );
+    });
+
+    it('help activation closes the docked panels under a coarse pointer, not under a mouse', () => {
+      setInputProfileOverride('touch');
+      let deps = makeDeps({ renderVisible: true });
+      buildRailItems(deps)
+        .find((i: ControlRailItem) => i.id === 'help')!
+        .activate();
+      const commands = (
+        deps as unknown as {
+          ui: {
+            commands: {
+              toggleRenderingControls: ReturnType<typeof vi.fn>;
+              toggleHelp: ReturnType<typeof vi.fn>;
+            };
+          };
+        }
+      ).ui.commands;
+      expect(commands.toggleRenderingControls).toHaveBeenCalledTimes(1);
+      expect(commands.toggleHelp).toHaveBeenCalledTimes(1);
+
+      setInputProfileOverride('mouse');
+      deps = makeDeps({ renderVisible: true });
+      buildRailItems(deps)
+        .find((i: ControlRailItem) => i.id === 'help')!
+        .activate();
+      expect(
+        (
+          deps as unknown as {
+            ui: { commands: { toggleRenderingControls: ReturnType<typeof vi.fn> } };
+          }
+        ).ui.commands.toggleRenderingControls
+      ).not.toHaveBeenCalled();
     });
   });
 });

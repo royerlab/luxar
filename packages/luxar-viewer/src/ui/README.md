@@ -144,6 +144,10 @@ icon per panel (Help, Home, Navigation, Dimensions, Rendering, Layers,
 Data monitor, Datasets, Recording, Logs, View options, Settings, Performance),
 each with a hover tooltip showing its shortcut. Home, Navigation, Settings and
 Performance open rail popovers (see [`rail-panels/`](./rail-panels/README.md)).
+On a device that cannot hover the first-run hint says "Tap these controls (hold
+for options)" instead of "Hover", and under a coarse pointer the rail gains a
+momentary **Hide panels** item (the on-screen Escape) — see
+`core/app/init/build-rail-items.ts` and the UI Design Guide §11.5.
 
 **Design:**
 
@@ -311,6 +315,12 @@ animManager.addEventListener('complete', (e) => {
 - Integrates with `AnimationController` for frame updates
 - Updates dimension values via `SceneDimsManager`
 - CSS styling in `styles/components/dimension-sliders.css`
+- Coarse pointers (`getInputProfile().coarsePointer`): each slider row gains `◀ ▶`
+  step buttons (one base step per tap — the wheel's and `[ ]`'s step) in the same
+  controls wrapper the play button joins, and the dimension name becomes a chip that
+  selects that dimension as the `[ ]` target (`SliderConfig.onSelectDimension` tells
+  the input layer). Neither exists on a mouse machine; their styling lives in
+  `styles/components/coarse-pointer.css`.
 - See `scene/animation/dimension-animation-manager.ts` for core animation logic
 
 ### 2. Rendering Controls

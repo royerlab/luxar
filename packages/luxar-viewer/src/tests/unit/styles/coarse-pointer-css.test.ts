@@ -184,6 +184,35 @@ describe('coarse-pointer.css contract', () => {
     expect(coarse).toMatch(/\.luxar-control-rail__btn,[\s\S]*?\{[^}]*touch-action:\s*manipulation/);
   });
 
+  it('grows the tap targets and the text inputs under (pointer: coarse)', () => {
+    const coarse = mediaBlock(css, /pointer:\s*coarse/);
+    // 44 px primary targets through the local --luxar-hit-min property.
+    expect(coarse).toMatch(/--luxar-hit-min:\s*44px/);
+    expect(coarse).toMatch(
+      /\.luxar-control-rail__btn,\s*\.luxar-control-rail__chip\s*\{[^}]*width:\s*var\(--luxar-hit-min/
+    );
+    expect(ruleBody(coarse, '.luxar-panel-close')).toMatch(/height:\s*var\(--luxar-hit-min/);
+    // 36 px secondary targets; 24 px slider thumbs; 28 px range-slider thumbs.
+    expect(coarse).toMatch(/\.luxar-dimension-slider__step\s*\{[^}]*min-height:\s*36px/);
+    expect(coarse).toMatch(/\.luxar-gui__slider::-webkit-slider-thumb[^{]*\{[^}]*height:\s*24px/);
+    expect(coarse).toMatch(
+      /\.luxar-range-slider__input::-webkit-slider-thumb\s*\{[^}]*height:\s*28px/
+    );
+    // 16 px inputs: the iOS focus-zoom threshold.
+    expect(coarse).toMatch(/\.luxar-help-overlay input[^{]*\{[^}]*font-size:\s*16px/);
+    // The first-run hint stays beside the rail instead of across the canvas.
+    expect(ruleBody(coarse, '.luxar-control-rail-hint')).toMatch(/max-width:\s*calc\(/);
+  });
+
+  it('swaps hover feedback for press feedback under (hover: none)', () => {
+    const noHover = mediaBlock(css, /hover:\s*none/);
+    expect(noHover).toMatch(/\.luxar-control-rail__btn:active[^{]*\{[^}]*background:/);
+    // A stuck :hover after a tap goes back to the rest state.
+    expect(noHover).toMatch(/\.luxar-control-rail__btn:hover:not\(:active\)/);
+    // Tooltips need a hover; without one they show on keyboard focus only.
+    expect(noHover).toMatch(/\.luxar-control-rail__btn:focus-visible \.luxar-control-rail__tip/);
+  });
+
   it('keeps the rail visible without hover under (hover: none)', () => {
     const noHover = mediaBlock(css, /hover:\s*none/);
     expect(noHover).toMatch(

@@ -3,6 +3,7 @@ import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { calculateStepSize } from '../scene/dims/step-math';
 import { getNonDisplayedDimensions } from '../scene/dims/selection';
 import { getViewerContainer } from '../utils/viewer-container';
+import { getInputProfile } from '../utils/input-capabilities';
 import type { DimensionAnimationManager } from '../scene/animation/dimension-animation-manager';
 import { config } from '../config';
 import { log, Modules } from '../utils/log';
@@ -38,6 +39,13 @@ export interface SliderConfig {
 
   /** Zero-based position in the non-displayed dimension list selected for [ / ]. */
   selectedDimension?: number;
+
+  /**
+   * Fired when the panel selects the [ / ] target itself: under a coarse
+   * pointer each dimension's name is a tappable chip, the finger's stand-in
+   * for the 1–9 keys. Receives the position in the non-displayed list.
+   */
+  onSelectDimension?: (navigableIndex: number) => void;
 }
 
 /**
@@ -101,6 +109,7 @@ export class DimensionSliders {
 
   /** Zero-based position in the non-displayed dimension list selected for [ / ]. */
   private selectedDimension: number;
+  private readonly onSelectDimension?: (navigableIndex: number) => void;
 
   /** Map of dimension indices to their corresponding HTML slider elements */
   private sliders: Map<number, HTMLInputElement> = new Map();
@@ -208,6 +217,7 @@ export class DimensionSliders {
     this.dimensionNames = config.dimensionNames;
     this.dimensionUnits = config.dimensionUnits || [];
     this.selectedDimension = config.selectedDimension ?? 0;
+    this.onSelectDimension = config.onSelectDimension;
 
     // Build the UI hierarchy
     const { root, scroll } = this.createSlidersContainer();
@@ -827,10 +837,71 @@ export class DimensionSliders {
     sliderContainer.appendChild(thumb);
 
     sliderGroup.appendChild(label);
-    sliderGroup.appendChild(sliderContainer);
+    if (getInputProfile().coarsePointer) {
+      sliderGroup.appendChild(this.wrapWithStepButtons(dimIndex, name, sliderContainer));
+      this.makeNameChip(dimIndex, dimName);
+    } else {
+      sliderGroup.appendChild(sliderContainer);
+    }
 
     this.scrollBody.appendChild(sliderGroup);
     this.sliders.set(dimIndex, slider);
+  }
+
+  /**
+   * Coarse pointers only: `◀ track ▶`, one dimension step per tap (the
+   * authored step, else 1 % of the range — the same base step as the wheel
+   * and the [ / ] keys), in the same wrapper the play button later joins.
+   * A finger cannot scroll a slider by a single step, and a phone has no
+   * bracket keys; the buttons are the missing precise input.
+   */
+  private wrapWithStepButtons(
+    dimIndex: number,
+    name: string,
+    sliderContainer: HTMLElement
+  ): HTMLElement {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'luxar-dimension-slider__controls-wrapper';
+    const makeStep = (direction: -1 | 1): HTMLButtonElement => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'luxar-dimension-slider__step';
+      btn.textContent = direction < 0 ? '\u25C0' : '\u25B6';
+      btn.setAttribute('aria-label', `${direction < 0 ? 'Previous' : 'Next'} ${name}`);
+      this.sliderEvents.on(btn, 'click', () => {
+        const step = calculateStepSize(dimIndex, this.dims, { shift: false, ctrl: false });
+        // Live value, not slider.value: the continuous slider's 0–1000 integer
+        // scale would quantize and drift. setDimensionValue clamps and snaps.
+        const live = this.dims.currentStep[dimIndex];
+        sceneDimsManager.setDimensionValue(dimIndex, live + direction * step);
+      });
+      return btn;
+    };
+    wrapper.appendChild(makeStep(-1));
+    wrapper.appendChild(sliderContainer);
+    wrapper.appendChild(makeStep(1));
+    return wrapper;
+  }
+
+  /** Coarse pointers only: the dimension's name selects it as the [ / ] target. */
+  private makeNameChip(dimIndex: number, dimName: HTMLElement): void {
+    dimName.classList.add('luxar-dimension-slider__name--chip');
+    dimName.setAttribute('role', 'button');
+    dimName.tabIndex = 0;
+    const select = (): void => {
+      const navigableIndex = getNonDisplayedDimensions(this.dims).indexOf(dimIndex);
+      if (navigableIndex < 0) return;
+      this.setSelectedDimension(navigableIndex);
+      this.onSelectDimension?.(navigableIndex);
+    };
+    this.sliderEvents.on(dimName, 'click', select);
+    this.sliderEvents.on(dimName, 'keydown', (e) => {
+      const key = (e as KeyboardEvent).key;
+      if (key === 'Enter' || key === ' ') {
+        e.preventDefault();
+        select();
+      }
+    });
   }
 
   /**
@@ -1112,9 +1183,16 @@ export class DimensionSliders {
     this.sliderEvents.on(playButton, 'contextmenu', contextMenuHandler);
     this.playButtons.set(dimIndex, playButton);
 
-    // Create a wrapper to hold play button and slider track horizontally
+    // Create a wrapper to hold play button and slider track horizontally.
+    // Under a coarse pointer the track already sits in a wrapper with the
+    // step buttons (see wrapWithStepButtons); the play button joins it.
     const sliderTrack = sliderGroup.querySelector('.luxar-dimension-slider__track');
     if (sliderTrack) {
+      const existing = sliderTrack.parentElement;
+      if (existing?.classList.contains('luxar-dimension-slider__controls-wrapper')) {
+        existing.insertBefore(playButton, existing.firstChild);
+        return;
+      }
       // Create wrapper container for horizontal layout
       const controlsWrapper = document.createElement('div');
       controlsWrapper.className = 'luxar-dimension-slider__controls-wrapper';

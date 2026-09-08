@@ -16,6 +16,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { DimensionSliders } from '../../../ui/dimension-sliders';
 import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import type { SimpleDims } from '../../../types/dims';
+import {
+  resetInputProfileForTests,
+  setInputProfileOverride,
+} from '../../../utils/input-capabilities';
 
 // Mock scene dims manager
 vi.mock('../../../scene/scene-dims-manager', () => ({
@@ -1055,6 +1059,81 @@ describe('DimensionSliders — glass-root scroll delegation and visibility (#148
     expect(root().style.display).toBe('none');
     expect(sliders.getIsVisible()).toBe(false);
 
+    sliders.dispose();
+  });
+});
+
+describe('DimensionSliders - coarse pointer affordances', () => {
+  const dims: SimpleDims = {
+    ndim: 5,
+    displayed: [0, 1, 2],
+    currentStep: [0, 0, 0, 7, 1],
+    metadata: [
+      { name: 'X', unit: '', scale: 1, discrete: false, step: 1 },
+      { name: 'Y', unit: '', scale: 1, discrete: false, step: 1 },
+      { name: 'Z', unit: '', scale: 1, discrete: false, step: 1 },
+      { name: 'Frame', unit: '', scale: 1, discrete: true, step: 1 },
+      { name: 'Depth', unit: 'um', scale: 1, discrete: false, step: 0.5 },
+    ],
+  };
+  const build = (onSelectDimension?: (i: number) => void): DimensionSliders =>
+    new DimensionSliders({
+      container: document.getElementById('test-container')!,
+      dims,
+      dimensionRanges: [
+        [0, 100],
+        [0, 100],
+        [0, 100],
+        [0, 15],
+        [0, 10],
+      ],
+      dimensionNames: ['X', 'Y', 'Z', 'Frame', 'Depth'],
+      selectedDimension: 0,
+      onSelectDimension,
+    });
+
+  afterEach(() => resetInputProfileForTests());
+
+  it('adds ◀ ▶ step buttons that move the dimension by one base step', () => {
+    setInputProfileOverride('touch');
+    const sliders = build();
+    const frameSteps = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('.luxar-dimension-slider__step')
+    ).filter((b) => b.getAttribute('aria-label')?.endsWith('Frame'));
+    expect(frameSteps.map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Previous Frame',
+      'Next Frame',
+    ]);
+    frameSteps[1].click();
+    expect(sceneDimsManager.setDimensionValue).toHaveBeenLastCalledWith(3, 8);
+    frameSteps[0].click();
+    expect(sceneDimsManager.setDimensionValue).toHaveBeenLastCalledWith(3, 6);
+    sliders.dispose();
+  });
+
+  it('makes the dimension name a chip that selects the [ / ] target', () => {
+    setInputProfileOverride('touch');
+    const onSelect = vi.fn();
+    const sliders = build(onSelect);
+    const depthName = Array.from(
+      document.querySelectorAll<HTMLElement>('.luxar-dimension-slider__name')
+    ).find((el) => el.textContent === 'Depth')!;
+    expect(depthName.classList.contains('luxar-dimension-slider__name--chip')).toBe(true);
+    expect(depthName.getAttribute('role')).toBe('button');
+    depthName.click();
+    // Depth is the second non-displayed dimension (Frame, Depth) → index 1.
+    expect(onSelect).toHaveBeenCalledWith(1);
+    expect(document.querySelector('.luxar-dimension-sliders__status')?.textContent ?? '').toContain(
+      '[/]: 2'
+    );
+    sliders.dispose();
+  });
+
+  it('adds neither on a mouse machine', () => {
+    setInputProfileOverride('mouse');
+    const sliders = build();
+    expect(document.querySelectorAll('.luxar-dimension-slider__step').length).toBe(0);
+    expect(document.querySelectorAll('.luxar-dimension-slider__name--chip').length).toBe(0);
     sliders.dispose();
   });
 });

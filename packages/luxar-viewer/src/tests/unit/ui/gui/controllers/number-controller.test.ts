@@ -28,6 +28,13 @@ describe('NumberController', () => {
       expect(input).toBeInstanceOf(HTMLInputElement);
     });
 
+    it('asks touch keyboards for a decimal keypad (inputmode)', () => {
+      const input = controller.domElement.querySelector<HTMLInputElement>(
+        '.luxar-gui__input--number'
+      )!;
+      expect(input.inputMode).toBe('decimal');
+    });
+
     it('should not create slider without range', () => {
       const slider = controller.domElement.querySelector('.luxar-gui__slider');
 

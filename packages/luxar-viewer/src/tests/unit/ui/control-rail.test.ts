@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlRail, RAIL_ICONS, type ControlRailItem } from '../../../ui/control-rail';
+import {
+  resetInputProfileForTests,
+  setInputProfileOverride,
+} from '../../../utils/input-capabilities';
 
 function items(overrides: Partial<ControlRailItem>[] = []): ControlRailItem[] {
   const base: ControlRailItem[] = [
@@ -227,6 +231,30 @@ describe('ControlRail', () => {
     rail.dispose();
     rail = new ControlRail(items());
     expect(document.querySelector('.luxar-control-rail-hint')).toBeNull();
+  });
+
+  it('the first-run hint says "Tap … (hold for options)" when nothing can hover', () => {
+    setInputProfileOverride('touch');
+    try {
+      rail = new ControlRail(items());
+      const text = document.querySelector('.luxar-control-rail-hint')!.textContent!;
+      expect(text).toContain('Tap these controls (hold for options)');
+      expect(text).not.toContain('Hover');
+    } finally {
+      resetInputProfileForTests();
+    }
+  });
+
+  it('the first-run hint says "Hover" on a mouse machine', () => {
+    setInputProfileOverride('mouse');
+    try {
+      rail = new ControlRail(items());
+      expect(document.querySelector('.luxar-control-rail-hint')!.textContent).toContain(
+        'Hover these controls'
+      );
+    } finally {
+      resetInputProfileForTests();
+    }
   });
 
   it('clicking any button dismisses the first-run hint', () => {

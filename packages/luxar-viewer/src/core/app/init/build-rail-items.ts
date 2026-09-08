@@ -32,6 +32,7 @@ import type { DebugConsole } from '../../../ui/debug-console';
 import type { RecordingPanel } from '../../../ui/recording-panel';
 import type { AudioEngine } from '../../../audio/audio-engine';
 import { KeyAction, type KeyActionId } from '../../../input';
+import { getInputProfile } from '../../../utils/input-capabilities';
 
 /** Everything the rail item closures reference (all constructed by the pipeline). */
 export interface RailItemsDeps {
@@ -96,13 +97,34 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
     }
   };
 
+  // Touch-first devices (a coarse primary pointer): a phone has room for ONE
+  // floating surface, so the help overlay and the data monitor join the
+  // docked panels' exclusivity, and a "Hide panels" button stands in for the
+  // Escape key a phone does not have. Desktop keeps stacking and no new item.
+  const coarse = getInputProfile().coarsePointer;
+  const closeOthersOnCoarse = (): void => {
+    if (coarse) closeOtherLeftPanels();
+  };
+  // The Fullscreen API is absent on iPhone Safari (`fullscreenEnabled` is
+  // false and there is no webkit fallback on the document), so the chip would
+  // be dead there; gate on the real capability rather than on the device.
+  const fullscreenAvailable =
+    typeof document === 'undefined' ||
+    !!(
+      document.fullscreenEnabled ||
+      (document as Document & { webkitFullscreenEnabled?: boolean }).webkitFullscreenEnabled
+    );
+
   return [
     {
       id: 'help',
       title: 'Help & shortcuts',
       shortcut: shortcutForAction(KeyAction.toggleHelp),
       icon: RAIL_ICONS.help,
-      activate: () => ui.commands.toggleHelp(),
+      activate: () => {
+        closeOthersOnCoarse();
+        ui.commands.toggleHelp();
+      },
       openSelector: '#luxar-help-overlay',
     },
     {
@@ -228,7 +250,10 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
       title: 'Data monitor',
       shortcut: shortcutForAction(KeyAction.cycleDataMonitor),
       icon: RAIL_ICONS.monitor,
-      activate: () => ui.commands.cycleDataMonitor(),
+      activate: () => {
+        closeOthersOnCoarse();
+        ui.commands.cycleDataMonitor();
+      },
       openSelector: '.luxar-data-monitor',
     },
     {
@@ -337,27 +362,44 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
           activate: () => ui.commands.toggleCinematicMode(),
           isActive: () => renderingControls.settings.cinematicMode,
         },
-        {
-          // Fullscreen is otherwise reachable only through the focus-gated
-          // Space shortcut (dead whenever focus sits in a panel control), so
-          // this chip is the discoverable affordance. Active-state tracks the
-          // live fullscreen element; the rail refreshes on fullscreenchange
-          // (see ControlRail.syncFullscreen), which also covers exits via
-          // Escape or browser UI.
-          id: 'fullscreen',
-          title: 'Fullscreen',
-          shortcut: shortcutForAction(KeyAction.toggleFullscreen),
-          icon: RAIL_ICONS.fullscreen,
-          activate: () => ui.commands.toggleFullscreen(),
-          isActive: () => isDocumentFullscreen(),
-          // Fullscreen is a session-long ambient state — lighting the View
-          // button for the whole session would read as noise (and the rail
-          // is hidden in fullscreen anyway). The chip itself still shows
-          // active inside the flyout.
-          excludeFromParentActive: true,
-        },
+        ...(fullscreenAvailable
+          ? [
+              {
+                // Fullscreen is otherwise reachable only through the focus-gated
+                // Space shortcut (dead whenever focus sits in a panel control), so
+                // this chip is the discoverable affordance. Active-state tracks the
+                // live fullscreen element; the rail refreshes on fullscreenchange
+                // (see ControlRail.syncFullscreen), which also covers exits via
+                // Escape or browser UI. Omitted where the API is absent (iPhone).
+                id: 'fullscreen',
+                title: 'Fullscreen',
+                shortcut: shortcutForAction(KeyAction.toggleFullscreen),
+                icon: RAIL_ICONS.fullscreen,
+                activate: () => ui.commands.toggleFullscreen(),
+                isActive: () => isDocumentFullscreen(),
+                // Fullscreen is a session-long ambient state — lighting the View
+                // button for the whole session would read as noise (and the rail
+                // is hidden in fullscreen anyway). The chip itself still shows
+                // active inside the flyout.
+                excludeFromParentActive: true,
+              },
+            ]
+          : []),
       ],
     },
+    ...(coarse
+      ? [
+          {
+            // Touch only: the on-screen Escape. Closes every open panel and
+            // popover (what the Escape key does on a keyboard machine).
+            id: 'hide-panels',
+            title: 'Hide panels',
+            icon: RAIL_ICONS.view,
+            momentary: true,
+            activate: () => ui.commands.handleEscape(),
+          },
+        ]
+      : []),
     {
       // Viewer-wide preferences (theme + persisted user settings) — kept off
       // the top level so the rail stays focused. Click opens the popover.

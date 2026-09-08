@@ -44,7 +44,12 @@ on the rail gutter and the bottom strip (`index.html` declares `viewport-fit=cov
 `touch-action: manipulation` on buttons, a scrolling items box for the control rail,
 and no idle-dimming of the rail where nothing can hover. The rail's items wrapper
 (`.luxar-control-rail__items`) is `display: contents` in `control-rail.css` so it is
-layout-transparent on fine pointers. See the UI Design Guide §11.5.
+layout-transparent on fine pointers. Ergonomics, same file: 44px primary targets via
+a local `--luxar-hit-min` (36px secondary, 24–28px thumbs on a 24px hit band),
+16px panel inputs (iOS focus-zoom), `:active` press fills with the sticky post-tap
+`:hover` reset to the rest state under `(hover: none)`, tips on keyboard focus only,
+and the base look of the two elements that exist only on coarse pointers (the
+dimension sliders' `◀ ▶` step buttons and name chip). See the UI Design Guide §11.5.
 
 ## CSS Custom Properties
 

@@ -219,6 +219,9 @@ export function showHelpOverlay(bindings: RegisteredShortcutBindings) {
   filterInput.placeholder = 'Filter shortcuts…';
   filterInput.setAttribute('aria-label', 'Filter keyboard shortcuts');
   filterInput.autocomplete = 'off';
+  // Touch keyboards: a search keyboard with a Go/Search key; inert on desktop.
+  filterInput.inputMode = 'search';
+  filterInput.enterKeyHint = 'search';
   filterWrap.appendChild(filterIcon);
   filterWrap.appendChild(filterInput);
 
