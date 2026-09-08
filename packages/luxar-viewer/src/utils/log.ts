@@ -144,6 +144,7 @@ export const log = {
 export const Modules = {
   // Core
   LUXAR: 'Luxar',
+  AUDIO: 'Audio',
   APP: 'App',
   MAIN: 'Main',
 

@@ -95,9 +95,15 @@ GROUP_ADDERS = frozenset({"add_group", "add_partition_group", "add_lod_group"})
 #: Screen-space overlays: they carry no ``layer`` flag and never reach the panel.
 OVERLAY_ADDERS = frozenset({"add_text", "add_html", "add_image", "add_video"})
 
+#: Sound nodes (``docs/guides/specs/SOUND_SPEC.md``): heard, not drawn. They take
+#: a ``layer`` flag for the Layers panel's Phase 2 rows, but the panel does not
+#: list them today and they draw nothing, so the per-call layer rule does not
+#: apply to them.
+SOUND_ADDERS = frozenset({"add_sound"})
+
 
 def test_every_scene_adder_is_classified() -> None:
-    """Every ``Scene.add_*`` is geometry, a container, or an overlay — no fourth kind.
+    """Every ``Scene.add_*`` is geometry, a container, an overlay or a sound — no fifth kind.
 
     The per-call rule only inspects :data:`GEOMETRY_ADDERS`, so an eighth
     geometry adder on the scene API would be silently unchecked — the exact
@@ -106,13 +112,13 @@ def test_every_scene_adder_is_classified() -> None:
     """
     from luxar.core.scene import Scene
 
-    classified = GEOMETRY_ADDERS | GROUP_ADDERS | OVERLAY_ADDERS
+    classified = GEOMETRY_ADDERS | GROUP_ADDERS | OVERLAY_ADDERS | SOUND_ADDERS
     on_scene = {name for name in dir(Scene) if name.startswith("add_")}
 
     assert not sorted(on_scene - classified), (
         f"Scene grew adder(s) {sorted(on_scene - classified)} that this lint "
         "does not classify. Add them to GEOMETRY_ADDERS (so the layer rule "
-        "covers them), GROUP_ADDERS, or OVERLAY_ADDERS."
+        "covers them), GROUP_ADDERS, OVERLAY_ADDERS, or SOUND_ADDERS."
     )
     assert not sorted(classified - on_scene), (
         f"this lint names adder(s) {sorted(classified - on_scene)} that no "

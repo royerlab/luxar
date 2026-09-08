@@ -614,8 +614,8 @@ fitting script (`floor="auto"` is a valid answer — the gate wants a stated bas
 not a particular value).
 
 Two shapes stay outside the gate's reach, so pin them by hand. *The class API*:
-`GaussianSplatFitter().fit(V)` is a Python-function fit the guard cannot see, as
-an AST call-name check would have to flag every `.fit(` to catch it. *Argv-driven
+`GaussianSplatFitter().fit(FitParameters(V))` is a Python-function fit the guard
+cannot see, as an AST call-name check would have to flag every `.fit(` to catch it. *Argv-driven
 fits*: `calibrate_gsplat_demos.py` runs many fits by subprocessing `luxar gsplat
 cal` with no `--floor`, and that one needs no pin because `cal` is
 self-consistent — it subtracts the floor from the volume once up front and pins

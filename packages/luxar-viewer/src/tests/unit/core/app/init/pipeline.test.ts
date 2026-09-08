@@ -42,6 +42,7 @@ function makeSceneStub(opts: { initThrows?: boolean } = {}) {
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
     scene: { kind: 'scene' },
+    getSceneScale: vi.fn(() => 1),
     // The scene-environment wiring (`environment-wiring.ts`) attaches its capture
     // runtime here; `environment` stays null so the per-frame tick is a no-op.
     attachEnvironmentRuntime: vi.fn(),
@@ -76,6 +77,8 @@ function makeRecordingPanelStub() {
     // too, since reaching `getSceneLoader` from the panel itself would pull
     // the whole data/cache stack into its module graph.
     setLODSettledProvider: vi.fn(),
+    // The sound layer's capture tap ("Include Audio").
+    setAudioCapture: vi.fn(),
     // The two capture flags the pipeline's injected predicates read.
     // `isCurrentlyRecording()` covers BOTH capture kinds; only the
     // narrower `isLoopRenderSuppressed()` may gate the render skip.
@@ -84,7 +87,8 @@ function makeRecordingPanelStub() {
   };
 }
 function makeLayersPanelStub() {
-  return { kind: 'layers' };
+  // `setAudioPort` is the sound layer's late-bound port for the sound rows.
+  return { kind: 'layers', setAudioPort: vi.fn() };
 }
 function makeInputHandlerStub() {
   return {
@@ -228,6 +232,7 @@ function makePorts(): InitPipelinePorts {
     events: new EventGroup(),
     getPanelVisibilityStates: vi.fn().mockReturnValue(new Map()),
     restorePanelVisibilityStates: vi.fn(),
+    emitEmbedderEvent: vi.fn(),
   };
 }
 
@@ -370,6 +375,45 @@ describe('runInitPipeline', () => {
       // The pipeline returns `partial as InitPipelineResult` — same ref.
       expect(result).toBe(partial as InitPipelineResult);
     });
+
+    it('wires every audio port to the live viewer dependencies', async () => {
+      const { factories, sceneStub } = makeFactoryOverrides();
+      const ports = makePorts();
+      ports.options.factories = factories as never;
+      const result = await runInitPipeline(ports, {});
+      const audio = result.audioEngine as unknown as {
+        deps: Record<string, (...args: any[]) => any>;
+      };
+
+      expect(audio.deps.getCamera()).toBeUndefined();
+      expect(audio.deps.getSceneGraph()).toBeNull();
+      expect(audio.deps.getSceneScale()).toBe(1);
+      expect(audio.deps.resolveNodeCenter('missing')).toBeNull();
+      expect(audio.deps.container()).toBeInstanceOf(HTMLElement);
+      audio.deps.emit('sound-started', { name: 'narration' });
+      expect(ports.emitEmbedderEvent).toHaveBeenCalledWith('sound-started', {
+        name: 'narration',
+      });
+
+      const cameraChanged = vi.fn();
+      const unsubscribe = audio.deps.onCameraReplaced(cameraChanged);
+      const handler = sceneStub.addEventListener.mock.calls.find(
+        ([event]) => event === 'camera-changed'
+      )?.[1];
+      handler();
+      expect(cameraChanged).toHaveBeenCalledOnce();
+      unsubscribe();
+      expect(sceneStub.removeEventListener).toHaveBeenCalledWith('camera-changed', handler);
+
+      const recording = factories.recordingPanel.mock.results[0].value;
+      const capture = recording.setAudioCapture.mock.calls[0][0];
+      expect(capture.acquire()).toBeNull();
+      capture.release({} as MediaStream);
+      const layers = factories.layersPanel.mock.results[0].value;
+      const layerAudio = layers.setAudioPort.mock.calls[0][0];
+      layerAudio.setNodeMuted('/missing', true);
+      layerAudio.setNodeGain('/missing', 0.5);
+    });
   });
 
   describe('factory dispatch', () => {
@@ -416,6 +460,7 @@ describe('runInitPipeline', () => {
         events: new EventGroup(),
         getPanelVisibilityStates: vi.fn().mockReturnValue(new Map()),
         restorePanelVisibilityStates: vi.fn(),
+        emitEmbedderEvent: vi.fn(),
       };
 
       await runInitPipeline(ports, {});

@@ -77,7 +77,7 @@ import numpy as np
 import zarr
 from arbol import aprint, asection
 
-from .._zarr_compat import close, open_group
+from .._zarr_compat import close, group_keys, open_group
 from ..core.group.lod.group import (
     PARTITION_FINEST_AREA,
     WHOLE_OBJECT_FINEST_ANCHOR,
@@ -897,7 +897,7 @@ def _collect_lod_groups(
     # diffs between runs, and `group_keys()` yields whatever order the store
     # backend happens to list (`part_1` before `part_0` on one machine, the
     # other way on the next). The traversal itself is order-insensitive.
-    for name in sorted(str(key) for key in group.group_keys()):
+    for name in sorted(group_keys(group)):
         _collect_lod_groups(
             group[name],
             under_partition=child_under,

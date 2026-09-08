@@ -186,7 +186,7 @@ Append parameters to the viewer URL to control startup behavior.
 | `gpuBudgetMB` | number | Pin the GPU-geometry byte budget in MB, bypassing auto-sizing. `0` disables the budget (unbounded resident geometry). |
 | `cacheBudgetMB` | number | Total in-memory cache pool (L0 + L1 + S-cache) in MB, for environments without `performance.memory` (Safari, WKWebView). Also supplies a GPU-geometry/LOD residency signal at one third of the cache pool; without `deviceMemory`, it replaces the 512 MB fallback and may raise or lower it. |
 | `dpr` | number | Pin a fixed device pixel ratio and disable adaptive DPR (clamped to [0.25, native DPR]). Overrides the high-DPR ceiling, so `?dpr=2` renders at 2 even with **Allow High DPR** off. For deterministic E2E/visual runs. |
-| `input` | `touch` \| `mouse` | Force the session's JS input profile: pointer flags, hover capability, touch points, and device tier. This changes device-class fallback budgets, primary-tip pen routing, and the Safari gesture-canceller gate; `touch` additionally applies the mobile rendering budgets (adaptive-DPR floor and refresh ceiling, high-DPR cap, GPU-byte and element-texture ceilings, data-worker count, blend-mode program warm-up), while `mouse` keeps the detected device tier. Long-press menus and tap-oriented copy land in follow-up touch work. Stylesheets and per-event gesture routing still follow the real media features and `PointerEvent.pointerType`, so a faithful check needs device emulation or a real device. Detected by default, including an iPad whose Safari reports a macOS user agent. |
+| `input` | `touch` \| `mouse` | Force the session's JS input profile: pointer flags, hover capability, touch points, and device tier. This changes device-class fallback budgets (`touch` only — `mouse` keeps the detected tier), primary-tip pen routing, the Safari gesture-canceller gate, and whether the help overlay lists its Touch section; `touch` additionally applies the mobile rendering budgets (adaptive-DPR floor and refresh ceiling, high-DPR cap, GPU-byte and element-texture ceilings, data-worker count, blend-mode program warm-up). Stylesheets and non-pen gesture routing still follow the real media features and `PointerEvent.pointerType`, so a faithful check needs device emulation or a real device. Detected by default, including an iPad whose Safari reports a macOS user agent. |
 | `lineJoin` | `none` \| `miter` | Force the line join style for the session — **applies only to `linePrimitive=screen-space`**. The default capsule primitive partitions every interior joint along its bisector unconditionally, so this parameter (and each node's authored `join` attribute) is a no-op there. |
 | `linePrimitive` | `capsule` \| `screen-space` | Select the line rendering primitive (#1352). Default **`capsule`**: a gaussian-like profile of the 2D point-to-segment distance — stable round discs end-on, seamless bisector-partitioned joints, quad-class cost. `screen-space` is the classic quad — the lean path for very large line scenes. With no URL override, the **`Settings → Advanced → Line primitive`** policy decides: `Auto` (default) builds the capsule, except line nodes whose effective segment load (authored count × a rendered-width factor) reaches 2 M, which build the quad; `Capsule`/`Quad` force one primitive everywhere. `?linePrimitive=` overrides the policy for the session. |
 
@@ -744,6 +744,41 @@ during a flight cancels it.
 For a complete worked example — story dimension, dimmed backdrop, per-story
 highlight layers, fact panels and waypoints — run
 `luxar demo run esm3_protein_stories` (it reads the ESM3 landscape demo's cache).
+
+### Sound
+
+A scene may carry `sound` nodes (`scene.add_sound`, see
+`docs/guides/specs/SOUND_SPEC.md`): an ambient bed, a narration bound to a
+story step, or a spatial source that gets louder as the camera approaches. Their
+audibility is the same hidden-dimension slab rule that decides which points are
+visible, so scrubbing a story dimension starts and stops the clips that belong
+to each step. When a loaded scene has sound nodes a **Sound** button appears in
+the rail: click mutes everything (persisted across scenes), right-click opens
+the mixer (master gain, the `ambient` / `voice` / `effects` buses, equal-power
+vs HRTF panning). The voice bus ducks the ambient bed while a narration plays.
+Scene defaults live in `ViewerConfig(audio=AudioConfig(...))`, and a controller
+drives the same knobs through `setAudio()`, `playSound()`, `stopSound()` and
+`getViewerState().audio`.
+
+Sound nodes authored with `layer=True` appear in the **Layers** panel with a
+`sound` badge: the eye mutes that node (a parent group's eye silences every
+sound under it), an inline slider sets its gain, and the name's tooltip shows the
+clip's licence, author and source. Narration authored with `trigger="on_arrive"`
+starts when a story flight lands (a flight you cut short still counts as
+arrived; one superseded by the next story does not). A node with `attach_to`
+follows another node's centre, and an `ambisonic="foa"` bed is a sound field
+that stays fixed to the world as you turn the camera. The **Recording** panel's
+"Include Audio" option (Advanced) records what you hear into real-time videos;
+frame-by-frame captures stay silent.
+
+Browsers refuse to start audio without a gesture on the page. In a regular tab
+the viewer shows a one-time **Tap to enable sound** overlay that the first click
+or key dismisses. For an unattended kiosk launch Chrome with the autoplay policy
+relaxed so the context starts on load and the gate never appears:
+
+```
+google-chrome --kiosk --autoplay-policy=no-user-gesture-required "http://host:5173/?src=…"
+```
 
 See `luxar.ViewerConfig` docstring for the full field list with types and
 valid ranges.

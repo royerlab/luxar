@@ -10,6 +10,7 @@ import pytest
 import torch
 
 from luxar.gsplats.fit_gsplats import GaussianSplatFitter, fit_gaussian_splats
+from luxar.gsplats.fitting.config import FitParameters
 from luxar.gsplats.models.gsplats import (
     render_gaussians,
     render_gaussians_numpy,
@@ -199,22 +200,26 @@ class TestGaussianSplatsIntegration:
 
         # Fit with a convergence threshold (may stop early)
         result_threshold = fitter.fit(
-            image,
-            seeds=seeds,
-            n_iters=200,
-            max_abs_error=0.001,
-            verbose=False,
-            napari_movie=False,
+            FitParameters(
+                V=image,
+                seeds=seeds,
+                n_iters=200,
+                max_abs_error=0.001,
+                verbose=False,
+                napari_movie=False,
+            )
         )
         stats_threshold = result_threshold.stats
 
         # Fit without a threshold (may stop early due to internal heuristics)
         result_no_threshold = fitter.fit(
-            image,
-            seeds=seeds,
-            n_iters=200,
-            verbose=False,
-            napari_movie=False,
+            FitParameters(
+                V=image,
+                seeds=seeds,
+                n_iters=200,
+                verbose=False,
+                napari_movie=False,
+            )
         )
         stats_no_threshold = result_no_threshold.stats
 

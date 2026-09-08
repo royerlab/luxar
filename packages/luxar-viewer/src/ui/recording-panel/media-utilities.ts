@@ -61,10 +61,19 @@ export interface MediaRecorderLike {
 export function getSupportedMimeType(
   recorder: MediaRecorderLike | undefined = typeof MediaRecorder !== 'undefined'
     ? (MediaRecorder as unknown as MediaRecorderLike)
-    : undefined
+    : undefined,
+  withAudio = false
 ): string | null {
   if (!recorder) return null;
-  const candidates = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+  // With an audio track the container needs an audio codec too; Opus is the
+  // only one WebM carries. A recorder that cannot name it still records the
+  // audio through the plain candidates below (the browser picks the codec).
+  const candidates = [
+    ...(withAudio ? ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus'] : []),
+    'video/webm;codecs=vp9',
+    'video/webm;codecs=vp8',
+    'video/webm',
+  ];
   for (const type of candidates) {
     if (recorder.isTypeSupported(type)) {
       return type;

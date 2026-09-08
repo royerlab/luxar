@@ -120,6 +120,7 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 - `OptimConfig`: Frozen dataclass for optimization hyperparameters (n_iters, lr, etc.)
 - `LossConfig`: Frozen dataclass for loss function configuration (loss_type defaults to `"l1"`, asymmetric_penalty, etc.)
 - `ConstraintConfig`: Frozen dataclass for constraint configuration (amp_max, max_eccentricity, etc.)
+- `FitParameters`: Raw public-call parameters threaded through the internal fit pipeline
 
 **Key Type Alias:**
 - `IterCallback = Callable[[int, torch.Tensor, Dict[str, Any]], None]`: Optional per-iteration
@@ -133,7 +134,7 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 ### `validation.py` - Input Validation
 **Purpose:** Validates all user inputs at the API boundary before processing.
 
-**Key Function:** `prepare_fit_config(fitter, V, **kwargs) -> FitConfig`
+**Key Function:** `prepare_fit_config(fitter, parameters: FitParameters) -> FitConfig`
 
 **Validations:**
 - Array dimensions and shapes

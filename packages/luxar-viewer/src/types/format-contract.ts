@@ -56,11 +56,12 @@ export const NODE_TYPES: readonly NodeTypeName[] = [
   'lines',
   'gsplats',
   'mesh',
+  'sound',
 ];
 /**
  * Union of the scene-graph node type names.
  */
-export type NodeTypeName = 'scene' | 'group' | 'points' | 'lines' | 'gsplats' | 'mesh';
+export type NodeTypeName = 'scene' | 'group' | 'points' | 'lines' | 'gsplats' | 'mesh' | 'sound';
 
 /**
  * Leaf geometry types — the element-bearing subset of NODE_TYPES.

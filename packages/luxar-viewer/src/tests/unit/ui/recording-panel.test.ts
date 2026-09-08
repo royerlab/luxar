@@ -26,6 +26,7 @@ import {
   getSupportedMimeType,
 } from '../../../ui/recording-panel/media-utilities';
 import { log, Modules } from '../../../utils/log';
+import { showToast } from '../../../ui/toast';
 
 // jsdom polyfill — required by createMockSceneManager.
 if (typeof globalThis.ImageData === 'undefined') {
@@ -101,6 +102,7 @@ describe('RecordingPanel', () => {
   let mockAnimController: any;
 
   beforeEach(() => {
+    vi.clearAllMocks();
     document.body.innerHTML = '';
     mockSceneManager = createMockSceneManager();
     mockAnimController = createMockAnimationController();
@@ -134,6 +136,25 @@ describe('RecordingPanel', () => {
       expect(panel.isVisible()).toBe(true);
       panel.toggle();
       expect(panel.isVisible()).toBe(false);
+    });
+  });
+
+  it.each([
+    ['image', 'captureScreenshot', 'Screenshot failed'],
+    ['video', 'startVideoRecording', 'Video recording failed to start'],
+  ] as const)('reports a rejected %s capture action', async (mode, method, message) => {
+    const modeSelect = document.querySelector('.luxar-gui__select') as HTMLSelectElement;
+    modeSelect.value = mode === 'image' ? 'Image' : 'Video';
+    modeSelect.dispatchEvent(new Event('change'));
+    vi.spyOn(panel, method).mockRejectedValue(new Error(`${mode} boom`));
+
+    const button = (panel as any).captureController.domElement.querySelector(
+      '.luxar-gui__button'
+    ) as HTMLButtonElement;
+    button.click();
+
+    await vi.waitFor(() => {
+      expect(showToast).toHaveBeenCalledWith(message);
     });
   });
 
@@ -421,6 +442,17 @@ describe('RecordingPanel', () => {
         (MediaRecorder as any).isTypeSupported = vi.fn().mockReturnValue(false);
         const result = getSupportedMimeType();
         expect(result).toBeNull();
+      });
+
+      it('with audio, prefers an Opus-capable WebM and falls back to the video-only types', () => {
+        (MediaRecorder as any).isTypeSupported = vi.fn((type: string) => type.includes('vp9'));
+        expect(getSupportedMimeType(undefined, true)).toBe('video/webm;codecs=vp9,opus');
+        (MediaRecorder as any).isTypeSupported = vi.fn(
+          (type: string) => type.includes('vp8') && !type.includes('opus')
+        );
+        expect(getSupportedMimeType(undefined, true)).toBe('video/webm;codecs=vp8');
+        (MediaRecorder as any).isTypeSupported = vi.fn((type: string) => type.includes('vp9'));
+        expect(getSupportedMimeType(undefined, false)).toBe('video/webm;codecs=vp9');
       });
 
       it('returns null when MediaRecorder undefined', () => {

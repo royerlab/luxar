@@ -216,7 +216,7 @@ export class PickingSystem {
     private renderer: Renderer,
     private capabilities: RendererCapabilities,
     private camera: THREE.Camera,
-    private onPickResult: (result: PickResult | null) => void
+    private onPickResult: (result: PickResult | null) => void | Promise<void>
   ) {
     this.pickScene = new THREE.Scene();
     // No background — pick buffer clears to (0,0,0,0) which means "no hit"
@@ -475,7 +475,7 @@ export class PickingSystem {
     this._pickSeq++;
     // Fade overlay (OverlayManager dedupes against the last state, so
     // repeated calls do no DOM work).
-    this.onPickResult(null);
+    this.deliverPickResult(null);
     this.scheduler.markDirty();
   }
 
@@ -534,7 +534,7 @@ export class PickingSystem {
     // pick's late result is now stale.
     this._pickSeq++;
     // Fade existing overlay while moving (dedupe-safe).
-    this.onPickResult(null);
+    this.deliverPickResult(null);
     this.scheduler.recordMouseMove(x, y);
   }
 
@@ -548,7 +548,7 @@ export class PickingSystem {
     // the cursor has already left the canvas.
     this._pickSeq++;
     this.scheduler.recordMouseLeave();
-    this.onPickResult(null);
+    this.deliverPickResult(null);
   }
 
   /** Clean up all resources — render target, pick materials, scene. */
@@ -675,7 +675,7 @@ export class PickingSystem {
     const ray = this.raycaster.ray;
 
     if (!rayHitsAnyNode(ray, this.nodeMap, this._worldBoxCache)) {
-      this.onPickResult(null);
+      this.deliverPickResult(null);
       return;
     }
 
@@ -689,7 +689,21 @@ export class PickingSystem {
     // the readback was in flight — emitting it would clobber fresher state
     // with a stale tooltip.
     if (pickSeq !== this._pickSeq) return;
-    this.onPickResult(result);
+    this.deliverPickResult(result);
+  }
+
+  /** Contain both synchronous throws and async rejections from result callbacks. */
+  private deliverPickResult(result: PickResult | null): void {
+    try {
+      const pending = this.onPickResult(result);
+      if (pending) {
+        pending.catch((error: unknown) => {
+          log.error(Modules.RENDERER, 'Pick result handler failed', error);
+        });
+      }
+    } catch (error) {
+      log.error(Modules.RENDERER, 'Pick result handler failed', error);
+    }
   }
 
   /**

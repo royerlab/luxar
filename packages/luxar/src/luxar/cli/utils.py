@@ -10,12 +10,13 @@ import threading
 import time
 import webbrowser
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 from urllib.parse import quote
 
 import zarr
 from arbol import aprint
 
+from .._zarr_compat import array_keys, group_keys
 from .._zarr_compat import open_group as zarr_open_group
 
 # CORS configuration shared across the CLI. Lives here (not in main.py)
@@ -421,6 +422,18 @@ def build_viewer() -> bool:
         return False
 
 
+#: Type indicator per node type in `luxar info`'s tree (`sound` is heard, not drawn).
+_TREE_TYPE_ICONS: Dict[str, str] = {
+    "scene": "🌐",
+    "group": "📁",
+    "points": "⚫",
+    "lines": "📏",
+    "gsplats": "💠",
+    "mesh": "🔺",
+    "sound": "🔈",
+}
+
+
 def format_tree_node(
     name: str,
     depth: int,
@@ -450,19 +463,10 @@ def format_tree_node(
         connector = "└─" if is_last else "├─"
         line = f"{prefix}{connector} {name}"
 
-    # Add type indicator
-    if node_type == "scene":
-        line += " 🌐"
-    elif node_type == "group":
-        line += " 📁"
-    elif node_type == "points":
-        line += " ⚫"
-    elif node_type == "lines":
-        line += " 📏"
-    elif node_type == "gsplats":
-        line += " 💠"
-    elif node_type == "mesh":
-        line += " 🔺"
+    # Add type indicator (unknown types get none)
+    icon = _TREE_TYPE_ICONS.get(node_type) if node_type else None
+    if icon:
+        line += f" {icon}"
 
     # Add selected attributes
     if attrs:
@@ -480,6 +484,9 @@ def format_tree_node(
         # across every geometry type.
         if "n_faces" in attrs:
             important_attrs.append(f"faces={attrs['n_faces']:,}")
+        for key in ("format", "trigger", "bus", "n_positions", "duration_s"):
+            if key in attrs:
+                important_attrs.append(f"{key}={attrs[key]}")
         if "shape" in attrs:
             important_attrs.append(f"shape={attrs['shape']}")
         if "dtype" in attrs:
@@ -601,11 +608,11 @@ def get_zarr_info(store_path: Path, detailed: bool = False) -> dict[str, Any]:
                 info["n_gsplats_total"] += gsplat_info["n_splats"]
 
             # Count arrays
-            for _array_name in group.array_keys():
+            for _array_name in array_keys(group):
                 info["n_arrays"] += 1
 
             # Recurse into subgroups
-            for subgroup_name in group.group_keys():
+            for subgroup_name in group_keys(group):
                 analyze_group(group[subgroup_name], f"{path}/{subgroup_name}")
 
         analyze_group(root)

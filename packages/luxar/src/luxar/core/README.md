@@ -568,6 +568,81 @@ explicit turns an invisible wrong-orientation render into a checkable equality.
 - `double_sided` - Whether back faces render
 - `ordering` - Always `"none"` in v1 (no spatial index)
 
+### 7c. Sound (`sound.py`)
+
+Node for an audio clip placed in the scene — the one node type that is *heard*
+rather than drawn (`docs/guides/specs/SOUND_SPEC.md`).
+
+**Purpose:**
+An ambient bed, a narration that plays when a story step is reached, or a
+spatial source that gets louder as the camera approaches. Sound is a layer on
+top of rendering and independent of it, but a spatial source has a position in
+the scene's frame — which makes it a node, not an overlay.
+
+✅ **Writable and playable.** `scene.add_sound` writes it, `luxar info` and
+`LuxarScene.list_sounds()` report it, and the viewer's audio engine plays it
+through Web Audio. `sound` is in the format contract's `node_types` but NOT in
+`geometry_types` / `loader_types`: it carries no elements, no blending mode, no
+LOD and no picking, so none of the geometry tables have a row for it.
+
+**Key Features:**
+- **Three placements.** `positions=None, hidden=None` → audible everywhere;
+  `hidden={"story": 3}` → sugar for one `(1, ndim)` row bound to a
+  hidden-dimension value (extended over every other hidden dimension); explicit
+  `positions=[[…]]` → a spatial source, one row per place it exists.
+- **Slab audibility.** The same hidden-dimension slab rule that decides which
+  points are visible decides when a sound is live; `extend_to_all` works as for
+  points.
+- **Attached** — `attach_to="Story 3: hsp70"`: the source follows the named
+  node's bounding-box centre in the viewer (spatial by default; combine with
+  `hidden=` to bind it to a value). Mutually exclusive with `positions`.
+- **Ambisonic field** — `ambisonic="foa"`: a 4-channel AmbiX AAC clip the
+  viewer decodes to stereo and rotates against the camera. Never spatial, never
+  positioned; `hidden=` still decides when it is live.
+- **Triggers** `"continuous"` (looped while audible, fades on the edge),
+  `"once"` (each time the node becomes audible), `"on_depart"` / `"on_arrive"`
+  (when a story flight leaves / lands on the `viewer_config.waypoints` entry
+  whose `when` clause the node's row satisfies), plus `delay_ms`, `gain`,
+  `fade_in_ms` / `fade_out_ms`.
+- **Buses** `ambient` (default) / `voice` / `effects`; the voice bus ducks
+  ambient while it plays (`ViewerConfig.audio.duck_db`).
+- **Spatial knobs** map one to one onto `PannerNode`: `distance_model`,
+  `ref_distance`, `max_distance`, `rolloff`, cone angles/gain, `orientation`.
+  Distances left `None` stay absent so the viewer defaults them from the scene
+  scale.
+- **Provenance is required**: `license`, `attribution`, `source_url` on every clip.
+- **Formats**: MP3 or AAC (`.m4a` / ADTS), sniffed from the bytes; Ogg/Opus is
+  refused because Safari cannot decode it; WAV/FLAC are refused as the wrong size
+  class for a hosted store.
+
+**What a sound does NOT have:** appearance attrs (`opacity`, `colormap`, …) are
+refused — only `layer` / `visible` / `transform` / `nd_transform` pass through;
+no spatial index (`ordering` is always `"none"`); no contribution to the scene
+bounds (a far-off source must not push the opening framing out).
+
+**On disk** (`docs/guides/user/LUXAR_ZARR_FORMAT.md`, *Sound Nodes*): the node
+group holds an optional `positions` array and the clip as a plain store key
+(`audio.mp3` / `audio.m4a`, named by `attrs["audio_file"]`). The clip bytes are
+folded into `content_hash` through `finalize/hashing.py::PAYLOAD_FILE_ATTRS`.
+
+**Usage Example:**
+```python
+scene.add_sound(
+    "bed_overview", "assets/overview_bed.mp3",
+    trigger="continuous", gain=0.4, fade_in_ms=1500, fade_out_ms=1500,
+    license="CC0", attribution="Freesound user X", source_url="https://…",
+)
+scene.add_sound(
+    "narration_hsp70", narration_bytes, hidden={"story": 3},
+    trigger="once", delay_ms=800, bus="voice",
+    license="CC0", attribution="Synthesised (OpenAI TTS)", source_url="https://…",
+)
+scene.add_sound(
+    "hum_hsp70", "assets/hum.mp3", positions=[[3, 7.28, -7.41, -0.27]],
+    ref_distance=2.0, max_distance=30.0, license="CC0", attribution="…", source_url="…",
+)
+```
+
 ### 8. Dimensions (`dimensions.py`)
 
 Scene-level coordinate system definitions with support for categorical dimensions.

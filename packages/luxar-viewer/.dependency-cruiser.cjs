@@ -2,7 +2,11 @@
  * dependency-cruiser config — enforces the package layering documented
  * in `CONVENTIONS.md`:
  *
- *   types → config → cache → rendering → data → scene → input → ui → core
+ *   types → config → cache → rendering → data → audio → scene → input → ui → core
+ *
+ * (`audio` sits between `data` and `scene`: the sound layer reuses the
+ * data layer's pure slab/derive helpers and takes the camera, dims manager
+ * and embedder emitter as ports — see src/audio/README.md.)
  *
  * (Note: `rendering` sits below `data` because rendering primitives —
  * materials, geometries, GPU buffer pools — are foundational
@@ -68,11 +72,22 @@ module.exports = {
     // Severity is `error` — the build fails on any new violation.
     // Paths listed in KNOWN_LAYER_EXCEPTIONS are exempt; add a
     // matching warn-only rule below for each reviewed exception.
-    layerRule('types', ['config', 'cache', 'rendering', 'data', 'scene', 'input', 'ui', 'core']),
-    layerRule('config', ['cache', 'rendering', 'data', 'scene', 'input', 'ui', 'core']),
-    layerRule('cache', ['rendering', 'data', 'scene', 'input', 'ui', 'core']),
-    layerRule('rendering', ['data', 'scene', 'input', 'ui', 'core']),
-    layerRule('data', ['scene', 'input', 'ui', 'core']),
+    layerRule('types', [
+      'config',
+      'cache',
+      'rendering',
+      'data',
+      'audio',
+      'scene',
+      'input',
+      'ui',
+      'core',
+    ]),
+    layerRule('config', ['cache', 'rendering', 'data', 'audio', 'scene', 'input', 'ui', 'core']),
+    layerRule('cache', ['rendering', 'data', 'audio', 'scene', 'input', 'ui', 'core']),
+    layerRule('rendering', ['data', 'audio', 'scene', 'input', 'ui', 'core']),
+    layerRule('data', ['audio', 'scene', 'input', 'ui', 'core']),
+    layerRule('audio', ['scene', 'input', 'ui', 'core']),
     layerRule('scene', ['input', 'ui', 'core']),
     layerRule('input', ['ui', 'core']),
     layerRule('ui', ['core']),
