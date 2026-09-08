@@ -27,6 +27,7 @@ _ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 def _load_checker() -> ModuleType:
     """Import ``scripts/check_lint_ratchet.py`` as a module by file path."""
     script_path = PROJECT_ROOT / "scripts/check_lint_ratchet.py"
+    sys.path.insert(0, str(script_path.parent))
     spec = importlib.util.spec_from_file_location("check_lint_ratchet", script_path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Could not load {script_path}")
@@ -489,8 +490,18 @@ def _unrestrict(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _require_ruff() -> None:
-    """Skip when ruff is absent; these arms need a real scan to mean anything."""
-    pytest.importorskip("ruff", reason="ruff is not installed in this environment")
+    """Fail clearly when the dependency that enforces this gate is absent."""
+    assert importlib.util.find_spec("ruff") is not None, (
+        "ruff is required for the lint-ratchet tests"
+    )
+
+
+def test_ruff_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Dropping Ruff from the test environment must fail, never skip green."""
+    monkeypatch.setattr(importlib.util, "find_spec", lambda _name: None)
+
+    with pytest.raises(AssertionError, match="ruff is required"):
+        _require_ruff()
 
 
 def test_main_fails_on_a_violation_that_is_not_baselined(
@@ -608,7 +619,9 @@ def test_main_update_baseline_replaces_an_unloadable_baseline(
     assert document["violations"] == {"sample.py::B905": 1}
     assert document["rules"] == list(checker.RATCHETED_SELECT)
     assert document["settings_fingerprint"] == _TEST_SETTINGS_FINGERPRINT
-    assert "Replacing the unreadable baseline" in _clean_output(capsys)
+    assert "Re-recording the baseline for the current Ruff settings" in _clean_output(
+        capsys
+    )
 
 
 def test_main_refuses_to_wipe_a_populated_baseline(
@@ -641,6 +654,23 @@ def test_main_refuses_to_wipe_an_unloadable_baseline(
     assert baseline.read_text() == "{truncated"
 
 
+def test_main_update_baseline_diagnoses_a_non_utf8_baseline(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Repair mode diagnoses undecodable debt without rewriting it."""
+    _require_ruff()
+    _unrestrict(monkeypatch)
+    _write_tree(tmp_path, _CLEAN_MODULE)
+    baseline = tmp_path / "baseline.json"
+    original = b'\xff\xfe{"violations": {}}'
+    baseline.write_bytes(original)
+
+    assert _run_main(tmp_path, baseline, "--update-baseline") == 2
+
+    assert "utf-8" in _clean_output(capsys)
+    assert baseline.read_bytes() == original
+
+
 def test_main_refusal_diagnoses_a_clean_restricted_update(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -670,6 +700,25 @@ def test_main_restricted_update_baseline_refuses_to_drop_debt(
     assert json.loads(baseline.read_text())["violations"] == {"other.py::B905": 4}
 
 
+def test_settings_refresh_does_not_report_retirement_when_write_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A refused refresh must not claim that baseline keys were retired."""
+    _require_ruff()
+    _write_tree(tmp_path, _ONE_VIOLATION)
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(
+        json.dumps(_baseline_payload({"other.py::B905": 4}, rules=["B"]))
+    )
+
+    assert _run_main(tmp_path, baseline, "--update-baseline") == 2
+
+    output = _clean_output(capsys)
+    assert "Refusing" in output and "RESTRICTED" in output
+    assert "Retiring" not in output
+    assert json.loads(baseline.read_text())["violations"] == {"other.py::B905": 4}
+
+
 def test_main_rejects_a_baselined_file_excluded_from_the_full_scan(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -694,6 +743,61 @@ def test_main_rejects_a_baselined_file_excluded_from_the_full_scan(
     assert "PARTIAL" in output
     assert "pkg/sub/b.py" in output
     assert "remove those files' keys from the baseline by hand" in output
+
+
+def test_update_baseline_rejects_a_file_omitted_by_settings_drift(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fingerprint refresh must not erase keys hidden by the new settings."""
+    _require_ruff()
+    (tmp_path / "pkg" / "sub").mkdir(parents=True)
+    (tmp_path / "pkg" / "a.py").write_text(_ONE_VIOLATION)
+    (tmp_path / "pkg" / "sub" / "b.py").write_text(_ONE_VIOLATION)
+    baseline = tmp_path / "baseline.json"
+    monkeypatch.setattr(checker, "DEFAULT_TARGETS", ("pkg",))
+    monkeypatch.setattr(
+        checker, "ruff_settings_fingerprint", _REAL_RUFF_SETTINGS_FINGERPRINT
+    )
+    args = ["--project-root", str(tmp_path), "--baseline", str(baseline)]
+
+    assert checker.main([*args, "--update-baseline"]) == 0
+    mismatched_document = json.loads(baseline.read_text())
+    mismatched_document["rules"] = ["B"]
+    original = json.dumps(mismatched_document)
+    baseline.write_text(original)
+    capsys.readouterr()
+    (tmp_path / "pyproject.toml").write_text('[tool.ruff]\nexclude = ["pkg/sub"]\n')
+
+    assert checker.main([*args, "--update-baseline"]) == 2
+    output = _clean_output(capsys)
+    assert "pkg/sub/b.py::B905" in output
+    assert baseline.read_text() == original
+
+
+def test_settings_refresh_reports_retired_lint_keys(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A deliberate refresh names same-file debt omitted by current settings."""
+    _require_ruff()
+    _unrestrict(monkeypatch)
+    _write_tree(tmp_path, _ONE_VIOLATION)
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(
+        json.dumps(
+            _baseline_payload(
+                {"sample.py::B905": 1, "sample.py::RUF012": 1}, rules=["B"]
+            )
+        )
+    )
+
+    assert _run_main(tmp_path, baseline, "--update-baseline") == 0
+
+    output = _clean_output(capsys)
+    assert "Retiring 1 baseline key" in output
+    assert "sample.py::RUF012" in output
+    assert json.loads(baseline.read_text())["violations"] == {"sample.py::B905": 1}
 
 
 def test_main_fails_closed_when_a_full_scan_covers_nothing(
