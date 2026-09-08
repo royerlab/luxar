@@ -5,16 +5,15 @@ Input validation and configuration preparation for Gaussian splat fitting.
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Any, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 
-from luxar.gsplats.fitting.config import FitConfig
+from luxar.gsplats.fitting.config import FitConfig, FitParameters
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.typing_utils.constants import (
     DEFAULT_SIGMA_MIN_DIAG as _DEFAULT_SIGMA_MIN_DIAG,
 )
-from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
 if TYPE_CHECKING:
     from luxar.gsplats.fit_gsplats import GaussianSplatFitter
@@ -230,51 +229,7 @@ def _resolve_source_dtype(V: Any, source_dtype: Any) -> tuple[str, Optional[int]
 
 def prepare_fit_config(
     fitter: "GaussianSplatFitter",  # GaussianSplatFitter instance
-    V: np.ndarray,
-    seeds: Optional[np.ndarray | int | float | GSplatData] = None,
-    norm_percentile: float = 0.0,
-    floor: "str | float | None" = "auto",
-    norm_range: "tuple[float, float] | None" = None,
-    downscale: Optional[int | Sequence[int]] = None,
-    init_sigma_vox: Optional[float] = None,
-    n_iters: int = 1000,
-    lr: float = 0.01,
-    loss_type: str = "l1",
-    asymmetric_penalty: Optional[float] = 1.0,
-    l1_amp: Optional[float] = None,
-    l1_diag: Optional[float] = None,
-    sigma_min_diag: Optional[Sequence[float] | float] = DEFAULT_SIGMA_MIN_DIAG,
-    sigma_max_diag: Optional[Sequence[float] | float] = None,
-    amp_max: Optional[float] = None,  # Maximum amplitude (prevents explosion)
-    max_eccentricity: Optional[float] = 10.0,
-    truncate: float = DEFAULT_TRUNCATION_RADIUS,
-    verbose: bool = True,
-    max_abs_error: Optional[float] = None,
-    rel_l2_target: Optional[float] = None,
-    gradient_clip: Optional[float] = None,
-    napari_movie: bool = False,
-    movie_every: int = 1,
-    movie_max_frames: Optional[int] = None,
-    scheduler_type: str = "plateau",
-    patience: int = 15,
-    lr_reduction_factor: float = 0.9,
-    early_stop_patience: Optional[int] = 300,
-    dynamic_ops_verbose: bool = False,
-    seed_method: str = "auto",
-    voxel_footprint_correction: bool | float = False,
-    boundary_penalty: Optional[float] = None,
-    clip_to_bounds: bool = False,
-    voxel_size: Optional[Sequence[float] | float] = None,
-    output_space: str = "real",
-    sort_splats_enabled: bool = True,
-    sort_splats_interval: int = 1000,
-    iter_callback: Optional[Any] = None,
-    iter_callback_every: int = 25,
-    seed_amps_background_relative: bool = False,
-    source_dtype: Optional[str] = None,
-    source_shape: Optional[Sequence[int]] = None,
-    source_stored_bytes: Optional[int] = None,
-    **seed_kwargs: Any,
+    parameters: FitParameters,
 ) -> FitConfig:
     """
     Validate input parameters and prepare configuration for fitting.
@@ -283,27 +238,8 @@ def prepare_fit_config(
     ----------
     fitter : GaussianSplatFitter
         The fitter instance (for device and dynamic ops config)
-    V : np.ndarray
-        Input image/volume to reconstruct
-    seed_method : str, default="auto"
-        Method for generating seeds when seeds=None:
-        - "decomposition": Scale-hierarchical detection via image decomposition
-        - "grid": Uniform grid seeding for spatial coverage
-        - "edges": Edge-based seeding with anisotropic shapes
-        - "auto": Principled combination of all methods (recommended)
-        This parameter is only used when seeds=None. If seeds are provided,
-        this parameter is ignored.
-    seed_amps_background_relative : bool, default=False
-        Amplitude convention of a ``seeds=GSplatData`` warm start. False (the
-        default) = raw-image-sampled, as ``generate_seeds()`` returns; True =
-        background-relative, as a previous fit's output is. See
-        ``fit_gaussian_splats`` for the full explanation. Ignored unless
-        ``seeds`` is a GSplatData.
-    **seed_kwargs
-        Additional keyword arguments for seed generation (e.g., num_scales,
-        percentile_thresh, etc.). Only used when seeds=None.
-    **kwargs
-        All other fitting parameters
+    parameters : FitParameters
+        Raw fit parameters from the public entry point.
 
     Returns
     -------
@@ -315,6 +251,52 @@ def prepare_fit_config(
     ValueError
         If any parameters are invalid
     """
+    V = parameters.V
+    seeds = parameters.seeds
+    norm_percentile = parameters.norm_percentile
+    floor = parameters.floor
+    norm_range = parameters.norm_range
+    downscale = parameters.downscale
+    init_sigma_vox = parameters.init_sigma_vox
+    n_iters = parameters.n_iters
+    lr = parameters.lr
+    loss_type = parameters.loss_type
+    asymmetric_penalty = parameters.asymmetric_penalty
+    l1_amp = parameters.l1_amp
+    l1_diag = parameters.l1_diag
+    sigma_min_diag = parameters.sigma_min_diag
+    sigma_max_diag = parameters.sigma_max_diag
+    amp_max = parameters.amp_max
+    max_eccentricity = parameters.max_eccentricity
+    truncate = parameters.truncate
+    verbose = parameters.verbose
+    max_abs_error = parameters.max_abs_error
+    rel_l2_target = parameters.rel_l2_target
+    gradient_clip = parameters.gradient_clip
+    napari_movie = parameters.napari_movie
+    movie_every = parameters.movie_every
+    movie_max_frames = parameters.movie_max_frames
+    scheduler_type = parameters.scheduler_type
+    patience = parameters.patience
+    lr_reduction_factor = parameters.lr_reduction_factor
+    early_stop_patience = parameters.early_stop_patience
+    dynamic_ops_verbose = parameters.dynamic_ops_verbose
+    seed_method = parameters.seed_method
+    voxel_footprint_correction = parameters.voxel_footprint_correction
+    boundary_penalty = parameters.boundary_penalty
+    clip_to_bounds = parameters.clip_to_bounds
+    voxel_size = parameters.voxel_size
+    output_space = parameters.output_space
+    sort_splats_enabled = parameters.sort_splats_enabled
+    sort_splats_interval = parameters.sort_splats_interval
+    iter_callback = parameters.iter_callback
+    iter_callback_every = parameters.iter_callback_every
+    seed_amps_background_relative = parameters.seed_amps_background_relative
+    source_dtype = parameters.source_dtype
+    source_shape = parameters.source_shape
+    source_stored_bytes = parameters.source_stored_bytes
+    seed_kwargs = parameters.seed_kwargs
+
     # Input validation.
     # Capture the caller's dtype BEFORE the cast below (see the helper: after the
     # cast the original element size is gone).

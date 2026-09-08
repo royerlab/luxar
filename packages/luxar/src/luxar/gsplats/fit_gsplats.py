@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import gc
 import warnings
+from dataclasses import fields
 from typing import Any, Optional, Sequence
 
 import numpy as np
@@ -18,6 +19,7 @@ import torch
 from arbol import asection
 
 from luxar.gsplats.fitting import (
+    FitParameters,
     create_loss_function,
     finalize_results,
     initialize_optimization,
@@ -104,54 +106,7 @@ class GaussianSplatFitter:
         self.enable_dynamic_ops = enable_dynamic_ops
         self.dynamic_config = dynamic_config or DynamicOpsConfig()
 
-    def fit(
-        self,
-        V: np.ndarray,
-        seeds: Optional[np.ndarray | int | float | GSplatData] = None,
-        norm_percentile: float = 0.0,
-        floor: "str | float | None" = "auto",
-        norm_range: "tuple[float, float] | None" = None,
-        downscale: Optional[int | Sequence[int]] = None,
-        init_sigma_vox: Optional[float] = None,
-        n_iters: int = 1000,
-        lr: float = 0.01,
-        loss_type: str = "l1",
-        asymmetric_penalty: Optional[float] = 1.0,
-        l1_amp: Optional[float] = None,
-        l1_diag: Optional[float] = None,
-        sigma_min_diag: Optional[Sequence[float] | float] = DEFAULT_SIGMA_MIN_DIAG,
-        sigma_max_diag: Optional[Sequence[float] | float] = None,
-        amp_max: Optional[float] = None,
-        max_eccentricity: Optional[float] = 10.0,
-        truncate: float = DEFAULT_TRUNCATION_RADIUS,
-        seed_method: str = "auto",
-        verbose: bool = True,
-        max_abs_error: Optional[float] = None,
-        rel_l2_target: Optional[float] = None,
-        gradient_clip: Optional[float] = None,
-        napari_movie: bool = False,
-        movie_every: int = 1,
-        movie_max_frames: Optional[int] = None,
-        scheduler_type: str = "plateau",
-        patience: int = 15,
-        lr_reduction_factor: float = 0.9,
-        early_stop_patience: Optional[int] = 300,
-        dynamic_ops_verbose: bool = False,
-        voxel_footprint_correction: bool | float = False,
-        boundary_penalty: Optional[float] = None,
-        clip_to_bounds: bool = False,
-        voxel_size: Optional[Sequence[float] | float] = None,
-        output_space: str = "real",
-        sort_splats_enabled: bool = True,
-        sort_splats_interval: int = 1000,
-        iter_callback: Optional[Any] = None,
-        iter_callback_every: int = 25,
-        seed_amps_background_relative: bool = False,
-        source_dtype: Optional[str] = None,
-        source_shape: Optional[Sequence[int]] = None,
-        source_stored_bytes: Optional[int] = None,
-        **seed_kwargs: Any,
-    ) -> GSplatData:
+    def fit(self, parameters: FitParameters) -> GSplatData:
         """
         Fit Gaussian splats using the modular fitting pipeline.
 
@@ -159,29 +114,8 @@ class GaussianSplatFitter:
 
         Parameters
         ----------
-        seed_method : str, default="auto" (RECOMMENDED)
-            Method for generating seeds when seeds=None:
-
-            - **"auto"** (DEFAULT, RECOMMENDED): Fast edges + grid combination.
-              Provides good convergence by capturing boundaries (edges) and
-              spatial coverage (grid). Decomposition excluded for speed.
-
-            - "decomposition": Multi-scale decomposition for blob-like features (slow).
-
-            - "grid": Uniform grid seeding for spatial coverage.
-
-            - "edges": Edge-based seeding with anisotropic shapes.
-
-            - Comma-separated combinations (e.g., "decomposition,edges,grid").
-
-            This parameter is only used when seeds=None.
-        seed_amps_background_relative : bool, default=False
-            Amplitude convention of a ``seeds=GSplatData`` warm start — False for
-            ``generate_seeds()`` output (raw), True for a previous fit's output
-            (background-relative). See fit_gaussian_splats().
-        **seed_kwargs
-            Additional keyword arguments for seed generation (e.g., num_scales,
-            percentile_thresh, etc.). Only used when seeds=None.
+        parameters : FitParameters
+            Raw fit parameters collected by :func:`fit_gaussian_splats`.
 
         Returns
         -------
@@ -189,54 +123,7 @@ class GaussianSplatFitter:
             Dataclass containing centers, amplitudes, cholesky_factors, and stats.
         """
         # Step 1: Validate and prepare configuration
-        config = prepare_fit_config(
-            self,
-            V,
-            seeds,
-            seed_amps_background_relative=seed_amps_background_relative,
-            norm_percentile=norm_percentile,
-            floor=floor,
-            norm_range=norm_range,
-            downscale=downscale,
-            init_sigma_vox=init_sigma_vox,
-            n_iters=n_iters,
-            lr=lr,
-            loss_type=loss_type,
-            asymmetric_penalty=asymmetric_penalty,
-            l1_amp=l1_amp,
-            l1_diag=l1_diag,
-            sigma_min_diag=sigma_min_diag,
-            sigma_max_diag=sigma_max_diag,
-            amp_max=amp_max,
-            max_eccentricity=max_eccentricity,
-            truncate=truncate,
-            verbose=verbose,
-            max_abs_error=max_abs_error,
-            rel_l2_target=rel_l2_target,
-            gradient_clip=gradient_clip,
-            napari_movie=napari_movie,
-            movie_every=movie_every,
-            movie_max_frames=movie_max_frames,
-            scheduler_type=scheduler_type,
-            patience=patience,
-            lr_reduction_factor=lr_reduction_factor,
-            early_stop_patience=early_stop_patience,
-            dynamic_ops_verbose=dynamic_ops_verbose,
-            seed_method=seed_method,
-            voxel_footprint_correction=voxel_footprint_correction,
-            boundary_penalty=boundary_penalty,
-            clip_to_bounds=clip_to_bounds,
-            voxel_size=voxel_size,
-            output_space=output_space,
-            sort_splats_enabled=sort_splats_enabled,
-            sort_splats_interval=sort_splats_interval,
-            iter_callback=iter_callback,
-            iter_callback_every=iter_callback_every,
-            source_dtype=source_dtype,
-            source_shape=source_shape,
-            source_stored_bytes=source_stored_bytes,
-            **seed_kwargs,
-        )
+        config = prepare_fit_config(self, parameters)
 
         # Clear cached rendering grids from previous fitting sessions
         from luxar.gsplats.models.gsplats.rendering_core import clear_grid_cache
@@ -269,6 +156,13 @@ class GaussianSplatFitter:
 
         # Step 6: Finalize and return results
         return finalize_results(optimization_results, config, preprocessed_data)
+
+
+def _collect_fit_parameters(values: dict[str, Any]) -> FitParameters:
+    """Build the internal parameter bundle from the public call arguments."""
+    return FitParameters(
+        **{field.name: values[field.name] for field in fields(FitParameters)}
+    )
 
 
 @arbol_warnings()
@@ -657,6 +551,8 @@ def fit_gaussian_splats(
     - Early stopping and adaptive learning-rate scheduling
     """
 
+    parameters = _collect_fit_parameters(locals())
+
     with asection("Fitting Gaussian Splats"):
         fitter = GaussianSplatFitter(
             device=device,
@@ -667,53 +563,7 @@ def fit_gaussian_splats(
         )
 
         # Fit and extract results
-        result = fitter.fit(
-            V=V,
-            seeds=seeds,
-            seed_amps_background_relative=seed_amps_background_relative,
-            norm_percentile=norm_percentile,
-            floor=floor,
-            norm_range=norm_range,
-            downscale=downscale,
-            init_sigma_vox=init_sigma_vox,
-            n_iters=n_iters,
-            lr=lr,  # Note: gradient dilution compensation applied automatically in fit() method
-            loss_type=loss_type,
-            asymmetric_penalty=asymmetric_penalty,
-            l1_amp=l1_amp,
-            l1_diag=l1_diag,
-            dynamic_ops_verbose=dynamic_ops_verbose,
-            sigma_min_diag=sigma_min_diag,
-            sigma_max_diag=sigma_max_diag,
-            amp_max=amp_max,
-            max_eccentricity=max_eccentricity,
-            truncate=truncate,
-            seed_method=seed_method,
-            verbose=verbose,
-            max_abs_error=max_abs_error,
-            rel_l2_target=rel_l2_target,
-            gradient_clip=gradient_clip,
-            napari_movie=napari_movie,
-            movie_every=movie_every,
-            movie_max_frames=movie_max_frames,
-            scheduler_type=scheduler_type,
-            patience=patience,
-            lr_reduction_factor=lr_reduction_factor,
-            early_stop_patience=early_stop_patience,
-            voxel_footprint_correction=voxel_footprint_correction,
-            boundary_penalty=boundary_penalty,
-            clip_to_bounds=clip_to_bounds,
-            voxel_size=voxel_size,
-            output_space=output_space,
-            sort_splats_enabled=sort_splats_enabled,
-            sort_splats_interval=sort_splats_interval,
-            iter_callback=iter_callback,
-            iter_callback_every=iter_callback_every,
-            source_dtype=source_dtype,
-            source_shape=source_shape,
-            source_stored_bytes=source_stored_bytes,
-            **seed_kwargs,
-        )
+        result = fitter.fit(parameters)
 
     # Explicitly release the fitter and its GPU resources (optimizer state,
     # model weights, preprocessed V_tensor) before post-fit operations.

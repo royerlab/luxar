@@ -551,6 +551,7 @@ For detailed control and statistics, use the class interface:
 
 ```python
 from luxar.gsplats.fit_gsplats import GaussianSplatFitter
+from luxar.gsplats.fitting import FitParameters
 
 # Initialize fitter with specific device and options
 fitter = GaussianSplatFitter(
@@ -560,12 +561,14 @@ fitter = GaussianSplatFitter(
 
 # Fit with detailed statistics
 result = fitter.fit(
-    image,
-    seeds=candidates,
-    n_iters=500,
-    early_stop_patience=200,  # iterations without improvement before stopping
-    sigma_min_diag=[0.5, 0.5],  # Minimum splat size
-    sigma_max_diag=[10.0, 10.0],  # Maximum splat size
+    FitParameters(
+        V=image,
+        seeds=candidates,
+        n_iters=500,
+        early_stop_patience=200,  # iterations without improvement before stopping
+        sigma_min_diag=[0.5, 0.5],  # Minimum splat size
+        sigma_max_diag=[10.0, 10.0],  # Maximum splat size
+    )
 )
 
 # Access optimization statistics from result.stats
@@ -1194,7 +1197,7 @@ gsplats/
 │   └── utils.py                   # Seeding helper utilities
 │
 ├── fitting/                       # Modular fitting pipeline
-│   ├── config.py                  # Configuration dataclasses (FitConfig, PreprocessedData, etc.)
+│   ├── config.py                  # Configuration dataclasses (FitParameters, FitConfig, etc.)
 │   ├── validation.py              # Input validation and parameter checking
 │   ├── preprocessing.py           # Data normalization and candidate generation
 │   ├── initialization.py          # Model and optimizer initialization
@@ -1314,7 +1317,7 @@ The fitting pipeline uses a modular architecture with focused, maintainable modu
 - **fitting/ modules**: Each handles a specific aspect of the fitting process
   - Individual components are independently testable
   - Clear separation of concerns across six pipeline stages
-  - Type-safe configuration via dataclasses (FitConfig, PreprocessedData, etc.)
+  - Type-safe configuration via dataclasses (FitParameters, FitConfig, etc.)
   - See `fitting/README.md` for the full pipeline architecture diagram
 
 ## Running Demos

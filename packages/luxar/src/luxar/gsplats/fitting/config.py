@@ -4,7 +4,7 @@ Configuration dataclasses for Gaussian splat fitting pipeline.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Sequence
 
 import numpy as np
@@ -130,6 +130,63 @@ class ConstraintConfig:
     output_space: str = "real"
     boundary_penalty: Optional[float] = None
     clip_to_bounds: bool = False
+
+
+@dataclass(frozen=True)
+class FitParameters:
+    """Raw parameters threaded through the internal fitting pipeline.
+
+    ``fit_gaussian_splats`` remains the explicit public API. This bundle removes
+    the duplicate parameter signatures from ``GaussianSplatFitter.fit`` and
+    ``prepare_fit_config`` while preserving their existing values until the
+    validation boundary normalizes them into :class:`FitConfig`.
+    """
+
+    V: np.ndarray
+    seeds: Optional[np.ndarray | int | float | "GSplatData"] = None
+    norm_percentile: float = 0.0
+    floor: str | float | None = "auto"
+    norm_range: tuple[float, float] | None = None
+    downscale: Optional[int | Sequence[int]] = None
+    init_sigma_vox: Optional[float] = None
+    n_iters: int = 1000
+    lr: float = 0.01
+    loss_type: str = "l1"
+    asymmetric_penalty: Optional[float] = 1.0
+    l1_amp: Optional[float] = None
+    l1_diag: Optional[float] = None
+    sigma_min_diag: Optional[Sequence[float] | float] = DEFAULT_SIGMA_MIN_DIAG
+    sigma_max_diag: Optional[Sequence[float] | float] = None
+    amp_max: Optional[float] = None
+    max_eccentricity: Optional[float] = 10.0
+    truncate: float = DEFAULT_TRUNCATION_RADIUS
+    seed_method: str = "auto"
+    verbose: bool = True
+    max_abs_error: Optional[float] = None
+    rel_l2_target: Optional[float] = None
+    gradient_clip: Optional[float] = None
+    napari_movie: bool = False
+    movie_every: int = 1
+    movie_max_frames: Optional[int] = None
+    scheduler_type: str = "plateau"
+    patience: int = 15
+    lr_reduction_factor: float = 0.9
+    early_stop_patience: Optional[int] = 300
+    dynamic_ops_verbose: bool = False
+    voxel_footprint_correction: bool | float = False
+    boundary_penalty: Optional[float] = None
+    clip_to_bounds: bool = False
+    voxel_size: Optional[Sequence[float] | float] = None
+    output_space: str = "real"
+    sort_splats_enabled: bool = True
+    sort_splats_interval: int = 1000
+    iter_callback: Optional[Any] = None
+    iter_callback_every: int = 25
+    seed_amps_background_relative: bool = False
+    source_dtype: Optional[str] = None
+    source_shape: Optional[Sequence[int]] = None
+    source_stored_bytes: Optional[int] = None
+    seed_kwargs: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

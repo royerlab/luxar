@@ -10,11 +10,18 @@ import torch
 
 from luxar.gsplats.fitting.config import (
     FitConfig,
+    FitParameters,
     OptimizationResults,
     PreprocessedData,
 )
 from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.fitting.results import _clip_to_bounds, finalize_results
+from luxar.gsplats.fitting.validation import prepare_fit_config as _prepare_fit_config
+
+
+def prepare_fit_config(fitter, V, **kwargs):
+    """Build raw parameters while keeping validation tests concise."""
+    return _prepare_fit_config(fitter, FitParameters(V=V, **kwargs))
 
 
 @pytest.fixture
@@ -598,7 +605,6 @@ class TestVoxelFootprintCorrectionValidation:
     def test_negative_sigma_raises_error(self) -> None:
         """Test that negative sigma raises ValueError."""
         from luxar.gsplats.fit_gsplats import GaussianSplatFitter
-        from luxar.gsplats.fitting.validation import prepare_fit_config
 
         fitter = GaussianSplatFitter(device="cpu")
         V = np.random.rand(32, 32).astype(np.float32)
@@ -615,7 +621,6 @@ class TestVoxelFootprintCorrectionValidation:
     def test_zero_sigma_raises_error(self) -> None:
         """Test that zero sigma raises ValueError."""
         from luxar.gsplats.fit_gsplats import GaussianSplatFitter
-        from luxar.gsplats.fitting.validation import prepare_fit_config
 
         fitter = GaussianSplatFitter(device="cpu")
         V = np.random.rand(32, 32).astype(np.float32)
@@ -632,7 +637,6 @@ class TestVoxelFootprintCorrectionValidation:
     def test_false_disabled_no_error(self) -> None:
         """Test that False (disabled) is accepted without error."""
         from luxar.gsplats.fit_gsplats import GaussianSplatFitter
-        from luxar.gsplats.fitting.validation import prepare_fit_config
 
         fitter = GaussianSplatFitter(device="cpu")
         V = np.random.rand(32, 32).astype(np.float32)
@@ -648,7 +652,6 @@ class TestVoxelFootprintCorrectionValidation:
     def test_true_enabled_no_error(self) -> None:
         """Test that True is accepted without error."""
         from luxar.gsplats.fit_gsplats import GaussianSplatFitter
-        from luxar.gsplats.fitting.validation import prepare_fit_config
 
         fitter = GaussianSplatFitter(device="cpu")
         V = np.random.rand(32, 32).astype(np.float32)
@@ -664,7 +667,6 @@ class TestVoxelFootprintCorrectionValidation:
     def test_positive_float_no_error(self) -> None:
         """Test that positive float is accepted without error."""
         from luxar.gsplats.fit_gsplats import GaussianSplatFitter
-        from luxar.gsplats.fitting.validation import prepare_fit_config
 
         fitter = GaussianSplatFitter(device="cpu")
         V = np.random.rand(32, 32).astype(np.float32)
@@ -680,7 +682,6 @@ class TestVoxelFootprintCorrectionValidation:
     def test_positive_int_no_error(self) -> None:
         """Test that positive int is accepted without error."""
         from luxar.gsplats.fit_gsplats import GaussianSplatFitter
-        from luxar.gsplats.fitting.validation import prepare_fit_config
 
         fitter = GaussianSplatFitter(device="cpu")
         V = np.random.rand(32, 32).astype(np.float32)
@@ -696,7 +697,6 @@ class TestVoxelFootprintCorrectionValidation:
     def test_negative_int_raises_error(self) -> None:
         """Test that negative int raises ValueError."""
         from luxar.gsplats.fit_gsplats import GaussianSplatFitter
-        from luxar.gsplats.fitting.validation import prepare_fit_config
 
         fitter = GaussianSplatFitter(device="cpu")
         V = np.random.rand(32, 32).astype(np.float32)
