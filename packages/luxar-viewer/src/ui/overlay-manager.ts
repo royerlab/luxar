@@ -664,7 +664,7 @@ export class OverlayManager {
     // exported app, zipped stores' blob URLs) are readable as they are, and
     // WKWebView's CORS media path is flaky (a failed CORS load taints the
     // element and every upload then throws), so do not ask when not needed.
-    if (config.alpha_matte === 'stacked' && this.isCrossOriginStore()) {
+    if (this.needsVideoCors(config)) {
       video.crossOrigin = 'anonymous';
     }
     video.muted = config.muted !== false;
@@ -709,6 +709,10 @@ export class OverlayManager {
     } catch {
       return false;
     }
+  }
+
+  private needsVideoCors(config: OverlayConfig): boolean {
+    return config.alpha_matte === 'stacked' && this.isCrossOriginStore();
   }
 
   /**
