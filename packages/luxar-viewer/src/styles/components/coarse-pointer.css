@@ -226,12 +226,21 @@
      the thumbs grow to a fingertip. The dimension slider's real input is an
      invisible overlay on a 20 px custom track, so its track grows instead. */
   .luxar-gui__slider,
-  .luxar-layers-panel__slider {
+  .luxar-layers-panel__slider,
+  [data-theme='light'] .luxar-gui__slider,
+  [data-theme='liquid-glass'] .luxar-layers-panel__slider,
+  [data-theme='liquid-glass'] .luxar-gui__slider {
     height: 24px;
     background: transparent;
   }
   .luxar-gui__slider::-webkit-slider-runnable-track,
   .luxar-layers-panel__slider::-webkit-slider-runnable-track {
+    height: 3px;
+    background: var(--luxar-interactive-default);
+    border-radius: var(--luxar-radius-full);
+  }
+  .luxar-gui__slider::-moz-range-track,
+  .luxar-layers-panel__slider::-moz-range-track {
     height: 3px;
     background: var(--luxar-interactive-default);
     border-radius: var(--luxar-radius-full);
