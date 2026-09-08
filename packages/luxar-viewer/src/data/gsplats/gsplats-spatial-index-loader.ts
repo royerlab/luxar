@@ -321,9 +321,10 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       ndim +
       1 +
       choleskyPackedSize(ndim) +
-      (attrs.has_colors ? 4 : 0) +
+      (attrs.has_colors !== false ? 4 : 0) +
       (attrs.has_label_ids ? 1 : 0);
-    const arrayCount = 4 + (attrs.has_colors ? 1 : 0) + (attrs.has_label_ids ? 1 : 0);
+    const arrayCount =
+      4 + (attrs.has_colors !== false ? 1 : 0) + (attrs.has_label_ids ? 1 : 0);
     const chunkSize = Math.max(1, attrs.chunk_size || 1);
     const chunkCount = Math.ceil(nSplats / chunkSize);
     return nSplats * scalarCount * 8 + chunkCount * arrayCount * PREFETCH_CHUNK_METADATA_BYTES;

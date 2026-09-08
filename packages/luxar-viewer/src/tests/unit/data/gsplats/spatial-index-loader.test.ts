@@ -94,6 +94,25 @@ describe('GSplatsSpatialIndexLoader', () => {
 
   // ────────────────────────────────────────────────────────────────
   describe('monitoring', () => {
+    it('treats an omitted has_colors attr like initialization does', () => {
+      const location = makeMockZarrLocation();
+      const attrs = { ...makeGSplatsNode().attrs } as Record<string, unknown>;
+      delete attrs.has_colors;
+      const omitted = new GSplatsSpatialIndexLoader(
+        location as unknown as ConstructorParameters<typeof GSplatsSpatialIndexLoader>[0],
+        makeGSplatsNode({ attrs })
+      );
+      const present = new GSplatsSpatialIndexLoader(
+        location as unknown as ConstructorParameters<typeof GSplatsSpatialIndexLoader>[0],
+        makeGSplatsNode()
+      );
+
+      expect(omitted.prefetchByteUpperBound).toBe(present.prefetchByteUpperBound);
+
+      omitted.dispose();
+      present.dispose();
+    });
+
     it('exposes the four LoaderMonitor methods', () => {
       expect(typeof loader.addEventListener).toBe('function');
       expect(typeof loader.removeEventListener).toBe('function');
