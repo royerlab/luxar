@@ -47,6 +47,7 @@ def _workflow_run_commands(workflow: Mapping[str, object]) -> list[str]:
             if isinstance(step, Mapping)
             and isinstance(step.get("run"), str)
             and not step.get("continue-on-error")
+            and step.get("if") is not False
         )
     return commands
 
@@ -65,6 +66,7 @@ def test_continue_on_error_steps_do_not_count_as_ci_coverage() -> None:
             "python-tests": {
                 "steps": [
                     {"run": "hatch run security", "continue-on-error": True},
+                    {"run": "hatch run check-versions", "if": False},
                     {"run": "hatch run check-imports"},
                 ]
             }
