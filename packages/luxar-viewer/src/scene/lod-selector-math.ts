@@ -339,6 +339,7 @@ export interface WorldBoxSource {
   }[];
 }
 
+/** Caller-owned output reused across evaluations; ``useLodBounds`` selects robust metric bounds. */
 export interface WorldBoxOptions {
   worldBoxScratch: BoundingBox;
   useLodBounds?: boolean;

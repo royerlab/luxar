@@ -702,6 +702,39 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     setFromObject.mockRestore();
   });
 
+  it('refreshes a cached footprint after the partition transform changes', () => {
+    const reg = makeRegistry();
+    const groupObject = new THREE.Group();
+    const geometry = new THREE.BufferGeometry();
+    geometry.boundingBox = new THREE.Box3(
+      new THREE.Vector3(-2, -0.05, -0.05),
+      new THREE.Vector3(-1.9, 0.05, 0.05)
+    );
+    const part = new THREE.Mesh(geometry);
+    part.name = '/partition/part_0';
+    groupObject.add(part);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [
+        {
+          object: part,
+          positionBounds: { min: [-3.4, -0.05, -0.05], max: [-3.3, 0.05, 0.05] },
+        },
+      ],
+    });
+
+    reg.evaluatePerFrame();
+    expect(part.visible).toBe(false);
+
+    groupObject.position.x = 2;
+    groupObject.updateMatrixWorld(true);
+    expect(new THREE.Box3().setFromObject(part).min.x).toBeCloseTo(0);
+
+    reg.evaluatePerFrame();
+    expect(part.visible).toBe(true);
+  });
+
   it('refreshes a cached footprint after a nested geometry commit', () => {
     const reg = makeRegistry();
     const groupObject = new THREE.Group();
@@ -725,6 +758,30 @@ describe('LODGroupRegistry — partition frustum selection', () => {
 
     reg.invalidatePartitionFootprint('/partition/part_0/level_1');
     reg.evaluatePerFrame();
+    expect(part.visible).toBe(true);
+  });
+
+  it('refreshes every cached part when a partition commit path matches no child', () => {
+    const reg = makeRegistry();
+    const groupObject = new THREE.Group();
+    const part = new THREE.Group();
+    part.name = '/partition/part_0';
+    const geometry = new THREE.BufferGeometry();
+    geometry.boundingBox = new THREE.Box3(new THREE.Vector3(2, 2, 2), new THREE.Vector3(3, 3, 3));
+    part.add(new THREE.Mesh(geometry));
+    groupObject.add(part);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [{ object: part, positionBounds: { min: [2, 2, 2], max: [3, 3, 3] } }],
+    });
+    reg.evaluatePerFrame();
+    expect(part.visible).toBe(false);
+
+    geometry.boundingBox.set(new THREE.Vector3(-0.5, -0.5, -0.5), new THREE.Vector3(0.5, 0.5, 0.5));
+    reg.invalidatePartitionFootprint('/partition/unregistered-child');
+    reg.evaluatePerFrame();
+
     expect(part.visible).toBe(true);
   });
 

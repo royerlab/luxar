@@ -625,6 +625,29 @@ const WORLD_BOX3_SCRATCH = new THREE.Box3();
 const PARTITION_VISIBILITY_CHANGED = 1;
 const PARTITION_BECAME_VISIBLE = 2;
 
+function matrixElementsDiffer(left: readonly number[], right: readonly number[]): boolean {
+  for (let index = 0; index < left.length; index++) {
+    if (left[index] !== right[index]) return true;
+  }
+  return false;
+}
+
+function invalidateMatchingPartitionChildren(
+  entry: PartitionGroupEntry,
+  children: Array<{ footprintDirty: boolean }>,
+  nodePath: string
+): boolean {
+  let matched = false;
+  for (let index = 0; index < entry.children.length; index++) {
+    const childPath = entry.children[index].object.name;
+    if (childPath.length === 0 || nodePath === childPath || nodePath.startsWith(`${childPath}/`)) {
+      children[index].footprintDirty = true;
+      matched = true;
+    }
+  }
+  return matched;
+}
+
 /**
  * Injected view-state accessors. Lets the registry stay test-friendly
  * (mock the camera, the viewport, the slice) without coupling to the
@@ -747,6 +770,8 @@ export class LODGroupRegistry {
         localBoxScratch: BoundingBox;
         worldBoxOptions: WorldBoxOptions;
         footprintBox: THREE.Box3;
+        /** World transform used to capture ``footprintBox``. */
+        footprintMatrixWorld: number[];
         footprintDirty: boolean;
       }>;
     }
@@ -866,27 +891,33 @@ export class LODGroupRegistry {
           },
         },
         footprintBox: new THREE.Box3(),
+        footprintMatrixWorld: new Array<number>(16).fill(0),
         footprintDirty: true,
       })),
     });
     for (const child of entry.children) child.object.userData.partitionFrustumVisible = true;
   }
 
-  /** Mark the owning partition part's rendered footprint stale after a geometry commit. */
+  /**
+   * Mark the owning partition part's rendered footprint stale after a geometry commit.
+   *
+   * ``SceneLoader.updatePointsGeometry`` and the three ``commit*Geometry`` methods
+   * are the complete geometry-attach funnels, including lazy LOD children and
+   * additive rungs, so every successful attachment reaches this method.
+   * ``registerPartition`` starts every part dirty, which also covers a commit that
+   * races registration. A path under a partition that matches no registered child
+   * dirties the whole partition conservatively rather than allowing an
+   * under-covering stale box. Footprints are cached in world space; the per-frame
+   * gate separately detects transform changes.
+   */
   invalidatePartitionFootprint(nodePath: string): void {
     for (const [entryPath, cache] of this.partitionCaches) {
       if (nodePath !== entryPath && !nodePath.startsWith(`${entryPath}/`)) continue;
       const entry = this.partitionEntries.get(entryPath);
       if (!entry) continue;
-      for (let index = 0; index < entry.children.length; index++) {
-        const childPath = entry.children[index].object.name;
-        if (
-          childPath.length === 0 ||
-          nodePath === childPath ||
-          nodePath.startsWith(`${childPath}/`)
-        ) {
-          cache.children[index].footprintDirty = true;
-        }
+      const matched = invalidateMatchingPartitionChildren(entry, cache.children, nodePath);
+      if (!matched) {
+        for (const childCache of cache.children) childCache.footprintDirty = true;
       }
     }
   }
@@ -1335,8 +1366,15 @@ export class LODGroupRegistry {
       if (worldBox) {
         WORLD_BOX3_SCRATCH.min.set(worldBox.min.x, worldBox.min.y, worldBox.min.z);
         WORLD_BOX3_SCRATCH.max.set(worldBox.max.x, worldBox.max.y, worldBox.max.z);
-        if (childCache.footprintDirty) {
+        child.object.updateWorldMatrix(false, false);
+        const matrixElements = child.object.matrixWorld.elements;
+        const transformChanged = matrixElementsDiffer(
+          matrixElements,
+          childCache.footprintMatrixWorld
+        );
+        if (childCache.footprintDirty || transformChanged) {
           childCache.footprintBox.setFromObject(child.object);
+          child.object.matrixWorld.toArray(childCache.footprintMatrixWorld);
           childCache.footprintDirty = false;
         }
         if (!childCache.footprintBox.isEmpty()) {
