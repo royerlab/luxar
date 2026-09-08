@@ -154,6 +154,27 @@ class TestSpecsAreValidRequirements:
         )
 
 
+class TestDefaultEnvironment:
+    def test_moderngl_stays_out_of_default_test_environment(self) -> None:
+        """The optional GPU renderer must not block Python matrix setup."""
+        pyproject = _pyproject()
+        if not pyproject.is_file():  # installed wheel — no source tree to check
+            pytest.skip("pyproject.toml not available (installed package)")
+
+        import tomllib
+
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        default_dependencies = data["tool"]["hatch"]["envs"]["default"]["dependencies"]
+        Requirement = pytest.importorskip("packaging.requirements").Requirement
+        default_names = {Requirement(raw).name.lower() for raw in default_dependencies}
+
+        assert "moderngl" not in default_names, (
+            "moderngl is demo-only and glcontext lacks a CPython 3.14 wheel; "
+            "putting it in the default Hatch environment makes the Python 3.14 "
+            "CI leg require system OpenGL headers before tests can run"
+        )
+
+
 class TestSpecsMatchPyproject:
     """Every spec must accept exactly the versions its pyproject pin accepts."""
 
