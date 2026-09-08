@@ -514,6 +514,8 @@ describe('gallery auto-exposure policy', () => {
       const { stops, flatSubject, guardExhausted } = await computeAutoExposure(io);
       expect(flatSubject).toBe(true);
       expect(stops).toBe(EXPOSURE_MIN);
+      expect(measured.at(-3)).toBeCloseTo(unclamped, 6);
+      expect(measured.at(-2)).toBeCloseTo(unclamped - CLIP_GUARD_STEP, 6);
       expect(measured.at(-1)).toBe(EXPOSURE_MIN);
       expect(guardExhausted).toBe(true);
     });
