@@ -349,9 +349,9 @@ def read_ply_mesh(path: Path) -> dict[str, object]:
         # ascii path widens everything to f8 and would otherwise lose the distinction.
         peak = float(np.max(colors)) if colors.size else 0.0
         colors = (
-            np.clip(colors * 255.0, 0, 255).astype(np.uint8)
+            np.clip(np.round(colors * 255.0), 0, 255).astype(np.uint8)
             if peak <= 1.0
-            else np.clip(colors, 0, 255).astype(np.uint8)
+            else np.clip(np.round(colors), 0, 255).astype(np.uint8)
         )
 
     return {

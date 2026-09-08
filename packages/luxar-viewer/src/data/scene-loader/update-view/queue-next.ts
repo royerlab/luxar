@@ -19,6 +19,7 @@
  */
 
 import { log, Modules } from '../../../utils/log';
+import { getErrorMessage } from '../../../utils/format-error';
 import { scheduleFrame } from '../../../utils/schedule-frame';
 import type { DataLoader, ViewState } from '../../data-loader-types';
 import type { GSplatsDataLoader } from '../../../types/gsplats';
@@ -83,7 +84,13 @@ export function queueNext(ctx: QueueNextCtx): void {
       // Release the lock right before starting the next update
       // Any slider events during the yield were queued (because lock was held)
       ctx.setUpdateInProgress(false);
-      ctx.updateView(pendingState);
+      ctx.updateView(pendingState).catch((error: unknown) => {
+        log.error(
+          Modules.SCENE_LOADER,
+          `Queued updateView re-entry failed: ${getErrorMessage(error)}`,
+          error
+        );
+      });
     });
     return;
   }
@@ -117,7 +124,7 @@ export function queueNext(ctx: QueueNextCtx): void {
     ctx.scheduleGSplatsRefinement().catch((error) => {
       log.error(
         Modules.SCENE_LOADER,
-        `Progressive refinement scheduling failed: ${(error as Error).message}`
+        `Progressive refinement scheduling failed: ${getErrorMessage(error)}`
       );
       // Belt-and-braces lock recovery: each refinement loop releases the
       // lock in its own finally, so a rejection reaching here means the

@@ -701,13 +701,14 @@
     },
     {
       "id": "gsplats_2d_cmu1_pathology",
-      "exposure": -2.0,
       "title": "Whole-Slide Pathology (CMU-1)",
       "geometry": "gsplats",
       "category": "medical",
       "script": "demo_gsplats_2d_cmu1_pathology.py",
       "dataset": "datasets/demos/gsplats_2d_cmu1_pathology.luxar.zarr",
-      "citation": "OpenSlide test data (Goode et al. 2013)"
+      "citation": "OpenSlide test data (Goode et al. 2013)",
+      "exposure": -2.0,
+      "note": "The wider clip guard does not replace this override: auto still misses the sparse 8.9%-lit subject during the percentile pass."
     },
     {
       "id": "gsplats_3d_flylight_mcfo_63x_brain",
@@ -811,13 +812,14 @@
     },
     {
       "id": "ppi_flow_field",
-      "exposure": -6.0,
       "title": "Protein-Interaction Flow Field",
       "geometry": "points+lines",
       "category": "networks",
       "script": "demo_ppi_flow_field.py",
       "dataset": "datasets/demos/ppi_flow_field_full.luxar.zarr",
-      "citation": "Luck et al. 2020"
+      "citation": "Luck et al. 2020",
+      "exposure": -6.0,
+      "note": "Auto now reaches the same -6-stop override and reports the clip guard exhausted there; the override remains deterministic and avoids the extra captures."
     },
     {
       "id": "gsplats_3d_drosophila_gastrulation",

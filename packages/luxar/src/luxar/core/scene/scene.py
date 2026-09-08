@@ -464,7 +464,7 @@ class Scene(Group):
         position: Tuple[float, float],
         *,
         name: Optional[str] = None,
-        size: Optional[Tuple[float, float]] = None,
+        size: Optional[Tuple[float, Optional[float]]] = None,
         opacity: float = 1.0,
         anchor: str = "top-left",
         blend_mode: str = "normal",
@@ -487,6 +487,8 @@ class Scene(Group):
             position: (x, y) in normalized screen coords [0, 1].
             name: Optional overlay name. Auto-generated if None.
             size: Optional (width, height) as fractions of viewport dimensions.
+                A ``None`` height keeps the image's own aspect ratio (the
+                viewer renders ``height: auto``), as for :meth:`add_video`.
             opacity: Opacity 0.0-1.0 (default 1.0).
             anchor: Anchor point for positioning (default 'top-left').
             blend_mode: CSS blend mode: 'normal', 'multiply', 'screen',

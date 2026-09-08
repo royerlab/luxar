@@ -43,7 +43,8 @@ standalone page declares the same in `styles/base/layout.css` (`#app`); a
 interaction/
 ├── picked-element-cache.ts   # the settled pick + its staleness guard
 ├── element-actions.ts        # attrs → safe URL + copy string (pure)
-└── canvas-actions.ts         # pointer/keyboard listeners, menu, clipboard, cursor
+├── canvas-actions.ts         # pointer/keyboard listeners, menu, clipboard, cursor
+└── canvas-gesture-ownership.ts # touch-action / callout stamp + Safari gesture cancel
 ```
 
 `initPicking` (`../picking/init-picking.ts`) constructs all three and registers

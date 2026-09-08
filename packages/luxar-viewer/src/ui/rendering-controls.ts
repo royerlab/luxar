@@ -188,7 +188,7 @@ export class RenderingControls {
 
     // Position on the left side with standard margins
     this.gui.domElement.style.position = 'fixed';
-    this.gui.domElement.style.top = '20px'; // Standard 20px margin
+    this.gui.domElement.style.top = 'calc(20px + env(safe-area-inset-top, 0px))';
     this.gui.domElement.style.left = '20px'; // Standard 20px margin
     this.gui.domElement.style.zIndex = String(config.ui.zIndex.renderingControls);
 

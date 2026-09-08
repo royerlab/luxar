@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any, List, Optional, Sequence
 
 import numpy as np
 
-from luxar.gsplats.calibration import CalibrationResult
+from luxar.gsplats.calibration import CalibrationResult, HeldOutPeak
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -37,6 +37,37 @@ def _safe_log_x(ax: "Axes") -> None:
     ax.grid(True, which="both", linestyle="--", alpha=0.3)
 
 
+def _selected_metric(
+    result: CalibrationResult,
+) -> tuple[np.ndarray, str, HeldOutPeak, str]:
+    """Return the selected curve, label, peak, and resolved metric name."""
+    curves = {
+        "psnr_minmax": (result.held_out_psnr_db, "held-out PSNR"),
+        "psnr_foreground": (
+            result.held_out_psnr_fg_db,
+            "foreground-only held-out PSNR",
+        ),
+        "psnr_fg_weighted": (
+            result.held_out_psnr_fg_weighted_db,
+            "foreground-weighted held-out PSNR",
+        ),
+        "gain": (result.held_out_gain_db, "held-out gain over predict-zero"),
+    }
+    resolved_metric = (
+        result.k_star_metric if result.k_star_metric in curves else "psnr_minmax"
+    )
+    values, label = curves[resolved_metric]
+    if (
+        result.k_star_metric != "psnr_minmax" and result.held_out_peak_selected is None
+    ) or len(values) != len(result.k_values_requested):
+        values, label = result.held_out_psnr_db, "held-out PSNR"
+        peak = result.held_out_peak
+        resolved_metric = "psnr_minmax"
+    else:
+        peak = result.held_out_peak_selected or result.held_out_peak
+    return np.asarray(values, dtype=float), label, peak, resolved_metric
+
+
 def _knee_display_idx(result: CalibrationResult) -> Optional[int]:
     """Index of the operating point (``k_knee``) in the sweep, or None.
 
@@ -45,7 +76,7 @@ def _knee_display_idx(result: CalibrationResult) -> Optional[int]:
     the K* marker, mirroring the CLI which prints the operating point only
     when it differs.
     """
-    peak = result.held_out_peak
+    _curve, _label, peak, _resolved_metric = _selected_metric(result)
     if not peak.k_knee or peak.k_knee == peak.k_star:
         return None
     if peak.k_knee not in result.k_values_requested:
@@ -63,15 +94,18 @@ def _plot_rate_distortion(
 ) -> None:
     ks = np.asarray(result.k_values_effective, dtype=float)
     held = np.asarray(result.held_out_psnr_db, dtype=float)
+    selected, selected_label, selected_peak, resolved_metric = _selected_metric(result)
     train = np.asarray(result.train_psnr_db, dtype=float)
     full = np.asarray(result.full_psnr_db, dtype=float)
     ssim = np.asarray(result.full_ssim, dtype=float)
     fit_t = np.asarray(result.fit_times_seconds, dtype=float)
-    k_star = result.held_out_peak.k_star
+    k_star = selected_peak.k_star
     psnr_ceiling = result.noise_floor.psnr_max_db
 
     # PSNR panel
     ax_psnr.plot(ks, held, "o-", color="C1", label="held-out")
+    if resolved_metric not in ("psnr_minmax", "gain"):
+        ax_psnr.plot(ks, selected, "d-", color="C6", label=selected_label)
     ax_psnr.plot(ks, train, "s--", color="C0", label="train")
     ax_psnr.plot(ks, full, "v:", color="C2", label="full volume")
     if math.isfinite(psnr_ceiling):
@@ -86,9 +120,10 @@ def _plot_rate_distortion(
             color="grey",
         )
     star_idx = result.k_values_requested.index(k_star)
+    displayed_selected = held if resolved_metric == "gain" else selected
     ax_psnr.plot(
         ks[star_idx],
-        held[star_idx],
+        displayed_selected[star_idx],
         marker="*",
         color="C3",
         markersize=18,
@@ -99,12 +134,12 @@ def _plot_rate_distortion(
     if knee_idx is not None:
         ax_psnr.plot(
             ks[knee_idx],
-            held[knee_idx],
+            displayed_selected[knee_idx],
             marker="D",
             color="C6",
             markersize=10,
             zorder=9,
-            label=f"knee={result.held_out_peak.k_knee:,}",
+            label=f"knee={selected_peak.k_knee:,}",
         )
     _safe_log_x(ax_psnr)
     ax_psnr.set_xlabel("Effective splat count K")
@@ -146,19 +181,21 @@ def _plot_rate_distortion(
 
 def _plot_blind_spot(fig: "Figure", ax: "Axes", result: CalibrationResult) -> None:
     ks = np.asarray(result.k_values_effective, dtype=float)
-    held = np.asarray(result.held_out_psnr_db, dtype=float)
+    held, held_label, selected_peak, resolved_metric = _selected_metric(result)
     train = np.asarray(result.train_psnr_db, dtype=float)
     psnr_ceiling = result.noise_floor.psnr_max_db
-    k_star = result.held_out_peak.k_star
+    k_star = selected_peak.k_star
     star_idx = result.k_values_requested.index(k_star)
 
-    ax.plot(ks, train, "s-", color="C0", label="train")
-    ax.plot(ks, held, "o-", color="C1", label="held-out (model selection)")
-    ax.fill_between(
-        ks, train, held, where=(train > held).tolist(), alpha=0.15, color="C3"
-    )
+    if resolved_metric == "psnr_minmax":
+        ax.plot(ks, train, "s-", color="C0", label="train")
+    ax.plot(ks, held, "o-", color="C1", label=f"{held_label} (model selection)")
+    if resolved_metric == "psnr_minmax":
+        ax.fill_between(
+            ks, train, held, where=(train > held).tolist(), alpha=0.15, color="C3"
+        )
 
-    if math.isfinite(psnr_ceiling):
+    if resolved_metric == "psnr_minmax" and math.isfinite(psnr_ceiling):
         ax.axhline(psnr_ceiling, color="grey", linestyle=":", linewidth=1)
         ax.text(
             ks[0],
@@ -177,7 +214,7 @@ def _plot_blind_spot(fig: "Figure", ax: "Axes", result: CalibrationResult) -> No
         color="C3",
         markersize=22,
         zorder=10,
-        label=f"K* = {k_star:,} ({result.held_out_peak.type})",
+        label=f"K* = {k_star:,} ({selected_peak.type})",
     )
     knee_idx = _knee_display_idx(result)
     if knee_idx is not None:
@@ -188,11 +225,11 @@ def _plot_blind_spot(fig: "Figure", ax: "Axes", result: CalibrationResult) -> No
             color="C6",
             markersize=12,
             zorder=9,
-            label=f"operating point (knee) = {result.held_out_peak.k_knee:,}",
+            label=f"operating point (knee) = {selected_peak.k_knee:,}",
         )
     _safe_log_x(ax)
     ax.set_xlabel("Effective splat count K")
-    ax.set_ylabel("PSNR (dB)")
+    ax.set_ylabel("Gain (dB)" if resolved_metric == "gain" else "PSNR (dB)")
     ax.set_title("Blind-spot cross-validation")
     ax.legend(loc="best", fontsize=10)
 
@@ -343,17 +380,29 @@ def render_calibration_report(
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    _selected_curve, _selected_label, selected_peak, resolved_metric = _selected_metric(
+        result
+    )
+    metric_description = resolved_metric
+    if result.k_star_metric != resolved_metric:
+        metric_description = f"{resolved_metric} (fallback from {result.k_star_metric} — curve undefined)"
+    knee_idx = _knee_display_idx(result)
 
     with PdfPages(output_path) as pdf:
         # ── Page 1: rate-distortion (4 panels) ────────────────────────
         fig, axes = plt.subplots(2, 2, figsize=(11, 8))
         suptitle = (
             f"Calibration: {tuple(result.volume_shape)} volume — "
-            f"K* = {result.held_out_peak.k_star:,} "
-            f"(type: {result.held_out_peak.type})"
+            f"K* = {selected_peak.k_star:,} "
+            f"(metric: {metric_description}, type: {selected_peak.type})"
         )
-        if _knee_display_idx(result) is not None:
-            suptitle += f" — operating point = {result.held_out_peak.k_knee:,}"
+        if knee_idx is not None:
+            suptitle += f" — operating point = {selected_peak.k_knee:,}"
+        if resolved_metric != "psnr_minmax":
+            suptitle += (
+                f"\npsnr_minmax K* = {result.held_out_peak.k_star:,} "
+                f"(type: {result.held_out_peak.type})"
+            )
         fig.suptitle(suptitle, fontsize=12)
         _plot_rate_distortion(
             fig,
@@ -373,14 +422,19 @@ def render_calibration_report(
         # Annotation: peak detection summary
         nf = result.noise_floor
         annotation = (
-            f"K* = {result.held_out_peak.k_star:,}  "
-            f"(type: {result.held_out_peak.type}, "
-            f"confidence: {result.held_out_peak.confidence_db:.2f} dB)\n"
+            f"K* = {selected_peak.k_star:,}  "
+            f"(metric: {metric_description}, type: {selected_peak.type}, "
+            f"confidence: {selected_peak.confidence_db:.2f} dB)\n"
         )
-        if _knee_display_idx(result) is not None:
+        if knee_idx is not None:
             annotation += (
                 f"operating point (diminishing returns) = "
-                f"{result.held_out_peak.k_knee:,} splats\n"
+                f"{selected_peak.k_knee:,} splats\n"
+            )
+        if resolved_metric != "psnr_minmax":
+            annotation += (
+                f"psnr_minmax K* = {result.held_out_peak.k_star:,} "
+                f"(type: {result.held_out_peak.type})\n"
             )
         annotation += (
             f"σ̂ = {nf.sigma_hat:.4f}, "
@@ -404,7 +458,7 @@ def render_calibration_report(
             ks_req = result.k_values_requested
             k_low = ks_req[0]
             k_high = ks_req[-1]
-            star_idx = ks_req.index(result.held_out_peak.k_star)
+            star_idx = ks_req.index(selected_peak.k_star)
             shape = tuple(result.volume_shape)
 
             rendered_low = _render_splat_path(splat_paths[0], shape)
@@ -426,12 +480,12 @@ def render_calibration_report(
                 rendered_star,
                 rendered_high,
                 k_low,
-                result.held_out_peak.k_star,
+                selected_peak.k_star,
                 k_high,
             )
             fig.suptitle(
                 f"Reconstruction slices  —  target vs K = {k_low:,} / "
-                f"K* = {result.held_out_peak.k_star:,} / K = {k_high:,}",
+                f"K* = {selected_peak.k_star:,} / K = {k_high:,}",
                 fontsize=11,
             )
             fig.tight_layout(rect=(0, 0, 1, 0.96))
@@ -457,7 +511,7 @@ def render_calibration_report(
         d = pdf.infodict()
         d["Title"] = f"Luxar calibration — {tuple(result.volume_shape)}"
         d["Subject"] = (
-            f"Recommended K = {result.held_out_peak.k_star} "
-            f"({result.held_out_peak.type})"
+            f"Recommended K = {selected_peak.k_star} "
+            f"({metric_description}, {selected_peak.type})"
         )
         d["Creator"] = "luxar gsplat cal"

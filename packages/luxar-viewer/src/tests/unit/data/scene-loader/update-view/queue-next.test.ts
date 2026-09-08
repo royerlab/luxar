@@ -29,6 +29,7 @@ import type { LinesDataLoader } from '../../../../../types/lines';
 import type { MeshDataLoader } from '../../../../../types/mesh';
 import type { DataLoader } from '../../../../../data/data-loader-types';
 import type { QueueNextCtx } from '../../../../../data/scene-loader/update-view/queue-next';
+import { log, Modules } from '../../../../../utils/log';
 
 // ============================================================================
 // Local fixtures
@@ -101,6 +102,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   uninstallRaf();
+  vi.restoreAllMocks();
 });
 
 // ============================================================================
@@ -135,6 +137,25 @@ describe('queueNext — pending state + rAF available', () => {
     // Waiters are NOT resolved on the pending branch — they carry over to
     // the re-entered (winning) pass, whose own queueNext resolves them.
     expect(ctx.spies.resolvePassWaiters).not.toHaveBeenCalled();
+  });
+
+  it('logs a rejected updateView re-entry instead of leaving an unhandled rejection', async () => {
+    const ctx = makeCtx();
+    const errorLog = vi.spyOn(log, 'error').mockImplementation(() => {});
+    const failure = new Error('synthetic re-entry failure');
+    ctx.spies.updateView.mockRejectedValue(failure);
+    ctx.viewStateQueue.setPending({ displayDims: [0, 1, 2] });
+
+    queueNext(ctx);
+    rafCallbacks[0](performance.now());
+    await Promise.resolve();
+
+    expect(errorLog).toHaveBeenCalledWith(
+      Modules.SCENE_LOADER,
+      'Queued updateView re-entry failed: synthetic re-entry failure',
+      failure
+    );
+    errorLog.mockRestore();
   });
 });
 

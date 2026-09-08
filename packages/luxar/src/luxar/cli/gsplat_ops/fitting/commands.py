@@ -214,9 +214,19 @@ def calibrate_command(
         "--k-star-metric",
         help=(
             "Metric for K* selection: psnr_minmax (default, manuscript) | "
-            "psnr_foreground | gain. For sparse/noise-free data, 'gain' "
-            "(dB over the predict-zero baseline) is far more reliable than the "
-            "background-dominated min--max PSNR."
+            "psnr_foreground | psnr_fg_weighted | gain. For sparse or "
+            "deconvolved data, psnr_fg_weighted balances signal fidelity against "
+            "background haze. gain is diagnostic only: it selects identically "
+            "to psnr_minmax because its baseline is constant across K."
+        ),
+    ),
+    fg_bg_ratio: float = typer.Option(
+        1.0,
+        "--fg-bg-ratio",
+        min=1e-12,
+        help=(
+            "Foreground:background total-weight ratio for psnr_fg_weighted "
+            "(default 1 gives equal total weight; must be > 0)."
         ),
     ),
     auto_region: bool = typer.Option(
@@ -337,6 +347,7 @@ def calibrate_command(
         array_key=array_key,
         axes=axes,
         k_star_metric=k_star_metric,
+        fg_bg_ratio=fg_bg_ratio,
         auto_region=auto_region,
         region_size=region_size,
         region_strategy=region_strategy,

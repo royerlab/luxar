@@ -3,9 +3,9 @@
 The min--max-range held-out PSNR is correct for raw/noisy data at a
 manageable scale (the manuscript regime), but it is background-dominated on
 large sparse volumes: a trivial predict-zero reconstruction already scores
-40-60 dB. The gain-over-baseline and foreground-restricted variants here are
-regime-robust alternatives; both are *additive* — the default K* selection
-still uses the min--max metric.
+40-60 dB. The gain-over-baseline, foreground-restricted, and foreground-weighted
+variants here are regime-robust alternatives; all are *additive* — the default
+K* selection still uses the min--max metric.
 """
 
 from __future__ import annotations
@@ -93,15 +93,57 @@ def held_out_gain_db(held_mse: float, baseline_mse: float) -> float:
     """dB improvement of the fit over the predict-zero baseline.
 
     ``10 * log10(baseline_mse / held_mse)``. 0 dB means "no better than
-    predicting zeros"; this metric plateaus meaningfully (it is not inflated
-    by trivially-reconstructed background), so it is the recommended
-    K*-selection metric for sparse / noise-free data.
+    predicting zeros". Because the baseline is constant across K, this curve
+    differs from min--max PSNR only by a constant and selects the same K*.
     """
     if not math.isfinite(baseline_mse) or baseline_mse <= 0.0:
         return float("nan")
     if held_mse <= 0.0:
         return float("inf")
     return float(10.0 * math.log10(baseline_mse / held_mse))
+
+
+def held_out_psnr_fg_weighted(
+    V_hat: np.ndarray,
+    V_original: np.ndarray,
+    held_mask: np.ndarray,
+    foreground_mask: np.ndarray,
+    fg_bg_ratio: float = 1.0,
+    data_range: Optional[float] = None,
+) -> float:
+    """Held-out PSNR with controlled foreground/background total weight.
+
+    Foreground voxels receive unit weight. Background voxels receive
+    ``n_fg / (fg_bg_ratio * n_bg)`` using counts from the held-out subset, so
+    ``fg_bg_ratio=1`` gives the two strata exactly equal total weight. Returns
+    ``nan`` when either held-out stratum is empty.
+    """
+    if not math.isfinite(fg_bg_ratio) or fg_bg_ratio <= 0.0:
+        raise ValueError(f"fg_bg_ratio must be finite and > 0, got {fg_bg_ratio}")
+    if V_hat.shape != V_original.shape:
+        raise ValueError(
+            f"shape mismatch: V_hat {V_hat.shape} vs V_original {V_original.shape}"
+        )
+    if held_mask.shape != V_original.shape or foreground_mask.shape != V_original.shape:
+        raise ValueError("held and foreground masks must match the volume shape")
+
+    held_fg = held_mask & foreground_mask
+    held_bg = held_mask & ~foreground_mask
+    n_fg = int(np.count_nonzero(held_fg))
+    n_bg = int(np.count_nonzero(held_bg))
+    if n_fg == 0 or n_bg == 0:
+        return float("nan")
+
+    fg_error = np.asarray(V_hat[held_fg] - V_original[held_fg], dtype=np.float64)
+    bg_error = np.asarray(V_hat[held_bg] - V_original[held_bg], dtype=np.float64)
+    bg_weight = n_fg / (fg_bg_ratio * n_bg)
+    weighted_mse = float(
+        (np.sum(fg_error**2) + bg_weight * np.sum(bg_error**2))
+        / (n_fg + bg_weight * n_bg)
+    )
+    if data_range is None:
+        data_range = float(V_original.max() - V_original.min())
+    return _psnr_db(weighted_mse, data_range)
 
 
 def held_out_psnr_foreground(

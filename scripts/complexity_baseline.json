@@ -1,5 +1,6 @@
 {
-  "_comment": "Cyclomatic-complexity baseline for scripts/check_complexity.py. Regenerate with: hatch run check-complexity --update-baseline. Each key is '<repo-relative-path>::<function-name>' and maps to the descending-sorted complexities of the over-limit functions with that name in that file (a list, because one file may hold several same-named functions). A function not listed here, or one whose complexity exceeds its baselined value, fails the check.",
+  "_comment": "Cyclomatic-complexity baseline for scripts/check_complexity.py. Regenerate with: hatch run check-complexity --update-baseline. Each key is '<repo-relative-path>::<function-name>' and maps to the descending-sorted complexities of the over-limit functions with that name in that file (a list, because one file may hold several same-named functions). A function not listed here, or one whose complexity exceeds its baselined value, fails the check. 'settings_fingerprint' records Ruff's normalized root resolved settings; a mismatch fails rather than silently retiring debt.",
+  "settings_fingerprint": "b39972c09c00ab8cbe0ca642f819cf106069db91a9e250ccadefc3f16f65abda",
   "functions": {
     "packages/luxar/src/luxar/cli/demo_commands.py::cache_clear": [
       29
@@ -156,9 +157,6 @@
     ],
     "packages/luxar/src/luxar/core/viewer_config.py::__post_init__": [
       12
-    ],
-    "packages/luxar/src/luxar/core/viewer_config.py::to_dict": [
-      11
     ],
     "packages/luxar/src/luxar/demos/_support/datasets/cache.py::cached_download": [
       12
@@ -578,7 +576,7 @@
       11
     ],
     "scripts/build_cuda_slurm.py::main": [
-      18
+      17
     ],
     "scripts/calibrate_gsplat_demos.py::_calibrate_demo": [
       11

@@ -11,7 +11,8 @@ import pytest
 import zarr
 
 from luxar._zarr_compat import create_array
-from luxar.encoding import ArrayDecoder, ArrayEncoder, SemanticType
+from luxar.encoding import ArrayDecoder, ArrayEncoder, EncodingMode, SemanticType
+from luxar.encoding.decoder import decode_coordinate_columns
 
 
 class TestBroadcastDecoding:
@@ -143,6 +144,213 @@ class TestQuantizedDecoding:
             assert decoded.dtype == np.float32
             # Should be close to original (with quantization error)
             assert np.allclose(decoded, data, atol=0.2)  # ~1/256 of range
+
+    @pytest.mark.parametrize(
+        ("encoding", "stored", "expected"),
+        [
+            (
+                {
+                    "name": "bounded_scalar_uint8",
+                    "min": 1.0,
+                    "max": 3.0,
+                    "bits": 8,
+                    "original_dtype": "uint8",
+                },
+                np.array([100], dtype=np.uint8),
+                np.array([2], dtype=np.uint8),
+            ),
+            (
+                {
+                    "name": "log_scalar_uint8",
+                    "max_log": np.log(5.0),
+                    "bits": 8,
+                    "original_dtype": "uint8",
+                },
+                np.array([200], dtype=np.uint8),
+                np.array([3], dtype=np.uint8),
+            ),
+            (
+                {
+                    "name": "geolog_scalar_uint8",
+                    "min_log": 0.0,
+                    "max_log": np.log(3.0),
+                    "bits": 8,
+                    "original_dtype": "uint8",
+                },
+                np.array([220], dtype=np.uint8),
+                np.array([3], dtype=np.uint8),
+            ),
+            (
+                {
+                    "name": "log_perchannel_u8",
+                    "col_lo": [np.log1p(1.0)],
+                    "col_hi": [np.log1p(3.0)],
+                    "bits": 8,
+                    "original_dtype": "uint8",
+                },
+                np.array([[100]], dtype=np.uint8),
+                np.array([[2]], dtype=np.uint8),
+            ),
+            (
+                {
+                    "name": "signed_log_perchannel_u8",
+                    "col_lo": [np.log1p(1.0)],
+                    "col_hi": [np.log1p(3.0)],
+                    "bits": 8,
+                    "original_dtype": "int8",
+                },
+                np.array([[100]], dtype=np.uint8),
+                np.array([[2]], dtype=np.int8),
+            ),
+            (
+                {
+                    "name": "linear_perchannel_u8",
+                    "col_lo": [1.0],
+                    "col_hi": [3.0],
+                    "bits": 8,
+                    "original_dtype": "uint8",
+                },
+                np.array([[100]], dtype=np.uint8),
+                np.array([[2]], dtype=np.uint8),
+            ),
+            (
+                {
+                    "name": "geolog_perchannel_u8",
+                    "col_lo": [0.0],
+                    "col_hi": [np.log(3.0)],
+                    "bits": 8,
+                    "zero_level": True,
+                    "original_dtype": "uint8",
+                },
+                np.array([[220]], dtype=np.uint8),
+                np.array([[3]], dtype=np.uint8),
+            ),
+            (
+                {"name": "rgb_uint8", "original_dtype": "uint8"},
+                np.array([[200]], dtype=np.uint8),
+                np.array([[1]], dtype=np.uint8),
+            ),
+        ],
+        ids=[
+            "bounded-scalar",
+            "log-scalar",
+            "geolog-scalar",
+            "log-perchannel",
+            "signed-log-perchannel",
+            "linear-perchannel",
+            "geolog-perchannel",
+            "color",
+        ],
+    )
+    def test_quantized_integer_restoration_rounds_before_cast(
+        self,
+        tmp_path,
+        encoding: dict,
+        stored: np.ndarray,
+        expected: np.ndarray,
+    ) -> None:
+        group = zarr.open_group(tmp_path, mode="w")
+        create_array(group, "test", data=stored)
+        group["test"].attrs["encoding"] = encoding
+
+        decoded = ArrayDecoder().decode(group["test"], group)
+
+        np.testing.assert_array_equal(decoded, expected)
+
+    def test_coordinate_column_integer_restoration_rounds_before_cast(
+        self, tmp_path
+    ) -> None:
+        group = zarr.open_group(tmp_path, mode="w")
+        create_array(group, "test", data=np.array([[100, 200]], dtype=np.uint8))
+        group["test"].attrs["encoding"] = {
+            "name": "linear_perchannel_u8",
+            "col_lo": [1.0, 1.0],
+            "col_hi": [3.0, 3.0],
+            "bits": 8,
+            "original_dtype": "uint8",
+        }
+
+        decoded = decode_coordinate_columns(group["test"], [0], group)
+
+        np.testing.assert_array_equal(decoded, np.array([[2]], dtype=np.uint8))
+
+    @pytest.mark.parametrize(
+        ("min_value", "max_value", "stored", "expected"),
+        [
+            (0.0, 255.6, 255, 255),
+            (-0.6, 254.4, 0, 0),
+        ],
+    )
+    def test_integer_restoration_clamps_to_dtype_range(
+        self,
+        tmp_path,
+        min_value: float,
+        max_value: float,
+        stored: int,
+        expected: int,
+    ) -> None:
+        group = zarr.open_group(tmp_path, mode="w")
+        create_array(group, "test", data=np.array([stored], dtype=np.uint8))
+        group["test"].attrs["encoding"] = {
+            "name": "bounded_scalar_uint8",
+            "min": min_value,
+            "max": max_value,
+            "bits": 8,
+            "original_dtype": "uint8",
+        }
+
+        decoded = ArrayDecoder().decode(group["test"], group)
+
+        np.testing.assert_array_equal(decoded, np.array([expected], dtype=np.uint8))
+
+    def test_integer_roundtrip_is_exact_below_half_unit_quantum(self, tmp_path) -> None:
+        data = np.arange(1, 33, dtype=np.uint8)
+        group = zarr.open_group(tmp_path, mode="w")
+        ArrayEncoder().encode(
+            data,
+            group,
+            "test",
+            SemanticType.POSITIVE_SCALAR,
+            mode=EncodingMode.AUTO,
+            allow_lut=False,
+            deduplicate=False,
+        )
+
+        encoding = group["test"].attrs["encoding"]
+        quantum = (encoding["max"] - encoding["min"]) / (2 ** encoding["bits"] - 1)
+        assert quantum < 0.5
+
+        decoded = ArrayDecoder().decode(group["test"], group)
+
+        np.testing.assert_array_equal(decoded, data)
+
+    def test_coarse_integer_roundtrip_stays_within_quantization_bound(
+        self, tmp_path
+    ) -> None:
+        data = np.arange(100, 25_501, dtype=np.uint16)
+        group = zarr.open_group(tmp_path, mode="w")
+        ArrayEncoder().encode(
+            data,
+            group,
+            "test",
+            SemanticType.POSITIVE_SCALAR,
+            mode=EncodingMode.AUTO,
+            allow_lut=False,
+            deduplicate=False,
+        )
+
+        encoding = group["test"].attrs["encoding"]
+        assert encoding["name"] == "bounded_scalar_uint8"
+        quantum = (encoding["max"] - encoding["min"]) / (2 ** encoding["bits"] - 1)
+
+        decoded = ArrayDecoder().decode(group["test"], group)
+        error = decoded.astype(np.int64) - data.astype(np.int64)
+
+        assert np.max(np.abs(error)) <= quantum / 2 + 0.5
+        assert error.min() < 0 < error.max()
+        assert abs(float(np.mean(error))) < 0.1, (
+            "mean error checks directional bias, not exact reconstruction"
+        )
 
     def test_decode_log_scalar_uint8(self):
         """Test decoding log scalar uint8."""
