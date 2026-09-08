@@ -158,6 +158,7 @@ export function createVideoMatteCompositor(
   let setup: NonNullable<ReturnType<typeof setupGl>> | undefined;
 
   const sizeToVideo = (): void => {
+    if (!video.videoWidth || !video.videoHeight) return;
     const [w, h] = stackedFrameSize(video.videoWidth, video.videoHeight);
     if (canvas.width !== w || canvas.height !== h) {
       canvas.width = w;

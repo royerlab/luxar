@@ -61,6 +61,22 @@ describe('createVideoMatteCompositor', () => {
     expect(matte.canvas.dataset.hasFrame).toBeUndefined(); // readyState 0: nothing was drawn
   });
 
+  it('keeps the default canvas size until video metadata is available', () => {
+    const video = document.createElement('video');
+    const matte = createVideoMatteCompositor(video);
+
+    expect([matte.canvas.width, matte.canvas.height]).toEqual([300, 150]);
+    matte.start();
+    matte.stop();
+    expect([matte.canvas.width, matte.canvas.height]).toEqual([300, 150]);
+
+    Object.defineProperty(video, 'videoWidth', { value: 768, configurable: true });
+    Object.defineProperty(video, 'videoHeight', { value: 1536, configurable: true });
+    video.dispatchEvent(new Event('loadedmetadata'));
+    expect([matte.canvas.width, matte.canvas.height]).toEqual([768, 768]);
+    matte.dispose();
+  });
+
   it('marks the canvas and reports exactly once after the first frame is drawn', () => {
     const video = document.createElement('video');
     Object.defineProperty(video, 'readyState', {
