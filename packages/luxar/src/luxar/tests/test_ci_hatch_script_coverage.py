@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import re
 import tomllib
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
 
 import yaml
 
@@ -33,16 +32,21 @@ def _default_scripts(pyproject_text: str) -> Mapping[str, str | list[str]]:
     return pyproject["tool"]["hatch"]["envs"]["default"]["scripts"]
 
 
-def _run_commands(value: Any) -> Iterator[str]:
-    if isinstance(value, Mapping):
-        for key, child in value.items():
-            if key == "run" and isinstance(child, str):
-                yield child
-            else:
-                yield from _run_commands(child)
-    elif isinstance(value, list):
-        for child in value:
-            yield from _run_commands(child)
+def _workflow_run_commands(workflow: Mapping[str, object]) -> list[str]:
+    jobs = workflow.get("jobs")
+    assert isinstance(jobs, Mapping)
+    commands = []
+    for job in jobs.values():
+        if not isinstance(job, Mapping):
+            continue
+        steps = job.get("steps", [])
+        assert isinstance(steps, list)
+        commands.extend(
+            step["run"]
+            for step in steps
+            if isinstance(step, Mapping) and isinstance(step.get("run"), str)
+        )
+    return commands
 
 
 def _invoked_hatch_scripts(commands: Sequence[str]) -> set[str]:
@@ -65,12 +69,14 @@ def _uncovered_check_static_members(
 
 def _repository_workflow_commands() -> list[str]:
     workflow_dir = PROJECT_ROOT / ".github" / "workflows"
-    workflows = [
-        yaml.safe_load(path.read_text(encoding="utf-8"))
-        for path in sorted(workflow_dir.iterdir())
-        if path.suffix in {".yml", ".yaml"}
-    ]
-    return list(_run_commands(workflows))
+    commands = []
+    for path in sorted(workflow_dir.iterdir()):
+        if path.suffix not in {".yml", ".yaml"}:
+            continue
+        workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert isinstance(workflow, Mapping)
+        commands.extend(_workflow_run_commands(workflow))
+    return commands
 
 
 def test_every_check_static_member_is_reached_or_explicitly_exempted() -> None:
