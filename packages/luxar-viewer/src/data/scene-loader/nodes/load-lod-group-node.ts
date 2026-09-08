@@ -562,13 +562,21 @@ export async function loadLodGroupNode(
       // pool, so once loaded they stay resident until scene teardown (matching
       // the prior behaviour, just deferred to first view). Nested leaf / lod
       // loaders self-register during loadChildren, which runs only on activation.
+      // Activation is NOT idempotent by nature — `loadChildren` attaches a fresh
+      // THREE.Group every time — so latch it after the first success. The
+      // registry no longer re-kicks group children for staleness, but any
+      // caller of `ensureLoaded` (an explicit retry after success, a future
+      // path) must never end up with two copies of the subtree.
+      let activated = false;
       const entryChild = attachLazyChild(
         placeholder,
         lazyChild,
         coverageFraction,
         ctx,
         async () => {
+          if (activated) return;
           await loadChildren(lazyChild, placeholder, childLoc, ctx);
+          activated = true;
           // The subtree's part leaves registered into the sweep maps just
           // now, mid-session — but refinement is only scheduled at
           // update-view tails, so without this kick their additive ladders

@@ -688,6 +688,40 @@ describe('loadLodGroupNode — lazy level loading', () => {
     }
   );
 
+  it('activating a deferred GROUP child a second time loads nothing (no duplicate subtree)', async () => {
+    // `loadChildren` attaches a fresh THREE.Group on every call, so a second
+    // `ensureLoaded` (a stale re-kick, an explicit retry after success) would
+    // hang a second full copy of the subtree under the placeholder: doubled
+    // geometry, duplicate names, re-registered loaders, leaked buffers (#2632).
+    attachStubChildren();
+    const reg = makeReg();
+    const ctx = makeCtx(reg);
+    const node = makeLodGroupNode(
+      [makeChildNode('/lod/child_0', 0), makeGroupChildNode('/lod/child_1', 0.5, 'gsplats')],
+      { default_level: 0 }
+    );
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+    const groupChild = reg.get('/lod')!.children[1];
+
+    groupChild.ensureLoaded!();
+    await vi.waitFor(() => expect(groupChild.ready).toBe(true));
+    const loadsAfterFirst = loadSceneNodesMock.mock.calls.filter(
+      (c) => (c[0] as SceneNode).path === '/lod/child_1'
+    ).length;
+    expect(loadsAfterFirst).toBe(1);
+
+    groupChild.loading = false; // what the registry's finally does
+    groupChild.ensureLoaded!();
+    await vi.waitFor(() => expect(groupChild.loading).toBe(false));
+    const loadsAfterSecond = loadSceneNodesMock.mock.calls.filter(
+      (c) => (c[0] as SceneNode).path === '/lod/child_1'
+    ).length;
+    expect(loadsAfterSecond).toBe(1);
+    expect(groupChild.ready).toBe(true);
+    // No second refinement kick either: nothing new registered.
+    expect(ctx.kickRefinementIfIdle).toHaveBeenCalledTimes(1);
+  });
+
   it('re-sorts children to ascending coverage_fraction (and warns) when the order is wrong', async () => {
     // Defense-in-depth for malformed / hand-authored scenes: the selector assumes
     // ascending thresholds. Given out-of-order thresholds (0, 1.0, 0.5), the loader

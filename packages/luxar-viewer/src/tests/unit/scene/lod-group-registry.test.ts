@@ -3155,6 +3155,32 @@ describe('LODGroupRegistry — settle-gated fine reload', () => {
     expect(children[0].object.visible).toBe(true);
   });
 
+  it('never re-activates a stale deferred GROUP child — its leaves are sweep-driven (#2632)', () => {
+    // The overview recipe's fine branch: a READY group child (a bare Group, no
+    // nodeType) whose stamped leaf is stale for the current version. Its
+    // `ensureLoaded` is `loadChildren`, which attaches a fresh subtree every
+    // time — re-firing it for staleness hung a second full copy of the branch
+    // under the placeholder. The leaves are sweep-registered and re-stamp
+    // themselves, so staleness must show the coarse fallback and kick nothing.
+    const ensureLoaded = vi.fn();
+    const group = makeChild(0.5);
+    group.ready = true;
+    group.ensureLoaded = ensureLoaded;
+    const leaf = new THREE.Group();
+    leaf.userData = { nodeType: 'gsplats', loadedViewVersion: 1, visibleSplatCount: 10 };
+    group.object.add(leaf);
+    const children = [makeGsplatChild(0, 2), group];
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2); // leaf stale at v2
+    reg.register(makeEntry(children, 0, '/g'));
+    for (let i = 0; i < 14; i++) reg.evaluatePerFrame(); // well past the settle window
+
+    expect(ensureLoaded).not.toHaveBeenCalled();
+    // Staleness WAS detected (not a vacuous pass): the group is the aspiration
+    // yet the coarse fresh level is what is displayed.
+    expect(children[0].object.visible).toBe(true);
+    expect(group.object.visible).toBe(false);
+  });
+
   it('never reloads an eager (sweep-driven) coarse level — it has no ensureLoaded', () => {
     // Both children stale + ready but NEITHER has ensureLoaded (eager levels):
     // the registry must not attempt a reload (that would throw on undefined).

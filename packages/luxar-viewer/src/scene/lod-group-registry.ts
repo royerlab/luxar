@@ -1760,8 +1760,16 @@ export class LODGroupRegistry {
     // re-firing the same ``ensureLoaded``, until the level is ready, fresh, AND
     // complete. Eager (coarse) levels have no ``ensureLoaded`` and stay
     // sweep-driven, so this only ever targets lazy levels.
+    // LEAF levels only. A deferred GROUP child (the overview recipe's fine
+    // partition / nested lod branch) has an ``ensureLoaded`` too, but its
+    // expensive step is ``loadChildren`` — re-running it attaches a SECOND copy
+    // of the whole subtree under the placeholder (double-drawn geometry,
+    // duplicate names, re-registered loaders, leaked buffers). Its leaves are
+    // sweep-registered and re-stamp themselves, so staleness needs no kick.
     const needsReloadOrRefine =
-      aspirationReady && (!aspirationFresh || (aspiration!.hasMoreLODs?.() ?? false));
+      aspirationReady &&
+      isTrackedLeaf(aspiration!) &&
+      (!aspirationFresh || (aspiration!.hasMoreLODs?.() ?? false));
     if (settled && needsReloadOrRefine && aspiration!.ensureLoaded) {
       this.maybeKickReload(entry, aspiration!);
     }
