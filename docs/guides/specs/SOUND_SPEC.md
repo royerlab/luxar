@@ -116,7 +116,8 @@ scene.add_sound(
   (`inverse` default, `linear`, `exponential`), `ref_distance`, `max_distance`,
   `rolloff`, optional `cone_inner_deg` / `cone_outer_deg` / `cone_outer_gain`
   and an `orientation` vector. Defaults derive from the scene scale like the fly
-  speed does (`ref_distance = scale/20`, `max_distance = scale`).
+  speed does (`ref_distance = scale/20`, `max_distance = scale`); the viewer
+  clamps its resolved `max_distance` to at least `ref_distance`.
 
 ### 3.2 On disk
 
@@ -235,7 +236,8 @@ waypoint events above.
   warm and unobtrusive under the narration, and a clip is judged by listening
   to the WHOLE loop, since many start gently and turn harsh.
 - **Cluster sounds** (Phase 2): one spatial source per story at the cluster
-  centre, `ref_distance` from the blob radius, live only at that story.
+  centre, distance falloff tuned from the story's waypoint camera, live only at
+  that story.
 
 ## 6. Phases
 

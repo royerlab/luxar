@@ -479,6 +479,7 @@ def test_add_story_sounds_authors_a_bed_and_one_narration_per_slot(
     assert hum_a["ref_distance"] == pytest.approx(
         camera_a * demo.HUM_REF_DISTANCE_PER_CAMERA_DISTANCE
     )
+    assert 20 * np.log10(hum_a["ref_distance"] / camera_a) == pytest.approx(-13.0)
 
 
 def test_add_story_sounds_stays_silent_without_an_engine_and_survives_no_bed(
