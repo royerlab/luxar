@@ -31,7 +31,7 @@ Provide the **shared spatial-ordering infrastructure** that drives all three geo
 **Morton (Z-order)** — bit interleaving:
 
 1. `morton_encode_nd(coords, bits_per_dim)`:
-   - Tries a Numba JIT-compiled kernel (`_get_morton_numba_kernel`) for fast single-threaded encoding (`@numba.njit("void(int64[:, ::1], int64, uint64[::1])", cache=True)`, no `parallel`/`prange`); the explicit signature eagerly compiles the kernel and requires C-contiguous input/output arrays
+   - Tries a Numba JIT-compiled kernel (`_get_morton_numba_kernel`) for fast single-threaded encoding (explicit typed signature, no `parallel`/`prange`); the signature eagerly compiles the kernel, requires C-contiguous input/output arrays, and accepts read-only input
    - Falls back to vectorized NumPy if Numba is unavailable or the kernel fails to compile (warned once)
    - Returns uint64 codes, shape `(N,)`
 

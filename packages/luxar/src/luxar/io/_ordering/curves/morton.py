@@ -18,9 +18,15 @@ def _get_morton_numba_kernel():  # type: ignore[no-untyped-def]
     """Lazy-compile the Numba Morton encoding kernel on first use."""
     import numba
 
-    @numba.njit(  # type: ignore[misc]
-        "void(int64[:, ::1], int64, uint64[::1])", cache=True
+    coords_type = numba.types.Array(  # type: ignore[no-untyped-call]
+        numba.int64, 2, "C", readonly=True
     )
+    out_type = numba.types.Array(  # type: ignore[no-untyped-call]
+        numba.uint64, 1, "C"
+    )
+    signature = numba.void(coords_type, numba.int64, out_type)
+
+    @numba.njit(signature, cache=True)  # type: ignore[misc]
     def _morton_kernel(coords: np.ndarray, bits_per_dim: int, out: np.ndarray) -> None:
         n_points = coords.shape[0]
         n_dims = coords.shape[1]
@@ -72,8 +78,8 @@ def morton_encode_nd(coords: np.ndarray, bits_per_dim: int = 16) -> np.ndarray:
             _morton_numba_kernel = False
 
     if _morton_numba_kernel:
-        # The eager signature requires C-contiguous input and output, so keep
-        # both this output buffer and the explicit contiguous input conversion.
+        # The eager signature accepts read-only C-contiguous input and requires
+        # writable C-contiguous output, so keep both buffers explicitly contiguous.
         out = np.empty(n_points, dtype=np.uint64)
         coords_i64 = np.ascontiguousarray(coords, dtype=np.int64)
         _morton_numba_kernel(coords_i64, bits_per_dim, out)

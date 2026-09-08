@@ -167,7 +167,20 @@ def test_morton_numba_kernel_uses_contiguous_signature() -> None:
     kernel = _morton_mod._get_morton_numba_kernel()
 
     assert kernel.signatures[0][0].layout == "C"
+    assert not kernel.signatures[0][0].mutable
     assert kernel.signatures[0][2].layout == "C"
+
+
+def test_morton_numba_accepts_readonly_contiguous_input() -> None:
+    pytest.importorskip("numba")
+    coords = np.ascontiguousarray([[0, 0, 0], [1, 2, 3], [7, 6, 5]], dtype=np.int64)
+    writable = coords.copy()
+    coords.setflags(write=False)
+
+    np.testing.assert_array_equal(
+        _encode_forcing_numba(morton_encode_nd, coords),
+        _encode_forcing_numba(morton_encode_nd, writable),
+    )
 
 
 def test_hilbert_numba_numpy_parity() -> None:
@@ -203,7 +216,7 @@ def test_numba_compile_failure_warns_once_before_fallback(
     numba = pytest.importorskip("numba")
 
     def fail_compile(signature=None, **_kwargs):
-        if isinstance(signature, str):
+        if signature is not None:
             raise RuntimeError("JIT unavailable")
 
         def leave_uncompiled(function):
