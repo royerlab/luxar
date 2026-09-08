@@ -38,9 +38,11 @@ reports all ordinary failures together instead of stopping at the first one.
 A killed check still stops immediately, and local runs can request fail-fast
 behavior with `--bail`. The static checks include the `check:overrides` pnpm
 security-pin guard, dependency-cruiser layer rules, and the `check:knip:ci`
-unused-export/unused-file gate. Coverage thresholds and their recorded
+unused-export/unused-file gate. Coverage thresholds and their last accepted
 measurements live together in `coverage-thresholds.mjs`; after coverage moves,
-run `pnpm check:coverage-slack -- --print` and refresh both maps atomically.
+run `pnpm check:coverage-slack -- --print`, update floors when required, and
+refresh the recorded measurements when accepting the new state. A downward
+refresh resets the erosion baseline and should be called out in the PR.
 `check:static` omits the coverage test and slack check, so `make check-all` does
 not re-run a suite that `make test-all` already ran.
 

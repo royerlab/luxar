@@ -226,7 +226,7 @@ export function parseArgs(argv) {
 /** Format measured rows as a paste-ready COVERAGE_RECORDED declaration. */
 export function formatRecordedBaselines(rows) {
   const lines = [
-    '/** Coverage measurements from the run that established each floor. */',
+    '/** Last accepted coverage measurements for each floor. */',
     'export const COVERAGE_RECORDED = {',
   ];
   for (let index = 0; index < rows.length;) {

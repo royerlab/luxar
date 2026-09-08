@@ -10,11 +10,11 @@
  *      measured value and fails when the gap grows past its budget, so a floor
  *      cannot quietly decay back into decoration.
  *
- * `COVERAGE_RECORDED` records the measurement each floor was set from
+ * `COVERAGE_RECORDED` stores the last accepted measurement for each floor
  * (2026-09, 686 files). Re-derive with `pnpm test:coverage`, then use
  * `pnpm check:coverage-slack -- --print` to emit a paste-ready replacement.
- * Any test change can move these measurements, so updating tests and refreshing
- * both maps is one atomic change.
+ * Lowering a recorded value resets the erosion baseline, so call that decision
+ * out in the PR rather than treating it as routine housekeeping.
  *
  * ## vitest 4 semantics — read before editing
  *
@@ -99,7 +99,7 @@ export const COVERAGE_THRESHOLDS = {
   'src/rendering/**': { lines: 74, functions: 75, branches: 70 },
 };
 
-/** Coverage measurements from the run that established each floor. */
+/** Last accepted coverage measurements for each floor. */
 export const COVERAGE_RECORDED = {
   lines: 89.09,
   statements: 88.18,
