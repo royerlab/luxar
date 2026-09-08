@@ -849,9 +849,9 @@ export class DimensionSliders {
   }
 
   /**
-   * Coarse pointers only: `◀ track ▶`, one dimension step per tap (the
-   * authored step, else 1 % of the range — the same base step as the wheel
-   * and the [ / ] keys), in the same wrapper the play button later joins.
+   * Coarse pointers only: `‹ track ›`, one dimension step per tap (the
+   * authored step, else 1 % of the range — the same base step as the [ / ]
+   * keys), in the same wrapper the play button later joins.
    * A finger cannot scroll a slider by a single step, and a phone has no
    * bracket keys; the buttons are the missing precise input.
    */
@@ -866,7 +866,7 @@ export class DimensionSliders {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'luxar-dimension-slider__step';
-      btn.textContent = direction < 0 ? '\u25C0' : '\u25B6';
+      btn.textContent = direction < 0 ? '\u2039' : '\u203A';
       btn.setAttribute('aria-label', `${direction < 0 ? 'Previous' : 'Next'} ${name}`);
       this.sliderEvents.on(btn, 'click', () => {
         const dimMeta = this.dims.metadata?.[dimIndex];
@@ -1166,7 +1166,7 @@ export class DimensionSliders {
     playButton.className = 'luxar-dimension-slider__play-btn';
     playButton.setAttribute('aria-label', 'Play/Pause animation (right-click for settings)');
     playButton.setAttribute('title', 'Play/Pause (right-click for settings)');
-    playButton.textContent = '⏵'; // Play icon, distinct from the coarse step arrow
+    playButton.textContent = '▶';
 
     // Click handler for play/pause
     const playClickHandler = () => {
@@ -1527,7 +1527,7 @@ export class DimensionSliders {
       playButton.textContent = '⏸'; // Pause icon
       playButton.classList.add('luxar-dimension-slider__play-btn--playing');
     } else {
-      playButton.textContent = '⏵'; // Play icon, distinct from the coarse step arrow
+      playButton.textContent = '▶';
       playButton.classList.remove('luxar-dimension-slider__play-btn--playing');
     }
   }

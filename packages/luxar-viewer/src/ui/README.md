@@ -315,8 +315,8 @@ animManager.addEventListener('complete', (e) => {
 - Integrates with `AnimationController` for frame updates
 - Updates dimension values via `SceneDimsManager`
 - CSS styling in `styles/components/dimension-sliders.css`
-- Coarse pointers (`getInputProfile().coarsePointer`): each slider row gains `◀ ▶`
-  step buttons (one base step per tap — the wheel's and `[ ]`'s step) in the same
+- Coarse pointers (`getInputProfile().coarsePointer`): each slider row gains `‹ ›`
+  step buttons (one base step per tap — the `[ ]` step) in the same
   controls wrapper the play button joins, and the dimension name becomes a chip that
   selects that dimension as the `[ ]` target (`SliderConfig.onSelectDimension` tells
   the input layer). Neither exists on a mouse machine; their styling lives in

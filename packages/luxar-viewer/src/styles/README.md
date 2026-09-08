@@ -50,7 +50,7 @@ a local `--luxar-hit-min` (36px secondary, 24px thumbs on a 24px hit band,
 16px panel inputs (iOS focus-zoom), `:active` press fills with the sticky post-tap
 `:hover` reset to the rest state under `(any-hover: none)`, tips on keyboard focus only,
 and the base look of the two elements that exist only on coarse pointers (the
-dimension sliders' `◀ ▶` step buttons and name chip). See the UI Design Guide §11.5.
+dimension sliders' `‹ ›` step buttons and name chip). See the UI Design Guide §11.5.
 
 ## CSS Custom Properties
 

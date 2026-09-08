@@ -3,7 +3,7 @@
  *
  * CONTRACT (enforced by tests/unit/styles/coarse-pointer-css.test.ts):
  *   - The top level of this file contains ONLY `@media` blocks keyed on the
- *     pointer / hover media features (`(pointer: coarse)`, `(hover: none)`,
+ *     pointer / hover media features (`(pointer: coarse)`, `(any-hover: none)`,
  *     `(any-hover: hover)`), so a mouse-and-keyboard machine receives byte-
  *     identical styling with or without this file.
  *   - Every touch adaptation in the stylesheet tree lives HERE, not scattered
@@ -15,7 +15,7 @@
  *
  * Why two features. `(pointer: coarse)` = the primary pointer is a finger:
  * targets grow, panels clamp to the viewport, safe areas are honoured.
- * `(hover: none)` = no pointer can hover: hover-revealed affordances are dead,
+ * `(any-hover: none)` = no pointer can hover: hover-revealed affordances are dead,
  * so the rail must not idle-dim and tooltips need another route. An iPad with
  * a Magic Keyboard trackpad matches the first but NOT the second, and keeps
  * hover-driven rail visibility. Rail labels are handled separately below
@@ -279,7 +279,7 @@
     height: 28px;
     border-radius: 14px;
   }
-  /* ◀ ▶ step buttons and the name chip exist only under a coarse pointer
+  /* ‹ › step buttons and the name chip exist only under a coarse pointer
      (dimension-sliders.ts creates them there), so their base look lives here. */
   .luxar-dimension-slider__step {
     flex: 0 0 auto;
@@ -387,6 +387,9 @@
   .luxar-control-rail__btn:hover:not(:active):not(.is-active) {
     background: none;
     color: var(--luxar-text-muted);
+  }
+  .luxar-control-rail__collapse:hover:not(:active):not(.is-active) {
+    color: var(--luxar-text-secondary);
   }
   .luxar-control-rail__btn:active,
   .luxar-control-rail__chip:active,

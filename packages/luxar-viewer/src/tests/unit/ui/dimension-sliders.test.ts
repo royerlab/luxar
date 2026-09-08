@@ -1094,7 +1094,7 @@ describe('DimensionSliders - coarse pointer affordances', () => {
 
   afterEach(() => resetInputProfileForTests());
 
-  it('adds ◀ ▶ step buttons that move the dimension by one base step', () => {
+  it('adds ‹ › step buttons that move the dimension by one base step', () => {
     setInputProfileOverride('touch');
     const sliders = build();
     const frameSteps = Array.from(
@@ -1104,6 +1104,7 @@ describe('DimensionSliders - coarse pointer affordances', () => {
       'Previous Frame',
       'Next Frame',
     ]);
+    expect(frameSteps.map((b) => b.textContent)).toEqual(['‹', '›']);
     frameSteps[1].click();
     expect(sceneDimsManager.setDimensionValue).toHaveBeenLastCalledWith(3, 8);
     frameSteps[0].click();
@@ -1160,7 +1161,7 @@ describe('DimensionSliders - coarse pointer affordances', () => {
       'luxar-dimension-slider__step',
       'luxar-dimension-slider__play-btn',
     ]);
-    expect(frameWrapper.lastElementChild?.textContent).toBe('⏵');
+    expect(frameWrapper.lastElementChild?.textContent).toBe('▶');
     sliders.dispose();
   });
 
