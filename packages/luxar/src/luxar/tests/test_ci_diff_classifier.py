@@ -45,6 +45,7 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[5]
 WORKFLOW = REPO / ".github/workflows/ci.yml"
+COVERAGE_WORKFLOW = REPO / ".github/workflows/coverage.yml"
 
 #: One row per gate input whose required domain is not guaranteed by its ordinary
 #: source extension or package path, so an explicit pattern alternative is required.
@@ -903,14 +904,8 @@ def test_live_ci_checkouts_attest_one_dispatched_dev_sha(workflow: str) -> None:
     capture_step = next(
         step for step in changes["steps"] if step.get("id") == "dispatched-dev"
     )
-    # The dev SHA is captured for dispatched repair windows AND the coverage cron.
-    # A dispatch tests HEAD (validated `--ref dev`); a schedule cron checks out the
-    # default branch, so it resolves origin/dev instead.
-    assert capture_step["if"] == (
-        "github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'"
-    )
+    assert capture_step["if"] == "github.event_name == 'workflow_dispatch'"
     assert "git rev-parse HEAD" in capture_step["run"]
-    assert "git rev-parse origin/dev" in capture_step["run"]
     for job_name, checkout in checkout_jobs.items():
         if job_name == "changes":
             continue
@@ -990,16 +985,10 @@ def test_obsidian_routed_jobs_have_timeout_headroom(workflow: str) -> None:
 
 
 def test_ci_repair_window_is_dispatched_on_dev(workflow: str) -> None:
-    """Promotion requests repair windows via dispatch, not the coverage cron.
-
-    A ``schedule`` cron exists (it is the reliable home of the coverage gate --
-    pinned by ``test_pull_requests_skip_coverage_while_other_events_enforce_it``),
-    but the promotion service still repairs cancelled contexts with an explicit
-    ``workflow_dispatch --ref dev``, never a default-branch cron.
-    """
+    """Promotion requests repair windows explicitly instead of default-branch crons."""
     # BaseLoader preserves the YAML 1.1 ``on`` key instead of coercing it to True.
     parsed = yaml.load(workflow, Loader=yaml.BaseLoader)
-    assert "schedule" in parsed["on"]
+    assert "schedule" not in parsed["on"]
     dispatch = parsed["on"]["workflow_dispatch"]
     full_matrix = dispatch["inputs"]["full_python_matrix"]
     assert full_matrix["required"] == "false"
@@ -1010,48 +999,10 @@ def test_ci_repair_window_is_dispatched_on_dev(workflow: str) -> None:
     matrix_line = next(
         line for line in workflow.splitlines() if "python-version: ${{" in line
     )
+    assert "github.event.schedule" not in matrix_line
     assert (
         "github.event_name == 'workflow_dispatch' && inputs.full_python_matrix"
         in matrix_line
-    )
-
-
-def test_pull_requests_skip_coverage_while_other_events_enforce_it(
-    workflow: str,
-) -> None:
-    """The per-event coverage split is pinned so the 89% gate cannot be lost silently.
-
-    Coverage instrumentation is the dominant cost of ``python-tests``, so PRs run
-    the ``-m 'not slow'`` suite plain (``test-nocov``) while every non-PR event runs
-    ``test-cov`` (coverage + the 89% ``fail_under`` gate). The scheduled cron is the
-    reliable home of that gate -- its own concurrency group survives dev pushes --
-    and scheduled runs take the full interpreter matrix. Without this test the split
-    could regress (both branches back to ``test-cov``, or coverage dropped from the
-    schedule) while ``python-tests`` still reported green, exactly the fail-open
-    class this module exists to catch.
-    """
-    parsed = yaml.safe_load(workflow)
-
-    # (a) the test step branches test-nocov on pull_request, test-cov otherwise.
-    steps = parsed["jobs"]["python-tests"]["steps"]
-    run = next(step["run"] for step in steps if "test-nocov" in step.get("run", ""))
-    assert '"${{ github.event_name }}" = "pull_request"' in run
-    assert "hatch run test-nocov" in run
-    assert "hatch run test-cov" in run
-    # test-nocov only on the pull_request branch, test-cov only on the else branch.
-    assert run.index("test-nocov") < run.index("else") < run.index("hatch run test-cov")
-
-    # (b) scheduled runs are included in the full-matrix condition.
-    matrix_line = next(
-        line for line in workflow.splitlines() if "python-version: ${{" in line
-    )
-    assert "github.event_name == 'schedule'" in matrix_line
-
-    # (c) a schedule: trigger exists (BaseLoader keeps the YAML 1.1 ``on`` key).
-    triggers = yaml.load(workflow, Loader=yaml.BaseLoader)["on"]
-    assert "schedule" in triggers
-    assert [entry["cron"] for entry in triggers["schedule"]], (
-        "the schedule trigger must define at least one cron"
     )
 
     changes = yaml.safe_load(workflow)["jobs"]["changes"]
@@ -1063,6 +1014,51 @@ def test_pull_requests_skip_coverage_while_other_events_enforce_it(
     )
     assert "--ref dev" in guard["run"]
     assert "exit 1" in guard["run"]
+
+
+def test_pull_requests_skip_coverage_while_the_gate_lives_in_coverage_yml(
+    workflow: str,
+) -> None:
+    """Pin the coverage split so the 89% gate cannot be lost silently.
+
+    Coverage instrumentation is the dominant cost of ``python-tests``, so PRs run
+    the ``-m 'not slow'`` suite plain (``test-nocov``). The authoritative coverage +
+    89% gate is the SEPARATE ``coverage.yml`` workflow, on push to ``dev`` -- a
+    schedule trigger would attach its verdict to the default-branch tip, not the
+    dev commit promotion evaluates. Its per-commit concurrency group with
+    ``cancel-in-progress: false`` lets every dev commit's coverage complete. Without
+    this test the split could regress (ci.yml back to ``test-cov`` on PRs, or
+    coverage.yml deleted / no longer running ``test-cov``) while ``python-tests``
+    still reported green -- the fail-open class this module exists to catch.
+    """
+    # (a) ci.yml's test step: test-nocov on pull_request, test-cov otherwise.
+    steps = yaml.safe_load(workflow)["jobs"]["python-tests"]["steps"]
+    run = next(step["run"] for step in steps if "test-nocov" in step.get("run", ""))
+    assert '"${{ github.event_name }}" = "pull_request"' in run
+    assert "hatch run test-nocov" in run
+    assert "hatch run test-cov" in run
+    # test-nocov only on the pull_request branch, test-cov only on the else branch.
+    assert run.index("test-nocov") < run.index("else") < run.index("hatch run test-cov")
+
+    # (b) the dedicated coverage workflow enforces the gate on push to dev.
+    assert COVERAGE_WORKFLOW.exists(), "the coverage gate workflow is missing"
+    coverage_text = COVERAGE_WORKFLOW.read_text(encoding="utf-8")
+    coverage = yaml.safe_load(coverage_text)
+    triggers = yaml.load(coverage_text, Loader=yaml.BaseLoader)["on"]
+    assert triggers["push"]["branches"] == ["dev"]
+    # A schedule trigger is deliberately NOT the coverage home: its verdict would
+    # attach to the default branch, not the dev commit promotion evaluates.
+    assert "schedule" not in triggers
+    # Per-COMMIT group, never cancelled, so every dev commit's coverage completes
+    # and its check-run attaches to the dev commit promotion reads.
+    assert coverage["concurrency"]["group"] == "coverage-${{ github.sha }}"
+    assert coverage["concurrency"]["cancel-in-progress"] is False
+    coverage_runs = "\n".join(
+        step.get("run", "")
+        for job in coverage["jobs"].values()
+        for step in job["steps"]
+    )
+    assert "hatch run test-cov" in coverage_runs
 
 
 def test_green_dispatch_repairs_cancelled_push_contexts(workflow: str) -> None:

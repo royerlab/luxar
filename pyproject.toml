@@ -393,11 +393,11 @@ MKL_NUM_THREADS = "{env:MKL_NUM_THREADS:1}"
 NUMEXPR_NUM_THREADS = "{env:NUMEXPR_NUM_THREADS:1}"
 
 # `test` runs the FULL suite (incl. `slow`) — the authoritative pre-push gate,
-# run locally before every push. `test-cov` (coverage + the 89% gate) is what CI
-# runs on every NON-PR event — the scheduled dev cron, every `workflow_dispatch`,
-# and best-effort on push to dev; PR runs use `test-nocov` (same subset, no
-# instrumentation) so a PR does not pay the coverage cost (see ci.yml). Both
-# deselect `slow` so the 1-core GitHub runner stays well under the job timeout;
+# run locally before every push. `test-cov` (coverage + the 89% gate) is what the
+# dedicated `coverage.yml` workflow runs on every push to dev (and what ci.yml runs
+# on the full-matrix dispatch); PR runs use `test-nocov` (same subset, no
+# instrumentation) so a PR does not pay the coverage cost (see ci.yml/coverage.yml).
+# Both deselect `slow` so the 1-core GitHub runner stays well under the job timeout;
 # the heavy CPU-fitting tests (content-fit CLI, tiled/progressive fitting) still
 # run locally and their code stays covered by fast unit tests (coverage holds
 # above the 89% gate).
@@ -427,8 +427,8 @@ test = "pytest -n {env:LUXAR_PYTEST_JOBS:6} --dist loadfile {args:packages/luxar
 test-cov = "mkdir -p coverage/python && pytest -m 'not slow' --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests}"
 # `test-nocov` is the per-PR fast path: the SAME `-m 'not slow'` subset and paths
 # as `test-cov`, but without `--cov` instrumentation (the dominant cost of the job).
-# ci.yml runs it on `pull_request` and `test-cov` on every other event, so the 89%
-# gate is enforced off the PR critical path (scheduled dev cron + dispatch).
+# ci.yml runs it on `pull_request`; the 89% gate is enforced off the PR critical
+# path by the dedicated `coverage.yml` workflow (push to dev) running `test-cov`.
 test-nocov = "pytest -m 'not slow' {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests}"
 test-cov-all = "mkdir -p coverage/python && pytest -n {env:LUXAR_PYTEST_JOBS:6} --dist loadfile --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests}"
 # `scripts/benchmarks` remains explicit as a safety net if the anchored
@@ -622,8 +622,8 @@ python = ["3.12", "3.13", "3.14"]
 # `testpaths`, which the explicit args below override). This env has
 # `features = ["test"]`, which omits the `dev`-only tooling those paths import.
 # The default env (`features = ["dev"]`) has it, which is why `hatch run test-cov`
-# — what CI runs on every non-PR matrix leg (PRs run `test-nocov`; see ci.yml) —
-# can collect them.
+# — what coverage.yml runs on push to dev, and ci.yml on the full-matrix dispatch
+# (PRs run `test-nocov`) — can collect them.
 run = "pytest {args:packages/luxar/src/luxar}"
 cov = "pytest -m 'not slow' --cov=luxar --cov-report=term-missing {args:packages/luxar/src/luxar}"
 
@@ -875,14 +875,14 @@ skip_covered = false
 # statements, up from 41,347 when a stray "pass" substring was deleting whole
 # function bodies from the denominator).
 #
-# The ~2.5 pt margin is deliberate, not slack, and matters MORE now that coverage
-# runs less often: PRs skip it entirely (`test-nocov`), so the gate is measured
-# only on the scheduled dev cron, on `workflow_dispatch`, and best-effort on push
-# to dev (see ci.yml). A regression can therefore ride green PRs onto `dev` and is
-# not caught until the next coverage run rather than on the introducing PR. On top
-# of that, PRs run 3.12 only while those coverage runs take the 3.12/3.13/3.14
-# matrix, so a floor tuned tight to one interpreter can redden `dev` after green
-# PRs. Re-measure with `hatch run test-cov` before raising.
+# The ~2.5 pt margin is deliberate, not slack, and matters MORE now that PRs skip
+# coverage entirely (`test-nocov`): the gate is measured by the dedicated
+# `coverage.yml` workflow on push to dev (and on the full-matrix ci.yml dispatch),
+# NOT on the introducing PR. A regression can therefore ride a green PR onto `dev`
+# and is caught only when that push-to-dev coverage run lands. coverage.yml runs a
+# single 3.12 leg; the full-matrix dispatch adds 3.13/3.14, so a floor tuned tight
+# to one interpreter can still redden `dev`. Re-measure with `hatch run test-cov`
+# before raising.
 fail_under = 89
 
 [tool.coverage.html]
