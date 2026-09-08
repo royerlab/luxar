@@ -77,11 +77,8 @@ def test_continue_on_error_steps_do_not_count_as_ci_coverage() -> None:
 
 
 def _uncovered_check_static_members(
-    pyproject_text: str, commands: Sequence[str]
+    members: Sequence[str], commands: Sequence[str]
 ) -> set[str]:
-    scripts = _default_scripts(pyproject_text)
-    members = scripts["check-static"]
-    assert isinstance(members, list)
     invoked = _invoked_hatch_scripts(commands)
     return set(members) - invoked - CHECK_STATIC_EXEMPTIONS.keys()
 
@@ -96,7 +93,9 @@ def _ci_workflow_commands() -> list[str]:
 def test_every_check_static_member_is_reached_or_explicitly_exempted() -> None:
     """A new local static check must not silently miss every CI workflow."""
     pyproject_text = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    uncovered = _uncovered_check_static_members(pyproject_text, _ci_workflow_commands())
+    members = _default_scripts(pyproject_text)["check-static"]
+    assert isinstance(members, list)
+    uncovered = _uncovered_check_static_members(members, _ci_workflow_commands())
 
     assert not uncovered, (
         "check-static member(s) are not invoked by any workflow and have no "
@@ -120,10 +119,9 @@ def test_check_static_exemptions_are_live_and_still_unwired() -> None:
 def test_an_unwired_new_member_fails_the_coverage_check() -> None:
     """Control arm: prove the meta-gate catches the regression it describes."""
     pyproject_text = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    mutant = pyproject_text.replace(
-        '    "security"\n]', '    "security",\n    "forgotten-check"\n]', 1
-    )
+    members = _default_scripts(pyproject_text)["check-static"]
+    assert isinstance(members, list)
 
-    assert _uncovered_check_static_members(mutant, _ci_workflow_commands()) == {
-        "forgotten-check"
-    }
+    assert _uncovered_check_static_members(
+        [*members, "forgotten-check"], _ci_workflow_commands()
+    ) == {"forgotten-check"}
