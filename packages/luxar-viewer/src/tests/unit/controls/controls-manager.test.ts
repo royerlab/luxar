@@ -407,7 +407,7 @@ describe('ControlsManager', () => {
       expect(controls.dampingFactor).toBe(0.1);
     });
 
-    it('settleDamping delegates for orbit controls and is safe for fly controls', () => {
+    it('settleDamping delegates to the active orbit or fly controls', () => {
       const controls = controlsManager.getControls() as LuxarOrbitControls;
       const settleDamping = vi.spyOn(controls, 'settleDamping');
 
@@ -415,7 +415,11 @@ describe('ControlsManager', () => {
       expect(settleDamping).toHaveBeenCalledOnce();
 
       controlsManager.setControlType('fly');
-      expect(() => controlsManager.settleDamping()).not.toThrow();
+      const flyControls = controlsManager.getControls() as LuxarFlyControls;
+      const settleFlyDamping = vi.spyOn(flyControls, 'settleDamping');
+
+      controlsManager.settleDamping();
+      expect(settleFlyDamping).toHaveBeenCalledOnce();
     });
 
     it('defaults orbit feel knobs from config (zoom 1.0, damping 0.25)', () => {

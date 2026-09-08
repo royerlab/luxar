@@ -587,11 +587,9 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     }
   }
 
-  /** Stop residual orbit/ortho damping without changing the current pose. */
+  /** Stop residual user-input look damping without changing the current pose. */
   public settleDamping(): void {
-    if (this.currentControls instanceof LuxarOrbitControls) {
-      this.currentControls.settleDamping();
-    }
+    this.currentControls?.settleDamping();
   }
 
   public setFlyLookSpeed(speed: number): void {
