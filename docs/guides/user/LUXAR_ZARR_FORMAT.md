@@ -1473,11 +1473,13 @@ Overlays are NOT part of the 3D scene graph — they use normalized screen coord
   "type": "overlay_image",
   "position": [0.9, 0.05],
   "image_file": "image.png",
-  "size": [0.1, 0.05],
+  "size": [0.1, null],
   "blend_mode": "normal",
   "z_index": 1
 }
 ```
+As for video overlays, a `null` height in `size` keeps the image's own aspect
+ratio.
 The image file is stored directly in the overlay's zarr directory. Compiler-written
 overlays use exactly `image.png`, `image.jpeg`, or `image.webp`, matching the PNG,
 JPEG, or WebP payload bytes. These canonical names avoid case-insensitive metadata

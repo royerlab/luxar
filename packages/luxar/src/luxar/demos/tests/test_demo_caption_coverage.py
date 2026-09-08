@@ -1,4 +1,4 @@
-"""Every authored demo scene carries one standard bottom-right caption."""
+"""Every authored demo scene carries a standard or explicit custom credit."""
 
 from __future__ import annotations
 
@@ -20,6 +20,11 @@ _INTEROP_DEMOS = {
     "demo_gsplats_interop_sog_matrixcity.py",
     "demo_gsplats_interop_spz_scaniverse.py",
 }
+
+# This kiosk intentionally reserves bottom-right for its bundled Biohub mark and
+# renders the dataset/model/license credit as the closing line of its Overview
+# panel (guarded in test_demo_esm3_protein_stories.py).
+_CUSTOM_CAPTION_DEMOS = {"demo_esm3_protein_stories.py"}
 
 
 def _name_calls(tree: ast.AST, name: str) -> list[ast.Call]:
@@ -56,6 +61,9 @@ def test_every_authored_scene_has_exactly_one_standard_caption() -> None:
             assert not creates and not captions and len(interop) == 1, path.name
             continue
         assert creates, f"{path.name} authors no scene"
+        if path.name in _CUSTOM_CAPTION_DEMOS:
+            assert not captions, path.name
+            continue
         assert len(captions) == len(creates), (
             f"{path.name} authors {len(creates)} scene(s) but "
             f"{len(captions)} standard caption(s)"
@@ -64,7 +72,7 @@ def test_every_authored_scene_has_exactly_one_standard_caption() -> None:
 
 def test_demo_modules_do_not_hand_author_bottom_right_overlays() -> None:
     for path in scanned_demo_modules():
-        if path.name == "_caption.py":
+        if path.name == "_caption.py" or path.name in _CUSTOM_CAPTION_DEMOS:
             continue
         tree = ast.parse(path.read_text(), filename=str(path))
         offenders = []
@@ -73,7 +81,7 @@ def test_demo_modules_do_not_hand_author_bottom_right_overlays() -> None:
                 continue
             if not (
                 isinstance(node.func, ast.Attribute)
-                and node.func.attr in {"add_text", "add_html"}
+                and node.func.attr in {"add_text", "add_html", "add_image"}
             ):
                 continue
             if any(
