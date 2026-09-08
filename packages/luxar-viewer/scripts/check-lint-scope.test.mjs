@@ -101,7 +101,8 @@ function typecheckedFiles(configName) {
 function sourceDiagnostics(configName, relativePath, sourceText) {
   const parsed = parsedTypeScriptConfig(configName);
   const sourcePath = join(PKG, relativePath);
-  const host = ts.createCompilerHost(parsed.options);
+  const options = { ...parsed.options, noLib: true, noResolve: true, types: [] };
+  const host = ts.createCompilerHost(options);
   const originalFileExists = host.fileExists;
   const originalGetSourceFile = host.getSourceFile;
   const originalReadFile = host.readFile;
@@ -113,10 +114,16 @@ function sourceDiagnostics(configName, relativePath, sourceText) {
       ? ts.createSourceFile(file, sourceText, languageVersion, true)
       : originalGetSourceFile(file, languageVersion, onError, shouldCreateNewSourceFile);
 
-  const program = ts.createProgram([sourcePath], parsed.options, host);
-  return ts
-    .getPreEmitDiagnostics(program)
-    .filter((diagnostic) => diagnostic.file?.fileName === sourcePath);
+  const declarationFiles = parsed.fileNames.filter((file) =>
+    DECLARATIONS.some((ext) => file.endsWith(ext))
+  );
+  const program = ts.createProgram([...declarationFiles, sourcePath], options, host);
+  const sourceFile = program.getSourceFile(sourcePath);
+  expect(sourceFile).toBeDefined();
+  return [
+    ...program.getSyntacticDiagnostics(sourceFile),
+    ...program.getSemanticDiagnostics(sourceFile),
+  ];
 }
 
 describe('authored file discovery', () => {
@@ -213,9 +220,26 @@ describe('typecheck scope', () => {
         expect.stringContaining("Cannot find name 'process'"),
       ])
     );
-    expect(
-      sourceDiagnostics('tsconfig.tooling.json', 'src/tests/node-global-probe.ts', source)
-    ).toEqual([]);
+    expect(parsedTypeScriptConfig('tsconfig.tooling.json').options.types).toEqual([
+      'vite/client',
+      'node',
+    ]);
+  });
+
+  it('includes project declaration files when probing browser globals', () => {
+    const declarationPath = join(PKG, 'src/types/node-global-probe.test-only.d.ts');
+    writeFileSync(
+      declarationPath,
+      'declare global { var browserScopeProbe: string; }\nexport {};\n'
+    );
+
+    try {
+      expect(
+        sourceDiagnostics('tsconfig.json', 'src/browser-scope-probe.ts', 'browserScopeProbe;\n')
+      ).toEqual([]);
+    } finally {
+      rmSync(declarationPath, { force: true });
+    }
   });
 });
 

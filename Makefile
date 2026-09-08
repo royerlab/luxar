@@ -89,9 +89,9 @@ endif
 # (pnpm neither fails nor warns on a dependency's engines by default).
 # Deliberately NOT mirrored into `engines.node` in
 # packages/luxar-viewer/package.json: that manifest ships with the published
-# npm package, where it must state the LIBRARY's runtime floor (>=20.19.0,
-# Vite 8.x) — a dev-only jsdom constraint there would break installs for
-# consumers on supported Nodes (yarn enforces engines strictly).
+# npm package, where it mirrors Vite 8.x's LIBRARY runtime range
+# (^20.19.0 || >=22.12.0) — a dev-only jsdom constraint there would break
+# installs for consumers on supported Nodes (yarn enforces engines strictly).
 MIN_NODE_MAJOR := 22
 MIN_NODE_MINOR := 22
 # Mirrors `engines.pnpm` in packages/luxar-viewer/package.json. 10.6 is the
