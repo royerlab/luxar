@@ -1157,6 +1157,18 @@ def load_landscape_cache(cache_dir: Path) -> tuple[np.ndarray, dict[str, np.ndar
     return positions, fields
 
 
+def _turntable_environment(output_path: Path) -> np.ndarray | None:
+    """Load a durable build's baked environment, or explain how to create it."""
+    environment = load_environment_faces(output_path)
+    if environment is None and output_path.is_dir():
+        aprint(
+            "ℹ️  No baked environment in the output store yet: turntables use "
+            "the studio lights only. Keep the store with `--no-serve`, run "
+            f"`luxar env bake {output_path}`, and rebuild to light them with the map."
+        )
+    return environment
+
+
 def build_stories_scene(
     output_path: Path,
     positions: np.ndarray,
@@ -1193,13 +1205,7 @@ def build_stories_scene(
             # been through `luxar env bake`; a first build renders under the
             # studio lights alone (the environment digest is in the cache key,
             # so the next build after a bake re-renders them lit).
-            environment = load_environment_faces(output_path)
-            if environment is None:
-                aprint(
-                    "ℹ️  No baked environment in the output store yet: turntables "
-                    "use the studio lights only. Run `luxar env bake "
-                    f"{output_path}` and rebuild to light them with the map."
-                )
+            environment = _turntable_environment(output_path)
             assets = render_turntables(
                 [s.pdb_id for s in stories if s.pdb_id],
                 cache,

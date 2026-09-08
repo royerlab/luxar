@@ -10,6 +10,10 @@ is absent, and the per-structure skip.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
 
 from luxar.demos import _pdb_turntable as tt
 
@@ -127,6 +131,74 @@ def test_render_turntables_skips_when_no_gpu_context(
     monkeypatch.setattr(tt, "ClayRenderer", no_context)
     assert tt.render_turntables(["1OMG"], tmp_path) == {}
     assert "no GPU context" in capsys.readouterr().out
+
+
+def test_render_turntables_releases_renderer_when_environment_setup_fails(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    monkeypatch.setattr(tt, "find_pymol", lambda: ["/usr/bin/pymol", "-cq"])
+    monkeypatch.setattr(tt, "find_ffmpeg", lambda: "/usr/bin/ffmpeg")
+    monkeypatch.setattr(tt, "has_moderngl", lambda: True)
+    released: list[bool] = []
+
+    class FakeRenderer:
+        def __init__(self, _size: int) -> None:
+            pass
+
+        def set_environment(self, _faces: object) -> None:
+            raise ValueError("cube faces must be square")
+
+        def release(self) -> None:
+            released.append(True)
+
+    monkeypatch.setattr(tt, "ClayRenderer", FakeRenderer)
+
+    assert tt.render_turntables(["1OMG"], tmp_path) == {}
+    output = capsys.readouterr().out
+    assert "environment setup failed" in output
+    assert "no GPU context" not in output
+    assert released == [True]
+
+
+def test_render_turntable_releases_owned_renderer_when_environment_setup_fails(
+    monkeypatch, tmp_path
+) -> None:
+    released: list[bool] = []
+
+    class FakeRenderer:
+        def __init__(self, _size: int) -> None:
+            pass
+
+        def set_environment(self, _faces: object) -> None:
+            raise ValueError("cube faces must be square")
+
+        def release(self) -> None:
+            released.append(True)
+
+    monkeypatch.setattr(tt, "ClayRenderer", FakeRenderer)
+    monkeypatch.setattr(tt, "has_moderngl", lambda: True)
+    monkeypatch.setattr(
+        tt, "fetch_pdb", lambda _pdb_id, cache: (cache / "1OMG.pdb", "Conotoxin")
+    )
+    monkeypatch.setattr(tt, "structure_atoms", lambda _pdb_id, _cache: 100)
+    monkeypatch.setattr(
+        tt, "export_surface_meshes", lambda *_args, **_kwargs: [tmp_path / "mesh.npz"]
+    )
+    monkeypatch.setattr(
+        tt,
+        "meshes_from_files",
+        lambda *_args, **_kwargs: [SimpleNamespace(positions=np.zeros((3, 3)))],
+    )
+
+    with pytest.raises(ValueError, match="cube faces must be square"):
+        tt.render_turntable(
+            "1OMG",
+            tmp_path,
+            pymol=["/usr/bin/pymol", "-cq"],
+            ffmpeg="/usr/bin/ffmpeg",
+        )
+
+    assert released == [True]
 
 
 def test_render_turntables_reports_and_skips_a_failing_structure(

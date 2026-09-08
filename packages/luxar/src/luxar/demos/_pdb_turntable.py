@@ -28,8 +28,8 @@ Pipeline (all cached under ``~/.cache/luxar/pdb_turntables``):
    story colour, soft lights, screen-space ambient occlusion, transparent
    background — streaming them into ffmpeg. When the scene's baked environment
    is at hand (``load_environment_faces`` on a store `luxar env bake` has run
-   on), it also lights the clay: a faint hemispheric tint and a glossy limb
-   reflection of the very map the structure sits in, ON TOP of the studio
+   on), it also lights the clay: a clear hemispheric tint and a strong glossy
+   limb reflection of the very map the structure sits in, ON TOP of the studio
    lights. The environment's digest is part of the cache key.
 4. ffmpeg encodes an opaque VP9 WebM as a **stacked alpha matte** — the colour
    on top, the alpha channel as a grey matte below, twice as tall — which the
@@ -468,7 +468,11 @@ def render_turntable(
     own_renderer = renderer is None
     if own_renderer:
         renderer = ClayRenderer(size)
-        renderer.set_environment(environment)
+        try:
+            renderer.set_environment(environment)
+        except Exception:
+            renderer.release()
+            raise
     try:
         render_turntable_video(
             meshes,
@@ -485,6 +489,22 @@ def render_turntable(
         if own_renderer:
             renderer.release()
     return TurntableAssets(pdb_id, webm, poster, title, frames, fps)
+
+
+def _create_renderer(
+    size: int, environment: Optional[np.ndarray]
+) -> tuple[Optional[ClayRenderer], Optional[str]]:
+    """Create and configure a shared renderer, returning a soft-gate message."""
+    try:
+        renderer = ClayRenderer(size)
+    except Exception as e:  # noqa: BLE001 — no GL context on this machine
+        return None, f"no GPU context ({e})"
+    try:
+        renderer.set_environment(environment)
+    except Exception as e:  # noqa: BLE001 — malformed or unsupported environment
+        renderer.release()
+        return None, f"environment setup failed ({e})"
+    return renderer, None
 
 
 def render_turntables(
@@ -538,11 +558,9 @@ def render_turntables(
         for line in hint.splitlines():
             aprint(f"   {line}")
         return results
-    try:
-        renderer = ClayRenderer(size)
-        renderer.set_environment(environment)
-    except Exception as e:  # noqa: BLE001 — no GL context on this machine
-        aprint(f"⚠️  Turntable videos skipped: no GPU context ({e})")
+    renderer, renderer_error = _create_renderer(size, environment)
+    if renderer is None:
+        aprint(f"⚠️  Turntable videos skipped: {renderer_error}")
         return results
 
     try:

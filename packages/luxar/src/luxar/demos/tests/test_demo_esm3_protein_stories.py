@@ -44,6 +44,22 @@ def _story(**overrides: object) -> Story:
     return Story(**base)  # type: ignore[arg-type]
 
 
+def test_turntable_environment_only_hints_for_a_durable_store(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    monkeypatch.setattr(demo, "load_environment_faces", lambda _path: None)
+    output_path = tmp_path / "esm3_protein_stories.luxar.zarr"
+
+    assert demo._turntable_environment(output_path) is None
+    assert capsys.readouterr().out == ""
+
+    output_path.mkdir()
+    assert demo._turntable_environment(output_path) is None
+    hint = capsys.readouterr().out
+    assert "--no-serve" in hint
+    assert f"luxar env bake {output_path}" in hint
+
+
 def test_select_members_keeps_the_blob_and_drops_stragglers() -> None:
     names = np.array(
         ["Hemoglobin subunit alpha"] * 6

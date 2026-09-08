@@ -339,7 +339,7 @@ def test_prefilter_cube_is_flat_for_a_flat_sky_and_peaks_toward_a_single_light()
     assert (glossy[..., 1] > 0.05).sum() < (diffuse[..., 1] > 0.05).sum()
     # The light's colour, not grey.
     peak = np.unravel_index(diffuse[..., 1].argmax(), diffuse.shape[:3])
-    assert diffuse[peak][1] > diffuse[peak][0] > diffuse[peak][2] * 0.0
+    assert diffuse[peak][1] > diffuse[peak][2] > diffuse[peak][0] > 0
 
     black = cr.prefilter_cube(np.zeros((6, 8, 8, 4), np.float32), 4, exponent=1.0)
     assert not black.any()
@@ -354,3 +354,13 @@ def test_prefilter_cube_is_flat_for_a_flat_sky_and_peaks_toward_a_single_light()
     )
     assert by_pct[3].mean() > 3 * by_peak[3].mean()  # the dark side is no longer black
     assert by_pct.max() == pytest.approx(1.0, abs=1e-6)  # and the hot spot is clamped
+
+
+def test_prefilter_cube_preserves_detail_for_prime_sized_faces() -> None:
+    sky = np.zeros((6, 127, 127, 3), dtype=np.float32)
+    sky[2, 48:79, 48:79] = 1.0
+
+    filtered = cr.prefilter_cube(sky, 8, exponent=24.0, in_res=64)
+
+    assert filtered[2].max() == pytest.approx(1.0)
+    assert filtered[3].max() < 1e-3

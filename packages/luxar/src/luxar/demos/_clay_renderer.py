@@ -205,18 +205,19 @@ def cube_directions(res: int) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _block_mean(faces: np.ndarray, res: int) -> np.ndarray:
-    """Area-average ``(6, R, R, C)`` faces down to ``(6, res, res, C)`` (R % res == 0)."""
+    """Area-average ``(6, R, R, C)`` faces down to ``(6, res, res, C)``."""
     n = faces.shape[1]
     if n == res:
         return faces.astype(np.float32)
-    if n % res:
-        raise ValueError(f"cube face size {n} is not a multiple of {res}")
-    k = n // res
-    return (
-        faces.astype(np.float32)
-        .reshape(faces.shape[0], res, k, res, k, faces.shape[-1])
-        .mean(axis=(2, 4))
-    )
+    edges = np.linspace(0, n, res + 1, dtype=np.intp)
+    out = np.empty((faces.shape[0], res, res, faces.shape[-1]), dtype=np.float32)
+    source = faces.astype(np.float32)
+    for row in range(res):
+        for col in range(res):
+            out[:, row, col] = source[
+                :, edges[row] : edges[row + 1], edges[col] : edges[col + 1]
+            ].mean(axis=(1, 2))
+    return out
 
 
 def prefilter_cube(
@@ -233,15 +234,15 @@ def prefilter_cube(
     a larger one a Phong lobe (glossy reflection). ``faces`` is ``(6, R, R, 3+)``
     linear radiance in the stored face order; the alpha channel, if any, is
     dropped and the input is area-averaged to ``in_res`` first. The result is
-    normalised so its brightest texel has luminance 1 — the caller decides how
-    much of it to add — and is all zeros for an all-black environment.
+    normalised so the ``reference_percentile``-th percentile of the prefiltered
+    cube's luminance is 1, with brighter values clamped; at 100 this is the
+    brightest texel. The caller decides how much to add. An all-black
+    environment stays all zeros.
     """
     rgb = np.asarray(faces, dtype=np.float32)[..., :3]
     rgb = np.nan_to_num(rgb, nan=0.0, posinf=0.0, neginf=0.0)
     r = rgb.shape[1]
     in_res = min(in_res, r)
-    while r % in_res:
-        in_res -= 1
     src = _block_mean(rgb, in_res).reshape(-1, 3)
     src_dirs, src_w = cube_directions(in_res)
     src_dirs = src_dirs.reshape(-1, 3)
@@ -569,12 +570,11 @@ class ClayRenderer:
         prefiltered on the CPU: a cosine lobe (irradiance) that tints the surface
         by up to ``diffuse`` of its albedo where the map is bright, and a glossy
         lobe (``gloss_exponent``) whose reflection adds up to ``specular`` at a
-        grazing limb. Both are normalised so the map's ``reference_percentile``
-        luminance is 1 (clamped above): at 100 that is the peak, and a star field
-        would then light nothing but the one brightest cluster; 97 lets the whole
-        map show in the reflection — the owner found the peak-normalised version
-        invisible. Still additive on top of the studio, so a dark
-        sky with a few bright clusters stays a hint rather than a light source.
+        grazing limb. Both are normalised so the ``reference_percentile``-th
+        percentile of each prefiltered cube's luminance is 1 (clamped above): at
+        100 that is the peak, and a star field would then light nothing but the
+        one brightest cluster; 97 lets the whole map show in the reflection.
+        The environment remains additive on top of the studio lighting.
         """
         for t in (self._env_diff, self._env_spec):
             if t is not None:
