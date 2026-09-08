@@ -588,7 +588,9 @@ describe('buildRailItems', () => {
       setInputProfileOverride('touch');
       for (const id of ['render', 'layers', 'recording']) {
         const deps = makeDeps({ layerCount: 3 });
-        buildRailItems(deps).find((item) => item.id === id)!.activate();
+        buildRailItems(deps)
+          .find((item) => item.id === id)!
+          .activate();
       }
       expect(hideHelp).toHaveBeenCalledTimes(3);
       expect(hiddenPanels).toEqual(['data-monitor', 'data-monitor', 'data-monitor']);
@@ -598,7 +600,9 @@ describe('buildRailItems', () => {
       setInputProfileOverride('mouse');
       for (const id of ['render', 'layers', 'recording']) {
         const deps = makeDeps({ layerCount: 3 });
-        buildRailItems(deps).find((item) => item.id === id)!.activate();
+        buildRailItems(deps)
+          .find((item) => item.id === id)!
+          .activate();
       }
       expect(hideHelp).not.toHaveBeenCalled();
       expect(hiddenPanels).toEqual([]);
