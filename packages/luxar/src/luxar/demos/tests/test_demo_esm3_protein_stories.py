@@ -564,3 +564,30 @@ def test_biohub_logo_is_a_bundled_transparent_png() -> None:
         alpha = np.asarray(im)[..., 3]
     assert alpha.min() == 0 and alpha.max() == 255  # transparent margin, opaque glyph
     assert 0 < BIOHUB_LOGO_WIDTH <= 0.2
+
+
+def test_every_story_waypoint_reveals_its_overlays_on_arrival() -> None:
+    """The panel, caption and turntable appear when the camera has landed.
+
+    Every ``Waypoint(...)`` the demo authors carries ``reveal="on_arrival"`` —
+    the gate the viewer keys on the flight's arrival, the same event that starts
+    the narration, so text and voice land together (remote-control spec §4.1).
+    """
+    import ast
+    import inspect
+
+    import luxar.demos.demo_esm3_protein_stories as demo
+
+    tree = ast.parse(inspect.getsource(demo))
+    waypoint_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "Waypoint"
+    ]
+    assert len(waypoint_calls) == 2  # the overview and the per-story loop
+    for call in waypoint_calls:
+        reveal = next((kw.value for kw in call.keywords if kw.arg == "reveal"), None)
+        assert isinstance(reveal, ast.Constant), ast.unparse(call)[:80]
+        assert reveal.value == "on_arrival"

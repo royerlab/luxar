@@ -208,6 +208,14 @@ export class OverlayManager {
   private boundDimChangeHandler: () => void;
   /** Whether overlays are globally hidden by the user toggle (U key) */
   private globallyHidden = false;
+  /**
+   * Arrival gate for story flights (`Waypoint.reveal = "on_arrival"`): while
+   * it returns true, a dimension-bound overlay that is not already showing
+   * stays hidden. `null` = no gate.
+   */
+  private transitGate: (() => boolean) | null = null;
+  /** Non-hover overlays currently shown — what the arrival gate keeps as is. */
+  private shown = new Set<string>();
   /** Hover overlays that update from GPU picking results. */
   private hoverOverlays = new Map<string, HoverOverlayEntry>();
   /** Cache last hover result to skip redundant DOM updates. */
@@ -298,8 +306,37 @@ export class OverlayManager {
     this.updateVisibility();
   }
 
+  /**
+   * Install (or clear, with `null`) the arrival gate. While `gate()` is true —
+   * the waypoint driver is flying to a waypoint authored `reveal: "on_arrival"`
+   * — `updateVisibility()` keeps a dimension-bound overlay that would NEWLY
+   * appear hidden, hides one that stops matching at once (leaving is instant),
+   * and leaves overlays without a `visible_range` alone. The app re-runs
+   * `updateVisibility()` when the flight resolves so the held overlays fade in
+   * together, on arrival.
+   */
+  setTransitGate(gate: (() => boolean) | null): void {
+    this.transitGate = gate;
+  }
+
+  /**
+   * Whether `config` shows now: the dimension rule, the global toggle, and the
+   * arrival gate (which only ever withholds a dimension-bound overlay that is
+   * not already on screen). Keeps `shown` in step with the answer.
+   */
+  private resolveVisible(name: string, config: OverlayConfig, inTransit: boolean): boolean {
+    let visible = !this.globallyHidden && this.isOverlayVisible(config);
+    if (visible && inTransit && config.visible_range && !this.shown.has(name)) {
+      visible = false;
+    }
+    if (visible) this.shown.add(name);
+    else this.shown.delete(name);
+    return visible;
+  }
+
   /** Update overlay visibility based on current dimension state. */
   updateVisibility(): void {
+    const inTransit = this.transitGate?.() === true;
     for (const [name, config] of this.configs) {
       const el = this.overlayElements.get(name);
       if (!el) continue;
@@ -316,7 +353,7 @@ export class OverlayManager {
         continue;
       }
 
-      const visible = !this.globallyHidden && this.isOverlayVisible(config);
+      const visible = this.resolveVisible(name, config, inTransit);
       const isFade = config.transition === 'fade';
       if (config.type === 'overlay_video') this.syncVideoPlayback(name, visible);
 
@@ -489,6 +526,8 @@ export class OverlayManager {
     this.overlayElements.clear();
     this.configs.clear();
     this.hoverOverlays.clear();
+    this.shown.clear();
+    this.transitGate = null;
   }
 
   // ---------------------------------------------------------------- private

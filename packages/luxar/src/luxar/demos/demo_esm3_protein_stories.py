@@ -1282,6 +1282,10 @@ def build_stories_scene(
         overview_position = pull_in(
             (overview_distance, overview_distance * 0.55, overview_distance)
         )
+        # `reveal="on_arrival"`: the panel, the caption and the turntable appear
+        # when the camera has landed, not while it is still flying — the same
+        # arrival event that starts the narration, so text and voice land
+        # together. Departing a story hides its overlays at once.
         waypoints = [
             Waypoint(
                 when={STORY_DIM: 0},
@@ -1289,6 +1293,7 @@ def build_stories_scene(
                     position=overview_position, target=(0.0, 0.0, 0.0), up=(0, 1, 0)
                 ),
                 duration_ms=3000,
+                reveal="on_arrival",
             )
         ]
         for k, (s, c) in enumerate(zip(stories, clusters, strict=True), start=1):
@@ -1297,6 +1302,7 @@ def build_stories_scene(
                     when={STORY_DIM: k},
                     camera=story_camera(c, s, global_centre),
                     duration_ms=s.flight_ms,
+                    reveal="on_arrival",
                 )
             )
 

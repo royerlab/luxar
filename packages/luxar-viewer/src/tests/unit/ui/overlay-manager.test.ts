@@ -1717,3 +1717,87 @@ describe('OverlayManager HTML size cap (issue #768)', () => {
     expect(warnSpy).not.toHaveBeenCalled();
   });
 });
+
+describe('OverlayManager.updateVisibility — arrival gate (Waypoint.reveal = "on_arrival")', () => {
+  let manager: OverlayManager;
+  let inTransit = false;
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    mockDimsState.current = null;
+    inTransit = false;
+    manager = new OverlayManager();
+    manager.setTransitGate(() => inTransit);
+  });
+
+  afterEach(() => {
+    manager.dispose();
+  });
+
+  function setStory(value: number): void {
+    mockDimsState.current = {
+      ndim: 1,
+      currentStep: [value],
+      displayed: [],
+      metadata: [{ name: 'story', unit: '', scale: 1 }],
+    };
+  }
+
+  function visibleNames(): string[] {
+    return manager
+      .getVisibleOverlays()
+      .map((o) => o.config.name)
+      .sort();
+  }
+
+  async function loadStoryOverlays(): Promise<void> {
+    await manager.loadOverlays(
+      [
+        makeTextOverlay({ name: 'title' }), // no visible_range: never gated
+        makeTextOverlay({ name: 'panel-0', visible_range: { story: 0 } }),
+        makeTextOverlay({ name: 'panel-1', visible_range: { story: 1 }, transition: 'fade' }),
+        makeTextOverlay({ name: 'both', visible_range: { story: [0, 1] } }),
+      ],
+      'http://example.com'
+    );
+  }
+
+  it('holds an overlay that would newly appear while in transit, hides the departing one at once, keeps the rest', async () => {
+    setStory(0);
+    await loadStoryOverlays();
+    expect(visibleNames()).toEqual(['both', 'panel-0', 'title']);
+
+    // The story steps to 1 and the camera is flying: panel-1 waits.
+    inTransit = true;
+    setStory(1);
+    manager.updateVisibility();
+    expect(visibleNames()).toEqual(['both', 'title']);
+    const held = document.querySelector('[data-overlay-name="panel-1"]') as HTMLDivElement;
+    expect(held.classList.contains('luxar-overlay--hidden')).toBe(true);
+
+    // Arrival: the gate opens and the app re-runs the pass — panel-1 fades in.
+    inTransit = false;
+    manager.updateVisibility();
+    expect(visibleNames()).toEqual(['both', 'panel-1', 'title']);
+    expect(held.classList.contains('luxar-overlay--hidden')).toBe(false);
+  });
+
+  it('without a gate (or with it open) behaves exactly as before', async () => {
+    manager.setTransitGate(null);
+    setStory(0);
+    await loadStoryOverlays();
+    setStory(1);
+    manager.updateVisibility();
+    expect(visibleNames()).toEqual(['both', 'panel-1', 'title']);
+  });
+
+  it('a scene loaded mid-transit shows nothing dimension-bound until arrival', async () => {
+    inTransit = true;
+    setStory(1);
+    await loadStoryOverlays();
+    expect(visibleNames()).toEqual(['title']);
+    inTransit = false;
+    manager.updateVisibility();
+    expect(visibleNames()).toEqual(['both', 'panel-1', 'title']);
+  });
+});

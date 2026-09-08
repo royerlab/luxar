@@ -578,6 +578,9 @@ export class LuxarApp {
             index: payload.index,
             completed: 'completed' in payload ? payload.completed : true,
           });
+          // The flight resolved and the driver's gate is open: reveal the
+          // overlays a `reveal: "on_arrival"` waypoint held back.
+          this.overlayManager?.updateVisibility();
         }
         const when = waypoints[payload.index]?.when;
         if (when && this.audioEngine) {
@@ -590,6 +593,10 @@ export class LuxarApp {
     });
     const listener = (): void => {
       driver.evaluate('fly');
+      // The overlay manager listens to the same dims manager and may have run
+      // first, already showing the new story's captions; while the gate is
+      // closed, re-run its pass now — same task, so nothing paints in between.
+      if (driver.inTransit) this.overlayManager?.updateVisibility();
     };
     sceneDimsManager.addListener(listener);
     this.waypointListener = listener;
@@ -691,6 +698,10 @@ export class LuxarApp {
       inputHandler: this.inputHandler,
       recordingPanel: this.recordingPanel,
     });
+    // Story captions wait for the camera when a waypoint asks for it: the gate
+    // reads the LIVE driver, so it holds whichever scene's waypoints are
+    // installed, before or after the overlays themselves were created.
+    this.overlayManager.setTransitGate(() => this.waypointDriver?.inTransit === true);
   }
 
   /**

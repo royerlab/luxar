@@ -109,6 +109,15 @@ export interface ZarrWaypoint {
   easing?: 'linear' | 'ease-in-out';
   /** Rendering overrides (snake_case ViewerConfig keys) applied on arrival. */
   rendering?: Record<string, unknown>;
+  /**
+   * When this waypoint's dimension-bound overlays appear. `immediate` (the
+   * default) shows them as the dimension changes, while the camera is still
+   * flying; `on_arrival` holds overlays that would newly appear until the
+   * flight resolves — a snap or a camera-less waypoint arrives at once, a
+   * flight the visitor cancels counts as arrival, a flight a newer waypoint
+   * supersedes never reveals. Departing overlays hide immediately either way.
+   */
+  reveal?: 'immediate' | 'on_arrival';
 }
 
 /**
