@@ -263,6 +263,7 @@ VOXEL_SCALE = (2.5, 1.0, 1.0, 1.0)
 #: recording's absolute intensity scale.
 NORMALIZE_INTENSITY = 1.0
 
+# ---- Appearance, shared by both channels ----
 #: Volumetric optical depth shared by both layers (set by eye with the windows
 #: in CHANNELS): low enough that neither channel hides the other.
 ABSORPTION = 0.02
@@ -635,9 +636,10 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
                         layer_order=ch["layer_order"],
                         blending_mode="volumetric",
                         # Near-transparent optical depth: the two volumes only
-                        # occlude each other faintly, but the front/back order is
-                        # honoured, which is what makes the nuclei read inside
-                        # the membrane shell (additive blending flattened it).
+                        # occlude each other faintly. Compositing is exact within
+                        # each channel and approximate where their splats
+                        # interleave; the small absorption keeps that approximation
+                        # unobtrusive while preserving the authored front/back order.
                         absorption=ABSORPTION,
                         gamma=ch["gamma"],
                         intensity=1.0 / (ch["window"][1] - ch["window"][0]),
