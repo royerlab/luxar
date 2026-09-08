@@ -57,6 +57,7 @@ interface SceneManagerStub {
   controls: {
     addEventListener: ReturnType<typeof vi.fn>;
     removeEventListener: ReturnType<typeof vi.fn>;
+    settleDamping: ReturnType<typeof vi.fn>;
   };
   addEventListener: ReturnType<typeof vi.fn>;
   removeEventListener: ReturnType<typeof vi.fn>;
@@ -72,6 +73,7 @@ function makeSceneManager(scene: THREE.Scene): SceneManagerStub {
     controls: {
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
+      settleDamping: vi.fn(),
     },
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
@@ -364,6 +366,37 @@ describe('initPicking', () => {
       });
 
       expect(sceneLoader.nodeFactory.registerExistingSceneNodes).toHaveBeenCalledOnce();
+    });
+
+    it('settles touch navigation before handling a canvas tap', async () => {
+      const sceneManager = makeSceneManager(scene);
+      await initPicking({
+        sceneManager: sceneManager as never,
+        pickingEvents,
+        previous: makePreviousEmpty(),
+        getOverlayManager: () => undefined,
+      });
+
+      sceneManager.renderer.domElement.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          pointerId: 1,
+          pointerType: 'touch',
+          button: 0,
+          clientX: 100,
+          clientY: 100,
+        })
+      );
+      sceneManager.renderer.domElement.dispatchEvent(
+        new PointerEvent('pointerup', {
+          pointerId: 1,
+          pointerType: 'touch',
+          button: 0,
+          clientX: 100,
+          clientY: 100,
+        })
+      );
+
+      expect(sceneManager.controls.settleDamping).toHaveBeenCalledOnce();
     });
   });
 
