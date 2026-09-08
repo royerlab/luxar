@@ -67,24 +67,17 @@ def _uncovered_check_static_members(
     return set(members) - invoked - CHECK_STATIC_EXEMPTIONS.keys()
 
 
-def _repository_workflow_commands() -> list[str]:
-    workflow_dir = PROJECT_ROOT / ".github" / "workflows"
-    commands = []
-    for path in sorted(workflow_dir.iterdir()):
-        if path.suffix not in {".yml", ".yaml"}:
-            continue
-        workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
-        assert isinstance(workflow, Mapping)
-        commands.extend(_workflow_run_commands(workflow))
-    return commands
+def _ci_workflow_commands() -> list[str]:
+    workflow_path = PROJECT_ROOT / ".github" / "workflows" / "ci.yml"
+    workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    assert isinstance(workflow, Mapping)
+    return _workflow_run_commands(workflow)
 
 
 def test_every_check_static_member_is_reached_or_explicitly_exempted() -> None:
     """A new local static check must not silently miss every CI workflow."""
     pyproject_text = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    uncovered = _uncovered_check_static_members(
-        pyproject_text, _repository_workflow_commands()
-    )
+    uncovered = _uncovered_check_static_members(pyproject_text, _ci_workflow_commands())
 
     assert not uncovered, (
         "check-static member(s) are not invoked by any workflow and have no "
@@ -98,7 +91,7 @@ def test_check_static_exemptions_are_live_and_still_unwired() -> None:
     scripts = _default_scripts(pyproject_text)
     members = scripts["check-static"]
     assert isinstance(members, list)
-    invoked = _invoked_hatch_scripts(_repository_workflow_commands())
+    invoked = _invoked_hatch_scripts(_ci_workflow_commands())
 
     assert set(CHECK_STATIC_EXEMPTIONS) <= set(members)
     assert set(CHECK_STATIC_EXEMPTIONS).isdisjoint(invoked)
@@ -112,6 +105,6 @@ def test_an_unwired_new_member_fails_the_coverage_check() -> None:
         '    "security"\n]', '    "security",\n    "forgotten-check"\n]', 1
     )
 
-    assert _uncovered_check_static_members(mutant, _repository_workflow_commands()) == {
+    assert _uncovered_check_static_members(mutant, _ci_workflow_commands()) == {
         "forgotten-check"
     }
