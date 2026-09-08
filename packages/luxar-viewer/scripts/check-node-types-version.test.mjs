@@ -30,6 +30,18 @@ describe('checkNodeTypesVersion', () => {
     expect(checkNodeTypesVersion(viewerRoot, repoRoot)).toEqual([]);
   });
 
+  it.each(['v22.22.0', '22.22.0'])('accepts a full .nvmrc version: %s', (nvm) => {
+    const { viewerRoot, repoRoot } = makeFixture({ nvm });
+    expect(checkNodeTypesVersion(viewerRoot, repoRoot)).toEqual([]);
+  });
+
+  it('rejects an .nvmrc release alias', () => {
+    const { viewerRoot, repoRoot } = makeFixture({ nvm: 'lts/jod' });
+    expect(checkNodeTypesVersion(viewerRoot, repoRoot)).toEqual(
+      expect.arrayContaining([expect.stringContaining('Expected single-major versions')])
+    );
+  });
+
   it('rejects a package range for another Node major', () => {
     const { viewerRoot, repoRoot } = makeFixture({ declared: '^26' });
     expect(checkNodeTypesVersion(viewerRoot, repoRoot)).toEqual(

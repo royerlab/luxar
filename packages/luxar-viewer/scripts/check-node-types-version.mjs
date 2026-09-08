@@ -1,3 +1,14 @@
+#!/usr/bin/env node
+/**
+ * Keep `@types/node` aligned with the viewer's Node runtime contract.
+ *
+ * #2519 showed that newer declarations can make APIs such as `node:vfs`
+ * typecheck even though the runtime selected by `.nvmrc` cannot provide them.
+ * Treat `.nvmrc` as the single source of truth for the typings major. The
+ * Dependabot semver-major ignore prevents automated drift, while
+ * `src/tests/type/node-runtime-contract.ts` provides a type-level tripwire.
+ */
+
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
