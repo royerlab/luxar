@@ -454,9 +454,10 @@ Phases 1–3 are independently landable; Phase 4 is the one that can say no.
 2. **D4 widens the collected set.** Commutative nodes have never received a
    positive `renderOrder`; an `additive` layer moving out of the "draws first"
    position can change appearance. Phase 4 converted the neuromast's two layers
-   to depth-sorted `volumetric` blending, so the risk remains for future scenes
-   that mix a levelled commutative layer with untracked `renderOrder = 0`
-   content. Phase 1 is behaviour-preserving only for unauthored scenes.
+   to depth-sorted `volumetric` blending, so it no longer exercises D4's
+   commutative path. The risk remains for future scenes that mix a levelled
+   commutative layer with untracked `renderOrder = 0` content. Phase 1 is
+   behaviour-preserving only for unauthored scenes.
 3. **A level is a promise the renderer cannot always keep** (§8.1's bucket
    split, §5's interpenetration limit). Documenting where it is partially
    honoured matters more than the mechanism, because a silently-half-applied

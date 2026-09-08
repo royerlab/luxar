@@ -1075,7 +1075,7 @@ Five hours of zebrafish gastrulation (Zenodo 1211599, confocal, 151 timepoints t
 
 **Requires**: The two pre-fit channels are not bundled with the repo. The resolver fetches the 130 MB `.gsplats.zarr.zip` pair from the published `cc-by` record through `ensure_dataset` (SHA-256 verified, cached under `~/.cache/luxar/gsplats_4d_neuromast_2ch/`, expanded to a temporary directory on read), and falls back to an unzipped local pair under `$LUXAR_NEUROMAST_DATA_DIR` (default `~/luxar_demo_data/gsplats_neuromast_2ch/`) only when the manifest can build no download URL for the record. No GPU is needed.
 
-**Demonstrates**: 4D + multi-channel gsplats, per-channel `layer=True` + named colormaps (`bop_blue`/`bop_orange`) for the Layers panel, `add_gsplats_from_file` grafting of pre-fit multi-LOD (`stream`, 8 LODs) nodes, Z-anisotropy correction baked via `transform --scale`, redundancy-based culling, and additive compositing because the two superimposed channels have no meaningful cross-layer order. Options: `--no-serve`, `--serve-only`.
+**Demonstrates**: 4D + multi-channel gsplats, per-channel `layer=True` + named colormaps (`bop_blue`/`bop_orange`) for the Layers panel, `add_gsplats_from_file` grafting of pre-fit multi-LOD (`stream`, 8 LODs) nodes, Z-anisotropy correction baked via `transform --scale`, redundancy-based culling, and depth-sorted `volumetric` compositing with an authored membrane-before-nuclei `layer_order` plus per-channel display windows and gamma. Options: `--no-serve`, `--serve-only`.
 
 ---
 
