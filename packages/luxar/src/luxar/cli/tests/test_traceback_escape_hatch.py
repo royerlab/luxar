@@ -267,6 +267,8 @@ def test_no_interactive_cli_handler_discards_a_caught_exception() -> None:
        and chains the cause either way. Preferred.
     2. Chain it yourself: `raise typer.Exit(1) from err`.
 
+    There are no exceptions for unattended handlers: those may print a
+    traceback unconditionally, but must still chain the caught exception.
     Parsed with `ast` rather than grepped, so a `raise typer.Exit` in a string
     or comment cannot trip it and one inside a nested function cannot hide from
     it.
@@ -274,16 +276,8 @@ def test_no_interactive_cli_handler_discards_a_caught_exception() -> None:
     offenders: list[str] = []
     for path in _cli_sources():
         tree = ast.parse(path.read_text())
-        parents = {
-            child: parent
-            for parent in ast.walk(tree)
-            for child in ast.iter_child_nodes(parent)
-        }
         rel = path.relative_to(CLI_ROOT.parent)
         for node, stmt, caught in _discarding_exits(tree):
-            key = f"{rel}::{_enclosing_function(node, parents).name}"
-            if key in UNATTENDED_TRACEBACK_HANDLERS:
-                continue
             binding = f" as {node.name}" if node.name is not None else ""
             offenders.append(
                 f"{rel}:{stmt.lineno}: except {caught}{binding} -> {ast.unparse(stmt)}"
