@@ -738,6 +738,24 @@ describe('SceneLoader', () => {
       expect(sceneLoader.currentViewVersion).toBe(before);
     });
 
+    it('a changed view ignores targeted resync options and sweeps every loader', async () => {
+      const target = { updateView: vi.fn().mockResolvedValue(null), dispose: vi.fn() };
+      const other = { updateView: vi.fn().mockResolvedValue(null), dispose: vi.fn() };
+      const loaders = (sceneLoader as unknown as { loaders: Map<string, unknown> }).loaders;
+      loaders.set('/tiled/part_1/level_0', target);
+      loaders.set('/other', other);
+      const before = sceneLoader.currentViewVersion;
+
+      await sceneLoader.updateView(
+        { slicePosition: [0, 0, 0, 9] },
+        { resyncPaths: new Set(['/tiled/part_1']) }
+      );
+
+      expect(sceneLoader.currentViewVersion).toBe(before + 1);
+      expect(target.updateView).toHaveBeenCalledTimes(1);
+      expect(other.updateView).toHaveBeenCalledTimes(1);
+    });
+
     it('a targeted resync preserves frame-budget refine debt until an untargeted pass', async () => {
       const stored = (sceneLoader as unknown as { viewState: ViewState }).viewState;
 
