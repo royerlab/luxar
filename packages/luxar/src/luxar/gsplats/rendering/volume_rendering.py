@@ -20,6 +20,8 @@ if TYPE_CHECKING:
 
 
 _cuda_render_warning_emitted = False
+_CUDA_MIN_DIM = 2
+_CUDA_MAX_SUPPORTED_DIM = 8
 
 
 def _try_cuda_render(
@@ -31,8 +33,10 @@ def _try_cuda_render(
     intensity_floor: float,
 ) -> torch.Tensor | None:
     """Render with the CUDA extension when its supported fast path is available."""
-    # Keep this in sync with cuda/src/cuda_splatting.h (MIN_DIMS/MAX_DIMS).
-    if not 2 <= len(shape) <= 8:
+    # Keep these bounds in sync with
+    # luxar/gsplats/models/gsplats/cuda/src/cuda_splatting.h
+    # (MIN_DIM / MAX_SUPPORTED_DIM).
+    if not _CUDA_MIN_DIM <= len(shape) <= _CUDA_MAX_SUPPORTED_DIM:
         return None
 
     try:
@@ -67,7 +71,7 @@ def _try_cuda_render(
                 "CUDA volume renderer failed with "
                 f"{type(exc).__name__}: {exc}; falling back to PyTorch",
                 RuntimeWarning,
-                stacklevel=2,
+                stacklevel=3,
             )
             _cuda_render_warning_emitted = True
         return None

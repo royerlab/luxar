@@ -296,6 +296,11 @@ def validate_visible_range(
     return validated
 
 
+_SUPPORTED_IMAGE_INPUTS = (
+    "Supported: str/Path, bytes, numpy array, PIL Image, or imageio-compatible."
+)
+
+
 def _try_imageio_to_bytes(image: Any, fmt: str) -> Tuple[bytes, str] | None:
     """Decode an optional imageio input, preserving runtime decoder failures."""
     try:
@@ -303,17 +308,26 @@ def _try_imageio_to_bytes(image: Any, fmt: str) -> Tuple[bytes, str] | None:
     except ImportError:
         return None
 
-    try:
-        if hasattr(image, "read"):
+    if hasattr(image, "read"):
+        try:
             arr = iio.imread(image)
-        else:
+        except Exception as exc:
+            raise ValueError(
+                f"Cannot process image of type {type(image).__name__}: imageio failed "
+                f"with {type(exc).__name__}: {exc}. {_SUPPORTED_IMAGE_INPUTS}"
+            ) from exc
+    else:
+        try:
             arr = np.asarray(image)
-        return _numpy_to_bytes(arr, fmt), fmt
-    except Exception as exc:
-        raise ValueError(
-            f"Cannot process image of type {type(image).__name__}: imageio failed "
-            f"with {type(exc).__name__}: {exc}"
-        ) from exc
+        except Exception as exc:
+            raise ValueError(
+                f"Cannot process image of type {type(image).__name__}: array conversion "
+                f"failed with {type(exc).__name__}: {exc}. {_SUPPORTED_IMAGE_INPUTS}"
+            ) from exc
+        if arr.ndim not in (2, 3):
+            return None
+
+    return _numpy_to_bytes(arr, fmt), fmt
 
 
 def validate_image_input(
@@ -377,8 +391,7 @@ def validate_image_input(
         return imageio_result
 
     raise ValueError(
-        f"Cannot process image of type {type(image).__name__}. "
-        f"Supported: str/Path, bytes, numpy array, PIL Image, or imageio-compatible."
+        f"Cannot process image of type {type(image).__name__}. {_SUPPORTED_IMAGE_INPUTS}"
     )
 
 
