@@ -14,8 +14,8 @@ Provide **space-filling curve primitives** that enable spatial locality in chunk
 
 | Module | Curve | Entry Points | Numba Kernel |
 |--------|-------|--------------|--------------|
-| **morton.py** | Morton (Z-order) | `morton_encode_nd(coords, bits_per_dim=16)`, `morton_encode_128bit(coords, bits_per_dim)` | `_morton_numba_kernel` (lazy-compiled) |
-| **hilbert.py** | Hilbert | `hilbert_encode_nd(coords, bits_per_dim=16)` | `_hilbert_numba_kernel` (lazy-compiled) |
+| **morton.py** | Morton (Z-order) | `morton_encode_nd(coords, bits_per_dim=16)`, `morton_encode_128bit(coords, bits_per_dim)` | `_morton_numba_kernel` (eagerly compiled on first load) |
+| **hilbert.py** | Hilbert | `hilbert_encode_nd(coords, bits_per_dim=16)` | `_hilbert_numba_kernel` (eagerly compiled on first load) |
 
 ## Call Flow
 
