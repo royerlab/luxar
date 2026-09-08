@@ -173,32 +173,38 @@ def test_hilbert_numba_numpy_parity() -> None:
 
 
 @pytest.mark.parametrize(
-    ("module", "encoder", "kernel_attr", "loader_attr", "label"),
+    ("module", "encoder", "kernel_attr", "label"),
     [
         (
             _morton_mod,
             morton_encode_nd,
             "_morton_numba_kernel",
-            "_get_morton_numba_kernel",
             "Morton",
         ),
         (
             _hilbert_mod,
             hilbert_encode_nd,
             "_hilbert_numba_kernel",
-            "_get_hilbert_numba_kernel",
             "Hilbert",
         ),
     ],
 )
 def test_numba_compile_failure_warns_once_before_fallback(
-    monkeypatch, module, encoder, kernel_attr: str, loader_attr: str, label: str
+    monkeypatch, module, encoder, kernel_attr: str, label: str
 ) -> None:
-    def fail_compile():
-        raise RuntimeError("JIT unavailable")
+    numba = pytest.importorskip("numba")
+
+    def fail_compile(signature=None, **_kwargs):
+        if isinstance(signature, str):
+            raise RuntimeError("JIT unavailable")
+
+        def leave_uncompiled(function):
+            return function
+
+        return leave_uncompiled
 
     monkeypatch.setattr(module, kernel_attr, None)
-    monkeypatch.setattr(module, loader_attr, fail_compile)
+    monkeypatch.setattr(numba, "njit", fail_compile)
     coords = np.array([[0, 0], [1, 2], [3, 1]], dtype=np.int64)
 
     with pytest.warns(

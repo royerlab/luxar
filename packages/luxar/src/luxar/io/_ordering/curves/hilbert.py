@@ -17,7 +17,7 @@ def _get_hilbert_numba_kernel():  # type: ignore[no-untyped-def]
     """Lazy-compile the Numba Hilbert encoding kernel on first use."""
     import numba
 
-    @numba.njit(cache=True)  # type: ignore[misc]
+    @numba.njit("void(int64[:,:], int64, uint64[:])", cache=True)  # type: ignore[misc]
     def _hilbert_kernel(coords: np.ndarray, bits_per_dim: int, out: np.ndarray) -> None:
         """Numba-accelerated Hilbert curve encoding.
 
