@@ -216,8 +216,7 @@ export class PickingSystem {
     private renderer: Renderer,
     private capabilities: RendererCapabilities,
     private camera: THREE.Camera,
-    private onPickResult:
-      ((result: PickResult | null) => void) | ((result: PickResult | null) => Promise<void>)
+    private onPickResult: (result: PickResult | null) => void | Promise<void>
   ) {
     this.pickScene = new THREE.Scene();
     // No background — pick buffer clears to (0,0,0,0) which means "no hit"
