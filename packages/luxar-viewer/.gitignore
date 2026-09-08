@@ -13,6 +13,7 @@ performance-baselines.json
 points-rendering-perf.json
 line-renderer-compare-perf.json
 test-results-perf/
+test-results-mobile/
 
 # Line perf-bench writes per-commit results to perf-results/<sha>/...
 # Keep the README (it's the directory's docs) but ignore generated runs.

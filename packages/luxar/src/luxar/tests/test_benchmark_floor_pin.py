@@ -41,7 +41,7 @@ the same file, so ``from luxar.gsplats import fit_gaussian_splats as fit`` then
 What this gate deliberately does NOT cover
 ------------------------------------------
 *The class API.* :class:`~luxar.gsplats.GaussianSplatFitter`'s
-``fit(V, ..., floor="auto")`` honours the same spec, but an AST gate sees only
+``fit(FitParameters(V, ..., floor="auto"))`` honours the same spec, but an AST gate sees only
 the attribute name ``fit``, and demanding ``floor=`` on every ``.fit(`` would
 flag ``model.fit(X, y)`` / ``scaler.fit_transform(X)`` (the ``_NOT_A_FITTER``
 case below pins that it does not). Hence *module-level* functions only.
