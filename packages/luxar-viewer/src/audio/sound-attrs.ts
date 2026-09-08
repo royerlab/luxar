@@ -124,6 +124,7 @@ export function parseSoundNodeAttrs(
   const trigger = parseTrigger(path, raw.trigger);
   const attachTo = parseAttachTo(raw.attach_to);
   const ambisonic = parseAmbisonic(path, raw.ambisonic);
+  const refDistance = distance(raw.ref_distance, scale / 20);
   return {
     spatial: parseSpatial(raw.spatial, attachTo, ambisonic),
     trigger,
@@ -134,8 +135,8 @@ export function parseSoundNodeAttrs(
     fade_in_ms: num(raw.fade_in_ms, 0),
     fade_out_ms: num(raw.fade_out_ms, 0),
     distance_model: parseDistanceModel(raw.distance_model),
-    ref_distance: distance(raw.ref_distance, scale / 20),
-    max_distance: distance(raw.max_distance, scale),
+    ref_distance: refDistance,
+    max_distance: Math.max(distance(raw.max_distance, scale), refDistance),
     rolloff: num(raw.rolloff, 1),
     cone_inner_deg: optNum(raw.cone_inner_deg),
     cone_outer_deg: optNum(raw.cone_outer_deg),

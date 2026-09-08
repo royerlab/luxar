@@ -116,6 +116,12 @@ describe('SoundNode — routing and voices', () => {
     expect(v0.panner.maxDistance).toBe(40);
   });
 
+  it('keeps the default max distance at least as large as an authored ref distance', () => {
+    const attrs = parseSoundNodeAttrs('/sounds/clip', { ref_distance: 200 }, 100);
+    expect(attrs.ref_distance).toBe(200);
+    expect(attrs.max_distance).toBe(200);
+  });
+
   it('uses xyz columns before the first view-state update', () => {
     const node = makeNode({ spatial: true }, descriptor({ rows: [[10, 20, 30]], ndim: 3 }));
     node.setBuffer(new FakeAudioBuffer() as unknown as AudioBuffer);
