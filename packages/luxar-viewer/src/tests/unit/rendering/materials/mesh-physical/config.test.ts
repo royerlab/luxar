@@ -15,6 +15,9 @@ import {
   PHYSICAL_MESH_DEFAULTS,
   PHYSICAL_MESH_KNOB_KEYS,
   PHYSICAL_MESH_KNOBS,
+  PHYSICAL_PROGRAM_CACHE_KEY,
+  TRANSMISSION_ALPHA_MIX_LINE,
+  TRANSMISSION_ALPHA_PIN_LINE,
   applyPhysicalMeshConfig,
   clampPhysicalKnob,
   derivePhysicalCompositing,
@@ -23,6 +26,7 @@ import {
   physicalKnobInertReason,
   physicalKnobToSlider,
   physicalSetVertexAlpha,
+  pinTransmittedAlphaGlsl,
   type PhysicalMeshHost,
   type PhysicalMeshKnobKey,
   type PhysicalMeshMaterialConfig,
@@ -94,14 +98,104 @@ describe('derivePhysicalCompositing — translucency is read off the data', () =
       first,
       _why
     ) => {
-      const d = derivePhysicalCompositing({ opacity, vertexAlpha, alphaCutoff, transmission });
+      const inputs = { opacity, vertexAlpha, alphaCutoff, transmission, refractData: false };
+      const d = derivePhysicalCompositing(inputs);
       expect(d.transparent).toBe(transparent);
       expect(d.depthWrite).toBe(depthWrite);
       expect(d.alphaTest).toBe(alphaTest);
       expect(d.blendingMode).toBe(stamp);
       expect(d.drawBeforeEmissive).toBe(first);
+      expect(d.drawAfterEmissive).toBe(false);
+      // Phase 3: `refract_data` moves the SAME glass from first to last in its band
+      // and changes nothing else about how it composites.
+      const r = derivePhysicalCompositing({ ...inputs, refractData: true });
+      expect(r.drawAfterEmissive).toBe(first);
+      expect(r.drawBeforeEmissive).toBe(false);
+      expect([r.transparent, r.depthWrite, r.alphaTest, r.blendingMode]).toEqual([
+        d.transparent,
+        d.depthWrite,
+        d.alphaTest,
+        d.blendingMode,
+      ]);
     }
   );
+});
+
+describe('the transmitted-alpha pin (spec §3.4 Phase 3)', () => {
+  const INCLUDE = '#include <transmission_fragment>';
+
+  it("three's transmission chunk still carries the exact line the pin replaces", () => {
+    // A three upgrade that moves this line silently un-pins the alpha on WebGL and
+    // refract_data glass composites wrongly again — hence a hard failure, not a warning.
+    expect(THREE.ShaderChunk.transmission_fragment).toContain(TRANSMISSION_ALPHA_MIX_LINE);
+    expect(THREE.ShaderChunk.transmission_fragment.split(TRANSMISSION_ALPHA_MIX_LINE)).toHaveLength(
+      2
+    );
+    // And three's physical fragment shader reaches it through the include the hook expands.
+    expect(THREE.ShaderLib.physical.fragmentShader).toContain(INCLUDE);
+  });
+
+  it('expands the include with the line pinned, after the volume refraction sample', () => {
+    const source = `void main() {\n${INCLUDE}\n#include <opaque_fragment>\n}`;
+    const chunk = THREE.ShaderChunk.transmission_fragment;
+    const patched = pinTransmittedAlphaGlsl(source, chunk);
+    expect(patched).not.toContain(INCLUDE);
+    expect(patched).not.toContain(TRANSMISSION_ALPHA_MIX_LINE);
+    // The chunk opens with the same `= 1.0;` as its initialiser, so the pin adds exactly
+    // one more occurrence — and that one sits AFTER the volume refraction sample.
+    const pinsBefore = chunk.split(TRANSMISSION_ALPHA_PIN_LINE).length - 1;
+    expect(patched.split(TRANSMISSION_ALPHA_PIN_LINE).length - 1).toBe(pinsBefore + 1);
+    expect(patched.indexOf('getIBLVolumeRefraction')).toBeLessThan(
+      patched.lastIndexOf(TRANSMISSION_ALPHA_PIN_LINE)
+    );
+    // The rest of the shader is untouched.
+    expect(patched).toContain('#include <opaque_fragment>');
+  });
+
+  it('leaves a shader without the include alone, and a drifted chunk to three', () => {
+    const plain = 'void main() { gl_FragColor = vec4(1.0); }';
+    expect(pinTransmittedAlphaGlsl(plain, THREE.ShaderChunk.transmission_fragment)).toBe(plain);
+    const withInclude = `a\n${INCLUDE}\nb`;
+    expect(pinTransmittedAlphaGlsl(withInclude, '// a chunk with no mix line')).toBe(withInclude);
+  });
+
+  it('the WebGL wrapper applies it from a prototype method, so clones carry it and the cache key is fixed', () => {
+    const m = new PhysicalMeshMaterial({ transmission: 1.0 });
+    const clone = m.clone();
+    const params = {
+      fragmentShader: `x\n${INCLUDE}\ny`,
+    } as unknown as THREE.WebGLProgramParametersWithUniforms;
+    clone.onBeforeCompile(params);
+    expect(params.fragmentShader).toContain(TRANSMISSION_ALPHA_PIN_LINE);
+    expect(params.fragmentShader).not.toContain(INCLUDE);
+    expect(m.customProgramCacheKey()).toBe(PHYSICAL_PROGRAM_CACHE_KEY);
+    expect(clone.customProgramCacheKey()).toBe(m.customProgramCacheKey());
+    // Three's default key is the hook's source text; ours must not be.
+    expect(new THREE.MeshPhysicalMaterial().customProgramCacheKey()).not.toBe(
+      PHYSICAL_PROGRAM_CACHE_KEY
+    );
+  });
+
+  it('the WebGPU wrapper installs the alpha-pinning lighting model with the same feature flags', () => {
+    const Ctor = requireTslMaterials().materials.meshPhysical;
+    const glass = new Ctor({ transmission: 1.0, clearcoat: 0.5 });
+    const model = glass.setupLightingModel() as unknown as {
+      constructor: { name: string };
+      transmission: boolean;
+      clearcoat: boolean;
+      sheen: boolean;
+      start: unknown;
+    };
+    expect(model.constructor.name).toBe('LuxarPhysicalLightingModel');
+    expect(model.transmission).toBe(true);
+    expect(model.clearcoat).toBe(true);
+    expect(model.sheen).toBe(false);
+    expect(typeof model.start).toBe('function');
+    const metal = new Ctor({ metalness: 1.0 });
+    expect((metal.setupLightingModel() as unknown as { transmission: boolean }).transmission).toBe(
+      false
+    );
+  });
 });
 
 describe('the knob table and its slider mapping', () => {
@@ -257,6 +351,37 @@ describe.each(BACKENDS)('physical mesh material (%s)', (_name, ctor) => {
     expect(glass.userData.blendingMode).toBeUndefined();
     expect(glass.userData.drawBeforeEmissive).toBe(true);
     const metal = new (ctor())({ metalness: 1.0 });
+    expect(metal.userData.drawBeforeEmissive).toBeUndefined();
+    expect(metal.userData.drawAfterEmissive).toBeUndefined();
+  });
+
+  it('refract_data flips glass to draw AFTER the emissive data, and is inert without transmission', () => {
+    const lens = new (ctor())({ transmission: 1.0, refractData: true });
+    // Same compositing state as any glass — only the ordering stamp differs.
+    expect(lens.transparent).toBe(true);
+    expect(lens.depthWrite).toBe(false);
+    expect(lens.blending).toBe(THREE.NormalBlending);
+    expect(lens.userData.drawAfterEmissive).toBe(true);
+    expect(lens.userData.drawBeforeEmissive).toBeUndefined();
+    // Exactly one stamp at a time; a live toggle swaps them without a rebuild.
+    const versionBefore = (lens as unknown as { version: number }).version;
+    (lens as unknown as { updateRefractData(v: boolean): void }).updateRefractData(false);
+    expect(lens.userData.drawBeforeEmissive).toBe(true);
+    expect(lens.userData.drawAfterEmissive).toBeUndefined();
+    expect((lens as unknown as { version: number }).version).toBe(versionBefore);
+    (lens as unknown as { updateRefractData(v: boolean): void }).updateRefractData(true);
+    expect(lens.userData.drawAfterEmissive).toBe(true);
+    // The flag survives a transmission zero crossing and back (re-derived from the
+    // stored inputs), and is inert while the surface transmits nothing.
+    const knob = lens as unknown as { updatePhysicalKnob(k: PhysicalMeshKnobKey, v: number): void };
+    knob.updatePhysicalKnob('transmission', 0);
+    expect(lens.userData.drawAfterEmissive).toBeUndefined();
+    expect(lens.userData.drawBeforeEmissive).toBeUndefined();
+    knob.updatePhysicalKnob('transmission', 0.5);
+    expect(lens.userData.drawAfterEmissive).toBe(true);
+    // Without transmission the flag stamps nothing at all.
+    const metal = new (ctor())({ metalness: 1.0, refractData: true });
+    expect(metal.userData.drawAfterEmissive).toBeUndefined();
     expect(metal.userData.drawBeforeEmissive).toBeUndefined();
   });
 

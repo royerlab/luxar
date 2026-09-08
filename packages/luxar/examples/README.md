@@ -58,6 +58,9 @@ directly with `pnpm` or `npx`.
 | File | What it teaches |
 |---|---|
 | `mesh_basic_example.py` | `add_mesh` with triangle faces, flat shading, and per-vertex colours. |
+| `mesh_physical_materials_example.py` | `material="physical"`: nine spheres — house shader, clearcoat shell, gold, steel, pearl, velvet and three glasses (Phases 1–2). |
+| `mesh_reflections_example.py` | `viewer_config.environment.source="scene"`: chrome and glass lit by an exact capture of the data around them; the `luxar env bake` target (Phase 4). |
+| `mesh_glass_lens_example.py` | `refract_data=True`: glass that draws after — and refracts — the point lattice behind it, beside the Phase 2 default and a tinted bubble (Phase 3). |
 
 ### Rendering attributes
 

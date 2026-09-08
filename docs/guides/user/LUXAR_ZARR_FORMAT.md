@@ -1027,20 +1027,24 @@ Two structural differences from the other three types:
   "thickness": 0.4,                  //   >= 0, scene units
   "attenuation_color": "#f6d148",    //   "#rrggbb"
   "attenuation_distance": 0.3,       //   > 0, scene units; absent = none
-  "dispersion": 0.5                  //   >= 0
+  "dispersion": 0.5,                 //   >= 0
+  "refract_data": true               // Phase 3: draw after, and refract, the emissive data
 }
 ```
 
 The seven house-shader appearance attrs control shading and texture sampling;
 `slab_tolerance` controls nD membership loading; `material` selects the material
-family and unlocks the thirteen physically based knobs
-(`docs/guides/specs/MESH_PHYSICAL_MATERIALS_SPEC.md`). All twenty-two mesh-only
+family and unlocks the fourteen physically based knobs
+(`docs/guides/specs/MESH_PHYSICAL_MATERIALS_SPEC.md`). All twenty-three mesh-only
 authored attrs are rejected on points, lines, Gaussian splats, and groups. A
 physical knob without `material: "physical"` is refused at authoring; a
 physical mesh refuses `ambient` / `shade_exponent` / `specular` / `shininess`,
 `blending_mode`, `colormap`, a texture and `shading: "none"`; and `thickness`,
-`attenuation_color`, `attenuation_distance` and `dispersion` are refused without
-a `transmission` above zero — none of these pairings has a meaning.
+`attenuation_color`, `attenuation_distance`, `dispersion` and `refract_data` are
+refused without a `transmission` above zero — none of these pairings has a
+meaning. `refract_data` (Phase 3) makes a glass draw after, and refract, the
+points, lines and splats behind it, while data in front of it stays crisp on top
+(the viewer partitions each data fragment by depth against the glass).
 
 #### vertices/ (Required)
 - **Shape:** `(V, D)` — nD vertex positions, exactly like `Lines.vertices`.
@@ -1421,7 +1425,8 @@ per-layer visibility, display-range, gamma, opacity, absorption (volumetric
 mode's κ), blending mode, and colormap controls, plus mesh shading controls
 (ambient, shade falloff, specular, shininess, alpha cutoff) — or, for a
 `material: "physical"` mesh, live sliders for its physical knobs in place of
-those sliders (the two colour knobs are read-only rows). The mesh-only appearance attrs also include `texture_filter`
+those sliders plus a Refract data switch (the two colour knobs are read-only
+rows). The mesh-only appearance attrs also include `texture_filter`
 and `texture_wrap`; all of them are valid only on mesh leaves and do not inherit
 through groups.
 
@@ -1565,11 +1570,13 @@ Overlays are NOT part of the 3D scene graph — they use normalized screen coord
   "type": "overlay_image",
   "position": [0.9, 0.05],
   "image_file": "image.png",
-  "size": [0.1, 0.05],
+  "size": [0.1, null],
   "blend_mode": "normal",
   "z_index": 1
 }
 ```
+As for video overlays, a `null` height in `size` keeps the image's own aspect
+ratio.
 The image file is stored directly in the overlay's zarr directory. Compiler-written
 overlays use exactly `image.png`, `image.jpeg`, or `image.webp`, matching the PNG,
 JPEG, or WebP payload bytes. These canonical names avoid case-insensitive metadata
@@ -2261,6 +2268,9 @@ When using spatial indices:
 Every data array self-describes its on-disk encoding via an `encoding` attr
 in its `.zattrs` (`{"name": "<scheme>", ...}`); readers dispatch on
 `encoding.name` and decode back to float32 (or the original integer dtype).
+When `original_dtype` is integral, readers round decoded values to the nearest
+integer and clamp them to the target dtype's range before casting rather than
+truncating toward zero or allowing overflow to wrap around.
 The full scheme vocabulary is single-sourced in
 `format-contract/contract.yaml`. Besides the quantization schemes described
 per-array above (`linear_perchannel_u16`, `rgb_uint8`,

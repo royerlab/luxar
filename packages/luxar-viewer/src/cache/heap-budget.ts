@@ -37,10 +37,38 @@ const MB = 1024 * 1024;
  */
 const CACHE_SHARE_OF_TARGET = 0.6;
 const NON_CACHE_SHARE_OF_TARGET = 1 - CACHE_SHARE_OF_TARGET;
+/**
+ * How the two shares DERIVED HERE divide the non-cache remainder: eager line
+ * working set 0.5, L2 write-queue retain 0.25, leaving a quarter of the
+ * remainder unclaimed by either. That is a bound on what THESE TWO numbers
+ * hand out, not on total commitment — the eager 0.5 is claimed independently,
+ * in full, by three consumers (`createLineWorkingSetGate` in
+ * `data/scene-loader/nodes/load-children-concurrently.ts`,
+ * `RefinementResidencyBudget.forSession` in
+ * `data/scene-loader/progressive/residency-budget.ts`, and
+ * `rendering/gpu-byte-budget.ts` as a min-candidate), so on a 4 GiB heap the
+ * commitments already total
+ * 3 × 512 + 328 MiB against a 1310 MiB remainder. Keep that ledger in mind when
+ * retuning: the queue takes a quarter rather than a half precisely because
+ * these are ceilings on demand-filled structures competing for one heap, and
+ * a second half-share would let two of them alone spend the whole remainder.
+ */
 const EAGER_WORKING_SET_SHARE_OF_REMAINDER = 0.5;
 const EAGER_WORKING_SET_CAP_BYTES = 512 * MB;
 /** Historical line-admission fallback when no session memory signal exists. */
 const EAGER_WORKING_SET_FIXED_FALLBACK_BYTES = 256 * MB;
+
+/**
+ * The L2 (OPFS) write queue's share of that same remainder (see the split
+ * above). Its own constants deliberately — the eager working set and the write
+ * queue are unrelated consumers, so one's ceiling must never move because the
+ * other's was retuned.
+ */
+const OPFS_WRITE_QUEUE_SHARE_OF_REMAINDER = 0.25;
+/** Ceiling so a very large heap can't let the queue pin an absurd retain. */
+const OPFS_WRITE_QUEUE_CAP_BYTES = 512 * MB;
+/** No-signal fallback: clears today's largest demo while still being a bound. */
+const OPFS_WRITE_QUEUE_FIXED_FALLBACK_BYTES = 256 * MB;
 
 /** Hard ceiling on the S-cache so a huge heap can't pin an absurd budget. */
 const SLICE_CAP_BYTES = 2048 * MB;
@@ -167,15 +195,52 @@ export function readHeapLimitBytes(): number | undefined {
 }
 
 /**
- * The eager child loader's share of the heap headroom left outside the cache
- * pool. Half of that shared remainder stays available for render, WASM,
- * prefetch, and unrelated scene-graph work, while the absolute cap prevents a
- * large V8 heap limit from recreating an eight-wide allocation spike.
+ * Heap headroom left OUTSIDE the cache pool — the shared memory model every
+ * non-cache consumer sizes itself from (the eager child loader, the L2 write
+ * queue), so a session uses ONE remainder rather than each consumer inventing
+ * its own view of the heap.
  *
  * Resolution matches the cache pool: explicit pool override → measured heap →
- * device-class pool → fixed fallback. Pool-based inputs are converted back to
- * their corresponding non-cache share so a WebKit session uses one coherent
- * memory model for caches and eager line loading.
+ * device-class pool. A pool-based input is converted back to the remainder it
+ * implies (`pool × NON_CACHE/CACHE`) so a WebKit session — where the heap
+ * cannot be measured at all — stays on the same model as a Chrome one.
+ *
+ * Returns `undefined` when there is no memory signal at all (non-browser /
+ * Firefox+Safari without an override), so each consumer applies its own
+ * no-signal fallback.
+ *
+ * @param heapLimitBytes - Override for the device heap limit (tests). When
+ *   omitted, {@link readHeapLimitBytes} is consulted; an explicitly passed
+ *   non-positive value skips the heap path WITHOUT probing browser state.
+ * @param poolOverrideBytes - Explicit total cache pool in bytes. Takes
+ *   precedence over the heap-derived remainder.
+ * @param fallbackPoolBytes - Device-class total cache pool in bytes, used only
+ *   when neither an explicit pool nor a measurable heap is available.
+ */
+function nonCacheRemainderBytes(
+  heapLimitBytes?: number,
+  poolOverrideBytes?: number,
+  fallbackPoolBytes?: number
+): number | undefined {
+  const remainderFromCachePool = (poolBytes: number): number =>
+    poolBytes * (NON_CACHE_SHARE_OF_TARGET / CACHE_SHARE_OF_TARGET);
+  if (positive(poolOverrideBytes)) return remainderFromCachePool(poolOverrideBytes);
+  const heap = heapLimitBytes === undefined ? readHeapLimitBytes() : heapLimitBytes;
+  if (positive(heap)) {
+    return heap * config.dataLoading.memory.targetHeapUsage * NON_CACHE_SHARE_OF_TARGET;
+  }
+  if (positive(fallbackPoolBytes)) return remainderFromCachePool(fallbackPoolBytes);
+  return undefined;
+}
+
+/**
+ * The eager child loader's share of the heap headroom left outside the cache
+ * pool (`nonCacheRemainderBytes`): half of it. The L2 write-queue retain takes
+ * a quarter (see {@link computeOpfsWriteQueueBudgetBytes}) and the last quarter
+ * is claimed by neither, while the absolute cap prevents a large V8 heap limit
+ * from recreating an eight-wide allocation spike. Note that this budget is
+ * handed to several independent consumers in full — see the ledger on the share
+ * constants — so it bounds each of them, not their sum.
  *
  * @param heapLimitBytes - Override for the device heap limit (tests). When
  *   omitted, {@link readHeapLimitBytes} is consulted; invalid explicit values
@@ -190,29 +255,83 @@ export function computeWorkingSetBudgetBytes(
   poolOverrideBytes?: number,
   fallbackPoolBytes?: number
 ): number {
-  const budgetFromCachePool = (poolBytes: number): number =>
-    poolBytes *
-    (NON_CACHE_SHARE_OF_TARGET / CACHE_SHARE_OF_TARGET) *
-    EAGER_WORKING_SET_SHARE_OF_REMAINDER;
+  const remainder = nonCacheRemainderBytes(heapLimitBytes, poolOverrideBytes, fallbackPoolBytes);
+  if (remainder === undefined) return EAGER_WORKING_SET_FIXED_FALLBACK_BYTES;
+  return Math.floor(
+    Math.min(remainder * EAGER_WORKING_SET_SHARE_OF_REMAINDER, EAGER_WORKING_SET_CAP_BYTES)
+  );
+}
 
-  let budgetBytes: number;
-  if (positive(poolOverrideBytes)) {
-    budgetBytes = budgetFromCachePool(poolOverrideBytes);
-  } else {
-    const heap = heapLimitBytes === undefined ? readHeapLimitBytes() : heapLimitBytes;
-    if (positive(heap)) {
-      budgetBytes =
-        heap *
-        config.dataLoading.memory.targetHeapUsage *
-        NON_CACHE_SHARE_OF_TARGET *
-        EAGER_WORKING_SET_SHARE_OF_REMAINDER;
-    } else if (positive(fallbackPoolBytes)) {
-      budgetBytes = budgetFromCachePool(fallbackPoolBytes);
-    } else {
-      return EAGER_WORKING_SET_FIXED_FALLBACK_BYTES;
-    }
-  }
-  return Math.floor(Math.min(budgetBytes, EAGER_WORKING_SET_CAP_BYTES));
+/**
+ * The L2 (OPFS) write queue's share of the same non-cache heap remainder
+ * (`nonCacheRemainderBytes`) — the ceiling on bytes pending background writes
+ * may retain.
+ *
+ * NOT `max(l1Size, 64 MB)`, which is what this cap was at first (#2528). A
+ * pending write's buffer is the SAME `Uint8Array` the L1 entry holds (see the
+ * enqueue site in `multi-level-caching-store.ts`), so while the entry is still
+ * L1-resident it costs one extra REFERENCE, not one extra buffer; the only
+ * genuinely extra retention is the pending-and-since-evicted set. Charging the
+ * queue for bytes L1 already owns and bounds made the cap track the wrong
+ * quantity — on a machine whose L1 resolves to ~100 MB it bound at roughly half
+ * the 214 MB a single pathology scene streams, which re-introduced the write
+ * drops #2528 had removed (0 → 3 966, #2561).
+ *
+ * What this bounds is nonetheless TOTAL pending bytes, not that evicted-and-
+ * pending subset. Accounting only the subset would be tighter (it is what
+ * #2561's option 3 proposed) but needs an L1 eviction hook the queue does not
+ * have; total-pending is a strict over-estimate of the extra retention, so it
+ * is conservative in the safe direction and costs nothing but a lower ceiling.
+ *
+ * Resolved values (`targetHeapUsage` 0.8, so remainder = heap × 0.8 × 0.4, of
+ * which this takes a quarter — i.e. simply heap × 0.08):
+ *   - 4 GiB Chrome heap: remainder 1310 MiB → 328 MiB. That clears both the
+ *     214 MB the cmu1 pathology scene streams before its cap bound (peak
+ *     pending ≈ cumulative streamed here: its 10 961 writes drain 4-wide at
+ *     tens of ms each — see the queue module's docstring — which is several
+ *     times slower than the ~9.7 s arrival) and its 277 MB whole-store
+ *     ceiling. The margin over that ceiling is 1.18×, not comfortable.
+ *   - 2 GiB heap: remainder 655 MiB → 164 MiB.
+ *   - 8 GiB heap: remainder 2621 MiB → 655 MiB, capped at 512 MiB.
+ *   - `?cacheBudgetMB=2048`: remainder 1365 MiB → 341 MiB.
+ *   - mobile device-class pool (384 MiB): remainder 256 MiB → 64 MiB.
+ *   - no memory signal at all: 256 MiB.
+ * So for that scene the cap BINDS below roughly a 2.6 GiB heap (214/0.08 =
+ * 2675 MiB) and its whole store no longer fits below ~3.4 GiB (277/0.08 =
+ * 3462 MiB). That is the intended heap-relative behaviour, not a regression: a
+ * small heap SHOULD drop writes rather than retain a third of a gigabyte it
+ * does not have. Hence no absolute floor on the measured path either — a fixed
+ * 256 MiB floor on a 1 GiB heap (whose whole non-cache remainder is 328 MiB)
+ * would be no bound at all. The no-signal 256 MiB is deliberately more generous
+ * than a measured mid-size heap resolves to: it is a no-INFORMATION default,
+ * sized to clear today's demos rather than to a heap nobody could observe.
+ *
+ * The absent floor has one pathological edge, left visible rather than papered
+ * over: a tiny explicit pool resolves below a single chunk — `?cacheBudgetMB=1`
+ * gives a 0.67 MiB remainder and a ~170 KiB allowance, under the 256 KiB a
+ * chunk can reach — and because overflow drops the ARRIVAL rather than evicting
+ * pending work, nothing is ever persisted. L2 is then effectively off for the
+ * session. That is self-inflicted by the setting, and a floor would have to
+ * exceed the whole non-cache remainder to prevent it.
+ *
+ * @param heapLimitBytes - Override for the device heap limit (tests). When
+ *   omitted, {@link readHeapLimitBytes} is consulted; invalid explicit values
+ *   skip the heap path without probing browser state.
+ * @param poolOverrideBytes - Explicit total cache pool in bytes (`?cacheBudgetMB=`
+ *   / the native launcher). Takes precedence over the heap-derived budget.
+ * @param fallbackPoolBytes - Device-class total cache pool in bytes, used only
+ *   when neither an explicit pool nor a measurable heap is available.
+ */
+export function computeOpfsWriteQueueBudgetBytes(
+  heapLimitBytes?: number,
+  poolOverrideBytes?: number,
+  fallbackPoolBytes?: number
+): number {
+  const remainder = nonCacheRemainderBytes(heapLimitBytes, poolOverrideBytes, fallbackPoolBytes);
+  if (remainder === undefined) return OPFS_WRITE_QUEUE_FIXED_FALLBACK_BYTES;
+  return Math.floor(
+    Math.min(remainder * OPFS_WRITE_QUEUE_SHARE_OF_REMAINDER, OPFS_WRITE_QUEUE_CAP_BYTES)
+  );
 }
 
 /**

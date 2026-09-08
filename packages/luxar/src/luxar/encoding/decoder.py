@@ -10,6 +10,15 @@ import numpy as np
 import zarr
 
 
+def _restore_original_dtype(values: np.ndarray, original_dtype: np.dtype) -> np.ndarray:
+    """Restore decoded values, clamping and rounding before integral casts."""
+    if original_dtype.kind in "iu":
+        dtype_limits = np.iinfo(original_dtype)
+        values = np.clip(values, dtype_limits.min, dtype_limits.max)
+        values = np.rint(values)
+    return np.asarray(values, dtype=original_dtype)
+
+
 class ArrayDecoder:
     """Decode any encoded array from zarr.
 
@@ -230,7 +239,7 @@ class ArrayDecoder:
         # Use float64 intermediate for precision, then cast to original dtype
         normalized = data.astype(np.float64) / (2**bits - 1)
         result = normalized * (max_val - min_val) + min_val
-        return np.asarray(result, dtype=original_dtype)
+        return _restore_original_dtype(result, original_dtype)
 
     def _decode_log_scalar(self, arr: zarr.Array, enc: dict) -> np.ndarray:
         """Decode log scalar: uint → original dtype using expm1.
@@ -261,7 +270,7 @@ class ArrayDecoder:
         # small differences from this float64 metadata/reference helper are expected.
         normalized = data.astype(np.float64) / (2**bits - 1)
         result = np.expm1(normalized * max_log)
-        return np.asarray(result, dtype=original_dtype)
+        return _restore_original_dtype(result, original_dtype)
 
     def _decode_geolog_scalar(self, arr: zarr.Array, enc: dict) -> np.ndarray:
         """Decode geometric-log scalar (min/max-anchored, reserved zero level).
@@ -300,7 +309,7 @@ class ArrayDecoder:
                 min_log
                 + (data[nz].astype(np.float64) - 1.0) / denom * (max_log - min_log)
             )
-        return np.asarray(out, dtype=original_dtype)
+        return _restore_original_dtype(out, original_dtype)
 
     @staticmethod
     def _perchannel_scales(
@@ -392,7 +401,7 @@ class ArrayDecoder:
         x = np.expm1(y)
         if zero_mask is not None:
             x = np.where(zero_mask, 0.0, x)
-        return np.asarray(x, dtype=original_dtype)
+        return _restore_original_dtype(x, original_dtype)
 
     def _decode_signed_log_perchannel(self, arr: zarr.Array, enc: dict) -> np.ndarray:
         """Decode generic per-channel signed-log quantization of an (N, C) array.
@@ -409,7 +418,7 @@ class ArrayDecoder:
         x = np.sign(y) * np.expm1(np.abs(y))
         if zero_mask is not None:
             x = np.where(zero_mask, 0.0, x)
-        return np.asarray(x, dtype=original_dtype)
+        return _restore_original_dtype(x, original_dtype)
 
     def _decode_linear_perchannel(self, arr: zarr.Array, enc: dict) -> np.ndarray:
         """Decode generic per-channel LINEAR (fixed-point) quantization of an
@@ -423,7 +432,9 @@ class ArrayDecoder:
         lo, hi, bits = self._perchannel_scales(data, enc, "linear_perchannel")
         original_dtype = np.dtype(enc.get("original_dtype", "float32"))
         rng = np.maximum(hi - lo, 1e-30)
-        return np.asarray(lo + data / ((1 << bits) - 1) * rng, dtype=original_dtype)
+        return _restore_original_dtype(
+            lo + data / ((1 << bits) - 1) * rng, original_dtype
+        )
 
     def _decode_geolog_perchannel(self, arr: zarr.Array, enc: dict) -> np.ndarray:
         """Decode per-channel TRUE-log quantization of a positive (N, C) array.
@@ -441,7 +452,9 @@ class ArrayDecoder:
         rng = np.maximum(hi - lo, 1e-30)
         denom = max((1 << bits) - 2, 1)
         y = lo + (data - 1.0) / denom * rng
-        return np.asarray(np.where(data == 0, 0.0, np.exp(y)), dtype=original_dtype)
+        return _restore_original_dtype(
+            np.where(data == 0, 0.0, np.exp(y)), original_dtype
+        )
 
     def _decode_color(self, arr: zarr.Array, enc: dict) -> np.ndarray:
         """Decode color: uint8/uint16 [0,max] → original dtype [0,1].
@@ -461,7 +474,7 @@ class ArrayDecoder:
 
         # Convert to [0, 1] range
         result = data.astype(np.float64) / max_val
-        return result.astype(original_dtype)
+        return _restore_original_dtype(result, original_dtype)
 
     def _decode_lut(self, arr: zarr.Array, enc: dict) -> np.ndarray:
         """Decode LUT-encoded array.
@@ -567,6 +580,6 @@ def decode_coordinate_columns(
     decoded = selected_low + selected.astype(np.float64) / ((1 << bits) - 1) * (
         selected_high - selected_low
     )
-    return np.asarray(
-        decoded, dtype=np.dtype(encoding.get("original_dtype", "float32"))
+    return _restore_original_dtype(
+        decoded, np.dtype(encoding.get("original_dtype", "float32"))
     )

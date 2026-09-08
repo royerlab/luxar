@@ -19,6 +19,7 @@ import { SliceCache } from '../../../cache/slice-cache';
 import {
   cachePoolOverrideBytes,
   computeCacheBudgets,
+  computeOpfsWriteQueueBudgetBytes,
   deviceClassPoolBytes,
   type CacheBudgets,
 } from '../../../cache/heap-budget';
@@ -118,7 +119,8 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
   const l1Enabled = appConfig.cache.enabled && !noCache;
   // Device-class fallback pool (mobile/laptop/desktop) for WebKit without an
   // override — where the heap can't be measured. undefined in non-browser envs.
-  const budgets = computeCacheBudgets(undefined, poolOverrideBytes, deviceClassPoolBytes(), {
+  const fallbackPoolBytes = deviceClassPoolBytes();
+  const budgets = computeCacheBudgets(undefined, poolOverrideBytes, fallbackPoolBytes, {
     l0: l0Enabled,
     l1: l1Enabled,
     slice: sliceEnabled,
@@ -176,6 +178,14 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
       {
         l1MaxSize: budgets.l1Bytes,
         l2MaxSize: appConfig.cache.l2MaxSizeMB * 1024 * 1024,
+        // The L2 write queue's retained-byte ceiling comes from the same
+        // memory model, so the `?cacheBudgetMB=` / native-launcher override and
+        // the device-class fallback feed it exactly like the tiers above.
+        opfsWriteQueueMaxBytes: computeOpfsWriteQueueBudgetBytes(
+          undefined,
+          poolOverrideBytes,
+          fallbackPoolBytes
+        ),
         debug: cacheDebug || appConfig.cache.debug,
         noCache,
         noOpfs,

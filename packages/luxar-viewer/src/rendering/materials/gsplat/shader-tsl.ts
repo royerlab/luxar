@@ -68,6 +68,12 @@ import {
   screenSize,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
+import {
+  clipDepthVarying,
+  glassPartitionGuardTSL,
+  glassPartitionNodesFromUniforms,
+  type GlassPartitionTSLNodes,
+} from '../_shared/glass-partition-tsl';
 import { resolveElementTextureWidth, SPLAT_TEXTURE_LAYOUT } from '../../element-texture-layout';
 import {
   invalidFloatTSL,
@@ -173,6 +179,9 @@ export interface GSplatTSLNodes {
   /** Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB. */
   readonly uSortedIndexSlot: TSLNode;
   readonly uDensityDrop: TSLNode;
+  /** Refraction split (glass-partition-tsl.ts): mode + shared glass depth texture. */
+  readonly uGlassPartition: GlassPartitionTSLNodes['uGlassPartition'];
+  readonly uGlassDepth: GlassPartitionTSLNodes['uGlassDepth'];
   readonly uNearCull: TSLNode;
   readonly uMaxExtentFactor: TSLNode;
   readonly uCov2DDilation: TSLNode;
@@ -269,6 +278,7 @@ export function gsplatWebGPUFactory(
   // body (the TSL pattern for Fn-traced vertex stages).
   const vColor: TSLNode = varying(vec3(float(0.0), float(0.0), float(0.0)));
   const vAmplitude2D: TSLNode = varying(float(0.0));
+  const vClipZW: TSLNode = clipDepthVarying();
   const vAlpha: TSLNode = varying(float(1.0));
   const vL2D: TSLNode = varying(vec3(float(0.0), float(0.0), float(0.0)));
   const vCenterScreen: TSLNode = varying(vec2(float(0.0), float(0.0)));
@@ -664,7 +674,9 @@ export function gsplatWebGPUFactory(
     vL2D.assign(vL2DVal);
     vCenterScreen.assign(vCenterScreenVal);
 
-    return rejected.select(rejectClipPos, validClipPos);
+    const clipOut: TSLNode = rejected.select(rejectClipPos, validClipPos).toVar();
+    vClipZW.assign(clipOut.zw);
+    return clipOut;
   });
 
   const clipPos: TSLNode = vertexBody();
@@ -675,6 +687,9 @@ export function gsplatWebGPUFactory(
   // Fragment uses `screenCoordinate` (= gl_FragCoord.xy in TSL) to
   // recover pixel position relative to the splat centre.
   const fragmentNode = Fn(() => {
+    // Refraction split partition FIRST: a fragment on the wrong side of the glass
+    // costs nothing further (glass-partition-tsl.ts; GLSL twin at the top of main()).
+    glassPartitionGuardTSL(nodes, vClipZW);
     // `screenCoordinate` is TOP-LEFT-origin on BOTH backends (three
     // normalizes: the WebGL fallback emits `size.y - gl_FragCoord.y`,
     // native WGSL's position builtin is already top-left), but
@@ -850,6 +865,7 @@ export function buildGSplatTSLNodesFromUniforms(
     uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
     uSortedIndexSlot: uniform((uniforms.uSortedIndexSlot?.value as number) ?? 0),
     uDensityDrop: uniform((uniforms.uDensityDrop?.value as number) ?? 0),
+    ...glassPartitionNodesFromUniforms(uniforms),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
     uMaxExtentFactor: uniform((uniforms.uMaxExtentFactor?.value as number) ?? 1.0),
     // Neutral fallback 0 (no dilation) — matches GLSL's missing-uniform default,

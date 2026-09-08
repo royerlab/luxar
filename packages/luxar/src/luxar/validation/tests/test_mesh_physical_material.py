@@ -72,8 +72,10 @@ def test_vocabulary_is_closed_and_registered_everywhere() -> None:
         "shininess",
     }
     assert PHYSICAL_MATERIAL_ATTRS | {"material"} <= MESH_ONLY_APPEARANCE_ATTRS
-    # The Phase 2 glass family is in (spec §3.4); Phase 3 adds no authored knob.
+    # The Phase 2 glass family is in (spec §3.4), and Phase 3's one authored knob,
+    # the `refract_data` flag, rides the same pairing rule.
     assert PHYSICAL_TRANSMISSION_ATTRS <= MESH_ONLY_APPEARANCE_ATTRS
+    assert "refract_data" in PHYSICAL_TRANSMISSION_DEPENDENT_ATTRS
 
 
 @pytest.mark.parametrize("value", ["luxar", "physical"])
@@ -195,9 +197,11 @@ def test_glass_family_round_trips_and_is_written_only_when_set(tmp_path) -> None
             attenuation_color="#f6d148",
             attenuation_distance=0.3,
             dispersion=0.5,
+            refract_data=True,
         )
         assert amber.attrs["transmission"] == 1.0
         assert amber.attrs["attenuation_color"] == "#f6d148"
+        assert amber.attrs["refract_data"] is True
         # `ior` alone is meaningful (it sets an opaque surface's reflectance) …
         metal = scene.add_mesh("metal", _V, _F, material="physical", ior=2.0)
         assert metal.attrs["ior"] == 2.0
@@ -214,7 +218,10 @@ def test_glass_family_round_trips_and_is_written_only_when_set(tmp_path) -> None
         assert key in attrs, key
     assert attrs["ior"] == 1.5
     assert attrs["dispersion"] == 0.5
+    assert attrs["refract_data"] is True
     assert "thickness" not in root["metal"].attrs
+    # Absent means false: a Phase 2 glass that never asked stays glass-first.
+    assert "refract_data" not in root["bubble"].attrs
 
 
 def test_physical_keeps_smooth_and_flat_shading(tmp_path) -> None:
@@ -372,6 +379,16 @@ def test_physical_knob_survives_post_hoc_write_through_on_a_mesh(tmp_path) -> No
             dict(material="physical", transmission=0.0, dispersion=0.5),
             r"\['dispersion'\] but no transmission above zero",
             "glass knob with transmission explicitly zero",
+        ),
+        (
+            dict(material="physical", refract_data=True),
+            r"\['refract_data'\] but no transmission above zero",
+            "refract_data without transmission",
+        ),
+        (
+            dict(material="physical", transmission=1.0, refract_data=1),
+            "Refract data must be a bool",
+            "refract_data as a number",
         ),
         (
             dict(

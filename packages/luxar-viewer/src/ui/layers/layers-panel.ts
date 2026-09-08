@@ -638,6 +638,10 @@ export class LayersPanel {
     this.applyEngine.applyLayerOrder(live);
     this.applyEngine.applyLabelStyle(live);
     this.applyEngine.applyMeshAppearance(live);
+    // And a physical layer's live knobs + its refract_data switch, which the
+    // sliders wrote straight onto the material (resetAllLayers has always done this;
+    // the per-row reset missed it, leaving a dragged knob on the surface while the
+    // readouts showed the authored values).
     this.applyEngine.applyPhysicalKnobs(live);
     this.refreshRowVisual(path);
     this.controls.render();

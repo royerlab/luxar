@@ -94,6 +94,7 @@ The authoritative list is the directory itself — run
 | **error-recovery.spec.ts** | ⭐ Error handling |
 | **first-time-ux.spec.ts** | Browser, help, error messages |
 | **geometry-types.spec.ts** | Lines & GSplats rendering |
+| **glass-refraction-partition.spec.ts** | `refract_data` glass refracts the data behind it while data in front stays crisp (the depth partition), WebGL and WebGPU arms, on the lens example |
 | **gsplat-rendering-visual.spec.ts** | GSplat visual rendering |
 | **hover-overlay.spec.ts** | Hover-overlay DOM rendering + CSS transitions (direct OverlayManager probe) |
 | **hover-tooltip.spec.ts** | Full hover pipeline: mouse → GPU pick → label → tooltip DOM |

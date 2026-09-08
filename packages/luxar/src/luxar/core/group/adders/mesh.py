@@ -211,10 +211,12 @@ def _reject_physical_material_conflicts(
       ``alphaTest``.
     - The glass knobs that only act inside three's transmission block
       (:data:`PHYSICAL_TRANSMISSION_DEPENDENT_ATTRS`: ``thickness``,
-      ``attenuation_color``, ``attenuation_distance``, ``dispersion``) without a
-      ``transmission`` above zero are dead metadata too — three compiles them
-      under ``USE_TRANSMISSION`` — so ``thickness=0.4`` on an opaque metal is
-      refused. ``ior`` is exempt: it also sets an opaque surface's reflectance.
+      ``attenuation_color``, ``attenuation_distance``, ``dispersion``, and the
+      Phase 3 ``refract_data`` flag) without a ``transmission`` above zero are
+      dead metadata too — three compiles the knobs under ``USE_TRANSMISSION``,
+      and a surface that transmits nothing has nothing to refract — so
+      ``thickness=0.4`` or ``refract_data=True`` on an opaque metal is refused.
+      ``ior`` is exempt: it also sets an opaque surface's reflectance.
 
     Runs BEFORE the shared attrs gate so the reason a caller sees is the pairing,
     not a downstream symptom, and validates the family value first so a typo in
@@ -285,8 +287,8 @@ def _reject_physical_transmission_conflicts(name: str, attrs: Dict[str, Any]) ->
     if not transmitting:
         raise ValueError(
             f"Cannot add mesh '{name}' with material='physical' and {glass_only} "
-            "but no transmission above zero: three evaluates thickness, "
-            "attenuation and dispersion only inside its transmission path, so "
+            "but no transmission above zero: thickness, attenuation, dispersion "
+            "and refract_data only act inside three's transmission path, so "
             "they would be written and silently ignored. Pass transmission=... "
             "(a fraction in (0, 1]) alongside them, or drop them."
         )

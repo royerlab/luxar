@@ -57,6 +57,10 @@ import {
   GLSL_LINE_JOIN,
 } from '../_shared/glsl-lib';
 import {
+  GLSL_GLASS_PARTITION_GUARD,
+  GLSL_GLASS_PARTITION_UNIFORMS,
+} from '../_shared/glass-partition';
+import {
   ALPHA_CLAMP,
   VOLUMETRIC_SERIES_C1,
   VOLUMETRIC_SERIES_C2_DIVISOR,
@@ -532,6 +536,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
  */
 export const LINE_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
+    ${GLSL_GLASS_PARTITION_UNIFORMS}
     ${GLSL_NEAR_FADE_FUNCTIONS}
 
     uniform int uIsOrtho;   // shared with the vertex stage
@@ -563,6 +568,7 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
     out vec4 fragColor;
 
     void main() {
+      ${GLSL_GLASS_PARTITION_GUARD}
       // Compute distance from centerline (0 to 1)
       float p = abs(vPerpNorm);
 

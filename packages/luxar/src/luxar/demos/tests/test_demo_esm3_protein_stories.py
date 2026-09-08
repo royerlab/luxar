@@ -7,6 +7,7 @@ gets highlighted and WHERE the camera goes, on synthetic data.
 
 from __future__ import annotations
 
+import html
 from pathlib import Path
 
 import numpy as np
@@ -113,28 +114,54 @@ def test_story_camera_looks_at_the_centre_from_outside_the_cloud() -> None:
     import math
 
     from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
+    from luxar.demos.demo_esm3_protein_stories import (
+        SPARSE_TAIL_RATIO,
+        SPHERE_RADIUS_SCALE,
+        bubble_radius,
+        framing_radius,
+    )
 
     cam = story_camera(
-        cluster, _story(frame_fraction=0.36, min_distance=2.5), np.zeros(3)
+        cluster, _story(frame_fraction=0.46, min_distance=1.0), np.zeros(3)
     )
     assert cam.target == (4.0, 0.0, 0.0)
     assert cam.position is not None
     offset = np.array(cam.position) - np.array(cam.target)
-    # The blob (diameter 1.0) spans 36% of the frame height under the cinematic
-    # lens: distance = r95 / (0.5 * 0.36 * tan(fov/2)); along +x lifted in +y,
-    # never through the cloud. The pose leaves fov to cinematic mode.
-    expected = 0.5 / (0.5 * 0.36 * math.tan(math.radians(CINEMATIC_FOV_DEG) / 2))
+    # The BUBBLE (radius 1.35 * r95) spans 46% of the frame height under the
+    # cinematic lens — the panel's height: a sphere of radius R at distance d
+    # covers R / (d * tan(fov/2)) of the height, so d = R / (0.46 * tan(fov/2));
+    # along +x lifted in +y, never through the cloud. fov is left to cinematic mode.
+    r_bubble = SPHERE_RADIUS_SCALE * 0.5
+    assert bubble_radius(cluster) == r_bubble
+    expected = r_bubble / (0.46 * math.tan(math.radians(CINEMATIC_FOV_DEG) / 2))
     assert np.isclose(np.linalg.norm(offset), expected)
     assert offset[0] > 0 and offset[1] > 0
     assert cam.fov is None
     # min_distance is a floor, not a scale.
     far = story_camera(
-        cluster, _story(frame_fraction=0.36, min_distance=20.0), np.zeros(3)
+        cluster, _story(frame_fraction=0.46, min_distance=20.0), np.zeros(3)
     )
     assert far.position is not None
     assert np.isclose(
         np.linalg.norm(np.array(far.position) - np.array(far.target)), 20.0
     )
+    # A sparse cluster (long tail: r95 far beyond r50) is framed on its core, so
+    # the camera comes closer than the bubble alone would ask for.
+    sparse = StoryCluster(
+        indices=np.arange(3), centre=np.zeros(3), r95=1.0, n_named=3, r50=0.2
+    )
+    dense = StoryCluster(
+        indices=np.arange(3), centre=np.zeros(3), r95=1.0, n_named=3, r50=0.6
+    )
+    assert framing_radius(dense) == bubble_radius(dense)
+    assert framing_radius(sparse) < bubble_radius(sparse)
+    assert framing_radius(sparse) == max(
+        0.35, SPHERE_RADIUS_SCALE * SPARSE_TAIL_RATIO * 0.2
+    )
+    near = story_camera(sparse, _story(min_distance=0.1), np.zeros(3))
+    farther = story_camera(dense, _story(min_distance=0.1), np.zeros(3))
+    assert near.position is not None and farther.position is not None
+    assert np.linalg.norm(near.position) < np.linalg.norm(farther.position)
 
 
 def test_story_camera_falls_back_when_the_cluster_sits_at_the_centre() -> None:
@@ -143,6 +170,27 @@ def test_story_camera_falls_back_when_the_cluster_sits_at_the_centre() -> None:
     cluster = StoryCluster(indices=np.arange(1), centre=np.zeros(3), r95=0.1, n_named=1)
     cam = story_camera(cluster, _story(), np.zeros(3))
     assert cam.position is not None and cam.position[2] > 0
+
+
+def test_story_camera_stays_outside_a_sparse_cluster_bubble() -> None:
+    from luxar.demos.demo_esm3_protein_stories import (
+        BUBBLE_CAMERA_CLEARANCE,
+        StoryCluster,
+        bubble_radius,
+    )
+
+    cluster = StoryCluster(
+        indices=np.arange(3),
+        centre=np.array([4.0, 0.0, 0.0]),
+        r95=2.4,
+        r50=0.2,
+        n_named=3,
+    )
+    cam = story_camera(cluster, _story(min_distance=0.1), np.zeros(3))
+
+    assert cam.position is not None
+    distance = np.linalg.norm(np.asarray(cam.position) - np.asarray(cam.target))
+    assert np.isclose(distance, BUBBLE_CAMERA_CLEARANCE * bubble_radius(cluster))
 
 
 @pytest.mark.parametrize("n", [0, 1, 3])
@@ -170,6 +218,82 @@ def test_panels_escape_html_and_carry_the_counts() -> None:
     assert "42 proteins highlighted" in panel
     assert "Open question: why?" in panel
     assert "1,234 Swiss-Prot proteins" in overview_panel_html(1234)
+
+
+def test_attribution_closes_the_overview_panel_and_is_not_a_standalone_overlay() -> (
+    None
+):
+    """The credit lives inside the Overview panel (story 0), nowhere else.
+
+    The kiosk keeps the title bare and bottom-right for the Biohub mark, so the
+    dataset/model/license credit is the panel's closing line — escaped like the
+    rest of the panel — and no overlay is authored from ATTRIBUTION directly.
+    """
+    import ast
+    import inspect
+
+    import luxar.demos.demo_esm3_protein_stories as demo
+
+    citation = demo.DEMO_META["citation"]
+    assert citation["ref"] in demo.ATTRIBUTION
+    assert citation["license"] in demo.ATTRIBUTION
+    panel = overview_panel_html(1234)
+    assert html.escape(demo.ATTRIBUTION) in panel
+    assert panel.rstrip().endswith(html.escape(demo.ATTRIBUTION) + "</div></div>")
+
+    tree = ast.parse(inspect.getsource(demo))
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"add_text", "add_html"}
+        and node.args
+        and isinstance(node.args[0], ast.Name)
+        and node.args[0].id == "ATTRIBUTION"
+        for node in ast.walk(tree)
+    )
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "add_html"
+        and node.args
+        and isinstance(node.args[0], ast.Call)
+        and isinstance(node.args[0].func, ast.Name)
+        and node.args[0].func.id == "overview_panel_html"
+        for node in ast.walk(tree)
+    )
+
+
+def test_story_highlights_declare_their_intentional_additive_blending() -> None:
+    import ast
+    import inspect
+
+    import luxar.demos.demo_esm3_protein_stories as demo
+
+    tree = ast.parse(inspect.getsource(demo))
+    story_points = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "add_points"
+        and node.args
+        # The highlight node is the one named through story_node_name(k, s)
+        # (the hums' attach_to target).
+        and isinstance(node.args[0], ast.Call)
+        and isinstance(node.args[0].func, ast.Name)
+        and node.args[0].func.id == "story_node_name"
+    ]
+    assert len(story_points) == 1
+    blending_mode = next(
+        (
+            keyword.value
+            for keyword in story_points[0].keywords
+            if keyword.arg == "blending_mode"
+        ),
+        None,
+    )
+    assert isinstance(blending_mode, ast.Constant)
+    assert blending_mode.value == "additive"
 
 
 def test_story_narration_is_the_short_spoken_script_not_the_panel() -> None:
@@ -397,3 +521,25 @@ def test_add_story_sounds_keeps_the_stereo_bed_without_an_encoder(
     assert added == 1
     attrs = dict(open_group(store, mode="r")["bed_ambient"].attrs)
     assert "ambisonic" not in attrs and attrs["format"] == "mp3"
+
+
+def test_biohub_logo_is_a_bundled_transparent_png() -> None:
+    """The bottom-right mark ships inside the package (self-contained store).
+
+    demos/data is excluded from the wheel, so the asset lives beside the module;
+    it must be a real PNG with an alpha channel — the glyph is white, and the
+    transparency plus `difference` blending is what makes it read on any
+    background.
+    """
+    from luxar.demos.demo_esm3_protein_stories import BIOHUB_LOGO, BIOHUB_LOGO_WIDTH
+
+    assert BIOHUB_LOGO.is_file(), BIOHUB_LOGO
+    assert "demos/data" not in BIOHUB_LOGO.as_posix()
+    assert BIOHUB_LOGO.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    from PIL import Image
+
+    with Image.open(BIOHUB_LOGO) as im:
+        assert im.mode == "RGBA"
+        alpha = np.asarray(im)[..., 3]
+    assert alpha.min() == 0 and alpha.max() == 255  # transparent margin, opaque glyph
+    assert 0 < BIOHUB_LOGO_WIDTH <= 0.2

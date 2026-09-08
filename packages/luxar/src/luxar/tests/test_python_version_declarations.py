@@ -18,7 +18,6 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[5]
 FLOOR = "3.12"
-FULL_MATRIX_SCHEDULE = "17 9 * * *"
 
 
 @pytest.fixture(scope="module")
@@ -48,9 +47,10 @@ def _ci_legs(workflow: str) -> tuple[set[str], set[str]]:
     assert "github.event_name == 'push'" in line, (
         f"matrix must keep the full supported set on dev pushes: {line.strip()}"
     )
-    assert f"github.event.schedule == '{FULL_MATRIX_SCHEDULE}'" in line, (
-        f"matrix must keep one daily full-version run: {line.strip()}"
-    )
+    assert (
+        "github.event_name == 'workflow_dispatch' && inputs.full_python_matrix" in line
+    ), f"matrix dispatch must require the full-matrix input: {line.strip()}"
+    assert "github.event.schedule" not in line
     lists = re.findall(r"fromJSON\('(\[[^\]]*\])'\)", line)
     assert len(lists) == 2, f"matrix expression lost a branch: {line.strip()}"
     return (
@@ -73,7 +73,7 @@ def test_requires_python_is_the_floor(pyproject: str) -> None:
     assert re.search(r'requires-python\s*=\s*">=' + FLOOR + '"', pyproject)
 
 
-def test_every_declared_version_is_tested_on_dev_push_and_daily_schedule(
+def test_every_declared_version_is_tested_on_dev_push_and_full_dispatch(
     pyproject: str, workflow: str
 ) -> None:
     """A classifier the wheel advertises must be a version CI actually runs.
@@ -96,7 +96,7 @@ def test_the_hatch_matrix_mirrors_ci(pyproject: str, workflow: str) -> None:
     assert _hatch_matrix(pyproject) == full_matrix_legs
 
 
-def test_pull_request_and_frequent_schedule_legs_are_the_floor_alone(
+def test_pull_request_and_default_dispatch_legs_are_the_floor_alone(
     workflow: str,
 ) -> None:
     """Branch protection requires ``python-tests (3.12)``, so the floor must run.

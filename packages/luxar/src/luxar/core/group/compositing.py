@@ -92,11 +92,11 @@ _GEOMETRY_WORDS = ("points", "lines", "mesh", "gsplats", "sound")
 #: The mesh-only authored keys refused on every non-mesh node by the
 #: adder/group and write-through guards.
 #:
-#: Twenty-one are appearance: the five house-shader controls, the two
-#: texture-sampling ones, the ``material`` family selector and the thirteen
-#: physically based knobs it unlocks — seven surface knobs and the six-knob glass
-#: family (``MESH_PHYSICAL_MATERIALS_SPEC.md`` §3.1, §3.4) — which is what the
-#: name records. ``slab_tolerance`` is the exception and is
+#: Twenty-two are appearance: the five house-shader controls, the two
+#: texture-sampling ones, the ``material`` family selector and the fourteen
+#: physically based knobs it unlocks — seven surface knobs and the seven-knob glass
+#: family, ``refract_data`` included (``MESH_PHYSICAL_MATERIALS_SPEC.md`` §3.1,
+#: §3.4) — which is what the name records. ``slab_tolerance`` is the exception and is
 #: deliberately here anyway: it is a LOADING knob — the half-width of the nD
 #: membership slab a continuous hidden dimension is culled against (spec §5.2.1)
 #: — but it is mesh-only for exactly the same reason and must be refused on the
@@ -116,6 +116,7 @@ MESH_ONLY_APPEARANCE_ATTRS = frozenset(
         "iridescence",
         "material",
         "metalness",
+        "refract_data",
         "roughness",
         "shade_exponent",
         "sheen",

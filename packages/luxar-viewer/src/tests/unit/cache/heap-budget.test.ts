@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   cachePoolOverrideBytes,
   computeCacheBudgets,
+  computeOpfsWriteQueueBudgetBytes,
   computeWorkingSetBudgetBytes,
   readHeapLimitBytes,
   inferDeviceClass,
@@ -64,6 +65,55 @@ describe('computeWorkingSetBudgetBytes', () => {
     expect(computeWorkingSetBudgetBytes()).toBe(256 * MB);
     expect(computeWorkingSetBudgetBytes(0)).toBe(256 * MB);
     expect(computeWorkingSetBudgetBytes(Number.NaN)).toBe(256 * MB);
+  });
+});
+
+describe('computeOpfsWriteQueueBudgetBytes', () => {
+  it('uses a quarter of the non-cache share of the configured heap target', () => {
+    // 512MB × 0.8 target × 0.4 non-cache = 163.84MB remainder; a quarter =
+    // 40.96MB, well under the 512MB cap. The eager working set takes half of
+    // the same remainder, leaving a quarter unclaimed.
+    const heap = 512 * MB;
+    expect(computeOpfsWriteQueueBudgetBytes(heap)).toBe(Math.floor(heap * target * 0.4 * 0.25));
+    // 4GiB (the audit machine): remainder 1310.72MB → 327.68MB, under the cap.
+    expect(computeOpfsWriteQueueBudgetBytes(4 * 1024 * MB)).toBe(Math.floor(327.68 * MB));
+    // The two consumers together must leave headroom on the remainder.
+    const heapBig = 2048 * MB;
+    expect(
+      computeWorkingSetBudgetBytes(heapBig) + computeOpfsWriteQueueBudgetBytes(heapBig)
+    ).toBeLessThan(heapBig * target * 0.4);
+  });
+
+  it('caps the retained-byte allowance on a large measured heap', () => {
+    // 8GiB: remainder 2621.44MB, a quarter = 655.36MB → capped.
+    expect(computeOpfsWriteQueueBudgetBytes(8 * 1024 * MB)).toBe(512 * MB);
+    expect(computeOpfsWriteQueueBudgetBytes(16 * 1024 * MB)).toBe(512 * MB);
+  });
+
+  it('uses an explicit cache-pool override before a measured heap', () => {
+    // Pool 768MB → remainder 768 × (0.4/0.6) = 512MB; a quarter = 128MB.
+    expect(computeOpfsWriteQueueBudgetBytes(512 * MB, 768 * MB)).toBe(128 * MB);
+    // The native launcher's 2048MB pool → remainder 1365.33MB → 341.33MB.
+    expect(computeOpfsWriteQueueBudgetBytes(undefined, 2048 * MB)).toBe(
+      Math.floor(2048 * MB * (0.4 / 0.6) * 0.25)
+    );
+  });
+
+  it('derives a WebKit allowance from the device-class cache pool when no override exists', () => {
+    // Mobile pool 384MB → remainder 256MB; a quarter = 64MB.
+    expect(computeOpfsWriteQueueBudgetBytes(undefined, undefined, 384 * MB)).toBe(64 * MB);
+    // A measured heap still wins over the device-class fallback.
+    expect(computeOpfsWriteQueueBudgetBytes(512 * MB, undefined, 2048 * MB)).toBe(
+      Math.floor(512 * MB * target * 0.4 * 0.25)
+    );
+  });
+
+  it('uses the fixed fallback when no pool or heap signal is available', () => {
+    // Deliberately more generous than a measured mid-size heap: a
+    // no-information default sized to clear today's demos.
+    expect(computeOpfsWriteQueueBudgetBytes()).toBe(256 * MB);
+    expect(computeOpfsWriteQueueBudgetBytes(0)).toBe(256 * MB);
+    expect(computeOpfsWriteQueueBudgetBytes(Number.NaN)).toBe(256 * MB);
   });
 });
 

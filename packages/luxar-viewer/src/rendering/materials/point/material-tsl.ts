@@ -50,6 +50,7 @@ import {
 } from '../../blending-state';
 import type { BlendingMode } from '../../../types/blending';
 import { proxyIUniform, type TSLNode } from '../_shared/tsl-helpers';
+import { glassPartitionNodes } from '../_shared/glass-partition-tsl';
 import { computeScalarRangeUniforms } from '../_shared/scalar-range';
 
 /**
@@ -68,6 +69,8 @@ interface PointMaterialTSLNodeTable {
   uIsOrtho: TSLNode;
   uSortedIndexSlot: TSLNode;
   uDensityDrop: TSLNode;
+  uGlassPartition: TSLNode;
+  uGlassDepth: TSLNode;
   uNearCull: TSLNode;
   uPixelRatio: TSLNode;
   uResolution: TSLNode;
@@ -146,6 +149,8 @@ export class PointTSLMaterial
       uIsOrtho: uniform(0),
       uSortedIndexSlot: uniform(0),
       uDensityDrop: uniform(0),
+      // Refraction split: mode 0 outside the split; the shared glass depth texture.
+      ...glassPartitionNodes(),
       uNearCull: uniform(0.1),
       uPixelRatio: uniform(1),
       uResolution: uniform(new THREE.Vector2(1920, defaultResolutionY)),
@@ -173,6 +178,8 @@ export class PointTSLMaterial
       uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
       uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
       uDensityDrop: proxyIUniform(this.tslNodes.uDensityDrop),
+      uGlassPartition: proxyIUniform(this.tslNodes.uGlassPartition),
+      uGlassDepth: proxyIUniform(this.tslNodes.uGlassDepth),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
       uPixelRatio: proxyIUniform(this.tslNodes.uPixelRatio),
       uResolution: proxyIUniform(this.tslNodes.uResolution),

@@ -23,6 +23,7 @@ import {
 } from './layer-state';
 import { RangeSlider } from './range-slider';
 import { LabeledSlider } from './labeled-slider';
+import { LabeledToggle } from './labeled-toggle';
 import {
   ABSORPTION_DEFAULT_MAX,
   ABSORPTION_LOG_DECADES,
@@ -42,6 +43,7 @@ import {
   PHYSICAL_MESH_KNOBS,
   physicalKnobFromSlider,
   physicalKnobInertReason,
+  physicalRefractDataInertReason,
   physicalKnobToSlider,
   type PhysicalKnobSpec,
   type PhysicalMeshKnobKey,
@@ -81,9 +83,9 @@ export const PHYSICAL_MATERIAL_TOOLTIP =
   'environment. The sliders drive the material live; Reset restores what add_mesh(...) ' +
   'authored. A greyed slider changes nothing in the current state (hover it for why: a ' +
   'metal transmits nothing, clearcoat roughness needs a clearcoat, attenuation needs a ' +
-  'colour). Transmission (glass, lenses) refracts the background and other meshes ' +
-  "only — three's transmission pass does not see Luxar's transparent point, line and " +
-  'splat materials, so data in front of or behind glass stays unrefracted.';
+  'colour). Transmission (glass, lenses) refracts the background and other meshes; ' +
+  'switch on Refract data (it needs a transmission above 0) to also refract the points, ' +
+  'lines and splats behind the glass; data in front of it stays crisp on top.';
 
 /** Readout for a knob slider: three decimals where the step needs them, "∞" at an infinite top stop. */
 function formatPhysicalKnob(spec: PhysicalKnobSpec, value: number): string {
@@ -117,6 +119,8 @@ export class LayerControls {
    */
   private physicalGroupEl: HTMLElement | null = null;
   private physicalSliders = new Map<PhysicalMeshKnobKey, LabeledSlider>();
+  /** The physical block's "Refract data" switch (spec §3.4 Phase 3). */
+  private refractDataToggle: LabeledToggle | null = null;
   private physicalRowsEl: HTMLElement | null = null;
   private blendSelect: HTMLSelectElement | null = null;
   private layerOrderInput: HTMLInputElement | null = null;
@@ -450,6 +454,7 @@ export class LayerControls {
     physicalLabel.title = PHYSICAL_MATERIAL_TOOLTIP;
     this.physicalGroupEl.appendChild(physicalLabel);
     for (const key of PHYSICAL_MESH_KNOB_KEYS) this.buildPhysicalKnobSlider(key);
+    this.buildRefractDataToggle();
     this.physicalRowsEl = document.createElement('div');
     this.physicalRowsEl.className = 'luxar-layers-panel__physical-rows';
     this.physicalGroupEl.appendChild(this.physicalRowsEl);
@@ -957,8 +962,34 @@ export class LayerControls {
   private disposePhysicalKnobs(): void {
     for (const slider of this.physicalSliders.values()) slider.dispose();
     this.physicalSliders.clear();
+    this.refractDataToggle?.dispose();
+    this.refractDataToggle = null;
     this.physicalGroupEl = null;
     this.physicalRowsEl = null;
+  }
+
+  /**
+   * The "Refract data" switch (spec §3.4 Phase 3), after the knob sliders: a glass
+   * that draws after — and refracts — the emissive data behind it. Rides the same
+   * knob record and apply path as the sliders, so Reset restores it the same way.
+   */
+  private buildRefractDataToggle(): void {
+    if (!this.physicalGroupEl) return;
+    this.refractDataToggle = new LabeledToggle({
+      container: this.physicalGroupEl,
+      label: 'Refract data',
+      initialChecked: false,
+      onChange: (checked) => {
+        this.controlsInteracting = true;
+        this.deps.state.applyToSelected((l) => {
+          if (l.physicalKnobs) l.physicalKnobs.refract_data = checked;
+        });
+        for (const sel of this.deps.state.getSelected()) {
+          this.deps.apply.applyPhysicalKnobs(sel);
+        }
+        this.controlsInteracting = false;
+      },
+    });
   }
 
   /**
@@ -1016,6 +1047,7 @@ export class LayerControls {
     for (const [key, slider] of this.physicalSliders) {
       slider.setInert(physicalKnobInertReason(key, live));
     }
+    this.refractDataToggle?.setInert(physicalRefractDataInertReason(live));
   }
 
   /**
@@ -1033,6 +1065,7 @@ export class LayerControls {
     for (const [key, slider] of this.physicalSliders) {
       slider.setValue(physicalKnobToSlider(key, knobs[key]));
     }
+    this.refractDataToggle?.setChecked(knobs.refract_data === true);
     this.syncPhysicalInertStates(knobs);
     const addRow = (label: string, value: string): void => {
       const row = document.createElement('div');
