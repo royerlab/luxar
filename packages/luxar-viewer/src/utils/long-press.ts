@@ -7,11 +7,11 @@
  * Safari never fires `contextmenu` for it (it raises a callout sheet instead,
  * which `-webkit-touch-callout: none` suppresses), while Android Chrome
  * synthesises a `contextmenu` event. This helper makes the viewer the SINGLE
- * opener on both: it fires its own callback after `durationMs`, swallows the
- * platform `contextmenu` that Android would otherwise also deliver (so one
- * press cannot open two menus), and swallows the `click` the browser emits when
- * the finger finally lifts (so the button's primary action does not run on top
- * of the menu that just opened).
+ * opener on both: it fires its callback after `durationMs`, or immediately when
+ * a platform `contextmenu` arrives mid-press. Only a handled press swallows that
+ * event (so one press cannot open two menus) and the `click` the browser emits
+ * when the finger finally lifts (so the button's primary action does not run on
+ * top of the menu that just opened).
  *
  * Only touch-like pointers arm it (`isTouchLikePointer`): a mouse keeps its
  * right button and never sees a timer, so desktop behaviour is unchanged.

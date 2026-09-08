@@ -11,9 +11,10 @@
  *
  * Touch-like pointers only ({@link isTouchLikePointer}): a mouse double-click
  * stays inert, as it always was. A tap is a primary press that lifts within
- * {@link TOUCH_CLICK_SLOP_PX} with no second finger down at any point during
- * the gesture — a pinch is two fingers, not two taps — and a drag resets the
- * tap history, so drag-then-tap is one tap, not two.
+ * {@link TOUCH_CLICK_SLOP_PX} before {@link LONG_PRESS_MS}, with no second
+ * finger down at any point during the gesture — a pinch is two fingers, not
+ * two taps — and a drag resets the tap history, so drag-then-tap is one tap,
+ * not two.
  */
 
 import type { EventGroup } from '../../../utils/cross-layer/event-group';
@@ -77,7 +78,7 @@ export function installDoubleTapToFit(
     }
     const t = now();
     if (t - start.t >= LONG_PRESS_MS) {
-      lastTap = null;
+      lastTap = null; // a hold: its release is not half of a double-tap
       return;
     }
     if (

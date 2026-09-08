@@ -49,6 +49,7 @@
 }
 
 .luxar-layers-panel input[type='text'],
+.luxar-layers-panel input[type='number'],
 .luxar-layers-panel textarea {
   -webkit-touch-callout: default;
 }

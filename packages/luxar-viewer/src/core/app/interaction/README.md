@@ -149,11 +149,12 @@ so at 4 px every tap read as a camera drag), and three gestures:
   mouse path stays synchronous so its user activation is never spent.
 - **Long-press** (`LONG_PRESS_MS`, held within the slop, one finger) — pick, then
   the element menu; the finger's release is then inert.
-- **Double-tap** (within `DOUBLE_TAP_MS` / `DOUBLE_TAP_SLOP_PX`) — re-frame,
-  via `double-tap-to-fit.ts` → `LuxarApp.recenterCamera`. `canvas-actions`
-  recognises the same second tap only to cancel the first tap's deferred
-  navigation and skip the re-pick; it never re-frames itself, so the gesture
-  behaves identically on scenes that never provision picking.
+- **Double-tap** (two presses that each release before `LONG_PRESS_MS`, within
+  `DOUBLE_TAP_MS` / `DOUBLE_TAP_SLOP_PX`) — re-frame, via
+  `double-tap-to-fit.ts` → `LuxarApp.recenterCamera`. `canvas-actions` recognises
+  the same second tap only to cancel the first tap's deferred navigation and
+  skip the re-pick; it never re-frames itself, so the gesture behaves identically
+  on scenes that never provision picking.
 
 ## The kill switch
 
