@@ -197,7 +197,7 @@ export class DatasetBrowser {
     this.untypeToFilter = this.installTypeToFilterOnPanel();
 
     // Start navigation at the determined path
-    this.navigate(initialPath);
+    this.navigateSafely(initialPath);
   }
 
   /**
@@ -443,7 +443,7 @@ export class DatasetBrowser {
         if (safeFireSelect(this.onDatasetSelect, this.navigator.getFullUrl(result.currentPath))) {
           this.close();
         } else {
-          void this.navigate(result.parentPath ?? '');
+          this.navigateSafely(result.parentPath ?? '');
         }
         return;
       }
@@ -477,6 +477,12 @@ export class DatasetBrowser {
       if (retry) retry.onclick = () => this.navigate(this.lastAttemptedPath);
       statusBar.textContent = 'Error loading directory';
     }
+  }
+
+  private navigateSafely(path: string): void {
+    this.navigate(path).catch((error: unknown) => {
+      log.warning(Modules.UI, 'Dataset navigation failed', error);
+    });
   }
 
   /**
@@ -633,7 +639,7 @@ export class DatasetBrowser {
       if (safeFireSelect(this.onDatasetSelect, fullUrl)) this.close();
       return;
     }
-    this.navigate(path);
+    this.navigateSafely(path);
   }
 
   /**
@@ -844,7 +850,7 @@ export class DatasetBrowser {
             this.close();
           }
         } else if (entry.type === 'directory') {
-          this.navigate(entry.path);
+          this.navigateSafely(entry.path);
         }
       };
       item.onclick = activate;

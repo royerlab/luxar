@@ -445,12 +445,11 @@ export class LayersPanel {
           // The Clipboard API is absent on non-secure origins and its write
           // can reject (permission denied) — both must surface as feedback,
           // not an unhandled rejection and silence.
-          const write = navigator.clipboard?.writeText(layer.path);
-          if (!write) {
+          if (!navigator.clipboard) {
             showToast('Clipboard unavailable (needs a secure context)');
             return;
           }
-          write.then(
+          navigator.clipboard.writeText(layer.path).then(
             () => showToast('Layer path copied'),
             () => showToast('Could not copy layer path')
           );

@@ -11,6 +11,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { DirectoryNavigator, type DirectoryEntry } from '../../../data';
 import { DatasetBrowser } from '../../../ui/dataset-browser';
 import { isTypingInInput } from '../../../utils/dom/focus';
+import { log } from '../../../utils/log';
 
 const navigateMock = vi.fn();
 const getFullUrlMock = vi.fn();
@@ -180,6 +181,29 @@ describe('DatasetBrowser', () => {
         expect(current?.textContent).toContain('sample.ZARR.ZIP');
         expect(current?.textContent).toContain('LOADED');
       });
+    });
+  });
+
+  it('logs a terminal navigation failure from a directory activation', async () => {
+    navigateMock.mockResolvedValueOnce(
+      defaultNavigateResult({
+        entries: [{ name: 'nested', path: 'nested', type: 'directory' }],
+      })
+    );
+    const browser = new DatasetBrowser({ container, onDatasetSelect, onClose });
+    await vi.waitFor(() => {
+      expect(container.querySelector('.luxar-dataset-browser__file-item')).not.toBeNull();
+    });
+
+    const failure = new Error('render path failed');
+    const internals = browser as unknown as { navigate(path: string): Promise<void> };
+    vi.spyOn(internals, 'navigate').mockRejectedValue(failure);
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+
+    (container.querySelector('.luxar-dataset-browser__file-item') as HTMLElement).click();
+
+    await vi.waitFor(() => {
+      expect(warning).toHaveBeenCalledWith('UI', 'Dataset navigation failed', failure);
     });
   });
 

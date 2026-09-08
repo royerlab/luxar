@@ -10,6 +10,17 @@
 
 import { formatErrorForDisplay, isErrorLike } from '../../utils/format-error';
 
+/** Safely obtain the last-resort string form used after JSON serialization fails. */
+export function formatFallbackValue(value: unknown): string {
+  if (typeof value !== 'object' || value === null) return String(value);
+  try {
+    const toString = (value as { toString?: unknown }).toString;
+    return typeof toString === 'function' ? toString.call(value) : '[unprintable]';
+  } catch {
+    return '[unprintable]';
+  }
+}
+
 /**
  * Convert an arbitrary console-arg list (strings, numbers, booleans,
  * objects, null, undefined) into a single space-separated display
@@ -18,8 +29,8 @@ import { formatErrorForDisplay, isErrorLike } from '../../utils/format-error';
  * "filter by visible text" promise holds.
  *
  * Objects are pretty-printed with `JSON.stringify(_, null, 2)`. If
- * stringify throws (e.g. a circular reference), falls back to
- * `String(arg)`.
+ * stringify throws (e.g. a circular reference), falls back to the
+ * value's string representation without allowing a hostile `toString` to escape.
  *
  * `Error` (and `DOMException`) is checked FIRST, before the object branch:
  * `name` / `message` / `stack` are non-enumerable, so `JSON.stringify(err)` is
@@ -50,10 +61,10 @@ export function formatArgs(args: readonly unknown[]): string {
         try {
           return JSON.stringify(arg, null, 2);
         } catch {
-          return String(arg);
+          return formatFallbackValue(arg);
         }
       }
-      return String(arg);
+      return formatFallbackValue(arg);
     })
     .join(' ');
 }
