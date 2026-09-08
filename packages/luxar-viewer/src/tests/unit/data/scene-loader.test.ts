@@ -376,9 +376,13 @@ describe('SceneLoader', () => {
     });
 
     it('should update all loaders with new view state', async () => {
+      // A slice that DIFFERS from the one loadScene derives from the scene
+      // dimensions (time midpoint 5, tolerance = step 0.1): re-submitting that
+      // exact state is, by the version contract, a bump-free "Resyncing view"
+      // pass rather than an "Updating view" one.
       const viewState: Partial<ViewState> = {
         displayDims: [0, 1, 2],
-        slicePosition: [0, 0, 0, 5],
+        slicePosition: [0, 0, 0, 6],
         tolerance: [0, 0, 0, 0.1],
       };
 
@@ -655,6 +659,370 @@ describe('SceneLoader', () => {
       await sceneLoader.updateView({});
 
       expect(mockLoader.updateView).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('updateView — version contract (bump only on a query-determinant change)', () => {
+    // The LOD registry judges a level's freshness by EXACT equality of its
+    // commit-time `loadedViewVersion` stamp with `currentViewVersion`, and lazy
+    // lod_group levels are never re-stamped by the sweep. So a pass that does
+    // not change the view (a partition resync, a retry re-run, a depth-sort
+    // re-commit) must NOT bump the version — bumping invalidated every resident
+    // fine level scene-wide and dropped all groups to coarse on camera motion.
+    const base: Partial<ViewState> = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 3],
+      tolerance: [0, 0, 0, 0.5],
+    };
+
+    beforeEach(async () => {
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+      await sceneLoader.updateView(base);
+    });
+
+    it('updateView({}) (a reprocess) leaves currentViewVersion unchanged', async () => {
+      const before = sceneLoader.currentViewVersion;
+      await sceneLoader.updateView({});
+      expect(sceneLoader.currentViewVersion).toBe(before);
+      // requestReprocess is the public door for the same pass.
+      sceneLoader.requestReprocess();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(sceneLoader.currentViewVersion).toBe(before);
+    });
+
+    it('re-submitting an equal view state does not bump', async () => {
+      const before = sceneLoader.currentViewVersion;
+      await sceneLoader.updateView({ ...base });
+      await sceneLoader.updateView({ slicePosition: [...base.slicePosition!] });
+      expect(sceneLoader.currentViewVersion).toBe(before);
+    });
+
+    it.each([
+      { field: 'slicePosition', next: { slicePosition: [0, 0, 0, 4] } },
+      { field: 'displayDims', next: { displayDims: [0, 1, 3] } },
+      { field: 'tolerance (displayed dim)', next: { tolerance: [1, 0, 0, 0.5] } },
+    ])('a changed $field bumps the version by exactly one', async ({ next }) => {
+      const before = sceneLoader.currentViewVersion;
+      await sceneLoader.updateView(next);
+      expect(sceneLoader.currentViewVersion).toBe(before + 1);
+      // And re-submitting the now-current state is again a no-bump pass.
+      await sceneLoader.updateView(next);
+      expect(sceneLoader.currentViewVersion).toBe(before + 1);
+    });
+
+    it('a targeted resync sweeps only loaders under the target paths and forgets no baseline', async () => {
+      const makeLoader = () => ({
+        updateView: vi.fn().mockResolvedValue(null),
+        dispose: vi.fn(),
+      });
+      const part0 = makeLoader();
+      const part1 = makeLoader();
+      const other = makeLoader();
+      const loaders = (sceneLoader as unknown as { loaders: Map<string, unknown> }).loaders;
+      loaders.set('/tiled/part_0/level_0', part0);
+      loaders.set('/tiled/part_1/level_0', part1);
+      loaders.set('/other', other);
+      const forgetPathSpy = vi.spyOn(
+        (sceneLoader as unknown as { viewStateQueue: ViewStateQueue }).viewStateQueue,
+        'forgetPath'
+      );
+      const before = sceneLoader.currentViewVersion;
+
+      sceneLoader.requestReprocess(['/tiled/part_1']);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(part1.updateView).toHaveBeenCalledTimes(1);
+      expect(part0.updateView).not.toHaveBeenCalled();
+      expect(other.updateView).not.toHaveBeenCalled();
+      expect(forgetPathSpy).not.toHaveBeenCalled();
+      expect(sceneLoader.currentViewVersion).toBe(before);
+    });
+
+    it('a changed view ignores targeted resync options and sweeps every loader', async () => {
+      const target = { updateView: vi.fn().mockResolvedValue(null), dispose: vi.fn() };
+      const other = { updateView: vi.fn().mockResolvedValue(null), dispose: vi.fn() };
+      const loaders = (sceneLoader as unknown as { loaders: Map<string, unknown> }).loaders;
+      loaders.set('/tiled/part_1/level_0', target);
+      loaders.set('/other', other);
+      const before = sceneLoader.currentViewVersion;
+
+      await sceneLoader.updateView(
+        { slicePosition: [0, 0, 0, 9] },
+        { resyncPaths: new Set(['/tiled/part_1']) }
+      );
+
+      expect(sceneLoader.currentViewVersion).toBe(before + 1);
+      expect(target.updateView).toHaveBeenCalledTimes(1);
+      expect(other.updateView).toHaveBeenCalledTimes(1);
+    });
+
+    it('a targeted resync preserves frame-budget refine debt until an untargeted pass', async () => {
+      const stored = (sceneLoader as unknown as { viewState: ViewState }).viewState;
+
+      await sceneLoader.updateView({ ...stored, frameBudgetMs: 8 });
+      expect(sceneLoader.isAtViewState(stored)).toBe(false);
+
+      sceneLoader.requestReprocess(['/tiled/part_1']);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(sceneLoader.isAtViewState(stored)).toBe(false);
+
+      sceneLoader.requestReprocess();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(sceneLoader.isAtViewState(stored)).toBe(true);
+    });
+
+    it('a targeted resync arriving mid-pass neither aborts the pass nor is lost', async () => {
+      let releaseGate!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        releaseGate = resolve;
+      });
+      let capturedSignal: AbortSignal | undefined;
+      const gated = {
+        updateView: vi.fn(async (_vs: unknown, _session: unknown, signal?: AbortSignal) => {
+          if (!capturedSignal) {
+            capturedSignal = signal;
+            await gate;
+            signal?.throwIfAborted();
+          }
+          return null;
+        }),
+        dispose: vi.fn(),
+      };
+      const target = { updateView: vi.fn().mockResolvedValue(null), dispose: vi.fn() };
+      const loaders = (sceneLoader as unknown as { loaders: Map<string, unknown> }).loaders;
+      loaders.set('/node', gated);
+      loaders.set('/tiled/part_1/level_0', target);
+
+      // A real view change runs synchronously into the gated loader and parks.
+      const p1 = sceneLoader.updateView({ slicePosition: [0, 0, 0, 7] });
+      await Promise.resolve();
+      expect(capturedSignal).toBeInstanceOf(AbortSignal);
+      expect(target.updateView).toHaveBeenCalledTimes(1);
+
+      // The resync must not take the supersede branch: no abort, no waiter.
+      sceneLoader.requestReprocess(['/tiled/part_1']);
+      await Promise.resolve();
+      expect(capturedSignal?.aborted).toBe(false);
+
+      releaseGate();
+      await p1;
+      // queueNext re-enters with the parked resync at the next frame (rAF in
+      // jsdom), so poll rather than assume a timer granularity.
+      await vi.waitFor(() => {
+        expect(target.updateView).toHaveBeenCalledTimes(2); // full pass + targeted resync
+      });
+      expect(gated.updateView).toHaveBeenCalledTimes(1); // not a target — untouched
+      expect((sceneLoader as unknown as { _updateInProgress: boolean })._updateInProgress).toBe(
+        false
+      );
+    });
+
+    it('a targeted resync arriving during a refinement HOLD queues its own pass instead of waiting', async () => {
+      // A refinement run holds the serialization lock with no view pass in
+      // flight. Nothing of updateView's `finally` will run, so the resync must
+      // queue a pending state (which the refinement loop cancels into) rather
+      // than park behind a pass that never ends. Before this, a re-entering
+      // part sat on a stale slice until every ladder finished streaming.
+      const target = { updateView: vi.fn().mockResolvedValue(null), dispose: vi.fn() };
+      const other = { updateView: vi.fn().mockResolvedValue(null), dispose: vi.fn() };
+      const loaders = (sceneLoader as unknown as { loaders: Map<string, unknown> }).loaders;
+      loaders.set('/tiled/part_1/level_0', target);
+      loaders.set('/other', other);
+      const internals = sceneLoader as unknown as {
+        _updateInProgress: boolean;
+        _refining: boolean;
+        _updateAbortController: AbortController | null;
+        viewStateQueue: ViewStateQueue;
+        takeQueuedResyncOpts(): { resyncPaths?: ReadonlySet<string> };
+      };
+      internals._updateInProgress = true;
+      internals._refining = true;
+      const controller = new AbortController();
+      internals._updateAbortController = controller;
+      expect(sceneLoader.isLoadPassInProgress()).toBe(false); // a hold is not a pass
+
+      sceneLoader.requestReprocess(['/tiled/part_1']);
+      await Promise.resolve();
+
+      // Queued, not parked; the in-flight refinement is NOT aborted.
+      expect(internals.viewStateQueue.hasPending()).toBe(true);
+      expect(sceneLoader.isLoadPassInProgress()).toBe(true); // registry now defers
+      expect(controller.signal.aborted).toBe(false);
+      expect(target.updateView).not.toHaveBeenCalled();
+
+      // The refinement loop's cancellation hand-off: release the lock and
+      // re-enter with the pending state plus the queued resync opts.
+      internals._updateInProgress = false;
+      internals._refining = false;
+      const pending = internals.viewStateQueue.takePending() ?? {};
+      const before = sceneLoader.currentViewVersion;
+      await sceneLoader.updateView(pending, internals.takeQueuedResyncOpts());
+
+      expect(target.updateView).toHaveBeenCalledTimes(1);
+      expect(other.updateView).not.toHaveBeenCalled();
+      expect(sceneLoader.currentViewVersion).toBe(before);
+      expect(internals.takeQueuedResyncOpts()).toEqual({}); // consumed exactly once
+    });
+
+    it('a real view change queued after a hold resync sweeps every loader', async () => {
+      const target = { updateView: vi.fn().mockResolvedValue(null), dispose: vi.fn() };
+      const other = { updateView: vi.fn().mockResolvedValue(null), dispose: vi.fn() };
+      const loaders = (sceneLoader as unknown as { loaders: Map<string, unknown> }).loaders;
+      loaders.set('/tiled/part_1/level_0', target);
+      loaders.set('/other', other);
+      const internals = sceneLoader as unknown as {
+        _updateInProgress: boolean;
+        _refining: boolean;
+        _updateAbortController: AbortController | null;
+        viewStateQueue: ViewStateQueue;
+        takeQueuedResyncOpts(): { resyncPaths?: ReadonlySet<string> };
+      };
+      internals._updateInProgress = true;
+      internals._refining = true;
+      internals._updateAbortController = new AbortController();
+
+      sceneLoader.requestReprocess(['/tiled/part_1']);
+      await Promise.resolve();
+      const queuedPass = sceneLoader.updateView({ slicePosition: [0, 0, 0, 9] });
+
+      internals._updateInProgress = false;
+      internals._refining = false;
+      const pending = internals.viewStateQueue.takePending() ?? {};
+      const before = sceneLoader.currentViewVersion;
+      await sceneLoader.updateView(pending, internals.takeQueuedResyncOpts());
+      await queuedPass;
+
+      expect(sceneLoader.currentViewVersion).toBe(before + 1);
+      expect(target.updateView).toHaveBeenCalledTimes(1);
+      expect(other.updateView).toHaveBeenCalledTimes(1);
+      expect(internals.takeQueuedResyncOpts()).toEqual({});
+    });
+
+    it('stashed resync paths never leak into a later, unrelated same-view pass', async () => {
+      // A resync stashed during a hold may be drained by a path that does not
+      // hand the paths over (the refinement run's final release, a retry's
+      // resume). The stash must then be gone: a later `updateView({})` queued
+      // behind a pass — the depth-sort reprocess whose whole purpose is to
+      // re-commit stamp-less nodes — would otherwise re-enter narrowed to
+      // loaders that have nothing to do with it.
+      const target = { updateView: vi.fn().mockResolvedValue(null), dispose: vi.fn() };
+      const other = { updateView: vi.fn().mockResolvedValue(null), dispose: vi.fn() };
+      const loaders = (sceneLoader as unknown as { loaders: Map<string, unknown> }).loaders;
+      loaders.set('/tiled/part_1/level_0', target);
+      loaders.set('/other', other);
+      const internals = sceneLoader as unknown as {
+        _updateInProgress: boolean;
+        _refining: boolean;
+        _queuedResyncPaths: Set<string> | null;
+        viewStateQueue: ViewStateQueue;
+        reenterPending(state: Partial<ViewState>): Promise<void>;
+      };
+      internals._updateInProgress = true;
+      internals._refining = true;
+      sceneLoader.requestReprocess(['/tiled/part_1']);
+      await Promise.resolve();
+      expect(internals._queuedResyncPaths?.size).toBe(1);
+
+      // Every drain site goes through `reenterPending`, which consumes the stash.
+      internals._updateInProgress = false;
+      internals._refining = false;
+      const drained = internals.viewStateQueue.drain((state) => internals.reenterPending(state));
+      expect(drained).toBe(true);
+      await vi.waitFor(() => {
+        expect(target.updateView).toHaveBeenCalledTimes(1);
+      });
+      expect(other.updateView).not.toHaveBeenCalled(); // the resync itself WAS targeted
+      expect(internals._queuedResyncPaths).toBeNull();
+
+      // Belt and braces: a stash left behind by any other route is dropped the
+      // moment a pass starts, so an untargeted reprocess stays untargeted.
+      internals._queuedResyncPaths = new Set(['/tiled/part_1']);
+      await sceneLoader.updateView({});
+      expect(other.updateView).toHaveBeenCalledTimes(1);
+      expect(internals._queuedResyncPaths).toBeNull();
+    });
+
+    it('a second rising edge during the same hold merges into the stash instead of being dropped', async () => {
+      const internals = sceneLoader as unknown as {
+        _updateInProgress: boolean;
+        _refining: boolean;
+        _queuedResyncPaths: Set<string> | null;
+        viewStateQueue: ViewStateQueue;
+      };
+      internals._updateInProgress = true;
+      internals._refining = true;
+      sceneLoader.requestReprocess(['/tiled/part_1']);
+      sceneLoader.requestReprocess(['/tiled/part_3']); // our own `{}` is already pending
+      await Promise.resolve();
+      expect([...(internals._queuedResyncPaths ?? [])].sort()).toEqual([
+        '/tiled/part_1',
+        '/tiled/part_3',
+      ]);
+      expect(internals.viewStateQueue.hasPending()).toBe(true);
+    });
+
+    it.each([
+      { order: 'untargeted reprocess FIRST, then a rising edge' },
+      { order: 'rising edge FIRST, then an untargeted reprocess' },
+    ])(
+      'an untargeted reprocess queued during a hold is never narrowed ($order)',
+      async ({ order }) => {
+        // The depth-sort coordinator's `requestReprocess()` exists to re-commit
+        // nodes whose stamps it just deleted, scene-wide. Whichever way it
+        // interleaves with a partition rising edge during a refinement hold,
+        // the hand-off must run a FULL sweep.
+        const target = { updateView: vi.fn().mockResolvedValue(null), dispose: vi.fn() };
+        const other = { updateView: vi.fn().mockResolvedValue(null), dispose: vi.fn() };
+        const loaders = (sceneLoader as unknown as { loaders: Map<string, unknown> }).loaders;
+        loaders.set('/tiled/part_1/level_0', target);
+        loaders.set('/other', other);
+        const internals = sceneLoader as unknown as {
+          _updateInProgress: boolean;
+          _refining: boolean;
+          _updateAbortController: AbortController | null;
+          viewStateQueue: ViewStateQueue;
+          reenterPending(state: Partial<ViewState>): Promise<void>;
+        };
+        internals._updateInProgress = true;
+        internals._refining = true;
+        internals._updateAbortController = new AbortController();
+        if (order.startsWith('untargeted')) {
+          void sceneLoader.updateView({}); // depth-sort style: no paths → supersede branch
+          sceneLoader.requestReprocess(['/tiled/part_1']);
+        } else {
+          sceneLoader.requestReprocess(['/tiled/part_1']);
+          void sceneLoader.updateView({});
+        }
+        await Promise.resolve();
+        expect(internals.viewStateQueue.hasPending()).toBe(true);
+
+        internals._updateInProgress = false;
+        internals._refining = false;
+        const drained = internals.viewStateQueue.drain((state) => internals.reenterPending(state));
+        expect(drained).toBe(true);
+        await vi.waitFor(() => {
+          expect(target.updateView).toHaveBeenCalledTimes(1);
+          expect(other.updateView).toHaveBeenCalledTimes(1); // full sweep, not narrowed
+        });
+      }
+    );
+
+    it('a queued re-entry that lands on a latched archive fault flushes the parked waiters', async () => {
+      // A lazy level can latch the fault OUTSIDE any pass. A waiter parked by a
+      // superseded updateView must then settle (resolve-only) rather than hang
+      // the dimension-animation pacing gate for the rest of the session.
+      const internals = sceneLoader as unknown as {
+        _archiveFault: ArchiveFaultError | null;
+        _passWaiters: Array<() => void>;
+      };
+      let settled = false;
+      internals._passWaiters.push(() => {
+        settled = true;
+      });
+      internals._archiveFault = new ArchiveFaultError('container unreadable', 'test');
+      await sceneLoader.updateView({ slicePosition: [0, 0, 0, 8] });
+      expect(settled).toBe(true);
+      expect(internals._passWaiters).toHaveLength(0);
     });
   });
 
@@ -1469,6 +1837,30 @@ describe('SceneLoader', () => {
         expect(errorLog).toHaveBeenCalledWith(
           Modules.SCENE_LOADER,
           'View reprocess failed: reprocess died',
+          failure
+        );
+      } finally {
+        updateView.mockRestore();
+        errorLog.mockRestore();
+      }
+    });
+
+    it('logs a rejected targeted requestReprocess update', async () => {
+      const errorLog = vi.spyOn(log, 'error').mockImplementation(() => {});
+      const failure = new Error('targeted reprocess died');
+      const updateView = vi.spyOn(sceneLoader, 'updateView').mockRejectedValue(failure);
+
+      try {
+        sceneLoader.requestReprocess(['/partition/part_1']);
+        await Promise.resolve();
+
+        expect(updateView).toHaveBeenCalledWith(
+          {},
+          { resyncPaths: new Set(['/partition/part_1']) }
+        );
+        expect(errorLog).toHaveBeenCalledWith(
+          Modules.SCENE_LOADER,
+          'View reprocess failed: targeted reprocess died',
           failure
         );
       } finally {

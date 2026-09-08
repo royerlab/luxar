@@ -119,6 +119,7 @@ FIXTURE_NAMES: list[str] = [
     "test_nd_transforms.luxar.zarr",
     "test_overview.gsplats.zarr",
     "test_partition_layer.luxar.zarr",
+    "test_partition_of_lod_points.luxar.zarr",
     "test_partition_wrong_frame.luxar.zarr",
     "test_points_blending_modes.luxar.zarr",
     "test_points_normal_overlap.luxar.zarr",
@@ -4079,6 +4080,60 @@ def generate_partition_layer_test() -> None:
         aprint("  wrong-frame partition: valid Python scene with shifted BSP planes")
 
 
+def generate_partition_of_lod_points_test() -> None:
+    """A ``kind=partition`` whose parts are themselves ``kind=lod`` groups.
+
+    The shape of the hosted 44-part h2afva time-lapse and of every
+    ``--recipe adaptive`` store: the partition wrapper frustum-gates its parts,
+    and each part carries its own substitutive ladder. ``partition-resync.spec.ts``
+    drives the camera so ONE part leaves the padded frustum and comes back —
+    the rising edge that used to re-run the view update with a bumped view
+    version and drop every LOD group in the scene to its coarsest level.
+
+    Authored explicitly through ``add_partition_group`` + per-part
+    ``add_points(substitutive_lod=...)``: ``add_points(partition=...,
+    substitutive_lod=...)`` composes the OTHER nesting (an lod wrapper over a
+    partition — the ``overview`` shape), which has no per-part selector.
+
+    Two well-separated clusters (x = -8 and x = +8, sigma 1.5). The spec parks
+    the camera inside one cluster's bounds (finest level, by the selector's
+    camera-inside rule) looking AWAY from the other, so the other — whose
+    coarsest merged-Gaussian level inflates its rendered footprint to roughly
+    ±14 units, far too wide to cull laterally — sits entirely behind the
+    camera; turning around brings it back. ``additive_lod=False``
+    keeps the ladder purely substitutive so the spec's "fine level stays on
+    screen" assertion is not confounded by rung streaming.
+    """
+    with asection("Generating Partition-of-LOD Points Test"):
+        output = FIXTURES_DIR / "test_partition_of_lod_points.luxar.zarr"
+        rng = np.random.default_rng(11)
+        dims = Dimensions.default_3d()
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            tiled = scene.add_partition_group(
+                "tiled", display_type="points", max_elements=1000, layer=True
+            )
+            for name, centre in (("part_0", -8.0), ("part_1", 8.0)):
+                positions = rng.normal([centre, 0.0, 0.0], 1.5, (400, 3)).astype(
+                    np.float32
+                )
+                tiled.add_points(
+                    name,
+                    positions,
+                    radii=0.3,
+                    substitutive_lod=dict(levels=2, device="cpu", seed=0),
+                    additive_lod=False,
+                )
+
+        aprint(f"  Created {output}")
+        aprint("  partition of 2 parts, each a kind=lod group of 3 substitutive levels")
+
+
 def _icosphere(subdivisions: int = 2, radius: float = 1.0) -> tuple:
     """A welded, closed icosphere: vertices, faces, and per-vertex unit normals.
 
@@ -4915,6 +4970,9 @@ def main() -> None:
         aprint("")
 
         generate_partition_layer_test()
+        aprint("")
+
+        generate_partition_of_lod_points_test()
         aprint("")
 
         generate_labelled_points_test()

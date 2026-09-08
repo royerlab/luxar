@@ -16,6 +16,7 @@ import * as THREE from 'three';
 import {
   filterPartitionVisibleLoaders,
   isPartitionPathVisible,
+  isUnderAny,
   runLoaderUpdates,
 } from '../../../../../data/scene-loader/loaders/run-loader-updates';
 import { ViewStateQueue } from '../../../../../data/scene-loader/view-state/view-state-queue';
@@ -213,6 +214,85 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
     expect(results.map(({ staged }) => staged)).toEqual([{ path: '/scene/visible' }, null]);
     expect(ctx.forgetPath).toHaveBeenCalledOnce();
     expect(ctx.forgetPath).toHaveBeenCalledWith('/scene/culled');
+  });
+
+  it('isUnderAny matches exact paths and descendants, not sibling prefixes', () => {
+    const targets = new Set(['/a', '/tiled/part_1']);
+    expect(isUnderAny('/a', targets)).toBe(true);
+    expect(isUnderAny('/a/b', targets)).toBe(true);
+    expect(isUnderAny('/tiled/part_1/level_0', targets)).toBe(true);
+    // `/a/bc` shares a string prefix with `/a/b`-style targets but is NOT under `/a/b`.
+    expect(isUnderAny('/ab', targets)).toBe(false);
+    expect(isUnderAny('/tiled/part_10', targets)).toBe(false);
+    expect(isUnderAny('/tiled', targets)).toBe(false);
+  });
+
+  it('skips non-target loaders during a targeted resync without forgetting their prefetch baseline', async () => {
+    const ctx = makeCtx();
+    const loaders = new Map<string, object>([
+      ['/tiled/part_0/level_0', {}],
+      ['/tiled/part_1/level_0', {}],
+      ['/other', {}],
+    ]);
+    const update = vi.fn((path: string) => Promise.resolve({ path }));
+    const skipped: string[] = [];
+    const profiler = {
+      beginTopLevel: vi.fn(() => ({
+        begin: vi.fn(),
+        end: vi.fn(),
+        setMetadata: vi.fn(),
+        markSkipped: vi.fn((reason: string) => {
+          skipped.push(reason);
+        }),
+      })),
+    };
+    const targets = new Set(['/tiled/part_1']);
+
+    const results = await runLoaderUpdates(loaders, 'Points', update, {
+      ...ctx,
+      profiler: profiler as never,
+      isResyncTarget: (path) => isUnderAny(path, targets),
+    });
+
+    // Only the loader under the re-entering part re-runs...
+    expect(update).toHaveBeenCalledOnce();
+    expect(update).toHaveBeenCalledWith('/tiled/part_1/level_0', {}, expect.anything());
+    expect(results.map(({ staged }) => staged)).toEqual([
+      null,
+      { path: '/tiled/part_1/level_0' },
+      null,
+    ]);
+    // ...the others are skipped with their own reason, and — unlike a culled
+    // part — keep their predictive-prefetch baseline: nothing about their view
+    // changed.
+    expect(skipped).toEqual([
+      'outside partition resync targets',
+      'outside partition resync targets',
+    ]);
+    expect(ctx.forgetPath).not.toHaveBeenCalled();
+  });
+
+  it('a culled resync TARGET is still skipped as culled, but a culled NON-target keeps its baseline', async () => {
+    const ctx = makeCtx();
+    const loaders = new Map<string, object>([
+      ['/tiled/part_1/level_0', {}], // target, culled → culled skip (forgets)
+      ['/tiled/part_0/level_0', {}], // non-target, culled → resync skip (keeps)
+    ]);
+    const update = vi.fn((path: string) => Promise.resolve({ path }));
+    const targets = new Set(['/tiled/part_1']);
+
+    const results = await runLoaderUpdates(loaders, 'Points', update, {
+      ...ctx,
+      shouldUpdatePath: () => false,
+      isResyncTarget: (path) => isUnderAny(path, targets),
+    });
+
+    expect(update).not.toHaveBeenCalled();
+    expect(results.map(({ staged }) => staged)).toEqual([null, null]);
+    // Rising edges fire when many parts are culled; a targeted resync must not
+    // strip every culled non-target of its predictive-prefetch baseline.
+    expect(ctx.forgetPath).toHaveBeenCalledOnce();
+    expect(ctx.forgetPath).toHaveBeenCalledWith('/tiled/part_1/level_0');
   });
 
   it('finds a culled partition marker anywhere in the loader ancestor chain', () => {
