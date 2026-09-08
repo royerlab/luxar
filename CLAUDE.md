@@ -51,7 +51,7 @@ pnpm typecheck    # Type check
 pnpm lint         # Lint (includes TYPE-AWARE rules: no-floating-promises,
                   # no-misused-promises, await-thenable, no-base-to-string).
                   # Also caps production functions at complexity 10, 120 code
-                  # lines, depth 4, and 5 parameters. The 700 pre-existing
+                  # lines, depth 4, and 5 parameters. The 683 pre-existing
                   # findings are recorded in
                   # eslint-suppressions.json — ESLint's own baseline, so a NEW
                   # violation or an over-declared count fails, including an
