@@ -1808,9 +1808,7 @@ describe('GSplatsSpatialIndexLoader', () => {
         mockArrays.colors.shape = [5_000_000, 3];
         mockArrays.colors.dtype = 'uint8';
         bodyLoader = new GSplatsSpatialIndexLoader(
-          mockZarrLocation as unknown as ConstructorParameters<
-            typeof GSplatsSpatialIndexLoader
-          >[0],
+          mockZarrLocation as unknown as ConstructorParameters<typeof GSplatsSpatialIndexLoader>[0],
           makeGSplatsNode({
             attrs: {
               ...mockNode.attrs,
