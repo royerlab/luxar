@@ -532,9 +532,20 @@ window.__tslHarness = {
     vertexShader: string;
     fragmentShader: string;
   }>,
+  renderBloomChainGLSL: () => Promise<{
+    pixels: Uint8Array;
+    mipCount: number;
+  }>,
+  renderBloomChainTSL: () => Promise<{
+    pixels: Uint8Array;
+    mipCount: number;
+  }>,
   listShaders: () => string[],
 };
 ```
+
+The bloom methods render the production multi-pass pyramid rather than a
+shader-registry entry, including additive upsample accumulation onto existing mips.
 
 `renderTSL` patches the renderer's internal
 `NodeManager._createNodeBuilderState` once per call to capture the

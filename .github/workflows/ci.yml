@@ -13,75 +13,23 @@ on:
     branches: [dev]
   pull_request:
     branches: [main, dev]
-  schedule:
-    # A merge reaches dev about every 39 minutes while the required Python and
-    # TypeScript legs take considerably longer, so most push runs are cancelled by
-    # the next merge before they can produce a promotable commit. Schedule events
-    # have their own concurrency group, so dev merges cannot cancel them. Run one
-    # every three hours to supply deliberate dev-tip coverage windows. Their
-    # contexts still attach to the scheduled event SHA on main; the repair walk
-    # below supplies the promotion value by repairing cancelled dev push runs.
-    #
-    # Scheduled runs still share a group with EACH OTHER, so a window still in
-    # flight three hours later is cancelled by its successor -- which is itself a
-    # promotion window, so a lost window costs three hours, not the cadence.
-    # UNLOADED, a floor-only window is one Python leg beside `typescript-tests`,
-    # ~83-91 min against the 180 min of spacing (see the `timeout-minutes` note on
-    # `python-tests`); the 09:17 full-matrix window is three legs at
-    # `max-parallel: 2`, so two waves, ~166-182 min plus the hosted `changes` /
-    # `pick-runner` preamble -- AT the spacing rather than under it. Both figures
-    # are unloaded, and obsidian is deliberately SCHED_IDLE, so neither window is
-    # guaranteed to finish: the full-matrix one is simply the first to lose, and
-    # its 3.13/3.14 coverage then waits for the next day. A floor-only window
-    # needs about half as much quiet and is therefore the last to be lost;
-    # sustained contention at the documented 2.4-3.3x stretch can cancel both
-    # until the box quiets.
-    #
-    # Scheduled runs select the whole suite because they have no PR base. Keep the
-    # 09:17 UTC window on the full supported Python matrix so 3.13/3.14 have one
-    # dedicated daily window; the other seven use only the required 3.12 context.
-    # Every window consumes hosted minutes for its short jobs, but the long
-    # Python/TypeScript legs always join the obsidian queue. Sustained contention
-    # can therefore cancel successive promotion windows. During an extended
-    # outage or promotion stall, create/set the Actions repository variable
-    # LUXAR_CI_FORCE_HOSTED to 1 before the next window, then clear it after
-    # capacity recovers.
-    #
-    # DEFAULT-BRANCH DEPENDENCE. GitHub runs `schedule:` triggers only on the
-    # repository DEFAULT branch, at its tip, and dispatches the event against that
-    # branch's SHA. The default is now `main`, so `github.sha` and the resulting
-    # contexts point at main. Once this workflow reaches main, `changes` instead
-    # checks out `refs/heads/dev`, captures that tip as `dev_sha`, and every suite
-    # checkout reuses it for internally consistent dev-tip coverage. The repair
-    # walk resolves dev explicitly and repairs its cancelled push contexts (#2466).
-    - cron: '17 9 * * *'
-    - cron: '17 0,3,6,12,15,18,21 * * *'
+  workflow_dispatch:
+    # The promotion service requests this workflow with `--ref dev`, so the run's
+    # check contexts attach to the dev commit they attest. Merge pushes already run
+    # the full supported Python matrix; repair windows default to the required 3.12
+    # leg, with an explicit full-matrix override for manual diagnostics.
+    inputs:
+      full_python_matrix:
+        description: Run the full 3.12/3.13/3.14 matrix (dispatch with --ref dev; every dispatch also repairs cancelled push checks)
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
-  # `github.event_name` is in the key ONLY to keep scheduled and push-to-dev
-  # in separate groups. While `dev` was the repository default a scheduled run's
-  # ref was `refs/heads/dev`, the same as a merge's; once the default flips to
-  # `main` a scheduled run's ref becomes `refs/heads/main`. This group is LEFT
-  # KEYED ON `github.ref` DELIBERATELY (considered, no change made): it only has
-  # to be STABLE and to keep the two event kinds apart, and `github.event_name`
-  # already does the separating -- a `push` fires only on `dev` and a
-  # `pull_request` never carries the `schedule` event, so no push or PR run ever
-  # shares a scheduled run's group regardless of ref, and scheduled runs still
-  # coalesce with each other post-flip (all `...-schedule-refs/heads/main-...`).
-  # Keying it on a pinned `refs/heads/dev` would only rename the group without
-  # changing behaviour, so it stays as-is; the scheduled suite jobs test one
-  # captured dev SHA via their checkout pins, not via this group. Under one
-  # shared group whichever of the two starts SECOND cancels the other -- and they
-  # collide constantly: over the 31 days before this was written a merge landed
-  # inside the daily cron's ~30min window on 17 days, and inside the half hour
-  # before it on 12.
-  #
-  # The expensive direction is the cron killing a merge's push run: a push run
-  # has no PR base either, so like a scheduled run it selects the WHOLE suite,
-  # and it is the only place the new `dev` commit gets that treatment. A cron has
-  # no business discarding it. The reverse is milder -- a merge that cancels the
-  # scheduled run executes the full suite itself -- but it still leaves "did
-  # every required job pass today?" unanswerable at a glance.
+  # `github.event_name` keeps dispatched repair windows and push-to-dev runs in
+  # separate groups. A dispatch requested with `--ref dev` has the same ref as a
+  # merge push, but a newer dispatch only supersedes an older dispatch; neither
+  # direction can cancel the merge run that produced the candidate commit.
   #
   # Fresh runs all use the `fresh` suffix, so PR and push runs still coalesce by
   # event and ref exactly as before. Reruns use the original run id instead, so
@@ -129,33 +77,36 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      dev_sha: ${{ steps.scheduled-dev.outputs.dev_sha }}
+      dev_sha: ${{ steps.dispatched-dev.outputs.dev_sha }}
       docs_relevant: ${{ steps.filter.outputs.docs_relevant }}
       dom_py: ${{ steps.filter.outputs.dom_py }}
       dom_ts: ${{ steps.filter.outputs.dom_ts }}
       dom_rust: ${{ steps.filter.outputs.dom_rust }}
       dom_go: ${{ steps.filter.outputs.dom_go }}
     steps:
+      # Make an operator mistake loud, but preserve the fail-safe contract above:
+      # dependent jobs still run against and report on the dispatched commit.
+      - name: Require a dev dispatch
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/dev'
+        run: |
+          echo "::error::CI repair windows must be dispatched with --ref dev"
+          exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # `github.sha` follows the default branch on schedule events, which is
-          # now `main`, not `dev`. Once this workflow reaches main, pin dev here,
-          # capture the resolved commit as `dev_sha`, and reuse that immutable SHA
-          # in every suite checkout for consistent dev-tip coverage. The contexts
-          # still attach to `github.sha`; the repair walk below restores promotion
-          # value by repairing dev push runs. Empty on push/PR == default.
-          ref: ${{ github.event_name == 'schedule' && 'refs/heads/dev' || '' }}
+          # A validated `--ref dev` dispatch attaches its contexts to `github.sha`.
+          # Check out that exact immutable commit, capture it as `dev_sha`, and
+          # reuse it in every suite checkout so the tested tree is the attested SHA.
           fetch-depth: 0
-      - id: scheduled-dev
-        if: github.event_name == 'schedule'
-        name: Capture the scheduled dev commit
+      - id: dispatched-dev
+        if: github.event_name == 'workflow_dispatch'
+        name: Capture the dispatched dev commit
         run: echo "dev_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - id: filter
         name: Classify the diff (language domains + documentation relevance)
         run: |
           base='${{ github.event.pull_request.base.sha }}'
           if [ -z "$base" ]; then
-            echo "push event (no PR base) -> full CI + documentation checks"
+            echo "push/dispatch event (no PR base) -> full CI + documentation checks"
             echo "docs_relevant=true" >> "$GITHUB_OUTPUT"
             printf "dom_py=true\ndom_ts=true\ndom_rust=true\ndom_go=true\n" >> "$GITHUB_OUTPUT"
             exit 0
@@ -321,7 +272,7 @@ jobs:
   # to 1 and re-run all jobs; "Re-run failed" reuses the previous router output.
   # Clear the override after obsidian capacity recovers.
   #
-  # On a push or the daily full-matrix schedule, max-parallel deliberately holds
+  # On a push or the full-matrix dispatch, max-parallel deliberately holds
   # one Python leg queued while two Python legs and TypeScript occupy the three
   # slots. GitHub reports that held leg as `queued` with the `obsidian` label
   # (observed 2026-08-24). The current run's active obsidian jobs keep the held
@@ -347,9 +298,10 @@ jobs:
         continue-on-error: true
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Scheduled runs materialise dev's scanner (see the schedule note).
+          # Unlike `changes`, this actions:write job does not depend on the dispatch
+          # ref guard. Materialise dev's trusted scanner, not the requested ref.
           # Empty on push/PR == default.
-          ref: ${{ github.event_name == 'schedule' && 'refs/heads/dev' || '' }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && 'refs/heads/dev' || '' }}
           persist-credentials: false
           sparse-checkout: scripts
 
@@ -364,8 +316,8 @@ jobs:
         run: |
           # Self-bounded below the job timeout. If jobs are STILL queued when
           # the window closes but obsidian stayed live the whole time, the box is
-          # busy, not dead (a push or daily full-matrix schedule routes 4 test
-          # jobs to obsidian, while a PR or frequent schedule routes 2;
+          # busy, not dead (a push or full-matrix dispatch routes 4 test
+          # jobs to obsidian, while a PR or required-context dispatch routes 2;
           # overlapping event groups do not cancel one another, so queued work
           # can be healthy and draining) — leave the run alone.
           start=$(date +%s)
@@ -491,7 +443,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Scheduled runs test the captured dev commit; empty on push/PR == default.
+          # Dispatched runs test the captured dev commit; empty on push/PR == default.
           ref: ${{ needs.changes.outputs.dev_sha || '' }}
 
       - name: No documentation-relevant changes
@@ -586,14 +538,14 @@ jobs:
       # With the obsidian fleet size documented by queue-watchdog, keep one
       # slot from being monopolised by one run's Python matrix. The shared
       # repository queue may still put other work ahead of this run's
-      # `typescript-tests`; pushes and the daily full-matrix schedule execute two
-      # Python legs, then the third. PRs and the seven floor-only scheduled
-      # windows have one Python leg and are unaffected. Keep the GitHub-hosted
-      # fork/override branch elastic: its matrix legs run on separate VMs.
+      # `typescript-tests`; pushes and the full-matrix dispatch execute two
+      # Python legs, then the third. PRs and required-context dispatches have one
+      # Python leg and are unaffected. Keep the GitHub-hosted fork/override branch
+      # elastic: its matrix legs run on separate VMs.
       max-parallel: ${{ needs.pick-runner.outputs.label == 'obsidian' && 2 || 3 }}
       matrix:
-        # FLOOR on every event, floor + NEWEST on push-to-dev and the daily
-        # 09:17 UTC schedule.
+        # FLOOR on every event, full supported set on push-to-dev and an explicit
+        # full-matrix dispatch.
         #
         # 3.12 is the floor (`requires-python = ">=3.12"`, what zarr 3.2+ needs)
         # and is the required status context under branch protection, so it runs
@@ -601,9 +553,9 @@ jobs:
         # `install-hatch` bootstrap explicitly prefers them, and a developer's
         # `hatch env` picks the newest interpreter on the box — so testing only the
         # floor would leave the version most people actually run unexercised.
-        # Hence 3.14 on merge pushes and one dedicated daily schedule, both
-        # of which run the whole suite. The other seven scheduled promotion
-        # windows intentionally carry only the required 3.12 context.
+        # Hence 3.14 on merge pushes and an explicit full-matrix dispatch.
+        # Required-context dispatches intentionally carry only the required 3.12
+        # context.
         #
         # If newer interpreters are ever deliberately unsupported, the honest fix
         # is a `requires-python` upper bound, not a quiet single-leg matrix.
@@ -614,9 +566,9 @@ jobs:
         # Three legs on pushes is also what this job carried before the floor moved
         # (3.10/3.11/3.12). `max-parallel` above controls their fan-out without
         # weakening the version coverage.
-        # Pull requests and the seven frequent schedules are the fallthrough. If
+        # Pull requests and the required-context dispatches are the fallthrough. If
         # another trigger is added, classify its version coverage explicitly.
-        python-version: ${{ (github.event_name == 'push' || github.event.schedule == '17 9 * * *') && fromJSON('["3.12", "3.13", "3.14"]') || fromJSON('["3.12"]') }}
+        python-version: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' && inputs.full_python_matrix) && fromJSON('["3.12", "3.13", "3.14"]') || fromJSON('["3.12"]') }}
     env:
       # Pin BLAS/OpenMP to one thread per leg. This suite runs SERIALLY, yet each
       # leg burned ~316% CPU on the self-hosted box -- numpy spawning threads to
@@ -685,7 +637,7 @@ jobs:
       # exhausted; the LFS pointer files in the work tree are sufficient.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Scheduled runs test the captured dev commit; empty on push/PR == default.
+          # Dispatched runs test the captured dev commit; empty on push/PR == default.
           ref: ${{ needs.changes.outputs.dev_sha || '' }}
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -860,7 +812,7 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Scheduled runs test the captured dev commit; empty on push/PR == default.
+          # Dispatched runs test the captured dev commit; empty on push/PR == default.
           ref: ${{ needs.changes.outputs.dev_sha || '' }}
 
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
@@ -1001,7 +953,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Scheduled runs test the captured dev commit; empty on push/PR == default.
+          # Dispatched runs test the captured dev commit; empty on push/PR == default.
           ref: ${{ needs.changes.outputs.dev_sha || '' }}
 
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
@@ -1095,7 +1047,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Scheduled runs test the captured dev commit; empty on push/PR == default.
+          # Dispatched runs test the captured dev commit; empty on push/PR == default.
           ref: ${{ needs.changes.outputs.dev_sha || '' }}
 
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
@@ -1226,20 +1178,20 @@ jobs:
           /tmp/wheel-venv/bin/luxar --help > /dev/null
           /tmp/wheel-venv/bin/python -c "import luxar; print('import OK:', luxar.__version__)"
 
-  # A scheduled run tests one captured dev commit, but its contexts attach to the
-  # scheduled event SHA on main. Once the dev tree has proved the five protected
-  # contexts green, walk commits still ahead of main through DEV'S TIP newest first
-  # and rerun cancelled required jobs from up to two dev push suites. This repairs
-  # skipped commits without an unbounded runner burst.
+  # A dispatched run tests the same immutable dev commit its contexts attest. Once
+  # that tree has proved the five protected contexts green, walk commits still ahead
+  # of main through DEV'S TIP newest first and rerun cancelled required jobs from up
+  # to two dev push suites. This repairs skipped commits without an unbounded runner
+  # burst.
   #
   # The walk anchors on dev's tip resolved EXPLICITLY (git/refs/heads/dev), NOT on
-  # the scheduled run's own ref/SHA. The checkout + ancestry guard below assert
+  # the dispatched run's own ref/SHA. The checkout + ancestry guard below assert
   # that the suite's captured commit remains on dev's line and fail loudly for an
   # unresolvable dev ref or an off-dev checkout.
   repair-cancelled-push-checks:
     needs:
       [changes, python-tests, typescript-tests, release-readiness, wheel-viewer, docs-quality]
-    if: ${{ github.event_name == 'schedule' && always() && !cancelled() }}
+    if: ${{ github.event_name == 'workflow_dispatch' && always() && !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -1272,19 +1224,18 @@ jobs:
               '[.[] | .jobs[] | select(.name == $context)] | max_by(.id).conclusion // "absent"' \
               <<<"$current_jobs")
             if [ "$conclusion" != "success" ]; then
-              echo "Required scheduled context is not green: $context=$conclusion"
+              echo "Required dispatched context is not green: $context=$conclusion"
               exit 0
             fi
           done
 
-          # Resolve dev's tip EXPLICITLY as the WALK ANCHOR. ${GITHUB_SHA} is the
-          # scheduled event commit on main, while the checked-out HEAD is the
-          # captured dev commit. Dev may advance while the window runs, so the
+          # Resolve dev's tip EXPLICITLY as the WALK ANCHOR. Dev may advance past
+          # the dispatched and checked-out commit while the window runs, so the
           # repair must walk through the current tip.
           dev_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/refs/heads/dev" \
             --jq '.object.sha') || dev_sha=""
           if [ -z "$dev_sha" ]; then
-            echo "::error::could not resolve refs/heads/dev; a scheduled promotion run must walk dev's tip -- failing loudly rather than silently skipping repair"
+            echo "::error::could not resolve refs/heads/dev; a dispatched promotion run must walk dev's tip -- failing loudly rather than silently skipping repair"
             exit 1
           fi
 
@@ -1306,7 +1257,7 @@ jobs:
               exit 1
             fi
           fi
-          echo "Walking commits ahead of main through dev tip $dev_sha (checked out $head_sha; scheduled run SHA ${GITHUB_SHA})"
+          echo "Walking commits ahead of main through dev tip $dev_sha (checked out $head_sha; dispatched run SHA ${GITHUB_SHA})"
 
           comparison=$(gh api --paginate --slurp \
             "repos/${GITHUB_REPOSITORY}/compare/main...${dev_sha}?per_page=100")
@@ -1401,7 +1352,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Scheduled runs test the captured dev commit; empty on push/PR == default.
+          # Dispatched runs test the captured dev commit; empty on push/PR == default.
           ref: ${{ needs.changes.outputs.dev_sha || '' }}
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -1471,7 +1422,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Scheduled runs test the captured dev commit; empty on push/PR == default.
+          # Dispatched runs test the captured dev commit; empty on push/PR == default.
           ref: ${{ needs.changes.outputs.dev_sha || '' }}
 
       # playwright.config.ts starts a second webServer — tools/range-http-server.py

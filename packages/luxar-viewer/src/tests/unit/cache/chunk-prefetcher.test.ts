@@ -11,8 +11,9 @@
  * - Race condition safety
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ChunkPrefetcher } from '../../../cache/chunk-prefetcher';
+import { log } from '../../../utils/log';
 
 /**
  * Deterministic polling helper — waits for a condition to become true.
@@ -46,6 +47,10 @@ describe('ChunkPrefetcher - Unit Tests', () => {
     prefetcher.registerArrayBounds('data/volume', [100, 100, 100, 30], [10, 10, 10, 10]);
     prefetcher.registerArrayBounds('data/values', [10240], [1024]);
     prefetcher.registerArrayBounds('test', [10240, 4], [1024, 4]);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   describe('Chunk Index Parsing', () => {
@@ -434,6 +439,35 @@ describe('ChunkPrefetcher - Unit Tests', () => {
 
       // Should have attempted prefetch
       expect(errorMockStore.getResult).toHaveBeenCalled();
+    });
+
+    it('logs a rejected prefetch and continues draining queued chunks', async () => {
+      const rejectedStore = {
+        getResult: vi
+          .fn()
+          .mockRejectedValueOnce(new Error('synthetic prefetch rejection'))
+          .mockResolvedValue({ ok: true, value: new Uint8Array([1]) }),
+        setPrefetcher: vi.fn(),
+      };
+      const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+      const rejectedPrefetcher = new ChunkPrefetcher(rejectedStore as any, {
+        enabled: true,
+        maxConcurrent: 1,
+      });
+      rejectedPrefetcher.registerArrayBounds('data', [4096], [1024]);
+
+      rejectedPrefetcher.onAccess('data/2');
+      await waitFor(() => {
+        const stats = rejectedPrefetcher.getStats();
+        return stats.inFlight === 0 && stats.queued === 0;
+      });
+
+      expect(rejectedStore.getResult).toHaveBeenCalledTimes(2);
+      expect(warning).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining('synthetic prefetch rejection')
+      );
+      warning.mockRestore();
     });
   });
 

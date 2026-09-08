@@ -178,6 +178,9 @@ export class SceneGraphModel {
         case 'group':
           // Containers carry no elements of their own.
           break;
+        case 'sound':
+          // Heard, not drawn: a sound node has no visible element count.
+          break;
         default:
           void (node.type satisfies never);
       }

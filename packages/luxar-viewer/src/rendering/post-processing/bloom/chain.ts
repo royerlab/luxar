@@ -146,6 +146,11 @@ export class BloomChain {
     return { width: this.mips[0].width, height: this.mips[0].height };
   }
 
+  /** Number of mip levels allocated after applying the minimum-size cutoff. */
+  get mipCount(): number {
+    return this.mips.length;
+  }
+
   /**
    * Change the number of mip levels and rebuild the pyramid.
    *

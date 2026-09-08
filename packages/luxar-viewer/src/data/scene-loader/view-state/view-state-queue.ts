@@ -24,6 +24,7 @@
  */
 
 import { log, Modules } from '../../../utils/log';
+import { getErrorMessage } from '../../../utils/format-error';
 import type { ViewState } from '../../data-loader-types';
 import { dispatchPredictivePrefetch, type PrefetchableLoader } from './predicted-view-state';
 
@@ -62,14 +63,15 @@ export class ViewStateQueue {
   drain(triggerUpdate: (state: Partial<ViewState>) => Promise<unknown>): boolean {
     const pendingState = this.takePending();
     if (pendingState === null) return false;
-    Promise.resolve().then(() => {
-      triggerUpdate(pendingState).catch((err) => {
+    Promise.resolve()
+      .then(() => triggerUpdate(pendingState))
+      .catch((error: unknown) => {
         log.warning(
           Modules.SCENE_LOADER,
-          `Drained updateView after retry failed: ${(err as Error).message}`
+          `Drained updateView after retry failed: ${getErrorMessage(error)}`,
+          error
         );
       });
-    });
     return true;
   }
 

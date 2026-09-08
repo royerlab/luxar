@@ -33,8 +33,8 @@ to locate a held-out peak. FISBe's raw has effectively none: the Janelia
 Workstation stitches and distortion-corrects the tiles, which scrubs the pixel
 noise even though values remain 12-bit. A sweep returns
 ``curve_type=signal_limited``, ``still_climbing=True``, sigma_hat ~1e-10 — its
-"K*" is just the top of whatever grid you supplied. Luxar warns and points at
-``--k-star-metric gain``; we drove K off a measured quality curve instead.
+"K*" is just the top of whatever grid you supplied. Luxar warns that alternate
+metrics may help on sparse data; we drove K off a measured quality curve instead.
 
 --------------------------------------------------------------------------------
 2. THE FLOOR IS THE MOST CONSEQUENTIAL KNOB — and a percentile floor is brutal

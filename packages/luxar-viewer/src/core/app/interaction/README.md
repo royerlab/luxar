@@ -25,13 +25,26 @@ scene.add_gsplats(
 
 They land in `userData.attrs` on each geometry leaf, which is what a pick hits.
 
+## Gesture ownership
+
+`canvas-gesture-ownership.ts` — `installCanvasGestureOwnership(canvas, events)`,
+called from `LuxarApp.init()` before the init pipeline. Stamps `touch-action: none`
+when the canvas's computed value is still `auto`, so an embedder's explicit choice
+is respected; callout and text-selection suppression are stamped unconditionally.
+It also cancels Safari's proprietary `gesturestart/gesturechange/gestureend` pinch
+events on devices that report touch points. Without it the browser claims a
+two-finger pinch as page zoom and the orbit controls' touch handlers never run. The
+standalone page declares the same in `styles/base/layout.css` (`#app`); a
+`LuxarLayer` host owns its canvas and sets `touch-action` itself.
+
 ## File Structure
 
 ```
 interaction/
 ├── picked-element-cache.ts   # the settled pick + its staleness guard
 ├── element-actions.ts        # attrs → safe URL + copy string (pure)
-└── canvas-actions.ts         # pointer/keyboard listeners, menu, clipboard, cursor
+├── canvas-actions.ts         # pointer/keyboard listeners, menu, clipboard, cursor
+└── canvas-gesture-ownership.ts # touch-action / callout stamp + Safari gesture cancel
 ```
 
 `initPicking` (`../picking/init-picking.ts`) constructs all three and registers

@@ -216,6 +216,12 @@ describe('RenderingControls', () => {
     }
   });
 
+  it('positions the panel below the top safe area by default', () => {
+    const gui = (renderingControls as unknown as { gui: { domElement: HTMLElement } }).gui;
+    expect(gui.domElement.style.top).toContain('20px');
+    expect(gui.domElement.style.top).toContain('safe-area-inset-top');
+  });
+
   describe('lifecycle cleanup', () => {
     it('should cancel deferred click-outside setup on dispose', () => {
       vi.useFakeTimers();

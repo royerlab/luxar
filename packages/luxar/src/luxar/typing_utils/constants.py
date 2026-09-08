@@ -229,6 +229,7 @@ NODE_TYPE_POINTS: Final[str] = "points"
 NODE_TYPE_LINES: Final[str] = "lines"
 NODE_TYPE_GSPLATS: Final[str] = "gsplats"
 NODE_TYPE_MESH: Final[str] = "mesh"
+NODE_TYPE_SOUND: Final[str] = "sound"
 
 # Point radius constants
 MIN_POINT_RADIUS: Final[float] = 0.001  # Minimum visible radius

@@ -2,9 +2,10 @@
  * Turning an unknown thrown value into something readable.
  *
  * `catch (error)` gives `unknown`, and the two obvious things to do with it are
- * both wrong in the same place: `String(error)` on an `Error` yields
- * `"Error: msg"` but on a `DOMException` loses the name, and `JSON.stringify`
- * yields `"{}"` because `name` / `message` / `stack` are all non-enumerable.
+ * both incomplete in the same place: `String(error)` on an `Error` yields
+ * `"Error: msg"` but on a `DOMException` loses the name, while directly using
+ * `JSON.stringify` on an Error yields `"{}"` because `name` / `message` /
+ * `stack` are all non-enumerable.
  * That second one is not hypothetical — it is why a real bug report read
  * `OPFSStore metadata save failed {}` with the cause entirely absent.
  *
@@ -15,11 +16,20 @@
  * @module utils/format-error
  */
 
+/** Return a non-empty message from an Error-like value. */
+function getErrorLikeMessage(error: unknown): string | undefined {
+  if (!isErrorLike(error)) return undefined;
+  const message = (error as { message?: unknown }).message;
+  return typeof message === 'string' && message.length > 0 ? message : undefined;
+}
+
 /**
  * The message from an unknown thrown value.
  *
  * `DOMException` (what the File System Access API throws) satisfies
- * `instanceof Error` per WebIDL, so one branch covers it.
+ * `instanceof Error` per WebIDL, so one branch covers it. Cross-realm and
+ * worker Error-like objects use their non-empty `message`; genuine data
+ * objects are serialized so their fields are not collapsed to `[object Object]`.
  *
  * Never throws. `String(x)` raises `TypeError: Cannot convert object to
  * primitive value` for a null-prototype object, and a hostile `message`
@@ -31,6 +41,17 @@
 export function getErrorMessage(error: unknown): string {
   try {
     if (error instanceof Error) return error.message;
+    const errorLikeMessage = getErrorLikeMessage(error);
+    if (errorLikeMessage) return errorLikeMessage;
+    if (typeof error === 'object' && error !== null) {
+      try {
+        const serialized = JSON.stringify(error);
+        // Preserve String(error) for non-enumerable-only Error-like objects.
+        if (serialized && serialized !== '{}') return serialized;
+      } catch {
+        // Fall through to String(error), which may still provide a useful tag.
+      }
+    }
     return String(error);
   } catch {
     return '[unprintable error]';

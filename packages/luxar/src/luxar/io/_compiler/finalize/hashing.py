@@ -13,6 +13,8 @@ from arbol import aprint
 from luxar._zarr_compat import (
     NODE_ATTR_DOCS,
     NODE_GROUP_DOCS,
+    array_keys,
+    group_keys,
     list_raw_keys,
     read_raw_bytes,
 )
@@ -22,8 +24,14 @@ from luxar.typing_utils.constants import ENVIRONMENT_GROUP
 # *inside* the group's own directory. Such files have no chunk grid and no zarr
 # metadata, so `array_keys()` and `group_keys()` are blind to them and their bytes
 # reach the digest only through this list. A new payload kind registers its attr
-# key here. Full rationale: `finalize/README.md`.
-PAYLOAD_FILE_ATTRS: tuple[str, ...] = ("image_file", "poster_file", "video_file")
+# key here (`image_file`/`poster_file`/`video_file` are an overlay's media,
+# `audio_file` a sound node's clip). Full rationale: `finalize/README.md`.
+PAYLOAD_FILE_ATTRS: tuple[str, ...] = (
+    "image_file",
+    "poster_file",
+    "video_file",
+    "audio_file",
+)
 
 #: zarr's own metadata documents, both on-disk formats (`_zarr_compat` already
 #: names the attr/group ones; `.zarray` and `.zmetadata` complete the set).
@@ -253,7 +261,7 @@ def compute_content_hashes(store: zarr.Group) -> str:
 
         # 1. Hash this node's own datasets (positions, colors, etc.) — storage
         #    identity first, then the decoded values.
-        for dataset_name in sorted(group.array_keys()):
+        for dataset_name in sorted(array_keys(group)):
             dataset = group[dataset_name]
             identity = _storage_identity(dataset_name, dataset)
             hasher.update(json.dumps(identity, sort_keys=True, default=str).encode())
@@ -286,7 +294,7 @@ def compute_content_hashes(store: zarr.Group) -> str:
         #    group still gets its OWN `content_hash` stamped (it is visited), so
         #    tooling can tell two bakes apart; it just does not fold into the
         #    parent. `luxar optimise`'s streaming twin mirrors this rule.
-        for child_name in sorted(group.group_keys()):
+        for child_name in sorted(group_keys(group)):
             child_path = f"{group_path}/{child_name}" if group_path else child_name
             child_hash = compute_hash_recursive(child_path)
             if not group_path and child_name == ENVIRONMENT_GROUP:

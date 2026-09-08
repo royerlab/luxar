@@ -110,6 +110,7 @@ export interface LODGroupRegistryOwner {
 export type SceneLoaderLODGroupRegistryFactory = (owner: LODGroupRegistryOwner) => LODGroupRegistry;
 import { ArrayRefRegistry } from './array-decoder/decoder';
 import { log, Modules } from '../utils/log';
+import { getErrorMessage } from '../utils/format-error';
 import { scheduleFrame } from '../utils/schedule-frame';
 import { config as appConfig } from '../config';
 import { MultiLevelCachingStore } from '../cache/multi-level-caching-store';
@@ -1024,7 +1025,9 @@ export class SceneLoader {
 
   /** Re-run the current view state without blocking the caller. */
   requestReprocess(): void {
-    void this.updateView({});
+    this.updateView({}).catch((error: unknown) => {
+      log.error(Modules.SCENE_LOADER, `View reprocess failed: ${getErrorMessage(error)}`, error);
+    });
   }
 
   /**
@@ -1378,7 +1381,7 @@ export class SceneLoader {
     this.scheduleGSplatsRefinement().catch((error) => {
       log.error(
         Modules.SCENE_LOADER,
-        `Deferred-activation refinement failed: ${(error as Error).message}`
+        `Deferred-activation refinement failed: ${getErrorMessage(error)}`
       );
       // Belt-and-braces lock recovery (mirrors queue-next.ts): the loops
       // release the lock in their own finally, so a rejection here means the
@@ -1438,7 +1441,13 @@ export class SceneLoader {
         // synchronous in non-browser contexts.
         scheduleFrame(() => {
           this._updateInProgress = false;
-          this.updateView(pendingState);
+          this.updateView(pendingState).catch((error: unknown) => {
+            log.error(
+              Modules.SCENE_LOADER,
+              `Refinement cancellation re-entry failed: ${getErrorMessage(error)}`,
+              error
+            );
+          });
         });
       };
       // Per-run abort controller, published as THIS loader's live update
@@ -2032,7 +2041,8 @@ export class SceneLoader {
     void this.updateView(this.viewState).catch((error) => {
       log.warning(
         Modules.SCENE_LOADER,
-        `Current view reload after archive retry failed: ${(error as Error).message}`
+        `Current view reload after archive retry failed: ${getErrorMessage(error)}`,
+        error
       );
     });
   }

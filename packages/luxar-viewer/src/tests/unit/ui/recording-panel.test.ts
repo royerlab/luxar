@@ -113,6 +113,11 @@ describe('RecordingPanel', () => {
   });
 
   describe('visibility', () => {
+    it('keeps the bottom-anchored panel above the safe area', () => {
+      const gui = (panel as any).gui.domElement as HTMLElement;
+      expect(gui.style.bottom).toMatch(/20px.*safe-area-inset-bottom/);
+    });
+
     it('starts hidden', () => {
       expect(panel.isVisible()).toBe(false);
     });
@@ -416,6 +421,17 @@ describe('RecordingPanel', () => {
         (MediaRecorder as any).isTypeSupported = vi.fn().mockReturnValue(false);
         const result = getSupportedMimeType();
         expect(result).toBeNull();
+      });
+
+      it('with audio, prefers an Opus-capable WebM and falls back to the video-only types', () => {
+        (MediaRecorder as any).isTypeSupported = vi.fn((type: string) => type.includes('vp9'));
+        expect(getSupportedMimeType(undefined, true)).toBe('video/webm;codecs=vp9,opus');
+        (MediaRecorder as any).isTypeSupported = vi.fn(
+          (type: string) => type.includes('vp8') && !type.includes('opus')
+        );
+        expect(getSupportedMimeType(undefined, true)).toBe('video/webm;codecs=vp8');
+        (MediaRecorder as any).isTypeSupported = vi.fn((type: string) => type.includes('vp9'));
+        expect(getSupportedMimeType(undefined, false)).toBe('video/webm;codecs=vp9');
       });
 
       it('returns null when MediaRecorder undefined', () => {

@@ -72,6 +72,7 @@ class NodeType(str, Enum):
     LINES = "lines"
     GSPLATS = "gsplats"
     MESH = "mesh"
+    SOUND = "sound"
 
     @classmethod
     def validate(cls, value: str) -> "NodeType":

@@ -46,6 +46,14 @@ Mesh
    :undoc-members:
    :show-inheritance:
 
+Sound
+-----
+
+.. autoclass:: luxar.core.Sound
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Dimensions
 ----------
 

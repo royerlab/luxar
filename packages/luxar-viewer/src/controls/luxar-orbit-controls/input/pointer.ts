@@ -16,6 +16,7 @@ import * as THREE from 'three';
 import { computeArcballRotation } from '../math/trackball';
 import { computeZoomScale } from '../math/zoom';
 import { normalizeWheelDelta } from '../../../utils/wheel-delta';
+import { isTouchLikePointer } from '../../../utils/input-capabilities';
 
 /** The gesture the orbit controls are currently performing. */
 export type ControlAction = 'rotate' | 'pan' | 'zoom' | 'none';
@@ -80,6 +81,8 @@ export interface OrbitInputCtx {
   getState: () => ControlAction;
   setState: (s: ControlAction) => void;
   addZoomDelta: (delta: number) => void;
+  /** Accumulate a view-axis roll (radians; damped in update()) — two-finger twist. */
+  addRollDelta: (delta: number) => void;
 
   // Cross-cutting callbacks
   pan: (deltaX: number, deltaY: number) => void;
@@ -165,7 +168,12 @@ export function handlePointerDown(ctx: OrbitInputCtx, event: PointerEvent): void
     ctx.pointerPositions.set(event.pointerId, new THREE.Vector2(event.clientX, event.clientY));
   }
 
-  if (event.pointerType === 'touch') {
+  if (isTouchLikePointer(event)) {
+    // Suppress the compatibility mouse events (mousedown / mousemove /
+    // mouseup) browsers synthesise after a touch: they would re-enter the
+    // mouse-only paths (fly controls, hover picking) and double-drive them.
+    // `click` is NOT suppressed by this, so tap-to-activate still works.
+    event.preventDefault();
     ctx.onTouchStart();
   } else {
     const action = mouseAction(event.button, event.shiftKey, ctx);
@@ -207,7 +215,7 @@ export function handlePointerMove(ctx: OrbitInputCtx, event: PointerEvent): void
     }
   }
 
-  if (event.pointerType === 'touch') {
+  if (isTouchLikePointer(event)) {
     ctx.onTouchMove(event);
     return;
   }
@@ -242,8 +250,9 @@ export function handlePointerMove(ctx: OrbitInputCtx, event: PointerEvent): void
 /**
  * End a pointer interaction: remove the pointer from the array (via
  * `setPointers`) and the position map. When no pointers remain, release the
- * capture and detach the move/up/cancel listeners. Resets the gesture state
- * to `'none'` and dispatches `end`.
+ * capture, detach the move/up/cancel listeners, reset the gesture state to
+ * `'none'` and dispatch `end`. When touch pointers remain (a finger lifted
+ * out of a pinch), the gesture is re-seeded from the survivors instead.
  */
 export function handlePointerUp(ctx: OrbitInputCtx, event: PointerEvent): void {
   // Remove this pointer. Use the filtered result directly — ctx.pointers
@@ -262,6 +271,16 @@ export function handlePointerUp(ctx: OrbitInputCtx, event: PointerEvent): void {
     ctx.domElement.removeEventListener('pointermove', ctx.boundOnPointerMove);
     ctx.domElement.removeEventListener('pointerup', ctx.boundOnPointerUp);
     ctx.domElement.removeEventListener('pointercancel', ctx.boundOnPointerUp);
+  } else if (remaining.some(isTouchLikePointer)) {
+    // A touch-like pointer remains after another pointer lifted or cancelled:
+    // re-seed the gesture from the survivors instead of ending it. Going
+    // 2 → 1 this resumes a one-finger rotate from the surviving finger's
+    // CURRENT position (a stale start point would make the scene jump), and
+    // the gesture stays 'started' so picking suppression is not lifted
+    // mid-drag. The orchestrator rebuilds the ctx from the updated pointer
+    // list, so the seeding sees the survivors only.
+    ctx.onTouchStart();
+    return;
   }
 
   ctx.setState('none');
