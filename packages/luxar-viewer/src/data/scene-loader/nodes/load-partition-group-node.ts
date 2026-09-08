@@ -323,11 +323,11 @@ export async function loadPartitionGroupNode(
       ).fill(undefined);
       for (let loadIndex = 0; loadIndex < sceneChildren.length; loadIndex++) {
         const partIndex = partIndexForChild(sceneChildren[loadIndex], loadIndex);
-        const object = partitionGroup.children.find(
+        const objects = partitionGroup.children.filter(
           (candidate) => candidate.userData.partIndex === partIndex
         );
-        if (object) {
-          registryChildren[partIndex] = { object, positionBounds: partBounds[partIndex] };
+        if (objects.length > 0) {
+          registryChildren[partIndex] = { objects, positionBounds: partBounds[partIndex] };
         }
       }
       if (registryChildren.every((child) => child !== undefined)) {

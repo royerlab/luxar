@@ -557,7 +557,7 @@ export interface LODGroupEntry {
 }
 
 export interface PartitionGroupChild {
-  object: THREE.Object3D;
+  objects: THREE.Object3D[];
   positionBounds: { min: readonly number[]; max: readonly number[] };
 }
 
@@ -844,7 +844,9 @@ export class LODGroupRegistry {
         },
       })),
     });
-    for (const child of entry.children) child.object.userData.partitionFrustumVisible = true;
+    for (const child of entry.children) {
+      for (const object of child.objects) object.userData.partitionFrustumVisible = true;
+    }
   }
 
   /** Drop an lod_group from the registry (called on scene teardown). */
@@ -880,8 +882,10 @@ export class LODGroupRegistry {
 
   private restorePartitionChildren(entry: PartitionGroupEntry): void {
     for (const child of entry.children) {
-      child.object.visible = true;
-      delete child.object.userData.partitionFrustumVisible;
+      for (const object of child.objects) {
+        object.visible = true;
+        delete object.userData.partitionFrustumVisible;
+      }
     }
   }
 
@@ -1290,17 +1294,22 @@ export class LODGroupRegistry {
       if (worldBox) {
         WORLD_BOX3_SCRATCH.min.set(worldBox.min.x, worldBox.min.y, worldBox.min.z);
         WORLD_BOX3_SCRATCH.max.set(worldBox.max.x, worldBox.max.y, worldBox.max.z);
-        FOOTPRINT_BOX3_SCRATCH.setFromObject(child.object);
-        if (!FOOTPRINT_BOX3_SCRATCH.isEmpty()) {
-          WORLD_BOX3_SCRATCH.union(FOOTPRINT_BOX3_SCRATCH);
+        for (const object of child.objects) {
+          FOOTPRINT_BOX3_SCRATCH.setFromObject(object);
+          if (!FOOTPRINT_BOX3_SCRATCH.isEmpty()) {
+            WORLD_BOX3_SCRATCH.union(FOOTPRINT_BOX3_SCRATCH);
+          }
         }
         visible = frustum.intersectsBox(WORLD_BOX3_SCRATCH);
       }
-      const wasVisible = child.object.userData.partitionFrustumVisible !== false;
-      child.object.userData.partitionFrustumVisible = visible;
-      if (child.object.visible !== visible) {
-        child.object.visible = visible;
-        result |= PARTITION_VISIBILITY_CHANGED;
+      let wasVisible = true;
+      for (const object of child.objects) {
+        if (object.userData.partitionFrustumVisible === false) wasVisible = false;
+        object.userData.partitionFrustumVisible = visible;
+        if (object.visible !== visible) {
+          object.visible = visible;
+          result |= PARTITION_VISIBILITY_CHANGED;
+        }
       }
       if (visible && !wasVisible) result |= PARTITION_BECAME_VISIBLE;
     }

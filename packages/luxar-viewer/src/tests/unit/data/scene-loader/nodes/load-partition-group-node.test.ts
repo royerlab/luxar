@@ -221,7 +221,9 @@ describe('loadPartitionGroupNode', () => {
       { min: [10, 20], max: [11, 21] },
     ]);
     expect(
-      entry.children.map((child: { object: THREE.Object3D }) => child.object.userData.partIndex)
+      entry.children.map(
+        (child: { objects: THREE.Object3D[] }) => child.objects[0].userData.partIndex
+      )
     ).toEqual([0, 1]);
   });
 
@@ -362,8 +364,14 @@ describe('loadPartitionGroupNode', () => {
 
   it('keeps every object from a part contiguous and stamps each with the same part index', async () => {
     const children = [
-      makePartNode('/partition/part_a', 'points', { child_index: 7 }),
-      makePartNode('/partition/part_b', 'points', { child_index: 3 }),
+      makePartNode('/partition/part_a', 'points', {
+        child_index: 1,
+        position_bounds: { min: [0, 0], max: [1, 1] },
+      }),
+      makePartNode('/partition/part_b', 'points', {
+        child_index: 0,
+        position_bounds: { min: [2, 2], max: [3, 3] },
+      }),
     ];
     const releases: Array<() => void> = [];
     const gates = children.map(
@@ -382,11 +390,12 @@ describe('loadPartitionGroupNode', () => {
       }
     });
 
+    const registerPartition = vi.fn();
     const loadPromise = loadPartitionGroupNode(
       makePartitionGroupNode(children),
       new THREE.Group(),
       makeStubLoc(),
-      makeCtx(),
+      makeRegistryCtx(registerPartition),
       loadSceneNodesMock
     );
     await Promise.resolve();
@@ -401,7 +410,10 @@ describe('loadPartitionGroupNode', () => {
       '/partition/part_b/first',
       '/partition/part_b/second',
     ]);
-    expect(wrapper.children.map((child) => child.userData.partIndex)).toEqual([7, 7, 3, 3]);
+    expect(wrapper.children.map((child) => child.userData.partIndex)).toEqual([1, 1, 0, 0]);
+    const entry = registerPartition.mock.calls[0][0];
+    expect(entry.children[0].objects).toEqual(wrapper.children.slice(2, 4));
+    expect(entry.children[1].objects).toEqual(wrapper.children.slice(0, 2));
   });
 
   it('all children start visible before the first frustum evaluation', async () => {
