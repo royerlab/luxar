@@ -596,7 +596,8 @@ class Scene(Group):
                 be decoded (PNG/JPEG/WebP bytes, path, array or PIL image).
             alpha_matte: ``None`` (an ordinary clip) or ``"stacked"`` (the clip
                 is colour over a grey alpha matte, see above; the viewer shows
-                only the top half, made transparent by the bottom half).
+                only the top half, made transparent by the bottom half). Stacked
+                mattes require ``autoplay=True`` because their source video is hidden.
             visible_range: Optional dimension-based visibility filter.
             transition: 'none' or 'fade' (default 'none').
             transition_duration: Transition duration in seconds (default 0.3).

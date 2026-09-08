@@ -228,6 +228,8 @@ def add_video_impl(
         raise ValueError("autoplay=True requires muted=True (browser autoplay policy)")
     validated_size = _validate_media_size(size) if size is not None else None
     validate_video_alpha_matte(alpha_matte)
+    if alpha_matte == "stacked" and not autoplay:
+        raise ValueError('alpha_matte="stacked" requires autoplay=True')
     video_bytes, fmt = validate_video_input(video)
     video_filename = f"video.{fmt}"
     files: Dict[str, bytes] = {video_filename: video_bytes}

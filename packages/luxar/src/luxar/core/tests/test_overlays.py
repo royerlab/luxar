@@ -418,6 +418,15 @@ class TestAddVideo:
                 scene.add_video(
                     self.WEBM_BYTES, position=(0.1, 0.5), alpha_matte="side-by-side"
                 )
+            with pytest.raises(
+                ValueError, match='alpha_matte="stacked" requires autoplay=True'
+            ):
+                scene.add_video(
+                    self.WEBM_BYTES,
+                    position=(0.1, 0.5),
+                    alpha_matte="stacked",
+                    autoplay=False,
+                )
 
         store = zarr.open_group(tmp_path / "test.luxar.zarr", mode="r")
         attrs = dict(store["overlays/overlay_0"].attrs)
