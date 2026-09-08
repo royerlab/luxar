@@ -222,12 +222,7 @@ def test_doctor_prints_info_before_diagnosing_a_gsplat_store() -> None:
         assert "no split planes" in result.stdout
 
 
-@pytest.mark.parametrize("traceback_enabled", [False, True])
-def test_doctor_continues_when_info_rejects_a_legacy_store(
-    traceback_enabled: bool, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    if traceback_enabled:
-        monkeypatch.setenv(TRACEBACK_ENV_VAR, "1")
+def test_doctor_continues_when_info_rejects_a_legacy_store() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         path = _legacy_gsplat_store(Path(tmp))
 
@@ -252,7 +247,12 @@ def test_info_command_exits_when_report_rejects_a_legacy_store() -> None:
         assert "Traceback" not in result.stdout
 
 
-def test_doctor_rejects_a_supported_but_unreadable_store() -> None:
+@pytest.mark.parametrize("traceback_enabled", [False, True])
+def test_doctor_rejects_a_supported_but_unreadable_store(
+    traceback_enabled: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if traceback_enabled:
+        monkeypatch.setenv(TRACEBACK_ENV_VAR, "1")
     with tempfile.TemporaryDirectory() as tmp:
         path = _unreadable_gsplat_store(Path(tmp))
 
