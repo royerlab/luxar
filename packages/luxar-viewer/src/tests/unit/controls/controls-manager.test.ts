@@ -407,6 +407,17 @@ describe('ControlsManager', () => {
       expect(controls.dampingFactor).toBe(0.1);
     });
 
+    it('settleDamping delegates for orbit controls and is safe for fly controls', () => {
+      const controls = controlsManager.getControls() as LuxarOrbitControls;
+      const settleDamping = vi.spyOn(controls, 'settleDamping');
+
+      controlsManager.settleDamping();
+      expect(settleDamping).toHaveBeenCalledOnce();
+
+      controlsManager.setControlType('fly');
+      expect(() => controlsManager.settleDamping()).not.toThrow();
+    });
+
     it('defaults orbit feel knobs from config (zoom 1.0, damping 0.25)', () => {
       const controls = controlsManager.getControls() as LuxarOrbitControls;
       expect(controls.zoomSpeed).toBe(1.0);
