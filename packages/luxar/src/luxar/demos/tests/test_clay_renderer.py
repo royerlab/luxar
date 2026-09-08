@@ -100,16 +100,25 @@ def test_perspective_and_rotation_conventions() -> None:
     assert front[0] > 0 and front[2] > 0
 
 
-def test_ffmpeg_pipe_command_encodes_vp9_with_alpha_from_raw_rgba() -> None:
+def test_ffmpeg_pipe_command_encodes_a_stacked_alpha_matte_from_raw_rgba() -> None:
+    """Colour over matte in one OPAQUE frame: the encoding every browser decodes.
+
+    A VP9 alpha plane was the first design; Safari / WKWebView decode it and drop
+    the alpha (black squares in the exported kiosk app), so the transparency now
+    travels as a grey matte stacked below the colour and the viewer recombines.
+    """
     cmd = cr.ffmpeg_pipe_command("/usr/bin/ffmpeg", 768, 30, Path("/out.webm"))
     assert cmd[0] == "/usr/bin/ffmpeg"
     assert cmd[cmd.index("-f") + 1] == "rawvideo"
     assert cmd[cmd.index("-s") + 1] == "768x768"
     assert cmd[cmd.index("-r") + 1] == "30"
-    assert cmd[cmd.index("-vf") + 1] == "vflip"  # OpenGL rows are bottom-up
+    vf = cmd[cmd.index("-vf") + 1]
+    assert vf == cr.STACKED_MATTE_FILTER
+    assert vf.startswith("vflip,")  # OpenGL rows are bottom-up
+    assert "alphaextract" in vf and "vstack" in vf  # colour on top, matte below
     assert cmd[cmd.index("-c:v") + 1] == "libvpx-vp9"
-    assert cmd[cmd.index("-pix_fmt", cmd.index("-i")) + 1] == "yuva420p"
-    assert cmd[cmd.index("-auto-alt-ref") + 1] == "0"  # keeps the alpha plane
+    assert cmd[cmd.index("-pix_fmt", cmd.index("-i")) + 1] == "yuv420p"  # opaque
+    assert "yuva420p" not in cmd and "-auto-alt-ref" not in cmd
     assert cmd[-1] == "/out.webm" and "-an" in cmd
 
 

@@ -27,8 +27,12 @@ Pipeline (all cached under ``~/.cache/luxar/pdb_turntables``):
    draws ``frames`` frames of one turn — matte clay in pastel shades of the
    story colour, soft lights, screen-space ambient occlusion, transparent
    background — streaming them into ffmpeg.
-4. ffmpeg encodes VP9 WebM **with an alpha channel** (``yuva420p``); frame 0 is
-   kept as a PNG poster (the Safari fallback: it cannot decode alpha WebM).
+4. ffmpeg encodes an opaque VP9 WebM as a **stacked alpha matte** — the colour
+   on top, the alpha channel as a grey matte below, twice as tall — which the
+   viewer recombines in a shader (``Scene.add_video(alpha_matte="stacked")``).
+   A VP9 alpha plane was the first encoding; Safari / WKWebView decode it and
+   drop the alpha, so the exported kiosk app showed black squares. Frame 0 is
+   kept as a transparent PNG poster.
 
 At the default 900 frames that is 0.4° per frame, a slow 30 s turn at 30 fps
 (the owner found one turn in 6 s far too fast). Renders are keyed by
@@ -64,7 +68,10 @@ from luxar.demos._clay_renderer import (
 
 #: Bump when the LOOK changes (shading, palette, frame count semantics) so
 #: cached turntables re-render.
-STYLE_VERSION = 6
+#: 7: the clip is a stacked alpha matte (colour over a grey matte, twice as
+#: tall, opaque VP9) instead of a VP9 alpha plane — Safari / WKWebView drop the
+#: alpha plane, so the exported kiosk app showed black squares.
+STYLE_VERSION = 7
 #: Bump when the PyMOL surface export changes so cached meshes are recomputed.
 MESH_VERSION = 2
 DEFAULT_FRAMES = 900
@@ -100,7 +107,7 @@ FFMPEG_INSTALL_HINT = (
 
 @dataclass(frozen=True)
 class TurntableAssets:
-    """One rendered structure: the alpha WebM, its poster frame, and the entry title."""
+    """One rendered structure: the stacked-matte WebM, its poster, and the entry title."""
 
     pdb_id: str
     webm: Path
@@ -391,7 +398,7 @@ def render_turntable(
     aprint(
         f"GPU: rendering {frames} frames of {pdb_id} at {size}px "
         f"({len(files)} chains, {sum(len(m.positions) for m in meshes) // 3:,} "
-        f"triangles) → VP9 alpha WebM at {fps} fps …"
+        f"triangles) → stacked-matte VP9 WebM at {fps} fps …"
     )
     render_turntable_video(
         meshes,

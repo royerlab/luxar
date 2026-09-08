@@ -402,6 +402,26 @@ class TestAddVideo:
         assert attrs["playback_rate"] == 1.5
         # A None height survives as null: the viewer keeps the video's aspect.
         assert attrs["size"] == [0.26, None]
+        # An ordinary clip carries no matte layout.
+        assert "alpha_matte" not in attrs
+
+    def test_video_alpha_matte_is_recorded_and_validated(self, tmp_path) -> None:
+        """`alpha_matte="stacked"` marks a colour-over-matte clip for the viewer.
+
+        Transparency travels as a grey matte stacked below the colour (one opaque
+        frame twice as tall) because Safari / WKWebView drop a VP9 alpha plane.
+        """
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as c:
+            scene = c.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_video(self.WEBM_BYTES, position=(0.1, 0.5), alpha_matte="stacked")
+            with pytest.raises(ValueError, match="alpha_matte must be one of"):
+                scene.add_video(
+                    self.WEBM_BYTES, position=(0.1, 0.5), alpha_matte="side-by-side"
+                )
+
+        store = zarr.open_group(tmp_path / "test.luxar.zarr", mode="r")
+        attrs = dict(store["overlays/overlay_0"].attrs)
+        assert attrs["alpha_matte"] == "stacked"
 
     def test_video_from_path_detects_mp4(self, tmp_path) -> None:
         f = tmp_path / "clip.mp4"

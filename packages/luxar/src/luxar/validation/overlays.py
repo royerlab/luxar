@@ -373,6 +373,24 @@ def validate_image_input(
 
 VALID_VIDEO_FORMATS: Set[str] = {"webm", "mp4"}
 
+#: How a video overlay carries transparency. ``"stacked"``: the frame is the
+#: colour on top and the alpha channel as a grey matte of the same size below
+#: (an ordinary opaque clip twice as tall), which the viewer recombines in a
+#: shader. Chosen over a VP9 alpha plane because Safari / WKWebView decode that
+#: and silently drop the alpha.
+VALID_VIDEO_ALPHA_MATTES: Set[str] = {"stacked"}
+
+
+def validate_video_alpha_matte(alpha_matte: Any) -> None:
+    """Refuse an ``alpha_matte`` layout the viewer does not recombine."""
+    if alpha_matte is None:
+        return
+    if alpha_matte not in VALID_VIDEO_ALPHA_MATTES:
+        raise ValueError(
+            f"alpha_matte must be one of {sorted(VALID_VIDEO_ALPHA_MATTES)} or None, "
+            f"got {alpha_matte!r}"
+        )
+
 
 def _detect_encoded_video_format(data: bytes) -> str:
     """Sniff a pre-encoded video payload: WebM (EBML header) or MP4 (``ftyp`` box).

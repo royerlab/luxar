@@ -1519,6 +1519,9 @@ def build_stories_scene(
                     anchor="center-left",
                     size=(TURNTABLE_WIDTH, None),
                     poster=a.poster,
+                    # Colour over a grey alpha matte: transparent in every
+                    # browser, WKWebView included (a VP9 alpha plane is not).
+                    alpha_matte="stacked",
                     visible_range={STORY_DIM: k},
                     transition="fade",
                     transition_duration=0.35,

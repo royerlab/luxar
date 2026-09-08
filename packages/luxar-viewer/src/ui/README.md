@@ -48,6 +48,8 @@ ui/
 ├── data-monitor-manager.ts             # Wires loaders to data-loading-monitor
 ├── data-loading-monitor.ts             # Spatial-loader telemetry monitor
 ├── overlay-manager.ts                  # Screen-space overlay rendering
+├── video-matte.ts                      # Stacked-alpha-matte video compositor (WebGL canvas;
+│                                       #   transparency that survives Safari / WKWebView)
 ├── loading-indicator.ts                # Loading spinner (was helpers.showLoading*)
 ├── error-overlay.ts                    # Error dialog (was helpers.showError/clearError)
 ├── help-overlay.ts                     # Keyboard shortcuts panel (was helpers.show/hideHelp)

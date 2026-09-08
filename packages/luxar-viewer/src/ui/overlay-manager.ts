@@ -13,6 +13,7 @@ import { getViewerContainer } from '../utils/viewer-container';
 import { escapeHtml } from '../utils/escape-html';
 import { substituteHoverTemplate } from '../utils/hover-template';
 import { detectMimeType } from '../utils/image-mime';
+import { createVideoMatteCompositor, type VideoMatteCompositor } from './video-matte';
 import { MAX_OVERLAY_HTML_CHARS, type OverlayConfig } from '../data/loaders';
 
 /** Read one opaque file from the active scene store. */
@@ -203,6 +204,8 @@ export class OverlayManager {
   private objectUrls = new Set<string>();
   /** Video overlays by name, so visibility can start/stop playback. */
   private videoElements = new Map<string, HTMLVideoElement>();
+  /** Stacked-alpha-matte compositors by overlay name (`alpha_matte: 'stacked'`). */
+  private matteCompositors = new Map<string, VideoMatteCompositor>();
   private baseUrl = '';
   private readFile?: OverlayFileReader;
   private boundDimChangeHandler: () => void;
@@ -534,6 +537,8 @@ export class OverlayManager {
   dispose(): void {
     sceneDimsManager.removeListener(this.boundDimChangeHandler);
 
+    for (const matte of this.matteCompositors.values()) matte.dispose();
+    this.matteCompositors.clear();
     for (const video of this.videoElements.values()) {
       // Stop decoding and release the media resource before the element goes.
       video.pause();
@@ -676,14 +681,49 @@ export class OverlayManager {
       );
     };
 
+    const shown = this.attachMatteCanvas(el, video, config) ?? video;
     if (config.size) {
-      video.style.width = `${config.size[0] * 100}vw`;
+      shown.style.width = `${config.size[0] * 100}vw`;
       // A null height keeps the media's own aspect ratio.
-      video.style.height = config.size[1] == null ? 'auto' : `${config.size[1] * 100}vh`;
+      shown.style.height = config.size[1] == null ? 'auto' : `${config.size[1] * 100}vh`;
     }
-    video.style.display = 'block';
+    shown.style.display = 'block';
     el.appendChild(video);
     this.videoElements.set(config.name, video);
+  }
+
+  /**
+   * For an `alpha_matte: 'stacked'` clip, show a compositor canvas instead of
+   * the `<video>` (which stays in the DOM, decoding, but visually hidden — it is
+   * the compositor's frame source). The poster sits behind the canvas until the
+   * first frame is drawn. Returns the element to size, or `null` when there is
+   * no matte or no WebGL (then the plain video shows: colour over matte, but
+   * visible rather than broken).
+   */
+  private attachMatteCanvas(
+    el: HTMLDivElement,
+    video: HTMLVideoElement,
+    config: OverlayConfig
+  ): HTMLCanvasElement | null {
+    if (config.alpha_matte !== 'stacked') return null;
+    const matte = createVideoMatteCompositor(video);
+    if (!matte) {
+      log.warning(
+        Modules.UI,
+        `Video overlay "${config.name}": no WebGL for the alpha matte — showing the raw clip`
+      );
+      return null;
+    }
+    video.classList.add('luxar-overlay__matte-source');
+    if (video.poster) {
+      matte.canvas.style.background = `url("${video.poster}") center / contain no-repeat`;
+      video.addEventListener('playing', () => (matte.canvas.style.background = ''), {
+        once: true,
+      });
+    }
+    el.appendChild(matte.canvas);
+    this.matteCompositors.set(config.name, matte);
+    return matte.canvas;
   }
 
   private setVideoMedia(
@@ -726,6 +766,9 @@ export class OverlayManager {
   private syncVideoPlayback(name: string, visible: boolean): void {
     const video = this.videoElements.get(name);
     if (!video) return;
+    const matte = this.matteCompositors.get(name);
+    if (visible) matte?.start();
+    else matte?.stop();
     if (visible) {
       video.preload = 'auto';
       if (video.paused && video.dataset.autoplay === '1') {

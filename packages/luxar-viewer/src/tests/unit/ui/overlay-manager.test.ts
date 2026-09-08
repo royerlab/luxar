@@ -42,6 +42,18 @@ vi.mock('../../../scene/scene-dims-manager', () => ({
   },
 }));
 
+/**
+ * The stacked-alpha-matte compositor needs WebGL, which jsdom lacks; the
+ * factory is mocked so tests can hand the manager a fake compositor (or `null`,
+ * the no-WebGL answer) and observe how it is driven.
+ */
+const matteFactory = vi.fn<
+  (video: HTMLVideoElement) => import('../../../ui/video-matte').VideoMatteCompositor | null
+>(() => null);
+vi.mock('../../../ui/video-matte', () => ({
+  createVideoMatteCompositor: (video: HTMLVideoElement) => matteFactory(video),
+}));
+
 function makeTextOverlay(overrides: Partial<OverlayConfig> = {}): OverlayConfig {
   return {
     name: 'caption',
@@ -318,6 +330,99 @@ describe('OverlayManager.loadOverlays', () => {
     playSpy.mockRestore();
     pauseSpy.mockRestore();
     pausedSpy.mockRestore();
+  });
+
+  it('shows a compositor canvas for a stacked-alpha-matte clip and drives it with visibility', async () => {
+    // jsdom has no WebGL, so the real compositor would decline; substitute one
+    // and check the manager's side of the contract: the canvas is what shows
+    // and is sized, the <video> stays as a hidden frame source, start/stop
+    // follow the overlay's visibility, and dispose releases the compositor.
+    const matte = {
+      canvas: document.createElement('canvas'),
+      start: vi.fn(),
+      stop: vi.fn(),
+      dispose: vi.fn(),
+      hasFrame: false,
+    };
+    matteFactory.mockReturnValueOnce(matte);
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(() => Promise.resolve());
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    const setStory = (value: number): void => {
+      mockDimsState.current = {
+        ndim: 2,
+        currentStep: [0, value],
+        displayed: [0],
+        metadata: [
+          { name: 'x', unit: '', scale: 1 },
+          { name: 'story', unit: '', scale: 1 },
+        ],
+      };
+      manager.updateVisibility();
+    };
+    setStory(0);
+
+    await manager.loadOverlays(
+      [
+        makeTextOverlay({
+          name: 'turntable',
+          type: 'overlay_video',
+          video_file: 'video.webm',
+          poster_file: 'poster.png',
+          alpha_matte: 'stacked',
+          size: [0.26, null],
+          visible_range: { story: 2 },
+        }),
+      ],
+      'https://example.com/scene.luxar.zarr/'
+    );
+
+    const el = document.querySelector('.luxar-overlay--video') as HTMLDivElement;
+    const video = el.querySelector('video') as HTMLVideoElement;
+    expect(matteFactory).toHaveBeenCalledWith(video);
+    expect(el.contains(matte.canvas)).toBe(true);
+    // The canvas is the sized, shown element; the video is the hidden source.
+    expect(matte.canvas.style.width).toBe('26vw');
+    expect(matte.canvas.style.height).toBe('auto');
+    expect(video.style.width).toBe('');
+    expect(video.classList.contains('luxar-overlay__matte-source')).toBe(true);
+    // The poster sits behind the canvas until the first frame plays.
+    expect(matte.canvas.style.background).toContain('poster.png');
+    video.dispatchEvent(new Event('playing'));
+    expect(matte.canvas.style.background).toBe('');
+
+    expect(matte.start).not.toHaveBeenCalled();
+    setStory(2);
+    expect(matte.start).toHaveBeenCalledTimes(1);
+    setStory(0);
+    expect(matte.stop).toHaveBeenCalled();
+
+    manager.dispose();
+    expect(matte.dispose).toHaveBeenCalledTimes(1);
+    mockDimsState.current = null;
+    vi.restoreAllMocks();
+  });
+
+  it('falls back to the plain <video> when the compositor declines (no WebGL)', async () => {
+    matteFactory.mockReturnValueOnce(null);
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    await manager.loadOverlays(
+      [
+        makeTextOverlay({
+          name: 'turntable',
+          type: 'overlay_video',
+          video_file: 'video.webm',
+          alpha_matte: 'stacked',
+          size: [0.26, null],
+        }),
+      ],
+      'https://example.com/scene.luxar.zarr/'
+    );
+    const video = document.querySelector('.luxar-overlay--video video') as HTMLVideoElement;
+    expect(document.querySelector('.luxar-overlay__matte')).toBeNull();
+    expect(video.style.width).toBe('26vw');
+    expect(video.classList.contains('luxar-overlay__matte-source')).toBe(false);
+    expect(warnSpy).toHaveBeenCalledWith(Modules.UI, expect.stringContaining('no WebGL'));
+    warnSpy.mockRestore();
   });
 
   it('shows native controls when video autoplay is disabled', async () => {

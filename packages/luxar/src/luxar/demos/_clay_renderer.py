@@ -545,11 +545,24 @@ def meshes_from_files(paths: Sequence[Path], colors: Sequence[RGB]) -> list[Mesh
     return meshes
 
 
-def ffmpeg_pipe_command(ffmpeg: str, size: int, fps: int, out_webm: Path) -> list[str]:
-    """ffmpeg reading raw RGBA frames on stdin, writing a VP9 WebM WITH alpha.
+#: The ffmpeg filter that turns an RGBA frame into a STACKED ALPHA MATTE frame:
+#: the colour on top, the alpha channel as a grey matte of the same size below
+#: (``vflip`` first because OpenGL reads the bottom row first). The result is an
+#: ordinary opaque video twice as tall, which every browser decodes; the viewer
+#: recombines the two halves in a shader (``ui/video-matte.ts``). A VP9 WebM
+#: with a real alpha plane was the first encoding — Chrome and Firefox render it
+#: transparent, but Safari / WKWebView decode it and DROP the alpha, so the
+#: kiosk app showed every turntable on a black square (#2622 follow-up).
+STACKED_MATTE_FILTER = "vflip,split[c][a];[a]alphaextract[a];[c][a]vstack"
 
-    ``-vf vflip`` because OpenGL reads the bottom row first; ``-auto-alt-ref 0``
-    because VP9 silently drops the alpha plane when alt-ref frames are on.
+
+def ffmpeg_pipe_command(ffmpeg: str, size: int, fps: int, out_webm: Path) -> list[str]:
+    """ffmpeg reading raw RGBA frames on stdin, writing a stacked-matte VP9 WebM.
+
+    Frames come out ``size`` wide and ``2 * size`` tall: colour over matte (see
+    :data:`STACKED_MATTE_FILTER`). Opaque ``yuv420p`` — no alpha plane, so the
+    clip plays the same in every browser and the viewer's compositor supplies
+    the transparency.
     """
     return [
         ffmpeg,
@@ -567,13 +580,11 @@ def ffmpeg_pipe_command(ffmpeg: str, size: int, fps: int, out_webm: Path) -> lis
         "-i",
         "-",
         "-vf",
-        "vflip",
+        STACKED_MATTE_FILTER,
         "-c:v",
         "libvpx-vp9",
         "-pix_fmt",
-        "yuva420p",
-        "-auto-alt-ref",
-        "0",
+        "yuv420p",
         "-b:v",
         "0",
         "-crf",
