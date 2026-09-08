@@ -315,7 +315,7 @@ def parse_findings(stdout: str, project_root: Path = PROJECT_ROOT) -> dict[str, 
 # ---------------------------------------------------------------------------
 
 
-def load_baseline(path: Path, settings_fingerprint: str | None) -> dict[str, int]:
+def load_baseline(path: Path, settings_fingerprint: str) -> dict[str, int]:
     """Load the baselined violation counts from ``path``.
 
     Returns ``{}`` if the file does not exist. Raises a clear ``ValueError`` if
@@ -354,10 +354,7 @@ def load_baseline(path: Path, settings_fingerprint: str | None) -> dict[str, int
             f"Baseline file {path} is malformed: 'settings_fingerprint' must "
             "be a non-empty string."
         )
-    if (
-        settings_fingerprint is not None
-        and recorded_fingerprint != settings_fingerprint
-    ):
+    if recorded_fingerprint != settings_fingerprint:
         raise ValueError(
             f"Baseline file {path} was recorded for Ruff settings fingerprint "
             f"{recorded_fingerprint!r}, but this run resolves to "
