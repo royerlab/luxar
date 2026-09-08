@@ -3,7 +3,7 @@
  * Unit tests for luxar-fly-controls/input/wheel.ts.
  *
  * Targets audit finding G14 (handleWheel 100% untested) and M6
- * (Math.sign(event.deltaY) direction + magic numbers 0.06/0.3/0.2 —
+ * (wheel-delta direction + magic numbers 0.06/0.3/0.2 —
  * zero direct test).
  */
 
@@ -34,10 +34,11 @@ function makeCtx(overrides: Partial<FlyWheelCtx> = {}): FlyWheelCtx {
 
 function makeWheelEvent(
   deltaY: number,
-  modifiers: { shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean } = {}
+  modifiers: { deltaX?: number; shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean } = {}
 ): WheelEvent {
   return new WheelEvent('wheel', {
     deltaY,
+    deltaX: modifiers.deltaX ?? 0,
     shiftKey: modifiers.shiftKey ?? false,
     ctrlKey: modifiers.ctrlKey ?? false,
     metaKey: modifiers.metaKey ?? false,
@@ -115,6 +116,13 @@ describe('handleWheel — plain scroll (forward/backward)', () => {
     handleWheel(ctxB, makeWheelEvent(-10000));
     expect(ctxA.velocity.z).toBeCloseTo(ctxB.velocity.z, 10);
   });
+
+  it('#2565 does not turn plain horizontal scrolling into forward motion', () => {
+    const ctx = makeCtx();
+    handleWheel(ctx, makeWheelEvent(0, { deltaX: -100 }));
+    expect(ctx.velocity.length()).toBe(0);
+    expect(ctx.dispatch).not.toHaveBeenCalled();
+  });
 });
 
 describe('handleWheel — wheelZoomSensitivity (Settings > Input > Zoom Sensitivity)', () => {
@@ -170,6 +178,19 @@ describe('handleWheel — shift+scroll (roll around viewing axis)', () => {
     // Z components opposite signs (forward = -Z).
     expect(Math.sign(ctxUp.angularVelocity.z)).not.toBe(Math.sign(ctxDown.angularVelocity.z));
   });
+
+  it('#2565 reads deltaX when Shift+wheel arrives on the horizontal axis', () => {
+    const ctx = makeCtx({ inertialMode: true, rotationSpeed: 2 });
+    handleWheel(ctx, makeWheelEvent(0, { deltaX: -100, shiftKey: true }));
+    expect(ctx.angularVelocity.z).toBeCloseTo(-0.12, 5);
+    expect(ctx.dispatch).toHaveBeenCalledWith('change');
+  });
+
+  it('#2565 keeps deltaY authoritative when both axes carry motion', () => {
+    const ctx = makeCtx({ inertialMode: true, rotationSpeed: 2 });
+    handleWheel(ctx, makeWheelEvent(100, { deltaX: -100, shiftKey: true }));
+    expect(ctx.angularVelocity.z).toBeCloseTo(0.12, 5);
+  });
 });
 
 describe('handleWheel — preventDefault contract', () => {
@@ -212,25 +233,25 @@ describe('handleWheel — modifier precedence (controls.md G15)', () => {
 });
 
 describe('handleWheel — deltaY = 0 boundary (controls.md G16)', () => {
-  it('[G16] deltaY = 0: Math.sign(0) = 0 → delta = -0 → zero impulse, but dispatch still fires', () => {
+  it('[G16] deltaY = 0: zero impulse and no change dispatch', () => {
     // controls.md G16: some trackpads emit zero-delta wheel events. The
     // function computes delta=-Math.sign(0)=-0 → impulse=0 → no velocity
-    // gain. preventDefault and dispatch still fire (the gate was passed).
+    // gain. preventDefault still fires, but no render-loop wakeup is needed.
     const ctx = makeCtx({ movementSpeed: 5 });
     const evt = makeWheelEvent(0);
     const pdSpy = vi.spyOn(evt, 'preventDefault');
     handleWheel(ctx, evt);
     expect(ctx.velocity.length()).toBe(0);
     expect(pdSpy).toHaveBeenCalledTimes(1);
-    expect(ctx.dispatch).toHaveBeenCalledWith('change');
+    expect(ctx.dispatch).not.toHaveBeenCalled();
   });
 
-  it('[G16] deltaY = 0 with shift: zero roll impulse, dispatch still fires', () => {
+  it('[G16] both wheel axes zero with shift: zero roll impulse and no change dispatch', () => {
     // Symmetric path through the shift branch.
     const ctx = makeCtx({ rotationSpeed: 5 });
     const evt = makeWheelEvent(0, { shiftKey: true });
     handleWheel(ctx, evt);
     expect(ctx.angularVelocity.length()).toBe(0);
-    expect(ctx.dispatch).toHaveBeenCalledWith('change');
+    expect(ctx.dispatch).not.toHaveBeenCalled();
   });
 });

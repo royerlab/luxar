@@ -55,7 +55,7 @@ utils/
 ├── result.ts                # Result<T, E> + ok/err/isOk/isErr/match/mapOk/mapErr/unwrap/tryAsync
 ├── storage-keys.ts          # luxar.* localStorage key registry
 ├── viewer-container.ts      # mount-root registry (get/set/resetViewerContainer) + containing-block promotion
-├── wheel-delta.ts           # normalizeWheelDelta (deltaMode line/page → pixel equivalent)
+├── wheel-delta.ts           # deltaMode normalization + opt-in Shift-axis fallback
 ├── cross-layer/             # Cross-layer plumbing (typed bus, notifier facade, listener group)
 │   ├── event-bus.ts         # Typed cross-layer pub/sub (LuxarEventMap, eventBus singleton)
 │   ├── event-group.ts       # DOM-listener group with single dispose() teardown

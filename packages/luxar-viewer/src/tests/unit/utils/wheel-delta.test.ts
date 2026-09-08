@@ -18,6 +18,7 @@ import {
   NOMINAL_PAGE_HEIGHT_PX,
   PIXELS_PER_LINE,
   normalizeWheelDelta,
+  normalizeWheelDeltaWithAxisFallback,
 } from '../../../utils/wheel-delta';
 
 /** Build a wheel event with an EXPLICIT deltaMode (jsdom defaults it to 0). */
@@ -77,6 +78,23 @@ describe('normalizeWheelDelta — pixel mode (DOM_DELTA_PIXEL) passes through', 
 
   it('passes sub-pixel trackpad deltas through unchanged', () => {
     expect(normalizeWheelDelta(wheel(0.5, 0))).toBe(0.5);
+  });
+});
+
+describe('normalizeWheelDeltaWithAxisFallback — Shift+wheel axis selection', () => {
+  it('uses deltaX when the browser moves a standard wheel notch off deltaY', () => {
+    const event = new WheelEvent('wheel', { deltaY: 0, deltaX: 3, deltaMode: 1 });
+    expect(normalizeWheelDeltaWithAxisFallback(event)).toBe(48);
+  });
+
+  it('keeps deltaY authoritative when both axes carry motion', () => {
+    const event = new WheelEvent('wheel', { deltaY: -3, deltaX: 100, deltaMode: 1 });
+    expect(normalizeWheelDeltaWithAxisFallback(event)).toBe(-48);
+  });
+
+  it('returns zero when neither axis carries motion', () => {
+    const event = new WheelEvent('wheel', { deltaY: 0, deltaX: 0, deltaMode: 0 });
+    expect(normalizeWheelDeltaWithAxisFallback(event)).toBe(0);
   });
 });
 

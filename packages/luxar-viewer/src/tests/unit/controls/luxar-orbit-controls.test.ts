@@ -604,6 +604,37 @@ describe('LuxarOrbitControls', () => {
       expect(roll(0.2, 2)).toBeCloseTo(120 * 0.0005, 12);
       expect(roll(0.2, 2)).not.toBeCloseTo(160 * 0.0005, 6);
     });
+
+    it('#2565 reads deltaX when Shift+wheel arrives on the horizontal axis', () => {
+      controls = new LuxarOrbitControls(camera, domElement);
+      controls.enableViewAxisRotation();
+      domElement.dispatchEvent(
+        new WheelEvent('wheel', {
+          deltaY: 0,
+          deltaX: 100,
+          shiftKey: true,
+          cancelable: true,
+        })
+      );
+      expect((controls as any).rollDelta).toBeCloseTo(100 * 0.0005, 12);
+    });
+
+    it('#2565 does not dispatch change when both wheel axes are zero', () => {
+      controls = new LuxarOrbitControls(camera, domElement);
+      controls.enableViewAxisRotation();
+      const changeSpy = vi.fn();
+      controls.addEventListener('change', changeSpy);
+      domElement.dispatchEvent(
+        new WheelEvent('wheel', {
+          deltaY: 0,
+          deltaX: 0,
+          shiftKey: true,
+          cancelable: true,
+        })
+      );
+      expect((controls as any).rollDelta).toBe(0);
+      expect(changeSpy).not.toHaveBeenCalled();
+    });
   });
 
   describe('public applyOrbitRotation [controls.md G29]', () => {
