@@ -93,6 +93,25 @@ def test_internal_fit_hops_accept_one_parameter_object() -> None:
     ]
 
 
+def test_fit_parameters_are_exported_with_the_fitter() -> None:
+    """The parameter type required by the class API must share its import path."""
+    import luxar.gsplats as gsplats
+
+    assert gsplats.FitParameters is FitParameters
+
+
+def test_fit_parameters_use_identity_equality_and_hashing() -> None:
+    """Array-valued parameters must not synthesize broken value comparison."""
+    import numpy as np
+
+    left = FitParameters(V=np.zeros((2, 2), dtype=np.float32))
+    right = FitParameters(V=np.zeros((2, 2), dtype=np.float32))
+
+    assert left == left
+    assert left != right
+    assert isinstance(hash(left), int)
+
+
 def test_public_call_arguments_are_collected_by_name() -> None:
     """Every raw parameter must retain its value entering the internal bundle."""
     values = {
@@ -209,6 +228,32 @@ def test_fit_parameters_omit_only_parameters_handled_elsewhere() -> None:
         f"expected {sorted(expected)}, got {sorted(entry_only)}. A new omission may "
         "be handled by neither the fitter nor the wrapper."
     )
+
+
+def test_fit_parameters_match_the_normalized_config_shape() -> None:
+    """A new raw fit knob must also enter the normalized config schema."""
+    assert _field_names(FitParameters) - _field_names(FitConfig) == set()
+
+
+def test_prepare_fit_config_reads_every_fit_parameter() -> None:
+    """A field added to both schemas must still be wired through validation."""
+    source = Path(inspect.getfile(prepare_fit_config)).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    function = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and node.name == prepare_fit_config.__name__
+    )
+    parameter_reads = {
+        node.attr
+        for node in ast.walk(function)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "parameters"
+    }
+
+    assert parameter_reads == _field_names(FitParameters)
 
 
 def _source_literal_defaults(obj: Any) -> dict[str, Any]:

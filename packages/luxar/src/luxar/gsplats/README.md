@@ -550,8 +550,7 @@ optimizer, scheduler = create_optimizer_and_scheduler(
 For detailed control and statistics, use the class interface:
 
 ```python
-from luxar.gsplats.fit_gsplats import GaussianSplatFitter
-from luxar.gsplats.fitting import FitParameters
+from luxar.gsplats import FitParameters, GaussianSplatFitter
 
 # Initialize fitter with specific device and options
 fitter = GaussianSplatFitter(
@@ -563,11 +562,13 @@ fitter = GaussianSplatFitter(
 result = fitter.fit(
     FitParameters(
         V=image,
-        seeds=candidates,
+        seeds=8000,
+        seed_method="decomposition",
         n_iters=500,
         early_stop_patience=200,  # iterations without improvement before stopping
         sigma_min_diag=[0.5, 0.5],  # Minimum splat size
         sigma_max_diag=[10.0, 10.0],  # Maximum splat size
+        seed_kwargs={"num_scales": 3},  # Extra seed-generator options
     )
 )
 

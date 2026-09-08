@@ -295,7 +295,7 @@ def prepare_fit_config(
     source_dtype = parameters.source_dtype
     source_shape = parameters.source_shape
     source_stored_bytes = parameters.source_stored_bytes
-    seed_kwargs = parameters.seed_kwargs
+    seed_kwargs = dict(parameters.seed_kwargs)
 
     # Input validation.
     # Capture the caller's dtype BEFORE the cast below (see the helper: after the

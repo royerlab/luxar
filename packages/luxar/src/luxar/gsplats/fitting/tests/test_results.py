@@ -10,18 +10,13 @@ import torch
 
 from luxar.gsplats.fitting.config import (
     FitConfig,
-    FitParameters,
     OptimizationResults,
     PreprocessedData,
 )
 from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.fitting.results import _clip_to_bounds, finalize_results
-from luxar.gsplats.fitting.validation import prepare_fit_config as _prepare_fit_config
 
-
-def prepare_fit_config(fitter, V, **kwargs):
-    """Build raw parameters while keeping validation tests concise."""
-    return _prepare_fit_config(fitter, FitParameters(V=V, **kwargs))
+from .conftest import prepare_fit_config
 
 
 @pytest.fixture

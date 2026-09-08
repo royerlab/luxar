@@ -132,7 +132,7 @@ class ConstraintConfig:
     clip_to_bounds: bool = False
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class FitParameters:
     """Raw parameters threaded through the internal fitting pipeline.
 

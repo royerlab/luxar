@@ -551,6 +551,7 @@ def fit_gaussian_splats(
     - Early stopping and adaptive learning-rate scheduling
     """
 
+    # Keep this first: the bundle must capture the public arguments before rebinding.
     parameters = _collect_fit_parameters(locals())
 
     with asection("Fitting Gaussian Splats"):
