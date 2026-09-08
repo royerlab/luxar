@@ -53,6 +53,7 @@ import type { SliceCache } from '../../cache/slice-cache';
 import { log, Modules, LogEmoji } from '../../utils/log';
 import { timeLodStageWithResult } from '../scene-loader/lod-load-stats';
 
+// Three rungs overlap hosted latency without letting speculation monopolize L0 or fetch slots.
 const MAX_PREFETCH_LEVELS = 3;
 
 function resolvePrefetchDepth(
