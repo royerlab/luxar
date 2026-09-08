@@ -25,6 +25,7 @@ import { trapFocus } from './help-overlay/focus-trap';
 import { ALWAYS_GLOBAL_KEYS, installTypeToFilter } from './help-overlay/type-to-filter';
 import { getViewerContainer } from '../utils/viewer-container';
 import { RAIL_ICONS } from './control-rail/icons';
+import { getInputProfile } from '../utils/input-capabilities';
 import type { RegisteredShortcutBindings, ShortcutHelpSectionId } from '../types/shortcut-help';
 import { config } from '../config';
 
@@ -47,6 +48,8 @@ interface HelpSection {
   title: string;
   icon: string;
   note?: string;
+  /** Rendered only when the device reports touch points (phones, tablets). */
+  touchOnly?: boolean;
   entries: HelpEntry[];
 }
 
@@ -63,6 +66,18 @@ const HELP_SECTIONS: HelpSection[] = [
       { keys: ['⇧', 'Wheel'], label: 'Roll around the view axis', order: 5 },
       { keys: ['Click'], label: 'Open the hovered element link', order: 6 },
       { keys: ['Right click'], label: 'Actions for the hovered element', order: 7 },
+    ],
+  },
+  {
+    title: 'Touch',
+    icon: RAIL_ICONS.navOrbit,
+    note: 'Phones and tablets — in ortho mode one finger pans and twist does not roll',
+    touchOnly: true,
+    entries: [
+      { keys: ['1 finger'], label: 'Rotate (fly mode: look around)', order: 1 },
+      { keys: ['2 fingers'], label: 'Pan (fly mode: strafe)', order: 2 },
+      { keys: ['Pinch'], label: 'Zoom (fly mode: move forward / back)', order: 3 },
+      { keys: ['Twist'], label: 'Roll around the view axis', order: 4 },
     ],
   },
   {
@@ -107,6 +122,15 @@ const HELP_SECTIONS: HelpSection[] = [
     ],
   },
 ];
+
+/**
+ * The sections this device shows. Keyboard-and-mouse machines never see the
+ * touch section, so the desktop help text is unchanged by it.
+ */
+function visibleHelpSections(): HelpSection[] {
+  const hasTouch = getInputProfile().touchPoints > 0;
+  return HELP_SECTIONS.filter((section) => !section.touchOnly || hasTouch);
+}
 
 function getRegisteredHelpEntries(
   bindings: RegisteredShortcutBindings
@@ -203,7 +227,7 @@ export function showHelpOverlay(bindings: RegisteredShortcutBindings) {
 
   const registeredEntries = getRegisteredHelpEntries(bindings);
 
-  for (const section of HELP_SECTIONS) {
+  for (const section of visibleHelpSections()) {
     const sectionEl = document.createElement('section');
     sectionEl.className = 'luxar-help-overlay__section';
 

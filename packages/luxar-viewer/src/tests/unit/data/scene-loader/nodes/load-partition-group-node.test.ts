@@ -221,7 +221,9 @@ describe('loadPartitionGroupNode', () => {
       { min: [10, 20], max: [11, 21] },
     ]);
     expect(
-      entry.children.map((child: { object: THREE.Object3D }) => child.object.userData.partIndex)
+      entry.children.map(
+        (child: { objects: THREE.Object3D[] }) => child.objects[0].userData.partIndex
+      )
     ).toEqual([0, 1]);
   });
 
@@ -402,6 +404,44 @@ describe('loadPartitionGroupNode', () => {
       '/partition/part_b/second',
     ]);
     expect(wrapper.children.map((child) => child.userData.partIndex)).toEqual([7, 7, 3, 3]);
+  });
+
+  it('registers every object emitted by each partition part', async () => {
+    const children = [
+      makePartNode('/partition/part_a', 'points', {
+        child_index: 1,
+        position_bounds: { min: [0, 0], max: [1, 1] },
+      }),
+      makePartNode('/partition/part_b', 'points', {
+        child_index: 0,
+        position_bounds: { min: [2, 2], max: [3, 3] },
+      }),
+    ];
+    loadSceneNodesMock.mockImplementation(async (child: SceneNode, parentThree: THREE.Object3D) => {
+      for (const suffix of ['first', 'second']) {
+        const object = new THREE.Group();
+        object.name = `${child.path}/${suffix}`;
+        parentThree.add(object);
+      }
+    });
+    const registerPartition = vi.fn();
+
+    const wrapper = await loadPartitionGroupNode(
+      makePartitionGroupNode(children),
+      new THREE.Group(),
+      makeStubLoc(),
+      makeRegistryCtx(registerPartition),
+      loadSceneNodesMock
+    );
+
+    expect(registerPartition).toHaveBeenCalledOnce();
+    const entry = registerPartition.mock.calls[0][0];
+    expect(entry.children.map((child: { path: string }) => child.path)).toEqual([
+      '/partition/part_b',
+      '/partition/part_a',
+    ]);
+    expect(entry.children[0].objects).toEqual(wrapper.children.slice(2, 4));
+    expect(entry.children[1].objects).toEqual(wrapper.children.slice(0, 2));
   });
 
   it('all children start visible before the first frustum evaluation', async () => {

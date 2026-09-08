@@ -163,8 +163,10 @@ def test_the_demonstrator_demos_state_a_level(demo: str) -> None:
     """The two demos updated to demonstrate the feature must keep stating one.
 
     The Acto3D heart exercises option 2 above directly; the neuromast ships
-    ``additive``, so option 1 would otherwise let it drop the levels and still
-    pass. Both are deliberate demonstrations of authored order.
+    ``volumetric`` (it composited ``additive`` until 2026-09, when option 1
+    would have let it drop the levels and still pass), and its two co-located
+    volumes only read correctly with the authored order. Both are deliberate
+    demonstrations of authored order.
     """
     path = _DEMOS / demo
     calls = len(_add_gsplats_calls(path))

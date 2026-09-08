@@ -92,6 +92,7 @@ if TYPE_CHECKING:
     from luxar.gsplats.fit_gsplats import GaussianSplatFitter, fit_gaussian_splats
     from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
     from luxar.gsplats.fit_tiled_gsplats import fit_tile, fit_tiled
+    from luxar.gsplats.fitting.config import FitParameters
     from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
     from luxar.gsplats.lift import (
         coarse_substitutive_levels,
@@ -136,6 +137,7 @@ else:
             fit_progressive_gaussian_splats,
         )
         from luxar.gsplats.fit_tiled_gsplats import fit_tile, fit_tiled
+        from luxar.gsplats.fitting.config import FitParameters
         from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
         from luxar.gsplats.lift import (
             coarse_substitutive_levels,
@@ -199,6 +201,12 @@ else:
 
         class GaussianSplatFitter:
             """Stateful Gaussian-splat fitter (needs the gsplats extra)."""
+
+            def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+                _raise_gsplats_import_error()
+
+        class FitParameters:
+            """Raw Gaussian-splat fit parameters (needs the gsplats extra)."""
 
             def __init__(self, *_args: Any, **_kwargs: Any) -> None:
                 _raise_gsplats_import_error()
@@ -351,6 +359,7 @@ __all__ = [
     "fit_tile",
     "fit_tiled",
     "GaussianSplatFitter",
+    "FitParameters",
     "GSplatData",
     "AdditiveSubLOD",
     "SubstitutiveLevel",

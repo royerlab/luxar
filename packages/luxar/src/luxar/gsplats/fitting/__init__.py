@@ -13,6 +13,7 @@ This package contains the Gaussian splat fitting pipeline components:
 
 from .config import (
     FitConfig,
+    FitParameters,
     OptimizationResults,
     PreprocessedData,
 )
@@ -26,6 +27,7 @@ from .visualization import display_compression_analysis, show_optimization_movie
 
 __all__ = [
     "FitConfig",
+    "FitParameters",
     "PreprocessedData",
     "OptimizationResults",
     "prepare_fit_config",

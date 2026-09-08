@@ -337,7 +337,10 @@ dependencies = [
     "scikit-image>=0.19.0",
     "tifffile>=2023.1.0",
     "imagecodecs>=2023.1.0",
-    "moderngl>=5.8",
+    # Keep demo-only GL deps out: every CI Python leg builds this env, and
+    # moderngl/glcontext ship no CPython 3.14 wheels. Run the GL tests with
+    # `hatch run demos:pytest packages/luxar/src/luxar/demos/tests/test_clay_renderer.py`.
+
     # Ceiling lifted with the zarr 3 migration; see the tracksdata group note.
     "napari[all]>=0.8",
     "pandas>=1.5.0",
@@ -522,6 +525,21 @@ check = [
     "check-static",
     "test-cov"
 ]
+
+# Demo renderer tests need optional GL dependencies without adding them to the
+# Python matrix environments above.
+[tool.hatch.envs.demos]
+template = "demos"
+features = ["test", "demos"]
+
+[tool.hatch.envs.demos.env-vars]
+OMP_NUM_THREADS = "{env:OMP_NUM_THREADS:1}"
+OPENBLAS_NUM_THREADS = "{env:OPENBLAS_NUM_THREADS:1}"
+MKL_NUM_THREADS = "{env:MKL_NUM_THREADS:1}"
+NUMEXPR_NUM_THREADS = "{env:NUMEXPR_NUM_THREADS:1}"
+
+[tool.hatch.envs.demos.scripts]
+pytest = "python -m pytest {args:packages/luxar/src/luxar/demos/tests}"
 
 # Viewer fixtures need the real gsplat LOD recipe pipeline, but none of the
 # dev/test/demo tooling in `default`. The extra index applies to every package

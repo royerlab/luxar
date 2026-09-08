@@ -1,11 +1,9 @@
-"""The fit parameter schema is restated in several places; they must agree.
+"""The public fit signature and its configuration dataclasses must agree.
 
-Audit A2-02. `fit_gaussian_splats` is the documented entry point, and its
-parameter set is restated by `GaussianSplatFitter.fit` and
-`prepare_fit_config` (43 shared names each), and across `FitConfig` plus the
-three declarative config bundles. Every restatement is a chance for a default
-to drift, and adding a knob means editing several places with nothing checking
-that you edited them all.
+Audit A2-02. `fit_gaussian_splats` is the documented entry point. Its raw
+parameters are threaded through the internal pipeline in `FitParameters`, then
+normalized into `FitConfig`; the three declarative config bundles expose useful
+subsets. Every dataclass default must agree with the entry point.
 
 **It had already drifted, six times.** The audit found one
 (`asymmetric_penalty`); an AST comparison of every shared name found five in
@@ -15,14 +13,10 @@ that you edited them all.
     gradient_clip        1.0   vs None    max_eccentricity     None  vs 10.0
     lr_reduction_factor  0.98  vs 0.9     FitConfig.max_eccentricity  None vs 10.0
 
-`prepare_fit_config` is public API (`gsplats.fitting.__all__`), and the three
-bundle dataclasses are documented as `fit_gaussian_splats(volume, **asdict(cfg))`
-— so every one of those was a divergent default an external caller actually got.
-
-This test is the gate. Collapsing the signatures into a single threaded
-`FitConfig` would remove the restatement outright, but it is a breaking change
-across ~50 call sites; making the restatement *unable to drift* is the part that
-fixes the defect, and it costs nothing.
+The three bundle dataclasses are documented as
+`fit_gaussian_splats(volume, **asdict(cfg))`, so every one of those was a
+divergent default an external caller actually got. This test is the gate for the
+remaining public-signature-to-dataclass restatements.
 """
 
 from __future__ import annotations
@@ -35,18 +29,19 @@ from typing import Any
 import pytest
 
 from luxar.gsplats import GaussianSplatFitter, fit_gaussian_splats
+from luxar.gsplats.fit_gsplats import _collect_fit_parameters
 from luxar.gsplats.fitting import prepare_fit_config
 from luxar.gsplats.fitting.config import (
     ConstraintConfig,
     FitConfig,
+    FitParameters,
     LossConfig,
     OptimConfig,
 )
 
 #: Sites that restate `fit_gaussian_splats`' parameters and must not disagree.
 RESTATEMENTS: dict[str, Any] = {
-    "GaussianSplatFitter.fit": GaussianSplatFitter.fit,
-    "prepare_fit_config": prepare_fit_config,
+    "FitParameters": FitParameters,
     "OptimConfig": OptimConfig,
     "LossConfig": LossConfig,
     "ConstraintConfig": ConstraintConfig,
@@ -84,6 +79,49 @@ def _defaults(obj: Any) -> dict[str, Any]:
 
 
 ENTRY_DEFAULTS = _defaults(fit_gaussian_splats)
+
+
+def test_internal_fit_hops_accept_one_parameter_object() -> None:
+    """The raw fit schema must not be restated by either internal hop."""
+    assert list(inspect.signature(GaussianSplatFitter.fit).parameters) == [
+        "self",
+        "parameters",
+    ]
+    assert list(inspect.signature(prepare_fit_config).parameters) == [
+        "fitter",
+        "parameters",
+    ]
+
+
+def test_fit_parameters_are_exported_with_the_fitter() -> None:
+    """The parameter type required by the class API must share its import path."""
+    import luxar.gsplats as gsplats
+
+    assert gsplats.FitParameters is FitParameters
+
+
+def test_fit_parameters_use_identity_equality_and_hashing() -> None:
+    """Array-valued parameters must not synthesize broken value comparison."""
+    import numpy as np
+
+    left = FitParameters(V=np.zeros((2, 2), dtype=np.float32))
+    right = FitParameters(V=np.zeros((2, 2), dtype=np.float32))
+
+    assert left == left
+    assert left != right
+    assert isinstance(hash(left), int)
+
+
+def test_public_call_arguments_are_collected_by_name() -> None:
+    """Every raw parameter must retain its value entering the internal bundle."""
+    values = {
+        name: object()
+        for name in inspect.signature(fit_gaussian_splats).parameters
+        if name in _field_names(FitParameters)
+    }
+    parameters = _collect_fit_parameters(values)
+    for name, value in values.items():
+        assert getattr(parameters, name) is value
 
 
 def test_dataclass_default_factories_are_included() -> None:
@@ -172,34 +210,11 @@ def test_the_two_FitConfig_classes_are_not_confused() -> None:
     assert "max_eccentricity" not in _field_names(BatchFitConfig)
 
 
-def test_prepare_fit_config_restates_the_config_schema_and_little_else() -> None:
-    """A2-02's structural claim, pinned.
-
-    The audit says "44 of prepare_fit_config's 45 params are literally FitConfig
-    field names". Measured, that holds against `FitConfig` itself: every other
-    named parameter is a field, and the only exception is the required
-    positional `fitter` argument.
-
-    Pinned because a parameter appearing here that is not in `FitConfig` means
-    the flat schema and the runtime config have begun to diverge in SHAPE, not
-    just in defaults — a different and worse problem than drift.
-    """
-    named = {
-        name
-        for name, parameter in inspect.signature(prepare_fit_config).parameters.items()
-        if parameter.kind
-        not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
-    }
-    exceptions = sorted(named - _field_names(FitConfig))
-    assert exceptions == ["fitter"], (
-        "prepare_fit_config parameters outside FitConfig changed: "
-        f"expected ['fitter'], got {exceptions}"
+def test_fit_parameters_omit_only_parameters_handled_elsewhere() -> None:
+    """Every fit input not handled by the wrapper belongs in FitParameters."""
+    entry_only = set(inspect.signature(fit_gaussian_splats).parameters) - _field_names(
+        FitParameters
     )
-
-
-def test_prepare_fit_config_omits_only_parameters_handled_elsewhere() -> None:
-    """A new entry-point knob must not disappear into `**seed_kwargs` silently."""
-    entry_only = set(ENTRY_DEFAULTS) - set(_defaults(prepare_fit_config))
     expected = {
         "cull_retention",
         "device",
@@ -209,10 +224,36 @@ def test_prepare_fit_config_omits_only_parameters_handled_elsewhere() -> None:
         "use_metal",
     }
     assert entry_only == expected, (
-        "fit_gaussian_splats parameters absent from prepare_fit_config changed: "
+        "fit_gaussian_splats parameters absent from FitParameters changed: "
         f"expected {sorted(expected)}, got {sorted(entry_only)}. A new omission may "
-        "be swallowed by **seed_kwargs instead of configuring the fit."
+        "be handled by neither the fitter nor the wrapper."
     )
+
+
+def test_fit_parameters_match_the_normalized_config_shape() -> None:
+    """A new raw fit knob must also enter the normalized config schema."""
+    assert _field_names(FitParameters) - _field_names(FitConfig) == set()
+
+
+def test_prepare_fit_config_reads_every_fit_parameter() -> None:
+    """A field added to both schemas must still be wired through validation."""
+    source = Path(inspect.getfile(prepare_fit_config)).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    function = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and node.name == prepare_fit_config.__name__
+    )
+    parameter_reads = {
+        node.attr
+        for node in ast.walk(function)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "parameters"
+    }
+
+    assert parameter_reads == _field_names(FitParameters)
 
 
 def _source_literal_defaults(obj: Any) -> dict[str, Any]:
@@ -255,9 +296,7 @@ def test_source_defaults_include_keyword_only_parameters() -> None:
     assert _source_literal_defaults(_keyword_only_default_fixture) == {"value": 7}
 
 
-@pytest.mark.parametrize(
-    "obj", [fit_gaussian_splats, prepare_fit_config], ids=lambda obj: obj.__name__
-)
+@pytest.mark.parametrize("obj", [fit_gaussian_splats], ids=lambda obj: obj.__name__)
 def test_source_defaults_match_the_imported_ones(obj: Any) -> None:
     """Guard against the comparison being fooled by import-time rebinding.
 

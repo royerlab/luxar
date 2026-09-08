@@ -557,7 +557,9 @@ export interface LODGroupEntry {
 }
 
 export interface PartitionGroupChild {
-  object: THREE.Object3D;
+  /** Stable node path for a part that may emit more than one scene object. */
+  path: string;
+  objects: THREE.Object3D[];
   positionBounds: { min: readonly number[]; max: readonly number[] };
 }
 
@@ -623,6 +625,34 @@ const FOOTPRINT_BOX3_SCRATCH = new THREE.Box3();
 // Bit flags returned by evaluatePartitionEntry so one child scan reports both effects.
 const PARTITION_VISIBILITY_CHANGED = 1;
 const PARTITION_BECAME_VISIBLE = 2;
+
+function unionPartitionFootprints(objects: readonly THREE.Object3D[], target: THREE.Box3): void {
+  for (const object of objects) {
+    FOOTPRINT_BOX3_SCRATCH.setFromObject(object);
+    if (!FOOTPRINT_BOX3_SCRATCH.isEmpty()) target.union(FOOTPRINT_BOX3_SCRATCH);
+  }
+}
+
+function updatePartitionObjectVisibility(
+  objects: readonly THREE.Object3D[],
+  visible: boolean
+): number {
+  // Any previously culled object makes the whole part a rising edge.
+  let wasVisible = true;
+  let changed = false;
+  for (const object of objects) {
+    if (object.userData.partitionFrustumVisible === false) wasVisible = false;
+    object.userData.partitionFrustumVisible = visible;
+    if (object.visible !== visible) {
+      object.visible = visible;
+      changed = true;
+    }
+  }
+  return (
+    (changed ? PARTITION_VISIBILITY_CHANGED : 0) |
+    (visible && !wasVisible ? PARTITION_BECAME_VISIBLE : 0)
+  );
+}
 
 /**
  * Injected view-state accessors. Lets the registry stay test-friendly
@@ -844,7 +874,11 @@ export class LODGroupRegistry {
         },
       })),
     });
-    for (const child of entry.children) child.object.userData.partitionFrustumVisible = true;
+    for (const child of entry.children) {
+      // Each loader path resolves to its emitted object, so stamping them all
+      // lets the loader gate use its normal ancestor walk for multi-object parts.
+      for (const object of child.objects) object.userData.partitionFrustumVisible = true;
+    }
   }
 
   /** Drop an lod_group from the registry (called on scene teardown). */
@@ -880,8 +914,10 @@ export class LODGroupRegistry {
 
   private restorePartitionChildren(entry: PartitionGroupEntry): void {
     for (const child of entry.children) {
-      child.object.visible = true;
-      delete child.object.userData.partitionFrustumVisible;
+      for (const object of child.objects) {
+        object.visible = true;
+        delete object.userData.partitionFrustumVisible;
+      }
     }
   }
 
@@ -1290,19 +1326,10 @@ export class LODGroupRegistry {
       if (worldBox) {
         WORLD_BOX3_SCRATCH.min.set(worldBox.min.x, worldBox.min.y, worldBox.min.z);
         WORLD_BOX3_SCRATCH.max.set(worldBox.max.x, worldBox.max.y, worldBox.max.z);
-        FOOTPRINT_BOX3_SCRATCH.setFromObject(child.object);
-        if (!FOOTPRINT_BOX3_SCRATCH.isEmpty()) {
-          WORLD_BOX3_SCRATCH.union(FOOTPRINT_BOX3_SCRATCH);
-        }
+        unionPartitionFootprints(child.objects, WORLD_BOX3_SCRATCH);
         visible = frustum.intersectsBox(WORLD_BOX3_SCRATCH);
       }
-      const wasVisible = child.object.userData.partitionFrustumVisible !== false;
-      child.object.userData.partitionFrustumVisible = visible;
-      if (child.object.visible !== visible) {
-        child.object.visible = visible;
-        result |= PARTITION_VISIBILITY_CHANGED;
-      }
-      if (visible && !wasVisible) result |= PARTITION_BECAME_VISIBLE;
+      result |= updatePartitionObjectVisibility(child.objects, visible);
     }
     return result;
   }
