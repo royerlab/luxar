@@ -388,7 +388,7 @@ uniform float u_spec;
 uniform float u_spec_power;
 // Image-based lighting from the scene's baked environment (optional, additive):
 // a cosine-prefiltered irradiance cube tints the clay with the map around it,
-// a glossy-prefiltered radiance cube adds a faint reflection at the limb.
+// a glossy-prefiltered radiance cube adds a strong reflection at the limb.
 uniform int u_env_on;
 uniform samplerCube u_env_diff;
 uniform samplerCube u_env_spec;
