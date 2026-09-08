@@ -44,7 +44,9 @@ def _workflow_run_commands(workflow: Mapping[str, object]) -> list[str]:
         commands.extend(
             step["run"]
             for step in steps
-            if isinstance(step, Mapping) and isinstance(step.get("run"), str)
+            if isinstance(step, Mapping)
+            and isinstance(step.get("run"), str)
+            and not step.get("continue-on-error")
         )
     return commands
 
@@ -54,6 +56,23 @@ def _invoked_hatch_scripts(commands: Sequence[str]) -> set[str]:
         match.group(1)
         for command in commands
         for match in re.finditer(r"\bhatch run ([A-Za-z0-9_-]+)", command)
+    }
+
+
+def test_continue_on_error_steps_do_not_count_as_ci_coverage() -> None:
+    workflow = {
+        "jobs": {
+            "python-tests": {
+                "steps": [
+                    {"run": "hatch run security", "continue-on-error": True},
+                    {"run": "hatch run check-imports"},
+                ]
+            }
+        }
+    }
+
+    assert _invoked_hatch_scripts(_workflow_run_commands(workflow)) == {
+        "check-imports"
     }
 
 
