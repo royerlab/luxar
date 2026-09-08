@@ -525,9 +525,11 @@ loaders, dropping their predictive-prefetch baseline. Because a culled
 part misses slice updates, its RE-ENTRY requests a resync of exactly
 that part's loaders — `deps.requestReprocess(partPaths)` with the
 re-entering parts' registered node paths (the wrapper path when a part
-has none), coalesced per wrapper across frames and held while
-`isUpdateInProgress()`. The loader runs that resync under the
-**unchanged view version**: its `updateView` bumps `currentViewVersion`
+has none), coalesced per wrapper across frames and held while a view
+pass is in flight or queued (`isLoadPassInProgress`; a refinement hold
+does not count — the loader parks a resync that lands during one and
+cancels the hold into a targeted pass). The loader runs that resync
+under the **unchanged view version**: its `updateView` bumps `currentViewVersion`
 only when a query determinant changes (`viewStatesEqual`). Lazy fine
 levels never join the sweep and are never re-stamped by it, so a bump on
 an unchanged view read every resident fine level scene-wide as stale and

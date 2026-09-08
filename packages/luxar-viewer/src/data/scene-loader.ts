@@ -101,6 +101,15 @@ export interface LODGroupRegistryOwner {
   requestReprocess(paths?: readonly string[]): void;
   /** Whether the owning loader currently has an update or refinement pass in flight. */
   isUpdateInProgress(): boolean;
+  /**
+   * Whether a view PASS is in flight or queued — a refinement hold does NOT
+   * count. The registry gates partition resyncs on this rather than on
+   * ``isUpdateInProgress``: a resync arriving during a refinement hold is
+   * parked and cancels into its own pass, whereas waiting for the hold to end
+   * left re-entering parts on a stale slice for as long as the ladders kept
+   * streaming (minutes on a slow link).
+   */
+  isLoadPassInProgress(): boolean;
 }
 
 /** Per-call directives for {@link SceneLoader.updateView}. */
@@ -1132,6 +1141,16 @@ export class SceneLoader {
       // pass that runs next (see the `finally` below). The registry gates on
       // `isUpdateInProgress` synchronously, so this branch is defensive.
       if (opts.resyncPaths) {
+        if (this._refining) {
+          // The lock is held by a refinement RUN, not a view pass: no `finally`
+          // of ours will run to fold the paths in. Queue an empty state so the
+          // refinement loop's between-pass pending check cancels into
+          // `updateView({}, resync)` (the same hand-off a slider move uses).
+          this._queuedResyncPaths ??= new Set<string>();
+          for (const path of opts.resyncPaths) this._queuedResyncPaths.add(path);
+          if (!this.viewStateQueue.hasPending()) this.viewStateQueue.setPending({});
+          return;
+        }
         this._pendingResyncPaths ??= new Set<string>();
         for (const path of opts.resyncPaths) this._pendingResyncPaths.add(path);
         return;
@@ -1542,7 +1561,10 @@ export class SceneLoader {
         // synchronous in non-browser contexts.
         scheduleFrame(() => {
           this._updateInProgress = false;
-          this.updateView(pendingState).catch((error: unknown) => {
+          // A resync parked during this refinement hold rides the pending
+          // state it queued; a real view change takes precedence over it only
+          // in that the full sweep is a superset (the paths are still consumed).
+          this.updateView(pendingState, this.takeQueuedResyncOpts()).catch((error: unknown) => {
             log.error(
               Modules.SCENE_LOADER,
               `Refinement cancellation re-entry failed: ${getErrorMessage(error)}`,

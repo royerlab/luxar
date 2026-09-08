@@ -746,7 +746,13 @@ export interface LODGroupRegistryDeps {
    * otherwise every lazy fine level scene-wide reads stale and drops to coarse.
    */
   requestReprocess?: (paths: readonly string[]) => void;
-  /** Whether the owning loader currently has an update or refinement pass in flight. */
+  /**
+   * Whether the owning loader has a view PASS in flight or queued. Rising edges
+   * are held (and coalesced) while this is true so a resync never lands on top
+   * of a pass. A refinement hold deliberately does NOT count: the loader parks
+   * a resync that arrives during one and cancels into its own pass, so
+   * re-entering parts do not sit on a stale slice until the ladders finish.
+   */
   isUpdateInProgress?: () => boolean;
   /**
    * Whether the LOD cross-fade is enabled (ON by default; `?no-lod-fade`

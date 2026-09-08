@@ -783,6 +783,53 @@ describe('SceneLoader', () => {
         false
       );
     });
+
+    it('a targeted resync arriving during a refinement HOLD queues its own pass instead of waiting', async () => {
+      // A refinement run holds the serialization lock with no view pass in
+      // flight. Nothing of updateView's `finally` will run, so the resync must
+      // queue a pending state (which the refinement loop cancels into) rather
+      // than park behind a pass that never ends. Before this, a re-entering
+      // part sat on a stale slice until every ladder finished streaming.
+      const target = { updateView: vi.fn().mockResolvedValue(null), dispose: vi.fn() };
+      const other = { updateView: vi.fn().mockResolvedValue(null), dispose: vi.fn() };
+      const loaders = (sceneLoader as unknown as { loaders: Map<string, unknown> }).loaders;
+      loaders.set('/tiled/part_1/level_0', target);
+      loaders.set('/other', other);
+      const internals = sceneLoader as unknown as {
+        _updateInProgress: boolean;
+        _refining: boolean;
+        _updateAbortController: AbortController | null;
+        viewStateQueue: ViewStateQueue;
+        takeQueuedResyncOpts(): { resyncPaths?: ReadonlySet<string> };
+      };
+      internals._updateInProgress = true;
+      internals._refining = true;
+      const controller = new AbortController();
+      internals._updateAbortController = controller;
+      expect(sceneLoader.isLoadPassInProgress()).toBe(false); // a hold is not a pass
+
+      sceneLoader.requestReprocess(['/tiled/part_1']);
+      await Promise.resolve();
+
+      // Queued, not parked; the in-flight refinement is NOT aborted.
+      expect(internals.viewStateQueue.hasPending()).toBe(true);
+      expect(sceneLoader.isLoadPassInProgress()).toBe(true); // registry now defers
+      expect(controller.signal.aborted).toBe(false);
+      expect(target.updateView).not.toHaveBeenCalled();
+
+      // The refinement loop's cancellation hand-off: release the lock and
+      // re-enter with the pending state plus the queued resync opts.
+      internals._updateInProgress = false;
+      internals._refining = false;
+      const pending = internals.viewStateQueue.takePending() ?? {};
+      const before = sceneLoader.currentViewVersion;
+      await sceneLoader.updateView(pending, internals.takeQueuedResyncOpts());
+
+      expect(target.updateView).toHaveBeenCalledTimes(1);
+      expect(other.updateView).not.toHaveBeenCalled();
+      expect(sceneLoader.currentViewVersion).toBe(before);
+      expect(internals.takeQueuedResyncOpts()).toEqual({}); // consumed exactly once
+    });
   });
 
   describe('updateView — dispose race', () => {

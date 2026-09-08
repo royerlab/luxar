@@ -325,13 +325,18 @@ describe('LuxarLayer', () => {
         deps: Record<string, unknown>;
       };
       const requestReprocess = vi.fn();
-      const isUpdateInProgress = vi.fn(() => true);
+      // The registry's `isUpdateInProgress` dep is wired to the PASS-level
+      // predicate, not the lock-level one: a refinement hold must not defer a
+      // partition resync.
+      const isUpdateInProgress = vi.fn(() => false);
+      const isLoadPassInProgress = vi.fn(() => true);
       const { deps } = factory({
         currentViewVersion: 1,
         gpuBufferPool: undefined,
         archiveFault: null,
         requestReprocess,
         isUpdateInProgress,
+        isLoadPassInProgress,
       });
 
       expect(Object.keys(deps).sort()).toEqual(
@@ -358,7 +363,8 @@ describe('LuxarLayer', () => {
       // resync stays targeted (and bump-free) in layer mode too.
       expect(requestReprocess).toHaveBeenCalledWith(['/p']);
       expect((deps.isUpdateInProgress as () => boolean)()).toBe(true);
-      expect(isUpdateInProgress).toHaveBeenCalledOnce();
+      expect(isLoadPassInProgress).toHaveBeenCalledOnce();
+      expect(isUpdateInProgress).not.toHaveBeenCalled();
     });
 
     it('reports no resident bytes rather than throwing when the pool is absent', () => {
