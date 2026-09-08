@@ -722,6 +722,45 @@ describe('loadLodGroupNode — lazy level loading', () => {
     expect(ctx.kickRefinementIfIdle).toHaveBeenCalledTimes(1);
   });
 
+  it('does not retry a deferred GROUP child after a failed load partially attached its subtree', async () => {
+    const archiveFault = new ArchiveFaultError('archive is no longer readable', '/scene.zip');
+    let groupLoads = 0;
+    loadSceneNodesMock.mockImplementation(async (child: SceneNode, parent: THREE.Object3D) => {
+      const mesh = new THREE.Mesh();
+      mesh.name = child.path;
+      parent.add(mesh);
+      if (child.path === '/lod/child_1' && groupLoads++ === 0) throw archiveFault;
+    });
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    try {
+      const reg = makeReg();
+      const ctx = makeCtx(reg);
+      const node = makeLodGroupNode(
+        [makeChildNode('/lod/child_0', 0), makeGroupChildNode('/lod/child_1', 0.5, 'gsplats')],
+        { default_level: 0 }
+      );
+      await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+      const groupChild = reg.get('/lod')!.children[1];
+
+      groupChild.ensureLoaded!();
+      await vi.waitFor(() => expect(groupChild.permanentlyFailed).toBe(true));
+      expect(groupChild.object.children).toHaveLength(1);
+      expect(groupLoads).toBe(1);
+
+      expect(reg.retryLazyChildByNodePath('/lod/child_1')).toBe(true);
+      await vi.waitFor(() => expect(groupChild.loading).toBe(false));
+      expect(groupLoads).toBe(1);
+      expect(groupChild.object.children).toHaveLength(1);
+      expect(ctx.kickRefinementIfIdle).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining('already has attached children')
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it('re-sorts children to ascending coverage_fraction (and warns) when the order is wrong', async () => {
     // Defense-in-depth for malformed / hand-authored scenes: the selector assumes
     // ascending thresholds. Given out-of-order thresholds (0, 1.0, 0.5), the loader
