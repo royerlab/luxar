@@ -92,6 +92,11 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "test_docs_workflow.py derives the published LFS candidate set from it",
     ),
     (
+        ".nvmrc",
+        "ts",
+        "check:node-types compares it against the declared @types/node major",
+    ),
+    (
         ".github/workflows/docs.yml",
         "py",
         "test_docs_workflow.py guards the Pages workflow itself",
