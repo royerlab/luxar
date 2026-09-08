@@ -221,7 +221,8 @@ keys of the form `<repo-relative-path>::<function-name>`, which map to the
 descending-sorted complexities of the over-limit functions with that name in
 that file. A settings mismatch requires reviewing `ruff check --show-settings`
 before deliberately re-running `--update-baseline`; the refresh lists any keys
-it will retire before writing. No line numbers are stored, so an unrelated edit
+it retired once the write succeeds, while a refused refresh reports none. No
+line numbers are stored, so an unrelated edit
 above a function never churns the baseline. Because a move
 pairs on the function name alone, a genuinely new function can in principle be
 absorbed by a same-named one vanishing in the same run; what the ratchet always
