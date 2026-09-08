@@ -121,14 +121,15 @@ Converts linear sRGB float RGBA pixels (from WebGL `readPixels`) to BT.2020 PQ Y
 Turning an unknown thrown value into something readable. `catch (error)` yields
 `unknown`, and both obvious approaches fail in the same place: `String(error)`
 loses a `DOMException`'s name, and `JSON.stringify(error)` yields `"{}"` because
-`name` / `message` / `stack` are non-enumerable. The debug console's Error branch
+`name` / `message` / `stack` are non-enumerable; worker-style Error-like objects
+can instead serialize their entire stack inline. The debug console's Error branch
 uses these so a `log.*(…, error)` call keeps its message.
 
 All five never throw — they run inside `catch` blocks and the patched
 `console.*` methods, so a hostile accessor or Proxy trap (or the null-prototype
 `String()` TypeError) must not break the very logging path reporting the error.
 
-- `getErrorMessage(error)` — the message
+- `getErrorMessage(error)` — an Error/Error-like message, serialized object, or string fallback
 - `formatErrorForDisplay(error)` — one-line `name: message`, name alone when the
   message is empty
 - `isGenuineError(value)` — a genuine `Error`: same-realm instance or the
