@@ -68,6 +68,7 @@ import json
 import re
 import subprocess
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -237,7 +238,7 @@ def list_ruff_files(
 
 
 def ensure_baselined_files_were_scanned(
-    baseline: dict[str, int], scanned_files: set[str], project_root: Path
+    baseline: Mapping[str, object], scanned_files: set[str], project_root: Path
 ) -> None:
     """Fail when an existing baselined file was silently excluded by ruff."""
     ruff_ratchet.ensure_baselined_files_scanned(baseline, scanned_files, project_root)
