@@ -37,8 +37,6 @@ export interface LongPressOptions {
 export const LONG_PRESS_MS = 500;
 /** Default movement tolerance, CSS px. */
 export const LONG_PRESS_SLOP_PX = 12;
-/** How long after firing the follow-up `click` is swallowed, ms. */
-const CLICK_SWALLOW_MS = 600;
 
 /**
  * Arm long-press detection on `el` (delegated: any touch-like `pointerdown`
@@ -51,7 +49,8 @@ export function attachLongPress(el: HTMLElement, options: LongPressOptions): () 
 
   let pressed: { id: number; x: number; y: number; event: PointerEvent } | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
-  let firedAt = -Infinity;
+  let swallowContextMenu = false;
+  let swallowClick = false;
   const activePointers = new Set<number>();
 
   const clearTimer = (): void => {
@@ -64,18 +63,20 @@ export function attachLongPress(el: HTMLElement, options: LongPressOptions): () 
     clearTimer();
     pressed = null;
   };
-  const recentlyFired = (): boolean => performance.now() - firedAt < CLICK_SWALLOW_MS;
   const fire = (): boolean => {
     clearTimer();
     const p = pressed;
     pressed = null;
     if (!p || !options.onLongPress(p.x, p.y, p.event)) return false;
-    firedAt = performance.now();
+    swallowContextMenu = true;
+    swallowClick = true;
     return true;
   };
 
   const onPointerDown = (e: Event): void => {
     const ev = e as PointerEvent;
+    swallowContextMenu = false;
+    swallowClick = false;
     if (!isTouchLikePointer(ev)) return;
     activePointers.add(ev.pointerId);
     // A second finger means a pinch or a two-finger gesture, not a press.
@@ -106,16 +107,17 @@ export function attachLongPress(el: HTMLElement, options: LongPressOptions): () 
 
   // Capture phase, so the swallow runs before any listener on the target.
   const onContextMenu = (e: Event): void => {
-    if ((pressed !== null && fire()) || recentlyFired()) {
+    if ((pressed !== null && fire()) || swallowContextMenu) {
+      swallowContextMenu = false;
       e.preventDefault();
       e.stopImmediatePropagation();
     }
   };
   const onClick = (e: Event): void => {
-    if (recentlyFired()) {
+    if (swallowClick) {
+      swallowClick = false;
       e.preventDefault();
       e.stopImmediatePropagation();
-      firedAt = -Infinity; // one click per press
     }
   };
 
@@ -130,6 +132,8 @@ export function attachLongPress(el: HTMLElement, options: LongPressOptions): () 
   return () => {
     cancel();
     activePointers.clear();
+    swallowContextMenu = false;
+    swallowClick = false;
     el.removeEventListener('pointerdown', onPointerDown);
     el.removeEventListener('pointermove', onPointerMove);
     el.removeEventListener('pointerup', onPointerEnd);

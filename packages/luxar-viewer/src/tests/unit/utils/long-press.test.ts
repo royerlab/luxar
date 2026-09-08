@@ -2,9 +2,7 @@
 /**
  * Unit tests for `utils/long-press.ts`.
  *
- * The timer is faked; `performance.now()` is not, which is fine because the
- * click-swallow window is measured against real time and these tests run in
- * far under 600 ms.
+ * The hold timer is faked so each gesture boundary can be exercised directly.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
@@ -150,6 +148,30 @@ describe('attachLongPress', () => {
     expect(clicked).not.toHaveBeenCalled();
     // Only ONE click is swallowed: the next is a real tap.
     child.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    expect(clicked).toHaveBeenCalledTimes(1);
+  });
+
+  it('swallows the release click even when the finger lifts long after the hold fires', () => {
+    const clicked = vi.fn();
+    child.addEventListener('click', clicked);
+    child.dispatchEvent(pointer('pointerdown'));
+    vi.advanceTimersByTime(LONG_PRESS_MS + 2_000);
+    child.dispatchEvent(pointer('pointerup'));
+    child.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    expect(clicked).not.toHaveBeenCalled();
+  });
+
+  it('a later pointerdown clears an unconsumed click swallow', () => {
+    const clicked = vi.fn();
+    child.addEventListener('click', clicked);
+    child.dispatchEvent(pointer('pointerdown'));
+    vi.advanceTimersByTime(LONG_PRESS_MS);
+    child.dispatchEvent(pointer('pointerup'));
+
+    child.dispatchEvent(pointer('pointerdown', { id: 2, pointerType: 'mouse' }));
+    child.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
     expect(clicked).toHaveBeenCalledTimes(1);
   });
 
