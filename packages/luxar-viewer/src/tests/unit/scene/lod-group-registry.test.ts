@@ -4361,6 +4361,7 @@ describe('LODGroupRegistry — capture quiescence (isCaptureQuiescent)', () => {
     expect(reg.isCaptureQuiescent()).toBe(false);
 
     loadPassInProgress = false;
+    expect(reg.isCaptureQuiescent()).toBe(false);
     archiveFault = true;
     expect(reg.isCaptureQuiescent()).toBe(true);
   });

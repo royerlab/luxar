@@ -479,12 +479,13 @@ level that has `failed` does not block, since it can never become ready
 this frame.
 
 Visible partition parts additionally block while a frustum rising edge is
-pending, while its targeted load pass is queued or committing, while their
+pending, while their targeted load pass is queued or committing, while their
 stamped leaves describe an older view version, or while a committed
-progressive ladder is incomplete. Pending paths for removed wrappers are
-discarded, hidden/re-culled parts do not block, and an archive fault keeps the
-same escape hatch as failed LOD levels so capture cannot become permanently
-unsettled.
+progressive ladder is incomplete. Hidden/re-culled parts do not block, and an
+archive fault skips waits that cannot make progress. A per-part loader failure
+without an archive fault can leave a stale stamp, so the bounded capture timeout
+and consecutive-timeout latch provide the escape instead of reporting the part
+quiescent.
 
 "Still streaming additive LODs" takes **both** available signals, and
 either one alone leaves a hole. A lazy child's live `hasMoreLODs()` thunk

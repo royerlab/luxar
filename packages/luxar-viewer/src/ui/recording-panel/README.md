@@ -209,15 +209,16 @@ land. Draining before it would keep advancing the turntable while waiting
 and smear the sweep.
 
 The hook is **tri-state** — `true` / `false` / `null` — and the third
-state is what keeps scenes without LOD or partitions free. The pipeline wires the
-provider unconditionally, so "a hook is present" says nothing about
-whether this scene has anything to wait for; `null` says there is no
-`lod_group` or `kind=partition` to wait for (no scene loader, no registry,
-or a registry with zero capture-relevant groups) and makes the loop skip the drain
-**entirely, including the mandatory catch-up rAF below**. A `true` does
-not: it means capture-relevant groups exist and are settled, which the loop
-can only know one tick late. An absent hook is identical to `null`, which is what
-the unit tests that don't supply it get. The hook is also called through a `try`/`catch`
+state is what keeps scenes without LOD or partitions free. The
+pipeline wires the provider unconditionally, so "a hook is present"
+says nothing about whether this scene has anything to wait for; `null`
+says there is no `lod_group` or `kind=partition` to wait for (no scene
+loader, no registry, or a registry with zero capture-relevant groups)
+and makes the loop skip the drain **entirely, including the mandatory
+catch-up rAF below**. A `true` does not: it means capture-relevant groups
+exist and are settled, which the loop can only know one tick late. An
+absent hook is identical to `null`, which is what the unit tests that
+don't supply it get. The hook is also called through a `try`/`catch`
 (the same treatment `AnimationController.pacingSuspended()` gives its
 injected predicate) — a throw degrades to `null`, i.e. "do not wait",
 rather than being caught by the loop's outer handler and discarding the

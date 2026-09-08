@@ -92,18 +92,19 @@ export interface OfflineCaptureStrategyHooks {
    *
    * TRI-STATE, and the third state is what keeps a plain points/lines scene
    * free:
-   * - `true` / `false` — this scene HAS level-of-detail or partition groups, so the loop
-   *   drains. It then always spends at least one extra rAF per frame even when
-   *   the answer is already `true`, because the selector runs before the orbit
-   *   callback within a frame and so is a pose behind until it ticks once more.
+   * - `true` / `false` — this scene HAS level-of-detail or partition groups, so
+   *   the loop drains. It then always spends at least one extra rAF per frame
+   *   even when the answer is already `true`, because the selector runs before
+   *   the orbit callback within a frame and so is a pose behind until it ticks
+   *   once more.
    * - `null` — this scene has no lod_group or partition to wait for (no
-   *   registry, or a registry with neither). The loop skips the drain entirely, INCLUDING
-   *   that mandatory tick, which is the pre-#1695 behaviour to the frame. Note
-   *   the narrowness: `null` is NOT "nothing here could ever be mid-load". A
-   *   `--recipe stream` scene — one leaf with an additive ladder and no
-   *   lod_group — answers `null` while its progressive refinement is still
-   *   climbing the ladder, so its early frames can be exported at a partial
-   *   prefix. Same artifact class, not covered by this drain.
+   *   registry, or a registry with neither). The loop skips the drain entirely,
+   *   INCLUDING that mandatory tick, which is the pre-#1695 behaviour to the
+   *   frame. Note the narrowness: `null` is NOT "nothing here could ever be
+   *   mid-load". A `--recipe stream` scene — one leaf with an additive ladder
+   *   and no lod_group — answers `null` while its progressive refinement is
+   *   still climbing the ladder, so its early frames can be exported at a
+   *   partial prefix. Same artifact class, not covered by this drain.
    *
    * Absent ⇒ identical to `null`. The panel wires this unconditionally and the
    * pipeline's provider is the one that answers `null`, so "the hook exists"

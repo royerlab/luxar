@@ -1038,9 +1038,9 @@ export class LODGroupRegistry {
    * Partition parts block while a visible rising edge is pending, while the
    * targeted view pass is queued or committing, or while a visible stamped leaf
    * is stale / still climbing its additive ladder. Hidden or re-culled parts are
-   * excluded because they contribute no pixels; missing wrappers are pruned.
-   * Unstamped leaves carry no freshness or ladder signal and remain non-blocking,
-   * matching the lod-group subtree fold below.
+   * excluded because they contribute no pixels. Unstamped leaves carry no
+   * freshness or ladder signal and remain non-blocking, matching the lod-group
+   * subtree fold below.
    *
    * - **A latched archive fault skips all work that could start or wait for new
    *   loads, but still waits for loads already in flight to finish committing.**
@@ -1049,6 +1049,10 @@ export class LODGroupRegistry {
    *   retry clears it. An already-started load still clears ``loading`` in its
    *   ``finally`` block and may commit geometry, so releasing the capture frame
    *   before that transition would allow a one-frame pop.
+   * - **A partition leaf load failure that does not latch an archive fault has no
+   *   success commit to refresh its stale stamp.** The predicate remains false;
+   *   the capture drain's bounded timeout and consecutive-timeout latch are the
+   *   escape hatch for that failed part.
    *
    * Per entry, in order:
    *
@@ -1192,7 +1196,6 @@ export class LODGroupRegistry {
     for (const [path, parts] of this.partitionResyncPending) {
       const entry = this.partitionEntries.get(path);
       if (!entry) {
-        this.partitionResyncPending.delete(path);
         continue;
       }
       if (this.pendingPartitionResyncContributes(entry, parts)) return false;
