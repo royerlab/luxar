@@ -226,6 +226,9 @@ describe('coarse-pointer.css contract', () => {
     expect(
       ruleBody(noHover, '.luxar-control-rail__btn:hover:not(:active):not(.is-active)')
     ).toMatch(/color:\s*var\(--luxar-text-muted\)/);
+    expect(
+      ruleBody(noHover, '.luxar-control-rail__collapse:hover:not(:active):not(.is-active)')
+    ).toMatch(/color:\s*var\(--luxar-text-secondary\)/);
     // Tooltips need a hover; without one they show on keyboard focus only.
     expect(noHover).toMatch(/\.luxar-control-rail__btn:focus-visible \.luxar-control-rail__tip/);
   });
