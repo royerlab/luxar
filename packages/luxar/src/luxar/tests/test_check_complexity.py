@@ -717,6 +717,23 @@ def test_main_refuses_to_wipe_a_populated_baseline(
     assert checker.load_baseline(baseline) == {"sample.py::tangled": [13]}
 
 
+def test_main_update_baseline_diagnoses_a_non_utf8_baseline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Repair mode diagnoses undecodable debt without rewriting it."""
+    _require_ruff()
+    _unrestrict(monkeypatch)
+    _write_tree(tmp_path, complex_function=False)
+    baseline = tmp_path / "baseline.json"
+    original = b'\xff\xfe{"functions": {}}'
+    baseline.write_bytes(original)
+
+    assert _run_main(tmp_path, baseline, "--update-baseline") == 2
+
+    assert "utf-8" in _clean_output(capsys)
+    assert baseline.read_bytes() == original
+
+
 def test_settings_refresh_does_not_report_retirement_when_write_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

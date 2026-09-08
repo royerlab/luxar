@@ -21,7 +21,7 @@ def baseline_entries_for_update(path: Path, field: str) -> dict[str, object]:
         return {}
     try:
         data = json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError):
         return {}
     if not isinstance(data, dict):
         return {}

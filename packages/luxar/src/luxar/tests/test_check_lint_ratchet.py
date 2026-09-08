@@ -654,6 +654,23 @@ def test_main_refuses_to_wipe_an_unloadable_baseline(
     assert baseline.read_text() == "{truncated"
 
 
+def test_main_update_baseline_diagnoses_a_non_utf8_baseline(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Repair mode diagnoses undecodable debt without rewriting it."""
+    _require_ruff()
+    _unrestrict(monkeypatch)
+    _write_tree(tmp_path, _CLEAN_MODULE)
+    baseline = tmp_path / "baseline.json"
+    original = b'\xff\xfe{"violations": {}}'
+    baseline.write_bytes(original)
+
+    assert _run_main(tmp_path, baseline, "--update-baseline") == 2
+
+    assert "utf-8" in _clean_output(capsys)
+    assert baseline.read_bytes() == original
+
+
 def test_main_refusal_diagnoses_a_clean_restricted_update(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

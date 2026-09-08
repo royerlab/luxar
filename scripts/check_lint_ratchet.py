@@ -458,7 +458,7 @@ def _baseline_is_populated(path: Path) -> bool:
         data = json.loads(path.read_text())
         violations = data.get("violations") if isinstance(data, dict) else None
         return bool(violations) if isinstance(violations, dict) else True
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError):
         return True
 
 
