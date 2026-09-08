@@ -162,6 +162,14 @@ def test_morton_numba_numpy_parity() -> None:
     )
 
 
+def test_morton_numba_kernel_uses_contiguous_signature() -> None:
+    pytest.importorskip("numba")
+    kernel = _morton_mod._get_morton_numba_kernel()
+
+    assert kernel.signatures[0][0].layout == "C"
+    assert kernel.signatures[0][2].layout == "C"
+
+
 def test_hilbert_numba_numpy_parity() -> None:
     """hilbert: JIT path and NumPy fallback yield byte-identical codes."""
     rng = np.random.default_rng(1)
