@@ -176,7 +176,10 @@ const clampStops = (s: number): number => Math.max(EXPOSURE_MIN, Math.min(EXPOSU
  *      Phase 1 (p99 target) over-boosts sparse/bloomy scenes into a grey wash;
  *      the background term is what pulls those back to a black background. The
  *      predicate or EXPOSURE_MIN terminates the guard; `guardExhausted` reports
- *      a frame that still violates either guard condition at the floor.
+ *      a frame that still violates either guard condition at the floor. For a
+ *      screen-filling subject, whole-frame p10 can be subject luminance rather
+ *      than background, so this term may remain unsatisfied; use the per-demo
+ *      `exposure` override for that case.
  *
  * NOTE (preserved quirk): when a pass's correction is already negligible it
  * records the corrected value and breaks WITHOUT applying it, so the returned
