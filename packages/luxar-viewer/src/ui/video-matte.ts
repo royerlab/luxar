@@ -152,7 +152,7 @@ export interface VideoMatteOptions {
 export function createVideoMatteCompositor(
   video: HTMLVideoElement,
   options: VideoMatteOptions = {}
-): VideoMatteCompositor | null {
+): VideoMatteCompositor {
   const canvas = document.createElement('canvas');
   canvas.className = 'luxar-overlay__matte';
   let setup: NonNullable<ReturnType<typeof setupGl>> | undefined;

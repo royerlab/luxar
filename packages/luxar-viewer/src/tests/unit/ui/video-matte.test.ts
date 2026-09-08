@@ -39,7 +39,7 @@ describe('createVideoMatteCompositor', () => {
       const matte = createVideoMatteCompositor(document.createElement('video'), { onFailure });
       expect(matte).not.toBeNull();
       expect(spy).not.toHaveBeenCalled();
-      matte!.start();
+      matte.start();
       expect(spy).toHaveBeenCalledTimes(1);
       expect(onFailure).toHaveBeenCalledWith(
         expect.objectContaining({ message: 'WebGL is unavailable' })
@@ -52,7 +52,6 @@ describe('createVideoMatteCompositor', () => {
   it('with a context, builds an unattached canvas and tolerates start/stop/dispose before any frame', () => {
     const video = document.createElement('video');
     const matte = createVideoMatteCompositor(video);
-    if (!matte) return; // a setup without a GL stub: covered by the case above
     expect(matte.canvas.className).toBe('luxar-overlay__matte');
     expect(matte.canvas.parentElement).toBeNull();
     matte.start();
@@ -72,7 +71,6 @@ describe('createVideoMatteCompositor', () => {
     Object.defineProperty(video, 'videoHeight', { value: 600, configurable: true });
     const onFirstFrame = vi.fn();
     const matte = createVideoMatteCompositor(video, { onFirstFrame });
-    if (!matte) return;
 
     matte.start();
     matte.stop();

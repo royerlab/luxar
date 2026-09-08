@@ -44,16 +44,17 @@ vi.mock('../../../scene/scene-dims-manager', () => ({
 
 /**
  * The stacked-alpha-matte compositor needs WebGL, which jsdom lacks; the
- * factory is mocked so tests can hand the manager a fake compositor (or `null`,
- * the no-WebGL answer) and observe how it is driven.
+ * factory is mocked so tests can hand the manager a fake compositor and observe
+ * how it is driven.
  */
 type MatteModule = typeof import('../../../ui/video-matte');
-const matteFactory = vi.fn<
-  (
-    video: HTMLVideoElement,
-    options?: import('../../../ui/video-matte').VideoMatteOptions
-  ) => import('../../../ui/video-matte').VideoMatteCompositor | null
->(() => null);
+const matteFactory =
+  vi.fn<
+    (
+      video: HTMLVideoElement,
+      options?: import('../../../ui/video-matte').VideoMatteOptions
+    ) => import('../../../ui/video-matte').VideoMatteCompositor
+  >();
 vi.mock('../../../ui/video-matte', () => ({
   createVideoMatteCompositor: ((video, options) =>
     matteFactory(video, options)) as MatteModule['createVideoMatteCompositor'],
@@ -338,8 +339,8 @@ describe('OverlayManager.loadOverlays', () => {
   });
 
   it('shows a compositor canvas for a stacked-alpha-matte clip and drives it with visibility', async () => {
-    // jsdom has no WebGL, so the real compositor would decline; substitute one
-    // and check the manager's side of the contract: the canvas is what shows
+    // jsdom has no WebGL, so substitute a compositor and check the manager's
+    // side of the contract: the canvas is what shows
     // and is sized, the <video> stays as a hidden frame source, start/stop
     // follow the overlay's visibility, and dispose releases the compositor.
     const matte = {
@@ -462,29 +463,6 @@ describe('OverlayManager.loadOverlays', () => {
     // A second failure report is a no-op (the compositor is already gone).
     fail!(new Error('again'));
     expect(matte.dispose).toHaveBeenCalledTimes(1);
-    warnSpy.mockRestore();
-  });
-
-  it('falls back to the plain <video> when the compositor declines (no WebGL)', async () => {
-    matteFactory.mockReturnValueOnce(null);
-    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
-    await manager.loadOverlays(
-      [
-        makeTextOverlay({
-          name: 'turntable',
-          type: 'overlay_video',
-          video_file: 'video.webm',
-          alpha_matte: 'stacked',
-          size: [0.26, null],
-        }),
-      ],
-      'https://example.com/scene.luxar.zarr/'
-    );
-    const video = document.querySelector('.luxar-overlay--video video') as HTMLVideoElement;
-    expect(document.querySelector('.luxar-overlay__matte')).toBeNull();
-    expect(video.style.width).toBe('26vw');
-    expect(video.classList.contains('luxar-overlay__matte-source')).toBe(false);
-    expect(warnSpy).toHaveBeenCalledWith(Modules.UI, expect.stringContaining('no WebGL'));
     warnSpy.mockRestore();
   });
 

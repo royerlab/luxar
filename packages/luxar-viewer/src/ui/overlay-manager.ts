@@ -715,9 +715,9 @@ export class OverlayManager {
    * For an `alpha_matte: 'stacked'` clip, show a compositor canvas instead of
    * the `<video>` (which stays in the DOM, decoding, but visually hidden — it is
    * the compositor's frame source). The poster sits behind the canvas until the
-   * first frame is drawn. Returns the element to size, or `null` when there is
-   * no matte or no WebGL (then the plain video shows: colour over matte, but
-   * visible rather than broken).
+   * first frame is drawn. Returns the element to size, or `null` when the clip
+   * is not a stacked matte. If WebGL is unavailable, the first `start()` reports
+   * failure and the manager falls back to the plain video.
    */
   private attachMatteCanvas(
     el: HTMLDivElement,
@@ -732,13 +732,6 @@ export class OverlayManager {
         if (current) current.canvas.style.backgroundImage = 'none';
       },
     });
-    if (!matte) {
-      log.warning(
-        Modules.UI,
-        `Video overlay "${config.name}": no WebGL for the alpha matte — showing the raw clip`
-      );
-      return null;
-    }
     video.classList.add('luxar-overlay__matte-source');
     if (video.poster) {
       // Longhands, not the `background` shorthand: the shorthand also resets
