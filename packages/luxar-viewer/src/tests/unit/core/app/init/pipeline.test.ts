@@ -632,9 +632,9 @@ describe('runInitPipeline', () => {
         expect(provider()).toBeNull();
 
         const isCaptureQuiescent = vi.fn(() => false);
-        const size = vi.fn(() => 0);
+        const captureSize = vi.fn(() => 0);
         vi.mocked(getSceneLoader).mockReturnValue({
-          lodGroupRegistry: { size, isCaptureQuiescent },
+          lodGroupRegistry: { captureSize, isCaptureQuiescent },
         } as never);
 
         // A registry with no lod_group registered — a plain points/lines scene
@@ -642,8 +642,9 @@ describe('runInitPipeline', () => {
         expect(provider()).toBeNull();
         expect(isCaptureQuiescent).not.toHaveBeenCalled();
 
-        // With entries registered the answer is the registry's own, both ways.
-        size.mockReturnValue(2);
+        // Partitions need the same catch-up tick and drain as lod_groups: their
+        // frustum rising edges launch asynchronous targeted resync passes.
+        captureSize.mockReturnValue(1);
         expect(provider()).toBe(false);
         isCaptureQuiescent.mockReturnValue(true);
         expect(provider()).toBe(true);

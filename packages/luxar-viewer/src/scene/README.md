@@ -446,8 +446,8 @@ registry.setSelectorMode(path, { lockLevel: 2 });
 ```
 
 **Capture quiescence:** `registry.isCaptureQuiescent()` answers "is
-every lod_group that contributes pixels to the current view already
-showing its own selected level at final quality?" — i.e. would one more
+every lod_group and partition part that contributes pixels to the current
+view already showing final committed quality?" — i.e. would one more
 frame of waiting improve what is on screen. The offline turntable
 capture drains on it (bounded) before exporting each frame, because the
 rAF loop — and therefore this frustum-aware selector — runs for the
@@ -477,6 +477,14 @@ cleared) the swap has not happened yet — a predicate reading only
 ready/loading/displayed would call that window settled. A `desired`
 level that has `failed` does not block, since it can never become ready
 this frame.
+
+Visible partition parts additionally block while a frustum rising edge is
+pending, while its targeted load pass is queued or committing, while their
+stamped leaves describe an older view version, or while a committed
+progressive ladder is incomplete. Pending paths for removed wrappers are
+discarded, hidden/re-culled parts do not block, and an archive fault keeps the
+same escape hatch as failed LOD levels so capture cannot become permanently
+unsettled.
 
 "Still streaming additive LODs" takes **both** available signals, and
 either one alone leaves a hole. A lazy child's live `hasMoreLODs()` thunk

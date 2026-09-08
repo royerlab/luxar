@@ -83,20 +83,21 @@ export interface OfflineCaptureStrategyHooks {
   downloadBlob(blob: Blob, filename: string): void;
   generateFilename(ext: string): string;
   /**
-   * Whether every in-frame LOD group is showing its selected level at final
+   * Whether every in-frame LOD group or partition part is at final committed
    * quality (`LODGroupRegistry.isCaptureQuiescent()`). The capture drains on
-   * this before grabbing each frame, so an asynchronous fine-level reload —
-   * kicked when a tile swings back into the frustum mid-orbit — cannot be
-   * filmed at its coarse fallback and pop back a few frames later (#1695).
+   * this before grabbing each frame, so an asynchronous fine-level reload or
+   * partition resync kicked when a tile swings back into the frustum mid-orbit
+   * cannot be filmed at a coarse fallback, stale slice, or empty state (#1695,
+   * #2633).
    *
    * TRI-STATE, and the third state is what keeps a plain points/lines scene
    * free:
-   * - `true` / `false` — this scene HAS level-of-detail groups, so the loop
+   * - `true` / `false` — this scene HAS level-of-detail or partition groups, so the loop
    *   drains. It then always spends at least one extra rAF per frame even when
    *   the answer is already `true`, because the selector runs before the orbit
    *   callback within a frame and so is a pose behind until it ticks once more.
-   * - `null` — this scene has no lod_group to wait for (no registry, or a
-   *   registry with none in it). The loop skips the drain entirely, INCLUDING
+   * - `null` — this scene has no lod_group or partition to wait for (no
+   *   registry, or a registry with neither). The loop skips the drain entirely, INCLUDING
    *   that mandatory tick, which is the pre-#1695 behaviour to the frame. Note
    *   the narrowness: `null` is NOT "nothing here could ever be mid-load". A
    *   `--recipe stream` scene — one leaf with an additive ladder and no
