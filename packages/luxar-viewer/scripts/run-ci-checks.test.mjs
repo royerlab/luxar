@@ -47,6 +47,19 @@ describe('runChecks', () => {
     expect(runner).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps dependency-cruiser violation counts as ordinary failures', () => {
+    const runner = vi.fn((check) => ({
+      status: check === 'check:layers' ? 137 : check === 'test:coverage' ? 1 : 0,
+      signal: null,
+    }));
+
+    expect(runChecks(CI_CHECKS, runner)).toEqual({
+      failures: ['check:layers', 'test:coverage'],
+      killed: null,
+    });
+    expect(runner.mock.calls.map(([check]) => check)).toEqual(CI_CHECKS);
+  });
+
   it('supports local fail-fast without changing the CI default', () => {
     const runner = vi.fn((check) => ({ status: check === 'check:format' ? 1 : 0, signal: null }));
     expect(runChecks(CI_CHECKS, runner, { bail: true })).toEqual({

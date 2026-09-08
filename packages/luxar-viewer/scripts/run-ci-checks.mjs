@@ -26,7 +26,7 @@ export function runChecks(checks, runner, options = {}) {
   const failures = [];
   for (const check of checks) {
     const result = runner(check);
-    const signal = result.signal ?? signalFromStatus(result.status);
+    const signal = result.signal ?? signalFromStatus(result.status, check);
     if (signal) return { failures, killed: { check, signal } };
     if (result.status !== 0) {
       failures.push(check);
@@ -36,7 +36,10 @@ export function runChecks(checks, runner, options = {}) {
   return { failures, killed: null };
 }
 
-function signalFromStatus(status) {
+function signalFromStatus(status, check) {
+  // dependency-cruiser exits with its violation count, so 128+N is ambiguous
+  // for check:layers and must remain an ordinary failure rather than a signal.
+  if (check === 'check:layers') return null;
   if (typeof status !== 'number' || status < 128) return null;
   const signalNumber = status - 128;
   return (
