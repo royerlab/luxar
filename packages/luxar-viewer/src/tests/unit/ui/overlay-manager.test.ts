@@ -347,9 +347,12 @@ describe('OverlayManager.loadOverlays', () => {
       start: vi.fn(),
       stop: vi.fn(),
       dispose: vi.fn(),
-      hasFrame: false,
     };
-    matteFactory.mockReturnValueOnce(matte);
+    let firstFrame: (() => void) | undefined;
+    matteFactory.mockImplementationOnce((_video, opts) => {
+      firstFrame = opts?.onFirstFrame;
+      return matte;
+    });
     vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(() => Promise.resolve());
     vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
     const setStory = (value: number): void => {
@@ -395,9 +398,11 @@ describe('OverlayManager.loadOverlays', () => {
     expect(matte.canvas.style.height).toBe('auto');
     expect(video.style.width).toBe('');
     expect(video.classList.contains('luxar-overlay__matte-source')).toBe(true);
-    // The poster sits behind the canvas until the first frame plays.
+    // The poster sits behind the canvas until the first frame is drawn.
     expect(matte.canvas.style.background).toContain('poster.png');
     video.dispatchEvent(new Event('playing'));
+    expect(matte.canvas.style.background).toContain('poster.png');
+    firstFrame!();
     expect(matte.canvas.style.background).toBe('');
 
     expect(matte.start).not.toHaveBeenCalled();
@@ -418,7 +423,6 @@ describe('OverlayManager.loadOverlays', () => {
       start: vi.fn(),
       stop: vi.fn(),
       dispose: vi.fn(),
-      hasFrame: false,
     };
     let fail: ((error: unknown) => void) | undefined;
     matteFactory.mockImplementationOnce((_video, opts) => {
@@ -449,6 +453,7 @@ describe('OverlayManager.loadOverlays', () => {
     // The raw clip takes over the canvas's sizing.
     expect(video.style.width).toBe('26vw');
     expect(video.style.height).toBe('auto');
+    expect(video.style.display).toBe('block');
     expect(warnSpy).toHaveBeenCalledWith(Modules.UI, expect.stringContaining('could not read'));
     // A second failure report is a no-op (the compositor is already gone).
     fail!(new Error('again'));

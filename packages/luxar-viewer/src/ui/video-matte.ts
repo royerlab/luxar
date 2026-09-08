@@ -11,13 +11,15 @@
  * `rgb` from the top half, `a` from the bottom half's red channel, output
  * premultiplied so the canvas composites correctly over the scene.
  *
- * One compositor per stacked video overlay. It draws only while `start()`ed
- * (the overlay manager ties that to the overlay's visibility, like playback)
- * and only when the video has a frame; frames are pulled with
+ * One compositor per stacked video overlay. Its WebGL resources are allocated
+ * lazily on the first `start()`, so clips never shown do not consume contexts.
+ * It draws only while `start()`ed (the overlay manager ties that to the
+ * overlay's visibility, like playback) and only when the video has a frame;
+ * frames are pulled with
  * `requestVideoFrameCallback` where available (one draw per decoded frame),
  * `requestAnimationFrame` otherwise. Without WebGL (jsdom, a blocked context)
- * `createVideoMatteCompositor` returns `null` and the manager shows the plain
- * video — colour over matte, but visible rather than broken.
+ * the first start reports failure and the manager shows the plain video —
+ * colour over matte, but visible rather than broken.
  */
 
 export const MATTE_VERTEX_SHADER = `
@@ -63,8 +65,6 @@ export interface VideoMatteCompositor {
   start(): void;
   /** Stop drawing; the last frame stays on the canvas. */
   stop(): void;
-  /** Whether at least one video frame has been drawn (the poster can go). */
-  readonly hasFrame: boolean;
   /** Stop, release the GL resources and lose the context. */
   dispose(): void;
 }
@@ -137,10 +137,12 @@ export interface VideoMatteOptions {
    * compositor has stopped itself. The caller then shows the raw clip instead.
    */
   onFailure?: (error: unknown) => void;
+  /** Called once after the first frame has been drawn to the canvas. */
+  onFirstFrame?: () => void;
 }
 
 /**
- * Build a compositor for `video`, a stacked-matte clip. The canvas takes the
+ * Build a lazy compositor for `video`, a stacked-matte clip. The canvas takes the
  * colour half's size as soon as the video's metadata is known (so a CSS
  * `height: auto` keeps the clip's true aspect) and is returned unattached —
  * the caller places it where the `<video>` would have gone. The video must be
@@ -153,16 +155,14 @@ export function createVideoMatteCompositor(
 ): VideoMatteCompositor | null {
   const canvas = document.createElement('canvas');
   canvas.className = 'luxar-overlay__matte';
-  const setup = setupGl(canvas);
-  if (!setup) return null;
-  const { gl, program, texture } = setup;
+  let setup: NonNullable<ReturnType<typeof setupGl>> | undefined;
 
   const sizeToVideo = (): void => {
     const [w, h] = stackedFrameSize(video.videoWidth, video.videoHeight);
     if (canvas.width !== w || canvas.height !== h) {
       canvas.width = w;
       canvas.height = h;
-      gl.viewport(0, 0, w, h);
+      setup?.gl.viewport(0, 0, w, h);
     }
   };
   if (video.readyState >= HTMLMediaElement.HAVE_METADATA) sizeToVideo();
@@ -175,9 +175,29 @@ export function createVideoMatteCompositor(
   let hasFrame = false;
   const v = video as FrameCallbackVideo;
 
+  const fail = (error: unknown): void => {
+    failed = true;
+    running = false;
+    options.onFailure?.(error);
+  };
+  const ensureSetup = (): boolean => {
+    if (setup) return true;
+    setup = setupGl(canvas) ?? undefined;
+    if (!setup) {
+      fail(new Error('WebGL is unavailable'));
+      return false;
+    }
+    sizeToVideo();
+    return true;
+  };
+
   const draw = (): void => {
     if (failed || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+    if (!ensureSetup()) return;
     sizeToVideo();
+    const currentSetup = setup;
+    if (!currentSetup) return;
+    const { gl, texture } = currentSetup;
     gl.bindTexture(gl.TEXTURE_2D, texture);
     try {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
@@ -185,13 +205,15 @@ export function createVideoMatteCompositor(
       // A tainted (cross-origin, no CORS) video: WebGL may never read it.
       // Stop for good and let the caller fall back to the raw clip rather
       // than throw out of a dims-manager listener every frame.
-      failed = true;
-      running = false;
-      options.onFailure?.(error);
+      fail(error);
       return;
     }
     gl.drawArrays(gl.TRIANGLES, 0, 3);
-    hasFrame = true;
+    if (!hasFrame) {
+      hasFrame = true;
+      canvas.dataset.hasFrame = '1';
+      options.onFirstFrame?.();
+    }
   };
   const tick = (): void => {
     if (!running) return;
@@ -216,12 +238,10 @@ export function createVideoMatteCompositor(
 
   return {
     canvas,
-    get hasFrame() {
-      return hasFrame;
-    },
     start() {
       if (running || failed) return;
       running = true;
+      if (!ensureSetup()) return;
       draw();
       if (running) schedule();
     },
@@ -233,9 +253,11 @@ export function createVideoMatteCompositor(
       running = false;
       cancel();
       video.removeEventListener('loadedmetadata', sizeToVideo);
-      gl.deleteTexture(texture);
-      gl.deleteProgram(program);
-      gl.getExtension('WEBGL_lose_context')?.loseContext();
+      if (setup) {
+        setup.gl.deleteTexture(setup.texture);
+        setup.gl.deleteProgram(setup.program);
+        setup.gl.getExtension('WEBGL_lose_context')?.loseContext();
+      }
     },
   };
 }

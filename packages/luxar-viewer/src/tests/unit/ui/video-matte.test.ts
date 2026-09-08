@@ -32,11 +32,18 @@ describe('MATTE_FRAGMENT_SHADER', () => {
 });
 
 describe('createVideoMatteCompositor', () => {
-  it('declines (null) where there is no WebGL, so the manager shows the plain clip', () => {
-    // The test setup stubs a GL context on jsdom canvases; take it away here.
+  it('allocates WebGL lazily on first start and reports when it is unavailable', () => {
     const spy = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+    const onFailure = vi.fn();
     try {
-      expect(createVideoMatteCompositor(document.createElement('video'))).toBeNull();
+      const matte = createVideoMatteCompositor(document.createElement('video'), { onFailure });
+      expect(matte).not.toBeNull();
+      expect(spy).not.toHaveBeenCalled();
+      matte!.start();
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(onFailure).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'WebGL is unavailable' })
+      );
     } finally {
       spy.mockRestore();
     }
@@ -48,11 +55,32 @@ describe('createVideoMatteCompositor', () => {
     if (!matte) return; // a setup without a GL stub: covered by the case above
     expect(matte.canvas.className).toBe('luxar-overlay__matte');
     expect(matte.canvas.parentElement).toBeNull();
-    expect(matte.hasFrame).toBe(false);
     matte.start();
     matte.start(); // idempotent
     matte.stop();
     matte.dispose();
-    expect(matte.hasFrame).toBe(false); // readyState 0: nothing was drawn
+    expect(matte.canvas.dataset.hasFrame).toBeUndefined(); // readyState 0: nothing was drawn
+  });
+
+  it('marks the canvas and reports exactly once after the first frame is drawn', () => {
+    const video = document.createElement('video');
+    Object.defineProperty(video, 'readyState', {
+      value: HTMLMediaElement.HAVE_CURRENT_DATA,
+      configurable: true,
+    });
+    Object.defineProperty(video, 'videoWidth', { value: 400, configurable: true });
+    Object.defineProperty(video, 'videoHeight', { value: 600, configurable: true });
+    const onFirstFrame = vi.fn();
+    const matte = createVideoMatteCompositor(video, { onFirstFrame });
+    if (!matte) return;
+
+    matte.start();
+    matte.stop();
+    matte.start();
+    matte.stop();
+
+    expect(matte.canvas.dataset.hasFrame).toBe('1');
+    expect(onFirstFrame).toHaveBeenCalledTimes(1);
+    matte.dispose();
   });
 });

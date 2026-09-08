@@ -712,6 +712,10 @@ export class OverlayManager {
     if (config.alpha_matte !== 'stacked') return null;
     const matte = createVideoMatteCompositor(video, {
       onFailure: (error) => this.abandonMatte(config.name, video, error),
+      onFirstFrame: () => {
+        const current = this.matteCompositors.get(config.name);
+        if (current) current.canvas.style.background = '';
+      },
     });
     if (!matte) {
       log.warning(
@@ -723,9 +727,6 @@ export class OverlayManager {
     video.classList.add('luxar-overlay__matte-source');
     if (video.poster) {
       matte.canvas.style.background = `url("${video.poster}") center / contain no-repeat`;
-      video.addEventListener('playing', () => (matte.canvas.style.background = ''), {
-        once: true,
-      });
     }
     el.appendChild(matte.canvas);
     this.matteCompositors.set(config.name, matte);
@@ -747,6 +748,7 @@ export class OverlayManager {
     video.classList.remove('luxar-overlay__matte-source');
     video.style.width = sizing.width;
     video.style.height = sizing.height;
+    video.style.display = 'block';
     log.warning(
       Modules.UI,
       `Video overlay "${name}": the alpha matte could not read the clip (${String(error)}) — showing the raw clip`
