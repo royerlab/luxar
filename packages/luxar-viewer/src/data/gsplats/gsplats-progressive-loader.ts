@@ -794,7 +794,11 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
         .catch(() => {
           // Ignore errors from speculative prefetch (network failures, aborts).
         })
-        .finally(() => this._prefetchingLevels.delete(level));
+        .finally(() => {
+          if (this._prefetchController === controller) {
+            this._prefetchingLevels.delete(level);
+          }
+        });
     }
   }
 
