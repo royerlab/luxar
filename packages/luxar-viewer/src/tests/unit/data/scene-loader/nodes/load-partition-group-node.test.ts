@@ -364,14 +364,8 @@ describe('loadPartitionGroupNode', () => {
 
   it('keeps every object from a part contiguous and stamps each with the same part index', async () => {
     const children = [
-      makePartNode('/partition/part_a', 'points', {
-        child_index: 1,
-        position_bounds: { min: [0, 0], max: [1, 1] },
-      }),
-      makePartNode('/partition/part_b', 'points', {
-        child_index: 0,
-        position_bounds: { min: [2, 2], max: [3, 3] },
-      }),
+      makePartNode('/partition/part_a', 'points', { child_index: 7 }),
+      makePartNode('/partition/part_b', 'points', { child_index: 3 }),
     ];
     const releases: Array<() => void> = [];
     const gates = children.map(
@@ -390,12 +384,11 @@ describe('loadPartitionGroupNode', () => {
       }
     });
 
-    const registerPartition = vi.fn();
     const loadPromise = loadPartitionGroupNode(
       makePartitionGroupNode(children),
       new THREE.Group(),
       makeStubLoc(),
-      makeRegistryCtx(registerPartition),
+      makeCtx(),
       loadSceneNodesMock
     );
     await Promise.resolve();
@@ -410,8 +403,43 @@ describe('loadPartitionGroupNode', () => {
       '/partition/part_b/first',
       '/partition/part_b/second',
     ]);
-    expect(wrapper.children.map((child) => child.userData.partIndex)).toEqual([1, 1, 0, 0]);
+    expect(wrapper.children.map((child) => child.userData.partIndex)).toEqual([7, 7, 3, 3]);
+  });
+
+  it('registers every object emitted by each partition part', async () => {
+    const children = [
+      makePartNode('/partition/part_a', 'points', {
+        child_index: 1,
+        position_bounds: { min: [0, 0], max: [1, 1] },
+      }),
+      makePartNode('/partition/part_b', 'points', {
+        child_index: 0,
+        position_bounds: { min: [2, 2], max: [3, 3] },
+      }),
+    ];
+    loadSceneNodesMock.mockImplementation(async (child: SceneNode, parentThree: THREE.Object3D) => {
+      for (const suffix of ['first', 'second']) {
+        const object = new THREE.Group();
+        object.name = `${child.path}/${suffix}`;
+        parentThree.add(object);
+      }
+    });
+    const registerPartition = vi.fn();
+
+    const wrapper = await loadPartitionGroupNode(
+      makePartitionGroupNode(children),
+      new THREE.Group(),
+      makeStubLoc(),
+      makeRegistryCtx(registerPartition),
+      loadSceneNodesMock
+    );
+
+    expect(registerPartition).toHaveBeenCalledOnce();
     const entry = registerPartition.mock.calls[0][0];
+    expect(entry.children.map((child: { path: string }) => child.path)).toEqual([
+      '/partition/part_b',
+      '/partition/part_a',
+    ]);
     expect(entry.children[0].objects).toEqual(wrapper.children.slice(2, 4));
     expect(entry.children[1].objects).toEqual(wrapper.children.slice(0, 2));
   });

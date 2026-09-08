@@ -327,7 +327,11 @@ export async function loadPartitionGroupNode(
           (candidate) => candidate.userData.partIndex === partIndex
         );
         if (objects.length > 0) {
-          registryChildren[partIndex] = { objects, positionBounds: partBounds[partIndex] };
+          registryChildren[partIndex] = {
+            path: sceneChildren[loadIndex].path,
+            objects,
+            positionBounds: partBounds[partIndex],
+          };
         }
       }
       if (registryChildren.every((child) => child !== undefined)) {

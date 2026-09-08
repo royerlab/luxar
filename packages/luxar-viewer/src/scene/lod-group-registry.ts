@@ -557,6 +557,8 @@ export interface LODGroupEntry {
 }
 
 export interface PartitionGroupChild {
+  /** Stable node path for a part that may emit more than one scene object. */
+  path: string;
   objects: THREE.Object3D[];
   positionBounds: { min: readonly number[]; max: readonly number[] };
 }
@@ -872,6 +874,8 @@ export class LODGroupRegistry {
       })),
     });
     for (const child of entry.children) {
+      // Each loader path resolves to its emitted object, so stamping them all
+      // lets the loader gate use its normal ancestor walk for multi-object parts.
       for (const object of child.objects) object.userData.partitionFrustumVisible = true;
     }
   }

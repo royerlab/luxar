@@ -570,6 +570,7 @@ describe('LODGroupRegistry — partition frustum selection', () => {
       groupObject,
       children: [
         {
+          path: '/partition/part_0',
           objects: [first, second],
           positionBounds: { min: [2, 2, 2], max: [3, 3, 3] },
         },
@@ -601,10 +602,12 @@ describe('LODGroupRegistry — partition frustum selection', () => {
       groupObject,
       children: [
         {
+          path: '/partition/part_0',
           objects: [visible],
           positionBounds: { min: [20, -0.5, 30, -0.5], max: [21, 0.5, 31, 0.5] },
         },
         {
+          path: '/partition/part_1',
           objects: [culled],
           positionBounds: { min: [-0.5, 2, -0.5, 2], max: [0.5, 3, 0.5, 3] },
         },
@@ -630,8 +633,16 @@ describe('LODGroupRegistry — partition frustum selection', () => {
       path: '/partition',
       groupObject,
       children: [
-        { objects: [culled], positionBounds: { min: [2, 2], max: [3, 3] } },
-        { objects: [unprojectable], positionBounds: { min: [], max: [] } },
+        {
+          path: '/partition/part_0',
+          objects: [culled],
+          positionBounds: { min: [2, 2], max: [3, 3] },
+        },
+        {
+          path: '/partition/part_1',
+          objects: [unprojectable],
+          positionBounds: { min: [], max: [] },
+        },
       ],
     });
 
@@ -658,10 +669,15 @@ describe('LODGroupRegistry — partition frustum selection', () => {
       groupObject,
       children: [
         {
+          path: '/partition/part_0',
           objects: [footprintVisible],
           positionBounds: { min: [1.2, -0.1, -0.1], max: [1.3, 0.1, 0.1] },
         },
-        { objects: [culled], positionBounds: { min: [2, 2, 2], max: [3, 3, 3] } },
+        {
+          path: '/partition/part_1',
+          objects: [culled],
+          positionBounds: { min: [2, 2, 2], max: [3, 3, 3] },
+        },
       ],
     });
 
@@ -687,6 +703,7 @@ describe('LODGroupRegistry — partition frustum selection', () => {
       groupObject,
       children: [
         {
+          path: '/partition/part_0',
           objects: [outside, footprintVisible],
           positionBounds: { min: [1.2, 2, 2], max: [1.3, 3, 3] },
         },
@@ -710,6 +727,7 @@ describe('LODGroupRegistry — partition frustum selection', () => {
       groupObject,
       children: [
         {
+          path: '/partition/part_0',
           objects: [child],
           positionBounds: { min: [1.05, -0.1, -0.1], max: [1.2, 0.1, 0.1] },
         },
@@ -739,7 +757,13 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     reg.registerPartition({
       path: '/partition',
       groupObject,
-      children: [{ objects: [child], positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] } }],
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [child],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+        },
+      ],
     });
 
     expect(reg.evaluatePerFrame()).toBe(true);
@@ -774,8 +798,16 @@ describe('LODGroupRegistry — partition frustum selection', () => {
       path: '/partition',
       groupObject,
       children: [
-        { objects: [first], positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] } },
-        { objects: [second], positionBounds: { min: [4, 0, 0], max: [5, 0.5, 0.5] } },
+        {
+          path: '/partition/part_0',
+          objects: [first],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+        },
+        {
+          path: '/partition/part_1',
+          objects: [second],
+          positionBounds: { min: [4, 0, 0], max: [5, 0.5, 0.5] },
+        },
       ],
     });
 
@@ -812,7 +844,13 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     reg.registerPartition({
       path: '/partition',
       groupObject,
-      children: [{ objects: [child], positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] } }],
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [child],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+        },
+      ],
     });
 
     reg.evaluatePerFrame();
@@ -845,7 +883,13 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     reg.registerPartition({
       path: '/partition',
       groupObject,
-      children: [{ objects: [child], positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] } }],
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [child],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+        },
+      ],
     });
 
     reg.evaluatePerFrame();
@@ -875,7 +919,13 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     reg.registerPartition({
       path: '/partition',
       groupObject,
-      children: [{ objects: [child], positionBounds: { min: [2, 2, 2], max: [3, 3, 3] } }],
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [child],
+          positionBounds: { min: [2, 2, 2], max: [3, 3, 3] },
+        },
+      ],
     });
 
     reg.evaluatePerFrame();
@@ -894,7 +944,13 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     reg.registerPartition({
       path: '/partition',
       groupObject,
-      children: [{ objects: [child], positionBounds: { min: [2, 2, 2], max: [3, 3, 3] } }],
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [child],
+          positionBounds: { min: [2, 2, 2], max: [3, 3, 3] },
+        },
+      ],
     });
 
     reg.evaluatePerFrame();
