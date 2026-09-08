@@ -272,9 +272,12 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
     expect(ctx.forgetPath).not.toHaveBeenCalled();
   });
 
-  it('a culled resync target is still skipped as culled (culled check runs first)', async () => {
+  it('a culled resync TARGET is still skipped as culled, but a culled NON-target keeps its baseline', async () => {
     const ctx = makeCtx();
-    const loaders = new Map<string, object>([['/tiled/part_1/level_0', {}]]);
+    const loaders = new Map<string, object>([
+      ['/tiled/part_1/level_0', {}], // target, culled → culled skip (forgets)
+      ['/tiled/part_0/level_0', {}], // non-target, culled → resync skip (keeps)
+    ]);
     const update = vi.fn((path: string) => Promise.resolve({ path }));
     const targets = new Set(['/tiled/part_1']);
 
@@ -285,7 +288,9 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
     });
 
     expect(update).not.toHaveBeenCalled();
-    expect(results.map(({ staged }) => staged)).toEqual([null]);
+    expect(results.map(({ staged }) => staged)).toEqual([null, null]);
+    // Rising edges fire when many parts are culled; a targeted resync must not
+    // strip every culled non-target of its predictive-prefetch baseline.
     expect(ctx.forgetPath).toHaveBeenCalledOnce();
     expect(ctx.forgetPath).toHaveBeenCalledWith('/tiled/part_1/level_0');
   });

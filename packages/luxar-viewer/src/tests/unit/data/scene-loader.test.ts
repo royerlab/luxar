@@ -897,6 +897,133 @@ describe('SceneLoader', () => {
       expect(other.updateView).toHaveBeenCalledTimes(1);
       expect(internals.takeQueuedResyncOpts()).toEqual({});
     });
+
+    it('stashed resync paths never leak into a later, unrelated same-view pass', async () => {
+      // A resync stashed during a hold may be drained by a path that does not
+      // hand the paths over (the refinement run's final release, a retry's
+      // resume). The stash must then be gone: a later `updateView({})` queued
+      // behind a pass — the depth-sort reprocess whose whole purpose is to
+      // re-commit stamp-less nodes — would otherwise re-enter narrowed to
+      // loaders that have nothing to do with it.
+      const target = { updateView: vi.fn().mockResolvedValue(null), dispose: vi.fn() };
+      const other = { updateView: vi.fn().mockResolvedValue(null), dispose: vi.fn() };
+      const loaders = (sceneLoader as unknown as { loaders: Map<string, unknown> }).loaders;
+      loaders.set('/tiled/part_1/level_0', target);
+      loaders.set('/other', other);
+      const internals = sceneLoader as unknown as {
+        _updateInProgress: boolean;
+        _refining: boolean;
+        _queuedResyncPaths: Set<string> | null;
+        viewStateQueue: ViewStateQueue;
+        reenterPending(state: Partial<ViewState>): Promise<void>;
+      };
+      internals._updateInProgress = true;
+      internals._refining = true;
+      sceneLoader.requestReprocess(['/tiled/part_1']);
+      await Promise.resolve();
+      expect(internals._queuedResyncPaths?.size).toBe(1);
+
+      // Every drain site goes through `reenterPending`, which consumes the stash.
+      internals._updateInProgress = false;
+      internals._refining = false;
+      const drained = internals.viewStateQueue.drain((state) => internals.reenterPending(state));
+      expect(drained).toBe(true);
+      await vi.waitFor(() => {
+        expect(target.updateView).toHaveBeenCalledTimes(1);
+      });
+      expect(other.updateView).not.toHaveBeenCalled(); // the resync itself WAS targeted
+      expect(internals._queuedResyncPaths).toBeNull();
+
+      // Belt and braces: a stash left behind by any other route is dropped the
+      // moment a pass starts, so an untargeted reprocess stays untargeted.
+      internals._queuedResyncPaths = new Set(['/tiled/part_1']);
+      await sceneLoader.updateView({});
+      expect(other.updateView).toHaveBeenCalledTimes(1);
+      expect(internals._queuedResyncPaths).toBeNull();
+    });
+
+    it('a second rising edge during the same hold merges into the stash instead of being dropped', async () => {
+      const internals = sceneLoader as unknown as {
+        _updateInProgress: boolean;
+        _refining: boolean;
+        _queuedResyncPaths: Set<string> | null;
+        viewStateQueue: ViewStateQueue;
+      };
+      internals._updateInProgress = true;
+      internals._refining = true;
+      sceneLoader.requestReprocess(['/tiled/part_1']);
+      sceneLoader.requestReprocess(['/tiled/part_3']); // our own `{}` is already pending
+      await Promise.resolve();
+      expect([...(internals._queuedResyncPaths ?? [])].sort()).toEqual([
+        '/tiled/part_1',
+        '/tiled/part_3',
+      ]);
+      expect(internals.viewStateQueue.hasPending()).toBe(true);
+    });
+
+    it.each([
+      { order: 'untargeted reprocess FIRST, then a rising edge' },
+      { order: 'rising edge FIRST, then an untargeted reprocess' },
+    ])(
+      'an untargeted reprocess queued during a hold is never narrowed ($order)',
+      async ({ order }) => {
+        // The depth-sort coordinator's `requestReprocess()` exists to re-commit
+        // nodes whose stamps it just deleted, scene-wide. Whichever way it
+        // interleaves with a partition rising edge during a refinement hold,
+        // the hand-off must run a FULL sweep.
+        const target = { updateView: vi.fn().mockResolvedValue(null), dispose: vi.fn() };
+        const other = { updateView: vi.fn().mockResolvedValue(null), dispose: vi.fn() };
+        const loaders = (sceneLoader as unknown as { loaders: Map<string, unknown> }).loaders;
+        loaders.set('/tiled/part_1/level_0', target);
+        loaders.set('/other', other);
+        const internals = sceneLoader as unknown as {
+          _updateInProgress: boolean;
+          _refining: boolean;
+          _updateAbortController: AbortController | null;
+          viewStateQueue: ViewStateQueue;
+          reenterPending(state: Partial<ViewState>): Promise<void>;
+        };
+        internals._updateInProgress = true;
+        internals._refining = true;
+        internals._updateAbortController = new AbortController();
+        if (order.startsWith('untargeted')) {
+          void sceneLoader.updateView({}); // depth-sort style: no paths → supersede branch
+          sceneLoader.requestReprocess(['/tiled/part_1']);
+        } else {
+          sceneLoader.requestReprocess(['/tiled/part_1']);
+          void sceneLoader.updateView({});
+        }
+        await Promise.resolve();
+        expect(internals.viewStateQueue.hasPending()).toBe(true);
+
+        internals._updateInProgress = false;
+        internals._refining = false;
+        const drained = internals.viewStateQueue.drain((state) => internals.reenterPending(state));
+        expect(drained).toBe(true);
+        await vi.waitFor(() => {
+          expect(target.updateView).toHaveBeenCalledTimes(1);
+          expect(other.updateView).toHaveBeenCalledTimes(1); // full sweep, not narrowed
+        });
+      }
+    );
+
+    it('a queued re-entry that lands on a latched archive fault flushes the parked waiters', async () => {
+      // A lazy level can latch the fault OUTSIDE any pass. A waiter parked by a
+      // superseded updateView must then settle (resolve-only) rather than hang
+      // the dimension-animation pacing gate for the rest of the session.
+      const internals = sceneLoader as unknown as {
+        _archiveFault: ArchiveFaultError | null;
+        _passWaiters: Array<() => void>;
+      };
+      let settled = false;
+      internals._passWaiters.push(() => {
+        settled = true;
+      });
+      internals._archiveFault = new ArchiveFaultError('container unreadable', 'test');
+      await sceneLoader.updateView({ slicePosition: [0, 0, 0, 8] });
+      expect(settled).toBe(true);
+      expect(internals._passWaiters).toHaveLength(0);
+    });
   });
 
   describe('updateView — dispose race', () => {

@@ -74,8 +74,9 @@ export async function runLoaderUpdates<TLoader, TStaged>(
     shouldUpdatePath?: (path: string) => boolean;
     /**
      * Targeted partition resync: `false` ⇒ this loader is not under any
-     * re-entering part, skip it without dropping its prefetch baseline. The
-     * culled check (`shouldUpdatePath`) runs first.
+     * re-entering part, skip it without dropping its prefetch baseline —
+     * checked BEFORE the culled check, so a culled non-target keeps its
+     * baseline too.
      */
     isResyncTarget?: (path: string) => boolean;
     /** Called at most once per sweep, after Promise.all, with the first archive fault. */
@@ -91,13 +92,17 @@ export async function runLoaderUpdates<TLoader, TStaged>(
     const session = ctx.profiler
       ? ctx.profiler.beginTopLevel(`${loaderType} (${path})`)
       : NOOP_SESSION;
+    // Resync-target check FIRST: a targeted resync must leave every non-target
+    // loader untouched, culled or not. Rising edges fire precisely when many
+    // parts are culled, and running the culled check first would drop those
+    // parts' prefetch baselines on every rising edge.
+    if (ctx.isResyncTarget?.(path) === false) {
+      session.markSkipped('outside partition resync targets');
+      return { staged: null, session };
+    }
     if (ctx.shouldUpdatePath?.(path) === false) {
       session.markSkipped('partition part outside camera frustum');
       ctx.viewStateQueue.forgetPath(path);
-      return { staged: null, session };
-    }
-    if (ctx.isResyncTarget?.(path) === false) {
-      session.markSkipped('outside partition resync targets');
       return { staged: null, session };
     }
     try {

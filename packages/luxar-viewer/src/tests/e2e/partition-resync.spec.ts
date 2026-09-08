@@ -114,8 +114,15 @@ test.describe('kind=partition of kind=lod parts — frustum re-entry resync', ()
     await waitForLuxarReady(page);
     await waitForRenderStable(page);
 
-    // Both parts on screen at the opening framing.
-    await waitForGroups(page, (g) => g.partition.visibleParts === 2, 'opening framing');
+    // Both parts on screen at the opening framing. `partCount === 2` pins the
+    // structure so a registration regression (parts default to visible when
+    // the frustum gate never engages) fails here, with a clear message, rather
+    // than 20 s later at the "far part culled" wait.
+    await waitForGroups(
+      page,
+      (g) => g.partition.partCount === 2 && g.partition.visibleParts === 2,
+      'opening framing (2 parts registered and visible)'
+    );
 
     // Park inside the near cluster looking away from the far one: the near
     // part is at its finest level (camera inside its bounds) and the far part,

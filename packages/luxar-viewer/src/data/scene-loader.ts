@@ -395,6 +395,21 @@ export class SceneLoader {
   private _pendingResyncPaths: Set<string> | null = null;
   /** Resync paths handed to the follow-up pass by ``queueNext``'s re-entry. */
   private _queuedResyncPaths: Set<string> | null = null;
+  /**
+   * True while the pending slot holds the empty state a RESYNC queued (so a
+   * later rising edge may merge into ``_queuedResyncPaths``); false once any
+   * other caller sets the slot — a real view change or an untargeted
+   * reprocess — because that pass must sweep everything and a stash arriving
+   * on top of it must be dropped, not merged (it would narrow that pass).
+   */
+  private _pendingIsResyncOnly = false;
+  /**
+   * Passes actually run (every ``updateView`` that reached the sweep). The
+   * per-geometry processors gate their first-update info logs on this being
+   * ``<= 1``; it used to be ``_updateVersion``, which now only advances on a
+   * view CHANGE and would keep those logs on forever for a static scene.
+   */
+  private _passCount = 0;
 
   /**
    * Whether an updateView sweep (fetch/decode/upload) is currently in
@@ -966,7 +981,7 @@ export class SceneLoader {
       getFailedLoadsProvider: () => this.getFailedLoadsProvider(),
       refinementHoldReason: (path) => this.refinementHoldReason(path),
       scheduleGSplatsRefinement: () => this.scheduleGSplatsRefinement(),
-      drainPendingViewState: () => this.viewStateQueue.drain((state) => this.updateView(state)),
+      drainPendingViewState: () => this.viewStateQueue.drain((state) => this.reenterPending(state)),
       resolvePassWaiters: () => this.resolvePassWaiters(),
       setDatasetAbortController: (c) => {
         this._datasetAbortController = c;
@@ -1103,6 +1118,22 @@ export class SceneLoader {
   }
 
   /**
+   * Re-enter ``updateView`` with a drained pending state. The ONLY way a
+   * pending state may be re-entered: every drain site must consume the resync
+   * paths stashed for it, or they leak into a later, unrelated same-view pass
+   * (e.g. a depth-sort ``requestReprocess()`` queued behind a pass) and narrow
+   * it to loaders that have nothing to do with it — leaving the nodes that
+   * pass existed to re-commit stamp-less. A changed view ignores the paths
+   * anyway (see ``updateView``), so passing them along is always safe.
+   */
+  private reenterPending(state: Partial<ViewState>): Promise<void> {
+    const opts = this.takeQueuedResyncOpts();
+    // Keep the plain call shape when nothing is stashed (callers and tests
+    // observe `updateView(state)`); only a real stash rides along.
+    return opts.resyncPaths ? this.updateView(state, opts) : this.updateView(state);
+  }
+
+  /**
    * Update all points and lines for a new view state.
    *
    * Uses serialized execution to prevent race conditions: only one update runs at a time.
@@ -1120,7 +1151,17 @@ export class SceneLoader {
     // isActive-return exit hands off via noopReleaseLock, and
     // scheduleGSplatsRefinement early-returns on `_disposed`, so no later
     // resolvePassWaiters runs). Resolve-only, never reject (matches dispose()).
-    if (this._disposed || this._archiveFault) return;
+    if (this._disposed) return;
+    if (this._archiveFault) {
+      // A queued re-entry (queueNext / the refinement hand-off) can land here
+      // after a lazy level latched the fault OUTSIDE any pass. Its pending
+      // state was already taken, so nothing else will ever settle the waiters
+      // parked on it — flush them (resolve-only, like the `finally`'s archive
+      // branch and `dispose()`), or the dimension-animation pacing gate and
+      // `waitForUpdate()` hang for the rest of the session.
+      this.resolvePassWaiters();
+      return;
+    }
 
     // Foreground passes deliberately do NOT abort the background slice
     // prefetch. The foreground now commits from the SliceCache without
@@ -1136,20 +1177,30 @@ export class SceneLoader {
 
     // SERIALIZATION: If an update is already in progress, queue this one and return
     if (this._updateInProgress) {
-      // A targeted resync carries no new view state, so it must NOT supersede
-      // (abort) the in-flight pass: park its paths and fold them into the
-      // pass that runs next (see the `finally` below). The registry gates on
-      // `isUpdateInProgress` synchronously, so this branch is defensive.
+      // A targeted resync carries no new view state (callers pass `{}`), so it
+      // must NOT supersede (abort) the in-flight work: park its paths and fold
+      // them into the pass that runs next. The registry gates on
+      // `isLoadPassInProgress` (a PASS in flight or queued), so of the two
+      // branches below only the refinement-hold one is reachable from it; the
+      // mid-pass one is defensive.
       if (opts.resyncPaths) {
         if (this._refining) {
           // The lock is held by a refinement RUN, not a view pass: no `finally`
-          // of ours will run to fold the paths in. Queue an empty state so the
-          // refinement loop's between-pass pending check cancels into
-          // `updateView({}, resync)` (the same hand-off a slider move uses).
-          if (this.viewStateQueue.hasPending()) return;
+          // of ours will run to fold the paths in. Stash the paths and queue an
+          // empty state so the refinement loop's between-pass pending check
+          // cancels into `updateView({}, resync)` (the same hand-off a slider
+          // move uses). If the slot already holds a state that is NOT ours — a
+          // real view change, or an untargeted reprocess such as the depth
+          // sort's — that pass sweeps everything (a superset), so drop the
+          // paths rather than narrow it. If it holds our own `{}` from an
+          // earlier rising edge, MERGE so no part is lost.
+          if (this.viewStateQueue.hasPending() && !this._pendingIsResyncOnly) return;
           this._queuedResyncPaths ??= new Set<string>();
           for (const path of opts.resyncPaths) this._queuedResyncPaths.add(path);
-          this.viewStateQueue.setPending({});
+          if (!this.viewStateQueue.hasPending()) {
+            this.viewStateQueue.setPending({});
+            this._pendingIsResyncOnly = true;
+          }
           return;
         }
         this._pendingResyncPaths ??= new Set<string>();
@@ -1170,7 +1221,10 @@ export class SceneLoader {
       // it runs — it bumps only if the merged view actually changes.)
       const supersededPrevious = this.viewStateQueue.hasPending();
       this.viewStateQueue.setPending(viewState);
+      // Whatever was stashed for a resync is now moot: this pending state (a
+      // real change or an untargeted reprocess) sweeps everything.
       this._queuedResyncPaths = null;
+      this._pendingIsResyncOnly = false;
       if (supersededPrevious) {
         log.info(
           Modules.SCENE_LOADER,
@@ -1193,6 +1247,12 @@ export class SceneLoader {
     // Mark update as in progress. The view version is decided below, once the
     // merged view state is known (bump only on a real change).
     this._updateInProgress = true;
+    // Paths stashed for a pending state travel in `opts` (``reenterPending``);
+    // anything still parked here at the start of a pass is stale by
+    // construction and must not narrow a later one.
+    this._queuedResyncPaths = null;
+    this._pendingIsResyncOnly = false;
+    this._passCount++;
 
     // Fresh per-update abort controller. A superseding updateView (the
     // serialization branch above) aborts this; its signal flows to every
@@ -1236,7 +1296,9 @@ export class SceneLoader {
       // re-commit) re-sweeps under the same version, so the lazy LOD levels
       // outside this sweep stay fresh.
       const viewChanged = !viewStatesEqual(nextViewState, this.viewState);
-      const resyncPaths = viewChanged ? undefined : opts.resyncPaths;
+      // An EMPTY target set would skip every loader and commit nothing: treat
+      // it as "no restriction" rather than as a silent no-op pass.
+      const resyncPaths = viewChanged || !opts.resyncPaths?.size ? undefined : opts.resyncPaths;
       // A targeted resync is not a view pass: leave the budget marker alone so
       // `isAtViewState` cannot skip the real re-run a budget-truncated playback
       // pass still owes. A changed view is always a full sweep, even if stale
@@ -1286,7 +1348,9 @@ export class SceneLoader {
         viewStateQueue: this.viewStateQueue,
         clearFailure: (path) => this.failedLoaders.delete(path),
         currentVersion,
-        updateVersion: this._updateVersion,
+        // The processors' "first update" log gate — a PASS counter, not the
+        // view version (which no longer moves on a same-view pass).
+        updateVersion: this._passCount,
         extendedToleranceCache,
         signal: updateController.signal,
         frameBudgetMs,
@@ -1395,6 +1459,10 @@ export class SceneLoader {
       // lock release. Implementation in scene-loader/update-view/queue-next.ts.
       if (this._archiveFault) {
         this.viewStateQueue.takePending();
+        // Parked resyncs die with the pass: the archive is unreadable, and a
+        // retry's resume runs an unrestricted pass anyway.
+        this._pendingResyncPaths = null;
+        this._queuedResyncPaths = null;
         this.resolvePassWaiters();
         this._updateInProgress = false;
       } else {
@@ -1405,6 +1473,7 @@ export class SceneLoader {
           if (!this.viewStateQueue.hasPending()) {
             this._queuedResyncPaths = this._pendingResyncPaths;
             this.viewStateQueue.setPending({});
+            this._pendingIsResyncOnly = true;
           }
           this._pendingResyncPaths = null;
         }
@@ -1414,7 +1483,7 @@ export class SceneLoader {
           linesLoaders: this.linesLoaders,
           gsplatLoaders: this.gsplatLoaders,
           meshLoaders: this.meshLoaders,
-          updateView: (state) => this.updateView(state, this.takeQueuedResyncOpts()),
+          updateView: (state) => this.reenterPending(state),
           setUpdateInProgress: (v) => {
             this._updateInProgress = v;
           },
@@ -1520,7 +1589,7 @@ export class SceneLoader {
       // queued-update waiters here rather than leaving them parked. A drained
       // state's re-entry settles them itself, at its commit — resolving here as
       // well would release the pacing gate early (see `finalReleaseLock`).
-      if (!this.viewStateQueue.drain((state) => this.updateView(state))) {
+      if (!this.viewStateQueue.drain((state) => this.reenterPending(state))) {
         this.resolvePassWaiters();
       }
     });
@@ -1568,7 +1637,7 @@ export class SceneLoader {
           // A resync parked during this refinement hold rides the pending
           // state it queued; a real view change takes precedence over it only
           // in that the full sweep is a superset (the paths are still consumed).
-          this.updateView(pendingState, this.takeQueuedResyncOpts()).catch((error: unknown) => {
+          this.reenterPending(pendingState).catch((error: unknown) => {
             log.error(
               Modules.SCENE_LOADER,
               `Refinement cancellation re-entry failed: ${getErrorMessage(error)}`,
@@ -1621,7 +1690,7 @@ export class SceneLoader {
         // waiters), else settle the waiters now. Intermediate phases don't
         // need this — the NEXT phase's loop-top pending check rescues them.
         if (this.viewStateQueue.hasPending()) {
-          this.viewStateQueue.drain((state) => this.updateView(state));
+          this.viewStateQueue.drain((state) => this.reenterPending(state));
         } else {
           this.resolvePassWaiters();
         }
@@ -2163,7 +2232,7 @@ export class SceneLoader {
   }
 
   private resumeViewAfterRetry(hadArchiveFault: boolean): void {
-    if (this.viewStateQueue.drain((state) => this.updateView(state))) return;
+    if (this.viewStateQueue.drain((state) => this.reenterPending(state))) return;
     if (!hadArchiveFault || this._archiveFault) return;
     void this.updateView(this.viewState).catch((error) => {
       log.warning(
@@ -2447,6 +2516,7 @@ export class SceneLoader {
     this.viewStateQueue.takePending();
     this._pendingResyncPaths = null;
     this._queuedResyncPaths = null;
+    this._pendingIsResyncOnly = false;
 
     // Stop the scene-identity watchdog first: its verdicts are about THIS
     // dataset, and a probe landing mid-teardown must not raise a banner
