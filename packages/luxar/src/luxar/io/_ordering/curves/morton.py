@@ -72,6 +72,8 @@ def morton_encode_nd(coords: np.ndarray, bits_per_dim: int = 16) -> np.ndarray:
             _morton_numba_kernel = False
 
     if _morton_numba_kernel:
+        # The eager signature requires C-contiguous input and output, so keep
+        # both this output buffer and the explicit contiguous input conversion.
         out = np.empty(n_points, dtype=np.uint64)
         coords_i64 = np.ascontiguousarray(coords, dtype=np.int64)
         _morton_numba_kernel(coords_i64, bits_per_dim, out)
