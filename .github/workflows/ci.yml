@@ -683,40 +683,19 @@ jobs:
           hatch run python -m pip_audit --desc --skip-editable
         continue-on-error: true
 
-      # The gates below judge the SOURCE, not the runtime (ruff target-version
+      # These gates judge the SOURCE, not the runtime (ruff target-version
       # py312, mypy python_version 3.12), so they run once — on the 3.12 leg —
-      # while staying under the required `python-tests (3.12)` context.
-      # The target list is the project's own (`hatch run lint`), not just the
-      # package. It used to be `packages/luxar/src/luxar/` alone, which left
-      # `scripts/` (121 files, 35K LOC — including every gate implementation),
-      # `scripts/benchmarks/`, `stats/` and `hatch_build.py` with no E/W/F/I
-      # check in CI at all (audit A12-04). The gates that guard this repository
-      # were the least-checked code in it.
-      - name: Lint (ruff)
+      # while staying under the required `python-tests (3.12)` context. Invoke
+      # the declared aggregate instead of restating its members here: adding a
+      # ratchet or changing a target in `hatch run lint` must change CI too.
+      - name: Lint, format, ratchets, and mypy
         if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
-        run: >-
-          hatch run python -m ruff check
-          packages/luxar/src scripts scripts/benchmarks stats hatch_build.py
-
-      # Formatting was enforced ONLY by the opt-in pre-commit hook, which sees
-      # the STAGED files and nothing else — so 10 files had drifted unformatted
-      # in the tree with no gate able to notice. Same targets as the lint above.
-      # `[tool.ruff.format] exclude = ["*.md"]` keeps this to Python; see the
-      # rationale in pyproject.toml.
-      - name: Format check (ruff)
-        if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
-        run: >-
-          hatch run python -m ruff format --check
-          packages/luxar/src scripts scripts/benchmarks stats hatch_build.py
-
-      - name: Type check (mypy)
-        if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
-        run: hatch run mypy packages/luxar/src/luxar/ scripts/ci_queue_scan.py
+        run: hatch run lint
 
       - name: Layer check (import-linter)
         if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
         # Enforce the full subpackage stack plus the narrower forbidden contracts.
-        run: hatch run lint-imports
+        run: hatch run check-imports
 
       - name: Layer order and debt ratchet
         if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
@@ -724,7 +703,7 @@ jobs:
 
       - name: Version consistency (Python == viewer == citation)
         if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
-        run: hatch run python scripts/check_version_consistency.py
+        run: hatch run check-versions
 
       - name: Format contract drift (Python <-> TypeScript)
         if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'

@@ -938,6 +938,13 @@ def test_mypy_gate_targets_stay_synchronized(workflow: str) -> None:
     assert claude_command is not None
 
     ci_steps = yaml.safe_load(workflow)["jobs"]["python-tests"]["steps"]
+    lint_step = next(
+        step
+        for step in ci_steps
+        if step.get("name") == "Lint, format, ratchets, and mypy"
+    )
+    assert lint_step["run"] == "hatch run lint"
+
     commands = {
         "pyproject.toml": next(
             command for command in lint_commands if command.startswith("mypy ")
@@ -947,9 +954,6 @@ def test_mypy_gate_targets_stay_synchronized(workflow: str) -> None:
             hook["entry"] for hook in precommit_hooks if hook.get("id") == "mypy"
         ),
         "CLAUDE.md": claude_command.group(0).removesuffix("  # Type check"),
-        ".github/workflows/ci.yml": next(
-            step["run"] for step in ci_steps if step.get("name") == "Type check (mypy)"
-        ),
     }
 
     targets = {}

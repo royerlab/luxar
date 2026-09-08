@@ -97,10 +97,14 @@ make test-perf-e2e   # Opt-in Playwright performance suite
 make check-all    # All quality checks (Python, TypeScript, Rust, Go) — reformats
 make lint-python        # read-only: ruff check
 make check-complexity   # read-only: ruff C901 ratcheted against scripts/complexity_baseline.json
+                  # CI enforces this both through `hatch run lint` and the
+                  # live-tree `test_repository_has_no_complexity_regressions`.
 make check-lint-ratchet # read-only: ruff's DEFECT rules (flake8-bugbear + RUF012)
                   # ratcheted against scripts/lint_baseline.json. Existing debt is
                   # tolerated; a file that newly breaks one of these rules — or
                   # gains another violation of one it already breaks — fails.
+                  # CI also runs the live-tree
+                  # `test_repository_has_no_lint_regressions` fail-closed check.
                   # B905 (`zip` without `strict=`) is the bulk of the baseline and
                   # its fix CHANGES BEHAVIOUR (`strict=True` raises), so pay it
                   # down per call site rather than sweeping. B008 is gated at zero:
@@ -705,6 +709,10 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream -b stream:1400
 # `hatch run check-demo-ladders` fails a built store whose SPARSEST slices fall
 # below the floor — it measures the 5th percentile, since a ladder starves at its
 # sparsest slice and one busy coordinate masks hundreds of starved ones.
+# It is intentionally not a checkout-only CI step: generated demo stores are
+# gitignored and absent there, so that would audit nothing. Demo-build/release
+# callers must run it with `--require-scenes`; `check-scene-credits` has the same
+# artifact-only contract.
 
 # Give every leaf of an EXISTING tree an additive ladder, structure-preservingly
 # (substitutive kind=lod levels, partition parts, adaptive groups all keep their
