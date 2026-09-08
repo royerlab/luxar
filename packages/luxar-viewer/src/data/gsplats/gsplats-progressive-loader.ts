@@ -68,9 +68,7 @@ function resolvePrefetchDepth(
 
 function readPrefetchHeadroom(loader: GSplatsSpatialIndexLoader | undefined): number | null {
   if (!loader) return null;
-  const readStats = loader.getPrefetchCacheStats;
-  if (typeof readStats !== 'function') return null;
-  const stats = readStats.call(loader);
+  const stats = loader.getPrefetchCacheStats();
   if (!stats) return null;
   return Math.max(0, (stats.maxSize ?? 0) - stats.size);
 }
@@ -814,9 +812,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     if (this._metadataWarmStarted || this._disposed) return;
     this._metadataWarmStarted = true;
     for (let level = 1; level < this.nLods; level++) {
-      const ensureInitialized = this.lodLoaders[level].ensureInitialized;
-      if (typeof ensureInitialized !== 'function') continue;
-      void ensureInitialized.call(this.lodLoaders[level]).catch(() => {
+      void this.lodLoaders[level].ensureInitialized().catch(() => {
         // Demand loading surfaces malformed metadata; warming stays best-effort.
       });
     }
