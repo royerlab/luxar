@@ -61,8 +61,8 @@ export async function loadMeshNodeCheap(
   log.custom('🔺', Modules.SCENE_LOADER, `Loading mesh: ${node.path}`);
   log.info(
     Modules.SCENE_LOADER,
-    `  ${String(node.attrs.n_vertices ?? 'unknown')} vertices, ` +
-      `${String(node.attrs.n_faces ?? 'unknown')} faces`
+    `  ${typeof node.attrs.n_vertices === 'number' ? node.attrs.n_vertices.toString() : 'unknown'} vertices, ` +
+      `${typeof node.attrs.n_faces === 'number' ? node.attrs.n_faces.toString() : 'unknown'} faces`
   );
 
   // Progressive reveal ladder: walks `additive_<i>/` subgroups and wraps one
