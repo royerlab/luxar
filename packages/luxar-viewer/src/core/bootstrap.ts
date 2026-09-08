@@ -133,7 +133,7 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // the GPU byte budget below, the cache pool's device class, gesture routing
   // and the touch UI all derive from `getInputProfile()`, and it memoises on
   // first use.
-  setInputProfileOverride(urlParams.input);
+  setInputProfileOverride(urlParams.input ?? null);
 
   // Size the single GPU-geometry byte budget before any pool / LOD
   // registry is constructed. Precedence: `?gpuBudgetMB=` URL param >

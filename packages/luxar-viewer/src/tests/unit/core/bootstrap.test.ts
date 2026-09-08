@@ -186,6 +186,17 @@ describe('bootstrapStandalone', () => {
       }
     });
 
+    it('detects the input profile when a partial URL-params object omits input', async () => {
+      const { getInputProfile, resetInputProfileForTests } =
+        await import('../../../utils/input-capabilities');
+      try {
+        await bootstrapStandalone({ canvas: CANVAS, urlParams: {} as UrlParams });
+        expect(getInputProfile().source).toBe('detected');
+      } finally {
+        resetInputProfileForTests();
+      }
+    });
+
     it('names the browser tab from ?title=, and leaves it alone without one', async () => {
       const original = document.title;
       try {
