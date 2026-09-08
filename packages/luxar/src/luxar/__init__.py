@@ -44,6 +44,7 @@ from .core.node import Node
 from .core.overlay import Overlay
 from .core.points import Points
 from .core.scene import Scene
+from .core.sound import Sound
 from .core.transforms import (
     compose,
     from_list,
@@ -65,6 +66,7 @@ from .core.transforms import (
 )
 from .core.viewer_config import (
     AnimationConfig,
+    AudioConfig,
     CameraConfig,
     DimensionsConfig,
     EnvironmentConfig,
@@ -124,6 +126,7 @@ __all__: list[str] = [
     "Points",
     "Lines",
     "Mesh",
+    "Sound",
     "GSplats",
     "Node",
     "Overlay",
@@ -142,6 +145,7 @@ __all__: list[str] = [
     "DimensionsConfig",
     "AnimationConfig",
     "Waypoint",
+    "AudioConfig",
     # Enumerations
     "BlendingMode",
     "NodeType",

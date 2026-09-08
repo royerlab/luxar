@@ -84,6 +84,12 @@
   background: var(--luxar-border-default);
 }
 
+/* An item whose `hidden` predicate is true is not rendered at all (e.g. the
+   Sound button on a scene without sound nodes). */
+.luxar-control-rail__btn[hidden] {
+  display: none;
+}
+
 .luxar-control-rail__btn {
   position: relative;
   width: 38px;

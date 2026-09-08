@@ -408,6 +408,19 @@ class TestFormatTreeNode:
         assert "n=500" in result
         assert "dtype=float32" in result
 
+    def test_with_sound_attrs(self) -> None:
+        """Sound summaries are rendered rather than discarded."""
+        result = format_tree_node(
+            "narration",
+            depth=1,
+            is_last=True,
+            node_type="sound",
+            attrs={"format": "mp3", "trigger": "once", "bus": "voice"},
+        )
+        assert "format=mp3" in result
+        assert "trigger=once" in result
+        assert "bus=voice" in result
+
     def test_with_prefix(self) -> None:
         """Test format_tree_node with custom prefix."""
         result = format_tree_node("child", depth=1, is_last=True, prefix="│   ")

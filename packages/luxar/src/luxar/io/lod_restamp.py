@@ -94,6 +94,7 @@ from arbol import aprint, asection
 from .._zarr_compat import (
     close,
     consolidate,
+    group_keys,
     is_consolidated,
     open_group,
     read_consolidated_attrs,
@@ -345,7 +346,7 @@ def _empty_ladder_refusal(
     if children:
         return None
     path = group.path or "/"
-    subgroups = sorted(str(name) for name in group.group_keys())
+    subgroups = sorted(group_keys(group))
     if subgroups:
         return SkippedGroup(
             path,
@@ -387,7 +388,7 @@ def _orphan_ladder_child_refusal(
     resolved = {name for name, _, _ in children}
     orphans = sorted(
         str(name)
-        for name in group.group_keys()
+        for name in group_keys(group)
         if str(name) not in resolved
         and _threshold_of(dict(group[str(name)].attrs)) is not None
     )
@@ -571,7 +572,7 @@ def _lod_paths(group: "zarr.Group") -> List[str]:
     out: List[str] = []
     if dict(group.attrs).get("kind") == "lod":
         out.append(group.path or "/")
-    for name in group.group_keys():
+    for name in group_keys(group):
         out.extend(_lod_paths(group[str(name)]))
     return out
 
@@ -623,7 +624,7 @@ def _walk(
                 plans.append(planned)
     elif kind == "partition":
         child_under = under_partition or len(_child_nodes(group)) > 1
-    for name in group.group_keys():
+    for name in group_keys(group):
         _walk(
             group[str(name)],
             under_partition=child_under,
@@ -768,7 +769,7 @@ def _snapshot_content_hashes(
     )
     if not deep:
         return
-    for name in group.group_keys():
+    for name in group_keys(group):
         _snapshot_content_hashes(group[str(name)], undo, deep=True)
 
 

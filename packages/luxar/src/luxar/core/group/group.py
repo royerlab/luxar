@@ -14,6 +14,7 @@ from typing import (
     Callable,
     Dict,
     List,
+    Mapping,
     Optional,
     Sequence,
     TypeVar,
@@ -28,6 +29,7 @@ from ..lines import Lines
 from ..mesh import Mesh
 from ..node import Node
 from ..points import Points
+from ..sound import Sound
 
 if TYPE_CHECKING:
     from ...gsplats.gsplat_data import GSplatData
@@ -406,6 +408,137 @@ class Group(Node):
                 substitutive_lod=substitutive_lod,
                 partition=partition,
                 **attrs,
+            ),
+        )
+
+    def add_sound(
+        self,
+        name: str,
+        clip: Union[bytes, bytearray, str, Path],
+        *,
+        positions: Optional["np.ndarray"] = None,
+        hidden: Optional[Mapping[str, float]] = None,
+        spatial: Optional[bool] = None,
+        trigger: str = "continuous",
+        delay_ms: float = 0.0,
+        gain: float = 1.0,
+        bus: str = "ambient",
+        fade_in_ms: float = 0.0,
+        fade_out_ms: float = 0.0,
+        distance_model: str = "inverse",
+        ref_distance: Optional[float] = None,
+        max_distance: Optional[float] = None,
+        rolloff: Optional[float] = None,
+        cone_inner_deg: Optional[float] = None,
+        cone_outer_deg: Optional[float] = None,
+        cone_outer_gain: Optional[float] = None,
+        orientation: Optional[Sequence[float]] = None,
+        attach_to: Optional[str] = None,
+        ambisonic: Optional[str] = None,
+        license: str = "",
+        attribution: str = "",
+        source_url: str = "",
+        parent: Optional["Node"] = None,
+        extend_to_all: Optional[Union[List[str], str]] = None,
+        **attrs: Any,
+    ) -> "Sound":
+        """Add a sound node — an MP3/AAC clip that plays in the viewer.
+
+        The one node type that is *heard* rather than drawn
+        (``docs/guides/specs/SOUND_SPEC.md``). Four placements:
+
+        * **Everywhere** — ``positions=None, hidden=None``: an ambient bed that
+          plays whatever the sliders say.
+        * **Bound to a hidden-dimension value** — ``hidden={"story": 3}``: sugar
+          for one ``(1, ndim)`` row at ``story=3``, extended over every other
+          non-displayed dimension, so the slab rule that decides which points
+          are visible decides when this clip is live. Non-spatial.
+        * **Spatial** — ``positions=[[3, 7.3, -7.4, -0.3]]``: one nD row per
+          place the source exists; the clip plays through a panner there and
+          gets louder as the camera approaches. ``spatial`` defaults to True.
+        * **Attached** — ``attach_to="cluster_hsp70"``: the source follows the
+          bounding-box centre of the named node ("the cluster hums" without
+          authoring coordinates). Spatial by default; combine with ``hidden=``
+          to make it live at one hidden-dimension value only.
+
+        Args:
+            name: Node name (no ``/``).
+            clip: Encoded MP3 or AAC (``.m4a``) bytes, or a path to such a file.
+                Ogg/Opus is refused (Safari cannot decode it); WAV/FLAC are
+                refused (wrong size class for a hosted store).
+            positions: ``(K, ndim)`` source positions, or ``None``.
+            hidden: ``{dimension_name: value}`` binding for a non-spatial clip.
+                Mutually exclusive with ``positions``.
+            spatial: Route through a panner (needs ``positions`` or
+                ``attach_to``). Defaults to ``positions is not None or
+                attach_to is not None``.
+            trigger: ``"continuous"`` (looped while audible, fades on the slab
+                edge), ``"once"`` (plays once each time the node becomes
+                audible), ``"on_depart"`` / ``"on_arrive"`` (plays once when a
+                story flight leaves / lands on the ``viewer_config.waypoints``
+                entry whose ``when`` clause this node's row satisfies — a node
+                without rows belongs to every waypoint).
+            attach_to: Name of the node whose bounding-box centre the source
+                follows. Mutually exclusive with ``positions``.
+            ambisonic: ``"foa"`` for a first-order ambisonic FIELD — a
+                4-channel AmbiX clip (AAC only) the viewer rotates against the
+                camera so the field stays fixed to the world. Non-spatial and
+                position-free by nature; ``hidden=`` still decides when it is
+                live.
+            delay_ms: Delay after the trigger fires, ``>= 0``.
+            gain: Per-node linear gain, ``>= 0``.
+            bus: ``"ambient"`` (default) / ``"voice"`` / ``"effects"``. The
+                voice bus ducks ambient while it plays.
+            fade_in_ms, fade_out_ms: Ramp lengths on the audible edge, ``>= 0``.
+            distance_model, ref_distance, max_distance, rolloff, cone_inner_deg,
+                cone_outer_deg, cone_outer_gain, orientation: ``PannerNode``
+                knobs (spatial only). Distances left ``None`` default in the
+                viewer from the scene scale (``scale/20`` and ``scale``).
+            license, attribution, source_url: REQUIRED provenance for the clip
+                (e.g. ``"CC0"``, the author, the URL it came from).
+            parent: Parent node (default: this group).
+            extend_to_all: As for ``add_points``; with ``hidden=`` it defaults
+                to every non-displayed dimension not named there.
+            **attrs: ``layer`` / ``visible`` / ``transform`` / ``nd_transform``
+                only — a sound has no appearance attrs.
+
+        Returns:
+            The created Sound node.
+        """
+        from .adders.sound import add_sound_impl
+
+        return self._transactional_add(
+            name,
+            parent,
+            lambda: add_sound_impl(
+                self,
+                name=name,
+                clip=clip,
+                positions=positions,
+                hidden=hidden,
+                spatial=spatial,
+                trigger=trigger,
+                delay_ms=delay_ms,
+                gain=gain,
+                bus=bus,
+                fade_in_ms=fade_in_ms,
+                fade_out_ms=fade_out_ms,
+                distance_model=distance_model,
+                ref_distance=ref_distance,
+                max_distance=max_distance,
+                rolloff=rolloff,
+                cone_inner_deg=cone_inner_deg,
+                cone_outer_deg=cone_outer_deg,
+                cone_outer_gain=cone_outer_gain,
+                orientation=orientation,
+                attach_to=attach_to,
+                ambisonic=ambisonic,
+                license=license,
+                attribution=attribution,
+                source_url=source_url,
+                parent=parent,
+                extend_to_all=extend_to_all,
+                attrs=attrs,
             ),
         )
 

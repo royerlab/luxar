@@ -160,7 +160,28 @@ export interface WaypointPorts {
   autoRotateActive: () => boolean;
   /** Snake_case rendering overrides — the authored `viewer_config` path. */
   applyRendering: (rendering: Record<string, unknown>) => void;
+  /**
+   * The two story events (`SOUND_SPEC.md` §4.3): `waypoint-departed` fires the
+   * moment the matched waypoint changes away from one; `waypoint-arrived`
+   * fires after the new waypoint's flight resolves (or immediately after a
+   * snap, or immediately when it has no camera block). A flight the visitor
+   * cancels still resolves and still arrives (`completed: false`); a flight a
+   * NEWER waypoint superseded does not arrive at all — the visitor has moved
+   * on, and its narration must not overlap the new story's.
+   */
+  emit?: (event: WaypointEvent['event'], payload: WaypointEvent['payload']) => void;
 }
+
+/** The waypoint driver's events on the embedder bus. */
+export interface WaypointEventMap {
+  'waypoint-departed': { index: number };
+  'waypoint-arrived': { index: number; completed: boolean };
+}
+export type WaypointEventName = keyof WaypointEventMap;
+/** One emitted event as a discriminated pair, for the port's non-generic signature. */
+export type WaypointEvent = {
+  [K in WaypointEventName]: { event: K; payload: WaypointEventMap[K] };
+}[WaypointEventName];
 
 /** How a newly matched waypoint is reached. */
 export type WaypointArrival = 'snap' | 'fly';
@@ -193,31 +214,66 @@ export class WaypointDriver {
     if (!dims) return this.current;
     const idx = matchWaypoint(this.waypoints, dims);
     if (idx === this.current) return idx;
+    const previous = this.current;
     this.current = idx;
+    if (previous >= 0) this.ports.emit?.('waypoint-departed', { index: previous });
     if (idx < 0) return idx;
 
-    const wp = this.waypoints[idx];
-    if (wp.camera && typeof wp.camera === 'object') {
-      this.reach(wp, wp.camera, arrival);
-    }
-    if (wp.rendering && typeof wp.rendering === 'object') {
-      this.ports.applyRendering(wp.rendering);
-    }
+    const flight = this.applyWaypoint(this.waypoints[idx], arrival);
     log.info(Modules.APP, `Waypoint ${idx} reached (${arrival})`);
+    this.announceArrival(idx, flight);
     return idx;
   }
 
-  /** Apply a waypoint's camera: verbatim at load, as a flight on a story step. */
-  private reach(wp: ZarrWaypoint, camera: ZarrCameraConfig, arrival: WaypointArrival): void {
+  /** Camera (a flight on a story step) and rendering overrides of a matched waypoint. */
+  private applyWaypoint(wp: ZarrWaypoint, arrival: WaypointArrival): Promise<FlightResult> | null {
+    const flight =
+      wp.camera && typeof wp.camera === 'object' ? this.reach(wp, wp.camera, arrival) : null;
+    if (wp.rendering && typeof wp.rendering === 'object') {
+      this.ports.applyRendering(wp.rendering);
+    }
+    return flight;
+  }
+
+  /**
+   * `waypoint-arrived`: right away for a snap or a camera-less waypoint, else
+   * when the flight resolves — unless a newer match superseded it meanwhile
+   * (see the port docs).
+   */
+  private announceArrival(idx: number, flight: Promise<FlightResult> | null): void {
+    if (!flight) {
+      this.ports.emit?.('waypoint-arrived', { index: idx, completed: true });
+      return;
+    }
+    void flight.then((result) => {
+      if (this.current !== idx) return;
+      this.ports.emit?.('waypoint-arrived', { index: idx, completed: result.completed });
+    });
+  }
+
+  /** The waypoint at `index`, for a listener that needs its `when` clause. */
+  getWaypoint(index: number): ZarrWaypoint | undefined {
+    return this.waypoints[index];
+  }
+
+  /**
+   * Apply a waypoint's camera: verbatim at load (returns null), as a flight on
+   * a story step (returns the flight, for the arrival event).
+   */
+  private reach(
+    wp: ZarrWaypoint,
+    camera: ZarrCameraConfig,
+    arrival: WaypointArrival
+  ): Promise<FlightResult> | null {
     const pose = this.ports.resolvePose(camera, this.ports.getLivePose());
     if (arrival === 'snap') {
       // Load-time framing: the authored pose verbatim.
       this.ports.snapTo(pose);
-      return;
+      return null;
     }
     // A story step. `duration_ms: 0` is still a flight of zero length so the
     // turntable rule applies to it too.
-    void this.ports.flyTo(pose, this.flightOptions(wp));
+    return this.ports.flyTo(pose, this.flightOptions(wp));
   }
 
   private flightOptions(wp: ZarrWaypoint): FlyToOptions {

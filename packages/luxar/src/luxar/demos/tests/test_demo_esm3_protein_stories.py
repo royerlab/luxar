@@ -8,18 +8,25 @@ gets highlighted and WHERE the camera goes, on synthetic data.
 from __future__ import annotations
 
 import html
+from pathlib import Path
 
 import numpy as np
 import pytest
 
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
+from luxar.demos import demo_esm3_protein_stories as demo
 from luxar.demos.demo_esm3_protein_stories import (
+    NARRATION_AFTER_FLIGHT_MS,
     STORIES,
     STORY_DIM,
     Story,
+    StoryCluster,
+    add_story_sounds,
+    hum_frequency_hz,
     overview_panel_html,
     select_story_members,
     story_camera,
+    story_node_name,
     story_panel_html,
 )
 
@@ -270,11 +277,11 @@ def test_story_highlights_declare_their_intentional_additive_blending() -> None:
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "add_points"
         and node.args
-        and isinstance(node.args[0], ast.JoinedStr)
-        and any(
-            isinstance(part, ast.Constant) and part.value == "Story "
-            for part in node.args[0].values
-        )
+        # The highlight node is the one named through story_node_name(k, s)
+        # (the hums' attach_to target).
+        and isinstance(node.args[0], ast.Call)
+        and isinstance(node.args[0].func, ast.Name)
+        and node.args[0].func.id == "story_node_name"
     ]
     assert len(story_points) == 1
     blending_mode = next(
@@ -327,6 +334,214 @@ def test_shipped_stories_are_well_formed_and_author_valid_waypoints() -> None:
         ]
     )
     assert len(vc.to_dict()["waypoints"]) == 11
+
+
+# =============================================================================
+# Sound layer: narration text + node assembly
+# =============================================================================
+
+
+def test_add_story_sounds_authors_a_bed_and_one_narration_per_slot(
+    tmp_path, monkeypatch
+) -> None:
+    """The bed download and the TTS are swapped for fakes; the SOUND NODES that land
+    in the store are real (through ``scene.add_sound``)."""
+    from luxar import Dimension, Dimensions, LuxarZarrCompiler
+    from luxar._zarr_compat import open_group
+
+    mp3 = bytes.fromhex("fffb9000") + b"\x00" * 64
+    bed = tmp_path / "bed.mp3"
+    bed.write_bytes(mp3)
+    monkeypatch.setattr(demo, "cached_download", lambda *a, **k: bed)
+    spoken: list[str] = []
+
+    def fake_synthesise(text, voice, cache_dir, *, engine=None, engines=None):
+        spoken.append(text)
+        clip = cache_dir / f"{len(spoken)}.mp3"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        clip.write_bytes(mp3)
+        return clip
+
+    monkeypatch.setattr(demo, "synthesise", fake_synthesise)
+    hums: list[float] = []
+
+    def fake_hum(frequency_hz, seconds, cache_dir, **_k):
+        hums.append(frequency_hz)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        clip = cache_dir / f"hum{len(hums)}.m4a"
+        clip.write_bytes(b"\x00\x00\x00\x18ftypM4A " + b"\x00" * 64)
+        return clip
+
+    monkeypatch.setattr(demo, "synthesise_hum", fake_hum)
+    foa_sources: list[Path] = []
+
+    def fake_foa(src, cache_dir, *, spread_deg, loop_crossfade_s):
+        assert loop_crossfade_s == demo.AMBIENT_BED_LOOP_CROSSFADE_S
+        foa_sources.append(src)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        clip = cache_dir / "foa.m4a"
+        clip.write_bytes(b"\x00\x00\x00\x18ftypM4A " + b"\x00" * 64)
+        return clip
+
+    monkeypatch.setattr(demo, "synthesise_foa_from_clip", fake_foa)
+    stories = (
+        _story(key="A", frame_fraction=0.72, flight_ms=2000),
+        _story(key="B", pattern="^x", flight_ms=4000),
+    )
+    clusters = [
+        StoryCluster(
+            indices=np.array([0]),
+            centre=np.zeros(3),
+            r95=0.5,
+            r50=0.1,
+            n_named=1,
+        ),
+        StoryCluster(
+            indices=np.array([1]),
+            centre=np.ones(3),
+            r95=2.0,
+            r50=1.1,
+            n_named=1,
+        ),
+    ]
+    store = tmp_path / "s.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(
+            dimensions=Dimensions(
+                [
+                    Dimension(
+                        STORY_DIM,
+                        unit="",
+                        categories=["Overview", "A", "B"],
+                        display=False,
+                    ),
+                    Dimension("x", unit="UMAP"),
+                    Dimension("y", unit="UMAP"),
+                    Dimension("z", unit="UMAP"),
+                ]
+            )
+        )
+        added = add_story_sounds(
+            scene,
+            stories,
+            narration_dir=tmp_path / "narration",
+            engine="openai",
+            clusters=clusters,
+            hum_dir=tmp_path / "hums",
+            ambisonic_dir=tmp_path / "foa",
+        )
+    assert added == 6  # bed + overview + two narrations + two hums
+    assert foa_sources == [bed]
+    # The authored scripts, not the panel: the overview script, then each
+    # story's `narration` (or its title + open question when none is authored).
+    assert spoken[0] == demo.OVERVIEW_NARRATION
+    assert spoken[1] == demo.story_narration(stories[0])
+    assert not spoken[1].startswith("Story ")
+    root = open_group(store, mode="r")
+    bed_attrs = dict(root["bed_ambient"].attrs)
+    assert bed_attrs["trigger"] == "continuous" and bed_attrs["bus"] == "ambient"
+    assert bed_attrs["has_positions"] is False
+    assert bed_attrs["license"] == "CC0"
+    # The bed became a first-order ambisonic field (the fake encoder "succeeded").
+    assert bed_attrs["ambisonic"] == "foa" and bed_attrs["format"] == "aac"
+    assert bed_attrs["spatial"] is False
+    # Bed and hums are Layers-panel rows (mute / gain); narrations are not.
+    assert bed_attrs["layer"] is True
+    assert dict(root["hum_B"].attrs)["layer"] is True
+    assert "layer" not in dict(root["narration_B"].attrs)
+    narr = dict(root["narration_B"].attrs)
+    # Narration starts when the flight lands (waypoint arrival), a beat later.
+    assert narr["trigger"] == "on_arrive" and narr["bus"] == "voice"
+    assert narr["delay_ms"] == NARRATION_AFTER_FLIGHT_MS
+    assert narr["has_positions"] is True and narr["n_positions"] == 1
+    overview = dict(root["narration_Overview"].attrs)
+    assert overview["trigger"] == "on_arrive"
+
+    # One hum per cluster, attached to the story's highlight node and tuned from
+    # the same distance as its story camera.
+    assert hums == [hum_frequency_hz(1), hum_frequency_hz(2)]
+    assert hum_frequency_hz(2) > hum_frequency_hz(1)
+    hum_b = dict(root["hum_B"].attrs)
+    assert hum_b["attach_to"] == story_node_name(2, stories[1]) == "Story 2: B"
+    assert hum_b["spatial"] is True and hum_b["bus"] == "effects"
+    assert hum_b["trigger"] == "continuous" and hum_b["loop"] is True
+    camera_b = demo.story_camera_distance(clusters[1], stories[1])
+    assert hum_b["ref_distance"] == pytest.approx(
+        camera_b * demo.HUM_REF_DISTANCE_PER_CAMERA_DISTANCE
+    )
+    assert hum_b["max_distance"] == pytest.approx(
+        camera_b * demo.HUM_MAX_DISTANCE_PER_CAMERA_DISTANCE
+    )
+    assert 20 * np.log10(hum_b["ref_distance"] / camera_b) == pytest.approx(-13.0)
+    assert hum_b["has_positions"] is True and hum_b["n_positions"] == 1
+    hum_a = dict(root["hum_A"].attrs)
+    camera_a = demo.story_camera_distance(clusters[0], stories[0])
+    assert hum_a["ref_distance"] == pytest.approx(
+        camera_a * demo.HUM_REF_DISTANCE_PER_CAMERA_DISTANCE
+    )
+    assert 20 * np.log10(hum_a["ref_distance"] / camera_a) == pytest.approx(-13.0)
+
+
+def test_add_story_sounds_stays_silent_without_an_engine_and_survives_no_bed(
+    tmp_path, monkeypatch
+) -> None:
+    from luxar import Dimension, Dimensions, LuxarZarrCompiler
+
+    def offline(*_a, **_k):
+        raise OSError("no network")
+
+    monkeypatch.setattr(demo, "cached_download", offline)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr("luxar.demos._narration.shutil.which", lambda _n: None)
+    store = tmp_path / "s.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(
+            dimensions=Dimensions(
+                [
+                    Dimension(
+                        STORY_DIM, unit="", categories=["Overview", "A"], display=False
+                    ),
+                    Dimension("x", unit="UMAP"),
+                    Dimension("y", unit="UMAP"),
+                    Dimension("z", unit="UMAP"),
+                ]
+            )
+        )
+        with pytest.warns(UserWarning, match="No narration engine"):
+            added = add_story_sounds(
+                scene, (_story(key="A"),), narration_dir=tmp_path / "n", engine=None
+            )
+    assert added == 0
+
+
+def test_add_story_sounds_keeps_the_stereo_bed_without_an_encoder(
+    tmp_path, monkeypatch
+) -> None:
+    from luxar import Dimension, Dimensions, LuxarZarrCompiler
+    from luxar._zarr_compat import open_group
+
+    bed = tmp_path / "bed.mp3"
+    bed.write_bytes(bytes.fromhex("fffb9000") + b"\x00" * 64)
+    monkeypatch.setattr(demo, "cached_download", lambda *a, **k: bed)
+    monkeypatch.setattr(demo, "synthesise_foa_from_clip", lambda *a, **k: None)
+    store = tmp_path / "s.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(
+            dimensions=Dimensions(
+                [
+                    Dimension(
+                        STORY_DIM, unit="", categories=["Overview"], display=False
+                    ),
+                    Dimension("x", unit="UMAP"),
+                    Dimension("y", unit="UMAP"),
+                    Dimension("z", unit="UMAP"),
+                ]
+            )
+        )
+        added = add_story_sounds(scene, (), narration_dir=tmp_path / "n", engine="none")
+    assert added == 1
+    attrs = dict(open_group(store, mode="r")["bed_ambient"].attrs)
+    assert "ambisonic" not in attrs and attrs["format"] == "mp3"
 
 
 def test_biohub_logo_is_a_bundled_transparent_png() -> None:
