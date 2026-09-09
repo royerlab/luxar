@@ -26,7 +26,7 @@ _CUDA_MAX_SUPPORTED_DIM = 8
 
 def _try_cuda_render(
     centers: torch.Tensor,
-    cholesky_factors: torch.Tensor,
+    Ls: torch.Tensor,  # (N, d, d)
     amplitudes: torch.Tensor,
     shape: Tuple[int, ...],
     truncate: float,
@@ -54,7 +54,7 @@ def _try_cuda_render(
         with torch.no_grad():
             output: torch.Tensor = CUDASplatFunction.apply(  # type: ignore[no-untyped-call, unused-ignore]
                 centers,
-                cholesky_factors,
+                Ls,
                 amplitudes,
                 tuple(shape),
                 truncate,
