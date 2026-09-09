@@ -208,8 +208,8 @@ vi.mock('../../../../../utils/input-capabilities', () => ({
 }));
 
 const initializeGpuByteBudget = vi.hoisted(() => vi.fn());
-vi.mock('../../../../../rendering/gpu-byte-budget', () => ({
-  getGpuByteBudget: () => 1024,
+vi.mock('../../../../../rendering/gpu-byte-budget', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../../../rendering/gpu-byte-budget')>()),
   initializeGpuByteBudget,
 }));
 
