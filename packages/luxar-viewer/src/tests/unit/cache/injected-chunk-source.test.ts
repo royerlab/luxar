@@ -162,10 +162,8 @@ describe('MultiLevelCachingStore with an injected ChunkSource', () => {
   });
 
   it('REJECTS on an aborted outcome, so an invalidated read cannot become fill values', async () => {
-    // The other half of the asymmetry, and the whole safety property: an
-    // `error` degrades to `undefined` (zarrita fills the chunk), while an
-    // `aborted` must reject — an invalidation fired precisely because those
-    // bytes must not be trusted.
+    // An invalidation fired precisely because those bytes must not be trusted,
+    // so an aborted read must reject rather than becoming fill values.
     const { source } = fakeSource({
       async get(): Promise<ChunkFetchOutcome> {
         return { kind: 'aborted' };
@@ -173,11 +171,11 @@ describe('MultiLevelCachingStore with an injected ChunkSource', () => {
     });
     const store = new MultiLevelCachingStore(source, { noOpfs: true });
 
-    await expect(store.get('points/c/0/0')).rejects.toThrow(/aborted during invalidation/);
+    await expect(store.get('points/c/0/0')).rejects.toThrow(/Cache read aborted/);
     await store.dispose();
   });
 
-  it('surfaces a source error as `undefined` rather than throwing', async () => {
+  it('throws a source error so zarrita cannot synthesize fill values', async () => {
     const { source } = fakeSource({
       async get(): Promise<ChunkFetchOutcome> {
         return { kind: 'error', cause: new Error('boom') };
@@ -185,7 +183,7 @@ describe('MultiLevelCachingStore with an injected ChunkSource', () => {
     });
     const store = new MultiLevelCachingStore(source, { noOpfs: true });
 
-    expect(await store.get('points/c/0/0')).toBeUndefined();
+    await expect(store.get('points/c/0/0')).rejects.toThrow('boom');
     await store.dispose();
   });
 });
