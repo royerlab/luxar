@@ -456,6 +456,12 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
     expect(peek(mgr).hdrTarget.width).toBe(8192);
     expect(peek(mgr).hdrTarget.height).toBe(4334);
 
+    mgr.setSSAAMultiplier(1);
+    expect(peek(mgr).hdrTarget.samples).toBe(4);
+
+    mgr.setSSAAMultiplier(1.5);
+    expect(peek(mgr).hdrTarget.samples).toBe(0);
+
     mgr.rebuildAfterContextRestore();
     expect(peek(mgr).hdrTarget.samples).toBe(0);
 

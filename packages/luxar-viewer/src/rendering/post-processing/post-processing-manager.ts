@@ -194,12 +194,16 @@ export class PostProcessingManager {
   private get activeMSAASamples(): number {
     // SSAA already supersamples the scene; retaining MSAA would add redundant
     // multisample colour/depth renderbuffers that can exceed the GPU allocation budget.
-    return this.msaaEnabled && !this.ssaaEnabled ? this.msaaSamples : 0;
+    return this.msaaEnabled && !(this.ssaaEnabled && this.ssaaMultiplier > 1)
+      ? this.msaaSamples
+      : 0;
   }
 
   private describeMSAA(): string {
     if (!this.msaaEnabled) return 'off';
-    if (this.ssaaEnabled) return `${this.msaaSamples}x configured; suspended by SSAA`;
+    if (this.ssaaEnabled && this.ssaaMultiplier > 1) {
+      return `${this.msaaSamples}x configured; suspended by SSAA`;
+    }
     return `${this.msaaSamples}x`;
   }
 
