@@ -433,6 +433,83 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
     mgr.dispose();
   });
 
+  it('suspends MSAA renderbuffers while SSAA is active and restores them afterward', () => {
+    const renderer = makeMockRenderer({ pixelRatio: 2 });
+    const capabilities = mockCaps('webgl2', {
+      maxTextureSize: 16384,
+      maxRenderbufferSize: 8192,
+    });
+    materialManager.setCaps(capabilities);
+    const mgr = new PostProcessingManager(
+      renderer,
+      capabilities,
+      new THREE.Scene(),
+      new THREE.PerspectiveCamera(),
+      { width: 2509, height: 1328 }
+    );
+
+    mgr.setMSAAEnabled(true);
+    expect(peek(mgr).hdrTarget.samples).toBe(4);
+
+    mgr.setSSAAEnabled(true);
+    expect(peek(mgr).hdrTarget.samples).toBe(0);
+    expect(peek(mgr).hdrTarget.width).toBe(8192);
+    expect(peek(mgr).hdrTarget.height).toBe(4334);
+
+    mgr.setSSAAMultiplier(1);
+    expect(peek(mgr).hdrTarget.samples).toBe(4);
+
+    mgr.setSSAAMultiplier(1.5);
+    expect(peek(mgr).hdrTarget.samples).toBe(0);
+
+    mgr.rebuildAfterContextRestore();
+    expect(peek(mgr).hdrTarget.samples).toBe(0);
+
+    mgr.setSSAAEnabled(false);
+    expect(peek(mgr).hdrTarget.samples).toBe(4);
+
+    mgr.dispose();
+  });
+
+  it('logs the effective MSAA state while SSAA suspends configured samples', () => {
+    const mgr = makeManager();
+    mgr.setMSAAEnabled(true);
+    const updateLog = vi.spyOn(log, 'update').mockImplementation(() => {});
+    const infoLog = vi.spyOn(log, 'info').mockImplementation(() => {});
+
+    mgr.setSSAAEnabled(true);
+    expect(updateLog).toHaveBeenLastCalledWith(
+      Modules.POST_PROCESSING,
+      'SSAA enabled (2x); MSAA: 4x configured; suspended by SSAA'
+    );
+
+    mgr.setSSAAMultiplier(1);
+    expect(updateLog).toHaveBeenLastCalledWith(
+      Modules.POST_PROCESSING,
+      'SSAA multiplier changed to 1x; MSAA: 4x'
+    );
+    mgr.setMSAASamples(2);
+    expect(infoLog).toHaveBeenLastCalledWith(Modules.POST_PROCESSING, 'MSAA samples set to 2x');
+
+    mgr.setSSAAMultiplier(1.5);
+    expect(updateLog).toHaveBeenLastCalledWith(
+      Modules.POST_PROCESSING,
+      'SSAA multiplier changed to 1.5x; MSAA: 2x configured; suspended by SSAA'
+    );
+    mgr.setMSAASamples(4);
+    expect(infoLog).toHaveBeenLastCalledWith(
+      Modules.POST_PROCESSING,
+      'MSAA samples set to 4x configured; suspended by SSAA'
+    );
+
+    mgr.setSSAAEnabled(false);
+    expect(updateLog).toHaveBeenLastCalledWith(Modules.POST_PROCESSING, 'SSAA disabled; MSAA: 4x');
+
+    mgr.dispose();
+    updateLog.mockRestore();
+    infoLog.mockRestore();
+  });
+
   it('reallocates after rebuildAfterContextRestore even at an identical size', () => {
     // The restore path rebuilds all transient targets; the allocation
     // memo must be invalidated so the follow-up updateRendererSize()

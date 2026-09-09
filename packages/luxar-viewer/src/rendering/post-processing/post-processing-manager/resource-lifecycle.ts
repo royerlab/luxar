@@ -111,7 +111,6 @@ export interface PipelineResources {
 export interface BuildResourcesConfig {
   readonly physW: number;
   readonly physH: number;
-  readonly msaaEnabled: boolean;
   readonly msaaSamples: number;
   readonly fxaaEnabled: boolean;
   readonly capabilities: RendererCapabilities;
@@ -145,7 +144,7 @@ export interface BuildResourcesConfig {
  * orchestrator assigns each field back to its private store.
  */
 export function buildTransientResources(c: BuildResourcesConfig): PipelineResources {
-  const hdrTarget = createHdrTarget(c.physW, c.physH, c.msaaEnabled ? c.msaaSamples : 0);
+  const hdrTarget = createHdrTarget(c.physW, c.physH, c.msaaSamples);
   const ldrTarget = createLdrTarget(c.physW, c.physH);
 
   // Mega-shader + fullscreen mesh. The materialManager dispatches on

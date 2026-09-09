@@ -169,7 +169,7 @@ export class PostProcessingManager {
       `PostProcessingManager initialized - Output: ${size.width}x${size.height}, ` +
         `Render: ${this.computeEffectiveSize().width}x${this.computeEffectiveSize().height}` +
         `${this.ssaaEnabled ? ' (SSAA)' : ''}, ` +
-        `MSAA: ${this.msaaEnabled ? this.msaaSamples + 'x' : 'off'}`
+        `MSAA: ${this.describeMSAA()}`
     );
   }
 
@@ -189,6 +189,23 @@ export class PostProcessingManager {
 
   private get maxPhysicalDimension(): number {
     return Math.min(this.capabilities.maxTextureSize, this.capabilities.maxRenderbufferSize);
+  }
+
+  private get activeMSAASamples(): number {
+    // SSAA already supersamples the scene; retaining MSAA would add redundant
+    // multisample colour/depth renderbuffers that can exceed the GPU allocation budget.
+    // At exactly 1x, the target matches SSAA-off size, so keep the configured mode.
+    return this.msaaEnabled && !(this.ssaaEnabled && this.ssaaMultiplier > 1)
+      ? this.msaaSamples
+      : 0;
+  }
+
+  private describeMSAA(): string {
+    if (!this.msaaEnabled) return 'off';
+    if (this.activeMSAASamples > 0) {
+      return `${this.msaaSamples}x`;
+    }
+    return `${this.msaaSamples}x configured; suspended by SSAA`;
   }
 
   private getPhysicalSize(): { width: number; height: number } {
@@ -218,8 +235,7 @@ export class PostProcessingManager {
     const r = buildTransientResources({
       physW: width,
       physH: height,
-      msaaEnabled: this.msaaEnabled,
-      msaaSamples: this.msaaSamples,
+      msaaSamples: this.activeMSAASamples,
       fxaaEnabled: this.fxaaEnabled,
       capabilities: this.capabilities,
       bloomLevels: this.bloomLevels,
@@ -576,7 +592,7 @@ export class PostProcessingManager {
     this.reallocateForSize();
     log.update(
       Modules.POST_PROCESSING,
-      `MSAA ${enabled ? `enabled (${this.msaaSamples}x)` : 'disabled'}`
+      `MSAA ${enabled ? `enabled (${this.describeMSAA()})` : 'disabled'}`
     );
   }
 
@@ -586,7 +602,7 @@ export class PostProcessingManager {
     this.msaaSamples = validated;
     if (this.msaaEnabled) {
       this.reallocateForSize();
-      log.info(Modules.POST_PROCESSING, `MSAA samples set to ${validated}`);
+      log.info(Modules.POST_PROCESSING, `MSAA samples set to ${this.describeMSAA()}`);
     }
   }
 
@@ -596,7 +612,7 @@ export class PostProcessingManager {
     this.reallocateForSize();
     log.update(
       Modules.POST_PROCESSING,
-      `SSAA ${enabled ? `enabled (${this.ssaaMultiplier}x)` : 'disabled'}`
+      `SSAA ${enabled ? `enabled (${this.ssaaMultiplier}x)` : 'disabled'}; MSAA: ${this.describeMSAA()}`
     );
   }
 
@@ -632,7 +648,10 @@ export class PostProcessingManager {
     this.ssaaMultiplier = multiplier;
     if (this.ssaaEnabled) {
       this.reallocateForSize();
-      log.update(Modules.POST_PROCESSING, `SSAA multiplier changed to ${multiplier}x`);
+      log.update(
+        Modules.POST_PROCESSING,
+        `SSAA multiplier changed to ${multiplier}x; MSAA: ${this.describeMSAA()}`
+      );
     }
   }
 
@@ -752,7 +771,7 @@ export class PostProcessingManager {
     const allocation = this.getRenderTargetAllocation();
     const { width: logicalW, height: logicalH } = allocation.logical;
     const { width: physW, height: physH } = allocation.physical;
-    const msaaSamples = this.msaaEnabled ? this.msaaSamples : 0;
+    const msaaSamples = this.activeMSAASamples;
 
     const last = this.lastAllocation;
     if (
@@ -773,7 +792,7 @@ export class PostProcessingManager {
     // synchronous resize event from setSize(), so observers must never
     // see a new backbuffer paired with stale post-processing targets.
     this.hdrTarget.dispose();
-    this.hdrTarget = createHdrTarget(physW, physH, this.msaaEnabled ? this.msaaSamples : 0);
+    this.hdrTarget = createHdrTarget(physW, physH, msaaSamples);
 
     this.ldrTarget.setSize(physW, physH);
     if (this.bloomChain) {
