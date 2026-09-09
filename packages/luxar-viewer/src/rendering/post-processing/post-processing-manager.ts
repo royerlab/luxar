@@ -169,7 +169,7 @@ export class PostProcessingManager {
       `PostProcessingManager initialized - Output: ${size.width}x${size.height}, ` +
         `Render: ${this.computeEffectiveSize().width}x${this.computeEffectiveSize().height}` +
         `${this.ssaaEnabled ? ' (SSAA)' : ''}, ` +
-        `MSAA: ${this.msaaEnabled ? this.msaaSamples + 'x' : 'off'}`
+        `MSAA: ${this.describeMSAA()}`
     );
   }
 
@@ -193,6 +193,12 @@ export class PostProcessingManager {
 
   private get activeMSAASamples(): number {
     return this.msaaEnabled && !this.ssaaEnabled ? this.msaaSamples : 0;
+  }
+
+  private describeMSAA(): string {
+    if (!this.msaaEnabled) return 'off';
+    if (this.ssaaEnabled) return `${this.msaaSamples}x configured; suspended by SSAA`;
+    return `${this.msaaSamples}x`;
   }
 
   private getPhysicalSize(): { width: number; height: number } {
@@ -580,7 +586,7 @@ export class PostProcessingManager {
     this.reallocateForSize();
     log.update(
       Modules.POST_PROCESSING,
-      `MSAA ${enabled ? `enabled (${this.msaaSamples}x)` : 'disabled'}`
+      `MSAA ${enabled ? `enabled (${this.describeMSAA()})` : 'disabled'}`
     );
   }
 

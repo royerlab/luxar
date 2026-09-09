@@ -170,6 +170,8 @@ describe('ResizeOrchestrator.resizeNow', () => {
     camera.lookAt(target);
     camera.updateMatrixWorld(true);
 
+    const positionBefore = camera.position.clone();
+    const orientationBefore = camera.quaternion.clone();
     const projectedBefore = target.clone().project(camera);
     orchestrator.resizeNow(2509, 1328, { ...harness.ctx, pixelRatioOverride: 1.31 });
     camera.updateMatrixWorld(true);
@@ -178,6 +180,8 @@ describe('ResizeOrchestrator.resizeNow', () => {
     camera.updateMatrixWorld(true);
     const projectedAfterProbe = target.clone().project(camera);
 
+    expect(camera.position).toEqual(positionBefore);
+    expect(camera.quaternion.angleTo(orientationBefore)).toBeCloseTo(0, 12);
     expect(projectedDuringProbe.x).toBeCloseTo(projectedBefore.x, 12);
     expect(projectedDuringProbe.y).toBeCloseTo(projectedBefore.y, 12);
     expect(projectedAfterProbe.x).toBeCloseTo(projectedBefore.x, 12);
