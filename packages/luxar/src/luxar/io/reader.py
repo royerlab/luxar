@@ -14,6 +14,10 @@ import zarr
 
 from luxar._zarr_compat import group_keys
 from luxar._zarr_compat import open_group as zc_open_group
+from luxar.core.group.partition import serialized_bsp_leaf_labels
+
+# Private imports, deliberately: these are the canonical scene-child discovery
+# and ordering rules. A local traversal would be another place for them to drift.
 from luxar.io._compiler.finalize.amplitude_window import (
     _indexed_children,
     _lod_children,
@@ -175,10 +179,35 @@ def _summarize_typed_node(
             info["duration_ms"] = child.attrs["duration_ms"]
 
 
+def _require_group(group: Any, node_name: str) -> zarr.Group:
+    """Return ``group`` or raise the points-node error used by flat reads."""
+    if not isinstance(group, zarr.Group):
+        raise ValueError(f"Node '{node_name}' is not a points node")
+    return group
+
+
+def _validate_partition_parts(
+    group: zarr.Group,
+    parts: List[tuple[str, zarr.Group, dict]],
+    node_name: str,
+) -> None:
+    """Refuse a BSP-backed partition whose persisted parts are incomplete."""
+    bsp_tree = group.attrs.get("bsp_tree")
+    if bsp_tree is None:
+        return
+    expected_parts = len(serialized_bsp_leaf_labels(bsp_tree))
+    if len(parts) != expected_parts:
+        raise ValueError(
+            f"Points node '{node_name}' has {len(parts)} partition parts "
+            f"but BSP tree declares {expected_parts}"
+        )
+
+
 def _flattened_point_sources(
     group: zarr.Group, node_name: str, *, is_root: bool = True
 ) -> List[zarr.Group]:
     """Resolve a structured points node to its finest disjoint leaf groups."""
+
     if not is_root:
         transforms = [
             key for key in ("transform", "nd_transform") if key in group.attrs
@@ -200,6 +229,7 @@ def _flattened_point_sources(
         parts = _ordered_children(group, "part_")
         if not parts:
             raise ValueError(f"Points node '{node_name}' has an empty partition")
+        _validate_partition_parts(group, parts, node_name)
         return [
             source
             for _, part, _ in parts
@@ -604,7 +634,7 @@ class LuxarScene:
 
         group = self._root[name]
         sources = (
-            _flattened_point_sources(group, name)
+            _flattened_point_sources(_require_group(group, name), name)
             if flatten
             else self._flat_point_source(name, group)
         )
@@ -618,7 +648,7 @@ class LuxarScene:
 
     def _get_flattened_points(self, name: str, group: zarr.Group) -> PointsData:
         """Decode and concatenate a structured points node's finest leaves."""
-        sources = _flattened_point_sources(group, name)
+        sources = _flattened_point_sources(_require_group(group, name), name)
         positions = self._concatenate_point_array(
             sources, "positions", name, required=True
         )

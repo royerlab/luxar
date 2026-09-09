@@ -133,6 +133,25 @@ def test_flatten_rejects_incomplete_additive_ladder(tmp_path: Path) -> None:
         scene.get_point_array("cloud", "positions", flatten=True)
 
 
+@pytest.mark.parametrize("damage", ["delete", "untyped"])
+def test_flatten_rejects_incomplete_partition(tmp_path: Path, damage: str) -> None:
+    scene_path = tmp_path / "incomplete-partition.luxar.zarr"
+    positions, _, _, _ = _expected_points()
+    with LuxarZarrCompiler(scene_path) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_points("cloud", positions, partition={"max_elements": 2})
+
+    root = open_group(scene_path, mode="a")
+    if damage == "delete":
+        del root["cloud"]["part_0"]
+    else:
+        del root["cloud"]["part_0"].attrs["type"]
+    consolidate(root)
+
+    with pytest.raises(ValueError, match="partition parts but BSP tree declares"):
+        LuxarScene.load(scene_path).get_points("cloud", flatten=True)
+
+
 def test_flatten_validates_stored_point_count(tmp_path: Path) -> None:
     scene_path = tmp_path / "wrong-count.luxar.zarr"
     positions, _, _, _ = _expected_points()
@@ -205,6 +224,9 @@ def test_get_point_array_preserves_flat_leaf_behavior(tmp_path: Path) -> None:
     np.testing.assert_allclose(decoded, scene.get_points("cloud").positions, atol=1e-6)
     with pytest.raises(ValueError, match="Unknown points array 'normals'"):
         scene.get_point_array("cloud", "normals")
+
+    with pytest.raises(ValueError, match="is not a points node"):
+        scene.get_points("cloud/positions", flatten=True)
 
 
 def test_flatten_round_trips_the_add_points_authoring_path(tmp_path: Path) -> None:
