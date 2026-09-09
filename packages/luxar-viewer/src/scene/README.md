@@ -479,8 +479,8 @@ level that has `failed` does not block, since it can never become ready
 this frame.
 
 Visible partition parts additionally block while a frustum rising edge is
-pending, while their targeted load pass is queued or committing, while their
-stamped leaves describe an older view version, or while a committed
+pending, while any load pass is queued or committing and any part is visible,
+while their stamped leaves describe an older view version, or while a committed
 progressive ladder is incomplete. Hidden/re-culled parts do not block, and an
 archive fault skips waits that cannot make progress. A per-part loader failure
 without an archive fault can leave a stale stamp, so the bounded capture timeout

@@ -1160,12 +1160,12 @@ export class LODGroupRegistry {
    * deliberately rejected: a capture visits the whole scene, so peak residency
    * would be the entire dataset.
    *
-   * Partition parts block while a visible rising edge is pending, while the
-   * targeted view pass is queued or committing, or while a visible stamped leaf
-   * is stale / still climbing its additive ladder. Hidden or re-culled parts are
-   * excluded because they contribute no pixels. Unstamped leaves carry no
-   * freshness or ladder signal and remain non-blocking, matching the lod-group
-   * subtree fold below.
+   * Partition parts block while a visible rising edge is pending, while any load
+   * pass is queued or committing and any part is visible, or while a visible
+   * stamped leaf is stale / still climbing its additive ladder. Hidden or
+   * re-culled parts are excluded because they contribute no pixels. Unstamped
+   * leaves carry no freshness or ladder signal and remain non-blocking, matching
+   * the lod-group subtree fold below.
    *
    * - **A latched archive fault skips all work that could start or wait for new
    *   loads, but still waits for loads already in flight to finish committing.**
@@ -1253,6 +1253,8 @@ export class LODGroupRegistry {
    * object per entry. That cost is genuinely irrelevant here.
    */
   isCaptureQuiescent(): boolean {
+    // Wired to SceneLoader.isLoadPassInProgress: any pass can still change a
+    // visible partition part before this fixed-pose capture frame is exported.
     if (this.anyVisiblePartitionPart() && this.deps.isUpdateInProgress?.() === true) return false;
     if (this.deps.hasArchiveFault?.()) return !this.anyChildLoading();
     const version = this.deps.getViewVersion?.();

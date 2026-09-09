@@ -856,11 +856,12 @@ describe('OfflineCaptureStrategy', () => {
     it('skips the drain entirely — mandatory tick included — when the hook answers null', async () => {
       // `null` is the hook's "this scene has nothing that could ever need
       // waiting for" answer (no scene loader, no LOD registry, or a registry
-      // with neither lod_groups nor partitions). The provider is wired unconditionally in
-      // production, so a plain points/lines scene reaches this path on every
-      // capture and must cost exactly what it did pre-#1695 — the mandatory
-      // selector-catch-up rAF included. Compare the `() => true` test below,
-      // which spends two extra frames for the same two exported frames.
+      // with neither lod_groups nor partitions). The provider is wired
+      // unconditionally in production, so a plain points/lines scene reaches
+      // this path on every capture and must cost exactly what it did pre-#1695
+      // — the mandatory selector-catch-up rAF included. Compare the `() =>
+      // true` test below, which spends two extra frames for the same two
+      // exported frames.
       const { sm } = makeSceneManager();
       const hooks = makeHooks();
       hooks.isLODSettled = vi.fn(() => null);

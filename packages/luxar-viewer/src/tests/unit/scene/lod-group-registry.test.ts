@@ -4638,6 +4638,42 @@ describe('LODGroupRegistry — capture quiescence (isCaptureQuiescent)', () => {
     expect(reg.isCaptureQuiescent()).toBe(true);
   });
 
+  it('does not wait on a pending partition resync while its wrapper is hidden', () => {
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      vi.fn(),
+      () => true
+    );
+    const partition = new THREE.Group();
+    const part = new THREE.Group();
+    partition.add(part);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject: partition,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [part],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+        },
+      ],
+    });
+
+    reg.evaluatePerFrame();
+    partition.position.x = -2.5;
+    reg.evaluatePerFrame();
+    expect(reg.isCaptureQuiescent()).toBe(false);
+
+    partition.visible = false;
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
   it('does not wait on a pending resync after its partition is removed', () => {
     let loadPassInProgress = true;
     const reg = makeRegistry(
@@ -4702,6 +4738,35 @@ describe('LODGroupRegistry — capture quiescence (isCaptureQuiescent)', () => {
 
     expect(reg.isCaptureQuiescent()).toBe(false);
     part.userData.committedLadderComplete = true;
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('does not wait on a stale partition leaf while its wrapper is hidden', () => {
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    const partition = new THREE.Group();
+    const part = new THREE.Group();
+    part.userData = {
+      nodeType: 'points',
+      visiblePointCount: 10,
+      loadedViewVersion: 1,
+      committedLadderComplete: true,
+    };
+    partition.add(part);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject: partition,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [part],
+          positionBounds: { min: [0, 0, 0], max: [0.5, 0.5, 0.5] },
+        },
+      ],
+    });
+    reg.evaluatePerFrame();
+
+    expect(reg.isCaptureQuiescent()).toBe(false);
+    partition.visible = false;
     expect(reg.isCaptureQuiescent()).toBe(true);
   });
 
