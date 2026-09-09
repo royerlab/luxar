@@ -78,6 +78,13 @@ const HELP_SECTIONS: HelpSection[] = [
       { keys: ['2 fingers'], label: 'Pan (fly mode: strafe)', order: 2 },
       { keys: ['Pinch'], label: 'Zoom (fly mode: move forward / back)', order: 3 },
       { keys: ['Twist'], label: 'Roll around the view axis', order: 4 },
+      { keys: ['Tap'], label: 'Pick the element — and open its link, if it has one', order: 5 },
+      {
+        keys: ['Press and hold'],
+        label: 'Actions menu — the touch equivalent of right click',
+        order: 6,
+      },
+      { keys: ['Double tap'], label: 'Recenter camera on scene', order: 7 },
     ],
   },
   {

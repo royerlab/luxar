@@ -649,10 +649,21 @@ describe('help overlay — Touch section', () => {
     expect(touchSection?.querySelector('.luxar-help-overlay__section-note')?.textContent).toBe(
       'Phones and tablets — in ortho mode one finger pans and twist does not roll'
     );
-    expect(
-      Array.from(touchSection?.querySelectorAll<HTMLElement>('kbd') ?? []).map(
-        (key) => key.textContent
-      )
-    ).toEqual(['1 finger', '2 fingers', 'Pinch', 'Twist']);
+    const rows = Array.from(
+      touchSection?.querySelectorAll<HTMLElement>('.luxar-help-overlay__row') ?? []
+    ).map((row) => ({
+      keys: Array.from(row.querySelectorAll('kbd')).map((key) => key.textContent),
+      label: row.querySelector('.luxar-help-overlay__desc')?.textContent,
+    }));
+
+    expect(rows).toEqual([
+      { keys: ['1 finger'], label: 'Rotate (fly mode: look around)' },
+      { keys: ['2 fingers'], label: 'Pan (fly mode: strafe)' },
+      { keys: ['Pinch'], label: 'Zoom (fly mode: move forward / back)' },
+      { keys: ['Twist'], label: 'Roll around the view axis' },
+      { keys: ['Tap'], label: 'Pick the element — and open its link, if it has one' },
+      { keys: ['Press and hold'], label: 'Actions menu — the touch equivalent of right click' },
+      { keys: ['Double tap'], label: 'Recenter camera on scene' },
+    ]);
   });
 });

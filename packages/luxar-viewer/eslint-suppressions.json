@@ -164,9 +164,6 @@
     }
   },
   "src/core/app/interaction/canvas-actions.ts": {
-    "complexity": {
-      "count": 1
-    },
     "max-lines-per-function": {
       "count": 1
     }

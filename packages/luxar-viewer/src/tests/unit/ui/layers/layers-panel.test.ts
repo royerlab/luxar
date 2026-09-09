@@ -332,6 +332,16 @@ describe('LayersPanel — sound rows', () => {
     gain.click();
     expect(panel.layerState.getPrimarySelected()?.path).toBe('/story');
   });
+
+  it('right-clicking the gain slider does not open the row menu', () => {
+    const gain = container.querySelector<HTMLInputElement>('.luxar-layer-row__gain')!;
+    const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+
+    gain.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(document.querySelector('.luxar-context-menu')).toBeNull();
+  });
 });
 
 describe('LayersPanel — construction', () => {
@@ -4365,6 +4375,19 @@ describe('LayersPanel — filter + context-menu lifecycle across dataset reloads
     row.dispatchEvent(rowEv);
     expect(rowEv.defaultPrevented).toBe(true);
     expect(document.querySelector('.luxar-context-menu')).not.toBeNull();
+    panel.dispose();
+  });
+
+  it('right-clicking the layer-order number field leaves the native menu alone', () => {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeManyLayerSceneGraph('alpha'));
+
+    const input = container.querySelector<HTMLInputElement>('.luxar-layers-panel__number')!;
+    const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    input.dispatchEvent(ev);
+
+    expect(ev.defaultPrevented).toBe(false);
+    expect(document.querySelector('.luxar-context-menu')).toBeNull();
     panel.dispose();
   });
 

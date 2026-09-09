@@ -10,6 +10,10 @@ is absent, and the per-structure skip.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
 
 from luxar.demos import _pdb_turntable as tt
 
@@ -129,6 +133,74 @@ def test_render_turntables_skips_when_no_gpu_context(
     assert "no GPU context" in capsys.readouterr().out
 
 
+def test_render_turntables_releases_renderer_when_environment_setup_fails(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    monkeypatch.setattr(tt, "find_pymol", lambda: ["/usr/bin/pymol", "-cq"])
+    monkeypatch.setattr(tt, "find_ffmpeg", lambda: "/usr/bin/ffmpeg")
+    monkeypatch.setattr(tt, "has_moderngl", lambda: True)
+    released: list[bool] = []
+
+    class FakeRenderer:
+        def __init__(self, _size: int) -> None:
+            pass
+
+        def set_environment(self, _faces: object) -> None:
+            raise ValueError("cube faces must be square")
+
+        def release(self) -> None:
+            released.append(True)
+
+    monkeypatch.setattr(tt, "ClayRenderer", FakeRenderer)
+
+    assert tt.render_turntables(["1OMG"], tmp_path) == {}
+    output = capsys.readouterr().out
+    assert "environment setup failed" in output
+    assert "no GPU context" not in output
+    assert released == [True]
+
+
+def test_render_turntable_releases_owned_renderer_when_environment_setup_fails(
+    monkeypatch, tmp_path
+) -> None:
+    released: list[bool] = []
+
+    class FakeRenderer:
+        def __init__(self, _size: int) -> None:
+            pass
+
+        def set_environment(self, _faces: object) -> None:
+            raise ValueError("cube faces must be square")
+
+        def release(self) -> None:
+            released.append(True)
+
+    monkeypatch.setattr(tt, "ClayRenderer", FakeRenderer)
+    monkeypatch.setattr(tt, "has_moderngl", lambda: True)
+    monkeypatch.setattr(
+        tt, "fetch_pdb", lambda _pdb_id, cache: (cache / "1OMG.pdb", "Conotoxin")
+    )
+    monkeypatch.setattr(tt, "structure_atoms", lambda _pdb_id, _cache: 100)
+    monkeypatch.setattr(
+        tt, "export_surface_meshes", lambda *_args, **_kwargs: [tmp_path / "mesh.npz"]
+    )
+    monkeypatch.setattr(
+        tt,
+        "meshes_from_files",
+        lambda *_args, **_kwargs: [SimpleNamespace(positions=np.zeros((3, 3)))],
+    )
+
+    with pytest.raises(ValueError, match="cube faces must be square"):
+        tt.render_turntable(
+            "1OMG",
+            tmp_path,
+            pymol=["/usr/bin/pymol", "-cq"],
+            ffmpeg="/usr/bin/ffmpeg",
+        )
+
+    assert released == [True]
+
+
 def test_render_turntables_reports_and_skips_a_failing_structure(
     monkeypatch, tmp_path, capsys
 ) -> None:
@@ -140,6 +212,10 @@ def test_render_turntables_reports_and_skips_a_failing_structure(
     class FakeRenderer:
         def __init__(self, size: int) -> None:
             self.size = size
+            self.environment: object = "unset"
+
+        def set_environment(self, faces: object) -> None:
+            self.environment = faces
 
         def release(self) -> None:
             released.append(True)
@@ -169,4 +245,97 @@ def test_render_turntables_reports_and_skips_a_failing_structure(
     assert by_id["3WU2"][1] == (0.4, 0.98, 0.4)
     assert by_id["1OMG"][1] == tt.DEFAULT_COLOR
     assert len({id(c[2]) for c in calls}) == 1 and isinstance(calls[0][2], FakeRenderer)
+    # No environment was given: the shared renderer is told so (studio lights).
+    assert calls[0][2].environment is None
     assert released == [True]
+
+
+def test_cache_key_and_cached_lookup_include_the_environment_digest(tmp_path) -> None:
+    import numpy as np
+
+    faces = np.zeros((6, 4, 4, 4), dtype=np.float32)
+    faces[0, 0, 0] = (1.0, 0.5, 0.25, 1.0)
+    digest = tt.environment_digest(faces)
+    assert len(digest) == 8 and tt.environment_digest(None) == ""
+    base = tt.cache_key("1OMG", 900, 768)
+    lit = tt.cache_key("1OMG", 900, 768, env_digest=digest)
+    assert lit != base and lit.startswith("1OMG_v")
+    # A different map is a different render; the same map is the same file.
+    other = faces.copy()
+    other[1, 1, 1] = (0.0, 0.0, 1.0, 1.0)
+    assert (
+        tt.cache_key("1OMG", 900, 768, env_digest=tt.environment_digest(other)) != lit
+    )
+    assert (
+        tt.cache_key("1OMG", 900, 768, env_digest=tt.environment_digest(faces.copy()))
+        == lit
+    )
+    # The cache lookup honours it: an unlit render does not satisfy a lit request.
+    stem = tt.cache_key("1OMG", tt.DEFAULT_FRAMES, tt.DEFAULT_SIZE)
+    (tmp_path / f"{stem}.webm").write_bytes(b"v")
+    (tmp_path / f"{stem}.png").write_bytes(b"p")
+    kw = dict(
+        frames=tt.DEFAULT_FRAMES,
+        fps=tt.DEFAULT_FPS,
+        size=tt.DEFAULT_SIZE,
+        color=tt.DEFAULT_COLOR,
+    )
+    assert tt._cached_turntable_assets("1OMG", tmp_path, **kw) is not None
+    assert (
+        tt._cached_turntable_assets("1OMG", tmp_path, env_digest=digest, **kw) is None
+    )
+
+
+def test_load_environment_faces_reads_a_baked_store_and_is_none_otherwise(
+    tmp_path,
+) -> None:
+    import numpy as np
+
+    from luxar import Dimensions, LuxarZarrCompiler
+    from luxar._zarr_compat import create_array, open_group
+    from luxar.environment import (
+        ENVIRONMENT_FORMAT,
+        FACE_ORDER,
+        attach_environment,
+        pack,
+    )
+
+    assert tt.load_environment_faces(tmp_path / "missing.luxar.zarr") is None
+    store = tmp_path / "scene.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_points(
+            "cloud", np.random.default_rng(1).random((50, 3)).astype(np.float32)
+        )
+    assert tt.load_environment_faces(store) is None  # built, not baked
+
+    res = 8
+    faces = np.zeros((6, res, res, 4), dtype=np.float32)
+    faces[2] = (0.1, 0.8, 0.3, 1.0)  # a green sky on +Y
+    header = {
+        "format": ENVIRONMENT_FORMAT,
+        "face_order": list(FACE_ORDER),
+        "coordinate_system": "webgl",
+        "probe": {"spec": "auto", "position": [0.5, 0.5, 0.5]},
+        "resolution": res,
+        "scene_content_hash": str(
+            dict(open_group(store, mode="r").attrs)["content_hash"]
+        ),
+        "appearance": {},
+        "baked_at": "2026-09-08T00:00:00Z",
+        "viewer_version": "test",
+    }
+    attach_environment(store, pack(header, faces.astype(np.float16).view(np.uint16)))
+
+    loaded = tt.load_environment_faces(store)
+    assert loaded is not None and loaded.shape == (6, res, res, 4)
+    assert loaded.dtype == np.float32
+    assert np.allclose(loaded[2, 0, 0, :3], (0.1, 0.8, 0.3), atol=1e-3)
+    assert not loaded[3].any()
+
+    root = open_group(store, mode="a")
+    env = root["environment"]
+    malformed = np.ones((6, res, res // 2, 4), dtype=np.float16).view(np.uint16)
+    create_array(env, "malformed", data=malformed, overwrite=True)
+    env.attrs["faces"] = "malformed"
+    assert tt.load_environment_faces(store) is None

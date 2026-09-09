@@ -15,6 +15,7 @@ from luxar.utils.arbol_warnings import (
     _arbol_showwarning,
     _default_display_active,
     arbol_warnings,
+    arbol_will_display,
     install_arbol_warnings,
 )
 
@@ -79,6 +80,36 @@ class TestArbolShowwarning:
         assert captured.out == ""
         assert "UserWarning: still visible" in captured.err
         assert "/a/b/encoder.py:42" in captured.err
+
+
+class TestArbolWillDisplay:
+    @pytest.mark.parametrize(
+        ("passthrough", "captured", "enable_output", "depth", "max_depth", "expected"),
+        [
+            (True, False, False, 2, 1, True),
+            (False, True, False, 2, 1, True),
+            (False, False, True, 1, 1, True),
+            (False, False, False, 0, float("inf"), False),
+            (False, False, True, 2, 1, False),
+        ],
+    )
+    def test_matches_arbol_visibility(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        passthrough: bool,
+        captured: bool,
+        enable_output: bool,
+        depth: int,
+        max_depth: float,
+        expected: bool,
+    ) -> None:
+        monkeypatch.setattr(Arbol, "passthrough", passthrough)
+        monkeypatch.setattr(Arbol._thread_local, "captured", captured, raising=False)
+        monkeypatch.setattr(Arbol, "enable_output", enable_output)
+        monkeypatch.setattr(Arbol, "_depth", depth)
+        monkeypatch.setattr(Arbol, "max_depth", max_depth)
+
+        assert arbol_will_display() is expected
 
 
 class TestArbolWarningsContext:

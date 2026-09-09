@@ -81,6 +81,42 @@ describe('ControlRail', () => {
     expect(root.children.length).toBe(3); // wrapper, footer, collapse handle
   });
 
+  it('a touch long-press on a context-popover button opens it without activating (touch)', () => {
+    const activate = vi.fn();
+    const build = vi.fn();
+    rail = new ControlRail(items([{}, { activate, popover: { build, trigger: 'context' } }]));
+    const btn = document.querySelector<HTMLButtonElement>('[data-rail-id="render"]')!;
+    btn.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        pointerId: 1,
+        pointerType: 'touch',
+        clientX: 20,
+        clientY: 100,
+        bubbles: true,
+      })
+    );
+    vi.advanceTimersByTime(500);
+    expect(build).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('.luxar-control-rail__popover')).not.toBeNull();
+    // The release click is swallowed: the button's primary action must not run.
+    btn.dispatchEvent(
+      new PointerEvent('pointerup', { pointerId: 1, pointerType: 'touch', bubbles: true })
+    );
+    btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    expect(activate).not.toHaveBeenCalled();
+  });
+
+  it('a mouse press never long-presses', () => {
+    const build = vi.fn();
+    rail = new ControlRail(items([{}, { popover: { build, trigger: 'context' } }]));
+    const btn = document.querySelector<HTMLButtonElement>('[data-rail-id="render"]')!;
+    btn.dispatchEvent(
+      new PointerEvent('pointerdown', { pointerId: 1, pointerType: 'mouse', bubbles: true })
+    );
+    vi.advanceTimersByTime(2000);
+    expect(build).not.toHaveBeenCalled();
+  });
+
   it('collapses and expands via the handle, persisting the state', () => {
     rail = new ControlRail(items());
     const railEl = document.querySelector('.luxar-control-rail')!;

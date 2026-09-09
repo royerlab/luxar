@@ -195,6 +195,7 @@ def add_video_impl(
     muted: bool = True,
     playback_rate: float = 1.0,
     poster: Any = None,
+    alpha_matte: Optional[str] = None,
     visible_range: Optional[Dict[str, Union[float, Tuple[float, float]]]] = None,
     transition: str = "none",
     transition_duration: float = 0.3,
@@ -205,6 +206,7 @@ def add_video_impl(
         validate_image_input,
         validate_position,
         validate_transition,
+        validate_video_alpha_matte,
         validate_video_input,
         validate_visible_range,
     )
@@ -225,6 +227,9 @@ def add_video_impl(
         # never starts is worse than one that starts silent.
         raise ValueError("autoplay=True requires muted=True (browser autoplay policy)")
     validated_size = _validate_media_size(size) if size is not None else None
+    validate_video_alpha_matte(alpha_matte)
+    if alpha_matte == "stacked" and not autoplay:
+        raise ValueError('alpha_matte="stacked" requires autoplay=True')
     video_bytes, fmt = validate_video_input(video)
     video_filename = f"video.{fmt}"
     files: Dict[str, bytes] = {video_filename: video_bytes}
@@ -250,6 +255,10 @@ def add_video_impl(
         poster_filename = f"poster.{poster_fmt}"
         files[poster_filename] = poster_bytes
         attrs["poster_file"] = poster_filename
+    if alpha_matte is not None:
+        # The clip carries its transparency as a grey matte stacked below the
+        # colour; the viewer recombines the halves (see Scene.add_video).
+        attrs["alpha_matte"] = alpha_matte
     if validated_size is not None:
         # A None height keeps the video's own aspect ratio (CSS height:auto).
         attrs["size"] = validated_size

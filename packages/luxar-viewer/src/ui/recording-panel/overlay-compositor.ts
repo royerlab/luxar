@@ -324,6 +324,21 @@ export function compositeImageOverlay(
   ctx.drawImage(img, xIn + dx, yIn + dy, drawW, drawH);
 }
 
+function getVideoDrawSource(
+  el: HTMLDivElement
+): { source: CanvasImageSource; width: number; height: number } | null {
+  const matte = el.querySelector<HTMLCanvasElement>('canvas.luxar-overlay__matte');
+  if (matte) {
+    if (matte.dataset.hasFrame !== '1') return null;
+    return { source: matte, width: matte.width, height: matte.height };
+  }
+  const video = el.querySelector('video');
+  if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth === 0) {
+    return null;
+  }
+  return { source: video, width: video.videoWidth, height: video.videoHeight };
+}
+
 /** Composite the current frame of a single video overlay. */
 export function compositeVideoOverlay(
   ctx: CanvasRenderingContext2D,
@@ -332,27 +347,24 @@ export function compositeVideoOverlay(
   position: readonly [number, number],
   metrics: OverlayCaptureMetrics
 ): void {
-  const video = el.querySelector('video');
-  if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth === 0) {
-    return;
-  }
+  const drawSource = getVideoDrawSource(el);
+  if (!drawSource) return;
+  const { source, width: sourceWidth, height: sourceHeight } = drawSource;
 
   let drawW: number;
   let drawH: number;
   if (config.size) {
     drawW = config.size[0] * metrics.vw;
     drawH =
-      config.size[1] == null
-        ? drawW * (video.videoHeight / video.videoWidth)
-        : config.size[1] * metrics.vh;
+      config.size[1] == null ? drawW * (sourceHeight / sourceWidth) : config.size[1] * metrics.vh;
   } else {
-    drawW = video.videoWidth * metrics.scaleX;
-    drawH = video.videoHeight * metrics.scaleY;
+    drawW = sourceWidth * metrics.scaleX;
+    drawH = sourceHeight * metrics.scaleY;
   }
 
   const [dx, dy] = computeAnchorOffset(config.anchor, drawW, drawH);
   const [xIn, yIn] = position;
-  ctx.drawImage(video, xIn + dx, yIn + dy, drawW, drawH);
+  ctx.drawImage(source, xIn + dx, yIn + dy, drawW, drawH);
 }
 
 /**

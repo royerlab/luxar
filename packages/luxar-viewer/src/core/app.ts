@@ -66,6 +66,7 @@ import {
   initPicking as initPickingImpl,
   disposePickingSession as disposePickingSessionImpl,
 } from './app/picking/init-picking';
+import { installDoubleTapToFit } from './app/interaction/double-tap-to-fit';
 import { applyViewerConfigState as applyViewerConfigStateHelper } from './app/viewer-config/apply-state';
 import {
   getPanelVisibilityStates as getPanelVisibilityStatesHelper,
@@ -311,6 +312,12 @@ export class LuxarApp {
       this.setupOnlineRetry();
       this.setupDebugInterface();
       this.setupEmbedderHooks(options.canvas);
+      // Touch double-tap re-frames on EVERY scene — not only the ones the
+      // picking session (and with it canvas-actions) gets provisioned for.
+      // (Unit tests hand `init` a stub canvas with no event surface.)
+      if (options.canvas instanceof HTMLElement) {
+        installDoubleTapToFit(options.canvas, this.events, () => this.recenterCamera());
+      }
 
       this.isInitialized = true;
     } catch (error) {
@@ -539,7 +546,10 @@ export class LuxarApp {
    */
   private installWaypoints(waypoints: ZarrWaypoint[] | undefined): void {
     this.disposeWaypoints();
-    if (!Array.isArray(waypoints) || waypoints.length === 0) return;
+    if (!Array.isArray(waypoints) || waypoints.length === 0) {
+      this.overlayManager?.updateVisibility();
+      return;
+    }
 
     const driver = new WaypointDriver(waypoints, {
       getDims: () => sceneDimsManager.getDims(),
@@ -578,6 +588,9 @@ export class LuxarApp {
             index: payload.index,
             completed: 'completed' in payload ? payload.completed : true,
           });
+          // The flight resolved and the driver's gate is open: reveal the
+          // overlays a `reveal: "on_arrival"` waypoint held back.
+          this.overlayManager?.updateVisibility();
         }
         const when = waypoints[payload.index]?.when;
         if (when && this.audioEngine) {
@@ -590,11 +603,17 @@ export class LuxarApp {
     });
     const listener = (): void => {
       driver.evaluate('fly');
+      // The overlay manager listens to the same dims manager and may have run
+      // first with the previous gate state. Re-run its pass now whether the
+      // new match closes OR opens the gate — same task, so nothing paints in
+      // between.
+      this.overlayManager?.updateVisibility();
     };
     sceneDimsManager.addListener(listener);
     this.waypointListener = listener;
     this.waypointDriver = driver;
     driver.evaluate('snap');
+    this.overlayManager?.updateVisibility();
   }
 
   private disposeWaypoints(): void {
@@ -691,6 +710,10 @@ export class LuxarApp {
       inputHandler: this.inputHandler,
       recordingPanel: this.recordingPanel,
     });
+    // Story captions wait for the camera when a waypoint asks for it: the gate
+    // reads the LIVE driver, so it holds whichever scene's waypoints are
+    // installed, before or after the overlays themselves were created.
+    this.overlayManager.setTransitGate(() => this.waypointDriver?.inTransit === true);
   }
 
   /**

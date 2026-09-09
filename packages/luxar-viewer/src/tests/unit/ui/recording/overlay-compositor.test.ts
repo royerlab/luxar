@@ -236,6 +236,47 @@ describe('compositeOverlays', () => {
     expect(video).toBe(overlay.el.querySelector('video'));
     expect([x, y, width, height]).toEqual([400, 175, 200, 150]);
   });
+
+  it('draws the ready matte canvas instead of the hidden stacked video source', () => {
+    const canvas = makeCanvas(1000, 500);
+    const fake = makeFakeCtx(1000, 500);
+    const el = makeVideoOverlay();
+    const matte = document.createElement('canvas');
+    matte.className = 'luxar-overlay__matte';
+    matte.width = 400;
+    matte.height = 300;
+    matte.dataset.hasFrame = '1';
+    el.prepend(matte);
+
+    compositeOverlays(
+      canvas,
+      fake as unknown as CanvasRenderingContext2D,
+      makeManager([{ el, config: makeConfig({ type: 'overlay_video', size: [0.2, null] }) }]),
+      makeCanvas(),
+      { width: 1000, height: 500 }
+    );
+
+    expect(fake.drawImage).toHaveBeenCalledExactlyOnceWith(matte, 400, 175, 200, 150);
+  });
+
+  it('skips a matte canvas until its first composited frame is ready', () => {
+    const fake = makeFakeCtx();
+    const el = makeVideoOverlay();
+    const matte = document.createElement('canvas');
+    matte.className = 'luxar-overlay__matte';
+    matte.width = 400;
+    matte.height = 300;
+    el.prepend(matte);
+
+    compositeOverlays(
+      makeCanvas(),
+      fake as unknown as CanvasRenderingContext2D,
+      makeManager([{ el, config: makeConfig({ type: 'overlay_video' }) }]),
+      makeCanvas()
+    );
+
+    expect(fake.drawImage).not.toHaveBeenCalled();
+  });
 });
 
 describe('compositeTextOverlay', () => {

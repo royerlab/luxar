@@ -429,6 +429,8 @@ format = [
     "ruff check --fix packages/luxar/src scripts scripts/benchmarks stats hatch_build.py"
 ]
 lint = [
+    # Project-wide targets keep the gate implementations and supporting Python
+    # tooling under E/W/F/I checks too; package-only CI left them unchecked.
     "ruff check packages/luxar/src scripts scripts/benchmarks stats hatch_build.py",
     # Formatting was enforced ONLY by an opt-in pre-commit hook, which sees just
     # the staged files — so 10 Python files had drifted unformatted in the tree

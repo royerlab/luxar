@@ -162,6 +162,27 @@ def test_morton_numba_numpy_parity() -> None:
     )
 
 
+def test_morton_numba_kernel_uses_contiguous_signature() -> None:
+    pytest.importorskip("numba")
+    kernel = _morton_mod._get_morton_numba_kernel()
+
+    assert kernel.signatures[0][0].layout == "C"
+    assert not kernel.signatures[0][0].mutable
+    assert kernel.signatures[0][2].layout == "C"
+
+
+def test_morton_numba_accepts_readonly_contiguous_input() -> None:
+    pytest.importorskip("numba")
+    coords = np.ascontiguousarray([[0, 0, 0], [1, 2, 3], [7, 6, 5]], dtype=np.int64)
+    writable = coords.copy()
+    coords.setflags(write=False)
+
+    np.testing.assert_array_equal(
+        _encode_forcing_numba(morton_encode_nd, coords),
+        _encode_forcing_numba(morton_encode_nd, writable),
+    )
+
+
 def test_hilbert_numba_numpy_parity() -> None:
     """hilbert: JIT path and NumPy fallback yield byte-identical codes."""
     rng = np.random.default_rng(1)
@@ -170,6 +191,87 @@ def test_hilbert_numba_numpy_parity() -> None:
         _encode_forcing_numpy_fallback(hilbert_encode_nd, coords),
         _encode_forcing_numba(hilbert_encode_nd, coords),
     )
+
+
+@pytest.mark.parametrize(
+    ("module", "encoder", "kernel_attr", "label"),
+    [
+        (
+            _morton_mod,
+            morton_encode_nd,
+            "_morton_numba_kernel",
+            "Morton",
+        ),
+        (
+            _hilbert_mod,
+            hilbert_encode_nd,
+            "_hilbert_numba_kernel",
+            "Hilbert",
+        ),
+    ],
+)
+def test_numba_compile_failure_warns_once_before_fallback(
+    monkeypatch, module, encoder, kernel_attr: str, label: str
+) -> None:
+    numba = pytest.importorskip("numba")
+
+    def fail_compile(signature=None, **_kwargs):
+        if signature is not None:
+            raise RuntimeError("JIT unavailable")
+
+        def leave_uncompiled(function):
+            return function
+
+        return leave_uncompiled
+
+    monkeypatch.setattr(module, kernel_attr, None)
+    monkeypatch.setattr(numba, "njit", fail_compile)
+    coords = np.array([[0, 0], [1, 2], [3, 1]], dtype=np.int64)
+
+    with pytest.warns(
+        RuntimeWarning,
+        match=rf"{label} Numba kernel failed with RuntimeError: JIT unavailable",
+    ) as caught:
+        first = encoder(coords, bits_per_dim=4)
+        second = encoder(coords, bits_per_dim=4)
+
+    np.testing.assert_array_equal(first, second)
+    assert len(caught) == 1
+
+
+@pytest.mark.parametrize(
+    ("module", "encoder", "kernel_attr", "loader_attr"),
+    [
+        (
+            _morton_mod,
+            morton_encode_nd,
+            "_morton_numba_kernel",
+            "_get_morton_numba_kernel",
+        ),
+        (
+            _hilbert_mod,
+            hilbert_encode_nd,
+            "_hilbert_numba_kernel",
+            "_get_hilbert_numba_kernel",
+        ),
+    ],
+)
+def test_missing_numba_falls_back_quietly(
+    monkeypatch, module, encoder, kernel_attr: str, loader_attr: str
+) -> None:
+    def fail_import():
+        raise ImportError("numba missing")
+
+    monkeypatch.setattr(module, kernel_attr, None)
+    monkeypatch.setattr(module, loader_attr, fail_import)
+    coords = np.array([[0, 0], [1, 2], [3, 1]], dtype=np.int64)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        encoded = encoder(coords, bits_per_dim=4)
+
+    assert encoded.shape == (3,)
+    assert not caught
 
 
 # --- Key Invariant 6: never tighter than the footprint, at ANY magnitude ------

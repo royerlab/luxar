@@ -722,4 +722,4 @@ def run_batch_submit(
         import traceback
 
         traceback.print_exc()
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e

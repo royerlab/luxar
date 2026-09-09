@@ -243,8 +243,4 @@ def run_render_to_file(
     except typer.Exit:
         raise
     except Exception as e:
-        aprint(f"Error: {e}")
-        import traceback
-
-        traceback.print_exc()
-        raise typer.Exit(1)
+        exit_with_error(f"Error: {e}", e)
