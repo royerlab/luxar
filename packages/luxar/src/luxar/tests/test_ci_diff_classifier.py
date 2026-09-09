@@ -1177,9 +1177,7 @@ def test_python_test_inputs_are_statically_owned_by_the_python_gate(
     } <= read_paths
     python_pattern = _domain_patterns(workflow)["py"]
     unclassified = {
-        path
-        for path in literal_paths
-        if not _classifies(python_pattern, path)
+        path for path in literal_paths if not _classifies(python_pattern, path)
     }
     unclassified.update(
         path for path in read_paths if not _classifies(python_pattern, path)
