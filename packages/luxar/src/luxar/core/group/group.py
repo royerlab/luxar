@@ -113,6 +113,10 @@ def _gsplat_data_from_arrays(
             colors_array = np.broadcast_to(
                 colors_array.astype(np.float32), (n_splats, colors_array.shape[0])
             )
+        elif colors_array.shape[0] == 1 and n_splats != 1:
+            colors_array = np.broadcast_to(
+                colors_array, (n_splats, colors_array.shape[1])
+            )
     return GSplatData(
         centers=centers_array,
         amplitudes=amplitudes_array,
@@ -961,9 +965,14 @@ class Group(Node):
             None,
             False,
         ):
+            from ...validation.writing import (
+                GSPLATS_RESERVED_ATTRS,
+                validate_render_attrs,
+            )
             from .compositing import funnel_add_error
 
             try:
+                validate_render_attrs(attrs, reserved_attrs=GSPLATS_RESERVED_ATTRS)
                 result = _gsplat_data_from_arrays(
                     centers,
                     amplitudes,
@@ -984,6 +993,7 @@ class Group(Node):
                 fill_sigma=fill_sigma,
                 substitutive_lod=resolved_substitutive_lod,
                 additive_lod=resolved_additive_lod,
+                # The array adder has always preserved caller amplitudes.
                 normalize_amplitudes=False,
                 partition=partition,
                 labels=labels,
@@ -1055,9 +1065,10 @@ class Group(Node):
         ``labels`` / ``image_labels`` may not be passed when the resolved result
         is multi-substitutive: every level is its own set of merged
         representative splats with its own count, so no single list has a
-        per-element correspondence to carry. Pass ``lod_group=False`` to label
-        the collapsed finest level, or build the ``kind="lod"`` group yourself
-        with :meth:`add_lod_group` and give each child its own labels.
+        per-element correspondence to carry. Pass ``substitutive_lod=False``
+        (or its ``lod_group=False`` alias) to label the collapsed finest level,
+        or build the ``kind="lod"`` group yourself with :meth:`add_lod_group`
+        and give each child its own labels.
 
         **An explicit ``None`` in ``**attrs`` means "absent".** For ``labels``,
         ``image_labels``, ``partition``, ``colors``, ``truncation_radius``,
@@ -1080,9 +1091,10 @@ class Group(Node):
         result is single-substitutive AND the parent is itself a
         ``kind="lod"`` ``Group`` (the child is a leaf of an enclosing
         LOD group). Passing it on a multi-substitutive path raises
-        ``ValueError`` — use ``lod_group=dict(coverage_fractions=[...])`` to
-        override the auto-derived thresholds. (``coverage_fraction=None`` is
-        "absent" per the rule above, so it is accepted on any path.)
+        ``ValueError`` — use
+        ``substitutive_lod=dict(coverage_fractions=[...])`` to override the
+        auto-derived thresholds. (``coverage_fraction=None`` is "absent" per
+        the rule above, so it is accepted on any path.)
 
         Args:
             name: Name of the gsplats (or kind=lod group) node.

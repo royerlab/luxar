@@ -146,25 +146,90 @@ def test_nested_file_accepts_false_substitutive_bypass(tmp_path, keyword) -> Non
     assert node.attrs["kind"] == "partition"
 
 
-def test_array_lod_preserves_payload_values_and_dtypes(tmp_path) -> None:
-    from luxar.core.group.group import _gsplat_data_from_arrays
-
+@pytest.mark.parametrize("channels", [3, 4])
+@pytest.mark.parametrize("lod_keyword", ["additive_lod", "substitutive_lod"])
+def test_array_lod_preserves_broadcast_color_storage(
+    tmp_path, channels, lod_keyword
+) -> None:
     data = _data()
-    amplitudes = np.linspace(0.1, 1.6, data.n_splats, dtype=np.float32)
-    colors = (0.2, 0.4, 0.6)
-    actual = _gsplat_data_from_arrays(
-        data.centers,
-        amplitudes,
-        data.cholesky_factors,
-        colors,
-        None,
-        None,
+    colors = np.linspace(0.2, 0.8, channels, dtype=np.float32).reshape(1, channels)
+    lod_spec = (
+        dict(n_lods=2)
+        if lod_keyword == "additive_lod"
+        else dict(compression_factor=2, levels=1)
+    )
+    output_path = tmp_path / "scene.luxar.zarr"
+
+    with LuxarZarrCompiler(output_path) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_gsplats(
+            "plain",
+            data.centers,
+            data.amplitudes,
+            data.cholesky_factors,
+            colors=colors,
+        )
+        scene.add_gsplats(
+            "structured",
+            data.centers,
+            data.amplitudes,
+            data.cholesky_factors,
+            colors=colors,
+            **{lod_keyword: lod_spec},
+        )
+
+    stored = zarr.open_group(output_path, mode="r")
+    plain_colors = np.asarray(stored["plain"]["colors"])
+    structured_leaf = (
+        stored["structured"]["additive_1"]
+        if lod_keyword == "additive_lod"
+        else stored["structured"]["child_1"]
+    )
+    structured_colors = np.asarray(structured_leaf["colors"])
+    assert plain_colors.shape == structured_colors.shape == (1, channels)
+    assert plain_colors.dtype == structured_colors.dtype == np.float32
+    np.testing.assert_allclose(structured_colors, plain_colors)
+
+
+@pytest.mark.parametrize(
+    ("attr", "value"),
+    [
+        ("lod_group", dict(compression_factor=2, levels=1)),
+        ("normalize_amplitudes", True),
+    ],
+)
+@pytest.mark.parametrize("lod_keyword", ["additive_lod", "substitutive_lod"])
+def test_array_lod_keeps_unknown_attr_refusal(
+    tmp_path, attr, value, lod_keyword
+) -> None:
+    data = _data()
+    lod_spec = (
+        dict(n_lods=2)
+        if lod_keyword == "additive_lod"
+        else dict(compression_factor=2, levels=1)
     )
 
-    np.testing.assert_allclose(actual.amplitudes, amplitudes)
-    np.testing.assert_allclose(actual.colors, np.broadcast_to(colors, (16, 3)))
-    assert actual.amplitudes.dtype == np.float32
-    assert actual.colors.dtype == np.float32
+    errors = []
+    for name, kwargs in (
+        ("plain", {attr: value}),
+        ("structured", {attr: value, lod_keyword: lod_spec}),
+    ):
+        with LuxarZarrCompiler(tmp_path / f"{name}.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError) as error:
+                scene.add_gsplats(
+                    "splats",
+                    data.centers,
+                    data.amplitudes,
+                    data.cholesky_factors,
+                    **kwargs,
+                )
+        errors.append(str(error.value))
+
+    assert errors[0] == errors[1]
+    assert errors[0].startswith(
+        f"Could not add gsplats 'splats': Unknown node attribute '{attr}'"
+    )
 
 
 @pytest.mark.parametrize(
@@ -210,6 +275,29 @@ def test_array_substitutive_lod_rejects_nonfinite_centers_cleanly(tmp_path) -> N
             )
 
 
+@pytest.mark.parametrize(
+    ("spec", "error_type", "message"),
+    [
+        (True, ValueError, "substitutive_lod=True"),
+        (3, TypeError, r"substitutive_lod \(or lod_group alias\) must be"),
+    ],
+)
+def test_array_substitutive_lod_errors_name_public_keyword(
+    tmp_path, spec, error_type, message
+) -> None:
+    data = _data()
+    with LuxarZarrCompiler(tmp_path / "scene.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        with pytest.raises(error_type, match=message):
+            scene.add_gsplats(
+                "splats",
+                data.centers,
+                data.amplitudes,
+                data.cholesky_factors,
+                substitutive_lod=spec,
+            )
+
+
 @pytest.mark.parametrize("keyword", ["labels", "keys"])
 def test_array_additive_lod_reports_unsupported_annotations(tmp_path, keyword) -> None:
     data = _data()
@@ -234,6 +322,32 @@ def test_add_gsplats_from_file_flattens_then_restructures(tmp_path) -> None:
         source.to_spatial_partition(max_elements=4),
         ordering="none",
     )
+    output_path = tmp_path / "scene.luxar.zarr"
+
+    with LuxarZarrCompiler(output_path) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_gsplats_from_file(
+            "splats",
+            source_path,
+            flatten=True,
+            additive_lod=dict(n_lods=2),
+        )
+
+    stored = zarr.open_group(output_path, mode="r")["splats"]
+    assert stored.attrs["type"] == "gsplats"
+    assert stored.attrs["n_splats"] == source.n_splats
+    assert stored.attrs["n_additive_sublods"] == 2
+
+
+def test_add_gsplats_from_file_flattens_substitutive_pyramid(tmp_path) -> None:
+    from luxar.gsplats.lod.substitutive import make_substitutive_lod
+
+    source = _data()
+    source_path = tmp_path / "pyramid.gsplats.zarr"
+    pyramid = make_substitutive_lod(
+        source, compression_factor=2, levels=1, device="cpu"
+    )
+    write_gsplats_tree(source_path, pyramid.tree, ordering="none")
     output_path = tmp_path / "scene.luxar.zarr"
 
     with LuxarZarrCompiler(output_path) as compiler:
