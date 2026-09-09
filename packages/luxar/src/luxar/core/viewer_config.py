@@ -899,7 +899,7 @@ class ViewerConfig:
 
     # Anti-aliasing. SMAA is unsupported because its 3-pass blend does
     # not fit Luxar's single-pass post-processing model. FXAA / MSAA /
-    # SSAA remain.
+    # SSAA remain; configured MSAA is suspended while SSAA is enabled.
     fxaa_enabled: Optional[bool] = None
     msaa_enabled: Optional[bool] = None
     msaa_samples: Optional[int] = None
