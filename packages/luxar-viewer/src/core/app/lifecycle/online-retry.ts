@@ -197,10 +197,7 @@ export function installOnlineRetry(ports: OnlineRetryPorts): void {
     ) {
       return;
     }
-    const delay = Math.min(
-      ONLINE_RETRY_POLL_MS * 2 ** onlineRetryRound,
-      ONLINE_RETRY_MAX_DELAY_MS
-    );
+    const delay = Math.min(ONLINE_RETRY_POLL_MS * 2 ** onlineRetryRound, ONLINE_RETRY_MAX_DELAY_MS);
     onlineRetryRound++;
     pollTimer = setTimeout(() => {
       pollTimer = undefined;

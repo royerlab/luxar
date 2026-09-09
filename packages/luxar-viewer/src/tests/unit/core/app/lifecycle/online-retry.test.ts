@@ -130,6 +130,10 @@ describe('installOnlineRetry', () => {
       await vi.advanceTimersByTimeAsync(ONLINE_RETRY_MAX_DELAY_MS * 2);
       expect(loader.retryAllFailedLoaders).toHaveBeenCalledTimes(MAX_ONLINE_RETRY_ROUNDS);
       expect(vi.getTimerCount()).toBe(0);
+
+      window.dispatchEvent(new Event('online'));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(loader.retryAllFailedLoaders).toHaveBeenCalledTimes(MAX_ONLINE_RETRY_ROUNDS + 1);
     } finally {
       vi.useRealTimers();
     }
@@ -283,7 +287,7 @@ describe('installOnlineRetry', () => {
   it('does not rearm a deferred-exhausted episode from another failure notification', async () => {
     vi.useFakeTimers();
     try {
-      let hasRetryableFailure = true;
+      const hasRetryableFailure = true;
       const retry = vi.fn().mockResolvedValue({
         succeeded: [],
         failed: ['/a'],

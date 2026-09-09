@@ -292,6 +292,9 @@ export class LuxarApp {
       // Install this before routing so O / the rail control can open the
       // browser while a slow initial dataset load is still in progress.
       this.setupDatasetBrowserShortcut();
+      // Install before the initial load so its first recorded transient
+      // failure can arm the bounded retry backoff immediately.
+      this.setupOnlineRetry();
       if (await this.shouldShowBrowser(result.sceneSrc)) {
         try {
           this.showDatasetBrowser();
@@ -308,7 +311,6 @@ export class LuxarApp {
 
       this.setupDisposeOnUnload();
       this.setupFocusHandling();
-      this.setupOnlineRetry();
       this.setupDebugInterface();
       this.setupEmbedderHooks(options.canvas);
 
