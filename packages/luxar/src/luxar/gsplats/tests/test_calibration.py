@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 import math
 from pathlib import Path
@@ -273,16 +274,41 @@ class TestDonutFill:
         assert np.median(V.flat[flat]) == 0.5  # the biased (old) estimate
         filled = donut_median_fill(V, mask)
         assert filled.flat[13] == 0.0
-        # Sanity: the held-out neighbour itself is filled from ITS unmasked donors.
-        assert 0.0 <= filled.flat[flat[-1]] <= 1.0
+        assert filled.flat[flat[-1]] == 1.0
 
-    def test_all_donors_masked_falls_back_to_unmasked_median(self):
-        V = np.arange(125, dtype=np.float32).reshape(5, 5, 5)
-        mask = np.zeros((5, 5, 5), dtype=bool)
-        mask[1:4, 1:4, 1:4] = True  # centre voxel (2,2,2) has only masked donors
+    def test_all_donors_masked_expands_to_nearest_shell(self):
+        V = np.arange(1000, dtype=np.float32).reshape(10, 10, 10)
+        mask = np.zeros_like(V, dtype=bool)
+        mask[2:8, 2:8, 2:8] = True
         filled = donut_median_fill(V, mask)
-        assert filled[2, 2, 2] == np.median(V[~mask])
+        centre = (5, 5, 5)
+        shell = [
+            tuple(centre[dim] + offset[dim] for dim in range(3))
+            for offset in itertools.product(range(-3, 4), repeat=3)
+            if max(map(abs, offset)) == 3
+            and not mask[tuple(centre[dim] + offset[dim] for dim in range(3))]
+        ]
+        expected = np.median([V[index] for index in shell])
+        assert filled[centre] == expected
+        assert filled[centre] != np.median(V[~mask])
         assert np.isfinite(filled).all()
+
+    def test_genuine_nan_donor_propagates(self):
+        V = np.ones((3, 3, 3), dtype=np.float32)
+        V[0, 0, 0] = np.nan
+        mask = np.zeros_like(V, dtype=bool)
+        mask[1, 1, 1] = True
+        assert np.isnan(donut_median_fill(V, mask)[1, 1, 1])
+
+    def test_chunked_gather_matches_single_chunk(self, monkeypatch):
+        import luxar.gsplats.calibration.masking as masking_module
+
+        rng = np.random.default_rng(5)
+        V = rng.random((8, 8, 8), dtype=np.float32)
+        mask = rng.random(V.shape) < 0.3
+        expected = donut_median_fill(V, mask)
+        monkeypatch.setattr(masking_module, "_MAX_DONUT_BYTES", 26 * V.itemsize * 2)
+        np.testing.assert_array_equal(donut_median_fill(V, mask), expected)
 
     def test_every_voxel_masked_raises(self):
         V = np.zeros((3, 3), dtype=np.float32)
@@ -924,8 +950,10 @@ class TestCalibrateSmoke:
         assert result.held_out_peak_selected.confidence_db == pytest.approx(
             expected.confidence_db
         )
-        assert result.held_out_peak_selected.confidence_db != pytest.approx(
-            result.held_out_peak.confidence_db, abs=1e-4
+        assert not np.allclose(
+            result.held_out_psnr_fg_weighted_db,
+            result.held_out_psnr_db,
+            atol=1e-4,
         )
 
     def test_invalid_metric_is_rejected_before_fitting(self, monkeypatch):
