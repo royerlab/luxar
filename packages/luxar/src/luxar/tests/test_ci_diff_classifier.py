@@ -50,9 +50,8 @@ COVERAGE_WORKFLOW = REPO / ".github/workflows/coverage.yml"
 #: One row per gate input whose required domain is not guaranteed by its ordinary
 #: source extension or package path, so an explicit pattern alternative is required.
 #: ``(path, domain, why)`` — the reason is quoted back in the failure message.
-#: Viewer-source readers name their paths through ``viewer_source()``; one static
-#: scan checks those calls, while another catches unclassified whole-path literals
-#: in pytest test modules.
+#: Static scans cover ``viewer_source()`` calls, whole-path Python literals,
+#: repo-rooted Python reads, and repo-rooted TypeScript ``readFileSync`` calls.
 #:
 #: Not every row is load-bearing to the same degree: some are matched by a broad
 #: alternative that could not plausibly be removed (``Cargo.lock`` via the whole
@@ -688,6 +687,27 @@ def test_inputs_without_python_readers_do_not_claim_the_python_domain(
     )
 
 
+def _tracked_paths(repo: Path) -> set[str]:
+    proc = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=repo,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    return set(proc.stdout.split("\0")) - {""}
+
+
+def _is_python_test_source(source_root: Path, source_path: Path) -> bool:
+    relative_parts = source_path.relative_to(source_root).parts
+    return (
+        source_path.name.startswith("test_")
+        or source_path.name == "conftest.py"
+        or source_root.name == "tests"
+        or "tests" in relative_parts[:-1]
+    )
+
+
 def _tracked_non_python_test_path_literals(
     source_roots: tuple[Path, ...] = _PYTHON_SOURCE_ROOTS,
     *,
@@ -699,32 +719,16 @@ def _tracked_non_python_test_path_literals(
     Test modules, ``conftest.py`` files, and helper modules below ``tests/``
     directories are scanned; other modules commonly name generated outputs rather
     than committed inputs. This file is excluded because its control tables name
-    paths with every ownership shape. The scan cannot derive concatenated paths,
-    ``os.path.join`` calls, or f-strings, and a path already owned by one language
-    is not checked for additional language owners; those still require review.
+    paths with every ownership shape. This literal-only pass cannot derive joined
+    paths or f-strings; ``_tracked_python_test_path_reads`` separately resolves
+    repo-rooted ``Path`` joins that flow into file reads.
     """
-    if tracked_paths is None:
-        proc = subprocess.run(
-            ["git", "ls-files", "-z"],
-            cwd=repo,
-            text=True,
-            capture_output=True,
-            check=True,
-        )
-        tracked_paths = set(proc.stdout.split("\0")) - {""}
-
+    tracked_paths = _tracked_paths(repo) if tracked_paths is None else tracked_paths
     paths: set[str] = set()
     this_file = Path(__file__).resolve()
     for source_root in source_roots:
         for source_path in source_root.rglob("*.py"):
-            relative_parts = source_path.relative_to(source_root).parts
-            is_test_source = (
-                source_path.name.startswith("test_")
-                or source_path.name == "conftest.py"
-                or source_root.name == "tests"
-                or "tests" in relative_parts[:-1]
-            )
-            if not is_test_source:
+            if not _is_python_test_source(source_root, source_path):
                 continue
             if source_path.resolve() == this_file:
                 continue
@@ -739,6 +743,204 @@ def _tracked_non_python_test_path_literals(
                 and node.value in tracked_paths
                 and not node.value.endswith(".py")
             )
+    return paths
+
+
+def _static_python_path(
+    node: ast.expr,
+    bindings: dict[str, Path],
+    source_path: Path,
+) -> Path | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return Path(node.value)
+    if isinstance(node, ast.Name):
+        if node.id == "__file__":
+            return source_path
+        return bindings.get(node.id)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        left = _static_python_path(node.left, bindings, source_path)
+        right = _static_python_path(node.right, bindings, source_path)
+        return left / right if left is not None and right is not None else None
+    if isinstance(node, ast.Attribute) and node.attr == "parent":
+        value = _static_python_path(node.value, bindings, source_path)
+        return value.parent if value is not None else None
+    if isinstance(node, ast.Subscript):
+        return _static_python_parent(node, bindings, source_path)
+    if isinstance(node, ast.Call):
+        return _static_python_path_call(node, bindings, source_path)
+    return None
+
+
+def _static_python_parent(
+    node: ast.Subscript,
+    bindings: dict[str, Path],
+    source_path: Path,
+) -> Path | None:
+    if (
+        isinstance(node.value, ast.Attribute)
+        and node.value.attr == "parents"
+        and isinstance(node.slice, ast.Constant)
+        and isinstance(node.slice.value, int)
+    ):
+        value = _static_python_path(node.value.value, bindings, source_path)
+        if value is None or node.slice.value < 0:
+            return None
+        try:
+            return value.parents[node.slice.value]
+        except IndexError:
+            return None
+    return None
+
+
+def _static_python_path_call(
+    node: ast.Call,
+    bindings: dict[str, Path],
+    source_path: Path,
+) -> Path | None:
+    if len(node.args) == 1 and not node.keywords:
+        if isinstance(node.func, ast.Name) and node.func.id == "Path":
+            return _static_python_path(node.args[0], bindings, source_path)
+    if (
+        not node.args
+        and not node.keywords
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "resolve"
+    ):
+        value = _static_python_path(node.func.value, bindings, source_path)
+        return value.resolve() if value is not None else None
+    return None
+
+
+def _python_path_bindings(tree: ast.Module, source_path: Path) -> dict[str, Path]:
+    bindings: dict[str, Path] = {}
+    for statement in tree.body:
+        targets: list[ast.expr]
+        if isinstance(statement, ast.Assign):
+            targets = statement.targets
+            value_node = statement.value
+        elif isinstance(statement, ast.AnnAssign):
+            targets = [statement.target]
+            value_node = statement.value
+        else:
+            continue
+        if value_node is None:
+            continue
+        value = _static_python_path(value_node, bindings, source_path)
+        if value is None:
+            continue
+        for target in targets:
+            if isinstance(target, ast.Name):
+                bindings[target.id] = value
+    return bindings
+
+
+def _python_open_is_read(call: ast.Call, mode_index: int) -> bool:
+    mode_node: ast.expr | None = None
+    if len(call.args) > mode_index:
+        mode_node = call.args[mode_index]
+    else:
+        mode_node = next(
+            (keyword.value for keyword in call.keywords if keyword.arg == "mode"), None
+        )
+    if mode_node is None:
+        return True
+    return (
+        isinstance(mode_node, ast.Constant)
+        and isinstance(mode_node.value, str)
+        and not set(mode_node.value) & set("wax+")
+    )
+
+
+def _python_read_path(
+    call: ast.Call,
+    bindings: dict[str, Path],
+    source_path: Path,
+) -> Path | None:
+    if isinstance(call.func, ast.Attribute):
+        if call.func.attr in {"read_text", "read_bytes"}:
+            return _static_python_path(call.func.value, bindings, source_path)
+        if call.func.attr == "open" and _python_open_is_read(call, 0):
+            return _static_python_path(call.func.value, bindings, source_path)
+    if (
+        isinstance(call.func, ast.Name)
+        and call.func.id == "open"
+        and call.args
+        and _python_open_is_read(call, 1)
+    ):
+        return _static_python_path(call.args[0], bindings, source_path)
+    return None
+
+
+def _tracked_python_test_path_reads(
+    source_roots: tuple[Path, ...] = _PYTHON_SOURCE_ROOTS,
+    *,
+    repo: Path = REPO,
+    tracked_paths: set[str] | None = None,
+) -> set[str]:
+    """Find committed-file reads through statically resolvable ``Path`` chains.
+
+    Module-level bindings may derive from ``__file__`` through ``Path``, ``resolve``,
+    ``parent``/``parents``, and ``/``. Only ``read_text``, ``read_bytes``, and
+    read-only ``open`` calls whose final path stays below ``repo`` are retained.
+    """
+    tracked_paths = _tracked_paths(repo) if tracked_paths is None else tracked_paths
+    paths: set[str] = set()
+    this_file = Path(__file__).resolve()
+    for source_root in source_roots:
+        for source_path in source_root.rglob("*.py"):
+            if not _is_python_test_source(source_root, source_path):
+                continue
+            if source_path.resolve() == this_file:
+                continue
+            tree = ast.parse(
+                source_path.read_text(encoding="utf-8"), filename=str(source_path)
+            )
+            bindings = _python_path_bindings(tree, source_path.resolve())
+            for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
+                path = _python_read_path(call, bindings, source_path.resolve())
+                if path is None:
+                    continue
+                try:
+                    relative = path.resolve().relative_to(repo.resolve()).as_posix()
+                except ValueError:
+                    continue
+                if relative in tracked_paths and not relative.endswith(".py"):
+                    paths.add(relative)
+    return paths
+
+
+_TYPESCRIPT_REPO_READ_RE = re.compile(
+    r"""\breadFileSync\(\s*
+    (?:(?:path\.)?(?:join|resolve))\(\s*REPO_ROOT
+    (?P<arguments>(?:\s*,\s*(?:'[^'\r\n]*'|"[^"\r\n]*"))+)
+    \s*\)""",
+    re.VERBOSE,
+)
+_TYPESCRIPT_PATH_PART_RE = re.compile(r"'([^'\r\n]*)'|\"([^\"\r\n]*)\"")
+
+
+def _tracked_typescript_test_path_reads(
+    source_roots: tuple[Path, ...] = (REPO / "packages/luxar-viewer/src",),
+    *,
+    repo: Path = REPO,
+    tracked_paths: set[str] | None = None,
+) -> set[str]:
+    """Find literal ``readFileSync(join|resolve(REPO_ROOT, ...))`` test inputs."""
+    tracked_paths = _tracked_paths(repo) if tracked_paths is None else tracked_paths
+    paths: set[str] = set()
+    for source_root in source_roots:
+        for source_path in source_root.rglob("*.test.ts"):
+            source = source_path.read_text(encoding="utf-8")
+            for match in _TYPESCRIPT_REPO_READ_RE.finditer(source):
+                parts = [
+                    single or double
+                    for single, double in _TYPESCRIPT_PATH_PART_RE.findall(
+                        match.group("arguments")
+                    )
+                ]
+                relative = Path(*parts).as_posix()
+                if relative in tracked_paths:
+                    paths.add(relative)
     return paths
 
 
@@ -804,6 +1006,86 @@ def test_python_gate_input_scan_includes_helpers_when_source_root_is_tests(
     assert paths == {"helper.json"}
 
 
+def test_python_gate_input_scan_resolves_only_repo_rooted_reads(tmp_path: Path) -> None:
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_reader.py").write_text(
+        """\
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
+CAPTURE = REPO / "scripts" / "capture.py"
+SNAPSHOTS = CAPTURE.parent
+
+(SNAPSHOTS / "records.json").read_text()
+(REPO / "bytes.bin").read_bytes()
+(REPO / "opened.json").open("rb")
+open(REPO / "builtin.json", encoding="utf-8")
+(REPO / "written.json").write_text("generated")
+(REPO / "appended.json").open("a")
+(REPO / "keyword-written.json").open(mode="w")
+(REPO / dynamic_name).read_text()
+""",
+        encoding="utf-8",
+    )
+
+    paths = _tracked_python_test_path_reads(
+        (tmp_path,),
+        repo=tmp_path,
+        tracked_paths={
+            "scripts/records.json",
+            "bytes.bin",
+            "opened.json",
+            "builtin.json",
+            "written.json",
+            "appended.json",
+            "keyword-written.json",
+        },
+    )
+
+    assert paths == {
+        "scripts/records.json",
+        "bytes.bin",
+        "opened.json",
+        "builtin.json",
+    }
+
+
+def test_typescript_gate_input_scan_resolves_only_repo_rooted_reads(
+    tmp_path: Path,
+) -> None:
+    tests = tmp_path / "src/tests/unit"
+    tests.mkdir(parents=True)
+    (tests / "reader.test.ts").write_text(
+        """\
+readFileSync(path.join(REPO_ROOT, 'scripts', 'manifest.json'), 'utf-8');
+readFileSync(resolve(REPO_ROOT, "Makefile"), "utf8");
+readFileSync(path.resolve(REPO_ROOT, 'README.md'));
+writeFileSync(path.join(REPO_ROOT, 'written.json'), 'generated');
+readFileSync(path.join(REPO_ROOT, dynamicName), 'utf-8');
+""",
+        encoding="utf-8",
+    )
+    (tests / "ignored.spec.ts").write_text(
+        "readFileSync(resolve(REPO_ROOT, 'ignored.json'), 'utf8');\n",
+        encoding="utf-8",
+    )
+
+    paths = _tracked_typescript_test_path_reads(
+        (tmp_path / "src",),
+        repo=tmp_path,
+        tracked_paths={
+            "scripts/manifest.json",
+            "Makefile",
+            "README.md",
+            "written.json",
+            "ignored.json",
+        },
+    )
+
+    assert paths == {"scripts/manifest.json", "Makefile", "README.md"}
+
+
 def test_python_gate_input_scan_rejects_missing_ownership() -> None:
     with pytest.raises(AssertionError, match="must have dom_py GATE_INPUTS rows"):
         _assert_unclassified_test_paths_are_owned({"unowned.json"})
@@ -864,19 +1146,54 @@ def test_derived_typescript_gate_input_patterns_are_exact(
     assert not _classifies(_domain_patterns(workflow)["ts"], path)
 
 
-def test_python_test_path_literals_are_statically_owned_by_the_python_gate(
+def test_python_test_inputs_are_statically_owned_by_the_python_gate(
     workflow: str,
 ) -> None:
-    """Every whole-path literal with no language gate is owned or explained."""
-    paths = _tracked_non_python_test_path_literals()
-    assert paths, "no Python test path literals found; the ownership guard is vacuous"
+    """Every discovered Python test input is owned or explained."""
+    literal_paths = _tracked_non_python_test_path_literals()
+    read_paths = _tracked_python_test_path_reads()
+    assert literal_paths, (
+        "no Python test path literals found; the ownership guard is vacuous"
+    )
+    assert read_paths, "no Python test path reads found; the ownership guard is vacuous"
+    assert {
+        "docs/guides/developer/DEMO_SITE_RUNBOOK.md",
+        "scripts/zenodo_record_text/records.json",
+    } <= read_paths
     patterns = list(_domain_patterns(workflow).values())
     unclassified = {
         path
-        for path in paths
+        for path in literal_paths
         if not any(_classifies(pattern, path) for pattern in patterns)
     }
+    python_pattern = _domain_patterns(workflow)["py"]
+    unclassified.update(
+        path for path in read_paths if not _classifies(python_pattern, path)
+    )
     _assert_unclassified_test_paths_are_owned(unclassified)
+
+
+def test_typescript_test_path_reads_are_statically_owned_by_the_typescript_gate(
+    workflow: str,
+) -> None:
+    paths = _tracked_typescript_test_path_reads()
+    assert paths, "no TypeScript test path reads found; the ownership guard is vacuous"
+    assert {
+        "Makefile",
+        "README.md",
+        "scripts/gallery/manifest.json",
+        "scripts/gallery/media-manifest.json",
+    } <= paths
+    typescript_pattern = _domain_patterns(workflow)["ts"]
+    unclassified = {path for path in paths if not _classifies(typescript_pattern, path)}
+    typescript_gate_inputs = {
+        path for path, domain, _why in GATE_INPUTS if domain == "ts"
+    }
+    missing = sorted(unclassified - typescript_gate_inputs)
+    assert not missing, (
+        "tracked paths read by TypeScript tests must have dom_ts GATE_INPUTS rows: "
+        f"{missing}"
+    )
 
 
 def _viewer_source_calls(
