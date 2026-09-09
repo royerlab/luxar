@@ -67,9 +67,11 @@ export const MAX_ONLINE_RETRY_ROUNDS = 5;
  *
  * Behavior:
  *   - No failures recorded → silent no-op (the common case).
- *   - Failures present → toast that a retry is starting, run
- *     `retryAllFailedLoaders()` (the loader serializes it against the
+ *   - An `online` transition with failures → toast that a retry is starting,
+ *     run `retryAllFailedLoaders()` (the loader serializes it against the
  *     update lock internally), and toast the genuine outcome.
+ *   - Background rounds stay silent while everything still fails; they toast
+ *     only when at least one load recovers.
  *   - **Deferred results re-attempt.** The lock is very plausibly held at
  *     the moment `online` fires (the reconnect typically happens while an
  *     update or LOD refinement is mid-flight — the very situation that
@@ -110,7 +112,7 @@ export function installOnlineRetry(ports: OnlineRetryPorts): void {
 
   let schedulePoll = (): void => {};
 
-  const attempt = (attemptNumber: number): void => {
+  const attempt = (attemptNumber: number, source: 'online' | 'poll'): void => {
     const loader = ports.getLoader();
     if (!loader?.hasAutoRetryableFailures()) {
       // Recovered elsewhere (manual retry, dataset switch), or everything left
@@ -139,7 +141,7 @@ export function installOnlineRetry(ports: OnlineRetryPorts): void {
           }
           deferredTimer = setTimeout(() => {
             deferredTimer = undefined;
-            attempt(attemptNumber + 1);
+            attempt(attemptNumber + 1, source);
           }, DEFERRED_RETRY_DELAY_MS);
           return;
         }
@@ -147,15 +149,16 @@ export function installOnlineRetry(ports: OnlineRetryPorts): void {
         retryInFlight = false;
         if (failed.length === 0) {
           resetOnlineBackoff();
-          ports.toast(
-            `Recovered ${succeeded.length} failed load${succeeded.length === 1 ? '' : 's'}.`,
-            4000
-          );
+          if (source === 'online' || succeeded.length > 0) {
+            ports.toast(
+              `Recovered ${succeeded.length} failed load${succeeded.length === 1 ? '' : 's'}.`,
+              4000
+            );
+          }
         } else {
-          ports.toast(
-            `Retried failed loads: ${succeeded.length} recovered, ${failed.length} still failing.`,
-            5000
-          );
+          const outcome = `Retried failed loads: ${succeeded.length} recovered, ${failed.length} still failing.`;
+          if (source === 'online' || succeeded.length > 0) ports.toast(outcome, 5000);
+          else log.info(Modules.LUXAR, outcome);
           schedulePoll();
         }
       })
@@ -183,8 +186,8 @@ export function installOnlineRetry(ports: OnlineRetryPorts): void {
 
     retryInFlight = true;
     log.info(Modules.LUXAR, message);
-    ports.toast(message, 3000);
-    attempt(1);
+    if (source === 'online') ports.toast(message, 3000);
+    attempt(1, source);
   };
 
   schedulePoll = (): void => {

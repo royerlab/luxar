@@ -91,6 +91,24 @@ describe('installOnlineRetry', () => {
       await vi.advanceTimersByTimeAsync(1);
       expect(loader.retryAllFailedLoaders).toHaveBeenCalledTimes(1);
       expect(loader.retryAllFailedLoaders).toHaveBeenCalledWith({ onlyAutoRetryable: true });
+      expect(toast).toHaveBeenCalledTimes(1);
+      expect(String(toast.mock.calls[0][0])).toContain('Recovered 1');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps an unsuccessful background retry round silent', async () => {
+    vi.useFakeTimers();
+    try {
+      const loader = makeLoader(true, { succeeded: [], failed: ['/a'] });
+      const notifyFailure = installWithFailureSignal({ events, getLoader: () => loader, toast });
+
+      notifyFailure();
+      await vi.advanceTimersByTimeAsync(ONLINE_RETRY_POLL_MS);
+
+      expect(loader.retryAllFailedLoaders).toHaveBeenCalledTimes(1);
+      expect(toast).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
