@@ -391,6 +391,8 @@ Fresh array every frame (a grow-only pool would pin disposed meshes across frame
 - **`scratch: RenderOrderScratch`** — per-frame allocation-free scratch (wrapper-inverse matrix, eye-local vector, center vector). Lazily allocated on first use (several unit-test files partially mock 'three', and an import-time `new THREE.Matrix4()` would break every test that transitively imports this module).
 - **Containment scratch** — grow-only flat number/boolean arrays for the two spheres per group, indegrees, and emitted flags. Adjacency arrays are created only when an honoured edge exists.
 
+The sibling partition-footprint cache in `scene/lod-group-registry.ts` uses push-based `invalidatePartitionFootprint` calls because geometry commits define its changes. BSP ranks instead pull the live split-plane sides every frame so camera and wrapper motion cannot depend on callers remembering to invalidate them.
+
 `warnedAxisMappingWrappers` is intentionally not frame-scoped: its weak entries suppress repeated diagnostics without retaining disposed wrappers.
 
 ## Configuration
