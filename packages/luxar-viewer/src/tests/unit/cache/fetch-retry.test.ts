@@ -47,16 +47,11 @@ function mockStreamingResponse(status: number): {
   return { response, wasCancelled: () => cancelled };
 }
 
-// Existing retry tests only inspect terminal status; dispose their scope
-// immediately. Body-lifetime tests call fetchWithRetryScoped directly.
 async function fetchWithRetry(
   url: string,
   options?: { timeoutMsOverride?: number; signal?: AbortSignal }
 ): Promise<Response | undefined> {
-  const fetched = await fetchWithRetryScoped(url, options);
-  if (!fetched) return undefined;
-  fetched.dispose();
-  return fetched.response;
+  return fetchWithRetryScoped(url, options, async ({ response }) => response);
 }
 
 function forceAbortSignalAnyFallback(): () => void {
@@ -103,9 +98,11 @@ describe('mergeAbortSignals', () => {
       expect(getEventListeners(primary.signal, 'abort')).toHaveLength(1);
       expect(getEventListeners(caller.signal, 'abort')).toHaveLength(1);
 
-      primary.abort();
+      const reason = new Error('primary timeout');
+      primary.abort(reason);
 
       expect(merged.signal.aborted).toBe(true);
+      expect(merged.signal.reason).toBe(reason);
       expect(getEventListeners(primary.signal, 'abort')).toHaveLength(0);
       expect(getEventListeners(caller.signal, 'abort')).toHaveLength(0);
     } finally {
@@ -120,9 +117,11 @@ describe('mergeAbortSignals', () => {
       const caller = new AbortController();
       const merged = mergeAbortSignals(primary.signal, caller.signal);
 
-      caller.abort();
+      const reason = new Error('caller cancelled');
+      caller.abort(reason);
 
       expect(merged.signal.aborted).toBe(true);
+      expect(merged.signal.reason).toBe(reason);
       expect(getEventListeners(primary.signal, 'abort')).toHaveLength(0);
       expect(getEventListeners(caller.signal, 'abort')).toHaveLength(0);
     } finally {
@@ -150,10 +149,12 @@ describe('mergeAbortSignals', () => {
     const restore = forceAbortSignalAnyFallback();
     try {
       const primary = new AbortController();
-      primary.abort();
+      const reason = new Error('already timed out');
+      primary.abort(reason);
       const caller = new AbortController();
       const merged = mergeAbortSignals(primary.signal, caller.signal);
       expect(merged.signal.aborted).toBe(true);
+      expect(merged.signal.reason).toBe(reason);
       expect(getEventListeners(primary.signal, 'abort')).toHaveLength(0);
       expect(getEventListeners(caller.signal, 'abort')).toHaveLength(0);
     } finally {
@@ -230,19 +231,19 @@ describe('fetchWithRetry', () => {
   it('keeps fallback cancellation live through the body, then releases it', async () => {
     const restore = forceAbortSignalAnyFallback();
     const caller = new AbortController();
-    let fetched: Awaited<ReturnType<typeof fetchWithRetryScoped>> = undefined;
     try {
       global.fetch = vi.fn(async () => mockResponse(200, 'hello')) as unknown as typeof fetch;
-      fetched = await fetchWithRetryScoped('https://example.com/x', { signal: caller.signal });
-      expect(fetched).toBeDefined();
-      expect(getEventListeners(caller.signal, 'abort')).toHaveLength(1);
-
-      await fetched?.response.arrayBuffer();
-      fetched?.dispose();
+      await fetchWithRetryScoped(
+        'https://example.com/x',
+        { signal: caller.signal },
+        async ({ readBody }) => {
+          expect(getEventListeners(caller.signal, 'abort')).toHaveLength(1);
+          await readBody();
+        }
+      );
 
       expect(getEventListeners(caller.signal, 'abort')).toHaveLength(0);
     } finally {
-      fetched?.dispose();
       restore();
     }
   });
@@ -278,10 +279,14 @@ describe('fetchWithRetry', () => {
     try {
       global.fetch = vi.fn(async () => mockResponse(500)) as unknown as typeof fetch;
 
-      const promise = fetchWithRetryScoped('https://example.com/x', {
-        timeoutMsOverride: 10_000,
-        signal: caller.signal,
-      });
+      const promise = fetchWithRetryScoped(
+        'https://example.com/x',
+        {
+          timeoutMsOverride: 10_000,
+          signal: caller.signal,
+        },
+        async ({ response }) => response
+      );
       await vi.advanceTimersByTimeAsync(5_000);
 
       expect(await promise).toBeUndefined();
@@ -301,7 +306,11 @@ describe('fetchWithRetry', () => {
     });
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    const promise = fetchWithRetryScoped('https://example.com/x', { timeoutMsOverride: 10_000 });
+    const promise = fetchWithRetryScoped(
+      'https://example.com/x',
+      { timeoutMsOverride: 10_000 },
+      async ({ response }) => response
+    );
     await vi.advanceTimersByTimeAsync(5_000);
 
     expect(await promise).toBeUndefined();
@@ -311,26 +320,44 @@ describe('fetchWithRetry', () => {
     for (const wasCancelled of cancelFlags) expect(wasCancelled()).toBe(true);
   });
 
-  it('dispose() cancels a terminal response body the caller never read', async () => {
+  it('cancels a terminal response body the caller does not read', async () => {
     const { response, wasCancelled } = mockStreamingResponse(404);
     global.fetch = vi.fn(async () => response) as unknown as typeof fetch;
 
-    const fetched = await fetchWithRetryScoped('https://example.com/x');
-    expect(fetched?.response.status).toBe(404);
-    // Body stays live until the caller settles (it may still choose to read).
-    expect(wasCancelled()).toBe(false);
-    fetched?.dispose();
+    const fetched = await fetchWithRetryScoped(
+      'https://example.com/x',
+      undefined,
+      async ({ response: fetchedResponse }) => {
+        expect(wasCancelled()).toBe(false);
+        return fetchedResponse;
+      }
+    );
+    expect(fetched?.status).toBe(404);
     expect(wasCancelled()).toBe(true);
   });
 
-  it('dispose() leaves a consumed body alone', async () => {
-    const { response, wasCancelled } = mockStreamingResponse(200);
+  it('leaves a consumed body alone', async () => {
+    let cancelled = false;
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1, 2, 3]));
+          controller.close();
+        },
+        cancel() {
+          cancelled = true;
+        },
+      })
+    );
     global.fetch = vi.fn(async () => response) as unknown as typeof fetch;
 
-    const fetched = await fetchWithRetryScoped('https://example.com/x');
-    await fetched?.response.arrayBuffer();
-    fetched?.dispose();
-    expect(wasCancelled()).toBe(false);
+    const data = await fetchWithRetryScoped(
+      'https://example.com/x',
+      undefined,
+      async ({ readBody }) => readBody()
+    );
+    expect(Array.from(data ?? [])).toEqual([1, 2, 3]);
+    expect(cancelled).toBe(false);
   });
 
   it('retries on 429 (rate-limited)', async () => {
@@ -504,6 +531,233 @@ describe('fetchWithRetry', () => {
       release.forEach((r) => r());
       await Promise.all(held);
     }
+  });
+
+  it('holds each fetch-gate slot until its response body is consumed', async () => {
+    const bodyControllers: ReadableStreamDefaultController<Uint8Array>[] = [];
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              bodyControllers.push(controller);
+            },
+          })
+        )
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const requests = Array.from({ length: MAX_CONCURRENT_CHUNK_FETCHES + 1 }, (_, index) =>
+      fetchWithRetryScoped(
+        `https://example.com/chunk-${index}`,
+        { timeoutMsOverride: 10_000 },
+        async ({ readBody }) => readBody()
+      )
+    );
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(MAX_CONCURRENT_CHUNK_FETCHES));
+
+    for (const controller of bodyControllers) controller.close();
+    await vi.waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledTimes(MAX_CONCURRENT_CHUNK_FETCHES + 1)
+    );
+    bodyControllers.at(-1)?.close();
+    await Promise.all(requests);
+  });
+
+  it('allows a body to exceed the deadline while bytes keep arriving', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              for (let index = 1; index <= 4; index++) {
+                setTimeout(() => controller.enqueue(new Uint8Array([index])), index * 200);
+              }
+              setTimeout(() => controller.close(), 850);
+            },
+          })
+        )
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const promise = fetchWithRetryScoped(
+      'https://example.com/slow-progress',
+      { timeoutMsOverride: 1_000 },
+      async ({ readBody }) => readBody()
+    );
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(Array.from((await promise) ?? [])).toEqual([1, 2, 3, 4]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('derives the absolute deadline from Content-Length at the throughput floor', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              for (let index = 1; index <= 15; index++) {
+                setTimeout(() => controller.enqueue(new Uint8Array([index])), index * 80);
+              }
+              setTimeout(() => controller.close(), 1_250);
+            },
+          }),
+          { headers: { 'Content-Length': String(32 * 1024) } }
+        )
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const promise = fetchWithRetryScoped(
+      'https://example.com/known-length',
+      { timeoutMsOverride: 400 },
+      async ({ readBody }) => readBody()
+    );
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect((await promise)?.byteLength).toBe(15);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows a known-length body to use the fallback absolute deadline', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => {
+      let cancelled = false;
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (let index = 1; index <= 64; index++) {
+              setTimeout(() => {
+                if (!cancelled) controller.enqueue(new Uint8Array(1024));
+              }, index * 200);
+            }
+            setTimeout(() => {
+              if (!cancelled) controller.close();
+            }, 12_900);
+          },
+          cancel() {
+            cancelled = true;
+          },
+        }),
+        { headers: { 'Content-Length': String(64 * 1024) } }
+      );
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const promise = fetchWithRetryScoped(
+      'https://example.com/slow-known-length',
+      { timeoutMsOverride: 30_000 },
+      async ({ readBody }) => readBody()
+    );
+    await vi.runAllTimersAsync();
+
+    expect((await promise)?.byteLength).toBe(64 * 1024);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('bounds a continuously trickling body by an absolute deadline', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => {
+      let cancelled = false;
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (let index = 1; index <= 20; index++) {
+              setTimeout(() => {
+                if (!cancelled) controller.enqueue(new Uint8Array([1]));
+              }, index * 200);
+            }
+          },
+          cancel() {
+            cancelled = true;
+          },
+        })
+      );
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    let exhaustedCause: unknown;
+
+    const promise = fetchWithRetryScoped(
+      'https://example.com/endless-trickle',
+      { timeoutMsOverride: 1_000, onExhausted: (error) => (exhaustedCause = error) },
+      async ({ readBody }) => readBody()
+    );
+    await vi.runAllTimersAsync();
+
+    expect(await promise).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(exhaustedCause).toMatchObject({
+      cause: expect.objectContaining({ message: expect.stringContaining('absolute deadline') }),
+    });
+  });
+
+  it('rejects a second read of the same response body', async () => {
+    global.fetch = vi.fn(
+      async () => new Response(new Uint8Array([1, 2, 3]))
+    ) as unknown as typeof fetch;
+
+    await expect(
+      fetchWithRetryScoped('https://example.com/double-read', undefined, async ({ readBody }) => {
+        await readBody();
+        return readBody();
+      })
+    ).rejects.toThrow('response body can only be read once');
+  });
+
+  it('aborts a stalled body and retries it', async () => {
+    vi.useFakeTimers();
+    let attempt = 0;
+    const fetchMock = vi.fn(async () => {
+      attempt += 1;
+      if (attempt === 1) {
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new Uint8Array([1]));
+            },
+          })
+        );
+      }
+      return new Response(new Uint8Array([2, 3]));
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const promise = fetchWithRetryScoped(
+      'https://example.com/stall',
+      { timeoutMsOverride: 1_000 },
+      async ({ readBody }) => readBody()
+    );
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(Array.from((await promise) ?? [])).toEqual([2, 3]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops a body read immediately when the caller aborts', async () => {
+    const caller = new AbortController();
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new Uint8Array([1]));
+            },
+          })
+        )
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const promise = fetchWithRetryScoped(
+      'https://example.com/caller-abort',
+      { signal: caller.signal },
+      async ({ readBody }) => readBody()
+    );
+    caller.abort();
+
+    expect(await promise).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('caps backoff at MAX_RETRY_DELAY_MS (~500ms)', async () => {

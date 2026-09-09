@@ -8,20 +8,27 @@
  * (`net::ERR_INSUFFICIENT_RESOURCES`) — the ceiling that capped large
  * substitutive-LOD scenes (~10M+ finest points).
  *
- * Both data-fetch paths funnel through {@link withFetchGate}: the
- * multi-level caching store's network tier (`fetch-retry.ts`, the default) and
- * the no-cache `FetchStore` (`data/zarr.ts`). A single shared counter caps the
- * total in flight, keeping throughput high (HTTP/2 multiplexes happily at this
- * width) while staying within the browser's socket/memory budget.
+ * All data-fetch paths funnel through {@link withFetchGate}: the multi-level
+ * caching store's network tier (`fetch-retry.ts`, the default), zipped-store
+ * range reads (`range-reader.ts`), and the no-cache `FetchStore`
+ * (`data/zarr.ts`). A single shared counter caps the total in flight, keeping
+ * throughput high (HTTP/2 multiplexes happily at this width) while staying
+ * within the browser's socket/memory budget.
+ *
+ * The gate is FIFO and has no priority lane. Because a lease now spans body
+ * consumption, metadata and validation requests can queue behind full chunk
+ * bodies rather than only their header round-trips. Keep that latency trade-off
+ * in mind when changing the cap.
  */
 
 /**
- * Maximum chunk `fetch()` calls in flight across every data path at once.
+ * Maximum chunk responses in flight across every data path at once.
  *
  * 64 is chosen for HTTP/2: high enough that multiplexing keeps the pipe full on
  * a multi-thousand-chunk visible range, low enough to stay clear of the
  * `net::ERR_INSUFFICIENT_RESOURCES` ceiling described above. Shared globally —
- * the cap is on total concurrency, not per store or per node.
+ * the cap is on total concurrency through response-body consumption, not per
+ * store or per node.
  */
 export const MAX_CONCURRENT_CHUNK_FETCHES = 64;
 
