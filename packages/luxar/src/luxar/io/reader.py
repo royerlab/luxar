@@ -14,6 +14,11 @@ import zarr
 
 from luxar._zarr_compat import group_keys
 from luxar._zarr_compat import open_group as zc_open_group
+from luxar.io._compiler.finalize.amplitude_window import (
+    _indexed_children,
+    _lod_children,
+    _ordered_children,
+)
 
 from ..core.dimensions import Dimensions
 from ..core.transforms import read_transform_from_zarr
@@ -170,48 +175,43 @@ def _summarize_typed_node(
             info["duration_ms"] = child.attrs["duration_ms"]
 
 
-def _numbered_groups(
-    group: zarr.Group, prefix: str, node_name: str
+def _flattened_point_sources(
+    group: zarr.Group, node_name: str, *, is_root: bool = True
 ) -> List[zarr.Group]:
-    """Return numbered child groups in numeric order, rejecting malformed names."""
-    numbered: List[tuple[int, zarr.Group]] = []
-    for child_name in group_keys(group):
-        if not child_name.startswith(prefix):
-            continue
-        suffix = child_name[len(prefix) :]
-        if not suffix.isdigit():
-            raise ValueError(
-                f"Node '{node_name}' has malformed structural child "
-                f"'{child_name}': expected {prefix}<integer>"
-            )
-        numbered.append((int(suffix), group[child_name]))
-    return [child for _, child in sorted(numbered, key=lambda item: item[0])]
-
-
-def _flattened_point_sources(group: zarr.Group, node_name: str) -> List[zarr.Group]:
     """Resolve a structured points node to its finest disjoint leaf groups."""
+    if not is_root:
+        transforms = [
+            key for key in ("transform", "nd_transform") if key in group.attrs
+        ]
+        if transforms:
+            joined = " and ".join(transforms)
+            raise ValueError(
+                f"Points node '{node_name}' cannot be flattened because descendant "
+                f"'{group.path}' carries {joined}"
+            )
+
     kind = group.attrs.get("kind")
     if kind == "lod":
-        levels = _numbered_groups(group, "child_", node_name)
+        levels = _lod_children(group)
         if not levels:
             raise ValueError(f"Points node '{node_name}' has an empty LOD structure")
-        return _flattened_point_sources(levels[-1], node_name)
+        return _flattened_point_sources(levels[-1][1], node_name, is_root=False)
     if kind == "partition":
-        parts = _numbered_groups(group, "part_", node_name)
+        parts = _ordered_children(group, "part_")
         if not parts:
             raise ValueError(f"Points node '{node_name}' has an empty partition")
         return [
             source
-            for part in parts
-            for source in _flattened_point_sources(part, node_name)
+            for _, part, _ in parts
+            for source in _flattened_point_sources(part, node_name, is_root=False)
         ]
 
-    additive = _numbered_groups(group, "additive_", node_name)
+    additive = _indexed_children(group, "additive_")
     if additive:
         return [
             source
-            for increment in additive
-            for source in _flattened_point_sources(increment, node_name)
+            for _, increment in additive
+            for source in _flattened_point_sources(increment, node_name, is_root=False)
         ]
     if group.attrs.get("type") != "points":
         raise ValueError(f"Node '{node_name}' is not a points node")
@@ -508,8 +508,11 @@ class LuxarScene:
             flatten: When true, read the finest substitutive level, concatenate
                 every partition part, and concatenate every disjoint additive
                 increment. This reconstructs the complete finest-level point
-                cloud from an authored structure. The default keeps the legacy
-                flat-leaf behavior.
+                cloud from an authored structure. Substitutive children are
+                ordered coarsest to finest, and additive children are disjoint
+                increments. This is a whole-node, non-streaming read; use
+                :meth:`get_point_array` when only one field is needed. The
+                default keeps the legacy flat-leaf behavior.
 
         Returns:
             PointsData with fields: positions, colors, radii, sharpness,
@@ -566,9 +569,10 @@ class LuxarScene:
 
         ``array_name`` uses the :class:`PointsData` field spelling:
         ``positions``, ``colors``, ``radii``, ``sharpness``, or
-        ``chunk_bounds``. Reading one field is useful when another layer shares
-        a large ``array_ref`` and decoding the complete node would materialize
-        an unnecessary second copy.
+        ``chunk_bounds``. Flattened reads reject ``chunk_bounds`` because leaf
+        chunk metadata does not align with concatenated rows. Reading one field
+        is useful when another layer shares a large ``array_ref`` and decoding
+        the complete node would materialize an unnecessary second copy.
         """
         if not self.has_node(name):
             raise KeyError(f"Points node not found: {name}")
@@ -587,6 +591,8 @@ class LuxarScene:
             raise ValueError(
                 f"Unknown points array '{array_name}'; expected one of: {supported}"
             ) from None
+        if flatten and array_name == "chunk_bounds":
+            raise ValueError("'chunk_bounds' is not available for flattened points")
 
         group = self._root[name]
         sources = (
@@ -612,11 +618,9 @@ class LuxarScene:
         colors = self._concatenate_point_array(sources, "colors", name)
         radii = self._concatenate_point_array(sources, "radii", name)
         sharpness = self._concatenate_point_array(sources, "sharpnesses", name)
-        chunk_bounds = self._concatenate_point_array(
-            sources, "chunk_bounds", name, decode=False
-        )
 
         metadata = dict(group.attrs)
+        metadata.pop("kind", None)
         metadata["type"] = "points"
         metadata["n_points"] = int(positions.shape[0])
         if "transform" in metadata:
@@ -638,7 +642,7 @@ class LuxarScene:
             colors=colors,
             radii=radii,
             sharpness=sharpness,
-            chunk_bounds=chunk_bounds,
+            chunk_bounds=None,
             metadata=metadata,
         )
 

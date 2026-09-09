@@ -25,25 +25,25 @@ def _write_structured_points_scene(path: Path) -> None:
     with LuxarZarrCompiler(path) as compiler:
         compiler.create_scene(dimensions=Dimensions.default_3d())
         compiler.write_points(
-            "cloud/child_0",
+            "cloud/lod_coarse",
             np.array([[99.0, 99.0, 99.0]], dtype=np.float32),
         )
         compiler.write_points(
-            "cloud/child_1/part_0/additive_0",
+            "cloud/lod_fine/part_0/additive_0",
             positions[:2],
             colors=colors[:2],
             radii=radii[:2],
             sharpness=sharpness[:2],
         )
         compiler.write_points(
-            "cloud/child_1/part_0/additive_1",
+            "cloud/lod_fine/part_0/additive_1",
             positions[2:4],
             colors=colors[2:4],
             radii=radii[2:4],
             sharpness=sharpness[2:4],
         )
         compiler.write_points(
-            "cloud/child_1/part_1",
+            "cloud/lod_fine/part_1",
             positions[4:],
             colors=colors[4:],
             radii=radii[4:],
@@ -52,7 +52,11 @@ def _write_structured_points_scene(path: Path) -> None:
 
     root = open_group(path, mode="a")
     root["cloud"].attrs.update({"type": "group", "kind": "lod"})
-    root["cloud"]["child_1"].attrs.update({"type": "group", "kind": "partition"})
+    root["cloud"]["lod_coarse"].attrs["child_index"] = 0
+    root["cloud"]["lod_fine"].attrs.update(
+        {"type": "group", "kind": "partition", "child_index": 1}
+    )
+    root["cloud"]["lod_fine"]["part_0"].attrs["type"] = "group"
     consolidate(root)
 
 
@@ -79,29 +83,88 @@ def test_flatten_reconstructs_the_finest_points_level(
     colors_only = scene.get_point_array("cloud", "colors", flatten=True)
     assert colors_only is not None
 
-    order = np.argsort(data.positions[:, 0])
     expected_positions, expected_colors, expected_radii, expected_sharpness = (
         _expected_points()
     )
-    np.testing.assert_allclose(data.positions[order], expected_positions, atol=1e-6)
-    np.testing.assert_allclose(data.colors[order], expected_colors, atol=2.0 / 255)
-    np.testing.assert_allclose(colors_only[order], expected_colors, atol=2.0 / 255)
-    np.testing.assert_allclose(data.radii[order], expected_radii, atol=0.03)
-    np.testing.assert_allclose(
-        data.sharpness[order], expected_sharpness, atol=2.0 / 255
-    )
-    assert data.chunk_bounds is not None
+    np.testing.assert_allclose(data.positions, expected_positions, atol=1e-6)
+    np.testing.assert_allclose(data.colors, expected_colors, atol=2.0 / 255)
+    np.testing.assert_allclose(colors_only, expected_colors, atol=2.0 / 255)
+    np.testing.assert_allclose(data.radii, expected_radii, atol=0.03)
+    np.testing.assert_allclose(data.sharpness, expected_sharpness, atol=2.0 / 255)
+    assert data.chunk_bounds is None
     assert data.metadata["type"] == "points"
-    assert data.metadata["kind"] == "lod"
+    assert "kind" not in data.metadata
     assert data.metadata["n_points"] == 6
+
+    with pytest.raises(ValueError, match="not available for flattened points"):
+        scene.get_point_array("cloud", "chunk_bounds", flatten=True)
 
 
 def test_flatten_rejects_inconsistent_optional_arrays(tmp_path: Path) -> None:
     scene_path = tmp_path / "structured.luxar.zarr"
     _write_structured_points_scene(scene_path)
     root = open_group(scene_path, mode="a")
-    del root["cloud"]["child_1"]["part_0"]["additive_1"]["colors"]
+    del root["cloud"]["lod_fine"]["part_0"]["additive_1"]["colors"]
     consolidate(root)
 
     with pytest.raises(ValueError, match="inconsistent 'colors'"):
         LuxarScene.load(scene_path).get_points("cloud", flatten=True)
+
+
+@pytest.mark.parametrize("transform_name", ["transform", "nd_transform"])
+def test_flatten_rejects_descendant_transforms(
+    tmp_path: Path, transform_name: str
+) -> None:
+    scene_path = tmp_path / "structured.luxar.zarr"
+    _write_structured_points_scene(scene_path)
+    root = open_group(scene_path, mode="a")
+    value = (
+        np.eye(4).tolist() if transform_name == "transform" else {"T": {"offset": 1}}
+    )
+    root["cloud"]["lod_fine"]["part_1"].attrs[transform_name] = value
+    consolidate(root)
+
+    with pytest.raises(ValueError, match=rf"descendant .* carries {transform_name}"):
+        LuxarScene.load(scene_path).get_points("cloud", flatten=True)
+
+
+def test_get_point_array_preserves_flat_leaf_behavior(tmp_path: Path) -> None:
+    scene_path = tmp_path / "flat.luxar.zarr"
+    positions, colors, _, _ = _expected_points()
+    with LuxarZarrCompiler(scene_path) as compiler:
+        compiler.create_scene(dimensions=Dimensions.default_3d())
+        compiler.write_points("cloud", positions, colors=colors)
+
+    scene = LuxarScene.load(scene_path)
+    decoded = scene.get_point_array("cloud", "positions")
+    assert decoded is not None
+    np.testing.assert_allclose(decoded, scene.get_points("cloud").positions, atol=1e-6)
+    with pytest.raises(ValueError, match="Unknown points array 'normals'"):
+        scene.get_point_array("cloud", "normals")
+
+
+def test_flatten_round_trips_the_add_points_authoring_path(tmp_path: Path) -> None:
+    scene_path = tmp_path / "authored.luxar.zarr"
+    positions, colors, radii, sharpness = _expected_points()
+    with LuxarZarrCompiler(scene_path) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_points(
+            "cloud",
+            positions,
+            colors=colors,
+            radii=radii,
+            sharpness=sharpness,
+            partition={"max_elements": 2},
+            substitutive_lod={"levels": 1, "device": "cpu", "seed": 0},
+            additive_lod={"n_lods": 2, "method": "random", "seed": 0},
+        )
+
+    data = LuxarScene.load(scene_path).get_points("cloud", flatten=True)
+    assert data.colors is not None
+    assert data.radii is not None
+    assert data.sharpness is not None
+    order = np.argsort(data.positions[:, 0])
+    np.testing.assert_allclose(data.positions[order], positions, atol=1e-6)
+    np.testing.assert_allclose(data.colors[order], colors, atol=2.0 / 255)
+    np.testing.assert_allclose(data.radii[order], radii, atol=0.03)
+    np.testing.assert_allclose(data.sharpness[order], sharpness, atol=2.0 / 255)

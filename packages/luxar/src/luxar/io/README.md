@@ -147,7 +147,9 @@ print(points["radii"].shape)  # (N,) or None
 print(points["metadata"]["transform"])  # 4x4 numpy array (if present)
 
 # Reconstruct the finest cloud from substitutive LOD, partition, and additive
-# increments. Read one field when a large array_ref should not be materialized.
+# increments. Structured wrapper names come from list_groups(), filtered to
+# kind="lod" or kind="partition". Read one field when a large array_ref should
+# not be materialized.
 finest = scene.get_points("structured_cloud", flatten=True)
 colors = scene.get_point_array("structured_cloud", "colors", flatten=True)
 

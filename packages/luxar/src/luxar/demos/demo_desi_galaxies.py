@@ -888,16 +888,6 @@ def restructure_scene(scene_path: Path) -> Path:
             f"({tracer_positions.shape[0]:,} vs {redshift_count:,}); "
             "this scene is not the two-layer shape restructure_scene expects"
         )
-    if tracer_rgb.shape[0] != tracer_positions.shape[0]:
-        raise ValueError(
-            f"'By tracer type' carries {tracer_positions.shape[0]:,} points but "
-            f"{tracer_rgb.shape[0]:,} colors"
-        )
-    if redshift_rgb.shape[0] != redshift_count:
-        raise ValueError(
-            f"'By redshift' carries {redshift_count:,} points but "
-            f"{redshift_rgb.shape[0]:,} colors"
-        )
 
     aprint(
         f"  ♻ Re-laddering {tracer_positions.shape[0]:,} points under the current "
