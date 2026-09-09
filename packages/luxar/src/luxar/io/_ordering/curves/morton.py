@@ -8,6 +8,7 @@ exercised by the parity tests in ``io/tests/test_ordering_properties.py``).
 
 from __future__ import annotations
 
+import warnings
 from typing import Any
 
 import numpy as np
@@ -17,7 +18,15 @@ def _get_morton_numba_kernel():  # type: ignore[no-untyped-def]
     """Lazy-compile the Numba Morton encoding kernel on first use."""
     import numba
 
-    @numba.njit(cache=True)  # type: ignore[misc]
+    coords_type = numba.types.Array(  # type: ignore[no-untyped-call]
+        numba.int64, 2, "C", readonly=True
+    )
+    out_type = numba.types.Array(  # type: ignore[no-untyped-call]
+        numba.uint64, 1, "C"
+    )
+    signature = numba.void(coords_type, numba.int64, out_type)
+
+    @numba.njit(signature, cache=True)  # type: ignore[misc]
     def _morton_kernel(coords: np.ndarray, bits_per_dim: int, out: np.ndarray) -> None:
         n_points = coords.shape[0]
         n_dims = coords.shape[1]
@@ -57,10 +66,20 @@ def morton_encode_nd(coords: np.ndarray, bits_per_dim: int = 16) -> np.ndarray:
     if _morton_numba_kernel is None:
         try:
             _morton_numba_kernel = _get_morton_numba_kernel()  # type: ignore[no-untyped-call]
-        except (ImportError, Exception):
+        except ImportError:
+            _morton_numba_kernel = False
+        except Exception as exc:
+            warnings.warn(
+                "Morton Numba kernel failed with "
+                f"{type(exc).__name__}: {exc}; using the NumPy fallback",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             _morton_numba_kernel = False
 
     if _morton_numba_kernel:
+        # The eager signature accepts read-only C-contiguous input and requires
+        # writable C-contiguous output, so keep both buffers explicitly contiguous.
         out = np.empty(n_points, dtype=np.uint64)
         coords_i64 = np.ascontiguousarray(coords, dtype=np.int64)
         _morton_numba_kernel(coords_i64, bits_per_dim, out)

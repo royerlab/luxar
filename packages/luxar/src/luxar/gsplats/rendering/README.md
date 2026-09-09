@@ -15,7 +15,7 @@ GPU-accelerated volume rendering of Gaussian splats, with automatic backend sele
 
 ## Backend Selection
 
-1. **CUDA splatting backend** (fastest) — Used when `device="cuda"` and the compiled CUDA extension is available. Uses tiled, memory-efficient rendering.
+1. **CUDA splatting backend** (fastest) — Used when `device="cuda"`, the compiled CUDA extension is available, and the volume dimensionality is within the extension's `MIN_DIM` / `MAX_SUPPORTED_DIM` range (currently 2–8D). Uses tiled, memory-efficient rendering.
 2. **Pure PyTorch** (fallback) — Works on any device (CUDA, MPS, CPU). Supports nD rendering with automatic chunking to prevent OOM.
 
 ## Usage
