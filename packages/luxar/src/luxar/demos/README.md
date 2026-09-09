@@ -84,8 +84,9 @@ no flat `GSplatData` form, so those demos fetch paths with `ensure_dataset` and
 graft each with `add_gsplats_from_file`. Anything costlier than `stream` is also
 conditional on how the demo BUILDS its scene: `add_gsplats_from_data` and
 `add_gsplats_from_file` carry a stored topology through, while plain
-`add_gsplats(centers=…, amplitudes=…)` writes a flat leaf, so a demo that
-rebuilds from arrays would pay `levels`' extra ~38% and then discard it.
+`add_gsplats(centers=…, amplitudes=…)` rebuilds from the finest arrays, so a demo
+that does not explicitly re-author a topology would pay `levels`' extra ~38%
+and then discard it.
 `tests/test_lod_policy.py` holds both gates: a fitting demo either routes every
 archive through the policy or is accounted for by name — it ships no artifact, it
 names the topology itself with a literal `build_recipe(...)`, or it sits on the

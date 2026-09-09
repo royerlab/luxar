@@ -1,6 +1,7 @@
 """luxar.core.group.lod.gsplats – GSplats-specific LOD axis resolvers.
 
-Interprets the ``lod_group=`` (substitutive) and ``additive_lod=`` (additive)
+Interprets ``substitutive_lod=`` (historically ``lod_group=``) and
+``additive_lod=``
 convenience kwargs against a :class:`~luxar.gsplats.gsplat_data.GSplatData`
 input, used by ``Scene.add_gsplats_from_data(...)``. These two resolvers are
 the GSplats counterparts to ``lod.points.resolve_additive_axis_points`` /
@@ -26,7 +27,7 @@ if TYPE_CHECKING:
     from ....gsplats.gsplat_data import GSplatData
 
 
-#: Sentinel-typed alias for the value vocabulary of ``lod_group=`` and
+#: Sentinel-typed alias for the value vocabulary of ``substitutive_lod=`` and
 #: ``additive_lod=``. Order: ``None`` (pass-through), ``True`` (require
 #: stored), ``False`` (collapse to finest), ``dict[str, Any]`` (compute,
 #: optionally with ``recompute=True``).
@@ -34,7 +35,7 @@ LODAxisSpec = Union[None, bool, dict]
 
 
 # ────────────────────────────────────────────────────────────────────────
-# Resolvers for the ``lod_group=`` / ``additive_lod=`` convenience kwargs
+# Resolvers for the ``substitutive_lod=`` / ``additive_lod=`` convenience kwargs
 # ────────────────────────────────────────────────────────────────────────
 
 
@@ -42,7 +43,7 @@ def resolve_substitutive_axis_gsplats(
     data: "GSplatData",
     spec: LODAxisSpec,
 ) -> Tuple["GSplatData", Optional[List[float]]]:
-    """Apply ``lod_group=`` semantics to ``data``.
+    """Apply ``substitutive_lod=`` semantics to ``data``.
 
     Returns ``(resolved_data, explicit_coverage_fractions_or_None)``.
 
@@ -65,7 +66,8 @@ def resolve_substitutive_axis_gsplats(
     | ``None`` (default)        | Auto-lower: if ``n_substitutive > 1``,  |
     |                           | keep the full pyramid so it becomes a   |
     |                           | ``kind=lod`` Group (no work discarded). |
-    |                           | Pass ``lod_group=False`` to collapse to |
+    |                           | Pass ``substitutive_lod=False`` to      |
+    |                           | collapse to the finest level.          |
     |                           | the finest level instead.               |
     +---------------------------+-----------------------------------------+
     | ``True``                  | Require ``n_substitutive > 1`` already; |
@@ -87,17 +89,19 @@ def resolve_substitutive_axis_gsplats(
     if spec is None:
         # Auto-lower: a multi-substitutive pyramid is expensive to build, so
         # the default no longer silently drops it. Returning the full data
-        # routes it to the kind=lod Group builder (same as ``lod_group=True``)
-        # downstream. Use ``lod_group=False`` to collapse to the finest level.
+        # routes it to the kind=lod Group builder (same as
+        # ``substitutive_lod=True``) downstream. Use
+        # ``substitutive_lod=False`` to collapse to the finest level.
         return data, None
 
     if spec is True:
         if data.n_substitutive <= 1:
             raise ValueError(
-                "lod_group=True requires the input GSplatData to already "
+                "substitutive_lod=True (or its lod_group=True alias) requires "
+                "the input GSplatData to already "
                 "carry substitutive levels (n_substitutive > 1); got "
                 f"n_substitutive={data.n_substitutive}. Use "
-                "lod_group=dict(...) to compute them on the fly."
+                "substitutive_lod=dict(...) to compute them on the fly."
             )
         return data, None
 
@@ -120,19 +124,20 @@ def resolve_substitutive_axis_gsplats(
             # call. Same invariant the auto-derivation enforces.
             if not explicit_coverage_fractions:
                 raise ValueError(
-                    "lod_group=dict(coverage_fractions=...) must be non-empty "
+                    "substitutive_lod=dict(coverage_fractions=...) must be non-empty "
                     f"(one strictly-ascending value in "
                     f"[0, {MAX_COVERAGE_FRACTION:g}] per substitutive level)"
                 )
             _assert_strict_ascending(
-                explicit_coverage_fractions, "lod_group=dict(coverage_fractions=...)"
+                explicit_coverage_fractions,
+                "substitutive_lod=dict(coverage_fractions=...)",
             )
             if (
                 explicit_coverage_fractions[0] < 0.0
                 or explicit_coverage_fractions[-1] > MAX_COVERAGE_FRACTION
             ):
                 raise ValueError(
-                    "lod_group=dict(coverage_fractions=...): values must lie in "
+                    "substitutive_lod=dict(coverage_fractions=...): values must lie in "
                     f"[0, {MAX_COVERAGE_FRACTION:g}] (coarsest→finest); got "
                     f"{explicit_coverage_fractions}. An explicit list keeps the "
                     "legacy selector='coverage' diagonal units, whose upper "
@@ -148,7 +153,7 @@ def resolve_substitutive_axis_gsplats(
             # honored on the stored path).
             if kwargs:
                 raise ValueError(
-                    "lod_group=dict(...) carries compute kwargs "
+                    "substitutive_lod=dict(...) carries compute kwargs "
                     f"({sorted(kwargs)}) but data already has "
                     f"n_substitutive={data.n_substitutive}. Pass "
                     "recompute=True to override the stored pyramid, or "
@@ -157,7 +162,7 @@ def resolve_substitutive_axis_gsplats(
             return data, explicit_coverage_fractions
 
         # Compute. Align with ``make_substitutive_lod``'s canonical default
-        # (3 levels) so ``lod_group=dict()`` yields the same pyramid as a
+        # (3 levels) so ``substitutive_lod=dict()`` yields the same pyramid as a
         # bare ``make_substitutive_lod(data)`` call.
         kwargs.setdefault("levels", 3)
         from ....gsplats.lod.substitutive import make_substitutive_lod
@@ -165,7 +170,10 @@ def resolve_substitutive_axis_gsplats(
         new_data = make_substitutive_lod(data, **kwargs)
         return new_data, explicit_coverage_fractions
 
-    raise TypeError(f"lod_group must be None, bool, or dict; got {type(spec).__name__}")
+    raise TypeError(
+        "substitutive_lod (or lod_group alias) must be None, bool, or dict; "
+        f"got {type(spec).__name__}"
+    )
 
 
 def resolve_additive_axis_gsplats(

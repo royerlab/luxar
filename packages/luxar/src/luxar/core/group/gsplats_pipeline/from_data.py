@@ -827,7 +827,7 @@ def add_gsplats_from_data_impl(
                 f"Could not add gsplats '{name}': coverage_fraction must not be "
                 "passed when the resolved result is multi-substitutive: "
                 "thresholds are derived per-child (or set via "
-                "lod_group=dict(coverage_fractions=[...]))."
+                "substitutive_lod=dict(coverage_fractions=[...]))."
             )
         _reject_before_wrapper(
             group,

@@ -357,7 +357,8 @@ def _reject_a_partition_beside_a_stored_ladder(
     ``add_gsplats_from_file(..., lod_group="bogus", partition={…},
     additive_lod={"n_lods": 2})`` answers the conflict (``ValueError``) where
     ``add_gsplats_from_data`` with the same effective arguments answers
-    ``TypeError: lod_group must be None, bool, or dict; got str``. Both refuse and
+    ``TypeError: substitutive_lod (or lod_group alias) must be None, bool, or
+    dict; got str``. Both refuse and
     both write nothing, so the divergence is in naming only — the same sanctioned
     class this module already documents for "a NaN position, an unknown attr".
     For the same reason a fault the COUNT cannot see (a bad ``method``, a stray
