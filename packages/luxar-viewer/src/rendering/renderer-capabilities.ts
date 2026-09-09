@@ -318,12 +318,18 @@ export function createRendererCapabilities(
     }
   ).backend;
   let maxTextureSize = 8192;
+  let maxRenderbufferSize = 8192;
   const maxTextureDimension2D = backend?.device?.limits?.maxTextureDimension2D;
   if (typeof maxTextureDimension2D === 'number' && maxTextureDimension2D > 0) {
     maxTextureSize = maxTextureDimension2D;
+    maxRenderbufferSize = maxTextureDimension2D;
   } else if (backend?.gl && typeof backend.gl.getParameter === 'function') {
     const glMax = backend.gl.getParameter(backend.gl.MAX_TEXTURE_SIZE) as number | null;
     if (typeof glMax === 'number' && glMax > 0) maxTextureSize = glMax;
+    const renderbufferMax = backend.gl.getParameter(backend.gl.MAX_RENDERBUFFER_SIZE) as
+      number | null;
+    maxRenderbufferSize =
+      typeof renderbufferMax === 'number' && renderbufferMax > 0 ? renderbufferMax : 2048;
   }
 
   return {
@@ -332,7 +338,7 @@ export function createRendererCapabilities(
     hdr,
     maxMSAASamples: 4, // WebGPU adapters guarantee at least 4× MSAA
     maxTextureSize,
-    maxRenderbufferSize: maxTextureSize,
+    maxRenderbufferSize,
     pointSizeRange: [1, 1024],
     readBackbufferPixels() {
       // WebGPU backbuffer readback. WebGPURenderer doesn't have a

@@ -230,3 +230,35 @@ describe('createRendererCapabilities (GL probes)', () => {
     expect(caps.hdr.floatTextures).toBe(false);
   });
 });
+
+describe('createRendererCapabilities (WebGPU limits)', () => {
+  it('uses the WebGPU texture dimension for render attachments', () => {
+    const renderer = {
+      isWebGPURenderer: true,
+      backend: { device: { limits: { maxTextureDimension2D: 12288 } } },
+    } as unknown as Renderer;
+
+    const caps = createRendererCapabilities(renderer, true);
+
+    expect(caps.maxTextureSize).toBe(12288);
+    expect(caps.maxRenderbufferSize).toBe(12288);
+  });
+
+  it('keeps the smaller renderbuffer limit on the WebGL compatibility backend', () => {
+    const gl = {
+      MAX_TEXTURE_SIZE,
+      MAX_RENDERBUFFER_SIZE,
+      getParameter: (parameter: number) =>
+        parameter === MAX_TEXTURE_SIZE ? 16384 : parameter === MAX_RENDERBUFFER_SIZE ? 8192 : 0,
+    };
+    const renderer = {
+      isWebGPURenderer: true,
+      backend: { gl },
+    } as unknown as Renderer;
+
+    const caps = createRendererCapabilities(renderer, true);
+
+    expect(caps.maxTextureSize).toBe(16384);
+    expect(caps.maxRenderbufferSize).toBe(8192);
+  });
+});
