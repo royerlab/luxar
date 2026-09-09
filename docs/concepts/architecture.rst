@@ -387,7 +387,7 @@ Gaussian Splatting Integration
 
 * Scientific images are inherently continuous (microscopy, astronomy)
 * Gaussian splats are a natural representation (PSF = Gaussian)
-* Enables super-resolution, denoising, compression
+* Enables denoising, compression, and continuous rendering at any zoom (no voxel interpolation)
 
 **Luxar Integration**:
 
@@ -400,7 +400,7 @@ Gaussian Splatting Integration
 
 * Compress microscopy images 10-100×
 * Denoise while preserving features
-* Super-resolution reconstruction
+* Render continuously at any zoom, free of voxel-interpolation artefacts
 * Multi-scale image analysis
 
 Transform Composition

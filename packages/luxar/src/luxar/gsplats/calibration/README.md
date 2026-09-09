@@ -4,7 +4,7 @@ Blind-spot cross-validation for principled Gaussian-splat model selection (Luxar
 
 ## Purpose
 
-This package implements the Noise2Self-based calibration protocol that finds the optimal splat count K* for a dataset: sweep K, fit each against a donut-median-filled volume (held-out 5% mask), measure held-out PSNR against the original unmasked values, and pick the K that maximises held-out quality. Capacity beyond K* memorises noise rather than signal.
+This package implements the Noise2Self-based calibration protocol that finds the optimal splat count K* for a dataset: sweep K, fit each against a donut-median-filled volume (held-out 5% mask; each held-out voxel is replaced by the median of its *unmasked* donut neighbours, so the fitter never sees a held-out value directly or through a neighbour's fill), measure held-out PSNR against the original unmasked values, and pick the K that maximises held-out quality. Capacity beyond K* memorises noise rather than signal.
 
 As a free byproduct, an ensemble noise-floor estimator (Laplacian + Haar HH + background MAD) places each dataset in absolute terms (PSNR ceiling).
 
@@ -12,7 +12,7 @@ As a free byproduct, an ensemble noise-floor estimator (Laplacian + Haar HH + ba
 
 Split by phase:
 
-- **`masking.py`** — Bernoulli mask generation (`cv_mask`) and donut-median self-supervision fill (`donut_median_fill`)
+- **`masking.py`** — Bernoulli mask generation (`cv_mask`) and donut-median self-supervision fill (`donut_median_fill`; held-out donors are excluded, clustered masks expand the radius, and an all-held-out volume is rejected)
 - **`metrics.py`** — Held-out reconstruction metrics (`held_out_psnr`, `held_out_gain_db`, `held_out_psnr_foreground`, `held_out_psnr_fg_weighted`, `predict_zero_baseline_mse`)
 - **`noise_floor.py`** — Ensemble noise-floor estimation (`estimate_noise_floor` → `NoiseFloor`) and DC-offset estimation (`estimate_floor`)
 - **`content.py`** — Feature content estimation (local-maxima / edges / intensity counts) for splat-density prediction; Otsu and lightly smoothed foreground masks; auto region selection
@@ -183,7 +183,7 @@ Calibration applies `--floor` (default `"auto"`) **once** to the volume before m
 All tests colocated in `packages/luxar/src/luxar/gsplats/tests/test_calibration.py`:
 
 - `cv_mask`: Determinism, fraction Binomial CI, shape/dtype, invalid bounds
-- `donut_median_fill`: Constant volume unchanged, unmasked voxels untouched, gradient volume local average, 2D/3D/4D shape correctness, empty mask early return, radius-bounds validation
+- `donut_median_fill`: Constant volume unchanged, unmasked voxels untouched, gradient volume local average, 2D/3D/4D shape correctness, empty mask early return, radius-bounds validation, invariance to the values at held-out positions, masked-neighbour exclusion, clustered-mask radius expansion, genuine-NaN propagation, bounded-chunk equivalence, all-masked error
 - Noise floor estimators: Laplacian/Haar/background MAD on constant/noisy volumes
 - `estimate_floor`: Mode histogram vs percentile, zero-padding exclusion, high-offset float32 volumes (a background band narrower than float32 spacing) and a degenerate single-value band
 - `build_k_grid`: Exponential/polynomial spacing, endpoint pinning, explicit-grid override & precedence, input validation (bad progression, too few points, `k_max ≤ k_min`)

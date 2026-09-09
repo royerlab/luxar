@@ -705,11 +705,14 @@ as a legacy store. Both use the RAW amplitudes, the same units
 
 ### Quality Stamps (`lod_stats` / `level_stats`, format-additive)
 
-Builds stamp measured approximation quality alongside the LOD structure so the
-viewer can make principled display decisions (raw element counts compare
-apples to oranges across substitutive levels). All keys live inside the
-existing `lod_stats` / `level_stats` attr dicts — additive, no version bump;
-readers treat absence as "unstamped" and fall back to counts.
+Builds stamp a **heuristic** approximation-quality estimate alongside the LOD
+structure so the viewer has something better than raw element counts to
+schedule display against (counts compare apples to oranges across substitutive
+levels). The stamps are a monotone proxy — an energy fraction times a sampled
+per-level mixture-L² score — not a certified or bounded fidelity measure. All
+keys live inside the existing `lod_stats` / `level_stats` attr dicts —
+additive, no version bump; readers treat absence as "unstamped" and fall back
+to counts.
 
 - **`lod_stats.energy_fraction_cum`** (per additive sub-LOD, `additive_<i>`
   group or single-set leaf): cumulative self-energy fraction *e(k)* ∈ (0, 1]
@@ -733,11 +736,16 @@ readers treat absence as "unstamped" and fall back to counts.
   `luxar.gsplats.lod.quality`). The finest side is 1.0 by definition
   (including each part leaf of an `overview` fine partition).
 
-The viewer's recursive quality algebra: a leaf currently shows quality
+The viewer's recursive quality algebra: a leaf currently shows the estimate
 `q = Q·e(k)`; a partition shows `Σ wₚ qₚ / Σ wₚ`; a lod group shows its
-visible child's `q`. The LOD display gate releases an upgrade swap once the
-candidate's committed energy reaches a threshold (0.6) instead of waiting for
-the count crossover; `Q` feeds the layers-panel / data-monitor readouts.
+visible child's `q`. `q` is a heuristic proxy for rendered fidelity — `e(k)`
+is exact for the loaded prefix's self-energy but says nothing about spatial
+error, and `Q` is a sampled estimate of a mixture-L² distance — so it orders
+candidates sensibly but does not bound the visual error of what is on screen.
+The LOD display gate uses it that way: an upgrade swap is released once the
+candidate's loaded energy fraction `e(k)` reaches a threshold (0.6) instead of
+waiting for the count crossover; `Q` feeds the layers-panel / data-monitor
+readouts.
 
 Stamps are written by every recipe build (`RecipeParams.quality_stamps`,
 default on; `Q` measurement can be disabled with `--no-quality-stamps`) and
