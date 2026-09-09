@@ -115,12 +115,12 @@ describe('coarsestFreshNonEmptyIndex', () => {
 
   it('skips fresh-but-empty levels and returns the coarsest fresh non-empty one', () => {
     // coarse fresh with 100 splats, fine fresh with 0 → index 0.
-    expect(coarsestFreshNonEmptyIndex([level(2, 100), level(2, 0)], 2)).toBe(0);
+    expect(coarsestFreshNonEmptyIndex([level(2, 100), level(2, 0)], 2, 1)).toBe(0);
   });
 
   it('skips stale levels even when non-empty', () => {
     // coarse stale@1 (non-empty), fine fresh@2 (non-empty) → index 1.
-    expect(coarsestFreshNonEmptyIndex([level(1, 100), level(2, 50)], 2)).toBe(1);
+    expect(coarsestFreshNonEmptyIndex([level(1, 100), level(2, 50)], 2, 2)).toBe(1);
   });
 
   it('accepts untracked counts (null) — only KNOWN-empty is skipped', () => {
@@ -128,11 +128,15 @@ describe('coarsestFreshNonEmptyIndex', () => {
       ready: true,
       object: { userData: { nodeType: 'group' } },
     };
-    expect(coarsestFreshNonEmptyIndex([untracked, level(2, 0)], 2)).toBe(0);
+    expect(coarsestFreshNonEmptyIndex([untracked, level(2, 0)], 2, 1)).toBe(0);
   });
 
   it('returns -1 when every fresh level is empty (genuinely empty slice)', () => {
-    expect(coarsestFreshNonEmptyIndex([level(2, 0), level(2, 0)], 2)).toBe(-1);
+    expect(coarsestFreshNonEmptyIndex([level(2, 0), level(2, 0)], 2, 2)).toBe(-1);
+  });
+
+  it('does not search finer than the empty aspiration', () => {
+    expect(coarsestFreshNonEmptyIndex([level(2, 0), level(2, 50)], 2, 0)).toBe(-1);
   });
 });
 

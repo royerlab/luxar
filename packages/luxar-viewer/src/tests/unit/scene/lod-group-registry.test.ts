@@ -40,6 +40,7 @@ import {
   type BoundingBox,
 } from '../../../scene/scene-manager/clipping/bounds-math';
 import { updateCameraAspect } from '../../../utils/camera-utils';
+import { log } from '../../../utils/log';
 
 describe('computeEntryWorldBox', () => {
   it('reuses the caller-owned world box', () => {
@@ -3061,6 +3062,21 @@ describe('LODGroupRegistry — retryLazyChildByNodePath', () => {
 });
 
 describe('LODGroupRegistry — fresh-but-empty display guard', () => {
+  it('keeps an empty coarse aspiration when only a finer fresh level is populated', () => {
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => undefined);
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    const children = [makeCountedChild(0, 2, 0), makeCountedChild(0.5, 2, 50)];
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.setSelectorMode('/g', { lockLevel: 0 });
+
+    reg.evaluatePerFrame();
+
+    expect(children[0].object.visible).toBe(true);
+    expect(children[1].object.visible).toBe(false);
+    expect(warning).not.toHaveBeenCalled();
+    warning.mockRestore();
+  });
+
   it('redirects display to the coarsest fresh NON-empty level when the chosen level is empty', () => {
     const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
     // Identity camera → aspiration is the finest level; it is FRESH but
