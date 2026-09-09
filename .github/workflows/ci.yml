@@ -158,6 +158,8 @@ jobs:
             # skill projections checked by sync_demo_counts.py. The Cholesky
             # documentation guard reads that same CLAUDE.md, all three skill pages
             # and GSPLATS_DIMENSION_MAPPING.md.
+            # test_format_contract.py's CURRENT_VERSION_CLAIMS also pins the
+            # current format version across its named docs and viewer sources.
             # GATE_INPUTS in test_ci_diff_classifier.py is the declaration checked
             # against this ERE. Markdown alone runs only docs-quality, so these need
             # explicit Python ownership.
