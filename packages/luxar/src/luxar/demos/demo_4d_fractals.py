@@ -729,12 +729,10 @@ def generate_4d_fractal_dataset(
             # helping to blend into.
             sharpnesses = np.full(len(positions_5d), 0.75, dtype=np.float32)
 
-            scene.add_points(
+            fractals = scene.add_partition_group(
                 "Fractals4D",
-                positions_5d,
-                colors=colors,
-                radii=radii,
-                sharpness=sharpnesses,
+                display_type="points",
+                max_elements=TARGET_MAX_POINTS_PER_PLANE,
                 # Dialled in live in the Layers panel and copied back here, so
                 # the demo OPENS on the settings someone actually chose rather
                 # than on defaults they then have to rediscover.
@@ -753,9 +751,19 @@ def generate_4d_fractal_dataset(
                 # to 0.570 of the unshaded value, so the previous 1.971 window
                 # becomes 1.123 to preserve the authored mean brightness.
                 intensity=1.0 / DISPLAY_MAX,
-                partition={"max_elements": TARGET_MAX_POINTS_PER_PLANE},
                 layer=True,
             )
+            for part, start in enumerate(
+                range(0, len(positions_5d), TARGET_MAX_POINTS_PER_PLANE)
+            ):
+                stop = min(start + TARGET_MAX_POINTS_PER_PLANE, len(positions_5d))
+                fractals.add_points(
+                    f"part_{part}",
+                    positions_5d[start:stop],
+                    colors=colors[start:stop],
+                    radii=radii[start:stop],
+                    sharpness=sharpnesses[start:stop],
+                )
 
             # --- Overlays ---
             # Title

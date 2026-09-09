@@ -1331,7 +1331,7 @@ scene.add_gsplats_from_data(
         (
             "demo_4d_fractals.py",
             "'Fractals4D'",
-            "partition",
+            "max_elements",
             "TARGET_MAX_POINTS_PER_PLANE",
         ),
     ],
@@ -1349,7 +1349,7 @@ def test_gallery_oversized_nodes_bound_individual_commits(
         for node in ast.walk(ast.parse(source))
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
-        and node.func.attr in {"add_points", "add_lines"}
+        and node.func.attr in {"add_points", "add_lines", "add_partition_group"}
         and node.args
         and ast.unparse(node.args[0]) == node_expression
     ]

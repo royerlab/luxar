@@ -392,13 +392,25 @@ class TestWrittenDatasetContract:
         assert wdim["range"] == [float(axis[0]), float(axis[-1])]
         assert len(planes) > 2, "test grid too small to exercise the slider"
 
-        attrs = zarr.open_group(out, mode="r")["Fractals4D"].attrs
+        root = zarr.open_group(out, mode="r")
+        group = root["Fractals4D"]
+        attrs = group.attrs
+        assert attrs["kind"] == "partition"
+        assert attrs["max_elements"] == _demo.TARGET_MAX_POINTS_PER_PLANE
         assert attrs["blending_mode"] == "volumetric"
         assert attrs["opacity"] == pytest.approx(0.43)
         assert attrs["absorption"] == pytest.approx(1.23)
         assert attrs["intensity"] == pytest.approx(1.0 / _demo.DISPLAY_MAX)
 
-        pos = scene.get_points("Fractals4D")["positions"]
+        part_names = list(group.group_keys())
+        assert part_names
+        assert all(
+            group[name].attrs["n_points"] <= _demo.TARGET_MAX_POINTS_PER_PLANE
+            for name in part_names
+        )
+        pos = np.concatenate(
+            [scene.get_points(f"Fractals4D/{name}")["positions"] for name in part_names]
+        )
         w = pos[:, 1]
         fractal_ids = pos[:, 0]
         # Quantization precision is judged against the PRODUCTION fetch
