@@ -985,10 +985,10 @@ class Group(Node):
         dim_order: Optional[List[str]] = None,
         fill: Optional[Dict[str, float]] = None,
         fill_sigma: Optional[Dict[str, float]] = None,
-        substitutive_lod: Any = _UNSET_LOD,
         lod_group: Any = _UNSET_LOD,
         additive_lod: Any = None,
         normalize_amplitudes: Any = _DEFAULT_NORMALIZE_AMPLITUDES,
+        substitutive_lod: Any = _UNSET_LOD,
         **attrs: Any,
     ) -> Union[GSplats, "Group"]:
         """Add Gaussian splats from a GSplatData object.

@@ -118,6 +118,8 @@ def add_gsplats_from_file_impl(
     reject_mesh_only_appearance("gsplats", name, attrs)
     if partition is not None:
         attrs["partition"] = partition
+    if additive_lod is not None:
+        attrs["additive_lod"] = additive_lod
 
     # Classical (photogrammetric) splat files — INRIA/SuperSplat .ply,
     # antimatter15 .splat, Niantic .spz — are imported on the fly and embedded
@@ -137,7 +139,6 @@ def add_gsplats_from_file_impl(
             fill=fill,
             fill_sigma=fill_sigma,
             lod_group=lod_group,
-            additive_lod=additive_lod,
             **attrs,
         )
 
@@ -162,7 +163,6 @@ def add_gsplats_from_file_impl(
             fill=fill,
             fill_sigma=fill_sigma,
             lod_group=lod_group,
-            additive_lod=additive_lod,
             **attrs,
         )
 
@@ -188,14 +188,13 @@ def add_gsplats_from_file_impl(
             fill=fill,
             fill_sigma=fill_sigma,
             lod_group=lod_group,
-            additive_lod=additive_lod,
             **attrs,
         )
 
-    if lod_group is not None or additive_lod is not None:
+    if lod_group is not None:
         raise ValueError(
-            "flatten=True is required to apply substitutive_lod= or "
-            "additive_lod= to a partition / nested .gsplats.zarr"
+            "flatten=True is required to apply substitutive_lod= to a "
+            "partition / nested .gsplats.zarr"
         )
 
     if dim_order is not None or fill is not None or fill_sigma is not None:

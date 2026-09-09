@@ -104,3 +104,48 @@ def test_add_gsplats_from_file_flattens_then_restructures(tmp_path) -> None:
     assert stored.attrs["type"] == "gsplats"
     assert stored.attrs["n_splats"] == source.n_splats
     assert stored.attrs["n_additive_sublods"] == 2
+
+
+def test_array_adder_keeps_partition_plus_additive_refusal_transactional(
+    tmp_path,
+) -> None:
+    output_path = tmp_path / "scene.luxar.zarr"
+    data = _data()
+
+    with LuxarZarrCompiler(output_path) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        with pytest.raises(
+            ValueError,
+            match="partition= is not supported alongside an additive_lod= ladder",
+        ):
+            scene.add_gsplats(
+                "splats",
+                data.centers,
+                data.amplitudes,
+                data.cholesky_factors,
+                partition=dict(max_elements=4),
+                additive_lod=dict(n_lods=2),
+            )
+
+    assert "splats" not in zarr.open_group(output_path, mode="r")
+
+
+def test_nested_file_requires_flatten_before_relod(tmp_path) -> None:
+    source_path = tmp_path / "partitioned.gsplats.zarr"
+    write_gsplats_tree(
+        source_path,
+        _data().to_spatial_partition(max_elements=4),
+        ordering="none",
+    )
+    output_path = tmp_path / "scene.luxar.zarr"
+
+    with LuxarZarrCompiler(output_path) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        with pytest.raises(ValueError, match="flatten=True is required"):
+            scene.add_gsplats_from_file(
+                "splats",
+                source_path,
+                substitutive_lod=dict(compression_factor=2, levels=1),
+            )
+
+    assert "splats" not in zarr.open_group(output_path, mode="r")

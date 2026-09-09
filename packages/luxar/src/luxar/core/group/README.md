@@ -67,9 +67,9 @@ group is detached from a scene or the scene lacks a writer.
 |--------|---------|---------|
 | `add_points(name, positions, ...)` | `Points` or `Group` | Add a point cloud; `partition=` yields a partition, `substitutive_lod=` yields an LOD, and combining them yields an overview LOD whose finest child is partitioned |
 | `add_lines(name, vertices, widths, ...)` | `Lines` or `Group` | Add polylines/segments/loops; partition-aware (polylines stay atomic) |
-| `add_gsplats(name, centers, amplitudes, cholesky_factors, ...)` | `GSplats` or `Group` | Add Gaussian splats from explicit arrays |
-| `add_gsplats_from_data(name, result, ...)` | `GSplats` or `Group` | Add from a `GSplatData`; resolves substitutive (`lod_group=`) and additive (`additive_lod=`) LOD axes |
-| `add_gsplats_from_file(name, path, ...)` | `GSplats` or `Group` | Load from a `.gsplats.zarr` file (auto-lowers a stored pyramid into a `kind=lod` group) |
+| `add_gsplats(name, centers, amplitudes, cholesky_factors, ...)` | `GSplats` or `Group` | Add Gaussian splats from explicit arrays with the same partition/substitutive/additive structure controls as the other geometry adders |
+| `add_gsplats_from_data(name, result, ...)` | `GSplats` or `Group` | Add from a `GSplatData`; resolves substitutive (`substitutive_lod=`, with `lod_group=` as an alias) and additive (`additive_lod=`) LOD axes |
+| `add_gsplats_from_file(name, path, ...)` | `GSplats` or `Group` | Load from a `.gsplats.zarr`; `flatten=True` collapses stored structure before applying new partition/LOD controls |
 | `add_gsplats_from_volume(name, volume, ...)` | `GSplats` or `Group` | Fit splats to a volume and add in one step (optional progressive multi-pass) |
 
 Cross-cutting keyword arguments shared by the leaf adders:
