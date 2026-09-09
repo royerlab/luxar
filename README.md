@@ -116,13 +116,13 @@ geometry, what it needs, and whether you have already built it:
 
  MEDICAL ────────────────────────────────────────────────────────────── 4 demos
  ✓ 17  dmri_tractography                       lines         588 MB
- • 28  gsplats_2d_cmu1_pathology               gsplats       150 MB GPU?
+ • 29  gsplats_2d_cmu1_pathology               gsplats       150 MB GPU?
 
  SYNTHETIC ─────────────────────────────────────────────────────────── 20 demos
  ✓ 10  cloud                                   points
    11  collision                               points
  ...
- ✓ 21  exotic_surfaces                         points
+ ✓ 22  exotic_surfaces                         points
 
  ✓ built   • inputs cached   (blank) not generated yet
  GPU/GPU? = required/optional     git-lfs kaggle manual = data you supply
