@@ -90,9 +90,15 @@ class _Recorder(list):
     def __init__(self) -> None:
         super().__init__()
         self.invocations: list[tuple[tuple[str, ...], dict[str, Any]]] = []
+        self.audit_invocations: list[tuple[tuple[str, ...], dict[str, Any]]] = []
 
 
-def _fake_run(repo: Path, calls: _Recorder, outcomes: dict[str, str]):
+def _fake_run(
+    repo: Path,
+    calls: _Recorder,
+    outcomes: dict[str, str],
+    audit_outcomes: dict[str, int],
+):
     """A ``subprocess.run`` that records the call and plays a scripted outcome.
 
     ``fail`` = the real "input not on this machine" shape (exit 1 with the demo's
@@ -109,6 +115,9 @@ def _fake_run(repo: Path, calls: _Recorder, outcomes: dict[str, str]):
 
     def run(cmd, **kwargs):  # type: ignore[no-untyped-def]
         script = Path(cmd[1]).name
+        if script in audit_outcomes:
+            calls.audit_invocations.append((tuple(cmd), dict(kwargs)))
+            return SimpleNamespace(returncode=audit_outcomes[script])
         calls.append(script)
         calls.invocations.append((tuple(cmd), dict(kwargs)))
         outcome = outcomes[script]
@@ -148,6 +157,7 @@ def _setup(
     missing_script: tuple[str, ...] = (),
     capture_only: tuple[str, ...] = (),
     lfs_states: Optional[dict[str, str]] = None,
+    audit_outcomes: Optional[dict[str, int]] = None,
 ) -> _Recorder:
     """Point the harness at a synthetic tree; return the recorded-calls list.
 
@@ -167,6 +177,10 @@ def _setup(
     manifest: list[dict[str, Any]] = []
     data_datasets: dict[str, Any] = {}
     outcomes: dict[str, str] = {}
+    audit_outcomes = audit_outcomes or {
+        "check_demo_ladders.py": 0,
+        "check_scene_credits.py": 0,
+    }
     lfs_states = lfs_states or {}
     for demo_id, local_data, outcome in specs:
         script: Optional[str]
@@ -207,7 +221,11 @@ def _setup(
     monkeypatch.setattr(gen, "load_manifest", lambda: manifest)
     data_manifest.write_text(json.dumps({"datasets": data_datasets}))
     calls = _Recorder()
-    monkeypatch.setattr(gen.subprocess, "run", _fake_run(tmp_path, calls, outcomes))
+    monkeypatch.setattr(
+        gen.subprocess,
+        "run",
+        _fake_run(tmp_path, calls, outcomes, audit_outcomes),
+    )
     return calls
 
 
@@ -405,6 +423,73 @@ def test_the_child_command_contract(tmp_path, monkeypatch) -> None:
     assert gen.GEN_TIMEOUT_S >= 600
     assert kwargs["capture_output"] is True
     assert kwargs["text"] is True
+
+
+def test_newly_generated_stores_are_audited_by_explicit_path(
+    tmp_path, monkeypatch
+) -> None:
+    calls = _setup(
+        tmp_path,
+        monkeypatch,
+        [("fresh", None, "ok"), ("stale", None, "ok")],
+        present=("stale",),
+    )
+
+    code = _run_main(monkeypatch)
+
+    assert code == 0
+    assert calls == ["demo_fresh.py"]
+    assert len(calls.audit_invocations) == 2
+    expected_store = str(tmp_path / "datasets/demos/fresh.luxar.zarr")
+    for cmd, kwargs in calls.audit_invocations:
+        assert cmd[0] == sys.executable
+        assert Path(cmd[1]).name in {
+            "check_demo_ladders.py",
+            "check_scene_credits.py",
+        }
+        assert list(cmd[2:]) == ["--require-scenes", expected_store]
+        assert kwargs == {"cwd": tmp_path}
+
+
+@pytest.mark.parametrize(
+    "failed_auditor", ["check_demo_ladders.py", "check_scene_credits.py"]
+)
+def test_a_failed_generated_store_audit_fails_the_gallery_build(
+    tmp_path, monkeypatch, capsys, failed_auditor
+) -> None:
+    calls = _setup(
+        tmp_path,
+        monkeypatch,
+        [("fresh", None, "ok")],
+        audit_outcomes={
+            "check_demo_ladders.py": int(failed_auditor == "check_demo_ladders.py"),
+            "check_scene_credits.py": int(failed_auditor == "check_scene_credits.py"),
+        },
+    )
+
+    code = _run_main(monkeypatch)
+    out = capsys.readouterr().out
+
+    assert code == 1
+    assert len(calls.audit_invocations) == 2
+    assert failed_auditor.removesuffix(".py") in out
+
+
+def test_an_idempotent_run_does_not_audit_neighbouring_stores(
+    tmp_path, monkeypatch
+) -> None:
+    calls = _setup(
+        tmp_path,
+        monkeypatch,
+        [("stale", None, "ok")],
+        present=("stale",),
+    )
+
+    code = _run_main(monkeypatch)
+
+    assert code == 0
+    assert not calls
+    assert not calls.audit_invocations
 
 
 def test_a_local_input_demo_that_succeeds_is_generated(

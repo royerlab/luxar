@@ -4,7 +4,10 @@
 Reads the single-source-of-truth manifest (``scripts/gallery/manifest.json``)
 and, for every entry that declares a generator ``script``, runs that demo with
 ``--no-serve`` to produce its ``.luxar.zarr`` under ``datasets/demos/`` — unless
-the dataset already exists (idempotent / resumable).
+the dataset already exists (idempotent / resumable). Every store produced by
+this run is then checked for LOD-ladder quality and embedded scene credits before
+the gallery capture can proceed; already-present neighbouring stores are not
+allowed to make a newly generated store fail or pass.
 
 Entries with ``script: null`` live only on a feature branch; their dataset must
 already be present (typically generated once, then committed/kept locally). Such
@@ -82,6 +85,11 @@ LOCAL_INPUT_MODES = ("manual-file", "kaggle-auth", "git-lfs")
 # This is a temporary list, not a policy. DELETE an entry the moment its cause is
 # gone — the demo is then generated like any other.
 UNBUILDABLE_IDS: dict[str, str] = {}
+
+SCENE_AUDITORS = (
+    REPO_ROOT / "scripts" / "check_demo_ladders.py",
+    REPO_ROOT / "scripts" / "check_scene_credits.py",
+)
 
 
 def load_manifest() -> list[dict[str, Any]]:
@@ -252,6 +260,28 @@ def print_plan(demos: list[dict[str, Any]]) -> None:
             aprint(f"[{present:>7}] {d['id']:<34} {gen}")
 
 
+def audit_generated_stores(paths: list[Path]) -> list[str]:
+    """Run every built-scene auditor against exactly the stores made here."""
+    if not paths:
+        return []
+
+    failures = []
+    with asection(f"Auditing {len(paths)} newly generated scene(s)"):
+        for auditor in SCENE_AUDITORS:
+            cmd = [
+                sys.executable,
+                str(auditor),
+                "--require-scenes",
+                *(str(path) for path in paths),
+            ]
+            aprint(" ".join(cmd))
+            result = subprocess.run(cmd, cwd=REPO_ROOT)
+            if result.returncode != 0:
+                failures.append(auditor.stem)
+                aprint(f"❌ {auditor.stem} failed with exit {result.returncode}")
+    return failures
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -294,6 +324,7 @@ def main() -> int:
         "no-output": [],
         "missing-script": [],
     }
+    generated_paths: list[Path] = []
 
     with asection(f"Generating {len(demos)} gallery datasets"):
         for entry in demos:
@@ -303,6 +334,8 @@ def main() -> int:
                 continue
             status, detail = generate_one(entry)
             results.setdefault(status, []).append(entry["id"])
+            if status == "generated":
+                generated_paths.append(REPO_ROOT / entry["dataset"])
             symbol = {"generated": "✅"}.get(status, "⚠️ ")
             aprint(f"{symbol} {entry['id']} — {status}: {detail}")
 
@@ -313,14 +346,16 @@ def main() -> int:
 
     ready = [d for d in demos if dataset_exists(d)]
     aprint(f"\n{len(ready)}/{len(demos)} datasets ready for capture.")
-    aprint("Next: cd packages/luxar-viewer && pnpm gallery")
+    audit_failures = audit_generated_stores(generated_paths)
+    if not audit_failures:
+        aprint("Next: cd packages/luxar-viewer && pnpm gallery")
 
     # Non-zero only on hard generation failures. capture-only, manual-data and
     # unbuildable are expected states, not errors: manual-data is a demo whose
     # machine-local input this machine does not have, unbuildable one that cannot
     # be built anywhere yet (see `generate_one`).
     hard_failures = results["failed"] + results["timeout"] + results["no-output"]
-    return 1 if hard_failures else 0
+    return 1 if hard_failures or audit_failures else 0
 
 
 if __name__ == "__main__":
