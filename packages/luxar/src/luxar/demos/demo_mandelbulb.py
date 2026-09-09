@@ -62,6 +62,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.colormaps import scalars_to_colors
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer
+from luxar.demos._lod_policy import stream_ladder
 from luxar.utils.paths import get_demos_output_dir
 
 
@@ -496,6 +497,7 @@ def generate_mandelbulb_volumetric(
                 # converge on its exposure target; that is not residual clipping
                 # or an uncompensated authoring offset.
                 intensity=1.0 / 26.0,
+                additive_lod=stream_ladder(len(positions)),
                 # Expose the node in the viewer's Layers panel so the
                 # appearance above is live-tunable — in volumetric mode the
                 # panel shows the Absorption (kappa) slider alongside opacity /

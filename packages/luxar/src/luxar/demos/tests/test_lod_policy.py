@@ -1290,3 +1290,71 @@ scene.add_gsplats_from_data(
     def test_rejects_a_slice_count_below_one(self) -> None:
         with pytest.raises(ValueError, match="slices must be >= 1"):
             stream_ladder(1_000, slices=0)
+
+
+@pytest.mark.parametrize(
+    ("filename", "node_expression", "keyword", "value_expression"),
+    [
+        ("demo_lorenz.py", "'LorenzAttractor'", "additive_lod", "stream_ladder"),
+        ("demo_mandelbulb.py", "'Mandelbulb'", "additive_lod", "stream_ladder"),
+        ("demo_rainbow_sphere.py", "'RainbowSphere'", "additive_lod", "stream_ladder"),
+        (
+            "demo_exotic_surfaces.py",
+            "FAMILY_NAMES[family]",
+            "additive_lod",
+            "stream_ladder",
+        ),
+        (
+            "demo_galaxy_simulation.py",
+            "f'Disc {label}'",
+            "additive_lod",
+            "stream_ladder",
+        ),
+        (
+            "demo_galaxy_simulation.py",
+            "'HII regions'",
+            "additive_lod",
+            "stream_ladder",
+        ),
+        (
+            "demo_galaxy_simulation.py",
+            "'Bulge'",
+            "additive_lod",
+            "stream_ladder",
+        ),
+        (
+            "demo_ppi_flow_field.py",
+            "'Advected protein streamlines'",
+            "additive_lod",
+            "stream_ladder",
+        ),
+        (
+            "demo_4d_fractals.py",
+            "'Fractals4D'",
+            "partition",
+            "TARGET_MAX_POINTS_PER_PLANE",
+        ),
+    ],
+)
+def test_gallery_oversized_nodes_bound_individual_commits(
+    filename: str,
+    node_expression: str,
+    keyword: str,
+    value_expression: str,
+) -> None:
+    """Every known oversized gallery node must bound one viewer commit."""
+    source = (Path(__file__).parents[1] / filename).read_text()
+    calls = [
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"add_points", "add_lines"}
+        and node.args
+        and ast.unparse(node.args[0]) == node_expression
+    ]
+    assert len(calls) == 1, f"expected one {node_expression} adder in {filename}"
+
+    values = {item.arg: item.value for item in calls[0].keywords if item.arg}
+    assert keyword in values, f"{filename} {node_expression} has no {keyword}="
+    assert value_expression in ast.unparse(values[keyword])

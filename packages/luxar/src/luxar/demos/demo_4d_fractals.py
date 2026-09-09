@@ -753,6 +753,7 @@ def generate_4d_fractal_dataset(
                 # to 0.570 of the unshaded value, so the previous 1.971 window
                 # becomes 1.123 to preserve the authored mean brightness.
                 intensity=1.0 / DISPLAY_MAX,
+                partition={"max_elements": TARGET_MAX_POINTS_PER_PLANE},
                 layer=True,
             )
 

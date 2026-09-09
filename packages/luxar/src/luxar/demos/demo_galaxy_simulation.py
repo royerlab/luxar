@@ -157,6 +157,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
+from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -970,6 +971,9 @@ def generate_galaxy(output_path: Path, n_disc: int, n_frames: int) -> int:
                         opacity=1.0,
                         blending_mode="additive",
                         intensity=gain,
+                        additive_lod=stream_ladder(
+                            len(pos), slices=hidden_axis_stops(pos, dims.non_displayed)
+                        ),
                         layer=True,
                     )
                     total += len(pos)
@@ -992,6 +996,10 @@ def generate_galaxy(output_path: Path, n_disc: int, n_frames: int) -> int:
                     opacity=1.0,
                     blending_mode="additive",
                     intensity=gain,
+                    additive_lod=stream_ladder(
+                        len(hii_pos),
+                        slices=hidden_axis_stops(hii_pos, dims.non_displayed),
+                    ),
                     layer=True,
                 )
                 total += len(hii_pos)
@@ -1010,6 +1018,10 @@ def generate_galaxy(output_path: Path, n_disc: int, n_frames: int) -> int:
                     opacity=1.0,
                     blending_mode="additive",
                     intensity=gain,
+                    additive_lod=stream_ladder(
+                        len(bulge_pos),
+                        slices=hidden_axis_stops(bulge_pos, dims.non_displayed),
+                    ),
                     layer=True,
                 )
                 total += len(bulge_pos)

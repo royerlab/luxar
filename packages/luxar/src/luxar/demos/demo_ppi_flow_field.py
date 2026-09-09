@@ -91,6 +91,7 @@ from luxar.demos._graph_common import (
     load_hgnc,
     load_huri_edges,
 )
+from luxar.demos._lod_policy import stream_ladder
 from luxar.demos._support._umap_utils import get_categorical_color
 from luxar.utils.paths import get_demos_output_dir
 
@@ -1199,6 +1200,9 @@ def write_scene(
                     blending_mode="additive",
                     opacity=0.35,
                     intensity=0.92 * NODE_INTENSITY_SCALE,
+                    additive_lod=stream_ladder(
+                        len(streamline_data.vertices), geometry="lines"
+                    ),
                     layer=True,
                 )
 

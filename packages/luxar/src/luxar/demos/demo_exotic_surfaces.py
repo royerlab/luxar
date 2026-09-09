@@ -125,6 +125,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer
 from luxar.demos._cinematic_camera import pull_in
+from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
 from luxar.shading import bake_ambient_occlusion
 from luxar.utils.paths import get_demos_output_dir
 
@@ -879,6 +880,9 @@ def generate_exotic_surfaces(output_path: Path, resolution: int = RESOLUTION) ->
                     gamma=1.0,
                     blending_mode="volumetric",
                     intensity=intensity,
+                    additive_lod=stream_ladder(
+                        len(nd), slices=hidden_axis_stops(nd, dims.non_displayed)
+                    ),
                     extend_to_all=[],
                     layer=True,
                 )
