@@ -105,6 +105,48 @@ def _run_pytorch_reference(data, truncate=3.0, intensity_floor=1e-5):
     )
 
 
+@pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Need multiple GPUs")
+def test_forward_backward_on_non_default_cuda_device():
+    """Kernels should launch on the device that owns their input tensors."""
+    from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import cholesky_to_conic
+
+    torch.cuda.set_device(0)
+    device = torch.device("cuda:1")
+    shape = (16, 16, 16)
+    centers = torch.tensor([[8.0, 8.0, 8.0]], device=device)
+    cholesky = torch.eye(3, device=device).unsqueeze(0)
+    conic = cholesky_to_conic(cholesky)
+    amps = torch.ones(1, device=device)
+
+    output, shape_tensor = cuda_splatting_backend.forward(
+        centers.contiguous(),
+        conic.contiguous(),
+        amps.contiguous(),
+        list(shape),
+        3.0,
+        1e-5,
+    )
+    gradients = cuda_splatting_backend.backward(
+        torch.ones_like(output),
+        centers.contiguous(),
+        conic.contiguous(),
+        amps.contiguous(),
+        list(shape),
+        3.0,
+        1e-5,
+        shape_tensor_cached=shape_tensor,
+    )
+
+    assert output.device == device
+    assert shape_tensor.device == device
+    assert torch.isfinite(output).all()
+    assert output.sum() > 0
+    assert all(gradient.device == device for gradient in gradients)
+    assert all(torch.isfinite(gradient).all() for gradient in gradients)
+    assert gradients[2].item() > 0
+    assert torch.cuda.current_device() == 0
+
+
 class TestAmplitudeBasedTruncation:
     """Invariant: amplitude-based truncation in effective_truncate_sq keeps
     low-amplitude splats consistent with the PyTorch reference and output

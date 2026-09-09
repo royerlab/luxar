@@ -19,6 +19,7 @@
 #include "kernel_launchers.cuh"
 
 #include <cuda_runtime.h>
+#include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAStream.h>
 
 #include <algorithm>
@@ -284,6 +285,8 @@ forward_impl(
 
     validate_inputs(centers, conic, amps, shape, expected_dtype);
 
+    const c10::cuda::CUDAGuard device_guard(centers.device());
+
     int dim = (int)shape.size();
     auto device = centers.device();
 
@@ -331,6 +334,8 @@ backward_impl(
         std::is_same_v<InputDType, __half> ? torch::kFloat16 : torch::kFloat32;
 
     validate_inputs(centers, conic, amps, shape, expected_dtype);
+
+    const c10::cuda::CUDAGuard device_guard(centers.device());
 
     int dim = (int)shape.size();
     int N = (int)centers.size(0);
