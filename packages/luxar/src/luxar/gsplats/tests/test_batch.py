@@ -497,6 +497,25 @@ class TestEnvCapture:
         assert env.luxar_version == "unknown"
         assert Path(caught[0].filename) == Path(__file__)
 
+    def test_missing_version_metadata_stays_quiet(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from luxar.gsplats.batch import env_capture
+
+        monkeypatch.setattr(
+            env_capture,
+            "version",
+            lambda _name: (_ for _ in ()).throw(
+                env_capture.PackageNotFoundError("luxar")
+            ),
+        )
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            assert env_capture._luxar_version() == "unknown"
+
+        assert not caught
+
     def test_generate_preamble_conda(self) -> None:
         from luxar.gsplats.batch.env_capture import CapturedEnv, generate_env_preamble
 
