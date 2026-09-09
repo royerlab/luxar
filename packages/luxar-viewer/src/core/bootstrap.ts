@@ -142,7 +142,8 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // path: `navigator.deviceMemory` is Chromium-only and spec-capped at 8 GB, so
   // on a large machine it pins the budget at its ceiling and the pool's
   // eviction path can never be exercised under pressure. `?cacheBudgetMB=` is
-  // the only way to reproduce constrained-device behaviour on a roomy box. In
+  // the only way to reproduce constrained-device behaviour on a roomy box;
+  // values around 384 MiB keep the byte-budget eviction path binding. In
   // desktop WebKit it is the sole signal and may raise or lower the 512 MB
   // fallback. On mobile WebKit it replaces the device-class pool in the shared
   // remainder, but the independent 128 MiB mobile safety cap remains a peer

@@ -579,8 +579,8 @@ repo root and used by `luxar export --native ...`) honor:
   so the viewer can't auto-size its caches from the JS heap. The same value
   supplies the auto GPU-geometry/LOD residency signal through the implied
   non-cache remainder; the default therefore raises that budget from 512 to
-  1432 MB when
-  `deviceMemory` is unavailable. Lower it on a constrained machine (e.g. `=512`).
+  1432 MB when `deviceMemory` is unavailable. Lower it on a constrained machine
+  (e.g. `=512`).
 
 ### Configuration
 

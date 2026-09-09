@@ -4,6 +4,7 @@ import {
   getGpuByteBudget,
   reduceGpuByteBudgetForContextLoss,
 } from '../../../rendering/gpu-byte-budget';
+import { config } from '../../../config';
 import { log, Modules } from '../../../utils/log';
 
 const profile = { deviceClass: 'laptop' as 'mobile' | 'laptop' | 'desktop' };
@@ -41,6 +42,7 @@ function withHeapLimit(bytes: number | undefined, fn: () => void): void {
 
 const MB = 1_000_000;
 const MiB = 1024 * 1024;
+const targetHeapUsage = config.dataLoading.memory.targetHeapUsage;
 
 afterEach(() => {
   // Reset to a known state so tests don't leak the singleton budget.
@@ -112,6 +114,16 @@ describe('gpu-byte-budget', () => {
       });
     });
 
+    it('can still bind below stranded superseded growth buffers', () => {
+      // The stranded superseded pairs measured on a 2M-splat 16-rung node are
+      // ~285 MB. The pool LRU can fire only when the budget lands below active
+      // + pooled bytes, so this pins an override that keeps eviction reachable.
+      withDeviceMemory(32, () => {
+        configureGpuByteBudget(null, { cachePoolOverrideBytes: 384 * MiB });
+        expect(getGpuByteBudget()).toBe(256 * MiB);
+      });
+    });
+
     it('an explicit gpuBudgetMB still wins over the override', () => {
       withDeviceMemory(8, () => {
         configureGpuByteBudget(1536 * MB, { cachePoolOverrideBytes: 256 * MB });
@@ -170,7 +182,9 @@ describe('gpu-byte-budget', () => {
       withDeviceMemory(32, () => {
         withHeapLimit(4 * 1024 * 1024 * 1024, () => {
           configureGpuByteBudget();
-          expect(getGpuByteBudget()).toBe(Math.floor(4 * 1024 * 1024 * 1024 * 0.8 * 0.4));
+          expect(getGpuByteBudget()).toBe(
+            Math.floor(4 * 1024 * 1024 * 1024 * targetHeapUsage * 0.4)
+          );
         });
       });
     });
@@ -209,7 +223,7 @@ describe('gpu-byte-budget', () => {
         });
       });
 
-      expect(atFourGB).toBe(Math.floor(4 * 1024 * 1024 * 1024 * 0.8 * 0.4));
+      expect(atFourGB).toBe(Math.floor(4 * 1024 * 1024 * 1024 * targetHeapUsage * 0.4));
       expect(atEightGB).toBe(2_000 * MB);
       expect(atEightGB).toBeGreaterThan(atFourGB);
     });
@@ -250,7 +264,7 @@ describe('gpu-byte-budget — mobile device class', () => {
     withDeviceMemory(undefined, () => {
       withHeapLimit(undefined, () => {
         configureGpuByteBudget();
-        expect(getGpuByteBudget()).toBe(Math.floor((384 * MiB) / 3));
+        expect(getGpuByteBudget()).toBe(128 * MiB);
       });
     });
   });
@@ -260,7 +274,7 @@ describe('gpu-byte-budget — mobile device class', () => {
     withDeviceMemory(8, () => {
       withHeapLimit(undefined, () => {
         configureGpuByteBudget(); // 8 GB × 0.25 = 2 GB would otherwise win
-        expect(getGpuByteBudget()).toBe(Math.floor((384 * MiB) / 3));
+        expect(getGpuByteBudget()).toBe(128 * MiB);
       });
     });
   });
@@ -270,7 +284,7 @@ describe('gpu-byte-budget — mobile device class', () => {
     withDeviceMemory(undefined, () => {
       withHeapLimit(undefined, () => {
         configureGpuByteBudget(null, { cachePoolOverrideBytes: 2048 * MiB });
-        expect(getGpuByteBudget()).toBe(Math.floor((384 * MiB) / 3));
+        expect(getGpuByteBudget()).toBe(128 * MiB);
       });
     });
   });

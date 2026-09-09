@@ -32,8 +32,9 @@ This package implements a transparent caching and prefetching layer for zarr dat
   2.6 GiB heap (heap-relative by design). The
   eager working set takes half of the same remainder and the last quarter is
   claimed by neither; that bounds these two shares, not total commitment —
-  the eager half is handed in full to three independent consumers (see the
-  share constants in `heap-budget.ts`).
+  the eager half is handed in full to two independent consumers, while GPU
+  geometry takes the full remainder under its own ceiling (see the share
+  constants in `heap-budget.ts`).
   Deliberately NOT derived from the L1 budget: a pending write's buffer is the
   same one L1 already holds and bounds, so an L1-resident pending write costs a
   reference rather than a second copy (#2561). An overflowing arrival is the

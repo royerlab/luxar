@@ -6,10 +6,11 @@
  * Browsers deliberately do NOT expose total/available VRAM (it's a
  * fingerprinting vector), so we can't read an "absolute max" and set to
  * it. Auto-sizing takes the lower of ``navigator.deviceMemory`` and the shared
- * non-cache heap remainder. An explicit total cache-pool override or mobile
- * device-class fallback supplies that remainder when the heap is unavailable.
- * The result has a 2 GB ceiling but no lower clamp, with 512 MB used only when
- * no signal exists. As a safety net, the budget is halved on a WebGL
+ * non-cache remainder. An explicit total cache-pool override replaces the
+ * heap-derived remainder in either direction; a mobile device-class fallback
+ * supplies it when the heap is unavailable. The result has a 2 GB ceiling but
+ * no lower clamp, with 512 MB used only when no signal exists. As a safety net,
+ * the budget is halved on a WebGL
  * context-loss event (a strong OOM signal) so an over-estimate self-corrects
  * instead of repeatedly crashing the context.
  *
@@ -55,7 +56,7 @@ import { log, Modules } from '../utils/log';
 const DEVICE_MEMORY_FRACTION = 0.25;
 const MIB = 1024 * 1024;
 /** Mobile GPU residency cap established by the device-runtime budget pass (#2588). */
-const MOBILE_BUDGET_BYTES = Math.floor(DEVICE_CLASS_POOL_BYTES.mobile / 3);
+const MOBILE_BUDGET_BYTES = 128 * MIB;
 /**
  * Budget used when NO memory signal is available at all — no device memory,
  * measured heap, explicit cache-pool override or mobile device class.
@@ -90,8 +91,10 @@ export interface GpuBudgetMemorySignals {
 }
 
 /**
- * Compute the auto budget from ``navigator.deviceMemory``, the measured JS
- * heap, and an explicit cache-pool override — whichever is scarcest.
+ * Compute the auto budget from ``navigator.deviceMemory`` and the shared
+ * non-cache remainder. An explicit cache-pool override deliberately replaces
+ * the measured-heap remainder in either direction, while remaining a peer
+ * minimum against device memory and the independent mobile cap.
  *
  * THE HEAP TERM IS THE ONE THAT MATTERS, and it has now been removed twice on
  * the reasoning that a coarse heap tier is not a GPU-memory signal. That is
@@ -148,6 +151,8 @@ function computeAutoBudget(memory?: GpuBudgetMemorySignals): { bytes: number; so
     nonCacheRemainder === undefined
       ? undefined
       : Math.floor(Math.min(nonCacheRemainder, MAX_BUDGET_BYTES));
+  // The mobile pool implies a 256 MiB remainder, so the independently measured
+  // 128 MiB safety cap dominates that candidate by construction.
   const fromMobileCap = fallbackPoolBytes === undefined ? undefined : MOBILE_BUDGET_BYTES;
 
   const candidates = [fromDeviceMemory, fromWorkingSet, fromMobileCap].filter(

@@ -161,8 +161,7 @@ make clean-launchers  # Clean built launcher binaries
 #   viewer via ?cacheBudgetMB=. Its implied non-cache remainder also becomes the
 #   auto GPU-geometry residency signal. WKWebView has neither performance.memory
 #   nor deviceMemory, so the launcher default (2048) raises that budget from 512
-#   to 1432 MB; lower
-#   it on a constrained machine.
+#   to 1432 MB; lower it on a constrained machine.
 
 # CUDA (Gaussian Splatting)
 make setup-cuda       # Install CUDA deps + build extension (may need sudo)
