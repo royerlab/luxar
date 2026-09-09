@@ -48,6 +48,8 @@ export const COVERAGE_THRESHOLDS = {
   lines: 88,
   statements: 87,
   functions: 84,
+  // branches 80 -> 82 after this change's branch set moved measured coverage
+  // 82.78 -> 83.00 and check-coverage-slack flagged the old floor as stale.
   branches: 82,
 
   // Crown jewels: high floors so a refactor cannot quietly erode them.
