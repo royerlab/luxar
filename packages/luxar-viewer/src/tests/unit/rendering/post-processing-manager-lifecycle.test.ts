@@ -483,14 +483,19 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
       'SSAA enabled (2x); MSAA: 4x configured; suspended by SSAA'
     );
 
+    mgr.setSSAAMultiplier(1);
     mgr.setMSAASamples(2);
+    expect(infoLog).toHaveBeenLastCalledWith(Modules.POST_PROCESSING, 'MSAA samples set to 2x');
+
+    mgr.setSSAAMultiplier(1.5);
+    mgr.setMSAASamples(4);
     expect(infoLog).toHaveBeenLastCalledWith(
       Modules.POST_PROCESSING,
-      'MSAA samples set to 2x configured; suspended by SSAA'
+      'MSAA samples set to 4x configured; suspended by SSAA'
     );
 
     mgr.setSSAAEnabled(false);
-    expect(updateLog).toHaveBeenLastCalledWith(Modules.POST_PROCESSING, 'SSAA disabled; MSAA: 2x');
+    expect(updateLog).toHaveBeenLastCalledWith(Modules.POST_PROCESSING, 'SSAA disabled; MSAA: 4x');
 
     mgr.dispose();
   });
