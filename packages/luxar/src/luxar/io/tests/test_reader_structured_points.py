@@ -111,6 +111,70 @@ def test_flatten_rejects_inconsistent_optional_arrays(tmp_path: Path) -> None:
         LuxarScene.load(scene_path).get_points("cloud", flatten=True)
 
 
+def test_flatten_rejects_incomplete_additive_ladder(tmp_path: Path) -> None:
+    scene_path = tmp_path / "incomplete.luxar.zarr"
+    positions, _, _, _ = _expected_points()
+    with LuxarZarrCompiler(scene_path) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_points(
+            "cloud",
+            positions,
+            additive_lod={"n_lods": 3, "method": "random", "seed": 0},
+        )
+
+    root = open_group(scene_path, mode="a")
+    del root["cloud"]["additive_1"]
+    consolidate(root)
+
+    scene = LuxarScene.load(scene_path)
+    with pytest.raises(ValueError, match="has 2 additive increments but declares 3"):
+        scene.get_points("cloud", flatten=True)
+    with pytest.raises(ValueError, match="has 2 additive increments but declares 3"):
+        scene.get_point_array("cloud", "positions", flatten=True)
+
+
+def test_flatten_validates_stored_point_count(tmp_path: Path) -> None:
+    scene_path = tmp_path / "wrong-count.luxar.zarr"
+    positions, _, _, _ = _expected_points()
+    with LuxarZarrCompiler(scene_path) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_points(
+            "cloud",
+            positions,
+            additive_lod={"n_lods": 2, "method": "random", "seed": 0},
+        )
+
+    root = open_group(scene_path, mode="a")
+    root["cloud"].attrs["n_points"] = len(positions) + 1
+    consolidate(root)
+
+    with pytest.raises(ValueError, match="has 6 decoded positions but declares 7"):
+        LuxarScene.load(scene_path).get_points("cloud", flatten=True)
+
+
+@pytest.mark.parametrize(
+    ("attrs", "message"),
+    [
+        ({"type": "group", "kind": "lod"}, "empty LOD structure"),
+        ({"type": "group", "kind": "partition"}, "empty partition"),
+        ({"type": "group"}, "is not a points node"),
+    ],
+)
+def test_flatten_rejects_invalid_structures(
+    tmp_path: Path, attrs: dict[str, str], message: str
+) -> None:
+    scene_path = tmp_path / "invalid.luxar.zarr"
+    with LuxarZarrCompiler(scene_path) as compiler:
+        compiler.create_scene(dimensions=Dimensions.default_3d())
+
+    root = open_group(scene_path, mode="a")
+    root.require_group("cloud").attrs.update(attrs)
+    consolidate(root)
+
+    with pytest.raises(ValueError, match=message):
+        LuxarScene.load(scene_path).get_points("cloud", flatten=True)
+
+
 @pytest.mark.parametrize("transform_name", ["transform", "nd_transform"])
 def test_flatten_rejects_descendant_transforms(
     tmp_path: Path, transform_name: str

@@ -207,6 +207,12 @@ def _flattened_point_sources(
         ]
 
     additive = _indexed_children(group, "additive_")
+    expected_additive = group.attrs.get("n_additive_sublods")
+    if expected_additive is not None and len(additive) != int(expected_additive):
+        raise ValueError(
+            f"Points node '{node_name}' has {len(additive)} additive increments "
+            f"but declares {int(expected_additive)}"
+        )
     if additive:
         return [
             source
@@ -510,9 +516,11 @@ class LuxarScene:
                 increment. This reconstructs the complete finest-level point
                 cloud from an authored structure. Substitutive children are
                 ordered coarsest to finest, and additive children are disjoint
-                increments. This is a whole-node, non-streaming read; use
-                :meth:`get_point_array` when only one field is needed. The
-                default keeps the legacy flat-leaf behavior.
+                increments. ``chunk_bounds`` is not returned because leaf chunk
+                metadata does not align with concatenated rows. This is a
+                whole-node, non-streaming read; use :meth:`get_point_array` when
+                only one field is needed. The default keeps the legacy flat-leaf
+                behavior.
 
         Returns:
             PointsData with fields: positions, colors, radii, sharpness,
@@ -622,7 +630,14 @@ class LuxarScene:
         metadata = dict(group.attrs)
         metadata.pop("kind", None)
         metadata["type"] = "points"
-        metadata["n_points"] = int(positions.shape[0])
+        n_points = int(positions.shape[0])
+        stored_n_points = metadata.get("n_points")
+        if stored_n_points is not None and int(stored_n_points) != n_points:
+            raise ValueError(
+                f"Points node '{name}' has {n_points} decoded positions but "
+                f"declares {int(stored_n_points)}"
+            )
+        metadata["n_points"] = n_points
         if "transform" in metadata:
             metadata["transform"] = read_transform_from_zarr(metadata["transform"])
 
