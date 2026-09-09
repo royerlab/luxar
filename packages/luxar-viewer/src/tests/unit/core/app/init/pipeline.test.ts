@@ -226,7 +226,6 @@ import {
   setMaxPixelRatioCap,
 } from '../../../../../rendering/pixel-ratio-cap';
 import { setNativeDPR } from '../../../../helpers/device-pixel-ratio';
-import { config } from '../../../../../config';
 
 function makePorts(): InitPipelinePorts {
   const canvas = document.createElement('canvas');

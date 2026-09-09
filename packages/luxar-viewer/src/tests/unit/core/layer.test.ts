@@ -210,7 +210,6 @@ vi.mock('../../../core/app/init/module-overrides', () => ({
 }));
 
 import { LuxarLayer, type LuxarLayerOptions } from '../../../core/layer/luxar-layer';
-import { config } from '../../../config';
 
 function makeOptions(overrides: Partial<LuxarLayerOptions> = {}): LuxarLayerOptions {
   const renderer = {
