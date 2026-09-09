@@ -6,6 +6,9 @@ import { sha256Hex } from './sha256';
 
 const INITIAL_RETRY_DELAY_MS = 50;
 const MAX_RETRY_DELAY_MS = 500;
+const MIN_BODY_THROUGHPUT_BYTES_PER_SECOND = 16 * 1024;
+const BODY_DEADLINE_FALLBACK_MULTIPLIER = 8;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 const NOOP_DISPOSE = (): void => {};
 
 /** A merged abort signal plus the cleanup for fallback source listeners. */
@@ -57,10 +60,28 @@ async function readBodyWithStallWatchdog(
   signal: AbortSignal,
   stallTimeoutMs: number
 ): Promise<Uint8Array<ArrayBuffer>> {
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let stallTimeoutId: ReturnType<typeof setTimeout> | undefined;
+  const contentLengthHeader = response.headers?.get('content-length');
+  const contentLength = contentLengthHeader === null ? Number.NaN : Number(contentLengthHeader);
+  const absoluteDeadlineMs = Math.min(
+    MAX_TIMER_DELAY_MS,
+    Number.isFinite(contentLength) && contentLength >= 0
+      ? Math.max(
+          stallTimeoutMs,
+          Math.ceil((contentLength * 1_000) / MIN_BODY_THROUGHPUT_BYTES_PER_SECOND)
+        )
+      : stallTimeoutMs * BODY_DEADLINE_FALLBACK_MULTIPLIER
+  );
+  const absoluteTimeoutId = setTimeout(
+    () =>
+      timeoutController.abort(
+        new Error(`response body exceeded absolute deadline of ${absoluteDeadlineMs} ms`)
+      ),
+    absoluteDeadlineMs
+  );
   const armWatchdog = (): void => {
-    if (timeoutId !== undefined) clearTimeout(timeoutId);
-    timeoutId = setTimeout(
+    if (stallTimeoutId !== undefined) clearTimeout(stallTimeoutId);
+    stallTimeoutId = setTimeout(
       () => timeoutController.abort(new Error(`response body stalled for ${stallTimeoutMs} ms`)),
       stallTimeoutMs
     );
@@ -109,7 +130,8 @@ async function readBodyWithStallWatchdog(
   } catch (error) {
     throw new FetchBodyError(error);
   } finally {
-    if (timeoutId !== undefined) clearTimeout(timeoutId);
+    if (stallTimeoutId !== undefined) clearTimeout(stallTimeoutId);
+    clearTimeout(absoluteTimeoutId);
   }
 }
 
@@ -139,11 +161,11 @@ export function mergeAbortSignals(primary: AbortSignal, caller?: AbortSignal): A
   };
   const onAbort = (): void => {
     dispose();
-    relay.abort();
+    relay.abort(primary.aborted ? primary.reason : caller.reason);
   };
 
   if (primary.aborted || caller.aborted) {
-    relay.abort();
+    relay.abort(primary.aborted ? primary.reason : caller.reason);
   } else {
     listening = true;
     primary.addEventListener('abort', onAbort, { once: true });
@@ -173,11 +195,15 @@ async function consumeResponse<T>(
   timeoutPerAttemptMs: number,
   consume: (attempt: FetchAttempt) => Promise<T>
 ): Promise<T> {
+  let bodyRead = false;
   try {
     return await consume({
       response,
-      readBody: () =>
-        readBodyWithStallWatchdog(response, timeoutController, signal, timeoutPerAttemptMs),
+      readBody: () => {
+        if (bodyRead) throw new Error('response body can only be read once');
+        bodyRead = true;
+        return readBodyWithStallWatchdog(response, timeoutController, signal, timeoutPerAttemptMs);
+      },
     });
   } catch (error) {
     if (error instanceof FetchBodyError) throw error;
@@ -192,6 +218,8 @@ async function runFetchAttempt<T>(
   consume: (attempt: FetchAttempt) => Promise<T>
 ): Promise<T> {
   return withFetchGate(async () => {
+    // Start the per-attempt timer only after acquiring the gate. Queue wait is
+    // controlled by the caller signal and must not consume the request budget.
     const timeoutController = new AbortController();
     const timeoutId = setTimeout(
       () =>
@@ -254,8 +282,10 @@ export async function hashUrl(url: string): Promise<string> {
  * missing zarr key. Network errors, timeouts, 429, and 5xx responses are
  * retried using the configured retry budget. The configured timeout is split
  * across attempts and applied separately to time-to-headers and no-progress
- * body stalls. A body may take longer while bytes continue to arrive, so a
- * bandwidth-bound transfer does not consume retry budget.
+ * body stalls. A progressing body may exceed that watchdog window, but it also
+ * has an absolute deadline: `Content-Length` divided by a 16 KiB/s floor, never
+ * shorter than the stall timeout; without a usable length, eight stall windows.
+ * This bounds how long one response can occupy a shared fetch-gate slot.
  *
  * @param url - URL to fetch.
  * @param options - Optional `timeoutMsOverride` (e.g. for cache-validation

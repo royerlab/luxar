@@ -98,9 +98,11 @@ describe('mergeAbortSignals', () => {
       expect(getEventListeners(primary.signal, 'abort')).toHaveLength(1);
       expect(getEventListeners(caller.signal, 'abort')).toHaveLength(1);
 
-      primary.abort();
+      const reason = new Error('primary timeout');
+      primary.abort(reason);
 
       expect(merged.signal.aborted).toBe(true);
+      expect(merged.signal.reason).toBe(reason);
       expect(getEventListeners(primary.signal, 'abort')).toHaveLength(0);
       expect(getEventListeners(caller.signal, 'abort')).toHaveLength(0);
     } finally {
@@ -115,9 +117,11 @@ describe('mergeAbortSignals', () => {
       const caller = new AbortController();
       const merged = mergeAbortSignals(primary.signal, caller.signal);
 
-      caller.abort();
+      const reason = new Error('caller cancelled');
+      caller.abort(reason);
 
       expect(merged.signal.aborted).toBe(true);
+      expect(merged.signal.reason).toBe(reason);
       expect(getEventListeners(primary.signal, 'abort')).toHaveLength(0);
       expect(getEventListeners(caller.signal, 'abort')).toHaveLength(0);
     } finally {
@@ -145,10 +149,12 @@ describe('mergeAbortSignals', () => {
     const restore = forceAbortSignalAnyFallback();
     try {
       const primary = new AbortController();
-      primary.abort();
+      const reason = new Error('already timed out');
+      primary.abort(reason);
       const caller = new AbortController();
       const merged = mergeAbortSignals(primary.signal, caller.signal);
       expect(merged.signal.aborted).toBe(true);
+      expect(merged.signal.reason).toBe(reason);
       expect(getEventListeners(primary.signal, 'abort')).toHaveLength(0);
       expect(getEventListeners(caller.signal, 'abort')).toHaveLength(0);
     } finally {
@@ -584,6 +590,84 @@ describe('fetchWithRetry', () => {
 
     expect(Array.from((await promise) ?? [])).toEqual([1, 2, 3, 4]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('derives the absolute deadline from Content-Length at the throughput floor', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              for (let index = 1; index <= 15; index++) {
+                setTimeout(() => controller.enqueue(new Uint8Array([index])), index * 80);
+              }
+              setTimeout(() => controller.close(), 1_250);
+            },
+          }),
+          { headers: { 'Content-Length': String(32 * 1024) } }
+        )
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const promise = fetchWithRetryScoped(
+      'https://example.com/known-length',
+      { timeoutMsOverride: 400 },
+      async ({ readBody }) => readBody()
+    );
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect((await promise)?.byteLength).toBe(15);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('bounds a continuously trickling body by an absolute deadline', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => {
+      let cancelled = false;
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (let index = 1; index <= 20; index++) {
+              setTimeout(() => {
+                if (!cancelled) controller.enqueue(new Uint8Array([1]));
+              }, index * 200);
+            }
+          },
+          cancel() {
+            cancelled = true;
+          },
+        })
+      );
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    let exhaustedCause: unknown;
+
+    const promise = fetchWithRetryScoped(
+      'https://example.com/endless-trickle',
+      { timeoutMsOverride: 1_000, onExhausted: (error) => (exhaustedCause = error) },
+      async ({ readBody }) => readBody()
+    );
+    await vi.runAllTimersAsync();
+
+    expect(await promise).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(exhaustedCause).toMatchObject({
+      cause: expect.objectContaining({ message: expect.stringContaining('absolute deadline') }),
+    });
+  });
+
+  it('rejects a second read of the same response body', async () => {
+    global.fetch = vi.fn(
+      async () => new Response(new Uint8Array([1, 2, 3]))
+    ) as unknown as typeof fetch;
+
+    await expect(
+      fetchWithRetryScoped('https://example.com/double-read', undefined, async ({ readBody }) => {
+        await readBody();
+        return readBody();
+      })
+    ).rejects.toThrow('response body can only be read once');
   });
 
   it('aborts a stalled body and retries it', async () => {
