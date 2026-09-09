@@ -78,6 +78,10 @@ def test_runbook_audits_built_scenes_before_upload() -> None:
     assert "hatch run check-scene-credits --require-scenes" in section
     assert "report-only" in section
     assert "currently fails" in section
+    assert "--force" in section
+    assert "not re-gated" in section
+    assert "backstop" in section
+    assert "must exit zero" in section
     audit_step = "audit the complete local scene inventory"
     upload_step = "upload only what changed"
     assert audit_step in section, "publishing wave no longer names the scene audit step"
