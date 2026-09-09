@@ -78,9 +78,11 @@ def test_runbook_audits_built_scenes_before_upload() -> None:
     assert "hatch run check-scene-credits --require-scenes" in section
     assert "report-only" in section
     assert "currently fails" in section
-    assert section.index("audit the complete local scene inventory") < section.index(
-        "upload only what changed"
-    )
+    audit_step = "audit the complete local scene inventory"
+    upload_step = "upload only what changed"
+    assert audit_step in section, "publishing wave no longer names the scene audit step"
+    assert upload_step in section, "publishing wave no longer names the upload step"
+    assert section.index(audit_step) < section.index(upload_step)
 
 
 def test_runbook_archive_digest_prefixes_match_active_manifest_pins() -> None:
