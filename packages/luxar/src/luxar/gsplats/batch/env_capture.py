@@ -12,6 +12,7 @@ import json
 import os
 import shlex
 import subprocess
+import sys
 import warnings
 from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, version
@@ -35,13 +36,16 @@ CURATED_ENV_VARS = [
 _warned_probe_failures: set[str] = set()
 
 
-def _warn_probe_failure_once(
-    probe: str, exc: Exception, *, stacklevel: int = 3
-) -> None:
+def _warn_probe_failure_once(probe: str, exc: Exception) -> None:
     """Report one unexpected probe failure while preserving its fallback."""
     if probe in _warned_probe_failures:
         return
     _warned_probe_failures.add(probe)
+    stacklevel = 2
+    frame = sys._getframe(1)
+    while frame is not None and frame.f_globals.get("__name__") == __name__:
+        stacklevel += 1
+        frame = frame.f_back
     warnings.warn(
         f"{probe} failed with {type(exc).__name__}: {exc}; using fallback.",
         RuntimeWarning,
@@ -170,7 +174,7 @@ def _partition_has_gpu(partition: str) -> bool:
     except subprocess.TimeoutExpired:
         pass  # A busy Slurm controller is an expected transient fallback.
     except Exception as exc:
-        _warn_probe_failure_once("_partition_has_gpu", exc, stacklevel=4)
+        _warn_probe_failure_once("_partition_has_gpu", exc)
     return False
 
 
@@ -282,7 +286,7 @@ def _cuda_build_info_path() -> Optional[Path]:
     except ImportError:
         return None  # The optional CUDA package or one of its dependencies is absent.
     except Exception as exc:
-        _warn_probe_failure_once("_cuda_build_info_path", exc, stacklevel=4)
+        _warn_probe_failure_once("_cuda_build_info_path", exc)
         return None
 
 

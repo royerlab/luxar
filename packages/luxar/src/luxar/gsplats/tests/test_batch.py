@@ -379,12 +379,17 @@ class TestEnvCapture:
         info_path = tmp_path / "cuda_build_info.json"
         info_path.write_text("{not json")
         monkeypatch.setattr(env_capture, "_cuda_build_info_path", lambda: info_path)
+        monkeypatch.setattr(env_capture, "_detect_loaded_modules", lambda: [])
+        monkeypatch.setattr(env_capture, "version", lambda _name: "test")
         monkeypatch.setattr(env_capture, "_warned_probe_failures", set())
 
         with pytest.warns(
             RuntimeWarning, match="read_cuda_build_info.*JSONDecodeError"
-        ):
-            assert env_capture.read_cuda_build_info() == {}
+        ) as caught:
+            env = env_capture.capture_environment()
+
+        assert env.loaded_modules == []
+        assert Path(caught[0].filename) == Path(__file__)
 
     def test_missing_cuda_package_stays_quiet(
         self, monkeypatch: pytest.MonkeyPatch
@@ -457,13 +462,17 @@ class TestEnvCapture:
             "find_spec",
             lambda _name: (_ for _ in ()).throw(RuntimeError("CUDA package broke")),
         )
+        monkeypatch.setattr(env_capture, "_detect_loaded_modules", lambda: [])
+        monkeypatch.setattr(env_capture, "version", lambda _name: "test")
         monkeypatch.setattr(env_capture, "_warned_probe_failures", set())
 
         with pytest.warns(
             RuntimeWarning,
             match="_cuda_build_info_path.*RuntimeError: CUDA package broke",
         ) as caught:
-            assert env_capture.read_cuda_build_info() == {}
+            env = env_capture.capture_environment()
+
+        assert env.loaded_modules == []
         assert Path(caught[0].filename) == Path(__file__)
 
     def test_version_probe_failure_warns_and_uses_unknown(
