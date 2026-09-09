@@ -62,6 +62,8 @@ import { GEOMETRY_DESCRIPTORS } from '../geometry-descriptors';
 import { deriveNodeViewState } from '../view-state/derive-node-view-state';
 import { isExtendToAll } from '../../../workers/data-worker/projection/hidden-dims';
 import { isAbortError } from '../../loaders';
+import { isObjectLoadEligible } from '../loaders/run-loader-updates';
+import type * as THREE from 'three';
 
 /** Everything the prefetcher may read off its owning SceneLoader. */
 export interface SlicePrefetcherCtx {
@@ -73,8 +75,8 @@ export interface SlicePrefetcherCtx {
   registry: Pick<LoaderRegistry, 'loaders' | 'linesLoaders' | 'gsplatLoaders'>;
   /** Compose a node's effective rendering attrs up the scene-graph ancestry. */
   applyEffectiveAttrs(node: SceneNode): SceneNode['attrs'];
-  /** Live foreground/background load-eligibility predicate. */
-  isPathVisible(path: string): boolean;
+  /** Resolve the live rendered object for a loader path. */
+  resolveObject(path: string): THREE.Object3D | null | undefined;
 }
 
 /**
@@ -179,9 +181,14 @@ export class SlicePrefetcher {
     const { registry } = this.ctx;
     const tasks: Array<Promise<void>> = [];
     const request = { viewState, budgetMs, signal: controller.signal };
-    this.queueVisible(tasks, registry.loaders, 'points', request);
-    this.queueVisible(tasks, registry.linesLoaders, 'lines', request);
-    this.queueVisible(tasks, registry.gsplatLoaders, 'gsplats', request);
+    const objects = new Map<string, THREE.Object3D | null | undefined>();
+    const resolveObject = (path: string): THREE.Object3D | null | undefined => {
+      if (!objects.has(path)) objects.set(path, this.ctx.resolveObject(path));
+      return objects.get(path);
+    };
+    this.queueVisible(tasks, registry.loaders, 'points', request, resolveObject);
+    this.queueVisible(tasks, registry.linesLoaders, 'lines', request, resolveObject);
+    this.queueVisible(tasks, registry.gsplatLoaders, 'gsplats', request, resolveObject);
 
     this.inFlight = tasks.length;
     // Reopen the gate once the whole batch settles so the next tick re-targets.
@@ -227,16 +234,16 @@ export class SlicePrefetcher {
     tasks: Array<Promise<void>>,
     loaders: ReadonlyMap<string, unknown>,
     kind: GeometryKind,
-    request: { viewState: ViewState; budgetMs: number; signal: AbortSignal }
+    request: { viewState: ViewState; budgetMs: number; signal: AbortSignal },
+    resolveObject: (path: string) => THREE.Object3D | null | undefined
   ): void {
     for (const path of loaders.keys()) {
-      if (!this.ctx.isPathVisible(path)) {
+      const object = resolveObject(path);
+      if (!isObjectLoadEligible(object)) {
         this.dropShadow(path);
         continue;
       }
-      tasks.push(
-        this.prefetchNode(path, kind, request.viewState, request.budgetMs, request.signal)
-      );
+      tasks.push(this.prefetchNode(path, kind, { ...request, object }));
     }
   }
 
@@ -248,10 +255,14 @@ export class SlicePrefetcher {
   private prefetchNode(
     path: string,
     kind: GeometryKind,
-    viewState: ViewState,
-    budgetMs: number,
-    signal: AbortSignal
+    request: {
+      viewState: ViewState;
+      budgetMs: number;
+      signal: AbortSignal;
+      object: THREE.Object3D | null | undefined;
+    }
   ): Promise<void> {
+    const { viewState, budgetMs, signal, object } = request;
     const graph = this.ctx.getSceneGraph();
     const node = findNodeByPath(graph, path);
     if (!node) return Promise.resolve();
@@ -292,7 +303,7 @@ export class SlicePrefetcher {
     return this.getShadow(path, kind, node)
       .then((shadow) => {
         if (signal.aborted || this.disposed) return;
-        if (!this.ctx.isPathVisible(path)) {
+        if (!isObjectLoadEligible(object)) {
           this.dropShadow(path);
           return;
         }

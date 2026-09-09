@@ -24,8 +24,9 @@ import { defineRefinementLoopContract } from '../_shared/refinement-loop-contrac
 defineRefinementLoopContract('runGSplatsRefinement', 'GSplats', 'showing reduced detail', (w) =>
   runGSplatsRefinement({
     rootGroup: w.rootGroup ?? new THREE.Group(),
+    objects: w.objects,
     viewStateQueue: w.viewStateQueue,
-    gsplatLoaders: w.loaders as GSplatsRefinementCtx['gsplatLoaders'],
+    loaders: w.loaders as GSplatsRefinementCtx['loaders'],
     deriveNodeViewState: w.deriveNodeViewState as GSplatsRefinementCtx['deriveNodeViewState'],
     processGSplats: w.processSpy as GSplatsRefinementCtx['processGSplats'],
     commitGSplats: vi.fn(),
@@ -72,7 +73,7 @@ describe('runGSplatsRefinement — abort-gated commit', () => {
     await runGSplatsRefinement({
       rootGroup: new THREE.Group(),
       viewStateQueue: new ViewStateQueue(),
-      gsplatLoaders: new Map([['/g', loader]]),
+      loaders: new Map([['/g', loader]]),
       deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
       processGSplats: processGSplats as unknown as GSplatsRefinementCtx['processGSplats'],
       commitGSplats: commitGSplats as unknown as GSplatsRefinementCtx['commitGSplats'],

@@ -35,6 +35,8 @@ const baseViewState: ViewState = {
 export interface RefinementRunWiring {
   /** Scene objects keyed by loader path; defaults to an empty root in adapters. */
   rootGroup?: THREE.Group;
+  /** Pre-resolved rendered objects keyed by loader path. */
+  objects?: ReadonlyMap<string, THREE.Object3D | undefined>;
   /** Loader map keyed by node path. Adapter casts to its loader type. */
   loaders: Map<string, unknown>;
   viewStateQueue: ViewStateQueue;
@@ -108,6 +110,30 @@ export function defineRefinementLoopContract(
       expect(releaseLock).toHaveBeenCalledTimes(1);
       expect(updateVisibleCountsInMonitor).toHaveBeenCalledTimes(1);
       expect(loader.updateView).not.toHaveBeenCalled();
+    });
+
+    it('uses pre-resolved objects without traversing the scene again', async () => {
+      const rootGroup = new THREE.Group();
+      const object = new THREE.Group();
+      object.name = '/n';
+      rootGroup.add(object);
+      const getObjectByName = vi.spyOn(rootGroup, 'getObjectByName');
+      const loader = makeStagedLoader([{ hasMoreLODs: true }, { hasMoreLODs: false }]);
+
+      await run({
+        rootGroup,
+        objects: new Map([['/n', object]]),
+        loaders: new Map([['/n', loader]]),
+        viewStateQueue: new ViewStateQueue(),
+        deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
+        updateVisibleCountsInMonitor: vi.fn(),
+        releaseLock: vi.fn(),
+        retriggerUpdate: vi.fn(),
+        processSpy: vi.fn(),
+      });
+
+      expect(getObjectByName).not.toHaveBeenCalled();
+      expect(loader.updateView).toHaveBeenCalledOnce();
     });
 
     it('retires a declined loader from the loop without processing it', async () => {

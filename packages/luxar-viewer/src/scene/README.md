@@ -548,6 +548,9 @@ false→true edge requests a targeted reprocess because hidden loaders may
 have missed slice changes. This cannot use `object.visible`: the LOD
 registry also clears that Three.js flag on resident levels that are not
 currently selected, and those levels must remain eligible to refine.
+Only the Layers panel's `LayerApplyEngine.applyVisibility` writes the stamp;
+calling `LuxarLayer.setVisible` directly changes only `object.visible` and does
+not cull background loading.
 
 **Wiring:** the SceneLoader instantiates one registry per scene and
 hooks `evaluatePerFrame()` into `AnimationController` alongside the

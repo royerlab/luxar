@@ -14,7 +14,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import {
-  filterLoadEligibleLoaders,
+  resolveLoadEligibleLoaders,
   isLoaderPathEligible,
   isUnderAny,
   runLoaderUpdates,
@@ -335,7 +335,8 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
     const visibleLoader = {};
     const culledLoader = {};
 
-    const filtered = filterLoadEligibleLoaders(
+    const getObjectByName = vi.spyOn(root, 'getObjectByName');
+    const resolved = resolveLoadEligibleLoaders(
       root,
       new Map([
         [visible.name, visibleLoader],
@@ -343,6 +344,8 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
       ])
     );
 
-    expect([...filtered]).toEqual([[visible.name, visibleLoader]]);
+    expect([...resolved.loaders]).toEqual([[visible.name, visibleLoader]]);
+    expect([...resolved.objects]).toEqual([[visible.name, visible]]);
+    expect(getObjectByName).toHaveBeenCalledTimes(2);
   });
 });

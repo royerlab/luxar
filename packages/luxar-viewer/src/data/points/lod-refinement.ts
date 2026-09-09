@@ -37,8 +37,10 @@ const LABEL = 'Points';
 
 export interface PointsRefinementCtx {
   rootGroup: THREE.Group | null;
+  /** Scene objects already resolved by the phase eligibility sweep. */
+  objects?: ReadonlyMap<string, THREE.Object3D | undefined>;
   viewStateQueue: ViewStateQueue;
-  pointsLoaders: Map<string, PointsDataLoader>;
+  loaders: Map<string, PointsDataLoader>;
   deriveNodeViewState(
     path: string,
     attrs: PointsMetadata | undefined,
@@ -78,12 +80,12 @@ export interface PointsRefinementCtx {
 }
 
 export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<void> {
-  const objects = new Map(
-    [...ctx.pointsLoaders.keys()].map((path) => [path, ctx.rootGroup?.getObjectByName(path)])
-  );
+  const objects =
+    ctx.objects ??
+    new Map([...ctx.loaders.keys()].map((path) => [path, ctx.rootGroup?.getObjectByName(path)]));
   const isPathVisible = (path: string): boolean => isObjectLoadEligible(objects.get(path));
   await runProgressiveRefinement({
-    loaders: ctx.pointsLoaders,
+    loaders: ctx.loaders,
     viewStateQueue: ctx.viewStateQueue,
     isActive: ctx.isActive,
     processLoader: async (path, loader) => {
@@ -151,7 +153,7 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
     },
     ...makeRefinementProgressCallbacks(
       LABEL,
-      ctx.pointsLoaders as Map<string, PointsDataLoader & RefinableLoader>,
+      ctx.loaders as Map<string, PointsDataLoader & RefinableLoader>,
       ctx.residencyBudget,
       isPathVisible
     ),

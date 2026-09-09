@@ -196,7 +196,7 @@ import {
 import { deriveNodeViewState as deriveNodeViewStateHelper } from './scene-loader/view-state/derive-node-view-state';
 import { SlicePrefetcher } from './scene-loader/prefetch/slice-prefetcher';
 import {
-  filterLoadEligibleLoaders,
+  resolveLoadEligibleLoaders,
   isLoaderPathEligible,
   isUnderAny,
   runLoaderUpdates as runLoaderUpdatesHelper,
@@ -570,7 +570,7 @@ export class SceneLoader {
         factoryDeps: () => this.factoryDeps(),
         registry: this.registry,
         applyEffectiveAttrs: (node) => this.applyEffectiveAttrs(node),
-        isPathVisible: (path) => isLoaderPathEligible(this.rootGroup, path),
+        resolveObject: (path) => this.rootGroup?.getObjectByName(path),
       });
     }
     // Strip any rider budget off the incoming partial — the shadow pass gets
@@ -1713,7 +1713,7 @@ export class SceneLoader {
       await runGSplatsRefinement({
         rootGroup: this.rootGroup,
         viewStateQueue: this.viewStateQueue,
-        gsplatLoaders: filterLoadEligibleLoaders(this.rootGroup, this.gsplatLoaders),
+        ...resolveLoadEligibleLoaders(this.rootGroup, this.gsplatLoaders),
         deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
         processGSplats: (path, data, viewState, session) =>
           this.processGSplatsData(path, data, viewState, session),
@@ -1731,7 +1731,7 @@ export class SceneLoader {
       await runPointsRefinement({
         rootGroup: this.rootGroup,
         viewStateQueue: this.viewStateQueue,
-        pointsLoaders: filterLoadEligibleLoaders(this.rootGroup, this.loaders),
+        ...resolveLoadEligibleLoaders(this.rootGroup, this.loaders),
         deriveNodeViewState: (path, attrs, opts) =>
           this.deriveNodeViewState(path, attrs as never, opts) as never,
         updatePointsGeometry: (path, data, session) =>
@@ -1749,7 +1749,7 @@ export class SceneLoader {
       await runLinesRefinement({
         rootGroup: this.rootGroup,
         viewStateQueue: this.viewStateQueue,
-        linesLoaders: filterLoadEligibleLoaders(this.rootGroup, this.linesLoaders),
+        ...resolveLoadEligibleLoaders(this.rootGroup, this.linesLoaders),
         deriveNodeViewState: (path, attrs, opts) =>
           this.deriveNodeViewState(path, attrs as never, opts) as never,
         processLines: (path, data, viewState, session) =>
@@ -1774,7 +1774,7 @@ export class SceneLoader {
       await runMeshRefinement({
         rootGroup: this.rootGroup,
         viewStateQueue: this.viewStateQueue,
-        meshLoaders: filterLoadEligibleLoaders(this.rootGroup, this.meshLoaders),
+        ...resolveLoadEligibleLoaders(this.rootGroup, this.meshLoaders),
         deriveNodeViewState: (path, attrs, opts) =>
           this.deriveNodeViewState(path, attrs as never, opts) as never,
         processMesh: (path, data, viewState, attrs) =>

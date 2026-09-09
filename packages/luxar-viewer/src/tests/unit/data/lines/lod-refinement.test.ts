@@ -29,8 +29,9 @@ const baseViewState: ViewState = {
 defineRefinementLoopContract('runLinesRefinement', 'Lines', 'showing reduced detail', (w) =>
   runLinesRefinement({
     rootGroup: w.rootGroup ?? new THREE.Group(),
+    objects: w.objects,
     viewStateQueue: w.viewStateQueue,
-    linesLoaders: w.loaders as LinesRefinementCtx['linesLoaders'],
+    loaders: w.loaders as LinesRefinementCtx['loaders'],
     deriveNodeViewState: w.deriveNodeViewState as LinesRefinementCtx['deriveNodeViewState'],
     processLines: w.processSpy as LinesRefinementCtx['processLines'],
     commitLines: vi.fn(),
@@ -53,7 +54,7 @@ describe('runLinesRefinement — Lines-specific behaviour', () => {
     await runLinesRefinement({
       rootGroup: new THREE.Group(),
       viewStateQueue: new ViewStateQueue(),
-      linesLoaders: new Map([['/l', singleShot]]),
+      loaders: new Map([['/l', singleShot]]),
       deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
       processLines,
       commitLines: vi.fn(),
@@ -95,7 +96,7 @@ describe('runLinesRefinement — Lines-specific behaviour', () => {
     await runLinesRefinement({
       rootGroup: new THREE.Group(),
       viewStateQueue: new ViewStateQueue(),
-      linesLoaders: new Map([['/l', loader]]),
+      loaders: new Map([['/l', loader]]),
       deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
       processLines,
       commitLines,
@@ -142,7 +143,7 @@ describe('runLinesRefinement — Lines-specific behaviour', () => {
     await runLinesRefinement({
       rootGroup: new THREE.Group(),
       viewStateQueue: new ViewStateQueue(),
-      linesLoaders: new Map([['/l', loader]]),
+      loaders: new Map([['/l', loader]]),
       deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
       processLines,
       commitLines,
@@ -192,7 +193,7 @@ describe('runLinesRefinement — Lines-specific behaviour', () => {
     await runLinesRefinement({
       rootGroup: new THREE.Group(),
       viewStateQueue: new ViewStateQueue(),
-      linesLoaders: new Map([['/l', loader]]),
+      loaders: new Map([['/l', loader]]),
       deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
       processLines,
       commitLines,
@@ -232,7 +233,7 @@ describe('runLinesRefinement — Lines-specific behaviour', () => {
       await runLinesRefinement({
         rootGroup: new THREE.Group(),
         viewStateQueue: new ViewStateQueue(),
-        linesLoaders: new Map([['/l', oneShotLoader(data)]]),
+        loaders: new Map([['/l', oneShotLoader(data)]]),
         deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
         processLines: vi.fn().mockResolvedValue(opts.staged),
         commitLines: vi.fn(),

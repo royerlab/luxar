@@ -171,7 +171,7 @@ export function handleRefinementError(
       Modules.SCENE_LOADER,
       `${label} refinement failed for ${path}: ${message} — ` +
         `giving up after ${MAX_CONSECUTIVE_REFINEMENT_FAILURES} consecutive failures ` +
-        `(will retry on the next view change; unwound ${unwound} level(s))`
+        `(will retry after connectivity is restored; unwound ${unwound} level(s))`
     );
     // The node silently freezes at its last valid coarse prefix — a
     // console-only error leaves the user staring at a permanently coarse node

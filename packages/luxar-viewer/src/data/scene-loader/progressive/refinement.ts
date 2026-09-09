@@ -28,8 +28,8 @@ import { scheduleFrame } from '../../../utils/schedule-frame';
 import { noteRefinementPass } from '../../../profiling/load-timeline';
 
 /**
- * Consecutive per-loader failures a refinement run tolerates before giving
- * up on that loader for the rest of the run. Without a cap, a persistently
+ * Consecutive failures tolerated before giving up on one loader. Without a
+ * cap, a persistently
  * failing LOD level (e.g. a hard 404 / decode error) kept `hasMoreLODs`
  * true forever and the loop retried at frame rate indefinitely — a network
  * retry storm with the update lock held. Scope is per loader instance, so a

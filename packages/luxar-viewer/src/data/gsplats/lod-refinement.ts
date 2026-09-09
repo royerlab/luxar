@@ -54,8 +54,10 @@ const LABEL = 'GSplats';
  */
 export interface GSplatsRefinementCtx {
   rootGroup: THREE.Group | null;
+  /** Scene objects already resolved by the phase eligibility sweep. */
+  objects?: ReadonlyMap<string, THREE.Object3D | undefined>;
   viewStateQueue: ViewStateQueue;
-  gsplatLoaders: Map<string, GSplatsDataLoader>;
+  loaders: Map<string, GSplatsDataLoader>;
   deriveNodeViewState(
     path: string,
     attrs: GSplatsMetadata | undefined,
@@ -113,12 +115,12 @@ export interface GSplatsRefinementCtx {
  * derive / process / commit closures.
  */
 export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<void> {
-  const objects = new Map(
-    [...ctx.gsplatLoaders.keys()].map((path) => [path, ctx.rootGroup?.getObjectByName(path)])
-  );
+  const objects =
+    ctx.objects ??
+    new Map([...ctx.loaders.keys()].map((path) => [path, ctx.rootGroup?.getObjectByName(path)]));
   const isPathVisible = (path: string): boolean => isObjectLoadEligible(objects.get(path));
   await runProgressiveRefinement({
-    loaders: ctx.gsplatLoaders,
+    loaders: ctx.loaders,
     viewStateQueue: ctx.viewStateQueue,
     isActive: ctx.isActive,
     processLoader: async (path, loader) => {
@@ -189,7 +191,7 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
     },
     ...makeRefinementProgressCallbacks(
       LABEL,
-      ctx.gsplatLoaders as Map<string, GSplatsDataLoader & RefinableLoader>,
+      ctx.loaders as Map<string, GSplatsDataLoader & RefinableLoader>,
       ctx.residencyBudget,
       isPathVisible
     ),

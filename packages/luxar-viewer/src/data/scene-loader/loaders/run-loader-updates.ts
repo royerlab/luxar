@@ -52,12 +52,23 @@ export function isUnderAny(path: string, targets: ReadonlySet<string>): boolean 
   return false;
 }
 
-/** Copy loaders whose paths are not culled or under a hidden layer. */
-export function filterLoadEligibleLoaders<TLoader>(
+/** Resolve loader objects once and copy paths eligible for background loading. */
+export function resolveLoadEligibleLoaders<TLoader>(
   root: THREE.Object3D | null,
   loaders: Map<string, TLoader>
-): Map<string, TLoader> {
-  return new Map([...loaders].filter(([path]) => isLoaderPathEligible(root, path)));
+): {
+  loaders: Map<string, TLoader>;
+  objects: Map<string, THREE.Object3D | undefined>;
+} {
+  const eligibleLoaders = new Map<string, TLoader>();
+  const objects = new Map<string, THREE.Object3D | undefined>();
+  for (const [path, loader] of loaders) {
+    const object = root?.getObjectByName(path);
+    if (!isObjectLoadEligible(object)) continue;
+    eligibleLoaders.set(path, loader);
+    objects.set(path, object);
+  }
+  return { loaders: eligibleLoaders, objects };
 }
 
 /**
@@ -106,7 +117,7 @@ export async function runLoaderUpdates<TLoader, TStaged>(
       return { staged: null, session };
     }
     if (ctx.shouldUpdatePath?.(path) === false) {
-      session.markSkipped('partition part outside camera frustum');
+      session.markSkipped('loader path culled or under a hidden layer');
       ctx.viewStateQueue.forgetPath(path);
       return { staged: null, session };
     }

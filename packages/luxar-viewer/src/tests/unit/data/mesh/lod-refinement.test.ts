@@ -25,8 +25,9 @@ const viewState: ViewState = {
 defineRefinementLoopContract('runMeshRefinement', 'Mesh', 'showing a partial surface', (w) =>
   runMeshRefinement({
     rootGroup: w.rootGroup ?? new THREE.Group(),
+    objects: w.objects,
     viewStateQueue: w.viewStateQueue,
-    meshLoaders: w.loaders as MeshRefinementCtx['meshLoaders'],
+    loaders: w.loaders as MeshRefinementCtx['loaders'],
     deriveNodeViewState: w.deriveNodeViewState as MeshRefinementCtx['deriveNodeViewState'],
     processMesh: w.processSpy as MeshRefinementCtx['processMesh'],
     commitMesh: vi.fn(),
@@ -52,7 +53,7 @@ describe('runMeshRefinement — Mesh-specific behaviour', () => {
     await runMeshRefinement({
       rootGroup: new THREE.Group(),
       viewStateQueue: new ViewStateQueue(),
-      meshLoaders: new Map([['/mesh', loader]]),
+      loaders: new Map([['/mesh', loader]]),
       deriveNodeViewState: () => ({ skip: false, viewState }),
       processMesh: vi.fn(),
       commitMesh: vi.fn(),
