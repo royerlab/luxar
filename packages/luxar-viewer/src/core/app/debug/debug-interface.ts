@@ -507,6 +507,10 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
           } | null;
           return loader?.lodGroupRegistry?.isAnyLevelLoading() ?? false;
         },
+        hasVisiblePendingPartitionResync: () =>
+          SceneLoaderManager.getInstance()
+            .getDefaultLoader()
+            ?.lodGroupRegistry?.hasVisiblePendingPartitionResync() ?? false,
       }),
 
     // Mark that runtime components are now available

@@ -1140,16 +1140,61 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     reg.evaluatePerFrame();
     groupObject.position.x = -2.5; // part_0 re-enters
     reg.evaluatePerFrame();
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(true);
+    groupObject.position.x = 0; // part_0 re-exits before the pending flush
+    reg.evaluatePerFrame();
+    expect(first.visible).toBe(false);
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(true);
     groupObject.position.x = -4.5; // part_1 re-enters
     reg.evaluatePerFrame();
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(true);
     expect(requestReprocess).not.toHaveBeenCalled();
 
     updateInProgress = false;
     reg.evaluatePerFrame();
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(false);
     reg.evaluatePerFrame();
     expect(requestReprocess).toHaveBeenCalledOnce();
     const paths = requestReprocess.mock.calls[0][0] as string[];
     expect([...paths].sort()).toEqual(['/partition/part_0', '/partition/part_1']);
+  });
+
+  it('does not report pending resync activity without a dispatch hook', () => {
+    let updateInProgress = true;
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => updateInProgress
+    );
+    const groupObject = new THREE.Group();
+    const child = new THREE.Group();
+    groupObject.add(child);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [child],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+        },
+      ],
+    });
+
+    reg.evaluatePerFrame();
+    groupObject.position.x = -2.5;
+    reg.evaluatePerFrame();
+
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(false);
+    updateInProgress = false;
+    reg.evaluatePerFrame();
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(false);
   });
 
   it('falls back to the whole wrapper when a re-entering part has no path', () => {
@@ -1371,10 +1416,12 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     updateInProgress = false;
     requestRender.mockClear();
     expect(reg.evaluatePerFrame()).toBe(false);
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(false);
     expect(requestReprocess).not.toHaveBeenCalled();
     expect(requestRender).not.toHaveBeenCalled();
 
     groupObject.visible = true;
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(true);
     expect(reg.evaluatePerFrame()).toBe(false);
     expect(requestReprocess).toHaveBeenCalledOnce();
     expect(requestReprocess).toHaveBeenCalledWith(['/partition/part_0']);
@@ -4693,6 +4740,43 @@ describe('LODGroupRegistry — capture quiescence (isCaptureQuiescent)', () => {
     expect(requestReprocess).toHaveBeenCalledWith(['/partition/part_0']);
 
     part.userData.loadedViewVersion = 2;
+    expect(reg.isCaptureQuiescent()).toBe(false);
+
+    loadPassInProgress = false;
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('does not wait on a pending resync without a dispatch hook', () => {
+    let loadPassInProgress = true;
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => loadPassInProgress
+    );
+    const partition = new THREE.Group();
+    const part = new THREE.Group();
+    partition.add(part);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject: partition,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [part],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+        },
+      ],
+    });
+
+    reg.evaluatePerFrame();
+    partition.position.x = -2.5;
+    reg.evaluatePerFrame();
     expect(reg.isCaptureQuiescent()).toBe(false);
 
     loadPassInProgress = false;
