@@ -106,7 +106,7 @@ from luxar.core.viewer_config import (
 from luxar.demos import launch_viewer, parse_path_arg
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG, pull_in
 from luxar.demos._dependencies import require_module
-from luxar.demos._lod_policy import stream_ladder
+from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
 from luxar.demos._pdb_turntable import (
     TurntableAssets,
     load_environment_faces,
@@ -502,8 +502,6 @@ WHOLE_HIGHLIGHT_INTENSITY = 0.35
 #: proteome's 2.03M arrived, then nothing. At overview distance the points are
 #: sub-pixel anyway, so one in seven draws the same shadow as all of them.
 WHOLE_HIGHLIGHT_MAX_POINTS = 300_000
-#: A whole-map highlight streams like the backdrop does.
-WHOLE_LADDER_MIN_MEMBERS = 100_000
 #: The backdrop is split into spatial parts of at most this many points: one
 #: points node renders at most 5,591,040 on a 4096-class GPU and silently drops
 #: the tail (one contiguous Hilbert-order region, so a clean-edged hole). Same
@@ -1501,7 +1499,11 @@ def build_universe_scene(
                 extend_to_all=[STORY_DIM],
                 layer=True,
                 partition=dict(max_elements=BACKDROP_MAX_POINTS_PER_NODE),
-                additive_lod=stream_ladder(n),
+                # One hidden coordinate (story 0, extended to all): the slice
+                # count is 1, but the policy is stated rather than assumed.
+                additive_lod=stream_ladder(
+                    n, slices=hidden_axis_stops(backdrop_positions, dims.non_displayed)
+                ),
             )
             units: dict[int, str] = {}
             for k, (s, c) in enumerate(zip(stories, clusters, strict=True), start=1):
@@ -1518,11 +1520,12 @@ def build_universe_scene(
                 intensity = (
                     WHOLE_HIGHLIGHT_INTENSITY if s.whole else highlight_intensity(m)
                 )
+                highlight_positions = np.column_stack(
+                    [np.full(m, float(k), dtype=np.float32), positions[idx]]
+                ).astype(np.float32)
                 scene.add_points(
                     story_node_name(k, s),
-                    np.column_stack(
-                        [np.full(m, float(k), dtype=np.float32), positions[idx]]
-                    ).astype(np.float32),
+                    highlight_positions,
                     colors=np.broadcast_to(
                         np.asarray(s.color, dtype=np.float32), (m, 3)
                     ).copy(),
@@ -1533,8 +1536,15 @@ def build_universe_scene(
                     labels=labels,
                     keys=keys,
                     **link_attrs,
-                    additive_lod=(
-                        stream_ladder(m) if m >= WHOLE_LADDER_MIN_MEMBERS else None
+                    # Every highlight streams like the backdrop: a whole-map
+                    # one needs the ladder, a knot's few hundred points fit its
+                    # first rung and cost nothing (and the slice-policy gate
+                    # reads one call shape, not a conditional).
+                    additive_lod=stream_ladder(
+                        m,
+                        slices=hidden_axis_stops(
+                            highlight_positions, dims.non_displayed
+                        ),
                     ),
                     layer=True,
                     # Additive and in its own band: the highlight shares every

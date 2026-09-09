@@ -60,6 +60,13 @@ _CONVERTED_ADDITIVE_TARGETS = {
 #: that can be checked against a measurement. "It is a big scene" is not a reason;
 #: a resident count against a per-geometry cap, or a correctness constraint, is.
 JUSTIFIED: dict[str, str] = {
+    "demo_esm_protein_universe.py": (
+        "7,714,508 points RESIDENT in the backdrop (one hidden story coordinate, "
+        "extended to every slot, so the resident slice IS the node) — past the "
+        "5,591,040 Points cap, so the partition is required; parts of at most "
+        "4,000,000 (DESI's margin). No substitutive levels: the additive ladder "
+        "streams each part and the residency budget bounds what stays."
+    ),
     "demo_desi_galaxies.py": (
         "9,751,955 points RESIDENT with no hidden axis — genuinely past the "
         "5,591,040 Points cap, so the partition is required. The substitutive "
