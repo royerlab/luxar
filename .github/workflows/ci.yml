@@ -796,8 +796,9 @@ jobs:
     steps:
       - name: Free disk space on hosted runners
         # See python-tests: reclaim preinstalled tooling on GitHub-hosted runners
-        # so the WASM build + suite do not hit `[Errno 28] No space left
-        # on device` (#1816). Skipped on the self-hosted box.
+        # so the two Hatch environments, generated examples, and Chromium do not
+        # hit `[Errno 28] No space left on device` (#1816).
+        # Skipped on the self-hosted box.
         if: runner.environment == 'github-hosted'
         working-directory: ${{ github.workspace }}
         run: |

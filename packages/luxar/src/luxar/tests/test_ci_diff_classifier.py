@@ -754,7 +754,12 @@ def test_mobile_e2e_suite_is_enabled_in_ci(workflow: str) -> None:
         "needs.typescript-tests.result != 'failure' && "
         "needs.changes.outputs.dom_ts != 'false' }}"
     )
-    assert job["steps"][0] == jobs["typescript-tests"]["steps"][0]
+    reclaim_step = job["steps"][0]
+    assert reclaim_step == jobs["typescript-tests"]["steps"][0]
+    assert (reclaim_step["name"], reclaim_step["if"]) == (
+        "Free disk space on hosted runners",
+        "runner.environment == 'github-hosted'",
+    )
     mobile_step = next(
         step for step in job["steps"] if step.get("run") == "make test-e2e-mobile"
     )
