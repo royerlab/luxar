@@ -482,6 +482,8 @@ def test_only_gating_generated_store_audits_fail_the_gallery_build(
     assert code == expected_code
     assert len(calls.audit_invocations) == 4
     assert failed_auditor.removesuffix(".py") in out
+    next_step = "Next: cd packages/luxar-viewer && pnpm gallery"
+    assert (next_step in out) is (expected_code == 0)
 
 
 def test_an_idempotent_run_reports_on_the_complete_local_inventory(
