@@ -732,27 +732,37 @@ SPARSE_TAIL_RATIO = 2.5
 BUBBLE_CAMERA_CLEARANCE = 1.2
 
 
-def bubble_radius(cluster: StoryCluster) -> float:
-    """World radius of the story's soap bubble."""
-    return max(SPHERE_MIN_RADIUS, SPHERE_RADIUS_SCALE * cluster.r95)
+def bubble_radius(
+    cluster: StoryCluster, *, min_radius: float = SPHERE_MIN_RADIUS
+) -> float:
+    """World radius of the story's soap bubble.
+
+    ``min_radius`` is the floor a small cluster is padded up to; the
+    protein-universe variant, whose knots are a few tenths of a unit across,
+    passes a smaller one.
+    """
+    return max(min_radius, SPHERE_RADIUS_SCALE * cluster.r95)
 
 
-def framing_radius(cluster: StoryCluster) -> float:
+def framing_radius(
+    cluster: StoryCluster, *, min_radius: float = SPHERE_MIN_RADIUS
+) -> float:
     """The radius the camera frames: the bubble, or the dense core when sparse."""
     if cluster.r50 > 0 and cluster.r95 > SPARSE_TAIL_RATIO * cluster.r50:
-        return max(
-            SPHERE_MIN_RADIUS, SPHERE_RADIUS_SCALE * SPARSE_TAIL_RATIO * cluster.r50
-        )
-    return bubble_radius(cluster)
+        return max(min_radius, SPHERE_RADIUS_SCALE * SPARSE_TAIL_RATIO * cluster.r50)
+    return bubble_radius(cluster, min_radius=min_radius)
 
 
-def story_camera_distance(cluster: StoryCluster, story: Story) -> float:
+def story_camera_distance(
+    cluster: StoryCluster, story: Story, *, min_radius: float = SPHERE_MIN_RADIUS
+) -> float:
     """Distance from the story camera to its cluster centre."""
     half_height_per_unit = math.tan(math.radians(CINEMATIC_FOV_DEG) / 2)
     return max(
         story.min_distance,
-        framing_radius(cluster) / (story.frame_fraction * half_height_per_unit),
-        BUBBLE_CAMERA_CLEARANCE * bubble_radius(cluster),
+        framing_radius(cluster, min_radius=min_radius)
+        / (story.frame_fraction * half_height_per_unit),
+        BUBBLE_CAMERA_CLEARANCE * bubble_radius(cluster, min_radius=min_radius),
     )
 
 
@@ -940,6 +950,8 @@ def story_camera(
     cluster: StoryCluster,
     story: Story,
     global_centre: np.ndarray,
+    *,
+    min_radius: float = SPHERE_MIN_RADIUS,
 ) -> CameraConfig:
     """Compose the waypoint pose for a cluster.
 
@@ -948,7 +960,8 @@ def story_camera(
     so the shot is not dead level), at a distance proportional to the blob's
     framing radius. Under auto-rotate only the target and distance are used —
     the turntable keeps its own direction — so the direction here matters
-    exactly when the visitor has stopped the spin.
+    exactly when the visitor has stopped the spin. ``min_radius`` is the
+    bubble's floor (see :func:`bubble_radius`).
     """
     outward = cluster.centre - global_centre
     norm = float(np.linalg.norm(outward))
@@ -963,7 +976,7 @@ def story_camera(
     # `frame_fraction` of the frame height under a 63° vertical field of view.
     # A sphere of radius R at distance d spans 2R of the frame's 2·d·tan(fov/2)
     # height, so R / (d·tan) is its fraction of the height.
-    distance = story_camera_distance(cluster, story)
+    distance = story_camera_distance(cluster, story, min_radius=min_radius)
     position = cluster.centre + outward * distance
     return CameraConfig(
         position=tuple(float(v) for v in position),
@@ -990,8 +1003,14 @@ def story_narration(story: Story) -> str:
     return f"{story.title}. {story.mystery}"
 
 
-def story_panel_html(story: Story, n_members: int, index: int, total: int) -> str:
-    """The right-hand story panel: title, subtitle, facts, open question."""
+def story_panel_html(
+    story: Story, n_members: int, index: int, total: int, *, unit: str = "proteins"
+) -> str:
+    """The right-hand story panel: title, subtitle, facts, open question.
+
+    ``unit`` names what the highlight count counts (``proteins`` here; the
+    protein-universe variant highlights ``clusters``).
+    """
     r, g, b = (int(round(v * 255)) for v in story.color)
     colour = f"#{r:02x}{g:02x}{b:02x}"
     items = "".join(
@@ -1015,7 +1034,7 @@ def story_panel_html(story: Story, n_members: int, index: int, total: int) -> st
         f'rgba(255,255,255,0.15);padding-top:0.8vh">'
         f"Open question: {html.escape(story.mystery)}</div>"
         f'<div style="font-size:1.0vh;color:#888;margin-top:0.8vh">'
-        f"{n_members:,} proteins highlighted</div>"
+        f"{n_members:,} {html.escape(unit)} highlighted</div>"
         "</div>"
     )
 
@@ -1047,6 +1066,7 @@ def add_story_sounds(
     narration_dir: Path = NARRATION_CACHE_DIR,
     engine: str | None = None,
     ambisonic_dir: Path = AMBISONIC_BED_CACHE_DIR,
+    overview_narration: str = OVERVIEW_NARRATION,
 ) -> int:
     """Add the ambient bed and one narration per story slot.
 
@@ -1054,6 +1074,7 @@ def add_story_sounds(
     skips it with a warning rather than failing the build. Narration is
     synthesised through :func:`luxar.demos._narration.synthesise`; when no
     engine is available the stories stay silent (the helper has already warned).
+    ``overview_narration`` is what slot 0 says (a sibling demo passes its own).
     """
     added = 0
     try:
@@ -1099,7 +1120,7 @@ def add_story_sounds(
     voice = NARRATION_VOICES.get(chosen or "", "")
     # The spoken scripts are authored with the stories (`Story.narration`,
     # `OVERVIEW_NARRATION`): short and punchy, not the panel read aloud.
-    slots: list[tuple[int, str, str]] = [(0, "Overview", OVERVIEW_NARRATION)]
+    slots: list[tuple[int, str, str]] = [(0, "Overview", overview_narration)]
     slots += [(k, s.key, story_narration(s)) for k, s in enumerate(stories, start=1)]
     for k, key, text in slots:
         clip = synthesise(text, voice, narration_dir, engine=chosen or "none")
