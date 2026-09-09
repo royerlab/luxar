@@ -122,6 +122,9 @@ pp.setMSAAEnabled(true);
 pp.setMSAASamples(4);
 ```
 
+SSAA multipliers above 1x suspend the configured MSAA samples to avoid
+allocating redundant multisample renderbuffers at the supersampled size.
+
 The optional `onResize` callback runs after every render-target
 reallocation (resize, SSAA toggle, MSAA toggle, DPR change). The host
 wires it to `SceneManager.updateMaterialsForCurrentCamera()` so the
