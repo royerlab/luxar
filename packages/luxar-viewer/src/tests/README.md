@@ -904,7 +904,7 @@ Tests run automatically on:
 - No linting errors
 
 **E2E in CI**: the GitHub Actions `e2e-tests` job is intentionally
-disabled (`if: false` in `.github/workflows/ci.yml`) — a dormant
+limited to the mobile/touch suite in `.github/workflows/ci.yml` — a dormant
 smoke subset (`pnpm test:e2e:smoke`) is defined and re-enabling is a
 one-line change. Until then, run E2E locally (`pnpm test:e2e`)
 before PR/merge.

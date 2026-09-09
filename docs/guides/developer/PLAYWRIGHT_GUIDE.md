@@ -233,9 +233,9 @@ pnpm agent:debug
 
 ### E2E Test Scripts
 
-> **CI status**: GitHub Actions E2E job is currently disabled
-> (`.github/workflows/ci.yml` `e2e-tests: if: false`). The disabled
-> job calls `pnpm test:e2e:smoke` if re-enabled. Local-only.
+> **CI status**: GitHub Actions runs the Chromium mobile/touch suite for
+> TypeScript changes. The full rendering-heavy desktop corpus remains on the
+> GPU promotion runner because hosted software WebGL is too slow and unreliable.
 
 | Script | Purpose | When to Use |
 |--------|---------|-------------|

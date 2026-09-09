@@ -1393,10 +1393,11 @@ jobs:
   # Narrow browser gate for the TSL↔GLSL shader cone — the ONLY equivalence
   # check the dual-backend shaders have.
   #
-  # Deliberately distinct from the disabled `e2e-tests` job below. That job's
-  # rationale is that software WebGL is too slow and unreliable for
-  # RENDERING-DEPENDENT specs — specs that load datasets and compare rendered
-  # frames against baselines. `tsl-shader-parity` is not that class: it renders
+  # Deliberately distinct from the mobile-only `e2e-tests` job below. The full
+  # desktop corpus remains off hosted software WebGL because it is too slow and
+  # unreliable for RENDERING-DEPENDENT specs — specs that load datasets and
+  # compare rendered frames against baselines. `tsl-shader-parity` is not that
+  # class: it renders
   # a 64×64 canvas through BOTH backends (`WebGLRenderer` vs
   # `WebGPURenderer({ forceWebGL: true })`) and compares them to EACH OTHER, so
   # rasterizer identity cancels out and llvmpipe is not merely tolerable, it is
@@ -1484,23 +1485,28 @@ jobs:
 
   # The full desktop E2E corpus remains on the GPU promotion runner: software
   # WebGL is too slow and unreliable for hundreds of rendering-heavy specs.
-  # This narrower job keeps the mobile/touch contract live in PR CI. Its 68
-  # device-emulated cases use Chromium only and run serially under CI.
+  # This hosted, Chromium-only job keeps the timing-sensitive mobile/touch
+  # contract live for TypeScript changes, with all 68 cases running serially.
+  # NOT YET REQUIRED. Promote it after several green runs establish its hosted
+  # llvmpipe wall clock and flake rate. The generated examples and fixtures are
+  # prepared in named steps so setup failures stay distinct from test failures.
   e2e-tests:
     needs: [changes, python-tests, typescript-tests]
-    if: ${{ !cancelled() && (needs.changes.outputs.dom_py != 'false' || needs.changes.outputs.dom_ts != 'false') }}
+    if: ${{ !cancelled() && needs.python-tests.result != 'failure' && needs.typescript-tests.result != 'failure' && needs.changes.outputs.dom_ts != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      # The smoke subset generates its example datasets at runtime via
-      # `make run-examples` (see step below) — none of the LFS-backed
-      # demo fixtures are read by the smoke specs. Keeping `lfs: true`
-      # made the checkout step itself fail when the repo's LFS budget
-      # was exhausted. If a future e2e job actually needs the demo
-      # payloads, re-enable `lfs: true` on that job specifically.
+      # The mobile suite generates its example datasets and generated fixtures
+      # at runtime; it reads none of the LFS-backed demo payloads. Keeping
+      # `lfs: true` made checkout itself fail when the repo's LFS budget was
+      # exhausted. Re-enable it only if a future hosted suite needs those files.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Dispatched runs test the captured dev commit; empty on push/PR == default.
+          ref: ${{ needs.changes.outputs.dev_sha || '' }}
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        id: setup-python
         with:
           python-version: '3.12'
 
@@ -1515,7 +1521,7 @@ jobs:
           cache-dependency-path: packages/luxar-viewer/pnpm-lock.yaml
 
       - name: Install Hatch
-        run: pipx install hatch
+        run: pipx install --python "${{ steps.setup-python.outputs.python-path }}" hatch
 
       - name: Install viewer dependencies
         run: cd packages/luxar-viewer && pnpm install --frozen-lockfile
@@ -1525,6 +1531,12 @@ jobs:
 
       - name: Install software OpenGL for headless WebGL
         run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1-mesa-dri libegl-mesa0 libgbm1
+
+      - name: Generate example datasets
+        run: make run-examples
+
+      - name: Generate viewer fixtures
+        run: make ensure-viewer-fixtures
 
       - name: Run mobile E2E suite
         run: make test-e2e-mobile

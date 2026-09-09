@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -764,11 +765,39 @@ def test_make_e2e_targets_require_fresh_example_fixtures() -> None:
 
     for target in (
         "test-e2e",
+        "test-e2e-browsers",
         "test-e2e-mobile",
         "test-e2e-smoke",
+        "test-e2e-smoke-strict",
         "test-perf-e2e",
     ):
         assert f"{target}: run-examples " in makefile
+
+
+def test_every_e2e_package_script_has_a_make_entry_point_or_reason() -> None:
+    repo = _MOD_PATH.parent.parent
+    package = json.loads(
+        (repo / "packages/luxar-viewer/package.json").read_text(encoding="utf-8")
+    )
+    scripts = {
+        name
+        for name in package["scripts"]
+        if name == "test:e2e" or name.startswith("test:e2e:") or name == "test:perf:e2e"
+    }
+    direct_only = {
+        "test:e2e:ci",
+        "test:e2e:debug",
+        "test:e2e:report",
+        "test:e2e:ui",
+        "test:e2e:visual",
+        "test:e2e:visual:update",
+    }
+    makefile = (repo / "Makefile").read_text(encoding="utf-8")
+    make_scripts = set(
+        re.findall(r"pnpm (test:e2e(?::[\w-]+)*|test:perf:e2e)", makefile)
+    )
+
+    assert scripts == make_scripts | direct_only
 
 
 def test_typescript_checker_uses_python_stale_exit_code() -> None:

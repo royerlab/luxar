@@ -89,8 +89,10 @@ make test-all     # All tests (Python incl. CUDA + WASM/Rust + TypeScript + Go l
 make test-cov-all # Coverage: Python (minus `-m slow`) + TypeScript
 make test-python  # Python tests only
 make test-e2e     # Full Playwright E2E suite (~17 min)
-make test-e2e-mobile  # Mobile/touch Playwright suite (Chromium device emulation)
-make test-e2e-smoke  # E2E smoke subset (the specs CI would run)
+make test-e2e-browsers  # Cross-browser Playwright subset
+make test-e2e-mobile  # Mobile/touch Playwright suite used by PR CI
+make test-e2e-smoke  # E2E smoke subset
+make test-e2e-smoke-strict  # Smoke subset with strict console handling
 make test-perf-e2e   # Opt-in Playwright performance suite
 # check-all is NOT read-only: `check-static` begins with `format`, so it
 # REWRITES packages/luxar/src and scripts. When other agents/people are editing

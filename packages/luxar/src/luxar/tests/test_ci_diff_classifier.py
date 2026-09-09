@@ -744,10 +744,30 @@ def test_the_workflow_itself_selects_every_language_domain(workflow: str) -> Non
 
 
 def test_mobile_e2e_suite_is_enabled_in_ci(workflow: str) -> None:
-    job = workflow.split("  e2e-tests:\n", maxsplit=1)[1]
+    """The mobile suite must remain live, correctly gated, and diagnosable."""
+    job = yaml.safe_load(workflow)["jobs"]["e2e-tests"]
 
-    assert "if: false" not in job
-    assert "run: make test-e2e-mobile" in job
+    assert set(job["needs"]) == {"changes", "python-tests", "typescript-tests"}
+    assert job["if"] == (
+        "${{ !cancelled() && needs.python-tests.result != 'failure' && "
+        "needs.typescript-tests.result != 'failure' && "
+        "needs.changes.outputs.dom_ts != 'false' }}"
+    )
+    assert any(step.get("run") == "make test-e2e-mobile" for step in job["steps"])
+
+    mobile_config = (
+        REPO / "packages/luxar-viewer/playwright.mobile.config.ts"
+    ).read_text(encoding="utf-8")
+    output_dir = re.search(r"outputDir:\s*['\"]([^'\"]+)['\"]", mobile_config)
+    assert output_dir, "mobile Playwright config must declare outputDir"
+    upload_step = next(
+        step
+        for step in job["steps"]
+        if "actions/upload-artifact" in step.get("uses", "")
+    )
+    assert upload_step["with"]["path"] == (
+        f"packages/luxar-viewer/{output_dir.group(1)}"
+    )
 
 
 def test_the_docs_gate_names_its_own_checker_and_baselines(workflow: str) -> None:

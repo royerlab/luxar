@@ -16,9 +16,9 @@
  * - The GLSL half of this contract is already pinned by a source assertion in
  *   `material-glsl.test.ts` ('#790 both vertex stages hand luxarLineJoin each
  *   END its own segment-constant width'). The TSL half was pinned ONLY by the
- *   checked-in codegen snapshots, and `.github/workflows/ci.yml` sets the whole
- *   `e2e-tests` job to `if: false` — so the two TSL factories could regress to a
- *   single shared per-vertex `joinPixelWidth` with every CI check still green.
+ *   checked-in codegen snapshots, which do not run in CI — so the two TSL
+ *   factories could regress to a single shared per-vertex `joinPixelWidth`
+ *   with every CI check still green.
  * - The TSL/GLSL parity harness cannot see the divergence either: its TSL side
  *   runs `WebGPURenderer({ forceWebGL: true })`, so both sides share WebGL's
  *   provoking rule, and the tapered parity fixture does not straddle the gate.

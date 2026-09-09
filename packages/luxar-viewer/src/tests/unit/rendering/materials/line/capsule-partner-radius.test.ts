@@ -27,11 +27,9 @@
  *   GLSL-only or TSL-only revert — passing `rPx` back into the partner
  *   reconstruction, or packing something other than the endpoint radii into the
  *   lane the fragment reads — stayed fully green.
- * - The TSL builders' only other coverage is the checked-in codegen snapshots
- *   (`tests/e2e/tsl-codegen-snapshot.spec.ts`), which do not run in CI: the
- *   `e2e-tests` job is `if: false` (`.github/workflows/ci.yml:862-863`), and that
- *   job would run only the smoke subset (`pnpm test:e2e:smoke`), which does not
- *   include the snapshot spec.
+ * - The TSL builders' only other direct coverage is the checked-in codegen
+ *   snapshots (`tests/e2e/tsl-codegen-snapshot.spec.ts`), which do not run in
+ *   CI; the hosted `e2e-tests` job runs only the mobile suite.
  * - The TSL fragment cannot be exercised here at all: its body is traced inside
  *   `Fn(() => {...})`, which only runs during a real node build, and that needs a
  *   WebGPU/WebGL backend unavailable under jsdom.
