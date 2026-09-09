@@ -27,6 +27,7 @@ from ..compositing import (
     reject_mesh_only_appearance,
     strip_absent_attr_kwargs,
 )
+from ..partition import reject_mismatched_partition_parent
 from .amplitude_norm import (
     NormalizeSpec,
     normalize_gsplat_data,
@@ -93,6 +94,7 @@ def reject_invalid_gsplat_compositing_attrs(
 ) -> None:
     """Apply the flat gsplat adder's compositing gates with its error prefix."""
     try:
+        reject_mismatched_partition_parent(parent or group, "gsplats", name)
         reject_layer_order_inside_specialized_group(
             "gsplats", name, attrs, parent or group
         )

@@ -12,6 +12,7 @@ from luxar.core.dimensions import Dimensions
 from luxar.core.group import Group
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+from luxar.gsplats.lod.additive import make_additive_lod
 from luxar.io.compiler import LuxarZarrCompiler
 
 
@@ -284,6 +285,43 @@ def test_array_lod_keeps_compositing_attr_refusal(
     assert errors[0].startswith("Could not add gsplats 'splats':")
 
 
+@pytest.mark.parametrize("lod_keyword", ["additive_lod", "substitutive_lod"])
+def test_array_lod_rejects_mismatched_partition_parent(tmp_path, lod_keyword) -> None:
+    data = _data()
+    lod_spec = (
+        dict(n_lods=2)
+        if lod_keyword == "additive_lod"
+        else dict(compression_factor=2, levels=1)
+    )
+
+    errors = []
+    for name, kwargs in (
+        ("plain", {}),
+        ("structured", {lod_keyword: lod_spec}),
+    ):
+        with LuxarZarrCompiler(tmp_path / f"{name}.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            parent = scene.add_partition_group(
+                "wrap", display_type="points", max_elements=100
+            )
+            with pytest.raises(ValueError) as error:
+                scene.add_gsplats(
+                    "part_0",
+                    data.centers,
+                    data.amplitudes,
+                    data.cholesky_factors,
+                    parent=parent,
+                    **kwargs,
+                )
+        errors.append(str(error.value))
+
+    assert errors[0] == errors[1]
+    assert errors[0].startswith(
+        "Could not add gsplats 'part_0': Cannot add gsplats 'part_0' to a "
+        "kind=partition group declared display_type='points'."
+    )
+
+
 @pytest.mark.parametrize(
     ("attr", "value", "specialized_parent"),
     [
@@ -312,6 +350,35 @@ def test_nested_file_rejects_invalid_compositing_attrs(
             scene.add_gsplats_from_file("splats", source_path, parent=parent, **kwargs)
 
     assert str(error.value).startswith("Could not add gsplats 'splats':")
+
+
+@pytest.mark.parametrize("source_kind", ["nested", "matrix_ladder"])
+def test_structured_file_rejects_mismatched_partition_parent(
+    tmp_path, source_kind
+) -> None:
+    source_path = tmp_path / f"{source_kind}.gsplats.zarr"
+    if source_kind == "nested":
+        write_gsplats_tree(
+            source_path,
+            _data().to_spatial_partition(max_elements=4),
+            ordering="none",
+        )
+    else:
+        make_additive_lod(_data(), n_lods=2).save(source_path, ordering="none")
+
+    with LuxarZarrCompiler(tmp_path / "scene.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        parent = scene.add_partition_group(
+            "wrap", display_type="points", max_elements=100
+        )
+        with pytest.raises(
+            ValueError,
+            match=(
+                "Could not add gsplats 'part_0': Cannot add gsplats 'part_0' to a "
+                "kind=partition group declared display_type='points'."
+            ),
+        ):
+            scene.add_gsplats_from_file("part_0", source_path, parent=parent)
 
 
 @pytest.mark.parametrize(
