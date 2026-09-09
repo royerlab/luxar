@@ -4,12 +4,13 @@
 suite — the dominant CPU cost of that job (~60–90 min under load) and the
 bottleneck capping how fast PRs reach a mergeable state. Pull-request runs now
 execute the same suite without coverage instrumentation (new `test-nocov` hatch
-script). The coverage collection plus the 89% threshold move to a dedicated
-`coverage.yml` workflow that runs on every push to `dev` (and on
-`workflow_dispatch`). Because it is a `push` to `dev`, its check-run attaches to
-the dev commit itself, so promotion — which reads per-commit check-runs for the
-commits ahead of `main` — halts on a coverage regression; its per-commit
-`concurrency` group (`cancel-in-progress: false`) lets every dev commit's
-coverage run to completion. The full-matrix `ci.yml` dispatch still runs
-`test-cov` as well. The `python-tests` context name is unchanged, so no required
-status is orphaned.
+script). Pushes to `dev` still run `test-cov` on all three `python-tests` legs;
+the protected `python-tests (3.12)` context remains the promotion-visible 89%
+gate. A dedicated `coverage.yml` workflow also runs one 3.12 coverage leg on
+every push to `dev` (and on `workflow_dispatch`) with per-commit, non-cancelling
+concurrency. Its check attaches to the dev commit and always completes, but is
+advisory until the `coverage` context is added to repository protection. Thus a
+dev push currently computes coverage four times (three ci.yml legs plus the
+dedicated observation), while PRs avoid the instrumentation cost. ci.yml
+dispatches also run `test-cov`. The `python-tests` context name is unchanged, so
+no required status is orphaned.

@@ -98,6 +98,11 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "test_docs_workflow.py guards the Pages workflow itself",
     ),
     (
+        ".github/workflows/coverage.yml",
+        "py",
+        "this module parses it to pin the coverage split",
+    ),
+    (
         ".github/workflows/external-reference-audits.yml",
         "py",
         "test_run_external_reference_audits.py pins its schedule and token wiring",
@@ -1016,22 +1021,21 @@ def test_ci_repair_window_is_dispatched_on_dev(workflow: str) -> None:
     assert "exit 1" in guard["run"]
 
 
-def test_pull_requests_skip_coverage_while_the_gate_lives_in_coverage_yml(
+def test_pull_requests_skip_coverage_while_dev_paths_enforce_and_observe_it(
     workflow: str,
 ) -> None:
     """Pin the coverage split so the 89% gate cannot be lost silently.
 
     Coverage instrumentation is the dominant cost of ``python-tests``, so PRs run
-    the ``-m 'not slow'`` suite plain (``test-nocov``). The authoritative coverage +
-    89% gate is the SEPARATE ``coverage.yml`` workflow, on push to ``dev`` -- a
-    schedule trigger would attach its verdict to the default-branch tip, not the
-    dev commit promotion evaluates. Its per-commit concurrency group with
-    ``cancel-in-progress: false`` lets every dev commit's coverage complete. Without
-    this test the split could regress (ci.yml back to ``test-cov`` on PRs, or
-    coverage.yml deleted / no longer running ``test-cov``) while ``python-tests``
-    still reported green -- the fail-open class this module exists to catch.
+    the ``-m 'not slow'`` suite plain (``test-nocov``). Pushes to ``dev`` retain
+    ``test-cov`` under the protected ``python-tests (3.12)`` context, while the
+    separate ``coverage.yml`` workflow records the same result without cancellation.
+    Its context is advisory until repository protection requires it. Without this
+    test either path could be lost silently -- the fail-open class this module exists
+    to catch.
     """
-    # (a) ci.yml's test step: test-nocov on pull_request, test-cov otherwise.
+    # (a) ci.yml's test step and hatch scripts: test-nocov on pull_request,
+    # test-cov otherwise, with identical target defaults and coverage only in cov.
     steps = yaml.safe_load(workflow)["jobs"]["python-tests"]["steps"]
     run = next(step["run"] for step in steps if "test-nocov" in step.get("run", ""))
     assert '"${{ github.event_name }}" = "pull_request"' in run
@@ -1039,25 +1043,36 @@ def test_pull_requests_skip_coverage_while_the_gate_lives_in_coverage_yml(
     assert "hatch run test-cov" in run
     # test-nocov only on the pull_request branch, test-cov only on the else branch.
     assert run.index("test-nocov") < run.index("else") < run.index("hatch run test-cov")
+    with (REPO / "pyproject.toml").open("rb") as stream:
+        scripts = tomllib.load(stream)["tool"]["hatch"]["envs"]["default"]["scripts"]
+    test_cov = scripts["test-cov"]
+    test_nocov = scripts["test-nocov"]
+    args_pattern = re.compile(r"\{args:([^}]*)\}")
+    assert args_pattern.search(test_cov).group(1) == args_pattern.search(
+        test_nocov
+    ).group(1)
+    assert "--cov" in test_cov
+    assert "--cov" not in test_nocov
 
-    # (b) the dedicated coverage workflow enforces the gate on push to dev.
-    assert COVERAGE_WORKFLOW.exists(), "the coverage gate workflow is missing"
+    # (b) the dedicated workflow records the gate on every push to dev.
+    assert COVERAGE_WORKFLOW.exists(), "the dedicated coverage workflow is missing"
     coverage_text = COVERAGE_WORKFLOW.read_text(encoding="utf-8")
     coverage = yaml.safe_load(coverage_text)
     triggers = yaml.load(coverage_text, Loader=yaml.BaseLoader)["on"]
     assert triggers["push"]["branches"] == ["dev"]
-    # A schedule trigger is deliberately NOT the coverage home: its verdict would
-    # attach to the default branch, not the dev commit promotion evaluates.
+    # A schedule trigger would attach its verdict to the default branch, not dev.
     assert "schedule" not in triggers
-    # Per-COMMIT group, never cancelled, so every dev commit's coverage completes
-    # and its check-run attaches to the dev commit promotion reads.
+    # Per-COMMIT group, never cancelled, so every dev commit gets a result.
     assert coverage["concurrency"]["group"] == "coverage-${{ github.sha }}"
     assert coverage["concurrency"]["cancel-in-progress"] is False
-    coverage_runs = "\n".join(
-        step.get("run", "")
-        for job in coverage["jobs"].values()
-        for step in job["steps"]
+    coverage_job = coverage["jobs"]["coverage"]
+    assert coverage_job["runs-on"] == (
+        "${{ vars.LUXAR_CI_FORCE_HOSTED == '1' && 'ubuntu-latest' || 'obsidian' }}"
     )
+    assert coverage_job["env"]["PYTEST_ADDOPTS"] == (
+        "${{ vars.LUXAR_CI_FORCE_HOSTED != '1' && '-n 2 --dist loadfile' || '' }}"
+    )
+    coverage_runs = "\n".join(step.get("run", "") for step in coverage_job["steps"])
     assert "hatch run test-cov" in coverage_runs
 
 

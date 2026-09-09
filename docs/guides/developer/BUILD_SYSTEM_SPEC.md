@@ -902,20 +902,21 @@ runs everything. The same trade as the per-PR Python matrix below: found on
 
 Coverage instrumentation plus the 89% `fail_under` gate is the dominant cost of
 `python-tests`, so it is off the per-PR critical path: PRs run the `-m 'not slow'`
-suite plain (`hatch run test-nocov`). The authoritative coverage gate lives in a
-**separate workflow, `.github/workflows/coverage.yml`**, triggered on `push` to
-`dev` (and `workflow_dispatch`). Being a push to `dev`, its check-run attaches to
-the dev commit (`github.sha` is that commit), so promotion — which reads
-per-commit check-runs for the commits ahead of `main` — halts on a coverage
-regression. Its `concurrency` group is per-commit (`coverage-${{ github.sha }}`,
-`cancel-in-progress: false`), so no push cancels another coverage run and each
-dev commit's coverage completes. It runs a single `3.12` leg of `hatch run
-test-cov` on the self-hosted `obsidian` pool. (A `schedule` trigger was
-deliberately NOT used: a scheduled run's checks attach to the default branch's
-tip, not the dev commit it checks out, so promotion would never see the verdict.)
-`ci.yml`'s own non-PR runs still execute `test-cov` too, but that is redundant and
-best-effort under ci.yml's `cancel-in-progress` concurrency, not the gate's home.
-The `python-tests` context name is unchanged, so no required status is orphaned.
+suite plain (`hatch run test-nocov`). Pushes to `dev` still run `test-cov`; the
+protected `python-tests (3.12)` context is the promotion-visible enforcement path
+and is load-bearing even though ci.yml's cancel-in-progress policy means some
+superseded dev runs never finish.
+
+A **separate workflow, `.github/workflows/coverage.yml`**, also runs `test-cov` on
+every push to `dev` (and on `workflow_dispatch`). Its per-commit concurrency group
+(`coverage-${{ github.sha }}`, `cancel-in-progress: false`) ensures every dev commit
+gets a completed single-3.12 coverage result. That `coverage` context is currently
+advisory because it is not one of main's protected contexts; adding it to repository
+protection is the known settings gap. The workflow defaults to `obsidian`, honors
+the `LUXAR_CI_FORCE_HOSTED=1` break-glass, and keeps hosted runs serial. A `schedule`
+trigger was deliberately not used: scheduled checks attach to the default branch's
+tip, not the dev commit tested. Dispatches of ci.yml also execute `test-cov`. The
+`python-tests` context name is unchanged, so no required status is orphaned.
 
 3.12 is the floor (`requires-python = ">=3.12"`) and names the required
 `python-tests (3.12)` context. Merge pushes exercise every supported interpreter,

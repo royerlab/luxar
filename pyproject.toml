@@ -393,10 +393,10 @@ MKL_NUM_THREADS = "{env:MKL_NUM_THREADS:1}"
 NUMEXPR_NUM_THREADS = "{env:NUMEXPR_NUM_THREADS:1}"
 
 # `test` runs the FULL suite (incl. `slow`) — the authoritative pre-push gate,
-# run locally before every push. `test-cov` (coverage + the 89% gate) is what the
-# dedicated `coverage.yml` workflow runs on every push to dev (and what ci.yml runs
-# on the full-matrix dispatch); PR runs use `test-nocov` (same subset, no
-# instrumentation) so a PR does not pay the coverage cost (see ci.yml/coverage.yml).
+# run locally before every push. `test-cov` (coverage + the 89% gate) runs on every
+# ci.yml push to dev and dispatch, plus the dedicated non-cancelling coverage.yml
+# workflow; PR runs use `test-nocov` (same subset, no instrumentation) so a PR does
+# not pay the coverage cost (see ci.yml/coverage.yml).
 # Both deselect `slow` so the 1-core GitHub runner stays well under the job timeout;
 # the heavy CPU-fitting tests (content-fit CLI, tiled/progressive fitting) still
 # run locally and their code stays covered by fast unit tests (coverage holds
@@ -427,8 +427,9 @@ test = "pytest -n {env:LUXAR_PYTEST_JOBS:6} --dist loadfile {args:packages/luxar
 test-cov = "mkdir -p coverage/python && pytest -m 'not slow' --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests}"
 # `test-nocov` is the per-PR fast path: the SAME `-m 'not slow'` subset and paths
 # as `test-cov`, but without `--cov` instrumentation (the dominant cost of the job).
-# ci.yml runs it on `pull_request`; the 89% gate is enforced off the PR critical
-# path by the dedicated `coverage.yml` workflow (push to dev) running `test-cov`.
+# ci.yml runs it on `pull_request`; pushes to dev keep the 89% gate under the
+# protected `python-tests (3.12)` context, and coverage.yml records a non-cancelling
+# advisory result for every dev commit.
 test-nocov = "pytest -m 'not slow' {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests}"
 test-cov-all = "mkdir -p coverage/python && pytest -n {env:LUXAR_PYTEST_JOBS:6} --dist loadfile --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests}"
 # `scripts/benchmarks` remains explicit as a safety net if the anchored
@@ -607,7 +608,7 @@ NUMEXPR_NUM_THREADS = "{env:NUMEXPR_NUM_THREADS:1}"
 
 [[tool.hatch.envs.test.matrix]]
 # Every version the classifiers advertise, mirroring the CI matrix's full set
-# (dev pushes and the daily 09:17 schedule):
+# on dev pushes and full-matrix dispatches:
 # `requires-python = ">=3.12"` has no ceiling, so the version most developers
 # actually run (their newest interpreter) has to be testable too —
 # `hatch run test.py3.14:cov`.
@@ -876,13 +877,13 @@ skip_covered = false
 # function bodies from the denominator).
 #
 # The ~2.5 pt margin is deliberate, not slack, and matters MORE now that PRs skip
-# coverage entirely (`test-nocov`): the gate is measured by the dedicated
-# `coverage.yml` workflow on push to dev (and on the full-matrix ci.yml dispatch),
-# NOT on the introducing PR. A regression can therefore ride a green PR onto `dev`
-# and is caught only when that push-to-dev coverage run lands. coverage.yml runs a
-# single 3.12 leg; the full-matrix dispatch adds 3.13/3.14, so a floor tuned tight
-# to one interpreter can still redden `dev`. Re-measure with `hatch run test-cov`
-# before raising.
+# coverage entirely (`test-nocov`): the gate is measured after merge by ci.yml's
+# push-to-dev `python-tests` legs, NOT on the introducing PR. A regression can
+# therefore ride a green PR onto `dev` before the protected 3.12 leg catches it.
+# coverage.yml also runs one non-cancelling 3.12 observation per dev commit, but its
+# context is advisory until repository protection requires it. Full-matrix
+# dispatches add 3.13/3.14, so a floor tuned tight to one interpreter can still
+# redden `dev`. Re-measure with `hatch run test-cov` before raising.
 fail_under = 89
 
 [tool.coverage.html]
