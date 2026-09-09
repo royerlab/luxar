@@ -1245,6 +1245,51 @@ describe('depth-sort coordinator', () => {
     expect(leafReads).toBeGreaterThan(readsAfterFirstFrame);
   });
 
+  it('rebuilds memoized BSP ranks when the wrapper tree is replaced', async () => {
+    const bspTree = { axis: 0, split: 0, left: { part: 0 }, right: { part: 1 } };
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => cameraAt(1000, 0, 0), requestRender: vi.fn() });
+
+    const parts = [0, 1].map(() => makeGSplatsMesh(2, 'normal'));
+    const wrapper = makePartitionWrapper(bspTree, parts);
+    for (const mesh of parts) {
+      coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    }
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+    expect(parts.map((mesh) => mesh.renderOrder)).toEqual([1, 2]);
+
+    wrapper.userData.bspTree = {
+      axis: 0,
+      split: 0,
+      left: { part: 1 },
+      right: { part: 0 },
+    };
+    coord.evaluateDepthSortPerFrame();
+    expect(parts.map((mesh) => mesh.renderOrder)).toEqual([2, 1]);
+  });
+
+  it('recomputes the local eye when the partition wrapper moves', async () => {
+    const bspTree = { axis: 0, split: 0, left: { part: 0 }, right: { part: 1 } };
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => cameraAt(1000, 0, 0), requestRender: vi.fn() });
+
+    const parts = [0, 1].map(() => makeGSplatsMesh(2, 'normal'));
+    const wrapper = makePartitionWrapper(bspTree, parts);
+    for (const mesh of parts) {
+      coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    }
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+    expect(parts.map((mesh) => mesh.renderOrder)).toEqual([1, 2]);
+
+    wrapper.position.x = 2000;
+    coord.evaluateDepthSortPerFrame();
+    expect(parts.map((mesh) => mesh.renderOrder)).toEqual([2, 1]);
+  });
+
   it('rebuilds memoized BSP ranks when live display dimensions change', async () => {
     const bspTree = { axis: 0, split: 0, left: { part: 0 }, right: { part: 1 } };
     let displayedDims = [3, 1, 0];
