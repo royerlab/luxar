@@ -847,14 +847,18 @@ Those tests resolve files through the shared `viewer_source()` helper, and
 `test_ci_diff_classifier.py` statically scans every literal helper call: each
 must have a Python `GATE_INPUTS` row, while every `NON_PYTHON_DOMAIN_PATHS`
 control must remain unread. A second scan checks whole tracked non-Python path
-literals in pytest test modules, `conftest.py` files, and helpers under `tests/`;
-every path with no language domain needs a Python `GATE_INPUTS` row or a
-justified exclusion. Documentation relevance is independent: Markdown and RST
-inputs read by pytest still need `dom_py` even though they select `docs-quality`.
-Eight viewer inputs are consumed without a literal `viewer_source()` call: the
+literals in pytest test modules, `conftest.py` files, and helpers under `tests/`,
+while a third resolves module-level, repo-rooted `Path` chains that flow into
+`read_text`, `read_bytes`, or read-only `open` calls. Every discovered path that
+lacks `dom_py` needs a Python `GATE_INPUTS` row or a justified exclusion, even if
+another language already owns it. Documentation relevance is also independent:
+Markdown and RST inputs read by pytest still need `dom_py` even though they
+select `docs-quality`.
+Ten viewer inputs are consumed without a literal `viewer_source()` call: the
 version and generated-format checks run through their scripts, direct readers
 include the viewer README and two `CURRENT_VERSION_CLAIMS` sources, while
-`test_fixture_environment.py` matches its three fixture files via `git grep`.
+`test_fixture_environment.py` matches its three fixture files via `git grep` and
+the two repo-rooted `readFileSync` reader files are scanned by the classifier.
 The classifier test keeps those explicit exceptions disjoint from the scanned
 readers and requires every `dom_py` viewer row to be in one set or the other.
 `GATE_INPUTS` is therefore the exact declaration; the workflow ERE is its
@@ -866,7 +870,17 @@ documentation checker's viewer scan and TypeDoc's entry points. `dom_ts`
 explicitly owns the root `README.md` and both gallery manifests because the
 gallery-selection unit test resolves and validates the README capture set from
 them. It also owns the root `Makefile` because the generated-fixture freshness
-test checks its E2E fixture prerequisite wiring.
+test checks its E2E fixture prerequisite wiring, plus
+`scripts/generate_builtin_colormaps.py` because the viewer's third-party notices
+test scrapes its colormap tables. A narrow static scan over viewer `src/**/*.test.ts`
+files finds literal `readFileSync` inputs rooted through `join(REPO_ROOT, ...)` or
+`resolve(REPO_ROOT, ...)` and requires each to have a TypeScript `GATE_INPUTS` row.
+The matched reader source set must exactly equal the named Python inputs so their
+edits run the classifier and stale ownership rows are rejected. This scan does not
+cover `import.meta`-rooted reads, `*.spec.ts`, or `scripts/*.test.mjs`; those
+existing inputs are already owned by broader TypeScript patterns, while a
+brand-new `*.test.ts` reader is reported the next time another Python-relevant
+change runs the repository-wide classifier.
 A check whose own inputs are unclassified is a check that skips for exactly the
 change it exists to catch. `.github/workflows/ci.yml` selects **all four**
 domains: it defines how every suite is invoked, so an edit that breaks a command
