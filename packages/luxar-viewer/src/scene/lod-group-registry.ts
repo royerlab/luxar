@@ -1110,6 +1110,11 @@ export class LODGroupRegistry {
     return this.entries.size;
   }
 
+  /** Number of registered groups that can require an offline-capture drain. */
+  captureSize(): number {
+    return this.entries.size + this.partitionEntries.size;
+  }
+
   /** Lookup an entry by path (mainly for tests / UI). */
   get(path: string): LODGroupEntry | undefined {
     return this.entries.get(path);
@@ -1141,9 +1146,9 @@ export class LODGroupRegistry {
   }
 
   /**
-   * Whether every lod_group that contributes pixels to the CURRENT view is
-   * already showing its own selected level at final quality — i.e. one more
-   * frame of waiting would not improve what is on screen.
+   * Whether every lod_group and partition part that contributes pixels to the
+   * CURRENT view is already at final committed quality — i.e. one more frame
+   * of waiting would not improve what is on screen.
    *
    * **Why this exists.** An offline turntable capture (``OfflineCaptureStrategy``)
    * takes exactly one ``requestAnimationFrame`` per exported frame. Since the
@@ -1157,6 +1162,13 @@ export class LODGroupRegistry {
    * deliberately rejected: a capture visits the whole scene, so peak residency
    * would be the entire dataset.
    *
+   * Partition parts block while a visible rising edge is pending, while any load
+   * pass is queued or committing and any part is visible, or while a visible
+   * stamped leaf is stale / still climbing its additive ladder. Hidden or
+   * re-culled parts are excluded because they contribute no pixels. Unstamped
+   * leaves carry no freshness or ladder signal and remain non-blocking, matching
+   * the lod-group subtree fold below.
+   *
    * - **A latched archive fault skips all work that could start or wait for new
    *   loads, but still waits for loads already in flight to finish committing.**
    *   The latch prevents any further automatic kick, so every other unmet
@@ -1164,6 +1176,10 @@ export class LODGroupRegistry {
    *   retry clears it. An already-started load still clears ``loading`` in its
    *   ``finally`` block and may commit geometry, so releasing the capture frame
    *   before that transition would allow a one-frame pop.
+   * - **A partition leaf load failure that does not latch an archive fault has no
+   *   success commit to refresh its stale stamp.** The predicate remains false;
+   *   the capture drain's bounded timeout and consecutive-timeout latch are the
+   *   escape hatch for that failed part.
    *
    * Per entry, in order:
    *
@@ -1239,8 +1255,12 @@ export class LODGroupRegistry {
    * object per entry. That cost is genuinely irrelevant here.
    */
   isCaptureQuiescent(): boolean {
+    // Wired to SceneLoader.isLoadPassInProgress: any pass can still change a
+    // visible partition part before this fixed-pose capture frame is exported.
+    if (this.anyVisiblePartitionPart() && this.deps.isUpdateInProgress?.() === true) return false;
     if (this.deps.hasArchiveFault?.()) return !this.anyChildLoading();
     const version = this.deps.getViewVersion?.();
+    if (!this.partitionsCaptureQuiescent(version ?? null)) return false;
     for (const entry of this.entries.values()) {
       // Deliberately excluded: an off-screen group is held coarse on purpose
       // and contributes no pixels to the frame being captured.
@@ -1290,6 +1310,77 @@ export class LODGroupRegistry {
       }
     }
     return true;
+  }
+
+  /** Whether visible partition parts have no pending resync or incomplete commit. */
+  private partitionsCaptureQuiescent(version: number | null): boolean {
+    if (!this.pendingPartitionResyncsQuiescent()) return false;
+    for (const entry of this.partitionEntries.values()) {
+      if (!this.partitionEntryCaptureQuiescent(entry, version)) return false;
+    }
+    return true;
+  }
+
+  private pendingPartitionResyncsQuiescent(): boolean {
+    for (const [path, parts] of this.partitionResyncPending) {
+      const entry = this.partitionEntries.get(path);
+      if (!entry) {
+        continue;
+      }
+      if (this.pendingPartitionResyncContributes(entry, parts)) return false;
+    }
+    return true;
+  }
+
+  private pendingPartitionResyncContributes(
+    entry: PartitionGroupEntry,
+    parts: ReadonlySet<string>
+  ): boolean {
+    if (!isEffectivelyVisible(entry.groupObject)) return false;
+    if (parts.has(entry.path)) return this.partitionHasVisiblePart(entry);
+    return entry.children.some(
+      (child) => parts.has(child.path) && this.partitionChildIsVisible(child)
+    );
+  }
+
+  private partitionEntryCaptureQuiescent(
+    entry: PartitionGroupEntry,
+    version: number | null
+  ): boolean {
+    if (!isEffectivelyVisible(entry.groupObject)) return true;
+    for (const child of entry.children) {
+      if (!this.partitionChildCaptureQuiescent(child, version)) return false;
+    }
+    return true;
+  }
+
+  private partitionChildCaptureQuiescent(
+    child: PartitionGroupChild,
+    version: number | null
+  ): boolean {
+    if (!this.partitionChildIsVisible(child)) return true;
+    for (const object of child.objects) {
+      const progress = subtreeDisplayProgress(object as unknown as ProgressNode, version);
+      if (progress && (!progress.fresh || !progress.complete)) return false;
+    }
+    return true;
+  }
+
+  /** Whether any registered partition part contributes pixels to this frame. */
+  private anyVisiblePartitionPart(): boolean {
+    for (const entry of this.partitionEntries.values()) {
+      if (!isEffectivelyVisible(entry.groupObject)) continue;
+      if (this.partitionHasVisiblePart(entry)) return true;
+    }
+    return false;
+  }
+
+  private partitionHasVisiblePart(entry: PartitionGroupEntry): boolean {
+    return entry.children.some((child) => this.partitionChildIsVisible(child));
+  }
+
+  private partitionChildIsVisible(child: PartitionGroupChild): boolean {
+    return child.objects.some((object) => object.userData.partitionFrustumVisible !== false);
   }
 
   /**

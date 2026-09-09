@@ -639,13 +639,13 @@ export async function runInitPipeline(
   // unconditionally, so on a plain points/lines scene the capture would
   // otherwise spend its mandatory selector-catch-up rAF on every exported
   // frame waiting for a selector that does not exist. `null` = "no lod_group
-  // to wait for" and skips the drain outright; only a scene with at least one
-  // registered lod_group gets the boolean. Narrow on purpose, and narrower
-  // than "nothing here can be mid-load" — a `--recipe stream` leaf has no
-  // lod_group but does have a progressive ladder still streaming.
+  // or partition to wait for" and skips the drain outright; partitions need
+  // the catch-up tick because a frustum rising edge starts a targeted resync.
+  // This remains narrower than "nothing here can be mid-load": a laddered leaf
+  // outside both group kinds still has no capture-visible registry entry.
   recordingPanel.setLODSettledProvider(() => {
     const registry = getSceneLoader('default')?.lodGroupRegistry;
-    if (!registry || registry.size() === 0) return null;
+    if (!registry || registry.captureSize() === 0) return null;
     return registry.isCaptureQuiescent();
   });
 
