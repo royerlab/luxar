@@ -413,6 +413,7 @@
 /* Play/Pause Button - Inline with slider */
 
 .luxar-dimension-slider__play-btn {
+  -webkit-touch-callout: none;
   /* Sizing - compact, matches slider track height */
   width: 24px;
   height: 20px;

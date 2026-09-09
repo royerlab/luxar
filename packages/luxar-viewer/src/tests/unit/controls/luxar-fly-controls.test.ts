@@ -293,6 +293,54 @@ describe('LuxarFlyControls', () => {
       expect(endHandler).toHaveBeenCalledTimes(1);
     });
 
+    it('settles residual touch-look motion after a drifting tap', () => {
+      domElement.dispatchEvent(
+        makePointerEvent('pointerdown', {
+          pointerId: 1,
+          pointerType: 'touch',
+          clientX: 100,
+          clientY: 100,
+        })
+      );
+      window.dispatchEvent(
+        makePointerEvent('pointermove', {
+          pointerId: 1,
+          pointerType: 'touch',
+          clientX: 110,
+          clientY: 100,
+        })
+      );
+      window.dispatchEvent(
+        makePointerEvent('pointerup', {
+          pointerId: 1,
+          pointerType: 'touch',
+          clientX: 110,
+          clientY: 100,
+        })
+      );
+
+      expect((controls as any).angularVelocity.length()).toBeGreaterThan(0);
+      controls.settleDamping();
+
+      const settledOrientation = camera.quaternion.clone();
+      const changeHandler = vi.fn();
+      controls.addEventListener('change', changeHandler);
+      for (let frame = 0; frame < 60; frame++) controls.update(1 / 60);
+
+      expect(changeHandler).not.toHaveBeenCalled();
+      expect(camera.quaternion.angleTo(settledOrientation)).toBe(0);
+    });
+
+    it('settles angular damping without cancelling translational glide', () => {
+      (controls as any).velocity.set(1, 2, 3);
+      (controls as any).angularVelocity.set(0.1, 0.2, 0.3);
+
+      controls.settleDamping();
+
+      expect((controls as any).angularVelocity.length()).toBe(0);
+      expect((controls as any).velocity.toArray()).toEqual([1, 2, 3]);
+    });
+
     it('leaves mouse-typed pointerdown to the mouse handlers', () => {
       const startHandler = vi.fn();
       controls.addEventListener('start', startHandler);

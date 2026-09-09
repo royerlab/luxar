@@ -169,6 +169,25 @@ describe('SceneLoaderManager', () => {
     expect(gateOf(manager.createLoader('density-after-off'))).toBeNull();
   });
 
+  it('forwards retryable-failure notifications to existing and future SceneLoaders', () => {
+    const manager = SceneLoaderManager.getInstance();
+    const existing = manager.createLoader('existing');
+    const notify = vi.fn();
+    manager.setAutoRetryableFailureCallback(notify);
+    const future = manager.createLoader('future');
+
+    const registryOf = (loader: unknown) =>
+      (
+        loader as {
+          registry: { recordFailure(path: string, error: Error): void };
+        }
+      ).registry;
+    registryOf(existing).recordFailure('/existing', new Error('HTTP 503 fetching chunk'));
+    registryOf(future).recordFailure('/future', new Error('HTTP 503 fetching chunk'));
+
+    expect(notify).toHaveBeenCalledTimes(2);
+  });
+
   it('should handle getAllLoaders correctly', () => {
     const manager = SceneLoaderManager.getInstance();
 

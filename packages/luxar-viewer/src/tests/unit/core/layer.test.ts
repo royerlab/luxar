@@ -369,6 +369,7 @@ describe('LuxarLayer', () => {
           'getEnergyCompEnabled',
           'getForceFinestLOD',
           'hasArchiveFault',
+          'hasNetworkFailureUnder',
           'isUpdateInProgress',
           'getResidentByteBudget',
           'getResidentBytes',

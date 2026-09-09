@@ -163,10 +163,9 @@ export class LabelLoader {
       // unlabelled node, and so are missing chunks, decode failures, bad
       // metadata and aborts.
       //
-      // Caveat: under MultiLevelCachingStore a retry-exhausted fetch also
-      // surfaces as a missing key, so this one branch can still swallow a
-      // network death on the offsets array. The cache tier logs its own warning
-      // for that.
+      // MultiLevelCachingStore rejects retry-exhausted fetches, so only a real
+      // not-found or a protected 403/410 metadata probe reaches this optional
+      // array branch (see HttpChunkSource).
       let offsetsArr: zarr.Array;
       try {
         offsetsArr = await zarr.open(offsetsLoc, { kind: 'array' });

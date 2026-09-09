@@ -119,6 +119,22 @@ describe('LoaderRegistry — failure tracking', () => {
     expect(r.failedLoaders.get('/p')!.kind).toBe('Validation');
   });
 
+  it('notifies retry scheduling only for eligible network failures', () => {
+    const r = new LoaderRegistry();
+    const notify = vi.fn();
+    r.setAutoRetryableFailureCallback(notify);
+
+    r.recordFailure('/decode', new Error('invalid chunk header'));
+    expect(notify).not.toHaveBeenCalled();
+
+    r.recordFailure('/network', new Error('HTTP 503 fetching chunk'));
+    expect(notify).toHaveBeenCalledOnce();
+
+    for (let i = 0; i < MAX_AUTO_RETRY_ATTEMPTS; i++) r.markAutoRetryAttempt('/network');
+    r.recordFailure('/network', new Error('HTTP 503 fetching chunk'));
+    expect(notify).toHaveBeenCalledOnce();
+  });
+
   describe('automatic-retry eligibility', () => {
     it('offers transient failures and withholds deterministic ones', () => {
       const r = new LoaderRegistry();

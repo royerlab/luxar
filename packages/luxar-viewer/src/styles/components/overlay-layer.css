@@ -46,6 +46,26 @@
   height: auto;
 }
 
+/* Stacked-alpha-matte video: the compositor canvas is what shows; the <video>
+   stays in the DOM as its frame source (decoding needs it attached and not
+   display:none) but takes no space and cannot be seen or clicked. */
+.luxar-overlay--video .luxar-overlay__matte {
+  display: block;
+  width: auto;
+  height: auto;
+  /* The whole point of the matte is a see-through margin: never let anything
+     paint a colour behind the canvas's transparent pixels. */
+  background-color: transparent !important;
+}
+
+.luxar-overlay--video .luxar-overlay__matte-source {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  opacity: 0.001 !important;
+  pointer-events: none !important;
+}
+
 /* HTML overlay defaults */
 .luxar-overlay--html {
   color: white;

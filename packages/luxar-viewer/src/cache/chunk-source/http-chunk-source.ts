@@ -14,6 +14,13 @@ import {
   getRemoteContentHash,
   type RemoteValidationToken,
 } from '../multi-level-caching-store/validation-queue';
+import { log, Modules } from '../../utils/log';
+
+const ZARR_METADATA_KEYS = new Set(['zarr.json', '.zarray', '.zattrs', '.zgroup', '.zmetadata']);
+
+function isZarrMetadataKey(key: string): boolean {
+  return ZARR_METADATA_KEYS.has(key.slice(key.lastIndexOf('/') + 1));
+}
 
 /** Reads chunks from a directory-backed zarr store over HTTP. */
 export class HttpChunkSource implements ChunkSource {
@@ -41,7 +48,24 @@ export class HttpChunkSource implements ChunkSource {
         buildUrl(this.baseUrl, key),
         { signal, onExhausted: (error) => (exhaustedCause = error) },
         async (attempt) => {
-          if (!attempt.response.ok) return { kind: 'missing' } as const;
+          if (attempt.response.status === 404) return { kind: 'missing' } as const;
+          if (
+            (attempt.response.status === 403 || attempt.response.status === 410) &&
+            isZarrMetadataKey(key)
+          ) {
+            log.warning(
+              Modules.CACHE,
+              `HTTP ${attempt.response.status} probing optional zarr metadata ${key}; treating as missing`
+            );
+            return { kind: 'missing' } as const;
+          }
+          if (!attempt.response.ok) {
+            const statusText = attempt.response.statusText ? ` ${attempt.response.statusText}` : '';
+            return {
+              kind: 'error',
+              cause: new Error(`HTTP ${attempt.response.status}${statusText} fetching ${key}`),
+            } as const;
+          }
           if (signal?.aborted) return { kind: 'aborted' } as const;
           const data = await attempt.readBody();
           return { kind: 'ok', data, bytesOverWire: data.byteLength } as const;

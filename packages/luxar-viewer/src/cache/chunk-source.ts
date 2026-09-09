@@ -43,16 +43,15 @@ export type ChunkFetchOutcome =
   | { kind: 'missing' }
   /** A caller signal, a store disposal, or an invalidation cancelled the read. */
   | { kind: 'aborted' }
-  /** Transient failure after the source exhausted its own retries. */
+  /** A non-missing HTTP failure or transient failure after retries. */
   | { kind: 'error'; cause: Error }
   /**
    * The CONTAINER is unreadable — not this one key.
    *
    * Distinct from `error` because the store's handling of the two must differ:
-   * a failed chunk degrades to a fill-valued read, which is right for one
-   * chunk and catastrophic for the whole store (a misconfigured server would
-   * render an empty scene instead of saying what is wrong). The store rethrows
-   * this so the loader surfaces `cause`.
+   * an ordinary source error is retryable by the loader, while a container
+   * fault needs its authored recovery path. The store rethrows both rather than
+   * allowing zarrita to fabricate fill values.
    */
   | { kind: 'fatal'; cause: Error };
 

@@ -4,6 +4,7 @@
  */
 
 .luxar-control-rail {
+  -webkit-touch-callout: none;
   position: absolute;
   top: 50%;
   left: 12px;

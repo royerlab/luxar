@@ -886,6 +886,17 @@ class TestWaypoint:
         # Zero is a legal "snap".
         assert Waypoint(when={"story": 0}, camera=cam, duration_ms=0).duration_ms == 0
 
+    def test_reveal_is_validated_and_round_trips(self) -> None:
+        cam = CameraConfig(position=(0, 0, 1))
+        with pytest.raises(ValueError, match="reveal"):
+            Waypoint(when={"story": 0}, camera=cam, reveal="after_a_while")
+        # The default is immediate and is omitted from the store.
+        assert "reveal" not in Waypoint(when={"story": 0}, camera=cam).to_dict()
+        wp = Waypoint(when={"story": 0}, camera=cam, reveal="on_arrival")
+        assert wp.to_dict()["reveal"] == "on_arrival"
+        assert Waypoint.from_dict(wp.to_dict()).reveal == "on_arrival"
+        assert Waypoint.from_dict(wp.to_dict()) == wp
+
     def test_rendering_keys_are_viewer_config_field_names(self) -> None:
         cam = CameraConfig(position=(0, 0, 1))
         with pytest.raises(ValueError, match="unknown keys \\['bloom'\\]"):

@@ -22,6 +22,13 @@
  * optional `rendering` block rides the same override path an authored
  * `viewer_config` takes.
  *
+ * A waypoint authored `reveal: "on_arrival"` also gates the story's overlays
+ * on the flight: `inTransit` is true from the moment such a waypoint is
+ * matched with a flight until that flight resolves (cancelled by the visitor
+ * counts as arrived; superseded by a newer match hands over to it), and the
+ * overlay manager holds newly matching overlays while it is. The text and the
+ * turntable then appear when the camera has arrived, not while it travels.
+ *
  * Pure functions (`matchWaypoint`, `resolveWaypointPose`) carry the logic;
  * the class only sequences them against injected ports, so `LuxarApp` wires
  * it with the pieces it already owns (dims manager, camera flight, rendering
@@ -193,6 +200,12 @@ export type WaypointArrival = 'snap' | 'fly';
  */
 export class WaypointDriver {
   private current = -1;
+  private transit = false;
+  /**
+   * Identity of the live flight; an index can be revisited before its stale
+   * flight resolves.
+   */
+  private activeFlight: Promise<FlightResult> | null = null;
 
   constructor(
     private readonly waypoints: readonly ZarrWaypoint[],
@@ -202,6 +215,16 @@ export class WaypointDriver {
   /** Index of the waypoint currently in effect, or -1. */
   get currentIndex(): number {
     return this.current;
+  }
+
+  /**
+   * True while the current waypoint asked for `reveal: "on_arrival"` and its
+   * flight has not resolved yet — the window in which the overlay manager
+   * holds the story's captions back. False after a snap, for a waypoint
+   * without a camera block, and for `reveal: "immediate"` (the default).
+   */
+  get inTransit(): boolean {
+    return this.transit;
   }
 
   /**
@@ -217,9 +240,18 @@ export class WaypointDriver {
     const previous = this.current;
     this.current = idx;
     if (previous >= 0) this.ports.emit?.('waypoint-departed', { index: previous });
-    if (idx < 0) return idx;
+    if (idx < 0) {
+      this.activeFlight = null;
+      this.transit = false;
+      return idx;
+    }
 
-    const flight = this.applyWaypoint(this.waypoints[idx], arrival);
+    const wp = this.waypoints[idx];
+    const flight = this.applyWaypoint(wp, arrival);
+    this.activeFlight = flight;
+    // The gate is per DESTINATION: a newer match re-decides it, so a superseded
+    // flight cannot leave the overlays held open or closed on its behalf.
+    this.transit = flight !== null && wp.reveal === 'on_arrival';
     log.info(Modules.APP, `Waypoint ${idx} reached (${arrival})`);
     this.announceArrival(idx, flight);
     return idx;
@@ -246,7 +278,13 @@ export class WaypointDriver {
       return;
     }
     void flight.then((result) => {
-      if (this.current !== idx) return;
+      // Leaving and re-entering one waypoint reuses its index, so only the
+      // current flight may open the gate or announce arrival.
+      if (this.activeFlight !== flight) return;
+      this.activeFlight = null;
+      // Cleared BEFORE the event, so an arrival listener that re-runs the
+      // overlay visibility pass already sees the gate open.
+      this.transit = false;
       this.ports.emit?.('waypoint-arrived', { index: idx, completed: result.completed });
     });
   }
@@ -287,5 +325,7 @@ export class WaypointDriver {
   /** Forget the current match so the next `evaluate` re-applies it. */
   reset(): void {
     this.current = -1;
+    this.activeFlight = null;
+    this.transit = false;
   }
 }

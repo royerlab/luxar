@@ -65,6 +65,7 @@ export class SceneLoaderManager {
    * wake a loop — SceneLoader treats it as a no-op.
    */
   private requestRender: (() => void) | null = null;
+  private autoRetryableFailureCallback: (() => void) | null = null;
   /**
    * Projected-density provider + caps for the refinement rung gate, forwarded
    * to every created loader (→ `SceneLoader.setRefinementDensityProvider`).
@@ -110,6 +111,14 @@ export class SceneLoaderManager {
    */
   setRequestRender(callback: (() => void) | null): void {
     this.requestRender = callback;
+  }
+
+  /** Forward transient-failure notifications to every current and future loader. */
+  setAutoRetryableFailureCallback(callback: (() => void) | null): void {
+    this.autoRetryableFailureCallback = callback;
+    for (const loader of this.loaders.values()) {
+      loader.setAutoRetryableFailureCallback(callback);
+    }
   }
 
   /**
@@ -180,6 +189,7 @@ export class SceneLoaderManager {
       this.decodeKTX2
     );
     loader.setRequestRender(this.requestRender);
+    loader.setAutoRetryableFailureCallback(this.autoRetryableFailureCallback);
     if (this.refinementDensity) {
       loader.setRefinementDensityProvider(
         this.refinementDensity.provider,
@@ -230,6 +240,7 @@ export class SceneLoaderManager {
       this.decodeKTX2
     );
     loader.setRequestRender(this.requestRender);
+    loader.setAutoRetryableFailureCallback(this.autoRetryableFailureCallback);
     if (this.refinementDensity) {
       loader.setRefinementDensityProvider(
         this.refinementDensity.provider,

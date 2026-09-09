@@ -13,6 +13,7 @@ import typer
 from arbol import aprint, asection
 
 from ...typing_utils.constants import DEFAULT_BLENDING_MODE
+from .._traceback import exit_with_error
 from .encoding import _resolve_encoding_mode
 
 if TYPE_CHECKING:
@@ -244,11 +245,7 @@ def convert_to_scene(
     except (typer.Exit, typer.BadParameter):
         raise
     except Exception as e:
-        aprint(f"Error: {e}")
-        import traceback
-
-        traceback.print_exc()
-        raise typer.Exit(1)
+        exit_with_error(f"Error: {e}", e)
 
 
 def migrate_format_command(
@@ -345,11 +342,7 @@ def migrate_format_command(
         aprint(f"Error: {exc}")
         raise typer.Exit(1)
     except Exception as exc:
-        aprint(f"Error: {exc}")
-        import traceback
-
-        traceback.print_exc()
-        raise typer.Exit(1)
+        exit_with_error(f"Error: {exc}", exc)
 
 
 def reencode_command(
@@ -461,11 +454,7 @@ def reencode_command(
         aprint(f"Error: {exc}")
         raise typer.Exit(1)
     except Exception as exc:
-        aprint(f"Error: {exc}")
-        import traceback
-
-        traceback.print_exc()
-        raise typer.Exit(1)
+        exit_with_error(f"Error: {exc}", exc)
 
 
 def register_scene_commands(app: typer.Typer) -> None:

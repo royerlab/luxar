@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, Optional
 import typer
 from arbol import aprint, asection
 
+from ..._traceback import exit_with_error
+
 if TYPE_CHECKING:
     from luxar.gsplats.calibration import CalibrationResult, HeldOutPeak
 
@@ -431,8 +433,4 @@ def run_calibrate_command(
     except typer.Exit:
         raise
     except Exception as exc:
-        aprint(f"Error: {exc}")
-        import traceback
-
-        traceback.print_exc()
-        raise typer.Exit(1)
+        exit_with_error(f"Error: {exc}", exc)

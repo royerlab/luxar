@@ -66,6 +66,7 @@ import {
   initPicking as initPickingImpl,
   disposePickingSession as disposePickingSessionImpl,
 } from './app/picking/init-picking';
+import { installDoubleTapToFit } from './app/interaction/double-tap-to-fit';
 import { applyViewerConfigState as applyViewerConfigStateHelper } from './app/viewer-config/apply-state';
 import {
   getPanelVisibilityStates as getPanelVisibilityStatesHelper,
@@ -79,7 +80,7 @@ import { initColormapLegend as initColormapLegendImpl } from './app/overlays/ini
 import { initOverlays as initOverlaysImpl } from './app/overlays/init-overlays';
 import { installFocusHandling } from './app/lifecycle/focus-handling';
 import { installOnlineRetry } from './app/lifecycle/online-retry';
-import { getSceneLoader } from '../data/scene-loader-manager';
+import { getSceneLoader, SceneLoaderManager } from '../data/scene-loader-manager';
 import type { SceneLoader } from '../data/scene-loader';
 import { notifier } from '../utils/cross-layer/notifier';
 import { initScaleBar as initScaleBarImpl } from './app/overlays/init-scale-bar';
@@ -292,6 +293,9 @@ export class LuxarApp {
       // Install this before routing so O / the rail control can open the
       // browser while a slow initial dataset load is still in progress.
       this.setupDatasetBrowserShortcut();
+      // Install before the initial load so its first recorded transient
+      // failure can arm the bounded retry backoff immediately.
+      this.setupOnlineRetry();
       if (await this.shouldShowBrowser(result.sceneSrc)) {
         try {
           this.showDatasetBrowser();
@@ -308,9 +312,14 @@ export class LuxarApp {
 
       this.setupDisposeOnUnload();
       this.setupFocusHandling();
-      this.setupOnlineRetry();
       this.setupDebugInterface();
       this.setupEmbedderHooks(options.canvas);
+      // Touch double-tap re-frames on EVERY scene — not only the ones the
+      // picking session (and with it canvas-actions) gets provisioned for.
+      // (Unit tests hand `init` a stub canvas with no event surface.)
+      if (options.canvas instanceof HTMLElement) {
+        installDoubleTapToFit(options.canvas, this.events, () => this.recenterCamera());
+      }
 
       this.isInitialized = true;
     } catch (error) {
@@ -539,7 +548,10 @@ export class LuxarApp {
    */
   private installWaypoints(waypoints: ZarrWaypoint[] | undefined): void {
     this.disposeWaypoints();
-    if (!Array.isArray(waypoints) || waypoints.length === 0) return;
+    if (!Array.isArray(waypoints) || waypoints.length === 0) {
+      this.overlayManager?.updateVisibility();
+      return;
+    }
 
     const driver = new WaypointDriver(waypoints, {
       getDims: () => sceneDimsManager.getDims(),
@@ -578,6 +590,9 @@ export class LuxarApp {
             index: payload.index,
             completed: 'completed' in payload ? payload.completed : true,
           });
+          // The flight resolved and the driver's gate is open: reveal the
+          // overlays a `reveal: "on_arrival"` waypoint held back.
+          this.overlayManager?.updateVisibility();
         }
         const when = waypoints[payload.index]?.when;
         if (when && this.audioEngine) {
@@ -590,11 +605,17 @@ export class LuxarApp {
     });
     const listener = (): void => {
       driver.evaluate('fly');
+      // The overlay manager listens to the same dims manager and may have run
+      // first with the previous gate state. Re-run its pass now whether the
+      // new match closes OR opens the gate — same task, so nothing paints in
+      // between.
+      this.overlayManager?.updateVisibility();
     };
     sceneDimsManager.addListener(listener);
     this.waypointListener = listener;
     this.waypointDriver = driver;
     driver.evaluate('snap');
+    this.overlayManager?.updateVisibility();
   }
 
   private disposeWaypoints(): void {
@@ -691,6 +712,10 @@ export class LuxarApp {
       inputHandler: this.inputHandler,
       recordingPanel: this.recordingPanel,
     });
+    // Story captions wait for the camera when a waypoint asks for it: the gate
+    // reads the LIVE driver, so it holds whichever scene's waypoints are
+    // installed, before or after the overlays themselves were created.
+    this.overlayManager.setTransitGate(() => this.waypointDriver?.inTransit === true);
   }
 
   /**
@@ -787,10 +812,15 @@ export class LuxarApp {
    * the manager so dataset switches keep pointing at the current loader.
    */
   private setupOnlineRetry(): void {
+    const manager = SceneLoaderManager.getInstance();
     installOnlineRetry({
       events: this.events,
       getLoader: () => getSceneLoader(),
       toast: (message, durationMs) => notifier.toast(message, durationMs),
+      subscribeAutoRetryableFailure: (listener) => {
+        manager.setAutoRetryableFailureCallback(listener);
+        return () => manager.setAutoRetryableFailureCallback(null);
+      },
     });
   }
 
