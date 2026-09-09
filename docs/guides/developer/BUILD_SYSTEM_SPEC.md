@@ -804,7 +804,7 @@ and each job runs its expensive steps only for the domain(s) it covers:
 | Domain | Set by | Gates |
 |--------|--------|-------|
 | `dom_py` | `*.py`, `Makefile`, `pyproject.toml`, `*.pyx/*.pxd`, CUDA `*.cu/*.cuh`, plus cross-language gate inputs listed below | `python-tests`, `wheel-viewer` |
-| `dom_ts` | anything under `packages/luxar-viewer/`, root `tsconfig*.json`, `vitest*.{ts,js,mjs}`, plus gallery-selection inputs listed below | `typescript-tests`, `release-readiness`, `wheel-viewer` |
+| `dom_ts` | anything under `packages/luxar-viewer/`, root `tsconfig*.json`, `vitest*.{ts,js,mjs}`, plus gallery-selection and E2E-wiring inputs listed below | `typescript-tests`, `release-readiness`, `wheel-viewer` |
 | `dom_rust` | `*.rs`, `Cargo.toml/lock` | `typescript-tests`, `release-readiness`, `wheel-viewer` |
 | `dom_go` | `*.go`, `go.mod/sum`, `cli/_launchers/` | `go-launcher` |
 
@@ -835,29 +835,38 @@ reads that same `CLAUDE.md` and skill page, and adds
 `.agents/skills/luxar-gsplat-pipeline/SKILL.md` and
 `docs/specs/GSPLATS_DIMENSION_MAPPING.md` to the Python-owned set.
 Consequently, every `CLAUDE.md` edit runs the Python matrix.
-Two workflow files and `.gitattributes` are `dom_py` for the same reason:
-`test_docs_workflow.py` reads `docs.yml` and `.gitattributes`, and
+Three workflow files, `.gitattributes`, and `.gitignore` are `dom_py` for the
+same reason: `test_docs_workflow.py` reads `docs.yml` and `.gitattributes`,
 `test_run_external_reference_audits.py` asserts the schedule, permissions and
-token wiring of `external-reference-audits.yml`. A workflow file matches no
-other domain on its own, so each has to be named or its guard never runs.
+token wiring of `external-reference-audits.yml`, the classifier test parses
+`coverage.yml`, and the wheel-completeness guard reads `.gitignore`. A workflow
+file matches no other domain on its own, so each has to be named or its guard
+never runs.
 Viewer TypeScript sources read by Python contract tests are also `dom_py`.
 Those tests resolve files through the shared `viewer_source()` helper, and
 `test_ci_diff_classifier.py` statically scans every literal helper call: each
 must have a Python `GATE_INPUTS` row, while every `NON_PYTHON_DOMAIN_PATHS`
-control must remain unread. Five viewer inputs are consumed without opening a
-named path in a test: the version and generated-format checks run through their
-scripts, while `test_fixture_environment.py` matches its three fixture files via
-`git grep`. The classifier test keeps those explicit exceptions disjoint from
-the scanned readers and requires every `dom_py` viewer row to be in one set or
-the other. `GATE_INPUTS` is therefore the exact declaration; the workflow ERE is
-its checked copy rather than a second unchecked inventory. Ownership stays
+control must remain unread. A second scan checks whole tracked non-Python path
+literals in pytest test modules, `conftest.py` files, and helpers under `tests/`;
+every path with no language domain needs a Python `GATE_INPUTS` row or a
+justified exclusion. Documentation relevance is independent: Markdown and RST
+inputs read by pytest still need `dom_py` even though they select `docs-quality`.
+Eight viewer inputs are consumed without a literal `viewer_source()` call: the
+version and generated-format checks run through their scripts, direct readers
+include the viewer README and two `CURRENT_VERSION_CLAIMS` sources, while
+`test_fixture_environment.py` matches its three fixture files via `git grep`.
+The classifier test keeps those explicit exceptions disjoint from the scanned
+readers and requires every `dom_py` viewer row to be in one set or the other.
+`GATE_INPUTS` is therefore the exact declaration; the workflow ERE is its
+checked copy rather than a second unchecked inventory. Ownership stays
 file-narrow so unrelated viewer changes do not pull in the Python matrix. The
 docs gate has no corresponding hole: it already owns every viewer TypeScript
 source under `src/`, while viewer tools outside `src/` are outside both the
 documentation checker's viewer scan and TypeDoc's entry points. `dom_ts`
-explicitly owns the root `README.md` and gallery manifest because the
+explicitly owns the root `README.md` and both gallery manifests because the
 gallery-selection unit test resolves and validates the README capture set from
-them.
+them. It also owns the root `Makefile` because the generated-fixture freshness
+test checks its E2E fixture prerequisite wiring.
 A check whose own inputs are unclassified is a check that skips for exactly the
 change it exists to catch. `.github/workflows/ci.yml` selects **all four**
 domains: it defines how every suite is invoked, so an edit that breaks a command

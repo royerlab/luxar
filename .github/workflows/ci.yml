@@ -153,11 +153,13 @@ jobs:
             # would otherwise run zero tests), generate-gallery.spec.ts (the
             # gallery manifest field contract is parsed from it),
             # docs/guides/user/CLI_REFERENCE.md (test_docs_command_coverage.py),
-            # the root and demos README files (test_readme_demo_docs.py,
+            # the root, package and demos README files (test_readme_demo_docs.py,
             # test_demo_import_spelling.py), plus the CLAUDE.md and visualization-
             # skill projections checked by sync_demo_counts.py. The Cholesky
             # documentation guard reads that same CLAUDE.md, all three skill pages
             # and GSPLATS_DIMENSION_MAPPING.md.
+            # test_format_contract.py's CURRENT_VERSION_CLAIMS also pins the
+            # current format version across its named docs and viewer sources.
             # GATE_INPUTS in test_ci_diff_classifier.py is the declaration checked
             # against this ERE. Markdown alone runs only docs-quality, so these need
             # explicit Python ownership.
@@ -167,13 +169,18 @@ jobs:
             # not whole viewer subtrees: unrelated viewer edits should remain
             # TypeScript-only and avoid the Python matrix.
             # test_docs_workflow.py also parses docs.yml and derives the published
-            # LFS candidate set from .gitattributes, so both are Python gate inputs.
-            # coverage.yml and external-reference-audits.yml are too: pytest pins
-            # their gate wiring, and workflow files match no other domain alone.
-            printf '%s\n' "$changed" | grep -qE '(\.py$|^Makefile$|^README\.md$|^CLAUDE\.md$|^CITATION\.cff$|^\.agents/skills/luxar-(gsplat-pipeline/SKILL|visualization/(SKILL|references/scene-api))\.md$|^pyproject\.toml$|^\.pre-commit-config\.yaml$|\.(pyx|pxd|cu|cuh|cpp|h|hpp|mm|metal)$|^\.gitattributes$|^scripts/complexity_baseline\.json$|^scripts/lint_baseline\.json$|^scripts/gallery/manifest\.json$|^scripts/benchmarks/benchmark_bisect\.sh$|^scripts/demo_archive_characteristics\.json$|^scripts/release\.sh$|^docs/(guides/user/CLI_REFERENCE|specs/GSPLATS_DIMENSION_MAPPING)\.md$|^format-contract/|^\.github/workflows/(coverage|docs|external-reference-audits)\.yml$|^packages/luxar/src/luxar/demos/(README\.md$|data)|^packages/luxar-viewer/(package\.json$|src/(config/sections/(camera|rendering-controls)/data\.ts$|data/(attrs-composer\.ts$|loaders/spatial-query/tolerance-computer\.ts$)|rendering/(blending-state\.ts$|element-texture-layout\.ts$|materials/mesh/appearance\.ts$|node-factory/create-(points|lines|gsplats|mesh)-node\.ts$)|scene/lod-group-registry\.ts$|tests/(global-setup\.ts$|README\.md$|screenshots/exposure-policy\.ts$|screenshots/generate-gallery\.spec\.ts$)|types/(data-monitor-types|format-contract|geometry-capabilities|line-join|lod-group|partition-group)\.ts$)|tests/fixtures/README\.md$|tools/example-fixture-freshness\.ts$))' && dom_py=true || true
+            # LFS candidate set from .gitattributes, while the wheel-completeness
+            # guard reads .gitignore. test_verify_media.py reads media-manifest.json;
+            # test_docs_workflow.py checks the demo-site runbook, and the Zenodo
+            # snapshot test reads scripts/zenodo_record_text/. coverage.yml and
+            # external-reference-audits.yml are also pytest inputs, and workflow
+            # files match no language domain alone.
+            printf '%s\n' "$changed" | grep -qE '(\.py$|^Makefile$|^README\.md$|^CLAUDE\.md$|^CITATION\.cff$|^\.agents/skills/luxar-(gsplat-pipeline/SKILL|visualization/(SKILL|references/scene-api))\.md$|^pyproject\.toml$|^\.pre-commit-config\.yaml$|\.(pyx|pxd|cu|cuh|cpp|h|hpp|mm|metal)$|^\.(gitattributes|gitignore)$|^scripts/complexity_baseline\.json$|^scripts/lint_baseline\.json$|^scripts/gallery/(manifest|media-manifest)\.json$|^scripts/zenodo_record_text/|^scripts/benchmarks/benchmark_bisect\.sh$|^scripts/demo_archive_characteristics\.json$|^scripts/release\.sh$|^docs/(api/gsplats\.rst$|guides/(developer/DEMO_SITE_RUNBOOK|user/(CLI_REFERENCE|FORMAT_AND_MIGRATION|LUXAR_ZARR_FORMAT))\.md$|specs/(GSPLATS_DIMENSION_MAPPING|GSPLATS_ZARR_FORMAT)\.md$)|^format-contract/|^\.github/workflows/(coverage|docs|external-reference-audits)\.yml$|^packages/luxar(-viewer)?/README\.md$|^packages/luxar/src/luxar/(cli|gsplats(/(io|lod))?|core/group/(lod|gsplats_pipeline))/README\.md$|^packages/luxar/src/luxar/demos/(README\.md$|data)|^packages/luxar-viewer/(package\.json$|src/(config/sections/(camera|rendering-controls)/data\.ts$|data/(attrs-composer\.ts$|codecs/README\.md$|loaders/spatial-query/tolerance-computer\.ts$|scene-loader/lifecycle/load-scene\.ts$)|rendering/(blending-state\.ts$|element-texture-layout\.ts$|materials/mesh/appearance\.ts$|node-factory/create-(points|lines|gsplats|mesh)-node\.ts$)|scene/lod-group-registry\.ts$|tests/(global-setup\.ts$|README\.md$|screenshots/exposure-policy\.ts$|screenshots/generate-gallery\.spec\.ts$)|types/(data-monitor-types|format-contract|geometry-capabilities|line-join|lod-group|partition-group)\.ts$)|tests/fixtures/README\.md$|tools/example-fixture-freshness\.ts$))' && dom_py=true || true
             # TS domain = the WHOLE viewer package (its py fixture-generators feed TS tests -> hierarchy) + root TS config.
-            # The gallery-selection unit test also reads the root README and gallery manifest.
-            printf '%s\n' "$changed" | grep -qE '(^packages/luxar-viewer/|^README\.md$|^scripts/gallery/manifest\.json$|^tsconfig[^/]*\.json$|(^|/)vitest[^/]*\.(ts|js|mjs)$)' && dom_ts=true || true
+            # gallery-selection.test.ts also reads the root README and both gallery
+            # manifests; generated-fixture-freshness.test.ts checks the Makefile's
+            # E2E fixture prerequisite wiring.
+            printf '%s\n' "$changed" | grep -qE '(^packages/luxar-viewer/|^Makefile$|^README\.md$|^scripts/gallery/(media-)?manifest\.json$|^tsconfig[^/]*\.json$|(^|/)vitest[^/]*\.(ts|js|mjs)$)' && dom_ts=true || true
             printf '%s\n' "$changed" | grep -qE '(\.rs$|^wasm/|(^|/)Cargo\.(toml|lock)$)' && dom_rust=true || true
             printf '%s\n' "$changed" | grep -qE '(\.go$|^packages/luxar/src/luxar/cli/_launchers/|(^|/)go\.(mod|sum)$)' && dom_go=true || true
             # This workflow DEFINES how every suite is invoked, so it belongs to all
