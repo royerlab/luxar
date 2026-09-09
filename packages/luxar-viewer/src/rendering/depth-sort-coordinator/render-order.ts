@@ -46,14 +46,39 @@ interface RenderOrderScratch {
 let scratch: RenderOrderScratch | null = null;
 
 /**
- * Per-frame cache of a partition wrapper's back-to-front part order, keyed by
- * the wrapper `THREE.Object3D`. Value maps a part index (the leaf `part` /
- * `child_index`) to its draw RANK — 0 = farthest, drawn first. `null` marks a
- * wrapper with no usable `bspTree` (→ the centroid fallback). Cleared at the
- * top of every frame via {@link clearRenderOrderFrameState} so it never
- * outlives a frame.
+ * Per-frame lookup cache of a partition wrapper's back-to-front part order,
+ * keyed by the wrapper `THREE.Object3D`. Value maps a part index (the leaf
+ * `part` / `child_index`) to its draw RANK — 0 = farthest, drawn first. `null`
+ * marks a wrapper with no usable `bspTree` (→ the centroid fallback). Cleared
+ * at the top of every frame so this strong-key map never outlives a frame.
  */
 const partitionRankCache = new Map<THREE.Object3D, Map<number, number> | null>();
+
+type BspSplitNode = Extract<BspTreeNode, { part?: undefined }>;
+
+interface PartitionRankMemo {
+  tree: BspTreeNode;
+  displayDims: number[];
+  axisToComponent: readonly number[] | null;
+  splitNodes: BspSplitNode[];
+  planeSides: boolean[];
+  order: number[];
+  ranks: Map<number, number>;
+  initialized: boolean;
+}
+
+/**
+ * Cross-frame BSP memo. The weak wrapper key prevents disposed scene trees
+ * from being pinned; values retain only that wrapper's immutable tree and
+ * numeric traversal state. Ranks change only when the local eye crosses a
+ * stored split plane (or the displayed-axis mapping changes).
+ */
+const partitionRankMemo = new WeakMap<THREE.Object3D, PartitionRankMemo>();
+
+/** Grow-only numeric containment scratch; never retains scene objects. */
+const groupSphereScratch: number[] = [];
+const containmentIndegreeScratch: number[] = [];
+const containmentEmittedScratch: boolean[] = [];
 
 /** Partition wrappers already diagnosed for an unusable display-axis mapping. */
 const warnedAxisMappingWrappers = new WeakSet<THREE.Object3D>();
@@ -301,12 +326,93 @@ function bspTreeAxesAreMapped(node: BspTreeNode, map: readonly number[]): boolea
   return bspTreeAxesAreMapped(node.left, map) && bspTreeAxesAreMapped(node.right, map);
 }
 
+function displayDimsEqual(a: readonly number[] | null | undefined, b: readonly number[]): boolean {
+  const length = a?.length ?? 0;
+  if (length !== b.length) return false;
+  for (let i = 0; i < length; i++) if (a![i] !== b[i]) return false;
+  return true;
+}
+
+function collectBspSplitNodes(node: BspTreeNode, out: BspSplitNode[]): void {
+  if (node.part !== undefined) return;
+  out.push(node);
+  collectBspSplitNodes(node.left, out);
+  collectBspSplitNodes(node.right, out);
+}
+
+function makePartitionRankMemo(
+  tree: BspTreeNode,
+  displayed: readonly number[] | null | undefined
+): PartitionRankMemo {
+  const splitNodes: BspSplitNode[] = [];
+  collectBspSplitNodes(tree, splitNodes);
+  return {
+    tree,
+    displayDims: displayed ? [...displayed] : [],
+    axisToComponent: bspAxisToComponent(tree, displayed),
+    splitNodes,
+    planeSides: [],
+    order: [],
+    ranks: new Map<number, number>(),
+    initialized: false,
+  };
+}
+
+function planeSidesChanged(memo: PartitionRankMemo, eyeLocal: THREE.Vector3): boolean {
+  let changed = !memo.initialized;
+  for (let i = 0; i < memo.splitNodes.length; i++) {
+    const node = memo.splitNodes[i];
+    const component = memo.axisToComponent![node.axis];
+    const eye = component === 0 ? eyeLocal.x : component === 1 ? eyeLocal.y : eyeLocal.z;
+    const side = eye < node.split;
+    if (memo.planeSides[i] !== side) changed = true;
+    memo.planeSides[i] = side;
+  }
+  return changed;
+}
+
+function partitionRankMemoFor(
+  wrapper: THREE.Object3D,
+  tree: BspTreeNode,
+  displayed: readonly number[] | null | undefined
+): PartitionRankMemo {
+  const memo = partitionRankMemo.get(wrapper);
+  if (memo && memo.tree === tree && displayDimsEqual(displayed, memo.displayDims)) return memo;
+  const replacement = makePartitionRankMemo(tree, displayed);
+  partitionRankMemo.set(wrapper, replacement);
+  return replacement;
+}
+
+function warnUnmappedBsp(
+  wrapper: THREE.Object3D,
+  displayed: readonly number[] | null | undefined
+): void {
+  if (warnedAxisMappingWrappers.has(wrapper)) return;
+  warnedAxisMappingWrappers.add(wrapper);
+  log.warning(
+    Modules.RENDERER,
+    `partition-kind group ${wrapper.name || '(unnamed)'} has a valid bsp_tree whose split axes are not all displayed (displayDims=[${displayed?.join(', ') ?? ''}]); falling back to centroid ordering`
+  );
+}
+
+function rebuildPartitionRanks(
+  memo: PartitionRankMemo,
+  eyeLocal: THREE.Vector3,
+  axisToComponent: readonly number[]
+): void {
+  memo.order.length = 0;
+  traverseBspBackToFront(memo.tree, eyeLocal, axisToComponent, memo.order);
+  memo.ranks.clear();
+  for (let rank = 0; rank < memo.order.length; rank++) memo.ranks.set(memo.order[rank], rank);
+  memo.initialized = true;
+}
+
 /**
- * Back-to-front part RANK map for a partition wrapper (memoized per frame in
- * {@link partitionRankCache}). Transforms the camera into the wrapper's local
- * space once, traverses its `bspTree`, and numbers the resulting order
- * (0 = farthest). Returns `null` for a wrapper without a usable tree — no
- * stored tree, or split axes that aren't currently displayed.
+ * Back-to-front part RANK map for a partition wrapper. The strong-key frame
+ * cache avoids duplicate work across its parts; the weak cross-frame memo
+ * rebuilds the traversal only when the local eye crosses a split plane.
+ * Returns `null` for a wrapper without a usable tree — no stored tree, or
+ * split axes that aren't currently displayed.
  */
 function wrapperPartRanks(
   wrapper: THREE.Object3D,
@@ -318,35 +424,27 @@ function wrapperPartRanks(
 
   const tree = (wrapper.userData as { bspTree?: BspTreeNode }).bspTree;
   if (!tree) {
+    partitionRankMemo.delete(wrapper);
+    partitionRankCache.set(wrapper, null);
+    return null;
+  }
+  const displayed = getDisplayDims?.();
+  const memo = partitionRankMemoFor(wrapper, tree, displayed);
+  const axisToComponent = memo.axisToComponent;
+  if (axisToComponent === null) {
+    // A split axis isn't on screen under the current display dims, so its
+    // plane carries no depth information — fall back to the centroid
+    // heuristic rather than ordering along the wrong axis.
+    warnUnmappedBsp(wrapper, displayed);
     partitionRankCache.set(wrapper, null);
     return null;
   }
   wrapper.updateWorldMatrix(true, false);
   s.wrapperInv.copy(wrapper.matrixWorld).invert();
   s.eyeLocal.copy(camPos).applyMatrix4(s.wrapperInv);
-  const displayed = getDisplayDims?.();
-  const axisToComponent = bspAxisToComponent(tree, displayed);
-  if (axisToComponent === null) {
-    // A split axis isn't on screen under the current display dims, so its
-    // plane carries no depth information — fall back to the centroid
-    // heuristic rather than ordering along the wrong axis.
-    if (!warnedAxisMappingWrappers.has(wrapper)) {
-      warnedAxisMappingWrappers.add(wrapper);
-      log.warning(
-        Modules.RENDERER,
-        `partition-kind group ${wrapper.name || '(unnamed)'} has a valid bsp_tree whose split axes are not all displayed (displayDims=[${displayed?.join(', ') ?? ''}]); falling back to centroid ordering`
-      );
-    }
-    partitionRankCache.set(wrapper, null);
-    return null;
-  }
-
-  const order: number[] = [];
-  traverseBspBackToFront(tree, s.eyeLocal, axisToComponent, order);
-  const ranks = new Map<number, number>();
-  for (let rank = 0; rank < order.length; rank++) ranks.set(order[rank], rank);
-  partitionRankCache.set(wrapper, ranks);
-  return ranks;
+  if (planeSidesChanged(memo, s.eyeLocal)) rebuildPartitionRanks(memo, s.eyeLocal, axisToComponent);
+  partitionRankCache.set(wrapper, memo.ranks);
+  return memo.ranks;
 }
 
 /**
@@ -427,37 +525,77 @@ interface OrderGroup {
 const CONTAINMENT_EPS = 1e-3;
 
 /** Strict bounding-sphere containment of group `inner` inside group `outer`. */
-function groupContains(
-  outer: { x: number; y: number; z: number; r: number },
-  inner: { x: number; y: number; z: number; r: number }
-): boolean {
+function groupContains(spheres: readonly number[], outer: number, inner: number): boolean {
   // `r > 0` on both sides excludes bounds-less members (radius -1 sentinel
   // never aggregates above 0); strictly-greater radius makes every
   // containment edge point large → small, so the relation cannot cycle.
-  if (outer.r <= 0 || inner.r <= 0 || outer.r <= inner.r) return false;
-  const dx = outer.x - inner.x;
-  const dy = outer.y - inner.y;
-  const dz = outer.z - inner.z;
+  const outerRadius = spheres[outer + 3];
+  const innerRadius = spheres[inner + 3];
+  if (outerRadius <= 0 || innerRadius <= 0 || outerRadius <= innerRadius) return false;
+  const dx = spheres[outer] - spheres[inner];
+  const dy = spheres[outer + 1] - spheres[inner + 1];
+  const dz = spheres[outer + 2] - spheres[inner + 2];
   const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-  return dist + inner.r <= outer.r * (1 + CONTAINMENT_EPS);
+  return dist + innerRadius <= outerRadius * (1 + CONTAINMENT_EPS);
 }
 
-/** Enclosing sphere of two member spheres `a` and `b` (Ritter seed). */
-function encloseTwoSpheres(
-  a: { x: number; y: number; z: number; r: number },
-  b: { x: number; y: number; z: number; r: number }
-): { x: number; y: number; z: number; r: number } {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const dz = b.z - a.z;
-  const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-  // One sphere already swallows the other (covers the concentric d===0 case,
-  // so the division below is only reached with d > 0).
-  if (d + b.r <= a.r) return { x: a.x, y: a.y, z: a.z, r: a.r };
-  if (d + a.r <= b.r) return { x: b.x, y: b.y, z: b.z, r: b.r };
-  const r = (d + a.r + b.r) / 2;
-  const t = (r - a.r) / d; // center sits `r - a.r` along a → b
-  return { x: a.x + dx * t, y: a.y + dy * t, z: a.z + dz * t, r };
+const SPHERE_STRIDE = 4;
+const GROUP_SPHERE_STRIDE = SPHERE_STRIDE * 2;
+const TIGHT_SPHERE_OFFSET = 0;
+const LEGACY_SPHERE_OFFSET = SPHERE_STRIDE;
+
+function firstUsableSlot(slots: readonly OrderSlot[]): OrderSlot | null {
+  for (const slot of slots) if (slot.radius >= 0) return slot;
+  return null;
+}
+
+function hasAnotherUsableSlot(slots: readonly OrderSlot[], first: OrderSlot): boolean {
+  for (const slot of slots) if (slot !== first && slot.radius >= 0) return true;
+  return false;
+}
+
+function farthestSlotFrom(slots: readonly OrderSlot[], origin: OrderSlot): OrderSlot {
+  let best = origin;
+  let bestReach = -Infinity;
+  for (const slot of slots) {
+    if (slot.radius < 0) continue;
+    const dx = slot.viewX - origin.viewX;
+    const dy = slot.viewY - origin.viewY;
+    const dz = slot.viewZ - origin.viewZ;
+    const reach = Math.sqrt(dx * dx + dy * dy + dz * dz) + slot.radius;
+    if (reach > bestReach) {
+      bestReach = reach;
+      best = slot;
+    }
+  }
+  return best;
+}
+
+function writeRitterSeed(a: OrderSlot, b: OrderSlot, out: number[], offset: number): void {
+  const dx = b.viewX - a.viewX;
+  const dy = b.viewY - a.viewY;
+  const dz = b.viewZ - a.viewZ;
+  const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  if (distance + b.radius <= a.radius) {
+    out[offset] = a.viewX;
+    out[offset + 1] = a.viewY;
+    out[offset + 2] = a.viewZ;
+    out[offset + 3] = a.radius;
+    return;
+  }
+  if (distance + a.radius <= b.radius) {
+    out[offset] = b.viewX;
+    out[offset + 1] = b.viewY;
+    out[offset + 2] = b.viewZ;
+    out[offset + 3] = b.radius;
+    return;
+  }
+  const radius = (distance + a.radius + b.radius) / 2;
+  const t = (radius - a.radius) / distance;
+  out[offset] = a.viewX + dx * t;
+  out[offset + 1] = a.viewY + dy * t;
+  out[offset + 2] = a.viewZ + dz * t;
+  out[offset + 3] = radius;
 }
 
 /**
@@ -477,79 +615,69 @@ function encloseTwoSpheres(
  * tighter — and its center is offset, so a smaller radius alone does not make
  * its containment relation a subset of the legacy one.
  * {@link orderGroupsWithContainment} therefore requires an edge to hold under
- * BOTH this and {@link centroidMaxReachSphere}.
+ * BOTH this and {@link writeCentroidMaxReachSphere}.
  */
-function groupEnclosingSphere(slots: readonly OrderSlot[]): {
-  x: number;
-  y: number;
-  z: number;
-  r: number;
-} {
-  const members = slots.filter((s) => s.radius >= 0);
-  if (members.length === 0) return { x: 0, y: 0, z: 0, r: -1 };
-  const first = members[0];
-  if (members.length === 1) {
-    return { x: first.viewX, y: first.viewY, z: first.viewZ, r: first.radius };
+function writeGroupEnclosingSphere(
+  slots: readonly OrderSlot[],
+  out: number[],
+  offset: number
+): void {
+  const first = firstUsableSlot(slots);
+  if (!first) {
+    out[offset] = 0;
+    out[offset + 1] = 0;
+    out[offset + 2] = 0;
+    out[offset + 3] = -1;
+    return;
+  }
+  if (!hasAnotherUsableSlot(slots, first)) {
+    out[offset] = first.viewX;
+    out[offset + 1] = first.viewY;
+    out[offset + 2] = first.viewZ;
+    out[offset + 3] = first.radius;
+    return;
   }
 
   // Extreme-pair seed: farthest member from an arbitrary one, then the
   // farthest from that (center distance + the member's own radius = reach).
-  const farthestFrom = (m: OrderSlot): OrderSlot => {
-    let best = m;
-    let bestReach = -Infinity;
-    for (const s of members) {
-      const dx = s.viewX - m.viewX;
-      const dy = s.viewY - m.viewY;
-      const dz = s.viewZ - m.viewZ;
-      const reach = Math.sqrt(dx * dx + dy * dy + dz * dz) + s.radius;
-      if (reach > bestReach) {
-        bestReach = reach;
-        best = s;
-      }
-    }
-    return best;
-  };
-  const a = farthestFrom(first);
-  const b = farthestFrom(a);
-  const sphere = encloseTwoSpheres(
-    { x: a.viewX, y: a.viewY, z: a.viewZ, r: a.radius },
-    { x: b.viewX, y: b.viewY, z: b.viewZ, r: b.radius }
-  );
+  const a = farthestSlotFrom(slots, first);
+  const b = farthestSlotFrom(slots, a);
+  writeRitterSeed(a, b, out, offset);
 
   // Expand to cover any member sphere still poking outside the current bound.
-  for (const s of members) {
-    const dx = s.viewX - sphere.x;
-    const dy = s.viewY - sphere.y;
-    const dz = s.viewZ - sphere.z;
+  for (const s of slots) {
+    if (s.radius < 0) continue;
+    const dx = s.viewX - out[offset];
+    const dy = s.viewY - out[offset + 1];
+    const dz = s.viewZ - out[offset + 2];
     const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    if (d + s.radius <= sphere.r) continue; // already covered
-    const rNew = (sphere.r + d + s.radius) / 2;
+    const radius = out[offset + 3];
+    if (d + s.radius <= radius) continue; // already covered
+    const rNew = (radius + d + s.radius) / 2;
     if (d > 0) {
-      const t = (rNew - sphere.r) / d; // shift center toward s by (rNew - R)
-      sphere.x += dx * t;
-      sphere.y += dy * t;
-      sphere.z += dz * t;
+      const t = (rNew - radius) / d; // shift center toward s by (rNew - R)
+      out[offset] += dx * t;
+      out[offset + 1] += dy * t;
+      out[offset + 2] += dz * t;
     }
-    sphere.r = rNew;
+    out[offset + 3] = rNew;
   }
-  return sphere;
 }
 
 /**
  * Legacy enclosing sphere: centroid of the usable member centers, radius the
  * max over members of (center-distance + member radius). Skips members with
  * `radius < 0` and yields the `{r: -1}` sentinel when none are usable; exact
- * for a single member. Paired with {@link groupEnclosingSphere}:
+ * for a single member. Paired with {@link writeGroupEnclosingSphere}:
  * {@link orderGroupsWithContainment} requires a containment edge to hold under
  * both bounds, so the tighter Ritter sphere can only remove legacy false
  * edges, never introduce new off-center ones.
  */
-function centroidMaxReachSphere(slots: readonly OrderSlot[]): {
-  x: number;
-  y: number;
-  z: number;
-  r: number;
-} {
+function writeCentroidMaxReachSphere(
+  slots: readonly OrderSlot[],
+  out: number[],
+  offset: number
+): void {
   let x = 0;
   let y = 0;
   let z = 0;
@@ -561,7 +689,13 @@ function centroidMaxReachSphere(slots: readonly OrderSlot[]): {
     z += slot.viewZ;
     count++;
   }
-  if (count === 0) return { x: 0, y: 0, z: 0, r: -1 };
+  if (count === 0) {
+    out[offset] = 0;
+    out[offset + 1] = 0;
+    out[offset + 2] = 0;
+    out[offset + 3] = -1;
+    return;
+  }
   x /= count;
   y /= count;
   z /= count;
@@ -573,7 +707,10 @@ function centroidMaxReachSphere(slots: readonly OrderSlot[]): {
     const dz = slot.viewZ - z;
     r = Math.max(r, Math.sqrt(dx * dx + dy * dy + dz * dz) + slot.radius);
   }
-  return { x, y, z, r };
+  out[offset] = x;
+  out[offset + 1] = y;
+  out[offset + 2] = z;
+  out[offset + 3] = r;
 }
 
 /**
@@ -582,16 +719,16 @@ function centroidMaxReachSphere(slots: readonly OrderSlot[]): {
  * {@link assignGlobalRenderOrder}). `byDepth` arrives sorted by mean
  * view-z; a priority topological pass (Kahn's algorithm, farthest ready
  * group emitted first) preserves that order wherever containment allows.
- * Group counts are tens, so the O(G²) edge scan is negligible next to
- * the per-frame BSP traversals this module already does.
+ * Group counts are tens, so the O(G²) edge scan is negligible; its common
+ * no-edge path reuses numeric scratch and allocates no graph structure.
  */
 function orderGroupsWithContainment(byDepth: OrderGroup[]): OrderGroup[] {
   const n = byDepth.length;
   if (n < 2) return byDepth;
 
   // Two valid enclosing spheres per group: the Ritter union
-  // ({@link groupEnclosingSphere}) and the legacy centroid + max-reach bound
-  // ({@link centroidMaxReachSphere}); `tight` is whichever has the smaller
+  // ({@link writeGroupEnclosingSphere}) and the legacy centroid + max-reach bound
+  // ({@link writeCentroidMaxReachSphere}); `tight` is whichever has the smaller
   // radius (Ritter overshoots near-symmetric layouts, centroid overshoots
   // cluster-plus-outlier ones).
   //
@@ -607,25 +744,56 @@ function orderGroupsWithContainment(byDepth: OrderGroup[]): OrderGroup[] {
   // embedded node inside a member sphere) satisfies both bounds and is kept.
   // Acyclicity is preserved: every edge points strictly large → small in the
   // tight radius.
-  const spheres = byDepth.map((group) => {
-    const ritter = groupEnclosingSphere(group.slots);
+  const sphereCount = n * GROUP_SPHERE_STRIDE;
+  if (groupSphereScratch.length < sphereCount) groupSphereScratch.length = sphereCount;
+  for (let i = 0; i < n; i++) {
+    const offset = i * GROUP_SPHERE_STRIDE;
+    writeGroupEnclosingSphere(byDepth[i].slots, groupSphereScratch, offset);
     // No usable members → both bounds are the {r: -1} sentinel.
-    if (ritter.r < 0) return { tight: ritter, legacy: ritter };
-    const legacy = centroidMaxReachSphere(group.slots);
-    return { tight: legacy.r <= ritter.r ? legacy : ritter, legacy };
-  });
+    if (groupSphereScratch[offset + 3] < 0) {
+      for (let component = 0; component < SPHERE_STRIDE; component++) {
+        groupSphereScratch[offset + LEGACY_SPHERE_OFFSET + component] =
+          groupSphereScratch[offset + component];
+      }
+      continue;
+    }
+    writeCentroidMaxReachSphere(
+      byDepth[i].slots,
+      groupSphereScratch,
+      offset + LEGACY_SPHERE_OFFSET
+    );
+    if (
+      groupSphereScratch[offset + LEGACY_SPHERE_OFFSET + 3] <=
+      groupSphereScratch[offset + TIGHT_SPHERE_OFFSET + 3]
+    ) {
+      for (let component = 0; component < SPHERE_STRIDE; component++) {
+        groupSphereScratch[offset + TIGHT_SPHERE_OFFSET + component] =
+          groupSphereScratch[offset + LEGACY_SPHERE_OFFSET + component];
+      }
+    }
+  }
 
   // indegree[i] = number of groups that must draw before group i.
-  const indegree = new Array<number>(n).fill(0);
-  const containsEdges: number[][] = new Array(n);
+  if (containmentIndegreeScratch.length < n) containmentIndegreeScratch.length = n;
+  containmentIndegreeScratch.fill(0, 0, n);
+  let containsEdges: Array<number[] | undefined> | null = null;
   let anyEdge = false;
   for (let a = 0; a < n; a++) {
-    const edges: number[] = [];
     for (let b = 0; b < n; b++) {
+      const outer = a * GROUP_SPHERE_STRIDE;
+      const inner = b * GROUP_SPHERE_STRIDE;
       if (
         a !== b &&
-        groupContains(spheres[a].tight, spheres[b].tight) &&
-        groupContains(spheres[a].legacy, spheres[b].legacy)
+        groupContains(
+          groupSphereScratch,
+          outer + TIGHT_SPHERE_OFFSET,
+          inner + TIGHT_SPHERE_OFFSET
+        ) &&
+        groupContains(
+          groupSphereScratch,
+          outer + LEGACY_SPHERE_OFFSET,
+          inner + LEGACY_SPHERE_OFFSET
+        )
       ) {
         // A containment edge is honoured only WITHIN a band. Bands are hard
         // partitions of the draw order, so a cross-band edge is not merely
@@ -650,12 +818,12 @@ function orderGroupsWithContainment(byDepth: OrderGroup[]): OrderGroup[] {
         // cluster crisp on top instead of refracting it. Same standing as an authored
         // band (spec D3), so no diagnostic.
         if (byDepth[a].last || byDepth[b].last || byDepth[b].first) continue;
-        edges.push(b);
-        indegree[b]++;
+        containsEdges ??= new Array<number[] | undefined>(n);
+        (containsEdges[a] ??= []).push(b);
+        containmentIndegreeScratch[b]++;
         anyEdge = true;
       }
     }
-    containsEdges[a] = edges;
   }
   // No honoured edge → the incoming (level, meanZ) order already IS the answer,
   // bands included, since it is sorted band-first.
@@ -663,12 +831,13 @@ function orderGroupsWithContainment(byDepth: OrderGroup[]): OrderGroup[] {
 
   // Kahn's algorithm; among ready groups always emit the farthest first
   // (byDepth index order = depth order, so a linear min-scan suffices).
-  const emitted = new Array<boolean>(n).fill(false);
+  if (containmentEmittedScratch.length < n) containmentEmittedScratch.length = n;
+  containmentEmittedScratch.fill(false, 0, n);
   const ordered: OrderGroup[] = [];
   for (let step = 0; step < n; step++) {
     let pick = -1;
     for (let i = 0; i < n; i++) {
-      if (!emitted[i] && indegree[i] === 0) {
+      if (!containmentEmittedScratch[i] && containmentIndegreeScratch[i] === 0) {
         pick = i;
         break;
       }
@@ -677,12 +846,15 @@ function orderGroupsWithContainment(byDepth: OrderGroup[]): OrderGroup[] {
     // guard anyway so a future invariant break degrades to depth order
     // instead of dropping meshes from the rank pass.
     if (pick === -1) {
-      for (let i = 0; i < n; i++) if (!emitted[i]) ordered.push(byDepth[i]);
+      for (let i = 0; i < n; i++) {
+        if (!containmentEmittedScratch[i]) ordered.push(byDepth[i]);
+      }
       break;
     }
-    emitted[pick] = true;
+    containmentEmittedScratch[pick] = true;
     ordered.push(byDepth[pick]);
-    for (const b of containsEdges[pick]) indegree[b]--;
+    const edges = containsEdges![pick];
+    if (edges) for (const b of edges) containmentIndegreeScratch[b]--;
   }
   return ordered;
 }

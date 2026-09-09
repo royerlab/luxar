@@ -1208,6 +1208,68 @@ describe('depth-sort coordinator', () => {
     expect(parts.map((m) => m.renderOrder)).toEqual([1, 2, 3, 4]);
   });
 
+  it('reuses BSP ranks until the camera crosses a split plane', async () => {
+    let leafReads = 0;
+    const leaf = (part: number) =>
+      Object.defineProperty({}, 'part', {
+        configurable: true,
+        enumerable: true,
+        get: () => {
+          leafReads++;
+          return part;
+        },
+      });
+    const bspTree = { axis: 0, split: 0, left: leaf(0), right: leaf(1) };
+    let camera = cameraAt(1000, 0, 0);
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => camera, requestRender: vi.fn() });
+
+    const parts = [0, 1].map(() => makeGSplatsMesh(2, 'normal'));
+    makePartitionWrapper(bspTree, parts);
+    for (const mesh of parts) {
+      coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    }
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+    expect(parts.map((mesh) => mesh.renderOrder)).toEqual([1, 2]);
+    const readsAfterFirstFrame = leafReads;
+
+    coord.evaluateDepthSortPerFrame();
+    expect(parts.map((mesh) => mesh.renderOrder)).toEqual([1, 2]);
+    expect(leafReads).toBe(readsAfterFirstFrame);
+
+    camera = cameraAt(-1000, 0, 0);
+    coord.evaluateDepthSortPerFrame();
+    expect(parts.map((mesh) => mesh.renderOrder)).toEqual([2, 1]);
+    expect(leafReads).toBeGreaterThan(readsAfterFirstFrame);
+  });
+
+  it('rebuilds memoized BSP ranks when live display dimensions change', async () => {
+    const bspTree = { axis: 0, split: 0, left: { part: 0 }, right: { part: 1 } };
+    let displayedDims = [3, 1, 0];
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({
+      getCamera: () => cameraAt(0, 0, -1000),
+      requestRender: vi.fn(),
+      getDisplayDims: () => displayedDims,
+    });
+
+    const parts = [0, 1].map(() => makeGSplatsMesh(2, 'normal'));
+    makePartitionWrapper(bspTree, parts);
+    for (const mesh of parts) {
+      coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    }
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+    expect(parts.map((mesh) => mesh.renderOrder)).toEqual([2, 1]);
+
+    displayedDims = [0, 1, 2];
+    coord.evaluateDepthSortPerFrame();
+    expect(parts.map((mesh) => mesh.renderOrder)).toEqual([1, 2]);
+  });
+
   it('a tree that names only SOME parts falls the whole group back to depth order', async () => {
     // `partRank` is `ranks.get(partIndex) ?? -1`, so a stored tree whose leaf set
     // does not cover every part leaves ranked and unranked members side by side.
