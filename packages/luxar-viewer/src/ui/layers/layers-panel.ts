@@ -38,6 +38,7 @@ import type { AnimationController } from '../../scene/animation/animation-contro
 import { LayerApplyEngine } from './layer-apply';
 import { LayerControls } from './layer-controls';
 import { ALWAYS_GLOBAL_KEYS } from '../help-overlay/type-to-filter';
+import { SceneLoaderManager } from '../../data/scene-loader-manager';
 
 /**
  * What the panel needs from the sound layer for its `sound` rows
@@ -153,6 +154,8 @@ export class LayersPanel {
     getSceneGraph: () => this.sceneGraph,
     state: this.state,
     requestRender: () => this.requestRender(),
+    requestReprocess: (paths) =>
+      SceneLoaderManager.getInstance().getDefaultLoader()?.requestReprocess(paths),
     invalidatePickBuffer: () => this.pickBufferInvalidator?.(),
   });
 

@@ -14,8 +14,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import {
-  filterPartitionVisibleLoaders,
-  isPartitionPathVisible,
+  resolveLoadEligibleLoaders,
+  isLoaderPathEligible,
   isUnderAny,
   runLoaderUpdates,
 } from '../../../../../data/scene-loader/loaders/run-loader-updates';
@@ -338,9 +338,23 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
     part.add(nestedLod);
     nestedLod.add(leaf);
 
-    expect(isPartitionPathVisible(root, leaf.name)).toBe(true);
+    expect(isLoaderPathEligible(root, leaf.name)).toBe(true);
     part.userData.partitionFrustumVisible = false;
-    expect(isPartitionPathVisible(root, leaf.name)).toBe(false);
+    expect(isLoaderPathEligible(root, leaf.name)).toBe(false);
+  });
+
+  it('finds a hidden layer marker without treating an undisplayed LOD leaf as hidden', () => {
+    const root = new THREE.Group();
+    const layer = new THREE.Group();
+    const leaf = new THREE.Group();
+    leaf.name = '/layer/level_2';
+    leaf.visible = false;
+    root.add(layer);
+    layer.add(leaf);
+
+    expect(isLoaderPathEligible(root, leaf.name)).toBe(true);
+    layer.userData.layerVisible = false;
+    expect(isLoaderPathEligible(root, leaf.name)).toBe(false);
   });
 
   it('removes culled partition loaders from progressive refinement maps', () => {
@@ -354,7 +368,8 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
     const visibleLoader = {};
     const culledLoader = {};
 
-    const filtered = filterPartitionVisibleLoaders(
+    const getObjectByName = vi.spyOn(root, 'getObjectByName');
+    const resolved = resolveLoadEligibleLoaders(
       root,
       new Map([
         [visible.name, visibleLoader],
@@ -362,6 +377,8 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
       ])
     );
 
-    expect([...filtered]).toEqual([[visible.name, visibleLoader]]);
+    expect([...resolved.loaders]).toEqual([[visible.name, visibleLoader]]);
+    expect([...resolved.objects]).toEqual([[visible.name, visible]]);
+    expect(getObjectByName).toHaveBeenCalledTimes(2);
   });
 });

@@ -20,6 +20,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import * as THREE from 'three';
 import type { SceneNode, ViewState, DataLoader } from '../../../../../data/data-loader-types';
 
 const factoryCalls: Array<{ helper: string; path: string }> = [];
@@ -97,6 +98,8 @@ describe('SlicePrefetcher', () => {
   };
   let foregroundLoader: { updateView: ReturnType<typeof vi.fn> };
   let prefetcher: SlicePrefetcher;
+  let objects: Map<string, THREE.Object3D>;
+  let resolveObject: ReturnType<typeof vi.fn<(path: string) => THREE.Object3D | undefined>>;
 
   beforeEach(() => {
     factoryCalls.length = 0;
@@ -113,11 +116,17 @@ describe('SlicePrefetcher', () => {
       linesLoaders: new Map(),
       gsplatLoaders: new Map([['/splats', foregroundLoader as unknown as DataLoader]]),
     };
+    objects = new Map([
+      ['/pts', new THREE.Group()],
+      ['/splats', new THREE.Group()],
+    ]);
+    resolveObject = vi.fn((path) => objects.get(path));
     prefetcher = new SlicePrefetcher({
       getSceneGraph: () => graph,
       factoryDeps: () => ({ zarrStore: {} }) as never,
       registry: registry as never,
       applyEffectiveAttrs: (node) => node.attrs,
+      resolveObject,
     });
   });
 
@@ -139,6 +148,48 @@ describe('SlicePrefetcher', () => {
     expect(signal.aborted).toBe(false);
 
     expect(foregroundLoader.updateView).not.toHaveBeenCalled();
+  });
+
+  it('does not build or run shadows for culled or hidden loader paths', async () => {
+    objects.get('/pts')!.userData.partitionFrustumVisible = false;
+    prefetcher = new SlicePrefetcher({
+      getSceneGraph: () => graph,
+      factoryDeps: () => ({ zarrStore: {} }) as never,
+      registry: registry as never,
+      applyEffectiveAttrs: (node) => node.attrs,
+      resolveObject: (path) => objects.get(path),
+    });
+
+    prefetcher.prefetch(view, 42);
+    await flushAsync();
+
+    expect(factoryCalls.map((call) => call.path)).toEqual(['/splats']);
+    expect(shadowLoaders.has('/pts')).toBe(false);
+  });
+
+  it('disposes a cached shadow when its path becomes culled', async () => {
+    prefetcher.prefetch(view, 10);
+    await flushAsync();
+    const pointsShadow = shadowLoaders.get('/pts')!;
+
+    objects.get('/pts')!.userData.partitionFrustumVisible = false;
+    prefetcher.prefetch({ ...view, slicePosition: [0, 0, 0, 8] }, 10);
+    await flushAsync();
+
+    expect(pointsShadow.dispose).toHaveBeenCalledOnce();
+    expect(pointsShadow.updateView).toHaveBeenCalledOnce();
+  });
+
+  it('resolves each path once per batch and re-checks the cached object before loading', async () => {
+    prefetcher.prefetch(view, 10);
+    objects.get('/pts')!.userData.layerVisible = false;
+    await flushAsync();
+
+    expect(resolveObject).toHaveBeenCalledTimes(2);
+    expect(resolveObject).toHaveBeenCalledWith('/pts');
+    expect(resolveObject).toHaveBeenCalledWith('/splats');
+    expect(shadowLoaders.get('/pts')!.updateView).not.toHaveBeenCalled();
+    expect(shadowLoaders.get('/splats')!.updateView).toHaveBeenCalledOnce();
   });
 
   it('chooses the progressive factory when n_additive_sublods > 1', async () => {

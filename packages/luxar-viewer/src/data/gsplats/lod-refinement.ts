@@ -33,18 +33,17 @@ import type { ViewState } from '../data-loader-types';
 import type { ViewStateQueue } from '../scene-loader/view-state/view-state-queue';
 import type { RefinementResidencyBudget } from '../scene-loader/progressive/residency-budget';
 import type { StagedGSplatsCommit } from '../scene-loader/process/data-processor-gsplats';
-import {
-  RefinementFailureTracker,
-  runProgressiveRefinement,
-} from '../scene-loader/progressive/refinement';
+import { runProgressiveRefinement } from '../scene-loader/progressive/refinement';
 import { PARTIAL_EXTEND_TOLERANCE } from '../scene-loader/partial-extend-tolerance';
 import {
   admitRefinementCandidate,
+  failureTrackerFor,
   handleRefinementError,
   makeRefinementProgressCallbacks,
   recordRefinementResidency,
   type RefinableLoader,
 } from '../scene-loader/progressive/refinement-wrapper';
+import { isObjectLoadEligible } from '../scene-loader/loaders/run-loader-updates';
 
 /** Geometry name in this wrapper's log lines and toasts. */
 const LABEL = 'GSplats';
@@ -54,9 +53,10 @@ const LABEL = 'GSplats';
  * the loop can be tested with a stub.
  */
 export interface GSplatsRefinementCtx {
-  rootGroup: THREE.Group | null;
+  /** Scene objects already resolved by the phase eligibility sweep. */
+  objects: ReadonlyMap<string, THREE.Object3D | undefined>;
   viewStateQueue: ViewStateQueue;
-  gsplatLoaders: Map<string, GSplatsDataLoader>;
+  loaders: Map<string, GSplatsDataLoader>;
   deriveNodeViewState(
     path: string,
     attrs: GSplatsMetadata | undefined,
@@ -114,12 +114,10 @@ export interface GSplatsRefinementCtx {
  * derive / process / commit closures.
  */
 export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<void> {
-  // Per-run failure backoff: a loader that fails MAX_CONSECUTIVE times is
-  // excluded for the rest of this run (and from anyHasMoreLODs, so the loop
-  // can terminate) instead of retrying at frame rate forever.
-  const failures = new RefinementFailureTracker();
+  const objects = ctx.objects;
+  const isPathVisible = (path: string): boolean => isObjectLoadEligible(objects.get(path));
   await runProgressiveRefinement({
-    loaders: ctx.gsplatLoaders,
+    loaders: ctx.loaders,
     viewStateQueue: ctx.viewStateQueue,
     isActive: ctx.isActive,
     processLoader: async (path, loader) => {
@@ -130,12 +128,12 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
       const admission = admitRefinementCandidate(
         path,
         progressiveLoader,
-        failures,
-        ctx.residencyBudget
+        ctx.residencyBudget,
+        isPathVisible
       );
       if (!admission.admitted) return false;
       try {
-        const mesh = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
+        const mesh = objects.get(path) as THREE.Mesh | undefined;
         const nodeAttrs = mesh?.userData?.attrs as GSplatsMetadata | undefined;
         const refined = ctx.deriveNodeViewState(path, nodeAttrs, {
           applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.gsplats,
@@ -180,19 +178,19 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
           session?.end();
           pass?.end();
         }
-        failures.recordSuccess(path);
+        failureTrackerFor(progressiveLoader).recordSuccess(path);
         return true;
       } catch (error) {
-        return handleRefinementError({ label: LABEL }, path, error, progressiveLoader, failures);
+        return handleRefinementError({ label: LABEL }, path, error, progressiveLoader);
       } finally {
         recordRefinementResidency(path, progressiveLoader, ctx.residencyBudget);
       }
     },
     ...makeRefinementProgressCallbacks(
       LABEL,
-      ctx.gsplatLoaders as Map<string, GSplatsDataLoader & RefinableLoader>,
-      failures,
-      ctx.residencyBudget
+      ctx.loaders as Map<string, GSplatsDataLoader & RefinableLoader>,
+      ctx.residencyBudget,
+      isPathVisible
     ),
     updateVisibleCountsInMonitor: () => ctx.updateVisibleCountsInMonitor(),
     releaseLock: () => ctx.releaseLock(),

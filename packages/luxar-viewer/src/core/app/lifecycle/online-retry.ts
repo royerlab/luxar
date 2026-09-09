@@ -8,6 +8,8 @@ import { log, Modules } from '../../../utils/log';
  */
 export interface RetryCapableLoader {
   hasFailures(): boolean;
+  /** Re-open progressive LOD ladders retired by the consecutive-failure cap. */
+  resetRefinementFailures(): boolean;
   /**
    * Whether any failure is worth an automatic retry — a transient loader cause
    * still under the attempt cap, or a deferred LOD branch latched on an archive
@@ -117,6 +119,7 @@ export function installOnlineRetry(ports: OnlineRetryPorts): void {
     if (!loader?.hasAutoRetryableFailures()) {
       // Recovered elsewhere (manual retry, dataset switch), or everything left
       // is deterministic / past the cap — either way, done.
+      loader?.resetRefinementFailures();
       retryInFlight = false;
       resetOnlineBackoff();
       return;
@@ -134,6 +137,7 @@ export function installOnlineRetry(ports: OnlineRetryPorts): void {
               `Online retry still deferred after ${attemptNumber} attempts — ` +
                 'leaving failures to the monitor banner / manual retry'
             );
+            loader.resetRefinementFailures();
             retryInFlight = false;
             clearPoll();
             onlineRetryRound = MAX_ONLINE_RETRY_ROUNDS;
@@ -146,6 +150,7 @@ export function installOnlineRetry(ports: OnlineRetryPorts): void {
           return;
         }
 
+        loader.resetRefinementFailures();
         retryInFlight = false;
         if (failed.length === 0) {
           resetOnlineBackoff();
@@ -166,6 +171,7 @@ export function installOnlineRetry(ports: OnlineRetryPorts): void {
         // retryAllFailedLoaders resolves per-path failures into its result;
         // a rejection here is unexpected infrastructure trouble — log it and
         // leave the failure records for the next trigger.
+        loader.resetRefinementFailures();
         retryInFlight = false;
         log.warning(
           Modules.LUXAR,
@@ -180,6 +186,9 @@ export function installOnlineRetry(ports: OnlineRetryPorts): void {
     if (retryInFlight || navigator.onLine === false) return;
     const loader = ports.getLoader();
     if (!loader?.hasAutoRetryableFailures()) {
+      if (source === 'online' && loader?.resetRefinementFailures()) {
+        log.info(Modules.LUXAR, 'Connection restored - retrying LOD refinement');
+      }
       resetOnlineBackoff();
       return;
     }

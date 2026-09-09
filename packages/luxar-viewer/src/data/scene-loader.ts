@@ -198,8 +198,8 @@ import {
 import { deriveNodeViewState as deriveNodeViewStateHelper } from './scene-loader/view-state/derive-node-view-state';
 import { SlicePrefetcher } from './scene-loader/prefetch/slice-prefetcher';
 import {
-  filterPartitionVisibleLoaders,
-  isPartitionPathVisible,
+  resolveLoadEligibleLoaders,
+  isLoaderPathEligible,
   isUnderAny,
   runLoaderUpdates as runLoaderUpdatesHelper,
 } from './scene-loader/loaders/run-loader-updates';
@@ -213,6 +213,7 @@ import {
 import { runAtomicCommit } from './scene-loader/update-view/atomic-commit';
 import { buildUpdateCtxs } from './scene-loader/update-view/build-update-ctxs';
 import { queueNext } from './scene-loader/update-view/queue-next';
+import { resetRefinementFailureTrackers } from './scene-loader/progressive/refinement-wrapper';
 import { connectLoaderToMonitor as connectLoaderToMonitorHelper } from './scene-loader/nodes/connect-loader-to-monitor';
 import type { LineWorkingSetGate, NodeBuildCtx } from './scene-loader/nodes/build-ctx';
 import { createLineWorkingSetGate } from './scene-loader/nodes/load-children-concurrently';
@@ -571,6 +572,7 @@ export class SceneLoader {
         factoryDeps: () => this.factoryDeps(),
         registry: this.registry,
         applyEffectiveAttrs: (node) => this.applyEffectiveAttrs(node),
+        resolveObject: (path) => this.rootGroup?.getObjectByName(path),
       });
     }
     // Strip any rider budget off the incoming partial — the shadow pass gets
@@ -1094,7 +1096,7 @@ export class SceneLoader {
       viewStateQueue: this.viewStateQueue,
       registry: this.registry,
       onArchiveFault,
-      shouldUpdatePath: (path) => isPartitionPathVisible(this.rootGroup, path),
+      shouldUpdatePath: (path) => isLoaderPathEligible(this.rootGroup, path),
       isResyncTarget: resyncPaths ? (path) => isUnderAny(path, resyncPaths) : undefined,
     });
   }
@@ -1115,6 +1117,18 @@ export class SceneLoader {
         log.error(Modules.SCENE_LOADER, `View reprocess failed: ${getErrorMessage(error)}`, error);
       });
     }
+  }
+
+  /** Re-open exhausted progressive ladders after connectivity is restored. */
+  resetRefinementFailures(): boolean {
+    const reset = resetRefinementFailureTrackers([
+      ...this.loaders.values(),
+      ...this.linesLoaders.values(),
+      ...this.gsplatLoaders.values(),
+      ...this.meshLoaders.values(),
+    ]);
+    if (reset) this.requestReprocess();
+    return reset;
   }
 
   /** Hand the resync paths parked by a mid-pass call to the follow-up pass. */
@@ -1704,9 +1718,8 @@ export class SceneLoader {
       };
 
       await runGSplatsRefinement({
-        rootGroup: this.rootGroup,
         viewStateQueue: this.viewStateQueue,
-        gsplatLoaders: filterPartitionVisibleLoaders(this.rootGroup, this.gsplatLoaders),
+        ...resolveLoadEligibleLoaders(this.rootGroup, this.gsplatLoaders),
         deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
         processGSplats: (path, data, viewState, session) =>
           this.processGSplatsData(path, data, viewState, session),
@@ -1722,9 +1735,8 @@ export class SceneLoader {
       if (cancelled || this._disposed) return;
 
       await runPointsRefinement({
-        rootGroup: this.rootGroup,
         viewStateQueue: this.viewStateQueue,
-        pointsLoaders: filterPartitionVisibleLoaders(this.rootGroup, this.loaders),
+        ...resolveLoadEligibleLoaders(this.rootGroup, this.loaders),
         deriveNodeViewState: (path, attrs, opts) =>
           this.deriveNodeViewState(path, attrs as never, opts) as never,
         updatePointsGeometry: (path, data, session) =>
@@ -1740,9 +1752,8 @@ export class SceneLoader {
       if (cancelled || this._disposed) return;
 
       await runLinesRefinement({
-        rootGroup: this.rootGroup,
         viewStateQueue: this.viewStateQueue,
-        linesLoaders: filterPartitionVisibleLoaders(this.rootGroup, this.linesLoaders),
+        ...resolveLoadEligibleLoaders(this.rootGroup, this.linesLoaders),
         deriveNodeViewState: (path, attrs, opts) =>
           this.deriveNodeViewState(path, attrs as never, opts) as never,
         processLines: (path, data, viewState, session) =>
@@ -1765,9 +1776,8 @@ export class SceneLoader {
       // are already-decoded whole-node payloads, so a cancelled pass loses at most one
       // projection rather than an in-flight chunk fetch.
       await runMeshRefinement({
-        rootGroup: this.rootGroup,
         viewStateQueue: this.viewStateQueue,
-        meshLoaders: filterPartitionVisibleLoaders(this.rootGroup, this.meshLoaders),
+        ...resolveLoadEligibleLoaders(this.rootGroup, this.meshLoaders),
         deriveNodeViewState: (path, attrs, opts) =>
           this.deriveNodeViewState(path, attrs as never, opts) as never,
         processMesh: (path, data, viewState, attrs) =>
