@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   configureGpuByteBudget,
   getGpuByteBudget,
+  initializeGpuByteBudget,
   reduceGpuByteBudgetForContextLoss,
 } from '../../../rendering/gpu-byte-budget';
 import { log, Modules } from '../../../utils/log';
@@ -48,11 +49,87 @@ afterEach(() => {
 });
 
 describe('gpu-byte-budget', () => {
+  it('initializes a fresh embed budget from the mobile device class', async () => {
+    vi.resetModules();
+    profile.deviceClass = 'mobile';
+    try {
+      const freshBudget = await import('../../../rendering/gpu-byte-budget');
+      withDeviceMemory(undefined, () => {
+        withHeapLimit(undefined, () => {
+          freshBudget.initializeGpuByteBudget(null);
+          expect(freshBudget.getGpuByteBudget()).toBe(Math.floor((384 * MiB) / 3));
+        });
+      });
+    } finally {
+      profile.deviceClass = 'laptop';
+    }
+  });
+
+  it('resolves an omitted embed override from config', async () => {
+    vi.resetModules();
+    const { config: freshConfig } = await import('../../../config');
+    const previous = freshConfig.dataLoading.performance.gpuPoolMaxBytes;
+    try {
+      freshConfig.dataLoading.performance.gpuPoolMaxBytes = 321 * MB;
+      const freshBudget = await import('../../../rendering/gpu-byte-budget');
+      freshBudget.initializeGpuByteBudget();
+      expect(freshBudget.getGpuByteBudget()).toBe(321 * MB);
+    } finally {
+      freshConfig.dataLoading.performance.gpuPoolMaxBytes = previous;
+    }
+  });
+
+  it('auto-sizes an invalid NaN embed override instead of poisoning the budget', async () => {
+    vi.resetModules();
+    const { log: freshLog, Modules: freshModules } = await import('../../../utils/log');
+    const warning = vi.spyOn(freshLog, 'warning').mockImplementation(() => {});
+    try {
+      const freshBudget = await import('../../../rendering/gpu-byte-budget');
+      withDeviceMemory(4, () => {
+        freshBudget.initializeGpuByteBudget(Number.NaN);
+        expect(freshBudget.getGpuByteBudget()).toBe(1000 * MB);
+      });
+      expect(warning).toHaveBeenCalledWith(
+        freshModules.PERFORMANCE,
+        'Ignoring NaN GPU byte budget override; using auto-sizing'
+      );
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
   it('honors an explicit override and skips the heuristic', () => {
     withDeviceMemory(8, () => {
       configureGpuByteBudget(1536 * MB);
       expect(getGpuByteBudget()).toBe(1536 * MB);
     });
+  });
+
+  it('keeps the first startup configuration when a shared embed path configures again', () => {
+    withDeviceMemory(1, () => {
+      configureGpuByteBudget(777 * MB);
+      initializeGpuByteBudget();
+      expect(getGpuByteBudget()).toBe(777 * MB);
+    });
+  });
+
+  it.each([
+    [null, 'auto-sizing'],
+    [0, 'disabling eviction'],
+    [123 * MB, '123 MB'],
+  ] as const)('warns when a later entry point requests explicit %s', (overrideBytes, requested) => {
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    try {
+      configureGpuByteBudget(777 * MB);
+      initializeGpuByteBudget(overrideBytes);
+      expect(getGpuByteBudget()).toBe(777 * MB);
+      expect(warning).toHaveBeenCalledWith(
+        Modules.PERFORMANCE,
+        `GPU byte budget is already configured; ignoring later request for ${requested}`
+      );
+    } finally {
+      warning.mockRestore();
+    }
   });
 
   it('auto-sizes from deviceMemory at 25%, capped at 2GB with NO floor', () => {

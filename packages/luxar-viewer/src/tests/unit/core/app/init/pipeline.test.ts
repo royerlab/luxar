@@ -207,6 +207,12 @@ vi.mock('../../../../../utils/input-capabilities', () => ({
   getInputProfile: () => inputProfile,
 }));
 
+const initializeGpuByteBudget = vi.hoisted(() => vi.fn());
+vi.mock('../../../../../rendering/gpu-byte-budget', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../../../rendering/gpu-byte-budget')>()),
+  initializeGpuByteBudget,
+}));
+
 import { InputHandler, KeyAction } from '../../../../../input';
 import { ControlRail } from '../../../../../ui/control-rail';
 import { getSceneLoader, SceneLoaderManager } from '../../../../../data/scene-loader-manager';
@@ -261,6 +267,27 @@ describe('runInitPipeline', () => {
     (InputHandler as unknown as ReturnType<typeof vi.fn>).mockImplementation(() =>
       makeInputHandlerStub()
     );
+  });
+
+  it('configures the GPU byte budget for direct LuxarApp embeds', async () => {
+    const ports = makePorts();
+    const { factories } = makeFactoryOverrides();
+    ports.options.factories = factories as never;
+    ports.options.gpuPoolMaxBytes = 640_000_000;
+
+    await runInitPipeline(ports, {});
+
+    expect(initializeGpuByteBudget).toHaveBeenCalledWith(640_000_000);
+  });
+
+  it('uses the config default when a direct embed omits gpuPoolMaxBytes', async () => {
+    const ports = makePorts();
+    const { factories } = makeFactoryOverrides();
+    ports.options.factories = factories as never;
+
+    await runInitPipeline(ports, {});
+
+    expect(initializeGpuByteBudget).toHaveBeenCalledWith(undefined);
   });
 
   describe('partial-accumulator contract (load-bearing)', () => {
