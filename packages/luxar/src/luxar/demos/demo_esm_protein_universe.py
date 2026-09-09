@@ -175,7 +175,7 @@ COORDS_PARQUET = "umap_coordinates_3d.parquet"
 ANNOTATIONS_PARQUET = "representative_proteins_min50_pfam_taxa_desc_named_v3.parquet"
 #: The folded inputs: positions + the per-cluster columns every build needs.
 #: Bump the suffix when the layout below changes.
-UNIVERSE_CACHE = "universe_v2.npz"
+UNIVERSE_CACHE = "universe_v3.npz"
 #: Points farther than this from the cloud's median are UMAP outliers (0.12% of
 #: the rows, some 60 units out) that would otherwise set the scene's extent.
 CULL_RADIUS = 40.0
@@ -243,6 +243,15 @@ def _dominant_map_key(table: Any, column: str) -> tuple[np.ndarray, np.ndarray]:
     return codes, vocab
 
 
+def _characterized_percentages(column: Any) -> np.ndarray:
+    values = np.asarray(column.to_numpy(zero_copy_only=False), dtype=np.float32)
+    if not np.all(np.isfinite(values)):
+        raise ValueError("cluster_pct_characterized contains null or non-finite values")
+    if np.any((values < 0) | (values > 100)):
+        raise ValueError("cluster_pct_characterized contains values outside [0, 100]")
+    return values
+
+
 def build_universe_cache(coords: Path, annotations: Path, out: Path) -> Path:
     """Fold the two parquet inputs into the compact per-cluster cache.
 
@@ -284,7 +293,7 @@ def build_universe_cache(coords: Path, annotations: Path, out: Path) -> Path:
                 "fewer than 99% of the coordinate rows have an annotation row — "
                 "are the two parquet files from the same release?"
             )
-        pct_rows = at.column("cluster_pct_characterized").to_numpy().astype(np.uint8)
+        pct_rows = _characterized_percentages(at.column("cluster_pct_characterized"))
         pfam_rows, pfam_vocab = _dominant_map_key(at, "cluster_top_pfam_domains")
         phylum_rows, phylum_vocab = _dominant_map_key(at, "top_phyla")
         del at
@@ -299,7 +308,9 @@ def build_universe_cache(coords: Path, annotations: Path, out: Path) -> Path:
         out,
         positions=xyz,
         annotation_row=row,
-        pct_characterized=per_point(pct_rows, 0),
+        # A coordinate row without an annotation is unknown, not dark. Keep a
+        # neutral fill here; `dark_mask` also checks `annotation_row` explicitly.
+        pct_characterized=per_point(pct_rows, np.nan),
         pfam_code=per_point(pfam_rows, -1),
         pfam_vocab=pfam_vocab.astype("U16"),
         phylum_code=per_point(phylum_rows, -1),
@@ -335,7 +346,7 @@ class Universe:
 
     def dark_mask(self) -> np.ndarray:
         """Clusters with not one characterised member."""
-        return self.pct_characterized == 0
+        return (self.annotation_row >= 0) & (self.pct_characterized == 0)
 
     def phylum_names(self) -> np.ndarray:
         """Per-cluster dominant phylum name ('' when unknown)."""

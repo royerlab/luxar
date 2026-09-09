@@ -8,9 +8,15 @@ well-formedness of the twelve shipped stories.
 
 from __future__ import annotations
 
+from dataclasses import replace
+from pathlib import Path
+
 import numpy as np
 import pytest
+import zarr
 
+from luxar import Dimensions, LuxarZarrCompiler
+from luxar.core.dimensions import Dimension
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import demo_esm_protein_universe as demo
 from luxar.demos.demo_esm3_protein_stories import (
@@ -109,6 +115,71 @@ def test_universe_masks_select_by_dominant_pfam_phylum_and_darkness() -> None:
     names = u.phylum_names()
     assert names[0] == "Pseudomonadota" and names[4000] == "Chordata"
     assert names[-1] == ""  # no phylum recorded
+
+
+def test_dark_mask_preserves_fractional_values_and_excludes_unknown_joins() -> None:
+    u = replace(
+        _universe(),
+        annotation_row=np.array([0, 1, 2, -1], dtype=np.int32),
+        pct_characterized=np.array([0.0, 0.4, 2.5, 0.0], dtype=np.float32),
+    )
+
+    assert u.dark_mask().tolist() == [True, False, False, False]
+
+
+def test_characterized_percentages_reject_nulls_without_truncating_fractions() -> None:
+    class Column:
+        def __init__(self, values: list[float]) -> None:
+            self.values = values
+
+        def to_numpy(self, *, zero_copy_only: bool) -> np.ndarray:
+            assert zero_copy_only is False
+            return np.asarray(self.values, dtype=np.float64)
+
+    values = demo._characterized_percentages(Column([0.0, 0.4, 2.5, 100.0]))
+    assert values.dtype == np.float32
+    assert values.tolist() == pytest.approx([0.0, 0.4, 2.5, 100.0])
+
+    with pytest.raises(ValueError, match="null or non-finite"):
+        demo._characterized_percentages(Column([0.0, np.nan]))
+
+
+def test_backdrop_compositing_lives_only_on_partition_wrapper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(demo, "BACKDROP_TILE_POINTS", 2_000)
+    rng = np.random.default_rng(12)
+    positions = np.column_stack(
+        [
+            np.zeros(9_000, dtype=np.float32),
+            rng.normal(size=(9_000, 3)).astype(np.float32),
+        ]
+    )
+    colors = rng.random((9_000, 3), dtype=np.float32)
+    dims = Dimensions(
+        [
+            Dimension(demo.STORY_DIM, unit="", categories=["Overview"], display=False),
+            Dimension("x", unit="UMAP", display=True),
+            Dimension("y", unit="UMAP", display=True),
+            Dimension("z", unit="UMAP", display=True),
+        ]
+    )
+    out = tmp_path / "backdrop.luxar.zarr"
+
+    with LuxarZarrCompiler(out) as compiler:
+        scene = compiler.create_scene(dimensions=dims)
+        demo._add_backdrop(scene, positions, colors, dims)
+
+    store = zarr.open_group(out, mode="r")
+    wrapper = store["Backdrop"]
+    assert wrapper.attrs["opacity"] == pytest.approx(demo.BACKDROP_OPACITY)
+    assert wrapper.attrs["intensity"] == pytest.approx(demo.BACKDROP_INTENSITY)
+    for part_name in wrapper.group_keys():
+        part = wrapper[part_name]
+        for child_name in part.group_keys():
+            child = part[child_name]
+            assert child.attrs["opacity"] == pytest.approx(1.0)
+            assert child.attrs["intensity"] == pytest.approx(1.0)
 
 
 def test_densest_core_prefers_the_pure_knot_over_the_bigger_mixed_one() -> None:
