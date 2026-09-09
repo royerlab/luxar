@@ -79,7 +79,8 @@ Both files are **module-scoped singletons** (the `element-texture-layout.ts` pat
 
 **Module state** (render-order.ts):
 
-- `partitionRankCache: Map<THREE.Object3D, Map<number, number> | null>` — per-frame BSP rank cache (cleared every frame)
+- `partitionRankCache: Map<THREE.Object3D, Map<number, number> | null>` — per-frame strong-key BSP lookup cache (cleared every frame)
+- `partitionRankMemo: WeakMap<THREE.Object3D, PartitionRankMemo>` — cross-frame BSP ranks keyed by immutable tree + live display dimensions; reused until the camera crosses a split plane
 - `warnedAxisMappingWrappers: WeakSet<THREE.Object3D>` — session-lifetime deduplication for wrappers whose BSP axes cannot be mapped through the live display dimensions
 - `orderSlots: OrderSlot[]` — per-frame collect buffer (fresh array every frame)
 - `scratch: RenderOrderScratch` — per-frame allocation-free scratch (lazily allocated on first use)
@@ -356,11 +357,12 @@ Native `partition=` adders and gsplat spatial-partition producers (`tiles`/`adap
 **Per-frame flow**:
 
 1. Transform the camera into the wrapper's local space: `eyeLocal = camPos.applyMatrix4(inverse(wrapper.matrixWorld))`
-2. Traverse the tree back-to-front: `traverseBspBackToFront(tree, eyeLocal, order)`
+2. Compare the eye's side of every split plane with the wrapper's weak memo
+3. Only after a side changes, traverse the tree back-to-front: `traverseBspBackToFront(tree, eyeLocal, order)`
    - At each split: the eye is on one side of the plane; everything on the far side draws before everything on the near side
    - `left` holds `coord < split` (the near side when `eyeLocal[axis] < split`)
-3. Number the resulting order: 0 = farthest
-4. Memoize in `partitionRankCache` (cleared every frame)
+4. Number the resulting order: 0 = farthest, reusing the memo's array and rank map
+5. Publish that map through `partitionRankCache` for the wrapper's remaining parts this frame
 
 **Result**: exact back-to-front part order for point/gsplat BSP cells at any camera pose, including inside the volume; approximate traversal for centroid-split lines/mesh and overlapping uniform tiles, where geometry can cross a cut.
 
@@ -379,13 +381,17 @@ When a wrapper has no `bspTree`, when any stored split axis is absent from the l
 }
 ```
 
-Fresh array every frame (a grow-only pool would pin disposed meshes across frames; counts are tens, matching the per-frame allocations `wrapperPartRanks` already makes).
+Fresh array every frame (a grow-only pool would pin disposed meshes across frames; counts are tens). BSP memo state is safe to retain separately because its wrapper key is weak and its values hold only the wrapper's own immutable tree plus numeric arrays/maps.
 
 ### Frame-State Containers
 
 - **`partitionRankCache: Map<THREE.Object3D, Map<number, number> | null>`** — per-frame cache of a wrapper's back-to-front part order; `null` marks a wrapper with no usable `bspTree`. Cleared at the top of every frame.
+- **`partitionRankMemo: WeakMap<THREE.Object3D, PartitionRankMemo>`** — cross-frame plane-side signature, traversal array, and rank map. Weak keys avoid pinning disposed wrappers.
 - **`orderSlots: OrderSlot[]`** — per-frame collect buffer, built during the node loop, consumed by `assignGlobalRenderOrder`, then reset to `[]`.
 - **`scratch: RenderOrderScratch`** — per-frame allocation-free scratch (wrapper-inverse matrix, eye-local vector, center vector). Lazily allocated on first use (several unit-test files partially mock 'three', and an import-time `new THREE.Matrix4()` would break every test that transitively imports this module).
+- **Containment scratch** — grow-only flat number/boolean arrays for the two spheres per group, indegrees, and emitted flags. Adjacency arrays are created only when an honoured edge exists.
+
+The sibling partition-footprint cache in `scene/lod-group-registry.ts` uses push-based `invalidatePartitionFootprint` calls because geometry commits define its changes. BSP ranks instead pull the live split-plane sides every frame so camera and wrapper motion cannot depend on callers remembering to invalidate them.
 
 `warnedAxisMappingWrappers` is intentionally not frame-scoped: its weak entries suppress repeated diagnostics without retaining disposed wrappers.
 
@@ -452,16 +458,17 @@ Every release path (empty/commutative commit, mode-switch-away, node disposal) m
 
 ### Frame-State Lifetime
 
-The per-frame render-order containers (`partitionRankCache`, `orderSlots`) are cleared/reset every frame and never outlive a frame. `clearRenderOrderFrameState()` resets exactly these two — it runs FIRST in `evaluateDepthSortPerFrame`, before any early-return, so a disposed/dataset-switched frame can't leave them holding stale THREE object references. `scratch` is NOT reset each frame: it is module-scoped and persistent, holding only copied matrix/vector values (no scene references), which is why it is safe to keep across frames.
+The strong-reference render-order containers (`partitionRankCache`, `orderSlots`) are cleared/reset every frame and never outlive a frame. `clearRenderOrderFrameState()` resets exactly these two — it runs FIRST in `evaluateDepthSortPerFrame`, before any early-return, so a disposed/dataset-switched frame can't leave them holding stale THREE object references. `partitionRankMemo` is weak-keyed, while `scratch` and containment scratch hold only numeric state; all three are therefore safe to keep across frames.
 
 ### Allocation-Free Hot Path
 
-The per-frame scheduler and render-order assignment do no per-element allocation; a small O(#meshes + #wrappers) per-frame allocation (a fresh `orderSlots` array + one slot object per mesh, and a fresh `order` array + rank Map per wrapper) is intentional so disposed meshes are never pinned across frames:
+The per-frame scheduler and render-order assignment do no per-element allocation. A small O(#meshes) allocation (a fresh `orderSlots` array + one slot object per mesh) is intentional so disposed meshes are never pinned across frames:
 
 - `scratch` — lazily allocated on first use, reused every frame
 - `orderSlots` — fresh array per frame, but the array itself is cheap; the slots are plain objects
 - Per-node pose comparison — reuses `scratch.axis`, `scratch.mv`
-- BSP traversal — reuses `scratch.wrapperInv`, `scratch.eyeLocal`; the `order` array is per-wrapper-per-frame
+- BSP traversal — reuses `scratch.wrapperInv`, `scratch.eyeLocal`, and each wrapper's weak memo; the order/rank containers rebuild only after a split-plane crossing or display-axis change
+- Group containment — reuses flat sphere/indegree/emitted scratch; the common no-edge path allocates no adjacency arrays
 
 ## See Also
 

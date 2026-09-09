@@ -27,6 +27,7 @@ import type { LayerPatch, LayerSummary } from '../../core/app/embedder/events';
 import { config } from '../../config';
 import { log, Modules } from '../../utils/log';
 import { EventGroup } from '../../utils/cross-layer/event-group';
+import { attachLongPress } from '../../utils/long-press';
 import { openContextMenu, type ContextMenuItem } from '../overlay-widgets/context-menu';
 import { BLENDING_MODES } from '../../rendering/blending-state';
 import type { BlendingMode } from '../../rendering';
@@ -429,6 +430,30 @@ export class LayersPanel {
   // ====================================================================
   // Right-click context menus (shared openContextMenu utility)
   // ====================================================================
+
+  /**
+   * Route a secondary gesture at `target` (right-click or touch long-press) to
+   * the eye / row / header menu. Right-clicking an unselected row selects it
+   * first (Finder/napari convention); an already-selected row keeps the
+   * current multi-selection.
+   */
+  private openContextMenuAt(target: HTMLElement, clientX: number, clientY: number): boolean {
+    const eye = target.closest('.luxar-layer-row__eye') as HTMLElement | null;
+    const row = target.closest('.luxar-layer-row') as HTMLElement | null;
+    const header = target.closest('.luxar-layers-panel__header') as HTMLElement | null;
+    if (row) {
+      const path = row.dataset.layerPath;
+      const layer = path ? this.state.getLayer(path) : undefined;
+      if (!layer) return false;
+      if (!layer.selected) this.state.select(layer.path, 'single');
+      this.openLayerContextMenu(eye ? 'eye' : 'row', layer.path, clientX, clientY, eye ?? row);
+      return true;
+    } else if (header) {
+      this.openLayerContextMenu('header', null, clientX, clientY, header);
+      return true;
+    }
+    return false;
+  }
 
   /**
    * Open the eye / row / header menu. `layerPath` is null for the header
@@ -1005,27 +1030,22 @@ export class LayersPanel {
       // paste: the layer filter above and the range slider's bound editor
       // both live inside this panel, and we offer no clipboard verbs of our
       // own to replace it.
-      if (target.closest('input[type="text"], textarea')) return;
+      if (target.closest('input[type="text"], input[type="number"], textarea')) return;
       e.preventDefault();
-      const eye = target.closest('.luxar-layer-row__eye') as HTMLElement | null;
-      const row = target.closest('.luxar-layer-row') as HTMLElement | null;
-      const header = target.closest('.luxar-layers-panel__header') as HTMLElement | null;
-      if (row) {
-        const path = row.dataset.layerPath;
-        const layer = path ? this.state.getLayer(path) : undefined;
-        if (!layer) return;
-        if (!layer.selected) this.state.select(layer.path, 'single');
-        this.openLayerContextMenu(
-          eye ? 'eye' : 'row',
-          layer.path,
-          me.clientX,
-          me.clientY,
-          eye ?? row
-        );
-      } else if (header) {
-        this.openLayerContextMenu('header', null, me.clientX, me.clientY, header);
-      }
+      if (target.closest('.luxar-layer-row__gain')) return;
+      this.openContextMenuAt(target, me.clientX, me.clientY);
     });
+    // Touch: press and hold on a row / eye / the header opens the same menus
+    // (a finger has no right button, and iOS never synthesises `contextmenu`).
+    this.events.add(
+      attachLongPress(panel, {
+        onLongPress: (x, y, ev) => {
+          const target = ev.target as HTMLElement;
+          if (target.closest('input[type="text"], input[type="number"], textarea')) return false;
+          return this.openContextMenuAt(target, x, y);
+        },
+      })
+    );
 
     this.container.appendChild(panel);
 

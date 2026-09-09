@@ -22,6 +22,8 @@ import {
 import { ViewStateQueue } from '../../../../../data/scene-loader/view-state/view-state-queue';
 import { LoaderRegistry } from '../../../../../data/scene-loader/loaders/loader-registry';
 import { ArchiveFaultError } from '../../../../../cache/chunk-source';
+import type { ChunkSource } from '../../../../../cache/chunk-source';
+import { MultiLevelCachingStore } from '../../../../../cache/multi-level-caching-store';
 import { log } from '../../../../../utils/log';
 
 function makeCtx() {
@@ -98,6 +100,37 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
     } finally {
       errorSpy.mockRestore();
     }
+  });
+
+  it('records an exhausted chunk fetch as Network without staging a fresh commit', async () => {
+    const source: ChunkSource = {
+      identity: 'always-fails',
+      describe: 'always-fails',
+      get: vi.fn().mockResolvedValue({
+        kind: 'error',
+        cause: new Error('fetch exhausted retries for positions/0'),
+      }),
+      probeIdentityToken: vi.fn().mockResolvedValue(null),
+      dispose: vi.fn(),
+    };
+    const store = new MultiLevelCachingStore(source, { noCache: true });
+    const ctx = makeCtx();
+    const freshCommit = vi.fn();
+
+    const results = await runLoaderUpdates(
+      new Map<string, object>([['/scene/points', {}]]),
+      'Points',
+      async () => {
+        const bytes = await store.get('positions/0');
+        freshCommit(bytes ?? new Uint8Array(0));
+        return { count: 0 };
+      },
+      ctx
+    );
+
+    expect(results[0].staged).toBeNull();
+    expect(freshCommit).not.toHaveBeenCalled();
+    expect(ctx.failedLoaders.get('/scene/points')?.kind).toBe('Network');
   });
 
   it('keeps the original failure path when rollback itself throws', async () => {

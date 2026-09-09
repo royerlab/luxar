@@ -273,7 +273,7 @@ describe('buildRailItems', () => {
       expect(btn.querySelector('.luxar-control-rail__tip kbd')).toBeNull();
       expect(btn.querySelector('.luxar-control-rail__tip')?.textContent).toBe('Navigation · Orbit');
       expect(btn.getAttribute('aria-label')).toBe(
-        'Navigation: Orbit — click for fly, right-click for options'
+        'Navigation: Orbit — click for fly, right-click or hold for options'
       );
     });
 
@@ -477,10 +477,16 @@ describe('buildRailItems', () => {
       findAudio(makeDeps({ hasSoundNodes: true, muted: true })).render!(btn);
       expect(btn.dataset.audioState).toBe('muted');
       expect(btn.querySelector('.luxar-control-rail__tip')?.textContent).toBe('Sound · Muted');
+      expect(btn.getAttribute('aria-label')).toBe(
+        'Sound: muted — click to unmute, right-click or hold for the mixer'
+      );
       expect(btn.innerHTML).toContain(RAIL_ICONS.audioMuted.slice(0, 40));
       findAudio(makeDeps({ hasSoundNodes: true, muted: false })).render!(btn);
       expect(btn.dataset.audioState).toBe('on');
       expect(btn.querySelector('.luxar-control-rail__tip')?.textContent).toBe('Sound · On');
+      expect(btn.getAttribute('aria-label')).toBe(
+        'Sound: on — click to mute, right-click or hold for the mixer'
+      );
     });
 
     it('right-click opens the Sound popover', () => {

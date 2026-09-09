@@ -23,6 +23,22 @@
  * to `preventDefault` the native menu — the controls already do this in both
  * orbit and fly mode, so it is belt-and-braces against that changing.
  *
+ * ## Touch
+ *
+ * A finger neither hovers nor right-clicks, so the mouse model above has no
+ * touch equivalent on its own. Touch-like pointers (`isTouchLikePointer`) get:
+ * a wider slop ({@link TOUCH_CLICK_SLOP_PX}); **tap** = pick at the tap
+ * (`PickGenerationPort.pickAt`, the tooltip shows through the normal result
+ * path) and then the click action, after first discarding residual user-input
+ * damping in orbit, ortho, or fly mode so accepted drift cannot immediately
+ * clear that result; any navigation is deferred by {@link DOUBLE_TAP_MS} so a
+ * second tap can pre-empt it; **long-press** =
+ * the element menu, after which the release is inert; **double-tap** = the
+ * second tap pre-empts the first tap's navigation and picks nothing — the
+ * re-frame itself is `double-tap-to-fit.ts`, installed for every scene, since
+ * this module only exists once picking is provisioned. Mouse and pen-as-mouse
+ * paths are untouched.
+ *
  * ## Dependency injection
  *
  * `window.open`, the clipboard, the toast and the menu all arrive as ports.
@@ -40,10 +56,14 @@ import { openContextMenu, type ContextMenuItem } from '../../../ui/overlay-widge
 import { showToast } from '../../../ui/toast';
 import {
   CLICK_SLOP_PX,
+  TOUCH_CLICK_SLOP_PX,
   type CachedPick,
   type PickedElementCache,
   type PickGenerationPort,
 } from './picked-element-cache';
+import { DOUBLE_TAP_MS, DOUBLE_TAP_SLOP_PX } from './double-tap-to-fit';
+import { isTouchLikePointer } from '../../../utils/input-capabilities';
+import { LONG_PRESS_MS } from '../../../utils/long-press';
 import { resolveElementActions, type ResolvedElementActions } from './element-actions';
 
 /**
@@ -91,6 +111,8 @@ export interface CanvasActionsPorts {
   events: EventGroup;
   cache: PickedElementCache;
   picking: PickGenerationPort;
+  /** Discard residual camera damping when a touch release is classified as a tap. */
+  settleTouchNavigation?: () => void;
   /**
    * Whether links may be opened at all (`allowLinks` option / `?no-links`).
    * When false: no navigation, no link menu items, no pointer cursor — but
@@ -168,21 +190,6 @@ function copyWithFeedback(ports: CanvasActionsPorts, text: string, what: string)
 export function installCanvasActions(ports: CanvasActionsPorts): CanvasActionsHandle {
   const { canvas, events, cache, picking } = ports;
 
-  /** Pointers currently down. */
-  const down = new Map<number, { button: number; x: number; y: number }>();
-  /**
-   * Whether the gesture in progress has EVER had more than one pointer down.
-   *
-   * Checking `down.size` at release time is not enough, and the failure is
-   * asymmetric enough to be easy to miss: releasing the first of two fingers
-   * leaves `down.size === 1` and correctly bails, but releasing the *last* one
-   * leaves `down.size === 0`, which looks exactly like a single click. Every
-   * pinch would therefore end by opening a link. This latches on the second
-   * concurrent pointerdown and only clears once the canvas has no pointers at
-   * all, so both release orders are rejected.
-   */
-  let multiTouch = false;
-
   /**
    * Resolve what a pick offers, with the `allowLinks` gate applied.
    *
@@ -206,9 +213,10 @@ export function installCanvasActions(ports: CanvasActionsPorts): CanvasActionsHa
   /** As {@link resolveFor}, for the valid pick at `(x, y)` — null if there is none. */
   const actionsAt = (
     x: number,
-    y: number
+    y: number,
+    slopPx: number
   ): (ResolvedElementActions & { pick: CachedPick }) | null => {
-    const pick = cache.read(picking, x, y);
+    const pick = cache.read(picking, x, y, slopPx);
     if (!pick) return null;
     return { ...resolveFor(pick), pick };
   };
@@ -279,14 +287,129 @@ export function installCanvasActions(ports: CanvasActionsPorts): CanvasActionsHa
 
   // --- pointer gestures -----------------------------------------------------
 
+  interface DownPointer {
+    button: number;
+    x: number;
+    y: number;
+    /** Finger, or pen-as-finger — routes to the tap / long-press model. */
+    touchLike: boolean;
+    /** A long-press already acted on this pointer; its release is inert. */
+    consumed: boolean;
+    /** Gesture generation captured at pointerdown. */
+    gesture: number;
+  }
+  /** Pointers currently down. */
+  const down = new Map<number, DownPointer>();
+  /**
+   * Whether the gesture in progress has EVER had more than one pointer down.
+   *
+   * Checking `down.size` at release time is not enough, and the failure is
+   * asymmetric enough to be easy to miss: releasing the first of two fingers
+   * leaves `down.size === 1` and correctly bails, but releasing the *last* one
+   * leaves `down.size === 0`, which looks exactly like a single click. Every
+   * pinch would therefore end by opening a link. This latches on the second
+   * concurrent pointerdown and only clears once the canvas has no pointers at
+   * all, so both release orders are rejected.
+   */
+  let multiTouch = false;
+  let longPress: { id: number; timer: ReturnType<typeof setTimeout> } | null = null;
+  let deferredNavigation: ReturnType<typeof setTimeout> | null = null;
+  let lastTap: { t: number; x: number; y: number } | null = null;
+  let gestureGeneration = 0;
+
+  const clearLongPress = (): void => {
+    if (longPress) {
+      clearTimeout(longPress.timer);
+      longPress = null;
+    }
+  };
+  const clearDeferredNavigation = (): void => {
+    if (deferredNavigation !== null) {
+      clearTimeout(deferredNavigation);
+      deferredNavigation = null;
+    }
+  };
+
+  /**
+   * Pick at the pointer's position, then run `fn` once the result has landed.
+   * Without a `pickAt` on the port, act on whatever the cache already holds.
+   */
+  const afterPick = (clientX: number, clientY: number, gesture: number, fn: () => void): void => {
+    const run = (): void => {
+      if (gesture === gestureGeneration) fn();
+    };
+    const pending = picking.pickAt?.(clientX, clientY);
+    if (pending) {
+      void pending.then(run, (err: unknown) => {
+        log.warning(Modules.APP, `Touch pick failed: ${err}`);
+      });
+    } else run();
+  };
+
+  /** The element menu for a touch gesture at a viewport position. */
+  const openTouchMenu = (clientX: number, clientY: number, gesture: number): void => {
+    afterPick(clientX, clientY, gesture, () => {
+      const { x, y } = toCanvas({ clientX, clientY });
+      const resolved = actionsAt(x, y, TOUCH_CLICK_SLOP_PX);
+      if (!resolved) return;
+      ports.onElementContextMenu?.(
+        payloadFor(resolved.pick, 0, { clientX, clientY }, resolved.url)
+      );
+      openMenuFor(resolved, resolved.pick, clientX, clientY);
+    });
+  };
+
+  /** Arm the long-press → menu timer for a fresh touch-like primary press. */
+  const armLongPress = (ev: PointerEvent): void => {
+    clearLongPress();
+    const id = ev.pointerId;
+    longPress = {
+      id,
+      timer: setTimeout(() => {
+        longPress = null;
+        const entry = down.get(id);
+        if (!entry || multiTouch) return;
+        entry.consumed = true;
+        openTouchMenu(entry.x, entry.y, entry.gesture);
+      }, LONG_PRESS_MS),
+    };
+  };
+
   events.on(canvas, 'pointerdown', (e) => {
     const ev = e as PointerEvent;
-    down.set(ev.pointerId, { button: ev.button, x: ev.clientX, y: ev.clientY });
-    if (down.size > 1) multiTouch = true;
+    const touchLike = isTouchLikePointer(ev);
+    const gesture = ++gestureGeneration;
+    clearDeferredNavigation();
+    down.set(ev.pointerId, {
+      button: ev.button,
+      x: ev.clientX,
+      y: ev.clientY,
+      touchLike,
+      consumed: false,
+      gesture,
+    });
+    if (down.size > 1) {
+      multiTouch = true;
+      clearLongPress();
+      return;
+    }
+    if (touchLike && ev.button === 0) armLongPress(ev);
+  });
+
+  // A finger that travels past the tap slop is dragging (orbiting), not holding.
+  events.on(canvas, 'pointermove', (e) => {
+    const ev = e as PointerEvent;
+    if (!longPress || longPress.id !== ev.pointerId) return;
+    const start = down.get(ev.pointerId);
+    if (!start) return;
+    const dx = ev.clientX - start.x;
+    const dy = ev.clientY - start.y;
+    if (dx * dx + dy * dy > TOUCH_CLICK_SLOP_PX * TOUCH_CLICK_SLOP_PX) clearLongPress();
   });
 
   /** Drop a pointer, clearing the multi-touch latch once the canvas is idle. */
   const forgetPointer = (id: number): void => {
+    if (longPress?.id === id) clearLongPress();
     down.delete(id);
     if (down.size === 0) multiTouch = false;
   };
@@ -294,32 +417,14 @@ export function installCanvasActions(ports: CanvasActionsPorts): CanvasActionsHa
   events.on(canvas, 'pointercancel', onPointerGone);
   events.on(canvas, 'pointerleave', onPointerGone);
 
-  events.on(canvas, 'pointerup', (e) => {
-    const ev = e as PointerEvent;
-    const start = down.get(ev.pointerId);
-    // Read the latch BEFORE releasing this pointer: releasing the last finger
-    // of a pinch clears it, and we still need to know this gesture was one.
-    const wasMultiTouch = multiTouch;
-    forgetPointer(ev.pointerId);
-    if (!start) return;
-    // Any pointer still down, or any second pointer at any point during this
-    // gesture — a pinch, not a click. The latch is what makes the second half
-    // true: `down.size > 0` alone rejects releasing the FIRST of two fingers
-    // but not the last, which leaves the map empty and reads as a single click.
-    if (down.size > 0 || wasMultiTouch) return;
-    if (start.button !== ev.button) return;
-    if (ev.button !== 0 && ev.button !== 2) return;
-
-    const dx = ev.clientX - start.x;
-    const dy = ev.clientY - start.y;
-    if (dx * dx + dy * dy > CLICK_SLOP_PX * CLICK_SLOP_PX) return; // a drag
-
+  /** Mouse (and pen-as-mouse) click: the original synchronous model. */
+  const handleClick = (ev: PointerEvent): void => {
     // macOS secondary click is Ctrl + primary button, and fires with
     // `button === 0`. Treat it as the menu gesture, matching every native app.
     const isSecondary = ev.button === 2 || (ev.button === 0 && ev.ctrlKey && isMacPlatform());
 
     const { x, y } = toCanvas(ev);
-    const resolved = actionsAt(x, y);
+    const resolved = actionsAt(x, y, CLICK_SLOP_PX);
     if (!resolved) return;
 
     const payload = payloadFor(resolved.pick, ev.button, ev, resolved.url);
@@ -332,12 +437,90 @@ export function installCanvasActions(ports: CanvasActionsPorts): CanvasActionsHa
         (ports.openUrl ?? defaultOpenUrl)(resolved.url, resolved.target);
       }
     }
+  };
+
+  /**
+   * Touch tap: a second tap within {@link DOUBLE_TAP_MS} / {@link DOUBLE_TAP_SLOP_PX}
+   * is left to `double-tap-to-fit.ts`; otherwise pick here (desktop hover + click parity), then
+   * act, deferring any navigation so a double-tap can still pre-empt it. The
+   * mouse path stays synchronous so its user activation is never spent.
+   */
+  const handleTap = (ev: PointerEvent, gesture: number): void => {
+    const now = performance.now();
+    const { clientX, clientY, button } = ev;
+    if (lastTap && now - lastTap.t < DOUBLE_TAP_MS) {
+      const ddx = clientX - lastTap.x;
+      const ddy = clientY - lastTap.y;
+      if (ddx * ddx + ddy * ddy <= DOUBLE_TAP_SLOP_PX * DOUBLE_TAP_SLOP_PX) {
+        // The re-frame itself is `double-tap-to-fit.ts`, installed for every
+        // scene; here the second tap only pre-empts the first tap's navigation.
+        lastTap = null;
+        clearDeferredNavigation();
+        return;
+      }
+    }
+    lastTap = { t: now, x: clientX, y: clientY };
+    afterPick(clientX, clientY, gesture, () => {
+      const { x, y } = toCanvas({ clientX, clientY });
+      const resolved = actionsAt(x, y, TOUCH_CLICK_SLOP_PX);
+      if (!resolved) return;
+      ports.onElementClick?.(payloadFor(resolved.pick, button, { clientX, clientY }, resolved.url));
+      const url = resolved.url;
+      if (url === null) return;
+      clearDeferredNavigation();
+      deferredNavigation = setTimeout(() => {
+        deferredNavigation = null;
+        if (gesture !== gestureGeneration) return;
+        (ports.openUrl ?? defaultOpenUrl)(url, resolved.target);
+      }, DOUBLE_TAP_MS);
+    });
+  };
+
+  const isClickRelease = (ev: PointerEvent, start: DownPointer): boolean => {
+    if (start.button !== ev.button) return false;
+    if (ev.button !== 0 && ev.button !== 2) return false;
+    const slop = start.touchLike ? TOUCH_CLICK_SLOP_PX : CLICK_SLOP_PX;
+    const dx = ev.clientX - start.x;
+    const dy = ev.clientY - start.y;
+    if (dx * dx + dy * dy <= slop * slop) return true;
+    if (start.touchLike) lastTap = null;
+    return false;
+  };
+
+  events.on(canvas, 'pointerup', (e) => {
+    const ev = e as PointerEvent;
+    const start = down.get(ev.pointerId);
+    // Read the latch BEFORE releasing this pointer: releasing the last finger
+    // of a pinch clears it, and we still need to know this gesture was one.
+    const wasMultiTouch = multiTouch;
+    forgetPointer(ev.pointerId);
+    if (!start || start.consumed) return;
+    // Any pointer still down, or any second pointer at any point during this
+    // gesture — a pinch, not a click. The latch is what makes the second half
+    // true: `down.size > 0` alone rejects releasing the FIRST of two fingers
+    // but not the last, which leaves the map empty and reads as a single click.
+    if (down.size > 0 || wasMultiTouch) {
+      lastTap = null;
+      return;
+    }
+    if (!isClickRelease(ev, start)) return;
+
+    if (start.touchLike) {
+      ports.settleTouchNavigation?.();
+      handleTap(ev, start.gesture);
+    } else handleClick(ev);
   });
 
   // Suppress the native menu. Both controls implementations already do this,
   // in orbit and fly mode alike; kept so this module does not silently depend
   // on that remaining true.
   events.on(canvas, 'contextmenu', (e) => e.preventDefault());
+
+  events.add(() => {
+    gestureGeneration++;
+    clearLongPress();
+    clearDeferredNavigation();
+  });
 
   // --- keyboard path --------------------------------------------------------
 

@@ -11,6 +11,10 @@ import {
   installOnlineRetry,
   DEFERRED_RETRY_DELAY_MS,
   MAX_DEFERRED_RETRY_ATTEMPTS,
+  MAX_ONLINE_RETRY_ROUNDS,
+  ONLINE_RETRY_MAX_DELAY_MS,
+  ONLINE_RETRY_POLL_MS,
+  type OnlineRetryPorts,
   type RetryCapableLoader,
 } from '../../../../../core/app/lifecycle/online-retry';
 
@@ -30,6 +34,24 @@ function makeLoader(
     resetRefinementFailures: vi.fn().mockReturnValue(false),
     retryAllFailedLoaders: vi.fn().mockResolvedValue(result),
   };
+}
+
+function installWithFailureSignal(
+  ports: Omit<OnlineRetryPorts, 'subscribeAutoRetryableFailure'>
+): () => void {
+  let notifyFailure = (): void => {
+    throw new Error('failure listener was not installed');
+  };
+  installOnlineRetry({
+    ...ports,
+    subscribeAutoRetryableFailure: (listener) => {
+      notifyFailure = listener;
+      return () => {
+        notifyFailure = () => {};
+      };
+    },
+  });
+  return () => notifyFailure();
 }
 
 describe('installOnlineRetry', () => {
@@ -56,6 +78,86 @@ describe('installOnlineRetry', () => {
     expect(String(toast.mock.calls[1][0])).toContain('Recovered 2');
   });
 
+  it('retries a transient failure after backoff while the browser stays online', async () => {
+    vi.useFakeTimers();
+    try {
+      const loader = makeLoader(true);
+      const notifyFailure = installWithFailureSignal({ events, getLoader: () => loader, toast });
+
+      notifyFailure();
+
+      await vi.advanceTimersByTimeAsync(ONLINE_RETRY_POLL_MS - 1);
+      expect(loader.retryAllFailedLoaders).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(loader.retryAllFailedLoaders).toHaveBeenCalledTimes(1);
+      expect(loader.retryAllFailedLoaders).toHaveBeenCalledWith({ onlyAutoRetryable: true });
+      expect(toast).toHaveBeenCalledTimes(1);
+      expect(String(toast.mock.calls[0][0])).toContain('Recovered 1');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps an unsuccessful background retry round silent', async () => {
+    vi.useFakeTimers();
+    try {
+      const loader = makeLoader(true, { succeeded: [], failed: ['/a'] });
+      const notifyFailure = installWithFailureSignal({ events, getLoader: () => loader, toast });
+
+      notifyFailure();
+      await vi.advanceTimersByTimeAsync(ONLINE_RETRY_POLL_MS);
+
+      expect(loader.retryAllFailedLoaders).toHaveBeenCalledTimes(1);
+      expect(toast).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not keep a polling timer alive before a failure is recorded', async () => {
+    vi.useFakeTimers();
+    try {
+      const loader = makeLoader(false);
+      installWithFailureSignal({ events, getLoader: () => loader, toast });
+
+      await vi.advanceTimersByTimeAsync(ONLINE_RETRY_MAX_DELAY_MS * 10);
+
+      expect(loader.retryAllFailedLoaders).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('backs off exponentially and stops after the online retry round cap', async () => {
+    vi.useFakeTimers();
+    try {
+      const loader = makeLoader(true, { succeeded: [], failed: ['/a'] });
+      const notifyFailure = installWithFailureSignal({ events, getLoader: () => loader, toast });
+      notifyFailure();
+
+      let delay = ONLINE_RETRY_POLL_MS;
+      for (let round = 1; round <= MAX_ONLINE_RETRY_ROUNDS; round++) {
+        await vi.advanceTimersByTimeAsync(delay - 1);
+        expect(loader.retryAllFailedLoaders).toHaveBeenCalledTimes(round - 1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(loader.retryAllFailedLoaders).toHaveBeenCalledTimes(round);
+        delay = Math.min(delay * 2, ONLINE_RETRY_MAX_DELAY_MS);
+      }
+
+      await vi.advanceTimersByTimeAsync(ONLINE_RETRY_MAX_DELAY_MS * 2);
+      expect(loader.retryAllFailedLoaders).toHaveBeenCalledTimes(MAX_ONLINE_RETRY_ROUNDS);
+      expect(vi.getTimerCount()).toBe(0);
+
+      window.dispatchEvent(new Event('online'));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(loader.retryAllFailedLoaders).toHaveBeenCalledTimes(MAX_ONLINE_RETRY_ROUNDS + 1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('reports partial recovery when some loads still fail', async () => {
     const loader = makeLoader(true, { succeeded: ['/a'], failed: ['/b'] });
     installOnlineRetry({ events, getLoader: () => loader, toast });
@@ -76,6 +178,19 @@ describe('installOnlineRetry', () => {
     expect(toast).not.toHaveBeenCalled();
   });
 
+  it('re-opens exhausted LOD refinement when connectivity returns', async () => {
+    const loader = makeLoader(false);
+    vi.mocked(loader.resetRefinementFailures).mockReturnValue(true);
+    installOnlineRetry({ events, getLoader: () => loader, toast });
+
+    window.dispatchEvent(new Event('online'));
+    await Promise.resolve();
+
+    expect(loader.resetRefinementFailures).toHaveBeenCalledTimes(1);
+    expect(loader.retryAllFailedLoaders).not.toHaveBeenCalled();
+    expect(toast).not.toHaveBeenCalled();
+  });
+
   it('does nothing when every failure is deterministic or past the attempt cap', async () => {
     // Reconnecting cannot fix a decode error or a permanent 404 that already
     // exhausted its attempts. Retrying anyway re-fetched them on every `online`
@@ -87,19 +202,6 @@ describe('installOnlineRetry', () => {
     window.dispatchEvent(new Event('online'));
     await Promise.resolve();
 
-    expect(loader.retryAllFailedLoaders).not.toHaveBeenCalled();
-    expect(toast).not.toHaveBeenCalled();
-  });
-
-  it('re-opens exhausted LOD refinement when connectivity returns', async () => {
-    const loader = makeLoader(false);
-    vi.mocked(loader.resetRefinementFailures).mockReturnValue(true);
-    installOnlineRetry({ events, getLoader: () => loader, toast });
-
-    window.dispatchEvent(new Event('online'));
-    await Promise.resolve();
-
-    expect(loader.resetRefinementFailures).toHaveBeenCalledTimes(1);
     expect(loader.retryAllFailedLoaders).not.toHaveBeenCalled();
     expect(toast).not.toHaveBeenCalled();
   });
@@ -228,6 +330,38 @@ describe('installOnlineRetry', () => {
 
     await vi.waitFor(() => expect(loader.resetRefinementFailures).toHaveBeenCalledTimes(1));
     expect(toast).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not rearm a deferred-exhausted episode from another failure notification', async () => {
+    vi.useFakeTimers();
+    try {
+      const hasRetryableFailure = true;
+      const retry = vi.fn().mockResolvedValue({
+        succeeded: [],
+        failed: ['/a'],
+        deferred: true,
+      });
+      const loader: RetryCapableLoader = {
+        hasFailures: () => hasRetryableFailure,
+        hasAutoRetryableFailures: () => hasRetryableFailure,
+        resetRefinementFailures: () => false,
+        retryAllFailedLoaders: retry,
+      };
+      const notifyFailure = installWithFailureSignal({ events, getLoader: () => loader, toast });
+
+      window.dispatchEvent(new Event('online'));
+      await vi.advanceTimersByTimeAsync(
+        DEFERRED_RETRY_DELAY_MS * (MAX_DEFERRED_RETRY_ATTEMPTS + 1)
+      );
+      expect(retry).toHaveBeenCalledTimes(MAX_DEFERRED_RETRY_ATTEMPTS);
+
+      notifyFailure();
+      await vi.advanceTimersByTimeAsync(ONLINE_RETRY_MAX_DELAY_MS * 2);
+
+      expect(retry).toHaveBeenCalledTimes(MAX_DEFERRED_RETRY_ATTEMPTS);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('clears a pending deferred-retry timer when the EventGroup is disposed', async () => {

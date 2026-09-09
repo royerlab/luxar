@@ -7,6 +7,7 @@ used when available, falling back to the ``hilbertcurve`` library.
 
 from __future__ import annotations
 
+import warnings
 from typing import Any
 
 import numpy as np
@@ -16,7 +17,7 @@ def _get_hilbert_numba_kernel():  # type: ignore[no-untyped-def]
     """Lazy-compile the Numba Hilbert encoding kernel on first use."""
     import numba
 
-    @numba.njit(cache=True)  # type: ignore[misc]
+    @numba.njit("void(int64[:,:], int64, uint64[:])", cache=True)  # type: ignore[misc]
     def _hilbert_kernel(coords: np.ndarray, bits_per_dim: int, out: np.ndarray) -> None:
         """Numba-accelerated Hilbert curve encoding.
 
@@ -97,7 +98,15 @@ def hilbert_encode_nd(coords: np.ndarray, bits_per_dim: int = 16) -> np.ndarray:
     if _hilbert_numba_kernel is None:
         try:
             _hilbert_numba_kernel = _get_hilbert_numba_kernel()  # type: ignore[no-untyped-call]
-        except (ImportError, Exception):
+        except ImportError:
+            _hilbert_numba_kernel = False
+        except Exception as exc:
+            warnings.warn(
+                "Hilbert Numba kernel failed with "
+                f"{type(exc).__name__}: {exc}; using the Python fallback",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             _hilbert_numba_kernel = False
 
     if _hilbert_numba_kernel:

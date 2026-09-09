@@ -2252,10 +2252,10 @@ export function disposeDepthSort(): void {
   requestRenderBeforeCapture = null;
   setSortedIndexApplyBackPressureBypassed(false);
   // Module-state reset completeness: both per-frame containers can hold
-  // THREE object references between calls (the rank memo until the next
+  // THREE object references between calls (the rank lookup until the next
   // evaluate's clear; the slots only if an evaluate threw mid-collect) —
   // an embedder that disposes and re-inits in one page must not have the
-  // old scene pinned by them.
+  // old scene pinned by them. The cross-frame rank memo is weak-keyed.
   clearRenderOrderFrameState();
   // The display-dims accessor lives in the render-order submodule, not the
   // locals below; drop it too so a dispose/re-init doesn't keep the old app's

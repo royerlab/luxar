@@ -66,6 +66,7 @@ import {
   initPicking as initPickingImpl,
   disposePickingSession as disposePickingSessionImpl,
 } from './app/picking/init-picking';
+import { installDoubleTapToFit } from './app/interaction/double-tap-to-fit';
 import { applyViewerConfigState as applyViewerConfigStateHelper } from './app/viewer-config/apply-state';
 import {
   getPanelVisibilityStates as getPanelVisibilityStatesHelper,
@@ -79,7 +80,7 @@ import { initColormapLegend as initColormapLegendImpl } from './app/overlays/ini
 import { initOverlays as initOverlaysImpl } from './app/overlays/init-overlays';
 import { installFocusHandling } from './app/lifecycle/focus-handling';
 import { installOnlineRetry } from './app/lifecycle/online-retry';
-import { getSceneLoader } from '../data/scene-loader-manager';
+import { getSceneLoader, SceneLoaderManager } from '../data/scene-loader-manager';
 import type { SceneLoader } from '../data/scene-loader';
 import { notifier } from '../utils/cross-layer/notifier';
 import { initScaleBar as initScaleBarImpl } from './app/overlays/init-scale-bar';
@@ -292,6 +293,9 @@ export class LuxarApp {
       // Install this before routing so O / the rail control can open the
       // browser while a slow initial dataset load is still in progress.
       this.setupDatasetBrowserShortcut();
+      // Install before the initial load so its first recorded transient
+      // failure can arm the bounded retry backoff immediately.
+      this.setupOnlineRetry();
       if (await this.shouldShowBrowser(result.sceneSrc)) {
         try {
           this.showDatasetBrowser();
@@ -308,9 +312,14 @@ export class LuxarApp {
 
       this.setupDisposeOnUnload();
       this.setupFocusHandling();
-      this.setupOnlineRetry();
       this.setupDebugInterface();
       this.setupEmbedderHooks(options.canvas);
+      // Touch double-tap re-frames on EVERY scene — not only the ones the
+      // picking session (and with it canvas-actions) gets provisioned for.
+      // (Unit tests hand `init` a stub canvas with no event surface.)
+      if (options.canvas instanceof HTMLElement) {
+        installDoubleTapToFit(options.canvas, this.events, () => this.recenterCamera());
+      }
 
       this.isInitialized = true;
     } catch (error) {
@@ -803,10 +812,15 @@ export class LuxarApp {
    * the manager so dataset switches keep pointing at the current loader.
    */
   private setupOnlineRetry(): void {
+    const manager = SceneLoaderManager.getInstance();
     installOnlineRetry({
       events: this.events,
       getLoader: () => getSceneLoader(),
       toast: (message, durationMs) => notifier.toast(message, durationMs),
+      subscribeAutoRetryableFailure: (listener) => {
+        manager.setAutoRetryableFailureCallback(listener);
+        return () => manager.setAutoRetryableFailureCallback(null);
+      },
     });
   }
 

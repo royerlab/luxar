@@ -21,6 +21,13 @@ import {
   getRemoteContentHash,
   type RemoteValidationToken,
 } from '../multi-level-caching-store/validation-queue';
+import { log, Modules } from '../../utils/log';
+
+const ZARR_METADATA_KEYS = new Set(['zarr.json', '.zarray', '.zattrs', '.zgroup', '.zmetadata']);
+
+function isZarrMetadataKey(key: string): boolean {
+  return ZARR_METADATA_KEYS.has(key.slice(key.lastIndexOf('/') + 1));
+}
 
 /** Reads chunks from a directory-backed zarr store over HTTP. */
 export class HttpChunkSource implements ChunkSource {
@@ -64,15 +71,31 @@ export class HttpChunkSource implements ChunkSource {
     }
 
     try {
-      if (!scope.response.ok) return { kind: 'missing' };
+      if (scope.response.status === 404) return { kind: 'missing' };
+      if (
+        (scope.response.status === 403 || scope.response.status === 410) &&
+        isZarrMetadataKey(key)
+      ) {
+        log.warning(
+          Modules.CACHE,
+          `HTTP ${scope.response.status} probing optional zarr metadata ${key}; treating as missing`
+        );
+        return { kind: 'missing' };
+      }
+      if (!scope.response.ok) {
+        const statusText = scope.response.statusText ? ` ${scope.response.statusText}` : '';
+        return {
+          kind: 'error',
+          cause: new Error(`HTTP ${scope.response.status}${statusText} fetching ${key}`),
+        };
+      }
 
       // Check BEFORE touching the body. The store used to do this between the
       // headers arriving and `arrayBuffer()`, and losing it meant an
       // invalidation abort landing in that window surfaced as a NetworkError —
-      // which the store logs and turns into `undefined`, i.e. zarrita decodes
-      // the chunk as FILL VALUES. Silently wrong geometry is exactly what
-      // `abortPendingGets` exists to prevent. The `finally` still cancels the
-      // body we are no longer going to read.
+      // which is retryable rather than a deliberate cancellation. Silently
+      // trusting bytes invalidated by `abortPendingGets` is exactly what this
+      // check prevents. The `finally` still cancels the unread body.
       if (signal?.aborted) return { kind: 'aborted' };
 
       let data: Uint8Array;
@@ -81,7 +104,8 @@ export class HttpChunkSource implements ChunkSource {
       } catch (error) {
         // An abort during the body read rejects here. This must come back as an
         // outcome, not a throw: the seam's contract is that a source never
-        // throws, and a throw would escape as NetworkError → fill values.
+        // throws, and the store needs the abort classification to avoid
+        // recording it as a retryable network failure.
         if (signal?.aborted) return { kind: 'aborted' };
         return { kind: 'error', cause: error instanceof Error ? error : new Error(String(error)) };
       }
