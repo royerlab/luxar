@@ -2,10 +2,10 @@
  * Assemble the control-rail item descriptors.
  *
  * Extracted from the init pipeline so the rail's wiring lives in one focused,
- * independently-testable place rather than inline in the orchestrator. Each
- * button fires the SAME command as its keyboard shortcut (via
- * `inputHandler.getUiActions()`), so on-screen and keyboard behaviour never
- * drift. Rich controls open rail popovers (see `ui/rail-panels/`).
+ * independently-testable place rather than inline in the orchestrator.
+ * Buttons dispatch through `inputHandler.getUiActions()` so on-screen and
+ * keyboard controls share one command surface. Rich controls open rail
+ * popovers (see `ui/rail-panels/`).
  *
  * @module core/app/init/build-rail-items
  */
