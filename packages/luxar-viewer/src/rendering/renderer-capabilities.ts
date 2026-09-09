@@ -224,10 +224,15 @@ export function createRendererCapabilities(
     const maxTextureSize =
       typeof maxTextureSizeRaw === 'number' && maxTextureSizeRaw > 0 ? maxTextureSizeRaw : 2048;
     const maxRenderbufferSizeRaw = gl.getParameter(gl.MAX_RENDERBUFFER_SIZE) as number | null;
-    const maxRenderbufferSize =
-      typeof maxRenderbufferSizeRaw === 'number' && maxRenderbufferSizeRaw > 0
-        ? maxRenderbufferSizeRaw
-        : 2048;
+    const hasRenderbufferLimit =
+      typeof maxRenderbufferSizeRaw === 'number' && maxRenderbufferSizeRaw > 0;
+    const maxRenderbufferSize = hasRenderbufferLimit ? maxRenderbufferSizeRaw : maxTextureSize;
+    if (!hasRenderbufferLimit) {
+      log.warning(
+        Modules.RENDERER,
+        `MAX_RENDERBUFFER_SIZE probe failed; using MAX_TEXTURE_SIZE (${maxTextureSize})`
+      );
+    }
 
     const rawRange = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE);
     const pointSizeRange: readonly [number, number] =

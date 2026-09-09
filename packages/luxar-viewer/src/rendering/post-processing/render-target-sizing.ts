@@ -2,9 +2,8 @@
  * Pure helper for computing post-processing render-target dimensions.
  *
  * Extracted from `rendering/post-processing/post-processing-manager.ts` so the SSAA
- * upscale arithmetic — multiply the screen size by `ssaaMultiplier` only
- * when SSAA is on, otherwise pass through — is testable without a
- * WebGL context.
+ * upscale, Three.js floor rounding, and framebuffer clamp are testable
+ * without a WebGL context.
  *
  * @module rendering/post-processing/render-target-sizing
  */

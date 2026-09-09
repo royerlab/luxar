@@ -165,6 +165,24 @@ describe('createRendererCapabilities (GL probes)', () => {
     expect(caps.maxRenderbufferSize).toBe(2048);
   });
 
+  it.each([null, 0])(
+    'uses the texture limit when the WebGL2 renderbuffer probe returns %s',
+    (maxRenderbufferSize) => {
+      const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+      const caps = createRendererCapabilities(
+        fakeRenderer({ maxTextureSize: 16384, maxRenderbufferSize })
+      );
+
+      expect(caps.maxTextureSize).toBe(16384);
+      expect(caps.maxRenderbufferSize).toBe(16384);
+      expect(warning).toHaveBeenCalledWith(
+        Modules.RENDERER,
+        'MAX_RENDERBUFFER_SIZE probe failed; using MAX_TEXTURE_SIZE (16384)'
+      );
+      warning.mockRestore();
+    }
+  );
+
   it('forwards aliased point size range as [min, max]', () => {
     const caps = createRendererCapabilities(
       fakeRenderer({ pointSizeRange: new Float32Array([2, 256]) })
