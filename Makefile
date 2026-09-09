@@ -653,7 +653,7 @@ check-complexity:  ## Ratchet cyclomatic complexity (ruff C901) against the base
 	@echo "📐 Checking cyclomatic complexity against the baseline..."
 	$(HATCH) run check-complexity
 
-check-lint-ratchet:  ## Ratchet ruff's defect rules (bugbear + RUF012) against the baseline
+check-lint-ratchet:  ## Ratchet ruff's defect rules (bugbear + blind-except + RUF012) against the baseline
 	@echo "🐛 Checking defect-bearing lint rules against the baseline..."
 	$(HATCH) run check-lint-ratchet
 

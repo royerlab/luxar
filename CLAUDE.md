@@ -100,7 +100,7 @@ make lint-python        # read-only: ruff check
 make check-complexity   # read-only: ruff C901 ratcheted against scripts/complexity_baseline.json
                   # CI enforces this both through `hatch run lint` and the
                   # live-tree `test_repository_has_no_complexity_regressions`.
-make check-lint-ratchet # read-only: ruff's DEFECT rules (flake8-bugbear + RUF012)
+make check-lint-ratchet # read-only: ruff's DEFECT rules (bugbear + blind-except + RUF012)
                   # ratcheted against scripts/lint_baseline.json. Existing debt is
                   # tolerated; a file that newly breaks one of these rules — or
                   # gains another violation of one it already breaks — fails.
