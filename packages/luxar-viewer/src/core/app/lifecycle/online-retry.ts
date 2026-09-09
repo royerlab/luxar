@@ -108,6 +108,7 @@ export function installOnlineRetry(ports: OnlineRetryPorts): void {
               `Online retry still deferred after ${attemptNumber} attempts — ` +
                 'leaving failures to the monitor banner / manual retry'
             );
+            loader.resetRefinementFailures();
             retryInFlight = false;
             return;
           }
@@ -136,6 +137,7 @@ export function installOnlineRetry(ports: OnlineRetryPorts): void {
         // retryAllFailedLoaders resolves per-path failures into its result;
         // a rejection here is unexpected infrastructure trouble — log it and
         // leave the failure records for the next trigger.
+        loader.resetRefinementFailures();
         retryInFlight = false;
         log.warning(
           Modules.LUXAR,

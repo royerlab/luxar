@@ -189,10 +189,11 @@ describe('installOnlineRetry', () => {
   it('gives up after MAX_DEFERRED_RETRY_ATTEMPTS and leaves failures to the banner', async () => {
     vi.useFakeTimers();
     try {
+      const resetRefinementFailures = vi.fn().mockReturnValue(false);
       const loader: RetryCapableLoader = {
         hasFailures: () => true,
         hasAutoRetryableFailures: () => true,
-        resetRefinementFailures: () => false,
+        resetRefinementFailures,
         retryAllFailedLoaders: vi
           .fn()
           .mockResolvedValue({ succeeded: [], failed: ['/a'], deferred: true }),
@@ -205,6 +206,7 @@ describe('installOnlineRetry', () => {
       );
 
       expect(loader.retryAllFailedLoaders).toHaveBeenCalledTimes(MAX_DEFERRED_RETRY_ATTEMPTS);
+      expect(resetRefinementFailures).toHaveBeenCalledTimes(1);
       // No misleading outcome toast — only the initial "retrying…" one.
       expect(toast).toHaveBeenCalledTimes(1);
 
@@ -215,6 +217,17 @@ describe('installOnlineRetry', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('re-opens exhausted LOD refinement when the retry batch rejects', async () => {
+    const loader = makeLoader(true);
+    loader.retryAllFailedLoaders.mockRejectedValue(new Error('retry infrastructure failed'));
+    installOnlineRetry({ events, getLoader: () => loader, toast });
+
+    window.dispatchEvent(new Event('online'));
+
+    await vi.waitFor(() => expect(loader.resetRefinementFailures).toHaveBeenCalledTimes(1));
+    expect(toast).toHaveBeenCalledTimes(1);
   });
 
   it('clears a pending deferred-retry timer when the EventGroup is disposed', async () => {
