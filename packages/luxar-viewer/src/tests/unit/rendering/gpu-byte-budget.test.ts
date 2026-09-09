@@ -49,6 +49,20 @@ afterEach(() => {
 });
 
 describe('gpu-byte-budget', () => {
+  it('initializes a fresh embed budget from the mobile device class', async () => {
+    vi.resetModules();
+    profile.deviceClass = 'mobile';
+    const freshBudget = await import('../../../rendering/gpu-byte-budget');
+
+    withDeviceMemory(undefined, () => {
+      withHeapLimit(undefined, () => {
+        freshBudget.initializeGpuByteBudget(null);
+        expect(freshBudget.getGpuByteBudget()).toBe(Math.floor((384 * MiB) / 3));
+      });
+    });
+    profile.deviceClass = 'laptop';
+  });
+
   it('honors an explicit override and skips the heuristic', () => {
     withDeviceMemory(8, () => {
       configureGpuByteBudget(1536 * MB);
