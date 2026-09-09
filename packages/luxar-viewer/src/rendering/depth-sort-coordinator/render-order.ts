@@ -543,16 +543,6 @@ const GROUP_SPHERE_STRIDE = SPHERE_STRIDE * 2;
 const TIGHT_SPHERE_OFFSET = 0;
 const LEGACY_SPHERE_OFFSET = SPHERE_STRIDE;
 
-function firstUsableSlot(slots: readonly OrderSlot[]): OrderSlot | null {
-  for (const slot of slots) if (slot.radius >= 0) return slot;
-  return null;
-}
-
-function hasAnotherUsableSlot(slots: readonly OrderSlot[], first: OrderSlot): boolean {
-  for (const slot of slots) if (slot !== first && slot.radius >= 0) return true;
-  return false;
-}
-
 function farthestSlotFrom(slots: readonly OrderSlot[], origin: OrderSlot): OrderSlot {
   let best = origin;
   let bestReach = -Infinity;
@@ -621,7 +611,16 @@ function writeGroupEnclosingSphere(
   out: number[],
   offset: number
 ): void {
-  const first = firstUsableSlot(slots);
+  let first: OrderSlot | null = null;
+  let hasSecond = false;
+  for (const slot of slots) {
+    if (slot.radius < 0) continue;
+    if (first) {
+      hasSecond = true;
+      break;
+    }
+    first = slot;
+  }
   if (!first) {
     out[offset] = 0;
     out[offset + 1] = 0;
@@ -629,7 +628,7 @@ function writeGroupEnclosingSphere(
     out[offset + 3] = -1;
     return;
   }
-  if (!hasAnotherUsableSlot(slots, first)) {
+  if (!hasSecond) {
     out[offset] = first.viewX;
     out[offset + 1] = first.viewY;
     out[offset + 2] = first.viewZ;
