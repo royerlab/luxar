@@ -78,10 +78,13 @@ Heap detection uses `performance.memory`, which is **Chrome/Blink-only**. In
 is absent, so the heap can't be measured. There, pass an explicit pool with
 **`?cacheBudgetMB=<N>`** (the native launcher injects it automatically, default
 2048, env `LUXAR_CACHE_BUDGET_MB`); it takes precedence over heap detection and
-is split across the tiers the same way. One third also becomes the viewer's
-auto GPU-geometry/LOD residency signal, so the launcher default raises that
-budget from 512 to 716 MB; lower values reduce both cache and retained geometry
-pressure. Without an override, WebKit falls back to
+is split across the tiers the same way. The implied non-cache remainder also
+becomes the viewer's auto GPU-geometry/LOD residency signal, capped separately
+at 2 GB, so the launcher default raises that budget from 512 to 1432 MB; lower
+values reduce both cache and retained geometry pressure. The GPU and refinement
+ceilings are independent but not additive because they count overlapping
+renderer rows. Mobile devices retain a separate 128 MiB GPU safety cap, so a
+mobile override can only lower that value. Without an override, WebKit falls back to
 an inferred **device-class** pool (the `deviceClass` of the shared input profile, `utils/input-capabilities`): mobile ≈ 384 MB, laptop
 ≈ 1 GB, desktop ≈ 2 GB. `mobile` is detected reliably (mobile UA, or touch +
 coarse pointer — which also catches iPadOS); laptop vs desktop is a deliberately

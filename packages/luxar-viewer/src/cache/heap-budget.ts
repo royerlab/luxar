@@ -43,16 +43,15 @@ const NON_CACHE_SHARE_OF_TARGET = 1 - CACHE_SHARE_OF_TARGET;
  * working set 0.5, L2 write-queue retain 0.25, leaving a quarter of the
  * remainder unclaimed by either. That is a bound on what THESE TWO numbers
  * hand out, not on total commitment — the eager 0.5 is claimed independently,
- * in full, by three consumers (`createLineWorkingSetGate` in
+ * in full, by two consumers (`createLineWorkingSetGate` in
  * `data/scene-loader/nodes/load-children-concurrently.ts`,
  * `RefinementResidencyBudget.forSession` in
- * `data/scene-loader/progressive/residency-budget.ts`, and
- * `rendering/gpu-byte-budget.ts` as a min-candidate), so on a 4 GiB heap the
- * commitments already total
- * 3 × 512 + 328 MiB against a 1310 MiB remainder. Keep that ledger in mind when
- * retuning: the queue takes a quarter rather than a half precisely because
- * these are ceilings on demand-filled structures competing for one heap, and
- * a second half-share would let two of them alone spend the whole remainder.
+ * `data/scene-loader/progressive/residency-budget.ts`). GPU geometry takes the
+ * full remainder through `computeNonCacheRemainderBytes`, with its own 2 GB
+ * ceiling, because its evictor counts many of the same renderer rows as the
+ * refinement refusal gate rather than reserving an additive population. Keep
+ * that overlap in mind when retuning: these are independent ceilings on
+ * demand-filled structures, not shares whose sum is a memory reservation.
  */
 const EAGER_WORKING_SET_SHARE_OF_REMAINDER = 0.5;
 const EAGER_WORKING_SET_CAP_BYTES = 512 * MB;
@@ -155,9 +154,9 @@ export function readHeapLimitBytes(): number | undefined {
 
 /**
  * Heap headroom left OUTSIDE the cache pool — the shared memory model every
- * non-cache consumer sizes itself from (the eager child loader, the L2 write
- * queue), so a session uses ONE remainder rather than each consumer inventing
- * its own view of the heap.
+ * non-cache consumer sizes itself from (the eager child loader, refinement
+ * residency, GPU geometry, the L2 write queue), so a session uses ONE remainder
+ * rather than each consumer inventing its own view of the heap.
  *
  * Resolution matches the cache pool: explicit pool override → measured heap →
  * device-class pool. A pool-based input is converted back to the remainder it
@@ -176,7 +175,7 @@ export function readHeapLimitBytes(): number | undefined {
  * @param fallbackPoolBytes - Device-class total cache pool in bytes, used only
  *   when neither an explicit pool nor a measurable heap is available.
  */
-function nonCacheRemainderBytes(
+export function computeNonCacheRemainderBytes(
   heapLimitBytes?: number,
   poolOverrideBytes?: number,
   fallbackPoolBytes?: number
@@ -194,7 +193,7 @@ function nonCacheRemainderBytes(
 
 /**
  * The eager child loader's share of the heap headroom left outside the cache
- * pool (`nonCacheRemainderBytes`): half of it. The L2 write-queue retain takes
+ * pool (`computeNonCacheRemainderBytes`): half of it. The L2 write-queue retain takes
  * a quarter (see {@link computeOpfsWriteQueueBudgetBytes}) and the last quarter
  * is claimed by neither, while the absolute cap prevents a large V8 heap limit
  * from recreating an eight-wide allocation spike. Note that this budget is
@@ -214,7 +213,11 @@ export function computeWorkingSetBudgetBytes(
   poolOverrideBytes?: number,
   fallbackPoolBytes?: number
 ): number {
-  const remainder = nonCacheRemainderBytes(heapLimitBytes, poolOverrideBytes, fallbackPoolBytes);
+  const remainder = computeNonCacheRemainderBytes(
+    heapLimitBytes,
+    poolOverrideBytes,
+    fallbackPoolBytes
+  );
   if (remainder === undefined) return EAGER_WORKING_SET_FIXED_FALLBACK_BYTES;
   return Math.floor(
     Math.min(remainder * EAGER_WORKING_SET_SHARE_OF_REMAINDER, EAGER_WORKING_SET_CAP_BYTES)
@@ -223,7 +226,7 @@ export function computeWorkingSetBudgetBytes(
 
 /**
  * The L2 (OPFS) write queue's share of the same non-cache heap remainder
- * (`nonCacheRemainderBytes`) — the ceiling on bytes pending background writes
+ * (`computeNonCacheRemainderBytes`) — the ceiling on bytes pending background writes
  * may retain.
  *
  * NOT `max(l1Size, 64 MB)`, which is what this cap was at first (#2528). A
@@ -286,7 +289,11 @@ export function computeOpfsWriteQueueBudgetBytes(
   poolOverrideBytes?: number,
   fallbackPoolBytes?: number
 ): number {
-  const remainder = nonCacheRemainderBytes(heapLimitBytes, poolOverrideBytes, fallbackPoolBytes);
+  const remainder = computeNonCacheRemainderBytes(
+    heapLimitBytes,
+    poolOverrideBytes,
+    fallbackPoolBytes
+  );
   if (remainder === undefined) return OPFS_WRITE_QUEUE_FIXED_FALLBACK_BYTES;
   return Math.floor(
     Math.min(remainder * OPFS_WRITE_QUEUE_SHARE_OF_REMAINDER, OPFS_WRITE_QUEUE_CAP_BYTES)

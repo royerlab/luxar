@@ -105,14 +105,10 @@ describe('gpu-byte-budget', () => {
     // eviction path is unreachable. The override is the ONLY way to reproduce
     // constrained-device behaviour — without it the fix is untestable on the
     // hardware that would verify it.
-    it('is what makes eviction reachable: budget lands under a few hundred MB', () => {
-      // The stranded superseded pairs measured on a 2M-splat 16-rung node are
-      // ~285 MB. For the pool LRU to fire at all, the budget must land below
-      // active + pooled. This pins that the 1024 MiB test point actually binds
-      // — the whole acceptance criterion (evictions > 0) depends on it.
+    it('uses the non-cache remainder implied by the explicit pool', () => {
       withDeviceMemory(32, () => {
         configureGpuByteBudget(null, { cachePoolOverrideBytes: 1024 * MiB });
-        expect(getGpuByteBudget()).toBe(Math.floor((1024 * MiB) / 3));
+        expect(getGpuByteBudget()).toBe(Math.floor((1024 * MiB * 2) / 3));
       });
     });
 
@@ -123,17 +119,26 @@ describe('gpu-byte-budget', () => {
       });
     });
 
-    it('keeps large cache overrides proportional instead of applying the eager-loader cap', () => {
+    it('caps large cache overrides at the GPU budget ceiling, not the eager-loader ceiling', () => {
       withDeviceMemory(32, () => {
         configureGpuByteBudget(null, { cachePoolOverrideBytes: 4096 * MiB });
-        expect(getGpuByteBudget()).toBe(Math.floor((4096 * MiB) / 3));
+        expect(getGpuByteBudget()).toBe(2_000 * MB);
       });
     });
 
     it('uses the cache override when deviceMemory is unavailable', () => {
       withDeviceMemory(undefined, () => {
         configureGpuByteBudget(null, { cachePoolOverrideBytes: 2048 * MiB });
-        expect(getGpuByteBudget()).toBe(Math.floor((2048 * MiB) / 3));
+        expect(getGpuByteBudget()).toBe(Math.floor((2048 * MiB * 2) / 3));
+      });
+    });
+
+    it('lets an explicit cache pool replace the measured-heap remainder', () => {
+      withDeviceMemory(32, () => {
+        withHeapLimit(1024 * MiB, () => {
+          configureGpuByteBudget(null, { cachePoolOverrideBytes: 2048 * MiB });
+          expect(getGpuByteBudget()).toBe(Math.floor((2048 * MiB * 2) / 3));
+        });
       });
     });
 
@@ -165,8 +170,7 @@ describe('gpu-byte-budget', () => {
       withDeviceMemory(32, () => {
         withHeapLimit(4 * 1024 * 1024 * 1024, () => {
           configureGpuByteBudget();
-          expect(getGpuByteBudget()).toBeLessThan(2_000 * MB);
-          expect(getGpuByteBudget()).toBeGreaterThan(0);
+          expect(getGpuByteBudget()).toBe(Math.floor(4 * 1024 * 1024 * 1024 * 0.8 * 0.4));
         });
       });
     });
@@ -191,6 +195,25 @@ describe('gpu-byte-budget', () => {
       expect(atOneGB).toBeLessThan(atFourGB);
     });
 
+    it('tracks roomy heaps upward beyond the eager-loader 512 MiB ceiling', () => {
+      let atFourGB = 0;
+      let atEightGB = 0;
+      withDeviceMemory(32, () => {
+        withHeapLimit(4 * 1024 * 1024 * 1024, () => {
+          configureGpuByteBudget();
+          atFourGB = getGpuByteBudget();
+        });
+        withHeapLimit(8 * 1024 * 1024 * 1024, () => {
+          configureGpuByteBudget();
+          atEightGB = getGpuByteBudget();
+        });
+      });
+
+      expect(atFourGB).toBe(Math.floor(4 * 1024 * 1024 * 1024 * 0.8 * 0.4));
+      expect(atEightGB).toBe(2_000 * MB);
+      expect(atEightGB).toBeGreaterThan(atFourGB);
+    });
+
     it('logs the cache override in the MiB units supplied by the user', () => {
       const info = vi.spyOn(log, 'info').mockImplementation(() => {});
       withDeviceMemory(32, () => {
@@ -198,7 +221,7 @@ describe('gpu-byte-budget', () => {
       });
       expect(info).toHaveBeenCalledWith(
         Modules.PERFORMANCE,
-        'GPU byte budget: 358 MB (auto: deviceMemory=32 GB -> 2000 MB, cacheBudgetMB=1024 -> 358 MB; min=358 MB)'
+        'GPU byte budget: 716 MB (auto: deviceMemory=32 GB -> 2000 MB, cacheBudgetMB=1024 -> 716 MB; min=716 MB)'
       );
       info.mockRestore();
     });
@@ -222,7 +245,7 @@ describe('gpu-byte-budget — mobile device class', () => {
     profile.deviceClass = 'laptop';
   });
 
-  it('a phone/tablet with NO other signal (WebKit) gets the mobile pool share, not the 512 MB fallback', () => {
+  it('a phone/tablet with NO other signal (WebKit) retains the 128 MiB safety cap', () => {
     profile.deviceClass = 'mobile';
     withDeviceMemory(undefined, () => {
       withHeapLimit(undefined, () => {
@@ -237,6 +260,16 @@ describe('gpu-byte-budget — mobile device class', () => {
     withDeviceMemory(8, () => {
       withHeapLimit(undefined, () => {
         configureGpuByteBudget(); // 8 GB × 0.25 = 2 GB would otherwise win
+        expect(getGpuByteBudget()).toBe(Math.floor((384 * MiB) / 3));
+      });
+    });
+  });
+
+  it('a cache override cannot raise the mobile safety cap', () => {
+    profile.deviceClass = 'mobile';
+    withDeviceMemory(undefined, () => {
+      withHeapLimit(undefined, () => {
+        configureGpuByteBudget(null, { cachePoolOverrideBytes: 2048 * MiB });
         expect(getGpuByteBudget()).toBe(Math.floor((384 * MiB) / 3));
       });
     });

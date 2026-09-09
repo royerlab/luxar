@@ -144,13 +144,15 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // eviction path can never be exercised under pressure. `?cacheBudgetMB=` is
   // the only way to reproduce constrained-device behaviour on a roomy box. In
   // desktop WebKit it is the sole signal and may raise or lower the 512 MB
-  // fallback. On mobile WebKit the device-class term is the other signal, so
-  // `?cacheBudgetMB=` can only lower its 128 MiB share.
+  // fallback. On mobile WebKit it replaces the device-class pool in the shared
+  // remainder, but the independent 128 MiB mobile safety cap remains a peer
+  // minimum, so the override can only lower it.
   // The persisted Settings budget remains cache-only by design; the regression
   // guard is tests/unit/core/bootstrap.test.ts:594. The ambient JS heap limit is
-  // deliberately not folded in: its coarse Chromium tiers are not a GPU-memory
-  // measurement. A MOBILE device class is folded in (inside
-  // `computeAutoBudget`): on WebKit it is the only memory signal a phone has.
+  // folded in because pooled geometry retains CPU-side ArrayBuffers; unlike the
+  // eager loader, the GPU term uses the full non-cache remainder with its own
+  // 2 GB ceiling. A MOBILE device class is folded in (inside `computeAutoBudget`):
+  // on WebKit it is the only memory signal a phone has.
   configureGpuByteBudget(
     urlParams.gpuBudgetMB != null
       ? urlParams.gpuBudgetMB * 1_000_000

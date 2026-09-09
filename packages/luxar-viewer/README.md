@@ -577,8 +577,9 @@ repo root and used by `luxar export --native ...`) honor:
   S-cache) the launcher passes to the viewer via `?cacheBudgetMB=`
   (default 2048). WebKit WebViews don't implement `performance.memory`,
   so the viewer can't auto-size its caches from the JS heap. The same value
-  supplies the auto GPU-geometry/LOD residency signal at one third of the pool;
-  the default therefore raises that budget from 512 to 716 MB when
+  supplies the auto GPU-geometry/LOD residency signal through the implied
+  non-cache remainder; the default therefore raises that budget from 512 to
+  1432 MB when
   `deviceMemory` is unavailable. Lower it on a constrained machine (e.g. `=512`).
 
 ### Configuration
@@ -773,10 +774,10 @@ toolchain-derived version floor.
 Verified 2026-09-04 on macOS arm64 by running the E2E smoke subset (13 tests)
 against Playwright's bundled engines:
 
-| Engine   | Smoke subset | Notes                                                |
-| -------- | ------------ | ---------------------------------------------------- |
-| Chromium | 13/13 pass   | L2 (OPFS) disk cache initialises                      |
-| Firefox  | 13/13 pass   | L2 (OPFS) disk cache initialises                      |
+| Engine   | Smoke subset | Notes                                                                                                                           |
+| -------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| Chromium | 13/13 pass   | L2 (OPFS) disk cache initialises                                                                                                |
+| Firefox  | 13/13 pass   | L2 (OPFS) disk cache initialises                                                                                                |
 | WebKit   | 13/13 pass   | **runs without the L2 disk cache** — the OPFS store's init / write probe fails, so chunk data is not persisted between sessions |
 
 Reproduce after running `pnpm test:generate-fixtures` and `pnpm exec playwright
@@ -829,7 +830,7 @@ the native WKWebView launcher fall back to L1-only caching; see the
 - `?lineJoin=<none|miter>` — Force the line join style for the session; applies only to `linePrimitive=screen-space` (the capsule partitions joints unconditionally)
 - `?linePrimitive=<capsule|screen-space>` — Select the line rendering primitive for the session (#1352), overriding the `Settings → Advanced → Line primitive` policy; default policy `auto` builds the `capsule` (gaussian-like 2D point-to-segment profile: stable end-on discs, seamless partitioned joints) except for very large line nodes, which build the leaner `screen-space` quad. The third primitive, `volumetric`, was deleted after the capsule flip
 - `?gpuBudgetMB=<N>` — Override the shared GPU-geometry/LOD retention budget; `0` means unbounded
-- `?cacheBudgetMB=<N>` — Override the total in-memory cache pool (L0 + L1 + S-cache) in megabytes; used where `performance.memory` is unavailable (WKWebView, Safari), and also supplies one third of the pool as a GPU-geometry/LOD residency signal (replacing the 512 MB fallback in either direction when `deviceMemory` is unavailable)
+- `?cacheBudgetMB=<N>` — Override the total in-memory cache pool (L0 + L1 + S-cache) in megabytes; used where `performance.memory` is unavailable (WKWebView, Safari), and also supplies the implied non-cache remainder as a GPU-geometry/LOD residency signal (replacing the 512 MB fallback in either direction when `deviceMemory` is unavailable, capped at 2 GB)
 
 ### Programmatic Usage
 
