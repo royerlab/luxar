@@ -210,6 +210,7 @@ vi.mock('../../../core/app/init/module-overrides', () => ({
 }));
 
 import { LuxarLayer, type LuxarLayerOptions } from '../../../core/layer/luxar-layer';
+import { config } from '../../../config';
 
 function makeOptions(overrides: Partial<LuxarLayerOptions> = {}): LuxarLayerOptions {
   const renderer = {
@@ -242,6 +243,14 @@ describe('LuxarLayer', () => {
   });
 
   describe('construction', () => {
+    it('uses the configured default when gpuPoolMaxBytes is omitted', () => {
+      new LuxarLayer(makeOptions());
+
+      expect(initializeGpuByteBudget).toHaveBeenCalledWith(
+        config.dataLoading.performance.gpuPoolMaxBytes
+      );
+    });
+
     it.each([0, 640_000_000])(
       'configures GPU byte budget %s before installing the LOD registry',
       (gpuPoolMaxBytes) => {
