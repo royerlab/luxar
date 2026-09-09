@@ -27,6 +27,7 @@ import { clamp } from '../../utils/clamp';
 import {
   computeEffectiveSize,
   getPhysicalSize,
+  getRenderTargetAllocation,
   createHdrTarget,
   buildTransientResources,
   buildBloomChain,
@@ -182,7 +183,15 @@ export class PostProcessingManager {
       renderSize: this.renderSize,
       ssaaEnabled: this.ssaaEnabled,
       ssaaMultiplier: this.ssaaMultiplier,
+      maxPhysicalDimension: this.maxPhysicalDimension,
     });
+  }
+
+  private get maxPhysicalDimension(): number {
+    return Math.min(
+      this.capabilities.maxTextureSize,
+      this.capabilities.maxRenderbufferSize ?? this.capabilities.maxTextureSize
+    );
   }
 
   private getPhysicalSize(): { width: number; height: number } {
@@ -191,6 +200,17 @@ export class PostProcessingManager {
       renderSize: this.renderSize,
       ssaaEnabled: this.ssaaEnabled,
       ssaaMultiplier: this.ssaaMultiplier,
+      maxPhysicalDimension: this.maxPhysicalDimension,
+    });
+  }
+
+  private getRenderTargetAllocation() {
+    return getRenderTargetAllocation({
+      renderer: this.renderer,
+      renderSize: this.renderSize,
+      ssaaEnabled: this.ssaaEnabled,
+      ssaaMultiplier: this.ssaaMultiplier,
+      maxPhysicalDimension: this.maxPhysicalDimension,
     });
   }
 
@@ -733,8 +753,9 @@ export class PostProcessingManager {
    * complete no-op (see `lastAllocation`).
    */
   private reallocateForSize(): void {
-    const { width: logicalW, height: logicalH } = this.computeEffectiveSize();
-    const { width: physW, height: physH } = this.getPhysicalSize();
+    const allocation = this.getRenderTargetAllocation();
+    const { width: logicalW, height: logicalH } = allocation.logical;
+    const { width: physW, height: physH } = allocation.physical;
     const msaaSamples = this.msaaEnabled ? this.msaaSamples : 0;
 
     const last = this.lastAllocation;
@@ -750,6 +771,25 @@ export class PostProcessingManager {
     ) {
       return; // identical allocation — the redundant resize path lands here
     }
+    // All render targets at PHYSICAL size — matches canvas backbuffer
+    // and the resolution materials read from `getDrawingBufferSize()`.
+    // Resize them before the renderer: WebGPURenderer dispatches a
+    // synchronous resize event from setSize(), so observers must never
+    // see a new backbuffer paired with stale post-processing targets.
+    this.hdrTarget.dispose();
+    this.hdrTarget = createHdrTarget(physW, physH, this.msaaEnabled ? this.msaaSamples : 0);
+
+    this.ldrTarget.setSize(physW, physH);
+    if (this.bloomChain) {
+      this.bloomChain.setSize(physW, physH);
+      // setSize may have reallocated the mip targets — rebind the
+      // (possibly new) bloom texture identity into the mega-shader.
+      this.megaShader.setBloom(this.bloomIntensity, this.bloomChain.outputTexture);
+    }
+    this.fxaaPass?.setSize(physW, physH);
+    this.refractionSplit?.setSize(physW, physH);
+    this.megaShader.setResolution(physW, physH);
+
     this.lastAllocation = {
       displayW: this.renderSize.width,
       displayH: this.renderSize.height,
@@ -766,21 +806,16 @@ export class PostProcessingManager {
     this.renderer.domElement.style.width = `${this.renderSize.width}px`;
     this.renderer.domElement.style.height = `${this.renderSize.height}px`;
 
-    // All render targets at PHYSICAL size — matches canvas backbuffer
-    // and the resolution materials read from `getDrawingBufferSize()`.
-    this.hdrTarget.dispose();
-    this.hdrTarget = createHdrTarget(physW, physH, this.msaaEnabled ? this.msaaSamples : 0);
-
-    this.ldrTarget.setSize(physW, physH);
-    if (this.bloomChain) {
-      this.bloomChain.setSize(physW, physH);
-      // setSize may have reallocated the mip targets — rebind the
-      // (possibly new) bloom texture identity into the mega-shader.
-      this.megaShader.setBloom(this.bloomIntensity, this.bloomChain.outputTexture);
+    if (allocation.limited) {
+      const requested = this.computeEffectiveSize();
+      const dpr = this.renderer.getPixelRatio();
+      log.warning(
+        Modules.POST_PROCESSING,
+        `Render target ${Math.floor(requested.width * dpr)}x${Math.floor(requested.height * dpr)} ` +
+          `exceeds the ${this.maxPhysicalDimension}px framebuffer limit; ` +
+          `using ${physW}x${physH}`
+      );
     }
-    this.fxaaPass?.setSize(physW, physH);
-    this.refractionSplit?.setSize(physW, physH);
-    this.megaShader.setResolution(physW, physH);
 
     log.info(
       Modules.POST_PROCESSING,

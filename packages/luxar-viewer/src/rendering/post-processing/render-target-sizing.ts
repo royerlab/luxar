@@ -14,6 +14,12 @@ export interface RenderSize {
   height: number;
 }
 
+export interface RenderTargetAllocation {
+  logical: RenderSize;
+  physical: RenderSize;
+  limited: boolean;
+}
+
 /**
  * Compute the effective render-target size given current SSAA settings.
  *
@@ -40,5 +46,46 @@ export function computeEffectiveRenderSize(
   return {
     width: Math.round(renderSize.width * ssaaMultiplier),
     height: Math.round(renderSize.height * ssaaMultiplier),
+  };
+}
+
+/**
+ * Compute matching renderer and render-target dimensions.
+ *
+ * Three.js floors `logical × pixelRatio` when it sizes the canvas. Use
+ * the same rule here so every off-screen attachment exactly matches the
+ * backbuffer at non-integer DPRs. If either physical axis exceeds the
+ * framebuffer limit, reduce both logical axes by one common factor to
+ * preserve the viewport aspect ratio.
+ */
+export function computeRenderTargetAllocation(
+  renderSize: RenderSize,
+  ssaaEnabled: boolean,
+  ssaaMultiplier: number,
+  pixelRatio: number,
+  maxPhysicalDimension: number
+): RenderTargetAllocation {
+  const effective = computeEffectiveRenderSize(renderSize, ssaaEnabled, ssaaMultiplier);
+  const requestedPhysical = {
+    width: Math.max(1, Math.floor(effective.width * pixelRatio)),
+    height: Math.max(1, Math.floor(effective.height * pixelRatio)),
+  };
+  const scale = Math.min(
+    1,
+    maxPhysicalDimension / requestedPhysical.width,
+    maxPhysicalDimension / requestedPhysical.height
+  );
+  const logical = {
+    width: Math.max(1 / pixelRatio, effective.width * scale),
+    height: Math.max(1 / pixelRatio, effective.height * scale),
+  };
+
+  return {
+    logical,
+    physical: {
+      width: Math.max(1, Math.floor(logical.width * pixelRatio)),
+      height: Math.max(1, Math.floor(logical.height * pixelRatio)),
+    },
+    limited: scale < 1,
   };
 }

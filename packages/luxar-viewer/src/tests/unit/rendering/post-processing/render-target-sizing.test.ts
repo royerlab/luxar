@@ -3,7 +3,10 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { computeEffectiveRenderSize } from '../../../../rendering/post-processing/render-target-sizing';
+import {
+  computeEffectiveRenderSize,
+  computeRenderTargetAllocation,
+} from '../../../../rendering/post-processing/render-target-sizing';
 
 describe('computeEffectiveRenderSize', () => {
   it('passes through the render size unchanged when SSAA is disabled', () => {
@@ -60,6 +63,42 @@ describe('computeEffectiveRenderSize', () => {
     expect(computeEffectiveRenderSize({ width: 0, height: 0 }, true, 4)).toEqual({
       width: 0,
       height: 0,
+    });
+  });
+});
+
+describe('computeRenderTargetAllocation', () => {
+  it('matches Three.js floor rounding at a non-integer DPR', () => {
+    expect(
+      computeRenderTargetAllocation({ width: 1001, height: 1003 }, true, 1.5, 1.31, 8192)
+    ).toEqual({
+      logical: { width: 1502, height: 1505 },
+      physical: { width: 1967, height: 1971 },
+      limited: false,
+    });
+  });
+
+  it('reduces oversized SSAA dimensions proportionally to the framebuffer limit', () => {
+    const allocation = computeRenderTargetAllocation(
+      { width: 2509, height: 1328 },
+      true,
+      2,
+      2,
+      8192
+    );
+
+    expect(allocation.logical.width).toBe(4096);
+    expect(allocation.logical.height).toBeCloseTo(2167.99, 2);
+    expect(allocation.physical).toEqual({ width: 8192, height: 4335 });
+    expect(allocation.limited).toBe(true);
+    expect(allocation.logical.width / allocation.logical.height).toBeCloseTo(2509 / 1328, 5);
+  });
+
+  it('keeps a zero-sized hidden canvas and its targets at the same one-pixel floor', () => {
+    expect(computeRenderTargetAllocation({ width: 0, height: 0 }, false, 2, 2, 8192)).toEqual({
+      logical: { width: 0.5, height: 0.5 },
+      physical: { width: 1, height: 1 },
+      limited: false,
     });
   });
 });

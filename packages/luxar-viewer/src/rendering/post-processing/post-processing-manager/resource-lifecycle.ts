@@ -14,7 +14,7 @@ import * as THREE from 'three';
 import { BloomChain } from '../bloom/chain';
 import { FxaaPass } from '../fxaa/pass';
 import { FullscreenPass } from '../fullscreen/pass';
-import { computeEffectiveRenderSize } from '../render-target-sizing';
+import { computeEffectiveRenderSize, computeRenderTargetAllocation } from '../render-target-sizing';
 import { resolveToneMappingDefault } from '../tone-mapping';
 import { materialManager, type LuxarMegaShaderMaterial } from '../../material-manager';
 import { config } from '../../../config';
@@ -28,6 +28,7 @@ export interface SizingInputs {
   readonly renderSize: { readonly width: number; readonly height: number };
   readonly ssaaEnabled: boolean;
   readonly ssaaMultiplier: number;
+  readonly maxPhysicalDimension: number;
 }
 
 /** Effective (logical SSAA) render size in CSS pixels. */
@@ -43,12 +44,18 @@ export function computeEffectiveSize(s: SizingInputs): { width: number; height: 
  * mismatch would silently brighten the scene via over-coverage.
  */
 export function getPhysicalSize(s: SizingInputs): { width: number; height: number } {
-  const { width, height } = computeEffectiveSize(s);
-  const dpr = s.renderer.getPixelRatio();
-  return {
-    width: Math.max(1, Math.round(width * dpr)),
-    height: Math.max(1, Math.round(height * dpr)),
-  };
+  return getRenderTargetAllocation(s).physical;
+}
+
+/** Matching logical renderer size and physical attachment size. */
+export function getRenderTargetAllocation(s: SizingInputs) {
+  return computeRenderTargetAllocation(
+    s.renderSize,
+    s.ssaaEnabled,
+    s.ssaaMultiplier,
+    s.renderer.getPixelRatio(),
+    s.maxPhysicalDimension
+  );
 }
 
 /** Allocate the HDR target the scene renders into. */

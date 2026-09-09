@@ -110,6 +110,8 @@ export interface RendererCapabilities {
    * capacity.
    */
   readonly maxTextureSize: number;
+  /** Maximum renderbuffer dimension (`MAX_RENDERBUFFER_SIZE`). */
+  readonly maxRenderbufferSize: number;
   /** `[min, max]` `gl_PointSize` range — used for debug logging. */
   readonly pointSizeRange: readonly [number, number];
 
@@ -220,6 +222,11 @@ export function createRendererCapabilities(
     const maxTextureSizeRaw = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number | null;
     const maxTextureSize =
       typeof maxTextureSizeRaw === 'number' && maxTextureSizeRaw > 0 ? maxTextureSizeRaw : 2048;
+    const maxRenderbufferSizeRaw = gl.getParameter(gl.MAX_RENDERBUFFER_SIZE) as number | null;
+    const maxRenderbufferSize =
+      typeof maxRenderbufferSizeRaw === 'number' && maxRenderbufferSizeRaw > 0
+        ? maxRenderbufferSizeRaw
+        : 2048;
 
     const rawRange = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE);
     const pointSizeRange: readonly [number, number] =
@@ -259,6 +266,7 @@ export function createRendererCapabilities(
       hdr,
       maxMSAASamples,
       maxTextureSize,
+      maxRenderbufferSize,
       pointSizeRange,
       readBackbufferPixels() {
         // Bind the canvas backbuffer explicitly. `runPipeline` is
@@ -324,6 +332,7 @@ export function createRendererCapabilities(
     hdr,
     maxMSAASamples: 4, // WebGPU adapters guarantee at least 4× MSAA
     maxTextureSize,
+    maxRenderbufferSize: maxTextureSize,
     pointSizeRange: [1, 1024],
     readBackbufferPixels() {
       // WebGPU backbuffer readback. WebGPURenderer doesn't have a

@@ -19,6 +19,8 @@ import {
 
 // MAX_SAMPLES and ALIASED_POINT_SIZE_RANGE constants
 const MAX_SAMPLES = 0x8d57;
+const MAX_TEXTURE_SIZE = 0x0d33;
+const MAX_RENDERBUFFER_SIZE = 0x84e8;
 const ALIASED_POINT_SIZE_RANGE = 0x846d;
 const RED_BITS = 0x0d52;
 const GREEN_BITS = 0x0d53;
@@ -26,6 +28,8 @@ const BLUE_BITS = 0x0d54;
 
 type Probes = {
   maxSamples?: number | null;
+  maxTextureSize?: number | null;
+  maxRenderbufferSize?: number | null;
   pointSizeRange?: ArrayLike<number> | number;
   extensions?: string[];
   colorBits?: { red: number; green: number; blue: number };
@@ -35,6 +39,8 @@ type Probes = {
 
 function fakeRenderer(probes: Probes = {}): THREE.WebGLRenderer {
   const maxSamples = 'maxSamples' in probes ? probes.maxSamples : 8;
+  const maxTextureSize = 'maxTextureSize' in probes ? probes.maxTextureSize : 16384;
+  const maxRenderbufferSize = 'maxRenderbufferSize' in probes ? probes.maxRenderbufferSize : 8192;
   const {
     pointSizeRange = new Float32Array([1, 1024]),
     extensions = [],
@@ -46,6 +52,8 @@ function fakeRenderer(probes: Probes = {}): THREE.WebGLRenderer {
   const readPixels = vi.fn();
   const fakeGL = {
     MAX_SAMPLES,
+    MAX_TEXTURE_SIZE,
+    MAX_RENDERBUFFER_SIZE,
     ALIASED_POINT_SIZE_RANGE,
     RED_BITS,
     GREEN_BITS,
@@ -55,6 +63,8 @@ function fakeRenderer(probes: Probes = {}): THREE.WebGLRenderer {
     getExtension: (name: string) => (extensions.includes(name) ? {} : null),
     getParameter: (param: number) => {
       if (param === MAX_SAMPLES) return maxSamples;
+      if (param === MAX_TEXTURE_SIZE) return maxTextureSize;
+      if (param === MAX_RENDERBUFFER_SIZE) return maxRenderbufferSize;
       if (param === ALIASED_POINT_SIZE_RANGE) return pointSizeRange;
       if (param === RED_BITS) return colorBits.red;
       if (param === GREEN_BITS) return colorBits.green;
@@ -136,6 +146,22 @@ describe('createRendererCapabilities (GL probes)', () => {
   it('defaults maxMSAASamples to 0 when the GPU returns a non-number', () => {
     const caps = createRendererCapabilities(fakeRenderer({ maxSamples: null }));
     expect(caps.maxMSAASamples).toBe(0);
+  });
+
+  it('forwards texture and renderbuffer dimension limits independently', () => {
+    const caps = createRendererCapabilities(
+      fakeRenderer({ maxTextureSize: 16384, maxRenderbufferSize: 8192 })
+    );
+    expect(caps.maxTextureSize).toBe(16384);
+    expect(caps.maxRenderbufferSize).toBe(8192);
+  });
+
+  it('falls back to the WebGL2 floor when framebuffer limit probes are invalid', () => {
+    const caps = createRendererCapabilities(
+      fakeRenderer({ maxTextureSize: null, maxRenderbufferSize: 0 })
+    );
+    expect(caps.maxTextureSize).toBe(2048);
+    expect(caps.maxRenderbufferSize).toBe(2048);
   });
 
   it('forwards aliased point size range as [min, max]', () => {
