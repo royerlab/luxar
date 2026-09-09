@@ -32,6 +32,18 @@ export type CacheError =
   | { readonly kind: 'Fatal'; readonly cause: Error }
   | { readonly kind: 'Aborted' };
 
+type PendingGetOutcome = {
+  result: Result<Uint8Array, CacheError>;
+  source: 'l2' | 'network' | 'missing';
+};
+
+interface PendingGet {
+  promise: Promise<PendingGetOutcome>;
+  controller: AbortController;
+  waiters: number;
+  prefetchTriggered: boolean;
+}
+
 export interface MultiLevelCachingStoreOptions {
   /** L1 memory cache size in bytes (default: 100MB) */
   l1MaxSize?: number;
@@ -134,16 +146,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
   // CRIT-5 fix: each entry carries an AbortController so a
   // content-hash-mismatch invalidation can cancel in-flight fetches
   // before they write stale data back into L1/L2 after a clear.
-  private pendingGets = new Map<
-    string,
-    {
-      promise: Promise<{
-        result: Result<Uint8Array, CacheError>;
-        source: 'l2' | 'network' | 'missing';
-      }>;
-      controller: AbortController;
-    }
-  >();
+  private pendingGets = new Map<string, PendingGet>();
 
   // Invalidation callbacks (e.g., L0 DecompressedChunkCache clearing on L1/L2 invalidation)
   private invalidationCallbacks: (() => void)[] = [];
@@ -357,7 +360,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
    *          its owning scene.
    *
    * @throws {DOMException} `AbortError` when a live demand read is cancelled by
-   *         cache invalidation. Rejecting is required because zarrita treats
+   *         its caller or cache invalidation. Rejecting is required because zarrita treats
    *         `undefined` as a missing chunk and substitutes fill values.
    * @throws {Error} When a source/network failure exhausts retries or the
    *         container is unreadable, so the loader can record the failure.
@@ -423,7 +426,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
         // and render an empty scene, hiding a message written to be actionable.
         throw result.error.cause;
       } else if (result.error.kind === 'Aborted' && !this.disposed) {
-        throw new DOMException(`Cache read aborted during invalidation: ${key}`, 'AbortError');
+        throw new DOMException(`Cache read aborted: ${key}`, 'AbortError');
       }
       return undefined;
     }
@@ -483,58 +486,31 @@ export class MultiLevelCachingStore implements AsyncReadable {
     // caller without affecting any shared chain.
     if (options?.signal?.aborted) return err({ kind: 'Aborted' });
 
-    // Coalesce same-key L2/network cascade. The first concurrent
-    // caller creates the chain; subsequent callers await it. Bytes,
-    // L1, and L2 are populated exactly once.
-    //
-    // Bypass coalescing when the caller provides its own signal: the
-    // shared chain only respects dataAbort (so its lifetime can outlive
-    // any single caller), but a caller passing a signal expects that
-    // aborting it actually cancels the underlying fetch resource.
-    // Falling back to a non-coalesced fetchKeyChain preserves the
-    // per-caller abort contract for those (rare) callers.
-    let inflight: Promise<{
-      result: Result<Uint8Array, CacheError>;
-      source: 'l2' | 'network' | 'missing';
-    }>;
-    // MED-2: only the originator of a coalesced inflight chain should
-    // run prefetcher.onAccess(key) — subsequent waiters early-return
-    // inside the prefetcher anyway, but each call still walks the
-    // neighbour set / seen-set. Tracking originator here dedupes that
-    // fan-out to exactly one onAccess call per logical access.
-    let isPrefetchOriginator = true;
-    if (options?.signal !== undefined) {
-      inflight = this.fetchKeyChain(key, options.signal);
-    } else {
-      const cached = this.pendingGets.get(key);
-      if (cached) {
-        inflight = cached.promise;
-        isPrefetchOriginator = false;
-      } else {
-        // CRIT-5: per-entry AbortController lets validateCache cancel
-        // in-flight gets on a content-hash mismatch so the post-fetch
-        // L1/L2 populate cannot resurrect stale data after a clear.
-        const controller = new AbortController();
-        let fresh!: Promise<{
-          result: Result<Uint8Array, CacheError>;
-          source: 'l2' | 'network' | 'missing';
-        }>;
-        fresh = this.fetchKeyChain(key, controller.signal).finally(() => {
-          // An invalidation clears pendingGets before an aborted chain settles.
-          // A new request may install a replacement for the same key during
-          // that window, so the old chain must only remove its own entry.
-          if (this.pendingGets.get(key)?.promise === fresh) {
-            this.pendingGets.delete(key);
-          }
-        });
-        this.pendingGets.set(key, { promise: fresh, controller });
-        inflight = fresh;
-      }
+    // Coalesce every same-key L2/network cascade, including ordinary demand
+    // reads carrying a per-update signal. Each caller is a waiter: cancelling
+    // one waiter returns Aborted only to that caller, while the shared source
+    // read is cancelled once no waiter remains. Invalidation separately aborts
+    // the per-entry controller regardless of waiter count.
+    let pending = this.pendingGets.get(key);
+    if (pending?.controller.signal.aborted) {
+      this.pendingGets.delete(key);
+      pending = undefined;
     }
+    if (!pending) {
+      const controller = new AbortController();
+      let entry!: PendingGet;
+      const promise = this.fetchKeyChain(key, controller.signal).finally(() => {
+        if (this.pendingGets.get(key) === entry) this.pendingGets.delete(key);
+      });
+      entry = { promise, controller, waiters: 0, prefetchTriggered: false };
+      this.pendingGets.set(key, entry);
+      pending = entry;
+    }
+    pending.waiters++;
 
-    let outcome: { result: Result<Uint8Array, CacheError>; source: 'l2' | 'network' | 'missing' };
+    let outcome: PendingGetOutcome;
     try {
-      outcome = await inflight;
+      outcome = await this.waitForPendingGet(pending, options?.signal);
     } catch (error) {
       const cause = error instanceof Error ? error : new Error(String(error));
       return err({ kind: 'NetworkError', cause });
@@ -562,11 +538,46 @@ export class MultiLevelCachingStore implements AsyncReadable {
     // each call still touches that seen-set N times for N waiters.
     // Restrict to the originator (or non-coalesced signal'd callers)
     // so we do exactly one onAccess per logical access.
-    if (!options?.suppressPrefetch && outcome.result.ok && isPrefetchOriginator) {
+    if (!options?.suppressPrefetch && outcome.result.ok && !pending.prefetchTriggered) {
+      pending.prefetchTriggered = true;
       this.prefetcher?.onAccess(key);
     }
 
     return outcome.result;
+  }
+
+  private async waitForPendingGet(
+    pending: PendingGet,
+    signal?: AbortSignal
+  ): Promise<PendingGetOutcome> {
+    let released = false;
+    const release = (): void => {
+      if (released) return;
+      released = true;
+      pending.waiters--;
+      if (pending.waiters === 0 && !pending.controller.signal.aborted) pending.controller.abort();
+    };
+
+    if (!signal) {
+      try {
+        return await pending.promise;
+      } finally {
+        release();
+      }
+    }
+
+    let removeAbortListener = (): void => {};
+    const aborted = new Promise<PendingGetOutcome>((resolve) => {
+      const onAbort = (): void => resolve({ result: err({ kind: 'Aborted' }), source: 'network' });
+      signal.addEventListener('abort', onAbort, { once: true });
+      removeAbortListener = () => signal.removeEventListener('abort', onAbort);
+    });
+    try {
+      return await Promise.race([pending.promise, aborted]);
+    } finally {
+      removeAbortListener();
+      release();
+    }
   }
 
   /**
@@ -577,8 +588,8 @@ export class MultiLevelCachingStore implements AsyncReadable {
    */
   private async fetchKeyChain(
     key: string,
-    callerSignal?: AbortSignal
-  ): Promise<{ result: Result<Uint8Array, CacheError>; source: 'l2' | 'network' | 'missing' }> {
+    sharedSignal?: AbortSignal
+  ): Promise<PendingGetOutcome> {
     // L2: OPFS check (~1ms)
     if (this.enabled && this.l2Store) {
       const l2Hit = await this.l2Store.get(key);
@@ -587,7 +598,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
         // CRIT-5: if validateCache aborted this in-flight get during the
         // L2 read (content-hash mismatch), do NOT promote stale bytes to
         // a just-cleared L1.
-        if (callerSignal?.aborted || this.disposed || this.dataAbort.signal.aborted) {
+        if (sharedSignal?.aborted || this.disposed || this.dataAbort.signal.aborted) {
           return { result: err({ kind: 'Aborted' }), source: 'l2' };
         }
         // Promote to L1
@@ -601,14 +612,13 @@ export class MultiLevelCachingStore implements AsyncReadable {
     this.log(`source fetch: ${key}`, 'info');
     // Compose the store-level dispose signal so dataset disposal
     // aborts in-flight prefetch/demand fetches without each call site
-    // plumbing its own controller. When the caller passed its own
-    // signal (and bypassed coalescing in getResult), forward that too
-    // so per-caller cancellation actually aborts the resource.
-    const fetchAbort = mergeAbortSignals(this.dataAbort.signal, callerSignal);
+    // plumbing its own controller. The shared pending-get controller aborts
+    // when invalidated or when every caller waiting on this key has cancelled.
+    const fetchAbort = mergeAbortSignals(this.dataAbort.signal, sharedSignal);
     try {
       const outcome = await this.source.get(key, fetchAbort.signal);
 
-      if (this.disposed || this.dataAbort.signal.aborted || callerSignal?.aborted) {
+      if (this.disposed || this.dataAbort.signal.aborted || sharedSignal?.aborted) {
         return { result: err({ kind: 'Aborted' }), source: 'network' };
       }
       if (outcome.kind === 'aborted') {
@@ -644,7 +654,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
       // source returning and now (content-hash mismatch raced an
       // in-flight fetch), do NOT write stale bytes back into a
       // just-cleared L1/L2 — that would silently undo the invalidation.
-      if (callerSignal?.aborted || this.disposed || this.dataAbort.signal.aborted) {
+      if (sharedSignal?.aborted || this.disposed || this.dataAbort.signal.aborted) {
         return { result: err({ kind: 'Aborted' }), source: 'network' };
       }
 
