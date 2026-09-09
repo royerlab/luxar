@@ -1608,6 +1608,7 @@ def test_load_dataset_bundle_verifies_the_outer_zip_then_extracts(
                     {
                         "name": "b.gsplats.zarr.zip",
                         "hosted_sha256": hosted_sha,
+                        "superseded_sha256": ["a" * 64],
                         "bytes": bundle.stat().st_size,
                         **({"sha256": local_sha} if local_sha is not None else {}),
                     }
@@ -2469,6 +2470,7 @@ def test_a_complete_superseded_positional_pair_remains_usable(fake_repo, monkeyp
     )
 
     assert [path.read_bytes() for path in paths] == [b"old-fit", b"old-colors"]
+    assert list(paths.input_digests) == ["colors.npz", "fit.gsplats.zarr.zip"]
     assert paths.input_digests == {
         "colors.npz": hashlib.sha256(b"old-colors").hexdigest(),
         "fit.gsplats.zarr.zip": hashlib.sha256(b"old-fit").hexdigest(),

@@ -18,7 +18,7 @@ import pytest
 
 import luxar.utils.source_fingerprints as source_fingerprints
 from luxar import Dimensions, LuxarZarrCompiler
-from luxar._zarr_compat import consolidate, is_consolidated, open_group, read_node_attrs
+from luxar._zarr_compat import consolidate, open_group, read_node_attrs
 from luxar.demos._support.runtime.flags import parse_demo_flags
 from luxar.demos._support.runtime.provenance import (
     BUILDER_FINGERPRINT_ATTR,
@@ -65,20 +65,11 @@ def test_input_digests_are_stamped_in_canonical_order() -> None:
 
     stamp_input_digests(scene)
 
+    assert list(scene.attrs[INPUT_DIGESTS_ATTR]) == ["a.npz", "z.zip"]
     assert scene.attrs[INPUT_DIGESTS_ATTR] == {
         "a.npz": "a" * 64,
         "z.zip": "b" * 64,
     }
-
-
-def test_input_digests_can_stamp_an_already_saved_scene(tmp_path: Path) -> None:
-    scene = _write_scene(tmp_path / "saved.luxar.zarr", None)
-    _record_input_digests({"scene.zip": "c" * 64})
-
-    stamp_input_digests(scene)
-
-    assert read_node_attrs(scene)[INPUT_DIGESTS_ATTR] == {"scene.zip": "c" * 64}
-    assert is_consolidated(scene)
 
 
 def test_compiled_scene_persists_input_digests_in_content_hash(tmp_path: Path) -> None:

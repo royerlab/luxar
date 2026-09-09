@@ -1181,7 +1181,10 @@ def load_dataset_gsplats(
         verbose: Print progress.
 
     Returns:
-        ``list[GSplatData]``, or ``None`` when the caller should build the data.
+        Loaded GSplat data with a canonical ``input_digests`` map for the
+        selected files, or ``None`` when the caller should build the data. The
+        result behaves as a list, but list operations return plain lists and do
+        not preserve the map.
 
     Deliberately NOT supported:
         * **Bundle datasets.** ``gsplats_celegans`` ships one outer zip holding

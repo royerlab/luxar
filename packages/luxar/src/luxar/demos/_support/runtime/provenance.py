@@ -11,7 +11,7 @@ from typing import Any, Final, Protocol, Union
 
 from arbol import aprint
 
-from ...._zarr_compat import consolidate, is_consolidated, open_group, read_node_attrs
+from ...._zarr_compat import is_consolidated, read_node_attrs
 from ....utils.source_fingerprints import (
     fingerprint_imported_sources,
     store_writer_environment,
@@ -19,6 +19,7 @@ from ....utils.source_fingerprints import (
 
 #: Scene-root attr holding the fingerprint of the builder that wrote the scene.
 BUILDER_FINGERPRINT_ATTR: Final[str] = "builder_fingerprint"
+#: Scene-root attr mapping resolved input basenames to verified SHA-256 digests.
 INPUT_DIGESTS_ATTR: Final[str] = "input_digests"
 _DEMO_FINGERPRINT_VERSION: Final[int] = 2
 _DEMO_IMPORT_CACHE: dict[Path, set[str]] = {}
@@ -47,7 +48,7 @@ def _clear_input_digests() -> None:
     _RESOLVED_INPUT_DIGESTS.clear()
 
 
-def stamp_input_digests(scene: _SceneWithAttrs | str | Path) -> None:
+def stamp_input_digests(scene: _SceneWithAttrs) -> None:
     """Stamp every verified manifest input resolved in this process.
 
     The basename-keyed map participates in ``content_hash`` when stamped before
@@ -56,11 +57,6 @@ def stamp_input_digests(scene: _SceneWithAttrs | str | Path) -> None:
     if not _RESOLVED_INPUT_DIGESTS:
         return
     digests = dict(sorted(_RESOLVED_INPUT_DIGESTS.items()))
-    if isinstance(scene, (str, Path)):
-        group = open_group(scene, mode="a")
-        group.attrs[INPUT_DIGESTS_ATTR] = digests
-        consolidate(group)
-        return
     scene.attrs[INPUT_DIGESTS_ATTR] = digests
 
 
