@@ -772,6 +772,8 @@ export interface LODGroupRegistryDeps {
   getDisplayDims(): readonly number[];
   /** Whether the owning loader has latched an archive fault. */
   hasArchiveFault?: () => boolean;
+  /** Whether a loader under this LOD group has a recorded network failure. */
+  hasNetworkFailureUnder?: (path: string) => boolean;
   /**
    * Resident-byte budget (the ceiling). The single, adaptive VRAM budget
    * shared with the GPU buffer pool — one authority, not a competing one.
@@ -1777,13 +1779,15 @@ export class LODGroupRegistry {
         if (fallback >= 0 && fallback !== displayIdx) {
           if (!this.warnedEmptyLevel.has(entry.path)) {
             this.warnedEmptyLevel.add(entry.path);
+            const recovery = this.deps.hasNetworkFailureUnder?.(entry.path)
+              ? 'A network load failed under this group; use the monitor Retry action.'
+              : 'This usually means inconsistent/stale data (e.g. a dataset regenerated at ' +
+                'the same URL with a poisoned cache); try reloading with ?clear-cache.';
             log.warning(
               Modules.SCENE_LOADER,
               `lod_group ${entry.path}: level ${displayIdx} is fresh but committed 0 ` +
                 `elements while level ${fallback} has visible geometry — showing level ` +
-                `${fallback} instead. This usually means inconsistent/stale data ` +
-                '(e.g. a dataset regenerated at the same URL with a poisoned cache); ' +
-                'try reloading with ?clear-cache.'
+                `${fallback} instead. ${recovery}`
             );
           }
           displayIdx = fallback;
