@@ -1154,6 +1154,44 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     expect([...paths].sort()).toEqual(['/partition/part_0', '/partition/part_1']);
   });
 
+  it('does not report pending resync activity without a dispatch hook', () => {
+    let updateInProgress = true;
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => updateInProgress
+    );
+    const groupObject = new THREE.Group();
+    const child = new THREE.Group();
+    groupObject.add(child);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [child],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+        },
+      ],
+    });
+
+    reg.evaluatePerFrame();
+    groupObject.position.x = -2.5;
+    reg.evaluatePerFrame();
+
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(false);
+    updateInProgress = false;
+    reg.evaluatePerFrame();
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(false);
+  });
+
   it('falls back to the whole wrapper when a re-entering part has no path', () => {
     const requestReprocess = vi.fn();
     const reg = makeRegistry(
