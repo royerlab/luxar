@@ -65,10 +65,11 @@ JUSTIFIED: dict[str, str] = {
         "extended to every slot, so the resident slice IS the node) — past the "
         "5,591,040 Points cap, so the partition is required: a hand-built "
         "kind=partition of 64 BSP tiles of at most 125,000 points, each its own "
-        "kind=lod ladder with one coarse level (K=4). Per-tile selection draws "
-        "1.93M coarse splats at the overview and the whole-map stories (8 "
-        "tiles were too big: 3 sat at full detail from the overview); a knot "
-        "swaps in only its nearest handful of 120K-point tiles."
+        "hand-authored kind=lod ladder whose coarse level is a 1-in-4 POINTS "
+        "subsample (not the writer's synthesised Gaussians, which drew the view "
+        "from a knot toward the centre at 6 fps against 144 fps for plain "
+        "points). Per-tile selection draws ~1.9M points at the overview and the "
+        "whole-map stories; a knot swaps in only its nearest handful of tiles."
     ),
     "demo_desi_galaxies.py": (
         "9,751,955 points RESIDENT with no hidden axis — genuinely past the "

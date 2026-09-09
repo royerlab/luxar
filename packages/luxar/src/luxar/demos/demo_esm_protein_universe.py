@@ -97,6 +97,7 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.group.compositing import position_bounds_from_array
+from luxar.core.group.lod.group import partitioned_coverage_fractions
 from luxar.core.group.partition import bsp_leaf_parts, spatial_bsp_tree
 from luxar.core.viewer_config import (
     AudioConfig,
@@ -512,27 +513,27 @@ WHOLE_HIGHLIGHT_INTENSITY = 0.35
 #: sub-pixel anyway, so one in seven draws the same shadow as all of them.
 WHOLE_HIGHLIGHT_MAX_POINTS = 300_000
 #: The backdrop is a hand-built ``kind=partition`` of 64 BSP tiles of at most
-#: this many points, each tile its own ``kind=lod`` ladder with one coarse
-#: level of a quarter of its points (the Points counterpart of the gsplat
-#: ``adaptive`` recipe). Two ceilings at once: one points node renders at most
-#: 5,591,040 on a 4096-class GPU and silently drops the tail (one contiguous
-#: Hilbert-order region, so a clean-edged hole); and the owner wants the drawn
-#: count near 2M for frame rate. ``coverage`` is evaluated PER TILE against
-#: the tile's own projected box, so the tiles must be small: with 8 tiles each
-#: was a 20-unit cube whose box filled the screen even from the overview, and
-#: three of them sat at full detail there (8.2M triangles drawn). At 64 tiles
-#: the overview and the whole-map stories draw every tile coarse (1.93M splats,
-#: 3.85M triangles) and a knot swaps in only its nearest handful (five tiles at
-#: the hemoglobin knot, mostly frustum-culled). A single lod group over a
-#: partition (the first attempt) swapped ALL parts at once: 9.6M resident at
-#: every knot. All measured in the browser at a pinned DPR of 1.
+#: this many points, each tile its own ``kind=lod`` ladder of two POINTS
+#: levels: a fixed random 1-in-K subsample (colours scaled by K so the additive
+#: light is conserved) and the full tile. Two ceilings at once: one points node
+#: renders at most 5,591,040 on a 4096-class GPU and silently drops the tail
+#: (one contiguous Hilbert-order region, so a clean-edged hole); and the owner
+#: wants the drawn count near 2M for frame rate. ``coverage`` is evaluated PER
+#: TILE against the tile's own projected box, so the tiles must be small: with
+#: 8 tiles each was a 20-unit cube whose box filled the screen even from the
+#: overview, and three of them sat at full detail there. At 64 tiles the
+#: overview and the whole-map stories draw every tile coarse (~1.9M points)
+#: and a knot swaps in only its nearest handful. Two dead ends, both measured
+#: in the browser: a single lod group over a partition swapped ALL parts at
+#: once (9.6M resident at every knot); and the library's substitutive coarse
+#: levels — synthesised GAUSSIANS — rendered the view from a knot toward the
+#: map's centre at 6 fps at DPR 1 (1 fps at DPR 2), against 144 fps for the
+#: same 6.6M positions as plain points: merged Gaussians are fat where the
+#: cloud is sparse, and from inside the cloud a million of them overlap on
+#: every pixel. Points stay 1 px however many there are.
 BACKDROP_TILE_POINTS = 125_000
-#: Coarsening is pinned to the three SPATIAL columns of the (story, x, y, z)
-#: positions: the default (all dims) would let coarse Gaussians merge across
-#: the story coordinate.
-BACKDROP_SUBSTITUTIVE_LOD = dict(
-    compression_factor=4, levels=1, device="auto", coarsen_dims=[1, 2, 3]
-)
+#: Coarse level = one point in this many (light conserved by scaling colours).
+BACKDROP_LOD_FACTOR = 4
 
 STORIES: tuple[UniverseStory, ...] = (
     _carry(
@@ -1416,14 +1417,17 @@ def _add_bubbles(
 def _add_backdrop(
     scene: Any, positions: np.ndarray, colors: np.ndarray, dims: Dimensions
 ) -> None:
-    """The backdrop as BSP tiles of per-tile substitutive ladders (see
+    """The backdrop as BSP tiles of per-tile two-level POINTS ladders (see
     :data:`BACKDROP_TILE_POINTS`).
 
     Splits on the three spatial columns (the story column is constant), so the
     serialized split axes are the displayed dimensions and the viewer can use
-    the tree for exact back-to-front ordering. The compositing attrs ride on
-    the WRAPPER: it is the node the Layers panel reads and pushes down; of them
-    only ``opacity`` would reach a lod group's children on its own.
+    the tree for exact back-to-front ordering. Each tile is a hand-authored
+    ``kind=lod`` group (the shape ``examples/partition_of_lod_example.py``
+    builds): child 0 a seeded 1-in-K subsample with colours × K, child 1 the
+    whole tile, thresholds from the partition-bound fills-screen rule. The
+    compositing attrs ride on the WRAPPER: it is the node the Layers panel
+    reads and pushes down to every descendant material.
     """
     tree = spatial_bsp_tree(
         positions, BACKDROP_TILE_POINTS, rule="median", split_axes=[1, 2, 3]
@@ -1434,7 +1438,8 @@ def _add_backdrop(
     assert max(sizes) <= BACKDROP_TILE_POINTS, sizes
     aprint(
         f"Backdrop: {len(positions):,} clusters -> {len(parts)} BSP tiles "
-        f"({min(sizes):,}..{max(sizes):,} points), one coarse level each (K=4)"
+        f"({min(sizes):,}..{max(sizes):,} points), coarse level 1 in "
+        f"{BACKDROP_LOD_FACTOR} as points"
     )
     wrapper = scene.add_partition_group(
         "Backdrop",
@@ -1446,26 +1451,32 @@ def _add_backdrop(
         opacity=BACKDROP_OPACITY,
         intensity=BACKDROP_INTENSITY,
     )
+    rng = np.random.default_rng(0)
     for i, idx in enumerate(parts):
-        part_positions = positions[idx]
-        wrapper.add_points(
-            f"part_{i}",
-            part_positions,
-            colors=colors[idx],
-            radii=np.full(idx.size, BACKDROP_RADIUS, dtype=np.float32),
-            sharpness=np.full(idx.size, 0.6, dtype=np.float32),
-            opacity=BACKDROP_OPACITY,
-            intensity=BACKDROP_INTENSITY,
-            extend_to_all=[STORY_DIM],
-            # No `partition=` here, not even False: the guard tests `is not
-            # None`, and the substitutive writer already forces flat leaves.
-            substitutive_lod=BACKDROP_SUBSTITUTIVE_LOD,
-            # One hidden coordinate (story 0, extended to all): the slice count
-            # is 1, but the policy is stated rather than assumed.
-            additive_lod=stream_ladder(
-                idx.size, slices=hidden_axis_stops(part_positions, dims.non_displayed)
-            ),
-        )
+        n_coarse = max(1, int(idx.size) // BACKDROP_LOD_FACTOR)
+        coarse = np.sort(rng.choice(idx, n_coarse, replace=False))
+        coverage = partitioned_coverage_fractions([n_coarse, int(idx.size)])
+        lod = wrapper.add_lod_group(f"part_{i}", selector="screen-area")
+        levels = ((coarse, float(BACKDROP_LOD_FACTOR)), (idx, 1.0))
+        for level, (sel, gain) in enumerate(levels):
+            level_positions = positions[sel]
+            lod.add_points(
+                f"child_{level}",
+                level_positions,
+                colors=(colors[sel] * np.float32(gain)).astype(np.float32),
+                radii=np.full(sel.size, BACKDROP_RADIUS, dtype=np.float32),
+                sharpness=np.full(sel.size, 0.6, dtype=np.float32),
+                opacity=BACKDROP_OPACITY,
+                intensity=BACKDROP_INTENSITY,
+                extend_to_all=[STORY_DIM],
+                coverage_fraction=float(coverage[level]),
+                # One hidden coordinate (story 0, extended to all): the slice
+                # count is 1, but the policy is stated rather than assumed.
+                additive_lod=stream_ladder(
+                    sel.size,
+                    slices=hidden_axis_stops(level_positions, dims.non_displayed),
+                ),
+            )
 
 
 def resolve_stories(
