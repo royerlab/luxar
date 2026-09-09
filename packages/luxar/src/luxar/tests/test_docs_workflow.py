@@ -63,6 +63,20 @@ def test_runbook_section_three_headings_are_sequential() -> None:
     assert section_numbers == list(range(1, len(section_numbers) + 1))
 
 
+def test_runbook_audits_built_scenes_before_upload() -> None:
+    """Keep both fail-loud artifact checks in the publishing wave."""
+    text = DEMO_SITE_RUNBOOK.read_text()
+    section = text.split("## 2. Publishing a wave", 1)[1].split(
+        "### 2.1 Always publish to a new dated prefix", 1
+    )[0]
+
+    assert "hatch run check-demo-ladders --require-scenes" in section
+    assert "hatch run check-scene-credits --require-scenes" in section
+    assert section.index("audit the complete local scene inventory") < section.index(
+        "upload only what changed"
+    )
+
+
 def test_runbook_archive_digest_prefixes_match_active_manifest_pins() -> None:
     """Runbook archive examples must name active record generations."""
     text = DEMO_SITE_RUNBOOK.read_text()

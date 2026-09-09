@@ -28,11 +28,11 @@ CHECK_STATIC_EXEMPTIONS = {
     ),
     "check-demo-ladders": (
         "generated demo scenes are gitignored and absent from checkout-only CI; "
-        "artifact builders must use --require-scenes"
+        "the gallery generator and pre-upload runbook use --require-scenes"
     ),
     "check-scene-credits": (
         "generated demo scenes are gitignored and absent from checkout-only CI; "
-        "artifact builders must use --require-scenes"
+        "the gallery generator and pre-upload runbook use --require-scenes"
     ),
 }
 

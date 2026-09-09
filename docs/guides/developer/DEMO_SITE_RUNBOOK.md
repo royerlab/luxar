@@ -83,6 +83,7 @@ build the changed demos
   -> capture gallery media (stills + orbit videos)
   -> luxar optimise --profile archive        # 1 MB chunk target
   -> hash-compare against the LAST LOCAL BUILD
+  -> audit the complete local scene inventory
   -> upload only what changed, to a NEW dated prefix
   -> rebuild the page against that prefix, with an ABSOLUTE data host
   -> deploy (page + media as static assets)
@@ -95,6 +96,21 @@ object-storage `hosting` profile. On a representative live store it reduced
 the chunk count from 5,004 to 224 (22×), accepting larger partial reads in
 exchange for far fewer stored objects. Re-measure browser traffic and request
 cost before changing that tradeoff.
+
+`make generate-gallery-datasets` automatically runs both built-scene auditors
+against only the stores it generated in that invocation. That catches a bad
+rebuild without letting an unrelated stale local store block the build. Before
+uploading a wave, audit the complete local inventory as a separate fail-loud
+step:
+
+```bash
+hatch run check-demo-ladders --require-scenes
+hatch run check-scene-credits --require-scenes
+```
+
+Keep this immediately before upload, after the final local build and
+optimisation. `--require-scenes` is load-bearing: an empty or wrongly located
+inventory must fail rather than produce a green "inspected nothing" result.
 
 Before rebuilding `earthquakes`, `ocean_currents_earth`,
 `global_rivers_earth`, or `biodiversity_planetary_scale`, put KTX-Software's
