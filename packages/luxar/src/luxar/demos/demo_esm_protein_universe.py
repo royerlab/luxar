@@ -744,7 +744,7 @@ STORIES: tuple[UniverseStory, ...] = (
         pdb_id="2HYD",  # Sav1866, a multidrug ABC exporter
         narration=(
             "The spur. These nine thousand clusters were flung off the map, and "
-            "nearly all of them are one thing: the ATP-binding cassette, the "
+            "most of them are one thing: the ATP-binding cassette, the "
             "engine of the ABC transporters. Every genome has them, pumping "
             "nutrients in and toxins out. Humans have forty-eight; a broken one "
             "causes cystic fibrosis, another pumps chemotherapy out of tumours. "
