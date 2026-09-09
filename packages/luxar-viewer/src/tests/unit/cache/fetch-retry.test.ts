@@ -621,6 +621,42 @@ describe('fetchWithRetry', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('allows a known-length body to use the fallback absolute deadline', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => {
+      let cancelled = false;
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (let index = 1; index <= 64; index++) {
+              setTimeout(() => {
+                if (!cancelled) controller.enqueue(new Uint8Array(1024));
+              }, index * 200);
+            }
+            setTimeout(() => {
+              if (!cancelled) controller.close();
+            }, 12_900);
+          },
+          cancel() {
+            cancelled = true;
+          },
+        }),
+        { headers: { 'Content-Length': String(64 * 1024) } }
+      );
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const promise = fetchWithRetryScoped(
+      'https://example.com/slow-known-length',
+      { timeoutMsOverride: 30_000 },
+      async ({ readBody }) => readBody()
+    );
+    await vi.runAllTimersAsync();
+
+    expect((await promise)?.byteLength).toBe(64 * 1024);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('bounds a continuously trickling body by an absolute deadline', async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn(async () => {

@@ -68,10 +68,7 @@ function bodyAbsoluteDeadlineMs(response: Response, stallTimeoutMs: number): num
 
   return Math.min(
     MAX_TIMER_DELAY_MS,
-    Math.max(
-      stallTimeoutMs,
-      Math.ceil((contentLength * 1_000) / MIN_BODY_THROUGHPUT_BYTES_PER_SECOND)
-    )
+    Math.max(fallbackMs, Math.ceil((contentLength * 1_000) / MIN_BODY_THROUGHPUT_BYTES_PER_SECOND))
   );
 }
 
@@ -311,9 +308,9 @@ export async function hashUrl(url: string): Promise<string> {
  * retried using the configured retry budget. The configured timeout is split
  * across attempts and applied separately to time-to-headers and no-progress
  * body stalls. A progressing body may exceed that watchdog window, but it also
- * has an absolute deadline: `Content-Length` divided by a 16 KiB/s floor, never
- * shorter than the stall timeout; without a usable length, eight stall windows.
- * This bounds how long one response can occupy a shared fetch-gate slot.
+ * has an absolute deadline: the longer of eight stall windows or
+ * `Content-Length` divided by a 16 KiB/s floor. This bounds how long one
+ * response can occupy a shared fetch-gate slot.
  *
  * @param url - URL to fetch.
  * @param options - Optional `timeoutMsOverride` (e.g. for cache-validation
