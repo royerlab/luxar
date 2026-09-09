@@ -501,9 +501,9 @@ describe('post-grow reclaim (#2426 pool retention)', () => {
   });
 
   it.each([
-    ['points', 100, 5000],
-    ['lines', 100, 5000],
-    ['gsplats', 100, 10_000],
+    ['points', 100, 5000], // 66,764 → 453,164 B
+    ['lines', 100, 5000], // 66,716 → 780,236 B
+    ['gsplats', 100, 10_000], // 66,780 → 1,103,084 B
   ] as const)(
     '%s: a throwing post-grow sweep preserves the grown active buffer',
     (type, initialCount, grownCount) => {
