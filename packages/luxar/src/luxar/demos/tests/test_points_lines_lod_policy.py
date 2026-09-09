@@ -64,7 +64,7 @@ JUSTIFIED: dict[str, str] = {
         "44,469,233 points span 300 hidden (fractal, w) coordinates. A single "
         "slice-aware ladder would need a 5,558,655-point first rung to meet the "
         "12.5% opening-share floor, which cannot fit the 900,000-point commit "
-        "ceiling. Spatial parts capped at the authored 150,000 points per plane "
+        "ceiling. Partition children capped at the authored 150,000 points per plane "
         "bound every commit while remaining far below the 5,591,040 Points cap."
     ),
     "demo_desi_galaxies.py": (
