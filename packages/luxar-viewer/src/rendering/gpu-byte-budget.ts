@@ -5,12 +5,12 @@
  *
  * Browsers deliberately do NOT expose total/available VRAM (it's a
  * fingerprinting vector), so we can't read an "absolute max" and set to
- * it. Auto-sizing uses ``navigator.deviceMemory`` when available and an
- * explicit total cache-pool override when supplied; if both exist, the lower
- * derived budget wins. The result has a 2 GB ceiling but no lower clamp, with
- * 512 MB used only when neither signal exists. As a safety net, the budget is
- * halved on a WebGL context-loss event (a strong OOM signal) so an
- * over-estimate self-corrects instead of repeatedly crashing the context.
+ * it. Auto-sizing uses ``navigator.deviceMemory`` when available, the measured
+ * JS heap, the mobile device class, and an explicit total cache-pool override
+ * when supplied; the lowest derived budget wins. The result has a 2 GB ceiling
+ * but no lower clamp, with 512 MB used only when no signal exists. As a safety
+ * net, the budget is halved on a WebGL context-loss event (a strong OOM signal)
+ * so an over-estimate self-corrects instead of repeatedly crashing the context.
  *
  * **Single-viewer-per-page assumption.** The budget lives in module-global
  * state (``budgetBytes`` below), so it is shared by every pool and registry
@@ -190,8 +190,8 @@ function computeAutoBudget(memory?: GpuBudgetMemorySignals): { bytes: number; so
  * Configure the budget once at startup from the resolved config value
  * (or the ``?gpuBudgetMB`` URL param, which the caller passes in):
  *
- * - ``null`` / ``undefined`` → **auto-size** from device memory and any
- *   explicit cache-pool override.
+ * - ``null`` / ``undefined`` → **auto-size** from available ambient memory
+ *   signals and any explicit cache-pool override.
  * - ``0`` → disable byte-budget eviction (unbounded resident geometry).
  * - a positive number → pin the budget to exactly that many bytes.
  */

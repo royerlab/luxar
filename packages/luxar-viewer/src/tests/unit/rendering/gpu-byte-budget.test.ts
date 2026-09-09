@@ -52,26 +52,31 @@ describe('gpu-byte-budget', () => {
   it('initializes a fresh embed budget from the mobile device class', async () => {
     vi.resetModules();
     profile.deviceClass = 'mobile';
-    const freshBudget = await import('../../../rendering/gpu-byte-budget');
-
-    withDeviceMemory(undefined, () => {
-      withHeapLimit(undefined, () => {
-        freshBudget.initializeGpuByteBudget(null);
-        expect(freshBudget.getGpuByteBudget()).toBe(Math.floor((384 * MiB) / 3));
+    try {
+      const freshBudget = await import('../../../rendering/gpu-byte-budget');
+      withDeviceMemory(undefined, () => {
+        withHeapLimit(undefined, () => {
+          freshBudget.initializeGpuByteBudget(null);
+          expect(freshBudget.getGpuByteBudget()).toBe(Math.floor((384 * MiB) / 3));
+        });
       });
-    });
-    profile.deviceClass = 'laptop';
+    } finally {
+      profile.deviceClass = 'laptop';
+    }
   });
 
   it('resolves an omitted embed override from config', async () => {
     vi.resetModules();
     const { config: freshConfig } = await import('../../../config');
-    freshConfig.dataLoading.performance.gpuPoolMaxBytes = 321 * MB;
-    const freshBudget = await import('../../../rendering/gpu-byte-budget');
-
-    freshBudget.initializeGpuByteBudget();
-
-    expect(freshBudget.getGpuByteBudget()).toBe(321 * MB);
+    const previous = freshConfig.dataLoading.performance.gpuPoolMaxBytes;
+    try {
+      freshConfig.dataLoading.performance.gpuPoolMaxBytes = 321 * MB;
+      const freshBudget = await import('../../../rendering/gpu-byte-budget');
+      freshBudget.initializeGpuByteBudget();
+      expect(freshBudget.getGpuByteBudget()).toBe(321 * MB);
+    } finally {
+      freshConfig.dataLoading.performance.gpuPoolMaxBytes = previous;
+    }
   });
 
   it('honors an explicit override and skips the heuristic', () => {
@@ -91,16 +96,17 @@ describe('gpu-byte-budget', () => {
 
   it('warns when a later entry point requests an explicit override', () => {
     const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
-    configureGpuByteBudget(777 * MB);
-
-    initializeGpuByteBudget(123 * MB);
-
-    expect(getGpuByteBudget()).toBe(777 * MB);
-    expect(warning).toHaveBeenCalledWith(
-      Modules.PERFORMANCE,
-      'GPU byte budget is already configured; ignoring later request for 123 MB'
-    );
-    warning.mockRestore();
+    try {
+      configureGpuByteBudget(777 * MB);
+      initializeGpuByteBudget(123 * MB);
+      expect(getGpuByteBudget()).toBe(777 * MB);
+      expect(warning).toHaveBeenCalledWith(
+        Modules.PERFORMANCE,
+        'GPU byte budget is already configured; ignoring later request for 123 MB'
+      );
+    } finally {
+      warning.mockRestore();
+    }
   });
 
   it('auto-sizes from deviceMemory at 25%, capped at 2GB with NO floor', () => {
