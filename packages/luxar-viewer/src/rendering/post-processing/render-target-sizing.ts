@@ -98,6 +98,13 @@ export function computeRenderTargetAllocation(
       width: logicalDimensionForPhysical(physical.width, pixelRatio),
       height: logicalDimensionForPhysical(physical.height, pixelRatio),
     };
+  } else {
+    if (Math.floor(logical.width * pixelRatio) !== physical.width) {
+      logical.width = logicalDimensionForPhysical(physical.width, pixelRatio);
+    }
+    if (Math.floor(logical.height * pixelRatio) !== physical.height) {
+      logical.height = logicalDimensionForPhysical(physical.height, pixelRatio);
+    }
   }
 
   return {

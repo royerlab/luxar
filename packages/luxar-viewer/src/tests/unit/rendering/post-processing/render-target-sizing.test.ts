@@ -121,11 +121,23 @@ describe('computeRenderTargetAllocation', () => {
     }
   );
 
-  it('keeps a zero-sized hidden canvas and its targets at the same one-pixel floor', () => {
-    expect(computeRenderTargetAllocation({ width: 0, height: 0 }, false, 2, 2, 8192)).toEqual({
-      logical: { width: 0.5, height: 0.5 },
-      physical: { width: 1, height: 1 },
-      limited: false,
-    });
-  });
+  it.each([0.72, 0.73, 1.27, 2])(
+    'keeps a zero-sized hidden canvas and its targets at the same one-pixel floor at DPR %s',
+    (pixelRatio) => {
+      const allocation = computeRenderTargetAllocation(
+        { width: 0, height: 0 },
+        false,
+        2,
+        pixelRatio,
+        8192
+      );
+
+      expect(allocation.physical).toEqual({ width: 1, height: 1 });
+      expect(Math.floor(allocation.logical.width * pixelRatio)).toBe(1);
+      expect(Math.floor(allocation.logical.height * pixelRatio)).toBe(1);
+      expect(Math.round(allocation.logical.width * pixelRatio)).toBe(1);
+      expect(Math.round(allocation.logical.height * pixelRatio)).toBe(1);
+      expect(allocation.limited).toBe(false);
+    }
+  );
 });
