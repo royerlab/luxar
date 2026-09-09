@@ -48,10 +48,11 @@ export interface DataLoadingPerformanceConfig {
    * eviction). When usage exceeds it, the largest/coldest buffers are
    * disposed until back under budget.
    *
-   * - `null` (default): **auto-size** from the lowest available estimate from
-   *   `navigator.deviceMemory`, the measured JS heap, the mobile device class,
-   *   and one third of an explicit `cacheBudgetMB`, with a 2 GB ceiling and a
-   *   512 MB fallback only when no signal exists.
+   * - `null` (default): **auto-size** from the lower of 25% of
+   *   `navigator.deviceMemory` and the heap model's non-cache remainder, with a
+   *   2 GB ceiling and a 512 MB fallback only when no signal exists. An explicit
+   *   `cacheBudgetMB` replaces the heap-derived remainder in either direction,
+   *   while mobile keeps an independent 128 MiB peer minimum.
    * - `0`: disable byte-budget eviction entirely (count-only / unbounded
    *   resident geometry).
    * - a positive number: pin the budget to exactly that many bytes.

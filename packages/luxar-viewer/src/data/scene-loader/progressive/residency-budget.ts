@@ -31,10 +31,10 @@
  * accounting. The budget uses the eager gate's working-set calculation, including
  * its `EAGER_WORKING_SET_CAP_BYTES` ceiling: sufficiently large desktop heaps all
  * resolve to that same cap rather than scaling without bound. The GPU buffer
- * pool is also sized from that figure and covers some of the same renderer
- * element-row bytes. These remain independent ceilings, not a shared
- * reservation; eager in-flight bytes, pooled GPU bytes, and refinement
- * residency may coexist transiently.
+ * pool instead takes the full shared non-cache remainder up to its own 2 GB
+ * ceiling and covers some of the same renderer element-row bytes. These remain
+ * independent ceilings, not additive reservations; eager in-flight bytes,
+ * pooled GPU bytes, and refinement residency may coexist transiently.
  *
  * Decoded payload bytes are measured from the typed arrays. Renderer element
  * rows are derived from each geometry's authoritative layout constant, because

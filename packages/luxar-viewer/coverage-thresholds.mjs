@@ -48,6 +48,9 @@ export const COVERAGE_THRESHOLDS = {
   lines: 88,
   statements: 87,
   functions: 84,
+  // branches 80 -> 82 (2026-09): the GPU-budget tests here and the SSAA
+  // framebuffer-clamp tests in #2661 each moved measured branch coverage past
+  // the slack budget, and check-coverage-slack flagged the old floor as stale.
   branches: 82,
 
   // Crown jewels: high floors so a refactor cannot quietly erode them.
