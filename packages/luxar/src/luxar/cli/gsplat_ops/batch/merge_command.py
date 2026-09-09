@@ -341,4 +341,4 @@ def run_batch_merge_cmd(
         import traceback
 
         traceback.print_exc()
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e

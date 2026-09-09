@@ -9,6 +9,7 @@ from typing import Literal, Optional
 import typer
 from arbol import aprint, asection
 
+from ..._traceback import exit_with_error
 from ..encoding import _resolve_encoding_mode
 
 
@@ -248,8 +249,4 @@ def run_additive_dataset(
     except typer.Exit:
         raise
     except Exception as e:
-        aprint(f"❌ Error: {e}")
-        import traceback
-
-        traceback.print_exc()
-        raise typer.Exit(1)
+        exit_with_error(f"❌ Error: {e}", e)

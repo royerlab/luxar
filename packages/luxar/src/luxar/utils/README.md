@@ -52,6 +52,7 @@ as `⚠️ UserWarning: ...` tree lines whenever arbol can show them, and fall b
 to Python's stock stderr display whenever arbol would hide them.
 
 **Key Functions:**
+- `arbol_will_display()`: Report whether arbol would display a line at the current depth and verbosity
 - `install_arbol_warnings()`: Process-wide install for application entry points (called by the `luxar` CLI callback)
 - `arbol_warnings()`: Context manager / decorator scoping the override to a block (applied to the arbol-tree-producing public API entry points: `LuxarZarrCompiler`'s write methods, `fit_gaussian_splats`, `generate_seeds`, `save_gsplats`)
 
@@ -186,6 +187,9 @@ than per-call, is not thread-safe, and affects any other arbol user in the
 process. The module docstring states all three constraints; a per-call
 `verbosity=` argument and a `logging` bridge are both possible later, and
 neither is needed to make the output silenceable.
+
+Failure reporters must check `arbol_will_display()` and fall back to stderr so
+`set_verbosity("silent")` cannot turn a failed command into a bare exit code.
 
 ### Process lifecycle
 

@@ -35,7 +35,17 @@ from typing import Iterator, Optional, TextIO, Type
 
 from arbol import Arbol, aprint
 
-__all__ = ["arbol_warnings", "install_arbol_warnings"]
+__all__ = ["arbol_warnings", "arbol_will_display", "install_arbol_warnings"]
+
+
+def arbol_will_display() -> bool:
+    """Whether an ``aprint`` call at the current depth will be visible."""
+    captured = getattr(Arbol._thread_local, "captured", False)
+    return bool(
+        Arbol.passthrough
+        or captured
+        or (Arbol.enable_output and Arbol._depth <= Arbol.max_depth)
+    )
 
 
 def _arbol_showwarning(
@@ -47,13 +57,7 @@ def _arbol_showwarning(
     line: Optional[str] = None,
 ) -> None:
     """``warnings.showwarning`` replacement that prints via arbol when visible."""
-    captured = getattr(Arbol._thread_local, "captured", False)
-    arbol_will_display = (
-        Arbol.passthrough
-        or captured
-        or (Arbol.enable_output and Arbol._depth <= Arbol.max_depth)
-    )
-    if not arbol_will_display:
+    if not arbol_will_display():
         warnings._showwarning_orig(  # type: ignore[attr-defined]
             message, category, filename, lineno, file=file, line=line
         )
