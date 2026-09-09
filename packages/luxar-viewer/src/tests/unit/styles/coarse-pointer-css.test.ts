@@ -224,6 +224,12 @@ describe('coarse-pointer.css contract', () => {
     expect(coarse).toMatch(
       /\.luxar-dimension-slider__context-menu input,[\s\S]*?\.luxar-dimension-slider__context-menu select[^{]*\{[^}]*font-size:\s*16px/
     );
+    expect(ruleBody(coarse, '.luxar-dimension-slider__context-menu')).toMatch(
+      /max-height:\s*calc\(100vh - 20px\)[^}]*overflow-y:\s*auto/
+    );
+    expect(css).toMatch(
+      /@supports\s*\(height:\s*100dvh\)[\s\S]*?\.luxar-dimension-slider__context-menu\s*\{[^}]*max-height:\s*calc\(100dvh - 20px\)/
+    );
     // The first-run hint stays beside the rail instead of across the canvas.
     expect(ruleBody(coarse, '.luxar-control-rail-hint')).toMatch(/max-width:\s*calc\(/);
   });

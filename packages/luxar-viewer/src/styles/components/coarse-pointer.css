@@ -132,6 +132,10 @@
     height: min(400px, 60vh);
     bottom: calc(var(--luxar-spacing-10, 20px) + env(safe-area-inset-bottom, 0px));
   }
+  .luxar-dimension-slider__context-menu {
+    max-height: calc(100vh - 20px);
+    overflow-y: auto;
+  }
 
   /* ---- Rail gutter + safe area for the docked panels (the docking rule in
      control-rail.css is `!important` because the panels set `left` inline;
@@ -352,6 +356,9 @@
     }
     .luxar-debug-console {
       height: min(400px, 60dvh);
+    }
+    .luxar-dimension-slider__context-menu {
+      max-height: calc(100dvh - 20px);
     }
     .luxar-dimension-sliders {
       max-height: min(360px, 45dvh);

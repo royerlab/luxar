@@ -788,6 +788,36 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
     sliders.dispose();
   });
 
+  it('keeps the animation context menu inside a short viewport', () => {
+    const heightSpy = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(291);
+    const widthSpy = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(248);
+    const innerHeight = Object.getOwnPropertyDescriptor(window, 'innerHeight');
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 320 });
+    let sliders: DimensionSliders | undefined;
+
+    try {
+      sliders = buildSliders();
+      sliders.setAnimationManager(makeAnimationManagerStub() as never);
+      document.querySelector('.luxar-dimension-slider__play-btn')!.dispatchEvent(
+        new MouseEvent('contextmenu', {
+          bubbles: true,
+          cancelable: true,
+          clientX: 100,
+          clientY: 270,
+        })
+      );
+
+      const menu = document.querySelector<HTMLElement>('.luxar-dimension-slider__context-menu')!;
+      expect(menu.style.top).toBe('19px');
+      expect(parseFloat(menu.style.top) + menu.offsetHeight).toBeLessThanOrEqual(310);
+    } finally {
+      sliders?.dispose();
+      heightSpy.mockRestore();
+      widthSpy.mockRestore();
+      if (innerHeight) Object.defineProperty(window, 'innerHeight', innerHeight);
+    }
+  });
+
   it('does not own document Escape while the animation context menu is open', () => {
     const sliders = buildSliders();
     sliders.setAnimationManager(makeAnimationManagerStub() as never);

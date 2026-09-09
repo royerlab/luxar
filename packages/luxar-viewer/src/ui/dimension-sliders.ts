@@ -1478,6 +1478,10 @@ export class DimensionSliders {
       menuY = y + 10; // Show below cursor with 10px gap
     }
 
+    // Check bottom edge after the fallback above. Coarse-pointer CSS caps a
+    // menu taller than the viewport and makes it scrollable.
+    menuY = Math.max(10, Math.min(menuY, window.innerHeight - menuHeight - 10));
+
     menu.style.left = `${menuX}px`;
     menu.style.top = `${menuY}px`;
 
