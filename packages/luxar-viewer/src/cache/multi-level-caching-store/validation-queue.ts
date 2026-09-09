@@ -1,7 +1,6 @@
 import { ROOT_ATTR_DOCS, rootAttributes } from '../../types/zarr-documents';
 import { buildUrl, fetchWithRetry } from './fetch-retry';
 import { sha256Hex } from './sha256';
-import type { FetchResponseScope } from './fetch-retry';
 
 /**
  * Cross-instance validation serializer.
@@ -164,49 +163,47 @@ export async function getRemoteContentHash(
     // miss is now the common case (a format-2 store 404s `zarr.json` on every
     // poll), so letting the loop overwrite the previous scope would leak one
     // connection and two abort listeners per validation.
-    let scope: FetchResponseScope | null = null;
+    let data: Uint8Array<ArrayBuffer> | null = null;
     // Which document answered: the format follows from the NAME, so the parse
     // below never has to infer it from the content.
     let servedDoc: (typeof ROOT_ATTR_DOCS)[number] | null = null;
     const startedAt = Date.now();
     for (const doc of ROOT_ATTR_DOCS) {
       const budget = options.timeoutMsOverride;
-      const attempt = await fetchWithRetry(buildUrl(baseUrl, doc), {
-        timeoutMsOverride:
-          budget === undefined ? undefined : Math.max(1, budget - (Date.now() - startedAt)),
-        signal: options.signal,
-      });
+      const attempt = await fetchWithRetry(
+        buildUrl(baseUrl, doc),
+        {
+          timeoutMsOverride:
+            budget === undefined ? undefined : Math.max(1, budget - (Date.now() - startedAt)),
+          signal: options.signal,
+        },
+        async ({ response, readBody }) => (response.ok ? readBody() : null)
+      );
       if (!attempt) continue;
-      if (attempt.response.ok) {
-        scope = attempt;
+      if (attempt !== null) {
+        data = attempt;
         servedDoc = doc;
         break;
       }
-      attempt.dispose();
     }
-    if (!scope) return null;
+    if (!data) return null;
 
-    try {
-      const data = await scope.response.arrayBuffer();
-      const attrs = rootAttributes(
-        JSON.parse(new TextDecoder().decode(data)),
-        servedDoc ?? undefined
-      );
-      const stamped = attrs?.content_hash;
-      if (typeof stamped === 'string' && stamped.length > 0) {
-        return { hash: stamped, mode: 'content-hash' };
-      }
-
-      // Implicit token: hash the exact bytes served. Any rewrite of the root
-      // attrs (Luxar writers always bump `timestamp`) changes the token.
-      // Digest a Uint8Array view rather than the raw ArrayBuffer: `instanceof
-      // ArrayBuffer` checks fail across realms (jsdom/worker), and a view
-      // carries explicit byteOffset/byteLength either way.
-      const digest = await sha256Hex(new Uint8Array(data));
-      return { hash: `zattrs:${digest}`, mode: 'zattrs-hash' };
-    } finally {
-      scope.dispose();
+    const attrs = rootAttributes(
+      JSON.parse(new TextDecoder().decode(data)),
+      servedDoc ?? undefined
+    );
+    const stamped = attrs?.content_hash;
+    if (typeof stamped === 'string' && stamped.length > 0) {
+      return { hash: stamped, mode: 'content-hash' };
     }
+
+    // Implicit token: hash the exact bytes served. Any rewrite of the root
+    // attrs (Luxar writers always bump `timestamp`) changes the token.
+    // Digest a Uint8Array view rather than the raw ArrayBuffer: `instanceof
+    // ArrayBuffer` checks fail across realms (jsdom/worker), and a view
+    // carries explicit byteOffset/byteLength either way.
+    const digest = await sha256Hex(data);
+    return { hash: `zattrs:${digest}`, mode: 'zattrs-hash' };
   } catch {
     return null;
   }

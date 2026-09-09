@@ -379,11 +379,60 @@ export class LuxarHttpRangeReader {
     signal?: AbortSignal
   ): Promise<Uint8Array<ArrayBuffer>> {
     const end = offset + size - 1;
-    const scope = await fetchWithRetry(this.url, {
-      signal: signal ?? this.lifetime,
-      headers: { Range: `bytes=${offset}-${end}` },
-    });
-    if (!scope) {
+    const bytes = await fetchWithRetry(
+      this.url,
+      {
+        signal: signal ?? this.lifetime,
+        headers: { Range: `bytes=${offset}-${end}` },
+      },
+      async ({ response, readBody }) => {
+        if (!response.ok) {
+          throw archiveHttpError(this.url, response, ` for bytes ${offset}-${end}`);
+        }
+        if (response.status !== 206) {
+          throw new RangeUnsupportedError(
+            this.url,
+            `the server answered a Range request with ${response.status} instead of 206, ` +
+              'so the response body is the whole file rather than the requested bytes'
+          );
+        }
+
+        const contentRange = response.headers.get('content-range');
+        if (contentRange !== null) {
+          const match = /^\s*bytes\s+(\d+)-(\d+)\/(?:\d+|\*)\s*$/i.exec(contentRange);
+          const rangeStart = match ? Number(match[1]) : undefined;
+          const rangeEnd = match ? Number(match[2]) : undefined;
+          if (
+            rangeStart !== undefined &&
+            rangeEnd !== undefined &&
+            (rangeStart !== offset || rangeEnd !== end)
+          ) {
+            throw new RangeUnsupportedError(
+              this.url,
+              `the requested window was bytes ${offset}-${end}, but Content-Range reported bytes ${rangeStart}-${rangeEnd}`
+            );
+          }
+        }
+
+        const total = parseContentRangeTotal(contentRange);
+        if (total !== null && this.#length !== undefined && total !== this.#length) {
+          throw new RangeUnsupportedError(
+            this.url,
+            `the archive changed size during the read (${this.#length} → ${total} bytes)`
+          );
+        }
+
+        const data = await readBody();
+        if (data.length !== size) {
+          throw new RangeUnsupportedError(
+            this.url,
+            `the requested window was ${size} bytes, but the server returned ${data.length}`
+          );
+        }
+        return data;
+      }
+    );
+    if (!bytes) {
       // The live signal is the lifetime one unless a caller supplied its own —
       // and none do today, so testing `signal` alone never fired.
       if ((signal ?? this.lifetime)?.aborted) {
@@ -409,59 +458,6 @@ export class LuxarHttpRangeReader {
           )
         : new Error(`Cannot read the zipped store at ${this.url}: ${detail}`);
     }
-    const { response } = scope;
-    try {
-      if (!response.ok) {
-        throw archiveHttpError(this.url, response, ` for bytes ${offset}-${end}`);
-      }
-      if (response.status !== 206) {
-        // The decisive check. 200 here means the body is the whole archive, not
-        // the requested window, and every downstream offset would be wrong.
-        throw new RangeUnsupportedError(
-          this.url,
-          `the server answered a Range request with ${response.status} instead of 206, ` +
-            'so the response body is the whole file rather than the requested bytes'
-        );
-      }
-
-      const contentRange = response.headers.get('content-range');
-      if (contentRange !== null) {
-        const match = /^\s*bytes\s+(\d+)-(\d+)\/(?:\d+|\*)\s*$/i.exec(contentRange);
-        const rangeStart = match ? Number(match[1]) : undefined;
-        const rangeEnd = match ? Number(match[2]) : undefined;
-        if (
-          rangeStart !== undefined &&
-          rangeEnd !== undefined &&
-          (rangeStart !== offset || rangeEnd !== end)
-        ) {
-          throw new RangeUnsupportedError(
-            this.url,
-            `the requested window was bytes ${offset}-${end}, but Content-Range reported bytes ${rangeStart}-${rangeEnd}`
-          );
-        }
-      }
-
-      const total = parseContentRangeTotal(contentRange);
-      if (total !== null && this.#length !== undefined && total !== this.#length) {
-        // The archive changed under us mid-read; offsets from the central
-        // directory we already parsed no longer describe this file.
-        throw new RangeUnsupportedError(
-          this.url,
-          `the archive changed size during the read (${this.#length} → ${total} bytes)`
-        );
-      }
-
-      const buffer = await response.arrayBuffer();
-      const bytes = new Uint8Array(buffer);
-      if (bytes.length !== size) {
-        throw new RangeUnsupportedError(
-          this.url,
-          `the requested window was ${size} bytes, but the server returned ${bytes.length}`
-        );
-      }
-      return bytes;
-    } finally {
-      scope.dispose();
-    }
+    return bytes;
   }
 }

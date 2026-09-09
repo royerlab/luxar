@@ -16,12 +16,13 @@
  */
 
 /**
- * Maximum chunk `fetch()` calls in flight across every data path at once.
+ * Maximum chunk responses in flight across every data path at once.
  *
  * 64 is chosen for HTTP/2: high enough that multiplexing keeps the pipe full on
  * a multi-thousand-chunk visible range, low enough to stay clear of the
  * `net::ERR_INSUFFICIENT_RESOURCES` ceiling described above. Shared globally —
- * the cap is on total concurrency, not per store or per node.
+ * the cap is on total concurrency through response-body consumption, not per
+ * store or per node.
  */
 export const MAX_CONCURRENT_CHUNK_FETCHES = 64;
 

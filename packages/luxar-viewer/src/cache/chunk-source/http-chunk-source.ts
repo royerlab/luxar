@@ -42,55 +42,34 @@ export class HttpChunkSource implements ChunkSource {
   }
 
   async get(key: string, signal?: AbortSignal): Promise<ChunkFetchOutcome> {
-    let scope;
+    let exhaustedCause: unknown;
     try {
-      scope = await fetchWithRetry(buildUrl(this.baseUrl, key), { signal });
+      const outcome = await fetchWithRetry(
+        buildUrl(this.baseUrl, key),
+        { signal, onExhausted: (error) => (exhaustedCause = error) },
+        async (attempt) => {
+          if (!attempt.response.ok) return { kind: 'missing' } as const;
+          if (signal?.aborted) return { kind: 'aborted' } as const;
+          const data = await attempt.readBody();
+          return { kind: 'ok', data, bytesOverWire: data.byteLength } as const;
+        }
+      );
+      return (
+        outcome ??
+        (signal?.aborted
+          ? { kind: 'aborted' }
+          : {
+              kind: 'error',
+              cause: new Error(
+                `fetch exhausted retries for ${key}${
+                  exhaustedCause instanceof Error ? `: ${exhaustedCause.message}` : ''
+                }`,
+                { cause: exhaustedCause }
+              ),
+            })
+      );
     } catch (error) {
-      // Belt and braces: `fetchWithRetry` catches inside its own retry loop and
-      // returns undefined rather than rejecting, so this is not reachable
-      // today. Kept because the seam's contract is that `get` never throws, and
-      // that must not depend on a helper's internals.
       return { kind: 'error', cause: error instanceof Error ? error : new Error(String(error)) };
-    }
-
-    if (!scope) {
-      // `fetchWithRetry` returns undefined when it gave up: either the caller
-      // aborted, or the retry budget ran out. The store distinguishes those by
-      // inspecting its own signals, so report the retry case and let it
-      // re-classify an abort it knows about.
-      return signal?.aborted
-        ? { kind: 'aborted' }
-        : { kind: 'error', cause: new Error(`fetch exhausted retries for ${key}`) };
-    }
-
-    try {
-      if (!scope.response.ok) return { kind: 'missing' };
-
-      // Check BEFORE touching the body. The store used to do this between the
-      // headers arriving and `arrayBuffer()`, and losing it meant an
-      // invalidation abort landing in that window surfaced as a NetworkError —
-      // which the store logs and turns into `undefined`, i.e. zarrita decodes
-      // the chunk as FILL VALUES. Silently wrong geometry is exactly what
-      // `abortPendingGets` exists to prevent. The `finally` still cancels the
-      // body we are no longer going to read.
-      if (signal?.aborted) return { kind: 'aborted' };
-
-      let data: Uint8Array;
-      try {
-        data = new Uint8Array(await scope.response.arrayBuffer());
-      } catch (error) {
-        // An abort during the body read rejects here. This must come back as an
-        // outcome, not a throw: the seam's contract is that a source never
-        // throws, and a throw would escape as NetworkError → fill values.
-        if (signal?.aborted) return { kind: 'aborted' };
-        return { kind: 'error', cause: error instanceof Error ? error : new Error(String(error)) };
-      }
-
-      // Over HTTP the decoded body IS what the meter counted before this
-      // refactor; keeping them equal preserves the existing byte totals.
-      return { kind: 'ok', data, bytesOverWire: data.byteLength };
-    } finally {
-      scope.dispose();
     }
   }
 
