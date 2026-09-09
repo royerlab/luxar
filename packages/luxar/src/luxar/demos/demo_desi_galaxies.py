@@ -1238,7 +1238,6 @@ def main() -> None:
             unavailable_reason = str(exc)
         if scene_zip is not None:
             extract_shipped_scene(scene_zip, output_path)
-            stamp_input_digests(output_path)
             # The record's scene is a pre-built artifact, so its STRUCTURE is
             # whatever the build that produced it chose. Re-derive it under the
             # current recipe when it breaches the per-node ceiling, instead of
