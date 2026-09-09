@@ -12,7 +12,7 @@
  *  - Eviction respects active vs pooled (active never disposed).
  *  - Eviction is idempotent if pool already under budget.
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import * as THREE from 'three';
 import {
   GPUBufferPool,
@@ -526,6 +526,7 @@ describe('post-grow reclaim (#2426 pool retention)', () => {
             : pool.gsplats.gsplatBuffers;
 
       const oldGeometry = acquire(initialCount);
+      expect(pool.getStats().activeBytes).toBeLessThan(BUDGET_IN_REGIME);
       oldGeometry.addEventListener('dispose', () => {
         throw new Error('synthetic post-grow dispose failure');
       });
