@@ -40,6 +40,7 @@ import {
   type BoundingBox,
 } from '../../../scene/scene-manager/clipping/bounds-math';
 import { updateCameraAspect } from '../../../utils/camera-utils';
+import { log } from '../../../utils/log';
 
 describe('computeEntryWorldBox', () => {
   it('reuses the caller-owned world box', () => {
@@ -3116,6 +3117,31 @@ describe('LODGroupRegistry — fresh-but-empty display guard', () => {
     expect(children[1].object.visible).toBe(false); // empty fine hidden
   });
 
+  it('directs network-backed empty levels to Retry instead of clear-cache', () => {
+    const camera = new THREE.Camera();
+    camera.matrixWorldInverse.identity();
+    camera.projectionMatrix.identity();
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const reg = new LODGroupRegistry({
+      getCamera: () => camera,
+      getViewportSize: () => ({ width: 800, height: 600 }),
+      getDisplayDims: () => [0, 1, 2],
+      getViewVersion: () => 2,
+      hasNetworkFailureUnder: (path) => path === '/g',
+    });
+    const children = [makeCountedChild(0, 2, 100), makeCountedChild(0.5, 2, 0)];
+    reg.register(makeEntry(children, 0, '/g'));
+
+    reg.evaluatePerFrame();
+
+    expect(warning).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining('use the monitor Retry action')
+    );
+    expect(warning.mock.calls[0]?.[1]).not.toContain('?clear-cache');
+    warning.mockRestore();
+  });
+
   it('leaves a genuinely empty slice unchanged (every fresh level empty)', () => {
     const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
     const children = [makeCountedChild(0, 2, 0), makeCountedChild(0.5, 2, 0)];
@@ -4558,6 +4584,260 @@ describe('LODGroupRegistry — capture quiescence (isCaptureQuiescent)', () => {
 
   it('reports quiescent for an empty registry (nothing to wait for)', () => {
     expect(makeRegistry().isCaptureQuiescent()).toBe(true);
+  });
+
+  it('counts both lod groups and partitions as capture work', () => {
+    const reg = makeRegistry();
+    expect(reg.captureSize()).toBe(0);
+
+    reg.register(makeEntry([makeChild(0)], 0, '/lod'));
+    expect(reg.captureSize()).toBe(1);
+
+    const partition = new THREE.Group();
+    const part = new THREE.Group();
+    partition.add(part);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject: partition,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [part],
+          positionBounds: { min: [0, 0, 0], max: [0.5, 0.5, 0.5] },
+        },
+      ],
+    });
+    expect(reg.captureSize()).toBe(2);
+  });
+
+  it('waits across a partition rising edge until its targeted resync commits', () => {
+    let loadPassInProgress = true;
+    const requestReprocess = vi.fn(() => {
+      loadPassInProgress = true;
+    });
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      () => 2,
+      undefined,
+      undefined,
+      undefined,
+      requestReprocess,
+      () => loadPassInProgress
+    );
+    const partition = new THREE.Group();
+    const part = new THREE.Group();
+    part.userData = {
+      nodeType: 'points',
+      visiblePointCount: 10,
+      loadedViewVersion: 1,
+      committedLadderComplete: true,
+    };
+    partition.add(part);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject: partition,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [part],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+        },
+      ],
+    });
+
+    reg.evaluatePerFrame();
+    expect(part.visible).toBe(false);
+    expect(reg.isCaptureQuiescent()).toBe(true);
+
+    partition.position.x = -2.5;
+    reg.evaluatePerFrame();
+    expect(part.visible).toBe(true);
+    expect(requestReprocess).not.toHaveBeenCalled();
+    expect(reg.isCaptureQuiescent()).toBe(false);
+
+    loadPassInProgress = false;
+    reg.evaluatePerFrame();
+    expect(requestReprocess).toHaveBeenCalledWith(['/partition/part_0']);
+
+    part.userData.loadedViewVersion = 2;
+    expect(reg.isCaptureQuiescent()).toBe(false);
+
+    loadPassInProgress = false;
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('does not block forever on a pending partition resync after an archive fault', () => {
+    let loadPassInProgress = true;
+    let archiveFault = false;
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => archiveFault,
+      vi.fn(),
+      () => loadPassInProgress
+    );
+    const partition = new THREE.Group();
+    const part = new THREE.Group();
+    partition.add(part);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject: partition,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [part],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+        },
+      ],
+    });
+
+    reg.evaluatePerFrame();
+    partition.position.x = -2.5;
+    reg.evaluatePerFrame();
+    expect(reg.isCaptureQuiescent()).toBe(false);
+
+    loadPassInProgress = false;
+    expect(reg.isCaptureQuiescent()).toBe(false);
+    archiveFault = true;
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('does not wait on a pending partition resync while its wrapper is hidden', () => {
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      vi.fn(),
+      () => true
+    );
+    const partition = new THREE.Group();
+    const part = new THREE.Group();
+    partition.add(part);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject: partition,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [part],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+        },
+      ],
+    });
+
+    reg.evaluatePerFrame();
+    partition.position.x = -2.5;
+    reg.evaluatePerFrame();
+    expect(reg.isCaptureQuiescent()).toBe(false);
+
+    partition.visible = false;
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('does not wait on a pending resync after its partition is removed', () => {
+    let loadPassInProgress = true;
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      vi.fn(),
+      () => loadPassInProgress
+    );
+    const partition = new THREE.Group();
+    const part = new THREE.Group();
+    partition.add(part);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject: partition,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [part],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+        },
+      ],
+    });
+
+    reg.evaluatePerFrame();
+    partition.position.x = -2.5;
+    reg.evaluatePerFrame();
+    expect(reg.isCaptureQuiescent()).toBe(false);
+
+    reg.unregister('/partition');
+    loadPassInProgress = false;
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('waits for a visible bare partition leaf to finish its progressive ladder', () => {
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 1);
+    const partition = new THREE.Group();
+    const part = new THREE.Group();
+    part.userData = {
+      nodeType: 'gsplats',
+      visibleSplatCount: 100,
+      loadedViewVersion: 1,
+      committedLadderComplete: false,
+    };
+    partition.add(part);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject: partition,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [part],
+          positionBounds: { min: [0, 0, 0], max: [0.5, 0.5, 0.5] },
+        },
+      ],
+    });
+    reg.evaluatePerFrame();
+
+    expect(reg.isCaptureQuiescent()).toBe(false);
+    part.userData.committedLadderComplete = true;
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('does not wait on a stale partition leaf while its wrapper is hidden', () => {
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    const partition = new THREE.Group();
+    const part = new THREE.Group();
+    part.userData = {
+      nodeType: 'points',
+      visiblePointCount: 10,
+      loadedViewVersion: 1,
+      committedLadderComplete: true,
+    };
+    partition.add(part);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject: partition,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [part],
+          positionBounds: { min: [0, 0, 0], max: [0.5, 0.5, 0.5] },
+        },
+      ],
+    });
+    reg.evaluatePerFrame();
+
+    expect(reg.isCaptureQuiescent()).toBe(false);
+    partition.visible = false;
+    expect(reg.isCaptureQuiescent()).toBe(true);
   });
 
   it('reports quiescent for a settled single-level group', () => {

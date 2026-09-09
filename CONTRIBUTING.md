@@ -124,7 +124,7 @@ The project enforces quality standards automatically through pre-commit hooks an
 
 ### 🌐 TypeScript Code Quality
 - **Formatting**: ESLint + Prettier (automatic)
-- **Lint suppressions**: A reduced baselined count fails lint until you run `pnpm lint --prune-suppressions` from `packages/luxar-viewer/` and commit `eslint-suppressions.json`; inspect the removed entries with `git diff -- eslint-suppressions.json`. Deleting a baselined file is not detected, so prune manually after deletions. After moving a baselined file, re-key it with `pnpm exec eslint . --suppress-rule <rule>`, then prune. Resolve suppression-file conflicts by pruning after the merge, never by hand-merging counts or adding `eslint-disable` comments.
+- **Lint suppressions**: A reduced baselined count fails lint until you run `pnpm lint:prune` from `packages/luxar-viewer/` and commit `eslint-suppressions.json`; inspect the removed entries with `git diff -- eslint-suppressions.json`. Deleting a baselined file is not detected, so prune manually after deletions. After moving a baselined file, re-key it with `pnpm exec eslint . --suppress-rule <rule>`, then prune. Resolve suppression-file conflicts by pruning after the merge, never by hand-merging counts or adding `eslint-disable` comments.
 - **Type Safety**: Strict TypeScript configuration
 - **Documentation**: JSDoc comments for complex functions
 - **Memory Management**: Proper WebGL resource cleanup

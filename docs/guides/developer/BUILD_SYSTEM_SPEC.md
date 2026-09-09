@@ -94,7 +94,7 @@ The setup process has 5 steps:
 #### Step 2: Node.js Environment
 
 1. Sources nvm if already installed (`~/.nvm/nvm.sh`)
-2. Checks Node.js version (requires 22.22+ — jsdom 30's declared floor; Vite 8.x alone needs only 20.19)
+2. Checks Node.js version (requires 22.22+ — jsdom 30's declared floor; Vite 8.x supports `^20.19.0 || >=22.12.0`)
 3. If Node.js is missing or too old:
    - **macOS**: Uses Homebrew (`brew install node@22`)
    - **Linux**: Installs nvm, then `nvm install 22`
@@ -894,11 +894,30 @@ runs everything. The same trade as the per-PR Python matrix below: found on
 
 `python-tests` is a matrix whose legs depend on the event:
 
-| Event | Python legs |
-|-------|-------------|
+| Event | Python legs (`python-tests`) |
+|-------|-------------------------------|
 | `pull_request` | `3.12` — the floor, and the one required status context |
 | `push` to `dev` | `3.12`, `3.13`, `3.14` |
 | `workflow_dispatch` | `3.12` by default; `3.12`, `3.13`, `3.14` with `full_python_matrix=true` |
+
+Coverage instrumentation plus the 89% `fail_under` gate is the dominant cost of
+`python-tests`, so it is off the per-PR critical path: PRs run the `-m 'not slow'`
+suite plain (`hatch run test-nocov`). Pushes to `dev` still run `test-cov`; the
+protected `python-tests (3.12)` context is the promotion-visible enforcement path
+and is load-bearing even though ci.yml's cancel-in-progress policy means some
+superseded dev runs never finish.
+
+A **separate workflow, `.github/workflows/coverage.yml`**, also runs `test-cov` on
+every push to `dev` (and on `workflow_dispatch`). Its per-commit concurrency group
+(`coverage-${{ github.sha }}`, `cancel-in-progress: false`) ensures a newer dev push
+never cancels an older coverage run. An `obsidian` outage can still leave a run queued
+until GitHub expires it; `LUXAR_CI_FORCE_HOSTED=1` is the recovery path. That
+`coverage` context is currently advisory because it is not one of main's protected
+contexts; adding it to repository protection is the known settings gap. The workflow
+defaults to `obsidian` and keeps hosted runs serial. A `schedule` trigger was
+deliberately not used: scheduled checks attach to the default branch's tip, not the
+dev commit tested. Dispatches of ci.yml also execute `test-cov`. The `python-tests`
+context name is unchanged, so no required status is orphaned.
 
 3.12 is the floor (`requires-python = ">=3.12"`) and names the required
 `python-tests (3.12)` context. Merge pushes exercise every supported interpreter,
@@ -995,7 +1014,7 @@ that cap without re-measuring queue pressure.
 | Tool | Minimum Version | Reason |
 |------|----------------|--------|
 | Python | 3.12 | zarr 3 requires >=3.12 from 3.2 on; also stdlib `tomllib`, PEP 695 type stubs |
-| Node.js | 22.22 | jsdom 30 engines `^22.22.2 || ^24.15.0 || >=26.0.0` (undici 8 crashes on older Node); Vite 8.x needs only 20.19 |
+| Node.js | 22.22 | jsdom 30 engines `^22.22.2 || ^24.15.0 || >=26.0.0` (undici 8 crashes on older Node); Vite 8.x supports `^20.19.0 || >=22.12.0` |
 | Rust | stable | WASM compilation |
 | wasm-pack | 0.15.0 (pinned) | WASM packaging — `install-rust` installs exactly `WASM_PACK_VERSION` (see the Makefile) with `cargo install --locked --force`, then fails unless PATH answers with that version |
 
