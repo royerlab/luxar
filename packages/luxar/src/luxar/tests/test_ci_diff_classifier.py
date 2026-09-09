@@ -92,6 +92,12 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "test_docs_workflow.py derives the published LFS candidate set from it",
     ),
     (
+        ".gitignore",
+        "py",
+        "test_wheel_source_completeness.py guards package sources against broad "
+        "ignore rules",
+    ),
+    (
         ".github/workflows/docs.yml",
         "py",
         "test_docs_workflow.py guards the Pages workflow itself",
@@ -129,6 +135,11 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "scripts/gallery/manifest.json",
         "ts",
         "gallery-selection.test.ts validates README capture ids against it",
+    ),
+    (
+        "scripts/gallery/media-manifest.json",
+        "py",
+        "test_verify_media.py checks the committed media inventory against README.md",
     ),
     (
         "scripts/benchmarks/benchmark_bisect.sh",
@@ -190,6 +201,16 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "README.md",
         "ts",
         "gallery-selection.test.ts derives the README capture set from it",
+    ),
+    (
+        "packages/luxar/README.md",
+        "py",
+        "test_readme_demo_docs.py drift-guards the published demo count",
+    ),
+    (
+        "packages/luxar-viewer/README.md",
+        "py",
+        "test_readme_demo_docs.py drift-guards the published demo count",
     ),
     (
         "packages/luxar/src/luxar/demos/README.md",
@@ -401,6 +422,7 @@ _PYTHON_SOURCE_ROOTS = (
 
 _NON_SCANNED_PYTHON_VIEWER_INPUTS = {
     "packages/luxar-viewer/package.json": "read by check_version_consistency.py",
+    "packages/luxar-viewer/README.md": "read by test_readme_demo_docs.py",
     "packages/luxar-viewer/src/types/format-contract.ts": (
         "generated and checked by scripts/gen_format_contract.py"
     ),
@@ -412,6 +434,15 @@ _NON_SCANNED_PYTHON_VIEWER_INPUTS = {
     ),
     "packages/luxar-viewer/tests/fixtures/README.md": (
         "matched by test_fixture_environment.py through git grep"
+    ),
+}
+
+_NON_GATE_PYTHON_TEST_PATH_LITERALS = {
+    ".github/workflows/publish.yml": (
+        "test_set_version.py writes a fixture workflow at this path"
+    ),
+    ".github/workflows/publish-npm.yml": (
+        "test_set_version.py writes a fixture workflow at this path"
     ),
 }
 
@@ -555,6 +586,112 @@ def test_inputs_without_python_readers_do_not_claim_the_python_domain(
         f"{path} sets dom_py even though no Python gate reads it; narrow the "
         "cross-language viewer pattern"
     )
+
+
+def _tracked_non_python_test_path_literals(
+    source_roots: tuple[Path, ...] = _PYTHON_SOURCE_ROOTS,
+    *,
+    repo: Path = REPO,
+    tracked_paths: set[str] | None = None,
+) -> set[str]:
+    """Find whole tracked non-``.py`` path literals in pytest test modules.
+
+    Only ``test_*.py`` modules are scanned: non-test modules commonly name files
+    they generate rather than committed inputs they read. This file is excluded
+    because its positive and negative control tables intentionally name paths
+    with every ownership shape. The scan cannot derive concatenated paths,
+    ``os.path.join`` calls, or f-strings; those still require explicit review.
+    """
+    if tracked_paths is None:
+        proc = subprocess.run(
+            ["git", "ls-files", "-z"],
+            cwd=repo,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        tracked_paths = set(proc.stdout.split("\0")) - {""}
+
+    paths: set[str] = set()
+    this_file = Path(__file__).resolve()
+    for source_root in source_roots:
+        for source_path in source_root.rglob("test_*.py"):
+            if source_path.resolve() == this_file:
+                continue
+            tree = ast.parse(
+                source_path.read_text(encoding="utf-8"), filename=str(source_path)
+            )
+            paths.update(
+                node.value
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and node.value in tracked_paths
+                and not node.value.endswith(".py")
+            )
+    return paths
+
+
+def _assert_unclassified_test_paths_are_owned(paths: set[str]) -> None:
+    python_gate_inputs = {path for path, domain, _why in GATE_INPUTS if domain == "py"}
+    exceptions = set(_NON_GATE_PYTHON_TEST_PATH_LITERALS)
+    missing = sorted(paths - python_gate_inputs - exceptions)
+    stale_exceptions = sorted(exceptions - paths)
+    assert not missing, (
+        "tracked non-Python paths named by pytest tests must have dom_py "
+        f"GATE_INPUTS rows or justified exclusions: {missing}"
+    )
+    assert not stale_exceptions, (
+        "Python test path-literal exclusions no longer describe unclassified "
+        f"scan results; remove or update them: {stale_exceptions}"
+    )
+
+
+def test_python_gate_input_scan_uses_only_whole_tracked_test_literals(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "test_reader.py").write_text(
+        'INPUT = "tracked.json"\nSOURCE = "tracked.py"\nMISSING = "missing.json"\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "generator.py").write_text(
+        'OUTPUT = "generated.json"\n', encoding="utf-8"
+    )
+
+    paths = _tracked_non_python_test_path_literals(
+        (tmp_path,),
+        repo=tmp_path,
+        tracked_paths={"tracked.json", "tracked.py", "generated.json"},
+    )
+
+    assert paths == {"tracked.json"}
+
+
+def test_python_gate_input_scan_rejects_missing_ownership() -> None:
+    with pytest.raises(AssertionError, match="must have dom_py GATE_INPUTS rows"):
+        _assert_unclassified_test_paths_are_owned({"unowned.json"})
+
+
+def test_python_gate_input_scan_rejects_stale_exclusions() -> None:
+    with pytest.raises(AssertionError, match="exclusions no longer describe"):
+        _assert_unclassified_test_paths_are_owned(set())
+
+
+def test_python_test_path_literals_are_statically_owned_by_the_python_gate(
+    workflow: str,
+) -> None:
+    """Every whole-path literal with no gate must be owned or explained."""
+    paths = _tracked_non_python_test_path_literals()
+    patterns = [*_domain_patterns(workflow).values(), _docs_pattern(workflow)]
+    unclassified = {
+        path
+        for path in paths
+        if not any(_classifies(pattern, path) for pattern in patterns)
+    }
+    assert unclassified, (
+        "no unclassified literals found; the guard would pass vacuously"
+    )
+    _assert_unclassified_test_paths_are_owned(unclassified)
 
 
 def _viewer_source_calls(
