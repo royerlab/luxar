@@ -3,7 +3,10 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { computeEffectiveRenderSize } from '../../../../rendering/post-processing/render-target-sizing';
+import {
+  computeEffectiveRenderSize,
+  computeRenderTargetAllocation,
+} from '../../../../rendering/post-processing/render-target-sizing';
 
 describe('computeEffectiveRenderSize', () => {
   it('passes through the render size unchanged when SSAA is disabled', () => {
@@ -62,4 +65,79 @@ describe('computeEffectiveRenderSize', () => {
       height: 0,
     });
   });
+});
+
+describe('computeRenderTargetAllocation', () => {
+  it('matches Three.js floor rounding at a non-integer DPR', () => {
+    expect(
+      computeRenderTargetAllocation({ width: 1001, height: 1003 }, true, 1.5, 1.31, 8192)
+    ).toEqual({
+      logical: { width: 1502, height: 1505 },
+      physical: { width: 1967, height: 1971 },
+      limited: false,
+    });
+  });
+
+  it('reduces oversized SSAA dimensions proportionally to the framebuffer limit', () => {
+    const allocation = computeRenderTargetAllocation(
+      { width: 2509, height: 1328 },
+      true,
+      2,
+      2,
+      8192
+    );
+
+    expect(allocation.logical.width).toBe(4096);
+    expect(allocation.logical.height).toBe(2167);
+    expect(allocation.physical).toEqual({ width: 8192, height: 4334 });
+    expect(allocation.limited).toBe(true);
+    const sourceAspect = 2509 / 1328;
+    const allocatedAspect = allocation.physical.width / allocation.physical.height;
+    expect(Math.abs(allocatedAspect - sourceAspect) / sourceAspect).toBeLessThan(0.001);
+  });
+
+  it.each([
+    [{ width: 2721, height: 1440 }, 4, 1, 8192],
+    [{ width: 2040, height: 1080 }, 3, 1, 4096],
+    [{ width: 1371, height: 566 }, 4, 0.81, 4096],
+  ])(
+    'keeps limited physical dimensions encoder-compatible',
+    (renderSize, multiplier, pixelRatio, limit) => {
+      const allocation = computeRenderTargetAllocation(
+        renderSize,
+        true,
+        multiplier,
+        pixelRatio,
+        limit
+      );
+
+      expect(allocation.limited).toBe(true);
+      expect(allocation.physical.width % 2).toBe(0);
+      expect(allocation.physical.height % 2).toBe(0);
+      expect(Math.floor(allocation.logical.width * pixelRatio)).toBe(allocation.physical.width);
+      expect(Math.floor(allocation.logical.height * pixelRatio)).toBe(allocation.physical.height);
+      expect(Math.round(allocation.logical.width * pixelRatio)).toBe(allocation.physical.width);
+      expect(Math.round(allocation.logical.height * pixelRatio)).toBe(allocation.physical.height);
+    }
+  );
+
+  it.each([0.72, 0.73, 1.27, 2])(
+    'keeps a zero-sized hidden canvas and its targets at the same one-pixel floor at DPR %s',
+    (pixelRatio) => {
+      const allocation = computeRenderTargetAllocation(
+        { width: 0, height: 0 },
+        false,
+        2,
+        pixelRatio,
+        8192
+      );
+
+      expect(allocation.physical).toEqual({ width: 1, height: 1 });
+      expect(Math.floor(allocation.logical.width * pixelRatio)).toBe(1);
+      expect(Math.floor(allocation.logical.height * pixelRatio)).toBe(1);
+      expect(Math.round(allocation.logical.width * pixelRatio)).toBe(1);
+      expect(Math.round(allocation.logical.height * pixelRatio)).toBe(1);
+      expect(allocation.limited).toBe(false);
+    }
+  );
 });

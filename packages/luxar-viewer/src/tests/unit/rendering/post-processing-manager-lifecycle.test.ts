@@ -38,8 +38,12 @@ import type { Renderer, RendererCapabilities } from '../../../rendering/renderer
 import type { DataRefractionSplit } from '../../../rendering/post-processing/post-processing-manager/refraction-split';
 import { getGlassDepthTexture } from '../../../rendering/materials/_shared/glass-partition';
 import { loadTslMaterials } from '../../../rendering/tsl/load';
+import { log, Modules } from '../../../utils/log';
 
-function mockCaps(apiSurface: 'webgl2' | 'webgpu' = 'webgl2'): RendererCapabilities {
+function mockCaps(
+  apiSurface: 'webgl2' | 'webgpu' = 'webgl2',
+  overrides: Partial<RendererCapabilities> = {}
+): RendererCapabilities {
   return {
     apiSurface,
     framebufferYDown: apiSurface === 'webgpu',
@@ -54,19 +58,25 @@ function mockCaps(apiSurface: 'webgl2' | 'webgpu' = 'webgl2'): RendererCapabilit
       recommendedColorSpace: 'srgb',
     },
     maxTextureSize: 4096,
+    maxRenderbufferSize: 4096,
     maxMSAASamples: 4,
     pointSizeRange: [1, 1024],
     readBackbufferPixels: () => Promise.resolve({ pixels: new Uint8Array(), width: 0, height: 0 }),
+    ...overrides,
   };
 }
 
 function makeMockRenderer(opts: { pixelRatio?: number } = {}): Renderer {
   const canvas = document.createElement('canvas');
+  const pixelRatio = opts.pixelRatio ?? 1;
   return {
     outputColorSpace: THREE.LinearSRGBColorSpace,
     toneMapping: THREE.NoToneMapping,
-    getPixelRatio: () => opts.pixelRatio ?? 1,
-    setSize: vi.fn(),
+    getPixelRatio: () => pixelRatio,
+    setSize: vi.fn((width: number, height: number) => {
+      canvas.width = Math.floor(width * pixelRatio);
+      canvas.height = Math.floor(height * pixelRatio);
+    }),
     domElement: canvas,
   } as unknown as Renderer;
 }
@@ -246,6 +256,29 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
     materialManager.setCaps(mockCaps('webgl2'));
   });
 
+  it('warns once per transition into framebuffer-limited sizing', () => {
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const mgr = makeManager({ width: 5000, height: 3000 });
+    const limitWarnings = () =>
+      warning.mock.calls.filter(
+        ([module, message]) =>
+          module === Modules.POST_PROCESSING && String(message).includes('framebuffer limit')
+      );
+
+    mgr.resize(5000, 3000);
+    expect(limitWarnings()).toHaveLength(1);
+    mgr.resize(5001, 3000);
+    mgr.resize(5002, 3000);
+    expect(limitWarnings()).toHaveLength(1);
+
+    mgr.resize(1000, 600);
+    mgr.resize(5000, 3000);
+    expect(limitWarnings()).toHaveLength(2);
+
+    mgr.dispose();
+    warning.mockRestore();
+  });
+
   it('disposes the previous hdrTarget before allocating a new one', () => {
     const mgr = makeManager({ width: 64, height: 64 });
     const internals = peek(mgr);
@@ -357,6 +390,45 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
     mgr.resize(96, 96);
 
     expect(peek(mgr).hdrTarget).not.toBe(hdrAfterFirst);
+
+    mgr.dispose();
+  });
+
+  it('clamps oversized SSAA targets and resizes attachments before the canvas', () => {
+    const renderer = makeMockRenderer({ pixelRatio: 2 });
+    const capabilities = mockCaps('webgl2', {
+      maxTextureSize: 16384,
+      maxRenderbufferSize: 8192,
+    });
+    materialManager.setCaps(capabilities);
+    const mgr = new PostProcessingManager(
+      renderer,
+      capabilities,
+      new THREE.Scene(),
+      new THREE.PerspectiveCamera(),
+      { width: 64, height: 64 }
+    );
+    mgr.setSSAAEnabled(true);
+
+    const internals = peek(mgr);
+    const ldrSetSize = vi.spyOn(internals.ldrTarget, 'setSize');
+    const rendererSetSize = renderer.setSize as ReturnType<typeof vi.fn>;
+    rendererSetSize.mockClear();
+
+    mgr.resize(2509, 1328);
+
+    const [logicalWidth, logicalHeight] = rendererSetSize.mock.lastCall!;
+    expect(logicalWidth).toBe(4096);
+    expect(logicalHeight).toBe(2167);
+    expect(peek(mgr).hdrTarget.width).toBe(8192);
+    expect(peek(mgr).hdrTarget.height).toBe(4334);
+    expect(peek(mgr).ldrTarget.width).toBe(8192);
+    expect(peek(mgr).ldrTarget.height).toBe(4334);
+    expect(renderer.domElement.width).toBe(8192);
+    expect(renderer.domElement.height).toBe(4334);
+    expect(ldrSetSize.mock.invocationCallOrder[0]).toBeLessThan(
+      rendererSetSize.mock.invocationCallOrder[0]
+    );
 
     mgr.dispose();
   });

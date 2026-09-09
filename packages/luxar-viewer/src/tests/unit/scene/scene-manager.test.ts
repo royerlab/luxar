@@ -528,6 +528,7 @@ describe('SceneManager', () => {
           },
           maxMSAASamples: 0,
           maxTextureSize: 2048,
+          maxRenderbufferSize: 2048,
           pointSizeRange: [1, 1024],
           readBackbufferPixels: async () => ({
             pixels: new Uint8Array(0),
