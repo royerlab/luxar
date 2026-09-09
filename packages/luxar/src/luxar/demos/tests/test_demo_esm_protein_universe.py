@@ -78,7 +78,7 @@ def _universe(seed: int = 0) -> Universe:
     phylum[2000:2500] = 2
     phylum[4000:4120] = 0
     pfam[4870:4920] = 0  # the spur is PF00001 here (the shipped one is PF00005)
-    pct = np.full(n, 100, dtype=np.uint8)
+    pct = np.full(n, 100, dtype=np.float32)
     pct[2000:2500] = 0  # the phage clusters are dark
     return Universe(
         positions=positions,
@@ -128,20 +128,15 @@ def test_dark_mask_preserves_fractional_values_and_excludes_unknown_joins() -> N
 
 
 def test_characterized_percentages_reject_nulls_without_truncating_fractions() -> None:
-    class Column:
-        def __init__(self, values: list[float]) -> None:
-            self.values = values
-
-        def to_numpy(self, *, zero_copy_only: bool) -> np.ndarray:
-            assert zero_copy_only is False
-            return np.asarray(self.values, dtype=np.float64)
-
-    values = demo._characterized_percentages(Column([0.0, 0.4, 2.5, 100.0]))
+    pa = pytest.importorskip("pyarrow")
+    fractional = pa.chunked_array([pa.array([0.0, 0.4]), pa.array([2.5, 100.0])])
+    values = demo._characterized_percentages(fractional)
     assert values.dtype == np.float32
     assert values.tolist() == pytest.approx([0.0, 0.4, 2.5, 100.0])
 
+    null_integer = pa.chunked_array([pa.array([0, 5, None, 100], type=pa.int64())])
     with pytest.raises(ValueError, match="null or non-finite"):
-        demo._characterized_percentages(Column([0.0, np.nan]))
+        demo._characterized_percentages(null_integer)
 
 
 def test_backdrop_compositing_lives_only_on_partition_wrapper(

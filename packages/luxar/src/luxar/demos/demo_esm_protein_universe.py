@@ -298,7 +298,7 @@ def build_universe_cache(coords: Path, annotations: Path, out: Path) -> Path:
         phylum_rows, phylum_vocab = _dominant_map_key(at, "top_phyla")
         del at
 
-    def per_point(rows: np.ndarray, fill: int) -> np.ndarray:
+    def per_point(rows: np.ndarray, fill: float) -> np.ndarray:
         out_arr = np.full(len(row), fill, dtype=rows.dtype)
         out_arr[hit] = rows[row[hit]]
         return out_arr
