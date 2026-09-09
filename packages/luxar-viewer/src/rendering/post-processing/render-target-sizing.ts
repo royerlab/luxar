@@ -20,6 +20,11 @@ export interface RenderTargetAllocation {
   limited: boolean;
 }
 
+function logicalDimensionForPhysical(physical: number, pixelRatio: number): number {
+  const logical = physical / pixelRatio;
+  return Math.floor(logical * pixelRatio) === physical ? logical : (physical + 0.5) / pixelRatio;
+}
+
 /**
  * Compute the effective render-target size given current SSAA settings.
  *
@@ -55,8 +60,9 @@ export function computeEffectiveRenderSize(
  * Three.js floors `logical × pixelRatio` when it sizes the canvas. Use
  * the same rule here so every off-screen attachment exactly matches the
  * backbuffer at non-integer DPRs. If either physical axis exceeds the
- * framebuffer limit, reduce both logical axes by one common factor to
- * preserve the viewport aspect ratio.
+ * framebuffer limit, reduce both axes by one common factor, floor the
+ * resulting physical dimensions to even values for encoder compatibility,
+ * then derive the renderer's logical size from those physical dimensions.
  */
 export function computeRenderTargetAllocation(
   renderSize: RenderSize,
@@ -75,17 +81,29 @@ export function computeRenderTargetAllocation(
     maxPhysicalDimension / requestedPhysical.width,
     maxPhysicalDimension / requestedPhysical.height
   );
-  const logical = {
+  let logical = {
     width: Math.max(1 / pixelRatio, effective.width * scale),
     height: Math.max(1 / pixelRatio, effective.height * scale),
   };
+  let physical = {
+    width: Math.max(1, Math.floor(logical.width * pixelRatio)),
+    height: Math.max(1, Math.floor(logical.height * pixelRatio)),
+  };
+
+  if (scale < 1) {
+    physical = {
+      width: Math.max(2, physical.width - (physical.width % 2)),
+      height: Math.max(2, physical.height - (physical.height % 2)),
+    };
+    logical = {
+      width: logicalDimensionForPhysical(physical.width, pixelRatio),
+      height: logicalDimensionForPhysical(physical.height, pixelRatio),
+    };
+  }
 
   return {
     logical,
-    physical: {
-      width: Math.max(1, Math.floor(logical.width * pixelRatio)),
-      height: Math.max(1, Math.floor(logical.height * pixelRatio)),
-    },
+    physical,
     limited: scale < 1,
   };
 }

@@ -11,6 +11,7 @@ import * as THREE from 'three';
 import type { WebGPURenderer } from 'three/webgpu';
 
 import { detectDisplayCapabilities, type HDRCapabilities } from '../utils/hdr/hdr-detection';
+import { log, Modules } from '../utils/log';
 
 export type { WebGPURenderer } from 'three/webgpu';
 
@@ -328,8 +329,15 @@ export function createRendererCapabilities(
     if (typeof glMax === 'number' && glMax > 0) maxTextureSize = glMax;
     const renderbufferMax = backend.gl.getParameter(backend.gl.MAX_RENDERBUFFER_SIZE) as
       number | null;
-    maxRenderbufferSize =
-      typeof renderbufferMax === 'number' && renderbufferMax > 0 ? renderbufferMax : 2048;
+    if (typeof renderbufferMax === 'number' && renderbufferMax > 0) {
+      maxRenderbufferSize = renderbufferMax;
+    } else {
+      maxRenderbufferSize = maxTextureSize;
+      log.warning(
+        Modules.RENDERER,
+        `MAX_RENDERBUFFER_SIZE probe failed; using MAX_TEXTURE_SIZE (${maxTextureSize})`
+      );
+    }
   }
 
   return {

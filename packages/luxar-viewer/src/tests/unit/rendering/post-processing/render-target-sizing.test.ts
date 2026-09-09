@@ -88,11 +88,36 @@ describe('computeRenderTargetAllocation', () => {
     );
 
     expect(allocation.logical.width).toBe(4096);
-    expect(allocation.logical.height).toBeCloseTo(2167.99, 2);
-    expect(allocation.physical).toEqual({ width: 8192, height: 4335 });
+    expect(allocation.logical.height).toBe(2167);
+    expect(allocation.physical).toEqual({ width: 8192, height: 4334 });
     expect(allocation.limited).toBe(true);
-    expect(allocation.logical.width / allocation.logical.height).toBeCloseTo(2509 / 1328, 5);
+    const sourceAspect = 2509 / 1328;
+    const allocatedAspect = allocation.physical.width / allocation.physical.height;
+    expect(Math.abs(allocatedAspect - sourceAspect) / sourceAspect).toBeLessThan(0.001);
   });
+
+  it.each([
+    [{ width: 2721, height: 1440 }, 4, 1, 8192],
+    [{ width: 2040, height: 1080 }, 3, 1, 4096],
+    [{ width: 1371, height: 566 }, 4, 0.81, 4096],
+  ])(
+    'keeps limited physical dimensions encoder-compatible',
+    (renderSize, multiplier, pixelRatio, limit) => {
+      const allocation = computeRenderTargetAllocation(
+        renderSize,
+        true,
+        multiplier,
+        pixelRatio,
+        limit
+      );
+
+      expect(allocation.limited).toBe(true);
+      expect(allocation.physical.width % 2).toBe(0);
+      expect(allocation.physical.height % 2).toBe(0);
+      expect(Math.floor(allocation.logical.width * pixelRatio)).toBe(allocation.physical.width);
+      expect(Math.floor(allocation.logical.height * pixelRatio)).toBe(allocation.physical.height);
+    }
+  );
 
   it('keeps a zero-sized hidden canvas and its targets at the same one-pixel floor', () => {
     expect(computeRenderTargetAllocation({ width: 0, height: 0 }, false, 2, 2, 8192)).toEqual({

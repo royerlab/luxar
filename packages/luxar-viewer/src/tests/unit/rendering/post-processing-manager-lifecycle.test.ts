@@ -38,6 +38,7 @@ import type { Renderer, RendererCapabilities } from '../../../rendering/renderer
 import type { DataRefractionSplit } from '../../../rendering/post-processing/post-processing-manager/refraction-split';
 import { getGlassDepthTexture } from '../../../rendering/materials/_shared/glass-partition';
 import { loadTslMaterials } from '../../../rendering/tsl/load';
+import { log, Modules } from '../../../utils/log';
 
 function mockCaps(
   apiSurface: 'webgl2' | 'webgpu' = 'webgl2',
@@ -255,6 +256,29 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
     materialManager.setCaps(mockCaps('webgl2'));
   });
 
+  it('warns once per transition into framebuffer-limited sizing', () => {
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const mgr = makeManager({ width: 5000, height: 3000 });
+    const limitWarnings = () =>
+      warning.mock.calls.filter(
+        ([module, message]) =>
+          module === Modules.POST_PROCESSING && String(message).includes('framebuffer limit')
+      );
+
+    mgr.resize(5000, 3000);
+    expect(limitWarnings()).toHaveLength(1);
+    mgr.resize(5001, 3000);
+    mgr.resize(5002, 3000);
+    expect(limitWarnings()).toHaveLength(1);
+
+    mgr.resize(1000, 600);
+    mgr.resize(5000, 3000);
+    expect(limitWarnings()).toHaveLength(2);
+
+    mgr.dispose();
+    warning.mockRestore();
+  });
+
   it('disposes the previous hdrTarget before allocating a new one', () => {
     const mgr = makeManager({ width: 64, height: 64 });
     const internals = peek(mgr);
@@ -395,13 +419,13 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
 
     const [logicalWidth, logicalHeight] = rendererSetSize.mock.lastCall!;
     expect(logicalWidth).toBe(4096);
-    expect(logicalHeight).toBeCloseTo(2167.99, 2);
+    expect(logicalHeight).toBe(2167);
     expect(peek(mgr).hdrTarget.width).toBe(8192);
-    expect(peek(mgr).hdrTarget.height).toBe(4335);
+    expect(peek(mgr).hdrTarget.height).toBe(4334);
     expect(peek(mgr).ldrTarget.width).toBe(8192);
-    expect(peek(mgr).ldrTarget.height).toBe(4335);
+    expect(peek(mgr).ldrTarget.height).toBe(4334);
     expect(renderer.domElement.width).toBe(8192);
-    expect(renderer.domElement.height).toBe(4335);
+    expect(renderer.domElement.height).toBe(4334);
     expect(ldrSetSize.mock.invocationCallOrder[0]).toBeLessThan(
       rendererSetSize.mock.invocationCallOrder[0]
     );

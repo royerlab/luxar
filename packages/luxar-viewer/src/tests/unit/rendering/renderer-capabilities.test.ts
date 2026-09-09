@@ -16,6 +16,7 @@ import {
   detectFramebufferYDown,
   type Renderer,
 } from '../../../rendering/renderer-capabilities';
+import { log, Modules } from '../../../utils/log';
 
 // MAX_SAMPLES and ALIASED_POINT_SIZE_RANGE constants
 const MAX_SAMPLES = 0x8d57;
@@ -260,5 +261,29 @@ describe('createRendererCapabilities (WebGPU limits)', () => {
 
     expect(caps.maxTextureSize).toBe(16384);
     expect(caps.maxRenderbufferSize).toBe(8192);
+  });
+
+  it('uses the texture limit when the compatibility renderbuffer probe fails', () => {
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const gl = {
+      MAX_TEXTURE_SIZE,
+      MAX_RENDERBUFFER_SIZE,
+      getParameter: (parameter: number) =>
+        parameter === MAX_TEXTURE_SIZE ? 16384 : parameter === MAX_RENDERBUFFER_SIZE ? null : 0,
+    };
+    const renderer = {
+      isWebGPURenderer: true,
+      backend: { gl },
+    } as unknown as Renderer;
+
+    const caps = createRendererCapabilities(renderer, true);
+
+    expect(caps.maxTextureSize).toBe(16384);
+    expect(caps.maxRenderbufferSize).toBe(16384);
+    expect(warning).toHaveBeenCalledWith(
+      Modules.RENDERER,
+      'MAX_RENDERBUFFER_SIZE probe failed; using MAX_TEXTURE_SIZE (16384)'
+    );
+    warning.mockRestore();
   });
 });

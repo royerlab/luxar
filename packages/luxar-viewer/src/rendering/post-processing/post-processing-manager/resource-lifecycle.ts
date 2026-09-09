@@ -37,11 +37,11 @@ export function computeEffectiveSize(s: SizingInputs): { width: number; height: 
 }
 
 /**
- * Physical-pixel framebuffer size = effective × renderer.getPixelRatio().
- * Render targets and the mega-shader / bloom / FXAA passes are all
- * sized here so they match the renderer's canvas backbuffer AND what
- * materials read from `renderer.getDrawingBufferSize()`. At DPR > 1 a
- * mismatch would silently brighten the scene via over-coverage.
+ * Physical-pixel framebuffer size derived from the effective size, DPR,
+ * and framebuffer limit. Render targets and the mega-shader / bloom /
+ * FXAA passes are all sized here so they match the renderer's canvas
+ * backbuffer AND what materials read from `renderer.getDrawingBufferSize()`.
+ * At DPR > 1 a mismatch would silently brighten the scene via over-coverage.
  */
 export function getPhysicalSize(s: SizingInputs): { width: number; height: number } {
   return getRenderTargetAllocation(s).physical;
