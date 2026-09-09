@@ -122,6 +122,31 @@ function parsedTypeScriptConfig(configName) {
   return parsed;
 }
 
+/** Declaration roots supplied by the type packages selected by a project. */
+function selectedTypeDeclarations(parsed) {
+  const declarations = [];
+  const visit = (directory) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (entry.name === 'node_modules') continue;
+      const full = join(directory, entry.name);
+      if (entry.isDirectory()) visit(full);
+      else if (DECLARATIONS.some((ext) => entry.name.endsWith(ext))) declarations.push(full);
+    }
+  };
+
+  for (const typeName of parsed.options.types ?? []) {
+    const resolved = ts.resolveTypeReferenceDirective(
+      typeName,
+      parsed.options.configFilePath,
+      parsed.options,
+      ts.sys
+    ).resolvedTypeReferenceDirective?.resolvedFileName;
+    expect(resolved, `could not resolve TypeScript type package: ${typeName}`).toBeDefined();
+    visit(dirname(resolved));
+  }
+  return declarations;
+}
+
 /** Root files selected by a TypeScript project, relative to the package. */
 function typecheckedFiles(configName) {
   const parsed = parsedTypeScriptConfig(configName);
@@ -132,7 +157,7 @@ function typecheckedFiles(configName) {
 function sourceDiagnostics(configName, relativePath, sourceText) {
   const parsed = parsedTypeScriptConfig(configName);
   const sourcePath = join(PKG, relativePath);
-  const options = { ...parsed.options, noLib: true };
+  const options = { ...parsed.options, noLib: true, noResolve: true };
   const host = ts.createCompilerHost(options);
   const originalFileExists = host.fileExists;
   const originalGetSourceFile = host.getSourceFile;
@@ -148,7 +173,11 @@ function sourceDiagnostics(configName, relativePath, sourceText) {
   const declarationFiles = parsed.fileNames.filter((file) =>
     DECLARATIONS.some((ext) => file.endsWith(ext))
   );
-  const program = ts.createProgram([...declarationFiles, sourcePath], options, host);
+  const program = ts.createProgram(
+    [...declarationFiles, ...selectedTypeDeclarations(parsed), sourcePath],
+    options,
+    host
+  );
   const sourceFile = program.getSourceFile(sourcePath);
   expect(sourceFile).toBeDefined();
   return [
