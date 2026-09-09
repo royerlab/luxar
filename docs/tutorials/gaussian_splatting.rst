@@ -40,7 +40,7 @@ When to Use Gaussian Splats
 ✅ **Sparse features** - Images with distinct objects on dark background
 ✅ **Compression** - Need 10-100× smaller files
 ✅ **Denoising** - Smoothing while preserving features
-✅ **Super-resolution** - Upsample using fitted Gaussians
+✅ **Continuous rendering** - Fitted Gaussians draw at any zoom without voxel-interpolation artefacts
 
 **Not Recommended**:
 

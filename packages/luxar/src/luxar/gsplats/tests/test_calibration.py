@@ -247,6 +247,48 @@ class TestDonutFill:
         with pytest.raises(ValueError):
             donut_median_fill(V, mask, radius=0)
 
+    def test_fill_invariant_to_heldout_values(self):
+        # The blind-spot argument needs the filled volume to be a function of
+        # the UNMASKED voxels only. A dense mask makes masked neighbours common.
+        rng = np.random.default_rng(3)
+        V = rng.random((12, 12, 12), dtype=np.float32)
+        mask = rng.random((12, 12, 12)) < 0.3
+        V_perturbed = V.copy()
+        V_perturbed[mask] = rng.random(int(mask.sum()), dtype=np.float32) * 100
+        np.testing.assert_array_equal(
+            donut_median_fill(V, mask), donut_median_fill(V_perturbed, mask)
+        )
+
+    def test_masked_neighbours_excluded(self):
+        # 3x3x3 block: centre held out; 13 donors are 0, 12 donors are 1 and
+        # one donor (value 1) is itself held out. Including it would give a
+        # 26-value median of 0.5; excluding it leaves 13 zeros + 12 ones -> 0.
+        V = np.zeros((3, 3, 3), dtype=np.float32)
+        flat = [i for i in range(27) if i != 13]
+        for i in flat[13:]:
+            V.flat[i] = 1.0
+        mask = np.zeros((3, 3, 3), dtype=bool)
+        mask.flat[13] = True
+        mask.flat[flat[-1]] = True
+        assert np.median(V.flat[flat]) == 0.5  # the biased (old) estimate
+        filled = donut_median_fill(V, mask)
+        assert filled.flat[13] == 0.0
+        # Sanity: the held-out neighbour itself is filled from ITS unmasked donors.
+        assert 0.0 <= filled.flat[flat[-1]] <= 1.0
+
+    def test_all_donors_masked_falls_back_to_unmasked_median(self):
+        V = np.arange(125, dtype=np.float32).reshape(5, 5, 5)
+        mask = np.zeros((5, 5, 5), dtype=bool)
+        mask[1:4, 1:4, 1:4] = True  # centre voxel (2,2,2) has only masked donors
+        filled = donut_median_fill(V, mask)
+        assert filled[2, 2, 2] == np.median(V[~mask])
+        assert np.isfinite(filled).all()
+
+    def test_every_voxel_masked_raises(self):
+        V = np.zeros((3, 3), dtype=np.float32)
+        with pytest.raises(ValueError, match="every voxel"):
+            donut_median_fill(V, np.ones((3, 3), dtype=bool))
+
 
 # -----------------------------------------------------------------------------
 # held_out_psnr

@@ -278,9 +278,9 @@ When rendering with `displayDims = [d0, d1, d2]` and a `slicePosition`:
 
 1. **Map display dimensions to splat indices** — For each display dimension, find the corresponding splat dimension index (or `null` if the display dimension is extended/not in splat)
 
-2. **Extract 3D centers** — For spanned display dimensions, read from splat centers. For extended display dimensions, place at current slice position. Components with no display dimension behind them (a 2D or 1D view) are zero-filled.
+2. **Extract 3D centers** — For spanned display dimensions, read from splat centers. For extended display dimensions, place at current slice position. Components with no display dimension behind them (a 2D or 1D view) are zero-filled. The visible centre is the stored coordinate on each displayed dimension, read **directly** — it is not shifted by any correlation between the displayed and hidden dimensions (see step 3).
 
-3. **Extract 3D Cholesky submatrix** — Compute the marginal Cholesky of the sub-covariance over the displayed splat dimensions. Note the renderer's output buffer is **always** the 6-element packed-3D layout `[L00, L10, L11, L20, L21, L22]`, regardless of how many dimensions are displayed, so with `n = min(displayDims.length, 3) < 3` the marginal is only n×n and the remaining rows are **synthesized**, not extracted:
+3. **Extract 3D Cholesky submatrix** — Compute the **marginal** Cholesky of the sub-covariance over the displayed splat dimensions: the displayed 3D covariance is the marginal Σ_dd (the displayed rows/columns of Σ), **not** the conditional covariance Σ_dd − Σ_dh·Σ_hh⁻¹·Σ_hd (Schur complement) of the slice through the hidden coordinate. This is a deliberate visualisation choice: every splat is drawn with its full displayed footprint at its own centre, and the slice position only *attenuates* it (step 4). For categorical/discrete hidden axes such as time the distinction is moot — those axes are gated exactly, and carry no covariance worth conditioning on. For a continuous hidden axis correlated with a displayed one (a non-zero Σ_dh), the exact conditional slice would shift the visible centre by Σ_dh·Σ_hh⁻¹·(s − μ_h) and narrow the footprint to the Schur complement; that conditional projection is **not implemented**. Note the renderer's output buffer is **always** the 6-element packed-3D layout `[L00, L10, L11, L20, L21, L22]`, regardless of how many dimensions are displayed, so with `n = min(displayDims.length, 3) < 3` the marginal is only n×n and the remaining rows are **synthesized**, not extracted:
 
    - Off-diagonals are `0` — the phantom axis is uncorrelated with the real ones, leaving the in-plane profile exactly as authored.
    - The diagonal is the **geometric mean of the real Cholesky pivots**, which equals `(det Σ_S)^(1/2n)` and is therefore rotation-invariant. A 2D splat thus renders as a round blob at its own in-plane scale.
@@ -289,21 +289,37 @@ When rendering with `displayDims = [d0, d1, d2]` and a `slicePosition`:
 
    See `wasm/rust/src/gsplats_processing.rs::compute_display_cholesky_3d` and its TypeScript twin.
 
-4. **Compute attenuation in hidden dimensions** — For spanned dimensions that are neither displayed nor extended, compute Gaussian falloff based on Mahalanobis distance between the splat center and slice position in that dimension. Extended dimensions never attenuate.
+4. **Gate and attenuate in hidden dimensions** — Spanned dimensions that are neither displayed nor extended are handled in two passes. Extended dimensions never attenuate.
 
-```typescript
-// Attenuation for hidden spanned dimensions
-let attenuation = 1.0;
-for (const splatIdx of hiddenSplatDims) {
-  const centerValue = centers[i * ndim + splatIdx];
-  const sliceValue = slicePosition[sceneDimIdx];
-  const diff = sliceValue - centerValue;
-  const variance = getCholeskyVariance(cholesky, i, ndim, splatIdx);
-  const mahalDist = Math.abs(diff) / Math.sqrt(variance);
-  attenuation *= Math.exp(-0.5 * mahalDist * mahalDist);
-}
-amplitudes3D[i] = amplitudes[i] * attenuation;
+   - **Discrete hidden dims** (categorical/discrete axes, e.g. time) are a hard gate, precomputed on the TypeScript side before the kernel runs: a splat is visible only if its centre lies within half a step (`discreteSteps[dim] * 0.5`, default step `1`) of the slice position on *every* discrete hidden dim. No Gaussian falloff is applied on these axes.
+   - **Continuous hidden dims** attenuate the amplitude by **one joint Gaussian**, not a per-dimension product. The kernel forms the offset vector `diff = slicePosition − center` over all continuous hidden dims, extracts the **marginal** Cholesky of Σ_hh over exactly those dims (`compute_marginal_cholesky`, so hidden–hidden correlations are honoured), and evaluates a single Mahalanobis distance `d² = diffᵀ·Σ_hh⁻¹·diff`. The falloff is a **shifted, truncated Gaussian** that reaches exactly zero at the truncation radius (C⁰-continuous, so a splat crossing the cutoff fades out rather than popping):
+
+     `attenuation = max(0, (exp(−d²/2) − c) / (1 − c))`, with `c = exp(−truncate²/2)`
+
+   Only the amplitude is multiplied by `attenuation`; the 3D centre and Cholesky from steps 2–3 are written unchanged. A splat whose attenuated amplitude falls below `min_amplitude` (or is NaN) is dropped from the compacted output.
+
+```rust
+// Fused kernel — gsplats_processing.rs::project_gsplats_nd_to_3d, per splat i.
+if discrete_visibility[i] == 0 { continue; }            // hard gate (precomputed in TS)
+
+let attenuation = if continuous_hidden_dims.is_empty() { 1.0 } else {
+    for (h, &dim) in continuous_hidden_dims.iter().enumerate() {
+        diff[h] = slice_position[dim] - positions[i * ndim + dim];
+    }
+    // Marginal Cholesky of Σ_hh over the continuous hidden dims (correlations kept).
+    compute_marginal_cholesky(cholesky, i * packed_size, continuous_hidden_dims,
+                              num_continuous, &mut hidden_cholesky);
+    let d = mahalanobis_distance_internal(&diff[..num_continuous], &hidden_cholesky, num_continuous);
+    let c = (-0.5 * truncate * truncate).exp();          // shift so the tail hits 0 at `truncate`
+    (((-0.5 * d * d).exp() - c) / (1.0 - c)).max(0.0)
+};
+
+let amplitude3d = amplitudes[i] * attenuation;
+if amplitude3d < min_amplitude || amplitude3d.is_nan() { continue; }   // culled
+// centers3d / cholesky3d (steps 2–3) are emitted unattenuated; only the amplitude changes.
 ```
+
+   The TypeScript reference kernel in `wasm/typescript/gsplats-processing.ts` (the >16D path) applies the same shifted-Gaussian truncation.
 
 ---
 

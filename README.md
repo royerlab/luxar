@@ -337,9 +337,11 @@ the render continuously:
 | small | attenuated projection — near structure pops, occluded structure dims | depth cueing in dense timelapses |
 | large | dense smoke- or ink-like medium | opaque tissue, anatomy |
 
-Because fitted amplitudes *are* densities (fluorophore concentration) rather than
-learned opacities, κ is interpretable as the turbidity of the sample instead of
-being an arbitrary rendering constant. Absorption is also orientation-consistent —
+Because fitted amplitudes are background-relative image intensities — proportional
+to the detected fluorescence after floor subtraction and normalisation, not a
+calibrated fluorophore concentration — rather than learned opacities, κ is still
+interpretable as an effective turbidity of the sample instead of being an arbitrary
+rendering constant. Absorption is also orientation-consistent —
 an elongated splat seen end-on absorbs more than the same splat seen side-on, which
 a stored per-splat opacity cannot express. All three geometry types render the same
 physics, on both the WebGL/GLSL and WebGPU/TSL backends.
