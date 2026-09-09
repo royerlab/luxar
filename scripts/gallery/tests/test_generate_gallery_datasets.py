@@ -504,6 +504,28 @@ def test_an_idempotent_run_reports_on_the_complete_local_inventory(
         assert kwargs == {"cwd": tmp_path, "timeout": gen.AUDIT_TIMEOUT_S}
 
 
+def test_a_failing_neighbour_is_report_only_on_an_idempotent_run(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    calls = _setup(
+        tmp_path,
+        monkeypatch,
+        [("stale", None, "ok")],
+        present=("stale",),
+        audit_outcomes={
+            "check_demo_ladders.py": 0,
+            "check_scene_credits.py": 1,
+        },
+    )
+
+    code = _run_main(monkeypatch)
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert not calls
+    assert "check_scene_credits failed with exit 1 (report-only)" in out
+
+
 def test_a_gating_auditor_timeout_fails_the_gallery_build(
     tmp_path, monkeypatch, capsys
 ) -> None:
