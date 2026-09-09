@@ -1482,19 +1482,13 @@ jobs:
           path: packages/luxar-viewer/test-results/
           retention-days: 7
 
-  # E2E tests disabled — software WebGL on standard ubuntu-latest runners is
-  # too slow and unreliable for rendering-dependent specs. Run locally with:
-  # make test-e2e.
-  #
-  # The job below is a ready-to-go smoke subset (interaction-focused specs,
-  # datasets generated at runtime via `make run-examples`, no LFS needed) —
-  # re-enabling is a one-line change (drop `if: false`) once we accept the
-  # software-rendering flakiness risk or get GPU-capable runners
-  # (GitHub GPU runner beta, or a self-hosted runner with NVIDIA driver +
-  # EGL software fallback that still satisfies WebGL2).
+  # The full desktop E2E corpus remains on the GPU promotion runner: software
+  # WebGL is too slow and unreliable for hundreds of rendering-heavy specs.
+  # This narrower job keeps the mobile/touch contract live in PR CI. Its 68
+  # device-emulated cases use Chromium only and run serially under CI.
   e2e-tests:
-    if: false
-    needs: [python-tests, typescript-tests]
+    needs: [changes, python-tests, typescript-tests]
+    if: ${{ !cancelled() && (needs.changes.outputs.dom_py != 'false' || needs.changes.outputs.dom_ts != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -1532,14 +1526,8 @@ jobs:
       - name: Install software OpenGL for headless WebGL
         run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1-mesa-dri libegl-mesa0 libgbm1
 
-      - name: Generate example datasets
-        run: make run-examples
-
-      # Use the package-level smoke script as the source of truth so a
-      # workflow re-enable stays aligned with the local
-      # `pnpm test:e2e:smoke` definition.
-      - name: Run E2E smoke (CI subset)
-        run: cd packages/luxar-viewer && pnpm test:e2e:smoke
+      - name: Run mobile E2E suite
+        run: make test-e2e-mobile
         timeout-minutes: 45
         env:
           CI: true
@@ -1548,6 +1536,6 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: playwright-report
-          path: packages/luxar-viewer/test-results/
+          name: mobile-playwright-results
+          path: packages/luxar-viewer/test-results-mobile/
           retention-days: 7

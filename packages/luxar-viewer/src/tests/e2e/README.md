@@ -32,7 +32,8 @@ directly — see [Shared Fixture](#shared-fixture-fixturests) below.
 ### Mobile / touch suite
 
 ```bash
-pnpm test:e2e:mobile          # playwright.mobile.config.ts
+make test-e2e-mobile          # from the repository root; refreshes fixtures
+pnpm test:e2e:mobile          # direct playwright.mobile.config.ts invocation
 ```
 
 `src/tests/e2e/mobile/` runs under real device emulation (iPhone 14 portrait +
@@ -40,7 +41,8 @@ landscape, iPad Pro 11 and Pixel 7), all on **Chromium**: the GPU box runs
 Chromium only, and the gestures are synthesised through CDP
 `Input.dispatchTouchEvent` (`mobile/touch-helpers.ts`: pinch, twist, one-finger
 drag, 2→1 release, long-press, double-tap), which WebKit does not expose. The
-main config ignores this folder; the mobile config only matches it. What it
+main config ignores this folder; the mobile config only matches it. The suite
+runs in PR CI for Python and TypeScript changes. What it
 covers: the media queries actually match under emulation, pinch dollies the
 camera while `visualViewport.scale` stays 1, twist rolls, a finger lifting out of
 a pinch continues as a rotate, double-tap re-frames, tap picks + shows the

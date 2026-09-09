@@ -762,7 +762,12 @@ def test_main_rejects_luxar_imported_from_another_checkout(
 def test_make_e2e_targets_require_fresh_example_fixtures() -> None:
     makefile = (_MOD_PATH.parent.parent / "Makefile").read_text()
 
-    for target in ("test-e2e", "test-e2e-smoke", "test-perf-e2e"):
+    for target in (
+        "test-e2e",
+        "test-e2e-mobile",
+        "test-e2e-smoke",
+        "test-perf-e2e",
+    ):
         assert f"{target}: run-examples " in makefile
 
 

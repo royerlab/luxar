@@ -257,6 +257,7 @@ MIN_NODE_MINOR := 22
 | `make test-fixtures` | Generate test fixtures for TypeScript tests |
 | `make test-viewer-fixtures` | Generate fixtures + run TypeScript tests |
 | `make test-e2e` | Run the full Playwright E2E suite (~17 min) |
+| `make test-e2e-mobile` | Run the mobile/touch Playwright suite under Chromium device emulation |
 | `make test-e2e-smoke` | Run the E2E smoke subset (the interaction-focused specs CI would run) |
 | `make test-perf-e2e` | Run the opt-in Playwright performance suite |
 | `make lint-python` | Run ruff linting on Python |

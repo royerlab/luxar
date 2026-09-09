@@ -743,6 +743,13 @@ def test_the_workflow_itself_selects_every_language_domain(workflow: str) -> Non
         )
 
 
+def test_mobile_e2e_suite_is_enabled_in_ci(workflow: str) -> None:
+    job = workflow.split("  e2e-tests:\n", maxsplit=1)[1]
+
+    assert "if: false" not in job
+    assert "run: make test-e2e-mobile" in job
+
+
 def test_the_docs_gate_names_its_own_checker_and_baselines(workflow: str) -> None:
     """The sibling invariant that made the complexity hole visible.
 
