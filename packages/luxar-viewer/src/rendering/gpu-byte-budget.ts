@@ -191,8 +191,8 @@ function computeAutoBudget(memory?: GpuBudgetMemorySignals): { bytes: number; so
  * Configure the budget once at startup from the resolved config value
  * (or the ``?gpuBudgetMB`` URL param, which the caller passes in):
  *
- * - ``null`` / ``undefined`` → **auto-size** from available ambient memory
- *   signals and any explicit cache-pool override.
+ * - ``null`` / ``undefined`` / ``NaN`` → **auto-size** from available ambient
+ *   memory signals and any explicit cache-pool override. ``NaN`` also warns.
  * - ``0`` → disable byte-budget eviction (unbounded resident geometry).
  * - a positive number → pin the budget to exactly that many bytes.
  */
@@ -201,6 +201,10 @@ export function configureGpuByteBudget(
   memory?: GpuBudgetMemorySignals
 ): void {
   configured = true;
+  if (Number.isNaN(overrideBytes)) {
+    log.warning(Modules.PERFORMANCE, 'Ignoring NaN GPU byte budget override; using auto-sizing');
+    overrideBytes = null;
+  }
   if (overrideBytes == null) {
     const auto = computeAutoBudget(memory);
     budgetBytes = auto.bytes;
@@ -220,12 +224,23 @@ export function configureGpuByteBudget(
   );
 }
 
-/** Configure once for whichever supported viewer entry point starts first. */
+/**
+ * Configure the shared budget for whichever supported viewer entry point starts first.
+ *
+ * - ``undefined`` → use the config default; this is no opinion after another
+ *   entry point has configured the budget, so it is ignored silently.
+ * - ``null`` or ``NaN`` → auto-size from ambient memory signals; ``NaN`` warns.
+ * - ``0`` → disable byte-budget eviction (unbounded resident geometry).
+ * - a positive number → pin the budget to exactly that many bytes.
+ *
+ * Later explicit requests are ignored with a warning because the budget is
+ * module-global and shared by every pool and LOD registry on the page.
+ */
 export function initializeGpuByteBudget(overrideBytes?: number | null): void {
   if (configured) {
     if (overrideBytes !== undefined) {
       const requested =
-        overrideBytes === null
+        overrideBytes === null || Number.isNaN(overrideBytes)
           ? 'auto-sizing'
           : Math.max(0, overrideBytes) === 0
             ? 'disabling eviction'

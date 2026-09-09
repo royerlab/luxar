@@ -79,6 +79,25 @@ describe('gpu-byte-budget', () => {
     }
   });
 
+  it('auto-sizes an invalid NaN embed override instead of poisoning the budget', async () => {
+    vi.resetModules();
+    const { log: freshLog, Modules: freshModules } = await import('../../../utils/log');
+    const warning = vi.spyOn(freshLog, 'warning').mockImplementation(() => {});
+    try {
+      const freshBudget = await import('../../../rendering/gpu-byte-budget');
+      withDeviceMemory(4, () => {
+        freshBudget.initializeGpuByteBudget(Number.NaN);
+        expect(freshBudget.getGpuByteBudget()).toBe(1000 * MB);
+      });
+      expect(warning).toHaveBeenCalledWith(
+        freshModules.PERFORMANCE,
+        'Ignoring NaN GPU byte budget override; using auto-sizing'
+      );
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
   it('honors an explicit override and skips the heuristic', () => {
     withDeviceMemory(8, () => {
       configureGpuByteBudget(1536 * MB);
