@@ -1280,6 +1280,7 @@ def test_derived_python_gate_input_patterns_are_exact(workflow: str, path: str) 
     [
         "subdir/Makefile",
         "docs/Makefile.md",
+        "scripts/generate_builtin_colormaps_extra.py",
         "scripts/gallery/media-manifest.json.bak",
     ],
 )
