@@ -194,6 +194,7 @@ export class PostProcessingManager {
   private get activeMSAASamples(): number {
     // SSAA already supersamples the scene; retaining MSAA would add redundant
     // multisample colour/depth renderbuffers that can exceed the GPU allocation budget.
+    // At exactly 1x, the target matches SSAA-off size, so keep the configured mode.
     return this.msaaEnabled && !(this.ssaaEnabled && this.ssaaMultiplier > 1)
       ? this.msaaSamples
       : 0;
@@ -201,10 +202,10 @@ export class PostProcessingManager {
 
   private describeMSAA(): string {
     if (!this.msaaEnabled) return 'off';
-    if (this.ssaaEnabled && this.ssaaMultiplier > 1) {
-      return `${this.msaaSamples}x configured; suspended by SSAA`;
+    if (this.activeMSAASamples > 0) {
+      return `${this.msaaSamples}x`;
     }
-    return `${this.msaaSamples}x`;
+    return `${this.msaaSamples}x configured; suspended by SSAA`;
   }
 
   private getPhysicalSize(): { width: number; height: number } {
@@ -647,7 +648,10 @@ export class PostProcessingManager {
     this.ssaaMultiplier = multiplier;
     if (this.ssaaEnabled) {
       this.reallocateForSize();
-      log.update(Modules.POST_PROCESSING, `SSAA multiplier changed to ${multiplier}x`);
+      log.update(
+        Modules.POST_PROCESSING,
+        `SSAA multiplier changed to ${multiplier}x; MSAA: ${this.describeMSAA()}`
+      );
     }
   }
 

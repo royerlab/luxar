@@ -484,10 +484,18 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
     );
 
     mgr.setSSAAMultiplier(1);
+    expect(updateLog).toHaveBeenLastCalledWith(
+      Modules.POST_PROCESSING,
+      'SSAA multiplier changed to 1x; MSAA: 4x'
+    );
     mgr.setMSAASamples(2);
     expect(infoLog).toHaveBeenLastCalledWith(Modules.POST_PROCESSING, 'MSAA samples set to 2x');
 
     mgr.setSSAAMultiplier(1.5);
+    expect(updateLog).toHaveBeenLastCalledWith(
+      Modules.POST_PROCESSING,
+      'SSAA multiplier changed to 1.5x; MSAA: 2x configured; suspended by SSAA'
+    );
     mgr.setMSAASamples(4);
     expect(infoLog).toHaveBeenLastCalledWith(
       Modules.POST_PROCESSING,
@@ -498,6 +506,8 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
     expect(updateLog).toHaveBeenLastCalledWith(Modules.POST_PROCESSING, 'SSAA disabled; MSAA: 4x');
 
     mgr.dispose();
+    updateLog.mockRestore();
+    infoLog.mockRestore();
   });
 
   it('reallocates after rebuildAfterContextRestore even at an identical size', () => {
