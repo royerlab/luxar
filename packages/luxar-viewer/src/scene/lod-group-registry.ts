@@ -1756,12 +1756,12 @@ export class LODGroupRegistry {
 
     // ── Fresh-but-EMPTY display guard ──
     // If the chosen display level committed 0 elements, prefer the coarsest
-    // fresh NON-empty level no finer than the selector's aspiration. A level
-    // between the chosen display and aspiration can legitimately fill a stale
-    // fallback gap; only redirecting to a level coarser than the chosen display
-    // signals inconsistent/corrupt data and warrants the warning below. Never
-    // search finer than the aspiration: those levels must not override the
-    // selector, even when a coarse slice is legitimately empty (see #1600).
+    // fresh NON-empty level no finer than the chosen display or the selector's
+    // aspiration, whichever is finer. An intermediate level can legitimately
+    // fill a stale fallback gap; only redirecting to a level coarser than the
+    // chosen display signals inconsistent/corrupt data and warrants the warning
+    // below. Finer levels must not override the selector, even when a coarse
+    // slice is legitimately empty (see #1600).
     if (version != null && displayIdx >= 0) {
       const chosen = entry.children[displayIdx];
       // Group-aware: a deferred kind=partition / nested lod subtree whose visible
@@ -2137,8 +2137,8 @@ export class LODGroupRegistry {
    * treated as non-empty (a bare ``THREE.Group`` has no leaf count stamp). A
    * READY child with an UNTRACKED count (``null`` — group with no stamped leaf)
    * is accepted: the guard only redirects away from KNOWN-empty levels. The
-   * caller bounds the search at the selector's aspiration, so no finer level
-   * can override it. Because
+   * caller bounds the search at the chosen display level or the selector's
+   * aspiration, whichever is finer, so no finer level can override it. Because
    * ``childFreshAndCount``'s ``fresh`` implies ``ready``, a NOT-ready placeholder
    * can never be returned — the guard must only redirect to a level that can
    * actually draw. When nothing qualifies (``-1``) the caller keeps the
