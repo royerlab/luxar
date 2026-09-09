@@ -101,7 +101,7 @@ function typecheckedFiles(configName) {
 function sourceDiagnostics(configName, relativePath, sourceText) {
   const parsed = parsedTypeScriptConfig(configName);
   const sourcePath = join(PKG, relativePath);
-  const options = { ...parsed.options, noLib: true, noResolve: true, types: [] };
+  const options = { ...parsed.options, noLib: true };
   const host = ts.createCompilerHost(options);
   const originalFileExists = host.fileExists;
   const originalGetSourceFile = host.getSourceFile;
@@ -213,6 +213,11 @@ describe('typecheck scope', () => {
     const browserMessages = browserDiagnostics.map((diagnostic) =>
       ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')
     );
+    const toolingDiagnostics = sourceDiagnostics(
+      'tsconfig.tooling.json',
+      'scripts/node-global-probe.ts',
+      source
+    );
 
     expect(browserMessages).toEqual(
       expect.arrayContaining([
@@ -220,10 +225,7 @@ describe('typecheck scope', () => {
         expect.stringContaining("Cannot find name 'process'"),
       ])
     );
-    expect(parsedTypeScriptConfig('tsconfig.tooling.json').options.types).toEqual([
-      'vite/client',
-      'node',
-    ]);
+    expect(toolingDiagnostics).toEqual([]);
   });
 
   it('includes project declaration files when probing browser globals', () => {
