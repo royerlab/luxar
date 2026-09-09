@@ -310,6 +310,20 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
     expect(isPartitionPathVisible(root, leaf.name)).toBe(false);
   });
 
+  it('finds a hidden layer marker without treating an undisplayed LOD leaf as hidden', () => {
+    const root = new THREE.Group();
+    const layer = new THREE.Group();
+    const leaf = new THREE.Group();
+    leaf.name = '/layer/level_2';
+    leaf.visible = false;
+    root.add(layer);
+    layer.add(leaf);
+
+    expect(isPartitionPathVisible(root, leaf.name)).toBe(true);
+    layer.userData.layerVisible = false;
+    expect(isPartitionPathVisible(root, leaf.name)).toBe(false);
+  });
+
   it('removes culled partition loaders from progressive refinement maps', () => {
     const root = new THREE.Group();
     const visible = new THREE.Group();

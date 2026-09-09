@@ -141,6 +141,22 @@ describe('SlicePrefetcher', () => {
     expect(foregroundLoader.updateView).not.toHaveBeenCalled();
   });
 
+  it('does not build or run shadows for culled or hidden loader paths', async () => {
+    prefetcher = new SlicePrefetcher({
+      getSceneGraph: () => graph,
+      factoryDeps: () => ({ zarrStore: {} }) as never,
+      registry: registry as never,
+      applyEffectiveAttrs: (node) => node.attrs,
+      isPathVisible: (path) => path !== '/pts',
+    });
+
+    prefetcher.prefetch(view, 42);
+    await flushAsync();
+
+    expect(factoryCalls.map((call) => call.path)).toEqual(['/splats']);
+    expect(shadowLoaders.has('/pts')).toBe(false);
+  });
+
   it('chooses the progressive factory when n_additive_sublods > 1', async () => {
     graph.children = [makeNode('/splats', { n_additive_sublods: 4 })];
     registry.loaders.clear();

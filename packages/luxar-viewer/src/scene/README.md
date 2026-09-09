@@ -524,7 +524,8 @@ so a cold part preloads just before it enters). A part outside it is
 hidden and stamped `userData.partitionFrustumVisible = false` — on
 EVERY object the part emitted, since one part node may produce several,
 and a part counts as re-entering when any of them was culled; the
-scene loader's sweep (`isPartitionPathVisible`) and refinement skip its
+scene loader's sweep, refinement, and predictive slice prefetch
+(`isPartitionPathVisible`) skip its
 loaders, dropping their predictive-prefetch baseline. Because a culled
 part misses slice updates, its RE-ENTRY requests a resync of exactly
 that part's loaders — `deps.requestReprocess(partPaths)` with the

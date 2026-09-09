@@ -33,18 +33,17 @@ import type { ViewState } from '../data-loader-types';
 import type { ViewStateQueue } from '../scene-loader/view-state/view-state-queue';
 import type { RefinementResidencyBudget } from '../scene-loader/progressive/residency-budget';
 import type { StagedGSplatsCommit } from '../scene-loader/process/data-processor-gsplats';
-import {
-  RefinementFailureTracker,
-  runProgressiveRefinement,
-} from '../scene-loader/progressive/refinement';
+import { runProgressiveRefinement } from '../scene-loader/progressive/refinement';
 import { PARTIAL_EXTEND_TOLERANCE } from '../scene-loader/partial-extend-tolerance';
 import {
   admitRefinementCandidate,
+  failureTrackerFor,
   handleRefinementError,
   makeRefinementProgressCallbacks,
   recordRefinementResidency,
   type RefinableLoader,
 } from '../scene-loader/progressive/refinement-wrapper';
+import { isPartitionPathVisible } from '../scene-loader/loaders/run-loader-updates';
 
 /** Geometry name in this wrapper's log lines and toasts. */
 const LABEL = 'GSplats';
@@ -114,10 +113,7 @@ export interface GSplatsRefinementCtx {
  * derive / process / commit closures.
  */
 export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<void> {
-  // Per-run failure backoff: a loader that fails MAX_CONSECUTIVE times is
-  // excluded for the rest of this run (and from anyHasMoreLODs, so the loop
-  // can terminate) instead of retrying at frame rate forever.
-  const failures = new RefinementFailureTracker();
+  const isPathVisible = (path: string): boolean => isPartitionPathVisible(ctx.rootGroup, path);
   await runProgressiveRefinement({
     loaders: ctx.gsplatLoaders,
     viewStateQueue: ctx.viewStateQueue,
@@ -130,8 +126,8 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
       const admission = admitRefinementCandidate(
         path,
         progressiveLoader,
-        failures,
-        ctx.residencyBudget
+        ctx.residencyBudget,
+        isPathVisible
       );
       if (!admission.admitted) return false;
       try {
@@ -180,10 +176,10 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
           session?.end();
           pass?.end();
         }
-        failures.recordSuccess(path);
+        failureTrackerFor(progressiveLoader).recordSuccess(path);
         return true;
       } catch (error) {
-        return handleRefinementError({ label: LABEL }, path, error, progressiveLoader, failures);
+        return handleRefinementError({ label: LABEL }, path, error, progressiveLoader);
       } finally {
         recordRefinementResidency(path, progressiveLoader, ctx.residencyBudget);
       }
@@ -191,8 +187,8 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
     ...makeRefinementProgressCallbacks(
       LABEL,
       ctx.gsplatLoaders as Map<string, GSplatsDataLoader & RefinableLoader>,
-      failures,
-      ctx.residencyBudget
+      ctx.residencyBudget,
+      isPathVisible
     ),
     updateVisibleCountsInMonitor: () => ctx.updateVisibleCountsInMonitor(),
     releaseLock: () => ctx.releaseLock(),

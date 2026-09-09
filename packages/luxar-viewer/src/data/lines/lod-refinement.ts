@@ -20,18 +20,17 @@ import type { ViewState } from '../data-loader-types';
 import type { ViewStateQueue } from '../scene-loader/view-state/view-state-queue';
 import type { StagedLinesCommit } from '../scene-loader/process/data-processor-lines';
 import type { RefinementResidencyBudget } from '../scene-loader/progressive/residency-budget';
-import {
-  RefinementFailureTracker,
-  runProgressiveRefinement,
-} from '../scene-loader/progressive/refinement';
+import { runProgressiveRefinement } from '../scene-loader/progressive/refinement';
 import { PARTIAL_EXTEND_TOLERANCE } from '../scene-loader/partial-extend-tolerance';
 import {
   admitRefinementCandidate,
+  failureTrackerFor,
   handleRefinementError,
   makeRefinementProgressCallbacks,
   recordRefinementResidency,
   type RefinableLoader,
 } from '../scene-loader/progressive/refinement-wrapper';
+import { isPartitionPathVisible } from '../scene-loader/loaders/run-loader-updates';
 
 /** Geometry name in this wrapper's log lines and toasts. */
 const LABEL = 'Lines';
@@ -80,10 +79,7 @@ export interface LinesRefinementCtx {
 }
 
 export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void> {
-  // Per-run failure backoff: a loader that fails MAX_CONSECUTIVE times is
-  // excluded for the rest of this run (and from anyHasMoreLODs, so the loop
-  // can terminate) instead of retrying at frame rate forever.
-  const failures = new RefinementFailureTracker();
+  const isPathVisible = (path: string): boolean => isPartitionPathVisible(ctx.rootGroup, path);
   await runProgressiveRefinement({
     loaders: ctx.linesLoaders,
     viewStateQueue: ctx.viewStateQueue,
@@ -96,8 +92,8 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
       const admission = admitRefinementCandidate(
         path,
         progressiveLoader,
-        failures,
-        ctx.residencyBudget
+        ctx.residencyBudget,
+        isPathVisible
       );
       if (!admission.admitted) return false;
       try {
@@ -145,10 +141,10 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
           session?.end();
           pass?.end();
         }
-        failures.recordSuccess(path);
+        failureTrackerFor(progressiveLoader).recordSuccess(path);
         return true;
       } catch (error) {
-        return handleRefinementError({ label: LABEL }, path, error, progressiveLoader, failures);
+        return handleRefinementError({ label: LABEL }, path, error, progressiveLoader);
       } finally {
         recordRefinementResidency(path, progressiveLoader, ctx.residencyBudget);
       }
@@ -156,8 +152,8 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
     ...makeRefinementProgressCallbacks(
       LABEL,
       ctx.linesLoaders as Map<string, LinesDataLoader & RefinableLoader>,
-      failures,
-      ctx.residencyBudget
+      ctx.residencyBudget,
+      isPathVisible
     ),
     updateVisibleCountsInMonitor: () => ctx.updateVisibleCountsInMonitor(),
     releaseLock: () => ctx.releaseLock(),

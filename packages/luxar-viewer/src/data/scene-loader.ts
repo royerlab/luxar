@@ -569,6 +569,7 @@ export class SceneLoader {
         factoryDeps: () => this.factoryDeps(),
         registry: this.registry,
         applyEffectiveAttrs: (node) => this.applyEffectiveAttrs(node),
+        isPathVisible: (path) => isPartitionPathVisible(this.rootGroup, path),
       });
     }
     // Strip any rider budget off the incoming partial — the shadow pass gets

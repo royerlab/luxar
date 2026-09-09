@@ -60,6 +60,17 @@ export interface RefinableLoader {
   ladderResidency?: () => LadderResidency;
 }
 
+const failureTrackers = new WeakMap<RefinableLoader, RefinementFailureTracker>();
+
+export function failureTrackerFor(loader: RefinableLoader): RefinementFailureTracker {
+  let tracker = failureTrackers.get(loader);
+  if (!tracker) {
+    tracker = new RefinementFailureTracker();
+    failureTrackers.set(loader, tracker);
+  }
+  return tracker;
+}
+
 /** Outcome of {@link admitRefinementCandidate}. */
 export type RefinementAdmissionDecision =
   { readonly admitted: false } | { readonly admitted: true; readonly allowanceBytes?: number };
@@ -74,7 +85,7 @@ export interface RefinementErrorPresentation {
  * Decide whether one loader may refine this pass.
  *
  * Three reasons to decline, in order of cost: it has no more levels; it has
- * already failed `MAX_CONSECUTIVE_REFINEMENT_FAILURES` times this run; or the
+ * already failed `MAX_CONSECUTIVE_REFINEMENT_FAILURES` times; or the
  * shared residency ceiling refused it.
  *
  * The first check also keeps single-level geometry out of the loop. This is
@@ -83,18 +94,19 @@ export interface RefinementErrorPresentation {
  *
  * @param path Node path, used as the key for backoff and admission state.
  * @param loader The loader being offered.
- * @param failures Per-run failure tracker.
  * @param residencyBudget Shared residency ceiling; absent means unbounded.
+ * @param isPathVisible Live culling/layer-visibility predicate.
  * @returns Whether to proceed, and the byte allowance if one was granted.
  */
 export function admitRefinementCandidate(
   path: string,
   loader: RefinableLoader,
-  failures: RefinementFailureTracker,
-  residencyBudget?: RefinementResidencyBudget
+  residencyBudget?: RefinementResidencyBudget,
+  isPathVisible?: (path: string) => boolean
 ): RefinementAdmissionDecision {
   if (loader.hasMoreLODs !== true) return { admitted: false };
-  if (failures.isExhausted(path)) return { admitted: false };
+  if (isPathVisible?.(path) === false) return { admitted: false };
+  if (failureTrackerFor(loader).isExhausted(path)) return { admitted: false };
   // Declining here is not sufficient on its own: `anyHasMoreLODs` and
   // `getLoaderProgress` must exclude declined paths too, or the loop re-offers
   // this loader every frame forever while holding the update lock. That is why
@@ -112,7 +124,6 @@ export function admitRefinementCandidate(
  * @param path Node path that failed.
  * @param error The thrown value.
  * @param loader The loader, whose pass is unwound on a real failure.
- * @param failures Per-run failure tracker.
  * @returns Always `false` — the loop's `processLoader` contract for "no
  *   progress made". Returned rather than voided so the call site reads
  *   `return handleRefinementError(...)`.
@@ -121,8 +132,7 @@ export function handleRefinementError(
   presentation: RefinementErrorPresentation,
   path: string,
   error: unknown,
-  loader: RefinableLoader,
-  failures: RefinementFailureTracker
+  loader: RefinableLoader
 ): false {
   const { label, degradedState = 'showing reduced detail' } = presentation;
   // Superseded, not failed: a newer view-state (or dispose) aborted the
@@ -137,7 +147,7 @@ export function handleRefinementError(
   // See `loaders/progressive/pass-rollback`.
   const unwound = tryRollbackToPassStart(loader);
   const message = (error as Error).message;
-  if (failures.recordFailure(path)) {
+  if (failureTrackerFor(loader).recordFailure(path)) {
     log.error(
       Modules.SCENE_LOADER,
       `${label} refinement failed for ${path}: ${message} — ` +
@@ -204,18 +214,19 @@ export interface RefinementProgressCallbacks<TLoader> {
  *
  * @param label Geometry name for the log lines (e.g. `'Points'`).
  * @param loaders The geometry's loader map, read live for `anyHasMoreLODs`.
- * @param failures Per-run failure tracker.
  * @param residencyBudget Shared residency ceiling; absent means unbounded.
+ * @param isPathVisible Live culling/layer-visibility predicate.
  * @returns The callbacks, ready to spread into the loop context.
  */
 export function makeRefinementProgressCallbacks<TLoader extends RefinableLoader>(
   label: string,
   loaders: Map<string, TLoader>,
-  failures: RefinementFailureTracker,
-  residencyBudget?: RefinementResidencyBudget
+  residencyBudget?: RefinementResidencyBudget,
+  isPathVisible?: (path: string) => boolean
 ): RefinementProgressCallbacks<TLoader> {
   const excluded = (path: string, loader: RefinableLoader): boolean =>
-    failures.isExhausted(path) ||
+    isPathVisible?.(path) === false ||
+    failureTrackerFor(loader).isExhausted(path) ||
     residencyBudget?.isDeclined(path) === true ||
     loader.hasMoreLODs !== true;
 

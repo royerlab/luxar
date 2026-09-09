@@ -73,6 +73,7 @@ export interface SlicePrefetcherCtx {
   registry: Pick<LoaderRegistry, 'loaders' | 'linesLoaders' | 'gsplatLoaders'>;
   /** Compose a node's effective rendering attrs up the scene-graph ancestry. */
   applyEffectiveAttrs(node: SceneNode): SceneNode['attrs'];
+  isPathVisible?(path: string): boolean;
 }
 
 /**
@@ -177,12 +178,15 @@ export class SlicePrefetcher {
     const { registry } = this.ctx;
     const tasks: Array<Promise<void>> = [];
     for (const path of registry.loaders.keys()) {
+      if (this.ctx.isPathVisible?.(path) === false) continue;
       tasks.push(this.prefetchNode(path, 'points', viewState, budgetMs, controller.signal));
     }
     for (const path of registry.linesLoaders.keys()) {
+      if (this.ctx.isPathVisible?.(path) === false) continue;
       tasks.push(this.prefetchNode(path, 'lines', viewState, budgetMs, controller.signal));
     }
     for (const path of registry.gsplatLoaders.keys()) {
+      if (this.ctx.isPathVisible?.(path) === false) continue;
       tasks.push(this.prefetchNode(path, 'gsplats', viewState, budgetMs, controller.signal));
     }
 
@@ -277,7 +281,7 @@ export class SlicePrefetcher {
 
     return this.getShadow(path, kind, node)
       .then((shadow) => {
-        if (signal.aborted || this.disposed) return;
+        if (signal.aborted || this.disposed || this.ctx.isPathVisible?.(path) === false) return;
         // Structurally identical view-state shapes across the three
         // geometry loader interfaces (same cast the handlers perform).
         return (shadow as DataLoader).updateView(shadowViewState, undefined, signal);

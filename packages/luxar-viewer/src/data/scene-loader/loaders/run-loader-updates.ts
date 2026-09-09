@@ -24,11 +24,12 @@ const NOOP_SESSION: UpdateSession = {
   markSkipped: () => {},
 };
 
-/** Whether a loader path and every ancestor partition part are frustum-visible. */
+/** Whether a loader path is eligible for foreground or background loading. */
 export function isPartitionPathVisible(root: THREE.Object3D | null, path: string): boolean {
   let object: THREE.Object3D | null | undefined = root?.getObjectByName(path);
   while (object) {
     if (object.userData.partitionFrustumVisible === false) return false;
+    if (object.userData.layerVisible === false) return false;
     object = object.parent;
   }
   return true;
@@ -47,7 +48,7 @@ export function isUnderAny(path: string, targets: ReadonlySet<string>): boolean 
   return false;
 }
 
-/** Copy loaders whose paths are not nested below a culled partition part. */
+/** Copy loaders whose paths are not culled or under a hidden layer. */
 export function filterPartitionVisibleLoaders<TLoader>(
   root: THREE.Object3D | null,
   loaders: Map<string, TLoader>

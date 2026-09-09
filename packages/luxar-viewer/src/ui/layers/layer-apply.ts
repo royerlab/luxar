@@ -629,6 +629,7 @@ export class LayerApplyEngine {
   applyVisibility(path: string, visible: boolean): void {
     const obj = this.getMesh(path);
     if (obj) {
+      obj.userData.layerVisible = visible;
       obj.visible = visible;
       this.deps.requestRender();
     }
