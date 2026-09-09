@@ -12,7 +12,7 @@
  *  - Eviction respects active vs pooled (active never disposed).
  *  - Eviction is idempotent if pool already under budget.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as THREE from 'three';
 import {
   GPUBufferPool,
@@ -499,4 +499,51 @@ describe('post-grow reclaim (#2426 pool retention)', () => {
 
     pool.dispose();
   });
+
+  it.each([
+    ['points', 100, 5000],
+    ['lines', 100, 5000],
+    ['gsplats', 100, 10_000],
+  ] as const)(
+    '%s: a throwing post-grow sweep preserves the grown active buffer',
+    (type, initialCount, grownCount) => {
+      const pool = new GPUBufferPool(20, 300, 5, () => BUDGET_IN_REGIME);
+      const acquire = (count: number): THREE.InstancedBufferGeometry => {
+        switch (type) {
+          case 'points':
+            return pool.acquirePointsGeometry('n1', count);
+          case 'lines':
+            return pool.acquireLinesGeometry('n1', count);
+          case 'gsplats':
+            return pool.acquireGSplatsGeometry('n1', count);
+        }
+      };
+      const freeBuckets =
+        type === 'points'
+          ? pool.points.pointBuffers
+          : type === 'lines'
+            ? pool.lines.lineBuffers
+            : pool.gsplats.gsplatBuffers;
+
+      const oldGeometry = acquire(initialCount);
+      oldGeometry.addEventListener('dispose', () => {
+        throw new Error('synthetic post-grow dispose failure');
+      });
+
+      expect(() => acquire(grownCount)).toThrow('synthetic post-grow dispose failure');
+
+      const active = pool.activeBuffers.get('n1');
+      expect(active).toBeDefined();
+      expect(active!.geometry).not.toBe(oldGeometry);
+      expect(active!.inUse).toBe(true);
+      expect(active!.geometry.userData.luxarInvalidated).not.toBe(true);
+      for (const buffers of freeBuckets.values()) {
+        for (const buffer of buffers) {
+          expect(buffer.geometry).not.toBe(active!.geometry);
+        }
+      }
+
+      pool.dispose();
+    }
+  );
 });
