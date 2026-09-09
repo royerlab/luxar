@@ -94,15 +94,19 @@ describe('gpu-byte-budget', () => {
     });
   });
 
-  it('warns when a later entry point requests an explicit override', () => {
+  it.each([
+    [null, 'auto-sizing'],
+    [0, 'disabling eviction'],
+    [123 * MB, '123 MB'],
+  ] as const)('warns when a later entry point requests explicit %s', (overrideBytes, requested) => {
     const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
     try {
       configureGpuByteBudget(777 * MB);
-      initializeGpuByteBudget(123 * MB);
+      initializeGpuByteBudget(overrideBytes);
       expect(getGpuByteBudget()).toBe(777 * MB);
       expect(warning).toHaveBeenCalledWith(
         Modules.PERFORMANCE,
-        'GPU byte budget is already configured; ignoring later request for 123 MB'
+        `GPU byte budget is already configured; ignoring later request for ${requested}`
       );
     } finally {
       warning.mockRestore();
