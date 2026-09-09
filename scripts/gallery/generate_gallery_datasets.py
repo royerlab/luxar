@@ -395,10 +395,10 @@ def main() -> int:
     audit_failures = audit_generated_stores(generated_paths)
     report_local_scene_inventory()
 
-    # Non-zero only on hard generation failures. capture-only, manual-data and
-    # unbuildable are expected states, not errors: manual-data is a demo whose
-    # machine-local input this machine does not have, unbuildable one that cannot
-    # be built anywhere yet (see `generate_one`).
+    # Non-zero on hard generation failures or an enforced audit failure.
+    # capture-only, manual-data and unbuildable are expected states, not errors:
+    # manual-data is a demo whose machine-local input this machine does not have,
+    # unbuildable one that cannot be built anywhere yet (see `generate_one`).
     hard_failures = results["failed"] + results["timeout"] + results["no-output"]
     if not (hard_failures or audit_failures):
         aprint("Next: cd packages/luxar-viewer && pnpm gallery")
