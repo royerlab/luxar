@@ -60,8 +60,9 @@ const DEVICE_MEMORY_FRACTION = 0.25;
 const CACHE_POOL_GPU_SHARE = 1 / 3;
 const MIB = 1024 * 1024;
 /**
- * Budget used when NO memory signal is available at all — neither
- * ``deviceMemory`` nor an explicit cache-pool override.
+ * Budget used when NO memory signal is available at all — no
+ * ``deviceMemory``, measurable heap, mobile device class, or explicit
+ * cache-pool override.
  *
  * NOT a floor under a budget that WAS derived from a signal. It used to be one,
  * and that was the bug: a tab told it had a small pool still got 512 MB, which
