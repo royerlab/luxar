@@ -324,7 +324,7 @@ def _validate_scheduler_parameters(parameters: FitParameters) -> None:
         raise ValueError("scheduler_type must be 'plateau' or 'exponential'")
 
 
-def _validate_stopping_parameters(parameters: FitParameters) -> int:
+def _validate_stopping_parameters(parameters: FitParameters) -> None:
     """Validate stopping, movie, and normalization controls in public order."""
     if parameters.truncate <= 0:
         raise ValueError("truncate must be positive")
@@ -342,7 +342,6 @@ def _validate_stopping_parameters(parameters: FitParameters) -> int:
             f"got {parameters.norm_percentile}"
         )
     _validate_floor(parameters.floor)
-    return 10000 if parameters.movie_max_frames is None else parameters.movie_max_frames
 
 
 def _normalize_sigma_min(sigma_min_diag: Any, ndim: int) -> Any:
@@ -519,9 +518,14 @@ def prepare_fit_config(
     # L1 regularization defaults will be set in preprocessing.py after gradient dilution
     # is calculated, to ensure they scale properly with effective learning rates
 
+    # Validators inspect the raw parameter bundle; normalized values stay in
+    # coordinator locals and are passed explicitly to normalization helpers.
     _validate_core_hyperparameters(parameters)
     _validate_scheduler_parameters(parameters)
-    movie_max_frames = _validate_stopping_parameters(parameters)
+    _validate_stopping_parameters(parameters)
+    movie_max_frames = (
+        10000 if parameters.movie_max_frames is None else parameters.movie_max_frames
+    )
 
     d = V.ndim
     sigma_min_diag = _normalize_sigma_min(sigma_min_diag, d)

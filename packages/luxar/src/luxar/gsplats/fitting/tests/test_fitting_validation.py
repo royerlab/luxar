@@ -26,6 +26,7 @@ pytestmark = pytest.mark.skipif(not HAS_TORCH, reason="PyTorch not available")
 
 if HAS_TORCH:
     from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
+    from luxar.gsplats.gsplat_data import GSplatData
 
     from .conftest import prepare_fit_config
 
@@ -248,6 +249,23 @@ def test_prepare_fit_config_preserves_validation_precedence(
     assert_validation_precedence(_validate_with_defaults, earlier, later)
 
 
+def test_prepare_fit_config_rejects_wrong_dimension_gsplat_seeds() -> None:
+    """Warm-start splats must match the input volume dimensionality."""
+    seeds = GSplatData(
+        centers=np.ones((1, 3), dtype=np.float32),
+        amplitudes=np.ones(1, dtype=np.float32),
+        cholesky_factors=np.ones((1, 6), dtype=np.float32),
+    )
+    case = ValidationCase(
+        "gsplat_seed_dimensions",
+        {"seeds": seeds},
+        ValueError,
+        "GSplatData centers must have 2 columns to match image dimensions",
+    )
+
+    assert_validation_failure(_validate_with_defaults, case)
+
+
 class TestPrepareConfig:
     """Test configuration preparation and validation."""
 
@@ -278,6 +296,7 @@ class TestPrepareConfig:
         assert config.enable_dynamic_ops
         assert config.n_iters == 1000  # default
         assert config.lr == 0.01  # default
+        assert config.movie_max_frames == 10000
 
     def test_input_validation_empty_image(self) -> None:
         """Test validation of empty image."""
