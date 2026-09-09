@@ -224,6 +224,7 @@ describe('coarse-pointer.css contract', () => {
     expect(coarse).toMatch(
       /\.luxar-dimension-slider__context-menu input,[\s\S]*?\.luxar-dimension-slider__context-menu select[^{]*\{[^}]*font-size:\s*16px/
     );
+    expect(coarse).toMatch(/\.luxar-debug-console__filter,[\s\S]*?\{[^}]*font-size:\s*16px/);
     expect(ruleBody(coarse, '.luxar-dimension-slider__context-menu')).toMatch(
       /max-height:\s*calc\(100vh - 20px\)[^}]*overflow-y:\s*auto/
     );
