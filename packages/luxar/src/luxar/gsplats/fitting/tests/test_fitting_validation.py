@@ -2,11 +2,15 @@
 Tests for fitting validation module.
 """
 
+from collections.abc import Mapping
+from typing import Any
+
 import numpy as np
 import pytest
 
 from luxar.conftest import (
     ValidationCase,
+    assert_validation_failure,
     assert_validation_precedence,
     ordered_validation_pairs,
 )
@@ -220,6 +224,18 @@ VALIDATION_PRECEDENCE = (
 )
 
 
+def _validate_with_defaults(overrides: Mapping[str, Any]) -> None:
+    kwargs = dict(overrides)
+    volume = kwargs.pop("V", np.ones((2, 3), dtype=np.float32))
+    prepare_fit_config(MockGaussianSplatFitter(), volume, **kwargs)
+
+
+@pytest.mark.parametrize("case", VALIDATION_PRECEDENCE, ids=lambda case: case.name)
+def test_prepare_fit_config_preserves_validation_failures(case: ValidationCase) -> None:
+    """Each recorded invalid input keeps its exact exception type and message."""
+    assert_validation_failure(_validate_with_defaults, case)
+
+
 @pytest.mark.parametrize(
     ("earlier", "later"),
     ordered_validation_pairs(VALIDATION_PRECEDENCE),
@@ -229,18 +245,7 @@ def test_prepare_fit_config_preserves_validation_precedence(
     earlier: ValidationCase, later: ValidationCase
 ) -> None:
     """Every earlier invalid parameter wins when a later rule also fails."""
-    fitter = MockGaussianSplatFitter()
-
-    def validate(overrides) -> None:
-        kwargs = dict(overrides)
-        volume = kwargs.pop("V", np.ones((2, 3), dtype=np.float32))
-        prepare_fit_config(
-            fitter,
-            volume,
-            **kwargs,
-        )
-
-    assert_validation_precedence(validate, earlier, later)
+    assert_validation_precedence(_validate_with_defaults, earlier, later)
 
 
 class TestPrepareConfig:

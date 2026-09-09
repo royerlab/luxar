@@ -14,7 +14,9 @@ before each test, and holds a few small shared test helpers:
 which zarr format wrote it, and ``find_repo_relative_file`` / ``viewer_source`` /
 ``read_ts_number_const`` / ``read_ts_string_literals`` let the handful of
 cross-language constant-lock tests read values straight out of a TypeScript
-source rather than trust a prose comment to stay in sync.
+source rather than trust a prose comment to stay in sync. ``ValidationCase``
+and its assertion helpers pin exact failure signatures and precedence before a
+large guard block is refactored.
 """
 
 from __future__ import annotations
@@ -156,7 +158,18 @@ def assert_validation_precedence(
     overrides = {**later.overrides, **earlier.overrides}
     with pytest.raises(earlier.exception_type) as raised:
         validate(overrides)
+    assert type(raised.value) is earlier.exception_type
     assert str(raised.value) == earlier.message
+
+
+def assert_validation_failure(
+    validate: Callable[[Mapping[str, Any]], Any], case: ValidationCase
+) -> None:
+    """Assert the exact exception type and message for one invalid input."""
+    with pytest.raises(case.exception_type) as raised:
+        validate(case.overrides)
+    assert type(raised.value) is case.exception_type
+    assert str(raised.value) == case.message
 
 
 #: v3 spells blosc's shuffle as a NAME; numcodecs spells it as an int, and the
