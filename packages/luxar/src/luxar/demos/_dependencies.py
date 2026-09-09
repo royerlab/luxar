@@ -151,10 +151,11 @@ INSTALL_SPECS: dict[str, DependencySpec] = {
         "download them on a cold cache — having scikit-image is not enough.",
     ),
     "pyarrow": DependencySpec(
-        "pyarrow>=12.0.0",
+        "pyarrow>=13.0.0",
         "demos",
-        "Never imported directly: it is the engine behind `pandas.read_parquet`, "
-        "which several demos use to load their point tables.",
+        "Version 13 added the `zero_copy_only` keyword to "
+        "`ChunkedArray.to_numpy`, which the biodiversity demo uses while "
+        "loading its point table.",
     ),
     "scipy": DependencySpec(
         "scipy>=1.15.0,<2.0",
