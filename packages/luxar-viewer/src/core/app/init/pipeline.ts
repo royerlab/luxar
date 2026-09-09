@@ -238,6 +238,7 @@ export async function runInitPipeline(
       // skips evaluation in this state.
       getDisplayDims: () => sceneDimsManager.getDims()?.displayed ?? [],
       hasArchiveFault: () => owner.archiveFault !== null,
+      hasNetworkFailureUnder: (path) => owner.hasNetworkFailureUnder(path),
       requestReprocess: (paths) => owner.requestReprocess(paths),
       // A view PASS in flight or queued — not a refinement hold, which the
       // loader parks a resync through (see `LODGroupRegistryOwner`).

@@ -405,16 +405,17 @@ export class MultiLevelCachingStore implements AsyncReadable {
    * @see {@link init} for cache initialization and validation
    * @see {@link setPrefetcher} for enabling automatic adjacent chunk loading
    */
-  async get(key: string, _options?: unknown): Promise<Uint8Array | undefined> {
+  async get(key: string, options?: { signal?: AbortSignal }): Promise<Uint8Array | undefined> {
     // zarrita interprets undefined as "key missing" and decodes the chunk as
-    // fill values. Missing and exhausted NetworkError therefore keep that
-    // contract, but a live-store invalidation abort must reject instead of
-    // silently committing zero-filled geometry. Disposal remains quiet because
-    // the owning scene/load is being discarded at the same time.
-    const result = await this.getResult(key);
+    // fill values. Only a real Missing result may keep that contract: network
+    // failures and live aborts must reject so loaders record a retryable failure
+    // instead of committing and caching fabricated zero-filled geometry.
+    // Disposal remains quiet because the owning scene/load is discarded too.
+    const result = await this.getResult(key, options);
     if (isErr(result)) {
       if (result.error.kind === 'NetworkError') {
         log.warning(Modules.CACHE, `Network error fetching ${key}: ${result.error.cause.message}`);
+        throw result.error.cause;
       } else if (result.error.kind === 'Fatal') {
         // The container itself is unreadable (no Range support, archive missing,
         // access denied). Returning `undefined` would let zarrita fill the chunk
@@ -433,9 +434,8 @@ export class MultiLevelCachingStore implements AsyncReadable {
    *
    * Same L1 → L2 → L3 cascade as {@link get}, but distinguishes:
    * - `ok(data)` — present in some tier or fetched successfully.
-   * - `err({ kind: 'Missing' })` — server returned non-2xx (e.g. 404)
-   *   or a non-retryable client error. Caller may treat as "not yet
-   *   stored" without alarm.
+   * - `err({ kind: 'Missing' })` — server returned 404. Caller may treat as
+   *   "not yet stored" without alarm.
    * - `err({ kind: 'NetworkError', cause })` — transient network/DNS
    *   error or 5xx after retries exhausted. Caller may back off.
    * - `err({ kind: 'Aborted' })` — caller signal, cache invalidation, or

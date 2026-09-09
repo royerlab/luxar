@@ -11,6 +11,7 @@ import {
   installOnlineRetry,
   DEFERRED_RETRY_DELAY_MS,
   MAX_DEFERRED_RETRY_ATTEMPTS,
+  ONLINE_RETRY_POLL_MS,
   type RetryCapableLoader,
 } from '../../../../../core/app/lifecycle/online-retry';
 
@@ -53,6 +54,23 @@ describe('installOnlineRetry', () => {
     // Outcome surfaced to the user: a "retrying" toast then a success toast.
     await vi.waitFor(() => expect(toast).toHaveBeenCalledTimes(2));
     expect(String(toast.mock.calls[1][0])).toContain('Recovered 2');
+  });
+
+  it('retries a transient failure after backoff while the browser stays online', async () => {
+    vi.useFakeTimers();
+    try {
+      const loader = makeLoader(true);
+      installOnlineRetry({ events, getLoader: () => loader, toast });
+
+      await vi.advanceTimersByTimeAsync(ONLINE_RETRY_POLL_MS - 1);
+      expect(loader.retryAllFailedLoaders).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(loader.retryAllFailedLoaders).toHaveBeenCalledTimes(1);
+      expect(loader.retryAllFailedLoaders).toHaveBeenCalledWith({ onlyAutoRetryable: true });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('reports partial recovery when some loads still fail', async () => {

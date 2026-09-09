@@ -92,6 +92,8 @@ export interface LODGroupRegistryOwner {
   readonly gpuBufferPool: GPUBufferPool | null;
   /** Current archive fault latched by the owning loader, if any. */
   readonly archiveFault: ArchiveFaultError | null;
+  /** Whether this path or one of its descendants has a network failure. */
+  hasNetworkFailureUnder(path: string): boolean;
   /**
    * Re-run the owning loader's current view state. With ``paths`` (partition
    * node paths whose parts just re-entered the frustum) only loaders at or
@@ -2190,6 +2192,16 @@ export class SceneLoader {
    */
   getFailedLoaders(): ReadonlyMap<string, { error: Error; timestamp: number; retryCount: number }> {
     return this.failedLoaders;
+  }
+
+  /** Whether a path or one of its descendants has a recorded network failure. */
+  hasNetworkFailureUnder(path: string): boolean {
+    for (const [failedPath, info] of this.failedLoaders) {
+      if (info.kind === 'Network' && (failedPath === path || failedPath.startsWith(`${path}/`))) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**

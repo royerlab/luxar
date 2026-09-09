@@ -81,6 +81,23 @@ describe('HttpChunkSource — outcomes', () => {
     expect((await new HttpChunkSource(BASE).get('c/9/9')).kind).toBe('missing');
   });
 
+  it.each([400, 401, 403, 410, 416])(
+    'maps HTTP %s to an error instead of pretending the key is missing',
+    async (status) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => bodyResponse(new Uint8Array(0), status))
+      );
+
+      const outcome = await new HttpChunkSource(BASE).get('c/9/9');
+
+      expect(outcome.kind).toBe('error');
+      if (outcome.kind !== 'error') return;
+      expect(outcome.cause.message).toContain(String(status));
+      expect(outcome.cause.message).toContain('c/9/9');
+    }
+  );
+
   it('retries a 5xx and succeeds when the server recovers', async () => {
     let attempt = 0;
     vi.stubGlobal(

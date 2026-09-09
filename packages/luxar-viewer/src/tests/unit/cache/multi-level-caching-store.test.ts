@@ -1683,13 +1683,35 @@ describe('MultiLevelCachingStore', () => {
       expect(global.fetch).toHaveBeenCalledTimes(3);
     });
 
-    it('should handle network errors', async () => {
+    it('rejects exhausted network errors instead of returning a fill-valued miss', async () => {
       global.fetch = vi.fn(async () => {
         throw new Error('Network error');
       }) as any;
 
-      const result = await store.get('test');
-      expect(result).toBeUndefined(); // Graceful failure
+      await expect(store.get('test')).rejects.toThrow('fetch exhausted retries');
+    });
+
+    it('forwards zarrita GetOptions.signal through get() to the underlying fetch', async () => {
+      let observedSignal: AbortSignal | undefined;
+      global.fetch = vi.fn((_url: string, init?: RequestInit) => {
+        observedSignal = init?.signal ?? undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('Aborted', 'AbortError')),
+            { once: true }
+          );
+        });
+      }) as unknown as typeof fetch;
+
+      const controller = new AbortController();
+      const pending = store.get('cancelled', { signal: controller.signal });
+      await vi.waitFor(() => expect(observedSignal).toBeDefined());
+
+      controller.abort();
+
+      await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+      expect(observedSignal?.aborted).toBe(true);
     });
 
     it('should handle OPFS initialization failure', async () => {

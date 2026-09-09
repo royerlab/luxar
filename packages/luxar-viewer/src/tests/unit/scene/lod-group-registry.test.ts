@@ -37,6 +37,7 @@ import {
   type BoundingBox,
 } from '../../../scene/scene-manager/clipping/bounds-math';
 import { updateCameraAspect } from '../../../utils/camera-utils';
+import { log } from '../../../utils/log';
 
 // ────────────────────────────────────────────────────────────────────────
 // pickChildWithHysteresis — pure selector math
@@ -2799,6 +2800,31 @@ describe('LODGroupRegistry — fresh-but-empty display guard', () => {
     reg.evaluatePerFrame();
     expect(children[0].object.visible).toBe(true); // populated coarse shown
     expect(children[1].object.visible).toBe(false); // empty fine hidden
+  });
+
+  it('directs network-backed empty levels to Retry instead of clear-cache', () => {
+    const camera = new THREE.Camera();
+    camera.matrixWorldInverse.identity();
+    camera.projectionMatrix.identity();
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const reg = new LODGroupRegistry({
+      getCamera: () => camera,
+      getViewportSize: () => ({ width: 800, height: 600 }),
+      getDisplayDims: () => [0, 1, 2],
+      getViewVersion: () => 2,
+      hasNetworkFailureUnder: (path) => path === '/g',
+    });
+    const children = [makeCountedChild(0, 2, 100), makeCountedChild(0.5, 2, 0)];
+    reg.register(makeEntry(children, 0, '/g'));
+
+    reg.evaluatePerFrame();
+
+    expect(warning).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining('use the monitor Retry action')
+    );
+    expect(warning.mock.calls[0]?.[1]).not.toContain('?clear-cache');
+    warning.mockRestore();
   });
 
   it('leaves a genuinely empty slice unchanged (every fresh level empty)', () => {

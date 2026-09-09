@@ -64,7 +64,14 @@ export class HttpChunkSource implements ChunkSource {
     }
 
     try {
-      if (!scope.response.ok) return { kind: 'missing' };
+      if (scope.response.status === 404) return { kind: 'missing' };
+      if (!scope.response.ok) {
+        const statusText = scope.response.statusText ? ` ${scope.response.statusText}` : '';
+        return {
+          kind: 'error',
+          cause: new Error(`HTTP ${scope.response.status}${statusText} fetching ${key}`),
+        };
+      }
 
       // Check BEFORE touching the body. The store used to do this between the
       // headers arriving and `arrayBuffer()`, and losing it meant an

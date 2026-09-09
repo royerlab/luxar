@@ -930,6 +930,7 @@ export class LuxarLayer {
           // Matches `core/app/init/pipeline.ts`.
           getDisplayDims: () => sceneDimsManager.getDims()?.displayed ?? [],
           hasArchiveFault: () => owner.archiveFault !== null,
+          hasNetworkFailureUnder: (path) => owner.hasNetworkFailureUnder(path),
           requestReprocess: (paths) => owner.requestReprocess(paths),
           // A view PASS in flight or queued — not a refinement hold (see the
           // app pipeline's identical wiring).

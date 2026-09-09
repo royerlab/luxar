@@ -49,6 +49,9 @@ export const DEFERRED_RETRY_DELAY_MS = 2000;
  */
 export const MAX_DEFERRED_RETRY_ATTEMPTS = 10;
 
+/** Backoff before checking for retryable failures while still online. */
+export const ONLINE_RETRY_POLL_MS = 5000;
+
 /**
  * Register a `window 'online'` listener that retries every failed loader
  * when connectivity is restored — the trigger half of the failed-load
@@ -69,19 +72,24 @@ export const MAX_DEFERRED_RETRY_ATTEMPTS = 10;
  *     times instead of being misreported as "still failing".
  *   - Re-entrancy guarded: `retryInFlight` covers the whole attempt chain,
  *     so bursts of `online` events cannot stack batches.
+ *   - While the browser stays online, a lightweight timer checks for newly
+ *     recorded transient failures and starts the same bounded retry path.
  *
  * Routed through the supplied {@link EventGroup} so both the listener and
- * any pending deferred-retry timer are cleaned up on app dispose (same
+ * pending retry timers are cleaned up on app dispose (same
  * pattern as `installFocusHandling`).
  */
 export function installOnlineRetry(ports: OnlineRetryPorts): void {
   let retryInFlight = false;
+  let pollSuppressed = false;
   let deferredTimer: ReturnType<typeof setTimeout> | undefined;
+  let pollTimer: ReturnType<typeof setTimeout> | undefined;
 
   // Dispose safety: a deferred re-attempt scheduled just before app teardown
   // must not fire against a disposed loader.
   ports.events.add(() => {
     if (deferredTimer !== undefined) clearTimeout(deferredTimer);
+    if (pollTimer !== undefined) clearTimeout(pollTimer);
   });
 
   const attempt = (attemptNumber: number): void => {
@@ -106,6 +114,7 @@ export function installOnlineRetry(ports: OnlineRetryPorts): void {
                 'leaving failures to the monitor banner / manual retry'
             );
             retryInFlight = false;
+            pollSuppressed = true;
             return;
           }
           deferredTimer = setTimeout(() => {
@@ -140,17 +149,36 @@ export function installOnlineRetry(ports: OnlineRetryPorts): void {
       });
   };
 
-  ports.events.on(window, 'online', () => {
-    if (retryInFlight) return;
+  const triggerRetry = (message: string, source: 'online' | 'poll'): void => {
+    if (source === 'online') pollSuppressed = false;
+    if (retryInFlight || (source === 'poll' && pollSuppressed) || navigator.onLine === false)
+      return;
     const loader = ports.getLoader();
+    if (!loader?.hasAutoRetryableFailures()) {
+      pollSuppressed = false;
+      return;
+    }
+
+    retryInFlight = true;
+    log.info(Modules.LUXAR, message);
+    ports.toast(message, 3000);
+    attempt(1);
+  };
+
+  const schedulePoll = (): void => {
+    pollTimer = setTimeout(() => {
+      pollTimer = undefined;
+      triggerRetry('Retrying failed loads…', 'poll');
+      schedulePoll();
+    }, ONLINE_RETRY_POLL_MS);
+  };
+
+  schedulePoll();
+
+  ports.events.on(window, 'online', () => {
     // Deliberately NOT `hasFailures()`: a scene whose only failures are
     // deterministic gets no retry and no "Connection restored" toast, since
     // reconnecting cannot help it.
-    if (!loader?.hasAutoRetryableFailures()) return;
-
-    retryInFlight = true;
-    log.info(Modules.LUXAR, 'Connection restored - retrying failed loaders');
-    ports.toast('Connection restored — retrying failed loads…', 3000);
-    attempt(1);
+    triggerRetry('Connection restored — retrying failed loads…', 'online');
   });
 }

@@ -1938,6 +1938,18 @@ describe('SceneLoader', () => {
       expect(internals.makeLoadSceneCtx().getFailedLoaderReasons()).toEqual(['Unexpected']);
     });
 
+    it('finds only network failures under the requested path boundary', () => {
+      const internals = sceneLoader as unknown as FailInternals;
+      internals.registry.recordFailure('/g/level_0', new Error('HTTP 503 fetching chunk'));
+      internals.registry.recordFailure('/g2/level_0', new Error('HTTP 503 fetching chunk'));
+      internals.registry.recordFailure('/g/level_1', new Error('invalid chunk'), 'Decode');
+
+      expect(sceneLoader.hasNetworkFailureUnder('/g')).toBe(true);
+      expect(sceneLoader.hasNetworkFailureUnder('/g2')).toBe(true);
+      expect(sceneLoader.hasNetworkFailureUnder('/missing')).toBe(false);
+      expect(sceneLoader.hasNetworkFailureUnder('/g/level_1')).toBe(false);
+    });
+
     it('surfaces and retries an archive fault with no recorded node failure', async () => {
       const archiveFault = new ArchiveFaultError('archive unavailable', '/scene.zip');
       const current = { displayDims: [0, 1, 2], slicePosition: [3], tolerance: [0] };
