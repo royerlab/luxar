@@ -91,13 +91,14 @@ class _Recorder(list):
         super().__init__()
         self.invocations: list[tuple[tuple[str, ...], dict[str, Any]]] = []
         self.audit_invocations: list[tuple[tuple[str, ...], dict[str, Any]]] = []
+        self.audit_events: list[str] = []
 
 
 def _fake_run(
     repo: Path,
     calls: _Recorder,
     outcomes: dict[str, str],
-    audit_outcomes: dict[str, int],
+    audit_outcomes: dict[str, int | str],
 ):
     """A ``subprocess.run`` that records the call and plays a scripted outcome.
 
@@ -116,8 +117,12 @@ def _fake_run(
     def run(cmd, **kwargs):  # type: ignore[no-untyped-def]
         script = Path(cmd[1]).name
         if script in audit_outcomes:
+            calls.audit_events.append("run")
             calls.audit_invocations.append((tuple(cmd), dict(kwargs)))
-            return SimpleNamespace(returncode=audit_outcomes[script])
+            outcome = audit_outcomes[script]
+            if outcome == "timeout":
+                raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+            return SimpleNamespace(returncode=outcome)
         calls.append(script)
         calls.invocations.append((tuple(cmd), dict(kwargs)))
         outcome = outcomes[script]
@@ -157,7 +162,7 @@ def _setup(
     missing_script: tuple[str, ...] = (),
     capture_only: tuple[str, ...] = (),
     lfs_states: Optional[dict[str, str]] = None,
-    audit_outcomes: Optional[dict[str, int]] = None,
+    audit_outcomes: Optional[dict[str, int | str]] = None,
 ) -> _Recorder:
     """Point the harness at a synthetic tree; return the recorded-calls list.
 
@@ -439,23 +444,27 @@ def test_newly_generated_stores_are_audited_by_explicit_path(
 
     assert code == 0
     assert calls == ["demo_fresh.py"]
-    assert len(calls.audit_invocations) == 2
+    assert len(calls.audit_invocations) == 4
     expected_store = str(tmp_path / "datasets/demos/fresh.luxar.zarr")
-    for cmd, kwargs in calls.audit_invocations:
+    for cmd, kwargs in calls.audit_invocations[:2]:
         assert cmd[0] == sys.executable
         assert Path(cmd[1]) in {
             tmp_path / "scripts/check_demo_ladders.py",
             tmp_path / "scripts/check_scene_credits.py",
         }
         assert list(cmd[2:]) == ["--require-scenes", expected_store]
-        assert kwargs == {"cwd": tmp_path}
+        assert kwargs == {"cwd": tmp_path, "timeout": gen.AUDIT_TIMEOUT_S}
+    for cmd, kwargs in calls.audit_invocations[2:]:
+        assert list(cmd[2:]) == ["--require-scenes"]
+        assert kwargs == {"cwd": tmp_path, "timeout": gen.AUDIT_TIMEOUT_S}
 
 
 @pytest.mark.parametrize(
-    "failed_auditor", ["check_demo_ladders.py", "check_scene_credits.py"]
+    ("failed_auditor", "expected_code"),
+    [("check_demo_ladders.py", 0), ("check_scene_credits.py", 1)],
 )
-def test_a_failed_generated_store_audit_fails_the_gallery_build(
-    tmp_path, monkeypatch, capsys, failed_auditor
+def test_only_gating_generated_store_audits_fail_the_gallery_build(
+    tmp_path, monkeypatch, capsys, failed_auditor, expected_code
 ) -> None:
     calls = _setup(
         tmp_path,
@@ -470,12 +479,12 @@ def test_a_failed_generated_store_audit_fails_the_gallery_build(
     code = _run_main(monkeypatch)
     out = capsys.readouterr().out
 
-    assert code == 1
-    assert len(calls.audit_invocations) == 2
+    assert code == expected_code
+    assert len(calls.audit_invocations) == 4
     assert failed_auditor.removesuffix(".py") in out
 
 
-def test_an_idempotent_run_does_not_audit_neighbouring_stores(
+def test_an_idempotent_run_reports_on_the_complete_local_inventory(
     tmp_path, monkeypatch
 ) -> None:
     calls = _setup(
@@ -489,7 +498,52 @@ def test_an_idempotent_run_does_not_audit_neighbouring_stores(
 
     assert code == 0
     assert not calls
-    assert not calls.audit_invocations
+    assert len(calls.audit_invocations) == 2
+    for cmd, kwargs in calls.audit_invocations:
+        assert list(cmd[2:]) == ["--require-scenes"]
+        assert kwargs == {"cwd": tmp_path, "timeout": gen.AUDIT_TIMEOUT_S}
+
+
+def test_a_gating_auditor_timeout_fails_the_gallery_build(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    _setup(
+        tmp_path,
+        monkeypatch,
+        [("fresh", None, "ok")],
+        audit_outcomes={
+            "check_demo_ladders.py": 0,
+            "check_scene_credits.py": "timeout",
+        },
+    )
+
+    code = _run_main(monkeypatch)
+    out = capsys.readouterr().out
+
+    assert code == 1
+    assert "check_scene_credits timed out" in out
+
+
+def test_parent_output_is_flushed_before_each_auditor(tmp_path, monkeypatch) -> None:
+    calls = _setup(tmp_path, monkeypatch, [("fresh", None, "ok")])
+    real_stdout = sys.stdout
+
+    class FlushSpy:
+        def write(self, text):  # type: ignore[no-untyped-def]
+            return real_stdout.write(text)
+
+        def flush(self) -> None:
+            calls.audit_events.append("flush")
+            real_stdout.flush()
+
+        def __getattr__(self, name):  # type: ignore[no-untyped-def]
+            return getattr(real_stdout, name)
+
+    monkeypatch.setattr(sys, "stdout", FlushSpy())
+
+    _run_main(monkeypatch)
+
+    assert calls.audit_events == ["flush", "run"] * 4
 
 
 def test_a_local_input_demo_that_succeeds_is_generated(
@@ -565,6 +619,23 @@ def test_capture_only_entries_have_no_runnable_demo_on_disk() -> None:
                 f"{entry['id']}: manifest says capture-only, but "
                 f"{on_disk[entry['id']]} is on disk and can generate the dataset"
             )
+
+
+def test_manifest_dataset_stems_resolve_through_the_demo_registry() -> None:
+    """Explicit credit audits require manifest stores to match demo outputs."""
+    from luxar.demos.registry import iter_demos
+
+    registered_outputs = {output for demo in iter_demos() for output in demo.outputs}
+    unresolved = {
+        entry["id"]: Path(entry["dataset"]).name.removesuffix(".luxar.zarr")
+        for entry in gen.load_manifest()
+        if Path(entry["dataset"]).name.removesuffix(".luxar.zarr")
+        not in registered_outputs
+    }
+
+    assert not unresolved, (
+        f"gallery dataset stems missing from DEMO_META outputs: {unresolved}"
+    )
 
 
 def test_manifest_carries_no_undeclared_fields() -> None:

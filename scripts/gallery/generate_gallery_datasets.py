@@ -6,8 +6,10 @@ and, for every entry that declares a generator ``script``, runs that demo with
 ``--no-serve`` to produce its ``.luxar.zarr`` under ``datasets/demos/`` — unless
 the dataset already exists (idempotent / resumable). Every store produced by
 this run is then checked for LOD-ladder quality and embedded scene credits before
-the gallery capture can proceed; already-present neighbouring stores are not
-allowed to make a newly generated store fail or pass.
+the gallery capture can proceed. Scene credits gate the build; ladder findings
+are report-only until the demo corpus has been laddered. A second report-only
+pass covers the complete local inventory, so already-present neighbours remain
+visible without deciding whether a newly generated store may proceed.
 
 Entries with ``script: null`` live only on a feature branch; their dataset must
 already be present (typically generated once, then committed/kept locally). Such
@@ -72,6 +74,9 @@ DATA_MANIFEST = DEMOS_DIR / "data_manifest.json"
 # Gaussian splats; give them room but don't hang the whole run forever.
 GEN_TIMEOUT_S = 3600
 
+# Built-scene audits are metadata-heavy but should never hang a gallery build.
+AUDIT_TIMEOUT_S = 600
+
 # Provisioning modes that may make a positive demo exit mean "this machine does
 # not have the input". Git LFS is checked against the observed payload state;
 # unlike `luxar demo run-all`, the gallery still attempts every runnable entry.
@@ -87,8 +92,8 @@ LOCAL_INPUT_MODES = ("manual-file", "kaggle-auth", "git-lfs")
 UNBUILDABLE_IDS: dict[str, str] = {}
 
 SCENE_AUDITOR_NAMES = (
-    "check_demo_ladders.py",
-    "check_scene_credits.py",
+    ("check_demo_ladders.py", False),
+    ("check_scene_credits.py", True),
 )
 
 
@@ -260,15 +265,17 @@ def print_plan(demos: list[dict[str, Any]]) -> None:
             aprint(f"[{present:>7}] {d['id']:<34} {gen}")
 
 
-def audit_generated_stores(paths: list[Path]) -> list[str]:
-    """Run every built-scene auditor against exactly the stores made here."""
-    if not paths:
-        return []
-
+def _run_scene_auditors(
+    paths: list[Path], *, title: str, enforce_configured_gates: bool
+) -> list[str]:
+    """Run every built-scene auditor and return only enforced failures."""
     failures = []
-    with asection(f"Auditing {len(paths)} newly generated scene(s)"):
-        for auditor_name in SCENE_AUDITOR_NAMES:
+    with asection(title):
+        for auditor_name, gates in SCENE_AUDITOR_NAMES:
             auditor = REPO_ROOT / "scripts" / auditor_name
+            # Generated-path calls are non-empty by construction, so
+            # --require-scenes is defense-in-depth there. It is load-bearing for
+            # the whole-inventory report, where an empty build box must be loud.
             cmd = [
                 sys.executable,
                 str(auditor),
@@ -276,11 +283,45 @@ def audit_generated_stores(paths: list[Path]) -> list[str]:
                 *(str(path) for path in paths),
             ]
             aprint(" ".join(cmd))
-            result = subprocess.run(cmd, cwd=REPO_ROOT)
-            if result.returncode != 0:
-                failures.append(auditor.stem)
-                aprint(f"❌ {auditor.stem} failed with exit {result.returncode}")
+            sys.stdout.flush()
+            failure: str | None
+            try:
+                result = subprocess.run(cmd, cwd=REPO_ROOT, timeout=AUDIT_TIMEOUT_S)
+            except subprocess.TimeoutExpired:
+                failure = f"timed out after {AUDIT_TIMEOUT_S}s"
+            else:
+                failure = (
+                    f"failed with exit {result.returncode}"
+                    if result.returncode != 0
+                    else None
+                )
+            if failure is not None:
+                enforced = enforce_configured_gates and gates
+                if enforced:
+                    failures.append(auditor.stem)
+                suffix = "" if enforced else " (report-only)"
+                aprint(f"❌ {auditor.stem} {failure}{suffix}")
     return failures
+
+
+def audit_generated_stores(paths: list[Path]) -> list[str]:
+    """Audit exactly the stores made here, enforcing configured gates."""
+    if not paths:
+        return []
+    return _run_scene_auditors(
+        paths,
+        title=f"Auditing {len(paths)} newly generated scene(s)",
+        enforce_configured_gates=True,
+    )
+
+
+def report_local_scene_inventory() -> None:
+    """Report every built scene without making neighbouring stores a gate."""
+    _run_scene_auditors(
+        [],
+        title="Reporting the complete local scene inventory",
+        enforce_configured_gates=False,
+    )
 
 
 def main() -> int:
@@ -348,6 +389,7 @@ def main() -> int:
     ready = [d for d in demos if dataset_exists(d)]
     aprint(f"\n{len(ready)}/{len(demos)} datasets ready for capture.")
     audit_failures = audit_generated_stores(generated_paths)
+    report_local_scene_inventory()
     if not audit_failures:
         aprint("Next: cd packages/luxar-viewer && pnpm gallery")
 

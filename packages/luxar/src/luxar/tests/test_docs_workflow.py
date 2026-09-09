@@ -64,14 +64,20 @@ def test_runbook_section_three_headings_are_sequential() -> None:
 
 
 def test_runbook_audits_built_scenes_before_upload() -> None:
-    """Keep both fail-loud artifact checks in the publishing wave."""
+    """Keep both artifact checks and their gate policy in the publishing wave."""
     text = DEMO_SITE_RUNBOOK.read_text()
-    section = text.split("## 2. Publishing a wave", 1)[1].split(
-        "### 2.1 Always publish to a new dated prefix", 1
-    )[0]
+    heading = "## 2. Publishing a wave"
+    assert heading in text, f"missing runbook heading: {heading}"
+    section_and_rest = text.split(heading, 1)[1]
+    assert "\n### " in section_and_rest, (
+        "publishing-wave introduction is no longer followed by a subsection"
+    )
+    section = section_and_rest.split("\n### ", 1)[0]
 
     assert "hatch run check-demo-ladders --require-scenes" in section
     assert "hatch run check-scene-credits --require-scenes" in section
+    assert "report-only" in section
+    assert "currently fails" in section
     assert section.index("audit the complete local scene inventory") < section.index(
         "upload only what changed"
     )

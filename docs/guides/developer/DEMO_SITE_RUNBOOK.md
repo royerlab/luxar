@@ -98,10 +98,12 @@ exchange for far fewer stored objects. Re-measure browser traffic and request
 cost before changing that tradeoff.
 
 `make generate-gallery-datasets` automatically runs both built-scene auditors
-against only the stores it generated in that invocation. That catches a bad
-rebuild without letting an unrelated stale local store block the build. Before
-uploading a wave, audit the complete local inventory as a separate fail-loud
-step:
+against only the stores it generated in that invocation, then reports on the
+complete local inventory. Scene-credit failures gate a rebuild without letting
+an unrelated stale local store block it. The ladder arm is report-only for now:
+it currently fails across much of the pre-ladder corpus, so use its output to
+track and prioritize that debt rather than skipping the audit entirely. Before
+uploading a wave, run the complete inventory commands directly as well:
 
 ```bash
 hatch run check-demo-ladders --require-scenes
@@ -111,6 +113,8 @@ hatch run check-scene-credits --require-scenes
 Keep this immediately before upload, after the final local build and
 optimisation. `--require-scenes` is load-bearing: an empty or wrongly located
 inventory must fail rather than produce a green "inspected nothing" result.
+Scene credits must exit zero before upload; record the report-only ladder result
+alongside the wave until the corpus is ready for that check to become a gate.
 
 Before rebuilding `earthquakes`, `ocean_currents_earth`,
 `global_rivers_earth`, or `biodiversity_planetary_scale`, put KTX-Software's
