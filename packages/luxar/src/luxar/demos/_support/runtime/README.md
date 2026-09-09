@@ -32,8 +32,9 @@ print(device, flags["recompute"])
   `scene_is_current()` identify the producing demo, hash its sources plus the
   writer environment, and reuse only completed scenes written by the current
   producer.
-- `stamp_input_digests()` records the exact verified manifest artifacts on the
-  scene root as a canonical basename-to-sha256 map.
+- `stamp_input_digests()` records every verified manifest artifact resolved in
+  this process on the scene root as a canonical basename-to-sha256 map. A later
+  artifact with the same basename replaces the earlier process-local entry.
 - `parse_demo_flags()` parses the shared `--recompute`, `--keep-stale`,
   `--no-serve`, and `--serve-only` flags.
 - `parse_int_arg()` parses integer `--name=VALUE` or `--name VALUE` forms and

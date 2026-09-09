@@ -5,8 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from collections.abc import MutableMapping
 from pathlib import Path
-from typing import Any, Final, Union
+from typing import Any, Final, Protocol, Union
 
 from arbol import aprint
 
@@ -25,6 +26,11 @@ _DEMO_MODULE_CACHES: dict[Path, dict[str, Path | None]] = {}
 _RESOLVED_INPUT_DIGESTS: dict[str, str] = {}
 
 
+class _SceneWithAttrs(Protocol):
+    @property
+    def attrs(self) -> MutableMapping[str, Any]: ...
+
+
 def _clear_demo_source_fingerprint_caches() -> None:
     """Clear process-local static import resolution caches."""
     _DEMO_IMPORT_CACHE.clear()
@@ -32,7 +38,7 @@ def _clear_demo_source_fingerprint_caches() -> None:
 
 
 def _record_input_digests(input_digests: dict[str, str]) -> None:
-    """Record verified demo inputs resolved in this process."""
+    """Record every verified manifest input resolved in this process by basename."""
     _RESOLVED_INPUT_DIGESTS.update(input_digests)
 
 
@@ -41,8 +47,12 @@ def _clear_input_digests() -> None:
     _RESOLVED_INPUT_DIGESTS.clear()
 
 
-def stamp_input_digests(scene: Any | str | Path) -> None:
-    """Stamp the exact verified demo inputs resolved in this process."""
+def stamp_input_digests(scene: _SceneWithAttrs | str | Path) -> None:
+    """Stamp every verified manifest input resolved in this process.
+
+    The basename-keyed map participates in ``content_hash`` when stamped before
+    finalization. Does nothing when the resolver has recorded no inputs.
+    """
     if not _RESOLVED_INPUT_DIGESTS:
         return
     digests = dict(sorted(_RESOLVED_INPUT_DIGESTS.items()))
