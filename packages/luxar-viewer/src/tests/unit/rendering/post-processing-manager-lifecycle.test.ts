@@ -465,6 +465,30 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
     mgr.dispose();
   });
 
+  it('logs the effective MSAA state while SSAA suspends configured samples', () => {
+    const mgr = makeManager();
+    mgr.setMSAAEnabled(true);
+    const updateLog = vi.spyOn(log, 'update').mockImplementation(() => {});
+    const infoLog = vi.spyOn(log, 'info').mockImplementation(() => {});
+
+    mgr.setSSAAEnabled(true);
+    expect(updateLog).toHaveBeenLastCalledWith(
+      Modules.POST_PROCESSING,
+      'SSAA enabled (2x); MSAA: 4x configured; suspended by SSAA'
+    );
+
+    mgr.setMSAASamples(2);
+    expect(infoLog).toHaveBeenLastCalledWith(
+      Modules.POST_PROCESSING,
+      'MSAA samples set to 2x configured; suspended by SSAA'
+    );
+
+    mgr.setSSAAEnabled(false);
+    expect(updateLog).toHaveBeenLastCalledWith(Modules.POST_PROCESSING, 'SSAA disabled; MSAA: 2x');
+
+    mgr.dispose();
+  });
+
   it('reallocates after rebuildAfterContextRestore even at an identical size', () => {
     // The restore path rebuilds all transient targets; the allocation
     // memo must be invalidated so the follow-up updateRendererSize()
