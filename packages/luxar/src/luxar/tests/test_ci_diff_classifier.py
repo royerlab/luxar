@@ -139,6 +139,16 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "wiring",
     ),
     (
+        "packages/luxar-viewer/src/tests/unit/gallery-selection.test.ts",
+        "py",
+        "the classifier scans it for repo-rooted readFileSync inputs",
+    ),
+    (
+        "packages/luxar-viewer/src/tests/unit/config/generated-fixture-freshness.test.ts",
+        "py",
+        "the classifier scans it for repo-rooted readFileSync inputs",
+    ),
+    (
         "scripts/generate_builtin_colormaps.py",
         "ts",
         "the viewer's third-party notices test scrapes its colormap tables",
@@ -528,6 +538,12 @@ _NON_SCANNED_PYTHON_VIEWER_INPUTS = {
     "packages/luxar-viewer/src/tests/global-setup.ts": (
         "matched by test_fixture_environment.py through git grep"
     ),
+    "packages/luxar-viewer/src/tests/unit/gallery-selection.test.ts": (
+        "scanned for repo-rooted readFileSync inputs by this module"
+    ),
+    "packages/luxar-viewer/src/tests/unit/config/generated-fixture-freshness.test.ts": (
+        "scanned for repo-rooted readFileSync inputs by this module"
+    ),
     "packages/luxar-viewer/src/tests/README.md": (
         "matched by test_fixture_environment.py through git grep"
     ),
@@ -536,7 +552,7 @@ _NON_SCANNED_PYTHON_VIEWER_INPUTS = {
     ),
 }
 
-_NON_GATE_PYTHON_TEST_PATH_EXCLUSIONS = {
+_NON_GATE_PYTHON_TEST_PATH_LITERAL_EXCLUSIONS = {
     ".github/workflows/ci.yml": "owned by the explicit all-domains workflow block",
     ".github/workflows/publish.yml": (
         "test_set_version.py writes a fixture workflow at this path"
@@ -563,6 +579,10 @@ _NON_GATE_PYTHON_TEST_PATH_EXCLUSIONS = {
     "packages/luxar/src/luxar/shading/README.md": (
         "test_check_tile_staleness.py writes a fixture file at this path"
     ),
+}
+
+_NON_GATE_PYTHON_TEST_PATH_READ_EXCLUSIONS = {
+    ".github/workflows/ci.yml": "owned by the explicit all-domains workflow block",
 }
 
 #: The rule that puts the workflow itself in every domain. Extracted as text so a
@@ -948,7 +968,15 @@ def _tracked_typescript_test_path_reads(
     repo: Path = REPO,
     tracked_paths: set[str] | None = None,
 ) -> set[str]:
-    """Find literal ``readFileSync(join|resolve(REPO_ROOT, ...))`` test inputs."""
+    """Find literal ``readFileSync(join|resolve(REPO_ROOT, ...))`` test inputs.
+
+    This intentionally scans only ``src/**/*.test.ts`` calls rooted at the literal
+    ``REPO_ROOT`` identifier. It does not cover ``import.meta``-rooted reads,
+    ``*.spec.ts`` files, or ``scripts/*.test.mjs``. Existing matched reader files
+    therefore need explicit ``dom_py`` ownership so edits to the guard run pytest;
+    a brand-new reader remains discoverable only once another Python-relevant change
+    runs this repository-wide check.
+    """
     tracked_paths = _tracked_paths(repo) if tracked_paths is None else tracked_paths
     paths: set[str] = set()
     for source_root in source_roots:
@@ -967,16 +995,25 @@ def _tracked_typescript_test_path_reads(
     return paths
 
 
-def _assert_unclassified_test_paths_are_owned(paths: set[str]) -> None:
+def _assert_unclassified_test_paths_are_owned(
+    literal_paths: set[str], read_paths: set[str]
+) -> None:
     python_gate_inputs = {path for path, domain, _why in GATE_INPUTS if domain == "py"}
-    exceptions = set(_NON_GATE_PYTHON_TEST_PATH_EXCLUSIONS)
-    missing = sorted(paths - python_gate_inputs - exceptions)
-    stale_exceptions = sorted(exceptions - paths)
-    assert not missing and not stale_exceptions, (
+    literal_exceptions = set(_NON_GATE_PYTHON_TEST_PATH_LITERAL_EXCLUSIONS)
+    read_exceptions = set(_NON_GATE_PYTHON_TEST_PATH_READ_EXCLUSIONS)
+    missing = sorted(
+        (literal_paths - python_gate_inputs - literal_exceptions)
+        | (read_paths - python_gate_inputs - read_exceptions)
+    )
+    stale_literal_exceptions = sorted(literal_exceptions - literal_paths)
+    stale_read_exceptions = sorted(read_exceptions - read_paths)
+    assert not missing and not stale_literal_exceptions and not stale_read_exceptions, (
         "tracked non-Python paths named by pytest tests must have dom_py "
         f"GATE_INPUTS rows or justified exclusions: {missing}; Python test "
-        "path exclusions no longer describe unclassified scan results; "
-        f"remove or update them: {stale_exceptions}"
+        "literal exclusions no longer describe unclassified literal results; "
+        f"remove or update them: {stale_literal_exceptions}; Python test read "
+        "exclusions no longer describe unclassified read results; remove or "
+        f"update them: {stale_read_exceptions}"
     )
 
 
@@ -1132,7 +1169,10 @@ readFileSync(path.join(REPO_ROOT, dynamicName), 'utf-8');
 
 def test_python_gate_input_scan_rejects_missing_ownership() -> None:
     with pytest.raises(AssertionError, match="must have dom_py GATE_INPUTS rows"):
-        _assert_unclassified_test_paths_are_owned({"unowned.json"})
+        _assert_unclassified_test_paths_are_owned(
+            set(_NON_GATE_PYTHON_TEST_PATH_LITERAL_EXCLUSIONS) | {"unowned.json"},
+            set(_NON_GATE_PYTHON_TEST_PATH_READ_EXCLUSIONS),
+        )
 
 
 def test_typescript_gate_input_scan_rejects_missing_ownership() -> None:
@@ -1142,20 +1182,32 @@ def test_typescript_gate_input_scan_rejects_missing_ownership() -> None:
 
 def test_python_gate_input_scan_rejects_stale_exclusions() -> None:
     with pytest.raises(AssertionError, match="exclusions no longer describe"):
-        _assert_unclassified_test_paths_are_owned(set())
+        _assert_unclassified_test_paths_are_owned(set(), set())
 
 
 def test_python_gate_input_scan_reports_missing_and_stale_together() -> None:
     with pytest.raises(AssertionError) as error:
-        _assert_unclassified_test_paths_are_owned({"unowned.json"})
+        _assert_unclassified_test_paths_are_owned({"unowned.json"}, set())
     assert "must have dom_py GATE_INPUTS rows" in str(error.value)
     assert "exclusions no longer describe" in str(error.value)
+
+
+def test_python_gate_input_scan_literal_exclusion_cannot_excuse_read() -> None:
+    fixture_path = "packages/luxar-viewer/src/tests/screenshots/crop-policy.ts"
+    with pytest.raises(AssertionError, match=re.escape(fixture_path)):
+        _assert_unclassified_test_paths_are_owned(
+            set(_NON_GATE_PYTHON_TEST_PATH_LITERAL_EXCLUSIONS),
+            set(_NON_GATE_PYTHON_TEST_PATH_READ_EXCLUSIONS) | {fixture_path},
+        )
 
 
 def test_python_gate_input_scan_exclusions_have_one_line_reasons() -> None:
     assert all(
         reason and "\n" not in reason
-        for reason in _NON_GATE_PYTHON_TEST_PATH_EXCLUSIONS.values()
+        for reason in (
+            *_NON_GATE_PYTHON_TEST_PATH_LITERAL_EXCLUSIONS.values(),
+            *_NON_GATE_PYTHON_TEST_PATH_READ_EXCLUSIONS.values(),
+        )
     )
 
 
@@ -1173,6 +1225,7 @@ def test_python_gate_input_scan_exclusions_have_one_line_reasons() -> None:
         "packages/luxar/src/luxar/gsplats/archive/README.md",
         "packages/luxar-viewer/src/data/codecs/archive/README.md",
         "packages/luxar-viewer/src/data/scene-loader/lifecycle/load-scene.ts.bak",
+        "packages/luxar-viewer/src/tests/unit/whatever-new.test.ts",
         "scripts/zenodo_record_text_backup/records.json",
         "scripts/zenodo_record_text.md",
     ],
@@ -1208,15 +1261,18 @@ def test_python_test_inputs_are_statically_owned_by_the_python_gate(
     assert {
         "docs/guides/developer/DEMO_SITE_RUNBOOK.md",
         "scripts/zenodo_record_text/records.json",
-    } <= read_paths
+    } <= read_paths, (
+        "these paths pin the Python read scan against going vacuous; if a genuine "
+        "reader was removed, replace its path with a current committed-file canary"
+    )
     python_pattern = _domain_patterns(workflow)["py"]
-    unclassified = {
+    unclassified_literals = {
         path for path in literal_paths if not _classifies(python_pattern, path)
     }
-    unclassified.update(
+    unclassified_reads = {
         path for path in read_paths if not _classifies(python_pattern, path)
-    )
-    _assert_unclassified_test_paths_are_owned(unclassified)
+    }
+    _assert_unclassified_test_paths_are_owned(unclassified_literals, unclassified_reads)
 
 
 def test_typescript_test_path_reads_are_statically_owned_by_the_typescript_gate(
@@ -1229,7 +1285,11 @@ def test_typescript_test_path_reads_are_statically_owned_by_the_typescript_gate(
         "README.md",
         "scripts/gallery/manifest.json",
         "scripts/gallery/media-manifest.json",
-    } <= paths
+    } <= paths, (
+        "these paths pin the TypeScript read scan against going vacuous; if a "
+        "genuine reader was removed, replace its path with a current committed-file "
+        "canary"
+    )
     typescript_pattern = _domain_patterns(workflow)["ts"]
     _assert_typescript_test_paths_are_owned(paths, typescript_pattern)
 

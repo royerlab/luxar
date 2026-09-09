@@ -854,10 +854,11 @@ lacks `dom_py` needs a Python `GATE_INPUTS` row or a justified exclusion, even i
 another language already owns it. Documentation relevance is also independent:
 Markdown and RST inputs read by pytest still need `dom_py` even though they
 select `docs-quality`.
-Eight viewer inputs are consumed without a literal `viewer_source()` call: the
+Ten viewer inputs are consumed without a literal `viewer_source()` call: the
 version and generated-format checks run through their scripts, direct readers
 include the viewer README and two `CURRENT_VERSION_CLAIMS` sources, while
-`test_fixture_environment.py` matches its three fixture files via `git grep`.
+`test_fixture_environment.py` matches its three fixture files via `git grep` and
+the two repo-rooted `readFileSync` reader files are scanned by the classifier.
 The classifier test keeps those explicit exceptions disjoint from the scanned
 readers and requires every `dom_py` viewer row to be in one set or the other.
 `GATE_INPUTS` is therefore the exact declaration; the workflow ERE is its
@@ -871,9 +872,14 @@ gallery-selection unit test resolves and validates the README capture set from
 them. It also owns the root `Makefile` because the generated-fixture freshness
 test checks its E2E fixture prerequisite wiring, plus
 `scripts/generate_builtin_colormaps.py` because the viewer's third-party notices
-test scrapes its colormap tables. A symmetric static scan over viewer `*.test.ts`
+test scrapes its colormap tables. A narrow static scan over viewer `src/**/*.test.ts`
 files finds literal `readFileSync` inputs rooted through `join(REPO_ROOT, ...)` or
 `resolve(REPO_ROOT, ...)` and requires each to have a TypeScript `GATE_INPUTS` row.
+The currently matched reader files are also named Python inputs so their edits run
+the classifier. This scan does not cover `import.meta`-rooted reads, `*.spec.ts`,
+or `scripts/*.test.mjs`; those existing inputs are already owned by broader
+TypeScript patterns, while a brand-new `*.test.ts` reader is discovered only when
+another Python-relevant change runs the repository-wide classifier.
 A check whose own inputs are unclassified is a check that skips for exactly the
 change it exists to catch. `.github/workflows/ci.yml` selects **all four**
 domains: it defines how every suite is invoked, so an edit that breaks a command
