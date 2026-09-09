@@ -168,10 +168,14 @@ These contracts span every tier and are enforced by the unit tests in
 - Coalesced `pendingGets` clean up by entry identity, not key alone. An older
   aborted chain settling after invalidation therefore cannot evict a newer
   same-key request from the map or make that replacement unabortable.
-- A live demand read aborted by invalidation rejects with `AbortError`; it never
-  becomes `undefined`, because zarrita interprets that value as a missing chunk
-  and would commit fill-value geometry. Reads unwinding after store disposal
-  remain quiet because the owning scene is already being discarded.
+- Signal-bearing demand reads still coalesce by key. Cancelling one waiter leaves
+  the shared chain running for the others; invalidation, or cancellation of the
+  last waiter, aborts the source request.
+- A live demand read aborted by its caller or invalidation rejects with
+  `AbortError`; it never becomes `undefined`, because zarrita interprets that
+  value as a missing chunk and would commit fill-value geometry. Reads unwinding
+  after store disposal remain quiet because the owning scene is already being
+  discarded.
 
 ### OPFS mutation ordering
 
@@ -468,12 +472,14 @@ new MultiLevelCachingStore(source: string | ChunkSource, options?: {
 
 Initialize OPFS storage and validate cache. Must be called before first use.
 
-**`async get(key: string): Promise<Uint8Array | undefined>`**
+**`async get(key: string, options?: { signal?: AbortSignal }): Promise<Uint8Array | undefined>`**
 
 Get a zarr chunk with L1 → L2 → HTTP cascade. Implements zarrita's AsyncReadable
-interface. Missing keys and exhausted network failures return `undefined`;
-mid-session invalidation aborts reject with `AbortError` so zarrita cannot decode
-an interrupted demand read as a fill-value chunk. Disposal aborts remain quiet.
+interface. Missing keys return `undefined`; exhausted network and container
+failures reject so the loader records them instead of accepting fill values.
+Caller cancellation and mid-session invalidation reject with `AbortError` so
+zarrita cannot decode an interrupted demand read as a fill-value chunk. Disposal
+aborts remain quiet.
 
 **`getStats(): MultiLevelCacheStats`**
 

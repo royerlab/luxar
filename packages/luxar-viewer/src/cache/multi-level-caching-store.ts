@@ -32,18 +32,21 @@ export type CacheError =
   | { readonly kind: 'Fatal'; readonly cause: Error }
   | { readonly kind: 'Aborted' };
 
-type PendingGetOutcome = {
+/** @internal Shared result of a coalesced cache read. */
+export type PendingGetOutcome = {
   result: Result<Uint8Array, CacheError>;
   source: 'l2' | 'network' | 'missing';
 };
 
-interface PendingGet {
+/** @internal Mutable state for callers sharing one cache read. */
+export interface PendingGet {
   promise: Promise<PendingGetOutcome>;
   controller: AbortController;
   waiters: number;
   prefetchTriggered: boolean;
 }
 
+/** Configuration for the memory, OPFS, and source-backed cache tiers. */
 export interface MultiLevelCachingStoreOptions {
   /** L1 memory cache size in bytes (default: 100MB) */
   l1MaxSize?: number;
