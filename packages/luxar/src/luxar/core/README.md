@@ -829,7 +829,7 @@ Dataclasses for viewer configuration hints stored in the zarr file.
 - `UIConfig` - Panel visibility (help, rendering controls, performance, dimensions, scale bar, layers, overlays)
 - `DimensionsConfig` - nD navigation state (current step, selected dimension)
 - `AnimationConfig` - Per-dimension animation (playing, target_fps, loop mode, direction, step size)
-- `Waypoint` - A camera pose bound to a hidden-dimension position (`when={"story": 1, "time": (10, 20)}`, the overlay `visible_range` rule; first match wins), with optional `duration_ms`, `easing` and a `rendering` override block — how a scene's story dimension drives the camera
+- `Waypoint` - A camera pose bound to a hidden-dimension position (`when={"story": 1, "time": (10, 20)}`, the overlay `visible_range` rule; first match wins), with optional `duration_ms`, `easing`, `reveal="on_arrival"` to hold dimension-bound overlays until the flight resolves, and a `rendering` override block — how a scene's story dimension drives the camera
 
 **Usage Example:**
 ```python

@@ -1,11 +1,10 @@
 """A failing CLI command must be able to hand back its traceback.
 
-Seventeen `except Exception` blocks across the CLI printed one line and raised
-`typer.Exit(1)`. That is the right default — a stack trace is noise when the
-cause is "file not found" — but there was no way to opt out, so a genuine bug
-inside the library surfaced as one line with nowhere to go next. Six raised a
-bare exit, and two used `from None`, so eight discarded the exception chain
-(audit finding `A9-02`).
+CLI handlers report one line and raise `typer.Exit(1)` by default, while
+`LUXAR_TRACEBACK=1` re-raises fatal exceptions and prints recoverable ones.
+The first seventeen routed sites included eight that discarded the exception
+chain (audit finding `A9-02`); #2553 routes the remaining handlers that used to
+print a traceback unconditionally.
 
 Three things are tested, and the third is the one that keeps working:
 
@@ -13,9 +12,9 @@ Three things are tested, and the third is the one that keeps working:
    environment the way the docstring says (including the falsey spellings).
 2. The chain survives even on the quiet path, so `--show-locals`-style tooling
    and `raise ... from` consumers still see the cause.
-3. No CLI source discards a caught exception in an `except Exception` block
-   any more. That is a source scan, and it is what catches the eighteenth site
-   somebody adds next month.
+3. No CLI source discards a caught exception in an
+   `except Exception` block, and the four unattended fit/batch exceptions stay
+   exact. That source scan catches the next inconsistent handler.
 """
 
 from __future__ import annotations
@@ -29,16 +28,24 @@ from pathlib import Path
 
 import pytest
 import typer
+from arbol import Arbol
 
 import luxar
 from luxar.cli import _traceback
 from luxar.cli._traceback import (
     TRACEBACK_ENV_VAR,
     exit_with_error,
+    report_error,
     traceback_requested,
 )
 
 CLI_ROOT = Path(_traceback.__file__).parent
+UNATTENDED_TRACEBACK_HANDLERS = {
+    "cli/gsplat_ops/batch/merge_command.py::run_batch_merge_cmd",
+    "cli/gsplat_ops/batch/run.py::run_batch_run",
+    "cli/gsplat_ops/batch/submit.py::run_batch_submit",
+    "cli/gsplat_ops/fitting/fit.py::run_fit_volume",
+}
 
 
 def test_the_package_fixture_clears_this_exact_variable() -> None:
@@ -106,6 +113,45 @@ class TestExitWithError:
             exit_with_error("❌ nope", cause)
         assert caught.value.__cause__ is cause
 
+    def test_the_quiet_path_survives_silent_arbol(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A fatal report must not disappear with ordinary narration."""
+        monkeypatch.delenv(TRACEBACK_ENV_VAR, raising=False)
+        monkeypatch.setattr(Arbol, "enable_output", False)
+        cause = ValueError("the underlying problem")
+
+        with pytest.raises(typer.Exit):
+            exit_with_error("❌ nope", cause)
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "❌ nope" in captured.err
+        assert TRACEBACK_ENV_VAR in captured.err
+
+    def test_the_quiet_path_survives_arbol_depth_truncation(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A nested fatal report must outlive the narration depth cap."""
+        monkeypatch.delenv(TRACEBACK_ENV_VAR, raising=False)
+        monkeypatch.setattr(Arbol, "passthrough", False)
+        monkeypatch.setattr(Arbol, "enable_output", True)
+        monkeypatch.setattr(Arbol, "max_depth", 0)
+        monkeypatch.setattr(Arbol, "_depth", 1)
+        monkeypatch.setattr(Arbol._thread_local, "captured", False, raising=False)
+
+        with pytest.raises(typer.Exit):
+            exit_with_error("❌ nested nope", ValueError("cause"))
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "❌ nested nope" in captured.err
+        assert TRACEBACK_ENV_VAR in captured.err
+
     def test_the_loud_path_reraises_the_original_unchanged(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -127,6 +173,32 @@ class TestExitWithError:
         cause = KeyboardInterrupt()
         with pytest.raises(KeyboardInterrupt):
             exit_with_error("❌ interrupted", cause)
+
+
+class TestReportError:
+    """Recoverable failures keep control flow unchanged in both modes."""
+
+    def test_the_quiet_path_prints_the_message_and_hint(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.delenv(TRACEBACK_ENV_VAR, raising=False)
+
+        report_error("❌ recoverable", ValueError("cause"))
+
+        output = capsys.readouterr().out
+        assert "❌ recoverable" in output
+        assert TRACEBACK_ENV_VAR in output
+
+    def test_the_loud_path_prints_the_traceback_and_returns(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv(TRACEBACK_ENV_VAR, "1")
+
+        report_error("❌ recoverable", ValueError("the underlying problem"))
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "ValueError: the underlying problem" in captured.err
 
 
 def _cli_sources() -> list[Path]:
@@ -158,8 +230,6 @@ def _discarding_exits(
         caught = ast.unparse(node.type) if node.type else "BaseException"
         if caught not in {"Exception", "BaseException"}:
             continue
-        body = "\n".join(ast.unparse(s) for s in node.body)
-        prints_traceback = "print_exc" in body or "format_exc" in body
         for stmt in ast.walk(node):
             if not isinstance(stmt, ast.Raise) or stmt.exc is None:
                 continue
@@ -170,31 +240,35 @@ def _discarding_exits(
                 and stmt.cause is not None
                 and ast.unparse(stmt.cause) == node.name
             )
-            if not chained and not prints_traceback:
+            if not chained:
                 offenders.append((node, stmt, caught))
     return offenders
 
 
-def test_no_cli_handler_discards_a_caught_exception() -> None:
-    """A broad handler that exits must not throw the cause away entirely.
+def _enclosing_function(
+    node: ast.AST, parents: dict[ast.AST, ast.AST]
+) -> ast.FunctionDef | ast.AsyncFunctionDef:
+    owner = node
+    while owner in parents and not isinstance(
+        parents[owner], (ast.FunctionDef, ast.AsyncFunctionDef)
+    ):
+        owner = parents[owner]
+    function = parents.get(owner)
+    assert isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
+    return function
 
-    Three ways to satisfy it, and the bar is deliberately the weakest of them:
+
+def test_no_cli_handler_discards_a_caught_exception() -> None:
+    """A broad CLI handler must preserve the cause it exits from.
+
+    Two ways to satisfy it:
 
     1. Route through `exit_with_error`, which offers the traceback on request
        and chains the cause either way. Preferred.
     2. Chain it yourself: `raise typer.Exit(1) from err`.
-    3. Print the traceback in the handler (`traceback.print_exc()`).
 
-    Option 3 is included because roughly two dozen CLI handlers already do it,
-    and they are not the defect this file is about: they surface the traceback,
-    they just surface it *unconditionally*, so a plain "file not found" arrives
-    with a stack trace attached. Routing those through `exit_with_error` too
-    would make the traceback opt-in everywhere — a real improvement, and a
-    behaviour change for two dozen commands, so it belongs in its own change
-    rather than being smuggled in behind a gate. #2553 tracks that follow-up.
-    Until then this test pins the honest invariant (nothing is thrown away)
-    rather than the one we would like (everything is consistent).
-
+    There are no exceptions for unattended handlers: those may print a
+    traceback unconditionally, but must still chain the caught exception.
     Parsed with `ast` rather than grepped, so a `raise typer.Exit` in a string
     or comment cannot trip it and one inside a nested function cannot hide from
     it.
@@ -215,6 +289,65 @@ def test_no_cli_handler_discards_a_caught_exception() -> None:
     )
 
 
+def _traceback_printer_name(node: ast.Call) -> str | None:
+    if isinstance(node.func, ast.Attribute):
+        name = node.func.attr
+    elif isinstance(node.func, ast.Name):
+        name = node.func.id
+    else:
+        return None
+    return name if name in {"print_exc", "print_exception", "format_exc"} else None
+
+
+def test_only_unattended_handlers_print_tracebacks_unconditionally() -> None:
+    """Long-running fit/batch entry points keep tracebacks in unattended logs."""
+    observed: set[str] = set()
+    for path in _cli_sources():
+        if path == Path(_traceback.__file__):
+            continue
+        tree = ast.parse(path.read_text())
+        parents = {
+            child: parent
+            for parent in ast.walk(tree)
+            for child in ast.iter_child_nodes(parent)
+        }
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if _traceback_printer_name(node) is None:
+                continue
+            function = _enclosing_function(node, parents)
+            observed.add(f"{path.relative_to(CLI_ROOT.parent)}::{function.name}")
+
+    assert observed == UNATTENDED_TRACEBACK_HANDLERS, (
+        "update UNATTENDED_TRACEBACK_HANDLERS only when a long-running entry "
+        "point deliberately keeps unconditional tracebacks"
+    )
+
+
+def test_the_traceback_scan_recognizes_all_supported_spellings() -> None:
+    """Attribute and directly imported traceback printers are both visible."""
+    source = (
+        "import traceback\n"
+        "from traceback import format_exc, print_exc, print_exception\n"
+        "def examples(error):\n"
+        "    traceback.print_exc()\n"
+        "    traceback.print_exception(error)\n"
+        "    traceback.format_exc()\n"
+        "    print_exc()\n"
+        "    print_exception(error)\n"
+        "    format_exc()\n"
+    )
+    tree = ast.parse(source)
+    names = {
+        name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        if (name := _traceback_printer_name(node)) is not None
+    }
+    assert names == {"print_exc", "print_exception", "format_exc"}
+
+
 def test_the_scan_would_notice_a_discarding_handler() -> None:
     """The gate above passes; prove it is not passing vacuously.
 
@@ -226,7 +359,6 @@ def test_the_scan_would_notice_a_discarding_handler() -> None:
     """
     source = (
         "import typer\n"
-        "import traceback\n"
         "def good():\n"
         "    try:\n"
         "        pass\n"
@@ -247,15 +379,9 @@ def test_the_scan_would_notice_a_discarding_handler() -> None:
         "        pass\n"
         "    except ValueError as e:\n"
         "        raise typer.Exit(1)\n"
-        "def printing_good():\n"
-        "    try:\n"
-        "        pass\n"
-        "    except BaseException:\n"
-        "        traceback.print_exc()\n"
-        "        raise typer.Exit(1)\n"
     )
     found = [stmt.lineno for _, stmt, _ in _discarding_exits(ast.parse(source))]
-    assert found == [12, 17], f"expected both discarding handlers, got {found}"
+    assert found == [11, 16], f"expected both discarding handlers, got {found}"
 
 
 class TestItWorksThroughTheRealCli:
@@ -272,14 +398,16 @@ class TestItWorksThroughTheRealCli:
     """
 
     @staticmethod
-    def _run(store: Path, *, traceback: bool) -> subprocess.CompletedProcess[str]:
+    def _run(
+        command: list[str], *, traceback: bool
+    ) -> subprocess.CompletedProcess[str]:
         env = {**os.environ}
         if traceback:
             env[TRACEBACK_ENV_VAR] = "1"
         else:
             env.pop(TRACEBACK_ENV_VAR, None)
         return subprocess.run(
-            [sys.executable, "-m", "luxar", "info", str(store)],
+            [sys.executable, "-m", "luxar", *command],
             capture_output=True,
             text=True,
             timeout=600,
@@ -293,8 +421,19 @@ class TestItWorksThroughTheRealCli:
         store.mkdir()
         return store
 
+    @pytest.fixture
+    def unreadable_gsplat_store(self, tmp_path: Path) -> Path:
+        """A recognized gsplat root whose required arrays are absent."""
+        from luxar._zarr_compat import open_group
+
+        store = tmp_path / "unreadable.gsplats.zarr"
+        root = open_group(str(store), mode="w")
+        root.attrs["format_type"] = "gsplats_zarr"
+        root.attrs["format_version"] = "3.4"
+        return store
+
     def test_the_default_prints_one_line_and_the_hint(self, not_a_store: Path) -> None:
-        result = self._run(not_a_store, traceback=False)
+        result = self._run(["info", str(not_a_store)], traceback=False)
         assert result.returncode == 1, result.stdout + result.stderr
         combined = result.stdout + result.stderr
         assert "Error reading info for" in combined
@@ -306,7 +445,7 @@ class TestItWorksThroughTheRealCli:
     def test_setting_the_variable_produces_a_real_traceback(
         self, not_a_store: Path
     ) -> None:
-        result = self._run(not_a_store, traceback=True)
+        result = self._run(["info", str(not_a_store)], traceback=True)
         assert result.returncode != 0
         combined = result.stdout + result.stderr
         # The exception type from deep inside zarr, i.e. the actual origin —
@@ -314,3 +453,21 @@ class TestItWorksThroughTheRealCli:
         assert "GroupNotFoundError" in combined, (
             "expected the underlying exception, got:\n" + combined
         )
+
+    def test_gsplat_info_uses_the_same_opt_in_path(
+        self, unreadable_gsplat_store: Path
+    ) -> None:
+        command = ["gsplat", "info", str(unreadable_gsplat_store)]
+
+        quiet = self._run(command, traceback=False)
+        quiet_output = quiet.stdout + quiet.stderr
+        assert quiet.returncode == 1, quiet_output
+        assert "Error: 'centers'" in quiet_output
+        assert TRACEBACK_ENV_VAR in quiet_output
+        assert "Traceback" not in quiet_output
+
+        loud = self._run(command, traceback=True)
+        loud_output = loud.stdout + loud.stderr
+        assert loud.returncode != 0
+        assert "Traceback" in loud_output
+        assert "KeyError: 'centers'" in loud_output

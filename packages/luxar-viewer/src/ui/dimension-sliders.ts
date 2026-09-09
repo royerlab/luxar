@@ -8,6 +8,7 @@ import type { DimensionAnimationManager } from '../scene/animation/dimension-ani
 import { config } from '../config';
 import { log, Modules } from '../utils/log';
 import { EventGroup } from '../utils/cross-layer/event-group';
+import { attachLongPress } from '../utils/long-press';
 import {
   clampWithCyclicWrap,
   valueToFraction,
@@ -1078,8 +1079,11 @@ export class DimensionSliders {
     // Create compact play/pause button
     const playButton = document.createElement('button');
     playButton.className = 'luxar-dimension-slider__play-btn';
-    playButton.setAttribute('aria-label', 'Play/Pause animation (right-click for settings)');
-    playButton.setAttribute('title', 'Play/Pause (right-click for settings)');
+    playButton.setAttribute(
+      'aria-label',
+      'Play/Pause animation (right-click or press and hold for settings)'
+    );
+    playButton.setAttribute('title', 'Play/Pause (right-click or hold for settings)');
     playButton.textContent = '▶'; // Play icon
 
     // Click handler for play/pause
@@ -1108,6 +1112,15 @@ export class DimensionSliders {
     // Cleanup handled centrally by sliderEvents.dispose() in createSliders().
     this.sliderEvents.on(playButton, 'click', playClickHandler);
     this.sliderEvents.on(playButton, 'contextmenu', contextMenuHandler);
+    // Touch: press and hold opens the same settings menu (no right button).
+    this.sliderEvents.add(
+      attachLongPress(playButton, {
+        onLongPress: (x, y) => {
+          this.showContextMenu(dimIndex, x, y);
+          return true;
+        },
+      })
+    );
     this.playButtons.set(dimIndex, playButton);
 
     // Create a wrapper to hold play button and slider track horizontally

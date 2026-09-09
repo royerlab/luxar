@@ -547,6 +547,7 @@ class Scene(Group):
         muted: bool = True,
         playback_rate: float = 1.0,
         poster: Any = None,
+        alpha_matte: Optional[str] = None,
         visible_range: Optional[Dict[str, Union[float, Tuple[float, float]]]] = None,
         transition: str = "none",
         transition_duration: float = 0.3,
@@ -565,9 +566,15 @@ class Scene(Group):
         Offline capture runs on a synthetic frame clock while the HTML video
         follows wall time, so its recorded playback speed is not preserved.
 
-        Transparency: a VP9 WebM with an alpha channel (``yuva420p``) plays
-        transparent in Chrome and Firefox; Safari cannot decode it and shows
-        the ``poster`` instead — always supply one for a transparent video.
+        Transparency: encode the clip as a STACKED ALPHA MATTE — the colour on
+        top and the alpha channel as a grey matte of the same size below, one
+        ordinary opaque frame twice as tall (ffmpeg:
+        ``split[c][a];[a]alphaextract[a];[c][a]vstack``) — and pass
+        ``alpha_matte="stacked"``; the viewer recombines the halves in a shader,
+        so the clip is transparent in every browser, WKWebView included. A VP9
+        WebM with an alpha plane (``yuva420p``) plays transparent only in Chrome
+        and Firefox: Safari decodes it and DROPS the alpha, showing the clip on a
+        black square. Always supply a ``poster`` for a transparent video.
 
         Args:
             video: Raw bytes or a file path. Must already be WebM or MP4; there
@@ -587,6 +594,10 @@ class Scene(Group):
             playback_rate: Speed multiplier in (0, 16] (default 1.0).
             poster: Optional still shown before play and where the video cannot
                 be decoded (PNG/JPEG/WebP bytes, path, array or PIL image).
+            alpha_matte: ``None`` (an ordinary clip) or ``"stacked"`` (the clip
+                is colour over a grey alpha matte, see above; the viewer shows
+                only the top half, made transparent by the bottom half). Stacked
+                mattes require ``autoplay=True`` because their source video is hidden.
             visible_range: Optional dimension-based visibility filter.
             transition: 'none' or 'fade' (default 'none').
             transition_duration: Transition duration in seconds (default 0.3).
@@ -619,6 +630,7 @@ class Scene(Group):
             muted=muted,
             playback_rate=playback_rate,
             poster=poster,
+            alpha_matte=alpha_matte,
             visible_range=visible_range,
             transition=transition,
             transition_duration=transition_duration,

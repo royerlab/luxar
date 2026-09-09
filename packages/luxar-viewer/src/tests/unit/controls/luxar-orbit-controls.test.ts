@@ -114,6 +114,33 @@ describe('LuxarOrbitControls', () => {
 
       expect(handler).toHaveBeenCalled();
     });
+
+    it('settleDamping discards residual motion without changing the current pose', () => {
+      controls = new LuxarOrbitControls(camera, domElement);
+      controls.update();
+      const internals = controls as unknown as {
+        rotationDelta: THREE.Quaternion;
+        panDelta: THREE.Vector3;
+        zoomDelta: number;
+        rollDelta: number;
+      };
+      internals.rotationDelta.setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.1);
+      internals.panDelta.set(1, 2, 3);
+      internals.zoomDelta = 0.5;
+      internals.rollDelta = 0.25;
+      const position = camera.position.clone();
+      const quaternion = camera.quaternion.clone();
+
+      controls.settleDamping();
+
+      expect(internals.rotationDelta.equals(new THREE.Quaternion())).toBe(true);
+      expect(internals.panDelta.equals(new THREE.Vector3())).toBe(true);
+      expect(internals.zoomDelta).toBe(0);
+      expect(internals.rollDelta).toBe(0);
+      expect(camera.position.equals(position)).toBe(true);
+      expect(camera.quaternion.equals(quaternion)).toBe(true);
+      expect(controls.update()).toBe(false);
+    });
   });
 
   describe('quaternion rotation', () => {

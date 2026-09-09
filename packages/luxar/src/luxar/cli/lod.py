@@ -28,6 +28,8 @@ from luxar.utils.lod_methods import (
     LEGACY_METHOD_FLAGS,
 )
 
+from ._traceback import exit_with_error
+
 # Shared recipe/streaming validation surface — moved to
 # gsplat_ops/recipe_shared.py (consumed by six gsplat_ops modules);
 # re-imported here so the lod command and historical
@@ -1024,12 +1026,8 @@ def lod_recipe(
 
     except (typer.Exit, typer.BadParameter):
         raise
-    except Exception as e:
-        aprint(f"Error: {e}")
-        import traceback
-
-        traceback.print_exc()
-        raise typer.Exit(1) from e
+    except Exception as e:  # noqa: BLE001 - exit_with_error reports the cause and exits.
+        exit_with_error(f"Error: {e}", e)
 
 
 # Re-exported for tests / introspection.

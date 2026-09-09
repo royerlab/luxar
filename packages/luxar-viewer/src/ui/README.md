@@ -48,6 +48,8 @@ ui/
 ├── data-monitor-manager.ts             # Wires loaders to data-loading-monitor
 ├── data-loading-monitor.ts             # Spatial-loader telemetry monitor
 ├── overlay-manager.ts                  # Screen-space overlay rendering
+├── video-matte.ts                      # Stacked-alpha-matte video compositor (WebGL canvas;
+│                                       #   transparency that survives Safari / WKWebView)
 ├── loading-indicator.ts                # Loading spinner (was helpers.showLoading*)
 ├── error-overlay.ts                    # Error dialog (was helpers.showError/clearError)
 ├── help-overlay.ts                     # Keyboard shortcuts panel (was helpers.show/hideHelp)
@@ -231,7 +233,7 @@ Each dimension slider includes animation controls for automated playback through
 
 - **Play Button** (`▶`/`⏸`): Compact button to the left of slider
   - Left-click: Toggle animation play/pause
-  - Right-click: Open settings context menu (Napari-style)
+  - Right-click or hold: Open settings context menu (Napari-style)
 
 - **Slider wheel**: One base step per notch (the authored step, else 1% of the
   range); `Shift` fine (÷10), `Ctrl` coarse (×10), `Ctrl+Shift` extra-fine
@@ -239,7 +241,7 @@ Each dimension slider includes animation controls for automated playback through
   animation Step override below — hand stepping stays on the dimension's own
   grid.
 
-**Context Menu Settings** (right-click play button): three sections, each a
+**Context Menu Settings** (right-click or hold the play button): three sections, each a
 micro-header row over one wrapping row of selectable chips.
 
 - **Speed Section**: Set target animation speed
@@ -653,9 +655,12 @@ overlay before attaching. Rapid `H` toggles therefore cannot arm stale handlers
 that close or retain a subsequently opened panel.
 
 On devices reporting touch points, the shortcut list also includes a `Touch`
-section for orbit, zoom, pan and roll gestures. Its note calls out the ortho
-exception: one finger pans there and twist does not roll. The section is
-filtered out for non-touch devices, leaving desktop help text unchanged.
+section: the orbit, zoom, pan and roll gestures, then the finger equivalents of
+the desktop pointer rows — tap picks an element (and follows its link when it
+has one), press and hold opens whatever menu a right-click would, and double tap
+recenters the camera the way `F` does. Its note calls out the ortho exception:
+one finger pans there and twist does not roll. The section is filtered out for
+non-touch devices, leaving desktop help text unchanged.
 
 Initial focus goes to the overlay **container**, not its filter field. A focused
 text input trips `InputHandler`'s typing guard, which drops every key but

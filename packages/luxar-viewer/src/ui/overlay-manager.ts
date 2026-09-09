@@ -13,6 +13,7 @@ import { getViewerContainer } from '../utils/viewer-container';
 import { escapeHtml } from '../utils/escape-html';
 import { substituteHoverTemplate } from '../utils/hover-template';
 import { detectMimeType } from '../utils/image-mime';
+import { createVideoMatteCompositor, type VideoMatteCompositor } from './video-matte';
 import { MAX_OVERLAY_HTML_CHARS, type OverlayConfig } from '../data/loaders';
 
 /** Read one opaque file from the active scene store. */
@@ -203,11 +204,30 @@ export class OverlayManager {
   private objectUrls = new Set<string>();
   /** Video overlays by name, so visibility can start/stop playback. */
   private videoElements = new Map<string, HTMLVideoElement>();
+  /** Stacked-alpha-matte compositors by overlay name (`alpha_matte: 'stacked'`). */
+  private matteCompositors = new Map<string, VideoMatteCompositor>();
   private baseUrl = '';
   private readFile?: OverlayFileReader;
   private boundDimChangeHandler: () => void;
   /** Whether overlays are globally hidden by the user toggle (U key) */
   private globallyHidden = false;
+  /**
+   * Arrival gate for story flights (`Waypoint.reveal = "on_arrival"`): while
+   * it returns true, a dimension-bound overlay that is not already showing
+   * stays hidden. `null` = no gate.
+   */
+  private transitGate: (() => boolean) | null = null;
+  /** Non-hover overlays currently shown. */
+  private shown = new Set<string>();
+  /**
+   * `shown` as it was BEFORE the current dimension position was reached —
+   * what the arrival gate keeps as is. Snapshotted when `updateVisibility()`
+   * first sees a new position, so a second pass at the same position (the app
+   * re-runs it once the driver has decided the gate) still knows which
+   * overlays were already on screen and which only just appeared.
+   */
+  private settled = new Set<string>();
+  private settledAt: string | null = null;
   /** Hover overlays that update from GPU picking results. */
   private hoverOverlays = new Map<string, HoverOverlayEntry>();
   /** Cache last hover result to skip redundant DOM updates. */
@@ -298,8 +318,54 @@ export class OverlayManager {
     this.updateVisibility();
   }
 
+  /**
+   * Install (or clear, with `null`) the arrival gate. While `gate()` is true —
+   * the waypoint driver is flying to a waypoint authored `reveal: "on_arrival"`
+   * — `updateVisibility()` keeps a dimension-bound overlay that would NEWLY
+   * appear hidden, hides one that stops matching at once (leaving is instant),
+   * and leaves overlays without a `visible_range` alone. The app re-runs
+   * `updateVisibility()` when the flight resolves so the held overlays fade in
+   * together, on arrival.
+   */
+  setTransitGate(gate: (() => boolean) | null): void {
+    this.transitGate = gate;
+  }
+
+  /**
+   * Whether `config` shows now: the dimension rule, the global toggle, and the
+   * arrival gate (which only ever withholds a dimension-bound overlay that is
+   * not already on screen). Keeps `shown` in step with the answer.
+   */
+  private resolveVisible(name: string, config: OverlayConfig, inTransit: boolean): boolean {
+    let visible = !this.globallyHidden && this.isOverlayVisible(config);
+    if (visible && inTransit && config.visible_range && !this.settled.has(name)) {
+      visible = false;
+    }
+    if (visible) this.shown.add(name);
+    else this.shown.delete(name);
+    return visible;
+  }
+
+  /**
+   * Re-snapshot `settled` when the dimension position changed since the last
+   * pass. The overlay manager and the waypoint driver both listen to the dims
+   * manager in unspecified order: if this pass runs first it may show the new
+   * story's captions before the driver closes the gate; the app then re-runs
+   * it at the SAME position, and the snapshot lets that second pass withhold
+   * exactly the overlays the first one had just revealed.
+   */
+  private refreshSettled(): void {
+    const dims = sceneDimsManager.getDims();
+    const key = dims ? dims.currentStep.join(',') : '';
+    if (key === this.settledAt) return;
+    this.settled = new Set(this.shown);
+    this.settledAt = key;
+  }
+
   /** Update overlay visibility based on current dimension state. */
   updateVisibility(): void {
+    this.refreshSettled();
+    const inTransit = this.transitGate?.() === true;
     for (const [name, config] of this.configs) {
       const el = this.overlayElements.get(name);
       if (!el) continue;
@@ -316,7 +382,7 @@ export class OverlayManager {
         continue;
       }
 
-      const visible = !this.globallyHidden && this.isOverlayVisible(config);
+      const visible = this.resolveVisible(name, config, inTransit);
       const isFade = config.transition === 'fade';
       if (config.type === 'overlay_video') this.syncVideoPlayback(name, visible);
 
@@ -471,6 +537,8 @@ export class OverlayManager {
   dispose(): void {
     sceneDimsManager.removeListener(this.boundDimChangeHandler);
 
+    for (const matte of this.matteCompositors.values()) matte.dispose();
+    this.matteCompositors.clear();
     for (const video of this.videoElements.values()) {
       // Stop decoding and release the media resource before the element goes.
       video.pause();
@@ -489,6 +557,10 @@ export class OverlayManager {
     this.overlayElements.clear();
     this.configs.clear();
     this.hoverOverlays.clear();
+    this.shown.clear();
+    this.settled.clear();
+    this.settledAt = null;
+    this.transitGate = null;
   }
 
   // ---------------------------------------------------------------- private
@@ -586,6 +658,15 @@ export class OverlayManager {
     if (!config.video_file) return;
 
     const video = document.createElement('video');
+    // A stacked-matte clip is read by WebGL, which refuses a tainted video:
+    // ask for CORS up front (before `src`) when the store lives on another
+    // origin — the dev server against `luxar serve`. Same-origin clips (the
+    // exported app, zipped stores' blob URLs) are readable as they are, and
+    // WKWebView's CORS media path is flaky (a failed CORS load taints the
+    // element and every upload then throws), so do not ask when not needed.
+    if (this.needsVideoCors(config)) {
+      video.crossOrigin = 'anonymous';
+    }
     video.muted = config.muted !== false;
     video.loop = config.loop !== false;
     // Deliberately NOT the DOM `autoplay` attribute: the browser honours that
@@ -609,14 +690,89 @@ export class OverlayManager {
       );
     };
 
+    const shown = this.attachMatteCanvas(el, video, config) ?? video;
     if (config.size) {
-      video.style.width = `${config.size[0] * 100}vw`;
+      shown.style.width = `${config.size[0] * 100}vw`;
       // A null height keeps the media's own aspect ratio.
-      video.style.height = config.size[1] == null ? 'auto' : `${config.size[1] * 100}vh`;
+      shown.style.height = config.size[1] == null ? 'auto' : `${config.size[1] * 100}vh`;
     }
-    video.style.display = 'block';
+    shown.style.display = 'block';
     el.appendChild(video);
     this.videoElements.set(config.name, video);
+  }
+
+  /** Whether the store's base URL is on another origin than the page (blob URLs are not). */
+  private isCrossOriginStore(): boolean {
+    if (!this.baseUrl || isZippedStoreUrl(this.baseUrl)) return false;
+    try {
+      return new URL(this.baseUrl, window.location.href).origin !== window.location.origin;
+    } catch {
+      return false;
+    }
+  }
+
+  private needsVideoCors(config: OverlayConfig): boolean {
+    return config.alpha_matte === 'stacked' && this.isCrossOriginStore();
+  }
+
+  /**
+   * For an `alpha_matte: 'stacked'` clip, show a compositor canvas instead of
+   * the `<video>` (which stays in the DOM, decoding, but visually hidden — it is
+   * the compositor's frame source). The poster sits behind the canvas until the
+   * first frame is drawn. Returns the element to size, or `null` when the clip
+   * is not a stacked matte. If WebGL is unavailable, the first `start()` reports
+   * failure and the manager falls back to the plain video.
+   */
+  private attachMatteCanvas(
+    el: HTMLDivElement,
+    video: HTMLVideoElement,
+    config: OverlayConfig
+  ): HTMLCanvasElement | null {
+    if (config.alpha_matte !== 'stacked') return null;
+    const matte = createVideoMatteCompositor(video, {
+      onFailure: (error) => this.abandonMatte(config.name, video, error),
+      onFirstFrame: () => {
+        const current = this.matteCompositors.get(config.name);
+        if (current) current.canvas.style.backgroundImage = 'none';
+      },
+    });
+    video.classList.add('luxar-overlay__matte-source');
+    if (video.poster) {
+      // Longhands, not the `background` shorthand: the shorthand also resets
+      // the colour, and the page's `canvas { background-color: #000 }` rule
+      // (index.html, meant for the WebGL canvas) must never show through — the
+      // stylesheet pins the matte canvas transparent, the poster is image-only.
+      const style = matte.canvas.style;
+      style.backgroundImage = `url("${video.poster}")`;
+      style.backgroundPosition = 'center';
+      style.backgroundSize = 'contain';
+      style.backgroundRepeat = 'no-repeat';
+    }
+    el.appendChild(matte.canvas);
+    this.matteCompositors.set(config.name, matte);
+    return matte.canvas;
+  }
+
+  /**
+   * The compositor could not read the video (a tainted cross-origin clip):
+   * drop the canvas and show the raw clip — colour over matte, visible rather
+   * than a blank square — and say why, once.
+   */
+  private abandonMatte(name: string, video: HTMLVideoElement, error: unknown): void {
+    const matte = this.matteCompositors.get(name);
+    if (!matte) return;
+    this.matteCompositors.delete(name);
+    const sizing = { width: matte.canvas.style.width, height: matte.canvas.style.height };
+    matte.dispose();
+    matte.canvas.remove();
+    video.classList.remove('luxar-overlay__matte-source');
+    video.style.width = sizing.width;
+    video.style.height = sizing.height;
+    video.style.display = 'block';
+    log.warning(
+      Modules.UI,
+      `Video overlay "${name}": the alpha matte could not read the clip (${String(error)}) — showing the raw clip`
+    );
   }
 
   private setVideoMedia(
@@ -659,6 +815,9 @@ export class OverlayManager {
   private syncVideoPlayback(name: string, visible: boolean): void {
     const video = this.videoElements.get(name);
     if (!video) return;
+    const matte = this.matteCompositors.get(name);
+    if (visible) matte?.start();
+    else matte?.stop();
     if (visible) {
       video.preload = 'auto';
       if (video.paused && video.dataset.autoplay === '1') {

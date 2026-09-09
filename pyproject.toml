@@ -429,6 +429,8 @@ format = [
     "ruff check --fix packages/luxar/src scripts scripts/benchmarks stats hatch_build.py"
 ]
 lint = [
+    # Project-wide targets keep the gate implementations and supporting Python
+    # tooling under E/W/F/I checks too; package-only CI left them unchecked.
     "ruff check packages/luxar/src scripts scripts/benchmarks stats hatch_build.py",
     # Formatting was enforced ONLY by an opt-in pre-commit hook, which sees just
     # the staged files — so 10 Python files had drifted unformatted in the tree
@@ -489,7 +491,7 @@ check-complexity = "python scripts/check_complexity.py {args}"
 check-wheel = "python scripts/check_wheel.py {args}"
 # Ratchet ruff's defect-bearing rules (flake8-bugbear + blind-except + RUF012) against
 # scripts/lint_baseline.json. Same shape as check-complexity and for the same
-# reason: 678 pre-existing violations mean the rules cannot go into
+# reason: 652 pre-existing violations across 338 file/rule keys mean the rules cannot go into
 # `[tool.ruff.lint] select` without a large, behaviour-changing sweep.
 check-lint-ratchet = "python scripts/check_lint_ratchet.py {args}"
 # Compile-check the shipped CUDA/Metal sources -- no GPU, no linking, just
@@ -1144,8 +1146,8 @@ known-first-party = ["luxar"]
 
 # The `B` (flake8-bugbear) and `BLE` (flake8-blind-except) families plus RUF012
 # are enforced as a RATCHET by `scripts/check_lint_ratchet.py`, not by `select`
-# above — see that script's module docstring for why (678 pre-existing
-# violations, and B905's fix changes behaviour). This setting exists so the
+# above — see that script's module docstring for why (652 pre-existing
+# violations across 338 file/rule keys, and B905's fix changes behaviour). This setting exists so the
 # ratchet baselines real defects only:
 # `typer.Option(...)` / `typer.Argument(...)` in a parameter default is the
 # documented Typer idiom, evaluated once at import ON PURPOSE, and it accounted

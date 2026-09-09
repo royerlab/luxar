@@ -169,6 +169,13 @@ describe('typecheck scope', () => {
   });
 });
 
+describe('lint contract', () => {
+  it('fails on unpruned suppressions', () => {
+    const pkg = JSON.parse(readFileSync(join(PKG, 'package.json'), 'utf8'));
+    expect(pkg.scripts.lint).not.toContain('--pass-on-unpruned-suppressions');
+  });
+});
+
 describe('prettier scope', () => {
   /** The paths the format scripts actually pass to prettier. */
   function formatTargets() {

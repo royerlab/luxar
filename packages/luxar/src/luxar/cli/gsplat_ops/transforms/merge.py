@@ -8,6 +8,7 @@ from typing import Literal, Optional
 import typer
 from arbol import aprint, asection
 
+from ..._traceback import exit_with_error
 from ..encoding import _resolve_encoding_mode
 from ..recipe_shared import carried_appearance_from_inputs
 
@@ -182,8 +183,4 @@ def run_merge_datasets(
         # (No partial-output caveat needed: the writer streams into a temp
         # sibling and atomically swaps into place, so a mid-write failure
         # leaves any prior store untouched and no partial output behind.)
-        aprint(f"Error: {e}")
-        import traceback
-
-        traceback.print_exc()
-        raise typer.Exit(1)
+        exit_with_error(f"Error: {e}", e)

@@ -37,9 +37,9 @@ WHY A SCRIPT INSTEAD OF ``[tool.ruff.lint] select``
 ---------------------------------------------------
 The same reason ``C901`` is ratcheted by ``scripts/check_complexity.py``: ruff
 has no baseline mechanism. A bare ``select = ["B", "BLE", "RUF012"]`` would fail
-on all pre-existing violations (678 at the time of writing, 289 of them
-``B905``), so
-it could not be turned on at all without a large, unrelated, and — for ``B905``
+on all pre-existing violations (652 across 338 file/rule keys at the time of
+writing, 289 of them ``B905``), so it could not be turned on at all without a
+large, unrelated, and — for ``B905``
 specifically — *behaviour-changing* sweep: ``strict=True`` RAISES on mismatched
 lengths, so it is a decision per call site, not a mechanical edit. Ruff's root
 resolved settings are fingerprinted in the baseline, and nested Ruff configs

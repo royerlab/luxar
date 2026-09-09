@@ -21,6 +21,8 @@ from typing import Literal, Optional
 import typer
 from arbol import aprint, asection
 
+from .._traceback import exit_with_error
+
 
 def import_command(
     input_path: Path = typer.Argument(
@@ -100,11 +102,7 @@ def import_command(
         aprint(f"Error: {exc}")
         raise typer.Exit(1)
     except Exception as exc:
-        aprint(f"Error: {exc}")
-        import traceback
-
-        traceback.print_exc()
-        raise typer.Exit(1)
+        exit_with_error(f"Error: {exc}", exc)
 
 
 def run_import(
@@ -279,11 +277,7 @@ def export_command(
         aprint(f"Error: {exc}")
         raise typer.Exit(1)
     except Exception as exc:
-        aprint(f"Error: {exc}")
-        import traceback
-
-        traceback.print_exc()
-        raise typer.Exit(1)
+        exit_with_error(f"Error: {exc}", exc)
 
 
 def run_export(

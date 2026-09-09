@@ -310,4 +310,138 @@ describe('WaypointDriver', () => {
     driver.evaluate('fly');
     expect(ports.flyTo).toHaveBeenCalledTimes(1);
   });
+
+  describe('inTransit (reveal: "on_arrival")', () => {
+    const REVEALING: ZarrWaypoint[] = [
+      { when: { story: 0 }, camera: { position: [0, 0, 5] }, reveal: 'on_arrival' },
+      { when: { story: 1 }, camera: { position: [5, 0, 0] }, reveal: 'on_arrival' },
+      { when: { story: 2 }, camera: { position: [9, 9, 9] } },
+      // A camera-less waypoint (rendering only) — cast because `camera` is
+      // required by the type but optional for the driver.
+      {
+        when: { story: 3 },
+        rendering: { exposure: 0.5 },
+        reveal: 'on_arrival',
+      } as unknown as ZarrWaypoint,
+    ];
+
+    it('is closed after a snap, open during the flight, closed again when it resolves — before the arrival event', async () => {
+      const current = { step: [0, 0, 0, 0, 0] };
+      const ports = makePorts(current);
+      let resolveFlight!: (r: { completed: boolean }) => void;
+      ports.flyTo.mockImplementationOnce(() => new Promise((r) => (resolveFlight = r)));
+      const seenAtArrival: boolean[] = [];
+      const driver = new WaypointDriver(REVEALING, {
+        ...ports,
+        emit: (event) => {
+          if (event === 'waypoint-arrived') seenAtArrival.push(driver.inTransit);
+        },
+      });
+      driver.evaluate('snap');
+      expect(driver.inTransit).toBe(false); // the load-time framing never holds captions
+
+      current.step = [0, 0, 0, 1, 0];
+      driver.evaluate('fly');
+      expect(driver.inTransit).toBe(true);
+
+      resolveFlight({ completed: true });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(driver.inTransit).toBe(false);
+      // The arrival listener already saw the gate open.
+      expect(seenAtArrival).toEqual([false, false]);
+    });
+
+    it('a visitor-cancelled flight opens the gate (arrival); the default reveal never closes it', async () => {
+      const current = { step: [0, 0, 0, 0, 0] };
+      const ports = makePorts(current);
+      ports.flyTo.mockImplementationOnce(() => Promise.resolve({ completed: false }));
+      const driver = new WaypointDriver(REVEALING, ports);
+      driver.evaluate('snap');
+
+      current.step = [0, 0, 0, 1, 0];
+      driver.evaluate('fly');
+      expect(driver.inTransit).toBe(true);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(driver.inTransit).toBe(false);
+
+      // reveal absent (immediate): captions show as the dimension changes.
+      current.step = [0, 0, 0, 2, 0];
+      driver.evaluate('fly');
+      expect(driver.inTransit).toBe(false);
+    });
+
+    it('a newer match re-decides the gate; the superseded flight resolving changes nothing', async () => {
+      const current = { step: [0, 0, 0, 0, 0] };
+      const ports = makePorts(current);
+      let resolveFirst!: (r: { completed: boolean }) => void;
+      ports.flyTo.mockImplementationOnce(() => new Promise((r) => (resolveFirst = r)));
+      const driver = new WaypointDriver(REVEALING, ports);
+      driver.evaluate('snap');
+
+      current.step = [0, 0, 0, 1, 0];
+      driver.evaluate('fly');
+      expect(driver.inTransit).toBe(true);
+      // Story 2 has no reveal: its (immediate) flight opens the gate at once.
+      current.step = [0, 0, 0, 2, 0];
+      driver.evaluate('fly');
+      expect(driver.inTransit).toBe(false);
+      resolveFirst({ completed: false });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(driver.inTransit).toBe(false);
+
+      // Leaving every waypoint, or a camera-less waypoint, never holds captions.
+      current.step = [0, 0, 0, 1, 0];
+      ports.flyTo.mockImplementationOnce(() => new Promise(() => {}));
+      driver.evaluate('fly');
+      expect(driver.inTransit).toBe(true);
+      current.step = [0, 0, 0, 7, 0];
+      driver.evaluate('fly');
+      expect(driver.inTransit).toBe(false);
+      current.step = [0, 0, 0, 3, 0];
+      driver.evaluate('fly');
+      expect(driver.inTransit).toBe(false);
+    });
+
+    it('a stale flight cannot arrive after leaving and re-entering the same waypoint', async () => {
+      const current = { step: [0, 0, 0, 7, 0] };
+      const ports = makePorts(current);
+      let resolveFirst!: (result: { completed: boolean }) => void;
+      let resolveSecond!: (result: { completed: boolean }) => void;
+      ports.flyTo
+        .mockImplementationOnce(() => new Promise((resolve) => (resolveFirst = resolve)))
+        .mockImplementationOnce(() => new Promise((resolve) => (resolveSecond = resolve)));
+      const arrivals: Array<{ index: number; completed: boolean }> = [];
+      const driver = new WaypointDriver(REVEALING, {
+        ...ports,
+        emit: (event, payload) => {
+          if (event === 'waypoint-arrived' && 'completed' in payload) arrivals.push(payload);
+        },
+      });
+      driver.evaluate('snap');
+
+      current.step = [0, 0, 0, 0, 0];
+      driver.evaluate('fly');
+      expect(driver.inTransit).toBe(true);
+      current.step = [0, 0, 0, 7, 0];
+      driver.evaluate('fly');
+      current.step = [0, 0, 0, 0, 0];
+      driver.evaluate('fly');
+      expect(driver.inTransit).toBe(true);
+
+      resolveFirst({ completed: false });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(driver.inTransit).toBe(true);
+      expect(arrivals).toEqual([]);
+
+      resolveSecond({ completed: true });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(driver.inTransit).toBe(false);
+      expect(arrivals).toEqual([{ index: 0, completed: true }]);
+    });
+  });
 });

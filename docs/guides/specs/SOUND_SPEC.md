@@ -244,7 +244,7 @@ waypoint events above.
 | Phase | Scope |
 | --- | --- |
 | 1 | `sound` node type (Python writer + validation, viewer loader, `AudioEngine`, `SoundNode`, listener), non-spatial and spatial playback, slab audibility, `continuous`/`once`, buses and ducking, autoplay gate + kiosk flag docs, rail mute, `viewer_config.audio`, remote `setAudio`/`playSound`; demo narration + ambient bed |
-| 2 | `on_depart`/`on_arrive` via waypoint events, `attach_to`, cluster sounds in the demo (a pentatonic hum per story attached to the highlight node), Layers-panel rows (eye = mute, group eye mutes the subtree, inline gain slider, provenance tooltip; `LayerSummary`/`LayerPatch` gain) |
+| 2 | `on_depart`/`on_arrive` via waypoint events, `attach_to` (exercised by the stories demo's per-cluster hums, since removed from the demo as a distracting drone; the mechanism stays), Layers-panel rows (eye = mute, group eye mutes the subtree, inline gain slider, provenance tooltip; `LayerSummary`/`LayerPatch` gain) |
 | 3 | Recording panel "Include Audio": the master-gain tap into real-time WebM (Opus mime first; the offline path stays silent) |
 | 4 | Ambisonic beds (`ambisonic: "foa"`, AmbiX ACN/SN3D, four-channel AAC — Chrome decodes it to four channels) rotating with the camera through the native decoder, no Omnitone |
 
