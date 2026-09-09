@@ -801,17 +801,14 @@ async function getRemoteContentHash(
   options: { signal?: AbortSignal; timeoutMsOverride?: number }
 ): Promise<RemoteValidationToken | null> {
   // Direct HTTP fetch - NO cache lookup
-  const fetched = await fetchWithRetry(buildUrl(baseUrl, '.zattrs'), options);
-  if (!fetched) return null;
-  try {
-    const bytes = await fetched.response.arrayBuffer();
-    // ... return the stamped content_hash ('content-hash' mode), or the
-    // SHA-256 of the raw .zattrs bytes ('zattrs-hash' mode) when absent
-  } finally {
-    // Keeps fallback abort listeners live through body consumption, then
-    // releases them from the long-lived caller/store signal.
-    fetched.dispose();
-  }
+  const bytes = await fetchWithRetry(
+    buildUrl(baseUrl, '.zattrs'),
+    options,
+    async ({ response, readBody }) => (response.ok ? readBody() : null)
+  );
+  if (!bytes) return null;
+  // ... return the stamped content_hash ('content-hash' mode), or the
+  // SHA-256 of the raw .zattrs bytes ('zattrs-hash' mode) when absent
 }
 
 // WRONG: Would compare cached hash against itself (always matches!)

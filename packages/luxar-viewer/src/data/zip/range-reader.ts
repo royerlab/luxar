@@ -390,6 +390,8 @@ export class LuxarHttpRangeReader {
           throw archiveHttpError(this.url, response, ` for bytes ${offset}-${end}`);
         }
         if (response.status !== 206) {
+          // The decisive check: 200 here means the body is the whole archive,
+          // not the requested window.
           throw new RangeUnsupportedError(
             this.url,
             `the server answered a Range request with ${response.status} instead of 206, ` +
@@ -416,6 +418,8 @@ export class LuxarHttpRangeReader {
 
         const total = parseContentRangeTotal(contentRange);
         if (total !== null && this.#length !== undefined && total !== this.#length) {
+          // Offsets already parsed from the central directory belong to the
+          // previous archive size and cannot safely address the new body.
           throw new RangeUnsupportedError(
             this.url,
             `the archive changed size during the read (${this.#length} → ${total} bytes)`

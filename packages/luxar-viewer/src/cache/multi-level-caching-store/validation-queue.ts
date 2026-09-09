@@ -177,11 +177,9 @@ export async function getRemoteContentHash(
         async ({ response, readBody }) => (response.ok ? readBody() : null)
       );
       if (!attempt) continue;
-      if (attempt !== null) {
-        data = attempt;
-        servedDoc = doc;
-        break;
-      }
+      data = attempt;
+      servedDoc = doc;
+      break;
     }
     if (!data) return null;
 

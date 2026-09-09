@@ -13,6 +13,11 @@
  * the no-cache `FetchStore` (`data/zarr.ts`). A single shared counter caps the
  * total in flight, keeping throughput high (HTTP/2 multiplexes happily at this
  * width) while staying within the browser's socket/memory budget.
+ *
+ * The gate is FIFO and has no priority lane. Because a lease now spans body
+ * consumption, metadata and validation requests can queue behind full chunk
+ * bodies rather than only their header round-trips. Keep that latency trade-off
+ * in mind when changing the cap.
  */
 
 /**
