@@ -277,6 +277,7 @@ def test_a_git_lfs_demo_with_payload_still_fails_hard(
     assert code == 1
     assert "failed" in out
     assert "manual-data" not in out
+    assert "Next: cd packages/luxar-viewer && pnpm gallery" not in out
 
 
 @pytest.mark.parametrize("state", ["missing", "pointer"])

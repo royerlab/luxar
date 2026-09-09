@@ -9,7 +9,11 @@ this run is then checked for LOD-ladder quality and embedded scene credits befor
 the gallery capture can proceed. Scene credits gate the build; ladder findings
 are report-only until the demo corpus has been laddered. A second report-only
 pass covers the complete local inventory, so already-present neighbours remain
-visible without deciding whether a newly generated store may proceed.
+visible without deciding whether a newly generated store may proceed. A store
+that fails the generated-store credit gate is not re-gated on a later
+idempotent run; fix the demo and regenerate it with ``--force`` (or delete the
+store first). The direct full-inventory credit audit before upload is the
+backstop and must exit zero.
 
 Entries with ``script: null`` live only on a feature branch; their dataset must
 already be present (typically generated once, then committed/kept locally). Such
@@ -390,14 +394,14 @@ def main() -> int:
     aprint(f"\n{len(ready)}/{len(demos)} datasets ready for capture.")
     audit_failures = audit_generated_stores(generated_paths)
     report_local_scene_inventory()
-    if not audit_failures:
-        aprint("Next: cd packages/luxar-viewer && pnpm gallery")
 
     # Non-zero only on hard generation failures. capture-only, manual-data and
     # unbuildable are expected states, not errors: manual-data is a demo whose
     # machine-local input this machine does not have, unbuildable one that cannot
     # be built anywhere yet (see `generate_one`).
     hard_failures = results["failed"] + results["timeout"] + results["no-output"]
+    if not (hard_failures or audit_failures):
+        aprint("Next: cd packages/luxar-viewer && pnpm gallery")
     return 1 if hard_failures or audit_failures else 0
 
 
