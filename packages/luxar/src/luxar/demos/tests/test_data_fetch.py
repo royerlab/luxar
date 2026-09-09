@@ -664,13 +664,25 @@ def test_variant_on_nonvariant_dataset_raises(fake_repo):
 
 
 def test_ensure_dataset_copies_from_inrepo_lfs(fake_repo):
+    from luxar.demos._support.runtime.provenance import (
+        INPUT_DIGESTS_ATTR,
+        _clear_input_digests,
+        stamp_input_digests,
+    )
+
     manifest, cache = fake_repo
+    _clear_input_digests()
     paths = ensure_dataset(
         "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
     )
     assert len(paths) == 1
     assert paths[0].exists() and paths[0].read_bytes() == b"toy-splat-bytes"
     assert paths[0].parent == cache / "gsplats_toy"
+    assert paths.input_digests == {paths[0].name: _sha256(paths[0])}
+    scene = type("Scene", (), {"attrs": {}})()
+    stamp_input_digests(scene)
+    assert scene.attrs[INPUT_DIGESTS_ATTR] == paths.input_digests
+    _clear_input_digests()
 
 
 def test_ensure_dataset_resolves_only_requested_files(fake_repo):
@@ -1254,6 +1266,11 @@ def test_wrapper_loads_only_the_gsplat_files(fake_gsplats_repo):
 
     assert out is not None and len(out) == 1, "the .npz sidecar must be skipped"
     assert len(out[0].amplitudes) == 8
+    assert out.input_digests == {
+        "toy_ch0.gsplats.zarr.zip": _sha256(
+            cache / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+        )
+    }
 
 
 def test_wrapper_points_a_multi_part_store_at_the_graft_entry(
@@ -1591,6 +1608,7 @@ def test_load_dataset_bundle_verifies_the_outer_zip_then_extracts(
                     {
                         "name": "b.gsplats.zarr.zip",
                         "hosted_sha256": hosted_sha,
+                        "superseded_sha256": ["a" * 64],
                         "bytes": bundle.stat().st_size,
                         **({"sha256": local_sha} if local_sha is not None else {}),
                     }
@@ -1622,10 +1640,7 @@ def test_load_dataset_bundle_verifies_the_outer_zip_then_extracts(
     assert loaded[0][0].read_bytes() == bundle.read_bytes()
     # The extracted frames are keyed on the digest that was just verified, not on
     # a (size, mtime) guess a same-size re-upload could reproduce.
-    expected_stamp = (
-        f"sha256:{sha}+{hosted_sha}" if hosted_mode == "diverge" else f"sha256:{sha}"
-    )
-    assert loaded[0][1]["stamp"] == expected_stamp
+    assert loaded[0][1]["stamp"] == f"sha256:{sha}"
 
 
 def test_load_dataset_bundle_refreshes_frames_after_superseded_bundle_is_replaced(
@@ -2455,6 +2470,11 @@ def test_a_complete_superseded_positional_pair_remains_usable(fake_repo, monkeyp
     )
 
     assert [path.read_bytes() for path in paths] == [b"old-fit", b"old-colors"]
+    assert list(paths.input_digests) == ["colors.npz", "fit.gsplats.zarr.zip"]
+    assert paths.input_digests == {
+        "colors.npz": hashlib.sha256(b"old-colors").hexdigest(),
+        "fit.gsplats.zarr.zip": hashlib.sha256(b"old-fit").hexdigest(),
+    }
 
 
 def test_a_complete_positional_pair_refreshes_when_current_sources_exist(
@@ -2743,13 +2763,13 @@ def test_the_superseded_verdict_ranks_below_both_contracts(fake_repo):
     payload = data_fetch._DEMOS_DATA_DIR / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
     current = _sha256(payload)
     # The same digest named as BOTH current and superseded: current must win.
-    assert (
-        data_fetch._accepted_contract(payload, current, None, False, [current])
-        == "local"
+    assert data_fetch._accepted_contract(payload, current, None, False, [current]) == (
+        "local",
+        current,
     )
-    assert (
-        data_fetch._accepted_contract(payload, None, current, False, [current])
-        == "hosted"
+    assert data_fetch._accepted_contract(payload, None, current, False, [current]) == (
+        "hosted",
+        current,
     )
 
 

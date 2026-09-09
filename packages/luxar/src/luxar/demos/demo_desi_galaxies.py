@@ -102,6 +102,7 @@ from luxar.demos import (
     ensure_dataset,
     launch_viewer,
     parse_demo_flags,
+    stamp_input_digests,
     substitutive_lod_or_flat,
 )
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
@@ -1098,6 +1099,7 @@ def create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(cinematic_mode=True, camera=camera),
             )
+            stamp_input_digests(scene)
             scene.attrs["title"] = "DESI DR1 — The Cosmic Web"
 
             # Layer 1: colored by tracer type (categorical populations).

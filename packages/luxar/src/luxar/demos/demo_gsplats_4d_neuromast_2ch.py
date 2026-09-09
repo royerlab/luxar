@@ -133,6 +133,7 @@ from luxar.demos import (
     parse_demo_flags,
     parse_path_arg,
     run_luxar_cli,
+    stamp_input_digests,
 )
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
 from luxar.gsplats.tree import center_bounds, iter_leaves
@@ -617,6 +618,7 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
                     cinematic_mode=True, tone_mapping="ACES", exposure=EXPOSURE_STOPS
                 ),
             )
+            stamp_input_digests(scene)
             scene.attrs["title"] = "GSplats: 4D Two-Channel Neuromast Timelapse"
             scene.attrs["description"] = (
                 "Zebrafish lateral-line neuromast (she:GFP; cldnb:lyn-mScarlet), "

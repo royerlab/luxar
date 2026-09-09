@@ -99,6 +99,7 @@ from luxar.demos import (
     local_fit_path,
     parse_demo_flags,
     require_module,
+    stamp_input_digests,
     voxel_sampled_payload_agreement,
     warn_if_no_cuda_gpu,
 )
@@ -920,6 +921,7 @@ def create_luxar_scene(fit: GSplatData, labels: np.ndarray, output_path: Path) -
                 ),
                 citation=DEMO_META["citation"],
             )
+            stamp_input_digests(scene)
             scene.attrs["title"] = "GSplats: CT Anatomical Atlas (TotalSegmentator)"
             # One toggle-able layer per tissue supergroup (Layers panel); each
             # splat keeps its specific organ name as a hover tooltip.

@@ -123,6 +123,7 @@ from luxar.demos import (
     load_dataset_bundle,
     parse_demo_flags,
     require_module,
+    stamp_input_digests,
     warn_if_no_cuda_gpu,
 )
 from luxar.demos._lod_policy import save_with_lod
@@ -1755,6 +1756,7 @@ def create_luxar_scene(
                 citation=DEMO_META["citation"],
                 viewer_config=ViewerConfig(cinematic_mode=True),
             )
+            stamp_input_digests(scene)
 
             scene.attrs["title"] = "GSplats: C. elegans Embryo — Nuclei Tracking"
             scene.attrs["description"] = f"""
