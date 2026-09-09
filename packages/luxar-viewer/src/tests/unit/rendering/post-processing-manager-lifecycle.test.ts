@@ -433,6 +433,35 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
     mgr.dispose();
   });
 
+  it('suspends MSAA renderbuffers while SSAA is active and restores them afterward', () => {
+    const renderer = makeMockRenderer({ pixelRatio: 2 });
+    const capabilities = mockCaps('webgl2', {
+      maxTextureSize: 16384,
+      maxRenderbufferSize: 8192,
+    });
+    materialManager.setCaps(capabilities);
+    const mgr = new PostProcessingManager(
+      renderer,
+      capabilities,
+      new THREE.Scene(),
+      new THREE.PerspectiveCamera(),
+      { width: 2509, height: 1328 }
+    );
+
+    mgr.setMSAAEnabled(true);
+    expect(peek(mgr).hdrTarget.samples).toBe(4);
+
+    mgr.setSSAAEnabled(true);
+    expect(peek(mgr).hdrTarget.samples).toBe(0);
+    expect(peek(mgr).hdrTarget.width).toBe(8192);
+    expect(peek(mgr).hdrTarget.height).toBe(4334);
+
+    mgr.setSSAAEnabled(false);
+    expect(peek(mgr).hdrTarget.samples).toBe(4);
+
+    mgr.dispose();
+  });
+
   it('reallocates after rebuildAfterContextRestore even at an identical size', () => {
     // The restore path rebuilds all transient targets; the allocation
     // memo must be invalidated so the follow-up updateRendererSize()

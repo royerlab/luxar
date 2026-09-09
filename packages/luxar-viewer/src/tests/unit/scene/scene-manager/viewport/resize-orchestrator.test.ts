@@ -160,6 +160,29 @@ describe('ResizeOrchestrator.resizeNow', () => {
 
     expect(harness.setPixelRatio).toHaveBeenCalledWith(0.5);
   });
+
+  it('keeps the orbit target at the same screen position across DPR probes', () => {
+    const orchestrator = new ResizeOrchestrator();
+    const harness = makeCtx();
+    const camera = harness.ctx.camera as THREE.PerspectiveCamera;
+    const target = new THREE.Vector3(4, -2, 1);
+    camera.position.set(10, 5, 12);
+    camera.lookAt(target);
+    camera.updateMatrixWorld(true);
+
+    const projectedBefore = target.clone().project(camera);
+    orchestrator.resizeNow(2509, 1328, { ...harness.ctx, pixelRatioOverride: 1.31 });
+    camera.updateMatrixWorld(true);
+    const projectedDuringProbe = target.clone().project(camera);
+    orchestrator.resizeNow(2509, 1328, { ...harness.ctx, pixelRatioOverride: 0.81 });
+    camera.updateMatrixWorld(true);
+    const projectedAfterProbe = target.clone().project(camera);
+
+    expect(projectedDuringProbe.x).toBeCloseTo(projectedBefore.x, 12);
+    expect(projectedDuringProbe.y).toBeCloseTo(projectedBefore.y, 12);
+    expect(projectedAfterProbe.x).toBeCloseTo(projectedBefore.x, 12);
+    expect(projectedAfterProbe.y).toBeCloseTo(projectedBefore.y, 12);
+  });
 });
 
 describe('ResizeOrchestrator.scheduleResize', () => {

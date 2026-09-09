@@ -75,7 +75,7 @@ group table.
 | `src`              | `string`              | config          | Initial Zarr URL. Empty/missing shows the dataset browser.                                                                                                                                                   |
 | `debug`            | `boolean`             | `false`         | Exposes `window.__luxarDebug` for Playwright / dev console.                                                                                                                                                  |
 | `loaderConfig`     | `LoaderConfig`        | —               | Cache and prefetch flags (`noCache`, `cacheDebug`, `clearCache`, `noPrefetch`, `prefetchDebug`).                                                                                                             |
-| `gpuPoolMaxBytes`  | `number \| null`      | config          | Session-wide GPU geometry budget in bytes. `null` auto-sizes from device memory, measured heap, and device class; `0` disables byte-budget eviction; a positive value pins it.                              |
+| `gpuPoolMaxBytes`  | `number \| null`      | config          | Session-wide GPU geometry budget in bytes. `null` auto-sizes from device memory, measured heap, and device class; `0` disables byte-budget eviction; a positive value pins it.                               |
 | `updateBrowserUrl` | `boolean`             | `false`         | Opt in to mirroring picked datasets into the browser URL. `bootstrapStandalone()` sets this to `true`.                                                                                                       |
 | `wasmPath`         | `string`              | —               | Override for bundlers that don't resolve `import.meta.url` for WASM (webpack 4, Parcel 1, etc.). Serving the published package unbundled usually costs one benign 404 before the next candidate wins.        |
 | `workerPath`       | `string`              | —               | Same, for the data worker.                                                                                                                                                                                   |
@@ -685,6 +685,7 @@ renderingControls: {
 **Anti-Aliasing Notes:**
 
 - **MSAA**: Hardware-accelerated, fast and sharp — great default for most scenes. Note: MSAA has limitations with additive blending (used by GSplats); consider FXAA for scenes with Gaussian splats
+- **SSAA + MSAA**: SSAA temporarily suspends MSAA allocation. Combining multisampling with an already-upscaled SSAA target is redundant and can exceed browser framebuffer-allocation limits; disabling SSAA restores the configured MSAA setting.
 - **FXAA**: Fastest post-process AA, may slightly blur the image
 - **SSAA**: Highest quality (supersampling), significant performance cost
 
@@ -776,10 +777,10 @@ toolchain-derived version floor.
 Verified 2026-09-04 on macOS arm64 by running the E2E smoke subset (13 tests)
 against Playwright's bundled engines:
 
-| Engine   | Smoke subset | Notes                                                |
-| -------- | ------------ | ---------------------------------------------------- |
-| Chromium | 13/13 pass   | L2 (OPFS) disk cache initialises                      |
-| Firefox  | 13/13 pass   | L2 (OPFS) disk cache initialises                      |
+| Engine   | Smoke subset | Notes                                                                                                                           |
+| -------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| Chromium | 13/13 pass   | L2 (OPFS) disk cache initialises                                                                                                |
+| Firefox  | 13/13 pass   | L2 (OPFS) disk cache initialises                                                                                                |
 | WebKit   | 13/13 pass   | **runs without the L2 disk cache** — the OPFS store's init / write probe fails, so chunk data is not persisted between sessions |
 
 Reproduce after running `pnpm test:generate-fixtures` and `pnpm exec playwright

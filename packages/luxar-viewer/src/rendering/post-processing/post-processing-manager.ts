@@ -191,6 +191,10 @@ export class PostProcessingManager {
     return Math.min(this.capabilities.maxTextureSize, this.capabilities.maxRenderbufferSize);
   }
 
+  private get activeMSAASamples(): number {
+    return this.msaaEnabled && !this.ssaaEnabled ? this.msaaSamples : 0;
+  }
+
   private getPhysicalSize(): { width: number; height: number } {
     return getPhysicalSize({
       renderer: this.renderer,
@@ -218,8 +222,8 @@ export class PostProcessingManager {
     const r = buildTransientResources({
       physW: width,
       physH: height,
-      msaaEnabled: this.msaaEnabled,
-      msaaSamples: this.msaaSamples,
+      msaaEnabled: this.activeMSAASamples > 0,
+      msaaSamples: this.activeMSAASamples,
       fxaaEnabled: this.fxaaEnabled,
       capabilities: this.capabilities,
       bloomLevels: this.bloomLevels,
@@ -752,7 +756,7 @@ export class PostProcessingManager {
     const allocation = this.getRenderTargetAllocation();
     const { width: logicalW, height: logicalH } = allocation.logical;
     const { width: physW, height: physH } = allocation.physical;
-    const msaaSamples = this.msaaEnabled ? this.msaaSamples : 0;
+    const msaaSamples = this.activeMSAASamples;
 
     const last = this.lastAllocation;
     if (
@@ -773,7 +777,7 @@ export class PostProcessingManager {
     // synchronous resize event from setSize(), so observers must never
     // see a new backbuffer paired with stale post-processing targets.
     this.hdrTarget.dispose();
-    this.hdrTarget = createHdrTarget(physW, physH, this.msaaEnabled ? this.msaaSamples : 0);
+    this.hdrTarget = createHdrTarget(physW, physH, msaaSamples);
 
     this.ldrTarget.setSize(physW, physH);
     if (this.bloomChain) {
