@@ -116,6 +116,8 @@ describe('computeRenderTargetAllocation', () => {
       expect(allocation.physical.height % 2).toBe(0);
       expect(Math.floor(allocation.logical.width * pixelRatio)).toBe(allocation.physical.width);
       expect(Math.floor(allocation.logical.height * pixelRatio)).toBe(allocation.physical.height);
+      expect(Math.round(allocation.logical.width * pixelRatio)).toBe(allocation.physical.width);
+      expect(Math.round(allocation.logical.height * pixelRatio)).toBe(allocation.physical.height);
     }
   );
 

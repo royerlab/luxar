@@ -21,7 +21,7 @@ export interface RenderTargetAllocation {
 
 function logicalDimensionForPhysical(physical: number, pixelRatio: number): number {
   const logical = physical / pixelRatio;
-  return Math.floor(logical * pixelRatio) === physical ? logical : (physical + 0.5) / pixelRatio;
+  return Math.floor(logical * pixelRatio) === physical ? logical : (physical + 0.25) / pixelRatio;
 }
 
 /**
