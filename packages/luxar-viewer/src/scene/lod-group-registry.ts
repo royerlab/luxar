@@ -1755,15 +1755,13 @@ export class LODGroupRegistry {
     }
 
     // ── Fresh-but-EMPTY display guard ──
-    // With consistent LOD data a finer level can never be empty where a
-    // coarser one is not (coarse levels are derived from fine), so a fresh
-    // level that committed 0 elements while a coarser fresh level holds
-    // visible geometry signals inconsistent/corrupt data (e.g. a stale cache
-    // serving an old layout whose chunk queries zero-fill). Displaying the
-    // empty level would silently blank the group; redirect to the coarsest
-    // fresh NON-empty coarser level and warn once so the inconsistency is
-    // visible instead of black. A genuinely empty aspiration is unchanged
-    // when only finer levels contain geometry.
+    // If the chosen display level committed 0 elements, prefer the coarsest
+    // fresh NON-empty level no finer than the selector's aspiration. A level
+    // between the chosen display and aspiration can legitimately fill a stale
+    // fallback gap; only redirecting to a level coarser than the chosen display
+    // signals inconsistent/corrupt data and warrants the warning below. Never
+    // search finer than the aspiration: those levels must not override the
+    // selector, even when a coarse slice is legitimately empty (see #1600).
     if (version != null && displayIdx >= 0) {
       const chosen = entry.children[displayIdx];
       // Group-aware: a deferred kind=partition / nested lod subtree whose visible
@@ -1774,9 +1772,10 @@ export class LODGroupRegistry {
       // stays the coarsest fresh non-empty leaf level.
       const chosenProgress = chosen ? this.childFreshAndCount(chosen, version) : undefined;
       if (chosen && chosenProgress?.fresh && chosenProgress.count === 0) {
-        const fallback = this.coarsestFreshNonEmptyIndex(entry, version, displayIdx);
+        const fallbackLimit = Math.max(displayIdx, entry.activeChildIndex);
+        const fallback = this.coarsestFreshNonEmptyIndex(entry, version, fallbackLimit);
         if (fallback >= 0 && fallback !== displayIdx) {
-          if (!this.warnedEmptyLevel.has(entry.path)) {
+          if (fallback < displayIdx && !this.warnedEmptyLevel.has(entry.path)) {
             this.warnedEmptyLevel.add(entry.path);
             log.warning(
               Modules.SCENE_LOADER,
@@ -2137,9 +2136,9 @@ export class LODGroupRegistry {
    * whose visible leaves all committed 0) is correctly skipped rather than
    * treated as non-empty (a bare ``THREE.Group`` has no leaf count stamp). A
    * READY child with an UNTRACKED count (``null`` — group with no stamped leaf)
-   * is accepted, matching the leaf-only helper it replaced: the guard only
-   * redirects away from KNOWN-empty levels. Finer levels are not fallbacks and
-   * must not override the selector's aspiration. Because
+   * is accepted: the guard only redirects away from KNOWN-empty levels. The
+   * caller bounds the search at the selector's aspiration, so no finer level
+   * can override it. Because
    * ``childFreshAndCount``'s ``fresh`` implies ``ready``, a NOT-ready placeholder
    * can never be returned — the guard must only redirect to a level that can
    * actually draw. When nothing qualifies (``-1``) the caller keeps the

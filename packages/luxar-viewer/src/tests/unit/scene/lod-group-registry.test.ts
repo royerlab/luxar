@@ -3062,6 +3062,52 @@ describe('LODGroupRegistry — retryLazyChildByNodePath', () => {
 });
 
 describe('LODGroupRegistry — fresh-but-empty display guard', () => {
+  it('uses populated intermediate geometry after a stale hold expires', () => {
+    const state = { version: 1, clock: 0 };
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => undefined);
+    try {
+      const reg = makeRegistry(
+        [0, 1, 2],
+        undefined,
+        undefined,
+        () => state.version,
+        undefined,
+        () => state.clock
+      );
+      const children = [
+        makeCountedChild(0, 1, 100),
+        makeCountedChild(0.5, 1, 500),
+        makeCountedChild(1, 1, 1000),
+      ];
+      reg.register(makeEntry(children, 2, '/g'));
+      reg.evaluatePerFrame();
+      expect(reg.get('/g')!.activeChildIndex).toBe(2);
+
+      state.version = 2;
+      Object.assign(children[0].object.userData!, {
+        loadedViewVersion: 2,
+        visibleSplatCount: 0,
+      });
+      Object.assign(children[1].object.userData!, {
+        loadedViewVersion: 2,
+        visibleSplatCount: 50,
+      });
+      reg.evaluatePerFrame();
+      expect(children[2].object.visible).toBe(true);
+
+      state.clock += 260;
+      reg.evaluatePerFrame();
+
+      expect(reg.get('/g')!.displayedChildIndex).toBe(1);
+      expect(children[0].object.visible).toBe(false);
+      expect(children[1].object.visible).toBe(true);
+      expect(children[2].object.visible).toBe(false);
+      expect(warning).not.toHaveBeenCalled();
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
   it('keeps an empty coarse aspiration when only a finer fresh level is populated', () => {
     const warning = vi.spyOn(log, 'warning').mockImplementation(() => undefined);
     try {
