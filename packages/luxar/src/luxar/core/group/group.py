@@ -38,6 +38,7 @@ if TYPE_CHECKING:
 
 TNode = TypeVar("TNode")
 _DEFAULT_NORMALIZE_AMPLITUDES = object()
+_UNSET_LOD = object()
 
 
 def _resolve_normalize_amplitudes_default(
@@ -46,6 +47,53 @@ def _resolve_normalize_amplitudes_default(
     if normalize_amplitudes is not _DEFAULT_NORMALIZE_AMPLITUDES:
         return normalize_amplitudes
     return parent.attrs.get("kind") not in ("lod", "partition")
+
+
+def _resolve_gsplat_substitutive_lod_alias(
+    substitutive_lod: Any, lod_group: Any
+) -> Any:
+    if substitutive_lod is not _UNSET_LOD and lod_group is not _UNSET_LOD:
+        raise ValueError("Pass only one of substitutive_lod= and lod_group=")
+    if substitutive_lod is not _UNSET_LOD:
+        return substitutive_lod
+    if lod_group is not _UNSET_LOD:
+        return lod_group
+    return None
+
+
+def _gsplat_data_from_arrays(
+    centers: Any,
+    amplitudes: Any,
+    cholesky_factors: Any,
+    colors: Any,
+    label_ids: Any,
+    label_vocabulary: Optional[Dict[int, str]],
+) -> GSplatData:
+    from ...gsplats.gsplat_data import GSplatData
+
+    centers_array = np.asarray(centers)
+    if centers_array.ndim != 2:
+        raise ValueError(
+            f"Centers must have shape (N, D), got shape {centers_array.shape}"
+        )
+    amplitudes_array = np.asarray(amplitudes)
+    if amplitudes_array.ndim == 0:
+        amplitudes_array = np.full(
+            centers_array.shape[0], amplitudes_array, dtype=amplitudes_array.dtype
+        )
+    colors_array = None if colors is None else np.asarray(colors)
+    if colors_array is not None and colors_array.ndim == 1:
+        colors_array = np.broadcast_to(
+            colors_array, (centers_array.shape[0], colors_array.shape[0])
+        ).copy()
+    return GSplatData(
+        centers=centers_array,
+        amplitudes=amplitudes_array,
+        cholesky_factors=np.asarray(cholesky_factors),
+        colors=colors_array,
+        label_ids=None if label_ids is None else np.asarray(label_ids),
+        label_vocabulary=label_vocabulary,
+    )
 
 
 class Group(Node):
@@ -802,6 +850,8 @@ class Group(Node):
         fill: Optional[Dict[str, float]] = None,
         fill_sigma: Optional[Dict[str, float]] = None,
         partition: Any = None,
+        substitutive_lod: Any = None,
+        additive_lod: Any = None,
         **attrs: Any,
     ) -> Union[GSplats, "Group"]:
         """Add a Gaussian splats node.
@@ -843,6 +893,11 @@ class Group(Node):
                 "gsplats"``; the wrapper's children are ``part_<i>``
                 GSplats nodes. ``image_labels`` is not supported alongside
                 ``partition=``.
+            substitutive_lod: Substitutive-LOD control, matching the Points,
+                Lines, and Mesh adders. The value vocabulary is the same as
+                :meth:`add_gsplats_from_data`'s historical ``lod_group=``.
+            additive_lod: Additive-LOD control. The value vocabulary matches
+                :meth:`add_gsplats_from_data`.
             **attrs: Additional node attributes. Common ones:
 
                 - ``layer`` (bool): Expose this node in the viewer's Layers
@@ -867,6 +922,33 @@ class Group(Node):
             The created ``GSplats`` node, or a kind=partition ``Group``
             wrapper when ``partition=`` produced more than one part.
         """
+        if substitutive_lod is not None or additive_lod is not None:
+            result = _gsplat_data_from_arrays(
+                centers,
+                amplitudes,
+                cholesky_factors,
+                colors,
+                label_ids,
+                label_vocabulary,
+            )
+            return self.add_gsplats_from_data(
+                name,
+                result,
+                parent=parent,
+                extend_to_all=extend_to_all,
+                dim_order=dim_order,
+                fill=fill,
+                fill_sigma=fill_sigma,
+                substitutive_lod=substitutive_lod,
+                additive_lod=additive_lod,
+                normalize_amplitudes=False,
+                partition=partition,
+                labels=labels,
+                image_labels=image_labels,
+                keys=keys,
+                **attrs,
+            )
+
         from .adders.gsplats import add_gsplats_impl
 
         return self._transactional_add(
@@ -903,7 +985,8 @@ class Group(Node):
         dim_order: Optional[List[str]] = None,
         fill: Optional[Dict[str, float]] = None,
         fill_sigma: Optional[Dict[str, float]] = None,
-        lod_group: Any = None,
+        substitutive_lod: Any = _UNSET_LOD,
+        lod_group: Any = _UNSET_LOD,
         additive_lod: Any = None,
         normalize_amplitudes: Any = _DEFAULT_NORMALIZE_AMPLITUDES,
         **attrs: Any,
@@ -916,9 +999,11 @@ class Group(Node):
         for progressive (prefix-sum) loading. Single-LOD data uses the
         flat layout (arrays at the node path).
 
-        ``lod_group`` and ``additive_lod`` control the two LOD axes (see
+        ``substitutive_lod`` and ``additive_lod`` control the two LOD axes (see
         ``luxar.core.group.lod.gsplats.resolve_substitutive_axis_gsplats`` /
-        ``resolve_additive_axis_gsplats`` for the full value vocabulary). When
+        ``resolve_additive_axis_gsplats`` for the full value vocabulary).
+        ``lod_group=`` remains supported as an alias for
+        ``substitutive_lod=``; passing both is refused. When
         the resolved data has multiple substitutive levels, this method
         builds a ``kind="lod"`` ``Group`` containing one gsplats child
         per level (in coarsest→finest order, named ``child_<i>``) and
@@ -1018,6 +1103,7 @@ class Group(Node):
         """
         from .gsplats_pipeline.from_data import add_gsplats_from_data_impl
 
+        lod_group = _resolve_gsplat_substitutive_lod_alias(substitutive_lod, lod_group)
         normalize_amplitudes = _resolve_normalize_amplitudes_default(
             parent or self, normalize_amplitudes
         )
@@ -1050,6 +1136,11 @@ class Group(Node):
         fill: Optional[Dict[str, float]] = None,
         fill_sigma: Optional[Dict[str, float]] = None,
         normalize_amplitudes: Any = _DEFAULT_NORMALIZE_AMPLITUDES,
+        partition: Any = None,
+        substitutive_lod: Any = _UNSET_LOD,
+        lod_group: Any = _UNSET_LOD,
+        additive_lod: Any = None,
+        flatten: bool = False,
         **attrs: Any,
     ) -> Union[GSplats, "Group"]:
         """Add Gaussian splats by loading from a .gsplats.zarr file.
@@ -1059,6 +1150,12 @@ class Group(Node):
         child per substitutive level); pass ``lod_group=False`` to
         collapse to the finest level instead (see
         ``add_gsplats_from_data`` for the convention).
+
+        Set ``flatten=True`` to materialize the source tree's default finest
+        selection as one leaf before applying ``partition=``,
+        ``substitutive_lod=``, or ``additive_lod=``. This is required to
+        restructure a stored partition or nested LOD tree. ``lod_group=`` is
+        retained as an alias for ``substitutive_lod=``.
 
         ``labels`` / ``image_labels`` / ``keys`` are accepted only when the file is a single
         leaf with NO additive ladder. Any multi-LEAF result — an auto-lowered
@@ -1107,6 +1204,13 @@ class Group(Node):
                 and volumetric optical depth are both LINEAR in the raw stored
                 amplitude and nothing windows them. See
                 :mod:`luxar.core.group.gsplats_pipeline.amplitude_norm`.
+            partition: Spatial partition control applied to matrix-shaped input,
+                or after ``flatten=True``.
+            substitutive_lod: Substitutive-LOD control applied after loading.
+            lod_group: Backward-compatible alias for ``substitutive_lod``.
+            additive_lod: Additive-LOD control applied after loading.
+            flatten: Collapse stored structure to the default finest selection
+                before applying the requested structure.
             **attrs: Additional node attributes — the :meth:`add_gsplats`
                 vocabulary (including ``absorption``) MINUS the four channels
                 the file supplies, which are refused; see the rules above. On a
@@ -1120,6 +1224,7 @@ class Group(Node):
         """
         from .gsplats_pipeline.from_io import add_gsplats_from_file_impl
 
+        lod_group = _resolve_gsplat_substitutive_lod_alias(substitutive_lod, lod_group)
         normalize_amplitudes = _resolve_normalize_amplitudes_default(
             parent or self, normalize_amplitudes
         )
@@ -1136,6 +1241,10 @@ class Group(Node):
                 fill=fill,
                 fill_sigma=fill_sigma,
                 normalize_amplitudes=normalize_amplitudes,
+                partition=partition,
+                lod_group=lod_group,
+                additive_lod=additive_lod,
+                flatten=flatten,
                 **attrs,
             ),
         )

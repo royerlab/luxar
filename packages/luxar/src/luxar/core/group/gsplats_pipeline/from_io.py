@@ -84,6 +84,10 @@ def add_gsplats_from_file_impl(
     dim_order: Optional[List[str]] = None,
     fill: Optional[Dict[str, float]] = None,
     fill_sigma: Optional[Dict[str, float]] = None,
+    partition: Any = None,
+    lod_group: Any = None,
+    additive_lod: Any = None,
+    flatten: bool = False,
     **attrs: Any,
 ) -> Union["GSplats", "Group"]:
     from luxar.gsplats.io.load_gsplats import load_gsplat_node
@@ -112,6 +116,8 @@ def add_gsplats_from_file_impl(
     strip_absent_attr_kwargs(attrs, ABSENT_WHEN_NONE_ATTRS)
     reject_data_owned_channels(name, attrs)
     reject_mesh_only_appearance("gsplats", name, attrs)
+    if partition is not None:
+        attrs["partition"] = partition
 
     # Classical (photogrammetric) splat files — INRIA/SuperSplat .ply,
     # antimatter15 .splat, Niantic .spz — are imported on the fly and embedded
@@ -130,6 +136,8 @@ def add_gsplats_from_file_impl(
             dim_order=dim_order,
             fill=fill,
             fill_sigma=fill_sigma,
+            lod_group=lod_group,
+            additive_lod=additive_lod,
             **attrs,
         )
 
@@ -140,6 +148,23 @@ def add_gsplats_from_file_impl(
     # GSplatData equivalent, so it is GRAFTED node-for-node, reusing the scene's
     # own builders — the same subtree the file already holds.
     node, _stats = load_gsplat_node(path)
+
+    if flatten:
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        return add_gsplats_from_data_impl(
+            group,
+            name=name,
+            result=GSplatData.from_default_selection(node, stats=_stats).flattened(),
+            parent=parent,
+            extend_to_all=extend_to_all,
+            dim_order=dim_order,
+            fill=fill,
+            fill_sigma=fill_sigma,
+            lod_group=lod_group,
+            additive_lod=additive_lod,
+            **attrs,
+        )
 
     if is_matrix_shaped(node):
         from luxar.gsplats.gsplat_data import GSplatData
@@ -162,7 +187,15 @@ def add_gsplats_from_file_impl(
             dim_order=dim_order,
             fill=fill,
             fill_sigma=fill_sigma,
+            lod_group=lod_group,
+            additive_lod=additive_lod,
             **attrs,
+        )
+
+    if lod_group is not None or additive_lod is not None:
+        raise ValueError(
+            "flatten=True is required to apply substitutive_lod= or "
+            "additive_lod= to a partition / nested .gsplats.zarr"
         )
 
     if dim_order is not None or fill is not None or fill_sigma is not None:
