@@ -504,6 +504,11 @@ WHOLE_HIGHLIGHT_INTENSITY = 0.35
 WHOLE_HIGHLIGHT_MAX_POINTS = 300_000
 #: A whole-map highlight streams like the backdrop does.
 WHOLE_LADDER_MIN_MEMBERS = 100_000
+#: The backdrop is split into spatial parts of at most this many points: one
+#: points node renders at most 5,591,040 on a 4096-class GPU and silently drops
+#: the tail (one contiguous Hilbert-order region, so a clean-edged hole). Same
+#: margin as the DESI demo.
+BACKDROP_MAX_POINTS_PER_NODE = 4_000_000
 
 STORIES: tuple[UniverseStory, ...] = (
     _carry(
@@ -1495,6 +1500,7 @@ def build_universe_scene(
                 intensity=BACKDROP_INTENSITY,
                 extend_to_all=[STORY_DIM],
                 layer=True,
+                partition=dict(max_elements=BACKDROP_MAX_POINTS_PER_NODE),
                 additive_lod=stream_ladder(n),
             )
             units: dict[int, str] = {}
