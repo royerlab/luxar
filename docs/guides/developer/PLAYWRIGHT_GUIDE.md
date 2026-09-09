@@ -240,7 +240,9 @@ pnpm agent:debug
 | Script | Purpose | When to Use |
 |--------|---------|-------------|
 | `pnpm test:e2e` | Run all tests | Local manual testing |
-| `pnpm test:e2e:smoke` | Non-GPU smoke subset | Local CI mirror; basis for the disabled workflow |
+| `pnpm test:e2e:mobile` | Chromium mobile/touch suite | Local reproduction of the hosted CI job |
+| `pnpm test:e2e:smoke` | Non-GPU smoke subset | Fast local interaction smoke check |
+| `pnpm test:e2e:smoke:strict` | Smoke subset with strict console handling | CI-like local smoke validation |
 | `pnpm test:e2e:browsers` | Run the functional browser smoke matrix with snapshots ignored | After generating fixtures and installing Firefox/WebKit |
 | `pnpm test:e2e:ui` | Interactive test runner | Writing new tests |
 | `pnpm test:e2e:debug` | Debug mode | Debugging failing tests |

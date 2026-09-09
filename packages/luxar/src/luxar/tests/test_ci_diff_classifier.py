@@ -745,7 +745,8 @@ def test_the_workflow_itself_selects_every_language_domain(workflow: str) -> Non
 
 def test_mobile_e2e_suite_is_enabled_in_ci(workflow: str) -> None:
     """The mobile suite must remain live, correctly gated, and diagnosable."""
-    job = yaml.safe_load(workflow)["jobs"]["e2e-tests"]
+    jobs = yaml.safe_load(workflow)["jobs"]
+    job = jobs["e2e-tests"]
 
     assert set(job["needs"]) == {"changes", "python-tests", "typescript-tests"}
     assert job["if"] == (
@@ -753,7 +754,12 @@ def test_mobile_e2e_suite_is_enabled_in_ci(workflow: str) -> None:
         "needs.typescript-tests.result != 'failure' && "
         "needs.changes.outputs.dom_ts != 'false' }}"
     )
-    assert any(step.get("run") == "make test-e2e-mobile" for step in job["steps"])
+    assert job["steps"][0] == jobs["typescript-tests"]["steps"][0]
+    mobile_step = next(
+        step for step in job["steps"] if step.get("run") == "make test-e2e-mobile"
+    )
+    assert mobile_step["timeout-minutes"] == 45
+    assert job["timeout-minutes"] == 75
 
     mobile_config = (
         REPO / "packages/luxar-viewer/playwright.mobile.config.ts"

@@ -1488,14 +1488,29 @@ jobs:
   # This hosted, Chromium-only job keeps the timing-sensitive mobile/touch
   # contract live for TypeScript changes, with all 68 cases running serially.
   # NOT YET REQUIRED. Promote it after several green runs establish its hosted
-  # llvmpipe wall clock and flake rate. The generated examples and fixtures are
-  # prepared in named steps so setup failures stay distinct from test failures.
+  # llvmpipe wall clock and flake rate; before promotion, move the dom_ts guard
+  # to the steps so this context reports green for untouched domains. The
+  # generated examples and fixtures are prepared in named steps so setup
+  # failures stay distinct from test failures.
   e2e-tests:
     needs: [changes, python-tests, typescript-tests]
     if: ${{ !cancelled() && needs.python-tests.result != 'failure' && needs.typescript-tests.result != 'failure' && needs.changes.outputs.dom_ts != 'false' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 75
     steps:
+      - name: Free disk space on hosted runners
+        # See python-tests: reclaim preinstalled tooling on GitHub-hosted runners
+        # so the WASM build + suite do not hit `[Errno 28] No space left
+        # on device` (#1816). Skipped on the self-hosted box.
+        if: runner.environment == 'github-hosted'
+        working-directory: ${{ github.workspace }}
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /opt/hostedtoolcache/CodeQL \
+            /usr/share/dotnet /opt/ghc /usr/local/share/boost 2>/dev/null || true
+          sudo docker image prune --all --force 2>/dev/null || true
+          df -h /
+
       # The mobile suite generates its example datasets and generated fixtures
       # at runtime; it reads none of the LFS-backed demo payloads. Keeping
       # `lfs: true` made checkout itself fail when the repo's LFS budget was

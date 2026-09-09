@@ -784,6 +784,7 @@ def test_every_e2e_package_script_has_a_make_entry_point_or_reason() -> None:
         for name in package["scripts"]
         if name == "test:e2e" or name.startswith("test:e2e:") or name == "test:perf:e2e"
     }
+    # Interactive/debugging/reporting scripts have no batch-oriented Make semantics.
     direct_only = {
         "test:e2e:ci",
         "test:e2e:debug",
