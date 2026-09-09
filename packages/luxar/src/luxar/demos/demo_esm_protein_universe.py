@@ -159,19 +159,24 @@ UNIVERSE_CACHE = "universe_v2.npz"
 #: Points farther than this from the cloud's median are UMAP outliers (0.12% of
 #: the rows, some 60 units out) that would otherwise set the scene's extent.
 CULL_RADIUS = 40.0
-#: Beyond this radius from the centre lies the spur (see the ABC story).
+#: Beyond this radius from the centre lies the spur (see the ABC story) — but
+#: not only the spur: a few hundred stragglers sit that far out in other
+#: directions, and they would drag the story's bounding-box centre off the
+#: streak (from [3, 5, -30] to [-9, -2, -15]). So the spur is the far points
+#: within ``SPUR_HALF_ANGLE_DEG`` of the far set's mean direction, computed
+#: from the data at build time.
 SPUR_RADIUS = 22.0
-#: The spur story is a GEOMETRY predicate (everything beyond ``SPUR_RADIUS``)
-#: whose panel makes a FAMILY claim, so the build checks that at least
-#: ``SPUR_PFAM_MIN_FRACTION`` of the lit clusters have an ABC-transporter Pfam
-#: family as their dominant domain; a different Atlas release could move the
-#: spur. Measured on this release: 9,196 clusters beyond r=22, of which 64% are
-#: the ATP-binding cassette itself (PF00005), 20% the ABC-type AAA ATPase
-#: domain (PF13304) and 2% the ABC membrane domain (PF00664) — 86% ABC parts;
-#: the remainder is mostly MFS transporters (PF07690). The dense knot at the
-#: spur's tip is 99% PF00005.
+SPUR_HALF_ANGLE_DEG = 15.0
+#: The spur story is a GEOMETRY predicate whose panel makes a FAMILY claim, so
+#: the build checks that at least ``SPUR_PFAM_MIN_FRACTION`` of the lit
+#: clusters have an ABC-transporter Pfam family as their dominant domain; a
+#: different Atlas release could move the spur. Measured on this release:
+#: 8,277 clusters on the spur, 96% of them ABC parts — the ATP-binding cassette
+#: itself (PF00005), the ABC-type AAA ATPase domain (PF13304) or the ABC
+#: membrane domain (PF00664). Taking every point beyond r=22 instead gives
+#: 9,196 at 86%: the difference is the stragglers.
 SPUR_PFAMS = ("PF00005", "PF13304", "PF00664")
-SPUR_PFAM_MIN_FRACTION = 0.8
+SPUR_PFAM_MIN_FRACTION = 0.9
 
 # The annotation columns the cache folds in (the rest are read per story member
 # at build time).
@@ -699,7 +704,7 @@ STORIES: tuple[UniverseStory, ...] = (
     UniverseStory(
         key="ABC transporters",
         title="The spur — ABC transporters flung off the map",
-        subtitle="Nine thousand clusters, nearly nine in ten of them parts of ABC transporters, in a streak of their own",
+        subtitle="Eight thousand clusters, nearly all of them parts of ABC transporters, in a streak of their own",
         pattern="",
         region="spur",
         whole=True,
@@ -726,7 +731,7 @@ STORIES: tuple[UniverseStory, ...] = (
             "domains that clamp shut around two ATPs and spring open when they "
             "are spent. That engine — the cassette — is what these clusters "
             "share.",
-            # 9,196 clusters beyond radius 22; 86% carry an ABC-transporter Pfam
+            # 8,277 clusters on the spur; 96% carry an ABC-transporter Pfam
             # family as their dominant domain (see SPUR_PFAMS).
             "The map put them on a spur of their own. A streak like this is a "
             "known habit of the layout algorithm when a huge family of very "
@@ -743,8 +748,8 @@ STORIES: tuple[UniverseStory, ...] = (
         tags=("membranes", "medicine", "map artefact"),
         pdb_id="2HYD",  # Sav1866, a multidrug ABC exporter
         narration=(
-            "The spur. These nine thousand clusters were flung off the map, and "
-            "most of them are one thing: the ATP-binding cassette, the "
+            "The spur. These eight thousand clusters were flung off the map, and "
+            "nearly all of them are one thing: the ATP-binding cassette, the "
             "engine of the ABC transporters. Every genome has them, pumping "
             "nutrients in and toxins out. Humans have forty-eight; a broken one "
             "causes cystic fibrosis, another pumps chemotherapy out of tumours. "
@@ -995,6 +1000,23 @@ AMBISONIC_BED_CACHE_DIR = CACHE_DIR / "ambisonic"
 MAX_SEED_CANDIDATES = 20_000
 
 
+def spur_mask(positions: np.ndarray) -> np.ndarray:
+    """The spur: far points within :data:`SPUR_HALF_ANGLE_DEG` of their mean direction.
+
+    The mean direction of everything beyond :data:`SPUR_RADIUS` is the spur's
+    axis (the streak dominates that set), and the cone around it drops the
+    stragglers that sit equally far out in other directions.
+    """
+    radius = np.linalg.norm(positions, axis=1)
+    far = radius > SPUR_RADIUS
+    if not far.any():
+        return far
+    axis = positions[far].mean(axis=0)
+    axis /= np.linalg.norm(axis)
+    cos = (positions @ axis) / np.maximum(radius, 1e-9)
+    return far & (cos > np.cos(np.radians(SPUR_HALF_ANGLE_DEG)))
+
+
 def densest_core(
     family_pos: np.ndarray,
     radius: float,
@@ -1041,7 +1063,7 @@ def family_mask(
             raise ValueError(f"story {story.key!r} selects by name but no names given")
         mask |= name_mask
     if story.region == "spur":
-        mask |= np.linalg.norm(universe.positions, axis=1) > SPUR_RADIUS
+        mask |= spur_mask(universe.positions)
     elif story.region == "dark":
         mask |= universe.dark_mask()
     elif story.region == "phage":

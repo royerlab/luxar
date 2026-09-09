@@ -196,6 +196,17 @@ def test_side_on_camera_looks_across_the_spur_not_along_it() -> None:
     assert tuple(side_on.target) == tuple(centre)
 
 
+def test_spur_mask_keeps_the_streak_and_drops_far_stragglers() -> None:
+    u = _universe()
+    # Add a straggler equally far out but 90 degrees off the spur's axis.
+    positions = np.vstack([u.positions, [[30.0, 0.0, 0.0]]]).astype(np.float32)
+    mask = demo.spur_mask(positions)
+    assert mask[4870:4920].all()  # the streak along +z
+    assert not mask[-1]  # the straggler along +x
+    assert mask.sum() == 50
+    assert not demo.spur_mask(np.zeros((5, 3), dtype=np.float32)).any()
+
+
 def test_region_stories_select_by_predicate_not_by_family() -> None:
     u = _universe()
     assert family_mask(_story(region="spur"), u, None).sum() == 50
