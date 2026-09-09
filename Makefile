@@ -81,7 +81,7 @@ endif
 # `^22.22.2 || ^24.15.0 || >=26.0.0`; its undici 8 dependency destructures
 # `markAsUncloneable` from node:worker_threads (added in Node 22.16) and throws
 # on anything older, so the whole unit suite is unrunnable below that. Vite 8.x
-# only needs 20.19+, so jsdom is the binding constraint for development. This
+# supports `^20.19.0 || >=22.12.0`, so jsdom is the binding constraint for development. This
 # make check is deliberately a coarse too-old floor (major.minor only): every
 # version it accepts has the 22.16+ API the suite actually needs (verified:
 # the full unit suite passes on 22.22.0, below jsdom's ^22.22.2); enforcing
