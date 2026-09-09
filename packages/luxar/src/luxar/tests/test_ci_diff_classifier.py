@@ -134,6 +134,12 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "and test_demo_commands.py grades the `clean-*` recipes and cache root",
     ),
     (
+        "Makefile",
+        "ts",
+        "generated-fixture-freshness.test.ts pins the ensure-viewer-fixtures E2E "
+        "wiring",
+    ),
+    (
         "scripts/gallery/manifest.json",
         "py",
         "test_demo_meta.py cross-validates it against the demo registry",
