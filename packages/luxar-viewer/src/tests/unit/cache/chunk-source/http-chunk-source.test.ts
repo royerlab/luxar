@@ -10,6 +10,7 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { HttpChunkSource } from '../../../../cache/chunk-source/http-chunk-source';
+import { log } from '../../../../utils/log';
 
 const BASE = 'https://example.com/data.zarr';
 
@@ -95,6 +96,26 @@ describe('HttpChunkSource — outcomes', () => {
       if (outcome.kind !== 'error') return;
       expect(outcome.cause.message).toContain(String(status));
       expect(outcome.cause.message).toContain('c/9/9');
+    }
+  );
+
+  it.each(['zarr.json', '.zarray', '.zattrs', '.zgroup', '.zmetadata'])(
+    'treats HTTP 403/410 for metadata probe %s as missing with a warning',
+    async (key) => {
+      const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+      try {
+        for (const status of [403, 410]) {
+          vi.stubGlobal(
+            'fetch',
+            vi.fn(async () => bodyResponse(new Uint8Array(0), status))
+          );
+
+          expect((await new HttpChunkSource(BASE).get(`nested/${key}`)).kind).toBe('missing');
+        }
+        expect(warning).toHaveBeenCalledTimes(2);
+      } finally {
+        warning.mockRestore();
+      }
     }
   );
 

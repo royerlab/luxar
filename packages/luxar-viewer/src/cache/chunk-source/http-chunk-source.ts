@@ -21,6 +21,13 @@ import {
   getRemoteContentHash,
   type RemoteValidationToken,
 } from '../multi-level-caching-store/validation-queue';
+import { log, Modules } from '../../utils/log';
+
+const ZARR_METADATA_KEYS = new Set(['zarr.json', '.zarray', '.zattrs', '.zgroup', '.zmetadata']);
+
+function isZarrMetadataKey(key: string): boolean {
+  return ZARR_METADATA_KEYS.has(key.slice(key.lastIndexOf('/') + 1));
+}
 
 /** Reads chunks from a directory-backed zarr store over HTTP. */
 export class HttpChunkSource implements ChunkSource {
@@ -65,6 +72,16 @@ export class HttpChunkSource implements ChunkSource {
 
     try {
       if (scope.response.status === 404) return { kind: 'missing' };
+      if (
+        (scope.response.status === 403 || scope.response.status === 410) &&
+        isZarrMetadataKey(key)
+      ) {
+        log.warning(
+          Modules.CACHE,
+          `HTTP ${scope.response.status} probing optional zarr metadata ${key}; treating as missing`
+        );
+        return { kind: 'missing' };
+      }
       if (!scope.response.ok) {
         const statusText = scope.response.statusText ? ` ${scope.response.statusText}` : '';
         return {
