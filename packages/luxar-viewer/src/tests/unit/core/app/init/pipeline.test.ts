@@ -288,9 +288,7 @@ describe('runInitPipeline', () => {
 
     await runInitPipeline(ports, {});
 
-    expect(initializeGpuByteBudget).toHaveBeenCalledWith(
-      config.dataLoading.performance.gpuPoolMaxBytes
-    );
+    expect(initializeGpuByteBudget).toHaveBeenCalledWith(undefined);
   });
 
   describe('partial-accumulator contract (load-bearing)', () => {

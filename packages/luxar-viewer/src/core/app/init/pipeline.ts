@@ -89,12 +89,6 @@ export interface InitPipelinePorts {
   emitEmbedderEvent: (event: 'sound-started' | 'sound-ended', payload: { name: string }) => void;
 }
 
-function resolveGpuPoolMaxBytes(options: LuxarAppOptions): number | null {
-  return options.gpuPoolMaxBytes === undefined
-    ? config.dataLoading.performance.gpuPoolMaxBytes
-    : options.gpuPoolMaxBytes;
-}
-
 /**
  * Build the complete viewer subsystem graph (scene manager, animation
  * controller, panels, input handler, etc.), wire context-loss /
@@ -117,7 +111,7 @@ export async function runInitPipeline(
   ports: InitPipelinePorts,
   partial: Partial<InitPipelineResult>
 ): Promise<InitPipelineResult> {
-  initializeGpuByteBudget(resolveGpuPoolMaxBytes(ports.options));
+  initializeGpuByteBudget(ports.options.gpuPoolMaxBytes);
 
   // Inform users about expected console messages. The browser logs a
   // `GET … 404` line (with a JS stack trace) for every failed network

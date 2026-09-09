@@ -47,6 +47,7 @@ import {
   computeWorkingSetBudgetBytes,
   readHeapLimitBytes,
 } from '../cache/heap-budget';
+import { config } from '../config';
 import { getInputProfile } from '../utils/input-capabilities';
 import { log, Modules } from '../utils/log';
 
@@ -163,8 +164,7 @@ function computeAutoBudget(memory?: GpuBudgetMemorySignals): { bytes: number; so
   }
 
   // The MINIMUM of the available signals. The cache-pool override is a peer
-  // signal, so when deviceMemory is absent it may raise or lower the fallback;
-  // a coarse ambient heap tier is not a GPU-memory signal.
+  // signal, so when deviceMemory is absent it may raise or lower the fallback.
   //
   // Clamped ABOVE only. There is no floor: a floor is exactly what stopped this
   // budget from ever binding, and a budget that cannot bind cannot evict.
@@ -221,8 +221,24 @@ export function configureGpuByteBudget(
 
 /** Configure once for whichever supported viewer entry point starts first. */
 export function initializeGpuByteBudget(overrideBytes?: number | null): void {
-  if (configured) return;
-  configureGpuByteBudget(overrideBytes);
+  if (configured) {
+    if (overrideBytes !== undefined) {
+      const requested =
+        overrideBytes === null
+          ? 'auto-sizing'
+          : Math.max(0, overrideBytes) === 0
+            ? 'disabling eviction'
+            : `${mb(Math.max(0, overrideBytes))} MB`;
+      log.warning(
+        Modules.PERFORMANCE,
+        `GPU byte budget is already configured; ignoring later request for ${requested}`
+      );
+    }
+    return;
+  }
+  configureGpuByteBudget(
+    overrideBytes === undefined ? config.dataLoading.performance.gpuPoolMaxBytes : overrideBytes
+  );
 }
 
 /** Current GPU-geometry byte budget. Read dynamically so backoff applies live. */

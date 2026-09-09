@@ -246,9 +246,7 @@ describe('LuxarLayer', () => {
     it('uses the configured default when gpuPoolMaxBytes is omitted', () => {
       new LuxarLayer(makeOptions());
 
-      expect(initializeGpuByteBudget).toHaveBeenCalledWith(
-        config.dataLoading.performance.gpuPoolMaxBytes
-      );
+      expect(initializeGpuByteBudget).toHaveBeenCalledWith(undefined);
     });
 
     it.each([0, 640_000_000])(

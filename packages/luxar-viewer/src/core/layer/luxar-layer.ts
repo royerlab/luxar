@@ -276,11 +276,7 @@ export class LuxarLayer {
     this.options = options;
 
     applyModuleOverrides({ wasmPath: options.wasmPath, workerPath: options.workerPath });
-    initializeGpuByteBudget(
-      options.gpuPoolMaxBytes === undefined
-        ? config.dataLoading.performance.gpuPoolMaxBytes
-        : options.gpuPoolMaxBytes
-    );
+    initializeGpuByteBudget(options.gpuPoolMaxBytes);
 
     // Materials must know the renderer's capabilities BEFORE any node is
     // built — the GLSL vs. TSL dispatch in the material factories branches on
