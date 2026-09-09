@@ -51,7 +51,7 @@ afterEach(() => {
 });
 
 describe('gpu-byte-budget', () => {
-  it('initializes a fresh embed budget from the mobile device class', async () => {
+  it('initializes a fresh embed budget from the independent mobile cap', async () => {
     vi.resetModules();
     profile.deviceClass = 'mobile';
     try {
@@ -59,7 +59,7 @@ describe('gpu-byte-budget', () => {
       withDeviceMemory(undefined, () => {
         withHeapLimit(undefined, () => {
           freshBudget.initializeGpuByteBudget(null);
-          expect(freshBudget.getGpuByteBudget()).toBe(Math.floor((384 * MiB) / 3));
+          expect(freshBudget.getGpuByteBudget()).toBe(128 * MiB);
         });
       });
     } finally {
