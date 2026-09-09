@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   configureGpuByteBudget,
   getGpuByteBudget,
+  initializeGpuByteBudget,
   reduceGpuByteBudgetForContextLoss,
 } from '../../../rendering/gpu-byte-budget';
 import { log, Modules } from '../../../utils/log';
@@ -52,6 +53,14 @@ describe('gpu-byte-budget', () => {
     withDeviceMemory(8, () => {
       configureGpuByteBudget(1536 * MB);
       expect(getGpuByteBudget()).toBe(1536 * MB);
+    });
+  });
+
+  it('keeps the first startup configuration when a shared embed path configures again', () => {
+    withDeviceMemory(1, () => {
+      configureGpuByteBudget(777 * MB);
+      initializeGpuByteBudget();
+      expect(getGpuByteBudget()).toBe(777 * MB);
     });
   });
 

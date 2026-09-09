@@ -119,6 +119,7 @@ import {
 } from '../../rendering/renderer-capabilities';
 import {
   getGpuByteBudget,
+  initializeGpuByteBudget,
   reduceGpuByteBudgetForContextLoss,
 } from '../../rendering/gpu-byte-budget';
 import {
@@ -187,6 +188,12 @@ export interface LuxarLayerOptions {
   requestRender?: () => void;
   /** Cache and prefetch flags forwarded to the data loader. */
   loaderConfig?: LoaderConfig;
+  /**
+   * Session-wide GPU geometry budget in bytes. `null` auto-sizes, `0`
+   * disables byte-budget eviction, and a positive value pins the budget.
+   * Defaults to `config.dataLoading.performance.gpuPoolMaxBytes`.
+   */
+  gpuPoolMaxBytes?: number | null;
   /** Override for bundlers that can't resolve `import.meta.url` asset URLs. */
   wasmPath?: string;
   /** Same, for the data worker. */
@@ -269,6 +276,11 @@ export class LuxarLayer {
     this.options = options;
 
     applyModuleOverrides({ wasmPath: options.wasmPath, workerPath: options.workerPath });
+    initializeGpuByteBudget(
+      options.gpuPoolMaxBytes === undefined
+        ? config.dataLoading.performance.gpuPoolMaxBytes
+        : options.gpuPoolMaxBytes
+    );
 
     // Materials must know the renderer's capabilities BEFORE any node is
     // built — the GLSL vs. TSL dispatch in the material factories branches on

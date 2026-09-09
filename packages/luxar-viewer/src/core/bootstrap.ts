@@ -147,10 +147,9 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // fallback. On mobile WebKit the device-class term is the other signal, so
   // `?cacheBudgetMB=` can only lower its 128 MiB share.
   // The persisted Settings budget remains cache-only by design; the regression
-  // guard is tests/unit/core/bootstrap.test.ts:594. The ambient JS heap limit is
-  // deliberately not folded in: its coarse Chromium tiers are not a GPU-memory
-  // measurement. A MOBILE device class is folded in (inside
-  // `computeAutoBudget`): on WebKit it is the only memory signal a phone has.
+  // guard is tests/unit/core/bootstrap.test.ts:594. The measured JS heap limit
+  // is also folded in because pooled geometry retains CPU-side ArrayBuffers;
+  // the mobile device class remains WebKit's only signal on phones and tablets.
   configureGpuByteBudget(
     urlParams.gpuBudgetMB != null
       ? urlParams.gpuBudgetMB * 1_000_000

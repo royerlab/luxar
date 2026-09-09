@@ -75,6 +75,7 @@ const MAX_BUDGET_BYTES = 2_000_000_000; // 2 GB
 const BACKOFF_FLOOR_BYTES = 256_000_000; // 256 MB
 
 let budgetBytes = NO_SIGNAL_BUDGET_BYTES;
+let configured = false;
 
 /**
  * Explicit memory signals the auto budget folds in alongside `navigator.deviceMemory`.
@@ -198,6 +199,7 @@ export function configureGpuByteBudget(
   overrideBytes?: number | null,
   memory?: GpuBudgetMemorySignals
 ): void {
+  configured = true;
   if (overrideBytes == null) {
     const auto = computeAutoBudget(memory);
     budgetBytes = auto.bytes;
@@ -215,6 +217,12 @@ export function configureGpuByteBudget(
       ? 'GPU byte budget: disabled (0 — unbounded resident geometry)'
       : `GPU byte budget: ${mb(budgetBytes)} MB (explicit)`
   );
+}
+
+/** Configure once for whichever supported viewer entry point starts first. */
+export function initializeGpuByteBudget(overrideBytes?: number | null): void {
+  if (configured) return;
+  configureGpuByteBudget(overrideBytes);
 }
 
 /** Current GPU-geometry byte budget. Read dynamically so backoff applies live. */
