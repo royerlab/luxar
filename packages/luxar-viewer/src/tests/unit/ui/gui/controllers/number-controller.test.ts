@@ -28,16 +28,18 @@ describe('NumberController', () => {
       expect(input).toBeInstanceOf(HTMLInputElement);
     });
 
-    it('keeps the full keyboard when negative values are allowed', () => {
+    it('leaves the keyboard hint unset when the range is unbounded', () => {
       const input = controller.domElement.querySelector<HTMLInputElement>(
         '.luxar-gui__input--number'
       )!;
-      expect(input.inputMode).toBe('text');
+      expect(input.hasAttribute('inputmode')).toBe(false);
+      expect(input.inputMode).toBe('');
     });
 
-    it('keeps the full keyboard for a range with a negative minimum', () => {
+    it('leaves the keyboard hint unset for a range with a negative minimum', () => {
       const ranged = new NumberController({ value: 0 }, 'value', { min: -10, max: 10 });
-      expect(ranged.$input!.inputMode).toBe('text');
+      expect(ranged.$input!.hasAttribute('inputmode')).toBe(false);
+      expect(ranged.$input!.inputMode).toBe('');
       ranged.dispose();
     });
 
