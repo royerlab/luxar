@@ -94,7 +94,7 @@ DEFAULT_TARGETS: tuple[str, ...] = (
 # rule from here would otherwise make every one of its findings look like
 # paid-down debt, quietly retiring the rule with a green tick and an "improved"
 # message.
-RATCHETED_SELECT: tuple[str, ...] = ("B", "RUF012")
+RATCHETED_SELECT: tuple[str, ...] = ("B", "BLE", "RUF012")
 
 # Baseline path relative to the project root.
 DEFAULT_BASELINE_RELPATH = "scripts/lint_baseline.json"
