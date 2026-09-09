@@ -450,8 +450,7 @@ function wrapperPartRanks(
 /**
  * One order-pass entry per visible sorted-mode gsplat mesh, rebuilt every
  * frame (fresh array per frame — a grow-only pool would pin disposed
- * meshes across frames; counts are tens, matching the per-frame
- * allocations {@link wrapperPartRanks} already makes).
+ * meshes across frames; counts are tens).
  */
 interface OrderSlot {
   mesh: THREE.Mesh;
