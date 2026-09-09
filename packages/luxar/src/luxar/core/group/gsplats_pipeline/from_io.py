@@ -148,7 +148,7 @@ def add_gsplats_from_file_impl(
     # tree (kind=partition root, or lod with non-leaf children) has no flat
     # GSplatData equivalent, so it is GRAFTED node-for-node, reusing the scene's
     # own builders — the same subtree the file already holds.
-    node, _stats = load_gsplat_node(path)
+    node, stats = load_gsplat_node(path)
 
     if flatten:
         from luxar.gsplats.gsplat_data import GSplatData
@@ -156,7 +156,7 @@ def add_gsplats_from_file_impl(
         return add_gsplats_from_data_impl(
             group,
             name=name,
-            result=GSplatData.from_default_selection(node, stats=_stats).flattened(),
+            result=GSplatData.from_default_selection(node, stats=stats).flattened(),
             parent=parent,
             extend_to_all=extend_to_all,
             dim_order=dim_order,
@@ -191,18 +191,19 @@ def add_gsplats_from_file_impl(
             **attrs,
         )
 
-    if lod_group is not None:
-        raise ValueError(
-            "flatten=True is required to apply substitutive_lod= to a "
-            "partition / nested .gsplats.zarr"
-        )
-
     if dim_order is not None or fill is not None or fill_sigma is not None:
         raise ValueError(
             "dim_order / fill / fill_sigma are not supported when grafting a "
             "partition / nested .gsplats.zarr (the file is already a full node "
             "subtree). Re-author the file in the target scene dims, or embed a "
-            "matrix-shaped (leaf / additive / kind=lod) file instead."
+            "matrix-shaped (leaf / additive / kind=lod) file instead, or pass "
+            "flatten=True to materialize the default finest selection first."
+        )
+
+    if lod_group is not None and lod_group is not False:
+        raise ValueError(
+            "flatten=True is required to apply substitutive_lod= to a "
+            "partition / nested .gsplats.zarr"
         )
 
     # Scene-dimension COUNT check on the STORED tree, before the graft creates

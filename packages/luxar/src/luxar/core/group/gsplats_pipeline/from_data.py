@@ -61,7 +61,7 @@ GRAFT_STRUCTURE = (
 )
 GRAFT_REMEDY = (
     "Label a single-leaf file instead ('gsplat flatten' collapses this one to "
-    "one leaf)."
+    "one leaf), or pass flatten=True when adding the file."
 )
 
 
@@ -889,6 +889,13 @@ def add_gsplats_from_data_impl(
             fill_sigma=fill_sigma,
             **attrs,
         )
+
+    for kwarg in ("labels", "image_labels", "keys"):
+        if attrs.get(kwarg) is not None:
+            raise ValueError(
+                f"Could not add gsplats '{name}': "
+                + labels_on_a_laddered_leaf_reason(kwarg)
+            )
 
     return add_gsplats_multi_lod_impl(
         group,

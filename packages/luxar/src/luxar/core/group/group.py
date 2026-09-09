@@ -19,6 +19,7 @@ from typing import (
     Sequence,
     TypeVar,
     Union,
+    cast,
 )
 
 import numpy as np
@@ -52,11 +53,15 @@ def _resolve_normalize_amplitudes_default(
 def _resolve_gsplat_substitutive_lod_alias(
     substitutive_lod: Any, lod_group: Any
 ) -> Any:
-    if substitutive_lod is not _UNSET_LOD and lod_group is not _UNSET_LOD:
+    substitutive_requested = (
+        substitutive_lod is not _UNSET_LOD and substitutive_lod is not None
+    )
+    alias_requested = lod_group is not _UNSET_LOD and lod_group is not None
+    if substitutive_requested and alias_requested:
         raise ValueError("Pass only one of substitutive_lod= and lod_group=")
-    if substitutive_lod is not _UNSET_LOD:
+    if substitutive_requested:
         return substitutive_lod
-    if lod_group is not _UNSET_LOD:
+    if alias_requested:
         return lod_group
     return None
 
@@ -70,26 +75,48 @@ def _gsplat_data_from_arrays(
     label_vocabulary: Optional[Dict[int, str]],
 ) -> GSplatData:
     from ...gsplats.gsplat_data import GSplatData
+    from ...validation.writing import validate_gsplat_inputs
 
     centers_array = np.asarray(centers)
-    if centers_array.ndim != 2:
-        raise ValueError(
-            f"Centers must have shape (N, D), got shape {centers_array.shape}"
-        )
-    amplitudes_array = np.asarray(amplitudes)
-    if amplitudes_array.ndim == 0:
-        amplitudes_array = np.full(
-            centers_array.shape[0], amplitudes_array, dtype=amplitudes_array.dtype
-        )
-    colors_array = None if colors is None else np.asarray(colors)
-    if colors_array is not None and colors_array.ndim == 1:
-        colors_array = np.broadcast_to(
-            colors_array, (centers_array.shape[0], colors_array.shape[0])
+    amplitudes_value: Any = (
+        amplitudes if np.isscalar(amplitudes) else np.asarray(amplitudes)
+    )
+    cholesky_array = np.asarray(cholesky_factors)
+    (
+        centers_array,
+        amplitudes_value,
+        cholesky_array,
+        colors_value,
+        n_splats,
+        _n_dims,
+        cholesky_is_uniform,
+    ) = validate_gsplat_inputs(
+        centers_array,
+        amplitudes_value,
+        cholesky_array,
+        colors,
+    )
+    amplitudes_array = cast(
+        np.ndarray[Any, Any],
+        np.full(n_splats, amplitudes_value, dtype=np.asarray(amplitudes_value).dtype)
+        if np.isscalar(amplitudes_value)
+        else amplitudes_value,
+    )
+    if cholesky_is_uniform:
+        cholesky_array = np.broadcast_to(
+            cholesky_array, (n_splats, cholesky_array.shape[1])
         ).copy()
+    colors_array = None
+    if colors_value is not None:
+        colors_array = np.asarray(colors_value)
+        if colors_array.ndim == 1:
+            colors_array = np.broadcast_to(
+                colors_array.astype(np.float32), (n_splats, colors_array.shape[0])
+            )
     return GSplatData(
         centers=centers_array,
         amplitudes=amplitudes_array,
-        cholesky_factors=np.asarray(cholesky_factors),
+        cholesky_factors=cholesky_array,
         colors=colors_array,
         label_ids=None if label_ids is None else np.asarray(label_ids),
         label_vocabulary=label_vocabulary,
@@ -850,8 +877,8 @@ class Group(Node):
         fill: Optional[Dict[str, float]] = None,
         fill_sigma: Optional[Dict[str, float]] = None,
         partition: Any = None,
-        substitutive_lod: Any = None,
-        additive_lod: Any = None,
+        substitutive_lod: Any = _UNSET_LOD,
+        additive_lod: Any = _UNSET_LOD,
         **attrs: Any,
     ) -> Union[GSplats, "Group"]:
         """Add a Gaussian splats node.
@@ -893,9 +920,10 @@ class Group(Node):
                 "gsplats"``; the wrapper's children are ``part_<i>``
                 GSplats nodes. ``image_labels`` is not supported alongside
                 ``partition=``.
-            substitutive_lod: Substitutive-LOD control, matching the Points,
-                Lines, and Mesh adders. The value vocabulary is the same as
-                :meth:`add_gsplats_from_data`'s historical ``lod_group=``.
+            substitutive_lod: Substitutive-LOD control. The value vocabulary is
+                the same as :meth:`add_gsplats_from_data`'s historical
+                ``lod_group=``. When combined with ``partition=``, every
+                substitutive level is partitioned independently.
             additive_lod: Additive-LOD control. The value vocabulary matches
                 :meth:`add_gsplats_from_data`.
             **attrs: Additional node attributes. Common ones:
@@ -922,15 +950,30 @@ class Group(Node):
             The created ``GSplats`` node, or a kind=partition ``Group``
             wrapper when ``partition=`` produced more than one part.
         """
-        if substitutive_lod is not None or additive_lod is not None:
-            result = _gsplat_data_from_arrays(
-                centers,
-                amplitudes,
-                cholesky_factors,
-                colors,
-                label_ids,
-                label_vocabulary,
-            )
+        resolved_substitutive_lod = (
+            None if substitutive_lod is _UNSET_LOD else substitutive_lod
+        )
+        resolved_additive_lod = None if additive_lod is _UNSET_LOD else additive_lod
+        if resolved_substitutive_lod not in (
+            None,
+            False,
+        ) or resolved_additive_lod not in (
+            None,
+            False,
+        ):
+            from .compositing import funnel_add_error
+
+            try:
+                result = _gsplat_data_from_arrays(
+                    centers,
+                    amplitudes,
+                    cholesky_factors,
+                    colors,
+                    label_ids,
+                    label_vocabulary,
+                )
+            except (ValueError, TypeError) as error:
+                raise ValueError(funnel_add_error("gsplats", name, error)) from error
             return self.add_gsplats_from_data(
                 name,
                 result,
@@ -939,8 +982,8 @@ class Group(Node):
                 dim_order=dim_order,
                 fill=fill,
                 fill_sigma=fill_sigma,
-                substitutive_lod=substitutive_lod,
-                additive_lod=additive_lod,
+                substitutive_lod=resolved_substitutive_lod,
+                additive_lod=resolved_additive_lod,
                 normalize_amplitudes=False,
                 partition=partition,
                 labels=labels,
