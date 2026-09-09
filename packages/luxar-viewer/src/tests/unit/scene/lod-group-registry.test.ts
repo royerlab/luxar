@@ -1378,6 +1378,7 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     expect(requestRender).not.toHaveBeenCalled();
 
     groupObject.visible = true;
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(true);
     expect(reg.evaluatePerFrame()).toBe(false);
     expect(requestReprocess).toHaveBeenCalledOnce();
     expect(requestReprocess).toHaveBeenCalledWith(['/partition/part_0']);
