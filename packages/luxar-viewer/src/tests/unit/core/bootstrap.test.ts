@@ -186,6 +186,17 @@ describe('bootstrapStandalone', () => {
       }
     });
 
+    it('detects the input profile when a partial URL-params object omits input', async () => {
+      const { getInputProfile, resetInputProfileForTests } =
+        await import('../../../utils/input-capabilities');
+      try {
+        await bootstrapStandalone({ canvas: CANVAS, urlParams: {} as UrlParams });
+        expect(getInputProfile().source).toBe('detected');
+      } finally {
+        resetInputProfileForTests();
+      }
+    });
+
     it('names the browser tab from ?title=, and leaves it alone without one', async () => {
       const original = document.title;
       try {
@@ -509,6 +520,18 @@ describe('bootstrapStandalone', () => {
         noPrefetch: false,
         prefetchDebug: false,
       });
+    });
+
+    it('leaves mobile blend-warm-up resolution to the shared init pipeline', async () => {
+      await bootstrapStandalone({
+        canvas: CANVAS,
+        urlParams: { ...EMPTY_PARAMS, input: 'touch' },
+      });
+      expect(mocks.init.mock.calls.at(-1)?.[0].blendWarmup).toBe(true);
+      // Bootstrap only threads the URL option. The shared pipeline applies the
+      // mobile clamp for both standalone and direct LuxarApp construction.
+      await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
+      expect(mocks.init.mock.calls.at(-1)?.[0].blendWarmup).toBe(true);
     });
 
     it('threads urlParams.dpr into init() as pinnedDPR, and omits it when absent', async () => {

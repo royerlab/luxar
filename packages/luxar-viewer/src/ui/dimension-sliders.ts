@@ -3,6 +3,7 @@ import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { calculateStepSize } from '../scene/dims/step-math';
 import { getNonDisplayedDimensions } from '../scene/dims/selection';
 import { getViewerContainer } from '../utils/viewer-container';
+import { normalizeWheelDeltaWithAxisFallback } from '../utils/wheel-delta';
 import type { DimensionAnimationManager } from '../scene/animation/dimension-animation-manager';
 import { config } from '../config';
 import { log, Modules } from '../utils/log';
@@ -799,10 +800,7 @@ export class DimensionSliders {
       // preventDefault: don't scroll the page, and don't let Ctrl+wheel
       // zoom it (requires { passive: false }).
       event.preventDefault();
-      // Shift+wheel on a standard mouse arrives as a HORIZONTAL scroll
-      // (the browser swaps the axis, leaving deltaY = 0) — read whichever
-      // axis carries the motion.
-      const delta = event.deltaY !== 0 ? event.deltaY : event.deltaX;
+      const delta = normalizeWheelDeltaWithAxisFallback(event);
       if (delta === 0) return;
       const wheelStep = calculateStepSize(dimIndex, this.dims, {
         shift: event.shiftKey,

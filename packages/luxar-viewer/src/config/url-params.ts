@@ -275,11 +275,14 @@ export interface UrlParams {
    * hover capability, touch points, and device tier. This changes device-class
    * fallback budgets (`touch` only — `mouse` keeps the detected tier),
    * primary-tip pen routing, the Safari gesture-canceller gate, and whether the
-   * help overlay lists its Touch section.
-   * Stylesheets and non-pen gesture routing keep following the real media
-   * features and `PointerEvent.pointerType`, so a faithful check still needs
-   * device emulation or a real device. `null` (missing or unrecognised) ⇒ detect
-   * from the browser. See `utils/input-capabilities.ts`.
+   * help overlay lists its Touch section; `touch` additionally applies the
+   * mobile rendering budgets (adaptive-DPR floor and refresh ceiling, high-DPR
+   * cap, GPU-byte and element-texture ceilings, data-worker count) and skips
+   * the blend-variant program warm-up. Stylesheets and non-pen gesture routing
+   * keep following the real media features and `PointerEvent.pointerType`, so a
+   * faithful check still needs device emulation or a real device. `null`
+   * (missing or unrecognised) ⇒ detect from the browser. See
+   * `utils/input-capabilities.ts`.
    */
   input: InputProfileOverride | null;
 

@@ -3021,6 +3021,11 @@ describe('SceneLoader', () => {
 
     it('should update geometry with new points data', () => {
       const points = attachPointsChild('/test_points', 0);
+      const invalidatePartitionFootprint = vi.fn();
+      (sceneLoader as any).lodGroupRegistry = {
+        invalidatePartitionFootprint,
+        clear: vi.fn(),
+      };
       const newData = {
         positions: new Float32Array([4, 5, 6, 7, 8, 9]),
         colors: new Float32Array([1, 1, 1, 1, 1, 1]),
@@ -3042,6 +3047,7 @@ describe('SceneLoader', () => {
       // and its visiblePointCount reflects the new data.
       expect(points.geometry).toBeDefined();
       expect(points.userData.visiblePointCount).toBe(2);
+      expect(invalidatePartitionFootprint).toHaveBeenCalledWith('/test_points');
     });
 
     it('writes new positions through whichever path the loader takes (pool or in-place)', () => {

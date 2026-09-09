@@ -339,6 +339,12 @@ export interface WorldBoxSource {
   }[];
 }
 
+/** Caller-owned output reused across evaluations; ``useLodBounds`` selects robust metric bounds. */
+export interface WorldBoxOptions {
+  worldBoxScratch: BoundingBox;
+  useLodBounds?: boolean;
+}
+
 /**
  * Fold an entry's children nD bounds into a single world-space
  * :type:`BoundingBox`, mapping nD axes onto X/Y/Z via the current
@@ -350,21 +356,23 @@ export interface WorldBoxSource {
  * frustum gating and eviction so visible outliers remain part of the geometry.
  * Children with bogus bounds are skipped. Uses the caller-owned
  * ``localBoxScratch`` (per-entry) and ``matrixScratch`` (per-registry);
- * ``transformBoundingBox`` allocates the returned box, so it is independent of
- * those scratches and safe to keep past the next call.
+ * ``worldBoxScratch`` receives the transformed bounds and is reused by the
+ * caller on the next evaluation.
  */
 export function computeEntryWorldBox(
   entry: WorldBoxSource,
   displayDims: readonly number[],
   localBoxScratch: BoundingBox,
   matrixScratch: number[],
-  useLodBounds: boolean = false
+  options: WorldBoxOptions
 ): BoundingBox | null {
   const local = localBoxScratch;
   let any = false;
   for (let ci = 0; ci < entry.children.length; ci++) {
     const child = entry.children[ci];
-    const pb = useLodBounds ? (child.lodBounds ?? child.positionBounds) : child.positionBounds;
+    const pb = options.useLodBounds
+      ? (child.lodBounds ?? child.positionBounds)
+      : child.positionBounds;
     if (pb.min.length === 0 || pb.max.length === 0 || pb.min.length !== pb.max.length) {
       continue;
     }
@@ -423,5 +431,5 @@ export function computeEntryWorldBox(
   const elements = entry.groupObject.matrixWorld.elements;
   const m = matrixScratch;
   for (let i = 0; i < 16; i++) m[i] = elements[i];
-  return transformBoundingBox(local, m);
+  return transformBoundingBox(local, m, options.worldBoxScratch);
 }

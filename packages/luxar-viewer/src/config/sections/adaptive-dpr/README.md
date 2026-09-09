@@ -25,7 +25,8 @@ ranges, TTL consistency). The runtime on/off toggle lives in
   prevents quality flicker), `hysteresisSeconds: 3`,
   `evaluationIntervalMs: 500`; refresh-relative ratios
   `scaleDownFpsRatio: 0.75` / `scaleUpFpsRatio: 0.90` over a
-  `refreshRateFallback: 60` warmup cap; probe knobs
+  `refreshRateFallback: 60` warmup cap (and under a `refreshRateCeiling`,
+  `0` = none here; the mobile runtime constructs the manager with 60); probe knobs
   `probeWindowMs: 1500` / `probeImprovement: 1.05` / `probeMinSamples: 8`;
   floor/backoff `floorTtlMs: 30_000` × `backoffMultiplier: 2` capped at
   `backoffMaxTtlMs: 300_000`; ceiling demotion

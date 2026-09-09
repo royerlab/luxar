@@ -75,8 +75,11 @@ snapshot; the handlers update them through the context.
 
 - **Ctrl/Meta+scroll** is passed through untouched — it belongs to the
   upstream `InputHandler` FOV path.
-- Otherwise calls `preventDefault` and normalises `deltaY` via
-  `-Math.sign(...)` so line / pixel / page scroll modes behave alike.
+- Otherwise calls `preventDefault` and normalises through
+  `utils/wheel-delta`; Shift+scroll opts into `deltaX` fallback when that axis
+  carries the motion.
+- A zero selected delta returns without applying an impulse or dispatching
+  `change`.
 - **Shift+scroll** rolls around the viewing axis: inertial-mode adds an
   impulse to `angularVelocity`; non-inertial premultiplies a quaternion
   into `orientation` and renormalises.

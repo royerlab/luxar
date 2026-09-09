@@ -6,6 +6,11 @@ import {
 } from '../../../rendering/gpu-byte-budget';
 import { log, Modules } from '../../../utils/log';
 
+const profile = { deviceClass: 'laptop' as 'mobile' | 'laptop' | 'desktop' };
+vi.mock('../../../utils/input-capabilities', () => ({
+  getInputProfile: () => profile,
+}));
+
 /** Temporarily set navigator.deviceMemory (GB) for a test. */
 function withDeviceMemory(gb: number | undefined, fn: () => void): void {
   const had = Object.prototype.hasOwnProperty.call(navigator, 'deviceMemory');
@@ -209,5 +214,40 @@ describe('gpu-byte-budget', () => {
     expect(getGpuByteBudget()).toBe(256 * MB);
     reduceGpuByteBudgetForContextLoss(); // already at floor → unchanged
     expect(getGpuByteBudget()).toBe(256 * MB);
+  });
+});
+
+describe('gpu-byte-budget — mobile device class', () => {
+  afterEach(() => {
+    profile.deviceClass = 'laptop';
+  });
+
+  it('a phone/tablet with NO other signal (WebKit) gets the mobile pool share, not the 512 MB fallback', () => {
+    profile.deviceClass = 'mobile';
+    withDeviceMemory(undefined, () => {
+      withHeapLimit(undefined, () => {
+        configureGpuByteBudget();
+        expect(getGpuByteBudget()).toBe(Math.floor((384 * MiB) / 3));
+      });
+    });
+  });
+
+  it('the mobile candidate is a peer in the minimum: it binds under a generous deviceMemory', () => {
+    profile.deviceClass = 'mobile';
+    withDeviceMemory(8, () => {
+      withHeapLimit(undefined, () => {
+        configureGpuByteBudget(); // 8 GB × 0.25 = 2 GB would otherwise win
+        expect(getGpuByteBudget()).toBe(Math.floor((384 * MiB) / 3));
+      });
+    });
+  });
+
+  it('a laptop/desktop contributes no device-class candidate (unchanged resolution)', () => {
+    withDeviceMemory(undefined, () => {
+      withHeapLimit(undefined, () => {
+        configureGpuByteBudget();
+        expect(getGpuByteBudget()).toBe(512 * MB);
+      });
+    });
   });
 });
