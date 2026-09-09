@@ -171,7 +171,7 @@ describe('MultiLevelCachingStore with an injected ChunkSource', () => {
     });
     const store = new MultiLevelCachingStore(source, { noOpfs: true });
 
-    await expect(store.get('points/c/0/0')).rejects.toThrow(/aborted during invalidation/);
+    await expect(store.get('points/c/0/0')).rejects.toThrow(/Cache read aborted/);
     await store.dispose();
   });
 

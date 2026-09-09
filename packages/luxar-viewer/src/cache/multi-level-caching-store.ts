@@ -440,8 +440,8 @@ export class MultiLevelCachingStore implements AsyncReadable {
    * - `ok(data)` — present in some tier or fetched successfully.
    * - `err({ kind: 'Missing' })` — server returned 404. Caller may treat as
    *   "not yet stored" without alarm.
-   * - `err({ kind: 'NetworkError', cause })` — transient network/DNS
-   *   error or 5xx after retries exhausted. Caller may back off.
+   * - `err({ kind: 'NetworkError', cause })` — a non-missing HTTP failure or
+   *   transient network/DNS error after retries exhausted. Caller may back off.
    * - `err({ kind: 'Aborted' })` — caller signal, cache invalidation, or
    *   store disposal aborted the read.
    * - `err({ kind: 'Fatal', cause })` — the whole container is unreadable, not
@@ -532,12 +532,8 @@ export class MultiLevelCachingStore implements AsyncReadable {
       }
     }
 
-    // MED-2: per-key prefetch trigger. Only the originator of the
-    // coalesced inflight chain fans out neighbour onAccess work — the
-    // prefetcher's own seen-set would early-return for waiters, but
-    // each call still touches that seen-set N times for N waiters.
-    // Restrict to the originator (or non-coalesced signal'd callers)
-    // so we do exactly one onAccess per logical access.
+    // MED-2: per-key prefetch trigger. Only the first successful demand waiter
+    // fans out neighbour work, so coalesced callers touch the seen-set once.
     if (!options?.suppressPrefetch && outcome.result.ok && !pending.prefetchTriggered) {
       pending.prefetchTriggered = true;
       this.prefetcher?.onAccess(key);
@@ -569,8 +565,12 @@ export class MultiLevelCachingStore implements AsyncReadable {
     let removeAbortListener = (): void => {};
     const aborted = new Promise<PendingGetOutcome>((resolve) => {
       const onAbort = (): void => resolve({ result: err({ kind: 'Aborted' }), source: 'network' });
-      signal.addEventListener('abort', onAbort, { once: true });
-      removeAbortListener = () => signal.removeEventListener('abort', onAbort);
+      if (signal.aborted) {
+        onAbort();
+      } else {
+        signal.addEventListener('abort', onAbort, { once: true });
+        removeAbortListener = () => signal.removeEventListener('abort', onAbort);
+      }
     });
     try {
       return await Promise.race([pending.promise, aborted]);
@@ -586,10 +586,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
    * coalescer. Increments aggregate network counters once; per-caller
    * demand counters are incremented in getResult after this resolves.
    */
-  private async fetchKeyChain(
-    key: string,
-    sharedSignal?: AbortSignal
-  ): Promise<PendingGetOutcome> {
+  private async fetchKeyChain(key: string, sharedSignal?: AbortSignal): Promise<PendingGetOutcome> {
     // L2: OPFS check (~1ms)
     if (this.enabled && this.l2Store) {
       const l2Hit = await this.l2Store.get(key);
