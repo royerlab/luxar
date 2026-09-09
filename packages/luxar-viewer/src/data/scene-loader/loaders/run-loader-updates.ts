@@ -74,7 +74,7 @@ export function resolveLoadEligibleLoaders<TLoader>(
 /**
  * Run a per-loader update task for every entry in `loaders`, recording
  * failures into `failedLoaders` and forgetting the predictive-prefetch
- * baseline for failed or frustum-culled paths. Loaders outside a targeted
+ * baseline for failed, culled, or hidden paths. Loaders outside a targeted
  * partition resync (`isResyncTarget`) are skipped WITHOUT forgetting their
  * baseline — nothing about their view changed. Archive faults are excluded
  * from that bookkeeping and reported once after every task has settled.

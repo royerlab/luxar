@@ -28,11 +28,13 @@ CHECK_STATIC_EXEMPTIONS = {
     ),
     "check-demo-ladders": (
         "generated demo scenes are gitignored and absent from checkout-only CI; "
-        "artifact builders must use --require-scenes"
+        "the gallery generator reports ladder findings without gating while the "
+        "pre-upload runbook exposes the corpus-wide debt with --require-scenes"
     ),
     "check-scene-credits": (
         "generated demo scenes are gitignored and absent from checkout-only CI; "
-        "artifact builders must use --require-scenes"
+        "the gallery generator gates generated stores and the pre-upload runbook "
+        "checks the full inventory with --require-scenes"
     ),
 }
 

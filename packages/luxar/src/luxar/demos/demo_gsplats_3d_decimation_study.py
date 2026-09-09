@@ -134,6 +134,7 @@ from luxar.demos import (
     parse_demo_flags,
     parse_path_arg,
     run_luxar_cli,
+    stamp_input_digests,
 )
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
 from luxar.gsplats.tree import center_bounds
@@ -351,6 +352,7 @@ def create_luxar_scene(level_paths: list[Path], output_path: Path) -> Path:
                 dimensions=dims,
                 viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
             )
+            stamp_input_digests(scene)
             scene.attrs["title"] = "GSplats: How Far Can You Decimate?"
             scene.attrs["description"] = (
                 "One zebrafish embryo (zebrahub h2afva) at four measured detail "

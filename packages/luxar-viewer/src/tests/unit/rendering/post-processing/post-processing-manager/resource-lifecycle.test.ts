@@ -30,6 +30,7 @@ const sizingInputs = (overrides: Partial<SizingInputs> = {}): SizingInputs => ({
   renderSize: { width: 800, height: 600 },
   ssaaEnabled: false,
   ssaaMultiplier: 1,
+  maxPhysicalDimension: 16384,
   ...overrides,
 });
 
@@ -116,15 +117,15 @@ describe('getPhysicalSize', () => {
     ).toEqual({ width: 1, height: 1 });
   });
 
-  it('rounds (not floors) to nearest integer for fractional DPR', () => {
+  it('floors fractional DPR exactly like Three.js canvas sizing', () => {
     expect(
       getPhysicalSize(
         sizingInputs({
-          renderer: stubRenderer(1.5),
-          renderSize: { width: 100, height: 100 },
+          renderer: stubRenderer(1.31),
+          renderSize: { width: 1001, height: 1003 },
         })
       )
-    ).toEqual({ width: 150, height: 150 });
+    ).toEqual({ width: 1311, height: 1313 });
   });
 });
 

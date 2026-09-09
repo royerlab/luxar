@@ -2,9 +2,8 @@
  * Pure helper for computing post-processing render-target dimensions.
  *
  * Extracted from `rendering/post-processing/post-processing-manager.ts` so the SSAA
- * upscale arithmetic — multiply the screen size by `ssaaMultiplier` only
- * when SSAA is on, otherwise pass through — is testable without a
- * WebGL context.
+ * upscale, Three.js floor rounding, and framebuffer clamp are testable
+ * without a WebGL context.
  *
  * @module rendering/post-processing/render-target-sizing
  */
@@ -12,6 +11,17 @@
 export interface RenderSize {
   width: number;
   height: number;
+}
+
+export interface RenderTargetAllocation {
+  logical: RenderSize;
+  physical: RenderSize;
+  limited: boolean;
+}
+
+function logicalDimensionForPhysical(physical: number, pixelRatio: number): number {
+  const logical = physical / pixelRatio;
+  return Math.floor(logical * pixelRatio) === physical ? logical : (physical + 0.25) / pixelRatio;
 }
 
 /**
@@ -40,5 +50,66 @@ export function computeEffectiveRenderSize(
   return {
     width: Math.round(renderSize.width * ssaaMultiplier),
     height: Math.round(renderSize.height * ssaaMultiplier),
+  };
+}
+
+/**
+ * Compute matching renderer and render-target dimensions.
+ *
+ * Three.js floors `logical × pixelRatio` when it sizes the canvas. Use
+ * the same rule here so every off-screen attachment exactly matches the
+ * backbuffer at non-integer DPRs. If either physical axis exceeds the
+ * framebuffer limit, reduce both axes by one common factor, floor the
+ * resulting physical dimensions to even values for encoder compatibility,
+ * then derive the renderer's logical size from those physical dimensions.
+ */
+export function computeRenderTargetAllocation(
+  renderSize: RenderSize,
+  ssaaEnabled: boolean,
+  ssaaMultiplier: number,
+  pixelRatio: number,
+  maxPhysicalDimension: number
+): RenderTargetAllocation {
+  const effective = computeEffectiveRenderSize(renderSize, ssaaEnabled, ssaaMultiplier);
+  const requestedPhysical = {
+    width: Math.max(1, Math.floor(effective.width * pixelRatio)),
+    height: Math.max(1, Math.floor(effective.height * pixelRatio)),
+  };
+  const scale = Math.min(
+    1,
+    maxPhysicalDimension / requestedPhysical.width,
+    maxPhysicalDimension / requestedPhysical.height
+  );
+  let logical = {
+    width: Math.max(1 / pixelRatio, effective.width * scale),
+    height: Math.max(1 / pixelRatio, effective.height * scale),
+  };
+  let physical = {
+    width: Math.max(1, Math.floor(logical.width * pixelRatio)),
+    height: Math.max(1, Math.floor(logical.height * pixelRatio)),
+  };
+
+  if (scale < 1) {
+    physical = {
+      width: Math.max(2, physical.width - (physical.width % 2)),
+      height: Math.max(2, physical.height - (physical.height % 2)),
+    };
+    logical = {
+      width: logicalDimensionForPhysical(physical.width, pixelRatio),
+      height: logicalDimensionForPhysical(physical.height, pixelRatio),
+    };
+  } else {
+    if (Math.floor(logical.width * pixelRatio) !== physical.width) {
+      logical.width = logicalDimensionForPhysical(physical.width, pixelRatio);
+    }
+    if (Math.floor(logical.height * pixelRatio) !== physical.height) {
+      logical.height = logicalDimensionForPhysical(physical.height, pixelRatio);
+    }
+  }
+
+  return {
+    logical,
+    physical,
+    limited: scale < 1,
   };
 }

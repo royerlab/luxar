@@ -278,6 +278,19 @@ Written by passing `citation=` to `LuxarZarrCompiler.create_scene(...)`. The
 payload is validated at write time (`luxar.core.citation.validate_citation`), so
 a malformed citation raises instead of being baked into every copy of the data.
 
+### `input_digests` (optional root attr)
+
+`input_digests` maps each resolved input artifact's basename to the lowercase
+sha256 digest of the bytes the demo resolver accepted. The map is canonical by
+basename and records every manifest artifact resolved in the process before the
+scene was stamped; basenames are therefore expected to be unique within that
+set.
+
+The attribute participates in the root `content_hash`, so changing the resolved
+input generation changes the scene's content identity even when its geometry is
+otherwise unchanged. This differs from the root `environment/` sidecar group,
+which is derived metadata and is explicitly excluded from `content_hash`.
+
 ### `incomplete` (optional root attr)
 
 `incomplete` (boolean) is written to the root `.zattrs` only when the writer

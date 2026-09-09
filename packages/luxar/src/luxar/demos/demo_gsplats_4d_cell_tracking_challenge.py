@@ -128,6 +128,7 @@ from luxar.demos import (
     parse_demo_flags,
     parse_int_arg,
     require_module,
+    stamp_input_digests,
     warn_if_no_cuda_gpu,
 )
 from luxar.demos.registry import DEMO_CACHE_ROOT
@@ -1142,6 +1143,7 @@ def create_luxar_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(cinematic_mode=True),
             )
+            stamp_input_digests(scene)
 
             scene.attrs["title"] = (
                 f"GSplats: Cell Tracking Challenge — {n} zebrafish embryo timelapses"
