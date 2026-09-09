@@ -66,6 +66,7 @@ import {
   initPicking as initPickingImpl,
   disposePickingSession as disposePickingSessionImpl,
 } from './app/picking/init-picking';
+import { installDoubleTapToFit } from './app/interaction/double-tap-to-fit';
 import { applyViewerConfigState as applyViewerConfigStateHelper } from './app/viewer-config/apply-state';
 import {
   getPanelVisibilityStates as getPanelVisibilityStatesHelper,
@@ -311,6 +312,12 @@ export class LuxarApp {
       this.setupOnlineRetry();
       this.setupDebugInterface();
       this.setupEmbedderHooks(options.canvas);
+      // Touch double-tap re-frames on EVERY scene — not only the ones the
+      // picking session (and with it canvas-actions) gets provisioned for.
+      // (Unit tests hand `init` a stub canvas with no event surface.)
+      if (options.canvas instanceof HTMLElement) {
+        installDoubleTapToFit(options.canvas, this.events, () => this.recenterCamera());
+      }
 
       this.isInitialized = true;
     } catch (error) {

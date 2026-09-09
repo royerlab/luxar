@@ -160,7 +160,7 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
         const shortcutLabel = controlModeShortcut ? ` (${controlModeShortcut})` : '';
         btn.setAttribute(
           'aria-label',
-          `Navigation: ${modeLabel} — click for ${next}${shortcutLabel}, right-click for options`
+          `Navigation: ${modeLabel} — click for ${next}${shortcutLabel}, right-click or hold for options`
         );
         // The button icon is cryptic on its own, so name the current mode in
         // the hover tooltip too: e.g. "Navigation · Orbit  V".
@@ -259,8 +259,8 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
         btn.setAttribute(
           'aria-label',
           muted
-            ? 'Sound: muted — click to unmute, right-click for the mixer'
-            : 'Sound: on — click to mute, right-click for the mixer'
+            ? 'Sound: muted — click to unmute, right-click or hold for the mixer'
+            : 'Sound: on — click to mute, right-click or hold for the mixer'
         );
         const tip = btn.querySelector('.luxar-control-rail__tip');
         if (tip) tip.textContent = muted ? 'Sound · Muted' : 'Sound · On';
