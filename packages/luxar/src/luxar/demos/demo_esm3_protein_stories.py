@@ -274,7 +274,9 @@ STORIES: tuple[Story, ...] = (
         facts=(
             "Hsp70 — DnaK in bacteria — is a chaperone: it holds unfolded "
             "proteins, refolds the damaged ones and hands the hopeless ones to "
-            "the shredder. Every cell type in every domain of life has it.",
+            "the shredder. Every bacterium and every eukaryote carries one, "
+            "with no known exception; archaea are the odd ones out, and those "
+            "that have it borrowed it from bacteria.",
             # Human Hsp70 vs E. coli DnaK: ~47–48% identity (Brocchieri et al.
             # 2008; Frontiers Mol. Biosci. 2021).
             "After some three billion years of separate evolution, human Hsp70 "
@@ -301,7 +303,8 @@ STORIES: tuple[Story, ...] = (
         narration=(
             "Hsp70, the oldest job in the cell. It holds unfolded proteins, "
             "refolds the damaged ones, and hands the hopeless ones to the "
-            "shredder. After three billion years apart, the human and E. coli "
+            "shredder. Every bacterium and every eukaryote has one. After "
+            "three billion years apart, the human and E. coli "
             "versions are still nearly half identical, letter for letter. That "
             "is why this cluster mixes bacteria, plants and animals. Cancer "
             "cells over-produce it to survive their own chaos, and drugs against "

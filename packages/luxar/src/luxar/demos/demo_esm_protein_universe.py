@@ -650,7 +650,7 @@ STORIES: tuple[UniverseStory, ...] = (
     ),
     _carry(
         "Hsp70",
-        subtitle="Thousands of clusters of one chaperone, in every branch of life",
+        subtitle="Nearly four thousand clusters of one chaperone, in every branch of life on this map",
         pattern="",
         pfam=("PF00012",),  # HSP70
         radius=FAMILY_RADIUS,
@@ -675,7 +675,8 @@ STORIES: tuple[UniverseStory, ...] = (
         narration=(
             "Hsp70, the oldest job in the cell. It holds unfolded proteins, "
             "refolds the damaged ones, and hands the hopeless ones to the "
-            "shredder. After three billion years apart, the human and E. coli "
+            "shredder. Every bacterium and every eukaryote has one. After "
+            "three billion years apart, the human and E. coli "
             "versions are still nearly half identical, letter for letter. The "
             "map holds it in dozens of knots, most of them bacterial, all "
             "recognisably the same protein. "
@@ -952,8 +953,8 @@ STORIES: tuple[UniverseStory, ...] = (
             # Annotation table: 51% of Uroviricota clusters have
             # cluster_pct_characterized == 0.
             "Half of the phage clusters here are dark: no member has ever been "
-            "characterised. Phage genomes are the largest reservoir of unknown "
-            "genes on the planet.",
+            "characterised. Phage genomes are probably the largest reservoir "
+            "of unexplored genes on the planet.",
         ),
         mystery=(
             "Every gram of soil and every millilitre of seawater holds millions "
