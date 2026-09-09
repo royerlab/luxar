@@ -151,10 +151,10 @@ def test_require_scenes_turns_an_empty_inventory_into_a_failure(
 ) -> None:
     """The opt-in for callers that KNOW demos should be present.
 
-    The default no-op is right for a fresh checkout and wrong for release prep
-    or a demo-build pipeline, where an empty inventory means the build did not
-    produce what it was supposed to. `--require-scenes` is how such a caller
-    says "silence here is a failure".
+    The default no-op is right for a fresh checkout and wrong for gallery
+    generation or the pre-upload audit, where an empty inventory means the build
+    did not produce what it was supposed to. `--require-scenes` is how such a
+    caller says "silence here is a failure".
     """
     assert main(["--demos-dir", str(tmp_path), "--require-scenes"]) == 1
     assert "INSPECTED NOTHING" in capsys.readouterr().out

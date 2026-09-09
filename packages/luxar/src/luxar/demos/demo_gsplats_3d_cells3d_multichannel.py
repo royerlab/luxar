@@ -101,6 +101,7 @@ from luxar.demos import (
     local_fit_path,
     parse_demo_flags,
     require_module,
+    stamp_input_digests,
     warn_if_no_cuda_gpu,
 )
 from luxar.demos._lod_policy import save_with_lod
@@ -329,6 +330,7 @@ def create_luxar_scene(gsplats_list, output_path=None):
                 ),
                 citation=DEMO_META["citation"],
             )
+            stamp_input_digests(scene)
 
             scene.attrs["title"] = "GSplats: 3D Cells Multi-Channel (BOP layers)"
             scene.attrs["description"] = """

@@ -250,6 +250,22 @@ def _numeric_suffix(name: str, prefix: str) -> Optional[int]:
     return int(suffix) if suffix.isdigit() else None
 
 
+def _ordered_children(
+    group: "zarr.Group", prefix: str
+) -> List[Tuple[str, "zarr.Group", dict]]:
+    """Scene-node children in canonical index, numeric-name, then name order."""
+    kids = _child_nodes(group)
+    indices = [_finite(attrs.get("child_index")) for _, _, attrs in kids]
+    if kids and all(i is not None for i in indices):
+        order: List[float] = [i for i in indices if i is not None]
+        return [kid for _, kid in sorted(zip(order, kids), key=lambda p: p[0])]
+    suffixes = [_numeric_suffix(name, prefix) for name, _, _ in kids]
+    if kids and all(s is not None for s in suffixes):
+        nums: List[int] = [s for s in suffixes if s is not None]
+        return [kid for _, kid in sorted(zip(nums, kids), key=lambda p: p[0])]
+    return sorted(kids, key=lambda kid: kid[0])
+
+
 def _lod_children(group: "zarr.Group") -> List[Tuple[str, "zarr.Group", dict]]:
     """A ``kind=lod`` group's children ordered COARSEST → FINEST.
 
@@ -272,16 +288,7 @@ def _lod_children(group: "zarr.Group") -> List[Tuple[str, "zarr.Group", dict]]:
     Python producer — ``core/node/node.py`` always stamps ``child_index`` — and
     exists only for a hand-edited or third-party store that supplies neither key.
     """
-    kids = _child_nodes(group)
-    indices = [_finite(attrs.get("child_index")) for _, _, attrs in kids]
-    if kids and all(i is not None for i in indices):
-        order: List[float] = [i for i in indices if i is not None]
-        return [kid for _, kid in sorted(zip(order, kids), key=lambda p: p[0])]
-    suffixes = [_numeric_suffix(name, "child_") for name, _, _ in kids]
-    if kids and all(s is not None for s in suffixes):
-        nums: List[int] = [s for s in suffixes if s is not None]
-        return [kid for _, kid in sorted(zip(nums, kids), key=lambda p: p[0])]
-    return sorted(kids, key=lambda kid: kid[0])
+    return _ordered_children(group, "child_")
 
 
 def _indexed_children(

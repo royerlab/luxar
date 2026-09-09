@@ -905,13 +905,8 @@ class TestRestructureFetchedScene:
         sentinel.write_text("keep me")
         monkeypatch.setattr(
             _demo,
-            "_finest_level_cloud",
-            lambda root, layer: (positions, colors),
-        )
-        monkeypatch.setattr(
-            _demo,
-            "_finest_level_colors",
-            lambda root, layer: (len(positions), colors),
+            "_read_restructure_arrays",
+            lambda path: (positions, colors, colors),
         )
 
         def fail_build(*args, **kwargs):
@@ -943,13 +938,8 @@ class TestRestructureFetchedScene:
         (scene / "original").write_text("old")
         monkeypatch.setattr(
             _demo,
-            "_finest_level_cloud",
-            lambda root, layer: (positions, colors),
-        )
-        monkeypatch.setattr(
-            _demo,
-            "_finest_level_colors",
-            lambda root, layer: (len(positions), colors),
+            "_read_restructure_arrays",
+            lambda path: (positions, colors, colors),
         )
 
         def build_scene(*args, **kwargs) -> None:

@@ -142,6 +142,7 @@ from luxar.demos import (
     ensure_dataset,
     launch_viewer,
     parse_demo_flags,
+    stamp_input_digests,
 )
 from luxar.demos._cinematic_camera import VIEWER_DEFAULT_FOV_DEG, pull_in
 from luxar.gsplats.gsplat_data import GSplatData
@@ -341,6 +342,7 @@ def create_luxar_scene(output_path: Path) -> Path:
                     ),
                 ),
             )
+            stamp_input_digests(scene)
             scene.attrs["title"] = "GSplats: What Does Culling Actually Remove?"
             scene.attrs["description"] = scene_description(rows)
 

@@ -82,6 +82,7 @@ from luxar.demos import (
     launch_viewer,
     parse_demo_flags,
     require_local_data,
+    stamp_input_digests,
 )
 from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
 from luxar.demos._support._umap_utils import attribute_to_color
@@ -228,6 +229,7 @@ def build_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(cinematic_mode=True),
             )
+            stamp_input_digests(scene)
             scene.add_points(
                 "cells",
                 positions,

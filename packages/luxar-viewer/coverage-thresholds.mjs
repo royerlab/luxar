@@ -48,8 +48,9 @@ export const COVERAGE_THRESHOLDS = {
   lines: 88,
   statements: 87,
   functions: 84,
-  // branches 80 -> 82 after this change's branch set moved measured coverage
-  // 82.78 -> 83.00 and check-coverage-slack flagged the old floor as stale.
+  // branches 80 -> 82 (2026-09): the GPU-budget tests here and the SSAA
+  // framebuffer-clamp tests in #2661 each moved measured branch coverage past
+  // the slack budget, and check-coverage-slack flagged the old floor as stale.
   branches: 82,
 
   // Crown jewels: high floors so a refactor cannot quietly erode them.
@@ -102,7 +103,7 @@ export const COVERAGE_THRESHOLDS = {
   // NOT excluded from coverage: that spec runs in CI as the non-required
   // `tsl-parity` job, and excluding code on the strength of a non-required gate
   // is how a metric starts lying. Revisit once the job is required.
-  'src/rendering/**': { lines: 74, functions: 75, branches: 70 },
+  'src/rendering/**': { lines: 74, functions: 77, branches: 72 },
 };
 
 /** Last accepted coverage measurements for each floor. */
@@ -110,7 +111,7 @@ export const COVERAGE_RECORDED = {
   lines: 89.38,
   statements: 88.43,
   functions: 86.61,
-  branches: 83,
+  branches: 83.04,
   'src/types/**': { lines: 99, functions: 96.77, branches: 98.05 },
   'src/wasm/**': { lines: 98.58, functions: 100, branches: 96.46 },
   'src/config/**': { lines: 95.36, functions: 100, branches: 93.17 },
@@ -123,5 +124,5 @@ export const COVERAGE_RECORDED = {
   'src/ui/**': { lines: 91.9, functions: 86.95, branches: 79.58 },
   'src/core/**': { lines: 89.91, functions: 75.15, branches: 85.78 },
   'src/input/**': { lines: 93.09, functions: 90.39, branches: 85.26 },
-  'src/rendering/**': { lines: 76.31, functions: 77.8, branches: 72.62 },
+  'src/rendering/**': { lines: 76.31, functions: 78.13, branches: 73.22 },
 };

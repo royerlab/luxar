@@ -116,6 +116,7 @@ from luxar.demos import (
     parse_demo_flags,
     parse_path_arg,
     run_luxar_cli,
+    stamp_input_digests,
 )
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
 from luxar.gsplats.tree import GSplatPartition, center_bounds, iter_leaves
@@ -536,6 +537,7 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                 dimensions=dims,
                 viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
             )
+            stamp_input_digests(scene)
             scene.attrs["title"] = "GSplats: Zebrafish Embryo (h2afva stack)"
             scene.attrs["description"] = (
                 "Zebrafish embryo nuclei (histone H2A variant label), one stack from "
