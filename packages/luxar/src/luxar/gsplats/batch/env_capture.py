@@ -1,4 +1,10 @@
-"""Auto-detect and capture the current execution environment for Slurm jobs."""
+"""Auto-detect and capture the current execution environment for Slurm jobs.
+
+Absent optional probes stay quiet; available probes that break emit one
+``RuntimeWarning`` and keep their fallback. Warnings are the intended channel
+because ``cli/main.py`` installs ``install_arbol_warnings()`` to render them as
+arbol lines.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +15,7 @@ import subprocess
 import warnings
 from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, version
+from importlib.util import find_spec
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -28,7 +35,9 @@ CURATED_ENV_VARS = [
 _warned_probe_failures: set[str] = set()
 
 
-def _warn_probe_failure_once(probe: str, exc: Exception) -> None:
+def _warn_probe_failure_once(
+    probe: str, exc: Exception, *, stacklevel: int = 3
+) -> None:
     """Report one unexpected probe failure while preserving its fallback."""
     if probe in _warned_probe_failures:
         return
@@ -36,7 +45,7 @@ def _warn_probe_failure_once(probe: str, exc: Exception) -> None:
     warnings.warn(
         f"{probe} failed with {type(exc).__name__}: {exc}; using fallback.",
         RuntimeWarning,
-        stacklevel=3,
+        stacklevel=stacklevel,
     )
 
 
@@ -104,6 +113,8 @@ def get_slurm_scheduler_info() -> Dict:
                     pass
     except FileNotFoundError:
         pass  # Slurm is optional on local workstations and login environments.
+    except subprocess.TimeoutExpired:
+        pass  # A busy Slurm controller is an expected transient fallback.
     except Exception as exc:
         _warn_probe_failure_once("get_slurm_scheduler_info", exc)
 
@@ -137,6 +148,8 @@ def is_slurm_mps_available() -> bool:
                 return "mps" in [g.strip() for g in gres_types.split(",")]
     except FileNotFoundError:
         pass  # No Slurm installation means MPS is simply unavailable.
+    except subprocess.TimeoutExpired:
+        pass  # A busy Slurm controller is an expected transient fallback.
     except Exception as exc:
         _warn_probe_failure_once("is_slurm_mps_available", exc)
     return False
@@ -152,9 +165,13 @@ def _partition_has_gpu(partition: str) -> bool:
             timeout=5,
         )
         return any("gpu:" in line.lower() for line in result.stdout.splitlines())
+    except FileNotFoundError:
+        pass  # A partial Slurm client install may omit sinfo.
+    except subprocess.TimeoutExpired:
+        pass  # A busy Slurm controller is an expected transient fallback.
     except Exception as exc:
-        _warn_probe_failure_once("detect_preemptible_gpu_partition sinfo", exc)
-        return False
+        _warn_probe_failure_once("_partition_has_gpu", exc, stacklevel=4)
+    return False
 
 
 def detect_preemptible_gpu_partition() -> Optional[str]:
@@ -220,6 +237,8 @@ def detect_preemptible_gpu_partition() -> Optional[str]:
 
     except FileNotFoundError:
         pass  # Slurm is optional; no scheduler means no preemptible partition.
+    except subprocess.TimeoutExpired:
+        pass  # A busy Slurm controller is an expected transient fallback.
     except Exception as exc:
         _warn_probe_failure_once("detect_preemptible_gpu_partition", exc)
     return None
@@ -245,20 +264,25 @@ def validate_partition_access(partition: str) -> bool:
                 return True
         return False
     except FileNotFoundError:
-        return False
+        pass  # A partial Slurm client install may omit sinfo.
+    except subprocess.TimeoutExpired:
+        pass  # A busy Slurm controller is an expected transient fallback.
     except Exception as exc:
         _warn_probe_failure_once("validate_partition_access", exc)
-        return False
+    return False
 
 
 def _cuda_build_info_path() -> Optional[Path]:
     """Return the optional CUDA build metadata path."""
     try:
-        import luxar.gsplats.models.gsplats.cuda as cuda_pkg
-
-        return Path(cuda_pkg.__file__).parent / "cuda_build_info.json"
+        cuda_spec = find_spec("luxar.gsplats.models.gsplats.cuda")
+        if cuda_spec is None or cuda_spec.origin is None:
+            return None
+        return Path(cuda_spec.origin).parent / "cuda_build_info.json"
+    except ImportError:
+        return None  # The optional CUDA package or one of its dependencies is absent.
     except Exception as exc:
-        _warn_probe_failure_once("CUDA build metadata package", exc)
+        _warn_probe_failure_once("_cuda_build_info_path", exc, stacklevel=4)
         return None
 
 
@@ -272,7 +296,7 @@ def read_cuda_build_info() -> Dict:
             with open(info_path) as f:
                 return dict(json.load(f))
         except Exception as exc:
-            _warn_probe_failure_once("CUDA build metadata file", exc)
+            _warn_probe_failure_once("read_cuda_build_info", exc)
     return {}
 
 
@@ -336,7 +360,7 @@ def capture_environment() -> CapturedEnv:
     except PackageNotFoundError:
         env.luxar_version = "unknown"
     except Exception as exc:
-        _warn_probe_failure_once("Luxar version metadata", exc)
+        _warn_probe_failure_once("capture_environment", exc)
         env.luxar_version = "unknown"
 
     return env
