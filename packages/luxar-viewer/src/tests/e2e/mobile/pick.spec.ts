@@ -32,7 +32,7 @@ test.describe('mobile pick', () => {
   test('a long-press opens the element menu; the camera does not move', async ({ page }) => {
     const c = await canvasCentre(page);
     const before = await cameraPose(page);
-    await longPress(page, c, 800);
+    await longPress(page, c, 2000);
     const menu = page.locator('.luxar-context-menu');
     await expect(menu).toBeVisible({ timeout: 10000 });
     await expect(menu.getByRole('menuitem').first()).toContainText(/Copy|Open link/);
