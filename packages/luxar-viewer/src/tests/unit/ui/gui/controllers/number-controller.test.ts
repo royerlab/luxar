@@ -37,7 +37,7 @@ describe('NumberController', () => {
 
     it('keeps the full keyboard for a range with a negative minimum', () => {
       const ranged = new NumberController({ value: 0 }, 'value', { min: -10, max: 10 });
-      expect(ranged.$input.inputMode).toBe('text');
+      expect(ranged.$input!.inputMode).toBe('text');
       ranged.dispose();
     });
 
@@ -73,7 +73,7 @@ describe('NumberController', () => {
     });
 
     it('asks touch keyboards for a decimal keypad when the range is non-negative', () => {
-      expect(controller.$input.inputMode).toBe('decimal');
+      expect(controller.$input!.inputMode).toBe('decimal');
     });
 
     it('wheel steps 1/10th step; modifiers follow the slider convention (⇧ finer, ⌃ coarse)', () => {
