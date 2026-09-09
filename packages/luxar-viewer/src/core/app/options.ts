@@ -36,9 +36,10 @@ export interface LuxarAppOptions {
   /** Cache and prefetch flags forwarded to the data loader. */
   loaderConfig?: LoaderConfig;
   /**
-   * Session-wide GPU geometry budget in bytes. `null` auto-sizes, `0`
-   * disables byte-budget eviction, and a positive value pins the budget.
-   * Defaults to `config.dataLoading.performance.gpuPoolMaxBytes`.
+   * Session-wide GPU geometry budget in bytes. `null` auto-sizes from device
+   * memory, measured heap, and device class; `0` disables byte-budget eviction,
+   * and a positive value pins the budget. Defaults to
+   * `config.dataLoading.performance.gpuPoolMaxBytes`.
    */
   gpuPoolMaxBytes?: number | null;
   /**

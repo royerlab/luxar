@@ -75,6 +75,7 @@ group table.
 | `src`              | `string`              | config          | Initial Zarr URL. Empty/missing shows the dataset browser.                                                                                                                                                   |
 | `debug`            | `boolean`             | `false`         | Exposes `window.__luxarDebug` for Playwright / dev console.                                                                                                                                                  |
 | `loaderConfig`     | `LoaderConfig`        | —               | Cache and prefetch flags (`noCache`, `cacheDebug`, `clearCache`, `noPrefetch`, `prefetchDebug`).                                                                                                             |
+| `gpuPoolMaxBytes`  | `number \| null`      | config          | Session-wide GPU geometry budget in bytes. `null` auto-sizes from device memory, measured heap, and device class; `0` disables byte-budget eviction; a positive value pins it.                              |
 | `updateBrowserUrl` | `boolean`             | `false`         | Opt in to mirroring picked datasets into the browser URL. `bootstrapStandalone()` sets this to `true`.                                                                                                       |
 | `wasmPath`         | `string`              | —               | Override for bundlers that don't resolve `import.meta.url` for WASM (webpack 4, Parcel 1, etc.). Serving the published package unbundled usually costs one benign 404 before the next candidate wins.        |
 | `workerPath`       | `string`              | —               | Same, for the data worker.                                                                                                                                                                                   |
@@ -205,9 +206,11 @@ The host must call `update()` each frame before rendering, `resize()` after a
 viewport or camera-projection change, and pass `requestRender` if it renders
 on demand rather than continuously. `renderOrder` defaults to 10 and is stamped
 onto every nested Luxar Group; host transparent groups should use explicit
-lower/higher values. On WebGL context loss, call `handleContextLost()` so Luxar
-backs off its GPU budget; after rebuilding the host renderer and post-processing,
-call `handleContextRestored()`.
+lower/higher values. `gpuPoolMaxBytes` controls the session-wide geometry budget:
+`null` auto-sizes from device memory, measured heap, and device class, `0`
+disables byte-budget eviction, and a positive value pins bytes. On WebGL context
+loss, call `handleContextLost()` so Luxar backs off that budget; after rebuilding
+the host renderer and post-processing, call `handleContextRestored()`.
 
 nD navigation coalesces, so a host can drive it from a slider at frame rate:
 
