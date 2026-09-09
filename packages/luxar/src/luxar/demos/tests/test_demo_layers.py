@@ -151,6 +151,12 @@ class Exemption(NamedTuple):
 #: Keyed on module filename. Each entry names the composite group layer that
 #: already covers the exempt nodes — never "this demo has no layer".
 EXEMPT: dict[str, Exemption] = {
+    "demo_4d_fractals.py": Exemption(
+        frozenset({"f'part_{part}'"}),
+        frozenset({"'Fractals4D'"}),
+        "Bounded children of the kind=partition `Fractals4D` wrapper, which "
+        "is the layer=True node and owns the shared compositing controls.",
+    ),
     "demo_nd_transforms.py": Exemption(
         frozenset(
             {

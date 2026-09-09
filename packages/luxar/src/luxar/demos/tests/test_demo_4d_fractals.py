@@ -365,14 +365,17 @@ class TestWrittenDatasetContract:
 
     @pytest.mark.parametrize("grid", [12, 16])
     def test_dimension_metadata_and_decoded_planes(
-        self, tmp_path: Path, grid: int
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, grid: int
     ) -> None:
         import zarr
 
         from luxar.io.reader import LuxarScene
 
         # 12 exercises phase alignment when grid//2 is not divisible by the
-        # stride; 16 proves the already-aligned case does not move.
+        # stride and forces multiple bounded partition children; 16 proves the
+        # already-aligned case does not move under the production cap.
+        if grid == 12:
+            monkeypatch.setattr(_demo, "TARGET_MAX_POINTS_PER_PLANE", 1_000)
         out = tmp_path / f"fractals_4d_test_{grid}.luxar.zarr"
         _demo.generate_4d_fractal_dataset(out, grid_size=grid)
 
@@ -404,6 +407,8 @@ class TestWrittenDatasetContract:
 
         part_names = list(group.group_keys())
         assert part_names
+        if grid == 12:
+            assert len(part_names) > 1
         assert all(
             group[name].attrs["n_points"] <= _demo.TARGET_MAX_POINTS_PER_PLANE
             for name in part_names
