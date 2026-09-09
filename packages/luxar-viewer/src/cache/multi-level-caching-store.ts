@@ -349,17 +349,18 @@ export class MultiLevelCachingStore implements AsyncReadable {
    *              - Metadata: '.zarray', '.zmetadata', '.zattrs'
    *              - Nested: 'group1/subgroup/array/0.0'
    *
-   * @param _options - Reserved for zarrita compatibility (currently unused).
-   *                   Zarrita may pass options in future versions.
+   * @param options - Zarrita read options. A supplied abort signal cancels the
+   *                  underlying source read for this caller.
    *
-   * @returns Promise resolving to chunk data as Uint8Array, or undefined if:
-   *          - Chunk doesn't exist (404 Not Found)
-   *          - Network retries are exhausted
-   *          - The store is being disposed with its owning scene
+   * @returns Promise resolving to chunk data as Uint8Array, or undefined when
+   *          the key does not exist (404) or the store is being disposed with
+   *          its owning scene.
    *
    * @throws {DOMException} `AbortError` when a live demand read is cancelled by
    *         cache invalidation. Rejecting is required because zarrita treats
    *         `undefined` as a missing chunk and substitutes fill values.
+   * @throws {Error} When a source/network failure exhausts retries or the
+   *         container is unreadable, so the loader can record the failure.
    *
    * @example
    * ```typescript
@@ -369,7 +370,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
    *   console.log(`Loaded ${chunk.byteLength} bytes`);
    *   // Process chunk data...
    * } else {
-   *   console.log('Chunk not found or network error');
+   *   console.log('Chunk not found');
    * }
    * ```
    *
@@ -620,9 +621,9 @@ export class MultiLevelCachingStore implements AsyncReadable {
         };
       }
       if (outcome.kind === 'fatal') {
-        // Reported, not thrown: `getResult` catches throws and flattens them to
-        // NetworkError, which `get` turns into `undefined` — i.e. exactly the
-        // empty scene this kind exists to prevent. `get` rethrows it instead.
+        // Reported, not thrown: `getResult` catches source throws and flattens
+        // them to NetworkError. Keeping the fatal distinction preserves the
+        // container-specific diagnostic that `get` rethrows to the loader.
         return { result: err({ kind: 'Fatal', cause: outcome.cause }), source: 'network' };
       }
       if (outcome.kind === 'missing') {

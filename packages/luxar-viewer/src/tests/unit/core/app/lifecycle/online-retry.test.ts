@@ -218,6 +218,40 @@ describe('installOnlineRetry', () => {
     }
   });
 
+  it('re-enables polling after the deferred failure episode clears', async () => {
+    vi.useFakeTimers();
+    try {
+      let hasRetryableFailure = true;
+      const retry = vi.fn().mockResolvedValue({
+        succeeded: [],
+        failed: ['/a'],
+        deferred: true,
+      });
+      const loader: RetryCapableLoader = {
+        hasFailures: () => hasRetryableFailure,
+        hasAutoRetryableFailures: () => hasRetryableFailure,
+        retryAllFailedLoaders: retry,
+      };
+      installOnlineRetry({ events, getLoader: () => loader, toast });
+
+      window.dispatchEvent(new Event('online'));
+      await vi.advanceTimersByTimeAsync(
+        DEFERRED_RETRY_DELAY_MS * (MAX_DEFERRED_RETRY_ATTEMPTS + 1)
+      );
+      expect(retry).toHaveBeenCalledTimes(MAX_DEFERRED_RETRY_ATTEMPTS);
+
+      hasRetryableFailure = false;
+      await vi.advanceTimersByTimeAsync(ONLINE_RETRY_POLL_MS);
+      hasRetryableFailure = true;
+      retry.mockResolvedValue({ succeeded: ['/b'], failed: [] });
+      await vi.advanceTimersByTimeAsync(ONLINE_RETRY_POLL_MS);
+
+      expect(retry).toHaveBeenCalledTimes(MAX_DEFERRED_RETRY_ATTEMPTS + 1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('clears a pending deferred-retry timer when the EventGroup is disposed', async () => {
     vi.useFakeTimers();
     try {

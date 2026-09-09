@@ -149,8 +149,8 @@ describe('HttpChunkSource — outcomes', () => {
     // The branch the fix was written for, and the one the existing
     // already-aborted case never reaches: the signal fires after the headers
     // arrive, so `arrayBuffer()` is the thing that rejects. A throw here escapes
-    // as NetworkError → undefined → zarrita fills the chunk. Silently wrong
-    // geometry, which is why this branch has to be pinned.
+    // as NetworkError instead of the cancellation classification the store
+    // needs, which is why this branch has to be pinned.
     const controller = new AbortController();
     vi.stubGlobal(
       'fetch',

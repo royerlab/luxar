@@ -76,10 +76,9 @@ export class HttpChunkSource implements ChunkSource {
       // Check BEFORE touching the body. The store used to do this between the
       // headers arriving and `arrayBuffer()`, and losing it meant an
       // invalidation abort landing in that window surfaced as a NetworkError —
-      // which the store logs and turns into `undefined`, i.e. zarrita decodes
-      // the chunk as FILL VALUES. Silently wrong geometry is exactly what
-      // `abortPendingGets` exists to prevent. The `finally` still cancels the
-      // body we are no longer going to read.
+      // which is retryable rather than a deliberate cancellation. Silently
+      // trusting bytes invalidated by `abortPendingGets` is exactly what this
+      // check prevents. The `finally` still cancels the unread body.
       if (signal?.aborted) return { kind: 'aborted' };
 
       let data: Uint8Array;
@@ -88,7 +87,8 @@ export class HttpChunkSource implements ChunkSource {
       } catch (error) {
         // An abort during the body read rejects here. This must come back as an
         // outcome, not a throw: the seam's contract is that a source never
-        // throws, and a throw would escape as NetworkError → fill values.
+        // throws, and the store needs the abort classification to avoid
+        // recording it as a retryable network failure.
         if (signal?.aborted) return { kind: 'aborted' };
         return { kind: 'error', cause: error instanceof Error ? error : new Error(String(error)) };
       }

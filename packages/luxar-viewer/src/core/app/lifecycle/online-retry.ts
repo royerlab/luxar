@@ -151,13 +151,13 @@ export function installOnlineRetry(ports: OnlineRetryPorts): void {
 
   const triggerRetry = (message: string, source: 'online' | 'poll'): void => {
     if (source === 'online') pollSuppressed = false;
-    if (retryInFlight || (source === 'poll' && pollSuppressed) || navigator.onLine === false)
-      return;
+    if (retryInFlight || navigator.onLine === false) return;
     const loader = ports.getLoader();
     if (!loader?.hasAutoRetryableFailures()) {
       pollSuppressed = false;
       return;
     }
+    if (source === 'poll' && pollSuppressed) return;
 
     retryInFlight = true;
     log.info(Modules.LUXAR, message);
