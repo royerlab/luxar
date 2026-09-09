@@ -935,7 +935,11 @@ class Group(Node):
             additive_lod: Additive-LOD control. The value vocabulary matches
                 :meth:`add_gsplats_from_data`. Requesting an additive ladder
                 opts this node out of compiler auto-partitioning; explicit
-                ``partition=`` beside the ladder remains unsupported.
+                ``partition=`` beside the ladder remains unsupported. On a
+                stacked or hidden-dimension node, an authored ladder is inert
+                when one already exists unless ``recompute=True``, and
+                ``slice_dims=`` is the only way to give every slice the same
+                absolute budget.
             **attrs: Additional node attributes. Common ones:
 
                 - ``layer`` (bool): Expose this node in the viewer's Layers
@@ -1207,9 +1211,9 @@ class Group(Node):
 
         If the source file carries multiple substitutive levels, the
         pyramid is auto-lowered into a ``kind=lod`` Group (one gsplats
-        child per substitutive level); pass ``lod_group=False`` to
-        collapse to the finest level instead (see
-        ``add_gsplats_from_data`` for the convention).
+        child per substitutive level); pass ``substitutive_lod=False`` to
+        collapse to the finest level instead. ``lod_group=False`` remains
+        the backward-compatible alias.
 
         Set ``flatten=True`` to materialize the source tree's default finest
         selection as one leaf before applying ``partition=``,
