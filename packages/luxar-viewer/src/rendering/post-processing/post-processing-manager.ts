@@ -192,6 +192,8 @@ export class PostProcessingManager {
   }
 
   private get activeMSAASamples(): number {
+    // SSAA already supersamples the scene; retaining MSAA would add redundant
+    // multisample colour/depth renderbuffers that can exceed the GPU allocation budget.
     return this.msaaEnabled && !this.ssaaEnabled ? this.msaaSamples : 0;
   }
 
@@ -228,7 +230,6 @@ export class PostProcessingManager {
     const r = buildTransientResources({
       physW: width,
       physH: height,
-      msaaEnabled: this.activeMSAASamples > 0,
       msaaSamples: this.activeMSAASamples,
       fxaaEnabled: this.fxaaEnabled,
       capabilities: this.capabilities,
@@ -596,7 +597,7 @@ export class PostProcessingManager {
     this.msaaSamples = validated;
     if (this.msaaEnabled) {
       this.reallocateForSize();
-      log.info(Modules.POST_PROCESSING, `MSAA samples set to ${validated}`);
+      log.info(Modules.POST_PROCESSING, `MSAA samples set to ${this.describeMSAA()}`);
     }
   }
 
@@ -606,7 +607,7 @@ export class PostProcessingManager {
     this.reallocateForSize();
     log.update(
       Modules.POST_PROCESSING,
-      `SSAA ${enabled ? `enabled (${this.ssaaMultiplier}x)` : 'disabled'}`
+      `SSAA ${enabled ? `enabled (${this.ssaaMultiplier}x)` : 'disabled'}; MSAA: ${this.describeMSAA()}`
     );
   }
 
