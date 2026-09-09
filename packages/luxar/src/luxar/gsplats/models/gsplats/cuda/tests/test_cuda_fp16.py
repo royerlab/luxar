@@ -1249,3 +1249,6 @@ class TestDeviceMovement:
         for param in model.parameters():
             assert param.dtype == torch.float16
             assert param.device == torch.device("cuda:1")
+
+        output = model()
+        assert torch.isfinite(output).all()

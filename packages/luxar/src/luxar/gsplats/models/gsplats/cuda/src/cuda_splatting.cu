@@ -116,6 +116,8 @@ void validate_inputs(
     TORCH_CHECK(centers.is_cuda(), "centers must be on CUDA device");
     TORCH_CHECK(conic.is_cuda(), "conic must be on CUDA device");
     TORCH_CHECK(amps.is_cuda(), "amps must be on CUDA device");
+    TORCH_CHECK(conic.device() == centers.device() && amps.device() == centers.device(),
+        "centers, conic, and amps must be on the same CUDA device");
 
     // Check dimensions
     int dim = (int)shape.size();
@@ -285,6 +287,7 @@ forward_impl(
 
     validate_inputs(centers, conic, amps, shape, expected_dtype);
 
+    // Make the inputs' device current for allocations and kernel launches.
     const c10::cuda::CUDAGuard device_guard(centers.device());
 
     int dim = (int)shape.size();
@@ -334,7 +337,11 @@ backward_impl(
         std::is_same_v<InputDType, __half> ? torch::kFloat16 : torch::kFloat32;
 
     validate_inputs(centers, conic, amps, shape, expected_dtype);
+    TORCH_CHECK(grad_output.is_cuda(), "grad_output must be on CUDA device");
+    TORCH_CHECK(grad_output.device() == centers.device(),
+        "grad_output and inputs must be on the same CUDA device");
 
+    // Make the inputs' device current for allocations and kernel launches.
     const c10::cuda::CUDAGuard device_guard(centers.device());
 
     int dim = (int)shape.size();
