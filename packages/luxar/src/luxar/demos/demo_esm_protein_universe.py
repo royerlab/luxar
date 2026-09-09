@@ -96,6 +96,8 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.group.compositing import position_bounds_from_array
+from luxar.core.group.partition import bsp_leaf_parts, spatial_bsp_tree
 from luxar.core.viewer_config import (
     AudioConfig,
     CameraConfig,
@@ -472,8 +474,14 @@ STORY_LENS_FOV_DEG = CINEMATIC_FOV_DEG
 # frame at knot distance keep individual clusters visible and the map a texture
 # behind them; at the overview they are sub-pixel and render as 1 px points as
 # before. The bubble's floor drops from 0.35 to 0.2 so a knot fills its bubble.
+# INTENSITY IS A WINDOW, NOT A GAIN (colour / (1/intensity)): the tour's 0.08
+# divides every colour by 12.5, which its 10 px points can afford and these
+# sub-pixel points cannot — the owner saw a dim overview with the viewer's
+# exposure pinned at +4 stops. 0.25 (a [0, 4] window) reads bright at the
+# overview; the coarse LOD splats inherit the same window through the Layers
+# panel push-down, so the whole backdrop brightens together.
 BACKDROP_RADIUS = 0.004
-BACKDROP_INTENSITY = 0.08
+BACKDROP_INTENSITY = 0.25
 BACKDROP_OPACITY = 0.7
 HIGHLIGHT_RADIUS = 0.006
 HIGHLIGHT_INTENSITY = 0.4
@@ -503,11 +511,28 @@ WHOLE_HIGHLIGHT_INTENSITY = 0.35
 #: proteome's 2.03M arrived, then nothing. At overview distance the points are
 #: sub-pixel anyway, so one in seven draws the same shadow as all of them.
 WHOLE_HIGHLIGHT_MAX_POINTS = 300_000
-#: The backdrop is split into spatial parts of at most this many points: one
-#: points node renders at most 5,591,040 on a 4096-class GPU and silently drops
-#: the tail (one contiguous Hilbert-order region, so a clean-edged hole). Same
-#: margin as the DESI demo.
-BACKDROP_MAX_POINTS_PER_NODE = 4_000_000
+#: The backdrop is a hand-built ``kind=partition`` of 64 BSP tiles of at most
+#: this many points, each tile its own ``kind=lod`` ladder with one coarse
+#: level of a quarter of its points (the Points counterpart of the gsplat
+#: ``adaptive`` recipe). Two ceilings at once: one points node renders at most
+#: 5,591,040 on a 4096-class GPU and silently drops the tail (one contiguous
+#: Hilbert-order region, so a clean-edged hole); and the owner wants the drawn
+#: count near 2M for frame rate. ``coverage`` is evaluated PER TILE against
+#: the tile's own projected box, so the tiles must be small: with 8 tiles each
+#: was a 20-unit cube whose box filled the screen even from the overview, and
+#: three of them sat at full detail there (8.2M triangles drawn). At 64 tiles
+#: the overview and the whole-map stories draw every tile coarse (1.93M splats,
+#: 3.85M triangles) and a knot swaps in only its nearest handful (five tiles at
+#: the hemoglobin knot, mostly frustum-culled). A single lod group over a
+#: partition (the first attempt) swapped ALL parts at once: 9.6M resident at
+#: every knot. All measured in the browser at a pinned DPR of 1.
+BACKDROP_TILE_POINTS = 125_000
+#: Coarsening is pinned to the three SPATIAL columns of the (story, x, y, z)
+#: positions: the default (all dims) would let coarse Gaussians merge across
+#: the story coordinate.
+BACKDROP_SUBSTITUTIVE_LOD = dict(
+    compression_factor=4, levels=1, device="auto", coarsen_dims=[1, 2, 3]
+)
 
 STORIES: tuple[UniverseStory, ...] = (
     _carry(
@@ -1388,6 +1413,61 @@ def _add_bubbles(
         )
 
 
+def _add_backdrop(
+    scene: Any, positions: np.ndarray, colors: np.ndarray, dims: Dimensions
+) -> None:
+    """The backdrop as BSP tiles of per-tile substitutive ladders (see
+    :data:`BACKDROP_TILE_POINTS`).
+
+    Splits on the three spatial columns (the story column is constant), so the
+    serialized split axes are the displayed dimensions and the viewer can use
+    the tree for exact back-to-front ordering. The compositing attrs ride on
+    the WRAPPER: it is the node the Layers panel reads and pushes down; of them
+    only ``opacity`` would reach a lod group's children on its own.
+    """
+    tree = spatial_bsp_tree(
+        positions, BACKDROP_TILE_POINTS, rule="median", split_axes=[1, 2, 3]
+    )
+    parts = bsp_leaf_parts(tree)
+    sizes = [int(p.size) for p in parts]
+    # The only cheap place to catch the per-node clamp: every leaf under budget.
+    assert max(sizes) <= BACKDROP_TILE_POINTS, sizes
+    aprint(
+        f"Backdrop: {len(positions):,} clusters -> {len(parts)} BSP tiles "
+        f"({min(sizes):,}..{max(sizes):,} points), one coarse level each (K=4)"
+    )
+    wrapper = scene.add_partition_group(
+        "Backdrop",
+        display_type="points",
+        max_elements=BACKDROP_TILE_POINTS,
+        layer=True,
+        position_bounds=position_bounds_from_array(positions),
+        bsp_tree=tree.to_serializable(),
+        opacity=BACKDROP_OPACITY,
+        intensity=BACKDROP_INTENSITY,
+    )
+    for i, idx in enumerate(parts):
+        part_positions = positions[idx]
+        wrapper.add_points(
+            f"part_{i}",
+            part_positions,
+            colors=colors[idx],
+            radii=np.full(idx.size, BACKDROP_RADIUS, dtype=np.float32),
+            sharpness=np.full(idx.size, 0.6, dtype=np.float32),
+            opacity=BACKDROP_OPACITY,
+            intensity=BACKDROP_INTENSITY,
+            extend_to_all=[STORY_DIM],
+            # No `partition=` here, not even False: the guard tests `is not
+            # None`, and the substitutive writer already forces flat leaves.
+            substitutive_lod=BACKDROP_SUBSTITUTIVE_LOD,
+            # One hidden coordinate (story 0, extended to all): the slice count
+            # is 1, but the policy is stated rather than assumed.
+            additive_lod=stream_ladder(
+                idx.size, slices=hidden_axis_stops(part_positions, dims.non_displayed)
+            ),
+        )
+
+
 def resolve_stories(
     universe: Universe,
     annotations: Path,
@@ -1494,23 +1574,7 @@ def build_universe_scene(
             ).astype(np.float32)
             # No hover labels on the backdrop: 7.7M strings would dominate the
             # store, and a kiosk visitor hovers the lit stories, which carry them.
-            scene.add_points(
-                "Backdrop",
-                backdrop_positions,
-                colors=backdrop_colors(universe),
-                radii=np.full(n, BACKDROP_RADIUS, dtype=np.float32),
-                sharpness=np.full(n, 0.6, dtype=np.float32),
-                opacity=BACKDROP_OPACITY,
-                intensity=BACKDROP_INTENSITY,
-                extend_to_all=[STORY_DIM],
-                layer=True,
-                partition=dict(max_elements=BACKDROP_MAX_POINTS_PER_NODE),
-                # One hidden coordinate (story 0, extended to all): the slice
-                # count is 1, but the policy is stated rather than assumed.
-                additive_lod=stream_ladder(
-                    n, slices=hidden_axis_stops(backdrop_positions, dims.non_displayed)
-                ),
-            )
+            _add_backdrop(scene, backdrop_positions, backdrop_colors(universe), dims)
             units: dict[int, str] = {}
             for k, (s, c) in enumerate(zip(stories, clusters, strict=True), start=1):
                 idx = whole_highlight_sample(c.indices) if s.whole else c.indices
