@@ -97,6 +97,9 @@ function lintPasses(scriptName) {
 function matchesTree(file, pattern) {
   if (pattern === '.') return true;
   const root = pattern.replace(/\/\*\*$/, '');
+  if (/[*?[\]{}]|[!+@]\(/.test(root)) {
+    throw new Error(`unsupported lint tree pattern: ${pattern}`);
+  }
   return file === root || file.startsWith(`${root}/`);
 }
 
@@ -246,6 +249,14 @@ describe('lint scope', () => {
   it('claims every authored file across the sequential lint passes', () => {
     const unreached = filesOutsideLintScript('lint');
     expect(unreached, `add these to a lint pass:\n${unreached.join('\n')}`).toEqual([]);
+  });
+
+  it('fails closed on unsupported lint tree patterns', () => {
+    for (const pattern of ['**/*.mjs', 'src/rendering/**/tsl/**']) {
+      expect(() => matchesTree('src/rendering/probe.ts', pattern)).toThrowError(
+        `unsupported lint tree pattern: ${pattern}`
+      );
+    }
   });
 
   it('prunes suppressions across every lint pass', () => {
