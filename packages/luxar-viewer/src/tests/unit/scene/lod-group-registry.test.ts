@@ -1141,6 +1141,10 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     groupObject.position.x = -2.5; // part_0 re-enters
     reg.evaluatePerFrame();
     expect(reg.hasVisiblePendingPartitionResync()).toBe(true);
+    groupObject.position.x = 0; // part_0 re-exits before the pending flush
+    reg.evaluatePerFrame();
+    expect(first.visible).toBe(false);
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(true);
     groupObject.position.x = -4.5; // part_1 re-enters
     reg.evaluatePerFrame();
     expect(reg.hasVisiblePendingPartitionResync()).toBe(true);
