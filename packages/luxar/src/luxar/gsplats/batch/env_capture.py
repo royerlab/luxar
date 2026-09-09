@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, version
 from importlib.util import find_spec
 from pathlib import Path
+from types import FrameType
 from typing import Dict, List, Optional
 
 # Environment variables known to matter for CUDA/PyTorch workloads.
@@ -42,7 +43,7 @@ def _warn_probe_failure_once(probe: str, exc: Exception) -> None:
         return
     _warned_probe_failures.add(probe)
     stacklevel = 2
-    frame = sys._getframe(1)
+    frame: FrameType | None = sys._getframe(1)
     while frame is not None and frame.f_globals.get("__name__") == __name__:
         stacklevel += 1
         frame = frame.f_back
@@ -304,6 +305,17 @@ def read_cuda_build_info() -> Dict:
     return {}
 
 
+def _luxar_version() -> str:
+    """Return the installed Luxar version, or ``unknown`` when unavailable."""
+    try:
+        return version("luxar")
+    except PackageNotFoundError:
+        return "unknown"
+    except Exception as exc:
+        _warn_probe_failure_once("_luxar_version", exc)
+        return "unknown"
+
+
 def capture_environment() -> CapturedEnv:
     """Auto-detect the current execution environment.
 
@@ -359,13 +371,7 @@ def capture_environment() -> CapturedEnv:
             env.env_vars[var] = val
 
     # 6. Luxar version
-    try:
-        env.luxar_version = version("luxar")
-    except PackageNotFoundError:
-        env.luxar_version = "unknown"
-    except Exception as exc:
-        _warn_probe_failure_once("capture_environment", exc)
-        env.luxar_version = "unknown"
+    env.luxar_version = _luxar_version()
 
     return env
 

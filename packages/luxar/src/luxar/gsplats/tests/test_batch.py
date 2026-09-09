@@ -489,10 +489,13 @@ class TestEnvCapture:
         )
         monkeypatch.setattr(env_capture, "_warned_probe_failures", set())
 
-        with pytest.warns(RuntimeWarning, match="capture_environment.*RuntimeError"):
+        with pytest.warns(
+            RuntimeWarning, match="_luxar_version.*RuntimeError"
+        ) as caught:
             env = env_capture.capture_environment()
 
         assert env.luxar_version == "unknown"
+        assert Path(caught[0].filename) == Path(__file__)
 
     def test_generate_preamble_conda(self) -> None:
         from luxar.gsplats.batch.env_capture import CapturedEnv, generate_env_preamble
