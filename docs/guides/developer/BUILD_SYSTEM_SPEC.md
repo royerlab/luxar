@@ -804,7 +804,7 @@ and each job runs its expensive steps only for the domain(s) it covers:
 | Domain | Set by | Gates |
 |--------|--------|-------|
 | `dom_py` | `*.py`, `Makefile`, `pyproject.toml`, `*.pyx/*.pxd`, CUDA `*.cu/*.cuh`, plus cross-language gate inputs listed below | `python-tests`, `wheel-viewer` |
-| `dom_ts` | anything under `packages/luxar-viewer/`, root `tsconfig*.json`, `vitest*.{ts,js,mjs}`, plus gallery-selection inputs listed below | `typescript-tests`, `release-readiness`, `wheel-viewer` |
+| `dom_ts` | anything under `packages/luxar-viewer/`, root `tsconfig*.json`, `vitest*.{ts,js,mjs}`, plus gallery-selection and E2E-wiring inputs listed below | `typescript-tests`, `release-readiness`, `wheel-viewer` |
 | `dom_rust` | `*.rs`, `Cargo.toml/lock` | `typescript-tests`, `release-readiness`, `wheel-viewer` |
 | `dom_go` | `*.go`, `go.mod/sum`, `cli/_launchers/` | `go-launcher` |
 
@@ -863,9 +863,10 @@ file-narrow so unrelated viewer changes do not pull in the Python matrix. The
 docs gate has no corresponding hole: it already owns every viewer TypeScript
 source under `src/`, while viewer tools outside `src/` are outside both the
 documentation checker's viewer scan and TypeDoc's entry points. `dom_ts`
-explicitly owns the root `README.md` and gallery manifest because the
+explicitly owns the root `README.md` and both gallery manifests because the
 gallery-selection unit test resolves and validates the README capture set from
-them.
+them. It also owns the root `Makefile` because the generated-fixture freshness
+test checks its E2E fixture prerequisite wiring.
 A check whose own inputs are unclassified is a check that skips for exactly the
 change it exists to catch. `.github/workflows/ci.yml` selects **all four**
 domains: it defines how every suite is invoked, so an edit that breaks a command
