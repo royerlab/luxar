@@ -786,6 +786,24 @@ def test_python_gate_input_scan_uses_only_whole_tracked_test_source_literals(
     assert paths == {"tracked.json", "fixture.json", "helper.json"}
 
 
+def test_python_gate_input_scan_includes_helpers_when_source_root_is_tests(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "tests"
+    source_root.mkdir()
+    (source_root / "_gate_helpers.py").write_text(
+        'INPUT = "helper.json"\n', encoding="utf-8"
+    )
+
+    paths = _tracked_non_python_test_path_literals(
+        (source_root,),
+        repo=tmp_path,
+        tracked_paths={"helper.json"},
+    )
+
+    assert paths == {"helper.json"}
+
+
 def test_python_gate_input_scan_rejects_missing_ownership() -> None:
     with pytest.raises(AssertionError, match="must have dom_py GATE_INPUTS rows"):
         _assert_unclassified_test_paths_are_owned({"unowned.json"})
@@ -824,10 +842,26 @@ def test_python_gate_input_scan_exclusions_have_one_line_reasons() -> None:
         "packages/luxar/src/luxar/gsplats/archive/README.md",
         "packages/luxar-viewer/src/data/codecs/archive/README.md",
         "packages/luxar-viewer/src/data/scene-loader/lifecycle/load-scene.ts.bak",
+        "scripts/zenodo_record_text_backup/records.json",
+        "scripts/zenodo_record_text.md",
     ],
 )
 def test_derived_python_gate_input_patterns_are_exact(workflow: str, path: str) -> None:
     assert not _classifies(_domain_patterns(workflow)["py"], path)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "subdir/Makefile",
+        "docs/Makefile.md",
+        "scripts/gallery/media-manifest.json.bak",
+    ],
+)
+def test_derived_typescript_gate_input_patterns_are_exact(
+    workflow: str, path: str
+) -> None:
+    assert not _classifies(_domain_patterns(workflow)["ts"], path)
 
 
 def test_python_test_path_literals_are_statically_owned_by_the_python_gate(
