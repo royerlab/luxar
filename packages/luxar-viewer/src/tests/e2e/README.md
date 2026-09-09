@@ -633,7 +633,7 @@ examples are rebuilt, refresh and inspect the affected baselines too.
 
 Keeping one reproducible Linux corpus leaves room for a future CI job
 covering the DOM/CSS-only `@visual` specs without the WebGL rasterizer
-variability that currently keeps the full E2E job disabled.
+variability that keeps the full desktop E2E corpus on the GPU promotion runner.
 
 ## Conventions for New Specs
 
