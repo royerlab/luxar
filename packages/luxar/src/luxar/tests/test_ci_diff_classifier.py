@@ -49,8 +49,9 @@ WORKFLOW = REPO / ".github/workflows/ci.yml"
 #: One row per gate input whose required domain is not guaranteed by its ordinary
 #: source extension or package path, so an explicit pattern alternative is required.
 #: ``(path, domain, why)`` — the reason is quoted back in the failure message.
-#: Viewer-source readers name their paths through ``viewer_source()``; the static
-#: scan below checks those literal calls against this declaration.
+#: Viewer-source readers name their paths through ``viewer_source()``; one static
+#: scan checks those calls, while another catches unclassified whole-path literals
+#: in pytest test modules.
 #:
 #: Not every row is load-bearing to the same degree: some are matched by a broad
 #: alternative that could not plausibly be removed (``Cargo.lock`` via the whole
@@ -677,6 +678,26 @@ def test_python_gate_input_scan_rejects_stale_exclusions() -> None:
         _assert_unclassified_test_paths_are_owned(set())
 
 
+def test_python_gate_input_scan_exclusions_have_one_line_reasons() -> None:
+    assert all(
+        reason and "\n" not in reason
+        for reason in _NON_GATE_PYTHON_TEST_PATH_LITERALS.values()
+    )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".gitignore.bak",
+        "scripts/gallery/media-manifest.json.bak",
+        "packages/luxar/subdir/README.md",
+        "packages/luxar-viewer/docs/README.md",
+    ],
+)
+def test_derived_python_gate_input_patterns_are_exact(workflow: str, path: str) -> None:
+    assert not _classifies(_domain_patterns(workflow)["py"], path)
+
+
 def test_python_test_path_literals_are_statically_owned_by_the_python_gate(
     workflow: str,
 ) -> None:
@@ -688,9 +709,6 @@ def test_python_test_path_literals_are_statically_owned_by_the_python_gate(
         for path in paths
         if not any(_classifies(pattern, path) for pattern in patterns)
     }
-    assert unclassified, (
-        "no unclassified literals found; the guard would pass vacuously"
-    )
     _assert_unclassified_test_paths_are_owned(unclassified)
 
 

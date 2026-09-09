@@ -153,7 +153,7 @@ jobs:
             # would otherwise run zero tests), generate-gallery.spec.ts (the
             # gallery manifest field contract is parsed from it),
             # docs/guides/user/CLI_REFERENCE.md (test_docs_command_coverage.py),
-            # the root and demos README files (test_readme_demo_docs.py,
+            # the root, package and demos README files (test_readme_demo_docs.py,
             # test_demo_import_spelling.py), plus the CLAUDE.md and visualization-
             # skill projections checked by sync_demo_counts.py. The Cholesky
             # documentation guard reads that same CLAUDE.md, all three skill pages
@@ -167,7 +167,8 @@ jobs:
             # not whole viewer subtrees: unrelated viewer edits should remain
             # TypeScript-only and avoid the Python matrix.
             # test_docs_workflow.py also parses docs.yml and derives the published
-            # LFS candidate set from .gitattributes, so both are Python gate inputs.
+            # LFS candidate set from .gitattributes, while the wheel-completeness
+            # guard reads .gitignore. The gallery tests read both manifest files.
             # external-reference-audits.yml is one too: its schedule, permissions
             # and token wiring are asserted by test_run_external_reference_audits.py,
             # and a workflow file matches no other domain on its own.
