@@ -393,10 +393,14 @@ MKL_NUM_THREADS = "{env:MKL_NUM_THREADS:1}"
 NUMEXPR_NUM_THREADS = "{env:NUMEXPR_NUM_THREADS:1}"
 
 # `test` runs the FULL suite (incl. `slow`) — the authoritative pre-push gate,
-# run locally before every push. `test-cov` (what CI runs) deselects `slow` so
-# the 1-core GitHub runner stays well under the job timeout; the heavy CPU-fitting
-# tests (content-fit CLI, tiled/progressive fitting) still run locally and their
-# code stays covered by fast unit tests (coverage holds above the 89% gate).
+# run locally before every push. `test-cov` (coverage + the 89% gate) runs on every
+# ci.yml push to dev and dispatch, plus the dedicated non-cancelling coverage.yml
+# workflow; PR runs use `test-nocov` (same subset, no instrumentation) so a PR does
+# not pay the coverage cost (see ci.yml/coverage.yml).
+# Both deselect `slow` so the 1-core GitHub runner stays well under the job timeout;
+# the heavy CPU-fitting tests (content-fit CLI, tiled/progressive fitting) still
+# run locally and their code stays covered by fast unit tests (coverage holds
+# above the 89% gate).
 [tool.hatch.envs.default.scripts]
 # `-n ... --dist loadfile` on the two LOCAL-ONLY scripts. Override the worker
 # count with LUXAR_PYTEST_JOBS.
@@ -421,6 +425,12 @@ test = "pytest -n {env:LUXAR_PYTEST_JOBS:6} --dist loadfile {args:packages/luxar
 # override that per-machine choice from the wrong place. Set PYTEST_ADDOPTS
 # yourself for a fast local coverage run.
 test-cov = "mkdir -p coverage/python && pytest -m 'not slow' --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests}"
+# `test-nocov` is the per-PR fast path: the SAME `-m 'not slow'` subset and paths
+# as `test-cov`, but without `--cov` instrumentation (the dominant cost of the job).
+# ci.yml runs it on `pull_request`; pushes to dev keep the 89% gate under the
+# protected `python-tests (3.12)` context, and coverage.yml starts a per-commit
+# advisory run that newer dev pushes cannot cancel.
+test-nocov = "pytest -m 'not slow' {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests}"
 test-cov-all = "mkdir -p coverage/python && pytest -n {env:LUXAR_PYTEST_JOBS:6} --dist loadfile --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests}"
 # `scripts/benchmarks` remains explicit as a safety net if the anchored
 # `/benchmarks/` ignore rule ever regresses to matching nested directories.
@@ -601,7 +611,7 @@ NUMEXPR_NUM_THREADS = "{env:NUMEXPR_NUM_THREADS:1}"
 
 [[tool.hatch.envs.test.matrix]]
 # Every version the classifiers advertise, mirroring the CI matrix's full set
-# (dev pushes and the daily 09:17 schedule):
+# on dev pushes and full-matrix dispatches:
 # `requires-python = ">=3.12"` has no ceiling, so the version most developers
 # actually run (their newest interpreter) has to be testable too —
 # `hatch run test.py3.14:cov`.
@@ -615,8 +625,9 @@ python = ["3.12", "3.13", "3.14"]
 # and `stats` paths the default env's `test`/`test-cov` scripts run (nor
 # `testpaths`, which the explicit args below override). This env has
 # `features = ["test"]`, which omits the `dev`-only tooling those paths import.
-# The default env (`features = ["dev"]`) has it, which is why `hatch run
-# test-cov` — what CI runs on every matrix leg — can collect them.
+# The default env (`features = ["dev"]`) has it, which is why `hatch run test-cov`
+# — what ci.yml runs on every push to `dev` and on every dispatch, and coverage.yml
+# on every push to `dev` (PRs run `test-nocov`) — can collect them.
 run = "pytest {args:packages/luxar/src/luxar}"
 cov = "pytest -m 'not slow' --cov=luxar --cov-report=term-missing {args:packages/luxar/src/luxar}"
 
@@ -868,10 +879,14 @@ skip_covered = false
 # statements, up from 41,347 when a stray "pass" substring was deleting whole
 # function bodies from the denominator).
 #
-# The ~2.5 pt margin is deliberate, not slack: PRs run 3.12 only, while
-# push/schedule runs the 3.12/3.13/3.14 matrix, so a floor tuned tight to one
-# interpreter can redden `dev` after a green PR. Re-measure with
-# `hatch run test-cov` before raising.
+# The ~2.5 pt margin is deliberate, not slack, and matters MORE now that PRs skip
+# coverage entirely (`test-nocov`): the gate is measured after merge by ci.yml's
+# push-to-dev `python-tests` legs, NOT on the introducing PR. A regression can
+# therefore ride a green PR onto `dev` before the protected 3.12 leg catches it.
+# coverage.yml also runs one non-cancelling 3.12 observation per dev commit, but its
+# context is advisory until repository protection requires it. Full-matrix
+# dispatches add 3.13/3.14, so a floor tuned tight to one interpreter can still
+# redden `dev`. Re-measure with `hatch run test-cov` before raising.
 fail_under = 89
 
 [tool.coverage.html]
