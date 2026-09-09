@@ -86,9 +86,9 @@ LOCAL_INPUT_MODES = ("manual-file", "kaggle-auth", "git-lfs")
 # gone — the demo is then generated like any other.
 UNBUILDABLE_IDS: dict[str, str] = {}
 
-SCENE_AUDITORS = (
-    REPO_ROOT / "scripts" / "check_demo_ladders.py",
-    REPO_ROOT / "scripts" / "check_scene_credits.py",
+SCENE_AUDITOR_NAMES = (
+    "check_demo_ladders.py",
+    "check_scene_credits.py",
 )
 
 
@@ -267,7 +267,8 @@ def audit_generated_stores(paths: list[Path]) -> list[str]:
 
     failures = []
     with asection(f"Auditing {len(paths)} newly generated scene(s)"):
-        for auditor in SCENE_AUDITORS:
+        for auditor_name in SCENE_AUDITOR_NAMES:
+            auditor = REPO_ROOT / "scripts" / auditor_name
             cmd = [
                 sys.executable,
                 str(auditor),

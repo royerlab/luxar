@@ -443,9 +443,9 @@ def test_newly_generated_stores_are_audited_by_explicit_path(
     expected_store = str(tmp_path / "datasets/demos/fresh.luxar.zarr")
     for cmd, kwargs in calls.audit_invocations:
         assert cmd[0] == sys.executable
-        assert Path(cmd[1]).name in {
-            "check_demo_ladders.py",
-            "check_scene_credits.py",
+        assert Path(cmd[1]) in {
+            tmp_path / "scripts/check_demo_ladders.py",
+            tmp_path / "scripts/check_scene_credits.py",
         }
         assert list(cmd[2:]) == ["--require-scenes", expected_store]
         assert kwargs == {"cwd": tmp_path}

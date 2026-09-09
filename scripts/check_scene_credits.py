@@ -37,8 +37,8 @@ A checkout with no generated scenes remains a read-only no-op, matching
 ``check-demo-ladders``: the output directory is gitignored, so an empty
 inventory is the normal state of a fresh clone and of CI. It now says INSPECTED
 NOTHING rather than wording that reads like a pass, and ``--require-scenes``
-turns it into a failure for callers that know better — release prep, or a
-demo-build pipeline running this after the build.
+turns it into a failure for callers that know better — the gallery generator or
+the pre-upload inventory audit.
 """
 
 from __future__ import annotations
@@ -238,7 +238,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         action="store_true",
         help=(
             "fail instead of passing when no scene was inspected (use wherever "
-            "demos ARE expected to be built: release prep, a demo-build pipeline)"
+            "demos ARE expected: gallery generation, the pre-upload audit)"
         ),
     )
     args = parser.parse_args(argv)
