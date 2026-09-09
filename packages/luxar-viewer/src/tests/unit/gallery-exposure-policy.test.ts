@@ -450,8 +450,8 @@ describe('gallery auto-exposure policy', () => {
       };
       const { stops, flatSubject, guardExhausted } = await computeAutoExposure(io);
       expect(flatSubject).toBe(false);
-      expect(stops).toBe(EXPOSURE_MIN);
-      expect(measured.at(-1)).toBe(EXPOSURE_MIN);
+      expect(stops).toBe(-10);
+      expect(measured.at(-1)).toBe(-10);
       expect(guardExhausted).toBe(true);
     });
 
@@ -483,7 +483,7 @@ describe('gallery auto-exposure policy', () => {
       expect(guardExhausted).toBe(true);
     });
 
-    it('clamps at EXPOSURE_MIN when the mid-tone pass cannot reach the target', async () => {
+    it('uses the guard to reach EXPOSURE_MIN after the mid-tone budget is exhausted', async () => {
       // Narrow AND pinned near white, and the subject never responds to
       // exposure, so the mid-tone pass spends its whole budget stepping down.
       let applied = 0;
@@ -504,19 +504,19 @@ describe('gallery auto-exposure policy', () => {
           };
         },
       };
-      // Sanity-check the premise against the real budget: MID_EXPOSURE_ITERS
-      // corrections of log2(0.5/0.99) from where phase 1 leaves off must
-      // undershoot the floor, otherwise this would not exercise the clamp.
+      // The widened floor is below what phase 2 can reach with valid 0..1 luma,
+      // so the median pass must exhaust its budget above the floor and phase 3
+      // must finish the descent.
       const afterPhase1 = 1.0 + AUTO_EXPOSURE_ITERS * Math.log2(TARGET_HI / 0.99);
       const unclamped = afterPhase1 + MID_EXPOSURE_ITERS * Math.log2(TARGET_MID / 0.99);
-      expect(unclamped).toBeLessThan(EXPOSURE_MIN);
+      expect(unclamped).toBeGreaterThan(EXPOSURE_MIN);
 
       const { stops, flatSubject, guardExhausted } = await computeAutoExposure(io);
       expect(flatSubject).toBe(true);
       expect(stops).toBe(EXPOSURE_MIN);
-      // Phase 2 measures its final applied exposure, then phase 3 enters at
-      // the floor and spends exactly one measurement declaring exhaustion.
-      expect(measured.slice(-2)).toEqual([EXPOSURE_MIN, EXPOSURE_MIN]);
+      expect(measured.at(-3)).toBeCloseTo(unclamped, 6);
+      expect(measured.at(-2)).toBeCloseTo(unclamped - CLIP_GUARD_STEP, 6);
+      expect(measured.at(-1)).toBe(EXPOSURE_MIN);
       expect(guardExhausted).toBe(true);
     });
   });

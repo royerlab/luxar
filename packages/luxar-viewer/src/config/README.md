@@ -140,6 +140,7 @@ adaptiveDPR: {
   scaleDownFpsRatio: 0.75,     // Scale down below 75% of the display's rAF cap
   scaleUpFpsRatio: 0.90,       // Count toward scale-up above 90% of the cap
   refreshRateFallback: 60,     // Cap assumed before the estimator warms up
+  refreshRateCeiling: 0,       // Upper bound on the estimated cap (0 = none; mobile runtime passes 60)
   midbandGraceSamples: 1,      // Mid-band samples tolerated before the streak resets
 
   // U-shape probe (every scale-down is verified before it stands)

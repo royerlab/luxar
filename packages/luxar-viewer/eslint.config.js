@@ -99,11 +99,9 @@ export default [
       // 0 await-thenable) and 160 including tests. Existing findings are
       // recorded in `eslint-suppressions.json` — ESLint's own baseline
       // mechanism, not a hand-rolled ratchet — so nothing goes red today and a
-      // higher per-file count fails immediately. Burn them down with
-      // `pnpm lint --prune-suppressions`. The default lint script deliberately
-      // passes `--pass-on-unpruned-suppressions`, so paying down debt or deleting
-      // a baselined file does not fail CI before pruning. Until then, a file that
-      // drops two of three findings retains all three slots without a reminder.
+      // higher per-file count fails immediately. The default lint script also
+      // rejects unpruned counts, so burn findings down with
+      // `pnpm lint --prune-suppressions` and commit the updated baseline.
       //
       // `no-unnecessary-type-assertion` is deliberately NOT here: 867 findings,
       // auto-fixable, and a redundant `as` is untidy rather than wrong. Landing

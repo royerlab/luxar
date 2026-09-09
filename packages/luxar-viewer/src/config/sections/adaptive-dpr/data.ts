@@ -20,6 +20,7 @@ export const adaptiveDPRConfig: AdaptiveDPRConfig = {
   scaleDownFpsRatio: 0.75,
   scaleUpFpsRatio: 0.9,
   refreshRateFallback: 60,
+  refreshRateCeiling: 0, // 0 = unbounded; the mobile runtime passes 60
   midbandGraceSamples: 1,
 
   // U-shape probe (previously hardcoded class constants)

@@ -89,6 +89,7 @@ import {
   pickChildWithHysteresis,
   projectBoxAreaFraction,
   projectBoxDiagonalPx,
+  type WorldBoxOptions,
 } from './lod-selector-math';
 import { enforceResidentByteBudget } from './lod-eviction';
 
@@ -613,6 +614,8 @@ interface LODGroupEntryCache {
   /** Whether any child needs the optional robust-bounds metric fold. */
   hasLodBounds: boolean;
   localBoxScratch: BoundingBox;
+  worldBoxOptions: WorldBoxOptions;
+  metricWorldBoxOptions: WorldBoxOptions;
 }
 
 /**
@@ -625,7 +628,8 @@ interface LODGroupEntryCache {
  *   - ``PARTITION_FRUSTUM_MATRIX_SCRATCH`` — padded projection × view product.
  *   - ``WORLD_BOX3_SCRATCH`` — a ``THREE.Box3`` view of a group's world bbox
  *     for ``frustum.intersectsBox`` (our ``BoundingBox`` is a plain object).
- *   - ``FOOTPRINT_BOX3_SCRATCH`` — loaded geometry footprint unioned into part bounds.
+ *   - ``FOOTPRINT_BOX3_SCRATCH`` — one object's rendered footprint on its way
+ *     into a part's cached footprint box.
  * (The eviction pass keeps its own scratches in ``lod-eviction.ts``.)
  */
 const FRUSTUM_SCRATCH = new THREE.Frustum();
@@ -666,6 +670,72 @@ function unionPartitionFootprints(objects: readonly THREE.Object3D[], target: TH
     FOOTPRINT_BOX3_SCRATCH.setFromObject(object);
     if (!FOOTPRINT_BOX3_SCRATCH.isEmpty()) target.union(FOOTPRINT_BOX3_SCRATCH);
   }
+}
+
+/**
+ * Whether any object of a part has moved since its footprint box was captured.
+ * ``cached`` holds one 16-element world-matrix block per object, in
+ * ``objects`` order, sized by ``registerPartition``. A part that later gained an
+ * object reads ``undefined`` past the end and so counts as moved, which
+ * recaptures and grows the array; one that lost an object simply stops
+ * comparing the trailing blocks.
+ *
+ * Only the part's own objects are compared. A transform on a DESCENDANT of one
+ * of them is not detected — descendant transforms are applied at node-creation
+ * time and never animated, and every geometry commit dirties the part
+ * explicitly. Anything that starts moving a descendant later has to call
+ * ``invalidatePartitionFootprint``.
+ */
+function partitionFootprintMatricesDiffer(
+  objects: readonly THREE.Object3D[],
+  cached: readonly number[]
+): boolean {
+  for (let index = 0; index < objects.length; index++) {
+    const elements = objects[index].matrixWorld.elements;
+    const offset = index * 16;
+    for (let element = 0; element < 16; element++) {
+      if (cached[offset + element] !== elements[element]) return true;
+    }
+  }
+  return false;
+}
+
+/** Rebuild a part's cached footprint box and the world matrices it was taken at. */
+function capturePartitionFootprint(
+  objects: readonly THREE.Object3D[],
+  target: THREE.Box3,
+  cached: number[]
+): void {
+  target.makeEmpty();
+  unionPartitionFootprints(objects, target);
+  // Snapshot AFTER the union: ``Box3.expandByObject`` refreshes each object's
+  // world matrix, so a snapshot taken first would lag by one recompute and make
+  // every following frame look like a move.
+  for (let index = 0; index < objects.length; index++) {
+    objects[index].matrixWorld.toArray(cached, index * 16);
+  }
+}
+
+/**
+ * Dirty every part the committed ``nodePath`` belongs to — the part itself, or
+ * anything under it (an LOD level or an additive rung commits at a deeper path
+ * than the part it renders into). Returns whether any part matched, so the
+ * caller can fall back to dirtying the whole partition.
+ */
+function invalidateMatchingPartitionChildren(
+  entry: PartitionGroupEntry,
+  children: Array<{ footprintDirty: boolean }>,
+  nodePath: string
+): boolean {
+  let matched = false;
+  for (let index = 0; index < entry.children.length; index++) {
+    const childPath = entry.children[index].path;
+    if (nodePath === childPath || nodePath.startsWith(`${childPath}/`)) {
+      children[index].footprintDirty = true;
+      matched = true;
+    }
+  }
+  return matched;
 }
 
 function updatePartitionObjectVisibility(
@@ -821,6 +891,14 @@ export class LODGroupRegistry {
       children: Array<{
         source: PartitionGroupEntry;
         localBoxScratch: BoundingBox;
+        worldBoxOptions: WorldBoxOptions;
+        footprintBox: THREE.Box3;
+        /**
+         * World transforms ``footprintBox`` was captured at — one flattened
+         * 16-element block per object of the part, in ``children[i].objects`` order.
+         */
+        footprintMatrixWorld: number[];
+        footprintDirty: boolean;
       }>;
     }
   > = new Map();
@@ -895,6 +973,19 @@ export class LODGroupRegistry {
         min: { x: 0, y: 0, z: 0 },
         max: { x: 0, y: 0, z: 0 },
       },
+      worldBoxOptions: {
+        worldBoxScratch: {
+          min: { x: 0, y: 0, z: 0 },
+          max: { x: 0, y: 0, z: 0 },
+        },
+      },
+      metricWorldBoxOptions: {
+        worldBoxScratch: {
+          min: { x: 0, y: 0, z: 0 },
+          max: { x: 0, y: 0, z: 0 },
+        },
+        useLodBounds: true,
+      },
     });
     // Apply initial visibility: only the active child is visible, and
     // only if its geometry is ready. A lazily-loaded active child that
@@ -925,12 +1016,46 @@ export class LODGroupRegistry {
           min: { x: 0, y: 0, z: 0 },
           max: { x: 0, y: 0, z: 0 },
         },
+        worldBoxOptions: {
+          worldBoxScratch: {
+            min: { x: 0, y: 0, z: 0 },
+            max: { x: 0, y: 0, z: 0 },
+          },
+        },
+        footprintBox: new THREE.Box3(),
+        footprintMatrixWorld: new Array<number>(child.objects.length * 16).fill(0),
+        footprintDirty: true,
       })),
     });
     for (const child of entry.children) {
       // Each loader path resolves to its emitted object, so stamping them all
       // lets the loader gate use its normal ancestor walk for multi-object parts.
       for (const object of child.objects) object.userData.partitionFrustumVisible = true;
+    }
+  }
+
+  /**
+   * Mark the owning partition part's rendered footprint stale after a geometry commit.
+   *
+   * ``SceneLoader.updatePointsGeometry`` and the three ``commit*Geometry`` methods
+   * are the complete geometry-attach funnels, including lazy LOD children and
+   * additive rungs. They dirty the part before writing, so a commit that hands off
+   * geometry and then throws cannot leave the previous footprint cached.
+   * ``registerPartition`` starts every part dirty, which also covers a commit that
+   * races registration. A path under a partition that matches no registered child
+   * dirties the whole partition conservatively rather than allowing an
+   * under-covering stale box. Footprints are cached in world space; the per-frame
+   * gate separately detects transform changes.
+   */
+  invalidatePartitionFootprint(nodePath: string): void {
+    for (const [entryPath, cache] of this.partitionCaches) {
+      if (nodePath !== entryPath && !nodePath.startsWith(`${entryPath}/`)) continue;
+      const entry = this.partitionEntries.get(entryPath);
+      if (!entry) continue;
+      const matched = invalidateMatchingPartitionChildren(entry, cache.children, nodePath);
+      if (!matched) {
+        for (const childCache of cache.children) childCache.footprintDirty = true;
+      }
     }
   }
 
@@ -1417,13 +1542,28 @@ export class LODGroupRegistry {
         childCache.source,
         displayDims,
         childCache.localBoxScratch,
-        this.matrixScratch
+        this.matrixScratch,
+        childCache.worldBoxOptions
       );
       let visible = true;
       if (worldBox) {
         WORLD_BOX3_SCRATCH.min.set(worldBox.min.x, worldBox.min.y, worldBox.min.z);
         WORLD_BOX3_SCRATCH.max.set(worldBox.max.x, worldBox.max.y, worldBox.max.z);
-        unionPartitionFootprints(child.objects, WORLD_BOX3_SCRATCH);
+        for (const object of child.objects) object.updateWorldMatrix(false, false);
+        if (
+          childCache.footprintDirty ||
+          partitionFootprintMatricesDiffer(child.objects, childCache.footprintMatrixWorld)
+        ) {
+          capturePartitionFootprint(
+            child.objects,
+            childCache.footprintBox,
+            childCache.footprintMatrixWorld
+          );
+          childCache.footprintDirty = false;
+        }
+        if (!childCache.footprintBox.isEmpty()) {
+          WORLD_BOX3_SCRATCH.union(childCache.footprintBox);
+        }
         visible = frustum.intersectsBox(WORLD_BOX3_SCRATCH);
       }
       const flags = updatePartitionObjectVisibility(child.objects, visible);
@@ -1884,10 +2024,9 @@ export class LODGroupRegistry {
    * ``lod-selector-math.ts`` for the math). The default uses raw
    * ``positionBounds`` for frustum gating and eviction; ``useLodBounds`` uses
    * robust bounds with a per-child raw fallback for selector metrics. This
-   * wrapper supplies the per-entry ``localBoxScratch`` and the registry's
-   * ``matrixScratch``;
-   * ``transformBoundingBox`` allocates the returned box, so it is independent
-   * of those scratches and safe to keep past the next call.
+   * wrapper supplies per-entry local/world scratch boxes and the registry's
+   * ``matrixScratch``. Raw and robust metric bounds use distinct world boxes
+   * because both remain live during one selector evaluation.
    */
   private computeWorldBox(
     entry: LODGroupEntry,
@@ -1901,7 +2040,7 @@ export class LODGroupRegistry {
       displayDims,
       cache.localBoxScratch,
       this.matrixScratch,
-      useLodBounds
+      useLodBounds ? cache.metricWorldBoxOptions : cache.worldBoxOptions
     );
   }
 

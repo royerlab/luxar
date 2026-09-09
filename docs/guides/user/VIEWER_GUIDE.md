@@ -186,7 +186,7 @@ Append parameters to the viewer URL to control startup behavior.
 | `gpuBudgetMB` | number | Pin the GPU-geometry byte budget in MB, bypassing auto-sizing. `0` disables the budget (unbounded resident geometry). |
 | `cacheBudgetMB` | number | Total in-memory cache pool (L0 + L1 + S-cache) in MB, for environments without `performance.memory` (Safari, WKWebView). Also supplies a GPU-geometry/LOD residency signal at one third of the cache pool; without `deviceMemory`, it replaces the 512 MB fallback and may raise or lower it. |
 | `dpr` | number | Pin a fixed device pixel ratio and disable adaptive DPR (clamped to [0.25, native DPR]). Overrides the high-DPR ceiling, so `?dpr=2` renders at 2 even with **Allow High DPR** off. For deterministic E2E/visual runs. |
-| `input` | `touch` \| `mouse` | Force the session's JS input profile: pointer flags, hover capability, touch points, and device tier. This changes device-class fallback budgets (`touch` only — `mouse` keeps the detected tier), primary-tip pen routing, the Safari gesture-canceller gate, and whether the help overlay lists its Touch section. Stylesheets and non-pen gesture routing still follow the real media features and `PointerEvent.pointerType`, so a faithful check needs device emulation or a real device. Detected by default, including an iPad whose Safari reports a macOS user agent. |
+| `input` | `touch` \| `mouse` | Force the session's JS input profile: pointer flags, hover capability, touch points, and device tier. This changes device-class fallback budgets (`touch` only — `mouse` keeps the detected tier), primary-tip pen routing, the Safari gesture-canceller gate, and whether the help overlay lists its Touch section; `touch` additionally applies the mobile rendering budgets (adaptive-DPR floor and refresh ceiling, high-DPR cap, GPU-byte and element-texture ceilings, data-worker count) and skips the blend-variant program warm-up. Stylesheets and non-pen gesture routing still follow the real media features and `PointerEvent.pointerType`, so a faithful check needs device emulation or a real device. Detected by default, including an iPad whose Safari reports a macOS user agent. |
 | `lineJoin` | `none` \| `miter` | Force the line join style for the session — **applies only to `linePrimitive=screen-space`**. The default capsule primitive partitions every interior joint along its bisector unconditionally, so this parameter (and each node's authored `join` attribute) is a no-op there. |
 | `linePrimitive` | `capsule` \| `screen-space` | Select the line rendering primitive (#1352). Default **`capsule`**: a gaussian-like profile of the 2D point-to-segment distance — stable round discs end-on, seamless bisector-partitioned joints, quad-class cost. `screen-space` is the classic quad — the lean path for very large line scenes. With no URL override, the **`Settings → Advanced → Line primitive`** policy decides: `Auto` (default) builds the capsule, except line nodes whose effective segment load (authored count × a rendered-width factor) reaches 2 M, which build the quad; `Capsule`/`Quad` force one primitive everywhere. `?linePrimitive=` overrides the policy for the session. |
 
@@ -660,9 +660,10 @@ at — which is what keeps a reloaded or shared post-switch link named.
 | Story waypoints | `waypoints` (list of `Waypoint`: `when`, `camera`, `duration_ms`, `easing`, `rendering`) — camera poses bound to hidden-dimension positions; see below |
 
 Set `allow_high_dpr=True` if your scene is **line-dominated** — a river network,
-a tractogram, a wiring diagram. The viewer renders at CSS resolution by default
-even on a Retina display, because a 2x panel costs 4x the fragment work and
-soft-edged emissive geometry barely rewards it. Measured against DPR 2,
+a tractogram, a wiring diagram. Phones and tablets cap this setting at DPR 2;
+laptops and desktops use the panel's native DPR. The viewer renders at CSS
+resolution by default even on a Retina display, because a 2x panel costs 4x the
+fragment work and soft-edged emissive geometry barely rewards it. Measured against DPR 2,
 brightness and coverage hold to within 2.5% on every geometry type and the whole
 visible effect is a 15-35% loss of fine detail: on points and splats that is
 mild softening, but on dense thin lines the individual strands stop being

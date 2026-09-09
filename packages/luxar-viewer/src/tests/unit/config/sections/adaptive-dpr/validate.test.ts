@@ -91,6 +91,15 @@ describe('validateAdaptiveDPR', () => {
     expect(result.warnings).toContainEqual(expect.stringContaining('probeWindowMs'));
   });
 
+  it('warns (not errors) on a nonzero ceiling below a real display rate', () => {
+    const cfg = cloneConfig();
+    cfg.adaptiveDPR.refreshRateCeiling = 1;
+
+    const result = invokeValidator(validateAdaptiveDPR, cfg);
+    expect(result.valid).toBe(true);
+    expect(result.warnings).toContainEqual(expect.stringContaining('refreshRateCeiling'));
+  });
+
   it('warns (not errors) on a gapResetMs at or above the FPS window', () => {
     const cfg = cloneConfig();
     cfg.adaptiveDPR.gapResetMs = 1000;

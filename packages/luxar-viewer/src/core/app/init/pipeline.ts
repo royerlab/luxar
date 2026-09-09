@@ -3,7 +3,10 @@ import { SceneManager } from '../../../scene/scene-manager';
 import { AnimationController } from '../../../scene/animation/animation-controller';
 import { PerformanceMonitor } from '../../../ui/performance-monitor';
 import { DebugConsole } from '../../../ui/debug-console';
-import { AdaptiveDPRManager } from '../../../rendering/adaptive-dpr-manager';
+import {
+  AdaptiveDPRManager,
+  mobileAdaptiveDprOverrides,
+} from '../../../rendering/adaptive-dpr-manager';
 import { ResolutionIndicator } from '../../../ui/resolution-indicator';
 import { InputHandler } from '../../../input';
 import { DimensionSliders } from '../../../ui/dimension-sliders';
@@ -38,6 +41,7 @@ import type { EventGroup } from '../../../utils/cross-layer/event-group';
 import { wireDensityGuard } from './density-guard-wiring';
 import { buildLoadActivityPredicate } from './load-activity';
 import { wireSceneEnvironment } from './environment-wiring';
+import { getInputProfile } from '../../../utils/input-capabilities';
 
 /**
  * Everything `LuxarApp.init()` constructs is returned in this result.
@@ -144,7 +148,11 @@ export async function runInitPipeline(
     renderer: ports.options.renderer,
     webgpuForceWebGL: ports.options.webgpuForceWebGL,
     perfTimestamp: ports.options.perfTimestamp,
-    blendWarmup: ports.options.blendWarmup,
+    // Mobile GPUs can spend 50-300 ms linking each blend variant, and Safari
+    // before 18.2 has no requestIdleCallback to hide that work. Resolve the
+    // device default here so direct LuxarApp embedders get the same protection
+    // as the standalone bootstrap; an explicit false remains the opt-out.
+    blendWarmup: ports.options.blendWarmup !== false && getInputProfile().deviceClass !== 'mobile',
   });
 
   // Initialize animation controller with HDR post-processing.
@@ -386,7 +394,10 @@ export async function runInitPipeline(
   setHighDPRAllowed(config.renderingControls.defaults.allowHighDPR);
 
   // Initialize adaptive DPR manager for dynamic resolution scaling
-  const adaptiveDPRManager = new AdaptiveDPRManager();
+  // On a phone/tablet: a legible floor and a 60 Hz threshold ceiling (a
+  // ProMotion iPad's learned 120 Hz mark would otherwise read a healthy
+  // 60 fps as distress). `undefined` on a laptop/desktop — unchanged.
+  const adaptiveDPRManager = new AdaptiveDPRManager(mobileAdaptiveDprOverrides());
   partial.adaptiveDPRManager = adaptiveDPRManager;
   adaptiveDPRManager.setRenderer(sceneManager);
   animationController.setAdaptiveDPRManager(adaptiveDPRManager);

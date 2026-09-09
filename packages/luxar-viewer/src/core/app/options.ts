@@ -169,9 +169,9 @@ export interface LuxarAppOptions {
   /**
    * WebGL-only blend warm-up (pre-compile each DISTINCT reachable
    * blend-mode program variant, one compile per macrotask). Default:
-   * true. Mirrors `UrlParams.blendWarmup` (`?no-blend-warmup`
-   * disables) — the standalone bootstrap threads it here; embedders
-   * set it directly.
+   * true on laptops/desktops and false on phones/tablets. Mirrors
+   * `UrlParams.blendWarmup` (`?no-blend-warmup` disables) — the
+   * standalone bootstrap threads it here; embedders can disable it directly.
    */
   blendWarmup?: boolean;
 

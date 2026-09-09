@@ -12,6 +12,7 @@ import { Controller } from '../controller';
 import { ControllerType, type ControllerOptions } from '../types';
 import { clamp, formatNumber } from '../format/value-formatting';
 import { applyAutoBlur } from '../format/auto-blur';
+import { normalizeWheelDeltaWithAxisFallback } from '../../../utils/wheel-delta';
 
 export class NumberController extends Controller<number> {
   protected type = ControllerType.NUMBER;
@@ -91,10 +92,7 @@ export class NumberController extends Controller<number> {
           else if (wheelEvent.shiftKey) multiplier = 0.01;
           else if (wheelEvent.ctrlKey) multiplier = 1;
           const delta = this.stepValue * multiplier;
-          // Shift+wheel on a standard mouse arrives as a HORIZONTAL scroll
-          // (the browser swaps the axis, leaving deltaY = 0) — read
-          // whichever axis carries the motion.
-          const wheelDelta = wheelEvent.deltaY !== 0 ? wheelEvent.deltaY : wheelEvent.deltaX;
+          const wheelDelta = normalizeWheelDeltaWithAxisFallback(wheelEvent);
           if (wheelDelta === 0) return;
           const direction = wheelDelta < 0 ? 1 : -1;
           const value = this.constrainValue(this.getValue() + direction * delta);
