@@ -168,6 +168,8 @@ jobs:
             # literal calls and requires a GATE_INPUTS row for each. Name those files,
             # not whole viewer subtrees: unrelated viewer edits should remain
             # TypeScript-only and avoid the Python matrix.
+            # The two named unit tests are also scanned for repo-rooted readFileSync
+            # inputs, so edits to those scanner inputs must run the Python guard.
             # test_docs_workflow.py also parses docs.yml and derives the published
             # LFS candidate set from .gitattributes, while the wheel-completeness
             # guard reads .gitignore. test_verify_media.py reads media-manifest.json;
@@ -179,7 +181,8 @@ jobs:
             # TS domain = the WHOLE viewer package (its py fixture-generators feed TS tests -> hierarchy) + root TS config.
             # gallery-selection.test.ts also reads the root README and both gallery
             # manifests; generated-fixture-freshness.test.ts checks the Makefile's
-            # E2E fixture prerequisite wiring.
+            # E2E fixture prerequisite wiring. The third-party-notices test scrapes
+            # colormap tables from scripts/generate_builtin_colormaps.py.
             printf '%s\n' "$changed" | grep -qE '(^packages/luxar-viewer/|^Makefile$|^README\.md$|^scripts/generate_builtin_colormaps\.py$|^scripts/gallery/(media-)?manifest\.json$|^tsconfig[^/]*\.json$|(^|/)vitest[^/]*\.(ts|js|mjs)$)' && dom_ts=true || true
             printf '%s\n' "$changed" | grep -qE '(\.rs$|^wasm/|(^|/)Cargo\.(toml|lock)$)' && dom_rust=true || true
             printf '%s\n' "$changed" | grep -qE '(\.go$|^packages/luxar/src/luxar/cli/_launchers/|(^|/)go\.(mod|sum)$)' && dom_go=true || true
