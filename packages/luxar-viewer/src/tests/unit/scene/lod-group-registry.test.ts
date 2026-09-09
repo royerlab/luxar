@@ -4591,9 +4591,10 @@ describe('LODGroupRegistry — capture quiescence (isCaptureQuiescent)', () => {
     loadPassInProgress = false;
     reg.evaluatePerFrame();
     expect(requestReprocess).toHaveBeenCalledWith(['/partition/part_0']);
-    expect(reg.isCaptureQuiescent()).toBe(false);
 
     part.userData.loadedViewVersion = 2;
+    expect(reg.isCaptureQuiescent()).toBe(false);
+
     loadPassInProgress = false;
     expect(reg.isCaptureQuiescent()).toBe(true);
   });
