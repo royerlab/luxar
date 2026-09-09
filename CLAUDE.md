@@ -56,7 +56,7 @@ pnpm lint         # Lint (includes TYPE-AWARE rules: no-floating-promises,
                   # eslint-suppressions.json — ESLint's own baseline, so a NEW
                   # violation fails, including an increase inside a suppressed
                   # file (the suppression is a COUNT, not a file exemption).
-                  # Fixed some? `pnpm lint --prune-suppressions` tightens it.
+                  # Fixed some? `pnpm lint:prune` tightens it.
                   # Moved/renamed a baselined file? Re-key with `pnpm exec
                   # eslint . --suppress-rule <rule>`, then
                   # prune; verify the suppressions diff only moves that path.

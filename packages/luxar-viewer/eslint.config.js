@@ -100,7 +100,7 @@ export default [
       // recorded in `eslint-suppressions.json` — ESLint's own baseline
       // mechanism, not a hand-rolled ratchet — so nothing goes red today and a
       // higher per-file count fails immediately. Burn them down with
-      // `pnpm lint --prune-suppressions`. The default lint script deliberately
+      // `pnpm lint:prune`. The default lint script deliberately
       // passes `--pass-on-unpruned-suppressions`, so paying down debt or deleting
       // a baselined file does not fail CI before pruning. Until then, a file that
       // drops two of three findings retains all three slots without a reminder.

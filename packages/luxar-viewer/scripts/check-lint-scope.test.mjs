@@ -81,6 +81,37 @@ function authoredFiles(root = PKG) {
 
 const FILES = authoredFiles();
 
+/** ESLint passes named by a package script. */
+function lintPasses(scriptName) {
+  const scripts = JSON.parse(readFileSync(join(PKG, 'package.json'), 'utf8')).scripts;
+  expect(scripts[scriptName]).toBeTypeOf('string');
+  return scripts[scriptName].split('&&').map((command) => {
+    const target = /^\s*eslint\s+("[^"]+"|\S+)/.exec(command)?.[1]?.replaceAll('"', '');
+    expect(target, `could not read eslint target from: ${command}`).toBeDefined();
+    const ignores = [...command.matchAll(/--ignore-pattern\s+"([^"]+)"/g)].map((match) => match[1]);
+    return { command, target, ignores };
+  });
+}
+
+/** Whether a directory target or recursive ignore pattern includes a file. */
+function matchesTree(file, pattern) {
+  if (pattern === '.') return true;
+  const root = pattern.replace(/\/\*\*$/, '');
+  return file === root || file.startsWith(`${root}/`);
+}
+
+/** Authored files not claimed by any pass in a lint script. */
+function filesOutsideLintScript(scriptName) {
+  const passes = lintPasses(scriptName);
+  return FILES.filter(
+    (file) =>
+      !passes.some(
+        ({ target, ignores }) =>
+          matchesTree(file, target) && !ignores.some((pattern) => matchesTree(file, pattern))
+      )
+  );
+}
+
 /** Parsed TypeScript project configuration. */
 function parsedTypeScriptConfig(configName) {
   const configPath = join(PKG, configName);
@@ -181,6 +212,19 @@ describe('lint scope', () => {
     ).toEqual([]);
   });
 
+  it('claims every authored file across the sequential lint passes', () => {
+    const unreached = filesOutsideLintScript('lint');
+    expect(unreached, `add these to a lint pass:\n${unreached.join('\n')}`).toEqual([]);
+  });
+
+  it('prunes suppressions across every lint pass', () => {
+    const passes = lintPasses('lint:prune');
+    expect(passes.every(({ command }) => command.includes('--prune-suppressions'))).toBe(true);
+
+    const unreached = filesOutsideLintScript('lint:prune');
+    expect(unreached, `add these to a pruning pass:\n${unreached.join('\n')}`).toEqual([]);
+  });
+
   it('fails closed on unsupported source module extensions', async () => {
     const eslint = new ESLint({ cwd: PKG });
     for (const extension of ['mts', 'cts']) {
@@ -226,7 +270,7 @@ describe('typecheck scope', () => {
       ])
     );
     expect(toolingDiagnostics).toEqual([]);
-  });
+  }, 30_000);
 
   it('includes project declaration files when probing browser globals', () => {
     const declarationPath = join(PKG, 'src/types/node-global-probe.test-only.d.ts');
