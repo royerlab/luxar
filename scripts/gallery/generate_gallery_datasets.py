@@ -274,8 +274,8 @@ def _run_scene_auditors(
         for auditor_name, gates in SCENE_AUDITOR_NAMES:
             auditor = REPO_ROOT / "scripts" / auditor_name
             # Generated-path calls are non-empty by construction, so
-            # --require-scenes is defense-in-depth there. It is load-bearing for
-            # the whole-inventory report, where an empty build box must be loud.
+            # --require-scenes is defense-in-depth there. On the report-only
+            # inventory pass it makes an empty build box explicit in the output.
             cmd = [
                 sys.executable,
                 str(auditor),
