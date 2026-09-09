@@ -134,6 +134,7 @@ export function initDimensionSliders(ctx: DimNavSetupCtx): void {
       dimensionNames,
       dimensionUnits,
       selectedDimension: ctx.getSelectedDimension(),
+      onSelectDimension: (navigableIndex) => ctx.setSelectedDimension(navigableIndex),
     });
     ctx.setDimensionSliders(sliders);
     ctx.panelCoordinator.setDimensionSliders(sliders);

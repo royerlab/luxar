@@ -57,7 +57,7 @@ pnpm lint         # Lint (includes TYPE-AWARE rules: no-floating-promises,
                   # violation or an over-declared count fails, including an
                   # increase inside a suppressed file (the suppression is a
                   # COUNT, not a file exemption). After reducing a count, run
-                  # `pnpm lint --prune-suppressions` and commit the baseline.
+                  # `pnpm lint:prune` and commit the baseline.
                   # Moved/renamed a baselined file? Re-key with `pnpm exec
                   # eslint . --suppress-rule <rule>`, then
                   # prune; verify the suppressions diff only moves that path.
@@ -100,7 +100,7 @@ make lint-python        # read-only: ruff check
 make check-complexity   # read-only: ruff C901 ratcheted against scripts/complexity_baseline.json
                   # CI enforces this both through `hatch run lint` and the
                   # live-tree `test_repository_has_no_complexity_regressions`.
-make check-lint-ratchet # read-only: ruff's DEFECT rules (flake8-bugbear + RUF012)
+make check-lint-ratchet # read-only: ruff's DEFECT rules (bugbear + blind-except + RUF012)
                   # ratcheted against scripts/lint_baseline.json. Existing debt is
                   # tolerated; a file that newly breaks one of these rules — or
                   # gains another violation of one it already breaks — fails.
@@ -192,7 +192,7 @@ The build system is designed to work on **fresh Linux/macOS machines** with mini
 - **HPC/no-sudo**: no extra prerequisites — the Makefile auto-detects and uses venv fallback
 
 **What `make setup-dev` installs (no sudo needed):**
-- **Node.js 22.22+** (installs the 22 LTS by default): via nvm (Linux) or Homebrew (macOS). The floor is jsdom 30 (dev/test only), whose undici 8 dependency crashes on Node older than 22.16; Vite 8 alone only needs 20.19. `engines.node` in `packages/luxar-viewer/package.json` deliberately stays at the library's runtime floor (`>=20.19.0`) — that manifest is published to npm, and a dev-only jsdom constraint there would break installs for consumers.
+- **Node.js 22.22+** (installs the 22 LTS by default): via nvm (Linux) or Homebrew (macOS). The floor is jsdom 30 (dev/test only), whose undici 8 dependency crashes on Node older than 22.16; Vite 8 alone supports `^20.19.0 || >=22.12.0`. `engines.node` in `packages/luxar-viewer/package.json` deliberately mirrors that library runtime range, excluding unsupported Node 22.0–22.11 without imposing the higher contributor-only jsdom floor on npm consumers.
 - **pnpm**: TypeScript package manager (via npm global or `--prefix ~/.local` fallback on HPC)
 - **Hatch**: Python environment manager (via pipx, or venv fallback on HPC)
 - **Pre-commit hooks**: ruff (lint + format), bandit, and mypy — see `.pre-commit-config.yaml`

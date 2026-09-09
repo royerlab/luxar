@@ -36,12 +36,15 @@ export const dataLoadingPerformanceConfig: DataLoadingPerformanceConfig = {
   gpuPoolEvictionFrames: 300,
   gpuPoolEvictBatchSize: 5,
   // Single GPU-geometry byte budget (pool + LOD retention). `null`
-  // auto-sizes from device memory (see rendering/gpu-byte-budget.ts);
-  // `0` disables byte-budget eviction; a positive number pins it.
+  // auto-sizes from the lowest available device-memory, measured-heap,
+  // mobile-device, and explicit cache-pool signals (see
+  // rendering/gpu-byte-budget.ts); `0` disables byte-budget eviction;
+  // a positive number pins it.
   // Without a budget, a 10M-element Lines buffer (~760 MB at 1.5×
   // overallocation) or a stack of retained LOD levels can briefly hold
-  // gigabytes. Overridable at runtime via `?gpuBudgetMB=`.
-  gpuPoolMaxBytes: null, // auto-size from deviceMemory and/or one third of cacheBudgetMB
+  // gigabytes. Overridable at startup via `?gpuBudgetMB=` or the embedded
+  // app/layer `gpuPoolMaxBytes` options.
+  gpuPoolMaxBytes: null,
 
   // Debugging
   enablePerformanceMonitoring: false,

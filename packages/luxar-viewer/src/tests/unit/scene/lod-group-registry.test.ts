@@ -1140,16 +1140,61 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     reg.evaluatePerFrame();
     groupObject.position.x = -2.5; // part_0 re-enters
     reg.evaluatePerFrame();
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(true);
+    groupObject.position.x = 0; // part_0 re-exits before the pending flush
+    reg.evaluatePerFrame();
+    expect(first.visible).toBe(false);
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(true);
     groupObject.position.x = -4.5; // part_1 re-enters
     reg.evaluatePerFrame();
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(true);
     expect(requestReprocess).not.toHaveBeenCalled();
 
     updateInProgress = false;
     reg.evaluatePerFrame();
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(false);
     reg.evaluatePerFrame();
     expect(requestReprocess).toHaveBeenCalledOnce();
     const paths = requestReprocess.mock.calls[0][0] as string[];
     expect([...paths].sort()).toEqual(['/partition/part_0', '/partition/part_1']);
+  });
+
+  it('does not report pending resync activity without a dispatch hook', () => {
+    let updateInProgress = true;
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => updateInProgress
+    );
+    const groupObject = new THREE.Group();
+    const child = new THREE.Group();
+    groupObject.add(child);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [child],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+        },
+      ],
+    });
+
+    reg.evaluatePerFrame();
+    groupObject.position.x = -2.5;
+    reg.evaluatePerFrame();
+
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(false);
+    updateInProgress = false;
+    reg.evaluatePerFrame();
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(false);
   });
 
   it('falls back to the whole wrapper when a re-entering part has no path', () => {
@@ -1371,10 +1416,12 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     updateInProgress = false;
     requestRender.mockClear();
     expect(reg.evaluatePerFrame()).toBe(false);
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(false);
     expect(requestReprocess).not.toHaveBeenCalled();
     expect(requestRender).not.toHaveBeenCalled();
 
     groupObject.visible = true;
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(true);
     expect(reg.evaluatePerFrame()).toBe(false);
     expect(requestReprocess).toHaveBeenCalledOnce();
     expect(requestReprocess).toHaveBeenCalledWith(['/partition/part_0']);
@@ -2963,8 +3010,8 @@ describe('LODGroupRegistry — frustum-aware selection & eviction', () => {
 
 // ────────────────────────────────────────────────────────────────────────
 // Fresh-but-empty display guard — a fresh level that committed 0 elements
-// while another fresh level has visible geometry signals inconsistent data;
-// the registry must show the populated level instead of blanking the group.
+// while a coarser fresh level has visible geometry signals inconsistent data;
+// the registry must show the populated coarser level instead of blanking the group.
 // ────────────────────────────────────────────────────────────────────────
 
 /** A gsplats child stamped fresh with an explicit committed splat count. */
@@ -3062,16 +3109,90 @@ describe('LODGroupRegistry — retryLazyChildByNodePath', () => {
 });
 
 describe('LODGroupRegistry — fresh-but-empty display guard', () => {
+  it('uses populated intermediate geometry after a stale hold expires', () => {
+    const state = { version: 1, clock: 0 };
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => undefined);
+    try {
+      const reg = makeRegistry(
+        [0, 1, 2],
+        undefined,
+        undefined,
+        () => state.version,
+        undefined,
+        () => state.clock
+      );
+      const children = [
+        makeCountedChild(0, 1, 100),
+        makeCountedChild(0.5, 1, 500),
+        makeCountedChild(1, 1, 1000),
+      ];
+      reg.register(makeEntry(children, 2, '/g'));
+      reg.evaluatePerFrame();
+      expect(reg.get('/g')!.activeChildIndex).toBe(2);
+
+      state.version = 2;
+      Object.assign(children[0].object.userData!, {
+        loadedViewVersion: 2,
+        visibleSplatCount: 0,
+      });
+      Object.assign(children[1].object.userData!, {
+        loadedViewVersion: 2,
+        visibleSplatCount: 50,
+      });
+      reg.evaluatePerFrame();
+      expect(children[2].object.visible).toBe(true);
+
+      state.clock += 260;
+      reg.evaluatePerFrame();
+
+      expect(reg.get('/g')!.activeChildIndex).toBe(2);
+      expect(reg.get('/g')!.displayedChildIndex).toBe(1);
+      expect(children[0].object.visible).toBe(false);
+      expect(children[1].object.visible).toBe(true);
+      expect(children[2].object.visible).toBe(false);
+      expect(warning).not.toHaveBeenCalled();
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  it('keeps an empty coarse aspiration when only a finer fresh level is populated', () => {
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => undefined);
+    try {
+      const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+      const children = [makeCountedChild(0, 2, 0), makeCountedChild(0.5, 2, 50)];
+      for (const child of children) {
+        child.positionBounds = { min: [0, 0, 0], max: [0.001, 0.001, 0.001] };
+      }
+      reg.register(makeEntry(children, 0, '/g'));
+
+      reg.evaluatePerFrame();
+
+      expect(reg.list()[0].activeChildIndex).toBe(0);
+      expect(children[0].object.visible).toBe(true);
+      expect(children[1].object.visible).toBe(false);
+      expect(warning).not.toHaveBeenCalled();
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
   it('redirects display to the coarsest fresh NON-empty level when the chosen level is empty', () => {
-    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
-    // Identity camera → aspiration is the finest level; it is FRESH but
-    // committed 0 splats (the stale-cache / corrupt-data scenario), while the
-    // coarse level holds 100 fresh splats.
-    const children = [makeCountedChild(0, 2, 100), makeCountedChild(0.5, 2, 0)];
-    reg.register(makeEntry(children, 0, '/g'));
-    reg.evaluatePerFrame();
-    expect(children[0].object.visible).toBe(true); // populated coarse shown
-    expect(children[1].object.visible).toBe(false); // empty fine hidden
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => undefined);
+    try {
+      const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+      // Identity camera → aspiration is the finest level; it is FRESH but
+      // committed 0 splats (the stale-cache / corrupt-data scenario), while the
+      // coarse level holds 100 fresh splats.
+      const children = [makeCountedChild(0, 2, 100), makeCountedChild(0.5, 2, 0)];
+      reg.register(makeEntry(children, 0, '/g'));
+      reg.evaluatePerFrame();
+      expect(children[0].object.visible).toBe(true); // populated coarse shown
+      expect(children[1].object.visible).toBe(false); // empty fine hidden
+      expect(warning).toHaveBeenCalledOnce();
+    } finally {
+      warning.mockRestore();
+    }
   });
 
   it('directs network-backed empty levels to Retry instead of clear-cache', () => {
@@ -4619,6 +4740,43 @@ describe('LODGroupRegistry — capture quiescence (isCaptureQuiescent)', () => {
     expect(requestReprocess).toHaveBeenCalledWith(['/partition/part_0']);
 
     part.userData.loadedViewVersion = 2;
+    expect(reg.isCaptureQuiescent()).toBe(false);
+
+    loadPassInProgress = false;
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('does not wait on a pending resync without a dispatch hook', () => {
+    let loadPassInProgress = true;
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => loadPassInProgress
+    );
+    const partition = new THREE.Group();
+    const part = new THREE.Group();
+    partition.add(part);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject: partition,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [part],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+        },
+      ],
+    });
+
+    reg.evaluatePerFrame();
+    partition.position.x = -2.5;
+    reg.evaluatePerFrame();
     expect(reg.isCaptureQuiescent()).toBe(false);
 
     loadPassInProgress = false;

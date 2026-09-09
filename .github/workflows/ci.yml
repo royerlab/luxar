@@ -1027,6 +1027,16 @@ jobs:
           grep -qiE 'worker' /tmp/pack-files.txt || { echo "Missing worker asset"; exit 1; }
           echo "All release-readiness assertions passed."
 
+      - name: Set up minimum supported Node
+        if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20.19.0
+
+      - name: Smoke-import library on minimum supported Node
+        if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
+        run: node scripts/check-lib-exports.mjs
+
   # Build the second release product in an isolated job. `release-readiness`
   # validates the npm library bundle; this job runs the exact application build
   # whose `dist/` directory is force-included in the PyPI wheel. Keeping the two

@@ -561,6 +561,11 @@ Only the Layers panel's `LayerApplyEngine.applyVisibility` writes the stamp;
 calling `LuxarLayer.setVisible` directly changes only `object.visible` and does
 not cull background loading.
 
+`hasVisiblePendingPartitionResync()` publishes the held set to the wide
+load-activity and perf-settle predicates: a pending edge blocks settling only
+while its wrapper is effectively visible; hidden wrappers remain pending but
+do not block, and the signal is inert when no resync dispatcher is wired.
+
 **Wiring:** the SceneLoader instantiates one registry per scene and
 hooks `evaluatePerFrame()` into `AnimationController` alongside the
 dynamic-clipping callback. The injected `LODGroupRegistryDeps` supply

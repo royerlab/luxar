@@ -26,6 +26,7 @@
 
 import { getViewerContainer } from '../utils/viewer-container';
 import { isDocumentFullscreen } from '../utils/fullscreen';
+import { getInputProfile } from '../utils/input-capabilities';
 import { RailOverlay } from './control-rail/rail-overlay';
 import { isPanelVisible, escapeHtml } from './control-rail/dom-helpers';
 import type { ControlRailItem } from './control-rail/types';
@@ -489,9 +490,14 @@ export class ControlRail {
     // Announce the one-time hint to assistive tech. It's injected once and never
     // updated, so role=status (a polite live region) reads it once without spam.
     hint.setAttribute('role', 'status');
+    // "Hover" is a lie to a finger: without a hovering pointer the hint names
+    // the tap and the press-and-hold instead (the popovers open on hold).
+    const verb = getInputProfile().hoverCapable
+      ? 'Hover these controls'
+      : 'Tap these controls (hold for options)';
     hint.innerHTML =
       '<button class="luxar-control-rail-hint__close" type="button" aria-label="Dismiss">&times;</button>' +
-      '<b>New here?</b><br>Hover these controls, or press <kbd>H</kbd> — dimensions, rendering, layers &amp; more.';
+      `<b>New here?</b><br>${verb}, or press <kbd>H</kbd> — dimensions, rendering, layers &amp; more.`;
     hint
       .querySelector('.luxar-control-rail-hint__close')
       ?.addEventListener('click', () => this.dismissHint());

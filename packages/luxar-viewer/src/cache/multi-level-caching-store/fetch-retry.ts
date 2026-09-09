@@ -6,6 +6,9 @@ import { sha256Hex } from './sha256';
 
 const INITIAL_RETRY_DELAY_MS = 50;
 const MAX_RETRY_DELAY_MS = 500;
+const MIN_BODY_THROUGHPUT_BYTES_PER_SECOND = 16 * 1024;
+const BODY_DEADLINE_FALLBACK_MULTIPLIER = 8;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 const NOOP_DISPOSE = (): void => {};
 
 /** A merged abort signal plus the cleanup for fallback source listeners. */
@@ -14,12 +17,29 @@ export interface AbortSignalScope {
   dispose: () => void;
 }
 
-/** A fetch response whose abort-listener scope must cover body consumption.
- *  `dispose()` also cancels a body the caller never read, so an ignored
- *  non-OK response stops streaming instead of holding the connection. */
-export interface FetchResponseScope {
+/** A response whose body must be consumed inside the fetch-gate lease. */
+export interface FetchAttempt {
   response: Response;
-  dispose: () => void;
+  readBody: () => Promise<Uint8Array<ArrayBuffer>>;
+}
+
+export interface FetchRetryOptions {
+  timeoutMsOverride?: number;
+  signal?: AbortSignal;
+  headers?: HeadersInit;
+  onExhausted?: (error: unknown) => void;
+}
+
+class FetchConsumerError {
+  constructor(readonly cause: unknown) {}
+}
+
+class FetchBodyError extends Error {
+  constructor(cause: unknown) {
+    super(getErrorMessage(cause));
+    this.name = 'FetchBodyError';
+    this.cause = cause;
+  }
 }
 
 /**
@@ -32,6 +52,95 @@ function releaseUnconsumedBody(response: Response): void {
   const body = response.body;
   if (!body || response.bodyUsed || body.locked) return;
   void body.cancel().catch(() => {});
+}
+
+function bodyAbsoluteDeadlineMs(response: Response, stallTimeoutMs: number): number {
+  const fallbackMs = stallTimeoutMs * BODY_DEADLINE_FALLBACK_MULTIPLIER;
+  const contentLengthHeader = response.headers?.get('content-length');
+  if (contentLengthHeader === null || contentLengthHeader === undefined) {
+    return Math.min(MAX_TIMER_DELAY_MS, fallbackMs);
+  }
+
+  const contentLength = Number(contentLengthHeader);
+  if (!Number.isFinite(contentLength) || contentLength < 0) {
+    return Math.min(MAX_TIMER_DELAY_MS, fallbackMs);
+  }
+
+  return Math.min(
+    MAX_TIMER_DELAY_MS,
+    Math.max(fallbackMs, Math.ceil((contentLength * 1_000) / MIN_BODY_THROUGHPUT_BYTES_PER_SECOND))
+  );
+}
+
+async function readBodyWithStallWatchdog(
+  response: Response,
+  timeoutController: AbortController,
+  signal: AbortSignal,
+  stallTimeoutMs: number
+): Promise<Uint8Array<ArrayBuffer>> {
+  let stallTimeoutId: ReturnType<typeof setTimeout> | undefined;
+  const absoluteDeadlineMs = bodyAbsoluteDeadlineMs(response, stallTimeoutMs);
+  const absoluteTimeoutId = setTimeout(
+    () =>
+      timeoutController.abort(
+        new Error(`response body exceeded absolute deadline of ${absoluteDeadlineMs} ms`)
+      ),
+    absoluteDeadlineMs
+  );
+  const armWatchdog = (): void => {
+    if (stallTimeoutId !== undefined) clearTimeout(stallTimeoutId);
+    stallTimeoutId = setTimeout(
+      () => timeoutController.abort(new Error(`response body stalled for ${stallTimeoutMs} ms`)),
+      stallTimeoutMs
+    );
+  };
+  const abortPromise = new Promise<never>((_, reject) => {
+    const rejectAbort = (): void => reject(signal.reason);
+    if (signal.aborted) rejectAbort();
+    else signal.addEventListener('abort', rejectAbort, { once: true });
+  });
+
+  try {
+    const reader = response.body?.getReader();
+    if (!reader) {
+      armWatchdog();
+      return new Uint8Array(
+        await Promise.race([response.arrayBuffer(), abortPromise])
+      ) as Uint8Array<ArrayBuffer>;
+    }
+
+    const chunks: Uint8Array[] = [];
+    let byteLength = 0;
+    armWatchdog();
+    try {
+      for (;;) {
+        const { done, value } = await Promise.race([reader.read(), abortPromise]);
+        if (done) break;
+        if (value.byteLength === 0) continue;
+        chunks.push(value);
+        byteLength += value.byteLength;
+        armWatchdog();
+      }
+    } catch (error) {
+      void reader.cancel(error).catch(() => {});
+      throw error;
+    } finally {
+      reader.releaseLock();
+    }
+
+    const data = new Uint8Array(byteLength);
+    let offset = 0;
+    for (const chunk of chunks) {
+      data.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return data;
+  } catch (error) {
+    throw new FetchBodyError(error);
+  } finally {
+    if (stallTimeoutId !== undefined) clearTimeout(stallTimeoutId);
+    clearTimeout(absoluteTimeoutId);
+  }
 }
 
 /**
@@ -60,11 +169,11 @@ export function mergeAbortSignals(primary: AbortSignal, caller?: AbortSignal): A
   };
   const onAbort = (): void => {
     dispose();
-    relay.abort();
+    relay.abort(primary.aborted ? primary.reason : caller.reason);
   };
 
   if (primary.aborted || caller.aborted) {
-    relay.abort();
+    relay.abort(primary.aborted ? primary.reason : caller.reason);
   } else {
     listening = true;
     primary.addEventListener('abort', onAbort, { once: true });
@@ -75,6 +184,97 @@ export function mergeAbortSignals(primary: AbortSignal, caller?: AbortSignal): A
 
 function sleep(delayMs: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
+function retryDelayMs(attempt: number): number {
+  const base = INITIAL_RETRY_DELAY_MS * 2 ** attempt;
+  const jitter = (Math.random() - 0.5) * 0.5 * base;
+  return Math.min(Math.max(0, base + jitter), MAX_RETRY_DELAY_MS);
+}
+
+function callerAborted(options: FetchRetryOptions | undefined): boolean {
+  return options?.signal?.aborted === true;
+}
+
+function reportRetryExhaustion(
+  options: FetchRetryOptions | undefined,
+  lastError: unknown,
+  maxAttempts: number
+): void {
+  if (!lastError) return;
+  options?.onExhausted?.(lastError);
+  log.warning(
+    Modules.CACHE,
+    `Fetch failed after ${maxAttempts} attempt(s): ${getErrorMessage(lastError)}`
+  );
+}
+
+function isRetryableResponse(response: Response): boolean {
+  return !response.ok && (response.status >= 500 || response.status === 429);
+}
+
+async function consumeResponse<T>(
+  response: Response,
+  timeoutController: AbortController,
+  signal: AbortSignal,
+  timeoutPerAttemptMs: number,
+  consume: (attempt: FetchAttempt) => Promise<T>
+): Promise<T> {
+  let bodyRead = false;
+  try {
+    return await consume({
+      response,
+      readBody: () => {
+        if (bodyRead) throw new Error('response body can only be read once');
+        bodyRead = true;
+        return readBodyWithStallWatchdog(response, timeoutController, signal, timeoutPerAttemptMs);
+      },
+    });
+  } catch (error) {
+    if (error instanceof FetchBodyError) throw error;
+    throw new FetchConsumerError(error);
+  }
+}
+
+async function runFetchAttempt<T>(
+  url: string,
+  options: FetchRetryOptions | undefined,
+  timeoutPerAttemptMs: number,
+  consume: (attempt: FetchAttempt) => Promise<T>
+): Promise<T> {
+  return withFetchGate(async () => {
+    // Start the per-attempt timer only after acquiring the gate. Queue wait is
+    // controlled by the caller signal and must not consume the request budget.
+    const timeoutController = new AbortController();
+    const timeoutId = setTimeout(
+      () =>
+        timeoutController.abort(
+          new Error(`response headers timed out after ${timeoutPerAttemptMs} ms`)
+        ),
+      timeoutPerAttemptMs
+    );
+    const abortScope = mergeAbortSignals(timeoutController.signal, options?.signal);
+    let response: Response | undefined;
+    try {
+      response = await fetch(url, {
+        signal: abortScope.signal,
+        ...(options?.headers ? { headers: options.headers } : {}),
+      });
+      clearTimeout(timeoutId);
+      if (isRetryableResponse(response)) throw new Error(`HTTP ${response.status} for ${url}`);
+      return await consumeResponse(
+        response,
+        timeoutController,
+        abortScope.signal,
+        timeoutPerAttemptMs,
+        consume
+      );
+    } finally {
+      clearTimeout(timeoutId);
+      if (response) releaseUnconsumedBody(response);
+      abortScope.dispose();
+    }
+  });
 }
 
 /**
@@ -105,28 +305,32 @@ export async function hashUrl(url: string): Promise<string> {
  *
  * 4xx responses are returned immediately because retrying cannot fix a
  * missing zarr key. Network errors, timeouts, 429, and 5xx responses are
- * retried using the configured retry budget. The configured timeout is
- * treated as a total budget across attempts so retries do not multiply
- * worst-case load time.
+ * retried using the configured retry budget. The configured timeout is split
+ * across attempts and applied separately to time-to-headers and no-progress
+ * body stalls. A progressing body may exceed that watchdog window, but it also
+ * has an absolute deadline: the longer of eight stall windows or
+ * `Content-Length` divided by a 16 KiB/s floor. This bounds how long one
+ * response can occupy a shared fetch-gate slot. The configured timeout is a
+ * window input, not a wall-clock cap for one key: each retry may spend one
+ * window reaching headers and then the body deadline, followed by backoff.
  *
  * @param url - URL to fetch.
  * @param options - Optional `timeoutMsOverride` (e.g. for cache-validation
- *   probes that want a shorter budget than the data-fetch timeout) and a
- *   caller `signal` for dispose-cancel propagation. The caller signal is
+ *   probes that want shorter windows than data fetches) and a
+ *   caller `signal` for cancellation propagation. The caller signal is
  *   merged with the per-attempt timeout signal so either abort source
- *   wins immediately. A caller-aborted call exits without consuming
- *   retry budget.
- * @returns A terminal response and an idempotent `dispose()` callback. The
- *   caller must keep the scope through response-body consumption, then dispose
- *   it so fallback source listeners cannot accumulate; dispose also cancels
- *   a body the caller never read (e.g. a terminal non-OK response) so the
- *   server stops streaming it. Returns `undefined` after abort or retry
- *   exhaustion.
+ *   wins immediately. `onExhausted` receives the final retryable error. A
+ *   caller-aborted call exits without consuming retry budget.
+ * @param consume - Runs inside the global fetch-gate lease. Call `readBody()`
+ *   to consume a response with a no-progress watchdog; returning without
+ *   reading cancels the body before the lease is released.
+ * @returns The consumer result, or `undefined` after abort or retry exhaustion.
  */
-export async function fetchWithRetry(
+export async function fetchWithRetry<T>(
   url: string,
-  options?: { timeoutMsOverride?: number; signal?: AbortSignal; headers?: HeadersInit }
-): Promise<FetchResponseScope | undefined> {
+  options: FetchRetryOptions | undefined,
+  consume: (attempt: FetchAttempt) => Promise<T>
+): Promise<T | undefined> {
   const maxAttempts = Math.max(1, config.dataLoading.network.retryAttempts + 1);
   const totalTimeoutMs = options?.timeoutMsOverride ?? config.dataLoading.network.timeoutMs;
   const timeoutPerAttemptMs = Math.max(1, Math.ceil(totalTimeoutMs / maxAttempts));
@@ -135,54 +339,17 @@ export async function fetchWithRetry(
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     // Caller-aborted requests must not be retried; bail out before the
     // next attempt.
-    if (options?.signal?.aborted) {
+    if (callerAborted(options)) {
       return undefined;
     }
 
     try {
-      // Bounded-concurrency gate: zarrita fans out one fetch per chunk, so a
-      // large LOD selection would otherwise fire thousands at once and exhaust
-      // the browser (ERR_INSUFFICIENT_RESOURCES). The slot is held only for the
-      // request itself (headers); the small chunk body is read by the caller.
-      //
-      // The per-attempt timeout starts *inside* the gate, once the slot is
-      // acquired, so time spent waiting in the concurrency queue does not burn
-      // the fetch budget. A large LOD selection can queue thousands of chunks;
-      // charging that wait to the timeout would spuriously abort the tail of
-      // the queue and, at scale, exhaust the retry budget into dropped chunks.
-      const fetched = await withFetchGate(async (): Promise<FetchResponseScope> => {
-        const timeoutController = new AbortController();
-        const timeoutId = setTimeout(() => timeoutController.abort(), timeoutPerAttemptMs);
-        const abortScope = mergeAbortSignals(timeoutController.signal, options?.signal);
-        try {
-          const response = await fetch(url, {
-            signal: abortScope.signal,
-            ...(options?.headers ? { headers: options.headers } : {}),
-          });
-          return {
-            response,
-            dispose: (): void => {
-              releaseUnconsumedBody(response);
-              abortScope.dispose();
-            },
-          };
-        } catch (error) {
-          abortScope.dispose();
-          throw error;
-        } finally {
-          clearTimeout(timeoutId);
-        }
-      });
-      const { response } = fetched;
-      if (response.ok || (response.status < 500 && response.status !== 429)) {
-        return fetched;
-      }
-      fetched.dispose();
-      lastError = new Error(`HTTP ${response.status} for ${url}`);
+      return await runFetchAttempt(url, options, timeoutPerAttemptMs, consume);
     } catch (error) {
+      if (error instanceof FetchConsumerError) throw error.cause;
       lastError = error;
       // Caller-aborted: exit immediately rather than retrying.
-      if (options?.signal?.aborted) {
+      if (callerAborted(options)) {
         return undefined;
       }
     }
@@ -192,18 +359,10 @@ export async function fetchWithRetry(
       // a retry simultaneously (e.g. two browser tabs sharing a CDN)
       // do not synchronize their next attempts. Jitter is bounded by
       // MAX_RETRY_DELAY_MS so the worst-case wait stays predictable.
-      const base = INITIAL_RETRY_DELAY_MS * 2 ** attempt;
-      const jitter = (Math.random() - 0.5) * 0.5 * base; // [-25%, +25%]
-      const delayMs = Math.min(Math.max(0, base + jitter), MAX_RETRY_DELAY_MS);
-      await sleep(delayMs);
+      await sleep(retryDelayMs(attempt));
     }
   }
 
-  if (lastError) {
-    log.warning(
-      Modules.CACHE,
-      `Fetch failed after ${maxAttempts} attempt(s): ${getErrorMessage(lastError)}`
-    );
-  }
+  reportRetryExhaustion(options, lastError, maxAttempts);
   return undefined;
 }

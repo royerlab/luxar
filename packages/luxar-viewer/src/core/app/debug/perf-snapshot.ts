@@ -8,8 +8,8 @@
  * for it under-observes the load; and `getState().isLoading` has a narrow,
  * E2E-relied-upon meaning (a load PASS is outstanding) that must not be
  * widened. `isSettled` here is the wide predicate — no update pass, no
- * refinement drain, no lazy LOD promotion in flight, and the post-load
- * refinement ran to completion.
+ * refinement drain, no lazy LOD promotion in flight, no visible partition
+ * resync waiting for the loader, and the post-load refinement ran to completion.
  *
  * @module core/app/debug/perf-snapshot
  */
@@ -29,6 +29,8 @@ export interface PerfSnapshotContext {
   isAnyLoadPassInProgress?: () => boolean;
   /** Any lazy substitutive-LOD / deferred-partition level fetch in flight. */
   isAnyLodLevelLoading?: () => boolean;
+  /** A visible partition rising edge is waiting to be handed to the loader. */
+  hasVisiblePendingPartitionResync?: () => boolean;
   /** Per-node projected density (`scene/projected-density.ts` snapshot). */
   density?: () => unknown;
   /** Multi-level cache stats (`SceneLoader.getCacheStats()`; includes the L2 write queue). */
@@ -62,6 +64,7 @@ export interface PerfSnapshot {
     updateInProgress: boolean | null;
     loadPassInProgress: boolean | null;
     lodLevelLoading: boolean | null;
+    visiblePartitionResyncPending: boolean | null;
     refinementComplete: boolean;
   };
 }
@@ -90,12 +93,14 @@ export function computePerfSnapshot(ctx: PerfSnapshotContext = {}): PerfSnapshot
   const updateInProgress = read(ctx.isUpdateInProgress);
   const loadPassInProgress = read(ctx.isAnyLoadPassInProgress);
   const lodLevelLoading = read(ctx.isAnyLodLevelLoading);
+  const visiblePartitionResyncPending = read(ctx.hasVisiblePendingPartitionResync);
   const runtimeReady = ctx.isUpdateInProgress !== undefined;
   const refinementComplete = timeline.refinement.complete;
   const isSettled = runtimeReady
     ? updateInProgress === false &&
       loadPassInProgress !== true &&
       lodLevelLoading !== true &&
+      visiblePartitionResyncPending !== true &&
       refinementComplete
     : null;
   return {
@@ -109,6 +114,12 @@ export function computePerfSnapshot(ctx: PerfSnapshotContext = {}): PerfSnapshot
     cache: readOrNull(ctx.cache),
     blendWarmup: readOrNull(ctx.blendWarmup),
     isSettled,
-    settle: { updateInProgress, loadPassInProgress, lodLevelLoading, refinementComplete },
+    settle: {
+      updateInProgress,
+      loadPassInProgress,
+      lodLevelLoading,
+      visiblePartitionResyncPending,
+      refinementComplete,
+    },
   };
 }
