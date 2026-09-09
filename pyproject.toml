@@ -623,8 +623,8 @@ python = ["3.12", "3.13", "3.14"]
 # `testpaths`, which the explicit args below override). This env has
 # `features = ["test"]`, which omits the `dev`-only tooling those paths import.
 # The default env (`features = ["dev"]`) has it, which is why `hatch run test-cov`
-# — what coverage.yml runs on push to dev, and ci.yml on the full-matrix dispatch
-# (PRs run `test-nocov`) — can collect them.
+# — what ci.yml runs on every push to `dev` and on every dispatch, and coverage.yml
+# on every push to `dev` (PRs run `test-nocov`) — can collect them.
 run = "pytest {args:packages/luxar/src/luxar}"
 cov = "pytest -m 'not slow' --cov=luxar --cov-report=term-missing {args:packages/luxar/src/luxar}"
 
