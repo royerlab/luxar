@@ -1504,12 +1504,10 @@ def build_universe_scene(
                 units[k] = highlight_unit(len(c.indices), m)
                 labels, keys = details.get(k, (None, None))
                 # Hover labels + UniRef link on knot stories only (see
-                # `_member_details`); `link` refuses None, so pass nothing.
-                hover = (
-                    dict(labels=labels, keys=keys, link=UNIREF_LINK)
-                    if keys is not None
-                    else {}
-                )
+                # `_member_details`). `labels`/`keys` accept None; `link`
+                # refuses it, so the template rides in the link-metadata spread
+                # the element-cap gate knows (`link_attrs`, never a budget).
+                link_attrs = {"link": UNIREF_LINK} if keys is not None else {}
                 radius = WHOLE_HIGHLIGHT_RADIUS if s.whole else HIGHLIGHT_RADIUS
                 intensity = (
                     WHOLE_HIGHLIGHT_INTENSITY if s.whole else highlight_intensity(m)
@@ -1526,7 +1524,9 @@ def build_universe_scene(
                     sharpness=np.full(m, 0.85, dtype=np.float32),
                     opacity=0.95,
                     intensity=intensity,
-                    **hover,
+                    labels=labels,
+                    keys=keys,
+                    **link_attrs,
                     additive_lod=(
                         stream_ladder(m) if m >= WHOLE_LADDER_MIN_MEMBERS else None
                     ),
