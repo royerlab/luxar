@@ -79,7 +79,10 @@ _T = TypeVar("_T")
 
 
 class ResolvedDataset(list[_T], Generic[_T]):
-    """List-compatible resolved values plus their verified input digests."""
+    """List-compatible resolved values plus their verified input digests.
+
+    Derived list operations return plain lists and discard ``input_digests``.
+    """
 
     def __init__(self, values: list[_T], input_digests: dict[str, str]) -> None:
         super().__init__(values)
@@ -557,11 +560,15 @@ def _positional_superseded_fallbacks(
                 )
             return verdicts[fname]
 
+        def verdict_kind(entry: Manifest) -> Optional[str]:
+            verdict = cached_verdict(entry)
+            return verdict[0] if verdict is not None else None
+
         # Keep the source check first: source checkouts then avoid hashing a
         # cached superseded payload that the ordinary resolver will refresh.
         forced = any(
             not _has_current_source(lfs_dir, record, entry["name"])
-            and (cached_verdict(entry) or (None, None))[0] == "superseded"
+            and verdict_kind(entry) == "superseded"
             for entry in entries
         )
         if not forced:
@@ -570,18 +577,14 @@ def _positional_superseded_fallbacks(
         history_lengths = {
             len(entry.get("superseded_sha256") or ()) for entry in entries
         }
-        all_superseded = all(
-            (cached_verdict(entry) or (None, None))[0] == "superseded"
-            for entry in entries
-        )
+        all_superseded = all(verdict_kind(entry) == "superseded" for entry in entries)
         source_remedies = " ".join(
             f"{entry['name']}: {_source_remedy(lfs_dir, entry['name'])}"
             for entry in entries
         )
         if not all_superseded or len(history_lengths) != 1:
             states = ", ".join(
-                f"{entry['name']}="
-                f"{(cached_verdict(entry) or ('missing/corrupt', ''))[0]}"
+                f"{entry['name']}={verdict_kind(entry) or 'missing/corrupt'}"
                 for entry in entries
             )
             raise DatasetUnavailable(
@@ -592,13 +595,11 @@ def _positional_superseded_fallbacks(
                 f"Source remedies: {source_remedies}"
             )
 
-        fallbacks.update(
-            {
-                entry["name"]: verdict[1]
-                for entry in entries
-                if (verdict := cached_verdict(entry)) is not None
-            }
-        )
+        for entry in entries:
+            verdict = verdicts[entry["name"]]
+            if verdict is None:
+                raise AssertionError("all_superseded requires a cached verdict")
+            fallbacks[entry["name"]] = verdict[1]
         aprint(
             f"⚠️  Using SUPERSEDED positional pair {group!r} for dataset "
             f"{dataset_label!r}: every member matches the same previously pinned "
@@ -619,11 +620,7 @@ def _verdict_from_one_pass(
     with asection(f"Verifying {path.name}") if verbose else _null_ctx():
         if verbose:
             aprint("Computing SHA256...")
-        state = hashlib.sha256()
-        with open(path, "rb") as file:
-            for chunk in iter(lambda: file.read(8192 * 128), b""):
-                state.update(chunk)
-        actual = state.hexdigest()
+        actual = _file_sha256(path)
 
         for digest, kind in candidates:
             if actual == digest:
