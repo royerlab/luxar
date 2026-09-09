@@ -109,6 +109,7 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
         cycleDataMonitor: vi.fn(),
         recenterCamera: vi.fn(),
         exportViewerState: vi.fn(),
+        closeAllPanels: vi.fn(),
         handleEscape: vi.fn(),
         shouldHandleSpaceKey: () => true,
       },
