@@ -153,9 +153,19 @@ class TestSpecsAreValidRequirements:
             f"reader cannot tell whether it is still needed: {unexplained}"
         )
 
+    def test_pyarrow_floor_starts_at_numpy_copy_control_release(self) -> None:
+        packaging = pytest.importorskip("packaging.requirements")
+        version_mod = pytest.importorskip("packaging.version")
+
+        specifier = packaging.Requirement(INSTALL_SPECS["pyarrow"].spec).specifier
+        assert version_mod.Version("12.0.0") not in specifier, (
+            "pyarrow 12 lacks ChunkedArray.to_numpy(zero_copy_only=...)"
+        )
+        assert version_mod.Version("13.0.0") in specifier
+
 
 class TestHatchEnvironments:
-    def test_default_environment_matches_the_pyarrow_demo_floor(self) -> None:
+    def test_default_environment_matches_shared_demo_dependencies(self) -> None:
         pyproject = _pyproject()
         if not pyproject.is_file():  # installed wheel — no source tree to check
             pytest.skip("pyproject.toml not available (installed package)")
@@ -164,13 +174,20 @@ class TestHatchEnvironments:
 
         data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
         Requirement = pytest.importorskip("packaging.requirements").Requirement
-        dependencies = data["tool"]["hatch"]["envs"]["default"]["dependencies"]
-        by_name = {
-            Requirement(raw).name.lower(): Requirement(raw) for raw in dependencies
+        default_dependencies = {
+            Requirement(raw).name.lower(): Requirement(raw)
+            for raw in data["tool"]["hatch"]["envs"]["default"]["dependencies"]
+        }
+        demo_dependencies = {
+            Requirement(raw).name.lower(): Requirement(raw)
+            for raw in data["project"]["optional-dependencies"]["demos"]
         }
 
-        advertised = Requirement(INSTALL_SPECS["pyarrow"].spec)
-        assert by_name["pyarrow"].specifier == advertised.specifier
+        for name in sorted(default_dependencies.keys() & demo_dependencies.keys()):
+            assert (
+                default_dependencies[name].specifier
+                == demo_dependencies[name].specifier
+            ), f"default Hatch environment and demos extra disagree on {name}"
 
     def test_moderngl_stays_out_of_python_matrix_environments(self) -> None:
         """The optional GPU renderer must not block Python matrix setup."""
@@ -235,16 +252,6 @@ class TestHatchEnvironments:
 
 class TestSpecsMatchPyproject:
     """Every spec must accept exactly the versions its pyproject pin accepts."""
-
-    def test_pyarrow_floor_starts_at_numpy_copy_control_release(self) -> None:
-        packaging = pytest.importorskip("packaging.requirements")
-        version_mod = pytest.importorskip("packaging.version")
-
-        specifier = packaging.Requirement(INSTALL_SPECS["pyarrow"].spec).specifier
-        assert version_mod.Version("12.0.0") not in specifier, (
-            "pyarrow 12 lacks ChunkedArray.to_numpy(zero_copy_only=...)"
-        )
-        assert version_mod.Version("13.0.0") in specifier
 
     @pytest.mark.parametrize("module", sorted(INSTALL_SPECS))
     def test_spec_is_equivalent_to_the_pin(self, module: str) -> None:
@@ -350,7 +357,7 @@ class TestSpecsMatchPyproject:
                 "12.0.0",
                 "13.0.0",
                 # A date-versioned sample below the 2023.1.0 floor shared by
-                # tifffile/imagecodecs: without one in [12.0.0, 2023.1.0) those
+                # tifffile/imagecodecs: without one in [13.0.0, 2023.1.0) those
                 # rows have a decade-wide blind window where a relaxed pin reads
                 # identical to the current one.
                 "2020.1.1",
