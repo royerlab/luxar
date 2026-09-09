@@ -193,12 +193,12 @@ export function computeNonCacheRemainderBytes(
 
 /**
  * The eager child loader's share of the heap headroom left outside the cache
- * pool (`computeNonCacheRemainderBytes`): half of it. The L2 write-queue retain takes
- * a quarter (see {@link computeOpfsWriteQueueBudgetBytes}) and the last quarter
- * is claimed by neither, while the absolute cap prevents a large V8 heap limit
- * from recreating an eight-wide allocation spike. Note that this budget is
- * handed to several independent consumers in full — see the ledger on the share
- * constants — so it bounds each of them, not their sum.
+ * pool (`computeNonCacheRemainderBytes`): half of it. The L2 write-queue retain
+ * takes a quarter (see {@link computeOpfsWriteQueueBudgetBytes}) and the last
+ * quarter is claimed by neither, while the absolute cap prevents a large V8
+ * heap limit from recreating an eight-wide allocation spike. Note that this
+ * budget is handed to several independent consumers in full — see the ledger
+ * on the share constants — so it bounds each of them, not their sum.
  *
  * @param heapLimitBytes - Override for the device heap limit (tests). When
  *   omitted, {@link readHeapLimitBytes} is consulted; invalid explicit values
@@ -226,8 +226,8 @@ export function computeWorkingSetBudgetBytes(
 
 /**
  * The L2 (OPFS) write queue's share of the same non-cache heap remainder
- * (`computeNonCacheRemainderBytes`) — the ceiling on bytes pending background writes
- * may retain.
+ * (`computeNonCacheRemainderBytes`) — the ceiling on bytes pending background
+ * writes may retain.
  *
  * NOT `max(l1Size, 64 MB)`, which is what this cap was at first (#2528). A
  * pending write's buffer is the SAME `Uint8Array` the L1 entry holds (see the
