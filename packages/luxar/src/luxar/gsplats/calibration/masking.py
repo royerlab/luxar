@@ -72,8 +72,9 @@ def donut_median_fill(
     exclusion was added.
 
     Donors are gathered and sorted in bounded chunks. The working donor
-    buffer is at most 16 MiB, in the input dtype, in addition to the reflected
-    copies of ``V`` and ``mask`` for the current radius.
+    buffer targets 16 MiB (or one donor column when that alone is larger), in
+    the input dtype, in addition to the reflected copies of ``V`` and ``mask``
+    for the current radius.
 
     Parameters
     ----------
