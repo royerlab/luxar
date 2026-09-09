@@ -139,6 +139,11 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "wiring",
     ),
     (
+        "scripts/generate_builtin_colormaps.py",
+        "ts",
+        "the viewer's third-party notices test scrapes its colormap tables",
+    ),
+    (
         "scripts/gallery/manifest.json",
         "py",
         "test_demo_meta.py cross-validates it against the demo registry",
@@ -531,7 +536,7 @@ _NON_SCANNED_PYTHON_VIEWER_INPUTS = {
     ),
 }
 
-_NON_GATE_PYTHON_TEST_PATH_LITERALS = {
+_NON_GATE_PYTHON_TEST_PATH_EXCLUSIONS = {
     ".github/workflows/ci.yml": "owned by the explicit all-domains workflow block",
     ".github/workflows/publish.yml": (
         "test_set_version.py writes a fixture workflow at this path"
@@ -798,7 +803,7 @@ def _static_python_parent(
         and isinstance(node.slice.value, int)
     ):
         value = _static_python_path(node.value.value, bindings, source_path)
-        if value is None or node.slice.value < 0:
+        if value is None:
             return None
         try:
             return value.parents[node.slice.value]
@@ -896,27 +901,30 @@ def _tracked_python_test_path_reads(
 
     Module-level bindings may derive from ``__file__`` through ``Path``, ``resolve``,
     ``parent``/``parents``, and ``/``. Only ``read_text``, ``read_bytes``, and
-    read-only ``open`` calls whose final path stays below ``repo`` are retained.
+    read-only ``open`` calls whose final path stays below ``repo``, names a tracked
+    file, and does not name Python source are retained.
     """
     tracked_paths = _tracked_paths(repo) if tracked_paths is None else tracked_paths
+    repo_resolved = repo.resolve()
     paths: set[str] = set()
     this_file = Path(__file__).resolve()
     for source_root in source_roots:
         for source_path in source_root.rglob("*.py"):
             if not _is_python_test_source(source_root, source_path):
                 continue
-            if source_path.resolve() == this_file:
+            source_path_resolved = source_path.resolve()
+            if source_path_resolved == this_file:
                 continue
             tree = ast.parse(
                 source_path.read_text(encoding="utf-8"), filename=str(source_path)
             )
-            bindings = _python_path_bindings(tree, source_path.resolve())
+            bindings = _python_path_bindings(tree, source_path_resolved)
             for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
-                path = _python_read_path(call, bindings, source_path.resolve())
+                path = _python_read_path(call, bindings, source_path_resolved)
                 if path is None:
                     continue
                 try:
-                    relative = path.resolve().relative_to(repo.resolve()).as_posix()
+                    relative = path.resolve().relative_to(repo_resolved).as_posix()
                 except ValueError:
                     continue
                 if relative in tracked_paths and not relative.endswith(".py"):
@@ -961,14 +969,26 @@ def _tracked_typescript_test_path_reads(
 
 def _assert_unclassified_test_paths_are_owned(paths: set[str]) -> None:
     python_gate_inputs = {path for path, domain, _why in GATE_INPUTS if domain == "py"}
-    exceptions = set(_NON_GATE_PYTHON_TEST_PATH_LITERALS)
+    exceptions = set(_NON_GATE_PYTHON_TEST_PATH_EXCLUSIONS)
     missing = sorted(paths - python_gate_inputs - exceptions)
     stale_exceptions = sorted(exceptions - paths)
     assert not missing and not stale_exceptions, (
         "tracked non-Python paths named by pytest tests must have dom_py "
         f"GATE_INPUTS rows or justified exclusions: {missing}; Python test "
-        "path-literal exclusions no longer describe unclassified scan results; "
+        "path exclusions no longer describe unclassified scan results; "
         f"remove or update them: {stale_exceptions}"
+    )
+
+
+def _assert_typescript_test_paths_are_owned(paths: set[str], pattern: str) -> None:
+    unclassified = {path for path in paths if not _classifies(pattern, path)}
+    typescript_gate_inputs = {
+        path for path, domain, _why in GATE_INPUTS if domain == "ts"
+    }
+    missing = sorted(unclassified - typescript_gate_inputs)
+    assert not missing, (
+        "tracked paths read by TypeScript tests must have dom_ts GATE_INPUTS rows: "
+        f"{missing}"
     )
 
 
@@ -1036,9 +1056,14 @@ SNAPSHOTS = CAPTURE.parent
 (REPO / "bytes.bin").read_bytes()
 (REPO / "opened.json").open("rb")
 open(REPO / "builtin.json", encoding="utf-8")
+(REPO.parent / "outside.json").read_text()
+(REPO / "untracked.json").read_text()
+(REPO / "tracked.py").read_text()
 (REPO / "written.json").write_text("generated")
 (REPO / "appended.json").open("a")
 (REPO / "keyword-written.json").open(mode="w")
+(REPO / "exclusive.json").open("x")
+(REPO / "update.json").open("r+")
 (REPO / dynamic_name).read_text()
 """,
         encoding="utf-8",
@@ -1055,6 +1080,9 @@ open(REPO / "builtin.json", encoding="utf-8")
             "written.json",
             "appended.json",
             "keyword-written.json",
+            "tracked.py",
+            "exclusive.json",
+            "update.json",
         },
     )
 
@@ -1076,6 +1104,7 @@ def test_typescript_gate_input_scan_resolves_only_repo_rooted_reads(
 readFileSync(path.join(REPO_ROOT, 'scripts', 'manifest.json'), 'utf-8');
 readFileSync(resolve(REPO_ROOT, "Makefile"), "utf8");
 readFileSync(path.resolve(REPO_ROOT, 'README.md'));
+readFileSync(path.join(REPO_ROOT, 'untracked.json'), 'utf-8');
 writeFileSync(path.join(REPO_ROOT, 'written.json'), 'generated');
 readFileSync(path.join(REPO_ROOT, dynamicName), 'utf-8');
 """,
@@ -1106,6 +1135,11 @@ def test_python_gate_input_scan_rejects_missing_ownership() -> None:
         _assert_unclassified_test_paths_are_owned({"unowned.json"})
 
 
+def test_typescript_gate_input_scan_rejects_missing_ownership() -> None:
+    with pytest.raises(AssertionError, match="must have dom_ts GATE_INPUTS rows"):
+        _assert_typescript_test_paths_are_owned({"unowned.json"}, "^owned\\.json$")
+
+
 def test_python_gate_input_scan_rejects_stale_exclusions() -> None:
     with pytest.raises(AssertionError, match="exclusions no longer describe"):
         _assert_unclassified_test_paths_are_owned(set())
@@ -1121,7 +1155,7 @@ def test_python_gate_input_scan_reports_missing_and_stale_together() -> None:
 def test_python_gate_input_scan_exclusions_have_one_line_reasons() -> None:
     assert all(
         reason and "\n" not in reason
-        for reason in _NON_GATE_PYTHON_TEST_PATH_LITERALS.values()
+        for reason in _NON_GATE_PYTHON_TEST_PATH_EXCLUSIONS.values()
     )
 
 
@@ -1197,15 +1231,7 @@ def test_typescript_test_path_reads_are_statically_owned_by_the_typescript_gate(
         "scripts/gallery/media-manifest.json",
     } <= paths
     typescript_pattern = _domain_patterns(workflow)["ts"]
-    unclassified = {path for path in paths if not _classifies(typescript_pattern, path)}
-    typescript_gate_inputs = {
-        path for path, domain, _why in GATE_INPUTS if domain == "ts"
-    }
-    missing = sorted(unclassified - typescript_gate_inputs)
-    assert not missing, (
-        "tracked paths read by TypeScript tests must have dom_ts GATE_INPUTS rows: "
-        f"{missing}"
-    )
+    _assert_typescript_test_paths_are_owned(paths, typescript_pattern)
 
 
 def _viewer_source_calls(

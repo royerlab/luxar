@@ -869,10 +869,11 @@ documentation checker's viewer scan and TypeDoc's entry points. `dom_ts`
 explicitly owns the root `README.md` and both gallery manifests because the
 gallery-selection unit test resolves and validates the README capture set from
 them. It also owns the root `Makefile` because the generated-fixture freshness
-test checks its E2E fixture prerequisite wiring. A symmetric static scan over
-viewer `*.test.ts` files finds literal `readFileSync` inputs rooted through
-`join(REPO_ROOT, ...)` or `resolve(REPO_ROOT, ...)` and requires each to have a
-TypeScript `GATE_INPUTS` row.
+test checks its E2E fixture prerequisite wiring, plus
+`scripts/generate_builtin_colormaps.py` because the viewer's third-party notices
+test scrapes its colormap tables. A symmetric static scan over viewer `*.test.ts`
+files finds literal `readFileSync` inputs rooted through `join(REPO_ROOT, ...)` or
+`resolve(REPO_ROOT, ...)` and requires each to have a TypeScript `GATE_INPUTS` row.
 A check whose own inputs are unclassified is a check that skips for exactly the
 change it exists to catch. `.github/workflows/ci.yml` selects **all four**
 domains: it defines how every suite is invoked, so an edit that breaks a command
