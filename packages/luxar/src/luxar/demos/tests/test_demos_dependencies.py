@@ -219,7 +219,7 @@ class TestHatchEnvironments:
 class TestSpecsMatchPyproject:
     """Every spec must accept exactly the versions its pyproject pin accepts."""
 
-    def test_pyarrow_floor_supports_chunked_array_numpy_copy_control(self) -> None:
+    def test_pyarrow_floor_starts_at_numpy_copy_control_release(self) -> None:
         packaging = pytest.importorskip("packaging.requirements")
         version_mod = pytest.importorskip("packaging.version")
 
@@ -227,6 +227,7 @@ class TestSpecsMatchPyproject:
         assert version_mod.Version("12.0.0") not in specifier, (
             "pyarrow 12 lacks ChunkedArray.to_numpy(zero_copy_only=...)"
         )
+        assert version_mod.Version("13.0.0") in specifier
 
     @pytest.mark.parametrize("module", sorted(INSTALL_SPECS))
     def test_spec_is_equivalent_to_the_pin(self, module: str) -> None:
