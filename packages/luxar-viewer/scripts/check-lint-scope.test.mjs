@@ -183,7 +183,7 @@ function sourceDiagnostics(configName, relativePath, sourceText) {
   const declarationFiles = parsed.fileNames.filter(
     (file) =>
       DECLARATIONS.some((ext) => file.endsWith(ext)) ||
-      /\bdeclare\s+global\b/.test(readFileSync(file, 'utf8'))
+      /\bdeclare\b/.test(readFileSync(file, 'utf8'))
   );
   const program = ts.createProgram(
     [...declarationFiles, ...selectedTypeDeclarations(parsed), sourcePath],
@@ -330,13 +330,15 @@ describe('typecheck scope', () => {
     expect(toolingDiagnostics).toEqual([]);
   }, 30_000);
 
-  it('includes project global declarations when probing browser globals', () => {
-    for (const extension of ['d.ts', 'ts']) {
+  it('includes project ambient declarations when probing browser globals', () => {
+    const declarations = [
+      ['d.ts', 'declare global { var browserScopeProbe: string; }\nexport {};\n'],
+      ['ts', 'declare global { var browserScopeProbe: string; }\nexport {};\n'],
+      ['ts', 'declare var browserScopeProbe: string;\n'],
+    ];
+    for (const [extension, declaration] of declarations) {
       const declarationPath = join(PKG, `src/types/node-global-probe.test-only.${extension}`);
-      writeFileSync(
-        declarationPath,
-        'declare global { var browserScopeProbe: string; }\nexport {};\n'
-      );
+      writeFileSync(declarationPath, declaration);
 
       try {
         expect(
