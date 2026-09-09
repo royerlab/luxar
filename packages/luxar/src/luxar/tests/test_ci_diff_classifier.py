@@ -178,6 +178,12 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "otherwise run zero tests",
     ),
     (
+        "scripts/zenodo_record_text/records.json",
+        "py",
+        "test_zenodo_record_text.py checks the committed snapshot index and HTML "
+        "digests",
+    ),
+    (
         "docs/guides/user/CLI_REFERENCE.md",
         "py",
         "test_docs_command_coverage.py drift-guards it against the live Typer app; "
