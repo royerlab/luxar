@@ -176,9 +176,10 @@ describe('gpu-byte-budget', () => {
       // Settled by measurement, not argument (host-demos, `jsHeapSizeLimit`
       // spoofed with real used/total passing through): WITHOUT the heap term
       // the auto budget stayed at 2000 MB even at a spoofed 256 MB heap and
-      // reclaimed nothing — zero movement. WITH it the budget tracks the spoof
-      // at 43 / 86 / 172 MB for 256 / 512 / 1024 MiB, and multi6 returns to
-      // evict=5 on the real heap.
+      // reclaimed nothing — zero movement. The measured pre-#2439 half-share
+      // tracked the spoof at 43 / 86 / 172 MB for 256 / 512 / 1024 MiB and
+      // returned multi6 to evict=5; the full remainder now resolves those heap
+      // limits to 86 / 172 / 344 MB.
       withDeviceMemory(32, () => {
         withHeapLimit(4 * 1024 * 1024 * 1024, () => {
           configureGpuByteBudget();
@@ -274,6 +275,26 @@ describe('gpu-byte-budget — mobile device class', () => {
     withDeviceMemory(8, () => {
       withHeapLimit(undefined, () => {
         configureGpuByteBudget(); // 8 GB × 0.25 = 2 GB would otherwise win
+        expect(getGpuByteBudget()).toBe(128 * MiB);
+      });
+    });
+  });
+
+  it('a small measurable mobile heap can bind below the 128 MiB safety cap', () => {
+    profile.deviceClass = 'mobile';
+    withDeviceMemory(undefined, () => {
+      withHeapLimit(256 * MiB, () => {
+        configureGpuByteBudget();
+        expect(getGpuByteBudget()).toBe(Math.floor(256 * MiB * targetHeapUsage * 0.4));
+      });
+    });
+  });
+
+  it('the 128 MiB mobile safety cap binds above the small-heap boundary', () => {
+    profile.deviceClass = 'mobile';
+    withDeviceMemory(undefined, () => {
+      withHeapLimit(512 * MiB, () => {
+        configureGpuByteBudget();
         expect(getGpuByteBudget()).toBe(128 * MiB);
       });
     });

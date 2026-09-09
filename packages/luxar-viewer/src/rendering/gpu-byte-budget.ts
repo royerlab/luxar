@@ -8,11 +8,11 @@
  * it. Auto-sizing takes the lower of ``navigator.deviceMemory`` and the shared
  * non-cache remainder. An explicit total cache-pool override replaces the
  * heap-derived remainder in either direction; a mobile device-class fallback
- * supplies it when the heap is unavailable. The result has a 2 GB ceiling but
- * no lower clamp, with 512 MB used only when no signal exists. As a safety net,
- * the budget is halved on a WebGL
- * context-loss event (a strong OOM signal) so an over-estimate self-corrects
- * instead of repeatedly crashing the context.
+ * supplies it when the heap is unavailable, and an independent 128 MiB mobile
+ * cap remains a peer minimum. The result has a 2 GB ceiling but no lower clamp,
+ * with 512 MB used only when no signal exists. As a safety net, the budget is
+ * halved on a WebGL context-loss event (a strong OOM signal) so an over-estimate
+ * self-corrects instead of repeatedly crashing the context.
  *
  * **Single-viewer-per-page assumption.** The budget lives in module-global
  * state (``budgetBytes`` below), so it is shared by every pool and registry
@@ -109,9 +109,10 @@ export interface GpuBudgetMemorySignals {
  * MEASURED, not argued (host-demos, `jsHeapSizeLimit` spoofed in an init
  * script with real used/total passing through): without the heap term the auto
  * budget stayed at 2000 MB at a spoofed 256 MB heap and reclaimed nothing —
- * not one MB of movement. With it, the budget tracks the spoof at 43 / 86 /
- * 172 MB for 256 / 512 / 1024 MiB, and the auto-binding regression closes
- * (multi6 real-heap evict=5).
+ * not one MB of movement. The pre-#2439 half-share tracked the spoof at 43 / 86
+ * / 172 MB for 256 / 512 / 1024 MiB and closed the auto-binding regression
+ * (multi6 real-heap evict=5); the full-remainder derivation now resolves those
+ * same heap limits to 86 / 172 / 344 MB.
  *
  * Heap, explicit-pool and device-class inputs all go through
  * ``computeNonCacheRemainderBytes``: the project's single answer to "how much
@@ -132,6 +133,7 @@ function computeAutoBudget(memory?: GpuBudgetMemorySignals): { bytes: number; so
     Number.isFinite(cachePoolOverrideBytes) &&
     cachePoolOverrideBytes > 0;
   const heapLimitBytes = readHeapLimitBytes();
+  const isMobile = getInputProfile().deviceClass === 'mobile';
   // A phone or tablet is a memory signal in itself. WebKit exposes neither
   // `deviceMemory` nor `performance.memory`, so without this an iPhone took the
   // 512 MB no-signal fallback — ≈7 M resident splats, each also holding a
@@ -140,8 +142,7 @@ function computeAutoBudget(memory?: GpuBudgetMemorySignals): { bytes: number; so
   // tiers already size from (`DEVICE_CLASS_POOL_BYTES.mobile`) implies the same
   // non-cache remainder as an explicit `?cacheBudgetMB=` would. Laptop and
   // desktop contribute nothing here, so their resolution is unchanged.
-  const fallbackPoolBytes =
-    getInputProfile().deviceClass === 'mobile' ? DEVICE_CLASS_POOL_BYTES.mobile : undefined;
+  const fallbackPoolBytes = isMobile ? DEVICE_CLASS_POOL_BYTES.mobile : undefined;
   const nonCacheRemainder = computeNonCacheRemainderBytes(
     heapLimitBytes ?? 0,
     cachePoolOverrideBytes,
@@ -153,7 +154,7 @@ function computeAutoBudget(memory?: GpuBudgetMemorySignals): { bytes: number; so
       : Math.floor(Math.min(nonCacheRemainder, MAX_BUDGET_BYTES));
   // The mobile pool implies a 256 MiB remainder, so the independently measured
   // 128 MiB safety cap dominates that candidate by construction.
-  const fromMobileCap = fallbackPoolBytes === undefined ? undefined : MOBILE_BUDGET_BYTES;
+  const fromMobileCap = isMobile ? MOBILE_BUDGET_BYTES : undefined;
 
   const candidates = [fromDeviceMemory, fromWorkingSet, fromMobileCap].filter(
     (value): value is number => value !== undefined
