@@ -875,11 +875,12 @@ test checks its E2E fixture prerequisite wiring, plus
 test scrapes its colormap tables. A narrow static scan over viewer `src/**/*.test.ts`
 files finds literal `readFileSync` inputs rooted through `join(REPO_ROOT, ...)` or
 `resolve(REPO_ROOT, ...)` and requires each to have a TypeScript `GATE_INPUTS` row.
-The currently matched reader files are also named Python inputs so their edits run
-the classifier. This scan does not cover `import.meta`-rooted reads, `*.spec.ts`,
-or `scripts/*.test.mjs`; those existing inputs are already owned by broader
-TypeScript patterns, while a brand-new `*.test.ts` reader is discovered only when
-another Python-relevant change runs the repository-wide classifier.
+The matched reader source set must exactly equal the named Python inputs so their
+edits run the classifier and stale ownership rows are rejected. This scan does not
+cover `import.meta`-rooted reads, `*.spec.ts`, or `scripts/*.test.mjs`; those
+existing inputs are already owned by broader TypeScript patterns, while a
+brand-new `*.test.ts` reader is reported the next time another Python-relevant
+change runs the repository-wide classifier.
 A check whose own inputs are unclassified is a check that skips for exactly the
 change it exists to catch. `.github/workflows/ci.yml` selects **all four**
 domains: it defines how every suite is invoked, so an edit that breaks a command

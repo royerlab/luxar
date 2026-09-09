@@ -523,6 +523,13 @@ _PYTHON_SOURCE_ROOTS = (
     REPO / "stats",
 )
 
+_TYPESCRIPT_TEST_READER_INPUTS = frozenset(
+    {
+        "packages/luxar-viewer/src/tests/unit/gallery-selection.test.ts",
+        "packages/luxar-viewer/src/tests/unit/config/generated-fixture-freshness.test.ts",
+    }
+)
+
 _NON_SCANNED_PYTHON_VIEWER_INPUTS = {
     "packages/luxar-viewer/package.json": "read by check_version_consistency.py",
     "packages/luxar-viewer/README.md": "read by test_readme_demo_docs.py",
@@ -967,22 +974,26 @@ def _tracked_typescript_test_path_reads(
     *,
     repo: Path = REPO,
     tracked_paths: set[str] | None = None,
-) -> set[str]:
+) -> tuple[set[str], set[str]]:
     """Find literal ``readFileSync(join|resolve(REPO_ROOT, ...))`` test inputs.
 
     This intentionally scans only ``src/**/*.test.ts`` calls rooted at the literal
     ``REPO_ROOT`` identifier. It does not cover ``import.meta``-rooted reads,
     ``*.spec.ts`` files, or ``scripts/*.test.mjs``. Existing matched reader files
-    therefore need explicit ``dom_py`` ownership so edits to the guard run pytest;
-    a brand-new reader remains discoverable only once another Python-relevant change
-    runs this repository-wide check.
+    therefore need explicit ``dom_py`` ownership so edits to the guard run pytest.
+    A brand-new reader is reported the next time another Python-relevant change runs
+    this repository-wide check.
     """
     tracked_paths = _tracked_paths(repo) if tracked_paths is None else tracked_paths
     paths: set[str] = set()
+    reader_paths: set[str] = set()
     for source_root in source_roots:
         for source_path in source_root.rglob("*.test.ts"):
             source = source_path.read_text(encoding="utf-8")
-            for match in _TYPESCRIPT_REPO_READ_RE.finditer(source):
+            matches = list(_TYPESCRIPT_REPO_READ_RE.finditer(source))
+            if matches:
+                reader_paths.add(source_path.relative_to(repo).as_posix())
+            for match in matches:
                 parts = [
                     single or double
                     for single, double in _TYPESCRIPT_PATH_PART_RE.findall(
@@ -992,7 +1003,7 @@ def _tracked_typescript_test_path_reads(
                 relative = Path(*parts).as_posix()
                 if relative in tracked_paths:
                     paths.add(relative)
-    return paths
+    return paths, reader_paths
 
 
 def _assert_unclassified_test_paths_are_owned(
@@ -1026,6 +1037,21 @@ def _assert_typescript_test_paths_are_owned(paths: set[str], pattern: str) -> No
     assert not missing, (
         "tracked paths read by TypeScript tests must have dom_ts GATE_INPUTS rows: "
         f"{missing}"
+    )
+
+
+def _assert_typescript_test_reader_paths_are_owned(
+    reader_paths: set[str],
+    declared_reader_paths: set[str] | frozenset[str] = _TYPESCRIPT_TEST_READER_INPUTS,
+) -> None:
+    python_gate_inputs = {path for path, domain, _why in GATE_INPUTS if domain == "py"}
+    missing = sorted(reader_paths - python_gate_inputs)
+    undeclared = sorted(reader_paths - declared_reader_paths)
+    stale = sorted(declared_reader_paths - reader_paths)
+    assert not missing and not undeclared and not stale, (
+        "TypeScript test reader sources must have dom_py GATE_INPUTS rows: "
+        f"{missing}; update the declared reader set for new sources: {undeclared}; "
+        f"remove stale reader declarations: {stale}"
     )
 
 
@@ -1152,7 +1178,7 @@ readFileSync(path.join(REPO_ROOT, dynamicName), 'utf-8');
         encoding="utf-8",
     )
 
-    paths = _tracked_typescript_test_path_reads(
+    paths, reader_paths = _tracked_typescript_test_path_reads(
         (tmp_path / "src",),
         repo=tmp_path,
         tracked_paths={
@@ -1165,6 +1191,7 @@ readFileSync(path.join(REPO_ROOT, dynamicName), 'utf-8');
     )
 
     assert paths == {"scripts/manifest.json", "Makefile", "README.md"}
+    assert reader_paths == {"src/tests/unit/reader.test.ts"}
 
 
 def test_python_gate_input_scan_rejects_missing_ownership() -> None:
@@ -1178,6 +1205,20 @@ def test_python_gate_input_scan_rejects_missing_ownership() -> None:
 def test_typescript_gate_input_scan_rejects_missing_ownership() -> None:
     with pytest.raises(AssertionError, match="must have dom_ts GATE_INPUTS rows"):
         _assert_typescript_test_paths_are_owned({"unowned.json"}, "^owned\\.json$")
+
+
+def test_typescript_gate_input_reader_scan_rejects_missing_python_ownership() -> None:
+    reader = "packages/luxar-viewer/src/tests/unit/unowned-reader.test.ts"
+    with pytest.raises(AssertionError, match="must have dom_py GATE_INPUTS rows"):
+        _assert_typescript_test_reader_paths_are_owned({reader}, {reader})
+
+
+def test_typescript_gate_input_reader_scan_rejects_stale_declarations() -> None:
+    with pytest.raises(AssertionError, match="remove stale reader declarations"):
+        _assert_typescript_test_reader_paths_are_owned(
+            set(),
+            {"packages/luxar-viewer/src/tests/unit/removed-reader.test.ts"},
+        )
 
 
 def test_python_gate_input_scan_rejects_stale_exclusions() -> None:
@@ -1278,8 +1319,11 @@ def test_python_test_inputs_are_statically_owned_by_the_python_gate(
 def test_typescript_test_path_reads_are_statically_owned_by_the_typescript_gate(
     workflow: str,
 ) -> None:
-    paths = _tracked_typescript_test_path_reads()
+    paths, reader_paths = _tracked_typescript_test_path_reads()
     assert paths, "no TypeScript test path reads found; the ownership guard is vacuous"
+    assert reader_paths, (
+        "no TypeScript test reader sources found; the ownership guard is vacuous"
+    )
     assert {
         "Makefile",
         "README.md",
@@ -1290,6 +1334,7 @@ def test_typescript_test_path_reads_are_statically_owned_by_the_typescript_gate(
         "genuine reader was removed, replace its path with a current committed-file "
         "canary"
     )
+    _assert_typescript_test_reader_paths_are_owned(reader_paths)
     typescript_pattern = _domain_patterns(workflow)["ts"]
     _assert_typescript_test_paths_are_owned(paths, typescript_pattern)
 
