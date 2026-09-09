@@ -112,6 +112,58 @@ def test_select_members_honours_the_kingdom_filter() -> None:
     assert sorted(cluster.indices.tolist()) == [0, 1, 3]
 
 
+def test_cluster_geometry_centres_on_the_bounding_box_not_the_median() -> None:
+    from luxar.demos.demo_esm3_protein_stories import cluster_geometry
+
+    # Nine members piled at x=0 and one straggler at x=4: the median sits on
+    # the pile, the bounding-box centre halfway to the straggler.
+    members = np.zeros((10, 3))
+    members[-1, 0] = 4.0
+    centre, radial = cluster_geometry(members)
+    assert np.allclose(centre, [2.0, 0.0, 0.0])
+    assert radial.shape == (10,) and np.isclose(radial.max(), 2.0)
+    assert np.isclose(radial[0], 2.0)
+
+
+def test_bubble_encloses_the_farthest_member() -> None:
+    from luxar.demos.demo_esm3_protein_stories import (
+        BUBBLE_ENCLOSE_MARGIN,
+        SPHERE_RADIUS_SCALE,
+        bubble_radius,
+    )
+
+    # r_max well beyond the r95 rule: the enclosing radius wins.
+    wide = StoryCluster(
+        indices=np.arange(3), centre=np.zeros(3), r95=0.5, n_named=3, r50=0.2, r_max=2.0
+    )
+    assert bubble_radius(wide) == BUBBLE_ENCLOSE_MARGIN * 2.0
+    # r_max inside the r95 rule: the rule wins (a compact blob keeps its bubble).
+    tight = StoryCluster(
+        indices=np.arange(3),
+        centre=np.zeros(3),
+        r95=0.5,
+        n_named=3,
+        r50=0.2,
+        r_max=0.55,
+    )
+    assert bubble_radius(tight) == SPHERE_RADIUS_SCALE * 0.5
+
+
+def test_select_members_recentres_on_the_bounding_box() -> None:
+    rng = np.random.default_rng(3)
+    # A dense pile at x=0 plus a thin tail out to x=0.6, all named alike.
+    pile = rng.normal(scale=0.02, size=(200, 3))
+    tail = np.column_stack([np.linspace(0.1, 0.6, 20), np.zeros(20), np.zeros(20)])
+    positions = np.vstack([pile, tail]).astype(np.float32)
+    names = np.array(["Hemoglobin subunit alpha"] * len(positions), dtype=object)
+    kingdoms = np.array(["Other"] * len(positions), dtype=object)
+    cluster = select_story_members(_story(radius=0.8), names, kingdoms, positions)
+    assert len(cluster.indices) == len(positions)
+    lo, hi = positions.min(axis=0), positions.max(axis=0)
+    assert np.allclose(cluster.centre, (lo + hi) / 2, atol=1e-6)
+    assert cluster.r_max > cluster.r95 > cluster.r50 > 0
+
+
 def test_select_members_fails_loudly_when_nothing_matches() -> None:
     names = np.array(["Myoglobin"], dtype=object)
     with pytest.raises(ValueError, match="matched no protein names"):

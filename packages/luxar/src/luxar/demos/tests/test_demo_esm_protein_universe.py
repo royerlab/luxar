@@ -71,13 +71,13 @@ def _universe(seed: int = 0) -> Universe:
     phylum[:2000] = 1
     phylum[2000:2500] = 2
     phylum[4000:4120] = 0
+    pfam[4870:4920] = 0  # the spur is PF00001 here (the shipped one is PF00005)
     pct = np.full(n, 100, dtype=np.uint8)
     pct[2000:2500] = 0  # the phage clusters are dark
     return Universe(
         positions=positions,
         annotation_row=np.arange(n, dtype=np.int32),
         pct_characterized=pct,
-        naming_tier=np.zeros(n, dtype=np.int8),
         pfam_code=pfam,
         pfam_vocab=pfam_vocab,
         phylum_code=phylum,
@@ -143,6 +143,59 @@ def test_whole_story_lights_every_member_with_no_knot_cut() -> None:
     assert cluster.r95 > 1.0  # the whole cloud, not a knot
 
 
+def test_spur_check_demands_the_abc_family(monkeypatch: pytest.MonkeyPatch) -> None:
+    u = _universe()
+    tree = spatial.cKDTree(u.positions)
+    story = _story(region="spur", whole=True)
+    cluster = select_universe_members(story, u, family_mask(story, u, None), tree)
+    # The synthetic spur is PF00001-dominated, not PF00005: the guard fires.
+    assert demo.spur_pfam_fraction(u, cluster) == 0.0
+    with pytest.raises(ValueError, match="only 0%"):
+        demo.check_spur_story(u, cluster)
+    # ... and passes once the family matches the panel's claim.
+    monkeypatch.setattr(demo, "SPUR_PFAM", "PF00001")
+    assert demo.check_spur_story(u, cluster) == 1.0
+
+
+def test_whole_highlight_sample_is_all_or_a_fixed_sorted_subset() -> None:
+    small = np.arange(10, 10 + demo.WHOLE_HIGHLIGHT_MAX_POINTS - 1)
+    assert demo.whole_highlight_sample(small) is small
+    big = np.arange(0, 3 * demo.WHOLE_HIGHLIGHT_MAX_POINTS, 1)
+    a = demo.whole_highlight_sample(big)
+    b = demo.whole_highlight_sample(big)
+    assert len(a) == demo.WHOLE_HIGHLIGHT_MAX_POINTS
+    assert np.array_equal(a, b)  # seeded: the same members every build
+    assert np.all(np.diff(a) > 0)  # sorted, no duplicates
+    assert np.isin(a, big).all()
+
+
+def test_highlight_unit_states_the_sampling_ratio() -> None:
+    assert demo.highlight_unit(159, 159) == "clusters"
+    assert demo.highlight_unit(2_025_330, 300_000) == "clusters (one in 7 drawn)"
+    assert demo.highlight_unit(580_733, 300_000) == "clusters (one in 2 drawn)"
+
+
+def test_side_on_camera_looks_across_the_spur_not_along_it() -> None:
+    from luxar.demos.demo_esm3_protein_stories import StoryCluster
+
+    centre = np.array([0.0, 0.0, 30.0])  # straight out along +z from the origin
+    cluster = StoryCluster(
+        indices=np.arange(20), centre=centre, r95=6.0, n_named=20, r50=3.0, r_max=9.0
+    )
+    outside_in = demo.universe_story_camera(cluster, _story(), np.zeros(3))
+    side_on = demo.universe_story_camera(cluster, _story(side_on=True), np.zeros(3))
+    to_c = lambda pose: np.asarray(pose.position) - centre  # noqa: E731
+    radial = centre / np.linalg.norm(centre)
+    # Default pose sits along the centre→cluster ray (plus the small lift).
+    assert (
+        abs(np.dot(to_c(outside_in), radial)) / np.linalg.norm(to_c(outside_in)) > 0.9
+    )
+    # Side-on sits perpendicular to that ray, at the same distance rule.
+    assert abs(np.dot(to_c(side_on), radial)) / np.linalg.norm(to_c(side_on)) < 0.35
+    assert np.isclose(np.linalg.norm(to_c(side_on)), np.linalg.norm(to_c(outside_in)))
+    assert tuple(side_on.target) == tuple(centre)
+
+
 def test_region_stories_select_by_predicate_not_by_family() -> None:
     u = _universe()
     assert family_mask(_story(region="spur"), u, None).sum() == 50
@@ -159,7 +212,7 @@ def test_name_pattern_needs_a_name_mask_and_unions_with_pfam() -> None:
         family_mask(story, u, None)
     by_name = np.zeros(len(u), dtype=bool)
     by_name[3000:3010] = True
-    assert family_mask(story, u, by_name).sum() == 200 + 10
+    assert family_mask(story, u, by_name).sum() == 250 + 10  # PF00001: cloud + spur
 
 
 def test_select_members_fails_loudly_when_nothing_matches() -> None:

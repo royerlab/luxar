@@ -110,11 +110,7 @@ from luxar.demos import launch_viewer, parse_path_arg
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG, pull_in
 from luxar.demos._dependencies import require_module
 from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
-from luxar.demos._pdb_turntable import (
-    TurntableAssets,
-    load_environment_faces,
-    render_turntables,
-)
+from luxar.demos._pdb_turntable import TurntableAssets, render_turntables
 from luxar.demos.demo_esm3_protein_landscape import TAXON_COLORS
 from luxar.demos.demo_esm3_protein_stories import (
     BIOHUB_LOGO,
@@ -135,6 +131,7 @@ from luxar.demos.demo_esm3_protein_stories import (
     TURNTABLE_WIDTH,
     Story,
     StoryCluster,
+    _turntable_environment,
     add_story_sounds,
     bubble_radius,
     cluster_geometry,
@@ -158,19 +155,24 @@ COORDS_PARQUET = "umap_coordinates_3d.parquet"
 ANNOTATIONS_PARQUET = "representative_proteins_min50_pfam_taxa_desc_named_v3.parquet"
 #: The folded inputs: positions + the per-cluster columns every build needs.
 #: Bump the suffix when the layout below changes.
-UNIVERSE_CACHE = "universe_v1.npz"
+UNIVERSE_CACHE = "universe_v2.npz"
 #: Points farther than this from the cloud's median are UMAP outliers (0.12% of
 #: the rows, some 60 units out) that would otherwise set the scene's extent.
 CULL_RADIUS = 40.0
 #: Beyond this radius from the centre lies the spur (see the ABC story).
 SPUR_RADIUS = 22.0
+#: The spur story is a GEOMETRY predicate (everything beyond ``SPUR_RADIUS``)
+#: whose panel makes a FAMILY claim (ABC-transporter ATP-binding domains), so
+#: the build checks that at least this share of the lit clusters has that
+#: dominant Pfam family; a different Atlas release could move the spur.
+SPUR_PFAM = "PF00005"
+SPUR_PFAM_MIN_FRACTION = 0.9
 
 # The annotation columns the cache folds in (the rest are read per story member
 # at build time).
 _ANNOTATION_COLUMNS = (
     "protein_hash",
     "cluster_pct_characterized",
-    "naming_tier",
     "cluster_top_pfam_domains",
     "top_phyla",
 )
@@ -253,7 +255,6 @@ def build_universe_cache(coords: Path, annotations: Path, out: Path) -> Path:
                 "are the two parquet files from the same release?"
             )
         pct_rows = at.column("cluster_pct_characterized").to_numpy().astype(np.uint8)
-        tier_rows = at.column("naming_tier").to_numpy().astype(np.int8)
         pfam_rows, pfam_vocab = _dominant_map_key(at, "cluster_top_pfam_domains")
         phylum_rows, phylum_vocab = _dominant_map_key(at, "top_phyla")
         del at
@@ -269,7 +270,6 @@ def build_universe_cache(coords: Path, annotations: Path, out: Path) -> Path:
         positions=xyz,
         annotation_row=row,
         pct_characterized=per_point(pct_rows, 0),
-        naming_tier=per_point(tier_rows, 5),
         pfam_code=per_point(pfam_rows, -1),
         pfam_vocab=pfam_vocab.astype("U16"),
         phylum_code=per_point(phylum_rows, -1),
@@ -286,7 +286,6 @@ class Universe:
     positions: np.ndarray
     annotation_row: np.ndarray
     pct_characterized: np.ndarray
-    naming_tier: np.ndarray
     pfam_code: np.ndarray
     pfam_vocab: np.ndarray
     phylum_code: np.ndarray
@@ -475,17 +474,21 @@ STORY_LENS_FOV_DEG = CINEMATIC_FOV_DEG
 # frame at knot distance keep individual clusters visible and the map a texture
 # behind them; at the overview they are sub-pixel and render as 1 px points as
 # before. The bubble's floor drops from 0.35 to 0.2 so a knot fills its bubble.
-# INTENSITY IS A WINDOW, NOT A GAIN (colour / (1/intensity)): the tour's 0.08
-# divides every colour by 12.5, which its 10 px points can afford and these
-# sub-pixel points cannot — the owner saw a dim overview with the viewer's
-# exposure pinned at +4 stops. 0.25 (a [0, 4] window) reads bright at the
-# overview; the coarse LOD splats inherit the same window through the Layers
-# panel push-down, so the whole backdrop brightens together.
+# BRIGHTNESS IS A PAIR: a per-layer window and a global exposure. `intensity`
+# is a plain linear colour multiplier (a 1/16 window here), `exposure` is in
+# log2 stops on top of it, and the pair below is the one MEASURED in the
+# browser: the overview reads as a cloud, the view from a knot through the
+# map's centre stays short of a whiteout (it whited out at +4.4 stops, a value
+# found persisted in the app's storage), and the story highlights (0.4, one
+# node, composed once) sit ~6x above the backdrop so a knot still pops. The
+# tour's 0.08 at 0 stops was the dim overview the owner reported. These values
+# reach the material as written: the wrapper is the only node that carries
+# them (see `_add_backdrop`).
 BACKDROP_RADIUS = 0.004
-BACKDROP_INTENSITY = 0.25
+BACKDROP_INTENSITY = 0.0625
 #: Global exposure in log2 stops (see `_viewer_config`).
 BACKDROP_EXPOSURE_STOPS = 2.5
-BACKDROP_OPACITY = 0.7
+BACKDROP_OPACITY = 0.5
 HIGHLIGHT_RADIUS = 0.006
 HIGHLIGHT_INTENSITY = 0.4
 #: A knot of this many members gets the full highlight intensity; bigger
@@ -1053,7 +1056,8 @@ def select_universe_members(
 
     A knot story seeds on the member with the most (and purest) member
     neighbours within two thirds of ``story.radius``, keeps the members within
-    ``story.radius`` of it, and re-centres on their median.
+    ``story.radius`` of it, and re-centres on their bounding box (see
+    :func:`~luxar.demos.demo_esm3_protein_stories.cluster_geometry`).
     """
     n_named = int(mask.sum())
     if n_named == 0:
@@ -1132,6 +1136,23 @@ def universe_story_camera(
     )
 
 
+def spur_pfam_fraction(universe: Universe, cluster: StoryCluster) -> float:
+    """Share of a cluster's members whose dominant Pfam family is the spur's."""
+    return float(universe.pfam_mask((SPUR_PFAM,))[cluster.indices].mean())
+
+
+def check_spur_story(universe: Universe, cluster: StoryCluster) -> float:
+    """Raise unless the spur's members are :data:`SPUR_PFAM`-dominated; return the share."""
+    share = spur_pfam_fraction(universe, cluster)
+    if share < SPUR_PFAM_MIN_FRACTION:
+        raise ValueError(
+            f"the spur (r > {SPUR_RADIUS:g}) is only {share:.0%} {SPUR_PFAM}; the "
+            f"panel claims an ABC-transporter family (needs >= "
+            f"{SPUR_PFAM_MIN_FRACTION:.0%}). Re-measure this Atlas release."
+        )
+    return share
+
+
 def overview_panel_html(n_clusters: int) -> str:
     """The overview panel shown at story 0."""
     return (
@@ -1192,7 +1213,10 @@ def _member_details(
     out: dict[int, tuple[list[str], list[str]]] = {}
     for k, c in clusters.items():
         idx = [lookup.get(int(r), -1) for r in universe.annotation_row[c.indices]]
-        names = [str(cols["product_name"][i]) if i >= 0 else "cluster" for i in idx]
+        names = [
+            str(cols["product_name"][i] or "cluster") if i >= 0 else "cluster"
+            for i in idx
+        ]
         lcas = [str(cols["lca_taxonomy"][i] or "") if i >= 0 else "" for i in idx]
         unirefs = [
             str(cols["uniref_match_accession"][i] or "") if i >= 0 else "" for i in idx
@@ -1229,13 +1253,9 @@ def _render_story_turntables(
 ) -> dict[str, TurntableAssets]:
     with asection("Rendering PDB turntables"):
         cache_dir = cache or (Path.home() / ".cache" / "luxar" / TURNTABLE_CACHE)
-        environment = load_environment_faces(output_path)
-        if environment is None:
-            aprint(
-                "ℹ️  No baked environment in the output store yet: turntables use "
-                f"the studio lights only. Run `luxar env bake {output_path}` and "
-                "rebuild to light them with the map."
-            )
+        # Hints only for a durable store: on the serve path the output lives
+        # in a TemporaryDirectory that is gone before anyone could bake it.
+        environment = _turntable_environment(output_path)
         assets = render_turntables(
             [s.pdb_id for s in stories if s.pdb_id],
             cache_dir,
@@ -1261,13 +1281,10 @@ def _viewer_config(
     return ViewerConfig(
         cinematic_mode=True,
         camera=CameraConfig(position=pull_in(overview), target=(0.0, 0.0, 0.0)),
-        # Authored, not left to the slider: sub-pixel points at the overview
-        # need +2.5 stops over the viewer's 0 to read as a cloud, and the same stops
-        # stops keep the view through the map's centre from a knot short of a
-        # whiteout (the +4.4 the owner found persisted in the app's storage
-        # blew it out). The Rendering Controls remember per-source edits in
-        # localStorage and those WIN over this value at load; "Reset to
-        # Defaults" comes back here.
+        # Authored, not left to the slider (see the BRIGHTNESS note by
+        # `BACKDROP_INTENSITY`). The Rendering Controls remember per-source
+        # edits in localStorage and those WIN over this value at load; "Reset
+        # to Defaults" comes back here.
         exposure=BACKDROP_EXPOSURE_STOPS,
         auto_rotate=auto_rotate,
         auto_rotate_speed=0.5 if auto_rotate else None,
@@ -1470,14 +1487,16 @@ def _add_backdrop(
         levels = ((coarse, float(BACKDROP_LOD_FACTOR)), (idx, 1.0))
         for level, (sel, gain) in enumerate(levels):
             level_positions = positions[sel]
+            # No opacity/intensity here: compositing attrs compose
+            # MULTIPLICATIVELY root→leaf, so a copy on the levels would square
+            # the wrapper's (the closing review measured opacity 0.49 and a
+            # 1/16 window reaching the material when both carried them).
             lod.add_points(
                 f"child_{level}",
                 level_positions,
                 colors=(colors[sel] * np.float32(gain)).astype(np.float32),
                 radii=np.full(sel.size, BACKDROP_RADIUS, dtype=np.float32),
                 sharpness=np.full(sel.size, 0.6, dtype=np.float32),
-                opacity=BACKDROP_OPACITY,
-                intensity=BACKDROP_INTENSITY,
                 extend_to_all=[STORY_DIM],
                 coverage_fraction=float(coverage[level]),
                 # One hidden coordinate (story 0, extended to all): the slice
@@ -1504,6 +1523,8 @@ def resolve_stories(
             mask = family_mask(s, universe, masks.get(s.key))
             c = select_universe_members(s, universe, mask, all_tree)
             clusters.append(c)
+            if s.region == "spur":
+                aprint(f"{s.key}: {check_spur_story(universe, c):.0%} {SPUR_PFAM}")
             scope = "whole map" if s.whole else f"within {s.radius:g} of the knot"
             aprint(
                 f"{s.key}: {len(c.indices):,} of {c.n_named:,} matching clusters, "
