@@ -233,6 +233,11 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "test_format_contract.py checks its current gsplats format claim",
     ),
     (
+        "packages/luxar-viewer/src/data/scene-loader/lifecycle/load-scene.ts",
+        "py",
+        "test_format_contract.py checks its readable gsplats format range",
+    ),
+    (
         ".agents/skills/luxar-gsplat-pipeline/SKILL.md",
         "py",
         "test_cholesky_documentation.py executes its documented Cholesky packing",
@@ -491,6 +496,9 @@ _NON_SCANNED_PYTHON_VIEWER_INPUTS = {
     "packages/luxar-viewer/package.json": "read by check_version_consistency.py",
     "packages/luxar-viewer/README.md": "read by test_readme_demo_docs.py",
     "packages/luxar-viewer/src/data/codecs/README.md": (
+        "read by test_format_contract.py through CURRENT_VERSION_CLAIMS"
+    ),
+    "packages/luxar-viewer/src/data/scene-loader/lifecycle/load-scene.ts": (
         "read by test_format_contract.py through CURRENT_VERSION_CLAIMS"
     ),
     "packages/luxar-viewer/src/types/format-contract.ts": (
@@ -797,6 +805,7 @@ def test_python_gate_input_scan_exclusions_have_one_line_reasons() -> None:
         "packages/luxar-viewer/docs/README.md",
         "packages/luxar/src/luxar/gsplats/archive/README.md",
         "packages/luxar-viewer/src/data/codecs/archive/README.md",
+        "packages/luxar-viewer/src/data/scene-loader/lifecycle/load-scene.ts.bak",
     ],
 )
 def test_derived_python_gate_input_patterns_are_exact(workflow: str, path: str) -> None:
