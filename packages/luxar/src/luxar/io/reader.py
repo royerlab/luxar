@@ -170,6 +170,54 @@ def _summarize_typed_node(
             info["duration_ms"] = child.attrs["duration_ms"]
 
 
+def _numbered_groups(
+    group: zarr.Group, prefix: str, node_name: str
+) -> List[zarr.Group]:
+    """Return numbered child groups in numeric order, rejecting malformed names."""
+    numbered: List[tuple[int, zarr.Group]] = []
+    for child_name in group_keys(group):
+        if not child_name.startswith(prefix):
+            continue
+        suffix = child_name[len(prefix) :]
+        if not suffix.isdigit():
+            raise ValueError(
+                f"Node '{node_name}' has malformed structural child "
+                f"'{child_name}': expected {prefix}<integer>"
+            )
+        numbered.append((int(suffix), group[child_name]))
+    return [child for _, child in sorted(numbered, key=lambda item: item[0])]
+
+
+def _flattened_point_sources(group: zarr.Group, node_name: str) -> List[zarr.Group]:
+    """Resolve a structured points node to its finest disjoint leaf groups."""
+    kind = group.attrs.get("kind")
+    if kind == "lod":
+        levels = _numbered_groups(group, "child_", node_name)
+        if not levels:
+            raise ValueError(f"Points node '{node_name}' has an empty LOD structure")
+        return _flattened_point_sources(levels[-1], node_name)
+    if kind == "partition":
+        parts = _numbered_groups(group, "part_", node_name)
+        if not parts:
+            raise ValueError(f"Points node '{node_name}' has an empty partition")
+        return [
+            source
+            for part in parts
+            for source in _flattened_point_sources(part, node_name)
+        ]
+
+    additive = _numbered_groups(group, "additive_", node_name)
+    if additive:
+        return [
+            source
+            for increment in additive
+            for source in _flattened_point_sources(increment, node_name)
+        ]
+    if group.attrs.get("type") != "points":
+        raise ValueError(f"Node '{node_name}' is not a points node")
+    return [group]
+
+
 class LuxarScene:
     """Read-only access to a Luxar zarr scene.
 
@@ -452,11 +500,16 @@ class LuxarScene:
 
         return metadata
 
-    def get_points(self, name: str) -> PointsData:
+    def get_points(self, name: str, *, flatten: bool = False) -> PointsData:
         """Load points node data with automatic decoding.
 
         Args:
             name: Name of the points node
+            flatten: When true, read the finest substitutive level, concatenate
+                every partition part, and concatenate every disjoint additive
+                increment. This reconstructs the complete finest-level point
+                cloud from an authored structure. The default keeps the legacy
+                flat-leaf behavior.
 
         Returns:
             PointsData with fields: positions, colors, radii, sharpness,
@@ -465,12 +518,15 @@ class LuxarScene:
 
         Raises:
             KeyError: If node doesn't exist
-            ValueError: If node is not a points node
+            ValueError: If node is not a points node, or its structured leaves
+                are empty or carry inconsistent optional arrays.
         """
         if not self.has_node(name):
             raise KeyError(f"Points node not found: {name}")
 
         group = self._root[name]
+        if flatten:
+            return self._get_flattened_points(name, group)
         if group.attrs.get("type") != "points":
             raise ValueError(f"Node '{name}' is not a points node")
 
@@ -502,6 +558,126 @@ class LuxarScene:
             chunk_bounds=chunk_bounds,
             metadata=metadata,
         )
+
+    def get_point_array(
+        self, name: str, array_name: str, *, flatten: bool = False
+    ) -> Optional[np.ndarray]:
+        """Decode one points array, optionally across the finest structure.
+
+        ``array_name`` uses the :class:`PointsData` field spelling:
+        ``positions``, ``colors``, ``radii``, ``sharpness``, or
+        ``chunk_bounds``. Reading one field is useful when another layer shares
+        a large ``array_ref`` and decoding the complete node would materialize
+        an unnecessary second copy.
+        """
+        if not self.has_node(name):
+            raise KeyError(f"Points node not found: {name}")
+
+        stored_names = {
+            "positions": "positions",
+            "colors": "colors",
+            "radii": "radii",
+            "sharpness": "sharpnesses",
+            "chunk_bounds": "chunk_bounds",
+        }
+        try:
+            stored_name = stored_names[array_name]
+        except KeyError:
+            supported = ", ".join(stored_names)
+            raise ValueError(
+                f"Unknown points array '{array_name}'; expected one of: {supported}"
+            ) from None
+
+        group = self._root[name]
+        sources = (
+            _flattened_point_sources(group, name)
+            if flatten
+            else self._flat_point_source(name, group)
+        )
+        return self._concatenate_point_array(
+            sources,
+            stored_name,
+            name,
+            required=array_name == "positions",
+            decode=array_name != "chunk_bounds",
+        )
+
+    def _get_flattened_points(self, name: str, group: zarr.Group) -> PointsData:
+        """Decode and concatenate a structured points node's finest leaves."""
+        sources = _flattened_point_sources(group, name)
+        positions = self._concatenate_point_array(
+            sources, "positions", name, required=True
+        )
+        assert positions is not None
+        colors = self._concatenate_point_array(sources, "colors", name)
+        radii = self._concatenate_point_array(sources, "radii", name)
+        sharpness = self._concatenate_point_array(sources, "sharpnesses", name)
+        chunk_bounds = self._concatenate_point_array(
+            sources, "chunk_bounds", name, decode=False
+        )
+
+        metadata = dict(group.attrs)
+        metadata["type"] = "points"
+        metadata["n_points"] = int(positions.shape[0])
+        if "transform" in metadata:
+            metadata["transform"] = read_transform_from_zarr(metadata["transform"])
+
+        for array_name, array in (
+            ("colors", colors),
+            ("radii", radii),
+            ("sharpness", sharpness),
+        ):
+            if array is not None and array.shape[0] != positions.shape[0]:
+                raise ValueError(
+                    f"Points node '{name}' has {array.shape[0]} {array_name} rows "
+                    f"for {positions.shape[0]} positions"
+                )
+
+        return PointsData(
+            positions=positions,
+            colors=colors,
+            radii=radii,
+            sharpness=sharpness,
+            chunk_bounds=chunk_bounds,
+            metadata=metadata,
+        )
+
+    @staticmethod
+    def _flat_point_source(name: str, group: zarr.Group) -> List[zarr.Group]:
+        if group.attrs.get("type") != "points":
+            raise ValueError(f"Node '{name}' is not a points node")
+        return [group]
+
+    def _concatenate_point_array(
+        self,
+        sources: List[zarr.Group],
+        array_name: str,
+        node_name: str,
+        *,
+        required: bool = False,
+        decode: bool = True,
+    ) -> Optional[np.ndarray]:
+        """Concatenate one point field, requiring consistent leaf presence."""
+        present = [array_name in source for source in sources]
+        if not any(present):
+            if required:
+                raise ValueError(
+                    f"Points node '{node_name}' missing required '{array_name}' array"
+                )
+            return None
+        if not all(present):
+            raise ValueError(
+                f"Points node '{node_name}' has inconsistent '{array_name}' arrays "
+                "across its flattened leaves"
+            )
+
+        arrays = [
+            self._decoder.decode(source[array_name], self._root)
+            if decode
+            else np.asarray(source[array_name][:])
+            for source in sources
+        ]
+        return np.concatenate(arrays)
 
     def get_gsplats(self, name: str) -> GSplatsData:
         """Load gsplats node data with automatic decoding.

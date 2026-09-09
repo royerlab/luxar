@@ -146,6 +146,11 @@ print(points["colors"].shape)  # (N, 3) or None
 print(points["radii"].shape)  # (N,) or None
 print(points["metadata"]["transform"])  # 4x4 numpy array (if present)
 
+# Reconstruct the finest cloud from substitutive LOD, partition, and additive
+# increments. Read one field when a large array_ref should not be materialized.
+finest = scene.get_points("structured_cloud", flatten=True)
+colors = scene.get_point_array("structured_cloud", "colors", flatten=True)
+
 # Similarly for GSplats and Lines
 splats = scene.get_gsplats("splats1")
 print(splats["centers"].shape)  # (N, 3)
