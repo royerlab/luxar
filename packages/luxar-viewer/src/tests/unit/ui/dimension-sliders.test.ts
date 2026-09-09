@@ -788,7 +788,10 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
     sliders.dispose();
   });
 
-  it('keeps the animation context menu inside a short viewport', () => {
+  it.each([
+    { pressY: 270, expectedTop: 10 },
+    { pressY: 50, expectedTop: 60 },
+  ])('keeps the animation context menu away from a press at $pressY', ({ pressY, expectedTop }) => {
     const heightSpy = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(291);
     const widthSpy = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(248);
     const innerHeight = Object.getOwnPropertyDescriptor(window, 'innerHeight');
@@ -803,13 +806,17 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
           bubbles: true,
           cancelable: true,
           clientX: 100,
-          clientY: 270,
+          clientY: pressY,
         })
       );
 
       const menu = document.querySelector<HTMLElement>('.luxar-dimension-slider__context-menu')!;
-      expect(menu.style.top).toBe('19px');
-      expect(parseFloat(menu.style.top) + menu.offsetHeight).toBeLessThanOrEqual(310);
+      const menuTop = parseFloat(menu.style.top);
+      const menuHeight = parseFloat(menu.style.maxHeight);
+      expect(menuTop).toBe(expectedTop);
+      expect(menuHeight).toBe(250);
+      expect(menuTop + menuHeight).toBeLessThanOrEqual(310);
+      expect(pressY < menuTop || pressY > menuTop + menuHeight).toBe(true);
     } finally {
       sliders?.dispose();
       heightSpy.mockRestore();

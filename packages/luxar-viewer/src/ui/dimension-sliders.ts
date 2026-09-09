@@ -18,6 +18,29 @@ import {
   clampInteger,
 } from './dimension-sliders/slider-math';
 
+function placeContextMenuVertically(
+  menuHeight: number,
+  pressY: number,
+  viewportHeight: number
+): { top: number; maxHeight: string } {
+  const edgePadding = 10;
+  const pressGap = 10;
+  const aboveTop = pressY - menuHeight;
+  if (aboveTop >= edgePadding) return { top: aboveTop, maxHeight: '' };
+
+  const belowTop = pressY + pressGap;
+  if (belowTop + menuHeight <= viewportHeight - edgePadding) {
+    return { top: belowTop, maxHeight: '' };
+  }
+
+  const availableAbove = Math.max(0, pressY - pressGap - edgePadding);
+  const availableBelow = Math.max(0, viewportHeight - edgePadding - belowTop);
+  if (availableAbove >= availableBelow) {
+    return { top: edgePadding, maxHeight: `${availableAbove}px` };
+  }
+  return { top: belowTop, maxHeight: `${availableBelow}px` };
+}
+
 /**
  * Configuration interface for initializing dimension sliders.
  *
@@ -1461,7 +1484,7 @@ export class DimensionSliders {
 
     // Ensure menu stays within viewport bounds
     let menuX = x;
-    let menuY = y - menuHeight;
+    const verticalPlacement = placeContextMenuVertically(menuHeight, y, window.innerHeight);
 
     // Check right edge
     if (menuX + menuWidth > window.innerWidth) {
@@ -1473,17 +1496,9 @@ export class DimensionSliders {
       menuX = 10; // 10px padding from edge
     }
 
-    // Check top edge - if menu would go above viewport, show below cursor instead
-    if (menuY < 10) {
-      menuY = y + 10; // Show below cursor with 10px gap
-    }
-
-    // Check bottom edge after the fallback above. Coarse-pointer CSS caps a
-    // menu taller than the viewport and makes it scrollable.
-    menuY = Math.max(10, Math.min(menuY, window.innerHeight - menuHeight - 10));
-
     menu.style.left = `${menuX}px`;
-    menu.style.top = `${menuY}px`;
+    menu.style.top = `${verticalPlacement.top}px`;
+    menu.style.maxHeight = verticalPlacement.maxHeight;
 
     // Close on click outside - store handler for cleanup
     const closeOnClickOutside = (e: MouseEvent) => {
