@@ -228,8 +228,8 @@ def build_universe_cache(coords: Path, annotations: Path, out: Path) -> Path:
 
     Centres the coordinates on their median, culls the far outliers, joins the
     annotation table on the hash and keeps the per-cluster columns every build
-    needs: characterised fraction, naming tier, dominant Pfam family, dominant
-    phylum, and the annotation row (so a build can pull member details later).
+    needs: characterised fraction, dominant Pfam family, dominant phylum, and
+    the annotation row (so a build can pull member details later).
     """
     pq = require_module("pyarrow.parquet")
     t0 = time.time()
@@ -1012,7 +1012,10 @@ def spur_mask(positions: np.ndarray) -> np.ndarray:
     if not far.any():
         return far
     axis = positions[far].mean(axis=0)
-    axis /= np.linalg.norm(axis)
+    axis_norm = float(np.linalg.norm(axis))
+    if axis_norm <= 1e-9:
+        raise ValueError("far clusters have no dominant direction for the spur")
+    axis /= axis_norm
     cos = (positions @ axis) / np.maximum(radius, 1e-9)
     return far & (cos > np.cos(np.radians(SPUR_HALF_ANGLE_DEG)))
 

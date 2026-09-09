@@ -205,6 +205,9 @@ def test_spur_mask_keeps_the_streak_and_drops_far_stragglers() -> None:
     assert not mask[-1]  # the straggler along +x
     assert mask.sum() == 50
     assert not demo.spur_mask(np.zeros((5, 3), dtype=np.float32)).any()
+    symmetric = np.array([[30.0, 0.0, 0.0], [-30.0, 0.0, 0.0]], dtype=np.float32)
+    with pytest.raises(ValueError, match="no dominant direction"):
+        demo.spur_mask(symmetric)
 
 
 def test_region_stories_select_by_predicate_not_by_family() -> None:
