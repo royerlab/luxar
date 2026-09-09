@@ -31,8 +31,8 @@ Provide the **shared spatial-ordering infrastructure** that drives all three geo
 **Morton (Z-order)** — bit interleaving:
 
 1. `morton_encode_nd(coords, bits_per_dim)`:
-   - Tries Numba JIT-compiled kernel (`_get_morton_numba_kernel`) for fast single-threaded encoding (`@numba.njit(cache=True)`, no `parallel`/`prange`)
-   - Falls back to vectorized NumPy if Numba is unavailable
+   - Tries a Numba JIT-compiled kernel (`_get_morton_numba_kernel`) for fast single-threaded encoding (explicit typed signature, no `parallel`/`prange`); the signature eagerly compiles the kernel, requires C-contiguous input/output arrays, and accepts read-only input
+   - Falls back to vectorized NumPy if Numba is unavailable or the kernel fails to compile (warned once)
    - Returns uint64 codes, shape `(N,)`
 
 2. `morton_encode_128bit(coords, bits_per_dim)`:
@@ -42,8 +42,8 @@ Provide the **shared spatial-ordering infrastructure** that drives all three geo
 **Hilbert** — space-filling curve with better locality than Morton:
 
 1. `hilbert_encode_nd(coords, bits_per_dim)`:
-   - Tries Numba JIT-compiled kernel (`_get_hilbert_numba_kernel`) — implements Skilling's "Programming the Hilbert curve" algorithm
-   - Falls back to `hilbertcurve` library (pure Python, slow for large N) if Numba is unavailable
+   - Tries a Numba JIT-compiled kernel (`_get_hilbert_numba_kernel`) — implements Skilling's "Programming the Hilbert curve" algorithm and deliberately keeps an `A`-layout signature (`int64[:,:]` / `uint64[:]`)
+   - Falls back to `hilbertcurve` library (pure Python, slow for large N) if Numba is unavailable or the kernel fails to compile (warned once)
    - Returns uint64 codes, shape `(N,)`
 
 Both encoders are **permutation-equivariant**: reordering the input rows reorders the output codes identically, so a spatial sort is independent of input row order (verified by property-based tests in `io/tests/test_ordering_properties.py`).
