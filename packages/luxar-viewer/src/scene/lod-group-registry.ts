@@ -1312,7 +1312,11 @@ export class LODGroupRegistry {
     return true;
   }
 
-  /** Whether visible partition parts have no pending resync or incomplete commit. */
+  /**
+   * Whether visible partition parts have no pending resync or incomplete commit.
+   * Unlike {@link hasVisiblePendingPartitionResync}, pending resyncs count here
+   * only while their specific parts contribute pixels to the capture frame.
+   */
   private partitionsCaptureQuiescent(version: number | null): boolean {
     if (!this.pendingPartitionResyncsQuiescent()) return false;
     for (const entry of this.partitionEntries.values()) {
@@ -1322,6 +1326,7 @@ export class LODGroupRegistry {
   }
 
   private pendingPartitionResyncsQuiescent(): boolean {
+    if (!this.deps.requestReprocess) return true;
     for (const [path, parts] of this.partitionResyncPending) {
       const entry = this.partitionEntries.get(path);
       if (!entry) {
@@ -1396,9 +1401,13 @@ export class LODGroupRegistry {
 
   /**
    * Whether a visible partition has a rising-edge resync waiting for the
-   * owning loader to become idle. Pending work retained under a hidden wrapper
-   * is not actionable and must not keep wide settledness false indefinitely;
-   * neither can work when no resync dispatcher is wired.
+   * owning loader to become idle. Unlike
+   * {@link pendingPartitionResyncsQuiescent}, this deliberately mirrors
+   * {@link flushPartitionResyncs}'s wrapper-level visibility gate: every queued
+   * part under a visible wrapper is dispatched, even if that part re-exits
+   * before the flush. Pending work retained under a hidden wrapper is not
+   * actionable and must not keep wide settledness false indefinitely; neither
+   * can work when no resync dispatcher is wired.
    */
   hasVisiblePendingPartitionResync(): boolean {
     if (!this.deps.requestReprocess) return false;

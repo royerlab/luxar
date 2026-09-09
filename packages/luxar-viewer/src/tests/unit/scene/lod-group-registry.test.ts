@@ -4668,6 +4668,43 @@ describe('LODGroupRegistry — capture quiescence (isCaptureQuiescent)', () => {
     expect(reg.isCaptureQuiescent()).toBe(true);
   });
 
+  it('does not wait on a pending resync without a dispatch hook', () => {
+    let loadPassInProgress = true;
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => loadPassInProgress
+    );
+    const partition = new THREE.Group();
+    const part = new THREE.Group();
+    partition.add(part);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject: partition,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [part],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+        },
+      ],
+    });
+
+    reg.evaluatePerFrame();
+    partition.position.x = -2.5;
+    reg.evaluatePerFrame();
+    expect(reg.isCaptureQuiescent()).toBe(false);
+
+    loadPassInProgress = false;
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
   it('does not block forever on a pending partition resync after an archive fault', () => {
     let loadPassInProgress = true;
     let archiveFault = false;
