@@ -168,10 +168,9 @@ jobs:
             # TypeScript-only and avoid the Python matrix.
             # test_docs_workflow.py also parses docs.yml and derives the published
             # LFS candidate set from .gitattributes, so both are Python gate inputs.
-            # external-reference-audits.yml is one too: its schedule, permissions
-            # and token wiring are asserted by test_run_external_reference_audits.py,
-            # and a workflow file matches no other domain on its own.
-            printf '%s\n' "$changed" | grep -qE '(\.py$|^Makefile$|^README\.md$|^CLAUDE\.md$|^CITATION\.cff$|^\.agents/skills/luxar-(gsplat-pipeline/SKILL|visualization/(SKILL|references/scene-api))\.md$|^pyproject\.toml$|^\.pre-commit-config\.yaml$|\.(pyx|pxd|cu|cuh|cpp|h|hpp|mm|metal)$|^\.gitattributes$|^scripts/complexity_baseline\.json$|^scripts/lint_baseline\.json$|^scripts/gallery/manifest\.json$|^scripts/benchmarks/benchmark_bisect\.sh$|^scripts/demo_archive_characteristics\.json$|^scripts/release\.sh$|^docs/(guides/user/CLI_REFERENCE|specs/GSPLATS_DIMENSION_MAPPING)\.md$|^format-contract/|^\.github/workflows/(docs|external-reference-audits)\.yml$|^packages/luxar/src/luxar/demos/(README\.md$|data)|^packages/luxar-viewer/(package\.json$|src/(config/sections/(camera|rendering-controls)/data\.ts$|data/(attrs-composer\.ts$|loaders/spatial-query/tolerance-computer\.ts$)|rendering/(blending-state\.ts$|element-texture-layout\.ts$|materials/mesh/appearance\.ts$|node-factory/create-(points|lines|gsplats|mesh)-node\.ts$)|scene/lod-group-registry\.ts$|tests/(global-setup\.ts$|README\.md$|screenshots/exposure-policy\.ts$|screenshots/generate-gallery\.spec\.ts$)|types/(data-monitor-types|format-contract|geometry-capabilities|line-join|lod-group|partition-group)\.ts$)|tests/fixtures/README\.md$|tools/example-fixture-freshness\.ts$))' && dom_py=true || true
+            # coverage.yml and external-reference-audits.yml are too: pytest pins
+            # their gate wiring, and workflow files match no other domain alone.
+            printf '%s\n' "$changed" | grep -qE '(\.py$|^Makefile$|^README\.md$|^CLAUDE\.md$|^CITATION\.cff$|^\.agents/skills/luxar-(gsplat-pipeline/SKILL|visualization/(SKILL|references/scene-api))\.md$|^pyproject\.toml$|^\.pre-commit-config\.yaml$|\.(pyx|pxd|cu|cuh|cpp|h|hpp|mm|metal)$|^\.gitattributes$|^scripts/complexity_baseline\.json$|^scripts/lint_baseline\.json$|^scripts/gallery/manifest\.json$|^scripts/benchmarks/benchmark_bisect\.sh$|^scripts/demo_archive_characteristics\.json$|^scripts/release\.sh$|^docs/(guides/user/CLI_REFERENCE|specs/GSPLATS_DIMENSION_MAPPING)\.md$|^format-contract/|^\.github/workflows/(coverage|docs|external-reference-audits)\.yml$|^packages/luxar/src/luxar/demos/(README\.md$|data)|^packages/luxar-viewer/(package\.json$|src/(config/sections/(camera|rendering-controls)/data\.ts$|data/(attrs-composer\.ts$|loaders/spatial-query/tolerance-computer\.ts$)|rendering/(blending-state\.ts$|element-texture-layout\.ts$|materials/mesh/appearance\.ts$|node-factory/create-(points|lines|gsplats|mesh)-node\.ts$)|scene/lod-group-registry\.ts$|tests/(global-setup\.ts$|README\.md$|screenshots/exposure-policy\.ts$|screenshots/generate-gallery\.spec\.ts$)|types/(data-monitor-types|format-contract|geometry-capabilities|line-join|lod-group|partition-group)\.ts$)|tests/fixtures/README\.md$|tools/example-fixture-freshness\.ts$))' && dom_py=true || true
             # TS domain = the WHOLE viewer package (its py fixture-generators feed TS tests -> hierarchy) + root TS config.
             # The gallery-selection unit test also reads the root README and gallery manifest.
             printf '%s\n' "$changed" | grep -qE '(^packages/luxar-viewer/|^README\.md$|^scripts/gallery/manifest\.json$|^tsconfig[^/]*\.json$|(^|/)vitest[^/]*\.(ts|js|mjs)$)' && dom_ts=true || true
@@ -504,12 +503,13 @@ jobs:
     # if pick-runner itself dies the output is empty, and an empty `runs-on` is a
     # workflow-level error rather than a fallback.
     runs-on: ${{ needs.pick-runner.outputs.label || 'ubuntu-latest' }}
-    # `hatch run test-cov` runs `pytest -m 'not slow'` — the heavy CPU-fitting
-    # tests (content-fit CLI, tiled/progressive fitting) are marked `slow` and
-    # excluded here, cutting the serial 1-core run from >60 min to ~15 min while
-    # coverage stays above the 89% gate (slow tests' code is redundantly
-    # covered by fast unit tests). The FULL suite (incl. slow) is the local
-    # pre-push gate (`hatch run test`).
+    # PRs run `hatch run test-nocov`; pushes to dev and dispatches run
+    # `hatch run test-cov`. Both select `pytest -m 'not slow'` — the heavy
+    # CPU-fitting tests (content-fit CLI, tiled/progressive fitting) are marked
+    # `slow` and excluded here, cutting the serial 1-core run from >60 min to
+    # ~15 min. The coverage arm stays above the 89% gate (slow tests' code is
+    # redundantly covered by fast unit tests). The FULL suite (incl. slow) is
+    # the local pre-push gate (`hatch run test`).
     #
     # The suite runs under pytest-xdist ON THE SELF-HOSTED BOX ONLY (see
     # PYTEST_ADDOPTS below; hosted runners stay serial). The old note
@@ -747,9 +747,27 @@ jobs:
         # on a macOS runner and a CUDA image respectively (#2544).
         run: hatch run check-native --require cxx
 
-      - name: Test with coverage
+      - name: Test (PRs skip coverage; dev pushes enforce the coverage gate)
         if: needs.changes.outputs.dom_py != 'false'
-        run: hatch run test-cov
+        # Coverage instrumentation is the dominant CPU cost of this job (~60-90 min
+        # under contention) and the merge-rate ceiling: it is what made every PR
+        # wait ~an hour on the self-hosted pool. Per-PR runs skip it and run the
+        # same `-m 'not slow'` suite plain (fast, `test-nocov`).
+        #
+        # The else branch is load-bearing: on pushes to dev it runs `test-cov`
+        # under the protected `python-tests (3.12)` context, so the 89% floor can
+        # halt promotion. Do not remove it. The separate `coverage.yml` workflow
+        # runs the same gate once per dev commit without cancellation, but its
+        # `coverage` context remains advisory until repository protection requires
+        # it. Dispatches also run `test-cov` for repair and diagnostics.
+        # The job/context name (`python-tests (<ver>)`) is unchanged, so no
+        # required status context is orphaned.
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            hatch run test-nocov
+          else
+            hatch run test-cov
+          fi
 
   typescript-tests:
     needs: [changes, pick-runner]
