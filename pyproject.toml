@@ -428,8 +428,8 @@ test-cov = "mkdir -p coverage/python && pytest -m 'not slow' --cov=luxar --cov-r
 # `test-nocov` is the per-PR fast path: the SAME `-m 'not slow'` subset and paths
 # as `test-cov`, but without `--cov` instrumentation (the dominant cost of the job).
 # ci.yml runs it on `pull_request`; pushes to dev keep the 89% gate under the
-# protected `python-tests (3.12)` context, and coverage.yml records a non-cancelling
-# advisory result for every dev commit.
+# protected `python-tests (3.12)` context, and coverage.yml starts a per-commit
+# advisory run that newer dev pushes cannot cancel.
 test-nocov = "pytest -m 'not slow' {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests}"
 test-cov-all = "mkdir -p coverage/python && pytest -n {env:LUXAR_PYTEST_JOBS:6} --dist loadfile --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests}"
 # `scripts/benchmarks` remains explicit as a safety net if the anchored

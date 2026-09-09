@@ -8,9 +8,10 @@ script). Pushes to `dev` still run `test-cov` on all three `python-tests` legs;
 the protected `python-tests (3.12)` context remains the promotion-visible 89%
 gate. A dedicated `coverage.yml` workflow also runs one 3.12 coverage leg on
 every push to `dev` (and on `workflow_dispatch`) with per-commit, non-cancelling
-concurrency. Its check attaches to the dev commit and always completes, but is
-advisory until the `coverage` context is added to repository protection. Thus a
-dev push currently computes coverage four times (three ci.yml legs plus the
-dedicated observation), while PRs avoid the instrumentation cost. ci.yml
-dispatches also run `test-cov`. The `python-tests` context name is unchanged, so
-no required status is orphaned.
+concurrency. Its check attaches to the dev commit, and newer pushes cannot cancel
+it, but an obsidian outage can still leave it queued until GitHub expires it;
+`LUXAR_CI_FORCE_HOSTED=1` is the recovery path. The check is advisory until the
+`coverage` context is added to repository protection. Thus a dev push currently
+computes coverage four times (three ci.yml legs plus the dedicated observation),
+while PRs avoid the instrumentation cost. ci.yml dispatches also run `test-cov`.
+The `python-tests` context name is unchanged, so no required status is orphaned.

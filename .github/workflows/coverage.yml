@@ -1,6 +1,6 @@
 name: Coverage
 
-# This workflow records a non-cancellable 89% coverage result for every dev commit.
+# This workflow starts an 89% coverage run per dev commit that newer pushes cannot cancel.
 #
 # ci.yml runs coverage-instrumented tests (`test-cov`) as the dominant cost of
 # `python-tests` (~60-90 min under contention), so PRs run the suite WITHOUT
@@ -16,17 +16,18 @@ name: Coverage
 #
 # A `push` to `dev` attaches `github.sha` to the dev commit itself, so this
 # workflow's check-run lands on the commit it describes. The per-commit
-# `concurrency` group with `cancel-in-progress: false` means no push ever
-# cancels another coverage run -- each dev commit's coverage completes.
+# `concurrency` group with `cancel-in-progress: false` means newer pushes never
+# cancel older coverage runs. An obsidian outage can still leave a run queued
+# until GitHub expires it; `LUXAR_CI_FORCE_HOSTED=1` is the recovery path.
 on:
   push:
     branches: [dev]
   workflow_dispatch:
 
 concurrency:
-  # Per-COMMIT, and never cancelled: every dev commit gets its own coverage run
-  # to completion. (ci.yml's group is event+ref keyed with cancel-in-progress,
-  # which is exactly why its own push coverage leg is not a reliable record.)
+  # Per-COMMIT, so a newer dev push never cancels an older coverage run.
+  # (ci.yml's group is event+ref keyed with cancel-in-progress, which is exactly
+  # why its own push coverage leg is not a reliable record.)
   group: coverage-${{ github.sha }}
   cancel-in-progress: false
 

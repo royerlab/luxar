@@ -1054,7 +1054,7 @@ def test_pull_requests_skip_coverage_while_dev_paths_enforce_and_observe_it(
     assert "--cov" in test_cov
     assert "--cov" not in test_nocov
 
-    # (b) the dedicated workflow records the gate on every push to dev.
+    # (b) the dedicated workflow starts coverage on every push to dev.
     assert COVERAGE_WORKFLOW.exists(), "the dedicated coverage workflow is missing"
     coverage_text = COVERAGE_WORKFLOW.read_text(encoding="utf-8")
     coverage = yaml.safe_load(coverage_text)
@@ -1062,7 +1062,7 @@ def test_pull_requests_skip_coverage_while_dev_paths_enforce_and_observe_it(
     assert triggers["push"]["branches"] == ["dev"]
     # A schedule trigger would attach its verdict to the default branch, not dev.
     assert "schedule" not in triggers
-    # Per-COMMIT group, never cancelled, so every dev commit gets a result.
+    # Per-COMMIT group, so a newer dev push cannot cancel an older run.
     assert coverage["concurrency"]["group"] == "coverage-${{ github.sha }}"
     assert coverage["concurrency"]["cancel-in-progress"] is False
     coverage_job = coverage["jobs"]["coverage"]
