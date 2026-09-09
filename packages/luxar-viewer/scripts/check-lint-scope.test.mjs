@@ -81,16 +81,23 @@ function authoredFiles(root = PKG) {
 
 const FILES = authoredFiles();
 
+/** One ESLint pass from a package script. */
+function lintPass(command) {
+  const target = /^\s*eslint\s+("[^"]+"|\S+)/.exec(command)?.[1]?.replaceAll('"', '');
+  expect(target, `could not read eslint target from: ${command}`).toBeDefined();
+  const ignores = [...command.matchAll(/--ignore-pattern\s+"([^"]+)"/g)].map((match) => match[1]);
+  const ignoreFlags = [...command.matchAll(/(?:^|\s)--ignore-pattern(?=\s|$)/g)];
+  if (ignores.length !== ignoreFlags.length) {
+    throw new Error(`unsupported --ignore-pattern syntax in: ${command}`);
+  }
+  return { command, target, ignores };
+}
+
 /** ESLint passes named by a package script. */
 function lintPasses(scriptName) {
   const scripts = JSON.parse(readFileSync(join(PKG, 'package.json'), 'utf8')).scripts;
   expect(scripts[scriptName]).toBeTypeOf('string');
-  return scripts[scriptName].split('&&').map((command) => {
-    const target = /^\s*eslint\s+("[^"]+"|\S+)/.exec(command)?.[1]?.replaceAll('"', '');
-    expect(target, `could not read eslint target from: ${command}`).toBeDefined();
-    const ignores = [...command.matchAll(/--ignore-pattern\s+"([^"]+)"/g)].map((match) => match[1]);
-    return { command, target, ignores };
-  });
+  return scripts[scriptName].split('&&').map(lintPass);
 }
 
 /** Whether a directory target or recursive ignore pattern includes a file. */
@@ -255,6 +262,15 @@ describe('lint scope', () => {
     for (const pattern of ['**/*.mjs', 'src/rendering/**/tsl/**']) {
       expect(() => matchesTree('src/rendering/probe.ts', pattern)).toThrowError(
         `unsupported lint tree pattern: ${pattern}`
+      );
+    }
+  });
+
+  it('fails closed on unsupported ignore pattern syntax', () => {
+    for (const pattern of ["'src/**'", 'src/**']) {
+      const command = `eslint . --ignore-pattern ${pattern}`;
+      expect(() => lintPass(command)).toThrowError(
+        `unsupported --ignore-pattern syntax in: ${command}`
       );
     }
   });
