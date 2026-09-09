@@ -1848,14 +1848,13 @@ export class LODGroupRegistry {
     }
 
     // ── Fresh-but-EMPTY display guard ──
-    // With consistent LOD data a finer level can never be empty where a
-    // coarser one is not (coarse levels are derived from fine), so a fresh
-    // level that committed 0 elements while another fresh level holds visible
-    // geometry signals inconsistent/corrupt data (e.g. a stale cache serving
-    // an old layout whose chunk queries zero-fill). Displaying the empty level
-    // would silently blank the group; redirect to the coarsest fresh NON-empty
-    // level and warn once so the inconsistency is visible instead of black.
-    // A genuinely empty slice (every fresh level empty) is unchanged.
+    // If the chosen display level committed 0 elements, prefer the coarsest
+    // fresh NON-empty level no finer than the chosen display or the selector's
+    // aspiration, whichever is finer. An intermediate level can legitimately
+    // fill a stale fallback gap; only redirecting to a level coarser than the
+    // chosen display signals inconsistent/corrupt data and warrants the warning
+    // below. Finer levels must not override the selector, even when a coarse
+    // slice is legitimately empty (see #1600).
     if (version != null && displayIdx >= 0) {
       const chosen = entry.children[displayIdx];
       // Group-aware: a deferred kind=partition / nested lod subtree whose visible
@@ -1866,9 +1865,10 @@ export class LODGroupRegistry {
       // stays the coarsest fresh non-empty leaf level.
       const chosenProgress = chosen ? this.childFreshAndCount(chosen, version) : undefined;
       if (chosen && chosenProgress?.fresh && chosenProgress.count === 0) {
-        const fallback = this.coarsestFreshNonEmptyIndex(entry, version);
+        const fallbackLimit = Math.max(displayIdx, entry.activeChildIndex);
+        const fallback = this.coarsestFreshNonEmptyIndex(entry, version, fallbackLimit);
         if (fallback >= 0 && fallback !== displayIdx) {
-          if (!this.warnedEmptyLevel.has(entry.path)) {
+          if (fallback < displayIdx && !this.warnedEmptyLevel.has(entry.path)) {
             this.warnedEmptyLevel.add(entry.path);
             const recovery = this.deps.hasNetworkFailureUnder?.(entry.path)
               ? 'A network load failed under this group; use the monitor Retry action.'
@@ -2223,23 +2223,29 @@ export class LODGroupRegistry {
   }
 
   /**
-   * Index of the coarsest child that is fresh for ``version`` AND has a
-   * non-zero committed element count — or ``-1`` when none qualifies. The
-   * group-aware counterpart of the empty-level display guard's fallback: it
-   * resolves each child through {@link childFreshAndCount}, so a fresh-but-empty
-   * GROUP child (a deferred ``kind=partition`` subtree whose visible leaves all
-   * committed 0) is correctly skipped rather than treated as non-empty (a bare
-   * ``THREE.Group`` has no leaf count stamp). A READY child with an UNTRACKED
-   * count (``null`` — group with no stamped leaf) is accepted, matching the
-   * leaf-only helper it replaced: the guard only redirects away from KNOWN-empty
-   * levels. Because ``childFreshAndCount``'s ``fresh`` implies ``ready``, a
-   * NOT-ready placeholder can never be returned — the guard must only redirect
-   * to a level that can actually draw. When nothing qualifies (``-1``) the
-   * caller keeps the fresh-but-empty current level: an empty-but-real level
-   * beats a blank placeholder.
+   * Index of the coarsest child strictly before ``beforeIndex`` that is fresh
+   * for ``version`` AND has a non-zero committed element count — or ``-1`` when
+   * none qualifies. The group-aware counterpart of the empty-level display
+   * guard's fallback: it resolves each child through {@link childFreshAndCount},
+   * so a fresh-but-empty GROUP child (a deferred ``kind=partition`` subtree
+   * whose visible leaves all committed 0) is correctly skipped rather than
+   * treated as non-empty (a bare ``THREE.Group`` has no leaf count stamp). A
+   * READY child with an UNTRACKED count (``null`` — group with no stamped leaf)
+   * is accepted: the guard only redirects away from KNOWN-empty levels. The
+   * caller bounds the search at the chosen display level or the selector's
+   * aspiration, whichever is finer, so no finer level can override it. Because
+   * ``childFreshAndCount``'s ``fresh`` implies ``ready``, a NOT-ready placeholder
+   * can never be returned — the guard must only redirect to a level that can
+   * actually draw. When nothing qualifies (``-1``) the caller keeps the
+   * fresh-but-empty current level: an empty-but-real level beats a blank
+   * placeholder.
    */
-  private coarsestFreshNonEmptyIndex(entry: LODGroupEntry, version: number): number {
-    for (let i = 0; i < entry.children.length; i++) {
+  private coarsestFreshNonEmptyIndex(
+    entry: LODGroupEntry,
+    version: number,
+    beforeIndex: number
+  ): number {
+    for (let i = 0; i < entry.children.length && i < beforeIndex; i++) {
       const p = this.childFreshAndCount(entry.children[i], version);
       if (!p.fresh) continue;
       if (p.count === 0) continue;
