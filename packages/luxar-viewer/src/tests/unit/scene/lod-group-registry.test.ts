@@ -3098,6 +3098,7 @@ describe('LODGroupRegistry — fresh-but-empty display guard', () => {
       state.clock += 260;
       reg.evaluatePerFrame();
 
+      expect(reg.get('/g')!.activeChildIndex).toBe(2);
       expect(reg.get('/g')!.displayedChildIndex).toBe(1);
       expect(children[0].object.visible).toBe(false);
       expect(children[1].object.visible).toBe(true);
@@ -3130,15 +3131,21 @@ describe('LODGroupRegistry — fresh-but-empty display guard', () => {
   });
 
   it('redirects display to the coarsest fresh NON-empty level when the chosen level is empty', () => {
-    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
-    // Identity camera → aspiration is the finest level; it is FRESH but
-    // committed 0 splats (the stale-cache / corrupt-data scenario), while the
-    // coarse level holds 100 fresh splats.
-    const children = [makeCountedChild(0, 2, 100), makeCountedChild(0.5, 2, 0)];
-    reg.register(makeEntry(children, 0, '/g'));
-    reg.evaluatePerFrame();
-    expect(children[0].object.visible).toBe(true); // populated coarse shown
-    expect(children[1].object.visible).toBe(false); // empty fine hidden
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => undefined);
+    try {
+      const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+      // Identity camera → aspiration is the finest level; it is FRESH but
+      // committed 0 splats (the stale-cache / corrupt-data scenario), while the
+      // coarse level holds 100 fresh splats.
+      const children = [makeCountedChild(0, 2, 100), makeCountedChild(0.5, 2, 0)];
+      reg.register(makeEntry(children, 0, '/g'));
+      reg.evaluatePerFrame();
+      expect(children[0].object.visible).toBe(true); // populated coarse shown
+      expect(children[1].object.visible).toBe(false); // empty fine hidden
+      expect(warning).toHaveBeenCalledOnce();
+    } finally {
+      warning.mockRestore();
+    }
   });
 
   it('leaves a genuinely empty slice unchanged (every fresh level empty)', () => {
