@@ -29,11 +29,6 @@
       "count": 4
     }
   },
-  "src/cache/multi-level-caching-store/fetch-retry.ts": {
-    "complexity": {
-      "count": 1
-    }
-  },
   "src/cache/multi-level-caching-store/opfs-store.ts": {
     "complexity": {
       "count": 5
@@ -45,11 +40,6 @@
   "src/cache/multi-level-caching-store/opfs-store/metadata.ts": {
     "complexity": {
       "count": 2
-    }
-  },
-  "src/cache/multi-level-caching-store/validation-queue.ts": {
-    "complexity": {
-      "count": 1
     }
   },
   "src/config/sections/adaptive-dpr/validate.ts": {

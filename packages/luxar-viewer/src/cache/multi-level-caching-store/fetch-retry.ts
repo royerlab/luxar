@@ -54,6 +54,27 @@ function releaseUnconsumedBody(response: Response): void {
   void body.cancel().catch(() => {});
 }
 
+function bodyAbsoluteDeadlineMs(response: Response, stallTimeoutMs: number): number {
+  const fallbackMs = stallTimeoutMs * BODY_DEADLINE_FALLBACK_MULTIPLIER;
+  const contentLengthHeader = response.headers?.get('content-length');
+  if (contentLengthHeader === null || contentLengthHeader === undefined) {
+    return Math.min(MAX_TIMER_DELAY_MS, fallbackMs);
+  }
+
+  const contentLength = Number(contentLengthHeader);
+  if (!Number.isFinite(contentLength) || contentLength < 0) {
+    return Math.min(MAX_TIMER_DELAY_MS, fallbackMs);
+  }
+
+  return Math.min(
+    MAX_TIMER_DELAY_MS,
+    Math.max(
+      stallTimeoutMs,
+      Math.ceil((contentLength * 1_000) / MIN_BODY_THROUGHPUT_BYTES_PER_SECOND)
+    )
+  );
+}
+
 async function readBodyWithStallWatchdog(
   response: Response,
   timeoutController: AbortController,
@@ -61,17 +82,7 @@ async function readBodyWithStallWatchdog(
   stallTimeoutMs: number
 ): Promise<Uint8Array<ArrayBuffer>> {
   let stallTimeoutId: ReturnType<typeof setTimeout> | undefined;
-  const contentLengthHeader = response.headers?.get('content-length');
-  const contentLength = contentLengthHeader === null ? Number.NaN : Number(contentLengthHeader);
-  const absoluteDeadlineMs = Math.min(
-    MAX_TIMER_DELAY_MS,
-    Number.isFinite(contentLength) && contentLength >= 0
-      ? Math.max(
-          stallTimeoutMs,
-          Math.ceil((contentLength * 1_000) / MIN_BODY_THROUGHPUT_BYTES_PER_SECOND)
-        )
-      : stallTimeoutMs * BODY_DEADLINE_FALLBACK_MULTIPLIER
-  );
+  const absoluteDeadlineMs = bodyAbsoluteDeadlineMs(response, stallTimeoutMs);
   const absoluteTimeoutId = setTimeout(
     () =>
       timeoutController.abort(
@@ -182,6 +193,23 @@ function retryDelayMs(attempt: number): number {
   const base = INITIAL_RETRY_DELAY_MS * 2 ** attempt;
   const jitter = (Math.random() - 0.5) * 0.5 * base;
   return Math.min(Math.max(0, base + jitter), MAX_RETRY_DELAY_MS);
+}
+
+function callerAborted(options: FetchRetryOptions | undefined): boolean {
+  return options?.signal?.aborted === true;
+}
+
+function reportRetryExhaustion(
+  options: FetchRetryOptions | undefined,
+  lastError: unknown,
+  maxAttempts: number
+): void {
+  if (!lastError) return;
+  options?.onExhausted?.(lastError);
+  log.warning(
+    Modules.CACHE,
+    `Fetch failed after ${maxAttempts} attempt(s): ${getErrorMessage(lastError)}`
+  );
 }
 
 function isRetryableResponse(response: Response): boolean {
@@ -312,7 +340,7 @@ export async function fetchWithRetry<T>(
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     // Caller-aborted requests must not be retried; bail out before the
     // next attempt.
-    if (options?.signal?.aborted) {
+    if (callerAborted(options)) {
       return undefined;
     }
 
@@ -322,7 +350,7 @@ export async function fetchWithRetry<T>(
       if (error instanceof FetchConsumerError) throw error.cause;
       lastError = error;
       // Caller-aborted: exit immediately rather than retrying.
-      if (options?.signal?.aborted) {
+      if (callerAborted(options)) {
         return undefined;
       }
     }
@@ -336,12 +364,6 @@ export async function fetchWithRetry<T>(
     }
   }
 
-  if (lastError) {
-    options?.onExhausted?.(lastError);
-    log.warning(
-      Modules.CACHE,
-      `Fetch failed after ${maxAttempts} attempt(s): ${getErrorMessage(lastError)}`
-    );
-  }
+  reportRetryExhaustion(options, lastError, maxAttempts);
   return undefined;
 }
