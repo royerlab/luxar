@@ -79,7 +79,7 @@ import { initColormapLegend as initColormapLegendImpl } from './app/overlays/ini
 import { initOverlays as initOverlaysImpl } from './app/overlays/init-overlays';
 import { installFocusHandling } from './app/lifecycle/focus-handling';
 import { installOnlineRetry } from './app/lifecycle/online-retry';
-import { getSceneLoader } from '../data/scene-loader-manager';
+import { getSceneLoader, SceneLoaderManager } from '../data/scene-loader-manager';
 import type { SceneLoader } from '../data/scene-loader';
 import { notifier } from '../utils/cross-layer/notifier';
 import { initScaleBar as initScaleBarImpl } from './app/overlays/init-scale-bar';
@@ -787,10 +787,15 @@ export class LuxarApp {
    * the manager so dataset switches keep pointing at the current loader.
    */
   private setupOnlineRetry(): void {
+    const manager = SceneLoaderManager.getInstance();
     installOnlineRetry({
       events: this.events,
       getLoader: () => getSceneLoader(),
       toast: (message, durationMs) => notifier.toast(message, durationMs),
+      subscribeAutoRetryableFailure: (listener) => {
+        manager.setAutoRetryableFailureCallback(listener);
+        return () => manager.setAutoRetryableFailureCallback(null);
+      },
     });
   }
 

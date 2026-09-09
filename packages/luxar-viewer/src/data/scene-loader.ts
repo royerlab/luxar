@@ -775,6 +775,11 @@ export class SceneLoader {
     this._requestRender = callback;
   }
 
+  /** Install (or clear) the notification used to arm online failure retries. */
+  setAutoRetryableFailureCallback(callback: (() => void) | null): void {
+    this.registry.setAutoRetryableFailureCallback(callback);
+  }
+
   /**
    * Wire (or clear) the projected-density provider the refinement rung gate
    * reads. Same dependency inversion as `setRequestRender`: the tracker lives

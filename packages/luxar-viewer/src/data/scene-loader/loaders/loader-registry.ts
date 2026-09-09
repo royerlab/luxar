@@ -103,6 +103,12 @@ export const MAX_AUTO_RETRY_ATTEMPTS = 3;
  * and tracks loading failures for retry/recovery.
  */
 export class LoaderRegistry {
+  private autoRetryableFailureCallback: (() => void) | null = null;
+
+  setAutoRetryableFailureCallback(callback: (() => void) | null): void {
+    this.autoRetryableFailureCallback = callback;
+  }
+
   /**
    * Every loader, bucketed by geometry kind, path → loader.
    *
@@ -284,13 +290,18 @@ export class LoaderRegistry {
   recordFailure(path: string, error: Error, kind?: LoaderErrorKind): void {
     const existing = this.failedLoaders.get(path);
     const retryCount = existing ? existing.retryCount + 1 : 0;
+    const resolvedKind = kind ?? classifyLoaderError(error);
+    const autoRetryCount = existing ? existing.autoRetryCount : 0;
     this.failedLoaders.set(path, {
       error,
       timestamp: Date.now(),
       retryCount,
-      autoRetryCount: existing ? existing.autoRetryCount : 0,
-      kind: kind ?? classifyLoaderError(error),
+      autoRetryCount,
+      kind: resolvedKind,
     });
+    if (resolvedKind === 'Network' && autoRetryCount < MAX_AUTO_RETRY_ATTEMPTS) {
+      this.autoRetryableFailureCallback?.();
+    }
   }
 
   /**
