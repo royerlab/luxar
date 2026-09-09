@@ -6,11 +6,11 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from typing import Final, Union
+from typing import Any, Final, Union
 
 from arbol import aprint
 
-from ...._zarr_compat import is_consolidated, read_node_attrs
+from ...._zarr_compat import consolidate, is_consolidated, open_group, read_node_attrs
 from ....utils.source_fingerprints import (
     fingerprint_imported_sources,
     store_writer_environment,
@@ -18,15 +18,40 @@ from ....utils.source_fingerprints import (
 
 #: Scene-root attr holding the fingerprint of the builder that wrote the scene.
 BUILDER_FINGERPRINT_ATTR: Final[str] = "builder_fingerprint"
+INPUT_DIGESTS_ATTR: Final[str] = "input_digests"
 _DEMO_FINGERPRINT_VERSION: Final[int] = 2
 _DEMO_IMPORT_CACHE: dict[Path, set[str]] = {}
 _DEMO_MODULE_CACHES: dict[Path, dict[str, Path | None]] = {}
+_RESOLVED_INPUT_DIGESTS: dict[str, str] = {}
 
 
 def _clear_demo_source_fingerprint_caches() -> None:
     """Clear process-local static import resolution caches."""
     _DEMO_IMPORT_CACHE.clear()
     _DEMO_MODULE_CACHES.clear()
+
+
+def _record_input_digests(input_digests: dict[str, str]) -> None:
+    """Record verified demo inputs resolved in this process."""
+    _RESOLVED_INPUT_DIGESTS.update(input_digests)
+
+
+def _clear_input_digests() -> None:
+    """Clear process-local resolved input provenance (tests)."""
+    _RESOLVED_INPUT_DIGESTS.clear()
+
+
+def stamp_input_digests(scene: Any | str | Path) -> None:
+    """Stamp the exact verified demo inputs resolved in this process."""
+    if not _RESOLVED_INPUT_DIGESTS:
+        return
+    digests = dict(sorted(_RESOLVED_INPUT_DIGESTS.items()))
+    if isinstance(scene, (str, Path)):
+        group = open_group(scene, mode="a")
+        group.attrs[INPUT_DIGESTS_ATTR] = digests
+        consolidate(group)
+        return
+    scene.attrs[INPUT_DIGESTS_ATTR] = digests
 
 
 def demo_source_fingerprint(

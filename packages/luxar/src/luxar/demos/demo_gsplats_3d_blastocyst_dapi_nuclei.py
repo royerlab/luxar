@@ -167,6 +167,7 @@ from luxar.demos import (
     load_local_fit_gsplats_at,
     local_fit_path,
     parse_demo_flags,
+    stamp_input_digests,
     warn_if_no_cuda_gpu,
 )
 
@@ -442,6 +443,7 @@ def create_luxar_scene(gsplats_data, output_path: Path | None = None):
                 viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
                 citation=DEMO_META["citation"],
             )
+            stamp_input_digests(scene)
 
             # Add scene metadata
             scene.attrs["title"] = "GSplats: Mouse Blastocyst, DAPI-Stained Nuclei"

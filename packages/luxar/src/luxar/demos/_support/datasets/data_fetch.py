@@ -413,10 +413,14 @@ def ensure_dataset(
                     superseded=tuple(entry.get("superseded_sha256") or ()),
                 )
             )
-    return ResolvedDataset(
+    result = ResolvedDataset(
         [path for path, _ in resolved],
         {path.name: digest for path, digest in resolved},
     )
+    from ..runtime.provenance import _record_input_digests
+
+    _record_input_digests(result.input_digests)
+    return result
 
 
 def _matches(path: Path, expected: Optional[str], verbose: bool) -> bool:

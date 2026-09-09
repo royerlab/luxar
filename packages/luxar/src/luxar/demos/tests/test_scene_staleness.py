@@ -16,13 +16,17 @@ from pathlib import Path
 import pytest
 
 import luxar.utils.source_fingerprints as source_fingerprints
-from luxar._zarr_compat import consolidate, open_group
+from luxar._zarr_compat import consolidate, is_consolidated, open_group, read_node_attrs
 from luxar.demos._support.runtime.flags import parse_demo_flags
 from luxar.demos._support.runtime.provenance import (
     BUILDER_FINGERPRINT_ATTR,
+    INPUT_DIGESTS_ATTR,
     _clear_demo_source_fingerprint_caches,
+    _clear_input_digests,
+    _record_input_digests,
     demo_source_fingerprint,
     scene_is_current,
+    stamp_input_digests,
 )
 from luxar.utils.source_fingerprints import (
     imported_source_files,
@@ -43,8 +47,36 @@ def _write_scene(path: Path, fingerprint: str | None, *, finished: bool = True) 
 @pytest.fixture(autouse=True)
 def _reset_demo_source_fingerprint_caches() -> Iterator[None]:
     _clear_demo_source_fingerprint_caches()
+    _clear_input_digests()
     yield
+    _clear_input_digests()
     _clear_demo_source_fingerprint_caches()
+
+
+def test_input_digests_are_stamped_in_canonical_order() -> None:
+    class Scene:
+        def __init__(self) -> None:
+            self.attrs: dict[str, object] = {}
+
+    _record_input_digests({"z.zip": "b" * 64, "a.npz": "a" * 64})
+    scene = Scene()
+
+    stamp_input_digests(scene)
+
+    assert scene.attrs[INPUT_DIGESTS_ATTR] == {
+        "a.npz": "a" * 64,
+        "z.zip": "b" * 64,
+    }
+
+
+def test_input_digests_can_stamp_an_already_saved_scene(tmp_path: Path) -> None:
+    scene = _write_scene(tmp_path / "saved.luxar.zarr", None)
+    _record_input_digests({"scene.zip": "c" * 64})
+
+    stamp_input_digests(scene)
+
+    assert read_node_attrs(scene)[INPUT_DIGESTS_ATTR] == {"scene.zip": "c" * 64}
+    assert is_consolidated(scene)
 
 
 # ------------------------------------------------------------------ fingerprint

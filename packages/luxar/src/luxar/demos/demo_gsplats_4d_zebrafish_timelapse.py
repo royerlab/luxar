@@ -365,6 +365,7 @@ from luxar.demos import (
     parse_demo_flags,
     parse_int_arg,
     require_module,
+    stamp_input_digests,
     warn_if_no_cuda_gpu,
 )
 from luxar.demos.registry import DEMO_CACHE_ROOT
@@ -1143,6 +1144,7 @@ def create_luxar_scene(stacked: GSplatData, output_path: Path) -> Path:
                 citation=DEMO_META["citation"],
                 viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
             )
+            stamp_input_digests(scene)
             denoise_clause = (
                 f", with connected components smaller than {MIN_COMPONENT_VOXELS} "
                 "voxels removed from each timepoint before fitting"

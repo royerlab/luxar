@@ -76,15 +76,18 @@ from ._support.runtime.device import detect_device, warn_if_no_cuda_gpu
 from ._support.runtime.flags import parse_demo_flags, parse_int_arg, parse_path_arg
 from ._support.runtime.provenance import (
     BUILDER_FINGERPRINT_ATTR,
+    INPUT_DIGESTS_ATTR,
     demo_source_fingerprint,
     print_data_provenance,
     scene_is_current,
+    stamp_input_digests,
 )
 from ._support.runtime.viewer import launch_viewer
 
 __all__ = [
     "BUILDER_FINGERPRINT_ATTR",
     "INSTALL_SPECS",
+    "INPUT_DIGESTS_ATTR",
     "LOCAL_FIT_DIRNAME",
     "BundleMemberNotFound",
     "DatasetNotFound",
@@ -139,6 +142,7 @@ __all__ = [
     "run_luxar_cli",
     "scene_is_current",
     "stack_colorings",
+    "stamp_input_digests",
     "substitutive_lod_or_flat",
     "survey",
     "trilinear_vector",

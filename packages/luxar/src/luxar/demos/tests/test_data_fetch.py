@@ -664,7 +664,14 @@ def test_variant_on_nonvariant_dataset_raises(fake_repo):
 
 
 def test_ensure_dataset_copies_from_inrepo_lfs(fake_repo):
+    from luxar.demos._support.runtime.provenance import (
+        INPUT_DIGESTS_ATTR,
+        _clear_input_digests,
+        stamp_input_digests,
+    )
+
     manifest, cache = fake_repo
+    _clear_input_digests()
     paths = ensure_dataset(
         "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
     )
@@ -672,6 +679,10 @@ def test_ensure_dataset_copies_from_inrepo_lfs(fake_repo):
     assert paths[0].exists() and paths[0].read_bytes() == b"toy-splat-bytes"
     assert paths[0].parent == cache / "gsplats_toy"
     assert paths.input_digests == {paths[0].name: _sha256(paths[0])}
+    scene = type("Scene", (), {"attrs": {}})()
+    stamp_input_digests(scene)
+    assert scene.attrs[INPUT_DIGESTS_ATTR] == paths.input_digests
+    _clear_input_digests()
 
 
 def test_ensure_dataset_resolves_only_requested_files(fake_repo):
