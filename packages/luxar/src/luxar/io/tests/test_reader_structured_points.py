@@ -152,6 +152,31 @@ def test_flatten_rejects_incomplete_partition(tmp_path: Path, damage: str) -> No
         LuxarScene.load(scene_path).get_points("cloud", flatten=True)
 
 
+@pytest.mark.parametrize(
+    "bsp_tree",
+    [
+        {"axis": 0, "split": 0.5, "left": {"part": 0}},
+        {},
+        [0, 1, 2],
+    ],
+)
+def test_flatten_rejects_malformed_partition_tree(
+    tmp_path: Path, bsp_tree: object
+) -> None:
+    scene_path = tmp_path / "malformed-partition.luxar.zarr"
+    positions, _, _, _ = _expected_points()
+    with LuxarZarrCompiler(scene_path) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_points("cloud", positions, partition={"max_elements": 2})
+
+    root = open_group(scene_path, mode="a")
+    root["cloud"].attrs["bsp_tree"] = bsp_tree
+    consolidate(root)
+
+    with pytest.raises(ValueError, match="has an unreadable BSP tree"):
+        LuxarScene.load(scene_path).get_points("cloud", flatten=True)
+
+
 def test_flatten_validates_stored_point_count(tmp_path: Path) -> None:
     scene_path = tmp_path / "wrong-count.luxar.zarr"
     positions, _, _, _ = _expected_points()

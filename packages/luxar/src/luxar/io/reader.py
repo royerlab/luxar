@@ -195,7 +195,12 @@ def _validate_partition_parts(
     bsp_tree = group.attrs.get("bsp_tree")
     if bsp_tree is None:
         return
-    expected_parts = len(serialized_bsp_leaf_labels(bsp_tree))
+    try:
+        expected_parts = len(serialized_bsp_leaf_labels(bsp_tree))
+    except (KeyError, TypeError, ValueError):
+        raise ValueError(
+            f"Points node '{node_name}' has an unreadable BSP tree"
+        ) from None
     if len(parts) != expected_parts:
         raise ValueError(
             f"Points node '{node_name}' has {len(parts)} partition parts "
