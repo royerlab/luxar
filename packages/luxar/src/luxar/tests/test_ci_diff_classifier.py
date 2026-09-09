@@ -540,6 +540,21 @@ _NON_GATE_PYTHON_TEST_PATH_LITERALS = {
         "test_set_version.py writes a fixture workflow at this path"
     ),
     "CHANGELOG.md": "read by a whole-tree prose vocabulary scan",
+    "packages/luxar-viewer/playwright.gallery.config.ts": (
+        "test_check_tile_staleness.py writes a fixture file at this path"
+    ),
+    "packages/luxar-viewer/src/tests/screenshots/crop-policy.ts": (
+        "test_check_tile_staleness.py writes a fixture file at this path"
+    ),
+    "packages/luxar-viewer/src/tests/screenshots/gallery-media-reporting.ts": (
+        "test_check_tile_staleness.py writes a fixture file at this path"
+    ),
+    "packages/luxar-viewer/src/tests/screenshots/gallery-timelapse-settle.ts": (
+        "test_check_tile_staleness.py writes a fixture file at this path"
+    ),
+    "packages/luxar-viewer/src/tests/screenshots/orbit-axis.ts": (
+        "test_check_tile_staleness.py writes a fixture file at this path"
+    ),
     "packages/luxar/src/luxar/shading/README.md": (
         "test_check_tile_staleness.py writes a fixture file at this path"
     ),
@@ -1160,13 +1175,12 @@ def test_python_test_inputs_are_statically_owned_by_the_python_gate(
         "docs/guides/developer/DEMO_SITE_RUNBOOK.md",
         "scripts/zenodo_record_text/records.json",
     } <= read_paths
-    patterns = list(_domain_patterns(workflow).values())
+    python_pattern = _domain_patterns(workflow)["py"]
     unclassified = {
         path
         for path in literal_paths
-        if not any(_classifies(pattern, path) for pattern in patterns)
+        if not _classifies(python_pattern, path)
     }
-    python_pattern = _domain_patterns(workflow)["py"]
     unclassified.update(
         path for path in read_paths if not _classifies(python_pattern, path)
     )
