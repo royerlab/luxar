@@ -28,6 +28,21 @@ describe('NumberController', () => {
       expect(input).toBeInstanceOf(HTMLInputElement);
     });
 
+    it('leaves the keyboard hint unset when the range is unbounded', () => {
+      const input = controller.domElement.querySelector<HTMLInputElement>(
+        '.luxar-gui__input--number'
+      )!;
+      expect(input.hasAttribute('inputmode')).toBe(false);
+      expect(input.inputMode).toBe('');
+    });
+
+    it('leaves the keyboard hint unset for a range with a negative minimum', () => {
+      const ranged = new NumberController({ value: 0 }, 'value', { min: -10, max: 10 });
+      expect(ranged.$input!.hasAttribute('inputmode')).toBe(false);
+      expect(ranged.$input!.inputMode).toBe('');
+      ranged.dispose();
+    });
+
     it('should not create slider without range', () => {
       const slider = controller.domElement.querySelector('.luxar-gui__slider');
 
@@ -57,6 +72,10 @@ describe('NumberController', () => {
     beforeEach(() => {
       object = { value: 50 };
       controller = new NumberController(object, 'value', { min: 0, max: 100, step: 1 });
+    });
+
+    it('asks touch keyboards for a decimal keypad when the range is non-negative', () => {
+      expect(controller.$input!.inputMode).toBe('decimal');
     });
 
     it('wheel steps 1/10th step; modifiers follow the slider convention (⇧ finer, ⌃ coarse)', () => {

@@ -251,7 +251,7 @@ def test_parse_findings_derives_accepted_codes_from_the_selection(
     assert parsed == {"sample.py::XYZ123": 1}
 
 
-@pytest.mark.parametrize("code", ["E501", "BLE001"])
+@pytest.mark.parametrize("code", ["E501", "C901"])
 def test_parse_findings_rejects_a_rule_outside_the_selection(code: str) -> None:
     """A code the selection cannot produce means the command drifted."""
     stdout = json.dumps([_finding("a.py", code)])
@@ -310,9 +310,9 @@ def test_load_baseline_rejects_changed_resolved_settings(tmp_path: Path) -> None
 @pytest.mark.parametrize(
     "payload",
     [
-        pytest.param({"rules": ["B", "RUF012"]}, id="no-violations-key"),
+        pytest.param({"rules": list(checker.RATCHETED_SELECT)}, id="no-violations-key"),
         pytest.param(
-            {"rules": ["B", "RUF012"], "violations": {}},
+            {"rules": list(checker.RATCHETED_SELECT), "violations": {}},
             id="no-settings-fingerprint",
         ),
         pytest.param(_baseline_payload({"a.py::B905": 0}), id="zero-count"),
@@ -320,7 +320,7 @@ def test_load_baseline_rejects_changed_resolved_settings(tmp_path: Path) -> None
         pytest.param(_baseline_payload({"a.py::B905": "2"}), id="string-count"),
         pytest.param(
             {
-                "rules": ["B", "RUF012"],
+                "rules": list(checker.RATCHETED_SELECT),
                 "settings_fingerprint": _TEST_SETTINGS_FINGERPRINT,
                 "violations": [],
             },
@@ -517,6 +517,25 @@ def test_main_fails_on_a_violation_that_is_not_baselined(
 
     output = _clean_output(capsys)
     assert "sample.py::B905" in output
+    assert "not baselined" in output
+
+
+def test_main_fails_on_a_new_blind_exception_handler(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A new silent broad catch cannot bypass the defect-rule ratchet."""
+    _require_ruff()
+    _write_tree(
+        tmp_path,
+        "try:\n    raise RuntimeError('boom')\nexcept Exception:\n    pass\n",
+    )
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(json.dumps(_baseline_payload({})))
+
+    assert _run_main(tmp_path, baseline) == 1
+
+    output = _clean_output(capsys)
+    assert "sample.py::BLE001" in output
     assert "not baselined" in output
 
 

@@ -20,10 +20,10 @@ through it — the cache declares the port and the data layer supplies the adapt
 
 ## Two shapes worth knowing before adding a source
 
-**Return materialized bytes, not a `Response`.** The store used to hold a
-`FetchResponseScope` and cancel unread bodies in a `finally`. A non-HTTP container has
-no response to cancel, so that could not survive as a shared contract; response
-lifetime is now each source's own business.
+**Return materialized bytes, not a `Response`.** A non-HTTP container has no response
+to cancel, so response lifetime cannot be part of the shared source contract. The HTTP
+source delegates that lifetime to `fetchWithRetry`, whose consumer runs inside the
+shared fetch-gate lease and cancels any unread body before release.
 
 **`bytesOverWire` is separate from `data.byteLength`.** They are equal over plain
 HTTP. They are not for a container whose transport compresses, and collapsing them

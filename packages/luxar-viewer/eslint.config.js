@@ -100,8 +100,8 @@ export default [
       // recorded in `eslint-suppressions.json` — ESLint's own baseline
       // mechanism, not a hand-rolled ratchet — so nothing goes red today and a
       // higher per-file count fails immediately. The default lint script also
-      // rejects unpruned counts, so burn findings down with
-      // `pnpm lint --prune-suppressions` and commit the updated baseline.
+      // rejects unpruned counts, so burn findings down with `pnpm lint:prune`
+      // and commit the updated baseline.
       //
       // `no-unnecessary-type-assertion` is deliberately NOT here: 867 findings,
       // auto-fixable, and a redundant `as` is untidy rather than wrong. Landing
@@ -140,6 +140,11 @@ export default [
     // affect the initial payload — the thing this rule protects. The harness in
     // particular exists to drive the WebGPU path directly.
     files: ['src/tests/**/*.{ts,tsx}'],
+    languageOptions: {
+      parserOptions: {
+        project: './tsconfig.tooling.json',
+      },
+    },
     rules: {
       '@typescript-eslint/no-restricted-imports': 'off',
     },
@@ -223,8 +228,8 @@ export default [
     // NOT type-aware. Half of them are .mjs/.cjs, which no tsconfig covers,
     // and the value here is the ordinary correctness set -- unused bindings,
     // unreachable code, empty blocks. The .ts members are separately
-    // type-checked: tsconfig.json covers tools and tsconfig.tooling.json covers
-    // root configs and gate scripts.
+    // type-checked by tsconfig.tooling.json, which covers tests, tools, root
+    // configs and gate scripts.
     files: [
       '*.{ts,mts,cts,js,mjs,cjs}',
       'scripts/**/*.{ts,mts,cts,js,mjs,cjs}',

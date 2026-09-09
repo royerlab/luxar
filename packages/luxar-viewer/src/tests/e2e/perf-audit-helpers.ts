@@ -111,8 +111,9 @@ export async function waitForPerfReady(page: Page, timeout = 60_000): Promise<vo
 
 /**
  * Wait for `getPerf().isSettled === true`: no update pass, no load pass, no
- * lazy LOD level, post-load refinement complete. Returns false on timeout so
- * the caller can record a partial row instead of failing the run.
+ * lazy LOD level, no visible partition resync pending, post-load refinement
+ * complete. Returns false on timeout so the caller can record a partial row
+ * instead of failing the run.
  */
 export async function waitForPerfSettled(page: Page, timeout: number): Promise<boolean> {
   try {

@@ -48,7 +48,7 @@ export const COVERAGE_THRESHOLDS = {
   lines: 88,
   statements: 87,
   functions: 84,
-  branches: 80,
+  branches: 82,
 
   // Crown jewels: high floors so a refactor cannot quietly erode them.
   'src/types/**': { lines: 97, functions: 94, branches: 96 },
@@ -108,7 +108,7 @@ export const COVERAGE_RECORDED = {
   lines: 89.38,
   statements: 88.43,
   functions: 86.61,
-  branches: 82.78,
+  branches: 83,
   'src/types/**': { lines: 99, functions: 96.77, branches: 98.05 },
   'src/wasm/**': { lines: 98.58, functions: 100, branches: 96.46 },
   'src/config/**': { lines: 95.36, functions: 100, branches: 93.17 },

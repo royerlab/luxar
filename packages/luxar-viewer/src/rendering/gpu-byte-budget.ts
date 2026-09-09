@@ -5,14 +5,15 @@
  *
  * Browsers deliberately do NOT expose total/available VRAM (it's a
  * fingerprinting vector), so we can't read an "absolute max" and set to
- * it. Auto-sizing takes the lower of ``navigator.deviceMemory`` and the shared
- * non-cache remainder. An explicit total cache-pool override replaces the
- * heap-derived remainder in either direction; a mobile device-class fallback
- * supplies it when the heap is unavailable, and an independent 128 MiB mobile
- * cap remains a peer minimum. The result has a 2 GB ceiling but no lower clamp,
- * with 512 MB used only when no signal exists. As a safety net, the budget is
- * halved on a WebGL context-loss event (a strong OOM signal) so an over-estimate
- * self-corrects instead of repeatedly crashing the context.
+ * it. Auto-sizing takes the lowest estimate from ``navigator.deviceMemory``
+ * and the shared non-cache remainder derived from the measured JS heap. An
+ * explicit total cache-pool override replaces the heap term in either
+ * direction; a mobile device-class fallback supplies that term when the heap
+ * is unavailable, and an independent 128 MiB mobile cap remains a peer
+ * minimum. The result has a 2 GB ceiling but no lower clamp, with 512 MB used
+ * only when no signal exists. As a safety net, the budget is halved on a WebGL
+ * context-loss event (a strong OOM signal) so an over-estimate self-corrects
+ * instead of repeatedly crashing the context.
  *
  * **Single-viewer-per-page assumption.** The budget lives in module-global
  * state (``budgetBytes`` below), so it is shared by every pool and registry
@@ -49,6 +50,7 @@ import {
   DEVICE_CLASS_POOL_BYTES,
   readHeapLimitBytes,
 } from '../cache/heap-budget';
+import { config } from '../config';
 import { getInputProfile } from '../utils/input-capabilities';
 import { log, Modules } from '../utils/log';
 
@@ -74,6 +76,7 @@ const MAX_BUDGET_BYTES = 2_000_000_000; // 2 GB
 const BACKOFF_FLOOR_BYTES = 256_000_000; // 256 MB
 
 let budgetBytes = NO_SIGNAL_BUDGET_BYTES;
+let configured = false;
 
 /**
  * Explicit memory signals the auto budget folds in alongside `navigator.deviceMemory`.
@@ -195,8 +198,8 @@ function computeAutoBudget(memory?: GpuBudgetMemorySignals): { bytes: number; so
  * Configure the budget once at startup from the resolved config value
  * (or the ``?gpuBudgetMB`` URL param, which the caller passes in):
  *
- * - ``null`` / ``undefined`` → **auto-size** from device memory and any
- *   explicit cache-pool override.
+ * - ``null`` / ``undefined`` / ``NaN`` → **auto-size** from available ambient
+ *   memory signals and any explicit cache-pool override. ``NaN`` also warns.
  * - ``0`` → disable byte-budget eviction (unbounded resident geometry).
  * - a positive number → pin the budget to exactly that many bytes.
  */
@@ -204,6 +207,11 @@ export function configureGpuByteBudget(
   overrideBytes?: number | null,
   memory?: GpuBudgetMemorySignals
 ): void {
+  configured = true;
+  if (Number.isNaN(overrideBytes)) {
+    log.warning(Modules.PERFORMANCE, 'Ignoring NaN GPU byte budget override; using auto-sizing');
+    overrideBytes = null;
+  }
   if (overrideBytes == null) {
     const auto = computeAutoBudget(memory);
     budgetBytes = auto.bytes;
@@ -220,6 +228,39 @@ export function configureGpuByteBudget(
     budgetBytes === 0
       ? 'GPU byte budget: disabled (0 — unbounded resident geometry)'
       : `GPU byte budget: ${mb(budgetBytes)} MB (explicit)`
+  );
+}
+
+/**
+ * Configure the shared budget for whichever supported viewer entry point starts first.
+ *
+ * - ``undefined`` → use the config default; this is no opinion after another
+ *   entry point has configured the budget, so it is ignored silently.
+ * - ``null`` or ``NaN`` → auto-size from ambient memory signals; ``NaN`` warns.
+ * - ``0`` → disable byte-budget eviction (unbounded resident geometry).
+ * - a positive number → pin the budget to exactly that many bytes.
+ *
+ * Later explicit requests are ignored with a warning because the budget is
+ * module-global and shared by every pool and LOD registry on the page.
+ */
+export function initializeGpuByteBudget(overrideBytes?: number | null): void {
+  if (configured) {
+    if (overrideBytes !== undefined) {
+      const requested =
+        overrideBytes === null || Number.isNaN(overrideBytes)
+          ? 'auto-sizing'
+          : Math.max(0, overrideBytes) === 0
+            ? 'disabling eviction'
+            : `${mb(Math.max(0, overrideBytes))} MB`;
+      log.warning(
+        Modules.PERFORMANCE,
+        `GPU byte budget is already configured; ignoring later request for ${requested}`
+      );
+    }
+    return;
+  }
+  configureGpuByteBudget(
+    overrideBytes === undefined ? config.dataLoading.performance.gpuPoolMaxBytes : overrideBytes
   );
 }
 

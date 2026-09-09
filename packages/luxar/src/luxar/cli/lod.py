@@ -1026,7 +1026,7 @@ def lod_recipe(
 
     except (typer.Exit, typer.BadParameter):
         raise
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - exit_with_error reports the cause and exits.
         exit_with_error(f"Error: {e}", e)
 
 

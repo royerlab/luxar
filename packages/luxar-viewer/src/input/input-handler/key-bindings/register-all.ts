@@ -50,6 +50,7 @@ export interface KeyBindingsCommands {
   cycleDataMonitor(): void;
   recenterCamera(): void;
   exportViewerState(): void;
+  closeAllPanels(): void;
   handleEscape(): void;
   shouldHandleSpaceKey(): boolean;
 }

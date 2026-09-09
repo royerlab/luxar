@@ -25,7 +25,7 @@ import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import { notifier } from '../../../utils/cross-layer/notifier';
 import { log, Modules } from '../../../utils/log';
 import { config } from '../../../config';
-import { getGpuByteBudget } from '../../../rendering/gpu-byte-budget';
+import { getGpuByteBudget, initializeGpuByteBudget } from '../../../rendering/gpu-byte-budget';
 import { getMaxPixelRatio, setHighDPRAllowed } from '../../../rendering/pixel-ratio-cap';
 import {
   configureDepthSort,
@@ -111,6 +111,8 @@ export async function runInitPipeline(
   ports: InitPipelinePorts,
   partial: Partial<InitPipelineResult>
 ): Promise<InitPipelineResult> {
+  initializeGpuByteBudget(ports.options.gpuPoolMaxBytes);
+
   // Inform users about expected console messages. The browser logs a
   // `GET … 404` line (with a JS stack trace) for every failed network
   // request; these cannot be suppressed from JS — only avoided by not
@@ -412,11 +414,12 @@ export async function runInitPipeline(
   }
 
   // While the viewer is not SETTLED — an updateView sweep, any loader's load
-  // pass, a lazy LOD level load, or the post-load refinement drain (each
-  // rung is fetch + decode + commit with the lock released between passes)
-  // — frame jank reflects that work, not steady-state render cost, and the
-  // manager suppresses probe/estimator learning for those samples. Same
-  // predicate the perf probes read as `getPerf().isSettled`, inverted.
+  // pass, a lazy LOD level load, a held partition rising-edge resync, or the
+  // post-load refinement drain (each rung is fetch + decode + commit with the
+  // lock released between passes) — frame jank reflects that work, not
+  // steady-state render cost, and the manager suppresses probe/estimator
+  // learning for those samples. Same predicate the perf probes read as
+  // `getPerf().isSettled`, inverted.
   // TRUE while load activity is in flight (the adaptive-DPR manager's sense).
   const isLoadActive = buildLoadActivityPredicate({
     getDefaultLoader: () => getSceneLoader('default'),
@@ -655,8 +658,8 @@ export async function runInitPipeline(
   inputHandler.setLayersPanel(layersPanel);
 
   // Left activity rail — the always-visible, discoverable entry point to the
-  // otherwise keyboard-only panels. Each button fires the SAME command as its
-  // shortcut (via inputHandler.getUiActions()), so behaviour never drifts.
+  // otherwise keyboard-only panels. Buttons dispatch through the same command
+  // surface as keyboard shortcuts (via inputHandler.getUiActions()).
   // The sound layer. Constructs no AudioContext until a scene with sound nodes
   // attaches; every viewer piece it needs arrives as a port so `audio/` stays
   // below `scene/` in the layer order (see src/audio/README.md).
