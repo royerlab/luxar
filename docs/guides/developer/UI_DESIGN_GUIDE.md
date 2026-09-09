@@ -988,7 +988,8 @@ media features in any other stylesheet, and the load-bearing clamps present.
 - **Press, not hover.** Under `(any-hover: none)` a tap leaves an element in a
   sticky `:hover` until the next tap elsewhere, so the hover styling is put
   back to the rest state and `:active` carries the response (a translucent
-  highlight fill). The hover rule you restate must be the element's own rest
+  highlight fill). The reset covers rail buttons, collapse/chips, layer rows
+  and dimension play buttons. Each rule must restate the element's own rest
   state, so keep this list short and exact.
 - **Coarse-only affordances are gated in JS on `getInputProfile()`**, never on
   width: a momentary **Hide panels** rail item that always closes open surfaces, the help

@@ -47,8 +47,8 @@ and no idle-dimming of the rail where nothing can hover. The rail's items wrappe
 layout-transparent on fine pointers. Ergonomics, same file: 44px primary targets via
 a local `--luxar-hit-min` (36px secondary, 24px thumbs on a 24px hit band,
 28px dual-range thumbs on a 28px band),
-16px panel inputs (iOS focus-zoom), `:active` press fills with the sticky post-tap
-`:hover` reset to the rest state under `(any-hover: none)`, tips on keyboard focus only,
+16px panel inputs (iOS focus-zoom), `:active` press fills with sticky post-tap
+`:hover` resets for rail controls, layer rows and play buttons under `(any-hover: none)`, tips on keyboard focus only,
 and the base look of the two elements that exist only on coarse pointers (the
 dimension sliders' `‹ ›` step buttons and name chip). See the UI Design Guide §11.5.
 

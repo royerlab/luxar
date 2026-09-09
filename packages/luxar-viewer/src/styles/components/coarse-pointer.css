@@ -395,6 +395,16 @@
     background: none;
     color: var(--luxar-text-muted);
   }
+  .luxar-layer-row:hover:not(:active):not(.luxar-layer-row--selected) {
+    background: none;
+  }
+  .luxar-dimension-slider__play-btn:hover:not(:active) {
+    background: var(--luxar-highlight);
+    transform: none;
+  }
+  .luxar-dimension-slider__play-btn--playing:hover:not(:active) {
+    background: var(--luxar-warning);
+  }
   .luxar-control-rail__btn:active,
   .luxar-control-rail__chip:active,
   .luxar-gui__button:active,

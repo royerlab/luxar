@@ -232,6 +232,15 @@ describe('coarse-pointer.css contract', () => {
     expect(
       ruleBody(noHover, '.luxar-control-rail__chip:hover:not(:active):not(.is-active)')
     ).toMatch(/background:\s*none[^}]*color:\s*var\(--luxar-text-muted\)/);
+    expect(
+      ruleBody(noHover, '.luxar-layer-row:hover:not(:active):not(.luxar-layer-row--selected)')
+    ).toMatch(/background:\s*none/);
+    expect(ruleBody(noHover, '.luxar-dimension-slider__play-btn:hover:not(:active)')).toMatch(
+      /background:\s*var\(--luxar-highlight\)[^}]*transform:\s*none/
+    );
+    expect(
+      ruleBody(noHover, '.luxar-dimension-slider__play-btn--playing:hover:not(:active)')
+    ).toMatch(/background:\s*var\(--luxar-warning\)/);
     // Tooltips need a hover; without one they show on keyboard focus only.
     expect(noHover).toMatch(/\.luxar-control-rail__btn:focus-visible \.luxar-control-rail__tip/);
     expect(
