@@ -983,8 +983,9 @@ media features in any other stylesheet, and the load-bearing clamps present.
 - **16px inputs.** Every text/number/select inside a panel is `font-size: 16px`
   under a coarse pointer: below that iOS Safari zooms the page into a focused
   field and never zooms back. Numeric inputs use `inputmode="decimal"` only when
-  their minimum is non-negative (otherwise `text` keeps the minus key), and
-  filter fields use `inputmode="search"` (inert on desktop, so ungated in JS).
+  their minimum is non-negative; a signed or unbounded range carries no
+  `inputmode`, so the platform number keyboard keeps its minus key. Filter fields
+  use `inputmode="search"` (inert on desktop, so ungated in JS).
 - **Press, not hover.** Under `(any-hover: none)` a tap leaves an element in a
   sticky `:hover` until the next tap elsewhere, so the hover styling is put
   back to the rest state and `:active` carries the response (a translucent
