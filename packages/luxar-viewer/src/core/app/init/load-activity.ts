@@ -26,6 +26,8 @@ export interface LoadActivityDeps {
   isAnyLoadPassInProgress(): boolean;
   /** Any lazy LOD-group level currently loading. */
   isAnyLodLevelLoading(): boolean;
+  /** A visible partition rising edge is waiting to be handed to the loader. */
+  hasVisiblePendingPartitionResync(): boolean;
   /** The current load's refinement drain has run to completion. */
   isRefinementComplete(): boolean;
 }
@@ -36,6 +38,7 @@ export function isLoadActivity(deps: LoadActivityDeps): boolean {
     deps.isUpdateInProgress() ||
     deps.isAnyLoadPassInProgress() ||
     deps.isAnyLodLevelLoading() ||
+    deps.hasVisiblePendingPartitionResync() ||
     !deps.isRefinementComplete()
   );
 }
@@ -49,7 +52,10 @@ export function refinementCompleteFromTimeline(): boolean {
 export interface LoadActivitySources {
   getDefaultLoader(): {
     isUpdateInProgress(): boolean;
-    lodGroupRegistry?: { isAnyLevelLoading(): boolean } | null;
+    lodGroupRegistry?: {
+      isAnyLevelLoading(): boolean;
+      hasVisiblePendingPartitionResync(): boolean;
+    } | null;
   } | null;
   isAnyLoadPassInProgress(): boolean;
 }
@@ -65,6 +71,8 @@ export function buildLoadActivityPredicate(sources: LoadActivitySources): () => 
       isAnyLoadPassInProgress: () => sources.isAnyLoadPassInProgress(),
       isAnyLodLevelLoading: () =>
         sources.getDefaultLoader()?.lodGroupRegistry?.isAnyLevelLoading() === true,
+      hasVisiblePendingPartitionResync: () =>
+        sources.getDefaultLoader()?.lodGroupRegistry?.hasVisiblePendingPartitionResync() === true,
       isRefinementComplete: refinementCompleteFromTimeline,
     });
 }

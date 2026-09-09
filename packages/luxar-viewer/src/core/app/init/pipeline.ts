@@ -411,11 +411,12 @@ export async function runInitPipeline(
   }
 
   // While the viewer is not SETTLED — an updateView sweep, any loader's load
-  // pass, a lazy LOD level load, or the post-load refinement drain (each
-  // rung is fetch + decode + commit with the lock released between passes)
-  // — frame jank reflects that work, not steady-state render cost, and the
-  // manager suppresses probe/estimator learning for those samples. Same
-  // predicate the perf probes read as `getPerf().isSettled`, inverted.
+  // pass, a lazy LOD level load, a held partition rising-edge resync, or the
+  // post-load refinement drain (each rung is fetch + decode + commit with the
+  // lock released between passes) — frame jank reflects that work, not
+  // steady-state render cost, and the manager suppresses probe/estimator
+  // learning for those samples. Same predicate the perf probes read as
+  // `getPerf().isSettled`, inverted.
   // TRUE while load activity is in flight (the adaptive-DPR manager's sense).
   const isLoadActive = buildLoadActivityPredicate({
     getDefaultLoader: () => getSceneLoader('default'),

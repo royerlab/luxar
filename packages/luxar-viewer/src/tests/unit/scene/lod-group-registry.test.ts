@@ -1139,12 +1139,15 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     reg.evaluatePerFrame();
     groupObject.position.x = -2.5; // part_0 re-enters
     reg.evaluatePerFrame();
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(true);
     groupObject.position.x = -4.5; // part_1 re-enters
     reg.evaluatePerFrame();
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(true);
     expect(requestReprocess).not.toHaveBeenCalled();
 
     updateInProgress = false;
     reg.evaluatePerFrame();
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(false);
     reg.evaluatePerFrame();
     expect(requestReprocess).toHaveBeenCalledOnce();
     const paths = requestReprocess.mock.calls[0][0] as string[];
@@ -1370,6 +1373,7 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     updateInProgress = false;
     requestRender.mockClear();
     expect(reg.evaluatePerFrame()).toBe(false);
+    expect(reg.hasVisiblePendingPartitionResync()).toBe(false);
     expect(requestReprocess).not.toHaveBeenCalled();
     expect(requestRender).not.toHaveBeenCalled();
 

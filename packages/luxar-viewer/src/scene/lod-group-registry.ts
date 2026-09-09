@@ -1301,6 +1301,19 @@ export class LODGroupRegistry {
     return this.anyChildLoading();
   }
 
+  /**
+   * Whether a visible partition has a rising-edge resync waiting for the
+   * owning loader to become idle. Pending work retained under a hidden wrapper
+   * is not actionable and must not keep wide settledness false indefinitely.
+   */
+  hasVisiblePendingPartitionResync(): boolean {
+    for (const path of this.partitionResyncPending.keys()) {
+      const entry = this.partitionEntries.get(path);
+      if (entry && isEffectivelyVisible(entry.groupObject)) return true;
+    }
+    return false;
+  }
+
   private anyChildLoading(): boolean {
     for (const entry of this.entries.values()) {
       for (const child of entry.children) {
