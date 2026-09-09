@@ -435,7 +435,9 @@ STORIES: tuple[Story, ...] = (
             "lost as heat. How a protein manages that is still debated."
         ),
         tags=("energy", "structure"),
-        pdb_id="1BMF",
+        # The WHOLE machine — F1 head, stalk and Fo rotor in the membrane —
+        # not the F1 head alone (1BMF): a visitor should recognise a turbine.
+        pdb_id="6N2Y",
         narration=(
             "ATP synthase, the turbine in every cell. Protons flowing through "
             "it turn an axle, and each turn presses out three molecules of "
@@ -732,16 +734,25 @@ SPARSE_TAIL_RATIO = 2.5
 BUBBLE_CAMERA_CLEARANCE = 1.2
 
 
+#: The bubble encloses the farthest member with this much room to spare.
+BUBBLE_ENCLOSE_MARGIN = 1.05
+
+
 def bubble_radius(
     cluster: StoryCluster, *, min_radius: float = SPHERE_MIN_RADIUS
 ) -> float:
     """World radius of the story's soap bubble.
 
-    ``min_radius`` is the floor a small cluster is padded up to; the
-    protein-universe variant, whose knots are a few tenths of a unit across,
-    passes a smaller one.
+    The larger of the r95 rule and the enclosing radius (every member inside,
+    :data:`BUBBLE_ENCLOSE_MARGIN` to spare), floored at ``min_radius`` — the
+    floor a small cluster is padded up to; the protein-universe variant, whose
+    knots are a few tenths of a unit across, passes a smaller one.
     """
-    return max(min_radius, SPHERE_RADIUS_SCALE * cluster.r95)
+    return max(
+        min_radius,
+        SPHERE_RADIUS_SCALE * cluster.r95,
+        BUBBLE_ENCLOSE_MARGIN * cluster.r_max,
+    )
 
 
 def framing_radius(
@@ -819,6 +830,9 @@ class StoryCluster:
     #: whose r95 is far beyond its r50 is a big bubble around a small core, and
     #: the camera frames the core instead (``0`` = unknown, never sparse).
     r50: float = 0.0
+    #: Distance of the farthest member from the centre: the bubble encloses it
+    #: (``0`` = unknown, the bubble falls back to the r95 rule alone).
+    r_max: float = 0.0
 
 
 def _densest_member(family_pos: np.ndarray, radius: float) -> np.ndarray:
@@ -876,15 +890,28 @@ def select_story_members(
     indices = np.flatnonzero(members)
     if len(indices) == 0:
         raise ValueError(f"story {story.key!r}: no member within radius {story.radius}")
-    # Re-centre on the blob itself (the family median can be pulled by
-    # stragglers) and measure its framing radius.
-    centre = np.median(positions[indices], axis=0)
-    radial = np.linalg.norm(positions[indices] - centre, axis=1)
-    r95 = float(np.percentile(radial, 95))
-    r50 = float(np.percentile(radial, 50))
+    # Centre on the members' bounding box, not their median: a median sits in
+    # the dense half of an asymmetric blob and the bubble then hangs off to
+    # one side of what it is supposed to hold (checked on the kiosk). The
+    # framing radii are measured from that same centre.
+    centre, radial = cluster_geometry(positions[indices])
     return StoryCluster(
-        indices=indices, centre=centre, r95=r95, n_named=n_named, r50=r50
+        indices=indices,
+        centre=centre,
+        r95=float(np.percentile(radial, 95)),
+        n_named=n_named,
+        r50=float(np.percentile(radial, 50)),
+        r_max=float(radial.max()),
     )
+
+
+def cluster_geometry(member_pos: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Bounding-box centre of a member set and each member's distance to it."""
+    lo = member_pos.min(axis=0)
+    hi = member_pos.max(axis=0)
+    centre = ((lo + hi) / 2.0).astype(np.float64)
+    radial = np.linalg.norm(member_pos.astype(np.float64) - centre, axis=1)
+    return centre, radial
 
 
 def _midpoint_vertex(

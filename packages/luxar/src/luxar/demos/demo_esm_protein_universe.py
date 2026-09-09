@@ -134,6 +134,7 @@ from luxar.demos.demo_esm3_protein_stories import (
     StoryCluster,
     add_story_sounds,
     bubble_radius,
+    cluster_geometry,
     icosphere,
     story_camera,
     story_camera_distance,
@@ -1028,14 +1029,14 @@ def select_universe_members(
         raise ValueError(f"story {story.key!r}: no cluster matched its selector")
     if story.whole:
         indices = np.flatnonzero(mask)
-        centre = np.median(universe.positions[indices], axis=0)
-        radial = np.linalg.norm(universe.positions[indices] - centre, axis=1)
+        centre, radial = cluster_geometry(universe.positions[indices])
         return StoryCluster(
             indices=indices,
             centre=centre,
             r95=float(np.percentile(radial, 95)),
             n_named=n_named,
             r50=float(np.percentile(radial, 50)),
+            r_max=float(radial.max()),
         )
     seed = densest_core(
         universe.positions[mask].astype(np.float64), story.radius * 2.0 / 3.0, all_tree
@@ -1045,14 +1046,16 @@ def select_universe_members(
     if len(indices) == 0:
         raise ValueError(f"story {story.key!r}: no member within radius {story.radius}")
     indices = np.sort(indices)
-    centre = np.median(universe.positions[indices], axis=0)
-    radial = np.linalg.norm(universe.positions[indices] - centre, axis=1)
+    # Bounding-box centre + enclosing radius: the bubble holds every member
+    # and sits on the knot, not on its dense half (see the stories tour).
+    centre, radial = cluster_geometry(universe.positions[indices])
     return StoryCluster(
         indices=indices,
         centre=centre,
         r95=float(np.percentile(radial, 95)),
         n_named=n_named,
         r50=float(np.percentile(radial, 50)),
+        r_max=float(radial.max()),
     )
 
 
