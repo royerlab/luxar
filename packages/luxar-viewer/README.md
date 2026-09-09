@@ -685,7 +685,7 @@ renderingControls: {
 **Anti-Aliasing Notes:**
 
 - **MSAA**: Hardware-accelerated, fast and sharp — great default for most scenes. Note: MSAA has limitations with additive blending (used by GSplats); consider FXAA for scenes with Gaussian splats
-- **SSAA + MSAA**: SSAA temporarily suspends MSAA allocation. Combining multisampling with an already-upscaled SSAA target is redundant and can exceed browser framebuffer-allocation limits; disabling SSAA restores the configured MSAA setting.
+- **SSAA + MSAA**: SSAA above 1x temporarily suspends MSAA allocation. Combining multisampling with an already-upscaled SSAA target is redundant and can exceed browser framebuffer-allocation limits; returning to 1x or disabling SSAA restores the configured MSAA setting.
 - **FXAA**: Fastest post-process AA, may slightly blur the image
 - **SSAA**: Highest quality (supersampling), significant performance cost
 
