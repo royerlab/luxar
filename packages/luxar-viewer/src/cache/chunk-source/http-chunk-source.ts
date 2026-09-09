@@ -66,11 +66,26 @@ export class HttpChunkSource implements ChunkSource {
               cause: new Error(`HTTP ${attempt.response.status}${statusText} fetching ${key}`),
             } as const;
           }
+
+          // Check BEFORE touching the body. The store used to do this between the
+          // headers arriving and `arrayBuffer()`, and losing it meant an
+          // invalidation abort landing in that window surfaced as a NetworkError —
+          // which is retryable rather than a deliberate cancellation. Silently
+          // trusting bytes invalidated by `abortPendingGets` is exactly what this
+          // check prevents. The retry helper still cancels the unread body.
           if (signal?.aborted) return { kind: 'aborted' } as const;
           const data = await attempt.readBody();
+
+          // Over HTTP the decoded body IS what the meter counted before this
+          // refactor; keeping them equal preserves the existing byte totals.
           return { kind: 'ok', data, bytesOverWire: data.byteLength } as const;
         }
       );
+
+      // `fetchWithRetry` returns undefined when it gave up: either the caller
+      // aborted, or the retry budget ran out. The store distinguishes those by
+      // inspecting its own signals, so report the retry case and let it
+      // re-classify an abort it knows about.
       return (
         outcome ??
         (signal?.aborted
@@ -86,6 +101,9 @@ export class HttpChunkSource implements ChunkSource {
             })
       );
     } catch (error) {
+      // Belt and braces: consumer failures are not expected from this callback
+      // today. Keep the catch because the seam's contract is that `get` never
+      // throws, and that must not depend on a helper's internals.
       return { kind: 'error', cause: error instanceof Error ? error : new Error(String(error)) };
     }
   }
