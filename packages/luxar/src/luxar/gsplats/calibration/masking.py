@@ -140,6 +140,7 @@ def _masked_donor_medians(
     radius: int,
     shell_only: bool,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Compute donor medians and report which masked voxels found a donor."""
     offsets = _donut_offsets(V.ndim, radius, shell_only)
     V_pad = np.pad(V, radius, mode="reflect")
     mask_pad = np.pad(mask, radius, mode="reflect")
@@ -184,6 +185,7 @@ def _masked_donor_medians(
 
 
 def _donut_offsets(ndim: int, radius: int, shell_only: bool) -> list[tuple[int, ...]]:
+    """Return offsets for a full donut or only its outer Chebyshev shell."""
     offsets = itertools.product(range(-radius, radius + 1), repeat=ndim)
     if shell_only:
         return [offset for offset in offsets if max(map(abs, offset)) == radius]
@@ -191,6 +193,7 @@ def _donut_offsets(ndim: int, radius: int, shell_only: bool) -> list[tuple[int, 
 
 
 def _invalid_donor_sentinel(dtype: np.dtype) -> float | int | bool:
+    """Return a sortable high value used beyond each column's valid donors."""
     if np.issubdtype(dtype, np.floating):
         return np.inf
     if np.issubdtype(dtype, np.integer):
