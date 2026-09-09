@@ -30,7 +30,7 @@ import {
   recordRefinementResidency,
   type RefinableLoader,
 } from '../scene-loader/progressive/refinement-wrapper';
-import { isPartitionPathVisible } from '../scene-loader/loaders/run-loader-updates';
+import { isObjectLoadEligible } from '../scene-loader/loaders/run-loader-updates';
 
 /** Geometry name in this wrapper's log lines and toasts. */
 const LABEL = 'Lines';
@@ -79,7 +79,10 @@ export interface LinesRefinementCtx {
 }
 
 export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void> {
-  const isPathVisible = (path: string): boolean => isPartitionPathVisible(ctx.rootGroup, path);
+  const objects = new Map(
+    [...ctx.linesLoaders.keys()].map((path) => [path, ctx.rootGroup?.getObjectByName(path)])
+  );
+  const isPathVisible = (path: string): boolean => isObjectLoadEligible(objects.get(path));
   await runProgressiveRefinement({
     loaders: ctx.linesLoaders,
     viewStateQueue: ctx.viewStateQueue,
@@ -97,7 +100,7 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
       );
       if (!admission.admitted) return false;
       try {
-        const mesh = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
+        const mesh = objects.get(path) as THREE.Mesh | undefined;
         const nodeAttrs = mesh?.userData?.attrs as LinesMetadata | undefined;
         // Lines segment bounds already encode the extent, matching the
         // load-lines-node.ts convention.

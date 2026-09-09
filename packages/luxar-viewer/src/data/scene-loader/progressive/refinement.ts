@@ -60,9 +60,18 @@ export class RefinementFailureTracker {
     return this.exhaustedPaths.has(path);
   }
 
-  /** Reset the consecutive-failure count for `path` (a step succeeded). */
+  /** Reset the failure state for `path` (a step succeeded). */
   recordSuccess(path: string): void {
     this.failCounts.delete(path);
+    this.exhaustedPaths.delete(path);
+  }
+
+  /** Clear every exhausted/counted path. Returns whether any state changed. */
+  reset(): boolean {
+    const hadFailures = this.failCounts.size > 0 || this.exhaustedPaths.size > 0;
+    this.failCounts.clear();
+    this.exhaustedPaths.clear();
+    return hadFailures;
   }
 
   /**

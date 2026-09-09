@@ -10,11 +10,13 @@ describe('LayerApplyEngine visibility', () => {
     layer.name = '/layer';
     root.add(layer);
     const requestRender = vi.fn();
+    const requestReprocess = vi.fn();
     const engine = new LayerApplyEngine({
       getRootGroup: () => root,
       getSceneGraph: () => null,
       state: {} as never,
       requestRender,
+      requestReprocess,
     });
 
     engine.applyVisibility(layer.name, false);
@@ -22,5 +24,16 @@ describe('LayerApplyEngine visibility', () => {
     expect(layer.visible).toBe(false);
     expect(layer.userData.layerVisible).toBe(false);
     expect(requestRender).toHaveBeenCalledTimes(1);
+    expect(requestReprocess).not.toHaveBeenCalled();
+
+    engine.applyVisibility(layer.name, true);
+
+    expect(layer.visible).toBe(true);
+    expect(layer.userData.layerVisible).toBe(true);
+    expect(requestReprocess).toHaveBeenCalledOnce();
+    expect(requestReprocess).toHaveBeenCalledWith([layer.name]);
+
+    engine.applyVisibility(layer.name, true);
+    expect(requestReprocess).toHaveBeenCalledOnce();
   });
 });

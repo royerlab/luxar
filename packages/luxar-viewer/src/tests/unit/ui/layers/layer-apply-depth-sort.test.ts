@@ -107,6 +107,7 @@ function harness(initialMode: string, authoredMode?: string) {
     getSceneGraph: () => graph,
     state,
     requestRender: () => {},
+    requestReprocess: () => {},
   });
   return { engine, state, mat, mesh };
 }
@@ -151,6 +152,7 @@ function inheritedHarness(initialMode: string, ancestorMode: string) {
     getSceneGraph: () => graph,
     state,
     requestRender: () => {},
+    requestReprocess: () => {},
   });
   return { engine, state, mat, mesh, path: '/g/surf' };
 }
@@ -189,6 +191,7 @@ function physicalInheritedHarness(ancestorMode: string, invalidatePickBuffer?: (
     getSceneGraph: () => graph,
     state,
     requestRender: () => {},
+    requestReprocess: () => {},
     invalidatePickBuffer,
   });
   return { engine, state, mat, mesh, path: '/g/surf' };

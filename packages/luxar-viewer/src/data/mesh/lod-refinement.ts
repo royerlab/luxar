@@ -34,7 +34,7 @@ import {
   recordRefinementResidency,
   type RefinableLoader,
 } from '../scene-loader/progressive/refinement-wrapper';
-import { isPartitionPathVisible } from '../scene-loader/loaders/run-loader-updates';
+import { isObjectLoadEligible } from '../scene-loader/loaders/run-loader-updates';
 
 /** Geometry name in this wrapper's log lines and toasts. */
 const LABEL = 'Mesh';
@@ -83,7 +83,10 @@ export interface MeshRefinementCtx {
 }
 
 export async function runMeshRefinement(ctx: MeshRefinementCtx): Promise<void> {
-  const isPathVisible = (path: string): boolean => isPartitionPathVisible(ctx.rootGroup, path);
+  const objects = new Map(
+    [...ctx.meshLoaders.keys()].map((path) => [path, ctx.rootGroup?.getObjectByName(path)])
+  );
+  const isPathVisible = (path: string): boolean => isObjectLoadEligible(objects.get(path));
   await runProgressiveRefinement({
     loaders: ctx.meshLoaders,
     viewStateQueue: ctx.viewStateQueue,
@@ -101,7 +104,7 @@ export async function runMeshRefinement(ctx: MeshRefinementCtx): Promise<void> {
       );
       if (!admission.admitted) return false;
       try {
-        const object = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
+        const object = objects.get(path) as THREE.Mesh | undefined;
         const nodeAttrs = object?.userData?.attrs as MeshMetadata | undefined;
         // Mesh takes the partial-extend tolerance (only Lines opts out — its
         // segment bounds already encode the non-displayed extent). Matches

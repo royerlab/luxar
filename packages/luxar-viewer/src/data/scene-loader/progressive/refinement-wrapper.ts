@@ -16,7 +16,7 @@
  * the geometry's own name*:
  *
  * - {@link admitRefinementCandidate} — the `hasMoreLODs` / exhausted-backoff /
- *   residency-admission gate, whose three parts must agree with the three
+ *   live-visibility / residency-admission gate, whose four parts must agree with the four
  *   exclusions in {@link makeRefinementProgressCallbacks} or the loop re-offers
  *   a declined loader every frame while holding the update lock.
  * - {@link handleRefinementError} — abort-versus-failure classification, pass
@@ -60,7 +60,7 @@ export interface RefinableLoader {
   ladderResidency?: () => LadderResidency;
 }
 
-const failureTrackers = new WeakMap<RefinableLoader, RefinementFailureTracker>();
+const failureTrackers = new WeakMap<object, RefinementFailureTracker>();
 
 export function failureTrackerFor(loader: RefinableLoader): RefinementFailureTracker {
   let tracker = failureTrackers.get(loader);
@@ -71,6 +71,15 @@ export function failureTrackerFor(loader: RefinableLoader): RefinementFailureTra
   return tracker;
 }
 
+/** Reset refinement failure state for existing loader instances. */
+export function resetRefinementFailureTrackers(loaders: Iterable<object>): boolean {
+  let resetAny = false;
+  for (const loader of loaders) {
+    if (failureTrackers.get(loader)?.reset()) resetAny = true;
+  }
+  return resetAny;
+}
+
 function cannotRefine(
   path: string,
   loader: RefinableLoader,
@@ -78,8 +87,8 @@ function cannotRefine(
 ): boolean {
   return (
     loader.hasMoreLODs !== true ||
-    isPathVisible?.(path) === false ||
-    failureTrackerFor(loader).isExhausted(path)
+    failureTrackerFor(loader).isExhausted(path) ||
+    isPathVisible?.(path) === false
   );
 }
 
@@ -96,9 +105,9 @@ export interface RefinementErrorPresentation {
 /**
  * Decide whether one loader may refine this pass.
  *
- * Three reasons to decline, in order of cost: it has no more levels; it has
- * already failed `MAX_CONSECUTIVE_REFINEMENT_FAILURES` times; or the
- * shared residency ceiling refused it.
+ * Four reasons to decline, in order of cost: it has no more levels; it has
+ * already failed `MAX_CONSECUTIVE_REFINEMENT_FAILURES` times; it is culled or
+ * hidden; or the shared residency ceiling refused it.
  *
  * The first check also keeps single-level geometry out of the loop. This is
  * especially important for meshes, where that is the overwhelmingly common

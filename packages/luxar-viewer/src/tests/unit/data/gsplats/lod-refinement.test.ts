@@ -23,7 +23,7 @@ import { defineRefinementLoopContract } from '../_shared/refinement-loop-contrac
 
 defineRefinementLoopContract('runGSplatsRefinement', 'GSplats', 'showing reduced detail', (w) =>
   runGSplatsRefinement({
-    rootGroup: new THREE.Group(),
+    rootGroup: w.rootGroup ?? new THREE.Group(),
     viewStateQueue: w.viewStateQueue,
     gsplatLoaders: w.loaders as GSplatsRefinementCtx['gsplatLoaders'],
     deriveNodeViewState: w.deriveNodeViewState as GSplatsRefinementCtx['deriveNodeViewState'],

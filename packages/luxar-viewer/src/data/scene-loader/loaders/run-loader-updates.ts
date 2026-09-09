@@ -24,15 +24,19 @@ const NOOP_SESSION: UpdateSession = {
   markSkipped: () => {},
 };
 
-/** Whether a loader path is eligible for foreground or background loading. */
-export function isPartitionPathVisible(root: THREE.Object3D | null, path: string): boolean {
-  let object: THREE.Object3D | null | undefined = root?.getObjectByName(path);
+/** Whether an object is eligible for foreground or background loading. */
+export function isObjectLoadEligible(object: THREE.Object3D | null | undefined): boolean {
   while (object) {
     if (object.userData.partitionFrustumVisible === false) return false;
     if (object.userData.layerVisible === false) return false;
     object = object.parent;
   }
   return true;
+}
+
+/** Resolve a loader path and test its foreground/background load eligibility. */
+export function isLoaderPathEligible(root: THREE.Object3D | null, path: string): boolean {
+  return isObjectLoadEligible(root?.getObjectByName(path));
 }
 
 /**
@@ -49,11 +53,11 @@ export function isUnderAny(path: string, targets: ReadonlySet<string>): boolean 
 }
 
 /** Copy loaders whose paths are not culled or under a hidden layer. */
-export function filterPartitionVisibleLoaders<TLoader>(
+export function filterLoadEligibleLoaders<TLoader>(
   root: THREE.Object3D | null,
   loaders: Map<string, TLoader>
 ): Map<string, TLoader> {
-  return new Map([...loaders].filter(([path]) => isPartitionPathVisible(root, path)));
+  return new Map([...loaders].filter(([path]) => isLoaderPathEligible(root, path)));
 }
 
 /**

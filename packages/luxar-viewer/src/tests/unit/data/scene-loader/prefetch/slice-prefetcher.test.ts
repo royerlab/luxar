@@ -97,6 +97,7 @@ describe('SlicePrefetcher', () => {
   };
   let foregroundLoader: { updateView: ReturnType<typeof vi.fn> };
   let prefetcher: SlicePrefetcher;
+  let isPathVisible: ReturnType<typeof vi.fn<(path: string) => boolean>>;
 
   beforeEach(() => {
     factoryCalls.length = 0;
@@ -113,11 +114,13 @@ describe('SlicePrefetcher', () => {
       linesLoaders: new Map(),
       gsplatLoaders: new Map([['/splats', foregroundLoader as unknown as DataLoader]]),
     };
+    isPathVisible = vi.fn(() => true);
     prefetcher = new SlicePrefetcher({
       getSceneGraph: () => graph,
       factoryDeps: () => ({ zarrStore: {} }) as never,
       registry: registry as never,
       applyEffectiveAttrs: (node) => node.attrs,
+      isPathVisible,
     });
   });
 
@@ -155,6 +158,19 @@ describe('SlicePrefetcher', () => {
 
     expect(factoryCalls.map((call) => call.path)).toEqual(['/splats']);
     expect(shadowLoaders.has('/pts')).toBe(false);
+  });
+
+  it('disposes a cached shadow when its path becomes culled', async () => {
+    prefetcher.prefetch(view, 10);
+    await flushAsync();
+    const pointsShadow = shadowLoaders.get('/pts')!;
+
+    isPathVisible.mockImplementation((path) => path !== '/pts');
+    prefetcher.prefetch({ ...view, slicePosition: [0, 0, 0, 8] }, 10);
+    await flushAsync();
+
+    expect(pointsShadow.dispose).toHaveBeenCalledOnce();
+    expect(pointsShadow.updateView).toHaveBeenCalledOnce();
   });
 
   it('chooses the progressive factory when n_additive_sublods > 1', async () => {

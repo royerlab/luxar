@@ -14,8 +14,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import {
-  filterPartitionVisibleLoaders,
-  isPartitionPathVisible,
+  filterLoadEligibleLoaders,
+  isLoaderPathEligible,
   isUnderAny,
   runLoaderUpdates,
 } from '../../../../../data/scene-loader/loaders/run-loader-updates';
@@ -305,9 +305,9 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
     part.add(nestedLod);
     nestedLod.add(leaf);
 
-    expect(isPartitionPathVisible(root, leaf.name)).toBe(true);
+    expect(isLoaderPathEligible(root, leaf.name)).toBe(true);
     part.userData.partitionFrustumVisible = false;
-    expect(isPartitionPathVisible(root, leaf.name)).toBe(false);
+    expect(isLoaderPathEligible(root, leaf.name)).toBe(false);
   });
 
   it('finds a hidden layer marker without treating an undisplayed LOD leaf as hidden', () => {
@@ -319,9 +319,9 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
     root.add(layer);
     layer.add(leaf);
 
-    expect(isPartitionPathVisible(root, leaf.name)).toBe(true);
+    expect(isLoaderPathEligible(root, leaf.name)).toBe(true);
     layer.userData.layerVisible = false;
-    expect(isPartitionPathVisible(root, leaf.name)).toBe(false);
+    expect(isLoaderPathEligible(root, leaf.name)).toBe(false);
   });
 
   it('removes culled partition loaders from progressive refinement maps', () => {
@@ -335,7 +335,7 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
     const visibleLoader = {};
     const culledLoader = {};
 
-    const filtered = filterPartitionVisibleLoaders(
+    const filtered = filterLoadEligibleLoaders(
       root,
       new Map([
         [visible.name, visibleLoader],

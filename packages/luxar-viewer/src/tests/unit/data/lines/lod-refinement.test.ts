@@ -28,7 +28,7 @@ const baseViewState: ViewState = {
 
 defineRefinementLoopContract('runLinesRefinement', 'Lines', 'showing reduced detail', (w) =>
   runLinesRefinement({
-    rootGroup: new THREE.Group(),
+    rootGroup: w.rootGroup ?? new THREE.Group(),
     viewStateQueue: w.viewStateQueue,
     linesLoaders: w.loaders as LinesRefinementCtx['linesLoaders'],
     deriveNodeViewState: w.deriveNodeViewState as LinesRefinementCtx['deriveNodeViewState'],

@@ -27,6 +27,7 @@ function makeLoader(
   return {
     hasFailures: () => hasFailures,
     hasAutoRetryableFailures: () => hasAutoRetryableFailures,
+    resetRefinementFailures: vi.fn().mockReturnValue(false),
     retryAllFailedLoaders: vi.fn().mockResolvedValue(result),
   };
 }
@@ -90,6 +91,19 @@ describe('installOnlineRetry', () => {
     expect(toast).not.toHaveBeenCalled();
   });
 
+  it('re-opens exhausted LOD refinement when connectivity returns', async () => {
+    const loader = makeLoader(false);
+    vi.mocked(loader.resetRefinementFailures).mockReturnValue(true);
+    installOnlineRetry({ events, getLoader: () => loader, toast });
+
+    window.dispatchEvent(new Event('online'));
+    await Promise.resolve();
+
+    expect(loader.resetRefinementFailures).toHaveBeenCalledTimes(1);
+    expect(loader.retryAllFailedLoaders).not.toHaveBeenCalled();
+    expect(toast).not.toHaveBeenCalled();
+  });
+
   it('retries only the auto-retryable subset when failures are transient', async () => {
     const loader = makeLoader(true);
     installOnlineRetry({ events, getLoader: () => loader, toast });
@@ -112,6 +126,7 @@ describe('installOnlineRetry', () => {
     const loader: RetryCapableLoader & { retryAllFailedLoaders: ReturnType<typeof vi.fn> } = {
       hasFailures: () => true,
       hasAutoRetryableFailures: () => true,
+      resetRefinementFailures: () => false,
       retryAllFailedLoaders: vi.fn().mockImplementation(
         () =>
           new Promise((res) => {
@@ -146,6 +161,7 @@ describe('installOnlineRetry', () => {
       const loader: RetryCapableLoader = {
         hasFailures: () => true,
         hasAutoRetryableFailures: () => true,
+        resetRefinementFailures: () => false,
         retryAllFailedLoaders: vi.fn().mockImplementation(async () => {
           call += 1;
           if (call <= 2) return { succeeded: [], failed: ['/a', '/b'], deferred: true };
@@ -176,6 +192,7 @@ describe('installOnlineRetry', () => {
       const loader: RetryCapableLoader = {
         hasFailures: () => true,
         hasAutoRetryableFailures: () => true,
+        resetRefinementFailures: () => false,
         retryAllFailedLoaders: vi
           .fn()
           .mockResolvedValue({ succeeded: [], failed: ['/a'], deferred: true }),
@@ -206,6 +223,7 @@ describe('installOnlineRetry', () => {
       const loader: RetryCapableLoader = {
         hasFailures: () => true,
         hasAutoRetryableFailures: () => true,
+        resetRefinementFailures: () => false,
         retryAllFailedLoaders: vi
           .fn()
           .mockResolvedValue({ succeeded: [], failed: ['/a'], deferred: true }),

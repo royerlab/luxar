@@ -13,6 +13,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+import * as THREE from 'three';
 import { ViewStateQueue } from '../../../../data/scene-loader/view-state/view-state-queue';
 import { RefinementResidencyBudget } from '../../../../data/scene-loader/progressive/residency-budget';
 import type { ViewState } from '../../../../data/data-loader-types';
@@ -32,6 +33,8 @@ const baseViewState: ViewState = {
  * `deriveNodeViewState`'s return, and the `processSpy` return (which differ per
  * geometry). */
 export interface RefinementRunWiring {
+  /** Scene objects keyed by loader path; defaults to an empty root in adapters. */
+  rootGroup?: THREE.Group;
   /** Loader map keyed by node path. Adapter casts to its loader type. */
   loaders: Map<string, unknown>;
   viewStateQueue: ViewStateQueue;
@@ -137,6 +140,88 @@ export function defineRefinementLoopContract(
       expect(loader.updateView).not.toHaveBeenCalled();
       expect(processSpy).not.toHaveBeenCalled();
       expect(releaseLock).toHaveBeenCalledTimes(1);
+    });
+
+    it('stops offering a loader that becomes culled during refinement', async () => {
+      const rootGroup = new THREE.Group();
+      const leaf = new THREE.Group();
+      leaf.name = '/p';
+      rootGroup.add(leaf);
+      let calls = 0;
+      let hasMore = true;
+      const loader = {
+        get hasMoreLODs() {
+          return hasMore;
+        },
+        updateView: vi.fn().mockImplementation(async () => {
+          calls += 1;
+          if (calls === 1) leaf.userData.partitionFrustumVisible = false;
+          else hasMore = false;
+          return null;
+        }),
+      };
+
+      await run({
+        rootGroup,
+        loaders: new Map([[leaf.name, loader]]),
+        viewStateQueue: new ViewStateQueue(),
+        deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
+        updateVisibleCountsInMonitor: vi.fn(),
+        releaseLock: vi.fn(),
+        retriggerUpdate: vi.fn(),
+        processSpy: vi.fn(),
+      });
+
+      expect(loader.updateView).toHaveBeenCalledTimes(1);
+    });
+
+    it('resolves each scene object once instead of traversing the tree per gate check', async () => {
+      const rootGroup = new THREE.Group();
+      const leaf = new THREE.Group();
+      leaf.name = '/p';
+      rootGroup.add(leaf);
+      const lookup = vi.spyOn(rootGroup, 'getObjectByName');
+      const loader = makeStagedLoader([
+        { hasMoreLODs: true },
+        { hasMoreLODs: true },
+        { hasMoreLODs: false },
+      ]);
+
+      await run({
+        rootGroup,
+        loaders: new Map([[leaf.name, loader]]),
+        viewStateQueue: new ViewStateQueue(),
+        deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
+        updateVisibleCountsInMonitor: vi.fn(),
+        releaseLock: vi.fn(),
+        retriggerUpdate: vi.fn(),
+        processSpy: vi.fn(),
+      });
+
+      expect(loader.updateView).toHaveBeenCalledTimes(2);
+      expect(lookup).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps an exhausted failure backoff for the lifetime of the loader', async () => {
+      const loader = {
+        hasMoreLODs: true,
+        updateView: vi.fn().mockRejectedValue(new Error('persistent failure')),
+      };
+      const runOnce = () =>
+        run({
+          loaders: new Map([['/p', loader]]),
+          viewStateQueue: new ViewStateQueue(),
+          deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
+          updateVisibleCountsInMonitor: vi.fn(),
+          releaseLock: vi.fn(),
+          retriggerUpdate: vi.fn(),
+          processSpy: vi.fn(),
+        });
+
+      await runOnce();
+      await runOnce();
+
+      expect(loader.updateView).toHaveBeenCalledTimes(3);
     });
 
     it('passes the loader headroom share and records measured pass growth', async () => {

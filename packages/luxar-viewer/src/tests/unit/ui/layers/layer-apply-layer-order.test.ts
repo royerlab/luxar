@@ -70,6 +70,7 @@ function nestedLayerHarness(groupOrder?: number, leafOrder?: number) {
     getSceneGraph: () => graph,
     state,
     requestRender: () => {},
+    requestReprocess: () => {},
   });
   return { engine, state, mesh };
 }

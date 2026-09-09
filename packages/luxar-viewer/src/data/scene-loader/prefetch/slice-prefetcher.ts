@@ -73,7 +73,8 @@ export interface SlicePrefetcherCtx {
   registry: Pick<LoaderRegistry, 'loaders' | 'linesLoaders' | 'gsplatLoaders'>;
   /** Compose a node's effective rendering attrs up the scene-graph ancestry. */
   applyEffectiveAttrs(node: SceneNode): SceneNode['attrs'];
-  isPathVisible?(path: string): boolean;
+  /** Live foreground/background load-eligibility predicate. */
+  isPathVisible(path: string): boolean;
 }
 
 /**
@@ -229,11 +230,13 @@ export class SlicePrefetcher {
     request: { viewState: ViewState; budgetMs: number; signal: AbortSignal }
   ): void {
     for (const path of loaders.keys()) {
-      if (this.ctx.isPathVisible?.(path) !== false) {
-        tasks.push(
-          this.prefetchNode(path, kind, request.viewState, request.budgetMs, request.signal)
-        );
+      if (!this.ctx.isPathVisible(path)) {
+        this.dropShadow(path);
+        continue;
       }
+      tasks.push(
+        this.prefetchNode(path, kind, request.viewState, request.budgetMs, request.signal)
+      );
     }
   }
 
@@ -288,7 +291,11 @@ export class SlicePrefetcher {
 
     return this.getShadow(path, kind, node)
       .then((shadow) => {
-        if (signal.aborted || this.disposed || this.ctx.isPathVisible?.(path) === false) return;
+        if (signal.aborted || this.disposed) return;
+        if (!this.ctx.isPathVisible(path)) {
+          this.dropShadow(path);
+          return;
+        }
         // Structurally identical view-state shapes across the three
         // geometry loader interfaces (same cast the handlers perform).
         return (shadow as DataLoader).updateView(shadowViewState, undefined, signal);
@@ -324,5 +331,16 @@ export class SlicePrefetcher {
       if (this.shadows.get(path) === promise) this.shadows.delete(path);
     });
     return promise;
+  }
+
+  /** Forget and dispose one shadow whose path is no longer load-eligible. */
+  private dropShadow(path: string): void {
+    const pending = this.shadows.get(path);
+    if (!pending) return;
+    this.shadows.delete(path);
+    pending.then(
+      (loader) => loader.dispose(),
+      () => undefined
+    );
   }
 }

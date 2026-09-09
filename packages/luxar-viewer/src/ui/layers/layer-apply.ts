@@ -73,13 +73,15 @@ function isIdentityGain(intensity: number | undefined, offset: number | undefine
  * Dependencies injected by the owning {@link LayersPanel}. `getRootGroup` /
  * `getSceneGraph` are accessors because both fields are replaced on every
  * `initFromScene`; `state` is the panel's (stable) layer-state manager and
- * `requestRender` wakes the on-demand render loop after a material write.
+ * `requestRender` wakes the on-demand render loop after a material write, and
+ * `requestReprocess` refreshes a layer that became load-eligible again.
  */
 export interface LayerApplyEngineDeps {
   getRootGroup: () => THREE.Group | null;
   getSceneGraph: () => SceneNode | null;
   state: LayerStateManager;
   requestRender: () => void;
+  requestReprocess: (paths: readonly string[]) => void;
   /**
    * Marks the cached GPU pick buffer dirty so it re-renders after a panel edit
    * changed a mesh's pick coverage (opacity/cutoff/blending/physical knobs).
@@ -629,9 +631,11 @@ export class LayerApplyEngine {
   applyVisibility(path: string, visible: boolean): void {
     const obj = this.getMesh(path);
     if (obj) {
+      const wasLayerVisible = obj.userData.layerVisible !== false;
       obj.userData.layerVisible = visible;
       obj.visible = visible;
       this.deps.requestRender();
+      if (visible && !wasLayerVisible) this.deps.requestReprocess([path]);
     }
   }
 

@@ -43,7 +43,7 @@ import {
   recordRefinementResidency,
   type RefinableLoader,
 } from '../scene-loader/progressive/refinement-wrapper';
-import { isPartitionPathVisible } from '../scene-loader/loaders/run-loader-updates';
+import { isObjectLoadEligible } from '../scene-loader/loaders/run-loader-updates';
 
 /** Geometry name in this wrapper's log lines and toasts. */
 const LABEL = 'GSplats';
@@ -113,7 +113,10 @@ export interface GSplatsRefinementCtx {
  * derive / process / commit closures.
  */
 export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<void> {
-  const isPathVisible = (path: string): boolean => isPartitionPathVisible(ctx.rootGroup, path);
+  const objects = new Map(
+    [...ctx.gsplatLoaders.keys()].map((path) => [path, ctx.rootGroup?.getObjectByName(path)])
+  );
+  const isPathVisible = (path: string): boolean => isObjectLoadEligible(objects.get(path));
   await runProgressiveRefinement({
     loaders: ctx.gsplatLoaders,
     viewStateQueue: ctx.viewStateQueue,
@@ -131,7 +134,7 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
       );
       if (!admission.admitted) return false;
       try {
-        const mesh = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
+        const mesh = objects.get(path) as THREE.Mesh | undefined;
         const nodeAttrs = mesh?.userData?.attrs as GSplatsMetadata | undefined;
         const refined = ctx.deriveNodeViewState(path, nodeAttrs, {
           applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.gsplats,

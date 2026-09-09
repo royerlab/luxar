@@ -8,6 +8,8 @@ import { log, Modules } from '../../../utils/log';
  */
 export interface RetryCapableLoader {
   hasFailures(): boolean;
+  /** Re-open progressive LOD ladders retired by the consecutive-failure cap. */
+  resetRefinementFailures(): boolean;
   /**
    * Whether any failure is worth an automatic retry — a transient loader cause
    * still under the attempt cap, or a deferred LOD branch latched on an archive
@@ -89,6 +91,7 @@ export function installOnlineRetry(ports: OnlineRetryPorts): void {
     if (!loader?.hasAutoRetryableFailures()) {
       // Recovered elsewhere (manual retry, dataset switch), or everything left
       // is deterministic / past the cap — either way, done.
+      loader?.resetRefinementFailures();
       retryInFlight = false;
       return;
     }
@@ -115,6 +118,7 @@ export function installOnlineRetry(ports: OnlineRetryPorts): void {
           return;
         }
 
+        loader.resetRefinementFailures();
         retryInFlight = false;
         if (failed.length === 0) {
           ports.toast(
@@ -146,7 +150,12 @@ export function installOnlineRetry(ports: OnlineRetryPorts): void {
     // Deliberately NOT `hasFailures()`: a scene whose only failures are
     // deterministic gets no retry and no "Connection restored" toast, since
     // reconnecting cannot help it.
-    if (!loader?.hasAutoRetryableFailures()) return;
+    if (!loader?.hasAutoRetryableFailures()) {
+      if (loader?.resetRefinementFailures()) {
+        log.info(Modules.LUXAR, 'Connection restored - retrying LOD refinement');
+      }
+      return;
+    }
 
     retryInFlight = true;
     log.info(Modules.LUXAR, 'Connection restored - retrying failed loaders');

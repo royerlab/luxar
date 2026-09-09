@@ -525,7 +525,7 @@ hidden and stamped `userData.partitionFrustumVisible = false` — on
 EVERY object the part emitted, since one part node may produce several,
 and a part counts as re-entering when any of them was culled; the
 scene loader's sweep, refinement, and predictive slice prefetch
-(`isPartitionPathVisible`) skip its
+(`isLoaderPathEligible`) skip its
 loaders, dropping their predictive-prefetch baseline. Because a culled
 part misses slice updates, its RE-ENTRY requests a resync of exactly
 that part's loaders — `deps.requestReprocess(partPaths)` with the
@@ -540,6 +540,14 @@ levels never join the sweep and are never re-stamped by it, so a bump on
 an unchanged view read every resident fine level scene-wide as stale and
 dropped ALL groups to coarse on camera motion (the #2366 regression on
 the 44-part h2afva scene).
+
+The Layers panel separately stamps `userData.layerVisible` on the
+toggled node. The same load-eligibility check walks that node's ancestor
+chain, so hidden layers stop foreground sweeps and background work; the
+false→true edge requests a targeted reprocess because hidden loaders may
+have missed slice changes. This cannot use `object.visible`: the LOD
+registry also clears that Three.js flag on resident levels that are not
+currently selected, and those levels must remain eligible to refine.
 
 **Wiring:** the SceneLoader instantiates one registry per scene and
 hooks `evaluatePerFrame()` into `AnimationController` alongside the

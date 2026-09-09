@@ -30,7 +30,7 @@ import {
   recordRefinementResidency,
   type RefinableLoader,
 } from '../scene-loader/progressive/refinement-wrapper';
-import { isPartitionPathVisible } from '../scene-loader/loaders/run-loader-updates';
+import { isObjectLoadEligible } from '../scene-loader/loaders/run-loader-updates';
 
 /** Geometry name in this wrapper's log lines and toasts. */
 const LABEL = 'Points';
@@ -78,7 +78,10 @@ export interface PointsRefinementCtx {
 }
 
 export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<void> {
-  const isPathVisible = (path: string): boolean => isPartitionPathVisible(ctx.rootGroup, path);
+  const objects = new Map(
+    [...ctx.pointsLoaders.keys()].map((path) => [path, ctx.rootGroup?.getObjectByName(path)])
+  );
+  const isPathVisible = (path: string): boolean => isObjectLoadEligible(objects.get(path));
   await runProgressiveRefinement({
     loaders: ctx.pointsLoaders,
     viewStateQueue: ctx.viewStateQueue,
@@ -96,7 +99,7 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
       );
       if (!admission.admitted) return false;
       try {
-        const mesh = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
+        const mesh = objects.get(path) as THREE.Mesh | undefined;
         const nodeAttrs = mesh?.userData?.attrs as PointsMetadata | undefined;
         const refined = ctx.deriveNodeViewState(path, nodeAttrs, {
           applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.points,

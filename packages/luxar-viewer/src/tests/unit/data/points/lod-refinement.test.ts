@@ -28,7 +28,7 @@ const baseViewState: ViewState = {
 
 defineRefinementLoopContract('runPointsRefinement', 'Points', 'showing reduced detail', (w) =>
   runPointsRefinement({
-    rootGroup: new THREE.Group(),
+    rootGroup: w.rootGroup ?? new THREE.Group(),
     viewStateQueue: w.viewStateQueue,
     pointsLoaders: w.loaders as PointsRefinementCtx['pointsLoaders'],
     deriveNodeViewState: w.deriveNodeViewState as PointsRefinementCtx['deriveNodeViewState'],
@@ -42,62 +42,6 @@ defineRefinementLoopContract('runPointsRefinement', 'Points', 'showing reduced d
 );
 
 describe('runPointsRefinement — Points-specific behaviour', () => {
-  it('stops offering a loader that becomes culled during refinement', async () => {
-    const rootGroup = new THREE.Group();
-    const leaf = new THREE.Group();
-    leaf.name = '/p';
-    rootGroup.add(leaf);
-    let calls = 0;
-    let hasMore = true;
-    const loader: PointsDataLoader = {
-      get hasMoreLODs() {
-        return hasMore;
-      },
-      updateView: vi.fn().mockImplementation(async () => {
-        calls += 1;
-        if (calls === 1) leaf.userData.partitionFrustumVisible = false;
-        else hasMore = false;
-        return null;
-      }),
-    } as unknown as PointsDataLoader;
-
-    await runPointsRefinement({
-      rootGroup,
-      viewStateQueue: new ViewStateQueue(),
-      pointsLoaders: new Map([[leaf.name, loader]]),
-      deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
-      updatePointsGeometry: vi.fn(),
-      updateVisibleCountsInMonitor: vi.fn(),
-      releaseLock: vi.fn(),
-      retriggerUpdate: vi.fn(),
-    });
-
-    expect(loader.updateView).toHaveBeenCalledTimes(1);
-  });
-
-  it('keeps an exhausted failure backoff for the lifetime of the loader', async () => {
-    const loader: PointsDataLoader = {
-      hasMoreLODs: true,
-      updateView: vi.fn().mockRejectedValue(new Error('persistent failure')),
-    } as unknown as PointsDataLoader;
-    const run = () =>
-      runPointsRefinement({
-        rootGroup: new THREE.Group(),
-        viewStateQueue: new ViewStateQueue(),
-        pointsLoaders: new Map([['/p', loader]]),
-        deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
-        updatePointsGeometry: vi.fn(),
-        updateVisibleCountsInMonitor: vi.fn(),
-        releaseLock: vi.fn(),
-        retriggerUpdate: vi.fn(),
-      });
-
-    await run();
-    await run();
-
-    expect(loader.updateView).toHaveBeenCalledTimes(3);
-  });
-
   it('skips loaders that do not expose hasMoreLODs (non-progressive loaders)', async () => {
     // Single-shot PointsSpatialIndexLoader doesn't have `hasMoreLODs`;
     // the refinement loop must skip it via the `progressiveLoader.hasMoreLODs !== true`
