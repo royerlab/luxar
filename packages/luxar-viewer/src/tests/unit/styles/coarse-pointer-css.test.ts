@@ -193,7 +193,11 @@ describe('coarse-pointer.css contract', () => {
     );
     expect(ruleBody(coarse, '.luxar-panel-close')).toMatch(/height:\s*var\(--luxar-hit-min/);
     // 36 px secondary targets; 24 px slider thumbs; 28 px range-slider thumbs.
-    expect(coarse).toMatch(/\.luxar-dimension-slider__step\s*\{[^}]*min-height:\s*36px/);
+    const secondaryTargets = ruleBody(
+      coarse,
+      '.luxar-layer-row__eye,\n  .luxar-dimension-slider__play-btn,\n  .luxar-dimension-slider__step,\n  .luxar-dimension-slider__context-item'
+    );
+    expect(secondaryTargets).toMatch(/min-height:\s*36px/);
     expect(coarse).toMatch(/\.luxar-gui__slider::-webkit-slider-thumb[^{]*\{[^}]*height:\s*24px/);
     expect(coarse).toMatch(
       /\.luxar-range-slider__input::-webkit-slider-thumb\s*\{[^}]*height:\s*28px/
@@ -212,8 +216,14 @@ describe('coarse-pointer.css contract', () => {
     expect(coarse).toMatch(
       /\.luxar-layers-panel__slider::-moz-range-track[^{]*\{[^}]*height:\s*3px/
     );
+    expect(coarse).toMatch(
+      /\.luxar-dimension-slider__context-item[^{]*\{[^}]*touch-action:\s*manipulation/
+    );
     // 16 px inputs: the iOS focus-zoom threshold.
     expect(coarse).toMatch(/\.luxar-help-overlay input[^{]*\{[^}]*font-size:\s*16px/);
+    expect(coarse).toMatch(
+      /\.luxar-dimension-slider__context-menu input,[\s\S]*?\.luxar-dimension-slider__context-menu select[^{]*\{[^}]*font-size:\s*16px/
+    );
     // The first-run hint stays beside the rail instead of across the canvas.
     expect(ruleBody(coarse, '.luxar-control-rail-hint')).toMatch(/max-width:\s*calc\(/);
   });

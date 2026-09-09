@@ -181,6 +181,7 @@
   .luxar-gui__button,
   .luxar-dimension-slider__play-btn,
   .luxar-dimension-slider__step,
+  .luxar-dimension-slider__context-item,
   .luxar-layer-row,
   .luxar-data-monitor__tab {
     touch-action: manipulation;
@@ -212,7 +213,8 @@
   }
   .luxar-layer-row__eye,
   .luxar-dimension-slider__play-btn,
-  .luxar-dimension-slider__step {
+  .luxar-dimension-slider__step,
+  .luxar-dimension-slider__context-item {
     min-width: 36px;
     min-height: 36px;
   }
@@ -311,6 +313,8 @@
   .luxar-layers-panel select,
   .luxar-dimension-sliders input:not([type='range']),
   .luxar-dimension-sliders select,
+  .luxar-dimension-slider__context-menu input,
+  .luxar-dimension-slider__context-menu select,
   .luxar-help-overlay input,
   .luxar-dataset-browser input,
   .luxar-recording-panel input,
