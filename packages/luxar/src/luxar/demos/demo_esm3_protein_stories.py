@@ -230,10 +230,13 @@ STORIES: tuple[Story, ...] = (
             # D1 turns over fastest of all thylakoid proteins; half-life ~2 h in
             # growth light, faster in high light (Aro et al. 1993; Photosynth.
             # Res. reviews).
+            # Half-life ~90 min at a moderate 125 umol/m2/s; 30-60 min under
+            # intense illumination (pulse-chase measurements). D1 is the
+            # fastest-turning-over subunit of photosystem II in the light.
             "Splitting water has a price: D1 is damaged by its own chemistry "
-            "and is the fastest-replaced protein in the photosynthetic "
-            "membrane — a half-life of about two hours in ordinary light, "
-            "shorter in full sun. A leaf rebuilds this protein all day long.",
+            "and is replaced faster than any other protein of photosystem II "
+            "— a half-life of about ninety minutes in ordinary light, half "
+            "that in full sun. A leaf rebuilds this protein all day long.",
             # Purple-bacteria reaction centre L/M chains are homologous to
             # D1/D2 (Deisenhofer, Huber & Michel; Nobel 1988).
             "Its neighbours in this map are the L and M chains of "
@@ -255,8 +258,8 @@ STORIES: tuple[Story, ...] = (
             "subunit sits at the heart of the only enzyme known that splits "
             "water. Cyanobacteria running this machine filled Earth's air with "
             "oxygen, two and a half billion years ago. The chemistry is so "
-            "violent that D1 wrecks itself every couple of hours; a leaf "
-            "rebuilds it all day long. Molecular clocks say water-splitting is "
+            "violent that D1 wrecks itself within the hour in bright sun; a "
+            "leaf rebuilds it all day long. Molecular clocks say water-splitting is "
             "far older than the rise of oxygen. So why did the planet wait so "
             "long to change?"
         ),
@@ -334,9 +337,10 @@ STORIES: tuple[Story, ...] = (
             # 187:2561 (2018): 17.4 million. No single figure is settled.
             "The 1918 pandemic, an H1N1 virus, killed tens of millions of "
             "people — estimates run from 17 to 100 million.",
-            "The coronavirus spike grips the human ACE2 receptor to open a "
+            "The SARS-CoV-2 spike grips the human ACE2 receptor to open a "
             "cell; its receptor-binding domain is what most COVID-19 vaccines "
-            "teach the immune system to recognise.",
+            "teach the immune system to recognise. Its cousins pick other "
+            "locks — MERS uses DPP4, not ACE2.",
             "Here they gather into one continent although they share no "
             "common ancestor. The language model groups them by how they are "
             "built and what they do — a hint of convergent design, visible "

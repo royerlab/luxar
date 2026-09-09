@@ -658,6 +658,10 @@ STORIES: tuple[UniverseStory, ...] = (
         facts=_swap_fact(
             "Hsp70",
             2,
+            # Hsp70's "about 47% identical" (fact 1) is measured, not quoted:
+            # a global alignment of E. coli DnaK (P0A6Y8) against human HSPA1A
+            # (P0DMV8) gives 47.9% identity over 629 aligned columns, and 45.9%
+            # against Hsc70 (P11142).
             # Audit: 3,799 HSP70 clusters in 73 knots (19 of 20+ members);
             # the big ones mix bacterial phyla (Pseudomonadota, Bacillota,
             # Actinomycetota, Bacteroidota...), and plants and vertebrates share
@@ -742,6 +746,10 @@ STORIES: tuple[UniverseStory, ...] = (
         facts=_swap_fact(
             "RuBisCO",
             3,
+            # RuBisCO's "one CO2 every thirty seconds" (fact 1) is Bar-On &
+            # Milo, PNAS 116:4738 (2019): the effective time-averaged rate on
+            # land is ~0.03/s, one per 33 s, about 1% of the ~3/s kcat. Their
+            # 0.7 Gt global mass is the same paper.
             # Audit: knot of 117 — Streptophyta 58 (50%), Pseudomonadota 27,
             # Bacillota 10; 83 named for the large chain and seven "2,3-diketo-
             # 5-methylthiopentyl-1-phosphate enolase": the RuBisCO-like protein
@@ -766,20 +774,23 @@ STORIES: tuple[UniverseStory, ...] = (
             # Audit: knot of 171, 169 of them Uroviricota (tailed phages); 669
             # of the 1,560 RecA clusters in the map are viral. Phage-encoded
             # RecA homologs (T4's UvsX among them) are well known. RAD51 is
-            # its own Pfam family (PF08423, 535 clusters: archaea, fungi,
-            # vertebrates, plants).
+            # its own Pfam family (PF08423, 535 clusters: archaea 222, fungi
+            # 69, vertebrates 48, plants 47) in 21 components, the largest of
+            # them archaeal RadA and centred one unit from this knot.
             "The densest RecA knot in this map belongs to viruses: many tailed "
             "phages carry a RecA of their own, to repair and reshuffle their "
-            "genomes inside the host. Our RAD51 forms a knot of its own "
-            "elsewhere; the shape has barely moved in billions of years.",
+            "genomes inside the host. Our RAD51 and its archaeal cousin RadA "
+            "make knots of their own a short way off; the shape has barely "
+            "moved in billions of years.",
         ),
         narration=(
             "RecA and Rad51, the machine that mends broken DNA. It coats a "
             "broken strand and searches the entire genome for the matching "
             "sequence. Our version, RAD51, is loaded by BRCA2, the protein "
             "whose mutations cause much of hereditary breast cancer. This knot "
-            "belongs to phages, which carry a RecA of their own; the shape has "
-            "barely moved in billions of years. It finds one match among "
+            "belongs to phages, which carry a RecA of their own, and our RAD51 "
+            "sits in a knot just beside it; the shape has barely moved in "
+            "billions of years. It finds one match among "
             "millions of base pairs in minutes. How it searches that fast is "
             "still argued over."
         ),
@@ -843,8 +854,8 @@ STORIES: tuple[UniverseStory, ...] = (
             "nutrients in and toxins out. Humans have forty-eight; a broken one "
             "causes cystic fibrosis, another pumps chemotherapy out of tumours. "
             "The streak is a habit of the layout algorithm, but an honest one: "
-            "it marks the most repeated design in the protein world. How the "
-            "engine actually moves its cargo is still argued over."
+            "no design is repeated more often on this map. How the engine "
+            "actually moves its cargo is still argued over."
         ),
     ),
     UniverseStory(
