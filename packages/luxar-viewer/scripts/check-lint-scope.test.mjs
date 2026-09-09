@@ -170,8 +170,10 @@ function sourceDiagnostics(configName, relativePath, sourceText) {
       ? ts.createSourceFile(file, sourceText, languageVersion, true)
       : originalGetSourceFile(file, languageVersion, onError, shouldCreateNewSourceFile);
 
-  const declarationFiles = parsed.fileNames.filter((file) =>
-    DECLARATIONS.some((ext) => file.endsWith(ext))
+  const declarationFiles = parsed.fileNames.filter(
+    (file) =>
+      DECLARATIONS.some((ext) => file.endsWith(ext)) ||
+      /\bdeclare\s+global\b/.test(readFileSync(file, 'utf8'))
   );
   const program = ts.createProgram(
     [...declarationFiles, ...selectedTypeDeclarations(parsed), sourcePath],
@@ -301,19 +303,21 @@ describe('typecheck scope', () => {
     expect(toolingDiagnostics).toEqual([]);
   }, 30_000);
 
-  it('includes project declaration files when probing browser globals', () => {
-    const declarationPath = join(PKG, 'src/types/node-global-probe.test-only.d.ts');
-    writeFileSync(
-      declarationPath,
-      'declare global { var browserScopeProbe: string; }\nexport {};\n'
-    );
+  it('includes project global declarations when probing browser globals', () => {
+    for (const extension of ['d.ts', 'ts']) {
+      const declarationPath = join(PKG, `src/types/node-global-probe.test-only.${extension}`);
+      writeFileSync(
+        declarationPath,
+        'declare global { var browserScopeProbe: string; }\nexport {};\n'
+      );
 
-    try {
-      expect(
-        sourceDiagnostics('tsconfig.json', 'src/browser-scope-probe.ts', 'browserScopeProbe;\n')
-      ).toEqual([]);
-    } finally {
-      rmSync(declarationPath, { force: true });
+      try {
+        expect(
+          sourceDiagnostics('tsconfig.json', 'src/browser-scope-probe.ts', 'browserScopeProbe;\n')
+        ).toEqual([]);
+      } finally {
+        rmSync(declarationPath, { force: true });
+      }
     }
   });
 });
