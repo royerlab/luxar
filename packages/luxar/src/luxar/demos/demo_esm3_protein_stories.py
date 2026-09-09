@@ -615,7 +615,9 @@ STORIES: tuple[Story, ...] = (
             "One of them, a 25-amino-acid peptide from Conus magus, is now a "
             "drug: ziconotide (Prialt), approved in 2004 for severe chronic "
             "pain. It blocks the calcium channels that carry pain signals in "
-            "the spinal cord — the first medicine ever taken from the sea.",
+            "the spinal cord — the first medicine ever made from a venom of "
+            "the sea. (The first from the sea at all came earlier: "
+            "cytarabine, in 1969, from a Caribbean sponge.)",
             "Swiss-Prot holds over 1,200 conotoxins. This knot is one "
             "superfamily of them; the others are strewn across the whole map, "
             "because venom evolves faster than almost anything else.",
@@ -631,7 +633,7 @@ STORIES: tuple[Story, ...] = (
             "Conotoxins, venom that became medicine. Cone snails hunt with a "
             "harpoon and a cocktail of hundreds of peptides, each a precise key "
             "for one ion channel. One of them is now a drug for severe pain, "
-            "the first medicine ever taken from the sea. This knot is a single "
+            "the first ever made from a venom of the sea. This knot is a single "
             "superfamily; the rest are scattered across the whole map, because "
             "venom evolves faster than almost anything else. Why so fast is "
             "still being worked out."
