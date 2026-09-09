@@ -94,10 +94,13 @@ DEMO_META = {
         "ref": "ESM Atlas, Candido et al. 2026",
         "doi": "10.64898/2026.06.03.729735",
         "url": "https://biohub.ai/esmc/atlas",
-        # The public Atlas release is CC BY-SA 4.0 (AWS Open Data registry); the
-        # 3D coordinates and the per-cluster annotation table are a hand-off
-        # from the ESM Atlas team ahead of publication.
-        "license": "CC BY-SA 4.0; 3D map shown with permission",
+        # What governs OUR data is the permission, not a public licence: the 3D
+        # coordinates and the per-cluster annotation table are a hand-off from
+        # the ESM Atlas team, not the published release. Nor is the release's
+        # licence unambiguous — Biohub's own page says CC-BY-4.0 while the AWS
+        # Open Data registry entry says CC BY-SA 4.0 — so the footer claims
+        # neither and names only the permission we actually have.
+        "license": "3D map shown with permission",
     },
 }
 
