@@ -100,16 +100,25 @@ def test_perspective_and_rotation_conventions() -> None:
     assert front[0] > 0 and front[2] > 0
 
 
-def test_ffmpeg_pipe_command_encodes_vp9_with_alpha_from_raw_rgba() -> None:
+def test_ffmpeg_pipe_command_encodes_a_stacked_alpha_matte_from_raw_rgba() -> None:
+    """Colour over matte in one OPAQUE frame: the encoding every browser decodes.
+
+    A VP9 alpha plane was the first design; Safari / WKWebView decode it and drop
+    the alpha (black squares in the exported kiosk app), so the transparency now
+    travels as a grey matte stacked below the colour and the viewer recombines.
+    """
     cmd = cr.ffmpeg_pipe_command("/usr/bin/ffmpeg", 768, 30, Path("/out.webm"))
     assert cmd[0] == "/usr/bin/ffmpeg"
     assert cmd[cmd.index("-f") + 1] == "rawvideo"
     assert cmd[cmd.index("-s") + 1] == "768x768"
     assert cmd[cmd.index("-r") + 1] == "30"
-    assert cmd[cmd.index("-vf") + 1] == "vflip"  # OpenGL rows are bottom-up
+    vf = cmd[cmd.index("-vf") + 1]
+    assert vf == cr.STACKED_MATTE_FILTER
+    assert vf.startswith("vflip,")  # OpenGL rows are bottom-up
+    assert "alphaextract" in vf and "vstack" in vf  # colour on top, matte below
     assert cmd[cmd.index("-c:v") + 1] == "libvpx-vp9"
-    assert cmd[cmd.index("-pix_fmt", cmd.index("-i")) + 1] == "yuva420p"
-    assert cmd[cmd.index("-auto-alt-ref") + 1] == "0"  # keeps the alpha plane
+    assert cmd[cmd.index("-pix_fmt", cmd.index("-i")) + 1] == "yuv420p"  # opaque
+    assert "yuva420p" not in cmd and "-auto-alt-ref" not in cmd
     assert cmd[-1] == "/out.webm" and "-an" in cmd
 
 
@@ -272,3 +281,88 @@ def test_gpu_frame_has_straight_alpha_coverage_and_ambient_occlusion() -> None:
     assert slot < flat[slot_px][:3].mean() - 10
     # Without AO the slot floor and the face are lit alike (same normal).
     assert abs(float(flat[slot_px][:3].mean()) - float(flat[face_px][:3].mean())) < 6
+
+
+# =============================================================================
+# Environment lighting: cube-map geometry and prefiltering (pure numpy)
+# =============================================================================
+
+
+def test_cube_directions_follow_the_gl_face_convention_and_cover_the_sphere() -> None:
+    dirs, weights = cr.cube_directions(8)
+    assert dirs.shape == (6, 8, 8, 3) and weights.shape == (6, 8, 8)
+    assert np.allclose(np.linalg.norm(dirs, axis=-1), 1.0, atol=1e-6)
+    # The texels' solid angles tile the sphere (midpoint quadrature at 8 px/face
+    # is good to a few tenths of a percent).
+    assert np.isclose(weights.sum(), 4 * np.pi, rtol=1e-2)
+    # Face centres (the mean of the four central texels) point down their axis.
+    centres = dirs[:, 3:5, 3:5].mean(axis=(1, 2))
+    axes = np.array(
+        [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]
+    )
+    assert np.allclose(
+        centres / np.linalg.norm(centres, axis=1, keepdims=True), axes, atol=1e-6
+    )
+    # GL orientation: on +X the first row (t = 0) looks UP (+y) and s runs -z → +z.
+    assert dirs[0, 0, 4, 1] > 0 and dirs[0, 0, 0, 2] > dirs[0, 0, 7, 2]
+    # +Y's rows run along +z; -Y's along -z (the top/bottom faces are mirrored).
+    assert dirs[2, 7, 4, 2] > dirs[2, 0, 4, 2] and dirs[3, 7, 4, 2] < dirs[3, 0, 4, 2]
+
+
+def test_prefilter_cube_is_flat_for_a_flat_sky_and_peaks_toward_a_single_light() -> (
+    None
+):
+    flat = np.full((6, 16, 16, 4), 0.25, dtype=np.float32)
+    flat[..., 3] = 1.0
+    diff = cr.prefilter_cube(flat, 8, exponent=1.0, in_res=16)
+    assert diff.shape == (6, 8, 8, 3)
+    # Normalised to its own peak: a uniform sky is 1 everywhere, alpha ignored.
+    assert np.allclose(diff, 1.0, atol=1e-4)
+
+    sky = np.zeros((6, 16, 16, 3), dtype=np.float32)
+    sky[2, 7:9, 7:9] = (0.2, 1.0, 0.4)  # one small light straight up (+Y)
+    diffuse = cr.prefilter_cube(sky, 8, exponent=1.0, in_res=16)
+    glossy = cr.prefilter_cube(sky, 8, exponent=24.0, in_res=16)
+    dirs, _ = cr.cube_directions(8)
+    up = dirs[..., 1]
+    # Brightest looking up, dark looking down; the cosine lobe reaches the
+    # horizon, the glossy lobe hardly leaves the light's own face. Normalised
+    # so the reference (here the peak) luminance is 1 and clamped per channel,
+    # so a saturated colour's strongest channel tops out at exactly 1.
+    assert diffuse.max() == pytest.approx(1.0, abs=1e-4)
+    assert (diffuse <= 1.0 + 1e-6).all()
+    assert diffuse[3].max() < 1e-3 and glossy[3].max() < 1e-3
+    assert (
+        diffuse[..., 1][up > 0.95].mean()
+        > diffuse[..., 1][(up > 0.2) & (up < 0.4)].mean()
+    )
+    assert (glossy[..., 1] > 0.05).sum() < (diffuse[..., 1] > 0.05).sum()
+    # The light's colour, not grey.
+    peak = np.unravel_index(diffuse[..., 1].argmax(), diffuse.shape[:3])
+    assert diffuse[peak][1] > diffuse[peak][2] > diffuse[peak][0] > 0
+
+    black = cr.prefilter_cube(np.zeros((6, 8, 8, 4), np.float32), 4, exponent=1.0)
+    assert not black.any()
+
+    # A lower reference percentile lets a dark sky with one hot spot contribute
+    # everywhere: the hot spot clamps to 1 and the faint rest is lifted.
+    dim = np.full((6, 16, 16, 3), 0.01, dtype=np.float32)
+    dim[2, 7:9, 7:9] = 5.0
+    by_peak = cr.prefilter_cube(dim, 8, exponent=1.0, in_res=16)
+    by_pct = cr.prefilter_cube(
+        dim, 8, exponent=1.0, in_res=16, reference_percentile=50.0
+    )
+    assert by_pct[3].mean() > 3 * by_peak[3].mean()  # the dark side is no longer black
+    assert by_pct.max() == pytest.approx(1.0, abs=1e-6)  # and the hot spot is clamped
+
+
+def test_prefilter_cube_preserves_detail_for_prime_sized_faces() -> None:
+    sky = np.zeros((6, 127, 127, 3), dtype=np.float32)
+    sky[2, 48:79, 48:79] = 1.0
+
+    filtered = cr.prefilter_cube(sky, 8, exponent=24.0, in_res=64)
+
+    assert filtered[2].max() == pytest.approx(1.0)
+    assert filtered[2].min() < 0.01
+    assert filtered[2].mean() < 0.3
+    assert filtered[3].max() < 1e-3

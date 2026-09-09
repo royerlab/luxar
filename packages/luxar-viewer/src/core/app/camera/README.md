@@ -76,6 +76,23 @@ moving); `target_node` resolves through `resolveTargetNodeCenter` and beats
 `applyViewerConfigState` after `dimensions.current_step` is applied, torn down
 at the start of the next `loadDataset` and on dispose.
 
+A waypoint authored `reveal: "on_arrival"` also gates the story's overlays on
+its flight. `inTransit` is true from the moment such a waypoint is matched
+with a flight until that flight resolves (the driver clears it BEFORE emitting
+`waypoint-arrived`), and `OverlayManager.setTransitGate` reads it: while the
+gate is closed, a dimension-bound overlay that would newly appear is held, one
+that stops matching hides at once, and overlays without a `visible_range` are
+untouched. The app re-runs `updateVisibility()` right after every
+`evaluate('fly')` (the overlay manager listens to the same dims manager and may
+have run first — same task, nothing paints in between), after the install-time
+`evaluate('snap')` (and also when no waypoints are installed), and again on
+arrival, so the panel, caption and turntable fade in together once the camera
+has landed.
+A visitor-cancelled flight arrives (`completed: false`) and reveals; a flight
+a newer match supersedes hands the gate to the new destination; a snap and a
+camera-less waypoint never hold anything. The default (`"immediate"`, or the
+field absent) is the old behaviour.
+
 ## Tests
 
 `src/tests/unit/core/app/camera/waypoint-driver.test.ts`: matcher parity with the

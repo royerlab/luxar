@@ -22,7 +22,6 @@ from luxar.demos.demo_esm3_protein_stories import (
     Story,
     StoryCluster,
     add_story_sounds,
-    hum_frequency_hz,
     overview_panel_html,
     select_story_members,
     story_camera,
@@ -43,6 +42,22 @@ def _story(**overrides: object) -> Story:
     )
     base.update(overrides)
     return Story(**base)  # type: ignore[arg-type]
+
+
+def test_turntable_environment_only_hints_for_a_durable_store(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    monkeypatch.setattr(demo, "load_environment_faces", lambda _path: None)
+    output_path = tmp_path / "esm3_protein_stories.luxar.zarr"
+
+    assert demo._turntable_environment(output_path) is None
+    assert capsys.readouterr().out == ""
+
+    output_path.mkdir()
+    assert demo._turntable_environment(output_path) is None
+    hint = capsys.readouterr().out
+    assert "--no-serve" in hint
+    assert f"luxar env bake {output_path}" in hint
 
 
 def test_select_members_keeps_the_blob_and_drops_stragglers() -> None:
@@ -106,8 +121,6 @@ def test_select_members_fails_loudly_when_nothing_matches() -> None:
 
 
 def test_story_camera_looks_at_the_centre_from_outside_the_cloud() -> None:
-    from luxar.demos.demo_esm3_protein_stories import StoryCluster
-
     cluster = StoryCluster(
         indices=np.arange(3), centre=np.array([4.0, 0.0, 0.0]), r95=0.5, n_named=3
     )
@@ -165,8 +178,6 @@ def test_story_camera_looks_at_the_centre_from_outside_the_cloud() -> None:
 
 
 def test_story_camera_falls_back_when_the_cluster_sits_at_the_centre() -> None:
-    from luxar.demos.demo_esm3_protein_stories import StoryCluster
-
     cluster = StoryCluster(indices=np.arange(1), centre=np.zeros(3), r95=0.1, n_named=1)
     cam = story_camera(cluster, _story(), np.zeros(3))
     assert cam.position is not None and cam.position[2] > 0
@@ -175,7 +186,6 @@ def test_story_camera_falls_back_when_the_cluster_sits_at_the_centre() -> None:
 def test_story_camera_stays_outside_a_sparse_cluster_bubble() -> None:
     from luxar.demos.demo_esm3_protein_stories import (
         BUBBLE_CAMERA_CLEARANCE,
-        StoryCluster,
         bubble_radius,
     )
 
@@ -363,16 +373,6 @@ def test_add_story_sounds_authors_a_bed_and_one_narration_per_slot(
         return clip
 
     monkeypatch.setattr(demo, "synthesise", fake_synthesise)
-    hums: list[float] = []
-
-    def fake_hum(frequency_hz, seconds, cache_dir, **_k):
-        hums.append(frequency_hz)
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        clip = cache_dir / f"hum{len(hums)}.m4a"
-        clip.write_bytes(b"\x00\x00\x00\x18ftypM4A " + b"\x00" * 64)
-        return clip
-
-    monkeypatch.setattr(demo, "synthesise_hum", fake_hum)
     foa_sources: list[Path] = []
 
     def fake_foa(src, cache_dir, *, spread_deg, loop_crossfade_s):
@@ -388,22 +388,6 @@ def test_add_story_sounds_authors_a_bed_and_one_narration_per_slot(
         _story(key="A", frame_fraction=0.72, flight_ms=2000),
         _story(key="B", pattern="^x", flight_ms=4000),
     )
-    clusters = [
-        StoryCluster(
-            indices=np.array([0]),
-            centre=np.zeros(3),
-            r95=0.5,
-            r50=0.1,
-            n_named=1,
-        ),
-        StoryCluster(
-            indices=np.array([1]),
-            centre=np.ones(3),
-            r95=2.0,
-            r50=1.1,
-            n_named=1,
-        ),
-    ]
     store = tmp_path / "s.luxar.zarr"
     with LuxarZarrCompiler(store) as compiler:
         scene = compiler.create_scene(
@@ -426,11 +410,14 @@ def test_add_story_sounds_authors_a_bed_and_one_narration_per_slot(
             stories,
             narration_dir=tmp_path / "narration",
             engine="openai",
-            clusters=clusters,
-            hum_dir=tmp_path / "hums",
             ambisonic_dir=tmp_path / "foa",
         )
-    assert added == 6  # bed + overview + two narrations + two hums
+    # bed + overview + two narrations — and nothing on the `effects` bus: the
+    # per-cluster hums were removed as a distracting drone under the voice.
+    assert added == 4
+    assert not [
+        n for n in open_group(store, mode="r").group_keys() if n.startswith("hum_")
+    ]
     assert foa_sources == [bed]
     # The authored scripts, not the panel: the overview script, then each
     # story's `narration` (or its title + open question when none is authored).
@@ -445,9 +432,8 @@ def test_add_story_sounds_authors_a_bed_and_one_narration_per_slot(
     # The bed became a first-order ambisonic field (the fake encoder "succeeded").
     assert bed_attrs["ambisonic"] == "foa" and bed_attrs["format"] == "aac"
     assert bed_attrs["spatial"] is False
-    # Bed and hums are Layers-panel rows (mute / gain); narrations are not.
+    # The bed is a Layers-panel row (mute / gain); narrations are not.
     assert bed_attrs["layer"] is True
-    assert dict(root["hum_B"].attrs)["layer"] is True
     assert "layer" not in dict(root["narration_B"].attrs)
     narr = dict(root["narration_B"].attrs)
     # Narration starts when the flight lands (waypoint arrival), a beat later.
@@ -456,30 +442,8 @@ def test_add_story_sounds_authors_a_bed_and_one_narration_per_slot(
     assert narr["has_positions"] is True and narr["n_positions"] == 1
     overview = dict(root["narration_Overview"].attrs)
     assert overview["trigger"] == "on_arrive"
-
-    # One hum per cluster, attached to the story's highlight node and tuned from
-    # the same distance as its story camera.
-    assert hums == [hum_frequency_hz(1), hum_frequency_hz(2)]
-    assert hum_frequency_hz(2) > hum_frequency_hz(1)
-    hum_b = dict(root["hum_B"].attrs)
-    assert hum_b["attach_to"] == story_node_name(2, stories[1]) == "Story 2: B"
-    assert hum_b["spatial"] is True and hum_b["bus"] == "effects"
-    assert hum_b["trigger"] == "continuous" and hum_b["loop"] is True
-    camera_b = demo.story_camera_distance(clusters[1], stories[1])
-    assert hum_b["ref_distance"] == pytest.approx(
-        camera_b * demo.HUM_REF_DISTANCE_PER_CAMERA_DISTANCE
-    )
-    assert hum_b["max_distance"] == pytest.approx(
-        camera_b * demo.HUM_MAX_DISTANCE_PER_CAMERA_DISTANCE
-    )
-    assert 20 * np.log10(hum_b["ref_distance"] / camera_b) == pytest.approx(-13.0)
-    assert hum_b["has_positions"] is True and hum_b["n_positions"] == 1
-    hum_a = dict(root["hum_A"].attrs)
-    camera_a = demo.story_camera_distance(clusters[0], stories[0])
-    assert hum_a["ref_distance"] == pytest.approx(
-        camera_a * demo.HUM_REF_DISTANCE_PER_CAMERA_DISTANCE
-    )
-    assert 20 * np.log10(hum_a["ref_distance"] / camera_a) == pytest.approx(-13.0)
+    # The highlight node name the hums used to attach to is still the demo's.
+    assert story_node_name(2, stories[1]) == "Story 2: B"
 
 
 def test_add_story_sounds_stays_silent_without_an_engine_and_survives_no_bed(
@@ -564,3 +528,44 @@ def test_biohub_logo_is_a_bundled_transparent_png() -> None:
         alpha = np.asarray(im)[..., 3]
     assert alpha.min() == 0 and alpha.max() == 255  # transparent margin, opaque glyph
     assert 0 < BIOHUB_LOGO_WIDTH <= 0.2
+
+
+def test_every_story_waypoint_reveals_its_overlays_on_arrival() -> None:
+    """The panel, caption and turntable appear when the camera has landed.
+
+    Every ``Waypoint(...)`` the demo authors carries ``reveal="on_arrival"`` —
+    the gate the viewer keys on the flight's arrival, the same event that starts
+    the narration, so text and voice land together (remote-control spec §4.1).
+    """
+    import ast
+    import inspect
+
+    import luxar.demos.demo_esm3_protein_stories as demo
+
+    tree = ast.parse(inspect.getsource(demo))
+    waypoint_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "Waypoint"
+    ]
+    assert len(waypoint_calls) == 2  # the overview and the per-story loop
+    for call in waypoint_calls:
+        reveal = next((kw.value for kw in call.keywords if kw.arg == "reveal"), None)
+        assert isinstance(reveal, ast.Constant), ast.unparse(call)[:80]
+        assert reveal.value == "on_arrival"
+
+    video_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "add_video"
+    ]
+    assert len(video_calls) == 1
+    alpha_matte = next(
+        (kw.value for kw in video_calls[0].keywords if kw.arg == "alpha_matte"), None
+    )
+    assert isinstance(alpha_matte, ast.Constant), ast.unparse(video_calls[0])[:80]
+    assert alpha_matte.value == "stacked"

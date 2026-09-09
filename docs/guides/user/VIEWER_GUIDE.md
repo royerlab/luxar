@@ -657,7 +657,7 @@ at — which is what keeps a reloaded or shared post-switch link named.
 | UI visibility | `ui.show_help`, `ui.show_rendering_controls`, `ui.show_dimensions`, `ui.show_performance_monitor`, `ui.show_scale_bar`, `ui.show_layers` |
 | Dimensions | `dimensions.current_step`, `dimensions.selected_dimension` |
 | Animation | `animation` (per-dimension: `playing`, `target_fps`, `loop`, `direction`, `step_size`) — a scene with `playing: true` on a dimension starts that dimension animating on load, from wherever `dimensions.current_step` put it |
-| Story waypoints | `waypoints` (list of `Waypoint`: `when`, `camera`, `duration_ms`, `easing`, `rendering`) — camera poses bound to hidden-dimension positions; see below |
+| Story waypoints | `waypoints` (list of `Waypoint`: `when`, `camera`, `duration_ms`, `easing`, `reveal`, `rendering`) — camera poses bound to hidden-dimension positions; see below |
 
 Set `allow_high_dpr=True` if your scene is **line-dominated** — a river network,
 a tractogram, a wiring diagram. Phones and tablets cap this setting at DPR 2;
@@ -730,6 +730,9 @@ waypoint with its own `duration_ms` (default 1500; `0` snaps) and `easing`
 (`"ease-in-out"` or `"linear"`); moves that stay inside the same waypoint's
 ranges do nothing, and leaving every waypoint leaves the camera where it is.
 Any mouse, touch or key input during a flight cancels it where it is. The
+optional `reveal="on_arrival"` holds newly matching dimension-bound overlays
+until that flight resolves; the default `"immediate"` shows them as the
+dimension changes. The
 optional `rendering` block takes the same snake_case keys as `ViewerConfig`
 itself and is applied on arrival through the same validated path.
 
