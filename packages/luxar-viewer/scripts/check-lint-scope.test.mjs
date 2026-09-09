@@ -86,7 +86,7 @@ function lintPass(command) {
   const target = /^\s*eslint\s+("[^"]+"|\S+)/.exec(command)?.[1]?.replaceAll('"', '');
   expect(target, `could not read eslint target from: ${command}`).toBeDefined();
   const ignores = [...command.matchAll(/--ignore-pattern\s+"([^"]+)"/g)].map((match) => match[1]);
-  const ignoreFlags = [...command.matchAll(/(?:^|\s)--ignore-pattern(?=\s|$)/g)];
+  const ignoreFlags = [...command.matchAll(/--ignore-pattern\b/g)];
   if (ignores.length !== ignoreFlags.length) {
     throw new Error(`unsupported --ignore-pattern syntax in: ${command}`);
   }
@@ -267,8 +267,12 @@ describe('lint scope', () => {
   });
 
   it('fails closed on unsupported ignore pattern syntax', () => {
-    for (const pattern of ["'src/**'", 'src/**']) {
-      const command = `eslint . --ignore-pattern ${pattern}`;
+    for (const syntax of [
+      "--ignore-pattern 'src/**'",
+      '--ignore-pattern src/**',
+      '--ignore-pattern="src/**"',
+    ]) {
+      const command = `eslint . ${syntax}`;
       expect(() => lintPass(command)).toThrowError(
         `unsupported --ignore-pattern syntax in: ${command}`
       );
