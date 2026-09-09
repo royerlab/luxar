@@ -25,7 +25,7 @@ Provide **space-filling curve primitives** that enable spatial locality in chunk
 
 1. **Input**: `coords` (N, d) integer array, `bits_per_dim` (bit budget per dimension)
 2. **Kernel selection**:
-   - Try Numba JIT-compiled kernel (`_get_morton_numba_kernel`) on first use (lazy-compile, cached in `_morton_numba_kernel` module global)
+   - Compile the Numba kernel inside `_get_morton_numba_kernel` on first use, then cache it in the `_morton_numba_kernel` module global
    - If Numba is unavailable or compilation fails, set `_morton_numba_kernel = False` (tried and failed)
    - Once loaded, the kernel is reused for all subsequent calls
 3. **Numba path** (if available):
@@ -33,7 +33,7 @@ Provide **space-filling curve primitives** that enable spatial locality in chunk
    - Cast `coords` to contiguous int64 array
    - Call `_morton_numba_kernel(coords, bits_per_dim, out)` — single-threaded bit interleaving
    - Return `out`
-4. **NumPy fallback** (if Numba is unavailable):
+4. **NumPy fallback** (if Numba is unavailable or compilation fails):
    - Vectorized bit interleaving over all points:
      ```python
      morton = np.zeros(n_points, dtype=np.uint64)
@@ -60,13 +60,13 @@ Provide **space-filling curve primitives** that enable spatial locality in chunk
 
 1. **Input**: `coords` (N, d) integer array, `bits_per_dim`
 2. **Kernel selection**:
-   - Try Numba JIT-compiled kernel (`_get_hilbert_numba_kernel`) on first use (lazy-compile, cached in `_hilbert_numba_kernel` module global)
+   - Compile the Numba kernel inside `_get_hilbert_numba_kernel` on first use, then cache it in the `_hilbert_numba_kernel` module global
    - If Numba is unavailable or compilation fails, set `_hilbert_numba_kernel = False`
 3. **Numba path** (if available):
    - Allocate `out = np.empty(N, dtype=np.uint64)`
    - Call `_hilbert_numba_kernel(coords.astype(np.int64), bits_per_dim, out)` — implements Skilling's "Programming the Hilbert curve" algorithm
    - Return `out`
-4. **NumPy fallback** (if Numba is unavailable):
+4. **`hilbertcurve` fallback** (if Numba is unavailable or compilation fails):
    - Import `hilbertcurve` library (pure Python, slow for large N)
    - Create `HilbertCurve(bits_per_dim, n_dims)`
    - Loop over points: `hilbert_indices[i] = hilbert.distance_from_point(coords[i])`
@@ -87,9 +87,9 @@ Both encoders cache the compiled Numba kernels as module globals:
 - `_hilbert_numba_kernel` — same
 
 On first use:
-1. If `kernel is None`, try `_get_*_numba_kernel()` (lazy-compile)
+1. If `kernel is None`, compile the typed kernel inside `_get_*_numba_kernel()`
 2. If compilation succeeds, cache the kernel callable
-3. If compilation fails (ImportError or any exception), set `kernel = False` (never try again)
+3. If Numba is unavailable, silently set `kernel = False`; if compilation otherwise fails, warn once and set `kernel = False`
 4. Subsequent calls reuse the cached kernel (fast) or go straight to the fallback (if `False`)
 
 ## Key Invariants
@@ -98,11 +98,11 @@ On first use:
 
 2. **Numba vs fallback parity**: The JIT kernels and their fallbacks produce byte-identical codes. The Numba kernel is the fast path; the reference fallback is pure NumPy for Morton and the `hilbertcurve` library for Hilbert. Verified by deterministic tests that force the fallback and compare (`test_morton_numba_numpy_parity`, `test_hilbert_numba_numpy_parity` in `io/tests/test_ordering_properties.py`).
 
-3. **Lazy compilation**: Kernels are compiled on first use, not at import time. This avoids blocking at module load and isolates Numba import errors to the first call.
+3. **Deferred compilation**: Typed kernels are compiled inside the guarded loader on first use, not at import time. This avoids blocking at module load and isolates Numba import errors to the first call.
 
 4. **Bit budget**: The `bits_per_dim` parameter controls the grid resolution. Default is 16 bits/dim (grid size `2^16 = 65536`). The total code width is `bits_per_dim * n_dims`. Keeping that within 64 bits for `*_encode_nd` (and 128 bits for `morton_encode_128bit`) is a **caller-side** invariant — the callers (e.g. `compound.py`, `lines.py`) choose `bits_per_dim` so the code fits its container; the encoders enforce no cap themselves, so an over-budget input overflows the uint64 output (the JIT kernels wrap silently; the `hilbertcurve` fallback raises `OverflowError`).
 
-5. **Contiguous input**: The Numba kernels require int64 input. `morton_encode_nd` converts via `np.ascontiguousarray(coords, dtype=np.int64)` (also guaranteeing C-contiguity); `hilbert_encode_nd` converts via `coords.astype(np.int64)` before calling the kernel.
+5. **Contiguous buffers**: The Morton signature requires C-contiguous int64 input and a C-contiguous uint64 output buffer; read-only input is accepted. `morton_encode_nd` converts via `np.ascontiguousarray(coords, dtype=np.int64)` and allocates `out` with `np.empty`. `hilbert_encode_nd` converts via `coords.astype(np.int64)` before calling its typed kernel.
 
 6. **Hilbert convention**: The MSB of dimension 0 comes first in the bit interleave (matches the `hilbertcurve` library convention). This is the opposite order of Morton (which interleaves LSB-first).
 
@@ -142,9 +142,9 @@ LuxarZarrCompiler.write_points(...)
 ## Performance Characteristics
 
 **Numba JIT kernels** (when available):
-- **Compilation overhead**: ~100-500 ms on first use (lazy, one-time)
+- **Compilation overhead**: ~100-500 ms on first use (deferred, one-time)
 - **Encoding speed**: ~1-10 million points/sec (depends on dimensionality and CPU)
-- **Threading**: Both kernels are `@numba.njit(cache=True)` — single-threaded (no `parallel=True` / `prange`); the speedup comes from JIT-compiled native code, not multithreading
+- **Threading**: Morton uses `@numba.njit(signature, cache=True)` and Hilbert uses `@numba.njit("void(int64[:,:], int64, uint64[:])", cache=True)` — both are single-threaded (no `parallel=True` / `prange`); the speedup comes from JIT-compiled native code, not multithreading
 
 **NumPy fallback**:
 - **Morton**: Vectorized over all points, reasonably fast (~500k-2M points/sec)
