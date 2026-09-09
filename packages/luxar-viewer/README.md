@@ -253,7 +253,7 @@ A runnable example with a non-trivial host page lives in
 
 ### Prerequisites
 
-- Node.js 22.22+ (Node.js 22 LTS recommended) and pnpm — the floor for developing in this repo (jsdom 30 test toolchain); consuming the published library package only requires Node.js 20.19+ (`engines.node`)
+- Node.js 22.22+ (Node.js 22 LTS recommended) and pnpm — the floor for developing in this repo (jsdom 30 test toolchain); the published library package supports `^20.19.0 || >=22.12.0` (`engines.node`)
 - Modern web browser with WebGL 2.0 support
 - Zarr dataset (see [Data Format](#data-format) section)
 

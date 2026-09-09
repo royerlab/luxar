@@ -58,9 +58,8 @@ is a documented reason not to.
 
 Production functions are limited to complexity 10, 120 code lines, nesting
 depth 4, and 5 parameters. Existing debt is count-baselined in
-`eslint-suppressions.json`; reducing a count fails lint until
-`pnpm lint --prune-suppressions` updates the baseline. After moving or renaming
-a baselined file, re-key it with
+`eslint-suppressions.json`; reducing a count fails lint until `pnpm lint:prune`
+updates the baseline. After moving or renaming a baselined file, re-key it with
 `pnpm exec eslint . --suppress-rule <rule>`, then prune and
 verify the suppressions diff only moves that path.
 

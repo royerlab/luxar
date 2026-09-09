@@ -81,7 +81,7 @@ endif
 # `^22.22.2 || ^24.15.0 || >=26.0.0`; its undici 8 dependency destructures
 # `markAsUncloneable` from node:worker_threads (added in Node 22.16) and throws
 # on anything older, so the whole unit suite is unrunnable below that. Vite 8.x
-# only needs 20.19+, so jsdom is the binding constraint for development. This
+# supports `^20.19.0 || >=22.12.0`, so jsdom is the binding constraint for development. This
 # make check is deliberately a coarse too-old floor (major.minor only): every
 # version it accepts has the 22.16+ API the suite actually needs (verified:
 # the full unit suite passes on 22.22.0, below jsdom's ^22.22.2); enforcing
@@ -89,9 +89,9 @@ endif
 # (pnpm neither fails nor warns on a dependency's engines by default).
 # Deliberately NOT mirrored into `engines.node` in
 # packages/luxar-viewer/package.json: that manifest ships with the published
-# npm package, where it must state the LIBRARY's runtime floor (>=20.19.0,
-# Vite 8.x) — a dev-only jsdom constraint there would break installs for
-# consumers on supported Nodes (yarn enforces engines strictly).
+# npm package, where it mirrors Vite 8.x's LIBRARY runtime range
+# (^20.19.0 || >=22.12.0) — a dev-only jsdom constraint there would break
+# installs for consumers on supported Nodes (yarn enforces engines strictly).
 MIN_NODE_MAJOR := 22
 MIN_NODE_MINOR := 22
 # Mirrors `engines.pnpm` in packages/luxar-viewer/package.json. 10.6 is the
