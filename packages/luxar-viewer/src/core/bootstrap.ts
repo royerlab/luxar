@@ -149,11 +149,12 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // remainder, but the independent 128 MiB mobile safety cap remains a peer
   // minimum, so the override can only lower it.
   // The persisted Settings budget remains cache-only by design; the regression
-  // guard is tests/unit/core/bootstrap.test.ts:594. The ambient JS heap limit is
-  // folded in because pooled geometry retains CPU-side ArrayBuffers; unlike the
-  // eager loader, the GPU term uses the full non-cache remainder with its own
-  // 2 GB ceiling. A MOBILE device class is folded in (inside `computeAutoBudget`):
-  // on WebKit it is the only memory signal a phone has.
+  // guard is "threads stored cache preferences into loaderConfig when no URL
+  // params are set". The ambient JS heap limit is folded in because pooled
+  // geometry retains CPU-side ArrayBuffers; unlike the eager loader, the GPU
+  // term uses the full non-cache remainder with its own 2 GB ceiling. A MOBILE
+  // device class is folded in (inside `computeAutoBudget`): on WebKit it is the
+  // only memory signal a phone has.
   configureGpuByteBudget(
     urlParams.gpuBudgetMB != null
       ? urlParams.gpuBudgetMB * 1_000_000
