@@ -155,6 +155,23 @@ class TestSpecsAreValidRequirements:
 
 
 class TestHatchEnvironments:
+    def test_default_environment_matches_the_pyarrow_demo_floor(self) -> None:
+        pyproject = _pyproject()
+        if not pyproject.is_file():  # installed wheel — no source tree to check
+            pytest.skip("pyproject.toml not available (installed package)")
+
+        import tomllib
+
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        Requirement = pytest.importorskip("packaging.requirements").Requirement
+        dependencies = data["tool"]["hatch"]["envs"]["default"]["dependencies"]
+        by_name = {
+            Requirement(raw).name.lower(): Requirement(raw) for raw in dependencies
+        }
+
+        advertised = Requirement(INSTALL_SPECS["pyarrow"].spec)
+        assert by_name["pyarrow"].specifier == advertised.specifier
+
     def test_moderngl_stays_out_of_python_matrix_environments(self) -> None:
         """The optional GPU renderer must not block Python matrix setup."""
         pyproject = _pyproject()
@@ -331,6 +348,7 @@ class TestSpecsMatchPyproject:
                 "9.0.0",
                 "10.0",
                 "12.0.0",
+                "13.0.0",
                 # A date-versioned sample below the 2023.1.0 floor shared by
                 # tifffile/imagecodecs: without one in [12.0.0, 2023.1.0) those
                 # rows have a decade-wide blind window where a relaxed pin reads
