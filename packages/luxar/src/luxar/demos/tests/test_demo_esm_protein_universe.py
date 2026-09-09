@@ -148,12 +148,12 @@ def test_spur_check_demands_the_abc_family(monkeypatch: pytest.MonkeyPatch) -> N
     tree = spatial.cKDTree(u.positions)
     story = _story(region="spur", whole=True)
     cluster = select_universe_members(story, u, family_mask(story, u, None), tree)
-    # The synthetic spur is PF00001-dominated, not PF00005: the guard fires.
+    # The synthetic spur is PF00001-dominated, not an ABC family: the guard fires.
     assert demo.spur_pfam_fraction(u, cluster) == 0.0
     with pytest.raises(ValueError, match="only 0%"):
         demo.check_spur_story(u, cluster)
     # ... and passes once the family matches the panel's claim.
-    monkeypatch.setattr(demo, "SPUR_PFAM", "PF00001")
+    monkeypatch.setattr(demo, "SPUR_PFAMS", ("PF00001",))
     assert demo.check_spur_story(u, cluster) == 1.0
 
 

@@ -162,11 +162,16 @@ CULL_RADIUS = 40.0
 #: Beyond this radius from the centre lies the spur (see the ABC story).
 SPUR_RADIUS = 22.0
 #: The spur story is a GEOMETRY predicate (everything beyond ``SPUR_RADIUS``)
-#: whose panel makes a FAMILY claim (ABC-transporter ATP-binding domains), so
-#: the build checks that at least this share of the lit clusters has that
-#: dominant Pfam family; a different Atlas release could move the spur.
-SPUR_PFAM = "PF00005"
-SPUR_PFAM_MIN_FRACTION = 0.9
+#: whose panel makes a FAMILY claim, so the build checks that at least
+#: ``SPUR_PFAM_MIN_FRACTION`` of the lit clusters have an ABC-transporter Pfam
+#: family as their dominant domain; a different Atlas release could move the
+#: spur. Measured on this release: 9,196 clusters beyond r=22, of which 64% are
+#: the ATP-binding cassette itself (PF00005), 20% the ABC-type AAA ATPase
+#: domain (PF13304) and 2% the ABC membrane domain (PF00664) — 86% ABC parts;
+#: the remainder is mostly MFS transporters (PF07690). The dense knot at the
+#: spur's tip is 99% PF00005.
+SPUR_PFAMS = ("PF00005", "PF13304", "PF00664")
+SPUR_PFAM_MIN_FRACTION = 0.8
 
 # The annotation columns the cache folds in (the rest are read per story member
 # at build time).
@@ -694,7 +699,7 @@ STORIES: tuple[UniverseStory, ...] = (
     UniverseStory(
         key="ABC transporters",
         title="The spur — ABC transporters flung off the map",
-        subtitle="Nine thousand clusters of the largest protein family on Earth, in a streak of their own",
+        subtitle="Nine thousand clusters, nearly nine in ten of them parts of ABC transporters, in a streak of their own",
         pattern="",
         region="spur",
         whole=True,
@@ -721,7 +726,8 @@ STORIES: tuple[UniverseStory, ...] = (
             "domains that clamp shut around two ATPs and spring open when they "
             "are spent. That engine — the cassette — is what these clusters "
             "share.",
-            # 9,196 clusters beyond radius 22; 99% of the knot is PF00005.
+            # 9,196 clusters beyond radius 22; 86% carry an ABC-transporter Pfam
+            # family as their dominant domain (see SPUR_PFAMS).
             "The map put them on a spur of their own. A streak like this is a "
             "known habit of the layout algorithm when a huge family of very "
             "similar sequences shares few neighbours with anything else — an "
@@ -1137,17 +1143,17 @@ def universe_story_camera(
 
 
 def spur_pfam_fraction(universe: Universe, cluster: StoryCluster) -> float:
-    """Share of a cluster's members whose dominant Pfam family is the spur's."""
-    return float(universe.pfam_mask((SPUR_PFAM,))[cluster.indices].mean())
+    """Share of a cluster's members whose dominant Pfam family is an ABC part."""
+    return float(universe.pfam_mask(SPUR_PFAMS)[cluster.indices].mean())
 
 
 def check_spur_story(universe: Universe, cluster: StoryCluster) -> float:
-    """Raise unless the spur's members are :data:`SPUR_PFAM`-dominated; return the share."""
+    """Raise unless the spur's members are ABC-transporter-dominated; return the share."""
     share = spur_pfam_fraction(universe, cluster)
     if share < SPUR_PFAM_MIN_FRACTION:
         raise ValueError(
-            f"the spur (r > {SPUR_RADIUS:g}) is only {share:.0%} {SPUR_PFAM}; the "
-            f"panel claims an ABC-transporter family (needs >= "
+            f"the spur (r > {SPUR_RADIUS:g}) is only {share:.0%} ABC-transporter "
+            f"Pfam families {SPUR_PFAMS}; the panel claims that family (needs >= "
             f"{SPUR_PFAM_MIN_FRACTION:.0%}). Re-measure this Atlas release."
         )
     return share
@@ -1524,7 +1530,9 @@ def resolve_stories(
             c = select_universe_members(s, universe, mask, all_tree)
             clusters.append(c)
             if s.region == "spur":
-                aprint(f"{s.key}: {check_spur_story(universe, c):.0%} {SPUR_PFAM}")
+                aprint(
+                    f"{s.key}: {check_spur_story(universe, c):.0%} ABC-transporter Pfams"
+                )
             scope = "whole map" if s.whole else f"within {s.radius:g} of the knot"
             aprint(
                 f"{s.key}: {len(c.indices):,} of {c.n_named:,} matching clusters, "
