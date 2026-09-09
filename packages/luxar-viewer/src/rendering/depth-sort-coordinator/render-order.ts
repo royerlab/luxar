@@ -779,8 +779,8 @@ function orderGroupsWithContainment(byDepth: OrderGroup[]): OrderGroup[] {
   let containsEdges: Array<number[] | undefined> | null = null;
   let anyEdge = false;
   for (let a = 0; a < n; a++) {
+    const outer = a * GROUP_SPHERE_STRIDE;
     for (let b = 0; b < n; b++) {
-      const outer = a * GROUP_SPHERE_STRIDE;
       const inner = b * GROUP_SPHERE_STRIDE;
       if (
         a !== b &&
