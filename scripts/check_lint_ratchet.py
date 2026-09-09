@@ -2,7 +2,8 @@
 """
 Defect-Rule Lint Ratchet
 
-Enforces ruff's ``flake8-bugbear`` (``B``) family plus ``RUF012`` as a
+Enforces ruff's ``flake8-bugbear`` (``B``) and ``flake8-blind-except``
+(``BLE``) families plus ``RUF012`` as a
 baseline-driven *ratchet*: pre-existing violations are tolerated via a
 checked-in baseline (``scripts/lint_baseline.json``), but a NEW violation — or
 an extra one in an already-baselined file — fails the check. Regenerate the
@@ -25,6 +26,7 @@ working-looking code is silently wrong:
 ``B904``     ``raise`` inside ``except`` without ``from``, which drops the cause.
 ``B905``     ``zip()`` without ``strict=``, which silently truncates to the
              shortest input.
+``BLE001``   A broad exception handler can hide unrelated defects.
 ``RUF012``   A mutable class attribute shared by every instance.
 ===========  ====================================================================
 
@@ -34,8 +36,9 @@ The rest of ruff's catalogue that this repository already enforces lives in
 WHY A SCRIPT INSTEAD OF ``[tool.ruff.lint] select``
 ---------------------------------------------------
 The same reason ``C901`` is ratcheted by ``scripts/check_complexity.py``: ruff
-has no baseline mechanism. A bare ``select = ["B", "RUF012"]`` would fail on all
-pre-existing violations (473 at the time of writing, 290 of them ``B905``), so
+has no baseline mechanism. A bare ``select = ["B", "BLE", "RUF012"]`` would fail
+on all pre-existing violations (678 at the time of writing, 289 of them
+``B905``), so
 it could not be turned on at all without a large, unrelated, and — for ``B905``
 specifically — *behaviour-changing* sweep: ``strict=True`` RAISES on mismatched
 lengths, so it is a decision per call site, not a mechanical edit. Ruff's root
@@ -145,7 +148,7 @@ class RatchetReport:
 
 
 def run_ruff(targets: tuple[str, ...] | list[str], project_root: Path) -> str:
-    """Run ``ruff check --select B,RUF012`` over ``targets`` and return stdout.
+    """Run ``ruff check --select B,BLE,RUF012`` and return JSON stdout.
 
     ruff exits 1 when it reports findings, which is the NORMAL case here; only
     other exit codes (or a missing ``ruff`` module) are treated as hard errors.

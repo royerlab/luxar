@@ -97,7 +97,7 @@ make test-perf-e2e   # Opt-in Playwright performance suite
 make check-all    # All quality checks (Python, TypeScript, Rust, Go) — reformats
 make lint-python        # read-only: ruff check
 make check-complexity   # read-only: ruff C901 ratcheted against scripts/complexity_baseline.json
-make check-lint-ratchet # read-only: ruff's DEFECT rules (flake8-bugbear + RUF012)
+make check-lint-ratchet # read-only: ruff's DEFECT rules (bugbear + blind-except + RUF012)
                   # ratcheted against scripts/lint_baseline.json. Existing debt is
                   # tolerated; a file that newly breaks one of these rules — or
                   # gains another violation of one it already breaks — fails.

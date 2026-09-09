@@ -21,7 +21,7 @@ scripts/
 | `check_complexity.py` | Baseline-driven ratchet over ruff's `C901` cyclomatic-complexity rule (fails only on newly over-complex, or newly worse, functions) |
 | `check_layer_order.py` | Assert the `Subpackage layering` order is still the measured minimum and that its dated debt list has not grown |
 | `check_wheel.py` | Inspect a built `.whl`: package completeness against the source tree, `pyproject` excludes honoured, no Git-LFS pointer stubs, nothing over PyPI's per-file limit, viewer dist bundled |
-| `check_lint_ratchet.py` | Baseline-driven ratchet over ruff's defect-bearing rules — flake8-bugbear (`B`) plus `RUF012` (fails only on newly-broken rules) |
+| `check_lint_ratchet.py` | Baseline-driven ratchet over ruff's defect-bearing rules — flake8-bugbear (`B`), flake8-blind-except (`BLE`), and `RUF012` (fails only on newly-broken rules) |
 | `ruff_ratchet.py` | Shared fail-closed Ruff settings, nested-config, and scan-coverage guards used by both baseline ratchets |
 | `check_demo_ladders.py` | Audit built demo scenes for missing or degenerate additive streaming ladders |
 | `check_demo_links.py` | Report whether canonical demo click-through destinations still discriminate known-good and known-bad identifiers without gating on third-party availability |
@@ -238,21 +238,23 @@ tree is regression-free and is what gates every PR in CI.
 
 ### `check_lint_ratchet.py`
 
-Enforces ruff's `flake8-bugbear` (`B`) family plus `RUF012` as a baseline-driven
-ratchet — the same shape as the complexity ratchet above, applied to the
-*defect-bearing* rules rather than the cosmetic ones.
+Enforces ruff's `flake8-bugbear` (`B`) and `flake8-blind-except` (`BLE`) families
+plus `RUF012` as a baseline-driven ratchet — the same shape as the complexity
+ratchet above, applied to the *defect-bearing* rules rather than the cosmetic
+ones.
 
 Each ratcheted rule describes a way working-looking code is silently wrong:
 mutable defaults shared across calls (`B006`, `RUF012`), a closure capturing a
 loop variable by reference (`B023`), `warnings.warn` blaming the wrong line
 (`B028`), positional `maxsplit`/`count` (`B034`, also a `DeprecationWarning`
 from Python 3.13), `raise` inside `except` losing the cause (`B904`), and
-`zip()` silently truncating to its shortest input (`B905`).
+`zip()` silently truncating to its shortest input (`B905`). Broad exception
+handlers (`BLE001`) can hide unrelated defects.
 
 **Purpose:**
-- Run `ruff check --select B,RUF012` over the same paths as `hatch run lint`
+- Run `ruff check --select B,BLE,RUF012` over the same paths as `hatch run lint`
 - Tolerate the pre-existing violations recorded in `scripts/lint_baseline.json`
-  (473 across 235 file/rule keys at the time of writing, 290 of them `B905`)
+  (678 across 353 file/rule keys at the time of writing, 289 of them `B905`)
 - Fail (exit 1) when a file newly breaks a rule, or gains another violation of
   a rule it already breaks
 - Report paid-down debt as advisory (exit 0) so the baseline can be tightened
@@ -271,7 +273,7 @@ from Python 3.13), `raise` inside `except` losing the cause (`B904`), and
 These rules are deliberately not in `[tool.ruff.lint] select` for the same
 reason as `C901` — ruff has no baseline mechanism, and here the sweep would also
 be *behaviour-changing*: `zip(..., strict=True)` **raises** on mismatched
-lengths, so each of the 290 `B905` sites is a decision, not a mechanical edit.
+lengths, so each of the 289 `B905` sites is a decision, not a mechanical edit.
 
 `B008` is absent from the baseline on purpose. All 83 findings were
 `typer.Option(...)` / `typer.Argument(...)` in a parameter default — the
