@@ -347,8 +347,8 @@ Or programmatically:
    print(f"noise floor σ̂ = {result.noise_floor.sigma_hat:.4f}")
 
 The blind-spot trick: 5% of voxels are masked and replaced with the
-median of their 26-neighbour donut before fitting. The optimiser never
-sees the original noisy values at those positions, so PSNR computed at
+median of their unmasked 26-neighbour donut before fitting. The optimiser
+never sees the original noisy values at those positions, so PSNR computed at
 the held-out positions against the *original* values measures *signal*
 recovery rather than fidelity to the noise. Adding capacity beyond
 :math:`K^{\star}` starts memorising noise — held-out PSNR drops, even
