@@ -982,8 +982,9 @@ media features in any other stylesheet, and the load-bearing clamps present.
   two-thumb range slider) while the drawn track stays thin; checkboxes 24px.
 - **16px inputs.** Every text/number/select inside a panel is `font-size: 16px`
   under a coarse pointer: below that iOS Safari zooms the page into a focused
-  field and never zooms back. Numeric inputs also declare `inputmode="decimal"`
-  and filter fields `inputmode="search"` (inert on desktop, so ungated in JS).
+  field and never zooms back. Numeric inputs use `inputmode="decimal"` only when
+  their minimum is non-negative (otherwise `text` keeps the minus key), and
+  filter fields use `inputmode="search"` (inert on desktop, so ungated in JS).
 - **Press, not hover.** Under `(any-hover: none)` a tap leaves an element in a
   sticky `:hover` until the next tap elsewhere, so the hover styling is put
   back to the rest state and `:active` carries the response (a translucent

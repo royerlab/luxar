@@ -137,8 +137,9 @@ export class NumberController extends Controller<number> {
     this.input = document.createElement('input');
     this.input.type = 'number';
     this.input.className = 'luxar-gui__input luxar-gui__input--number';
-    // A numeric keypad (with a decimal point) on touch keyboards; inert on desktop.
-    this.input.inputMode = 'decimal';
+    // Keep the minus key when negative values are valid; otherwise prefer the
+    // compact decimal keypad. The hint is inert on desktop keyboards.
+    this.input.inputMode = this.minValue !== undefined && this.minValue >= 0 ? 'decimal' : 'text';
 
     if (this.minValue !== undefined) this.input.min = String(this.minValue);
     if (this.maxValue !== undefined) this.input.max = String(this.maxValue);

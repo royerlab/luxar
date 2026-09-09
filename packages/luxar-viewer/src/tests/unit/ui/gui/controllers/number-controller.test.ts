@@ -28,11 +28,17 @@ describe('NumberController', () => {
       expect(input).toBeInstanceOf(HTMLInputElement);
     });
 
-    it('asks touch keyboards for a decimal keypad (inputmode)', () => {
+    it('keeps the full keyboard when negative values are allowed', () => {
       const input = controller.domElement.querySelector<HTMLInputElement>(
         '.luxar-gui__input--number'
       )!;
-      expect(input.inputMode).toBe('decimal');
+      expect(input.inputMode).toBe('text');
+    });
+
+    it('keeps the full keyboard for a range with a negative minimum', () => {
+      const ranged = new NumberController({ value: 0 }, 'value', { min: -10, max: 10 });
+      expect(ranged.$input.inputMode).toBe('text');
+      ranged.dispose();
     });
 
     it('should not create slider without range', () => {
@@ -64,6 +70,10 @@ describe('NumberController', () => {
     beforeEach(() => {
       object = { value: 50 };
       controller = new NumberController(object, 'value', { min: 0, max: 100, step: 1 });
+    });
+
+    it('asks touch keyboards for a decimal keypad when the range is non-negative', () => {
+      expect(controller.$input.inputMode).toBe('decimal');
     });
 
     it('wheel steps 1/10th step; modifiers follow the slider convention (⇧ finer, ⌃ coarse)', () => {
