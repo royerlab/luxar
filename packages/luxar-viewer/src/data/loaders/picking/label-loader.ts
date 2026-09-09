@@ -164,7 +164,8 @@ export class LabelLoader {
       // metadata and aborts.
       //
       // MultiLevelCachingStore rejects retry-exhausted fetches, so only a real
-      // not-found reaches this optional-array branch.
+      // not-found or a protected 403/410 metadata probe reaches this optional
+      // array branch (see HttpChunkSource).
       let offsetsArr: zarr.Array;
       try {
         offsetsArr = await zarr.open(offsetsLoc, { kind: 'array' });
