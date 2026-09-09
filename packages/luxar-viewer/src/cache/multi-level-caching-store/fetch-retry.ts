@@ -252,17 +252,18 @@ export async function hashUrl(url: string): Promise<string> {
  *
  * 4xx responses are returned immediately because retrying cannot fix a
  * missing zarr key. Network errors, timeouts, 429, and 5xx responses are
- * retried using the configured retry budget. The configured timeout is
- * treated as a total budget across attempts so retries do not multiply
- * worst-case load time.
+ * retried using the configured retry budget. The configured timeout is split
+ * across attempts and applied separately to time-to-headers and no-progress
+ * body stalls. A body may take longer while bytes continue to arrive, so a
+ * bandwidth-bound transfer does not consume retry budget.
  *
  * @param url - URL to fetch.
  * @param options - Optional `timeoutMsOverride` (e.g. for cache-validation
  *   probes that want a shorter budget than the data-fetch timeout) and a
- *   caller `signal` for dispose-cancel propagation. The caller signal is
+ *   caller `signal` for cancellation propagation. The caller signal is
  *   merged with the per-attempt timeout signal so either abort source
- *   wins immediately. A caller-aborted call exits without consuming
- *   retry budget.
+ *   wins immediately. `onExhausted` receives the final retryable error. A
+ *   caller-aborted call exits without consuming retry budget.
  * @param consume - Runs inside the global fetch-gate lease. Call `readBody()`
  *   to consume a response with a no-progress watchdog; returning without
  *   reading cancels the body before the lease is released.

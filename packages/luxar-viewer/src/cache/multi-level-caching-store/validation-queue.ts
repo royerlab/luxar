@@ -157,12 +157,9 @@ export async function getRemoteContentHash(
   options: { signal?: AbortSignal; timeoutMsOverride?: number }
 ): Promise<RemoteValidationToken | null> {
   try {
-    // Each rejected attempt is disposed IMMEDIATELY. `dispose()` is not just
-    // listener cleanup — it also cancels a body the caller never read, so an
-    // undisposed 404 holds its connection open. Probing two documents means the
-    // miss is now the common case (a format-2 store 404s `zarr.json` on every
-    // poll), so letting the loop overwrite the previous scope would leak one
-    // connection and two abort listeners per validation.
+    // A format-2 store 404s `zarr.json` on every poll. The fetch consumer
+    // returns without reading that response, so `fetchWithRetry` cancels its
+    // body before probing the next document.
     let data: Uint8Array<ArrayBuffer> | null = null;
     // Which document answered: the format follows from the NAME, so the parse
     // below never has to infer it from the content.

@@ -1,16 +1,9 @@
 /**
  * The directory-store byte source: one HTTP request per chunk.
  *
- * This is the behaviour `MultiLevelCachingStore` had inline before the
- * {@link ChunkSource} seam existed, moved verbatim rather than rewritten —
- * same `buildUrl`, same `fetchWithRetry`, same retry budget, same
- * body-cancellation on a response we decline to read. The store's ~100
- * existing tests drive it through `global.fetch` and none of them changed.
- *
- * The one thing that genuinely moved is ownership of the `Response` lifetime.
- * The store used to hold a `FetchResponseScope` and `dispose()` it in a
- * `finally`; now that lives here, because a non-HTTP source has no response to
- * dispose and the seam must not mention one.
+ * `fetchWithRetry` owns the full response lifetime: this source inspects the
+ * status and consumes successful bodies inside its shared fetch-gate lease.
+ * Returning without reading cancels the body before another request starts.
  *
  * @module cache/chunk-source/http-chunk-source
  */
@@ -81,6 +74,6 @@ export class HttpChunkSource implements ChunkSource {
   }
 
   dispose(): void {
-    // Nothing held open: each `get` disposes its own response scope.
+    // Nothing held open: each `get` settles its response before returning.
   }
 }
