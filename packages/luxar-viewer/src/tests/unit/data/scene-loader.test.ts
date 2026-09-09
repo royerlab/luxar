@@ -1946,6 +1946,7 @@ describe('SceneLoader', () => {
 
       expect(sceneLoader.hasNetworkFailureUnder('/g')).toBe(true);
       expect(sceneLoader.hasNetworkFailureUnder('/g2')).toBe(true);
+      expect(sceneLoader.hasNetworkFailureUnder('/')).toBe(true);
       expect(sceneLoader.hasNetworkFailureUnder('/missing')).toBe(false);
       expect(sceneLoader.hasNetworkFailureUnder('/g/level_1')).toBe(false);
     });

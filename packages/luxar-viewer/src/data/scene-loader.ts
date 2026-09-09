@@ -2196,8 +2196,9 @@ export class SceneLoader {
 
   /** Whether a path or one of its descendants has a recorded network failure. */
   hasNetworkFailureUnder(path: string): boolean {
+    const prefix = path.endsWith('/') ? path : `${path}/`;
     for (const [failedPath, info] of this.failedLoaders) {
-      if (info.kind === 'Network' && (failedPath === path || failedPath.startsWith(`${path}/`))) {
+      if (info.kind === 'Network' && (failedPath === path || failedPath.startsWith(prefix))) {
         return true;
       }
     }
