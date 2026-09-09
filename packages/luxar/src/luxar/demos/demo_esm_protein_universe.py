@@ -483,6 +483,8 @@ STORY_LENS_FOV_DEG = CINEMATIC_FOV_DEG
 # panel push-down, so the whole backdrop brightens together.
 BACKDROP_RADIUS = 0.004
 BACKDROP_INTENSITY = 0.25
+#: Global exposure in log2 stops (see `_viewer_config`).
+BACKDROP_EXPOSURE_STOPS = 2.5
 BACKDROP_OPACITY = 0.7
 HIGHLIGHT_RADIUS = 0.006
 HIGHLIGHT_INTENSITY = 0.4
@@ -1259,6 +1261,14 @@ def _viewer_config(
     return ViewerConfig(
         cinematic_mode=True,
         camera=CameraConfig(position=pull_in(overview), target=(0.0, 0.0, 0.0)),
+        # Authored, not left to the slider: sub-pixel points at the overview
+        # need +2.5 stops over the viewer's 0 to read as a cloud, and the same stops
+        # stops keep the view through the map's centre from a knot short of a
+        # whiteout (the +4.4 the owner found persisted in the app's storage
+        # blew it out). The Rendering Controls remember per-source edits in
+        # localStorage and those WIN over this value at load; "Reset to
+        # Defaults" comes back here.
+        exposure=BACKDROP_EXPOSURE_STOPS,
         auto_rotate=auto_rotate,
         auto_rotate_speed=0.5 if auto_rotate else None,
         auto_rotate_axis="world-y" if auto_rotate else None,
