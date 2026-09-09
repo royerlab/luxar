@@ -118,7 +118,7 @@ export async function loadOverlayConfigs(
         const childGroup = await zarr.open(childLoc, { kind: 'group' });
         const attrs = childGroup.attrs as Record<string, unknown>;
 
-        if (!attrs?.type || !String(attrs.type).startsWith('overlay_')) {
+        if (typeof attrs?.type !== 'string' || !attrs.type.startsWith('overlay_')) {
           continue;
         }
 

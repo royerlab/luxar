@@ -39,6 +39,17 @@
  * attach + a single ``register()`` call at the end) — no per-child
  * ``ready`` gate is needed in the registry.
  *
+ * **Partition frustum gating** (``registerPartition`` / ``evaluatePartitionEntry``):
+ * a ``kind=partition`` group's parts are tested every frame against a frustum
+ * padded by ``PARTITION_FRUSTUM_MARGIN``; a part outside it is hidden and
+ * stamped ``userData.partitionFrustumVisible = false``, which the scene
+ * loader's sweep and refinement read to skip its loaders. Because a culled part
+ * misses slice updates, its RE-ENTRY requests a resync of exactly that part's
+ * loaders (``deps.requestReprocess(partPaths)``, coalesced per wrapper across
+ * frames and gated on ``isUpdateInProgress``). The resync re-sweeps under the
+ * UNCHANGED view version — bumping it here would read every lazy fine level
+ * scene-wide as stale and drop all groups to coarse on camera motion.
+ *
  * The bbox infrastructure is shared with the scene-bounds cache and
  * camera framing — ``projectBoundsToDisplayDims`` /
  * ``transformBoundingBox`` live in
@@ -78,6 +89,7 @@ import {
   pickChildWithHysteresis,
   projectBoxAreaFraction,
   projectBoxDiagonalPx,
+  type WorldBoxOptions,
 } from './lod-selector-math';
 import { enforceResidentByteBudget } from './lod-eviction';
 
@@ -437,6 +449,15 @@ export interface LODGroupChild {
    * single-LOD level (the common case) ⇒ no extra refinement passes.
    */
   hasMoreLODs?: () => boolean;
+  /**
+   * `true` for a deferred GROUP child (a `kind=partition` / nested `kind=lod`
+   * level — the `overview` recipe's fine branch), whose `ensureLoaded` runs
+   * `loadChildren` once to attach the whole subtree. The registry never
+   * re-fires such a child for staleness or refinement: its leaves are
+   * sweep-registered and re-stamp themselves, and a second activation would
+   * attach a second copy of the subtree. Set by `load-lod-group-node`.
+   */
+  deferredGroup?: boolean;
 }
 
 /** One LOD-group entry tracked by the registry. */
@@ -593,6 +614,8 @@ interface LODGroupEntryCache {
   /** Whether any child needs the optional robust-bounds metric fold. */
   hasLodBounds: boolean;
   localBoxScratch: BoundingBox;
+  worldBoxOptions: WorldBoxOptions;
+  metricWorldBoxOptions: WorldBoxOptions;
 }
 
 /**
@@ -605,7 +628,8 @@ interface LODGroupEntryCache {
  *   - ``PARTITION_FRUSTUM_MATRIX_SCRATCH`` — padded projection × view product.
  *   - ``WORLD_BOX3_SCRATCH`` — a ``THREE.Box3`` view of a group's world bbox
  *     for ``frustum.intersectsBox`` (our ``BoundingBox`` is a plain object).
- *   - ``FOOTPRINT_BOX3_SCRATCH`` — loaded geometry footprint unioned into part bounds.
+ *   - ``FOOTPRINT_BOX3_SCRATCH`` — one object's rendered footprint on its way
+ *     into a part's cached footprint box.
  * (The eviction pass keeps its own scratches in ``lod-eviction.ts``.)
  */
 const FRUSTUM_SCRATCH = new THREE.Frustum();
@@ -625,12 +649,93 @@ const FOOTPRINT_BOX3_SCRATCH = new THREE.Box3();
 // Bit flags returned by evaluatePartitionEntry so one child scan reports both effects.
 const PARTITION_VISIBILITY_CHANGED = 1;
 const PARTITION_BECAME_VISIBLE = 2;
+// Part paths that re-entered the frustum THIS frame, collected by
+// ``evaluatePartitionEntry`` and merged into ``partitionResyncPending`` only
+// on a rising edge (rare), so the steady-state per-frame path allocates nothing.
+const RISING_PARTS_SCRATCH = new Set<string>();
+
+/**
+ * Record a part that just re-entered the frustum, by its registered node path
+ * (``PartitionGroupChild.path`` — the loader-registry key for a leaf part and
+ * the prefix of a nested ``kind=lod`` part's level loaders). A part with no
+ * path cannot be targeted, so it is recorded as the WRAPPER path: resync the
+ * whole partition rather than silently miss it.
+ */
+function noteRisingPart(sink: Set<string>, partPath: string, wrapperPath: string): void {
+  sink.add(partPath || wrapperPath);
+}
 
 function unionPartitionFootprints(objects: readonly THREE.Object3D[], target: THREE.Box3): void {
   for (const object of objects) {
     FOOTPRINT_BOX3_SCRATCH.setFromObject(object);
     if (!FOOTPRINT_BOX3_SCRATCH.isEmpty()) target.union(FOOTPRINT_BOX3_SCRATCH);
   }
+}
+
+/**
+ * Whether any object of a part has moved since its footprint box was captured.
+ * ``cached`` holds one 16-element world-matrix block per object, in
+ * ``objects`` order, sized by ``registerPartition``. A part that later gained an
+ * object reads ``undefined`` past the end and so counts as moved, which
+ * recaptures and grows the array; one that lost an object simply stops
+ * comparing the trailing blocks.
+ *
+ * Only the part's own objects are compared. A transform on a DESCENDANT of one
+ * of them is not detected — descendant transforms are applied at node-creation
+ * time and never animated, and every geometry commit dirties the part
+ * explicitly. Anything that starts moving a descendant later has to call
+ * ``invalidatePartitionFootprint``.
+ */
+function partitionFootprintMatricesDiffer(
+  objects: readonly THREE.Object3D[],
+  cached: readonly number[]
+): boolean {
+  for (let index = 0; index < objects.length; index++) {
+    const elements = objects[index].matrixWorld.elements;
+    const offset = index * 16;
+    for (let element = 0; element < 16; element++) {
+      if (cached[offset + element] !== elements[element]) return true;
+    }
+  }
+  return false;
+}
+
+/** Rebuild a part's cached footprint box and the world matrices it was taken at. */
+function capturePartitionFootprint(
+  objects: readonly THREE.Object3D[],
+  target: THREE.Box3,
+  cached: number[]
+): void {
+  target.makeEmpty();
+  unionPartitionFootprints(objects, target);
+  // Snapshot AFTER the union: ``Box3.expandByObject`` refreshes each object's
+  // world matrix, so a snapshot taken first would lag by one recompute and make
+  // every following frame look like a move.
+  for (let index = 0; index < objects.length; index++) {
+    objects[index].matrixWorld.toArray(cached, index * 16);
+  }
+}
+
+/**
+ * Dirty every part the committed ``nodePath`` belongs to — the part itself, or
+ * anything under it (an LOD level or an additive rung commits at a deeper path
+ * than the part it renders into). Returns whether any part matched, so the
+ * caller can fall back to dirtying the whole partition.
+ */
+function invalidateMatchingPartitionChildren(
+  entry: PartitionGroupEntry,
+  children: Array<{ footprintDirty: boolean }>,
+  nodePath: string
+): boolean {
+  let matched = false;
+  for (let index = 0; index < entry.children.length; index++) {
+    const childPath = entry.children[index].path;
+    if (nodePath === childPath || nodePath.startsWith(`${childPath}/`)) {
+      children[index].footprintDirty = true;
+      matched = true;
+    }
+  }
+  return matched;
 }
 
 function updatePartitionObjectVisibility(
@@ -709,12 +814,24 @@ export interface LODGroupRegistryDeps {
    */
   requestRender?: () => void;
   /**
-   * Re-run the current view update after a partition child re-enters the
-   * frustum. Culled children skip event-driven slice updates, so the rising
-   * edge must resync any geometry that missed the latest view state.
+   * Re-run the current view update for the partition parts that just
+   * re-entered the frustum. Culled children skip event-driven slice updates, so
+   * the rising edge must resync any geometry that missed the latest view state.
+   * ``paths`` are the re-entering PART node paths (``child.path``), or
+   * the partition wrapper path when a part has none (= resync the whole
+   * partition); the loader prefix-matches its sweep loaders under them, so a
+   * nested ``kind=lod`` part's eager level is covered. The view state is
+   * unchanged, so the loader MUST NOT bump the view version for this pass —
+   * otherwise every lazy fine level scene-wide reads stale and drops to coarse.
    */
-  requestReprocess?: () => void;
-  /** Whether the owning loader currently has an update or refinement pass in flight. */
+  requestReprocess?: (paths: readonly string[]) => void;
+  /**
+   * Whether the owning loader has a view PASS in flight or queued. Rising edges
+   * are held (and coalesced) while this is true so a resync never lands on top
+   * of a pass. A refinement hold deliberately does NOT count: the loader parks
+   * a resync that arrives during one and cancels into its own pass, so
+   * re-entering parts do not sit on a stale slice until the ladders finish.
+   */
   isUpdateInProgress?: () => boolean;
   /**
    * Whether the LOD cross-fade is enabled (ON by default; `?no-lod-fade`
@@ -774,6 +891,14 @@ export class LODGroupRegistry {
       children: Array<{
         source: PartitionGroupEntry;
         localBoxScratch: BoundingBox;
+        worldBoxOptions: WorldBoxOptions;
+        footprintBox: THREE.Box3;
+        /**
+         * World transforms ``footprintBox`` was captured at — one flattened
+         * 16-element block per object of the part, in ``children[i].objects`` order.
+         */
+        footprintMatrixWorld: number[];
+        footprintDirty: boolean;
       }>;
     }
   > = new Map();
@@ -827,8 +952,14 @@ export class LODGroupRegistry {
    * byte-identical (no material writes, no subtree traversal).
    */
   private fadeWasManaged = false;
-  /** Partition rising edges waiting for their wrapper to be visible and the loader to be idle. */
-  private readonly partitionResyncPending = new Set<string>();
+  /**
+   * Partition rising edges waiting for their wrapper to be visible and the
+   * loader to be idle: wrapper path → the re-entering PART paths. A set that
+   * contains the wrapper path itself means "resync the whole partition" (a
+   * pathless part). Coalesced across frames; flushed as ONE
+   * ``requestReprocess(paths)`` call.
+   */
+  private readonly partitionResyncPending = new Map<string, Set<string>>();
 
   constructor(private deps: LODGroupRegistryDeps) {}
 
@@ -841,6 +972,19 @@ export class LODGroupRegistry {
       localBoxScratch: {
         min: { x: 0, y: 0, z: 0 },
         max: { x: 0, y: 0, z: 0 },
+      },
+      worldBoxOptions: {
+        worldBoxScratch: {
+          min: { x: 0, y: 0, z: 0 },
+          max: { x: 0, y: 0, z: 0 },
+        },
+      },
+      metricWorldBoxOptions: {
+        worldBoxScratch: {
+          min: { x: 0, y: 0, z: 0 },
+          max: { x: 0, y: 0, z: 0 },
+        },
+        useLodBounds: true,
       },
     });
     // Apply initial visibility: only the active child is visible, and
@@ -872,12 +1016,46 @@ export class LODGroupRegistry {
           min: { x: 0, y: 0, z: 0 },
           max: { x: 0, y: 0, z: 0 },
         },
+        worldBoxOptions: {
+          worldBoxScratch: {
+            min: { x: 0, y: 0, z: 0 },
+            max: { x: 0, y: 0, z: 0 },
+          },
+        },
+        footprintBox: new THREE.Box3(),
+        footprintMatrixWorld: new Array<number>(child.objects.length * 16).fill(0),
+        footprintDirty: true,
       })),
     });
     for (const child of entry.children) {
       // Each loader path resolves to its emitted object, so stamping them all
       // lets the loader gate use its normal ancestor walk for multi-object parts.
       for (const object of child.objects) object.userData.partitionFrustumVisible = true;
+    }
+  }
+
+  /**
+   * Mark the owning partition part's rendered footprint stale after a geometry commit.
+   *
+   * ``SceneLoader.updatePointsGeometry`` and the three ``commit*Geometry`` methods
+   * are the complete geometry-attach funnels, including lazy LOD children and
+   * additive rungs. They dirty the part before writing, so a commit that hands off
+   * geometry and then throws cannot leave the previous footprint cached.
+   * ``registerPartition`` starts every part dirty, which also covers a commit that
+   * races registration. A path under a partition that matches no registered child
+   * dirties the whole partition conservatively rather than allowing an
+   * under-covering stale box. Footprints are cached in world space; the per-frame
+   * gate separately detects transform changes.
+   */
+  invalidatePartitionFootprint(nodePath: string): void {
+    for (const [entryPath, cache] of this.partitionCaches) {
+      if (nodePath !== entryPath && !nodePath.startsWith(`${entryPath}/`)) continue;
+      const entry = this.partitionEntries.get(entryPath);
+      if (!entry) continue;
+      const matched = invalidateMatchingPartitionChildren(entry, cache.children, nodePath);
+      if (!matched) {
+        for (const childCache of cache.children) childCache.footprintDirty = true;
+      }
     }
   }
 
@@ -904,8 +1082,12 @@ export class LODGroupRegistry {
     this.partitionEntries.clear();
     this.partitionCaches.clear();
     // Reset the monotonic tick so a reused registry (shared-registry
-    // refactor) starts cold rather than inheriting stale LRU ordering.
+    // refactor) starts cold rather than inheriting stale LRU ordering — and
+    // the settle clock with it: it is keyed on the tick, and a leftover
+    // `lastChangeTick` from the old scene would read "not settled" for that
+    // many frames, freezing every stale reload after a dataset switch.
     this.tick = 0;
+    this.settleTracker.reset();
     this.warnedNoReadyChild.clear();
     this.warnedEmptyLevel.clear();
     this.fadeWasManaged = false;
@@ -1243,29 +1425,22 @@ export class LODGroupRegistry {
     let hasVisiblePendingResync = false;
     for (const entry of this.partitionEntries.values()) {
       if (!isEffectivelyVisible(entry.groupObject)) continue;
-      const result = this.evaluatePartitionEntry(entry, displayDims, PARTITION_FRUSTUM_SCRATCH);
+      RISING_PARTS_SCRATCH.clear();
+      const result = this.evaluatePartitionEntry(
+        entry,
+        displayDims,
+        PARTITION_FRUSTUM_SCRATCH,
+        RISING_PARTS_SCRATCH
+      );
       if ((result & PARTITION_VISIBILITY_CHANGED) !== 0) changed = true;
       if ((result & PARTITION_BECAME_VISIBLE) !== 0) {
-        this.partitionResyncPending.add(entry.path);
+        this.notePartitionRisingEdge(entry.path, RISING_PARTS_SCRATCH);
       }
       if (this.partitionResyncPending.has(entry.path)) hasVisiblePendingResync = true;
     }
-    if (
-      this.partitionResyncPending.size > 0 &&
-      this.deps.requestReprocess &&
-      this.deps.isUpdateInProgress?.() !== true
-    ) {
-      let shouldResync = false;
-      for (const path of this.partitionResyncPending) {
-        const entry = this.partitionEntries.get(path);
-        if (!entry) {
-          this.partitionResyncPending.delete(path);
-        } else if (isEffectivelyVisible(entry.groupObject)) {
-          this.partitionResyncPending.delete(path);
-          shouldResync = true;
-        }
-      }
-      if (shouldResync) this.deps.requestReprocess();
+    RISING_PARTS_SCRATCH.clear();
+    if (this.partitionResyncPending.size > 0 && this.deps.isUpdateInProgress?.() !== true) {
+      this.flushPartitionResyncs();
     }
     if (hasVisiblePendingResync && this.partitionResyncPending.size > 0) {
       this.deps.requestRender?.();
@@ -1305,10 +1480,57 @@ export class LODGroupRegistry {
     return changed;
   }
 
+  /**
+   * Rising edge (rare): remember WHICH parts of ``wrapperPath`` came back so
+   * the resync can be targeted at their loaders instead of re-sweeping the
+   * whole scene. Coalesces with parts already pending for the same wrapper.
+   */
+  private notePartitionRisingEdge(wrapperPath: string, parts: ReadonlySet<string>): void {
+    let pending = this.partitionResyncPending.get(wrapperPath);
+    if (!pending) {
+      pending = new Set<string>();
+      this.partitionResyncPending.set(wrapperPath, pending);
+    }
+    for (const partPath of parts) pending.add(partPath);
+  }
+
+  /**
+   * Hand every pending rising edge whose wrapper is visible to the loader as
+   * ONE ``requestReprocess(paths)`` call; hidden wrappers stay pending, dropped
+   * wrappers are forgotten. A set that contains its own wrapper path (a
+   * pathless part) collapses to the wrapper path alone — it already covers
+   * every part.
+   */
+  private flushPartitionResyncs(): void {
+    const requestReprocess = this.deps.requestReprocess;
+    if (!requestReprocess) return;
+    let resyncPaths: string[] | null = null;
+    for (const [path, parts] of this.partitionResyncPending) {
+      const entry = this.partitionEntries.get(path);
+      if (!entry) {
+        this.partitionResyncPending.delete(path);
+        continue;
+      }
+      if (!isEffectivelyVisible(entry.groupObject)) continue;
+      this.partitionResyncPending.delete(path);
+      resyncPaths ??= [];
+      if (parts.has(path)) resyncPaths.push(path);
+      else resyncPaths.push(...parts);
+    }
+    if (resyncPaths) requestReprocess(resyncPaths);
+  }
+
+  /**
+   * Frustum-gate one partition's parts. Returns the ``PARTITION_*`` bit flags;
+   * parts that re-entered this frame are added to ``risingParts`` by node path
+   * (``child.path``), or as the WRAPPER path when a part has none so the caller
+   * resyncs the whole partition rather than missing it.
+   */
   private evaluatePartitionEntry(
     entry: PartitionGroupEntry,
     displayDims: readonly number[],
-    frustum: THREE.Frustum
+    frustum: THREE.Frustum,
+    risingParts: Set<string>
   ): number {
     const cache = this.partitionCaches.get(entry.path);
     if (!cache) return 0;
@@ -1320,16 +1542,35 @@ export class LODGroupRegistry {
         childCache.source,
         displayDims,
         childCache.localBoxScratch,
-        this.matrixScratch
+        this.matrixScratch,
+        childCache.worldBoxOptions
       );
       let visible = true;
       if (worldBox) {
         WORLD_BOX3_SCRATCH.min.set(worldBox.min.x, worldBox.min.y, worldBox.min.z);
         WORLD_BOX3_SCRATCH.max.set(worldBox.max.x, worldBox.max.y, worldBox.max.z);
-        unionPartitionFootprints(child.objects, WORLD_BOX3_SCRATCH);
+        for (const object of child.objects) object.updateWorldMatrix(false, false);
+        if (
+          childCache.footprintDirty ||
+          partitionFootprintMatricesDiffer(child.objects, childCache.footprintMatrixWorld)
+        ) {
+          capturePartitionFootprint(
+            child.objects,
+            childCache.footprintBox,
+            childCache.footprintMatrixWorld
+          );
+          childCache.footprintDirty = false;
+        }
+        if (!childCache.footprintBox.isEmpty()) {
+          WORLD_BOX3_SCRATCH.union(childCache.footprintBox);
+        }
         visible = frustum.intersectsBox(WORLD_BOX3_SCRATCH);
       }
-      result |= updatePartitionObjectVisibility(child.objects, visible);
+      const flags = updatePartitionObjectVisibility(child.objects, visible);
+      result |= flags;
+      if ((flags & PARTITION_BECAME_VISIBLE) !== 0) {
+        noteRisingPart(risingParts, child.path, entry.path);
+      }
     }
     return result;
   }
@@ -1448,6 +1689,10 @@ export class LODGroupRegistry {
     // display-resolution pass below is the single owner of ``object.visible``.
     if (desired !== entry.activeChildIndex) {
       const target = entry.children[desired];
+      // `undefined` when a lock index outlives its children (an empty entry is
+      // registered on purpose and `setSelectorMode` skips clamping for it):
+      // nothing to aspire to, nothing to kick — never throw per frame.
+      if (!target) return false;
       if (isReady(target)) {
         entry.activeChildIndex = desired;
       } else {
@@ -1672,8 +1917,19 @@ export class LODGroupRegistry {
     // re-firing the same ``ensureLoaded``, until the level is ready, fresh, AND
     // complete. Eager (coarse) levels have no ``ensureLoaded`` and stay
     // sweep-driven, so this only ever targets lazy levels.
+    // Never for a deferred GROUP child (the overview recipe's fine partition /
+    // nested lod branch): it has an ``ensureLoaded`` too, but its expensive
+    // step is ``loadChildren`` — re-running it attaches a SECOND copy of the
+    // whole subtree under the placeholder (double-drawn geometry, duplicate
+    // names, re-registered loaders, leaked buffers). Its leaves are
+    // sweep-registered and re-stamp themselves, so staleness needs no kick.
+    // Keyed on the explicit ``deferredGroup`` flag, not on the leaf's
+    // ``nodeType`` stamp: a lazy leaf whose placeholder is not stamped yet
+    // must still drain its ladder here.
     const needsReloadOrRefine =
-      aspirationReady && (!aspirationFresh || (aspiration!.hasMoreLODs?.() ?? false));
+      aspirationReady &&
+      aspiration!.deferredGroup !== true &&
+      (!aspirationFresh || (aspiration!.hasMoreLODs?.() ?? false));
     if (settled && needsReloadOrRefine && aspiration!.ensureLoaded) {
       this.maybeKickReload(entry, aspiration!);
     }
@@ -1749,9 +2005,13 @@ export class LODGroupRegistry {
     // never displayed (camera/slice moved away mid-load) keeps
     // ``lastVisibleTick == null`` and is permanently exempt from eviction,
     // leaking VRAM.
+    // A SENTINEL, not the current tick: the eviction LRU's final tiebreak is
+    // coldest-first on this field, so stamping "now" would make the one level
+    // the user never saw the HOTTEST in its group and evict levels they looked
+    // at moments ago before it. 0 is older than any real tick (ticks start at 1).
     for (const child of entry.children) {
       if (isReady(child) && child.lastVisibleTick == null) {
-        child.lastVisibleTick = this.tick;
+        child.lastVisibleTick = 0;
       }
     }
 
@@ -1764,10 +2024,9 @@ export class LODGroupRegistry {
    * ``lod-selector-math.ts`` for the math). The default uses raw
    * ``positionBounds`` for frustum gating and eviction; ``useLodBounds`` uses
    * robust bounds with a per-child raw fallback for selector metrics. This
-   * wrapper supplies the per-entry ``localBoxScratch`` and the registry's
-   * ``matrixScratch``;
-   * ``transformBoundingBox`` allocates the returned box, so it is independent
-   * of those scratches and safe to keep past the next call.
+   * wrapper supplies per-entry local/world scratch boxes and the registry's
+   * ``matrixScratch``. Raw and robust metric bounds use distinct world boxes
+   * because both remain live during one selector evaluation.
    */
   private computeWorldBox(
     entry: LODGroupEntry,
@@ -1781,7 +2040,7 @@ export class LODGroupRegistry {
       displayDims,
       cache.localBoxScratch,
       this.matrixScratch,
-      useLodBounds
+      useLodBounds ? cache.metricWorldBoxOptions : cache.worldBoxOptions
     );
   }
 

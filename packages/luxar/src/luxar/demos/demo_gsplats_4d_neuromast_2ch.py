@@ -183,6 +183,12 @@ CHANNELS = [
         # Membranes are a dense diffuse shell that otherwise dominates and hides
         # the nuclei — render at half opacity so both channels read.
         "opacity": 0.5,
+        # Display window (Layers-panel range) and gamma, set by eye on the shipped
+        # store (2026-09-07). The window is authored as intensity/offset:
+        # intensity = 1 / (hi - lo), offset = -lo / (hi - lo), which the viewer
+        # maps back to [lo, hi] on a colormapped node.
+        "window": (0.007, 0.242),
+        "gamma": 1.67,
         # The enclosing structure, so it composites FIRST and the nuclei read on
         # top of it. This deliberately does NOT match the order the viewer would
         # infer: containment goes by bounding-sphere radius, and this fit gives
@@ -210,6 +216,8 @@ CHANNELS = [
         "colormap": "bop_orange",  # GFP nuclei, iSIM 488/525
         "marker": "she:GFP (nuclei)",
         "opacity": 1.0,
+        "window": (0.025, 0.719),
+        "gamma": 2.82,
         #: Inside the membrane shell, so it composites last (on top).
         "layer_order": 20,
         "source_flag": "source-nuclei",
@@ -254,8 +262,16 @@ VOXEL_SCALE = (2.5, 1.0, 1.0, 1.0)
 #: Amplitudes normalised to a unit peak, so appearance does not depend on the
 #: recording's absolute intensity scale.
 NORMALIZE_INTENSITY = 1.0
+
 #: Progressive rungs the merge produced for each channel.
 EXPECTED_RUNGS = 8
+
+# ---- Appearance, shared by both channels -----------------------------------
+#: Volumetric optical depth shared by both layers (set by eye with the windows
+#: in CHANNELS): low enough that neither channel hides the other.
+ABSORPTION = 0.02
+#: Scene exposure in log2 stops (Rendering Controls > HDR > Exposure).
+EXPOSURE_STOPS = -3.4
 
 
 # =============================================================================
@@ -594,7 +610,12 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
             scene = compiler.create_scene(
                 citation=DEMO_META["citation"],
                 dimensions=dims,
-                viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
+                # Exposure pulled down 3.4 stops (set by eye with the channel
+                # windows): at the default camera distance the rosette core
+                # otherwise saturates to white under both volumetric layers.
+                viewer_config=ViewerConfig(
+                    cinematic_mode=True, tone_mapping="ACES", exposure=EXPOSURE_STOPS
+                ),
             )
             scene.attrs["title"] = "GSplats: 4D Two-Channel Neuromast Timelapse"
             scene.attrs["description"] = (
@@ -611,18 +632,26 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
                         path=str(path),
                         opacity=ch.get("opacity", 1.0),
                         # Cross-layer draw order, stated rather than inferred
-                        # from bounding-sphere radii (see CHANNELS above).
-                        # Inert while both layers are `additive`; correct the
-                        # moment either is switched to volumetric/normal.
+                        # from bounding-sphere radii (see CHANNELS above); it
+                        # matters now that both layers composite volumetrically.
                         layer_order=ch["layer_order"],
-                        # One global order slot per node cannot interleave the
-                        # two co-located volumes. Near-zero kappa only hid that
-                        # limitation; additive is order-independent.
-                        blending_mode="additive",
+                        blending_mode="volumetric",
+                        # Near-transparent optical depth: the two volumes only
+                        # occlude each other faintly. Compositing is exact within
+                        # each channel and approximate where their splats
+                        # interleave; the small absorption keeps that approximation
+                        # unobtrusive while preserving the authored front/back order.
+                        absorption=ABSORPTION,
+                        gamma=ch["gamma"],
+                        intensity=1.0 / (ch["window"][1] - ch["window"][0]),
+                        offset=-ch["window"][0] / (ch["window"][1] - ch["window"][0]),
                         layer=True,
                         colormap=ch["colormap"],
                     )
-                    aprint(f"  colormap={ch['colormap']}")
+                    aprint(
+                        f"  colormap={ch['colormap']} window={ch['window']} "
+                        f"gamma={ch['gamma']} opacity={ch.get('opacity', 1.0)}"
+                    )
 
             scene.add_text(
                 "Neuromast • membranes + nuclei",

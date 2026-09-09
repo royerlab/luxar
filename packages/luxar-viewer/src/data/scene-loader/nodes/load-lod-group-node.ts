@@ -562,23 +562,37 @@ export async function loadLodGroupNode(
       // pool, so once loaded they stay resident until scene teardown (matching
       // the prior behaviour, just deferred to first view). Nested leaf / lod
       // loaders self-register during loadChildren, which runs only on activation.
-      const entryChild = attachLazyChild(
-        placeholder,
-        lazyChild,
-        coverageFraction,
-        ctx,
-        async () => {
-          await loadChildren(lazyChild, placeholder, childLoc, ctx);
-          // The subtree's part leaves registered into the sweep maps just
-          // now, mid-session — but refinement is only scheduled at
-          // update-view tails, so without this kick their additive ladders
-          // would sit at chunk-1 until the next slice change (and the
-          // never-downgrade display gate would hold the previous level
-          // indefinitely). Safe on a dead dataset: the kick no-ops once the
-          // owning loader is disposed.
-          ctx.kickRefinementIfIdle();
+      // Activation is NOT idempotent by nature — `loadChildren` attaches a fresh
+      // THREE.Group every time, and can leave children attached before rejecting.
+      // Guard both a completed activation and that partial-failure state. The
+      // registry no longer re-kicks group children for staleness, but any caller
+      // of `ensureLoaded` must never end up with two copies of the subtree.
+      let activated = false;
+      let entryChild: LODGroupChild;
+      entryChild = attachLazyChild(placeholder, lazyChild, coverageFraction, ctx, async () => {
+        if (activated) return;
+        if (placeholder.children.length > 0) {
+          const reason =
+            `lod_group deferred child ${lazyChild.path} retry refused: ` +
+            'placeholder already has attached children';
+          entryChild.permanentlyFailed = true;
+          entryChild.failureReason = reason;
+          throw new Error(reason);
         }
-      );
+        await loadChildren(lazyChild, placeholder, childLoc, ctx);
+        activated = true;
+        // The subtree's part leaves registered into the sweep maps just
+        // now, mid-session — but refinement is only scheduled at
+        // update-view tails, so without this kick their additive ladders
+        // would sit at chunk-1 until the next slice change (and the
+        // never-downgrade display gate would hold the previous level
+        // indefinitely). Safe on a dead dataset: the kick no-ops once the
+        // owning loader is disposed.
+        ctx.kickRefinementIfIdle();
+      });
+      // Tells the registry this child activates a SUBTREE: never re-fire its
+      // `ensureLoaded` for staleness or refinement (see `LODGroupChild`).
+      entryChild.deferredGroup = true;
       registryChildren.push(entryChild);
       childPaths.set(entryChild, child.path);
       continue;

@@ -31,12 +31,47 @@ import {
   type LODGroupEntry,
   type PartitionGroupEntry,
 } from '../../../scene/lod-group-registry';
-import { DEGENERATE_RECT_HALF_EXTENT } from '../../../scene/lod-selector-math';
+import {
+  computeEntryWorldBox,
+  DEGENERATE_RECT_HALF_EXTENT,
+} from '../../../scene/lod-selector-math';
 import {
   calculateCameraDistance,
   type BoundingBox,
 } from '../../../scene/scene-manager/clipping/bounds-math';
 import { updateCameraAspect } from '../../../utils/camera-utils';
+
+describe('computeEntryWorldBox', () => {
+  it('reuses the caller-owned world box', () => {
+    const groupObject = new THREE.Group();
+    groupObject.position.set(5, 10, 15);
+    const localBoxScratch: BoundingBox = {
+      min: { x: 0, y: 0, z: 0 },
+      max: { x: 0, y: 0, z: 0 },
+    };
+    const worldBoxScratch: BoundingBox = {
+      min: { x: 99, y: 99, z: 99 },
+      max: { x: 99, y: 99, z: 99 },
+    };
+
+    const result = computeEntryWorldBox(
+      {
+        groupObject,
+        children: [{ positionBounds: { min: [0, 0, 0], max: [1, 1, 1] } }],
+      },
+      [0, 1, 2],
+      localBoxScratch,
+      new Array<number>(16),
+      { worldBoxScratch }
+    );
+
+    expect(result).toBe(worldBoxScratch);
+    expect(result).toEqual({
+      min: { x: 5, y: 10, z: 15 },
+      max: { x: 6, y: 11, z: 16 },
+    });
+  });
+});
 
 // ────────────────────────────────────────────────────────────────────────
 // pickChildWithHysteresis — pure selector math
@@ -469,7 +504,7 @@ function makeRegistry(
   requestRender?: () => void,
   now?: () => number,
   hasArchiveFault?: () => boolean,
-  requestReprocess?: () => void,
+  requestReprocess?: (paths: readonly string[]) => void,
   isUpdateInProgress?: () => boolean
 ) {
   const camera = new THREE.Camera();
@@ -687,6 +722,243 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     expect(culled.visible).toBe(false);
   });
 
+  it('reuses a static part footprint across frames', () => {
+    const reg = makeRegistry();
+    const groupObject = new THREE.Group();
+    const geometry = new THREE.BufferGeometry();
+    geometry.boundingBox = new THREE.Box3(
+      new THREE.Vector3(-0.5, -0.5, -0.5),
+      new THREE.Vector3(0.5, 0.5, 0.5)
+    );
+    const child = new THREE.Mesh(geometry);
+    groupObject.add(child);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [child],
+          positionBounds: { min: [-0.5, -0.5, -0.5], max: [0.5, 0.5, 0.5] },
+        },
+      ],
+    });
+    const setFromObject = vi.spyOn(THREE.Box3.prototype, 'setFromObject');
+
+    reg.evaluatePerFrame();
+    reg.evaluatePerFrame();
+
+    // Restore before asserting so a failure can't leak the spy into later tests.
+    const captures = setFromObject.mock.calls.length;
+    setFromObject.mockRestore();
+    expect(captures).toBe(1);
+  });
+
+  it('captures every object of a part once and reuses them across frames', () => {
+    const reg = makeRegistry();
+    const groupObject = new THREE.Group();
+    const near = new THREE.Mesh(
+      Object.assign(new THREE.BufferGeometry(), {
+        boundingBox: new THREE.Box3(
+          new THREE.Vector3(-0.5, -0.5, -0.5),
+          new THREE.Vector3(0.5, 0.5, 0.5)
+        ),
+      })
+    );
+    const far = new THREE.Mesh(
+      Object.assign(new THREE.BufferGeometry(), {
+        boundingBox: new THREE.Box3(new THREE.Vector3(2, 2, 2), new THREE.Vector3(3, 3, 3)),
+      })
+    );
+    groupObject.add(near, far);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [near, far],
+          positionBounds: { min: [2, 2, 2], max: [3, 3, 3] },
+        },
+      ],
+    });
+    const setFromObject = vi.spyOn(THREE.Box3.prototype, 'setFromObject');
+
+    reg.evaluatePerFrame();
+    reg.evaluatePerFrame();
+
+    // One capture per object on the first frame, nothing on the second.
+    const captures = setFromObject.mock.calls.length;
+    setFromObject.mockRestore();
+    expect(captures).toBe(2);
+    // The union still reaches the near object, so the part stays visible.
+    expect(near.visible).toBe(true);
+    expect(far.visible).toBe(true);
+  });
+
+  it('refreshes a cached footprint after the partition transform changes', () => {
+    const reg = makeRegistry();
+    const groupObject = new THREE.Group();
+    const geometry = new THREE.BufferGeometry();
+    geometry.boundingBox = new THREE.Box3(
+      new THREE.Vector3(-2, -0.05, -0.05),
+      new THREE.Vector3(-1.9, 0.05, 0.05)
+    );
+    const part = new THREE.Mesh(geometry);
+    groupObject.add(part);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [part],
+          positionBounds: { min: [-3.4, -0.05, -0.05], max: [-3.3, 0.05, 0.05] },
+        },
+      ],
+    });
+
+    reg.evaluatePerFrame();
+    expect(part.visible).toBe(false);
+
+    groupObject.position.x = 2;
+    groupObject.updateMatrixWorld(true);
+    expect(new THREE.Box3().setFromObject(part).min.x).toBeCloseTo(0);
+
+    reg.evaluatePerFrame();
+    expect(part.visible).toBe(true);
+  });
+
+  it('refreshes a cached footprint when only the second object of a part moves', () => {
+    const reg = makeRegistry();
+    const groupObject = new THREE.Group();
+    const anchor = new THREE.Group();
+    const geometry = new THREE.BufferGeometry();
+    geometry.boundingBox = new THREE.Box3(
+      new THREE.Vector3(-2, -0.05, -0.05),
+      new THREE.Vector3(-1.9, 0.05, 0.05)
+    );
+    const mover = new THREE.Mesh(geometry);
+    groupObject.add(anchor, mover);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [anchor, mover],
+          positionBounds: { min: [-3.4, -0.05, -0.05], max: [-3.3, 0.05, 0.05] },
+        },
+      ],
+    });
+
+    reg.evaluatePerFrame();
+    expect(mover.visible).toBe(false);
+
+    // Only the local transform is touched: the gate is responsible for
+    // refreshing each object's world matrix before comparing it.
+    mover.position.x = 2;
+
+    reg.evaluatePerFrame();
+    expect(mover.visible).toBe(true);
+  });
+
+  it('re-culls a part whose refreshed footprint no longer reaches the frustum', () => {
+    const reg = makeRegistry();
+    const groupObject = new THREE.Group();
+    const geometry = new THREE.BufferGeometry();
+    geometry.boundingBox = new THREE.Box3(
+      new THREE.Vector3(-0.5, -0.5, -0.5),
+      new THREE.Vector3(0.5, 0.5, 0.5)
+    );
+    const part = new THREE.Mesh(geometry);
+    groupObject.add(part);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      // Off-screen position bounds, so only the rendered footprint can keep it visible.
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [part],
+          positionBounds: { min: [2, 2, 2], max: [3, 3, 3] },
+        },
+      ],
+    });
+    reg.evaluatePerFrame();
+    expect(part.visible).toBe(true);
+
+    geometry.boundingBox.set(new THREE.Vector3(2, 2, 2), new THREE.Vector3(3, 3, 3));
+    reg.invalidatePartitionFootprint('/partition/part_0');
+    reg.evaluatePerFrame();
+
+    // A recapture REPLACES the cached box; a box that only ever grew would
+    // still carry the old on-screen extent and never cull.
+    expect(part.visible).toBe(false);
+  });
+
+  /**
+   * Two off-screen parts whose rendered footprints both move on screen without
+   * a registry notification. Used to show which parts an invalidation reaches:
+   * everything stays culled until the owning part is dirtied.
+   */
+  function makeTwoStalePartitionParts(reg: ReturnType<typeof makeRegistry>) {
+    const groupObject = new THREE.Group();
+    const parts = ['/partition/part_0', '/partition/part_1'].map((path) => {
+      const part = new THREE.Group();
+      const geometry = new THREE.BufferGeometry();
+      geometry.boundingBox = new THREE.Box3(new THREE.Vector3(2, 2, 2), new THREE.Vector3(3, 3, 3));
+      part.add(new THREE.Mesh(geometry));
+      groupObject.add(part);
+      return { path, part, geometry };
+    });
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: parts.map(({ path, part }) => ({
+        path,
+        objects: [part],
+        positionBounds: { min: [2, 2, 2], max: [3, 3, 3] },
+      })),
+    });
+    reg.evaluatePerFrame();
+    for (const { part } of parts) expect(part.visible).toBe(false);
+
+    for (const { geometry } of parts) {
+      geometry.boundingBox!.set(
+        new THREE.Vector3(-0.5, -0.5, -0.5),
+        new THREE.Vector3(0.5, 0.5, 0.5)
+      );
+    }
+    return parts;
+  }
+
+  it('refreshes only the owning part after a nested geometry commit', () => {
+    const reg = makeRegistry();
+    const [owner, sibling] = makeTwoStalePartitionParts(reg);
+
+    reg.evaluatePerFrame();
+    expect(owner.part.visible).toBe(false);
+
+    reg.invalidatePartitionFootprint('/partition/part_0/level_1');
+    reg.evaluatePerFrame();
+
+    expect(owner.part.visible).toBe(true);
+    // The commit path is under part_0 only, so part_1 keeps its cached box.
+    expect(sibling.part.visible).toBe(false);
+  });
+
+  it('refreshes every cached part when a partition commit path matches no child', () => {
+    const reg = makeRegistry();
+    const [first, second] = makeTwoStalePartitionParts(reg);
+
+    reg.invalidatePartitionFootprint('/partition/unregistered-child');
+    reg.evaluatePerFrame();
+
+    expect(first.part.visible).toBe(true);
+    expect(second.part.visible).toBe(true);
+  });
+
   it('unions the rendered footprints of every object in a part', () => {
     const reg = makeRegistry();
     const groupObject = new THREE.Group();
@@ -774,6 +1046,147 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     expect(reg.evaluatePerFrame()).toBe(true);
     expect(child.visible).toBe(true);
     expect(requestReprocess).toHaveBeenCalledOnce();
+    // The part carries a registered node path, so the resync targets it rather
+    // than re-sweeping the whole partition.
+    expect(requestReprocess).toHaveBeenCalledWith(['/partition/part_0']);
+  });
+
+  it('passes the re-entering part path on the rising edge', () => {
+    const requestReprocess = vi.fn();
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      requestReprocess
+    );
+    const groupObject = new THREE.Group();
+    const returning = new THREE.Group();
+    const staying = new THREE.Group();
+    groupObject.add(returning, staying);
+    // The RETURNING part is registered FIRST so a rising edge that leaked into
+    // later children (e.g. testing the accumulated flags instead of this
+    // child's) would name ``part_1`` too and fail the assertion below.
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [returning],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+        },
+        {
+          path: '/partition/part_1',
+          objects: [staying],
+          positionBounds: { min: [-0.5, 0, 0], max: [0.5, 0.5, 0.5] },
+        },
+      ],
+    });
+
+    reg.evaluatePerFrame();
+    expect(staying.visible).toBe(true);
+    expect(returning.visible).toBe(false);
+    expect(requestReprocess).not.toHaveBeenCalled();
+
+    // Bring ONLY the culled part back: the resync names it, not the wrapper and
+    // not the part that never left.
+    groupObject.position.x = -2.5;
+    reg.evaluatePerFrame();
+    expect(returning.visible).toBe(true);
+    expect(requestReprocess).toHaveBeenCalledOnce();
+    expect(requestReprocess).toHaveBeenCalledWith(['/partition/part_0']);
+  });
+
+  it('coalesces the union of re-entering parts across frames while an update is in flight', () => {
+    let updateInProgress = true;
+    const requestReprocess = vi.fn();
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      requestReprocess,
+      () => updateInProgress
+    );
+    const groupObject = new THREE.Group();
+    const first = new THREE.Group();
+    const second = new THREE.Group();
+    groupObject.add(first, second);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [first],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+        },
+        {
+          path: '/partition/part_1',
+          objects: [second],
+          positionBounds: { min: [4, 0, 0], max: [5, 0.5, 0.5] },
+        },
+      ],
+    });
+
+    reg.evaluatePerFrame();
+    groupObject.position.x = -2.5; // part_0 re-enters
+    reg.evaluatePerFrame();
+    groupObject.position.x = -4.5; // part_1 re-enters
+    reg.evaluatePerFrame();
+    expect(requestReprocess).not.toHaveBeenCalled();
+
+    updateInProgress = false;
+    reg.evaluatePerFrame();
+    reg.evaluatePerFrame();
+    expect(requestReprocess).toHaveBeenCalledOnce();
+    const paths = requestReprocess.mock.calls[0][0] as string[];
+    expect([...paths].sort()).toEqual(['/partition/part_0', '/partition/part_1']);
+  });
+
+  it('falls back to the whole wrapper when a re-entering part has no path', () => {
+    const requestReprocess = vi.fn();
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      requestReprocess
+    );
+    const groupObject = new THREE.Group();
+    const pathed = new THREE.Group();
+    const unpathed = new THREE.Group();
+    groupObject.add(pathed, unpathed);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [pathed],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+        },
+        { path: '', objects: [unpathed], positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] } },
+      ],
+    });
+
+    reg.evaluatePerFrame();
+    groupObject.position.x = -2.5; // both re-enter
+    reg.evaluatePerFrame();
+    expect(requestReprocess).toHaveBeenCalledOnce();
+    // The pathless part widens the request to the whole partition, which already
+    // covers the pathed one — exactly one path, the wrapper.
+    expect(requestReprocess).toHaveBeenCalledWith(['/partition']);
   });
 
   it('requests a view resync when any object in a part was culled', () => {
@@ -811,7 +1224,7 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     expect(requestReprocess).toHaveBeenCalledOnce();
   });
 
-  it('coalesces rising-edge resyncs until the active update finishes', () => {
+  it('buckets rising parts per wrapper and flushes each wrapper on its own', () => {
     let updateInProgress = true;
     const requestReprocess = vi.fn();
     const reg = makeRegistry(
@@ -825,38 +1238,57 @@ describe('LODGroupRegistry — partition frustum selection', () => {
       requestReprocess,
       () => updateInProgress
     );
-    const groupObject = new THREE.Group();
-    const first = new THREE.Group();
-    const second = new THREE.Group();
-    groupObject.add(first, second);
+    const firstGroup = new THREE.Group();
+    const firstPart = new THREE.Group();
+    firstGroup.add(firstPart);
+    const secondGroup = new THREE.Group();
+    const secondPart = new THREE.Group();
+    secondGroup.add(secondPart);
     reg.registerPartition({
-      path: '/partition',
-      groupObject,
+      path: '/first',
+      groupObject: firstGroup,
       children: [
         {
-          path: '/partition/part_0',
-          objects: [first],
+          path: '/first/part_0',
+          objects: [firstPart],
           positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
         },
+      ],
+    });
+    reg.registerPartition({
+      path: '/second',
+      groupObject: secondGroup,
+      children: [
         {
-          path: '/partition/part_1',
-          objects: [second],
-          positionBounds: { min: [4, 0, 0], max: [5, 0.5, 0.5] },
+          path: '/second/part_0',
+          objects: [secondPart],
+          positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
         },
       ],
     });
 
     reg.evaluatePerFrame();
-    groupObject.position.x = -2.5;
-    reg.evaluatePerFrame();
-    groupObject.position.x = -4.5;
+    expect(firstPart.visible).toBe(false);
+    expect(secondPart.visible).toBe(false);
+
+    // Both wrappers re-enter on the SAME frame, then only the first is
+    // flushable: each wrapper carries ITS OWN parts, so the request names
+    // ``/first``'s part alone and ``/second`` stays pending.
+    firstGroup.position.x = -2.5;
+    secondGroup.position.x = -2.5;
     reg.evaluatePerFrame();
     expect(requestReprocess).not.toHaveBeenCalled();
 
+    secondGroup.visible = false;
     updateInProgress = false;
     reg.evaluatePerFrame();
+    expect(requestReprocess).toHaveBeenCalledTimes(1);
+    expect(requestReprocess).toHaveBeenLastCalledWith(['/first/part_0']);
+
+    secondGroup.visible = true;
     reg.evaluatePerFrame();
-    expect(requestReprocess).toHaveBeenCalledOnce();
+    expect(requestReprocess).toHaveBeenCalledTimes(2);
+    expect(requestReprocess).toHaveBeenLastCalledWith(['/second/part_0']);
   });
 
   it('keeps requesting frames while a rising-edge resync is pending', () => {
@@ -944,6 +1376,7 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     groupObject.visible = true;
     expect(reg.evaluatePerFrame()).toBe(false);
     expect(requestReprocess).toHaveBeenCalledOnce();
+    expect(requestReprocess).toHaveBeenCalledWith(['/partition/part_0']);
   });
 
   it('unregister removes partition entries and their per-frame visibility writes', () => {
@@ -1034,6 +1467,19 @@ describe('LODGroupRegistry — selector mode', () => {
     const reg = makeRegistry();
     // Should not throw.
     reg.setSelectorMode('/missing', { lockLevel: 0 });
+  });
+
+  it('a lock on an entry with no children is inert (no per-frame throw)', () => {
+    // `loadLodGroupNode` registers an empty entry on purpose, and
+    // `setSelectorMode` skips clamping when there is nothing to clamp to — so
+    // `children[lockLevel]` is undefined and must not be dereferenced.
+    const reg = makeRegistry();
+    reg.register(makeEntry([], 0, '/empty'));
+    reg.setSelectorMode('/empty', { lockLevel: 2 });
+    expect(() => {
+      reg.evaluatePerFrame();
+      reg.evaluatePerFrame();
+    }).not.toThrow();
   });
 
   it('evaluatePerFrame returns true on a level swap, false on a no-op frame', () => {
@@ -2084,6 +2530,31 @@ describe('LODGroupRegistry — lazy children', () => {
     expect(relStranded).toHaveBeenCalledTimes(1);
   });
 
+  it('a never-shown level ages as the COLDEST in its group, not the hottest', () => {
+    // Back-filling lastVisibleTick with the CURRENT tick made the one level the
+    // user never saw the most-recently-used: under budget pressure the registry
+    // evicted a level shown moments ago and kept the stranded one (#2634).
+    const relShown = vi.fn();
+    const relStranded = vi.fn();
+    const children = [
+      readyLazy(0, { tick: 1 }), // locked + displayed → never evicted
+      readyLazy(0.5, { release: relShown, tick: 15 }), // shown at tick 15
+      { ...readyLazy(1.0, { release: relStranded }), ready: false }, // still loading
+    ];
+    // Two resident levels fit the budget, three do not (100 per ready level).
+    const reg = makeRegistry([0, 1, 2], 250, residentModel(children));
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.setSelectorMode('/g', { lockLevel: 0 });
+    for (let i = 0; i < 20; i++) reg.evaluatePerFrame(); // tick → 20, under budget
+    expect(relShown).not.toHaveBeenCalled();
+
+    children[2].ready = true; // the stranded load lands at tick 21, never displayed
+    reg.evaluatePerFrame();
+    expect(children[2].lastVisibleTick).toBe(0);
+    expect(relStranded).toHaveBeenCalledTimes(1); // coldest → evicted first
+    expect(relShown).not.toHaveBeenCalled();
+  });
+
   it('self-heals a not-ready active child: kicks its load, then shows it once ready (Fix 1)', () => {
     // The blank-render bug: a fallback can pin a not-ready lazy level as the
     // active child (e.g. the eager default failed to attach). With
@@ -2180,7 +2651,12 @@ describe('LODGroupRegistry — lazy children', () => {
     const children = [makeChild(0), makeChild(0.5)];
     reg.register(makeEntry(children, 0, '/g2'));
     reg.evaluatePerFrame();
-    expect(children[0].lastVisibleTick).toBe(1); // tick reset → first frame == 1
+    // The DISPLAYED level is stamped with the tick (reset → first frame == 1);
+    // the level that was never shown gets the coldest sentinel, 0.
+    const shown = children.find((c) => c.object.visible)!;
+    const hidden = children.find((c) => !c.object.visible)!;
+    expect(shown.lastVisibleTick).toBe(1);
+    expect(hidden.lastVisibleTick).toBe(0);
   });
 });
 
@@ -2992,6 +3468,50 @@ describe('LODGroupRegistry — settle-gated fine reload', () => {
     expect(ensureLoaded).toHaveBeenCalledTimes(1);
     // The coarse-fresh level stays displayed while the fine reloads.
     expect(children[0].object.visible).toBe(true);
+  });
+
+  it('never re-activates a stale deferred GROUP child — its leaves are sweep-driven (#2632)', () => {
+    // The overview recipe's fine branch: a READY group child (a bare Group, no
+    // nodeType) whose stamped leaf is stale for the current version. Its
+    // `ensureLoaded` is `loadChildren`, which attaches a fresh subtree every
+    // time — re-firing it for staleness hung a second full copy of the branch
+    // under the placeholder. The leaves are sweep-registered and re-stamp
+    // themselves, so staleness must show the coarse fallback and kick nothing.
+    const ensureLoaded = vi.fn();
+    const group = makeChild(0.5);
+    group.ready = true;
+    group.ensureLoaded = ensureLoaded;
+    group.deferredGroup = true; // what load-lod-group-node stamps on the group path
+    const leaf = new THREE.Group();
+    leaf.userData = { nodeType: 'gsplats', loadedViewVersion: 1, visibleSplatCount: 10 };
+    group.object.add(leaf);
+    const children = [makeGsplatChild(0, 2), group];
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2); // leaf stale at v2
+    reg.register(makeEntry(children, 0, '/g'));
+    for (let i = 0; i < 14; i++) reg.evaluatePerFrame(); // well past the settle window
+
+    expect(ensureLoaded).not.toHaveBeenCalled();
+    // Staleness WAS detected (not a vacuous pass): the group is the aspiration
+    // yet the coarse fresh level is what is displayed.
+    expect(children[0].object.visible).toBe(true);
+    expect(group.object.visible).toBe(false);
+  });
+
+  it('clear() resets the settle clock so a reused registry reloads promptly after a dataset switch', () => {
+    const first = vi.fn();
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    reg.register(makeEntry([makeGsplatChild(0, 2), makeStaleLazyFine(0.5, 1, first)], 0, '/a'));
+    for (let i = 0; i < 40; i++) reg.evaluatePerFrame(); // settle clock seeded at tick 1, tick now 40
+    expect(first).toHaveBeenCalledTimes(1);
+
+    // Dataset switch on a reused registry: tick restarts at 0. The SAME version
+    // (2) is observed again — without the reset the clock still points at the
+    // old scene's tick and "settled" would need ~40 more frames.
+    reg.clear();
+    const second = vi.fn();
+    reg.register(makeEntry([makeGsplatChild(0, 2), makeStaleLazyFine(0.5, 1, second)], 0, '/b'));
+    for (let i = 0; i < 12; i++) reg.evaluatePerFrame();
+    expect(second).toHaveBeenCalledTimes(1);
   });
 
   it('never reloads an eager (sweep-driven) coarse level — it has no ensureLoaded', () => {

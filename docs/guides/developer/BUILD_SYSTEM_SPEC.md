@@ -425,6 +425,11 @@ environment. Its first use creates roughly 1.2 GB alongside any existing
 `default` environment; `hatch env remove fixtures` reclaims that space without
 removing the default environment.
 
+Demo renderer tests use a separate `demos` environment, which creates roughly
+7 GB on first use. Run the focused GL suite with
+`hatch run demos:pytest packages/luxar/src/luxar/demos/tests/test_clay_renderer.py`;
+`hatch env remove demos` reclaims it afterwards.
+
 **Which Python does `hatch run` use?** The `default` environment declares no
 `python`, so Hatch builds it with whatever interpreter **Hatch itself** runs
 under — not necessarily one the project claims to support. Check before trusting

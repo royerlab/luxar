@@ -207,4 +207,14 @@ export class SettleTracker {
   isSettled(tick: number, settleTicks: number): boolean {
     return tick - this.lastChangeTick >= settleTicks;
   }
+
+  /**
+   * Forget the observed version and clock — for a registry that restarts its
+   * tick at 0 (`clear()`), so the first observation of the new scene re-seeds
+   * the clock instead of comparing against a tick from the old one.
+   */
+  reset(): void {
+    this.lastVersion = Number.NaN;
+    this.lastChangeTick = 0;
+  }
 }

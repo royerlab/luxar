@@ -16,7 +16,8 @@ pytestmark = pytest.mark.skipif(not HAS_TORCH, reason="PyTorch not available")
 
 if HAS_TORCH:
     from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
-    from luxar.gsplats.fitting.validation import prepare_fit_config
+
+    from .conftest import prepare_fit_config
 
 
 class MockGaussianSplatFitter:
@@ -32,6 +33,22 @@ class MockGaussianSplatFitter:
 
 class TestPrepareConfig:
     """Test configuration preparation and validation."""
+
+    def test_seed_kwargs_are_copied_at_the_config_boundary(self) -> None:
+        """Preprocessing mutations must not leak back into caller parameters."""
+        fitter = MockGaussianSplatFitter()
+        seed_kwargs = {"num_scales": 3}
+
+        config = prepare_fit_config(
+            fitter,
+            np.ones((4, 4), dtype=np.float32),
+            seed_kwargs=seed_kwargs,
+        )
+
+        assert config.seed_kwargs == seed_kwargs
+        assert config.seed_kwargs is not seed_kwargs
+        config.seed_kwargs["device"] = "cpu"
+        assert seed_kwargs == {"num_scales": 3}
 
     def test_basic_config_preparation(self) -> None:
         """Test basic configuration preparation."""

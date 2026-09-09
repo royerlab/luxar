@@ -197,7 +197,7 @@ export class DatasetBrowser {
     this.untypeToFilter = this.installTypeToFilterOnPanel();
 
     // Start navigation at the determined path
-    this.navigate(initialPath);
+    this.navigateSafely(initialPath);
   }
 
   /**
@@ -443,7 +443,7 @@ export class DatasetBrowser {
         if (safeFireSelect(this.onDatasetSelect, this.navigator.getFullUrl(result.currentPath))) {
           this.close();
         } else {
-          void this.navigate(result.parentPath ?? '');
+          this.navigateSafely(result.parentPath ?? '');
         }
         return;
       }
@@ -474,9 +474,15 @@ export class DatasetBrowser {
       const retry = content.querySelector(
         '.luxar-dataset-browser__error-retry'
       ) as HTMLButtonElement | null;
-      if (retry) retry.onclick = () => this.navigate(this.lastAttemptedPath);
+      if (retry) retry.onclick = () => this.navigateSafely(this.lastAttemptedPath);
       statusBar.textContent = 'Error loading directory';
     }
+  }
+
+  private navigateSafely(path: string): void {
+    this.navigate(path).catch((error: unknown) => {
+      log.warning(Modules.UI, 'Dataset navigation failed', error);
+    });
   }
 
   /**
@@ -498,7 +504,7 @@ export class DatasetBrowser {
     rootLink.type = 'button';
     rootLink.className = 'luxar-dataset-browser__breadcrumb-link';
     rootLink.innerHTML = `<span class="luxar-dataset-browser__breadcrumb-home" aria-hidden="true">${BROWSER_ICONS.home}</span>Root`;
-    rootLink.onclick = () => this.navigate('');
+    rootLink.onclick = () => this.navigateSafely('');
     crumbs.appendChild(rootLink);
 
     // Path segments
@@ -530,7 +536,7 @@ export class DatasetBrowser {
           link.type = 'button';
           link.className = 'luxar-dataset-browser__breadcrumb-link';
           link.textContent = part;
-          link.onclick = () => this.navigate(pathToNavigate);
+          link.onclick = () => this.navigateSafely(pathToNavigate);
           crumbs.appendChild(link);
         }
       });
@@ -633,7 +639,7 @@ export class DatasetBrowser {
       if (safeFireSelect(this.onDatasetSelect, fullUrl)) this.close();
       return;
     }
-    this.navigate(path);
+    this.navigateSafely(path);
   }
 
   /**
@@ -844,7 +850,7 @@ export class DatasetBrowser {
             this.close();
           }
         } else if (entry.type === 'directory') {
-          this.navigate(entry.path);
+          this.navigateSafely(entry.path);
         }
       };
       item.onclick = activate;

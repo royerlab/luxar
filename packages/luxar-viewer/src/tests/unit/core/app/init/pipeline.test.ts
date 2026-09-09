@@ -25,6 +25,10 @@ import { EventGroup } from '../../../../../utils/cross-layer/event-group';
 import type { DimensionSlidersConfig } from '../../../../../input/input-handler/panel-capabilities';
 import type { SliderConfig } from '../../../../../ui/dimension-sliders';
 
+const inputProfile = vi.hoisted(() => ({
+  deviceClass: 'laptop' as 'mobile' | 'laptop' | 'desktop',
+}));
+
 // Stub every heavy constructor at module level. Each one returns a
 // minimal object that satisfies the pipeline's subsequent member access.
 function makeSceneStub(opts: { initThrows?: boolean } = {}) {
@@ -126,6 +130,7 @@ vi.mock('../../../../../ui/debug-console', () => ({
   DebugConsole: vi.fn().mockImplementation(() => ({ kind: 'debug-console' })),
 }));
 vi.mock('../../../../../rendering/adaptive-dpr-manager', () => ({
+  mobileAdaptiveDprOverrides: vi.fn(() => undefined),
   AdaptiveDPRManager: vi.fn().mockImplementation(() => ({
     setRenderer: vi.fn(),
     setOnDPRChangeCallback: vi.fn(),
@@ -198,6 +203,9 @@ vi.mock('../../../../../rendering/depth-sort-coordinator', () => ({
   warmUpDepthSortWorker: vi.fn(),
   evaluateDepthSortPerFrame: vi.fn(),
 }));
+vi.mock('../../../../../utils/input-capabilities', () => ({
+  getInputProfile: () => inputProfile,
+}));
 
 import { InputHandler, KeyAction } from '../../../../../input';
 import { ControlRail } from '../../../../../ui/control-rail';
@@ -249,6 +257,7 @@ describe('runInitPipeline', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    inputProfile.deviceClass = 'laptop';
     (InputHandler as unknown as ReturnType<typeof vi.fn>).mockImplementation(() =>
       makeInputHandlerStub()
     );
@@ -464,6 +473,39 @@ describe('runInitPipeline', () => {
         perfTimestamp: true,
         blendWarmup: false,
       });
+    });
+
+    it('disables blend warm-up for direct LuxarApp embeds on mobile', async () => {
+      inputProfile.deviceClass = 'mobile';
+      const { factories, sceneStub } = makeFactoryOverrides();
+      const ports = makePorts();
+      ports.options.blendWarmup = true;
+      ports.options.factories = factories as never;
+
+      await runInitPipeline(ports, {});
+
+      expect(sceneStub.init).toHaveBeenCalledWith(expect.objectContaining({ blendWarmup: false }));
+    });
+
+    it('keeps the explicit blend warm-up opt-out on desktop', async () => {
+      const { factories, sceneStub } = makeFactoryOverrides();
+      const ports = makePorts();
+      ports.options.blendWarmup = false;
+      ports.options.factories = factories as never;
+
+      await runInitPipeline(ports, {});
+
+      expect(sceneStub.init).toHaveBeenCalledWith(expect.objectContaining({ blendWarmup: false }));
+    });
+
+    it('keeps blend warm-up enabled by default on desktop', async () => {
+      const { factories, sceneStub } = makeFactoryOverrides();
+      const ports = makePorts();
+      ports.options.factories = factories as never;
+
+      await runInitPipeline(ports, {});
+
+      expect(sceneStub.init).toHaveBeenCalledWith(expect.objectContaining({ blendWarmup: true }));
     });
   });
 

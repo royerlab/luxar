@@ -32,6 +32,7 @@ import { RecordingSession } from './recording-panel/session';
 import { ScreenshotStrategy } from './recording-panel/screenshot-strategy';
 import { VideoRecordingStrategy } from './recording-panel/video-recording-strategy';
 import { OfflineCaptureStrategy } from './recording-panel/offline-capture-strategy';
+import { showToast } from './toast';
 
 /**
  * Re-export of the shared recording types (defined in `recording-panel/types.ts`)
@@ -389,8 +390,18 @@ export class RecordingPanel {
       getTurntableInfo: () =>
         getTurntableInfoHelper(this.options.turntableSpeed, this.options.videoFPS),
       getNavigableDimensionOptions: () => getNavigableDimensionOptionsHelper(),
-      captureScreenshot: () => this.captureScreenshot(),
-      startVideoRecording: () => this.startVideoRecording(),
+      captureScreenshot: () => {
+        this.captureScreenshot().catch((error: unknown) => {
+          log.error(Modules.RECORDING, 'Screenshot capture failed', error);
+          showToast('Screenshot failed');
+        });
+      },
+      startVideoRecording: () => {
+        this.startVideoRecording().catch((error: unknown) => {
+          log.error(Modules.RECORDING, 'Video recording failed to start', error);
+          showToast('Video recording failed to start');
+        });
+      },
     });
     this.formatController = result.formatController;
     this.qualityController = result.qualityController;

@@ -1,6 +1,6 @@
-"""Tests for the neuromast demo's per-channel recompute path.
+"""Tests for the neuromast demo's recompute and scene-compilation paths.
 
-Five things here are worth pinning, each with a quiet failure mode:
+Six things here are worth pinning, each with a quiet failure mode:
 
 1. **The background subtraction.** A single measured floor per channel,
    subtracted with a clip at 0. Forgetting the clip leaves negative intensities,
@@ -17,6 +17,8 @@ Five things here are worth pinning, each with a quiet failure mode:
    assembled arrays if the current copies disappear.
 5. **The download estimate.** It must stay derived from both manifest archives,
    or metadata can silently drift when either channel is re-uploaded.
+6. **The shipped appearance.** The compiled scene must preserve the tuned
+   blending, optical depth, windows, gamma, opacity, order, and exposure.
 """
 
 import json
@@ -29,6 +31,7 @@ from luxar._zarr_compat import open_group
 from luxar.demos import demo_gsplats_4d_neuromast_2ch as demo
 from luxar.gsplats.calibration.noise_floor import estimate_floor
 from luxar.gsplats.gsplat_data import AdditiveSubLOD
+from luxar.gsplats.io.save_gsplats import save_gsplats
 from luxar.gsplats.tree import GSplatLeaf
 
 SMALL = (4, 3, 5, 6)
@@ -130,6 +133,19 @@ def _leaf_with_rungs(rungs, *, splats_per_rung=1):
         cholesky_factors=np.ones((splats_per_rung, 10), dtype=np.float32),
     )
     return GSplatLeaf(additive_sublods=[sublod] * rungs, meta={})
+
+
+def _tiny_gsplat_store(path: Path) -> Path:
+    save_gsplats(
+        path,
+        centers=np.array([[0, 0, 0, 0], [1, 1, 1, 1]], dtype=np.float32),
+        amplitudes=np.ones(2, dtype=np.float32),
+        cholesky_factors=np.tile([1, 0, 1, 0, 0, 1, 0, 0, 0, 1], (2, 1)).astype(
+            np.float32
+        ),
+        ordering="none",
+    )
+    return path
 
 
 class TestTheBackgroundSubtractionIsClippedAtZero:
@@ -260,6 +276,43 @@ class TestBothChannelsNeedTheirOwnSource:
         monkeypatch.setitem(demo.SOURCE_ARGS, "nuclei", tmp_path / "also-nope.zarr")
         with pytest.raises(FileNotFoundError, match="source-membranes"):
             demo.recompute_channel_paths(tmp_path / "work")
+
+
+def test_compiled_scene_preserves_the_tuned_appearance(tmp_path) -> None:
+    channel_paths = [
+        _tiny_gsplat_store(tmp_path / f"{channel['name']}.gsplats.zarr")
+        for channel in demo.CHANNELS
+    ]
+
+    output = demo.create_luxar_scene(channel_paths, tmp_path / "scene.luxar.zarr")
+    root = open_group(output, mode="r")
+
+    expected = {
+        "membranes": {
+            "window": (0.007, 0.242),
+            "gamma": 1.67,
+            "opacity": 0.5,
+            "layer_order": 10,
+        },
+        "nuclei": {
+            "window": (0.025, 0.719),
+            "gamma": 2.82,
+            "opacity": 1.0,
+            "layer_order": 20,
+        },
+    }
+    for name, appearance in expected.items():
+        attrs = dict(root[name].attrs)
+        lo, hi = appearance["window"]
+        assert attrs["blending_mode"] == "volumetric"
+        assert attrs["absorption"] == pytest.approx(0.02)
+        assert attrs["gamma"] == pytest.approx(appearance["gamma"])
+        assert attrs["opacity"] == pytest.approx(appearance["opacity"])
+        assert attrs["layer_order"] == appearance["layer_order"]
+        assert attrs["intensity"] == pytest.approx(1.0 / (hi - lo))
+        assert attrs["offset"] == pytest.approx(-lo / (hi - lo))
+
+    assert dict(root.attrs)["viewer_config"]["exposure"] == pytest.approx(-3.4)
 
 
 class TestEmptyFitTilesSurviveTheCullStage:

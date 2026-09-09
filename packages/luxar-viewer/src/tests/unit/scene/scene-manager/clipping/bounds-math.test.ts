@@ -824,6 +824,44 @@ describe('bounds-math', () => {
       expect(transformed.max).toEqual({ x: 6, y: 11, z: 16 });
     });
 
+    it('writes into a caller-owned output box without replacing its vectors', () => {
+      const box: BoundingBox = {
+        min: { x: 0, y: 0, z: 0 },
+        max: { x: 1, y: 1, z: 1 },
+      };
+      const target: BoundingBox = {
+        min: { x: 99, y: 99, z: 99 },
+        max: { x: 99, y: 99, z: 99 },
+      };
+      const targetMin = target.min;
+      const targetMax = target.max;
+      const translation = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 5, 10, 15, 1];
+
+      const transformed = transformBoundingBox(box, translation, target);
+
+      expect(transformed).toBe(target);
+      expect(transformed.min).toBe(targetMin);
+      expect(transformed.max).toBe(targetMax);
+      expect(transformed).toEqual({
+        min: { x: 5, y: 10, z: 15 },
+        max: { x: 6, y: 11, z: 16 },
+      });
+    });
+
+    it('supports using the input box as the output box', () => {
+      const box: BoundingBox = {
+        min: { x: 0, y: 0, z: 0 },
+        max: { x: 1, y: 1, z: 1 },
+      };
+      const translation = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 5, 10, 15, 1];
+
+      expect(transformBoundingBox(box, translation, box)).toBe(box);
+      expect(box).toEqual({
+        min: { x: 5, y: 10, z: 15 },
+        max: { x: 6, y: 11, z: 16 },
+      });
+    });
+
     it('should handle scaling', () => {
       const box: BoundingBox = {
         min: { x: -1, y: -1, z: -1 },

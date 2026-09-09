@@ -732,10 +732,14 @@ export class DataLoadingMonitor {
         this.clearL1Cache();
         break;
       case 'clearL2':
-        this.clearL2Cache();
+        this.clearL2Cache().catch((error: unknown) => {
+          this.reportCacheClearFailure('L2 cache', error);
+        });
         break;
       case 'clearAll':
-        this.clearAllCaches();
+        this.clearAllCaches().catch((error: unknown) => {
+          this.reportCacheClearFailure('all caches', error);
+        });
         break;
       case 'retryFailedLoads':
         this.retryFailedLoads();
@@ -755,6 +759,11 @@ export class DataLoadingMonitor {
         break;
       }
     }
+  }
+
+  private reportCacheClearFailure(label: string, error: unknown): void {
+    log.warning(Modules.DATA_MONITOR, `Failed to clear ${label}`, error);
+    notifier.toast(`Failed to clear ${label}`);
   }
 
   /**
