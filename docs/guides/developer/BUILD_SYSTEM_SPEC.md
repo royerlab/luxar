@@ -94,7 +94,7 @@ The setup process has 5 steps:
 #### Step 2: Node.js Environment
 
 1. Sources nvm if already installed (`~/.nvm/nvm.sh`)
-2. Checks Node.js version (requires 22.22+ — jsdom 30's declared floor; Vite 8.x alone needs only 20.19)
+2. Checks Node.js version (requires 22.22+ — jsdom 30's declared floor; Vite 8.x supports `^20.19.0 || >=22.12.0`)
 3. If Node.js is missing or too old:
    - **macOS**: Uses Homebrew (`brew install node@22`)
    - **Linux**: Installs nvm, then `nvm install 22`
@@ -990,7 +990,7 @@ that cap without re-measuring queue pressure.
 | Tool | Minimum Version | Reason |
 |------|----------------|--------|
 | Python | 3.12 | zarr 3 requires >=3.12 from 3.2 on; also stdlib `tomllib`, PEP 695 type stubs |
-| Node.js | 22.22 | jsdom 30 engines `^22.22.2 || ^24.15.0 || >=26.0.0` (undici 8 crashes on older Node); Vite 8.x needs only 20.19 |
+| Node.js | 22.22 | jsdom 30 engines `^22.22.2 || ^24.15.0 || >=26.0.0` (undici 8 crashes on older Node); Vite 8.x supports `^20.19.0 || >=22.12.0` |
 | Rust | stable | WASM compilation |
 | wasm-pack | 0.15.0 (pinned) | WASM packaging — `install-rust` installs exactly `WASM_PACK_VERSION` (see the Makefile) with `cargo install --locked --force`, then fails unless PATH answers with that version |
 

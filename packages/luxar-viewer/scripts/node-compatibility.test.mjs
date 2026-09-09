@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest';
 
 const PKG = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const REPO = resolve(PKG, '../..');
+// Copied from Vite 8.2's engines.node rather than read from node_modules so a
+// Vite upgrade requires an explicit decision about the published contract.
 const SUPPORTED_NODE_RANGE = '^20.19.0 || >=22.12.0';
 
 function packageJson(path) {
