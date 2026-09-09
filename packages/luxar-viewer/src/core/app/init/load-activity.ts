@@ -7,10 +7,10 @@
  * evidence). The controller used to read only `isUpdateInProgress()` — the
  * update-view lock — which excludes the post-load progressive refinement
  * drain (each rung is a fetch + decode + commit with the lock RELEASED between
- * passes), lazy `lod_group` level loads, held partition rising-edge resyncs,
- * and load passes on non-default loaders. The 2026-09 audit caught the
- * controller crediting the end of a refinement drain to a DPR step it had just
- * taken.
+ * passes), lazy `lod_group` level loads, held partition rising-edge resyncs on
+ * the default loader, and load passes on non-default loaders. The 2026-09 audit
+ * caught the controller crediting the end of a refinement drain to a DPR step
+ * it had just taken.
  *
  * This is the same settledness the perf probes read through
  * `__luxarDebug.getPerf().isSettled` (`debug/perf-snapshot.ts`), inverted.
