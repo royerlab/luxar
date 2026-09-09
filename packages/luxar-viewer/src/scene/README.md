@@ -540,6 +540,11 @@ an unchanged view read every resident fine level scene-wide as stale and
 dropped ALL groups to coarse on camera motion (the #2366 regression on
 the 44-part h2afva scene).
 
+`hasVisiblePendingPartitionResync()` publishes the held set to the wide
+load-activity and perf-settle predicates: a pending edge blocks settling only
+while its wrapper is effectively visible; hidden wrappers remain pending but
+do not block.
+
 **Wiring:** the SceneLoader instantiates one registry per scene and
 hooks `evaluatePerFrame()` into `AnimationController` alongside the
 dynamic-clipping callback. The injected `LODGroupRegistryDeps` supply
