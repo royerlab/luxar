@@ -806,7 +806,10 @@ STORIES: tuple[UniverseStory, ...] = (
             "phage there really are — nobody knows."
         ),
         tags=("virology", "ecology"),
-        pdb_id="2XGF",  # T4 long tail fibre receptor-binding tip
+        # The whole tail machine of phage T7 — collar, nozzle and tube — a
+        # recognisable piece of a phage, not one fibre tip (2XGF). The full T4
+        # baseplate (5IV5) renders too, but face-on it reads as a hexagonal blob.
+        pdb_id="6R21",
         narration=(
             "The phage universe. Bacteriophages, the viruses of bacteria, are "
             "the most abundant biological entities on Earth: ten million "
