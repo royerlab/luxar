@@ -310,11 +310,13 @@ export async function hashUrl(url: string): Promise<string> {
  * body stalls. A progressing body may exceed that watchdog window, but it also
  * has an absolute deadline: the longer of eight stall windows or
  * `Content-Length` divided by a 16 KiB/s floor. This bounds how long one
- * response can occupy a shared fetch-gate slot.
+ * response can occupy a shared fetch-gate slot. The configured timeout is a
+ * window input, not a wall-clock cap for one key: each retry may spend one
+ * window reaching headers and then the body deadline, followed by backoff.
  *
  * @param url - URL to fetch.
  * @param options - Optional `timeoutMsOverride` (e.g. for cache-validation
- *   probes that want a shorter budget than the data-fetch timeout) and a
+ *   probes that want shorter windows than data fetches) and a
  *   caller `signal` for cancellation propagation. The caller signal is
  *   merged with the per-attempt timeout signal so either abort source
  *   wins immediately. `onExhausted` receives the final retryable error. A
