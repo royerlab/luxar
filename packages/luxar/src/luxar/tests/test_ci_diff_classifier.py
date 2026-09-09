@@ -184,6 +184,11 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "its .md only selects docs-quality, which runs no pytest",
     ),
     (
+        "docs/guides/developer/DEMO_SITE_RUNBOOK.md",
+        "py",
+        "test_docs_workflow.py checks its section numbering and archive digest pins",
+    ),
+    (
         "docs/api/gsplats.rst",
         "py",
         "test_format_contract.py checks its current gsplats format claim",
@@ -805,6 +810,7 @@ def test_python_gate_input_scan_exclusions_have_one_line_reasons() -> None:
         ".gitignore.bak",
         "scripts/gallery/media-manifest.json.bak",
         "docs/api/gsplats.rst.bak",
+        "docs/guides/developer/archive/DEMO_SITE_RUNBOOK.md",
         "docs/guides/user/archive/FORMAT_AND_MIGRATION.md",
         "docs/specs/GSPLATS_ZARR_FORMAT.md.bak",
         "packages/luxar/subdir/README.md",
