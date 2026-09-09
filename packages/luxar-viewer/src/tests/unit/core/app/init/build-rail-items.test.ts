@@ -52,6 +52,7 @@ function makeDeps(
         cycleDataMonitor: vi.fn(),
         toggleCinematicMode: vi.fn(),
         toggleFullscreen: vi.fn(),
+        closeAllPanels: vi.fn(),
         handleEscape: vi.fn(),
         togglePerformanceStats: vi.fn(),
         recenterCamera: vi.fn(),
@@ -526,7 +527,7 @@ describe('buildRailItems', () => {
       vi.restoreAllMocks();
     });
 
-    it('adds a momentary Hide panels item that fires the Escape command', () => {
+    it('adds a momentary Hide panels item that closes panels without the fullscreen Escape path', () => {
       setInputProfileOverride('touch');
       const deps = makeDeps();
       const items = buildRailItems(deps);
@@ -538,9 +539,13 @@ describe('buildRailItems', () => {
       expect(hide.icon).not.toBe(RAIL_ICONS.view);
       hide.activate();
       expect(
+        (deps as unknown as { ui: { commands: { closeAllPanels: ReturnType<typeof vi.fn> } } }).ui
+          .commands.closeAllPanels
+      ).toHaveBeenCalledTimes(1);
+      expect(
         (deps as unknown as { ui: { commands: { handleEscape: ReturnType<typeof vi.fn> } } }).ui
           .commands.handleEscape
-      ).toHaveBeenCalledTimes(1);
+      ).not.toHaveBeenCalled();
     });
 
     it('does not add Hide panels on a mouse-and-keyboard machine', () => {

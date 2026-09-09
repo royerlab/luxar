@@ -620,6 +620,7 @@ export class InputHandler {
       cycleDataMonitor: () => this.handleDataMonitorCycle(),
       recenterCamera: () => this.recenterCamera(),
       exportViewerState: () => this.exportViewerState(),
+      closeAllPanels: () => this.panelCoordinator.closeAll(),
       handleEscape: () => this.handleEscapeKey(),
       shouldHandleSpaceKey: () => this.shouldHandleSpaceKey(),
     };

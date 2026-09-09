@@ -654,8 +654,8 @@ export async function runInitPipeline(
   inputHandler.setLayersPanel(layersPanel);
 
   // Left activity rail — the always-visible, discoverable entry point to the
-  // otherwise keyboard-only panels. Each button fires the SAME command as its
-  // shortcut (via inputHandler.getUiActions()), so behaviour never drifts.
+  // otherwise keyboard-only panels. Buttons dispatch through the same command
+  // surface as keyboard shortcuts (via inputHandler.getUiActions()).
   // The sound layer. Constructs no AudioContext until a scene with sound nodes
   // attaches; every viewer piece it needs arrives as a port so `audio/` stays
   // below `scene/` in the layer order (see src/audio/README.md).

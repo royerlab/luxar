@@ -109,8 +109,8 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
 
   // Touch-first devices (a coarse primary pointer): a phone has room for ONE
   // floating surface, so the help overlay and the data monitor join the
-  // docked panels' exclusivity, and a "Hide panels" button stands in for the
-  // Escape key a phone does not have. Desktop keeps stacking and no new item.
+  // docked panels' exclusivity, and a "Hide panels" button provides an
+  // unconditional close action. Desktop keeps stacking and no new item.
   const closeOthersOnCoarse = (except: 'help' | 'monitor'): void => {
     if (coarse) closeOtherLeftPanels(except);
   };
@@ -399,13 +399,13 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
     ...(coarse
       ? [
           {
-            // Touch only: the on-screen Escape. Closes every open panel and
-            // popover (what the Escape key does on a keyboard machine).
+            // Touch only: closes every open panel and popover, including while
+            // fullscreen (where keyboard Escape is reserved for the browser).
             id: 'hide-panels',
             title: 'Hide panels',
             icon: RAIL_ICONS.hidePanels,
             momentary: true,
-            activate: () => ui.commands.handleEscape(),
+            activate: () => ui.commands.closeAllPanels(),
           },
         ]
       : []),

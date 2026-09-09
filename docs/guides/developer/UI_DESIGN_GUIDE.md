@@ -991,7 +991,7 @@ media features in any other stylesheet, and the load-bearing clamps present.
   highlight fill). The hover rule you restate must be the element's own rest
   state, so keep this list short and exact.
 - **Coarse-only affordances are gated in JS on `getInputProfile()`**, never on
-  width: a momentary **Hide panels** rail item (the on-screen Escape), the help
+  width: a momentary **Hide panels** rail item that always closes open surfaces, the help
   and monitor joining the docked panels' one-surface exclusivity, `‹ ›` step
   buttons and a tappable name chip on each dimension slider (the finger's `[ ]`
   and `1–9` keys), and the Home popover captioning on `pointerdown` for

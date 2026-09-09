@@ -146,7 +146,7 @@ each with a hover tooltip showing its shortcut. Home, Navigation, Settings and
 Performance open rail popovers (see [`rail-panels/`](./rail-panels/README.md)).
 On a device that cannot hover the first-run hint says "Tap these controls (hold
 for options)" instead of "Hover", and under a coarse pointer the rail gains a
-momentary **Hide panels** item (the on-screen Escape) — see
+momentary **Hide panels** item that closes every open surface — see
 `core/app/init/build-rail-items.ts` and the UI Design Guide §11.5.
 
 **Design:**
