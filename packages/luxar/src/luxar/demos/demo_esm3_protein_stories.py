@@ -329,9 +329,11 @@ STORIES: tuple[Story, ...] = (
             "the same trick: class I fusion proteins that snap into a "
             "six-helix bundle, dragging virus and cell membranes together.",
             "Haemagglutinin gives influenza its “H” (H1N1, H5N1...). "
-            # 50–100 million: Johnson & Mueller 2002; CDC EID 2006.
-            "The 1918 pandemic, an H1N1 virus, killed an estimated 50 million "
-            "people — more than the war it followed.",
+            # Johnson & Mueller, Bull. Hist. Med. 76:105 (2002): 50 million,
+            # possibly 100 million; Spreeuwenberg et al., Am. J. Epidemiol.
+            # 187:2561 (2018): 17.4 million. No single figure is settled.
+            "The 1918 pandemic, an H1N1 virus, killed tens of millions of "
+            "people — estimates run from 17 to 100 million.",
             "The coronavirus spike grips the human ACE2 receptor to open a "
             "cell; its receptor-binding domain is what most COVID-19 vaccines "
             "teach the immune system to recognise.",
@@ -351,7 +353,8 @@ STORIES: tuple[Story, ...] = (
             "The intruders' continent. Influenza's haemagglutinin, the "
             "coronavirus spike, HIV's envelope: unrelated viruses, one trick. "
             "Each snaps into a bundle that drags virus and cell together. The "
-            "1918 flu killed fifty million people with a protein like this one. "
+            "1918 flu killed tens of millions of people with a protein like this "
+            "one. "
             "They gather here although they share no ancestor; the model groups "
             "them by how they are built and what they do. Most viral proteins "
             "have no known relatives at all. Where would that dark matter land "

@@ -229,6 +229,19 @@ def test_name_pattern_needs_a_name_mask_and_unions_with_pfam() -> None:
     assert family_mask(story, u, by_name).sum() == 250 + 10  # PF00001: cloud + spur
 
 
+def test_groups_filter_keeps_only_the_named_branches_of_life() -> None:
+    """Hemoglobin's guard: the globin knot the story lands on must be animal."""
+    universe = _universe()
+    unfiltered = family_mask(_story(pfam=("PF00042",)), universe, None)
+    animal = family_mask(
+        _story(pfam=("PF00042",), groups=("Other Vertebrates",)), universe, None
+    )
+    assert unfiltered.sum() == 270
+    assert animal.sum() == 120  # the Chordata knot only
+    assert np.flatnonzero(animal).min() >= 4000
+    assert np.flatnonzero(animal).max() < 4120
+
+
 def test_select_members_fails_loudly_when_nothing_matches() -> None:
     u = _universe()
     tree = spatial.cKDTree(u.positions)

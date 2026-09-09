@@ -2,10 +2,13 @@
 """ESM Protein Universe — twelve stories across 7.7 million protein clusters.
 
 The big-map sibling of ``demo_esm3_protein_stories``. Every point is one of
-7.7 million CLUSTERS of related proteins from the ESM Metagenomic Atlas — most
-of them read straight out of environmental DNA rather than from any organism
-grown in a lab — embedded by a protein language model and laid out by 3D UMAP.
-A hidden ``story`` dimension walks through twelve stops: seven protein families
+7.7 million CLUSTERS of proteins from the ESM Atlas (Candido et al., bioRxiv
+2026): 6.8 billion sequences from eight public databases — 5.6 billion of them
+read straight out of environmental DNA rather than from any organism grown in a
+lab — grouped by the features a protein language model (ESM C) sees in them
+(Jaccard ≥ 0.6 in sparse-autoencoder feature space) and laid out by 3D UMAP. A
+point is a cluster of at least fifty members; the 7.7 million together stand for
+817 million proteins. A hidden ``story`` dimension walks through twelve stops: seven protein families
 carried over from the Swiss-Prot tour (hemoglobin, photosystem II, Hsp70, the
 viral spike, ATP synthase, RuBisCO, RecA), three stories only this map can tell
 (the ABC-transporter spur flung off the cloud, the dark proteome, the phage
@@ -26,10 +29,17 @@ What changes against the Swiss-Prot tour, and why:
   (or a product-name pattern, or a region predicate) and frame the densest
   knot, scored by member count times purity, within a radius of ~0.3 rather
   than 0.8.
-- **Colour.** The backdrop is coloured by the domain of life of each cluster's
-  dominant phylum, and clusters with no characterised member at all — one in
-  four — are dimmed, so the "dark proteome" reads as geography before its
-  story is told.
+- **Colour.** The backdrop is coloured by the main branch of life of each
+  cluster's dominant phylum, and clusters with no characterised member at all
+  — one in four; no member carries a Pfam domain of known function, the same
+  count the preprint reports as "over two million" — are dimmed, so the "dark
+  proteome" reads as geography before its story is told.
+
+Dataset facts are from the preprint (Candido et al., "Language Modeling
+Materializes a World Model of Protein Biology", bioRxiv 2026, doi
+10.64898/2026.06.03.729735 — the atlas section and Appendix A.5); every
+map-specific line in a story (what a knot IS) was re-measured against the
+annotation table.
 
 Inputs are two parquet files handed over by the ESM Atlas team (not public, so
 ``local_data="manual-file"``): the coordinates
@@ -55,8 +65,9 @@ DEMO_META = {
     "key": "esm_protein_universe",
     "title": "ESM Protein Universe — twelve stories across 7.7 million protein clusters",
     "description": (
-        "The ESM Metagenomic Atlas cluster-representative 3D UMAP (7.7 million "
-        "protein clusters, mostly environmental) with a hidden story dimension: "
+        "The ESM Atlas cluster map (Candido et al. 2026): a 3D UMAP of 7.7 "
+        "million protein clusters drawn from 6.8 billion sequences, most of them "
+        "environmental, with a hidden story dimension: "
         "twelve stops — seven classic families, the ABC-transporter spur, the dark "
         "proteome, the phage universe, beta-lactamases and CRISPR-Cas — each with "
         "a fly-to waypoint, a highlight, a soap bubble, a turning structure and a "
@@ -78,9 +89,14 @@ DEMO_META = {
     "caches": ["esm_protein_universe", "pdb_turntables", "esm3_protein_stories"],
     "outputs": ["esm_protein_universe"],
     "citation": {
-        "short": "ESM Metagenomic Atlas cluster map, ESM Atlas team 2026",
-        "ref": "ESM Metagenomic Atlas / ESM Atlas team",
-        "license": "unpublished, shown with permission",
+        "short": "ESM Atlas cluster map (Candido et al. 2026)",
+        "ref": "ESM Atlas, Candido et al. 2026",
+        "doi": "10.64898/2026.06.03.729735",
+        "url": "https://biohub.ai/esmc/atlas",
+        # The public Atlas release is CC BY-SA 4.0 (AWS Open Data registry); the
+        # 3D coordinates and the per-cluster annotation table are a hand-off
+        # from the ESM Atlas team ahead of publication.
+        "license": "CC BY-SA 4.0; 3D map shown with permission",
     },
 }
 
@@ -414,7 +430,16 @@ def backdrop_colors(universe: Universe) -> np.ndarray:
 #
 # Every number below was checked against a source when the demo was written;
 # the source is named next to the fact. Counts about THIS map come from the
-# annotation table itself (the audit is in the module docstring's numbers).
+# annotation table itself, and the dataset facts from the ESM Atlas preprint
+# (Candido et al., bioRxiv 2026, doi 10.64898/2026.06.03.729735): 6,824,676,938
+# sequences from eight databases (UniParc, IMG/M, IMG/VR, two JGI MAG sets,
+# MGnify, UHGG, SPIRE), 5.6 billion of them metagenomic; ESMC 6B embeddings →
+# 16,384-feature SAE → Jaccard ≥ 0.6 clustering → 3.05 billion clusters, of
+# which 7.7 million have at least fifty members (817 million proteins; this
+# map); 1.1 billion ESMFold2 structures; "characterised" = a Pfam domain of
+# known function (Pfam 38.1), and "over two million" clusters have none. Every
+# map-specific line (what a knot IS) was re-measured on 2026-09-09; the knot
+# compositions quoted in the comments come from that audit.
 
 
 @dataclass(frozen=True)
@@ -431,6 +456,12 @@ class UniverseStory(Story):
 
     pfam: tuple[str, ...] = ()
     region: str | None = None
+    #: Keep only clusters whose dominant phylum falls in these landscape palette
+    #: groups (see :func:`phylum_group`). Hemoglobin needs it: the globin family
+    #: forms two knots of equal size, one bacterial and one animal, and the
+    #: purity-weighted seed lands on the bacterial one — which would make a
+    #: story titled "the molecule of breath" light flavohemoglobins.
+    groups: tuple[str, ...] = ()
     #: Light and frame the WHOLE selection rather than its densest knot: a story
     #: about the map itself (a quarter of it is dark; half a million clusters
     #: are phage) must show every member, or the panel's numbers and the
@@ -556,22 +587,30 @@ STORIES: tuple[UniverseStory, ...] = (
         subtitle="Four hundred globin clusters; the knot is the oxygen carriers of animals",
         pattern="",
         pfam=("PF00042",),  # Globin
+        # The 423 globin clusters form two knots of 159: one all bacterial
+        # (Pseudomonadota flavohemoglobins), one animal (Chordata 53, Nematoda
+        # 38, Arthropoda 9, Mollusca 2). Without the filter the purer bacterial
+        # knot wins the seed; with it the story lands on the animal globins.
+        groups=("Other Vertebrates", "Insects & Worms"),
         radius=FAMILY_RADIUS,
         min_distance=FAMILY_MIN_DISTANCE,
         facts=_swap_fact(
             "Hemoglobin",
             3,
-            # Bacterial globins (flavohemoglobins, truncated globins) and plant
-            # non-symbiotic hemoglobins: Vinogradov & Moens, JBC 283:8773 (2008).
-            "The globin fold is far older than blood. Bacteria, fungi and plants "
-            "carry globins that bind oxygen, sense it or detoxify nitric oxide, "
-            "and the model files them here with ours — the same eight helices, "
-            "reused for two billion years.",
+            # Knot: 102 animal globin clusters (audit). Bacterial globins
+            # (flavohemoglobins, truncated globins) and plant non-symbiotic
+            # hemoglobins: Vinogradov & Moens, JBC 283:8773 (2008); the bacterial
+            # knot of 159 sits elsewhere in the map.
+            "This knot is the animal globins: vertebrate hemoglobins beside the "
+            "globins of worms and insects. The fold is far older than blood — "
+            "bacteria, fungi and plants carry globins that sense oxygen or "
+            "detoxify nitric oxide, and the model files those in knots of their "
+            "own elsewhere in this map.",
         ),
     ),
     _carry(
         "Photosystem II",
-        subtitle="The reaction-centre proteins: D1, D2 and their purple-bacteria cousins",
+        subtitle="D1, the water-splitting protein — in cyanobacteria and plants, and in the viruses that hijack them",
         pattern="",
         pfam=("PF00124",),  # Photo_RC: D1/D2 and the L/M chains
         radius=FAMILY_RADIUS,
@@ -579,13 +618,17 @@ STORIES: tuple[UniverseStory, ...] = (
         facts=_swap_fact(
             "Photosystem II",
             3,
-            # Purple-bacteria reaction centre L/M chains are homologous to
-            # D1/D2 (Deisenhofer, Huber & Michel; Nobel 1988).
-            "In this knot D1 and D2 sit with the L and M chains of "
-            "purple-bacteria reaction centres: distant cousins that harvest "
-            "light but never learned to split water. Their kinship was a key "
-            "clue when the first photosynthetic structure was solved (Nobel "
-            "Prize in Chemistry 1988).",
+            # Knot (audit): 44 clusters, all named D1 — Uroviricota 18,
+            # Cyanobacteriota 13, Rhodophyta 7, Streptophyta 5. No purple
+            # bacteria: the L/M chains sit in knots of their own. Cyanophage
+            # psbA: Mann et al., Nature 424:741 (2003); Lindell et al., Nature
+            # 438:86 (2005) — the phage copy of D1 is expressed during infection
+            # and keeps photosynthesis running while the phage replicates.
+            "This knot is D1 itself, from cyanobacteria, red algae and plants — "
+            "and two in five of its clusters belong to viruses. Cyanophages "
+            "carry their own copy of D1, and switch it on during infection to "
+            "keep the host's photosynthesis running while they replicate "
+            "inside it.",
         ),
     ),
     _carry(
@@ -598,8 +641,13 @@ STORIES: tuple[UniverseStory, ...] = (
         facts=_swap_fact(
             "Hsp70",
             2,
-            "That is why the map holds it in dozens of knots — each a version "
-            "tuned to one branch of life, all of them recognisably the same "
+            # Audit: 3,799 HSP70 clusters in 73 knots (19 of 20+ members);
+            # the big ones mix bacterial phyla (Pseudomonadota, Bacillota,
+            # Actinomycetota, Bacteroidota...), and plants and vertebrates share
+            # a few smaller ones with them — no knot is one branch of life.
+            "That is why the map holds it in dozens of knots — most of them "
+            "bacterial DnaK in one variation or another, with the plant and "
+            "animal versions filed among them — all recognisably the same "
             "protein. The map is showing a protein older than the deepest split "
             "in the tree of life.",
         ),
@@ -608,7 +656,8 @@ STORIES: tuple[UniverseStory, ...] = (
             "refolds the damaged ones, and hands the hopeless ones to the "
             "shredder. After three billion years apart, the human and E. coli "
             "versions are still nearly half identical, letter for letter. The "
-            "map holds it in dozens of knots, one for every branch of life. "
+            "map holds it in dozens of knots, most of them bacterial, all "
+            "recognisably the same protein. "
             "Cancer cells over-produce it to survive their own chaos, and drugs "
             "against it have been tried for decades. None has reached the "
             "clinic. Why is such a universal protein so hard to target?"
@@ -628,19 +677,23 @@ STORIES: tuple[UniverseStory, ...] = (
         facts=_swap_fact(
             "Viral surface proteins",
             3,
-            # 562 spike clusters in the annotation table; the knot is 91% spike.
-            "This knot is the coronavirus spike in hundreds of versions — from "
-            "bats, birds, pigs, camels and people — a family the whole world "
-            "learned to read in 2020.",
+            # Audit: knot of 372 clusters, every named one a spike glycoprotein
+            # (Pisuviricota, the phylum that holds the coronaviruses; most have
+            # no phylum recorded). Hosts are the family's, not read from the
+            # table: coronaviruses of bats, birds (IBV), pigs (PEDV, TGEV),
+            # camels (MERS) and people.
+            "This knot is the coronavirus spike in hundreds of versions — a "
+            "family that infects bats, birds, pigs, camels and people — the "
+            "protein the whole world learned to read in 2020.",
         ),
         pdb_id="6VXX",  # SARS-CoV-2 spike, closed state
         narration=(
             "The intruders' spike. Influenza's haemagglutinin, the coronavirus "
             "spike, HIV's envelope: unrelated viruses, one trick. Each snaps "
             "into a bundle that drags virus and cell together. The 1918 flu "
-            "killed fifty million people with a protein like this one. This "
-            "knot is the coronavirus spike, in hundreds of versions, from bats "
-            "to people. Most viral proteins have no known relatives at all. "
+            "killed tens of millions of people with a protein like this one. "
+            "This knot is the coronavirus spike, in hundreds of versions, from a "
+            "family that infects bats, birds, camels and people. Most viral proteins have no known relatives at all. "
             "Where does that dark matter land on this map?"
         ),
     ),
@@ -653,10 +706,13 @@ STORIES: tuple[UniverseStory, ...] = (
         facts=_swap_fact(
             "ATP synthase",
             3,
+            # Audit: knot of 295, 93% pure — Bacillota 106, Pseudomonadota 62,
+            # Bacteroidota 39, Actinomycetota 28, and 10 named "chloroplastic".
             "This knot is the beta subunit as bacteria build it, in hundreds of "
-            "versions. The copies in our own mitochondria descend from exactly "
-            "these: the same motor, inherited from the bacteria that became "
-            "part of our cells.",
+            "versions, with the chloroplast copies of plants filed among them. "
+            "The copies in our own mitochondria descend from the same source: "
+            "one motor, inherited from the bacteria that became part of our "
+            "cells.",
         ),
     ),
     _carry(
@@ -669,8 +725,15 @@ STORIES: tuple[UniverseStory, ...] = (
         facts=_swap_fact(
             "RuBisCO",
             3,
-            "The knot here is the plant enzyme's large chain; the bacterial and "
-            "archaeal forms make their own smaller knots elsewhere in the map.",
+            # Audit: knot of 117 large-chain clusters — Streptophyta 58,
+            # Pseudomonadota 27, Bacillota 10, plus five "2,3-diketo-5-
+            # methylthiopentyl-1-phosphate enolase": the RuBisCO-like protein
+            # of the methionine salvage pathway (Ashida et al., Science 302:286
+            # (2003), Bacillus subtilis).
+            "The knot here is the large chain: half of it the plant enzyme, the "
+            "rest bacterial forms — and a few RuBisCO-like proteins that never "
+            "fix carbon at all. In Bacillus, one of them recycles methionine "
+            "instead.",
         ),
     ),
     _carry(
@@ -683,8 +746,11 @@ STORIES: tuple[UniverseStory, ...] = (
         facts=_swap_fact(
             "RecA and Rad51",
             3,
-            # The densest RecA knot here is dominated by tailed-phage clusters;
-            # phage-encoded RecA homologs (T4's UvsX among them) are well known.
+            # Audit: knot of 171, 169 of them Uroviricota (tailed phages); 669
+            # of the 1,560 RecA clusters in the map are viral. Phage-encoded
+            # RecA homologs (T4's UvsX among them) are well known. RAD51 is
+            # its own Pfam family (PF08423, 535 clusters: archaea, fungi,
+            # vertebrates, plants).
             "The densest RecA knot in this map belongs to viruses: many tailed "
             "phages carry a RecA of their own, to repair and reshuffle their "
             "genomes inside the host. Our RAD51 forms a knot of its own "
@@ -732,12 +798,15 @@ STORIES: tuple[UniverseStory, ...] = (
             "are spent. That engine — the cassette — is what these clusters "
             "share.",
             # 8,277 clusters on the spur; 96% carry an ABC-transporter Pfam
-            # family as their dominant domain (see SPUR_PFAMS).
-            "The map put them on a spur of their own. A streak like this is a "
-            "known habit of the layout algorithm when a huge family of very "
-            "similar sequences shares few neighbours with anything else — an "
-            "artefact, but an honest one: it marks the most repeated design in "
-            "the protein world.",
+            # family as their dominant domain (see SPUR_PFAMS). PF00005 is the
+            # largest family in Pfam (681,506 sequences at release 32) and the
+            # commonest dominant family in this map (48,106 clusters; the next,
+            # the MFS transporters PF07690, has 31,024).
+            "The map put them on a spur of their own. A streak like this is "
+            "what the layout algorithm does with a huge, tightly knit family "
+            "that shares few features with anything else — partly an artefact, "
+            "but an honest one: the ATP-binding cassette is the largest protein "
+            "family known, and the commonest on this map.",
         ),
         mystery=(
             "The same cassette powers importers and exporters, in bacteria and "
@@ -760,7 +829,7 @@ STORIES: tuple[UniverseStory, ...] = (
     ),
     UniverseStory(
         key="Dark proteome",
-        title="The dark proteome — two million clusters nobody has named",
+        title="The dark proteome — two million clusters nobody has characterised",
         subtitle="A quarter of this map has no characterised member at all",
         pattern="",
         region="dark",
@@ -769,18 +838,23 @@ STORIES: tuple[UniverseStory, ...] = (
         frame_fraction=1.0,
         facts=(
             # Annotation table: 2,025,330 of 7,723,579 clusters have
-            # cluster_pct_characterized == 0; 76% of those are named
+            # cluster_pct_characterized == 0 (no member carries a Pfam domain of
+            # known function — the preprint's own definition, which reports
+            # "over two million" such clusters); 76% of those are named
             # "hypothetical protein".
             "Two million of the 7.7 million clusters here — one in four — "
-            "contain not a single protein anyone has characterised. Most carry "
-            "the placeholder name “hypothetical protein”. They are the dim "
-            "points of this map.",
-            # Lin et al., Science 379:1123 (2023): ESM Metagenomic Atlas, 617
-            # million predicted structures.
+            "contain not a single protein anyone has characterised: no member "
+            "carries a domain of known function. Most wear the placeholder "
+            "name “hypothetical protein”. They are the dim points of this map.",
+            # Preprint, atlas section + Appendix A.5.1/A.5.2: 6.82 billion
+            # sequences, 5.6 billion from metagenomic samples (SPIRE, MGnify:
+            # gut, aquatic, soil, wastewater, agriculture, built environment);
+            # 1.1 billion representative structures from ESMFold2.
             "They come from metagenomics: DNA read straight out of soil, "
-            "seawater, hot springs and guts, from organisms nobody has grown in "
-            "a lab. The ESM Metagenomic Atlas predicted structures for more "
-            "than 600 million such sequences.",
+            "seawater, wastewater and guts, from organisms nobody has grown in "
+            "a lab. Of the 6.8 billion sequences behind this map, 5.6 billion "
+            "came that way — and a structure has been predicted for 1.1 "
+            "billion of them.",
             # Annotation table: in the densest 0.5-unit voxels the dark
             # fraction exceeds 95%; ten nearest neighbours of a dark cluster
             # are dark 80% of the time against a 26% base rate.
@@ -822,7 +896,10 @@ STORIES: tuple[UniverseStory, ...] = (
         frame_fraction=1.0,
         facts=(
             # Hendrix et al., PNAS 96:2192 (1999): ~10^31 tailed phages.
-            # Annotation table: 580,733 clusters with Uroviricota dominant.
+            # Annotation table: 580,733 clusters with Uroviricota (the tailed
+            # phages) as dominant phylum — 93% of the 622,879 viral clusters.
+            # Preprint: "Almost all viral sequences are metagenomic, largely
+            # derived from bacteriophages" (atlas section).
             "Bacteriophages — the viruses of bacteria — are the most abundant "
             "biological entities on Earth: an estimated ten million trillion "
             "trillion of them, more than every other organism combined. Here "
@@ -865,8 +942,13 @@ STORIES: tuple[UniverseStory, ...] = (
     UniverseStory(
         key="Beta-lactamases",
         title="Beta-lactamase — the enzyme that fights back",
-        subtitle="Seven thousand clusters of the proteins that destroy penicillin and its cousins",
+        subtitle="Nine thousand clusters of the beta-lactamase fold; this knot is the class A enzymes, TEM-1's own family",
         pattern="",
+        # PF00144 (7,168 clusters) is the beta-lactamase FOLD — class C
+        # enzymes, but also penicillin-binding proteins and esterases that never
+        # touch an antibiotic; PF13354 (2,251) is the class A beta-lactamases
+        # proper (TEM, SHV, CTX-M). The densest knot (398 clusters) is 97%
+        # PF13354, so the turntable's TEM-1 is the right molecule for it.
         pfam=("PF00144", "PF13354"),  # Beta-lactamase, Beta-lactamase2
         color=(0.95, 0.25, 0.5),
         radius=FAMILY_RADIUS,
@@ -888,10 +970,14 @@ STORIES: tuple[UniverseStory, ...] = (
             "problem in Gram-negative bacteria.",
             # D'Costa et al., Nature 477:457 (2011): resistance genes in
             # 30,000-year-old Beringian permafrost.
+            # Hall & Barlow, J. Mol. Evol. 59:133 (2004): serine beta-lactamases
+            # are over two billion years old; the beta-lactam producers are
+            # moulds (Penicillium) and soil bacteria (Streptomyces).
             "Beta-lactamase genes have been recovered from 30,000-year-old "
-            "permafrost. The enzymes are ancient: bacteria have been fighting "
-            "moulds with penicillins, and each other with beta-lactamases, for "
-            "millions of years.",
+            "permafrost. The enzymes are far older than that: moulds and soil "
+            "bacteria have made penicillin-like antibiotics, and their "
+            "neighbours have destroyed them with beta-lactamases, for hundreds "
+            "of millions of years.",
         ),
         mystery=(
             "Thousands of beta-lactamase variants are known and new ones appear "
@@ -917,7 +1003,23 @@ STORIES: tuple[UniverseStory, ...] = (
         title="CRISPR-Cas9 — a bacterial immune system turned into scissors",
         subtitle="Hundreds of clusters of the enzyme bacteria use to cut viral DNA",
         pattern="",
-        pfam=("PF16592", "PF16593", "PF13395"),  # Cas9 REC lobe, HNH, RuvC
+        # The preprint's own Cas9 class (Table S15 of Candido et al. 2026):
+        # the RuvC, HNH, REC-lobe, PI and bridge-helix families of Cas9. 874
+        # clusters in this map; the knot is 260 of them, 88% pure.
+        pfam=(
+            "PF22702",
+            "PF13395",
+            "PF16593",
+            "PF16592",
+            "PF16595",
+            "PF18470",
+            "PF21069",
+            "PF18525",
+            "PF18061",
+            "PF17893",
+            "PF17894",
+            "PF18070",
+        ),  # fmt: skip
         color=(0.4, 1.0, 0.8),
         radius=FAMILY_RADIUS,
         min_distance=FAMILY_MIN_DISTANCE,
@@ -940,8 +1042,9 @@ STORIES: tuple[UniverseStory, ...] = (
             "therapy for sickle-cell disease — the illness of the first story "
             "on this tour.",
         ),
-        # Makarova et al., Nat. Rev. Microbiol. 13:722 (2015): CRISPR-Cas in
-        # ~45% of bacterial and ~85% of archaeal genomes.
+        # Grissa et al., BMC Bioinformatics 8:172 (2007): CRISPR arrays in
+        # ~40% of bacterial and ~90% of archaeal genomes; Makarova et al.,
+        # Nat. Rev. Microbiol. 13:722 (2015) give ~45% / ~85%.
         mystery=(
             "Roughly 40% of bacteria and nearly 90% of archaea carry CRISPR "
             "systems, yet many highly successful bacteria do without. Why would "
@@ -966,12 +1069,12 @@ STORIES: tuple[UniverseStory, ...] = (
 OVERVIEW_TITLE = "Twelve stories in the protein universe"
 ATTRIBUTION = f"{DEMO_META['citation']['ref']} · {DEMO_META['citation']['license']}"
 OVERVIEW_HTML = (
-    "Every point is one of {n:,} clusters of related proteins from the ESM "
-    "Metagenomic Atlas — most of them read straight out of soil, seawater and "
-    "guts rather than from any organism grown in a lab — placed by a protein "
-    "language model so that similar proteins sit close together, then projected "
-    "to 3D with UMAP. Colours are domains of life; the dim points are clusters "
-    "nobody has characterised."
+    "Every point is one of {n:,} clusters of proteins from the ESM Atlas: 6.8 "
+    "billion sequences, most of them read straight out of soil, seawater and "
+    "guts rather than from any organism grown in a lab, grouped by the features "
+    "a protein language model sees in them and laid out in 3D with UMAP so that "
+    "similar clusters sit close together. Colours are the main branches of "
+    "life; the dim points are clusters nobody has characterised."
     "<br><br>Step the <b>story</b> dimension to fly to twelve knots that each "
     "tell a piece of biology: blood, sunlight, the oldest chaperone, the "
     "coronavirus spike, the cell's turbine, the slowest important enzyme, the "
@@ -981,10 +1084,10 @@ OVERVIEW_HTML = (
 #: Spoken introduction at the Overview slot.
 OVERVIEW_NARRATION = (
     "Every point here is a family of proteins: seven point seven million of "
-    "them, most read straight out of the environment, placed by a language "
-    "model so that similar proteins sit close together. The dim points are "
-    "families nobody has characterised. Twelve of these knots hide a story. "
-    "Step through them."
+    "them, drawn from nearly seven billion sequences, most read straight out "
+    "of the environment, and grouped by a language model so that similar "
+    "proteins sit close together. The dim points are families nobody has "
+    "characterised. Twelve of these knots hide a story. Step through them."
 )
 UNIREF_LINK = "https://www.uniprot.org/uniref?query={hover_key}"
 NARRATION_CACHE_DIR = CACHE_DIR / "narration"
@@ -1073,6 +1176,11 @@ def family_mask(
         mask |= universe.phylum_mask("Uroviricota")
     elif story.region is not None:
         raise ValueError(f"story {story.key!r}: unknown region {story.region!r}")
+    if story.groups:
+        names = universe.phylum_names()
+        group_of = {p: phylum_group(str(p)) for p in np.unique(names)}
+        in_group = np.array([group_of[p] in story.groups for p in names])
+        mask &= in_group
     return mask
 
 
