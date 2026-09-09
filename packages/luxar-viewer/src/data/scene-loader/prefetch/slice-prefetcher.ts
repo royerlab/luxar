@@ -177,18 +177,10 @@ export class SlicePrefetcher {
 
     const { registry } = this.ctx;
     const tasks: Array<Promise<void>> = [];
-    for (const path of registry.loaders.keys()) {
-      if (this.ctx.isPathVisible?.(path) === false) continue;
-      tasks.push(this.prefetchNode(path, 'points', viewState, budgetMs, controller.signal));
-    }
-    for (const path of registry.linesLoaders.keys()) {
-      if (this.ctx.isPathVisible?.(path) === false) continue;
-      tasks.push(this.prefetchNode(path, 'lines', viewState, budgetMs, controller.signal));
-    }
-    for (const path of registry.gsplatLoaders.keys()) {
-      if (this.ctx.isPathVisible?.(path) === false) continue;
-      tasks.push(this.prefetchNode(path, 'gsplats', viewState, budgetMs, controller.signal));
-    }
+    const request = { viewState, budgetMs, signal: controller.signal };
+    this.queueVisible(tasks, registry.loaders, 'points', request);
+    this.queueVisible(tasks, registry.linesLoaders, 'lines', request);
+    this.queueVisible(tasks, registry.gsplatLoaders, 'gsplats', request);
 
     this.inFlight = tasks.length;
     // Reopen the gate once the whole batch settles so the next tick re-targets.
@@ -228,6 +220,21 @@ export class SlicePrefetcher {
   dispose(): void {
     this.disposed = true;
     this.releaseShadows();
+  }
+
+  private queueVisible(
+    tasks: Array<Promise<void>>,
+    loaders: ReadonlyMap<string, unknown>,
+    kind: GeometryKind,
+    request: { viewState: ViewState; budgetMs: number; signal: AbortSignal }
+  ): void {
+    for (const path of loaders.keys()) {
+      if (this.ctx.isPathVisible?.(path) !== false) {
+        tasks.push(
+          this.prefetchNode(path, kind, request.viewState, request.budgetMs, request.signal)
+        );
+      }
+    }
   }
 
   /**

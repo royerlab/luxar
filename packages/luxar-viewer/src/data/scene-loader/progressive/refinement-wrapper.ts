@@ -71,6 +71,18 @@ export function failureTrackerFor(loader: RefinableLoader): RefinementFailureTra
   return tracker;
 }
 
+function cannotRefine(
+  path: string,
+  loader: RefinableLoader,
+  isPathVisible?: (path: string) => boolean
+): boolean {
+  return (
+    loader.hasMoreLODs !== true ||
+    isPathVisible?.(path) === false ||
+    failureTrackerFor(loader).isExhausted(path)
+  );
+}
+
 /** Outcome of {@link admitRefinementCandidate}. */
 export type RefinementAdmissionDecision =
   { readonly admitted: false } | { readonly admitted: true; readonly allowanceBytes?: number };
@@ -104,9 +116,7 @@ export function admitRefinementCandidate(
   residencyBudget?: RefinementResidencyBudget,
   isPathVisible?: (path: string) => boolean
 ): RefinementAdmissionDecision {
-  if (loader.hasMoreLODs !== true) return { admitted: false };
-  if (isPathVisible?.(path) === false) return { admitted: false };
-  if (failureTrackerFor(loader).isExhausted(path)) return { admitted: false };
+  if (cannotRefine(path, loader, isPathVisible)) return { admitted: false };
   // Declining here is not sufficient on its own: `anyHasMoreLODs` and
   // `getLoaderProgress` must exclude declined paths too, or the loop re-offers
   // this loader every frame forever while holding the update lock. That is why
@@ -225,10 +235,7 @@ export function makeRefinementProgressCallbacks<TLoader extends RefinableLoader>
   isPathVisible?: (path: string) => boolean
 ): RefinementProgressCallbacks<TLoader> {
   const excluded = (path: string, loader: RefinableLoader): boolean =>
-    isPathVisible?.(path) === false ||
-    failureTrackerFor(loader).isExhausted(path) ||
-    residencyBudget?.isDeclined(path) === true ||
-    loader.hasMoreLODs !== true;
+    cannotRefine(path, loader, isPathVisible) || residencyBudget?.isDeclined(path) === true;
 
   return {
     getLoaderProgress: (path, loader) => {
