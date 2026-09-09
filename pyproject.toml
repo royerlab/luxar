@@ -489,10 +489,11 @@ check-complexity = "python scripts/check_complexity.py {args}"
 # it in `wheel-viewer`, where the dist already exists.
 #   make build-viewer && hatch build && hatch run check-wheel dist/luxar-*.whl
 check-wheel = "python scripts/check_wheel.py {args}"
-# Ratchet ruff's defect-bearing rules (flake8-bugbear + blind-except + RUF012) against
-# scripts/lint_baseline.json. Same shape as check-complexity and for the same
-# reason: 651 pre-existing violations across 338 file/rule keys mean the rules cannot go into
-# `[tool.ruff.lint] select` without a large, behaviour-changing sweep.
+# Ratchet ruff's defect-bearing rules (flake8-bugbear + blind-except + RUF012)
+# against scripts/lint_baseline.json. It has the same shape as check-complexity
+# for the same reason: 651 pre-existing violations across 338 file/rule keys
+# mean the rules cannot go into `[tool.ruff.lint] select` without a large,
+# behaviour-changing sweep.
 check-lint-ratchet = "python scripts/check_lint_ratchet.py {args}"
 # Compile-check the shipped CUDA/Metal sources -- no GPU, no linking, just
 # `-fsyntax-only` / `metal -c` / `nvcc -cuda`. First no-GPU compile gate over
@@ -1147,8 +1148,8 @@ known-first-party = ["luxar"]
 # The `B` (flake8-bugbear) and `BLE` (flake8-blind-except) families plus RUF012
 # are enforced as a RATCHET by `scripts/check_lint_ratchet.py`, not by `select`
 # above — see that script's module docstring for why (651 pre-existing
-# violations across 338 file/rule keys, and B905's fix changes behaviour). This setting exists so the
-# ratchet baselines real defects only:
+# violations across 338 file/rule keys, and B905's fix changes behaviour). This
+# setting exists so the ratchet baselines real defects only:
 # `typer.Option(...)` / `typer.Argument(...)` in a parameter default is the
 # documented Typer idiom, evaluated once at import ON PURPOSE, and it accounted
 # for ALL 83 B008 findings in the tree. Declaring the two calls immutable takes

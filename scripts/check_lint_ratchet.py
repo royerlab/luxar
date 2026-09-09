@@ -3,12 +3,12 @@
 Defect-Rule Lint Ratchet
 
 Enforces ruff's ``flake8-bugbear`` (``B``) and ``flake8-blind-except``
-(``BLE``) families plus ``RUF012`` as a
-baseline-driven *ratchet*: pre-existing violations are tolerated via a
-checked-in baseline (``scripts/lint_baseline.json``), but a NEW violation — or
-an extra one in an already-baselined file — fails the check. Regenerate the
-baseline with ``--update-baseline``; paid-down debt is reported as advisory
-(exit 0) so the baseline can be tightened the same way.
+(``BLE``) families, plus ``RUF012``, as a baseline-driven *ratchet*.
+Pre-existing violations are tolerated via a checked-in baseline
+(``scripts/lint_baseline.json``), but a NEW violation — or an extra one in an
+already-baselined file — fails the check. Regenerate the baseline with
+``--update-baseline``; paid-down debt is reported as advisory (exit 0) so the
+baseline can be tightened the same way.
 
 WHY THESE RULES
 ---------------
@@ -36,15 +36,15 @@ The rest of ruff's catalogue that this repository already enforces lives in
 WHY A SCRIPT INSTEAD OF ``[tool.ruff.lint] select``
 ---------------------------------------------------
 The same reason ``C901`` is ratcheted by ``scripts/check_complexity.py``: ruff
-has no baseline mechanism. A bare ``select = ["B", "BLE", "RUF012"]`` would fail
-on all pre-existing violations (651 across 338 file/rule keys at the time of
-writing, 289 of them ``B905``), so it could not be turned on at all without a
-large, unrelated, and — for ``B905``
-specifically — *behaviour-changing* sweep: ``strict=True`` RAISES on mismatched
-lengths, so it is a decision per call site, not a mechanical edit. Ruff's root
-resolved settings are fingerprinted in the baseline, and nested Ruff configs
-are refused because they resolve independently per file. Configuration changes
-must therefore be re-baselined deliberately rather than silently retiring debt.
+has no baseline mechanism. A bare
+``select = ["B", "BLE", "RUF012"]`` would fail on all pre-existing violations
+(651 across 338 file/rule keys at the time of writing; 289 are ``B905``), so it
+could not be enabled without a large, unrelated sweep. For ``B905``, that sweep
+is also *behaviour-changing*: ``strict=True`` RAISES on mismatched lengths. That
+is a decision per call site, not a mechanical edit. Ruff's root resolved
+settings are fingerprinted in the baseline, and nested Ruff configs are refused
+because they resolve independently per file. Configuration changes must
+therefore be re-baselined deliberately rather than silently retiring debt.
 
 Note what this gate does NOT need to tolerate: ``B008`` sits at zero, because
 ``[tool.ruff.lint.flake8-bugbear] extend-immutable-calls`` in ``pyproject.toml``
