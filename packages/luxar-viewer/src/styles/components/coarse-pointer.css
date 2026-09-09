@@ -391,6 +391,10 @@
   .luxar-control-rail__collapse:hover:not(:active):not(.is-active) {
     color: var(--luxar-text-secondary);
   }
+  .luxar-control-rail__chip:hover:not(:active):not(.is-active) {
+    background: none;
+    color: var(--luxar-text-muted);
+  }
   .luxar-control-rail__btn:active,
   .luxar-control-rail__chip:active,
   .luxar-gui__button:active,
@@ -409,5 +413,11 @@
   .luxar-control-rail__btn:focus-visible .luxar-control-rail__tip {
     opacity: 1;
     visibility: visible;
+  }
+  .luxar-control-rail__chip:hover .luxar-control-rail__chip-tip {
+    opacity: 0;
+  }
+  .luxar-control-rail__chip:focus-visible .luxar-control-rail__chip-tip {
+    opacity: 1;
   }
 }

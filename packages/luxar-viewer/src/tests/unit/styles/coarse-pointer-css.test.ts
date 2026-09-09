@@ -229,8 +229,17 @@ describe('coarse-pointer.css contract', () => {
     expect(
       ruleBody(noHover, '.luxar-control-rail__collapse:hover:not(:active):not(.is-active)')
     ).toMatch(/color:\s*var\(--luxar-text-secondary\)/);
+    expect(
+      ruleBody(noHover, '.luxar-control-rail__chip:hover:not(:active):not(.is-active)')
+    ).toMatch(/background:\s*none[^}]*color:\s*var\(--luxar-text-muted\)/);
     // Tooltips need a hover; without one they show on keyboard focus only.
     expect(noHover).toMatch(/\.luxar-control-rail__btn:focus-visible \.luxar-control-rail__tip/);
+    expect(
+      ruleBody(noHover, '.luxar-control-rail__chip:hover .luxar-control-rail__chip-tip')
+    ).toMatch(/opacity:\s*0/);
+    expect(
+      ruleBody(noHover, '.luxar-control-rail__chip:focus-visible .luxar-control-rail__chip-tip')
+    ).toMatch(/opacity:\s*1/);
   });
 
   it('keeps the rail visible without hover under (any-hover: none)', () => {
