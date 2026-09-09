@@ -257,8 +257,6 @@ def _cuda_build_info_path() -> Optional[Path]:
         import luxar.gsplats.models.gsplats.cuda as cuda_pkg
 
         return Path(cuda_pkg.__file__).parent / "cuda_build_info.json"
-    except ImportError:
-        return None
     except Exception as exc:
         _warn_probe_failure_once("CUDA build metadata package", exc)
         return None

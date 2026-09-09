@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 import os
 import shutil
 import warnings
@@ -352,6 +353,30 @@ class TestEnvCapture:
 
         with pytest.warns(RuntimeWarning, match="CUDA build metadata.*JSONDecodeError"):
             assert env_capture.read_cuda_build_info() == {}
+
+    def test_cuda_package_import_failure_warns_and_is_ignored(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from luxar.gsplats.batch import env_capture
+
+        real_import = builtins.__import__
+
+        def import_module(
+            name: str,
+            globals: object = None,
+            locals: object = None,
+            fromlist: tuple[str, ...] = (),
+            level: int = 0,
+        ) -> object:
+            if name == "luxar.gsplats.models.gsplats.cuda":
+                raise ImportError("CUDA package broke")
+            return real_import(name, globals, locals, fromlist, level)
+
+        monkeypatch.setattr(builtins, "__import__", import_module)
+        monkeypatch.setattr(env_capture, "_warned_probe_failures", set())
+
+        with pytest.warns(RuntimeWarning, match="ImportError: CUDA package broke"):
+            assert env_capture._cuda_build_info_path() is None
 
     def test_version_probe_failure_warns_and_uses_unknown(
         self, monkeypatch: pytest.MonkeyPatch
