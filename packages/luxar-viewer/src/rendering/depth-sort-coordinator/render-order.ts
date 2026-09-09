@@ -377,6 +377,8 @@ function partitionRankMemoFor(
   displayed: readonly number[] | null | undefined
 ): PartitionRankMemo {
   const memo = partitionRankMemo.get(wrapper);
+  // The loader replaces userData.bspTree rather than mutating it, so object
+  // identity is the tree-version signal for this cross-frame memo.
   if (memo && memo.tree === tree && displayDimsEqual(displayed, memo.displayDims)) return memo;
   const replacement = makePartitionRankMemo(tree, displayed);
   partitionRankMemo.set(wrapper, replacement);
