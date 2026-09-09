@@ -78,6 +78,10 @@ def _gsplat_data_from_arrays(
     from ...validation.writing import validate_gsplat_inputs
 
     centers_array = np.asarray(centers)
+    if centers_array.ndim != 2:
+        raise ValueError(
+            f"Centers must have shape (N, D), got shape {centers_array.shape}"
+        )
     amplitudes_value: Any = (
         amplitudes if np.isscalar(amplitudes) else np.asarray(amplitudes)
     )
@@ -929,7 +933,9 @@ class Group(Node):
                 ``lod_group=``. When combined with ``partition=``, every
                 substitutive level is partitioned independently.
             additive_lod: Additive-LOD control. The value vocabulary matches
-                :meth:`add_gsplats_from_data`.
+                :meth:`add_gsplats_from_data`. Requesting an additive ladder
+                opts this node out of compiler auto-partitioning; explicit
+                ``partition=`` beside the ladder remains unsupported.
             **attrs: Additional node attributes. Common ones:
 
                 - ``layer`` (bool): Expose this node in the viewer's Layers
@@ -958,13 +964,10 @@ class Group(Node):
             None if substitutive_lod is _UNSET_LOD else substitutive_lod
         )
         resolved_additive_lod = None if additive_lod is _UNSET_LOD else additive_lod
-        if resolved_substitutive_lod not in (
-            None,
-            False,
-        ) or resolved_additive_lod not in (
-            None,
-            False,
-        ):
+        if (
+            resolved_substitutive_lod is not None
+            and resolved_substitutive_lod is not False
+        ) or (resolved_additive_lod is not None and resolved_additive_lod is not False):
             from ...validation.writing import (
                 GSPLATS_RESERVED_ATTRS,
                 validate_render_attrs,
@@ -1104,16 +1107,18 @@ class Group(Node):
             dim_order: Map data columns to scene dimensions by name.
             fill: Fixed coordinate values for unmapped dimensions.
             fill_sigma: Standard deviations for unmapped dims in Cholesky embedding.
-            lod_group: Substitutive-axis control. ``None`` (default; auto-lower
-                a multi-substitutive pyramid into a ``kind=lod`` Group),
-                ``True`` (require stored levels), ``False`` (collapse to
-                finest), ``dict(...)`` (compute
-                via :func:`make_substitutive_lod`), or ``dict(..., recompute=
-                True)``. Optional ``coverage_fractions=[...]`` inside the dict
-                overrides the auto-derived thresholds.
+            substitutive_lod: Substitutive-axis control. ``None`` (default;
+                auto-lower a multi-substitutive pyramid into a ``kind=lod``
+                Group), ``True`` (require stored levels), ``False`` (collapse
+                to finest), ``dict(...)`` (compute via
+                :func:`make_substitutive_lod`), or ``dict(..., recompute=True)``.
+                Optional ``coverage_fractions=[...]`` inside the dict overrides
+                the auto-derived thresholds.
+            lod_group: Backward-compatible alias for ``substitutive_lod``.
+                Passing both is refused.
             additive_lod: Additive-axis control, uniform across substitutive
-                levels. Same value vocabulary as ``lod_group``; ``dict(...)``
-                routes to :func:`make_additive_lod`.
+                levels. Same value vocabulary as ``substitutive_lod``;
+                ``dict(...)`` routes to :func:`make_additive_lod`.
             normalize_amplitudes: Scale amplitudes so a robust upper
                 reference (the 99.9th percentile) lands at 1.0, applied as ONE
                 factor across every substitutive level and additive rung.
@@ -1152,7 +1157,7 @@ class Group(Node):
             >>> # additive ladder per level, computed from a flat input.
             >>> scene.add_gsplats_from_data(
             ...     "multires", flat_result,
-            ...     lod_group=dict(compression_factor=4, levels=2),
+            ...     substitutive_lod=dict(compression_factor=4, levels=2),
             ...     additive_lod=dict(n_lods=4),
             ... )
         """

@@ -146,13 +146,21 @@ def test_nested_file_accepts_false_substitutive_bypass(tmp_path, keyword) -> Non
     assert node.attrs["kind"] == "partition"
 
 
-@pytest.mark.parametrize("channels", [3, 4])
+@pytest.mark.parametrize(
+    "colors",
+    [
+        np.array([[0.2, 0.4, 0.6]], dtype=np.float32),
+        np.array([[0.2, 0.4, 0.6, 0.8]], dtype=np.float32),
+        (0.2, 0.4, 0.6),
+        (255, 0, 0),
+    ],
+)
 @pytest.mark.parametrize("lod_keyword", ["additive_lod", "substitutive_lod"])
 def test_array_lod_preserves_broadcast_color_storage(
-    tmp_path, channels, lod_keyword
+    tmp_path, colors, lod_keyword
 ) -> None:
     data = _data()
-    colors = np.linspace(0.2, 0.8, channels, dtype=np.float32).reshape(1, channels)
+    channels = np.asarray(colors).shape[-1]
     lod_spec = (
         dict(n_lods=2)
         if lod_keyword == "additive_lod"
@@ -233,6 +241,80 @@ def test_array_lod_keeps_unknown_attr_refusal(
 
 
 @pytest.mark.parametrize(
+    ("attr", "value", "specialized_parent"),
+    [
+        ("join", "miter", False),
+        ("metalness", 0.5, False),
+        ("layer_order", 2, True),
+    ],
+)
+@pytest.mark.parametrize("lod_keyword", ["additive_lod", "substitutive_lod"])
+def test_array_lod_keeps_compositing_attr_refusal(
+    tmp_path, attr, value, specialized_parent, lod_keyword
+) -> None:
+    data = _data()
+    lod_spec = (
+        dict(n_lods=2)
+        if lod_keyword == "additive_lod"
+        else dict(compression_factor=2, levels=1)
+    )
+
+    errors = []
+    for name, kwargs in (
+        ("plain", {attr: value}),
+        ("structured", {attr: value, lod_keyword: lod_spec}),
+    ):
+        with LuxarZarrCompiler(tmp_path / f"{name}.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            parent = scene.add_lod_group("lod") if specialized_parent else None
+            if specialized_parent:
+                kwargs["coverage_fraction"] = 0.0
+            with pytest.raises(ValueError) as error:
+                scene.add_gsplats(
+                    "splats",
+                    data.centers,
+                    data.amplitudes,
+                    data.cholesky_factors,
+                    parent=parent,
+                    **kwargs,
+                )
+        errors.append(str(error.value))
+
+    assert errors[0] == errors[1]
+    assert errors[0].startswith("Could not add gsplats 'splats':")
+
+
+@pytest.mark.parametrize(
+    ("attr", "value", "specialized_parent"),
+    [
+        ("join", "miter", False),
+        ("metalness", 0.5, False),
+        ("layer_order", 2, True),
+    ],
+)
+def test_nested_file_rejects_invalid_compositing_attrs(
+    tmp_path, attr, value, specialized_parent
+) -> None:
+    source_path = tmp_path / "partitioned.gsplats.zarr"
+    write_gsplats_tree(
+        source_path,
+        _data().to_spatial_partition(max_elements=4),
+        ordering="none",
+    )
+
+    with LuxarZarrCompiler(tmp_path / "scene.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        parent = scene.add_lod_group("lod") if specialized_parent else None
+        kwargs = {attr: value}
+        if specialized_parent:
+            kwargs["coverage_fraction"] = 0.0
+        with pytest.raises(ValueError) as error:
+            scene.add_gsplats_from_file("splats", source_path, parent=parent, **kwargs)
+
+    assert str(error.value).startswith("Could not add gsplats 'splats':")
+
+
+@pytest.mark.parametrize(
     ("kwargs", "match"),
     [
         ({"colors": np.ones((15, 3), dtype=np.float32)}, "Number of colors"),
@@ -275,6 +357,34 @@ def test_array_substitutive_lod_rejects_nonfinite_centers_cleanly(tmp_path) -> N
             )
 
 
+@pytest.mark.parametrize("lod_keyword", ["additive_lod", "substitutive_lod"])
+def test_array_lod_keeps_flat_centers_shape_error(tmp_path, lod_keyword) -> None:
+    data = _data()
+    lod_spec = (
+        dict(n_lods=2)
+        if lod_keyword == "additive_lod"
+        else dict(compression_factor=2, levels=1)
+    )
+    errors = []
+    for name, kwargs in (
+        ("plain", {}),
+        ("structured", {lod_keyword: lod_spec}),
+    ):
+        with LuxarZarrCompiler(tmp_path / f"{name}.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError) as error:
+                scene.add_gsplats(
+                    "splats",
+                    data.centers.ravel(),
+                    data.amplitudes,
+                    data.cholesky_factors,
+                    **kwargs,
+                )
+        errors.append(str(error.value))
+
+    assert errors[0] == errors[1]
+
+
 @pytest.mark.parametrize(
     ("spec", "error_type", "message"),
     [
@@ -295,6 +405,24 @@ def test_array_substitutive_lod_errors_name_public_keyword(
                 data.amplitudes,
                 data.cholesky_factors,
                 substitutive_lod=spec,
+            )
+
+
+@pytest.mark.parametrize("lod_keyword", ["additive_lod", "substitutive_lod"])
+@pytest.mark.parametrize("value", [0, 0.0, np.bool_(False)])
+def test_array_lod_does_not_treat_numeric_zero_as_false(
+    tmp_path, lod_keyword, value
+) -> None:
+    data = _data()
+    with LuxarZarrCompiler(tmp_path / "scene.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        with pytest.raises(TypeError, match=lod_keyword):
+            scene.add_gsplats(
+                "splats",
+                data.centers,
+                data.amplitudes,
+                data.cholesky_factors,
+                **{lod_keyword: value},
             )
 
 

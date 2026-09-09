@@ -13,7 +13,7 @@ import numpy as np
 
 from luxar.validation.writing import validate_image_labels_for_writing
 
-from ..compositing import reject_mesh_only_appearance, strip_absent_attr_kwargs
+from ..compositing import strip_absent_attr_kwargs
 from .amplitude_norm import (
     NormalizeSpec,
     normalize_node_in_place,
@@ -35,6 +35,7 @@ from .from_data import (
     partition_beside_a_ladder_reason,
     reject_bad_partition_spec,
     reject_data_owned_channels,
+    reject_invalid_gsplat_compositing_attrs,
 )
 
 if TYPE_CHECKING:
@@ -115,7 +116,7 @@ def add_gsplats_from_file_impl(
     # a missing file is not an attrs question at all.
     strip_absent_attr_kwargs(attrs, ABSENT_WHEN_NONE_ATTRS)
     reject_data_owned_channels(name, attrs)
-    reject_mesh_only_appearance("gsplats", name, attrs)
+    reject_invalid_gsplat_compositing_attrs(group, name, parent, attrs)
     if partition is not None:
         attrs["partition"] = partition
     if additive_lod is not None:
@@ -811,7 +812,7 @@ def graft_gsplat_node(
     # depends on it; if you delete it, nothing observable changes.
     strip_absent_attr_kwargs(attrs, ABSENT_WHEN_NONE_ATTRS)
     reject_data_owned_channels(name, attrs)
-    reject_mesh_only_appearance("gsplats", name, attrs)
+    reject_invalid_gsplat_compositing_attrs(group, name, parent, attrs)
     _reject_a_partition_beside_a_stored_ladder(name, node, attrs)
     _reject_a_bad_partition_spec_on_a_graft(name, node, attrs)
     _reject_labels_on_a_grafted_wrapper(name, node, attrs)

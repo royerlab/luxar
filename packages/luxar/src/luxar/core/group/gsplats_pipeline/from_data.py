@@ -20,7 +20,10 @@ from ....validation.writing import (
 )
 from ..compositing import (
     ABSENT_WHEN_NONE_RENDER_ATTRS,
+    funnel_add_error,
     preflight_extend_to_all,
+    reject_layer_order_inside_specialized_group,
+    reject_lines_only_join,
     reject_mesh_only_appearance,
     strip_absent_attr_kwargs,
 )
@@ -80,8 +83,23 @@ LADDER_REMEDY = (
 STORED_LADDER_STRUCTURE = "the additive ladder this .gsplats.zarr already carries"
 STORED_LADDER_REMEDY = (
     "Collapse the ladder first ('gsplat flatten' rewrites the file as a single "
-    "unladdered leaf, which partitions normally)."
+    "unladdered leaf, which partitions normally), or pass flatten=True when "
+    "adding the file."
 )
+
+
+def reject_invalid_gsplat_compositing_attrs(
+    group: "Group", name: str, parent: Optional["Node"], attrs: Dict[str, Any]
+) -> None:
+    """Apply the flat gsplat adder's compositing gates with its error prefix."""
+    try:
+        reject_layer_order_inside_specialized_group(
+            "gsplats", name, attrs, parent or group
+        )
+        reject_lines_only_join("gsplats", name, attrs)
+        reject_mesh_only_appearance("gsplats", name, attrs)
+    except ValueError as error:
+        raise ValueError(funnel_add_error("gsplats", name, error)) from error
 
 
 def partition_beside_a_ladder_reason(structure: str, remedy: str) -> str:
@@ -768,7 +786,7 @@ def add_gsplats_from_data_impl(
     # the call it is about to make, so it is the more fundamental fault of the two
     # and there is nothing below it worth reporting first.
     reject_data_owned_channels(name, attrs)
-    reject_mesh_only_appearance("gsplats", name, attrs)
+    reject_invalid_gsplat_compositing_attrs(group, name, parent, attrs)
 
     # Propagate truncation_radius through attrs (unless caller overrode it — and
     # an explicit ``truncation_radius=None`` is NOT an override, having just been

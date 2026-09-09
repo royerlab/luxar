@@ -67,8 +67,7 @@ def resolve_substitutive_axis_gsplats(
     |                           | keep the full pyramid so it becomes a   |
     |                           | ``kind=lod`` Group (no work discarded). |
     |                           | Pass ``substitutive_lod=False`` to      |
-    |                           | collapse to the finest level.          |
-    |                           | the finest level instead.               |
+    |                           | collapse to the finest level.           |
     +---------------------------+-----------------------------------------+
     | ``True``                  | Require ``n_substitutive > 1`` already; |
     |                           | raise otherwise. Use stored.            |
