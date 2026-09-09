@@ -1,5 +1,5 @@
 /**
- * Partition visibility helpers and per-geometry update-loop scaffolding.
+ * Loader eligibility helpers and per-geometry update-loop scaffolding.
  *
  * Points / Lines / GSplats branches differ only in the type-specific
  * work (deriveNodeViewState, call loader.updateView, post-process,

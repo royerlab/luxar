@@ -36,9 +36,8 @@ import { isObjectLoadEligible } from '../scene-loader/loaders/run-loader-updates
 const LABEL = 'Lines';
 
 export interface LinesRefinementCtx {
-  rootGroup: THREE.Group | null;
   /** Scene objects already resolved by the phase eligibility sweep. */
-  objects?: ReadonlyMap<string, THREE.Object3D | undefined>;
+  objects: ReadonlyMap<string, THREE.Object3D | undefined>;
   viewStateQueue: ViewStateQueue;
   loaders: Map<string, LinesDataLoader>;
   deriveNodeViewState(
@@ -81,9 +80,7 @@ export interface LinesRefinementCtx {
 }
 
 export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void> {
-  const objects =
-    ctx.objects ??
-    new Map([...ctx.loaders.keys()].map((path) => [path, ctx.rootGroup?.getObjectByName(path)]));
+  const objects = ctx.objects;
   const isPathVisible = (path: string): boolean => isObjectLoadEligible(objects.get(path));
   await runProgressiveRefinement({
     loaders: ctx.loaders,

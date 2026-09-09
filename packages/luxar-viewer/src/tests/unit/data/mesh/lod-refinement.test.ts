@@ -22,10 +22,12 @@ const viewState: ViewState = {
   tolerance: [0, 0, 0],
 };
 
-defineRefinementLoopContract('runMeshRefinement', 'Mesh', 'showing a partial surface', (w) =>
-  runMeshRefinement({
-    rootGroup: w.rootGroup ?? new THREE.Group(),
-    objects: w.objects,
+defineRefinementLoopContract('runMeshRefinement', 'Mesh', 'showing a partial surface', (w) => {
+  const rootGroup = w.rootGroup ?? new THREE.Group();
+  return runMeshRefinement({
+    objects:
+      w.objects ??
+      new Map([...w.loaders.keys()].map((path) => [path, rootGroup.getObjectByName(path)])),
     viewStateQueue: w.viewStateQueue,
     loaders: w.loaders as MeshRefinementCtx['loaders'],
     deriveNodeViewState: w.deriveNodeViewState as MeshRefinementCtx['deriveNodeViewState'],
@@ -36,8 +38,8 @@ defineRefinementLoopContract('runMeshRefinement', 'Mesh', 'showing a partial sur
     retriggerUpdate: w.retriggerUpdate,
     signal: w.signal,
     residencyBudget: w.residencyBudget,
-  })
-);
+  });
+});
 
 describe('runMeshRefinement — Mesh-specific behaviour', () => {
   it('stops and logs when a successful mesh refinement pass advances no rung', async () => {
@@ -51,7 +53,7 @@ describe('runMeshRefinement — Mesh-specific behaviour', () => {
     const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
 
     await runMeshRefinement({
-      rootGroup: new THREE.Group(),
+      objects: new Map(),
       viewStateQueue: new ViewStateQueue(),
       loaders: new Map([['/mesh', loader]]),
       deriveNodeViewState: () => ({ skip: false, viewState }),

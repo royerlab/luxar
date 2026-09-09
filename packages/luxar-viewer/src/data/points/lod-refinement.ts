@@ -36,9 +36,8 @@ import { isObjectLoadEligible } from '../scene-loader/loaders/run-loader-updates
 const LABEL = 'Points';
 
 export interface PointsRefinementCtx {
-  rootGroup: THREE.Group | null;
   /** Scene objects already resolved by the phase eligibility sweep. */
-  objects?: ReadonlyMap<string, THREE.Object3D | undefined>;
+  objects: ReadonlyMap<string, THREE.Object3D | undefined>;
   viewStateQueue: ViewStateQueue;
   loaders: Map<string, PointsDataLoader>;
   deriveNodeViewState(
@@ -80,16 +79,14 @@ export interface PointsRefinementCtx {
 }
 
 export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<void> {
-  const objects =
-    ctx.objects ??
-    new Map([...ctx.loaders.keys()].map((path) => [path, ctx.rootGroup?.getObjectByName(path)]));
+  const objects = ctx.objects;
   const isPathVisible = (path: string): boolean => isObjectLoadEligible(objects.get(path));
   await runProgressiveRefinement({
     loaders: ctx.loaders,
     viewStateQueue: ctx.viewStateQueue,
     isActive: ctx.isActive,
     processLoader: async (path, loader) => {
-      // Every progressive field is optional here because `pointsLoaders` is
+      // Every progressive field is optional here because `loaders` is
       // typed as plain `PointsDataLoader`: single-shot PointsSpatialIndexLoader
       // has no ladder. `admitRefinementCandidate` gates on `hasMoreLODs`.
       const progressiveLoader = loader as PointsDataLoader & RefinableLoader;

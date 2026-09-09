@@ -1711,7 +1711,6 @@ export class SceneLoader {
       };
 
       await runGSplatsRefinement({
-        rootGroup: this.rootGroup,
         viewStateQueue: this.viewStateQueue,
         ...resolveLoadEligibleLoaders(this.rootGroup, this.gsplatLoaders),
         deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
@@ -1729,7 +1728,6 @@ export class SceneLoader {
       if (cancelled || this._disposed) return;
 
       await runPointsRefinement({
-        rootGroup: this.rootGroup,
         viewStateQueue: this.viewStateQueue,
         ...resolveLoadEligibleLoaders(this.rootGroup, this.loaders),
         deriveNodeViewState: (path, attrs, opts) =>
@@ -1747,7 +1745,6 @@ export class SceneLoader {
       if (cancelled || this._disposed) return;
 
       await runLinesRefinement({
-        rootGroup: this.rootGroup,
         viewStateQueue: this.viewStateQueue,
         ...resolveLoadEligibleLoaders(this.rootGroup, this.linesLoaders),
         deriveNodeViewState: (path, attrs, opts) =>
@@ -1772,7 +1769,6 @@ export class SceneLoader {
       // are already-decoded whole-node payloads, so a cancelled pass loses at most one
       // projection rather than an in-flight chunk fetch.
       await runMeshRefinement({
-        rootGroup: this.rootGroup,
         viewStateQueue: this.viewStateQueue,
         ...resolveLoadEligibleLoaders(this.rootGroup, this.meshLoaders),
         deriveNodeViewState: (path, attrs, opts) =>

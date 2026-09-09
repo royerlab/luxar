@@ -21,10 +21,12 @@ import type { GSplatsDataLoader } from '../../../../types/gsplats';
 import type { ViewState } from '../../../../data/data-loader-types';
 import { defineRefinementLoopContract } from '../_shared/refinement-loop-contract';
 
-defineRefinementLoopContract('runGSplatsRefinement', 'GSplats', 'showing reduced detail', (w) =>
-  runGSplatsRefinement({
-    rootGroup: w.rootGroup ?? new THREE.Group(),
-    objects: w.objects,
+defineRefinementLoopContract('runGSplatsRefinement', 'GSplats', 'showing reduced detail', (w) => {
+  const rootGroup = w.rootGroup ?? new THREE.Group();
+  return runGSplatsRefinement({
+    objects:
+      w.objects ??
+      new Map([...w.loaders.keys()].map((path) => [path, rootGroup.getObjectByName(path)])),
     viewStateQueue: w.viewStateQueue,
     loaders: w.loaders as GSplatsRefinementCtx['loaders'],
     deriveNodeViewState: w.deriveNodeViewState as GSplatsRefinementCtx['deriveNodeViewState'],
@@ -35,8 +37,8 @@ defineRefinementLoopContract('runGSplatsRefinement', 'GSplats', 'showing reduced
     retriggerUpdate: w.retriggerUpdate,
     signal: w.signal,
     residencyBudget: w.residencyBudget,
-  })
-);
+  });
+});
 
 const baseViewState: ViewState = {
   displayDims: [0, 1, 2],
@@ -71,7 +73,7 @@ describe('runGSplatsRefinement — abort-gated commit', () => {
     const commitGSplats = vi.fn();
 
     await runGSplatsRefinement({
-      rootGroup: new THREE.Group(),
+      objects: new Map(),
       viewStateQueue: new ViewStateQueue(),
       loaders: new Map([['/g', loader]]),
       deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
