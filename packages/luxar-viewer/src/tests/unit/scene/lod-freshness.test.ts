@@ -136,7 +136,7 @@ describe('coarsestFreshNonEmptyIndex', () => {
   });
 
   it('does not search finer than the empty aspiration', () => {
-    expect(coarsestFreshNonEmptyIndex([level(2, 0), level(2, 50)], 2, 0)).toBe(-1);
+    expect(coarsestFreshNonEmptyIndex([level(2, 0), level(2, 0), level(2, 50)], 2, 1)).toBe(-1);
   });
 });
 

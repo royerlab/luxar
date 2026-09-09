@@ -2963,8 +2963,8 @@ describe('LODGroupRegistry — frustum-aware selection & eviction', () => {
 
 // ────────────────────────────────────────────────────────────────────────
 // Fresh-but-empty display guard — a fresh level that committed 0 elements
-// while another fresh level has visible geometry signals inconsistent data;
-// the registry must show the populated level instead of blanking the group.
+// while a coarser fresh level has visible geometry signals inconsistent data;
+// the registry must show the populated coarser level instead of blanking the group.
 // ────────────────────────────────────────────────────────────────────────
 
 /** A gsplats child stamped fresh with an explicit committed splat count. */
@@ -3064,17 +3064,23 @@ describe('LODGroupRegistry — retryLazyChildByNodePath', () => {
 describe('LODGroupRegistry — fresh-but-empty display guard', () => {
   it('keeps an empty coarse aspiration when only a finer fresh level is populated', () => {
     const warning = vi.spyOn(log, 'warning').mockImplementation(() => undefined);
-    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
-    const children = [makeCountedChild(0, 2, 0), makeCountedChild(0.5, 2, 50)];
-    reg.register(makeEntry(children, 0, '/g'));
-    reg.setSelectorMode('/g', { lockLevel: 0 });
+    try {
+      const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+      const children = [makeCountedChild(0, 2, 0), makeCountedChild(0.5, 2, 50)];
+      for (const child of children) {
+        child.positionBounds = { min: [0, 0, 0], max: [0.001, 0.001, 0.001] };
+      }
+      reg.register(makeEntry(children, 0, '/g'));
 
-    reg.evaluatePerFrame();
+      reg.evaluatePerFrame();
 
-    expect(children[0].object.visible).toBe(true);
-    expect(children[1].object.visible).toBe(false);
-    expect(warning).not.toHaveBeenCalled();
-    warning.mockRestore();
+      expect(reg.list()[0].activeChildIndex).toBe(0);
+      expect(children[0].object.visible).toBe(true);
+      expect(children[1].object.visible).toBe(false);
+      expect(warning).not.toHaveBeenCalled();
+    } finally {
+      warning.mockRestore();
+    }
   });
 
   it('redirects display to the coarsest fresh NON-empty level when the chosen level is empty', () => {
