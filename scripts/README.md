@@ -255,7 +255,7 @@ handlers (`BLE001`) can hide unrelated defects.
 **Purpose:**
 - Run `ruff check --select B,BLE,RUF012` over the same paths as `hatch run lint`
 - Tolerate the pre-existing violations recorded in `scripts/lint_baseline.json`
-  (652 across 338 file/rule keys at the time of writing, 289 of them `B905`)
+  (651 across 338 file/rule keys at the time of writing, 289 of them `B905`)
 - Fail (exit 1) when a file newly breaks a rule, or gains another violation of
   a rule it already breaks
 - Report paid-down debt as advisory (exit 0) so the baseline can be tightened

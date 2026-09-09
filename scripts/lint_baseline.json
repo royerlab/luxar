@@ -327,7 +327,7 @@
     "packages/luxar/src/luxar/validation/base.py::B028": 3,
     "packages/luxar/src/luxar/validation/nd.py::B007": 1,
     "packages/luxar/src/luxar/validation/overlays.py::B904": 1,
-    "packages/luxar/src/luxar/validation/overlays.py::BLE001": 2,
+    "packages/luxar/src/luxar/validation/overlays.py::BLE001": 1,
     "packages/luxar/src/luxar/validation/writing.py::B904": 1,
     "scripts/benchmark_progressive_psnr.py::B905": 1,
     "scripts/benchmark_progressive_psnr.py::BLE001": 1,
