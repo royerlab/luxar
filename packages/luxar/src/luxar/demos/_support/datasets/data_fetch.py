@@ -520,6 +520,11 @@ def _source_remedy(lfs_dir: Path, fname: str) -> str:
     return "This archive is hosted-only and has no in-repo Git LFS copy."
 
 
+def _verdict_kind(verdict: Optional[tuple[str, str]]) -> Optional[str]:
+    """Return the kind carried by an accepted-contract verdict."""
+    return verdict[0] if verdict is not None else None
+
+
 def _positional_superseded_fallbacks(
     files: list[Manifest],
     cache_dir: Path,
@@ -560,15 +565,11 @@ def _positional_superseded_fallbacks(
                 )
             return verdicts[fname]
 
-        def verdict_kind(entry: Manifest) -> Optional[str]:
-            verdict = cached_verdict(entry)
-            return verdict[0] if verdict is not None else None
-
         # Keep the source check first: source checkouts then avoid hashing a
         # cached superseded payload that the ordinary resolver will refresh.
         forced = any(
             not _has_current_source(lfs_dir, record, entry["name"])
-            and verdict_kind(entry) == "superseded"
+            and _verdict_kind(cached_verdict(entry)) == "superseded"
             for entry in entries
         )
         if not forced:
@@ -577,14 +578,17 @@ def _positional_superseded_fallbacks(
         history_lengths = {
             len(entry.get("superseded_sha256") or ()) for entry in entries
         }
-        all_superseded = all(verdict_kind(entry) == "superseded" for entry in entries)
+        all_superseded = all(
+            _verdict_kind(cached_verdict(entry)) == "superseded" for entry in entries
+        )
         source_remedies = " ".join(
             f"{entry['name']}: {_source_remedy(lfs_dir, entry['name'])}"
             for entry in entries
         )
         if not all_superseded or len(history_lengths) != 1:
             states = ", ".join(
-                f"{entry['name']}={verdict_kind(entry) or 'missing/corrupt'}"
+                f"{entry['name']}="
+                f"{_verdict_kind(cached_verdict(entry)) or 'missing/corrupt'}"
                 for entry in entries
             )
             raise DatasetUnavailable(
