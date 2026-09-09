@@ -45,6 +45,7 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[5]
 WORKFLOW = REPO / ".github/workflows/ci.yml"
+COVERAGE_WORKFLOW = REPO / ".github/workflows/coverage.yml"
 
 #: One row per gate input whose required domain is not guaranteed by its ordinary
 #: source extension or package path, so an explicit pattern alternative is required.
@@ -104,6 +105,11 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "test_docs_workflow.py guards the Pages workflow itself",
     ),
     (
+        ".github/workflows/coverage.yml",
+        "py",
+        "this module parses it to pin the coverage split",
+    ),
+    (
         ".github/workflows/external-reference-audits.yml",
         "py",
         "test_run_external_reference_audits.py pins its schedule and token wiring",
@@ -143,6 +149,11 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "test_verify_media.py checks the committed media inventory against README.md",
     ),
     (
+        "scripts/gallery/media-manifest.json",
+        "ts",
+        "gallery-selection.test.ts validates README media keys against it",
+    ),
+    (
         "scripts/benchmarks/benchmark_bisect.sh",
         "py",
         "test_benchmark_bisect.py executes the committed launcher directly",
@@ -165,6 +176,61 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "py",
         "test_docs_command_coverage.py drift-guards it against the live Typer app; "
         "its .md only selects docs-quality, which runs no pytest",
+    ),
+    (
+        "docs/api/gsplats.rst",
+        "py",
+        "test_format_contract.py checks its current gsplats format claim",
+    ),
+    (
+        "docs/guides/user/FORMAT_AND_MIGRATION.md",
+        "py",
+        "test_format_contract.py checks its current gsplats format claims",
+    ),
+    (
+        "docs/guides/user/LUXAR_ZARR_FORMAT.md",
+        "py",
+        "test_format_contract.py checks its current gsplats format claims",
+    ),
+    (
+        "docs/specs/GSPLATS_ZARR_FORMAT.md",
+        "py",
+        "test_format_contract.py checks its current gsplats format claim",
+    ),
+    (
+        "packages/luxar/src/luxar/cli/README.md",
+        "py",
+        "test_format_contract.py checks its current gsplats format claim",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/README.md",
+        "py",
+        "test_format_contract.py checks its current gsplats format claim",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/io/README.md",
+        "py",
+        "test_format_contract.py checks its current gsplats format claims",
+    ),
+    (
+        "packages/luxar/src/luxar/gsplats/lod/README.md",
+        "py",
+        "test_format_contract.py checks its current gsplats format claim",
+    ),
+    (
+        "packages/luxar/src/luxar/core/group/lod/README.md",
+        "py",
+        "test_format_contract.py checks its current gsplats format claim",
+    ),
+    (
+        "packages/luxar/src/luxar/core/group/gsplats_pipeline/README.md",
+        "py",
+        "test_format_contract.py checks its current gsplats format claim",
+    ),
+    (
+        "packages/luxar-viewer/src/data/codecs/README.md",
+        "py",
+        "test_format_contract.py checks its current gsplats format claim",
     ),
     (
         ".agents/skills/luxar-gsplat-pipeline/SKILL.md",
@@ -424,6 +490,9 @@ _PYTHON_SOURCE_ROOTS = (
 _NON_SCANNED_PYTHON_VIEWER_INPUTS = {
     "packages/luxar-viewer/package.json": "read by check_version_consistency.py",
     "packages/luxar-viewer/README.md": "read by test_readme_demo_docs.py",
+    "packages/luxar-viewer/src/data/codecs/README.md": (
+        "read by test_format_contract.py through CURRENT_VERSION_CLAIMS"
+    ),
     "packages/luxar-viewer/src/types/format-contract.ts": (
         "generated and checked by scripts/gen_format_contract.py"
     ),
@@ -439,11 +508,16 @@ _NON_SCANNED_PYTHON_VIEWER_INPUTS = {
 }
 
 _NON_GATE_PYTHON_TEST_PATH_LITERALS = {
+    ".github/workflows/ci.yml": "owned by the explicit all-domains workflow block",
     ".github/workflows/publish.yml": (
         "test_set_version.py writes a fixture workflow at this path"
     ),
     ".github/workflows/publish-npm.yml": (
         "test_set_version.py writes a fixture workflow at this path"
+    ),
+    "CHANGELOG.md": "read by a whole-tree prose vocabulary scan",
+    "packages/luxar/src/luxar/shading/README.md": (
+        "test_check_tile_staleness.py writes a fixture file at this path"
     ),
 }
 
@@ -597,11 +671,12 @@ def _tracked_non_python_test_path_literals(
 ) -> set[str]:
     """Find whole tracked non-``.py`` path literals in pytest test modules.
 
-    Only ``test_*.py`` modules are scanned: non-test modules commonly name files
-    they generate rather than committed inputs they read. This file is excluded
-    because its positive and negative control tables intentionally name paths
-    with every ownership shape. The scan cannot derive concatenated paths,
-    ``os.path.join`` calls, or f-strings; those still require explicit review.
+    Test modules, ``conftest.py`` files, and helper modules below ``tests/``
+    directories are scanned; other modules commonly name generated outputs rather
+    than committed inputs. This file is excluded because its control tables name
+    paths with every ownership shape. The scan cannot derive concatenated paths,
+    ``os.path.join`` calls, or f-strings, and a path already owned by one language
+    is not checked for additional language owners; those still require review.
     """
     if tracked_paths is None:
         proc = subprocess.run(
@@ -616,7 +691,16 @@ def _tracked_non_python_test_path_literals(
     paths: set[str] = set()
     this_file = Path(__file__).resolve()
     for source_root in source_roots:
-        for source_path in source_root.rglob("test_*.py"):
+        for source_path in source_root.rglob("*.py"):
+            relative_parts = source_path.relative_to(source_root).parts
+            is_test_source = (
+                source_path.name.startswith("test_")
+                or source_path.name == "conftest.py"
+                or source_root.name == "tests"
+                or "tests" in relative_parts[:-1]
+            )
+            if not is_test_source:
+                continue
             if source_path.resolve() == this_file:
                 continue
             tree = ast.parse(
@@ -638,22 +722,25 @@ def _assert_unclassified_test_paths_are_owned(paths: set[str]) -> None:
     exceptions = set(_NON_GATE_PYTHON_TEST_PATH_LITERALS)
     missing = sorted(paths - python_gate_inputs - exceptions)
     stale_exceptions = sorted(exceptions - paths)
-    assert not missing, (
+    assert not missing and not stale_exceptions, (
         "tracked non-Python paths named by pytest tests must have dom_py "
-        f"GATE_INPUTS rows or justified exclusions: {missing}"
-    )
-    assert not stale_exceptions, (
-        "Python test path-literal exclusions no longer describe unclassified "
-        f"scan results; remove or update them: {stale_exceptions}"
+        f"GATE_INPUTS rows or justified exclusions: {missing}; Python test "
+        "path-literal exclusions no longer describe unclassified scan results; "
+        f"remove or update them: {stale_exceptions}"
     )
 
 
-def test_python_gate_input_scan_uses_only_whole_tracked_test_literals(
+def test_python_gate_input_scan_uses_only_whole_tracked_test_source_literals(
     tmp_path: Path,
 ) -> None:
+    (tmp_path / "tests").mkdir()
     (tmp_path / "test_reader.py").write_text(
         'INPUT = "tracked.json"\nSOURCE = "tracked.py"\nMISSING = "missing.json"\n',
         encoding="utf-8",
+    )
+    (tmp_path / "conftest.py").write_text('INPUT = "fixture.json"\n', encoding="utf-8")
+    (tmp_path / "tests" / "_gate_helpers.py").write_text(
+        'INPUT = "helper.json"\n', encoding="utf-8"
     )
     (tmp_path / "generator.py").write_text(
         'OUTPUT = "generated.json"\n', encoding="utf-8"
@@ -662,10 +749,16 @@ def test_python_gate_input_scan_uses_only_whole_tracked_test_literals(
     paths = _tracked_non_python_test_path_literals(
         (tmp_path,),
         repo=tmp_path,
-        tracked_paths={"tracked.json", "tracked.py", "generated.json"},
+        tracked_paths={
+            "tracked.json",
+            "tracked.py",
+            "generated.json",
+            "fixture.json",
+            "helper.json",
+        },
     )
 
-    assert paths == {"tracked.json"}
+    assert paths == {"tracked.json", "fixture.json", "helper.json"}
 
 
 def test_python_gate_input_scan_rejects_missing_ownership() -> None:
@@ -676,6 +769,13 @@ def test_python_gate_input_scan_rejects_missing_ownership() -> None:
 def test_python_gate_input_scan_rejects_stale_exclusions() -> None:
     with pytest.raises(AssertionError, match="exclusions no longer describe"):
         _assert_unclassified_test_paths_are_owned(set())
+
+
+def test_python_gate_input_scan_reports_missing_and_stale_together() -> None:
+    with pytest.raises(AssertionError) as error:
+        _assert_unclassified_test_paths_are_owned({"unowned.json"})
+    assert "must have dom_py GATE_INPUTS rows" in str(error.value)
+    assert "exclusions no longer describe" in str(error.value)
 
 
 def test_python_gate_input_scan_exclusions_have_one_line_reasons() -> None:
@@ -690,8 +790,13 @@ def test_python_gate_input_scan_exclusions_have_one_line_reasons() -> None:
     [
         ".gitignore.bak",
         "scripts/gallery/media-manifest.json.bak",
+        "docs/api/gsplats.rst.bak",
+        "docs/guides/user/archive/FORMAT_AND_MIGRATION.md",
+        "docs/specs/GSPLATS_ZARR_FORMAT.md.bak",
         "packages/luxar/subdir/README.md",
         "packages/luxar-viewer/docs/README.md",
+        "packages/luxar/src/luxar/gsplats/archive/README.md",
+        "packages/luxar-viewer/src/data/codecs/archive/README.md",
     ],
 )
 def test_derived_python_gate_input_patterns_are_exact(workflow: str, path: str) -> None:
@@ -701,9 +806,10 @@ def test_derived_python_gate_input_patterns_are_exact(workflow: str, path: str) 
 def test_python_test_path_literals_are_statically_owned_by_the_python_gate(
     workflow: str,
 ) -> None:
-    """Every whole-path literal with no gate must be owned or explained."""
+    """Every whole-path literal with no language gate is owned or explained."""
     paths = _tracked_non_python_test_path_literals()
-    patterns = [*_domain_patterns(workflow).values(), _docs_pattern(workflow)]
+    assert paths, "no Python test path literals found; the ownership guard is vacuous"
+    patterns = list(_domain_patterns(workflow).values())
     unclassified = {
         path
         for path in paths
@@ -1168,6 +1274,61 @@ def test_ci_repair_window_is_dispatched_on_dev(workflow: str) -> None:
     )
     assert "--ref dev" in guard["run"]
     assert "exit 1" in guard["run"]
+
+
+def test_pull_requests_skip_coverage_while_dev_paths_enforce_and_observe_it(
+    workflow: str,
+) -> None:
+    """Pin the coverage split so the 89% gate cannot be lost silently.
+
+    Coverage instrumentation is the dominant cost of ``python-tests``, so PRs run
+    the ``-m 'not slow'`` suite plain (``test-nocov``). Pushes to ``dev`` retain
+    ``test-cov`` under the protected ``python-tests (3.12)`` context, while the
+    separate ``coverage.yml`` workflow records the same result without cancellation.
+    Its context is advisory until repository protection requires it. Without this
+    test either path could be lost silently -- the fail-open class this module exists
+    to catch.
+    """
+    # (a) ci.yml's test step and hatch scripts: test-nocov on pull_request,
+    # test-cov otherwise, with identical target defaults and coverage only in cov.
+    steps = yaml.safe_load(workflow)["jobs"]["python-tests"]["steps"]
+    run = next(step["run"] for step in steps if "test-nocov" in step.get("run", ""))
+    assert '"${{ github.event_name }}" = "pull_request"' in run
+    assert "hatch run test-nocov" in run
+    assert "hatch run test-cov" in run
+    # test-nocov only on the pull_request branch, test-cov only on the else branch.
+    assert run.index("test-nocov") < run.index("else") < run.index("hatch run test-cov")
+    with (REPO / "pyproject.toml").open("rb") as stream:
+        scripts = tomllib.load(stream)["tool"]["hatch"]["envs"]["default"]["scripts"]
+    test_cov = scripts["test-cov"]
+    test_nocov = scripts["test-nocov"]
+    args_pattern = re.compile(r"\{args:([^}]*)\}")
+    assert args_pattern.search(test_cov).group(1) == args_pattern.search(
+        test_nocov
+    ).group(1)
+    assert "--cov" in test_cov
+    assert "--cov" not in test_nocov
+
+    # (b) the dedicated workflow starts coverage on every push to dev.
+    assert COVERAGE_WORKFLOW.exists(), "the dedicated coverage workflow is missing"
+    coverage_text = COVERAGE_WORKFLOW.read_text(encoding="utf-8")
+    coverage = yaml.safe_load(coverage_text)
+    triggers = yaml.load(coverage_text, Loader=yaml.BaseLoader)["on"]
+    assert triggers["push"]["branches"] == ["dev"]
+    # A schedule trigger would attach its verdict to the default branch, not dev.
+    assert "schedule" not in triggers
+    # Per-COMMIT group, so a newer dev push cannot cancel an older run.
+    assert coverage["concurrency"]["group"] == "coverage-${{ github.sha }}"
+    assert coverage["concurrency"]["cancel-in-progress"] is False
+    coverage_job = coverage["jobs"]["coverage"]
+    assert coverage_job["runs-on"] == (
+        "${{ vars.LUXAR_CI_FORCE_HOSTED == '1' && 'ubuntu-latest' || 'obsidian' }}"
+    )
+    assert coverage_job["env"]["PYTEST_ADDOPTS"] == (
+        "${{ vars.LUXAR_CI_FORCE_HOSTED != '1' && '-n 2 --dist loadfile' || '' }}"
+    )
+    coverage_runs = "\n".join(step.get("run", "") for step in coverage_job["steps"])
+    assert "hatch run test-cov" in coverage_runs
 
 
 def test_green_dispatch_repairs_cancelled_push_contexts(workflow: str) -> None:
