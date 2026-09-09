@@ -5,6 +5,12 @@ Tests for fitting validation module.
 import numpy as np
 import pytest
 
+from luxar.conftest import (
+    ValidationCase,
+    assert_validation_precedence,
+    ordered_validation_pairs,
+)
+
 try:
     import torch
 
@@ -29,6 +35,212 @@ class MockGaussianSplatFitter:
         self.dynamic_config = DynamicOpsConfig()
         self.use_metal = False
         self.use_cuda = False
+
+
+VALIDATION_PRECEDENCE = (
+    ValidationCase(
+        "source_shape", {"source_shape": []}, ValueError, "source_shape cannot be empty"
+    ),
+    ValidationCase(
+        "source_stored_bytes",
+        {"source_stored_bytes": 0},
+        ValueError,
+        "source_stored_bytes must be a positive integer, got 0",
+    ),
+    ValidationCase(
+        "empty_volume",
+        {"V": np.empty((0, 2), dtype=np.float32)},
+        ValueError,
+        "Input image V cannot be empty",
+    ),
+    ValidationCase(
+        "downscale",
+        {"downscale": 0},
+        ValueError,
+        "downscale factors must be >= 1, got 0",
+    ),
+    ValidationCase("seeds", {"seeds": 0}, ValueError, "seeds as int must be positive"),
+    ValidationCase(
+        "init_sigma_vox",
+        {"init_sigma_vox": 0},
+        ValueError,
+        "init_sigma_vox must be positive if specified",
+    ),
+    ValidationCase("n_iters", {"n_iters": 0}, ValueError, "n_iters must be positive"),
+    ValidationCase("lr", {"lr": 0}, ValueError, "lr must be positive"),
+    ValidationCase(
+        "loss_type",
+        {"loss_type": "invalid"},
+        ValueError,
+        "loss_type must be 'mse', 'poisson', or 'l1'",
+    ),
+    ValidationCase(
+        "l1_amp",
+        {"l1_amp": -1},
+        ValueError,
+        "l1_amp must be non-negative if specified",
+    ),
+    ValidationCase(
+        "l1_diag",
+        {"l1_diag": -1},
+        ValueError,
+        "l1_diag must be non-negative if specified",
+    ),
+    ValidationCase(
+        "asymmetric_penalty",
+        {"asymmetric_penalty": 0.5},
+        ValueError,
+        "asymmetric_penalty must be >= 1.0 (values < 1.0 would invert the penalty)",
+    ),
+    ValidationCase(
+        "gradient_clip",
+        {"gradient_clip": 0},
+        ValueError,
+        "gradient_clip must be positive if specified",
+    ),
+    ValidationCase("patience", {"patience": 0}, ValueError, "patience must be >= 1"),
+    ValidationCase(
+        "lr_reduction_factor",
+        {"lr_reduction_factor": 1},
+        ValueError,
+        "lr_reduction_factor must be in range (0, 1)",
+    ),
+    ValidationCase(
+        "early_stop_patience",
+        {"early_stop_patience": 0},
+        ValueError,
+        "early_stop_patience must be >= 1 if specified",
+    ),
+    ValidationCase(
+        "scheduler_type",
+        {"scheduler_type": "invalid"},
+        ValueError,
+        "scheduler_type must be 'plateau' or 'exponential'",
+    ),
+    ValidationCase(
+        "truncate", {"truncate": 0}, ValueError, "truncate must be positive"
+    ),
+    ValidationCase(
+        "max_abs_error",
+        {"max_abs_error": 0},
+        ValueError,
+        "max_abs_error must be positive if specified",
+    ),
+    ValidationCase(
+        "rel_l2_target",
+        {"rel_l2_target": 0},
+        ValueError,
+        "rel_l2_target must be positive if specified",
+    ),
+    ValidationCase(
+        "movie_max_frames",
+        {"movie_max_frames": 0},
+        ValueError,
+        "movie_max_frames must be positive or None",
+    ),
+    ValidationCase(
+        "movie_every", {"movie_every": 0}, ValueError, "movie_every must be >= 1"
+    ),
+    ValidationCase(
+        "norm_percentile",
+        {"norm_percentile": 50},
+        ValueError,
+        "norm_percentile must be in range [0.0, 50.0), got 50",
+    ),
+    ValidationCase("floor", {"floor": -1}, ValueError, "floor must be >= 0, got -1.0"),
+    ValidationCase(
+        "sigma_min_diag",
+        {"sigma_min_diag": 0},
+        ValueError,
+        "sigma_min_diag must be positive if specified",
+    ),
+    ValidationCase(
+        "sigma_max_diag",
+        {"sigma_max_diag": 0},
+        ValueError,
+        "sigma_max_diag fraction must be positive",
+    ),
+    ValidationCase(
+        "amp_max",
+        {"amp_max": 0},
+        ValueError,
+        "amp_max must be positive if specified",
+    ),
+    ValidationCase(
+        "norm_range",
+        {"norm_range": (1, 1)},
+        ValueError,
+        "norm_range must satisfy image_max > image_min, got (1, 1)",
+    ),
+    ValidationCase(
+        "max_eccentricity",
+        {"max_eccentricity": 0},
+        ValueError,
+        "max_eccentricity must be >= 1.0 (ratio of longest to shortest axis)",
+    ),
+    ValidationCase(
+        "voxel_footprint_correction",
+        {"voxel_footprint_correction": -1},
+        ValueError,
+        "voxel_footprint_correction sigma must be positive",
+    ),
+    ValidationCase(
+        "boundary_penalty",
+        {"boundary_penalty": -1},
+        ValueError,
+        "boundary_penalty must be non-negative if specified",
+    ),
+    ValidationCase(
+        "voxel_size", {"voxel_size": 0}, ValueError, "voxel_size must be positive"
+    ),
+    ValidationCase(
+        "output_space",
+        {"output_space": "invalid"},
+        ValueError,
+        "output_space must be 'real' or 'voxel'",
+    ),
+    ValidationCase(
+        "sort_splats_interval",
+        {"sort_splats_interval": 0},
+        ValueError,
+        "sort_splats_interval must be >= 1",
+    ),
+    ValidationCase(
+        "iter_callback",
+        {"iter_callback": 1},
+        ValueError,
+        "iter_callback must be callable or None",
+    ),
+    ValidationCase(
+        "iter_callback_every",
+        {"iter_callback_every": 0},
+        ValueError,
+        "iter_callback_every must be >= 1",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("earlier", "later"),
+    ordered_validation_pairs(VALIDATION_PRECEDENCE),
+    ids=lambda case: case.name,
+)
+def test_prepare_fit_config_preserves_validation_precedence(
+    earlier: ValidationCase, later: ValidationCase
+) -> None:
+    """Every earlier invalid parameter wins when a later rule also fails."""
+    fitter = MockGaussianSplatFitter()
+
+    def validate(overrides) -> None:
+        kwargs = dict(overrides)
+        volume = kwargs.pop("V", np.ones((2, 3), dtype=np.float32))
+        prepare_fit_config(
+            fitter,
+            volume,
+            **kwargs,
+        )
+
+    assert_validation_precedence(validate, earlier, later)
 
 
 class TestPrepareConfig:

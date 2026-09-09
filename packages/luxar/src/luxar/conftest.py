@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import re
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -114,6 +114,49 @@ class CompressorView(NamedTuple):
     cname: str
     clevel: int
     shuffle: int
+
+
+class ValidationCase(NamedTuple):
+    """One invalid-input case for an ordered validation-equivalence test."""
+
+    name: str
+    overrides: Mapping[str, Any]
+    exception_type: type[Exception]
+    message: str
+
+
+def ordered_validation_pairs(
+    cases: Sequence[ValidationCase],
+) -> list[tuple[ValidationCase, ValidationCase]]:
+    """Return every earlier/later pair from an ordered validation contract."""
+    names = [case.name for case in cases]
+    assert len(names) == len(set(names)), (
+        f"validation case names must be unique: {names}"
+    )
+    pairs = [
+        (earlier, later)
+        for index, earlier in enumerate(cases)
+        for later in cases[index + 1 :]
+    ]
+    for earlier, later in pairs:
+        overlap = set(earlier.overrides) & set(later.overrides)
+        assert not overlap, (
+            f"validation cases {earlier.name!r} and {later.name!r} both override "
+            f"{sorted(overlap)} and cannot form a two-violation input"
+        )
+    return pairs
+
+
+def assert_validation_precedence(
+    validate: Callable[[Mapping[str, Any]], Any],
+    earlier: ValidationCase,
+    later: ValidationCase,
+) -> None:
+    """Assert that ``earlier`` remains the exact failure for a two-error input."""
+    overrides = {**later.overrides, **earlier.overrides}
+    with pytest.raises(earlier.exception_type) as raised:
+        validate(overrides)
+    assert str(raised.value) == earlier.message
 
 
 #: v3 spells blosc's shuffle as a NAME; numcodecs spells it as an int, and the
