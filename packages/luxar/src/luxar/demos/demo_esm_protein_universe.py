@@ -4,11 +4,12 @@
 The big-map sibling of ``demo_esm3_protein_stories``. Every point is one of
 7.7 million CLUSTERS of proteins from the ESM Atlas (Candido et al., bioRxiv
 2026): 6.8 billion sequences from eight public databases — 5.6 billion of them
-read straight out of environmental DNA rather than from any organism grown in a
-lab — grouped by the features a protein language model (ESM C) sees in them
-(Jaccard ≥ 0.6 in sparse-autoencoder feature space) and laid out by 3D UMAP. A
-point is a cluster of at least fifty members; the 7.7 million together stand for
-817 million proteins. A hidden ``story`` dimension walks through twelve stops: seven protein families
+from metagenomes alone, read straight out of soil, seawater and guts rather than
+from any organism grown in a lab — grouped by the features a protein language
+model (ESM C) sees in them (Jaccard ≥ 0.6 to the cluster centre in
+sparse-autoencoder feature space) and laid out by 3D UMAP. A point is a cluster
+of at least fifty members; the 7.7 million together stand for 817 million
+proteins. A hidden ``story`` dimension walks through twelve stops: seven protein families
 carried over from the Swiss-Prot tour (hemoglobin, photosystem II, Hsp70, the
 viral spike, ATP synthase, RuBisCO, RecA), three stories only this map can tell
 (the ABC-transporter spur flung off the cloud, the dark proteome, the phage
@@ -433,11 +434,16 @@ def backdrop_colors(universe: Universe) -> np.ndarray:
 # annotation table itself, and the dataset facts from the ESM Atlas preprint
 # (Candido et al., bioRxiv 2026, doi 10.64898/2026.06.03.729735): 6,824,676,938
 # sequences from eight databases (UniParc, IMG/M, IMG/VR, two JGI MAG sets,
-# MGnify, UHGG, SPIRE), 5.6 billion of them metagenomic; ESMC 6B embeddings →
-# 16,384-feature SAE → Jaccard ≥ 0.6 clustering → 3.05 billion clusters, of
-# which 7.7 million have at least fifty members (817 million proteins; this
-# map); 1.1 billion ESMFold2 structures; "characterised" = a Pfam domain of
-# known function (Pfam 38.1), and "over two million" clusters have none. Every
+# MGnify, UHGG, SPIRE), with 5.6 billion from the two metagenome catalogues
+# SPIRE and MGnify alone; ESMC 6B embeddings → 16,384-feature SAE → Jaccard
+# ≥ 0.6 to the cluster centre → 3.05 billion clusters, of which 7.7 million
+# have at least fifty members (817 million proteins; this map); 1.1 billion
+# ESMFold2 structures; "characterised" means the cluster has a member carrying
+# a Pfam domain (release 38.1) whose FAMILY NAME does not mark it unknown
+# (DUF/UPF/"uncharacterized" — Appendix A.4.5.2's string rule, which the paper
+# itself calls a reasonable estimate), and "over two million" clusters have
+# none. Note the paper's other dark number, 1.5 million, is clusters with no
+# Pfam family AT ALL, a stricter cut than ours. Every
 # map-specific line (what a knot IS) was re-measured on 2026-09-09; the knot
 # compositions quoted in the comments come from that audit.
 
@@ -584,28 +590,33 @@ BACKDROP_LOD_FACTOR = 4
 STORIES: tuple[UniverseStory, ...] = (
     _carry(
         "Hemoglobin",
-        subtitle="Four hundred globin clusters; the knot is the oxygen carriers of animals",
+        subtitle="A hundred animal globin clusters, out of four hundred in the map",
         pattern="",
         pfam=("PF00042",),  # Globin
-        # The 423 globin clusters form two knots of 159: one all bacterial
-        # (Pseudomonadota flavohemoglobins), one animal (Chordata 53, Nematoda
-        # 38, Arthropoda 9, Mollusca 2). Without the filter the purer bacterial
-        # knot wins the seed; with it the story lands on the animal globins.
+        # The 423 globin clusters break into two components of 159 (linked at
+        # 0.3): one purely bacterial (Pseudomonadota flavohemoglobins), one
+        # animal-dominated. Without this filter the purer bacterial knot wins
+        # the purity-weighted seed; with it the story lands on 102 animal
+        # clusters (Chordata 53, Nematoda 38, Arthropoda 9, Mollusca 2).
         groups=("Other Vertebrates", "Insects & Worms"),
         radius=FAMILY_RADIUS,
         min_distance=FAMILY_MIN_DISTANCE,
         facts=_swap_fact(
             "Hemoglobin",
             3,
-            # Knot: 102 animal globin clusters (audit). Bacterial globins
-            # (flavohemoglobins, truncated globins) and plant non-symbiotic
-            # hemoglobins: Vinogradov & Moens, JBC 283:8773 (2008); the bacterial
-            # knot of 159 sits elsewhere in the map.
-            "This knot is the animal globins: vertebrate hemoglobins beside the "
-            "globins of worms and insects. The fold is far older than blood — "
-            "bacteria, fungi and plants carry globins that sense oxygen or "
-            "detoxify nitric oxide, and the model files those in knots of their "
-            "own elsewhere in this map.",
+            # Knot (audit): 102 clusters — Chordata 53, Nematoda 38,
+            # Arthropoda 9, Mollusca 2. Only 14 are named "hemoglobin"; most
+            # carry the generic "globin domain-containing protein", and a
+            # handful are neuroglobin, cytoglobin or myoglobin — the whole
+            # animal globin family, of which our blood protein is one member
+            # (Vinogradov & Moens, JBC 283:8773 (2008), for the fold's reach
+            # into bacteria, fungi and plants; that bacterial knot of 159 sits
+            # elsewhere in the map).
+            "This knot is the animal globins: hemoglobin beside the myoglobin "
+            "of muscle, the neuroglobin of nerves, and the globins of worms and "
+            "insects. The fold is far older than blood — bacteria, fungi and "
+            "plants carry globins that sense oxygen or detoxify nitric oxide, "
+            "and the model files those in a knot of their own elsewhere.",
         ),
     ),
     _carry(
@@ -618,9 +629,12 @@ STORIES: tuple[UniverseStory, ...] = (
         facts=_swap_fact(
             "Photosystem II",
             3,
-            # Knot (audit): 44 clusters, all named D1 — Uroviricota 18,
-            # Cyanobacteriota 13, Rhodophyta 7, Streptophyta 5. No purple
-            # bacteria: the L/M chains sit in knots of their own. Cyanophage
+            # Knot (audit): 44 clusters — Uroviricota 18, Cyanobacteriota 13,
+            # Rhodophyta 7, Streptophyta 5. Twenty are named "photosystem II
+            # protein D1", three are the far-red D1 paralogue chlorophyll f
+            # synthase, nine carry the generic reaction-centre name and six are
+            # hypothetical; NOT ONE is D2, and there are no purple bacteria —
+            # the D2 and L/M chains sit in knots of their own. Cyanophage
             # psbA: Mann et al., Nature 424:741 (2003); Lindell et al., Nature
             # 438:86 (2005) — the phage copy of D1 is expressed during infection
             # and keeps photosynthesis running while the phage replicates.
@@ -725,9 +739,9 @@ STORIES: tuple[UniverseStory, ...] = (
         facts=_swap_fact(
             "RuBisCO",
             3,
-            # Audit: knot of 117 large-chain clusters — Streptophyta 58,
-            # Pseudomonadota 27, Bacillota 10, plus five "2,3-diketo-5-
-            # methylthiopentyl-1-phosphate enolase": the RuBisCO-like protein
+            # Audit: knot of 117 — Streptophyta 58 (50%), Pseudomonadota 27,
+            # Bacillota 10; 83 named for the large chain and seven "2,3-diketo-
+            # 5-methylthiopentyl-1-phosphate enolase": the RuBisCO-like protein
             # of the methionine salvage pathway (Ashida et al., Science 302:286
             # (2003), Bacillus subtilis).
             "The knot here is the large chain: half of it the plant enzyme, the "
@@ -798,15 +812,18 @@ STORIES: tuple[UniverseStory, ...] = (
             "are spent. That engine — the cassette — is what these clusters "
             "share.",
             # 8,277 clusters on the spur; 96% carry an ABC-transporter Pfam
-            # family as their dominant domain (see SPUR_PFAMS). PF00005 is the
-            # largest family in Pfam (681,506 sequences at release 32) and the
-            # commonest dominant family in this map (48,106 clusters; the next,
-            # the MFS transporters PF07690, has 31,024).
+            # family as their dominant domain (see SPUR_PFAMS). ABC_tran
+            # (PF00005) has long been reported as the largest Pfam-A family by
+            # sequence count, and it is far and away the commonest dominant
+            # family in this map: 48,106 clusters against 31,024 for the next,
+            # the MFS transporters (PF07690). The measured number is ours; the
+            # Pfam ranking is not restated as a bare fact in the panel.
             "The map put them on a spur of their own. A streak like this is "
             "what the layout algorithm does with a huge, tightly knit family "
             "that shares few features with anything else — partly an artefact, "
-            "but an honest one: the ATP-binding cassette is the largest protein "
-            "family known, and the commonest on this map.",
+            "but an honest one: the ATP-binding cassette is among the largest "
+            "protein families known, and by a wide margin the commonest on "
+            "this map.",
         ),
         mystery=(
             "The same cassette powers importers and exporters, in bacteria and "
@@ -855,12 +872,16 @@ STORIES: tuple[UniverseStory, ...] = (
             "a lab. Of the 6.8 billion sequences behind this map, 5.6 billion "
             "came that way — and a structure has been predicted for 1.1 "
             "billion of them.",
-            # Annotation table: in the densest 0.5-unit voxels the dark
-            # fraction exceeds 95%; ten nearest neighbours of a dark cluster
-            # are dark 80% of the time against a 26% base rate.
-            "Dark sits next to dark: in the densest pockets here, more than "
-            "nine in ten neighbours are unnamed. Whatever these proteins do, "
-            "they do it in families of their own.",
+            # Annotation table (re-measured): the ten nearest neighbours of a
+            # dark cluster are dark 80% of the time against a 26% base rate,
+            # rising to 85% for dark clusters in the densest 1% of the map.
+            # An earlier draft said "more than nine in ten in the densest
+            # pockets" — that holds only for a handful of hand-picked voxels,
+            # not for the densest regions generally, so it is gone.
+            "Dark sits next to dark: eight of the ten nearest neighbours of an "
+            "unnamed cluster are unnamed too, where one in four would be the "
+            "rate if they were scattered. Whatever these proteins do, they do "
+            "it in families of their own.",
             # CRISPR: Ishino et al. 1987 → Jinek et al. 2012. GFP: Shimomura
             # 1962 → Chalfie et al. 1994.
             "Some of the most useful tools in biology were dark once. The "
@@ -879,7 +900,8 @@ STORIES: tuple[UniverseStory, ...] = (
             "contain not a single protein anyone has characterised. They are "
             "the dim points of this map, read straight out of soil, seawater "
             "and guts, from organisms nobody has grown. Dark sits next to dark: "
-            "in the densest pockets here, nine in ten neighbours are unnamed. "
+            "eight of the ten nearest neighbours of an unnamed cluster are "
+            "unnamed too, where one in four would be the rate by chance. "
             "Some of biology's best tools were dark once; CRISPR was unusual "
             "DNA for twenty-five years. Are these new chemistry, or old folds "
             "drifted beyond recognition? Nobody knows the proportion."
@@ -970,14 +992,16 @@ STORIES: tuple[UniverseStory, ...] = (
             "problem in Gram-negative bacteria.",
             # D'Costa et al., Nature 477:457 (2011): resistance genes in
             # 30,000-year-old Beringian permafrost.
-            # Hall & Barlow, J. Mol. Evol. 59:133 (2004): serine beta-lactamases
-            # are over two billion years old; the beta-lactam producers are
-            # moulds (Penicillium) and soil bacteria (Streptomyces).
+            # Hall & Barlow, Drug Resist. Updat. 7:111 (2004): phylogenies put
+            # the origin of the serine beta-lactamases more than two billion
+            # years back, and some on plasmids for millions of years. The
+            # beta-lactam producers are moulds (Penicillium) and soil bacteria
+            # (Streptomyces).
             "Beta-lactamase genes have been recovered from 30,000-year-old "
-            "permafrost. The enzymes are far older than that: moulds and soil "
-            "bacteria have made penicillin-like antibiotics, and their "
-            "neighbours have destroyed them with beta-lactamases, for hundreds "
-            "of millions of years.",
+            "permafrost, and phylogenies reckon the serine beta-lactamases far "
+            "older still — a couple of billion years. Moulds and soil bacteria "
+            "have long made penicillin-like antibiotics, and their neighbours "
+            "have long destroyed them.",
         ),
         mystery=(
             "Thousands of beta-lactamase variants are known and new ones appear "
@@ -1004,8 +1028,11 @@ STORIES: tuple[UniverseStory, ...] = (
         subtitle="Hundreds of clusters of the enzyme bacteria use to cut viral DNA",
         pattern="",
         # The preprint's own Cas9 class (Table S15 of Candido et al. 2026):
-        # the RuvC, HNH, REC-lobe, PI and bridge-helix families of Cas9. 874
-        # clusters in this map; the knot is 260 of them, 88% pure.
+        # the RuvC, REC-lobe, bridge-helix, WED, PI and C-terminal families of
+        # Cas9, plus HNH_4 (PF13395) — a GENERIC HNH endonuclease family, and
+        # the one that supplies 585 of the 874 clusters, so the selection is
+        # broader than "Cas9" at the family level. The knot it lands on is not:
+        # 260 clusters, 88% pure, 132 of them named for Cas9 itself.
         pfam=(
             "PF22702",
             "PF13395",
@@ -1042,13 +1069,14 @@ STORIES: tuple[UniverseStory, ...] = (
             "therapy for sickle-cell disease — the illness of the first story "
             "on this tour.",
         ),
-        # Grissa et al., BMC Bioinformatics 8:172 (2007): CRISPR arrays in
-        # ~40% of bacterial and ~90% of archaeal genomes; Makarova et al.,
-        # Nat. Rev. Microbiol. 13:722 (2015) give ~45% / ~85%.
+        # Makarova et al., Nat. Rev. Microbiol. 13:722 (2015): CRISPR-Cas in
+        # ~45% of bacterial and ~85% of archaeal genomes. (The often-quoted
+        # 40% / 90% pair traces to survey papers that do not agree with each
+        # other; CRISPRdb itself, Grissa et al. 2007, gives ~45% / ~83%.)
         mystery=(
-            "Roughly 40% of bacteria and nearly 90% of archaea carry CRISPR "
-            "systems, yet many highly successful bacteria do without. Why would "
-            "an organism give up an immune system?"
+            "Roughly 45% of bacteria and 85% of archaea carry CRISPR systems, "
+            "yet many highly successful bacteria do without. Why would an "
+            "organism give up an immune system?"
         ),
         tags=("genome editing", "immunity"),
         pdb_id="4OO8",  # S. pyogenes Cas9 with guide RNA and target DNA
