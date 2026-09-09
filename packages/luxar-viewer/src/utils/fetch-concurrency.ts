@@ -8,11 +8,12 @@
  * (`net::ERR_INSUFFICIENT_RESOURCES`) — the ceiling that capped large
  * substitutive-LOD scenes (~10M+ finest points).
  *
- * Both data-fetch paths funnel through {@link withFetchGate}: the
- * multi-level caching store's network tier (`fetch-retry.ts`, the default) and
- * the no-cache `FetchStore` (`data/zarr.ts`). A single shared counter caps the
- * total in flight, keeping throughput high (HTTP/2 multiplexes happily at this
- * width) while staying within the browser's socket/memory budget.
+ * All data-fetch paths funnel through {@link withFetchGate}: the multi-level
+ * caching store's network tier (`fetch-retry.ts`, the default), zipped-store
+ * range reads (`range-reader.ts`), and the no-cache `FetchStore`
+ * (`data/zarr.ts`). A single shared counter caps the total in flight, keeping
+ * throughput high (HTTP/2 multiplexes happily at this width) while staying
+ * within the browser's socket/memory budget.
  *
  * The gate is FIFO and has no priority lane. Because a lease now spans body
  * consumption, metadata and validation requests can queue behind full chunk
