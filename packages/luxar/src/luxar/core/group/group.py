@@ -1153,9 +1153,10 @@ class Group(Node):
 
         Set ``flatten=True`` to materialize the source tree's default finest
         selection as one leaf before applying ``partition=``,
-        ``substitutive_lod=``, or ``additive_lod=``. This is required to
-        restructure a stored partition or nested LOD tree. ``lod_group=`` is
-        retained as an alias for ``substitutive_lod=``.
+        ``substitutive_lod=``, or ``additive_lod=``. Without it, ``partition=``
+        and ``additive_lod=`` retain a nested source tree and apply to each leaf;
+        ``substitutive_lod=`` requires flattening that tree first. ``lod_group=``
+        is retained as an alias for ``substitutive_lod=``.
 
         ``labels`` / ``image_labels`` / ``keys`` are accepted only when the file is a single
         leaf with NO additive ladder. Any multi-LEAF result — an auto-lowered
@@ -1204,11 +1205,13 @@ class Group(Node):
                 and volumetric optical depth are both LINEAR in the raw stored
                 amplitude and nothing windows them. See
                 :mod:`luxar.core.group.gsplats_pipeline.amplitude_norm`.
-            partition: Spatial partition control applied to matrix-shaped input,
-                or after ``flatten=True``.
-            substitutive_lod: Substitutive-LOD control applied after loading.
+            partition: Spatial partition control applied to the loaded matrix,
+                or to each leaf of a retained nested tree.
+            substitutive_lod: Substitutive-LOD control applied after loading;
+                nested trees require ``flatten=True``.
             lod_group: Backward-compatible alias for ``substitutive_lod``.
-            additive_lod: Additive-LOD control applied after loading.
+            additive_lod: Additive-LOD control applied to the loaded matrix, or
+                independently to each leaf of a retained nested tree.
             flatten: Collapse stored structure to the default finest selection
                 before applying the requested structure.
             **attrs: Additional node attributes — the :meth:`add_gsplats`

@@ -66,6 +66,30 @@ def test_add_gsplats_composes_substitutive_and_additive_lod(tmp_path) -> None:
     assert stored["child_1"].attrs["n_splats"] == 16
 
 
+def test_add_gsplats_composes_partition_under_substitutive_lod(tmp_path) -> None:
+    data = _data()
+    output_path = tmp_path / "scene.luxar.zarr"
+
+    with LuxarZarrCompiler(output_path) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_gsplats(
+            "splats",
+            data.centers,
+            data.amplitudes,
+            data.cholesky_factors,
+            partition=dict(max_elements=4),
+            substitutive_lod=dict(compression_factor=2, levels=1),
+        )
+
+    stored = zarr.open_group(output_path, mode="r")["splats"]
+    assert stored.attrs["kind"] == "lod"
+    assert all(stored[name].attrs["kind"] == "partition" for name in stored)
+    assert (
+        sum(stored["child_1"][name].attrs["n_splats"] for name in stored["child_1"])
+        == data.n_splats
+    )
+
+
 def test_substitutive_lod_alias_refuses_ambiguous_double_spec(tmp_path) -> None:
     with LuxarZarrCompiler(tmp_path / "scene.luxar.zarr") as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
