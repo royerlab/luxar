@@ -4,11 +4,6 @@
       "count": 2
     }
   },
-  "src/cache/chunk-source/http-chunk-source.ts": {
-    "complexity": {
-      "count": 1
-    }
-  },
   "src/cache/chunk-source/zip-chunk-source.ts": {
     "complexity": {
       "count": 1
