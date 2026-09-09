@@ -1302,11 +1302,11 @@ export class LODGroupRegistry {
   }
 
   /**
-  * Whether a visible partition has a rising-edge resync waiting for the
-  * owning loader to become idle. Pending work retained under a hidden wrapper
+   * Whether a visible partition has a rising-edge resync waiting for the
+   * owning loader to become idle. Pending work retained under a hidden wrapper
    * is not actionable and must not keep wide settledness false indefinitely;
    * neither can work when no resync dispatcher is wired.
-  */
+   */
   hasVisiblePendingPartitionResync(): boolean {
     if (!this.deps.requestReprocess) return false;
     for (const path of this.partitionResyncPending.keys()) {
