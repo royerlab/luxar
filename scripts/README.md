@@ -227,10 +227,11 @@ above a function never churns the baseline. Because a move
 pairs on the function name alone, a genuinely new function can in principle be
 absorbed by a same-named one vanishing in the same run; what the ratchet always
 guarantees is the bound, not the identity — a pair can never increase total
-debt. The checker runs as part of `hatch run lint` and `hatch run check`, and the
-Python test suite
-(`packages/luxar/src/luxar/tests/test_check_complexity.py`) asserts the real
-tree is regression-free and is what gates every PR in CI.
+debt. The checker runs as part of `hatch run lint` and `hatch run check`; CI runs
+`hatch run lint` on its Python 3.12 leg. The Python test suite independently
+asserts the real tree is regression-free through
+`test_check_complexity.py::test_repository_has_no_complexity_regressions`, so
+both paths gate PRs.
 
 ---
 
@@ -309,15 +310,12 @@ baseline where a rule is a false positive at that specific site — prefer it to
 `--update-baseline`, which should be reserved for moves and deliberate
 re-baselining.
 
-**What actually enforces this in CI.** The checker runs as part of
-`hatch run lint` and `hatch run check`, which is what a developer and
-`make check-all` reach — but CI does *not* run either. Its `Lint (ruff)` step
-invokes `ruff check packages/luxar/src/luxar/` directly, which both skips the
-ratchet scripts and covers a narrower path set than they do. The gate that fires
-on a PR is therefore the pytest one,
-`test_check_lint_ratchet.py::test_repository_has_no_lint_regressions`, inside
-`python-tests` — exactly as for the complexity ratchet above. That test fails
-closed (a missing baseline reports every violation as new), and
+**What actually enforces this in CI.** The Python 3.12 leg runs
+`hatch run lint`, which reaches this checker through the same aggregate used by
+developers and `make check-all`. The test suite independently runs
+`test_check_lint_ratchet.py::test_repository_has_no_lint_regressions` against
+the live tree through `test-cov`. That test fails closed (a missing baseline
+reports every violation as new), and
 `scripts/lint_baseline.json` is in the `dom_py` change filter so editing the
 baseline cannot skip the test that re-derives it.
 
